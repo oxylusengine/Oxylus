@@ -2,7 +2,7 @@
 
 namespace ox {
 void Log::init(int argc, char** argv) {
-  OX_SCOPED_ZONE;
+  ZoneScoped;
   if (!std::filesystem::exists("logs"))
     std::filesystem::create_directory("logs");
 

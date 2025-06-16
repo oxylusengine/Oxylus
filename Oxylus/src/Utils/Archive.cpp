@@ -21,12 +21,12 @@ Archive::Archive(const std::string& file_name_, bool read_mode_) : read_mode(rea
   }
 }
 
-Archive::Archive(const uint8_t* data) {
+Archive::Archive(const u8* data) {
   data_ptr = data;
   set_read_mode_and_reset_pos(true);
 }
 
-void Archive::write_data(std::vector<uint8_t>& dest) const {
+void Archive::write_data(std::vector<u8>& dest) const {
   dest.resize(pos);
   std::memcpy(dest.data(), data_ptr, pos);
 }

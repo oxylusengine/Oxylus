@@ -1,65 +1,6 @@
 ---
 Language: Cpp
-BasedOnStyle: LLVM
-AlignConsecutiveShortCaseStatements:
-  Enabled: true
-  AcrossEmptyLines: true
-  AcrossComments: true
-  AlignCaseColons: true
-AlignConsecutiveAssignments: false
-AlignConsecutiveDeclarations: false
-AlignOperands: AlignAfterOperator
-AlignEscapedNewlines: Left
-AlignAfterOpenBracket: Align
-PackConstructorInitializers: CurrentLine
-BracedInitializerIndentWidth: 2
-BreakArrays: true
-AlignTrailingComments:
-  Kind: Always
-  OverEmptyLines: 2
-AllowShortFunctionsOnASingleLine: All
-AllowShortLambdasOnASingleLine: All
-AllowShortCaseLabelsOnASingleLine: true
-AllowAllArgumentsOnNextLine: false
-AllowAllParametersOfDeclarationOnNextLine: false
-AllowShortIfStatementsOnASingleLine: false
-DerivePointerAlignment: false
-PointerAlignment: Left
-QualifierAlignment: Left
-BinPackParameters: false
-BinPackArguments: false
-BraceWrapping:
-  AfterCaseLabel: false
-  AfterClass: false
-  AfterControlStatement: false
-  AfterEnum: false
-  AfterFunction: false
-  AfterNamespace: false
-  AfterStruct: false
-  AfterUnion: false
-  AfterExternBlock: false
-  BeforeCatch: false
-  BeforeElse: false
-  BeforeLambdaBody: false
-  BeforeWhile: false
-  SplitEmptyFunction: false
-  SplitEmptyRecord: false
-  SplitEmptyNamespace: false
-BreakBeforeBraces: Custom
-# BreakAfterReturnType: Automatic # clang-format 19 feature
-PenaltyReturnTypeOnItsOwnLine: 5000
-PenaltyBreakAssignment: 5000
-PenaltyBreakBeforeFirstCallParameter: 5000
-PenaltyBreakOpenParenthesis: 5000
-AlwaysBreakAfterReturnType: None
-BreakBeforeTernaryOperators: true
-BreakConstructorInitializers: AfterColon
-BreakBeforeConceptDeclarations: Always
-BreakAfterAttributes: Leave
-AlwaysBreakTemplateDeclarations: true
-Cpp11BracedListStyle: true
-ColumnLimit: 150
-ContinuationIndentWidth: 2
+IncludeBlocks: Regroup
 IncludeCategories:
   - Regex: "^<.*"
     Priority: 1
@@ -68,14 +9,50 @@ IncludeCategories:
   - Regex: ".*"
     Priority: 3
 IncludeIsMainRegex: "([-_](test|unittest))?$"
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: true
+  AlignCaseColons: true
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignOperands: true
+# LambdaBodyIndentation: OuterScope
+AlignEscapedNewlines: Left
+PackConstructorInitializers: CurrentLine
+BreakArrays: true
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 2
+AllowShortFunctionsOnASingleLine: All
+AllowShortLambdasOnASingleLine: Inline
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortIfStatementsOnASingleLine: false
+DerivePointerAlignment: false
+PointerAlignment: Left
+QualifierAlignment: Left
+BinPackParameters: OnePerLine
+BinPackArguments: false
+BreakBeforeBraces: Attach
+BreakBeforeBinaryOperators: None
+BreakAfterReturnType: Automatic
+BreakTemplateDeclarations: Yes 
+BreakBeforeTernaryOperators: true
+BreakAfterAttributes: Always
+Cpp11BracedListStyle: true
+AlignAfterOpenBracket: Align
+ColumnLimit: 120
 NamespaceIndentation: None
+FixNamespaceComments: true
 IndentCaseLabels: true
 IndentPPDirectives: BeforeHash
 SortUsingDeclarations: LexicographicNumeric
 InsertNewlineAtEOF: true
-LambdaBodyIndentation: OuterScope
 MacroBlockBegin: ""
 MacroBlockEnd: ""
 MaxEmptyLinesToKeep: 1
 SpacesInAngles: false
 TabWidth: 2
+UseTab: Never
+PenaltyBreakAssignment: 300
+#PenaltyBreakBeforeFirstCallParameter: 300

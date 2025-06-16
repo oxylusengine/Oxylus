@@ -1,5 +1,3 @@
 ﻿#include "Frustum.hpp"
 
-namespace ox {
-
-}
+namespace ox {}

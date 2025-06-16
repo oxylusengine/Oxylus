@@ -10,14 +10,16 @@ public:
   // Only used by OxylusEditor. Virtual directory registered for projects.
   static constexpr auto PROJECT_DIR = "project_dir";
 
-  void init() override;
-  void deinit() override;
+  auto init() -> std::expected<void, std::string> override;
+  auto deinit() -> std::expected<void, std::string> override;
 
-  void mount_dir(const std::string& virtual_dir, const std::string& physical_dir);
-  void unmount_dir(const std::string& virtual_dir);
+  auto is_mounted_dir(const std::string& virtual_dir) -> bool;
 
-  std::string resolve_physical_dir(const std::string& virtual_dir, const std::string& file_path);
-  std::string resolve_virtual_dir(const std::string& file_path);
+  auto mount_dir(const std::string& virtual_dir, const std::string& physical_dir) -> void;
+  auto unmount_dir(const std::string& virtual_dir) -> void;
+
+  auto resolve_physical_dir(const std::string& virtual_dir, const std::string& file_path) -> std::string;
+  auto resolve_virtual_dir(const std::string& file_path) -> std::string;
 
 private:
   ankerl::unordered_dense::map<std::string, std::string> mapped_dirs = {};

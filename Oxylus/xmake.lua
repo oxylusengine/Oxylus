@@ -1,8 +1,3 @@
-option("lua_bindings")
-    set_default(true)
-    set_showmenu(true)
-    set_description("Enable Lua bindings")
-
 target("Oxylus")
     set_kind("static")
     set_languages("cxx23")
@@ -14,10 +9,11 @@ target("Oxylus")
     add_forceincludes("pch.hpp", { public = true, force = true })
     set_pcheader("./src/pch.hpp", { public = true, force = true })
 
+    add_options("profile")
     if not has_config("lua_bindings") then
         remove_files("./src/Scripting/*Bindings*")
-	else
-		add_defines("OX_LUA_BINDINGS")
+    else
+        add_defines("OX_LUA_BINDINGS")
     end
 
     if is_plat("windows") then
@@ -69,20 +65,16 @@ target("Oxylus")
         "/EHsc",
         "/bigobj",
         "-wd4100",
-        { force = true, public = true, tools = { "msvc", "cl", "clang_cl", "clang-cl" } })
-
-    add_cxxflags(
-        "-Wno-unused-parameter",
-        "-Wno-unused-variable",
-        { force = true, public = true, tools = { "clang", "gcc" } })
+        "/Zc:preprocessor",
+        { public = true, tools = { "msvc", "cl", "clang_cl", "clang-cl" } })
 
     add_packages(
         "stb",
         "miniaudio",
         "imgui",
-        "imguizmo",
+        "imguizmo-lr",
         "glm",
-        "entt",
+        "flecs",
         "fastgltf",
         "meshoptimizer",
         "fmt",
@@ -92,7 +84,7 @@ target("Oxylus")
         "libsdl3",
         "toml++",
         "rapidjson",
-        "joltphysics",
+        "joltphysics-ox",
         "tracy",
         "sol2",
         "enkits",

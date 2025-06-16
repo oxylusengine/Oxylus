@@ -1,13 +1,17 @@
 #include "EditorPanel.hpp"
 
 #include <fmt/format.h>
+
 #include "Utils/StringUtils.hpp"
 #include "imgui.h"
 
 namespace ox {
 uint32_t EditorPanel::_count = 0;
 
-EditorPanel::EditorPanel(const char* name, const char8_t* icon, bool default_show) : visible(default_show), _name(name), _icon(icon) {
+EditorPanel::EditorPanel(const char* name, const char8_t* icon, bool default_show)
+    : visible(default_show),
+      _name(name),
+      _icon(icon) {
   _id = fmt::format(" {} {}\t\t###{}{}", StringUtils::from_char8_t(icon), name, _count, name);
   _count++;
 }

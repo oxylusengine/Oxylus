@@ -24,22 +24,6 @@
   }
 
 namespace ox {
-template <typename T>
-using Shared = std::shared_ptr<T>;
-
-template <typename T, typename... Args>
-constexpr Shared<T> create_shared(Args&&... args) {
-  return std::make_shared<T>(std::forward<Args>(args)...);
-}
-
-template <typename T>
-using Unique = std::unique_ptr<T>;
-
-template <typename T, typename... Args>
-constexpr Unique<T> create_unique(Args&&... args) {
-  return std::make_unique<T>(std::forward<Args>(args)...);
-}
-
 template <typename Fn>
 struct defer {
   Fn func;

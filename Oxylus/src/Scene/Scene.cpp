@@ -1,218 +1,383 @@
 #include "Scene.hpp"
 
-#include "Entity.hpp"
-#include "Jolt/Physics/Body/AllowedDOFs.h"
-#include "Scene/Components.hpp"
-#include "Utils/Timestep.hpp"
-
+#include <Core/FileSystem.hpp>
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Body/AllowedDOFs.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Character/Character.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
+#include <glm/gtx/matrix_decompose.hpp>
+#include <simdjson.h>
 #include <sol/state.hpp>
 
-#include "SceneRenderer.hpp"
-
+#include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
-
-#include <Jolt/Jolt.h>
-#include <Jolt/Physics/Body/BodyCreationSettings.h>
-
-#include "Jolt/Physics/Character/Character.h"
-#include "Jolt/Physics/Collision/Shape/BoxShape.h"
-#include "Jolt/Physics/Collision/Shape/CapsuleShape.h"
-#include "Jolt/Physics/Collision/Shape/CylinderShape.h"
-#include "Jolt/Physics/Collision/Shape/MeshShape.h"
-#include "Jolt/Physics/Collision/Shape/MutableCompoundShape.h"
-#include "Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h"
-#include "Jolt/Physics/Collision/Shape/SphereShape.h"
-#include "Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h"
-
+#include "Memory/Stack.hpp"
 #include "Physics/Physics.hpp"
+#include "Physics/PhysicsInterfaces.hpp"
 #include "Physics/PhysicsMaterial.hpp"
-
+#include "Render/Camera.hpp"
+#include "Render/EasyRenderPipeline.hpp"
 #include "Render/RenderPipeline.hpp"
-
+#include "Render/RendererConfig.hpp"
+#include "Scene/ECSModule/ComponentWrapper.hpp"
+#include "Scene/ECSModule/Core.hpp"
 #include "Scripting/LuaManager.hpp"
+#include "Utils/JsonHelpers.hpp"
+#include "Utils/JsonWriter.hpp"
+#include "Utils/Timestep.hpp"
 
 namespace ox {
-Scene::Scene() { init("Untitled"); }
+auto entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
+  ZoneScoped;
+
+  writer.begin_obj();
+  writer["name"] = e.name();
+
+  std::vector<ECS::ComponentWrapper> components = {};
+  writer["tags"].begin_array();
+  e.each([&](flecs::id component_id) {
+    if (!component_id.is_entity()) {
+      return;
+    }
+
+    ECS::ComponentWrapper component(e, component_id);
+    if (!component.is_component()) {
+      writer << component.path;
+    } else {
+      components.emplace_back(e, component_id);
+    }
+  });
+  writer.end_array();
+
+  writer["components"].begin_array();
+  for (auto& component : components) {
+    writer.begin_obj();
+    writer["name"] = component.path;
+    component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
+      auto& member_json = writer[member_name];
+      std::visit(ox::match{
+                     [](const auto&) {},
+                     [&](bool* v) { member_json = *v; },
+                     [&](f32* v) { member_json = *v; },
+                     [&](i32* v) { member_json = *v; },
+                     [&](u32* v) { member_json = *v; },
+                     [&](i64* v) { member_json = *v; },
+                     [&](u64* v) { member_json = *v; },
+                     [&](glm::vec2* v) { member_json = *v; },
+                     [&](glm::vec3* v) { member_json = *v; },
+                     [&](glm::vec4* v) { member_json = *v; },
+                     [&](glm::quat* v) { member_json = *v; },
+                     [&](glm::mat4* v) { member_json = std::span(glm::value_ptr(*v), 16); },
+                     [&](std::string* v) { member_json = *v; },
+                     [&](UUID* v) { member_json = v->str().c_str(); },
+                 },
+                 member);
+    });
+    writer.end_obj();
+  }
+  writer.end_array();
+
+  writer["children"].begin_array();
+  e.children([&writer](flecs::entity c) { entity_to_json(writer, c); });
+  writer.end_array();
+
+  writer.end_obj();
+}
+
+auto json_to_entity(Scene& self, //
+                    flecs::entity root,
+                    simdjson::ondemand::value& json,
+                    std::vector<UUID>& requested_assets) -> bool {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  const auto& world = self.world;
+
+  auto entity_name_json = json["name"];
+  if (entity_name_json.error()) {
+    OX_LOG_ERROR("Entities must have names!");
+    return false;
+  }
+
+  auto e = self.create_entity(std::string(entity_name_json.get_string().value_unsafe()));
+  if (root != flecs::entity::null())
+    e.child_of(root);
+
+  auto entity_tags_json = json["tags"];
+  for (auto entity_tag : entity_tags_json.get_array()) {
+    auto tag = world.component(stack.null_terminate(entity_tag.get_string().value_unsafe()).data());
+    e.add(tag);
+  }
+
+  auto components_json = json["components"];
+  for (auto component_json : components_json.get_array()) {
+    auto component_name_json = component_json["name"];
+    if (component_name_json.error()) {
+      OX_LOG_ERROR("Entity '{}' has corrupt components JSON array.", e.name().c_str());
+      return false;
+    }
+
+    const auto* component_name = stack.null_terminate_cstr(component_name_json.get_string().value_unsafe());
+    auto component_id = world.lookup(component_name);
+    if (!component_id) {
+      OX_LOG_ERROR("Entity '{}' has invalid component named '{}'!", e.name().c_str(), component_name);
+      return false;
+    }
+
+    OX_CHECK_EQ(self.component_db.is_component_known(component_id), true);
+    e.add(component_id);
+    ECS::ComponentWrapper component(e, component_id);
+    component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
+      auto member_json = component_json[member_name];
+      if (member_json.error()) {
+        // Default construct
+        return;
+      }
+
+      std::visit(ox::match{
+                     [](const auto&) {},
+                     [&](bool* v) { *v = static_cast<bool>(member_json.get_bool().value_unsafe()); },
+                     [&](f32* v) { *v = static_cast<f32>(member_json.get_double().value_unsafe()); },
+                     [&](i32* v) { *v = static_cast<i32>(member_json.get_int64().value_unsafe()); },
+                     [&](u32* v) { *v = static_cast<u32>(member_json.get_uint64().value_unsafe()); },
+                     [&](i64* v) { *v = member_json.get_int64().value_unsafe(); },
+                     [&](u64* v) { *v = member_json.get_uint64().value_unsafe(); },
+                     [&](glm::vec2* v) { json_to_vec(member_json.value_unsafe(), *v); },
+                     [&](glm::vec3* v) { json_to_vec(member_json.value_unsafe(), *v); },
+                     [&](glm::vec4* v) { json_to_vec(member_json.value_unsafe(), *v); },
+                     [&](glm::quat* v) { json_to_quat(member_json.value_unsafe(), *v); },
+                     // [&](glm::mat4 *v) {json_to_mat(member_json.value(), *v); },
+                     [&](std::string* v) { *v = member_json.get_string().value_unsafe(); },
+                     [&](UUID* v) {
+                       *v = UUID::from_string(member_json.get_string().value_unsafe()).value();
+                       requested_assets.push_back(*v);
+                     },
+                 },
+                 member);
+    });
+
+    e.modified(component_id);
+  }
+
+  auto children_json = json["children"];
+  for (auto children : children_json.get_array()) {
+    if (children.error()) {
+      continue;
+    }
+
+    if (!json_to_entity(self, e, children.value_unsafe(), requested_assets)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+auto ComponentDB::import_module(this ComponentDB& self, flecs::entity module) -> void {
+  ZoneScoped;
+
+  self.imported_modules.emplace_back(module);
+  module.children([&](flecs::id id) { self.components.push_back(id); });
+}
+
+auto ComponentDB::is_component_known(this ComponentDB& self, flecs::id component_id) -> bool {
+  ZoneScoped;
+
+  return std::ranges::any_of(self.components, [&](const auto& id) { return id == component_id; });
+}
+
+auto ComponentDB::get_components(this ComponentDB& self) -> std::span<flecs::id> { return self.components; }
+
+Scene::Scene(const std::shared_ptr<RenderPipeline>& render_pipeline) { this->init("Untitled", render_pipeline); }
 
 Scene::Scene(const std::string& name) { init(name); }
 
 Scene::~Scene() {
-  App::get_system<LuaManager>(EngineSystems::LuaManager)->get_state()->collect_gc();
+  const auto* lua_manager = App::get_system<LuaManager>(EngineSystems::LuaManager);
+  lua_manager->get_state()->collect_gc();
+
   if (running)
-    on_runtime_stop();
+    runtime_stop();
+
+  _render_pipeline->deinit();
 }
 
-Scene::Scene(const Scene& scene) {
-  this->scene_name = scene.scene_name;
-  const auto pack = this->registry.storage<entt::entity>().data();
-  const auto pack_size = this->registry.storage<entt::entity>().size();
-  this->registry.storage<entt::entity>().push(pack, pack + pack_size);
-}
+auto Scene::init(this Scene& self, const std::string& name, const std::shared_ptr<RenderPipeline>& render_pipeline) -> void {
+  ZoneScoped;
 
-void Scene::rigidbody_component_ctor(entt::registry& reg, entt::entity entity) {
-  auto& component = reg.get<RigidbodyComponent>(entity);
-  create_rigidbody(entity, reg.get<TransformComponent>(entity), component);
-}
+  self.scene_name = name;
 
-void Scene::collider_component_ctor(entt::registry& reg, entt::entity entity) {
-  if (reg.all_of<RigidbodyComponent>(entity))
-    create_rigidbody(entity, reg.get<TransformComponent>(entity), reg.get<RigidbodyComponent>(entity));
-}
-
-void Scene::character_controller_component_ctor(entt::registry& reg, entt::entity entity) const {
-  auto& component = reg.get<CharacterControllerComponent>(entity);
-  create_character_controller(reg.get<TransformComponent>(entity), component);
-}
-
-void Scene::init(const std::string& name) {
-  OX_SCOPED_ZONE;
-
-  this->scene_name = name;
-
-  dispatcher.sink<FutureMeshLoadEvent>().connect<&Scene::handle_future_mesh_load_event>(*this);
+  self.component_db.import_module(self.world.import <Core>());
 
   // Renderer
-  scene_renderer = create_unique<SceneRenderer>(this);
+  self._render_pipeline = render_pipeline;
 
-  scene_renderer->init(dispatcher);
-}
-
-Entity Scene::create_entity(const std::string& name) { return create_entity_with_uuid(UUID(), name); }
-
-entt::entity Scene::create_entity_with_uuid(UUID uuid, const std::string& name) {
-  OX_SCOPED_ZONE;
-  entt::entity ent = registry.create();
-  entity_map.emplace(uuid, ent);
-  registry.emplace<IDComponent>(ent, uuid);
-  registry.emplace<RelationshipComponent>(ent);
-  registry.emplace<TransformComponent>(ent);
-  registry.emplace<TagComponent>(ent).tag = name.empty() ? "Entity" : name;
-  return ent;
-}
-
-Entity Scene::load_mesh(const Shared<Mesh>& mesh) {
-  entt::entity root_entity = entt::null;
-
-  MeshComponent* parent = nullptr;
-  auto traverse = [this, mesh, &parent, &root_entity](const Mesh::Node* node, const entt::entity parent_entity, auto& traverse_func) -> void {
-    const Entity node_entity = create_entity(node->name);
-    if (parent_entity != entt::null)
-      eutil::set_parent(this, node_entity, parent_entity);
-
-    // TODO: we could actually use this to have material components for each child instead of having them all in the parent maybe?
-    auto& tc = registry.get<TransformComponent>(node_entity);
-    tc.set_from_matrix(node->get_local_transform());
-    if (!parent) {
-      parent = &registry.get_or_emplace<MeshComponent>(node_entity, mesh);
-      root_entity = node_entity;
-    } else {
-      parent->child_entities.emplace_back(node_entity);
-    }
-
-    for (const auto& child : node->children) {
-      traverse_func(child, node_entity, traverse_func);
-    }
-  };
-
-  for (const auto& node : mesh->root_nodes) {
-    traverse(node, entt::null, traverse);
+  if (!self._render_pipeline) {
+    self._render_pipeline = std::make_shared<EasyRenderPipeline>();
+    self._render_pipeline->init(App::get_vkcontext());
   }
 
-  return root_entity;
-}
+  self.world.observer<TransformComponent>()
+      .event(flecs::OnSet)
+      .event(flecs::OnAdd)
+      .event(flecs::OnRemove)
+      .without<MeshComponent>()
+      .each([&self](flecs::iter& it, usize i, TransformComponent&) {
+        auto entity = it.entity(i);
+        if (it.event() == flecs::OnSet) {
+          self.set_dirty(entity);
+        } else if (it.event() == flecs::OnAdd) {
+          self.add_transform(entity);
+          self.set_dirty(entity);
+        } else if (it.event() == flecs::OnRemove) {
+          self.remove_transform(entity);
+        }
+      });
 
-void Scene::update_physics(const Timestep& delta_time) {
-  OX_SCOPED_ZONE;
-  // Minimum stable value is 16.0
-  constexpr float physics_step_rate = 50.0f;
-  constexpr float physics_ts = 1.0f / physics_step_rate;
+  self.world.observer<TransformComponent, MeshComponent>()
+      .event(flecs::OnAdd)
+      .event(flecs::OnSet)
+      .event(flecs::OnRemove)
+      .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
+        auto entity = it.entity(i);
+        const auto mesh_event = it.event_id() == self.world.component<MeshComponent>();
+        if (it.event() == flecs::OnSet) {
+          if (!self.entity_transforms_map.contains(entity))
+            self.add_transform(entity);
+          self.set_dirty(entity);
 
-  bool stepped = false;
-  physics_frame_accumulator += (float)delta_time.get_seconds();
+          if (mesh_event && mc.mesh_uuid)
+            self.attach_mesh(entity, mc.mesh_uuid, mc.mesh_index);
+        } else if (it.event() == flecs::OnAdd) {
+          self.add_transform(entity);
+          self.set_dirty(entity);
+        } else if (it.event() == flecs::OnRemove) {
+          if (mc.mesh_uuid)
+            self.detach_mesh(entity, mc.mesh_uuid, mc.mesh_index);
 
-  auto physics = App::get_system<Physics>(EngineSystems::Physics);
+          self.remove_transform(entity);
+        }
+      });
 
-  while (physics_frame_accumulator >= physics_ts) {
-    physics->step(physics_ts);
-
-    {
-      {
-        OX_SCOPED_ZONE_N("CPPScripting/on_fixed_update");
-        const auto script_view = registry.view<CPPScriptComponent>();
-        for (auto&& [e, script_component] : script_view.each()) {
-          for (const auto& system : script_component.systems) {
-            system->on_fixed_update(physics_ts);
+  self.world.observer<TransformComponent, SpriteComponent>()
+      .event(flecs::OnSet)
+      .event(flecs::OnAdd)
+      .event(flecs::OnRemove)
+      .each([&self](flecs::iter& it, usize i, TransformComponent&, SpriteComponent& sprite) {
+        auto entity = it.entity(i);
+        // Set sprite rect
+        if (auto id = self.get_entity_transform_id(entity)) {
+          if (auto* transform = self.get_entity_transform(*id)) {
+            sprite.rect = AABB(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(0.5, 0.5, 0.5));
+            sprite.rect = sprite.rect.get_transformed(transform->world);
           }
         }
-      }
+      });
 
-      // TODO: Lua on_fixed_update
-    }
+  // Systems run order:
+  // -- PreUpdate  -> Main Systems
+  // -- OnUpdate   -> Physics Systems
+  // -- PostUpdate -> Renderer Systems
 
-    physics_frame_accumulator -= physics_ts;
-    stepped = true;
-  }
+  // --- Main Systems ---
 
-  const float interpolation_factor = physics_frame_accumulator / physics_ts;
+  self.world.system<const LuaScriptComponent>("LuaScriptsUpdate")
+      .kind(flecs::PreUpdate)
+      .each([&self](flecs::iter& it, size_t, const LuaScriptComponent& c) {
+        for (const auto& script : c.lua_systems) {
+          script->bind_globals(&self, it.entity(0), it.delta_time());
+          script->on_update(it.delta_time());
+        }
+      });
 
-  const auto& body_interface = physics->get_physics_system()->GetBodyInterface();
-  const auto view = registry.group<RigidbodyComponent>(entt::get<TransformComponent>);
-  for (auto&& [e, rb, tc] : view.each()) {
-    if (!rb.runtime_body)
-      continue;
+  self.world.system<const TransformComponent, AudioListenerComponent>("AudioListenerUpdate")
+      .kind(flecs::PreUpdate)
+      .each([&self](const flecs::entity& e, const TransformComponent& tc, AudioListenerComponent& ac) {
+        if (ac.active) {
+          auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
+          const glm::mat4 inverted = glm::inverse(self.get_world_transform(e));
+          const glm::vec3 forward = normalize(glm::vec3(inverted[2]));
+          audio_engine->set_listener_position(ac.listener_index, tc.position);
+          audio_engine->set_listener_direction(ac.listener_index, -forward);
+          audio_engine->set_listener_cone(
+              ac.listener_index, ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
+        }
+      });
 
-    const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
+  self.world.system<const TransformComponent, AudioSourceComponent>("AudioSourceUpdate")
+      .kind(flecs::PreUpdate)
+      .each([](const flecs::entity& e, const TransformComponent& tc, const AudioSourceComponent& ac) {
+        auto* asset_man = App::get_asset_manager();
+        if (auto* audio = asset_man->get_audio(ac.audio_source)) {
+          auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
+          audio_engine->set_source_attenuation_model(audio->get_source(), ac.attenuation_model);
+          audio_engine->set_source_volume(audio->get_source(), ac.volume);
+          audio_engine->set_source_pitch(audio->get_source(), ac.pitch);
+          audio_engine->set_source_looping(audio->get_source(), ac.looping);
+          audio_engine->set_source_spatialization(audio->get_source(), ac.looping);
+          audio_engine->set_source_roll_off(audio->get_source(), ac.roll_off);
+          audio_engine->set_source_min_gain(audio->get_source(), ac.min_gain);
+          audio_engine->set_source_max_gain(audio->get_source(), ac.max_gain);
+          audio_engine->set_source_min_distance(audio->get_source(), ac.min_distance);
+          audio_engine->set_source_max_distance(audio->get_source(), ac.max_distance);
+          audio_engine->set_source_cone(
+              audio->get_source(), ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
+          audio_engine->set_source_doppler_factor(audio->get_source(), ac.doppler_factor);
+        }
+      });
 
-    if (!body_interface.IsActive(body->GetID()))
-      continue;
+  // --- Physics Systems ---
 
-    if (rb.interpolation) {
-      if (stepped) {
-        JPH::Vec3 position = body->GetPosition();
-        JPH::Vec3 rotation = body->GetRotation().GetEulerAngles();
+  // TODO: Interpolation for rigibodies.
+
+  self.world.system<const LuaScriptComponent>()
+      .kind(flecs::OnUpdate)
+      .each([](flecs::iter& it, size_t, const LuaScriptComponent& c) {
+        OX_LOG_INFO("lua");
+        for (const auto& system : c.lua_systems) {
+          system->on_fixed_update(it.delta_time());
+        }
+      });
+
+  self.world.system<TransformComponent, RigidbodyComponent>()
+      .kind(flecs::OnUpdate)
+      .each([](TransformComponent& tc, RigidbodyComponent& rb) {
+        if (!rb.runtime_body)
+          return;
+
+        auto* physics = App::get_system<Physics>(EngineSystems::Physics);
+        const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
+        const auto& body_interface = physics->get_physics_system()->GetBodyInterface();
+
+        if (!body_interface.IsActive(body->GetID()))
+          return;
+
+        const JPH::Vec3 position = body->GetPosition();
+        const JPH::Vec3 rotation = body->GetRotation().GetEulerAngles();
 
         rb.previous_translation = rb.translation;
         rb.previous_rotation = rb.rotation;
         rb.translation = {position.GetX(), position.GetY(), position.GetZ()};
         rb.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
-      }
+        tc.position = rb.translation;
+        tc.rotation = glm::eulerAngles(rb.rotation);
+      });
 
-      tc.position = glm::lerp(rb.previous_translation, rb.translation, interpolation_factor);
-      tc.rotation = glm::eulerAngles(glm::slerp(rb.previous_rotation, rb.rotation, interpolation_factor));
-    } else {
-      const JPH::Vec3 position = body->GetPosition();
-      JPH::Vec3 rotation = body->GetRotation().GetEulerAngles();
-
-      rb.previous_translation = rb.translation;
-      rb.previous_rotation = rb.rotation;
-      rb.translation = {position.GetX(), position.GetY(), position.GetZ()};
-      rb.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
-      tc.position = rb.translation;
-      tc.rotation = glm::eulerAngles(rb.rotation);
-    }
-  }
-
-  // Character
-  {
-    const auto ch_view = registry.view<TransformComponent, CharacterControllerComponent>();
-    for (auto&& [e, tc, ch] : ch_view.each()) {
-      ch.character->PostSimulation(ch.collision_tolerance);
-      if (ch.interpolation) {
-        if (stepped) {
-          JPH::Vec3 position = ch.character->GetPosition();
-          JPH::Vec3 rotation = ch.character->GetRotation().GetEulerAngles();
-
-          ch.previous_translation = ch.translation;
-          ch.previous_rotation = ch.rotation;
-          ch.translation = {position.GetX(), position.GetY(), position.GetZ()};
-          ch.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
-        }
-
-        tc.position = glm::lerp(ch.previous_translation, ch.translation, interpolation_factor);
-        tc.rotation = glm::eulerAngles(glm::slerp(ch.previous_rotation, ch.rotation, interpolation_factor));
-      } else {
-        const JPH::Vec3 position = ch.character->GetPosition();
-        JPH::Vec3 rotation = ch.character->GetRotation().GetEulerAngles();
+  self.world.system<TransformComponent, CharacterControllerComponent>()
+      .kind(flecs::OnUpdate)
+      .each([](TransformComponent& tc, CharacterControllerComponent& ch) {
+        auto* character = reinterpret_cast<JPH::Character*>(ch.character);
+        character->PostSimulation(ch.collision_tolerance);
+        const JPH::Vec3 position = character->GetPosition();
+        const JPH::Vec3 rotation = character->GetRotation().GetEulerAngles();
 
         ch.previous_translation = ch.translation;
         ch.previous_rotation = ch.rotation;
@@ -220,176 +385,159 @@ void Scene::update_physics(const Timestep& delta_time) {
         ch.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
         tc.position = ch.translation;
         tc.rotation = glm::eulerAngles(ch.rotation);
-      }
-    }
-  }
+      });
+
+  // -- Renderer Systems ---
+
+  self.world.system<const TransformComponent, CameraComponent>("CameraUpdate")
+      .kind(flecs::PostUpdate)
+      .each([](const TransformComponent& tc, CameraComponent& cc) {
+        const auto screen_extent = App::get()->get_swapchain_extent();
+        cc.position = tc.position;
+        cc.pitch = tc.rotation.x;
+        cc.yaw = tc.rotation.y;
+        Camera::update(cc, screen_extent);
+      });
+
+  self.world.system<const TransformComponent, MeshComponent>("MeshesUpdate")
+      .kind(flecs::PostUpdate)
+      .each([](const TransformComponent& tc, MeshComponent& mc) {});
+
+  self.world.system<SpriteComponent>("SpritesUpdate")
+      .kind(flecs::PostUpdate)
+      .each([](const flecs::entity entity, SpriteComponent& sprite) {
+        if (RendererCVar::cvar_draw_bounding_boxes.get()) {
+          DebugRenderer::draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
+        }
+      });
+
+  self.world.system<SpriteComponent, SpriteAnimationComponent>("SpriteAnimationsUpdate")
+      .kind(flecs::PostUpdate)
+      .each([](flecs::iter& it, size_t, SpriteComponent& sprite, SpriteAnimationComponent& sprite_animation) {
+        const auto asset_manager = App::get_system<AssetManager>(EngineSystems::AssetManager);
+        auto* material = asset_manager->get_material(sprite.material);
+
+        if (sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
+            !material->albedo_texture)
+          return;
+
+        const auto dt = glm::clamp(static_cast<float>(it.delta_time()), 0.0f, 0.25f);
+        const auto time = sprite_animation.current_time + dt;
+
+        sprite_animation.current_time = time;
+
+        const float duration = static_cast<float>(sprite_animation.num_frames) / sprite_animation.fps;
+        u32 frame = math::flooru32(sprite_animation.num_frames * (time / duration));
+
+        if (time > duration) {
+          if (sprite_animation.inverted) {
+            // Remove/add a frame depending on the direction
+            const float frame_length = 1.0f / sprite_animation.fps;
+            sprite_animation.current_time -= duration - frame_length;
+          } else {
+            sprite_animation.current_time -= duration;
+          }
+        }
+
+        if (sprite_animation.loop)
+          frame %= sprite_animation.num_frames;
+        else
+          frame = glm::min(frame, sprite_animation.num_frames - 1);
+
+        frame = sprite_animation.inverted ? sprite_animation.num_frames - 1 - frame : frame;
+
+        const u32 frame_x = frame % sprite_animation.columns;
+        const u32 frame_y = frame / sprite_animation.columns;
+
+        const auto* albedo_texture = asset_manager->get_texture(material->albedo_texture);
+        auto& uv_size = material->uv_size;
+
+        auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
+        uv_size = {sprite_animation.frame_size[0] * 1.f / texture_size[0],
+                   sprite_animation.frame_size[1] * 1.f / texture_size[1]};
+        material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
+      });
+
+  self.world.system<const TransformComponent, LightComponent>("LightsUpdate")
+      .kind(flecs::PostUpdate)
+      .each([](const TransformComponent& tc, LightComponent& lc) {
+        lc.position = tc.position;
+        lc.rotation = tc.rotation;
+        lc.direction = glm::normalize(math::transform_normal(glm::vec4(0, 1, 0, 0), toMat4(glm::quat(tc.rotation))));
+      });
 }
 
-void Scene::destroy_entity(const Entity entity) {
-  OX_SCOPED_ZONE;
-  eutil::deparent(this, entity);
-  const auto children = registry.get<RelationshipComponent>(entity).children;
-
-  for (size_t i = 0; i < children.size(); i++) {
-    const Entity child_entity = get_entity_by_uuid(children[i]);
-    if (child_entity != entt::null)
-      destroy_entity(child_entity);
-  }
-
-  entity_map.erase(eutil::get_uuid(registry, entity));
-  registry.destroy(entity);
-}
-
-template <typename... Component>
-static void copy_component(entt::registry& dst, entt::registry& src, const ankerl::unordered_dense::map<UUID, entt::entity>& entt_map) {
-  ([&] {
-    auto view = src.view<Component>();
-    for (auto src_entity : view) {
-      entt::entity dst_entity = entt_map.at(src.get<IDComponent>(src_entity).uuid);
-
-      Component& src_component = src.get<Component>(src_entity);
-      dst.emplace_or_replace<Component>(dst_entity, src_component);
-    }
-  }(), ...);
-}
-
-template <typename... Component>
-static void copy_component(ComponentGroup<Component...>,
-                           entt::registry& dst,
-                           entt::registry& src,
-                           const ankerl::unordered_dense::map<UUID, entt::entity>& entt_map) {
-  copy_component<Component...>(dst, src, entt_map);
-}
-
-template <typename... Component>
-static void copy_component_if_exists(Entity dst, Entity src, entt::registry& registry) {
-  ([&] {
-    if (registry.all_of<Component>(src))
-      registry.emplace_or_replace<Component>(dst, registry.get<Component>(src));
-  }(), ...);
-}
-
-template <typename... Component>
-static void copy_component_if_exists(ComponentGroup<Component...>, Entity dst, Entity src, entt::registry& registry) {
-  copy_component_if_exists<Component...>(dst, src, registry);
-}
-
-void Scene::duplicate_children(const Entity entity) {
-  auto& rc = registry.get<RelationshipComponent>(entity);
-
-  for (auto& child : rc.children) {
-    const auto e = create_entity(eutil::get_name(registry, get_entity_by_uuid(child)));
-    copy_component_if_exists(AllComponents{}, e, get_entity_by_uuid(child), registry);
-    child = registry.get<IDComponent>(e).uuid;
-
-#if 0
-    auto& rcc = registry.get<RelationshipComponent>(e);
-
-    if (rcc.parent > 0) {
-      const auto p = create_entity(EUtil::get_name(registry, get_entity_by_uuid(child)));
-      copy_component_if_exists(AllComponents{}, p, get_entity_by_uuid(rcc.parent), registry);
-      rcc.parent = registry.get<IDComponent>(p).uuid;
-    }
-#endif
-    // duplicate_children(e);
-  }
-}
-
-Entity Scene::duplicate_entity(Entity entity) {
-  OX_SCOPED_ZONE;
-  const Entity new_entity = create_entity(eutil::get_name(registry, entity));
-  copy_component_if_exists(AllComponents{}, new_entity, entity, registry);
-
-  duplicate_children(new_entity);
-
-  return new_entity;
-}
-
-void Scene::on_runtime_start() {
-  OX_SCOPED_ZONE;
+auto Scene::runtime_start() -> void {
+  ZoneScoped;
 
   running = true;
 
-  physics_frame_accumulator = 0.0f;
-
   // Physics
-  auto physics = App::get_system<Physics>(EngineSystems::Physics);
   {
-    OX_SCOPED_ZONE_N("Physics Start");
+    ZoneNamedN(z, "Physics Start", true);
     body_activation_listener_3d = new Physics3DBodyActivationListener();
     contact_listener_3d = new Physics3DContactListener(this);
-    const auto physics_system = physics->get_physics_system();
+    const auto physics_system = App::get_system<Physics>(EngineSystems::Physics)->get_physics_system();
     physics_system->SetBodyActivationListener(body_activation_listener_3d);
     physics_system->SetContactListener(contact_listener_3d);
 
     // Rigidbodies
-    {
-      const auto group = registry.group<RigidbodyComponent>(entt::get<TransformComponent>);
-      for (auto&& [e, rb, tc] : group.each()) {
-        rb.previous_translation = rb.translation = tc.position;
-        rb.previous_rotation = rb.rotation = tc.rotation;
-        create_rigidbody(e, tc, rb);
-      }
-    }
+    world.query_builder<const TransformComponent, RigidbodyComponent>().build().each(
+        [this](flecs::entity e, const TransformComponent& tc, RigidbodyComponent& rb) {
+          rb.previous_translation = rb.translation = tc.position;
+          rb.previous_rotation = rb.rotation = tc.rotation;
+          create_rigidbody(e, tc, rb);
+        });
 
     // Characters
-    {
-      const auto group = registry.group<CharacterControllerComponent>(entt::get<TransformComponent>);
-      for (auto&& [e, ch, tc] : group.each()) {
-        create_character_controller(tc, ch);
-      }
-    }
+    world.query_builder<const TransformComponent, CharacterControllerComponent>().build().each(
+        [this](const TransformComponent& tc, CharacterControllerComponent& ch) {
+          create_character_controller(tc, ch);
+        });
 
     physics_system->OptimizeBroadPhase();
   }
 
   // Scripting
   {
-    OX_SCOPED_ZONE_N("LuaScripting/on_init");
-    const auto script_view = registry.view<LuaScriptComponent>();
-    for (auto&& [e, script_component] : script_view.each()) {
-      for (const auto& script : script_component.lua_systems) {
-        script->reload();
-        script->on_init(this, e);
-      }
-    }
-  }
-
-  {
-    OX_SCOPED_ZONE_N("CPPScripting/on_init");
-    const auto script_view = registry.view<CPPScriptComponent>();
-    for (auto&& [e, script_component] : script_view.each()) {
-      for (const auto& system : script_component.systems) {
-        system->on_init(this, e);
-      }
-    }
+    ZoneNamedN(z, "LuaScripting/on_init", true);
+    world.query_builder<const LuaScriptComponent>().build().each(
+        [this](const flecs::entity& e, const LuaScriptComponent& lsc) {
+          for (const auto& script : lsc.lua_systems) {
+            script->reload();
+            script->on_init(this, e);
+          }
+        });
   }
 }
 
-void Scene::on_runtime_stop() {
-  OX_SCOPED_ZONE;
+auto Scene::runtime_stop() -> void {
+  ZoneScoped;
 
   running = false;
 
   // Physics
   {
-    auto physics = App::get_system<Physics>(EngineSystems::Physics);
-    JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
-    const auto rb_view = registry.view<RigidbodyComponent>();
-    for (auto&& [e, rb] : rb_view.each()) {
-      if (rb.runtime_body) {
-        const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
-        body_interface.RemoveBody(body->GetID());
-        body_interface.DestroyBody(body->GetID());
-      }
-    }
-    const auto ch_view = registry.view<CharacterControllerComponent>();
-    for (auto&& [e, ch] : ch_view.each()) {
-      if (ch.character) {
-        body_interface.RemoveBody(ch.character->GetBodyID());
-        ch.character = nullptr;
-      }
-    }
+    ZoneNamedN(z, "Physics Stop", true);
+    const auto physics = App::get_system<Physics>(EngineSystems::Physics);
+    world.query_builder<RigidbodyComponent>().build().each(
+        [physics](const flecs::entity& e, const RigidbodyComponent& rb) {
+          if (rb.runtime_body) {
+            JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+            const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
+            body_interface.RemoveBody(body->GetID());
+            body_interface.DestroyBody(body->GetID());
+          }
+        });
+    world.query_builder<CharacterControllerComponent>().build().each(
+        [physics](const flecs::entity& e, CharacterControllerComponent& ch) {
+          if (ch.character) {
+            JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+            auto* character = reinterpret_cast<JPH::Character*>(ch.character);
+            body_interface.RemoveBody(character->GetBodyID());
+            ch.character = nullptr;
+          }
+        });
 
     delete body_activation_listener_3d;
     delete contact_listener_3d;
@@ -399,120 +547,347 @@ void Scene::on_runtime_stop() {
 
   // Scripting
   {
-    const auto script_view = registry.view<CPPScriptComponent>();
-    for (auto&& [e, script_component] : script_view.each()) {
-      for (const auto& system : script_component.systems) {
-        system->on_release(this, e);
-      }
-    }
+    ZoneNamedN(z, "LuaScripting/on_release", true);
+    world.query_builder<const LuaScriptComponent>().build().each(
+        [this](const flecs::entity& e, const LuaScriptComponent& lsc) {
+          for (const auto& script : lsc.lua_systems) {
+            script->on_release(this, e);
+          }
+        });
   }
+}
+
+auto Scene::runtime_update(const Timestep& delta_time) -> void {
+  ZoneScoped;
+
+  // TODO: Pass our delta_time?
+  world.progress();
+
+  _render_pipeline->on_update(this);
+  this->dirty_transforms.clear();
+
+  if (RendererCVar::cvar_enable_physics_debug_renderer.get()) {
+    auto physics = App::get_system<Physics>(EngineSystems::Physics);
+    physics->debug_draw();
+  }
+}
+
+auto Scene::disable_phases(const std::vector<flecs::entity_t>& phases) -> void {
+  ZoneScoped;
+  for (auto& phase : phases) {
+    if (!world.entity(phase).has(flecs::Disabled))
+      world.entity(phase).disable();
+  }
+}
+
+auto Scene::enable_all_phases() -> void {
+  ZoneScoped;
+  world.entity(flecs::PreUpdate).enable();
+  world.entity(flecs::OnUpdate).enable();
+  world.entity(flecs::PostUpdate).enable();
+}
+
+void Scene::on_render(const vuk::Extent3D extent, const vuk::Format format) {
+  ZoneScoped;
 
   {
-    const auto script_view = registry.view<LuaScriptComponent>();
-    for (auto&& [e, script_component] : script_view.each()) {
-      for (const auto& script : script_component.lua_systems) {
-        script->on_release(this, e);
+    ZoneNamedN(z, "LuaScripting/on_render", true);
+    world.query_builder<const LuaScriptComponent>().build().each([extent, format](const LuaScriptComponent& c) {
+      for (const auto& script : c.lua_systems) {
+        script->on_render(extent, format);
       }
+    });
+  }
+}
+
+auto Scene::create_entity(const std::string& name) const -> flecs::entity {
+  ZoneScoped;
+
+  if (auto found_entity = world.lookup(name.c_str()))
+    return found_entity;
+
+  flecs::entity e = world.entity();
+  if (name.empty()) {
+    memory::ScopedStack stack;
+    e.set_name(stack.format_char("Entity {}", e.id()));
+  } else {
+    e.set_name(name.c_str());
+  }
+
+  return e.add<TransformComponent>().add<LayerComponent>();
+}
+
+auto Scene::create_mesh_entity(const UUID& asset_uuid) -> flecs::entity {
+  ZoneScoped;
+
+  auto* asset_man = App::get_asset_manager();
+
+  // sanity check
+  if (!asset_man->get_asset(asset_uuid)) {
+    OX_LOG_ERROR("Cannot import an invalid model '{}' into the scene!", asset_uuid.str());
+    return {};
+  }
+
+  // acquire model
+  if (!asset_man->load_mesh(asset_uuid)) {
+    return {};
+  }
+
+  auto* imported_model = asset_man->get_mesh(asset_uuid);
+  auto& default_scene = imported_model->scenes[imported_model->default_scene_index];
+  auto root_entity = create_entity(world.lookup(default_scene.name.c_str()) ? std::string{} : default_scene.name);
+
+  auto visit_nodes = [&](this auto& visitor, flecs::entity& root, std::vector<usize>& node_indices) -> void {
+    for (const auto node_index : node_indices) {
+      auto& cur_node = imported_model->nodes[node_index];
+      auto node_entity = create_entity(world.lookup(cur_node.name.c_str()) ? std::string{} : cur_node.name);
+
+      const auto T = glm::translate(glm::mat4(1.0f), cur_node.translation);
+      const auto R = glm::mat4_cast(cur_node.rotation);
+      const auto S = glm::scale(glm::mat4(1.0f), cur_node.scale);
+      auto TRS = T * R * S;
+      auto transform_comp = TransformComponent{};
+      {
+        glm::quat rotation = {};
+        glm::vec3 skew = {};
+        glm::vec4 perspective = {};
+        glm::decompose(TRS, transform_comp.scale, rotation, transform_comp.position, skew, perspective);
+        transform_comp.rotation = glm::eulerAngles(glm::quat(rotation[3], rotation[0], rotation[1], rotation[2]));
+      }
+      node_entity.set(transform_comp);
+
+      if (cur_node.mesh_index.has_value()) {
+        node_entity.set<MeshComponent>(
+            {.mesh_uuid = asset_uuid, .mesh_index = static_cast<u32>(cur_node.mesh_index.value())});
+      }
+
+      node_entity.child_of(root);
+      node_entity.modified<TransformComponent>();
+
+      visitor(node_entity, cur_node.child_indices);
+    }
+  };
+
+  visit_nodes(root_entity, default_scene.node_indices);
+
+  return root_entity;
+}
+
+auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Scene> {
+  ZoneScoped;
+
+  // Copies the world but not the renderer. Imports component db from start.
+
+  std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(src_scene->_render_pipeline);
+
+  new_scene->component_db.import_module(new_scene->world.import <Core>());
+
+  JsonWriter writer{};
+  writer.begin_obj();
+  writer["entities"].begin_array();
+  src_scene->world.query_builder().with<TransformComponent>().build().each([&writer](flecs::entity e) {
+    if (e.parent() == flecs::entity::null() && !e.has<Hidden>()) {
+      entity_to_json(writer, e);
+    }
+  });
+  writer.end_array();
+  writer.end_obj();
+
+  auto content = simdjson::padded_string(writer.stream.str());
+  simdjson::ondemand::parser parser;
+  auto doc = parser.iterate(content);
+  if (doc.error()) {
+    OX_LOG_ERROR("Failed to parse scene file! {}", simdjson::error_message(doc.error()));
+    return nullptr;
+  }
+  auto entities_array = doc["entities"];
+
+  std::vector<UUID> requested_assets = {};
+  for (auto entity_json : entities_array.get_array()) {
+    if (!json_to_entity(*new_scene, flecs::entity::null(), entity_json.value_unsafe(), requested_assets)) {
+      return nullptr;
     }
   }
-}
 
-Entity Scene::find_entity(const std::string_view& name) {
-  OX_SCOPED_ZONE;
-  const auto view = registry.view<TagComponent>();
-  for (auto&& [e, tag] : view.each()) {
-    if (tag.tag == name) {
-      return e;
-    }
-  }
-  return entt::null;
-}
-
-bool Scene::has_entity(UUID uuid) const {
-  OX_SCOPED_ZONE;
-  return entity_map.contains(uuid);
-}
-
-Entity Scene::get_entity_by_uuid(UUID uuid) {
-  OX_SCOPED_ZONE;
-  if (entity_map.contains(uuid))
-    return entity_map.at(uuid);
-  return entt::null;
-}
-
-void Scene::trigger_future_mesh_load_event(FutureMeshLoadEvent future_mesh_load_event) { dispatcher.trigger(std::move(future_mesh_load_event)); }
-
-Shared<Scene> Scene::copy(const Shared<Scene>& src_scene) {
-  OX_SCOPED_ZONE;
-  Shared<Scene> new_scene = create_shared<Scene>();
-
-  auto& src_scene_registry = src_scene->registry;
-  auto& dst_scene_registry = new_scene->registry;
-
-  // Create entities in new scene
-  const auto view = src_scene_registry.view<IDComponent, TagComponent>();
-  for (const auto e : view) {
-    auto [id, tag] = view.get<IDComponent, TagComponent>(e);
-    const auto& name = tag.tag;
-    const Entity new_entity = new_scene->create_entity_with_uuid(id.uuid, name);
-    dst_scene_registry.get<TagComponent>(new_entity).enabled = tag.enabled;
-  }
-
-  for (const auto e : view) {
-    const Entity src_parent = eutil::get_parent(src_scene.get(), e);
-    if (src_parent != entt::null) {
-      const Entity dst = new_scene->get_entity_by_uuid(view.get<IDComponent>(e).uuid);
-      const auto parent_uuid = eutil::get_uuid(src_scene_registry, src_parent);
-      eutil::set_parent(new_scene.get(), dst, new_scene->get_entity_by_uuid(parent_uuid));
-    }
-  }
-
-  // Copy components (except IDComponent and TagComponent)
-  copy_component(AllComponents{}, dst_scene_registry, src_scene_registry, new_scene->entity_map);
+  new_scene->meshes_dirty = true;
 
   return new_scene;
 }
 
-void Scene::on_contact_added(const JPH::Body& body1,
+auto Scene::get_world_transform(const flecs::entity entity) const -> glm::mat4 {
+  const auto* tc = entity.get<TransformComponent>();
+  const auto parent = entity.parent();
+  const glm::mat4 parent_transform = parent != flecs::entity::null() ? get_world_transform(parent) : glm::mat4(1.0f);
+  return parent_transform * glm::translate(glm::mat4(1.0f), tc->position) * glm::toMat4(glm::quat(tc->rotation)) *
+         glm::scale(glm::mat4(1.0f), tc->scale);
+}
+
+auto Scene::get_local_transform(flecs::entity entity) const -> glm::mat4 {
+  const auto* tc = entity.get<TransformComponent>();
+  return glm::translate(glm::mat4(1.0f), tc->position) * glm::toMat4(glm::quat(tc->rotation)) *
+         glm::scale(glm::mat4(1.0f), tc->scale);
+}
+
+auto Scene::set_dirty(this Scene& self, flecs::entity entity) -> void {
+  ZoneScoped;
+
+  auto visit_parent = [](this auto& visitor, Scene& s, flecs::entity e) -> glm::mat4 {
+    auto local_mat = glm::mat4(1.0f);
+    if (e.has<TransformComponent>()) {
+      local_mat = s.get_local_transform(e);
+    }
+
+    auto parent = e.parent();
+    if (parent) {
+      return visitor(s, parent) * local_mat;
+    } else {
+      return local_mat;
+    }
+  };
+
+  OX_ASSERT(entity.has<TransformComponent>());
+  auto it = self.entity_transforms_map.find(entity);
+  if (it == self.entity_transforms_map.end()) {
+    return;
+  }
+
+  auto transform_id = it->second;
+  auto* gpu_transform = self.transforms.slot(transform_id);
+  gpu_transform->local = glm::mat4(1.0f);
+  gpu_transform->world = visit_parent(self, entity);
+  gpu_transform->normal = glm::mat3(gpu_transform->world);
+  self.dirty_transforms.push_back(transform_id);
+
+  // notify children
+  entity.children([](flecs::entity e) {
+    if (e.has<TransformComponent>()) {
+      e.modified<TransformComponent>();
+    }
+  });
+}
+
+auto Scene::get_entity_transform_id(flecs::entity entity) const -> option<GPU::TransformID> {
+  auto it = entity_transforms_map.find(entity);
+  if (it == entity_transforms_map.end())
+    return nullopt;
+  return it->second;
+}
+
+auto Scene::get_entity_transform(GPU::TransformID transform_id) const -> const GPU::Transforms* {
+  return transforms.slotc(transform_id);
+}
+
+auto Scene::add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID {
+  ZoneScoped;
+
+  auto id = self.transforms.create_slot();
+  self.entity_transforms_map.emplace(entity, id);
+
+  return id;
+}
+
+auto Scene::remove_transform(this Scene& self, flecs::entity entity) -> void {
+  ZoneScoped;
+
+  auto it = self.entity_transforms_map.find(entity);
+  if (it == self.entity_transforms_map.end()) {
+    return;
+  }
+
+  self.transforms.destroy_slot(it->second);
+  self.entity_transforms_map.erase(it);
+}
+
+auto Scene::attach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh_uuid, usize mesh_index) -> bool {
+  ZoneScoped;
+
+  auto transforms_it = self.entity_transforms_map.find(entity);
+  if (!self.entity_transforms_map.contains(entity)) {
+    OX_LOG_FATAL("Target entity must have a transform component!");
+    return false;
+  }
+
+  const auto transform_id = transforms_it->second;
+
+  auto old_mesh_uuid = std::ranges::find_if(self.rendering_meshes_map, [transform_id](const auto& entry) {
+    const auto& [_, transform_ids] = entry;
+    return std::ranges::contains(transform_ids, transform_id);
+  });
+
+  if (old_mesh_uuid != self.rendering_meshes_map.end()) {
+    self.detach_mesh(entity, old_mesh_uuid->first.first, mesh_index);
+  }
+
+  auto [instances_it, inserted] = self.rendering_meshes_map.try_emplace(std::pair{mesh_uuid, mesh_index});
+  if (!inserted && instances_it == self.rendering_meshes_map.end()) {
+    return false;
+  }
+
+  instances_it->second.emplace_back(transform_id);
+  self.meshes_dirty = true;
+  self.set_dirty(entity);
+
+  return true;
+}
+
+auto Scene::detach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh_uuid, usize mesh_index) -> bool {
+  ZoneScoped;
+
+  auto instances_it = self.rendering_meshes_map.find(std::pair(mesh_uuid, mesh_index));
+  auto transforms_it = self.entity_transforms_map.find(entity);
+  if (instances_it == self.rendering_meshes_map.end() || transforms_it == self.entity_transforms_map.end()) {
+    return false;
+  }
+
+  const auto transform_id = transforms_it->second;
+  auto& instances = instances_it->second;
+  std::erase_if(instances, [transform_id](const GPU::TransformID& id) { return id == transform_id; });
+  self.meshes_dirty = true;
+
+  if (instances.empty()) {
+    self.rendering_meshes_map.erase(instances_it);
+  }
+
+  return true;
+}
+
+auto Scene::on_contact_added(const JPH::Body& body1,
                              const JPH::Body& body2,
                              const JPH::ContactManifold& manifold,
-                             const JPH::ContactSettings& settings) {
-  OX_SCOPED_ZONE;
+                             const JPH::ContactSettings& settings) -> void {
+  ZoneScoped;
 
   {
-    OX_SCOPED_ZONE_N("CPPScripting/on_contact_added");
-    const auto script_view = registry.view<CPPScriptComponent>();
-    for (auto&& [e, script_component] : script_view.each()) {
-      for (const auto& system : script_component.systems) {
-        system->on_contact_added(this, e, body1, body2, manifold, settings);
-      }
-    }
+    ZoneNamedN(z, "LuaScripting/on_contact_added", true);
+    world.query_builder<const LuaScriptComponent>().build().each(
+        [this, &body1, &body2, &manifold, &settings](const flecs::entity& e, const LuaScriptComponent& lsc) {
+          for (const auto& script : lsc.lua_systems) {
+            script->on_contact_added(this, e, body1, body2, manifold, settings);
+          }
+        });
   }
-
-  // TODO: Lua callbacks
 }
 
-void Scene::on_contact_persisted(const JPH::Body& body1,
+auto Scene::on_contact_persisted(const JPH::Body& body1,
                                  const JPH::Body& body2,
                                  const JPH::ContactManifold& manifold,
-                                 const JPH::ContactSettings& settings) {
-  OX_SCOPED_ZONE;
+                                 const JPH::ContactSettings& settings) -> void {
+  ZoneScoped;
 
   {
-    OX_SCOPED_ZONE_N("CPPScripting/on_contact_persisted");
-    const auto script_view = registry.view<CPPScriptComponent>();
-    for (auto&& [e, script_component] : script_view.each()) {
-      for (const auto& system : script_component.systems) {
-        system->on_contact_persisted(this, e, body1, body2, manifold, settings);
-      }
-    }
+    ZoneNamedN(z, "LuaScripting/on_contact_persisted", true);
+    world.query_builder<const LuaScriptComponent>().build().each(
+        [this, &body1, &body2, &manifold, &settings](const flecs::entity& e, const LuaScriptComponent& lsc) {
+          for (const auto& script : lsc.lua_systems) {
+            script->on_contact_persisted(this, e, body1, body2, manifold, settings);
+          }
+        });
   }
-
-  // TODO: Lua callbacks
 }
 
-void Scene::create_rigidbody(entt::entity entity, const TransformComponent& transform, RigidbodyComponent& component) {
-  OX_SCOPED_ZONE;
+auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidbodyComponent& component)
+    -> void {
+  ZoneScoped;
   if (!running)
     return;
 
@@ -529,120 +904,122 @@ void Scene::create_rigidbody(entt::entity entity, const TransformComponent& tran
   JPH::MutableCompoundShapeSettings compound_shape_settings;
   float max_scale_component = glm::max(glm::max(transform.scale.x, transform.scale.y), transform.scale.z);
 
-  const auto& entity_name = eutil::get_name(registry, entity);
+  const auto entity_name = std::string(entity.name());
 
-  if (registry.all_of<BoxColliderComponent>(entity)) {
-    const auto& bc = registry.get<BoxColliderComponent>(entity);
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), bc.friction, bc.restitution);
+  if (const auto* bc = entity.get<BoxColliderComponent>()) {
+    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), bc->friction, bc->restitution);
 
-    glm::vec3 scale = bc.size;
+    glm::vec3 scale = bc->size;
     JPH::BoxShapeSettings shape_settings({glm::abs(scale.x), glm::abs(scale.y), glm::abs(scale.z)}, 0.05f, mat);
-    shape_settings.SetDensity(glm::max(0.001f, bc.density));
+    shape_settings.SetDensity(glm::max(0.001f, bc->density));
 
-    compound_shape_settings.AddShape({bc.offset.x, bc.offset.y, bc.offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
+    compound_shape_settings.AddShape(
+        {bc->offset.x, bc->offset.y, bc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
   }
 
-  if (registry.all_of<SphereColliderComponent>(entity)) {
-    const auto& sc = registry.get<SphereColliderComponent>(entity);
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), sc.friction, sc.restitution);
+  if (const auto* sc = entity.get<SphereColliderComponent>()) {
+    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), sc->friction, sc->restitution);
 
-    float radius = 2.0f * sc.radius * max_scale_component;
+    float radius = 2.0f * sc->radius * max_scale_component;
     JPH::SphereShapeSettings shape_settings(glm::max(0.01f, radius), mat);
-    shape_settings.SetDensity(glm::max(0.001f, sc.density));
+    shape_settings.SetDensity(glm::max(0.001f, sc->density));
 
-    compound_shape_settings.AddShape({sc.offset.x, sc.offset.y, sc.offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
+    compound_shape_settings.AddShape(
+        {sc->offset.x, sc->offset.y, sc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
   }
 
-  if (registry.all_of<CapsuleColliderComponent>(entity)) {
-    const auto& cc = registry.get<CapsuleColliderComponent>(entity);
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cc.friction, cc.restitution);
+  if (const auto* cc = entity.get<CapsuleColliderComponent>()) {
+    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cc->friction, cc->restitution);
 
-    float radius = 2.0f * cc.radius * max_scale_component;
-    JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, cc.height) * 0.5f, glm::max(0.01f, radius), mat);
-    shape_settings.SetDensity(glm::max(0.001f, cc.density));
+    float radius = 2.0f * cc->radius * max_scale_component;
+    JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, cc->height) * 0.5f, glm::max(0.01f, radius), mat);
+    shape_settings.SetDensity(glm::max(0.001f, cc->density));
 
-    compound_shape_settings.AddShape({cc.offset.x, cc.offset.y, cc.offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
+    compound_shape_settings.AddShape(
+        {cc->offset.x, cc->offset.y, cc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
   }
 
-  if (registry.all_of<TaperedCapsuleColliderComponent>(entity)) {
-    const auto& tcc = registry.get<TaperedCapsuleColliderComponent>(entity);
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), tcc.friction, tcc.restitution);
+  if (const auto* tcc = entity.get<TaperedCapsuleColliderComponent>()) {
+    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), tcc->friction, tcc->restitution);
 
-    float top_radius = 2.0f * tcc.top_radius * max_scale_component;
-    float bottom_radius = 2.0f * tcc.bottom_radius * max_scale_component;
-    JPH::TaperedCapsuleShapeSettings shape_settings(glm::max(0.01f, tcc.height) * 0.5f,
-                                                    glm::max(0.01f, top_radius),
-                                                    glm::max(0.01f, bottom_radius),
-                                                    mat);
-    shape_settings.SetDensity(glm::max(0.001f, tcc.density));
+    float top_radius = 2.0f * tcc->top_radius * max_scale_component;
+    float bottom_radius = 2.0f * tcc->bottom_radius * max_scale_component;
+    JPH::TaperedCapsuleShapeSettings shape_settings(
+        glm::max(0.01f, tcc->height) * 0.5f, glm::max(0.01f, top_radius), glm::max(0.01f, bottom_radius), mat);
+    shape_settings.SetDensity(glm::max(0.001f, tcc->density));
 
-    compound_shape_settings.AddShape({tcc.offset.x, tcc.offset.y, tcc.offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
+    compound_shape_settings.AddShape(
+        {tcc->offset.x, tcc->offset.y, tcc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
   }
 
-  if (registry.all_of<CylinderColliderComponent>(entity)) {
-    const auto& cc = registry.get<CylinderColliderComponent>(entity);
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cc.friction, cc.restitution);
+  if (const auto* cc = entity.get<CylinderColliderComponent>()) {
+    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cc->friction, cc->restitution);
 
-    float radius = 2.0f * cc.radius * max_scale_component;
-    JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, cc.height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
-    shape_settings.SetDensity(glm::max(0.001f, cc.density));
+    float radius = 2.0f * cc->radius * max_scale_component;
+    JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, cc->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
+    shape_settings.SetDensity(glm::max(0.001f, cc->density));
 
-    compound_shape_settings.AddShape({cc.offset.x, cc.offset.y, cc.offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
+    compound_shape_settings.AddShape(
+        {cc->offset.x, cc->offset.y, cc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
   }
 
-  if (registry.all_of<MeshColliderComponent>(entity) && registry.all_of<MeshComponent>(entity)) {
-    const auto& mc = registry.get<MeshColliderComponent>(entity);
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), mc.friction, mc.restitution);
+#if TODO
+  (const auto* mc = entity.get<MeshColliderComponent>()) {
+    if (const auto* mesh_component = entity.get<MeshComponent>()) {
+      const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), mc->friction, mc->restitution);
 
-    // TODO: We should only get the vertices and indices for this particular MeshComponent using MeshComponent::node_index
+      // TODO: We should only get the vertices and indices for this particular MeshComponent using
+      // MeshComponent::node_index
+      auto vertices = mesh_component->mesh_base->_vertices;
+      const auto& indices = mesh_component->mesh_base->_indices;
 
-    const auto& mesh_component = registry.get<MeshComponent>(entity);
-    auto vertices = mesh_component.mesh_base->_vertices;
-    const auto& indices = mesh_component.mesh_base->_indices;
+      // scale vertices
+      const auto world_transform = get_world_transform(entity);
+      for (auto& vert : vertices) {
+        glm::vec4 scaled_pos = world_transform * glm::vec4(vert.position, 1.0);
+        vert.position = glm::vec3(scaled_pos);
+      }
 
-    // scale vertices
-    const auto world_transform = eutil::get_world_transform(this, entity);
-    for (auto& vert : vertices) {
-      glm::vec4 scaled_pos = world_transform * glm::vec4(vert.position, 1.0);
-      vert.position = glm::vec3(scaled_pos);
+      const uint32_t vertex_count = static_cast<uint32_t>(vertices.size());
+      const uint32_t index_count = static_cast<uint32_t>(indices.size());
+      const uint32_t triangle_count = vertex_count / 3;
+
+      JPH::VertexList vertex_list;
+      vertex_list.resize(vertex_count);
+      for (uint32_t i = 0; i < vertex_count; ++i)
+        vertex_list[i] = JPH::Float3(vertices[i].position.x, vertices[i].position.y, vertices[i].position.z);
+
+      JPH::IndexedTriangleList indexedTriangleList;
+      indexedTriangleList.resize(index_count * 2);
+
+      for (uint32_t i = 0; i < triangle_count; ++i) {
+        indexedTriangleList[i * 2 + 0].mIdx[0] = indices[i * 3 + 0];
+        indexedTriangleList[i * 2 + 0].mIdx[1] = indices[i * 3 + 1];
+        indexedTriangleList[i * 2 + 0].mIdx[2] = indices[i * 3 + 2];
+
+        indexedTriangleList[i * 2 + 1].mIdx[2] = indices[i * 3 + 0];
+        indexedTriangleList[i * 2 + 1].mIdx[1] = indices[i * 3 + 1];
+        indexedTriangleList[i * 2 + 1].mIdx[0] = indices[i * 3 + 2];
+      }
+
+      JPH::PhysicsMaterialList material_list = {};
+      material_list.emplace_back(mat);
+      JPH::MeshShapeSettings shape_settings(vertex_list, indexedTriangleList, material_list);
+      compound_shape_settings.AddShape(
+          {mc->offset.x, mc->offset.y, mc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
     }
-
-    const uint32_t vertex_count = (uint32_t)vertices.size();
-    const uint32_t index_count = (uint32_t)indices.size();
-    const uint32_t triangle_count = vertex_count / 3;
-
-    JPH::VertexList vertex_list;
-    vertex_list.resize(vertex_count);
-    for (uint32_t i = 0; i < vertex_count; ++i)
-      vertex_list[i] = JPH::Float3(vertices[i].position.x, vertices[i].position.y, vertices[i].position.z);
-
-    JPH::IndexedTriangleList indexedTriangleList;
-    indexedTriangleList.resize(index_count * 2);
-
-    for (uint32_t i = 0; i < triangle_count; ++i) {
-      indexedTriangleList[i * 2 + 0].mIdx[0] = indices[i * 3 + 0];
-      indexedTriangleList[i * 2 + 0].mIdx[1] = indices[i * 3 + 1];
-      indexedTriangleList[i * 2 + 0].mIdx[2] = indices[i * 3 + 2];
-
-      indexedTriangleList[i * 2 + 1].mIdx[2] = indices[i * 3 + 0];
-      indexedTriangleList[i * 2 + 1].mIdx[1] = indices[i * 3 + 1];
-      indexedTriangleList[i * 2 + 1].mIdx[0] = indices[i * 3 + 2];
-    }
-
-    JPH::PhysicsMaterialList material_list = {};
-    material_list.emplace_back(mat);
-    JPH::MeshShapeSettings shape_settings(vertex_list, indexedTriangleList, material_list);
-    compound_shape_settings.AddShape({mc.offset.x, mc.offset.y, mc.offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
   }
+#endif
 
   // Body
   auto rotation = glm::quat(transform.rotation);
 
-  auto layer = registry.get<TagComponent>(entity).layer;
-  uint8_t layer_index = 1; // Default Layer
-  auto collision_mask_it = physics->layer_collision_mask.find(layer);
-  if (collision_mask_it != physics->layer_collision_mask.end())
-    layer_index = collision_mask_it->second.index;
+  u8 layer_index = 1; // Default Layer
+  if (auto layer_component = entity.get<LayerComponent>()) {
+    const auto collision_mask_it = physics->layer_collision_mask.find(layer_component->layer);
+    if (collision_mask_it != physics->layer_collision_mask.end())
+      layer_index = collision_mask_it->second.index;
+  }
 
   JPH::BodyCreationSettings body_settings(compound_shape_settings.Create().Get(),
                                           {transform.position.x, transform.position.y, transform.position.z},
@@ -659,164 +1036,128 @@ void Scene::create_rigidbody(entt::entity entity, const TransformComponent& tran
   body_settings.mAngularDamping = glm::max(0.0f, component.angular_drag);
   body_settings.mMotionQuality = component.continuous ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
   body_settings.mGravityFactor = component.gravity_scale;
-  body_settings.mAllowedDOFs = (JPH::EAllowedDOFs)component.allowed_dofs;
+  body_settings.mAllowedDOFs = static_cast<JPH::EAllowedDOFs>(component.allowed_dofs);
 
   body_settings.mIsSensor = component.is_sensor;
 
   JPH::Body* body = body_interface.CreateBody(body_settings);
 
-  JPH::EActivation activation = component.awake && component.type != RigidbodyComponent::BodyType::Static ? JPH::EActivation::Activate
-                                                                                                          : JPH::EActivation::DontActivate;
+  JPH::EActivation activation = component.awake && component.type != RigidbodyComponent::BodyType::Static
+                                    ? JPH::EActivation::Activate
+                                    : JPH::EActivation::DontActivate;
   body_interface.AddBody(body->GetID(), activation);
 
-  body->SetUserData((uint64)entity);
+  body->SetUserData((u64)entity);
 
   component.runtime_body = body;
 }
 
-void Scene::create_character_controller(const TransformComponent& transform, CharacterControllerComponent& component) const {
-  OX_SCOPED_ZONE;
+void Scene::create_character_controller(const TransformComponent& transform,
+                                        CharacterControllerComponent& component) const {
+  ZoneScoped;
   if (!running)
     return;
 
-  auto physics = App::get_system<Physics>(EngineSystems::Physics);
+  const auto physics = App::get_system<Physics>(EngineSystems::Physics);
 
   const auto position = JPH::Vec3(transform.position.x, transform.position.y, transform.position.z);
-  const auto capsule_shape = JPH::RotatedTranslatedShapeSettings(JPH::Vec3(0,
-                                                                           0.5f * component.character_height_standing +
-                                                                             component.character_radius_standing,
-                                                                           0),
-                                                                 JPH::Quat::sIdentity(),
-                                                                 new JPH::CapsuleShape(0.5f * component.character_height_standing,
-                                                                                       component.character_radius_standing))
-                               .Create()
-                               .Get();
+  const auto capsule_shape = JPH::RotatedTranslatedShapeSettings(
+                                 JPH::Vec3(0,
+                                           0.5f * component.character_height_standing +
+                                               component.character_radius_standing,
+                                           0),
+                                 JPH::Quat::sIdentity(),
+                                 new JPH::CapsuleShape(0.5f * component.character_height_standing,
+                                                       component.character_radius_standing))
+                                 .Create()
+                                 .Get();
 
   // Create character
-  const Shared<JPH::CharacterSettings> settings = create_shared<JPH::CharacterSettings>();
+  const std::shared_ptr<JPH::CharacterSettings> settings = std::make_shared<JPH::CharacterSettings>();
   settings->mMaxSlopeAngle = JPH::DegreesToRadians(45.0f);
   settings->mLayer = PhysicsLayers::MOVING;
   settings->mShape = capsule_shape;
   settings->mFriction = 0.0f;                                                     // For now this is not set.
   settings->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(),
-                                           -component.character_radius_standing); // Accept contacts that touch the lower sphere of the capsule
-  component.character = create_shared<JPH::Character>(settings.get(), position, JPH::Quat::sIdentity(), 0, physics->get_physics_system());
-  component.character->AddToPhysicsSystem(JPH::EActivation::Activate);
+                                           -component.character_radius_standing); // Accept contacts that touch the
+                                                                                  // lower sphere of the capsule
+  // TODO: Cleanup
+  component.character = new JPH::Character(
+      settings.get(), position, JPH::Quat::sIdentity(), 0, physics->get_physics_system());
+  reinterpret_cast<JPH::Character*>(component.character)->AddToPhysicsSystem(JPH::EActivation::Activate);
 }
 
-void Scene::handle_future_mesh_load_event(const FutureMeshLoadEvent& event) {
-  const auto task_scheduler = App::get_system<TaskScheduler>(EngineSystems::TaskScheduler);
-  event.task->on_complete([this](const Shared<Mesh>& mesh) { this->load_mesh(mesh); });
-  task_scheduler->schedule_task(event.task);
+auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
+  ZoneScoped;
+
+  JsonWriter writer{};
+
+  writer.begin_obj();
+
+  writer["name"] = self.scene_name;
+
+  writer["entities"].begin_array();
+  const auto q = self.world.query_builder().with<TransformComponent>().build();
+  q.each([&writer](flecs::entity e) {
+    if (e.parent() == flecs::entity::null() && !e.has<Hidden>()) {
+      entity_to_json(writer, e);
+    }
+  });
+  writer.end_array();
+
+  writer.end_obj();
+
+  std::ofstream filestream(path);
+  filestream << writer.stream.rdbuf();
+
+  OX_LOG_INFO("Saved scene {0}.", self.scene_name);
+
+  return true;
 }
 
-void Scene::on_runtime_update(const Timestep& delta_time) {
-  OX_SCOPED_ZONE;
+auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
+  ZoneScoped;
+  namespace sj = simdjson;
 
-  // TODO: maybe bindings should be done once at entity creation...
-  //       we can do it with entt on_create etc. callbacks...
-  // scripting binds
-  const auto cpp_script_view = registry.view<CPPScriptComponent>();
-  {
-    OX_SCOPED_ZONE_N("CPPScripting/binding");
-    for (auto&& [e, script_component] : cpp_script_view.each()) {
-      for (const auto& system : script_component.systems) {
-        system->bind_globals(this, e, &dispatcher);
-      }
+  std::string content = fs::read_file(path);
+  if (content.empty()) {
+    OX_LOG_ERROR("Failed to read/open file {}!", path);
+    return false;
+  }
+
+  content = sj::padded_string(content);
+  sj::ondemand::parser parser;
+  auto doc = parser.iterate(content);
+  if (doc.error()) {
+    OX_LOG_ERROR("Failed to parse scene file! {}", sj::error_message(doc.error()));
+    return false;
+  }
+
+  auto name_json = doc["name"];
+  if (name_json.error()) {
+    OX_LOG_ERROR("Scene files must have names!");
+    return false;
+  }
+
+  self.scene_name = name_json.get_string().value_unsafe();
+
+  auto entities_array = doc["entities"];
+
+  std::vector<UUID> requested_assets = {};
+  for (auto entity_json : entities_array.get_array()) {
+    if (!json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets)) {
+      return false;
     }
   }
 
-  const auto lua_script_view = registry.view<LuaScriptComponent>();
-  {
-    OX_SCOPED_ZONE_N("LuaScripting/binding");
-    for (auto&& [e, script_component] : lua_script_view.each()) {
-      for (const auto& script : script_component.lua_systems) {
-        script->bind_globals(this, e, delta_time);
-      }
+  OX_LOG_TRACE("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
+  for (const auto& uuid : requested_assets) {
+    auto* asset_man = App::get_system<AssetManager>(EngineSystems::AssetManager);
+    if (uuid && asset_man->get_asset(uuid)) {
+      asset_man->load_asset(uuid);
     }
   }
 
-  scene_renderer->update(delta_time);
-
-  update_physics(delta_time);
-
-  // Scripting
-  {
-    OX_SCOPED_ZONE_N("CPPScripting/on_update");
-    for (auto&& [e, script_component] : cpp_script_view.each()) {
-      for (const auto& system : script_component.systems) {
-        system->on_update(delta_time);
-      }
-    }
-  }
-
-  {
-    OX_SCOPED_ZONE_N("LuaScripting/on_update");
-    for (auto&& [e, script_component] : lua_script_view.each()) {
-      for (const auto& script : script_component.lua_systems) {
-        script->on_update(delta_time);
-      }
-    }
-  }
-
-  // Audio
-  {
-    OX_SCOPED_ZONE_N("Audio Systems");
-    const auto listener_view = registry.group<AudioListenerComponent>(entt::get<TransformComponent>);
-    for (auto&& [e, ac, tc] : listener_view.each()) {
-      ac.listener = create_shared<AudioListener>();
-      if (ac.active) {
-        const glm::mat4 inverted = inverse(eutil::get_world_transform(this, e));
-        const glm::vec3 forward = normalize(glm::vec3(inverted[2]));
-        ac.listener->set_config(ac.config);
-        ac.listener->set_position(tc.position);
-        ac.listener->set_direction(-forward);
-        break;
-      }
-    }
-
-    const auto source_view = registry.group<AudioSourceComponent>(entt::get<TransformComponent>);
-    for (auto&& [e, ac, tc] : source_view.each()) {
-      if (ac.source) {
-        const glm::mat4 inverted = inverse(eutil::get_world_transform(this, e));
-        const glm::vec3 forward = normalize(glm::vec3(inverted[2]));
-        ac.source->set_config(ac.config);
-        ac.source->set_position(tc.position);
-        ac.source->set_direction(forward);
-        if (ac.config.play_on_awake)
-          ac.source->play();
-      }
-    }
-  }
-}
-
-void Scene::on_render(const vuk::Extent3D extent, const vuk::Format format) {
-  OX_SCOPED_ZONE;
-
-  {
-    OX_SCOPED_ZONE_N("CPPScripting/on_imgui_render");
-    const auto script_view = registry.view<CPPScriptComponent>();
-    for (auto&& [e, script_component] : script_view.each()) {
-      for (const auto& system : script_component.systems) {
-        system->on_render(extent, format);
-      }
-    }
-  }
-
-  {
-    OX_SCOPED_ZONE_N("LuaScripting/on_imgui_render");
-    const auto script_view = registry.view<LuaScriptComponent>();
-    for (auto&& [e, script_component] : script_view.each()) {
-      for (const auto& script : script_component.lua_systems) {
-        script->on_render(extent, format);
-      }
-    }
-  }
-}
-
-void Scene::on_editor_update(const Timestep& delta_time, CameraComponent& camera) const {
-  OX_SCOPED_ZONE;
-  scene_renderer->get_render_pipeline()->submit_camera(camera);
-  scene_renderer->update(delta_time);
+  return true;
 }
 } // namespace ox

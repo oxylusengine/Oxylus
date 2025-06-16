@@ -1,10 +1,10 @@
 #pragma once
 
-#include "Core/Handle.hpp"
-#include "Core/Option.hpp"
-
 #include <SDL3/SDL_keycode.h>
 #include <vulkan/vulkan_core.h>
+
+#include "Core/Handle.hpp"
+#include "Core/Option.hpp"
 
 namespace ox {
 enum class WindowCursor {
@@ -22,7 +22,7 @@ enum class WindowCursor {
   Count,
 };
 
-enum class WindowFlag : uint32 {
+enum class WindowFlag : u32 {
   None = 0,
   Centered = 1 << 0,
   Resizable = 1 << 1,
@@ -38,22 +38,23 @@ struct SystemDisplay {
   glm::ivec2 position = {};
   glm::ivec4 work_area = {};
   glm::ivec2 resolution = {};
-  float32 refresh_rate = 30.0f;
-  float32 content_scale = 1.0f;
+  f32 refresh_rate = 30.0f;
+  f32 content_scale = 1.0f;
 };
 
 struct WindowCallbacks {
   void* user_data = nullptr;
   void (*on_resize)(void* user_data, glm::uvec2 size) = nullptr;
   void (*on_mouse_pos)(void* user_data, glm::vec2 position, glm::vec2 relative) = nullptr;
-  void (*on_mouse_button)(void* user_data, uint8 button, bool down) = nullptr;
+  void (*on_mouse_button)(void* user_data, u8 button, bool down) = nullptr;
   void (*on_mouse_scroll)(void* user_data, glm::vec2 offset) = nullptr;
-  void (*on_text_input)(void* user_data, const char8* text) = nullptr;
-  void (*on_key)(void* user_data, SDL_Keycode key_code, SDL_Scancode scan_code, uint16 mods, bool down, bool repeat) = nullptr;
+  void (*on_text_input)(void* user_data, const c8* text) = nullptr;
+  void (*on_key)(void* user_data, SDL_Keycode key_code, SDL_Scancode scan_code, u16 mods, bool down, bool repeat) =
+      nullptr;
   void (*on_close)(void* user_data) = nullptr;
 };
 
-enum class DialogKind : uint32 {
+enum class DialogKind : u32 {
   OpenFile = 0,
   SaveFile,
   OpenFolder,
@@ -67,9 +68,9 @@ struct FileDialogFilter {
 struct ShowDialogInfo {
   DialogKind kind = DialogKind::OpenFile;
   void* user_data = nullptr;
-  void (*callback)(void* user_data, const char8* const* files, int32 filter) = nullptr;
+  void (*callback)(void* user_data, const c8* const* files, i32 filter) = nullptr;
   std::string_view title = {};
-  std::string default_path = {};
+  ::fs::path default_path = {};
   std::span<FileDialogFilter> filters = {};
   bool multi_select = false;
 };
@@ -77,19 +78,19 @@ struct ShowDialogInfo {
 struct WindowInfo {
   // fill either data and data_length or just path
   struct Icon {
-    uchar* data = nullptr;
-    uint32 data_length = 0;
+    u8* data = nullptr;
+    u32 data_length = 0;
 
     std::string path = {};
   };
 
-  constexpr static int32 USE_PRIMARY_MONITOR = 0;
+  constexpr static i32 USE_PRIMARY_MONITOR = 0;
 
   std::string title = {};
   Icon icon = {};
-  int32 monitor = USE_PRIMARY_MONITOR;
-  uint32 width = 0;
-  uint32 height = 0;
+  i32 monitor = USE_PRIMARY_MONITOR;
+  u32 width = 0;
+  u32 height = 0;
   WindowFlag flags = WindowFlag::None;
 };
 
@@ -99,7 +100,7 @@ struct Window : Handle<Window> {
 
   void poll(const WindowCallbacks& callbacks) const;
 
-  static option<SystemDisplay> display_at(uint32 monitor_id = WindowInfo::USE_PRIMARY_MONITOR);
+  static option<SystemDisplay> display_at(u32 monitor_id = WindowInfo::USE_PRIMARY_MONITOR);
 
   void show_dialog(const ShowDialogInfo& info) const;
 
@@ -109,8 +110,8 @@ struct Window : Handle<Window> {
 
   VkSurfaceKHR get_surface(VkInstance instance) const;
 
-  uint32 get_width() const;
-  uint32 get_height() const;
+  u32 get_width() const;
+  u32 get_height() const;
 
   void* get_handle() const;
 

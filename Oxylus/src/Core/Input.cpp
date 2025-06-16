@@ -1,12 +1,13 @@
 #include "Input.hpp"
+
 #include "App.hpp"
 
 namespace ox {
 Input* Input::_instance = nullptr;
 
-void Input::init() {}
+auto Input::init() -> std::expected<void, std::string> { return {}; }
 
-void Input::deinit() {}
+auto Input::deinit() -> std::expected<void, std::string> { return {}; }
 
 void Input::set_instance() {
   if (_instance == nullptr)
@@ -14,6 +15,8 @@ void Input::set_instance() {
 }
 
 void Input::reset_pressed() {
+  ZoneScoped;
+
   memset(input_data.key_pressed, 0, MAX_KEYS);
   memset(input_data.mouse_clicked, 0, MAX_BUTTONS);
   input_data.scroll_offset_y = 0;

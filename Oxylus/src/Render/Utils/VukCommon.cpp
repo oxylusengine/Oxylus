@@ -4,12 +4,15 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
 namespace vuk {
-vuk::Value<vuk::ImageAttachment> generate_mips(vuk::Value<vuk::ImageAttachment> image, uint32_t mip_count) {
+vuk::Value<vuk::ImageAttachment> generate_mips(vuk::Value<vuk::ImageAttachment> image,
+                                               uint32_t mip_count) {
   auto ia = image.mip(0);
 
   for (uint32_t mip_level = 1; mip_level < mip_count; mip_level++) {
     auto pass = vuk::make_pass(fmt::format("mip_{}", mip_level).c_str(),
-                               [mip_level](vuk::CommandBuffer& command_buffer, VUK_IA(vuk::eTransferRead) src, VUK_IA(vuk::eTransferWrite) dst) {
+                               [mip_level](vuk::CommandBuffer& command_buffer,
+                                           VUK_IA(vuk::eTransferRead) src,
+                                           VUK_IA(vuk::eTransferWrite) dst) {
       ImageBlit blit;
       const auto extent = src->extent;
 

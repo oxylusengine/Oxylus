@@ -3,9 +3,12 @@
 #include "ModuleInterface.hpp"
 
 namespace ox {
-void ModuleRegistry::init() {}
+auto ModuleRegistry::init() -> std::expected<void, std::string> { return {}; }
 
-void ModuleRegistry::deinit() { clear(); }
+auto ModuleRegistry::deinit() -> std::expected<void, std::string> {
+  clear();
+  return {};
+}
 
 Module* ModuleRegistry::add_lib(const std::string& name, std::string_view path) {
   try {
@@ -21,12 +24,12 @@ Module* ModuleRegistry::add_lib(const std::string& name, std::string_view path) 
 
     const auto new_path = path_str + "_copy";
 
-    auto lib = create_unique<dylib>(new_path);
+    auto lib = std::make_unique<dylib>(new_path);
 
     const auto create_func = lib->get_function<ModuleInterface*()>("create_module");
     ModuleInterface* interface = create_func();
 
-    auto module = create_unique<Module>(std::move(lib), interface, path_str);
+    auto module = std::make_unique<Module>(std::move(lib), interface, path_str);
     libs.emplace(name, std::move(module));
 
     OX_LOG_INFO("Successfully loaded module: {}", name);
@@ -41,7 +44,8 @@ Module* ModuleRegistry::add_lib(const std::string& name, std::string_view path) 
 Module* ModuleRegistry::get_lib(const std::string& name) {
   try {
     return libs.at(name).get();
-  } catch ([[maybe_unused]] const std::exception& exc) {
+  } catch ([[maybe_unused]]
+           const std::exception& exc) {
     OX_LOG_ERROR("Module {} doesn't exists or has not been registered.", name);
     return nullptr;
   }

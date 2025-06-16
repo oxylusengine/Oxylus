@@ -1,18 +1,8 @@
 ﻿#pragma once
 #include <vuk/Value.hpp>
 
-#include "Event/Event.hpp"
-
-#include "Scene/Components.hpp"
-
-namespace vuk {
-struct SampledImage;
-}
-
 namespace ox {
-class VkContext;
 class Scene;
-
 class RenderPipeline {
 public:
   struct RenderInfo {
@@ -21,28 +11,15 @@ public:
     option<glm::uvec2> picking_texel = nullopt;
   };
 
-  RenderPipeline(std::string name) : _name(std::move(name)) {}
-
+  RenderPipeline() = default;
   virtual ~RenderPipeline() = default;
 
-  virtual void init(vuk::Allocator& allocator) = 0;
-  virtual void shutdown() = 0;
+  virtual auto init(VkContext& vk_context) -> void = 0;
+  virtual auto deinit() -> void = 0;
 
-  [[nodiscard]] virtual vuk::Value<vuk::ImageAttachment> on_render(vuk::Allocator& frame_allocator, const RenderInfo& render_info) = 0;
+  [[nodiscard]]
+  virtual auto on_render(VkContext& vk_context, const RenderInfo& render_info) -> vuk::Value<vuk::ImageAttachment> = 0;
 
-  virtual void on_dispatcher_events(EventDispatcher& dispatcher) {}
-
-  virtual void on_update(Scene* scene) {}
-  virtual void on_submit() {} // TODO: Not called anymore!! Old Code!!
-
-  virtual void submit_mesh_component(const MeshComponent& render_object) {}
-  virtual void submit_light(const LightComponent& light) {}
-  virtual void submit_camera(const CameraComponent& camera) {}
-  virtual void submit_sprite(const SpriteComponent& sprite) {}
-
-  virtual const std::string& get_name() { return _name; }
-
-protected:
-  std::string _name = {};
+  virtual auto on_update(Scene* scene) -> void = 0;
 };
 } // namespace ox

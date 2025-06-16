@@ -19,4 +19,4 @@ public:
 private:
   static ThreadManager* instance;
 };
-}
+} // namespace ox

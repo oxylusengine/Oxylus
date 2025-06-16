@@ -5,5 +5,5 @@ class state;
 }
 
 namespace ox::LuaBindings {
-void bind_physics(const Shared<sol::state>& state);
+void bind_physics(const std::shared_ptr<sol::state>& state);
 }

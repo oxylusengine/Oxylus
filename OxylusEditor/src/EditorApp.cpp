@@ -23,14 +23,14 @@ App* create_application(const AppCommandLineArgs& args) {
   spec.command_line_args = args;
   const WindowInfo::Icon icon = {.data = EngineLogo, .data_length = EngineLogoLen};
   spec.window_info = {
-    .title = spec.name,
-    .icon = icon,
-    .width = 1720,
-    .height = 900,
+      .title = spec.name,
+      .icon = icon,
+      .width = 1720,
+      .height = 900,
 #ifdef OX_PLATFORM_LINUX
-    .flags = WindowFlag::Centered,
+      .flags = WindowFlag::Centered,
 #else
-    .flags = WindowFlag::Centered | WindowFlag::Resizable,
+      .flags = WindowFlag::Centered | WindowFlag::Resizable,
 #endif
   };
 

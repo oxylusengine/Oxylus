@@ -19,4 +19,4 @@ private:
   std::mutex queue_mutex;
   std::condition_variable condition;
 };
-}
+} // namespace ox

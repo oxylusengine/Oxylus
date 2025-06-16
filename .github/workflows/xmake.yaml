@@ -3,13 +3,14 @@ permissions:
   contents: write
 on:
   push:
-    branches: [ dev ]
+    branches: [ main ]
   pull_request:
-    branches: [ dev ]
+    branches: [ main ]
 
 env:
   VULKAN_VERSION: 1.4.309.0
-  LLVM_VERSION: 19
+  LLVM_VERSION: 20
+  LLVM_WINDOWS_VERSION: 20.1.4
 
 jobs:
   build:
@@ -17,14 +18,14 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - { runner: windows-latest, os: windows, arch: x64,    toolchain: msvc,     mode: release, runtime: MT }
-          - { runner: windows-latest, os: windows, arch: x64,    toolchain: msvc,     mode: debug,   runtime: MTd }
+          - { runner: windows-2025, os: windows, arch: x64,    toolchain: msvc,     mode: release, runtime: MT }
+          - { runner: windows-2025, os: windows, arch: x64,    toolchain: msvc,     mode: debug,   runtime: MTd }
 
-          - { runner: windows-latest, os: windows, arch: x64,    toolchain: clang-cl, mode: release, runtime: MT }
-          - { runner: windows-latest, os: windows, arch: x64,    toolchain: clang-cl, mode: debug,   runtime: MTd }
+          - { runner: windows-2025, os: windows, arch: x64,    toolchain: clang-cl, mode: release, runtime: MT }
+          - { runner: windows-2025, os: windows, arch: x64,    toolchain: clang-cl, mode: debug,   runtime: MTd }
 
-          - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: clang-19, mode: release, runtime: c++_static }
-          - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: clang-19, mode: debug,   runtime: c++_static }
+          - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: clang-20, mode: release, runtime: c++_static }
+          - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: clang-20, mode: debug,   runtime: c++_static }
 
           - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: gcc-14,   mode: release, runtime: stdc++_static }
           - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: gcc-14,   mode: debug,   runtime: stdc++_static }
@@ -62,9 +63,9 @@ jobs:
 
       - name: Install LLVM for Windows
         if: ${{ matrix.platform.os == 'windows' }}
-        uses: std-microblock/install-llvm-action@master
+        uses: KyleMayes/install-llvm-action@master
         with:
-          version: "19.1.7"
+          version: "${{env.LLVM_WINDOWS_VERSION}}"
 
       # Install xmake
       - name: Setup xmake
@@ -92,7 +93,7 @@ jobs:
           key: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.platform.mode }}-${{ matrix.platform.runtime }}-${{ matrix.platform.toolchain }}-${{ steps.dep_hash.outputs.hash }}-W${{ steps.cache_key.outputs.key }}
 
       - name: Configure xmake and install dependencies
-        run: xmake config -v --toolchain=${{ matrix.platform.toolchain }} --arch=${{ matrix.platform.arch }} --mode=${{ matrix.platform.mode }} --runtimes=${{ matrix.platform.runtime }} --yes --policies=package.precompiled:n
+        run: xmake config -v --toolchain=${{ matrix.platform.toolchain }} --arch=${{ matrix.platform.arch }} --mode=${{ matrix.platform.mode }} --runtimes=${{ matrix.platform.runtime }} --yes --policies=package.precompiled:n --profile=y --lua_bindings=y
 
       # Save dependencies
       - name: Save cached xmake dependencies

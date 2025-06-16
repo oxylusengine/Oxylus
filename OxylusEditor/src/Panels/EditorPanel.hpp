@@ -3,8 +3,6 @@
 #include <stdint.h>
 #include <string>
 
-#include <vuk/Types.hpp>
-
 namespace ox {
 class EditorPanel {
 public:

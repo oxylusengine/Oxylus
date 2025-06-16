@@ -3,7 +3,7 @@
 namespace ox {
 struct Plane {
   glm::vec3 normal = {0.f, 1.f, 0.f}; // unit vector
-  float distance = 0.f;          // Distance with origin
+  float distance = 0.f;               // Distance with origin
 
   Plane() = default;
   Plane(glm::vec3 norm) : normal(glm::normalize(norm)) {}
@@ -50,8 +50,9 @@ struct Frustum {
   }
 
   bool intersects(const Frustum& other) const {
-    if (top_face.intersect(other.top_face) || bottom_face.intersect(other.bottom_face) || right_face.intersect(other.right_face) ||
-        left_face.intersect(other.left_face) || far_face.intersect(other.far_face) || near_face.intersect(other.near_face)) {
+    if (top_face.intersect(other.top_face) || bottom_face.intersect(other.bottom_face) ||
+        right_face.intersect(other.right_face) || left_face.intersect(other.left_face) ||
+        far_face.intersect(other.far_face) || near_face.intersect(other.near_face)) {
       return true;
     }
 

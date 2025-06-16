@@ -11,8 +11,8 @@ class Input : public ESystem {
 public:
   enum class CursorState { Disabled = 0x00034003, Normal = 0x00034001, Hidden = 0x00034002 };
 
-  void init() override;
-  void deinit() override;
+  auto init() -> std::expected<void, std::string> override;
+  auto deinit() -> std::expected<void, std::string> override;
 
   static void set_instance();
 

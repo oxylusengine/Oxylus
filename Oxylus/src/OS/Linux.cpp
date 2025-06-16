@@ -1,5 +1,3 @@
-#include "OS.hpp"
-
 #include <sys/file.h>
 #include <sys/inotify.h>
 #include <sys/mman.h>
@@ -8,33 +6,33 @@
 #include <sys/sysinfo.h>
 #include <unistd.h>
 
+#include "OS.hpp"
+
 namespace ox {
-auto os::mem_page_size() -> uint64 {
-    return sysconf(_SC_PAGESIZE);
+auto os::mem_page_size() -> u64 { return sysconf(_SC_PAGESIZE); }
+
+auto os::mem_reserve(u64 size) -> void* {
+  ZoneScoped;
+
+  return mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
 }
 
-auto os::mem_reserve(uint64 size) -> void * {
-    OX_SCOPED_ZONE;
+auto os::mem_release(void* data, u64 size) -> void {
+  ZoneScoped;
 
-    return mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+  munmap(data, size);
 }
 
-auto os::mem_release(void *data, uint64 size) -> void {
-    OX_SCOPED_ZONE;
+auto os::mem_commit(void* data, u64 size) -> bool {
+  ZoneScoped;
 
-    munmap(data, size);
+  return mprotect(data, size, PROT_READ | PROT_WRITE);
 }
 
-auto os::mem_commit(void *data, uint64 size) -> bool {
-    OX_SCOPED_ZONE;
+auto os::mem_decommit(void* data, u64 size) -> void {
+  ZoneScoped;
 
-    return mprotect(data, size, PROT_READ | PROT_WRITE);
+  madvise(data, size, MADV_DONTNEED);
+  mprotect(data, size, PROT_NONE);
 }
-
-auto os::mem_decommit(void *data, uint64 size) -> void {
-    OX_SCOPED_ZONE;
-
-    madvise(data, size, MADV_DONTNEED);
-    mprotect(data, size, PROT_NONE);
-}
-}
+} // namespace ox

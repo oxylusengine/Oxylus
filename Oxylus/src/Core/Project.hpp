@@ -1,41 +1,65 @@
 #pragma once
 
+#include "Core/UUID.hpp"
 namespace ox {
 struct ProjectConfig {
   std::string name = "Untitled";
 
-  std::string start_scene;
-  std::string asset_directory;
-  std::string module_name;
+  std::string start_scene = {};
+  std::string asset_directory = {};
+  std::string module_name = {};
+};
+
+struct AssetDirectory {
+  ::fs::path path = {};
+
+  AssetDirectory* parent = nullptr;
+  std::deque<std::unique_ptr<AssetDirectory>> subdirs = {};
+  ankerl::unordered_dense::set<UUID> asset_uuids = {};
+
+  AssetDirectory(::fs::path path_, AssetDirectory* parent_);
+
+  ~AssetDirectory();
+
+  auto add_subdir(this AssetDirectory& self, const ::fs::path& path) -> AssetDirectory*;
+
+  auto add_subdir(this AssetDirectory& self, std::unique_ptr<AssetDirectory>&& directory) -> AssetDirectory*;
+
+  auto add_asset(this AssetDirectory& self, const ::fs::path& path) -> UUID;
+
+  auto refresh(this AssetDirectory& self) -> void;
 };
 
 class Project {
 public:
   Project() = default;
-  Project(const std::string& dir) : project_directory(dir) {}
 
-  ProjectConfig& get_config() { return project_config; }
+  auto new_project(this Project& self,
+                   const std::string& project_dir,
+                   const std::string& project_name,
+                   const std::string& project_asset_dir) -> bool;
+  auto load(this Project& self, const std::string& path) -> bool;
+  auto save(this Project& self, const std::string& path) -> bool;
 
-  static std::string& get_project_directory() { return active_project->project_directory; }
-  void set_project_dir(const std::string& dir) { project_directory = dir; }
-  static std::string get_asset_directory();
-  const std::string& get_project_file_path() const { return project_file_path; }
+  auto get_config() -> ProjectConfig& { return project_config; }
 
-  void load_module();
-  void unload_module() const;
-  void check_module();
+  auto get_project_directory() -> std::string& { return project_directory; }
+  auto set_project_dir(const std::string& dir) -> void { project_directory = dir; }
+  auto get_project_file_path() const -> const std::string& { return project_file_path; }
 
-  static Shared<Project> create_new();
-  static Shared<Project> new_project(const std::string& project_dir, const std::string& project_name, const std::string& project_asset_dir);
-  static void set_active(const Shared<Project>& project) { active_project = project; }
-  static Shared<Project> get_active() { return active_project; }
-  static Shared<Project> load(const std::string& path);
-  static bool save_active(const std::string& path);
+  auto get_asset_directory() -> const std::unique_ptr<AssetDirectory>& { return asset_directory; }
+
+  auto register_assets(const std::string& path) -> void;
+
+  auto load_module() -> void;
+  auto unload_module() const -> void;
+  auto check_module() -> void;
 
 private:
-  ProjectConfig project_config;
-  std::string project_directory;
-  std::string project_file_path;
-  inline static Shared<Project> active_project;
+  ProjectConfig project_config = {};
+  std::string project_directory = {};
+  std::string project_file_path = {};
+  ::fs::file_time_type last_module_write_time = {};
+  std::unique_ptr<AssetDirectory> asset_directory = nullptr;
 };
 } // namespace ox

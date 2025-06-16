@@ -5,12 +5,12 @@ class Archive {
 public:
   Archive();
   Archive(const std::string& file_name, bool read_mode = true);
-  Archive(const uint8_t* data);
+  Archive(const u8* data);
   ~Archive() { close(); }
 
-  void write_data(std::vector<uint8_t>& dest) const;
+  void write_data(std::vector<u8>& dest) const;
 
-  const uint8_t* get_data() const { return data_ptr; }
+  const u8* get_data() const { return data_ptr; }
   size_t get_pos() const { return pos; }
   constexpr uint64_t get_version() const { return version; }
   constexpr bool is_read_mode() const { return read_mode; }
@@ -69,7 +69,7 @@ public:
     return *this;
   }
   Archive& operator<<(unsigned char data) {
-    _write((uint8_t)data);
+    _write((u8)data);
     return *this;
   }
   Archive& operator<<(int data) {
@@ -111,7 +111,8 @@ public:
     }
     return *this;
   }
-  template <typename T> Archive& operator<<(const std::vector<T>& data) {
+  template <typename T>
+  Archive& operator<<(const std::vector<T>& data) {
     // Here we will use the << operator so that non-specified types will have compile error!
     (*this) << data.size();
     for (const T& x : data) {
@@ -136,7 +137,7 @@ public:
     return *this;
   }
   Archive& operator>>(unsigned char& data) {
-    uint8_t temp;
+    u8 temp;
     _read(temp);
     data = (unsigned char)temp;
     return *this;
@@ -202,8 +203,8 @@ private:
   uint32_t version = 0;
   bool read_mode = false;
   size_t pos = 0;
-  std::vector<uint8_t> _data = {};
-  const uint8_t* data_ptr = nullptr;
+  std::vector<u8> _data = {};
+  const u8* data_ptr = nullptr;
 
   std::string file_name = {}; // save to this file on close
   std::string directory = {}; // directory of file_name
@@ -214,7 +215,8 @@ private:
   // Any specific type serialization should be implemented by hand
   // But these can be used as helper functions inside this class
 
-  template <typename T> void _write(const T& data) {
+  template <typename T>
+  void _write(const T& data) {
     OX_ASSERT(!read_mode);
     OX_ASSERT(!_data.empty());
     const size_t _right = pos + sizeof(data);
@@ -226,7 +228,8 @@ private:
     pos = _right;
   }
 
-  template <typename T> void _read(T& data) {
+  template <typename T>
+  void _read(T& data) {
     OX_ASSERT(read_mode);
     OX_ASSERT(data_ptr != nullptr);
     data = *(const T*)(data_ptr + pos);

@@ -1,21 +1,19 @@
 ﻿#include "Timer.hpp"
 
 namespace ox {
-float Timer::get_timed_ms() {
-  const float time = duration(m_last_time, now(), 1000.0f);
-  m_last_time = now();
+auto Timer::get_timed_ms() -> f32 {
+  const f32 time = duration(_last_time, now(), 1000.0f);
+  _last_time = now();
   return time;
 }
 
-TimeStamp Timer::now() {
-  return std::chrono::high_resolution_clock::now();
+TimeStamp Timer::now() { return std::chrono::high_resolution_clock::now(); }
+
+auto Timer::duration(const TimeStamp start, const TimeStamp end, const f64 time_resolution) -> f64 {
+  return std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count() * time_resolution;
 }
 
-double Timer::duration(const TimeStamp start, const TimeStamp end, const double timeResolution) {
-  return std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count() * timeResolution;
+auto Timer::duration(const TimeStamp start, const TimeStamp end, const f32 time_resolution) -> f32 {
+  return (float)std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count() * time_resolution;
 }
-
-float Timer::duration(const TimeStamp start, const TimeStamp end, const float timeResolution) {
-  return (float)std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count() * timeResolution;
-}
-}
+} // namespace ox

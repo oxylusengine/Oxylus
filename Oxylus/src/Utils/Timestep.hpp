@@ -24,4 +24,4 @@ private:
 
   Timer* m_Timer;
 };
-}
+} // namespace ox

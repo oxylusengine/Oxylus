@@ -5,12 +5,12 @@
 namespace ox {
 class ProjectSerializer {
 public:
-  ProjectSerializer(Shared<Project> project);
+  ProjectSerializer(Project* project_) : project(project_) {}
 
   bool serialize(const std::string& file_path) const;
   bool deserialize(const std::string& file_path) const;
 
 private:
-  Shared<Project> project;
+  Project* project;
 };
-}
+} // namespace ox

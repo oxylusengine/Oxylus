@@ -1,27 +1,23 @@
 #include "ProjectSerializer.hpp"
 
-#include "Utils/Toml.hpp"
 #include "FileSystem.hpp"
+#include "Utils/Toml.hpp"
 
 namespace ox {
-ProjectSerializer::ProjectSerializer(Shared<Project> project_) : project(std::move(project_)) {}
-
 bool ProjectSerializer::serialize(const std::string& file_path) const {
   const auto& config = project->get_config();
 
   const auto root = toml::table{{
-    "project",
-    toml::table{
-      {"name", config.name},
-      {"asset_directory", config.asset_directory},
-      {"start_scene", config.start_scene},
-      {"module_name", config.module_name},
-    },
+      "project",
+      toml::table{
+          {"name", config.name},
+          {"asset_directory", config.asset_directory},
+          {"start_scene", config.start_scene},
+          {"module_name", config.module_name},
+      },
   }};
 
-  fs::write_file(file_path, root, "# Oxylus project file"); // TODO: check for result
-
-  return true;
+  return fs::write_file(file_path, root, "# Oxylus project file");
 }
 
 bool ProjectSerializer::deserialize(const std::string& file_path) const {

@@ -2,15 +2,15 @@
 
 namespace ox {
 enum class CVarFlags : uint32_t {
-  None         = 0,
-  Noedit       = 1 << 1,
+  None = 0,
+  Noedit = 1 << 1,
   EditReadOnly = 1 << 2,
-  Advanced     = 1 << 3,
-  Dropdown     = 1 << 4,
+  Advanced = 1 << 3,
+  Dropdown = 1 << 4,
 
-  EditCheckbox  = 1 << 8,
+  EditCheckbox = 1 << 8,
   EditFloatDrag = 1 << 9,
-  EditIntDrag   = 1 << 10,
+  EditIntDrag = 1 << 10,
 };
 
 enum class CVarType : char {
@@ -49,23 +49,25 @@ public:
   CVarSystem() = default;
 
   static CVarSystem* get();
-  CVarParameter* get_cvar(uint32_t hash);
+  CVarParameter* get_cvar(usize hash);
 
   CVarParameter* create_float_cvar(const char* name, const char* description, float default_value, float current_value);
-  CVarParameter* create_int_cvar(const char* name, const char* description, int32_t default_value, int32_t current_value);
-  CVarParameter* create_string_cvar(const char* name, const char* description, const char* default_value, const char* current_value);
+  CVarParameter*
+  create_int_cvar(const char* name, const char* description, int32_t default_value, int32_t current_value);
+  CVarParameter*
+  create_string_cvar(const char* name, const char* description, const char* default_value, const char* current_value);
 
-  float* get_float_cvar(uint32_t hash);
-  int32_t* get_int_cvar(uint32_t hash);
-  std::string* get_string_cvar(uint32_t hash);
+  float* get_float_cvar(usize hash);
+  int32_t* get_int_cvar(usize hash);
+  std::string* get_string_cvar(usize hash);
 
-  void set_float_cvar(uint32_t hash, float value);
-  void set_int_cvar(uint32_t hash, int32_t value);
-  void set_string_cvar(uint32_t hash, const char* value);
+  void set_float_cvar(usize hash, float value);
+  void set_int_cvar(usize hash, int32_t value);
+  void set_string_cvar(usize hash, const char* value);
 
 private:
   std::shared_mutex mutex_;
-  ankerl::unordered_dense::map<uint32_t, Unique<CVarParameter>> saved_cvars;
+  ankerl::unordered_dense::map<usize, std::unique_ptr<CVarParameter>> saved_cvars;
   std::vector<CVarParameter*> cached_edit_parameters;
 
   CVarParameter* init_cvar(const char* name, const char* description);
@@ -96,9 +98,12 @@ struct AutoCVar_Int : AutoCVar<int32_t> {
 };
 
 struct AutoCVar_String : AutoCVar<std::string> {
-  AutoCVar_String(const char* name, const char* description, const char* default_value, CVarFlags flags = CVarFlags::None);
+  AutoCVar_String(const char* name,
+                  const char* description,
+                  const char* default_value,
+                  CVarFlags flags = CVarFlags::None);
 
   std::string get() const;
   void set(std::string&& val) const;
 };
-}
+} // namespace ox

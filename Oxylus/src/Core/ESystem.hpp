@@ -1,26 +1,23 @@
 ﻿#pragma once
 
-#include "Event/Event.hpp"
-
 #include <vuk/Types.hpp>
 
 namespace ox {
+class App;
+
 /// Engine systems interface
 class ESystem {
 public:
+  App* app = nullptr;
+
   ESystem() = default;
   virtual ~ESystem() = default;
   DELETE_DEFAULT_CONSTRUCTORS(ESystem)
 
-  virtual void init() = 0;
-  virtual void deinit() = 0;
+  virtual auto init() -> std::expected<void, std::string> = 0;
+  virtual auto deinit() -> std::expected<void, std::string> = 0;
 
-  virtual void on_update() {}
-  virtual void on_render(vuk::Extent3D extent, vuk::Format format) {}
-
-  void set_dispatcher(EventDispatcher* dispatcher) { m_dispatcher = dispatcher; }
-
-protected:
-  EventDispatcher* m_dispatcher = nullptr;
+  virtual auto on_update() -> void {}
+  virtual auto on_render(vuk::Extent3D extent, vuk::Format format) -> void {}
 };
 } // namespace ox

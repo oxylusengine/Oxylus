@@ -14,8 +14,8 @@ std::string fs::current_path() { return std::filesystem::current_path().generic_
 std::pair<std::string, std::string> fs::split_path(const std::string_view full_path) {
   const size_t found = full_path.find_last_of("/\\");
   return {
-    std::string(full_path.substr(0, found + 1)), // directory
-    std::string(full_path.substr(found + 1)),    // file
+      std::string(full_path.substr(0, found + 1)), // directory
+      std::string(full_path.substr(found + 1)),    // file
   };
 }
 
@@ -105,17 +105,17 @@ std::string fs::get_last_component(const std::string_view path) {
 }
 
 std::string fs::read_file(const std::string_view file_path) {
-  OX_SCOPED_ZONE;
+  ZoneScoped;
   std::ostringstream buf;
   const std::ifstream input(file_path.data());
   buf << input.rdbuf();
   return buf.str();
 }
 
-std::vector<uint8_t> fs::read_file_binary(const std::string_view file_path) {
+std::vector<u8> fs::read_file_binary(const std::string_view file_path) {
   std::ifstream file(file_path.data(), std::ios::binary);
 
-  std::vector<uint8_t> data = {};
+  std::vector<u8> data = {};
   if (file.is_open()) {
     const size_t dataSize = file.tellg();
     file.seekg(0, file.beg);
@@ -127,7 +127,7 @@ std::vector<uint8_t> fs::read_file_binary(const std::string_view file_path) {
   return data;
 }
 
-bool fs::write_file_binary(const std::string_view file_path, const std::vector<uint8_t>& data) {
+bool fs::write_file_binary(const std::string_view file_path, const std::vector<u8>& data) {
   std::ofstream file(file_path.data(), std::ios::binary | std::ios::trunc);
   if (file.is_open()) {
     file.write(reinterpret_cast<const char*>(data.data()), (std::streamsize)data.size());
@@ -137,9 +137,10 @@ bool fs::write_file_binary(const std::string_view file_path, const std::vector<u
   return false;
 }
 
-bool fs::binary_to_header(const std::string_view file_path, const std::string_view data_name, const std::vector<uint8_t>& data) {
+bool
+fs::binary_to_header(const std::string_view file_path, const std::string_view data_name, const std::vector<u8>& data) {
   std::string ss;
-  ss += "const uint8_t ";
+  ss += "const u8 ";
   ss += data_name;
   ss += "[] = {";
   for (size_t i = 0; i < data.size(); ++i) {

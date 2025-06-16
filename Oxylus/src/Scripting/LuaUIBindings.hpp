@@ -5,5 +5,5 @@ class state;
 }
 
 namespace ox::LuaBindings {
-void bind_ui(const Shared<sol::state>& state);
+void bind_ui(const std::shared_ptr<sol::state>& state);
 }

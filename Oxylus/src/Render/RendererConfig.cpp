@@ -1,84 +1,79 @@
 #include "RendererConfig.hpp"
 
-#include "Core/App.hpp"
 #include "Core/FileSystem.hpp"
-#include "Thread/TaskScheduler.hpp"
-
 #include "Utils/Toml.hpp"
 
 namespace ox {
-void RendererConfig::init() {
-  auto* task_scheduler = App::get_system<TaskScheduler>(EngineSystems::TaskScheduler);
-  task_scheduler->add_task([this]() {
-    if (!load_config("renderer_config.toml"))
-      save_config("renderer_config.toml");
-  });
 
-  task_scheduler->wait_for_all();
+auto RendererConfig::init() -> std::expected<void, std::string> {
+  if (!load_config("renderer_config.toml"))
+    if (!save_config("renderer_config.toml"))
+      return std::unexpected{"Couldn't load/save renderer_config.toml"};
+
+  return {};
 }
 
-void RendererConfig::deinit() { save_config("renderer_config.toml"); }
+auto RendererConfig::deinit() -> std::expected<void, std::string> {
+  if (!save_config("renderer_config.toml"))
+    return std::unexpected{"Couldn't save renderer_config.toml"};
 
-void RendererConfig::save_config(const char* path) const {
-  OX_SCOPED_ZONE;
+  return {};
+}
+
+bool RendererConfig::save_config(const char* path) const {
+  ZoneScoped;
 
   const auto root = toml::table{
-    {
-      "display",
-      toml::table{
-        {"vsync", (bool)RendererCVar::cvar_vsync.get()},
+      {
+          "display",
+          toml::table{
+              {"vsync", (bool)RendererCVar::cvar_vsync.get()},
+          },
       },
-    },
-    {
-      "debug",
-      toml::table{
-        {"debug_renderer", (bool)RendererCVar::cvar_enable_debug_renderer.get()},
-        {"bounding_boxes", (bool)RendererCVar::cvar_draw_bounding_boxes.get()},
-        {"physics_debug_renderer", (bool)RendererCVar::cvar_enable_physics_debug_renderer.get()},
+      {
+          "debug",
+          toml::table{
+              {"debug_renderer", (bool)RendererCVar::cvar_enable_debug_renderer.get()},
+              {"bounding_boxes", (bool)RendererCVar::cvar_draw_bounding_boxes.get()},
+              {"physics_debug_renderer", (bool)RendererCVar::cvar_enable_physics_debug_renderer.get()},
+          },
       },
-    },
-    {"color",
-     toml::table{{"tonemapper", RendererCVar::cvar_tonemapper.get()},
-                 {"exposure", RendererCVar::cvar_exposure.get()},
-                 {"gamma", RendererCVar::cvar_gamma.get()}}},
-    {
-      "gtao",
-      toml::table{
-        {"enabled", (bool)RendererCVar::cvar_gtao_enable.get()},
+      {"color",
+       toml::table{{"tonemapper", RendererCVar::cvar_tonemapper.get()},
+                   {"exposure", RendererCVar::cvar_exposure.get()},
+                   {"gamma", RendererCVar::cvar_gamma.get()}}},
+      {
+          "gtao",
+          toml::table{
+              {"enabled", (bool)RendererCVar::cvar_gtao_enable.get()},
+          },
       },
-    },
-    {
-      "bloom",
-      toml::table{
-        {"enabled", (bool)RendererCVar::cvar_bloom_enable.get()},
-        {"threshold", RendererCVar::cvar_bloom_threshold.get()},
+      {
+          "bloom",
+          toml::table{
+              {"enabled", (bool)RendererCVar::cvar_bloom_enable.get()},
+              {"threshold", RendererCVar::cvar_bloom_threshold.get()},
+          },
       },
-    },
-    {
-      "ssr",
-      toml::table{
-        {"enabled", (bool)RendererCVar::cvar_ssr_enable.get()},
+      {
+          "ssr",
+          toml::table{
+              {"enabled", (bool)RendererCVar::cvar_ssr_enable.get()},
+          },
       },
-    },
-    {
-      "shadows",
-      toml::table{
-        {"size", RendererCVar::cvar_shadows_size.get()},
+      {
+          "fxaa",
+          toml::table{
+              {"enabled", (bool)RendererCVar::cvar_fxaa_enable.get()},
+          },
       },
-    },
-    {
-      "fxaa",
-      toml::table{
-        {"enabled", (bool)RendererCVar::cvar_fxaa_enable.get()},
-      },
-    },
   };
 
-  fs::write_file(path, root, "# Oxylus renderer config file"); // TODO: check result
+  return fs::write_file(path, root, "# Oxylus renderer config file");
 }
 
 bool RendererConfig::load_config(const char* path) {
-  OX_SCOPED_ZONE;
+  ZoneScoped;
   const auto& content = fs::read_file(path);
   if (content.empty())
     return false;
@@ -107,9 +102,6 @@ bool RendererConfig::load_config(const char* path) {
 
   const auto ssr_config = toml["ssr"];
   RendererCVar::cvar_ssr_enable.set(ssr_config["enabled"].as_boolean()->get());
-
-  const auto shadows_config = toml["shadows"];
-  RendererCVar::cvar_shadows_size.set((int)shadows_config["size"].as_integer()->get());
 
   const auto fxaa_config = toml["fxaa"];
   RendererCVar::cvar_fxaa_enable.set(fxaa_config["enabled"].as_boolean()->get());

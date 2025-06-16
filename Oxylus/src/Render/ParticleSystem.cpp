@@ -24,14 +24,13 @@ void ParticleSystem::stop(bool force) {
 }
 
 void ParticleSystem::on_update(float ts, const glm::vec3& position) {
-  OX_SCOPED_ZONE;
+  ZoneScoped;
   const float simTs = ts * properties.simulation_speed;
 
   if (playing && !properties.looping)
     system_time += simTs;
   const float delay = properties.start_delay;
-  if (playing && (properties.looping || (system_time <= delay + properties.duration && system_time >
-                                             delay))) {
+  if (playing && (properties.looping || (system_time <= delay + properties.duration && system_time > delay))) {
     // Emit particles in unit time
     spawn_time += simTs;
     if (spawn_time >= 1.0f / static_cast<float>(properties.rate_over_time)) {
@@ -107,10 +106,10 @@ void ParticleSystem::on_render() const {
     if (particle.life_remaining <= 0.0f)
       continue;
 
-    glm::mat4 transform = glm::translate(glm::mat4(1.0f), particle.position) * glm::mat4(glm::quat(particle.rotation))
-                          * glm::scale(glm::mat4(1.0f), particle.size);
+    glm::mat4 transform = glm::translate(glm::mat4(1.0f), particle.position) * glm::mat4(glm::quat(particle.rotation)) *
+                          glm::scale(glm::mat4(1.0f), particle.size);
 
-    //Renderer::SubmitQuad(transform, m_Properties.Texture, particle.Color);
+    // Renderer::SubmitQuad(transform, m_Properties.Texture, particle.Color);
   }
 }
 
@@ -137,4 +136,4 @@ void ParticleSystem::emit(const glm::vec3& position, uint32_t count) {
     particle.life_remaining = properties.start_lifetime;
   }
 }
-}
+} // namespace ox

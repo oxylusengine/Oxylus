@@ -1,9 +1,7 @@
 #include "Thread.hpp"
 
 namespace ox {
-Thread::Thread() {
-  worker = std::thread(&Thread::queue_loop, this);
-}
+Thread::Thread() { worker = std::thread(&Thread::queue_loop, this); }
 
 Thread::~Thread() {
   if (worker.joinable()) {
@@ -24,10 +22,7 @@ void Thread::queue_job(std::function<void()> function) {
 
 void Thread::wait() {
   std::unique_lock lock(queue_mutex);
-  condition.wait(lock,
-    [this]() {
-      return job_queue.empty();
-    });
+  condition.wait(lock, [this]() { return job_queue.empty(); });
 }
 
 void Thread::queue_loop() {
@@ -35,10 +30,7 @@ void Thread::queue_loop() {
     std::function<void()> job;
     {
       std::unique_lock lock(queue_mutex);
-      condition.wait(lock,
-        [this] {
-          return !job_queue.empty() || destroying;
-        });
+      condition.wait(lock, [this] { return !job_queue.empty() || destroying; });
       if (destroying) {
         break;
       }
@@ -54,4 +46,4 @@ void Thread::queue_loop() {
     }
   }
 }
-}
+} // namespace ox

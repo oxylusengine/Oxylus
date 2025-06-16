@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 namespace ox {
-/// @brief A lightweight std::filesystem alternative and a safe wrapper for std::filesystem 
+/// @brief A lightweight std::filesystem alternative and a safe wrapper for std::filesystem
 namespace fs {
 /// @return current working dir
 std::string current_path();
@@ -35,7 +35,7 @@ std::string absolute(std::string_view path);
 std::string get_last_component(std::string_view path);
 
 std::string read_file(std::string_view file_path);
-std::vector<uint8_t> read_file_binary(std::string_view file_path);
+std::vector<u8> read_file_binary(std::string_view file_path);
 
 template <typename T>
 bool write_file(const std::string_view file_path, const T& data, const std::string& comment = {}) {
@@ -50,8 +50,8 @@ bool write_file(const std::string_view file_path, const T& data, const std::stri
   return false;
 }
 
-bool write_file_binary(std::string_view file_path, const std::vector<uint8_t>& data);
+bool write_file_binary(std::string_view file_path, const std::vector<u8>& data);
 
-bool binary_to_header(std::string_view file_path, std::string_view data_name, const std::vector<uint8_t>& data);
-}; // namespace FileSystem
+bool binary_to_header(std::string_view file_path, std::string_view data_name, const std::vector<u8>& data);
+}; // namespace fs
 } // namespace ox

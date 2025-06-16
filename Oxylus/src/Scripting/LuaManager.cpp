@@ -17,10 +17,12 @@
 #endif
 
 namespace ox {
-void LuaManager::init() {
-  OX_SCOPED_ZONE;
-  m_state = create_shared<sol::state>();
-  m_state->open_libraries(sol::lib::base, sol::lib::package, sol::lib::math, sol::lib::table, sol::lib::os, sol::lib::string);
+
+auto LuaManager::init() -> std::expected<void, std::string> {
+  ZoneScoped;
+  m_state = std::make_shared<sol::state>();
+  m_state->open_libraries(
+      sol::lib::base, sol::lib::package, sol::lib::math, sol::lib::table, sol::lib::os, sol::lib::string);
 
 #ifdef OX_LUA_BINDINGS
   bind_log();
@@ -36,22 +38,27 @@ void LuaManager::init() {
   LuaBindings::bind_physics(m_state);
   LuaBindings::bind_ui(m_state);
 #endif
+
+  return {};
 }
 
-void LuaManager::deinit() {
+auto LuaManager::deinit() -> std::expected<void, std::string> {
   m_state->collect_gc();
   m_state.reset();
+
+  return {};
 }
 
-#define SET_LOG_FUNCTIONS(table, name, log_func)                                                                                      \
-  table.set_function(name, sol::overload([](const std::string_view message) { log_func("{}", message); }, [](const glm::vec4& vec4) { \
-    log_func("x: {} y: {} z: {} w: {}", vec4.x, vec4.y, vec4.z, vec4.w);                                                              \
-  }, [](const glm::vec3& vec3) { log_func("x: {} y: {} z: {}", vec3.x, vec3.y, vec3.z); }, [](const glm::vec2& vec2) {                \
-    log_func("x: {} y: {}", vec2.x, vec2.y);                                                                                          \
+#define SET_LOG_FUNCTIONS(table, name, log_func)                                                                       \
+  table.set_function(                                                                                                  \
+      name, sol::overload([](const std::string_view message) { log_func("{}", message); }, [](const glm::vec4& vec4) { \
+    log_func("x: {} y: {} z: {} w: {}", vec4.x, vec4.y, vec4.z, vec4.w);                                               \
+  }, [](const glm::vec3& vec3) { log_func("x: {} y: {} z: {}", vec3.x, vec3.y, vec3.z); }, [](const glm::vec2& vec2) { \
+    log_func("x: {} y: {}", vec2.x, vec2.y);                                                                           \
   }, [](const glm::uvec2& vec2) { log_func("x: {} y: {}", vec2.x, vec2.y); }));
 
 void LuaManager::bind_log() const {
-  OX_SCOPED_ZONE;
+  ZoneScoped;
   auto log = m_state->create_table("Log");
 
   SET_LOG_FUNCTIONS(log, "info", OX_LOG_INFO)

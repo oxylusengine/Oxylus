@@ -15,11 +15,11 @@ struct SlangModuleInfo {
 };
 
 struct SlangEntryPoint {
-  std::vector<uint32> ir = {};
+  std::vector<u32> ir = {};
 };
 
 struct ShaderReflection {
-  uint32 pipeline_layout_index = 0;
+  u32 pipeline_layout_index = 0;
   glm::u64vec3 thread_group_size = {};
 };
 

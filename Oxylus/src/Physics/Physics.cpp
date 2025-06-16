@@ -3,18 +3,13 @@
 #include <cstdarg>
 
 #include "Jolt/Physics/Body/BodyManager.h"
-#include "RayCast.hpp"
-
-#include "Core/App.hpp"
-#include "Utils/OxMath.hpp"
-
 #include "Jolt/Physics/Collision/CastResult.h"
 #include "Jolt/Physics/Collision/RayCast.h"
 #include "Jolt/RegisterTypes.h"
+#include "RayCast.hpp"
+#include "Utils/OxMath.hpp"
 
 namespace ox {
-Physics* Physics::_instance = nullptr;
-
 static void TraceImpl(const char* inFMT, ...) {
   va_list list;
   va_start(list, inFMT);
@@ -32,7 +27,7 @@ static bool AssertFailedImpl(const char* inExpression, const char* inMessage, co
 };
 #endif
 
-void Physics::init() {
+auto Physics::init() -> std::expected<void, std::string> {
   // TODO: Override default allocators with Oxylus allocators.
   JPH::RegisterDefaultAllocator();
 
@@ -59,17 +54,24 @@ void Physics::init() {
                        layer_interface,
                        object_vs_broad_phase_layer_filter_interface,
                        object_layer_pair_filter_interface);
+
+  return {};
 }
 
-void Physics::set_instance() {
-  if (_instance == nullptr)
-    _instance = App::get_system<Physics>(EngineSystems::Physics);
-  JPH::Factory::sInstance = new JPH::Factory();
-  JPH::RegisterTypes();
+auto Physics::deinit() -> std::expected<void, std::string> {
+  JPH::UnregisterTypes();
+  delete JPH::Factory::sInstance;
+  JPH::Factory::sInstance = nullptr;
+  delete temp_allocator;
+  delete physics_system;
+  delete job_system;
+  delete debug_renderer;
+
+  return {};
 }
 
 void Physics::step(float physicsTs) {
-  OX_SCOPED_ZONE;
+  ZoneScoped;
 
   OX_CHECK_NULL(physics_system, "Physics system not initialized");
 
@@ -84,28 +86,10 @@ void Physics::debug_draw() {
   physics_system->DrawBodies(settings, debug_renderer);
 }
 
-void Physics::deinit() {
-  JPH::UnregisterTypes();
-  delete JPH::Factory::sInstance;
-  JPH::Factory::sInstance = nullptr;
-  delete temp_allocator;
-  delete physics_system;
-  delete job_system;
-  delete debug_renderer;
-}
-
-JPH::PhysicsSystem* Physics::get_physics_system() {
-  OX_SCOPED_ZONE;
-
-  OX_CHECK_NULL(_instance->physics_system, "Physics system not initialized");
-
-  return _instance->physics_system;
-}
-
 JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> Physics::cast_ray(const RayCast& ray_cast) {
   JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> collector;
   const JPH::RayCast ray{math::to_jolt(ray_cast.get_origin()), math::to_jolt(ray_cast.get_direction())};
-  _instance->get_broad_phase_query().CastRay(ray, collector);
+  get_broad_phase_query().CastRay(ray, collector);
 
   return collector;
 }

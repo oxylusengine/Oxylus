@@ -1,15 +1,12 @@
 #pragma once
 
 #include "Core/ESystem.hpp"
-
 #include "Utils/CVars.hpp"
 
 namespace ox {
 namespace RendererCVar {
+// clang-format off
 inline AutoCVar_Int cvar_vsync("rr.vsync", "toggle vsync", 1);
-
-inline AutoCVar_Int cvar_shadows_size("rr.shadows_size", "cascaded shadow map size", 2048);
-inline AutoCVar_Int cvar_shadows_pcf("rr.shadows_pcf", "use pcf in cascaded shadows", 1);
 
 inline AutoCVar_Int cvar_draw_grid("rr.draw_grid", "draw editor scene grid", 1);
 inline AutoCVar_Float cvar_draw_grid_distance("rr.grid_distance", "max grid distance", 20.f);
@@ -19,6 +16,7 @@ inline AutoCVar_Int cvar_enable_debug_renderer("rr.debug_renderer", "enable debu
 inline AutoCVar_Int cvar_draw_meshlet_aabbs("rr.draw_meshlet_aabbs", "draw meshlet aabbs", 0);
 inline AutoCVar_Int cvar_freeze_culling_frustum("rr.freeze_culling_frustum", "freeze culling frustum", 0);
 inline AutoCVar_Int cvar_draw_camera_frustum("rr.draw_camera_frustum", "draw camera frustum", 0);
+inline AutoCVar_Int cvar_debug_view("rr.debug_view", "0: None, 1: Triangles, 2: Meshlets, 3: Overdraw, 4: Albdeo, 5: Normal, 6: Emissive, 7: Metallic, 8: Roughness, 9: Occlusion", 0);
 
 inline AutoCVar_Int cvar_reload_render_pipeline("rr.reload_render_pipeline", "reload current scene's render pipeline", 0);
 
@@ -48,6 +46,7 @@ inline AutoCVar_Float cvar_fsr_sharpness("pp.fsr_sharpness", "sharpness for FSR"
 inline AutoCVar_Int cvar_tonemapper("pp.tonemapper", "tonemapper preset", 0);
 inline AutoCVar_Float cvar_exposure("pp.exposure", "tonemapping exposure", 1.0f);
 inline AutoCVar_Float cvar_gamma("pp.gamma", "screen gamma", 2.2f);
+// clang-format on
 } // namespace RendererCVar
 
 class RendererConfig : public ESystem {
@@ -60,12 +59,10 @@ public:
     TONEMAP_REINHARD = 4,
   };
 
-  RendererConfig() = default;
+  auto init() -> std::expected<void, std::string> override;
+  auto deinit() -> std::expected<void, std::string> override;
 
-  void init() override;
-  void deinit() override;
-
-  void save_config(const char* path) const;
+  bool save_config(const char* path) const;
   bool load_config(const char* path);
 };
 } // namespace ox

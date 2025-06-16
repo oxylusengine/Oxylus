@@ -1,7 +1,7 @@
 #pragma once
 
 namespace ox {
-enum class KeyCode : uint16 {
+enum class KeyCode : u16 {
   None = UINT16_MAX,
 
   Space = 32,
@@ -152,7 +152,7 @@ enum class KeyCode : uint16 {
   Menu = 348
 };
 
-enum class MouseCode : uint16 {
+enum class MouseCode : u16 {
   None = UINT16_MAX,
   Button0 = 0,
   Button1 = 1,

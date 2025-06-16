@@ -1,10 +1,10 @@
 #include "Camera.hpp"
 
-#include "Core/App.hpp"
+#include "Scene/ECSModule/Core.hpp"
 
 namespace ox {
-void Camera::update(::ox::CameraComponent& component, const glm::vec2& screen_size) {
-  OX_SCOPED_ZONE;
+void Camera::update(CameraComponent& component, const glm::vec2& screen_size) {
+  ZoneScoped;
 
   component.jitter_prev = component.jitter;
   component.matrices_prev.projection_matrix = component.matrices.projection_matrix;
@@ -23,7 +23,8 @@ void Camera::update(::ox::CameraComponent& component, const glm::vec2& screen_si
   component.right = glm::normalize(glm::cross(component.forward, {component.tilt, 1, component.tilt}));
   component.up = glm::normalize(glm::cross(component.right, component.forward));
 
-  component.matrices.view_matrix = glm::lookAt(component.position, component.position + component.forward, component.up);
+  component.matrices.view_matrix = glm::lookAt(
+      component.position, component.position + component.forward, component.up);
 
   const auto extent = screen_size;
   if (extent.x != 0)
@@ -54,12 +55,12 @@ Frustum Camera::get_frustum(const CameraComponent& component, const glm::vec3& p
   const glm::vec3 forward_far = component.far_clip * component.forward;
 
   Frustum frustum = {
-    .top_face = {position, cross(component.right, forward_far - component.up * half_v_side)},
-    .bottom_face = {position, cross(forward_far + component.up * half_v_side, component.right)},
-    .right_face = {position, cross(forward_far - component.right * half_h_side, component.up)},
-    .left_face = {position, cross(component.up, forward_far + component.right * half_h_side)},
-    .far_face = {position + forward_far, -component.forward},
-    .near_face = {position + component.near_clip * component.forward, component.forward},
+      .top_face = {position, cross(component.right, forward_far - component.up * half_v_side)},
+      .bottom_face = {position, cross(forward_far + component.up * half_v_side, component.right)},
+      .right_face = {position, cross(forward_far - component.right * half_h_side, component.up)},
+      .left_face = {position, cross(component.up, forward_far + component.right * half_h_side)},
+      .far_face = {position + forward_far, -component.forward},
+      .near_face = {position + component.near_clip * component.forward, component.forward},
   };
 
   frustum.init();
@@ -67,7 +68,8 @@ Frustum Camera::get_frustum(const CameraComponent& component, const glm::vec3& p
   return frustum;
 }
 
-RayCast Camera::get_screen_ray(const CameraComponent& component, const glm::vec2& screen_pos, const glm::vec2& screen_size) {
+RayCast
+Camera::get_screen_ray(const CameraComponent& component, const glm::vec2& screen_pos, const glm::vec2& screen_size) {
   const glm::mat4 view_proj_inverse = inverse(component.matrices.projection_matrix * component.matrices.view_matrix);
 
   float screen_x = screen_pos.x / screen_size.x;

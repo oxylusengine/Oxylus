@@ -1,28 +1,27 @@
 #pragma once
 
-#include "Assets/PBRMaterial.hpp"
-#include "Assets/SpriteMaterial.hpp"
+#include <flecs.h>
+
+#include "Asset/AssetManager.hpp"
+#include "Core/UUID.hpp"
 #include "EditorPanel.hpp"
-#include "Scene/Entity.hpp"
 
 namespace ox {
+struct Material;
+class Scene;
 class InspectorPanel : public EditorPanel {
 public:
   InspectorPanel();
 
   void on_render(vuk::Extent3D extent, vuk::Format format) override;
 
-  static void draw_pbr_material_properties(Shared<PBRMaterial>& material);
-  static void draw_sprite_material_properties(Shared<SpriteMaterial>& material);
+  static void draw_material_properties(Material* material, const UUID& material_uuid, flecs::entity load_event);
 
 private:
-  void draw_components(Entity entity);
+  void draw_components(flecs::entity entity);
+  void draw_asset_info(Asset* asset);
 
-  template <typename Component>
-  static void draw_add_component(entt::registry& reg, Entity entity, const char* name);
-
-  Entity selected_entity = entt::null;
-  Scene* context;
-  bool debug_mode = false;
+  Scene* _scene;
+  bool _rename_entity = false;
 };
 } // namespace ox

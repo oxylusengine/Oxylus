@@ -13,7 +13,8 @@ struct Particle {
   float life_remaining = 0.0f;
 };
 
-template <typename T> struct OverLifetimeModule {
+template <typename T>
+struct OverLifetimeModule {
   T start;
   T end;
   bool enabled = false;
@@ -21,12 +22,11 @@ template <typename T> struct OverLifetimeModule {
   OverLifetimeModule() : start(), end() {}
   OverLifetimeModule(const T& start_, const T& end_) : start(start_), end(end_) {}
 
-  T evaluate(float factor) {
-    return glm::lerp(end, start, factor);
-  }
+  T evaluate(float factor) { return glm::lerp(end, start, factor); }
 };
 
-template <typename T> struct BySpeedModule {
+template <typename T>
+struct BySpeedModule {
   T start;
   T end;
   float min_speed = 0.0f;
@@ -73,7 +73,7 @@ struct ParticleProperties {
   OverLifetimeModule<glm::vec3> rotation_over_lifetime;
   BySpeedModule<glm::vec3> rotation_by_speed;
 
-  Shared<Texture> texture = nullptr;
+  std::shared_ptr<Texture> texture = nullptr;
 };
 
 class ParticleSystem {
@@ -104,4 +104,4 @@ private:
   uint32_t active_particle_count = 0;
   bool playing = false;
 };
-}
+} // namespace ox

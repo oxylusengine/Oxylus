@@ -14,18 +14,10 @@ using TaskFunction = enki::TaskSetFunction;
 
 class TaskScheduler : public ESystem {
 public:
-  TaskScheduler() = default;
+  auto init() -> std::expected<void, std::string> override;
+  auto deinit() -> std::expected<void, std::string> override;
 
-  void init() override;
-  void deinit() override;
-
-  Unique<enki::TaskScheduler>& get_underlying() { return task_scheduler; }
-
-  template <typename func>
-  void add_task(func function) {
-    const enki::TaskSetFunction f = [function](enki::TaskSetPartition, uint32_t) mutable { function(); };
-    task_scheduler->AddTaskSetToPipe(task_sets.emplace_back(create_unique<TaskSet>(f)).get());
-  }
+  std::unique_ptr<enki::TaskScheduler>& get_underlying() { return task_scheduler; }
 
   void schedule_task(ITaskSet* set) const { task_scheduler->AddTaskSetToPipe(set); }
 
@@ -36,7 +28,7 @@ public:
   void wait_for_all();
 
 private:
-  Unique<enki::TaskScheduler> task_scheduler;
-  std::vector<Unique<TaskSet>> task_sets = {};
+  std::unique_ptr<enki::TaskScheduler> task_scheduler;
+  std::vector<std::unique_ptr<TaskSet>> task_sets = {};
 };
 } // namespace ox

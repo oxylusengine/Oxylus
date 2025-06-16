@@ -1,10 +1,8 @@
 ﻿#include "CVars.hpp"
 
-#include <entt/core/hashed_string.hpp>
-
 namespace ox {
-float* CVarSystem::get_float_cvar(const uint32_t hash) {
-  OX_SCOPED_ZONE;
+float* CVarSystem::get_float_cvar(const usize hash) {
+  ZoneScoped;
   const CVarParameter* par = get_cvar(hash);
   if (!par) {
     return nullptr;
@@ -12,8 +10,8 @@ float* CVarSystem::get_float_cvar(const uint32_t hash) {
   return &float_cvars[par->array_index].current;
 }
 
-int32_t* CVarSystem::get_int_cvar(const uint32_t hash) {
-  OX_SCOPED_ZONE;
+int32_t* CVarSystem::get_int_cvar(const usize hash) {
+  ZoneScoped;
   const CVarParameter* par = get_cvar(hash);
   if (!par) {
     return nullptr;
@@ -21,8 +19,8 @@ int32_t* CVarSystem::get_int_cvar(const uint32_t hash) {
   return &int_cvars[par->array_index].current;
 }
 
-std::string* CVarSystem::get_string_cvar(const uint32_t hash) {
-  OX_SCOPED_ZONE;
+std::string* CVarSystem::get_string_cvar(const usize hash) {
+  ZoneScoped;
   const CVarParameter* par = get_cvar(hash);
   if (!par) {
     return nullptr;
@@ -30,13 +28,12 @@ std::string* CVarSystem::get_string_cvar(const uint32_t hash) {
   return &string_cvars[par->array_index].current;
 }
 
-
 CVarSystem* CVarSystem::get() {
   static CVarSystem cvar_sys{};
   return &cvar_sys;
 }
 
-CVarParameter* CVarSystem::get_cvar(const uint32_t hash) {
+CVarParameter* CVarSystem::get_cvar(const usize hash) {
   std::shared_lock lock(mutex_);
 
   if (saved_cvars.contains(hash))
@@ -45,25 +42,28 @@ CVarParameter* CVarSystem::get_cvar(const uint32_t hash) {
   return nullptr;
 }
 
-void CVarSystem::set_float_cvar(const uint32_t hash, const float value) {
+void CVarSystem::set_float_cvar(const usize hash, const float value) {
   const CVarParameter* cvar = get_cvar(hash);
   if (cvar)
     float_cvars[cvar->array_index].current = value;
 }
 
-void CVarSystem::set_int_cvar(const uint32_t hash, const int32_t value) {
+void CVarSystem::set_int_cvar(const usize hash, const int32_t value) {
   const CVarParameter* cvar = get_cvar(hash);
   if (cvar)
     int_cvars[cvar->array_index].current = value;
 }
 
-void CVarSystem::set_string_cvar(const uint32_t hash, const char* value) {
+void CVarSystem::set_string_cvar(const usize hash, const char* value) {
   const CVarParameter* cvar = get_cvar(hash);
   if (cvar)
     string_cvars[cvar->array_index].current = value;
 }
 
-CVarParameter* CVarSystem::create_float_cvar(const char* name, const char* description, const float default_value, const float current_value) {
+CVarParameter* CVarSystem::create_float_cvar(const char* name,
+                                             const char* description,
+                                             const float default_value,
+                                             const float current_value) {
   std::unique_lock lock(mutex_);
   CVarParameter* param = init_cvar(name, description);
 
@@ -74,7 +74,10 @@ CVarParameter* CVarSystem::create_float_cvar(const char* name, const char* descr
   return param;
 }
 
-CVarParameter* CVarSystem::create_int_cvar(const char* name, const char* description, const int32_t default_value, const int32_t current_value) {
+CVarParameter* CVarSystem::create_int_cvar(const char* name,
+                                           const char* description,
+                                           const int32_t default_value,
+                                           const int32_t current_value) {
   std::unique_lock lock(mutex_);
   CVarParameter* param = init_cvar(name, description);
 
@@ -85,7 +88,10 @@ CVarParameter* CVarSystem::create_int_cvar(const char* name, const char* descrip
   return param;
 }
 
-CVarParameter* CVarSystem::create_string_cvar(const char* name, const char* description, const char* default_value, const char* current_value) {
+CVarParameter* CVarSystem::create_string_cvar(const char* name,
+                                              const char* description,
+                                              const char* default_value,
+                                              const char* current_value) {
   std::unique_lock lock(mutex_);
   CVarParameter* param = init_cvar(name, description);
 
@@ -97,45 +103,42 @@ CVarParameter* CVarSystem::create_string_cvar(const char* name, const char* desc
 }
 
 CVarParameter* CVarSystem::init_cvar(const char* name, const char* description) {
-  const uint32_t namehash = entt::hashed_string(name);
-  return saved_cvars.emplace(namehash, create_unique<CVarParameter>(CVarParameter({}, {}, {}, name, description))).first->second.get();
+  const std::hash<std::string> hasher = {};
+  const auto name_str = std::string(name);
+  const usize namehash = hasher(name_str);
+  return saved_cvars.emplace(namehash, std::make_unique<CVarParameter>(CVarParameter({}, {}, {}, name, description)))
+      .first->second.get();
 }
 
-AutoCVar_Float::AutoCVar_Float(const char* name, const char* description, const float default_value, const CVarFlags flags) {
+AutoCVar_Float::AutoCVar_Float(const char* name,
+                               const char* description,
+                               const float default_value,
+                               const CVarFlags flags) {
   CVarParameter* cvar = CVarSystem::get()->create_float_cvar(name, description, default_value, default_value);
   cvar->flags = flags;
   index = cvar->array_index;
 }
 
-float AutoCVar_Float::get() const {
-  return CVarSystem::get()->float_cvars.at(index).current;
-}
+float AutoCVar_Float::get() const { return CVarSystem::get()->float_cvars.at(index).current; }
 
-float* AutoCVar_Float::get_ptr() const {
-  return &CVarSystem::get()->float_cvars[index].current;
-}
+float* AutoCVar_Float::get_ptr() const { return &CVarSystem::get()->float_cvars[index].current; }
 
-void AutoCVar_Float::set(const float val) const {
-  CVarSystem::get()->float_cvars.at(index).current = val;
-}
+void AutoCVar_Float::set(const float val) const { CVarSystem::get()->float_cvars.at(index).current = val; }
 
-AutoCVar_Int::AutoCVar_Int(const char* name, const char* description, const int32_t default_value, const CVarFlags flags) {
+AutoCVar_Int::AutoCVar_Int(const char* name,
+                           const char* description,
+                           const int32_t default_value,
+                           const CVarFlags flags) {
   CVarParameter* cvar = CVarSystem::get()->create_int_cvar(name, description, default_value, default_value);
   cvar->flags = flags;
   index = cvar->array_index;
 }
 
-int32_t AutoCVar_Int::get() const {
-  return CVarSystem::get()->int_cvars.at(index).current;
-}
+int32_t AutoCVar_Int::get() const { return CVarSystem::get()->int_cvars.at(index).current; }
 
-int32_t* AutoCVar_Int::get_ptr() const {
-  return &CVarSystem::get()->int_cvars.at(index).current;
-}
+int32_t* AutoCVar_Int::get_ptr() const { return &CVarSystem::get()->int_cvars.at(index).current; }
 
-void AutoCVar_Int::set(const int32_t val) const {
-  CVarSystem::get()->int_cvars.at(index).current = val;
-}
+void AutoCVar_Int::set(const int32_t val) const { CVarSystem::get()->int_cvars.at(index).current = val; }
 
 void AutoCVar_Int::toggle() const {
   const bool enabled = get() != 0;
@@ -143,17 +146,16 @@ void AutoCVar_Int::toggle() const {
   set(enabled ? 0 : 1);
 }
 
-AutoCVar_String::AutoCVar_String(const char* name, const char* description, const char* default_value, const CVarFlags flags) {
+AutoCVar_String::AutoCVar_String(const char* name,
+                                 const char* description,
+                                 const char* default_value,
+                                 const CVarFlags flags) {
   CVarParameter* cvar = CVarSystem::get()->create_string_cvar(name, description, default_value, default_value);
   cvar->flags = flags;
   index = cvar->array_index;
 }
 
-std::string AutoCVar_String::get() const {
-  return CVarSystem::get()->string_cvars.at(index).current;
-};
+std::string AutoCVar_String::get() const { return CVarSystem::get()->string_cvars.at(index).current; };
 
-void AutoCVar_String::set(std::string&& val) const {
-  CVarSystem::get()->string_cvars.at(index).current = val;
-}
-}
+void AutoCVar_String::set(std::string&& val) const { CVarSystem::get()->string_cvars.at(index).current = val; }
+} // namespace ox

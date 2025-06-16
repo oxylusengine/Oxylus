@@ -5,5 +5,5 @@ class state;
 }
 
 namespace ox::LuaBindings {
-void bind_audio(const Shared<sol::state>& state);
+void bind_audio(const std::shared_ptr<sol::state>& state);
 }

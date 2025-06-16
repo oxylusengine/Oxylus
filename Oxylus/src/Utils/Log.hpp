@@ -40,6 +40,8 @@ public:
 #define OX_CHECK_LE(a, b, ...) CHECK_LE_F(a, b, ##__VA_ARGS__)
 #define OX_CHECK_GE(a, b, ...) CHECK_GE_F(a, b, ##__VA_ARGS__)
 
+#define OX_UNIMPLEMENTED(func, ...) LOG_F(ERROR, "Unimplemented: {} " __VA_ARGS__, #func)
+
 #ifndef OX_DEBUG
   #define OX_DISABLE_DEBUG_BREAKS
 #endif

@@ -1,33 +1,22 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
 #include <filesystem>
-#include <stack>
-#include <vector>
-
 #include <imgui.h>
 #include <mutex>
-
-#include <ankerl/unordered_dense.h>
-
-#include "EditorPanel.hpp"
+#include <stack>
+#include <vector>
+#include <vuk/Types.hpp>
+#include <vuk/Value.hpp>
 
 #include "Core/Base.hpp"
+#include "EditorPanel.hpp"
+#include "ThumbnailRenderPipeline.hpp"
 
 namespace ox {
 class Texture;
 
-enum class FileType {
-  Unknown = 0,
-  Scene,
-  Prefab,
-  Shader,
-  Texture,
-  Cubemap,
-  Model,
-  Audio,
-  Material,
-  Script
-};
+enum class FileType { Unknown = 0, Directory, Meta, Scene, Prefab, Shader, Texture, Mesh, Audio, Script, Material };
 
 class ContentPanel : public EditorPanel {
 public:
@@ -47,12 +36,15 @@ public:
   void invalidate();
 
 private:
-  std::pair<bool, uint32_t> directory_tree_view_recursive(const std::filesystem::path& path, uint32_t* count, int* selectionMask, ImGuiTreeNodeFlags flags);
+  std::pair<bool, uint32_t> directory_tree_view_recursive(const std::filesystem::path& path,
+                                                          uint32_t* count,
+                                                          int* selectionMask,
+                                                          ImGuiTreeNodeFlags flags);
   void render_header();
   void render_side_view();
   void render_body(bool grid);
   void update_directory_entries(const std::filesystem::path& directory);
-  void refresh() { update_directory_entries(m_current_directory); }
+  void refresh() { update_directory_entries(_current_directory); }
 
   void draw_context_menu_items(const std::filesystem::path& context, bool isDir);
 
@@ -61,7 +53,7 @@ private:
     std::string file_path;
     std::string extension;
     std::filesystem::directory_entry directory_entry;
-    Shared<Texture> thumbnail = nullptr;
+    std::shared_ptr<Texture> thumbnail = nullptr;
     bool is_directory = false;
 
     FileType type;
@@ -69,20 +61,23 @@ private:
     ImVec4 file_type_indicator_color;
   };
 
-  std::filesystem::path m_assets_directory;
-  std::filesystem::path m_current_directory;
-  std::stack<std::filesystem::path> m_back_stack;
-  std::vector<File> m_directory_entries;
-  std::mutex m_directory_mutex;
-  uint32_t m_currently_visible_items_tree_view = 0;
-  float thumbnail_max_limit = 256.0f;
-  float thumbnail_size_grid_limit = 96.0f; // lower values than this will switch to grid view
+  std::filesystem::path _assets_directory;
+  std::filesystem::path _current_directory;
+  std::stack<std::filesystem::path> _back_stack;
+  std::vector<File> _directory_entries;
+  std::mutex _directory_mutex;
+  u32 _currently_visible_items_tree_view = 0;
+  f32 thumbnail_max_limit = 256.0f;
+  f32 thumbnail_size_grid_limit = 96.0f; // lower values than this will switch to grid view
   ImGuiTextFilter m_filter;
-  float m_elapsed_time = 0.0f;
+  f32 _elapsed_time = 0.0f;
 
-  ankerl::unordered_dense::map<std::string, Shared<Texture>> thumbnail_cache;
+  bool mesh_thumbnails_enabled = false;
+  ankerl::unordered_dense::map<std::string, std::shared_ptr<Texture>> thumbnail_cache_textures;
+  ankerl::unordered_dense::map<std::string, vuk::ImageAttachment> thumbnail_cache_meshes;
+  ankerl::unordered_dense::map<std::string, std::unique_ptr<ThumbnailRenderPipeline>> thumbnail_render_pipeline_cache;
 
-  Shared<Texture> _white_texture;
-  std::filesystem::path m_directory_to_delete;
+  std::shared_ptr<Texture> _white_texture;
+  std::filesystem::path _directory_to_delete;
 };
-}
+} // namespace ox
