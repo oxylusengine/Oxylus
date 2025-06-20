@@ -200,7 +200,7 @@ auto EasyRenderPipeline::init(VkContext& vk_context) -> void {
       [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) dst, VUK_BA(vuk::eComputeRead) atmos) {
         cmd_list.bind_compute_pipeline("sky_transmittance_pipeline")
             .bind_image(0, 0, dst)
-            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(atmos->device_address))
+            .bind_buffer(0, 1, atmos)
             .dispatch_invocations_per_pixel(dst);
 
         return std::make_tuple(dst, atmos);
@@ -218,7 +218,7 @@ auto EasyRenderPipeline::init(VkContext& vk_context) -> void {
             .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
             .bind_image(0, 1, sky_transmittance_lut)
             .bind_image(0, 2, sky_multiscatter_lut)
-            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(atmos->device_address))
+            .bind_buffer(0, 3, atmos)
             .dispatch_invocations_per_pixel(sky_multiscatter_lut);
 
         return std::make_tuple(sky_transmittance_lut, sky_multiscatter_lut, atmos);
@@ -443,16 +443,13 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
                                  VUK_BA(vuk::eComputeRead) camera) {
           cmd_list //
               .bind_compute_pipeline("cull_meshlets")
-              .push_constants(vuk::ShaderStageFlagBits::eCompute,
-                              0,
-                              PushConstants(cull_triangles_cmd->device_address,
-                                            visible_meshlet_instances_indices->device_address,
-                                            meshlet_instances->device_address,
-                                            transforms_->device_address,
-                                            meshes->device_address,
-                                            camera->device_address,
-                                            meshlet_instance_count,
-                                            cull_flags))
+              .bind_buffer(0, 0, cull_triangles_cmd)
+              .bind_buffer(0, 1, camera)
+              .bind_buffer(0, 2, visible_meshlet_instances_indices)
+              .bind_buffer(0, 3, meshlet_instances)
+              .bind_buffer(0, 4, meshes)
+              .bind_buffer(0, 5, transforms_)
+              .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(meshlet_instance_count, cull_flags))
               .dispatch((meshlet_instance_count + Mesh::MAX_MESHLET_INDICES - 1) / Mesh::MAX_MESHLET_INDICES);
           return std::make_tuple(
               cull_triangles_cmd, visible_meshlet_instances_indices, meshlet_instances, transforms_, meshes, camera);
@@ -488,16 +485,14 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
            VUK_BA(vuk::eComputeWrite) camera) {
           cmd_list //
               .bind_compute_pipeline("cull_triangles")
-              .push_constants(vuk::ShaderStageFlagBits::eCompute,
-                              0,
-                              PushConstants(draw_indexed_cmd->device_address,
-                                            visible_meshlet_instances_indices->device_address,
-                                            reordered_indices->device_address,
-                                            meshlet_instances->device_address,
-                                            transforms_->device_address,
-                                            meshes->device_address,
-                                            camera->device_address,
-                                            cull_flags))
+              .bind_buffer(0, 0, draw_indexed_cmd)
+              .bind_buffer(0, 1, camera)
+              .bind_buffer(0, 2, visible_meshlet_instances_indices)
+              .bind_buffer(0, 3, reordered_indices)
+              .bind_buffer(0, 4, meshlet_instances)
+              .bind_buffer(0, 5, meshes)
+              .bind_buffer(0, 6, transforms_)
+              .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_flags)
               .dispatch_indirect(cull_triangles_cmd);
           return std::make_tuple(hiz,
                                  draw_indexed_cmd,
@@ -557,20 +552,21 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
              transforms_buffer_value,
              meshes_buffer_value,
              material_buffer,
-             overdraw_attachment) = vuk::make_pass( //
+             overdraw_attachment) = vuk::make_pass(   //
         "vis encode",
-        [&descriptor_set = *this->descriptor_set_01](vuk::CommandBuffer& cmd_list,
-                                                     VUK_BA(vuk::eIndirectRead) triangle_indirect,
-                                                     VUK_BA(vuk::eIndexRead) index_buffer,
-                                                     VUK_IA(vuk::eColorWrite) visbuffer,
-                                                     VUK_IA(vuk::eDepthStencilRW) depth,
-                                                     VUK_BA(vuk::eVertexRead) camera,
-                                                     VUK_BA(vuk::eVertexRead) visible_meshlet_instances_indices,
-                                                     VUK_BA(vuk::eVertexRead) meshlet_instances,
-                                                     VUK_BA(vuk::eVertexRead) transforms_,
-                                                     VUK_BA(vuk::eVertexRead) meshes,
-                                                     VUK_BA(vuk::eFragmentRead) materials,
-                                                     VUK_IA(vuk::eFragmentRW) overdraw) {
+        [&descriptor_set = *this->descriptor_set_01]( //
+            vuk::CommandBuffer& cmd_list,
+            VUK_BA(vuk::eIndirectRead) triangle_indirect,
+            VUK_BA(vuk::eIndexRead) index_buffer,
+            VUK_IA(vuk::eColorWrite) visbuffer,
+            VUK_IA(vuk::eDepthStencilRW) depth,
+            VUK_BA(vuk::eVertexRead) camera,
+            VUK_BA(vuk::eVertexRead) visible_meshlet_instances_indices,
+            VUK_BA(vuk::eVertexRead) meshlet_instances,
+            VUK_BA(vuk::eVertexRead) transforms_,
+            VUK_BA(vuk::eVertexRead) meshes,
+            VUK_BA(vuk::eFragmentRead) materials,
+            VUK_IA(vuk::eFragmentRW) overdraw) {
           cmd_list //
               .bind_graphics_pipeline("visbuffer_encode")
               .set_rasterization({.cullMode = vuk::CullModeFlagBits::eBack})
@@ -820,10 +816,9 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
                 .bind_image(0, 6, normal)
                 .bind_image(0, 7, emissive)
                 .bind_image(0, 8, metallic_roughness_occlusion)
-                .push_constants(
-                    vuk::ShaderStageFlagBits::eFragment,
-                    0,
-                    PushConstants(atmosphere_->device_address, sun_->device_address, camera->device_address))
+                .bind_buffer(0, 9, atmosphere_)
+                .bind_buffer(0, 10, sun_)
+                .bind_buffer(0, 11, camera)
                 .draw(3, 1, 0, 0);
             return std::make_tuple(dst, atmosphere_, sun_, camera, sky_transmittance_lut, sky_multiscatter_lut, depth);
           });
@@ -1004,9 +999,9 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
               .bind_image(0, 0, sky_transmittance_lut)
               .bind_image(0, 1, sky_multiscatter_lut)
               .bind_image(0, 2, sky_view_lut)
-              .push_constants(vuk::ShaderStageFlagBits::eCompute,
-                              0,
-                              PushConstants(atmosphere_->device_address, sun_->device_address, camera->device_address))
+              .bind_buffer(0, 3, atmosphere_)
+              .bind_buffer(0, 4, sun_)
+              .bind_buffer(0, 5, camera)
               .dispatch_invocations_per_pixel(sky_view_lut);
 
           return std::make_tuple(sky_view_lut, sky_transmittance_lut, sky_multiscatter_lut, atmosphere_, sun_, camera);
@@ -1035,9 +1030,9 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
               .bind_image(0, 0, sky_transmittance_lut)
               .bind_image(0, 1, sky_multiscatter_lut)
               .bind_image(0, 2, sky_aerial_perspective_lut)
-              .push_constants(vuk::ShaderStageFlagBits::eCompute,
-                              0,
-                              PushConstants(atmosphere_->device_address, sun_->device_address, camera->device_address))
+              .bind_buffer(0, 3, atmosphere_)
+              .bind_buffer(0, 4, sun_)
+              .bind_buffer(0, 5, camera)
               .dispatch_invocations_per_pixel(sky_aerial_perspective_lut);
 
           return std::make_tuple(sky_aerial_perspective_lut, sky_transmittance_lut, atmosphere_, sun_, camera);
@@ -1083,9 +1078,9 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
               .bind_image(0, 1, sky_aerial_perspective_lut)
               .bind_image(0, 2, sky_view_lut)
               .bind_image(0, 3, depth)
-              .push_constants(vuk::ShaderStageFlagBits::eFragment,
-                              0,
-                              PushConstants(atmosphere_->device_address, sun_->device_address, camera->device_address))
+              .bind_buffer(0, 4, atmosphere_)
+              .bind_buffer(0, 5, sun_)
+              .bind_buffer(0, 6, camera)
               .draw(3, 1, 0, 0);
 
           return std::make_tuple(dst, depth, camera);
