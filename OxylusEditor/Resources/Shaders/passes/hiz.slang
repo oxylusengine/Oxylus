@@ -19,8 +19,8 @@ import gpu;
 [[vk::binding(6)]]  StorageImage2D<f32> dst_mip_3;
 [[vk::binding(7)]]  StorageImage2D<f32> dst_mip_4;
 [[vk::binding(8)]]  StorageImage2D<f32> dst_mip_5;
-[[vk::binding(9)]]  globallycoherent StorageImage2D<f32> dst_mip_6;
-[[vk::binding(10)]]  StorageImage2D<f32> dst_mip_7;
+[[vk::binding(9)]]  StorageImage2D<f32> dst_mip_6;
+[[vk::binding(10)]] StorageImage2D<f32> dst_mip_7;
 [[vk::binding(11)]] StorageImage2D<f32> dst_mip_8;
 [[vk::binding(12)]] StorageImage2D<f32> dst_mip_9;
 [[vk::binding(13)]] StorageImage2D<f32> dst_mip_10;
@@ -28,7 +28,6 @@ import gpu;
 [[vk::binding(15)]] StorageImage2D<f32> dst_mip_12;
 
 struct PushConstants {
-    u32x2 extent;
     u32 mip_count;
     u32 work_group_count;
     f32x2x2 transform_z;
@@ -63,10 +62,10 @@ func unswizzle_16x16(u32 i) -> u32x2 {
 }
 
 func transform_z(f32x4 zs) -> f32x4 {
-    float2 z0 = mul(C.transform_z, float2(zs.x, 1.0));
-    float2 z1 = mul(C.transform_z, float2(zs.y, 1.0));
-    float2 z2 = mul(C.transform_z, float2(zs.z, 1.0));
-    float2 z3 = mul(C.transform_z, float2(zs.w, 1.0));
+    let z0 = mul(C.transform_z, float2(zs.x, 1.0));
+    let z1 = mul(C.transform_z, float2(zs.y, 1.0));
+    let z2 = mul(C.transform_z, float2(zs.z, 1.0));
+    let z3 = mul(C.transform_z, float2(zs.w, 1.0));
     return f32x4(z0.x, z1.x, z2.x, z3.x) / f32x4(z0.y, z1.y, z2.y, z3.y);
 }
 
@@ -79,7 +78,7 @@ func reduce(f32x4 v) -> f32 {
 }
 
 func store(u32x2 texel, u32 mip, f32 v) -> void {
-    get_mip_image(mip).store(texel, v);
+    get_mip_image(mip).store(texel, v, mip == 6 ? MemoryScope::QueueFamily : MemoryScope::Device);
 }
 
 func store_2x2(u32x2 p, u32 mip, f32x4 v) -> void {
@@ -90,7 +89,10 @@ func store_2x2(u32x2 p, u32 mip, f32x4 v) -> void {
 }
 
 func load(u32x2 texel) -> f32 {
-    let inv_extent = 1.0 / f32x2(C.extent);
+    u32x2 extent;
+    i32 _;
+    src_image.GetDimensions(0, extent.x, extent.y, _);
+    let inv_extent = 1.0 / f32x2(extent);
     f32x2 uv = f32x2(texel) * inv_extent + inv_extent;
     return src_image.sample_mip(sampler, uv, 0);
 }
@@ -112,10 +114,10 @@ func load_4x4(u32x2 p) -> f32x4x4 {
 }
 
 func load_mid_2x2(u32x2 p) -> f32x4 {
-    let x = dst_mip_6.load(p + i32x2(0, 0));
-    let y = dst_mip_6.load(p + i32x2(1, 0));
-    let z = dst_mip_6.load(p + i32x2(0, 1));
-    let w = dst_mip_6.load(p + i32x2(1, 1));
+    let x = dst_mip_6.load(p + i32x2(0, 0), MemoryScope.QueueFamily);
+    let y = dst_mip_6.load(p + i32x2(1, 0), MemoryScope.QueueFamily);
+    let z = dst_mip_6.load(p + i32x2(0, 1), MemoryScope.QueueFamily);
+    let w = dst_mip_6.load(p + i32x2(1, 1), MemoryScope.QueueFamily);
     return f32x4(x, y, z, w);
 }
 
@@ -138,9 +140,10 @@ func reduce_mip(f32x4x4 v, u32x2 p, u32 mip) -> f32 {
 }
 
 func reduce_mip_simd(u32x2 p, u32 local_id, u32 mip, f32 d) -> f32 {
-    var horiz = QuadReadAcrossX(d);
-    var vert = QuadReadAcrossY(d);
-    var diag = QuadReadAcrossDiagonal(d);
+    let quad = WaveGetLaneIndex() &  (~0x3);
+    var horiz = WaveReadLaneAt(d, quad | 1);
+    var vert = WaveReadLaneAt(d, quad | 2);
+    var diag = WaveReadLaneAt(d, quad | 3);
     store(p, mip, d);
 
     if (C.mip_count > mip + 1) {
@@ -149,8 +152,9 @@ func reduce_mip_simd(u32x2 p, u32 local_id, u32 mip, f32 d) -> f32 {
         horiz = com::wave_shuffle_xor(d, 0b1000);
         vert = com::wave_shuffle_xor(d, 0b0100);
         diag = com::wave_shuffle_xor(d, 0b1100);
-        if ((local_id & 3) == 0)
+        if ((local_id & 3) == 0) {
             store(p, mip + 1, d);
+        }
     }
 
     return reduce(f32x4(d, horiz, vert, diag));
@@ -214,7 +218,7 @@ func cs_main(u32x2 group_id : SV_GroupID) -> void {
     }
 
     com::control_barrier(com::memory_order_acq_rel,
-        com::MemoryScope::Workgroup, com::MemoryScope::Queue,
+        MemoryScope::Workgroup, MemoryScope::QueueFamily,
         com::MemoryLocation::Image | com::MemoryLocation::Workgroup);
     
     if (local_id == 0) {

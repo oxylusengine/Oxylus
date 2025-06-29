@@ -13,5 +13,4 @@ public func wave_shuffle_xor<T : __BuiltinType>(T value, u32 mask) -> T {
         OpGroupNonUniformShuffleXor $$T result Subgroup $value $mask;
     };
 }
-
 }

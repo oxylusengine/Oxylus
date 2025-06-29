@@ -226,6 +226,7 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   vk12_features.shaderInt8 = true;
   vk12_features.vulkanMemoryModelDeviceScope = true;
   vk12_features.shaderSubgroupExtendedTypes = true;
+  vk12_features.samplerFilterMinmax = true;
 
   VkPhysicalDeviceVulkan13Features vk13_features = {};
   vk13_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;

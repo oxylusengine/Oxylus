@@ -39,17 +39,17 @@ public f32x3 downsample(Image2D<f32x4> src, SamplerState sampler, f32x2 uv, floa
 }
 
 public f32x3 upsample(Image2D<f32x4> src, SamplerState sampler, f32x2 uv) {
-  f32x3 result = src.Sample(sampler, uv, i32x2(-1, 1)).rgb * 1.0;
-  result += src.Sample(sampler, uv, i32x2( 0, 1)).rgb * 2.0;
-  result += src.Sample(sampler, uv, i32x2( 1, 1)).rgb * 1.0;
+  f32x3 result = src.SampleLevel(sampler, uv, 0, i32x2(-1, 1)).rgb * 1.0;
+  result += src.SampleLevel(sampler, uv, 0, i32x2( 0, 1)).rgb * 2.0;
+  result += src.SampleLevel(sampler, uv, 0, i32x2( 1, 1)).rgb * 1.0;
 
-  result += src.Sample(sampler, uv, i32x2(-1, 0)).rgb * 2.0;
-  result += src.Sample(sampler, uv).rgb * 4.0;
-  result += src.Sample(sampler, uv, i32x2( 1, 0)).rgb * 2.0;
+  result += src.SampleLevel(sampler, uv, 0, i32x2(-1, 0)).rgb * 2.0;
+  result += src.SampleLevel(sampler, uv, 0).rgb * 4.0;
+  result += src.SampleLevel(sampler, uv, 0, i32x2( 1, 0)).rgb * 2.0;
 
-  result += src.Sample(sampler, uv, i32x2(-1, -1)).rgb * 1.0;
-  result += src.Sample(sampler, uv, i32x2( 0, -1)).rgb * 2.0;
-  result += src.Sample(sampler, uv, i32x2( 1, -1)).rgb * 1.0;
+  result += src.SampleLevel(sampler, uv, 0, i32x2(-1, -1)).rgb * 1.0;
+  result += src.SampleLevel(sampler, uv, 0, i32x2( 0, -1)).rgb * 2.0;
+  result += src.SampleLevel(sampler, uv, 0, i32x2( 1, -1)).rgb * 1.0;
 
   return result / 16.0;
 }

@@ -35,8 +35,8 @@ void Camera::update(CameraComponent& component, const glm::vec2& screen_size) {
   if (component.projection == CameraComponent::Projection::Perspective) {
     component.matrices.projection_matrix = glm::perspective(glm::radians(component.fov),
                                                             component.aspect,
-                                                            component.far_clip,
-                                                            component.near_clip); // reversed-z
+                                                            component.near_clip,
+                                                            component.far_clip); // reversed-z
   } else {
     component.matrices.projection_matrix = glm::ortho(-component.aspect * component.zoom,
                                                       component.aspect * component.zoom,
