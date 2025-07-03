@@ -24,6 +24,7 @@ public enum DebugView : i32 {
   Metallic,
   Roughness,
   Occlusion,
+  HiZ,
 };
 
 [[Flags]]

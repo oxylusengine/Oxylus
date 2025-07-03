@@ -23,15 +23,6 @@ public enum MemoryLocation : u32 {
     Image     = 0x800,
 };
 
-public enum MemoryScope : u32 {
-    CrossDevice = 0,
-    Device = 1,
-    Workgroup = 2,
-    Subgroup = 3,
-    Invocation = 4,
-    Queue = 5,
-};
-
 func spirv_type_checks<T>() -> void {
     if (__type_equals<T, f32>()) {
         spirv_asm {

@@ -70,14 +70,14 @@ public extension<T : ITexelElement> Image3D<T> {
 // StorageImage ────────────────────────────────────────────────────────────
 public typealias StorageImage<T : ITexelElement, S : __ITextureShape, let F : ImageFormat> = _Texture<T, S, 0, 0, 0, 1, 0, 0, F>;
 public extension<T : ITexelElement, S : __ITextureShape, let F : ImageFormat> StorageImage<T, S, F> {
-    public func load(vector<u32, S.dimensions> texel, com::MemoryScope scope = com::MemoryScope::Device) -> T {
+    public func load(vector<u32, S.dimensions> texel, MemoryScope scope = MemoryScope::Device) -> T {
         return spirv_asm {
             %sampled:__sampledType(T) = OpImageRead $this $texel NonPrivateTexel|MakeTexelVisible $scope;
             __truncate $$T result __sampledType(T) %sampled;
         };
     }
     
-    public func store(vector<u32, S.dimensions> texel, T value, com::MemoryScope scope = com::MemoryScope::Device) -> void {
+    public func store(vector<u32, S.dimensions> texel, T value, MemoryScope scope = MemoryScope::Device) -> void {
         spirv_asm {
             OpImageWrite $this $texel __convertTexel(value) NonPrivateTexel|MakeTexelAvailable $scope;
         };

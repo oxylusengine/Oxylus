@@ -6,7 +6,7 @@ import gpu;
 import passes.bloom.bloom;
 
 struct ShaderParameters {
-  StorageImage2D<f32x4, ImageFormat::RGBA16F> result_image;
+  StorageImage2D<f32x4, ImageFormat::R11F_G11F_B10F> result_image;
   Image2D<f32x4> source_image_upsample;
   Image2D<f32x4> source_image_downsample;
   SamplerState sampler;
@@ -27,6 +27,6 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID, uniform ParameterBlock<Shade
   f32x2 uv = (img_coords + 0.5) / img_size;
 
   f32x3 result = upsample(params.source_image_upsample, params.sampler, uv) 
-                + params.source_image_downsample.Sample(params.sampler, uv).rgb;
+                + params.source_image_downsample.SampleLevel(params.sampler, uv, 0).rgb;
   params.result_image.Store(img_coords, f32x4(result, 1.0));
 }

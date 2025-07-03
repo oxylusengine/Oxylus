@@ -27,7 +27,7 @@ App* create_application(const AppCommandLineArgs& args) {
       .icon = icon,
       .width = 1720,
       .height = 900,
-#ifdef OX_PLATFORM_LINUX
+#if 0
       .flags = WindowFlag::Centered,
 #else
       .flags = WindowFlag::Centered | WindowFlag::Resizable,
