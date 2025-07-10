@@ -17,7 +17,10 @@ inline AutoCVar_Int cvar_enable_debug_renderer("rr.debug_renderer", "enable debu
 inline AutoCVar_Int cvar_draw_meshlet_aabbs("rr.draw_meshlet_aabbs", "draw meshlet aabbs", 0);
 inline AutoCVar_Int cvar_freeze_culling_frustum("rr.freeze_culling_frustum", "freeze culling frustum", 0);
 inline AutoCVar_Int cvar_draw_camera_frustum("rr.draw_camera_frustum", "draw camera frustum", 0);
-inline AutoCVar_Int cvar_debug_view("rr.debug_view", "0: None, 1: Triangles, 2: Meshlets, 3: Overdraw, 4: Albdeo, 5: Normal, 6: Emissive, 7: Metallic, 8: Roughness, 9: Occlusion", 0);
+inline AutoCVar_Int cvar_debug_view("rr.debug_view", "0: None, 1: Triangles, 2: Meshlets, 3: Overdraw, 4: Albdeo, 5: Normal, 6: Emissive, 7: Metallic, 8: Roughness, 9: Occlusion, 10: HiZ", 0);
+inline AutoCVar_Int cvar_culling_frustum("rr.culling_frustum", "Frustum Culling", 1);
+inline AutoCVar_Int cvar_culling_occlusion("rr.culling_occlusion", "Occlusion culling", 1);
+inline AutoCVar_Int cvar_culling_triangle("rr.culling_triangle", "Triangle culling", 1);
 
 inline AutoCVar_Int cvar_reload_render_pipeline("rr.reload_render_pipeline", "reload current scene's render pipeline", 0);
 

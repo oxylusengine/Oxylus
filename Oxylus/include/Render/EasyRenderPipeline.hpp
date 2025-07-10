@@ -171,6 +171,7 @@ private:
   vuk::Unique<vuk::Buffer> transforms_buffer = vuk::Unique<vuk::Buffer>();
 
   GPU::CameraData camera_data = {};
+  GPU::CameraData previous_camera_data = {};
 
   bool meshes_dirty = false;
   std::vector<GPU::Mesh> gpu_meshes = {};

@@ -24,6 +24,7 @@ public enum DebugView : i32 {
   Metallic,
   Roughness,
   Occlusion,
+  HiZ,
 };
 
 [[Flags]]
@@ -31,6 +32,8 @@ public enum CullFlags : u32 {
     MeshletFrustum,
     TriangleBackFace,
     MicroTriangles,
+    OcclusionCulling,
+    TriangleCulling,
 };
 
 public enum MaterialFlag : u32 {

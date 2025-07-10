@@ -6,7 +6,7 @@ import gpu;
 import passes.bloom.bloom;
 
 struct ShaderParameters {
-  StorageImage2D<f32x4, ImageFormat::RGBA16F> result_image;
+  StorageImage2D<f32x4, ImageFormat::R11F_G11F_B10F> result_image;
   Image2D<f32x4> source_image;
   SamplerState sampler;
 };

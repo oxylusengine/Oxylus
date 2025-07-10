@@ -21,6 +21,7 @@ enum class DebugView : i32 {
   Metallic,
   Roughness,
   Occlusion,
+  HiZ,
 
   Count,
 };
@@ -29,9 +30,12 @@ enum class CullFlags : u32 {
   MeshletFrustum = 1 << 0,
   TriangleBackFace = 1 << 1,
   MicroTriangles = 1 << 2,
+  OcclusionCulling = 1 << 3,
+  TriangleCulling = 1 << 4,
 
-  All = MeshletFrustum | TriangleBackFace | MicroTriangles,
+  All = MeshletFrustum | TriangleBackFace | MicroTriangles | OcclusionCulling | TriangleCulling,
 };
+consteval void enable_bitmask(CullFlags);
 
 struct Meshlet {
   alignas(4) u32 vertex_offset = 0;

@@ -295,7 +295,11 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
       {.name = slang::CompilerOptionName::DisableWarning,
        .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "41017"}},
       {.name = slang::CompilerOptionName::Capability,
-       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "vk_mem_model"}}};
+       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "vk_mem_model"}},
+      {.name = slang::CompilerOptionName::Capability,
+       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvGroupNonUniformBallot"}},
+      {.name = slang::CompilerOptionName::Capability,
+       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvGroupNonUniformShuffle"}}};
   std::vector<slang::PreprocessorMacroDesc> macros;
   macros.reserve(info.definitions.size());
   for (const auto& [first, second] : info.definitions) {
