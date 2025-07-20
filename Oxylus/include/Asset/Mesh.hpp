@@ -17,7 +17,6 @@ struct Mesh {
     u32 material_index = 0;
     u32 meshlet_count = 0;
     u32 meshlet_offset = 0;
-    u32 local_triangle_indices_offset = 0;
     u32 vertex_count = 0;
     u32 vertex_offset = 0;
     u32 index_count = 0;
