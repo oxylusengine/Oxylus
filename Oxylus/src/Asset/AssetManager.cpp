@@ -828,6 +828,14 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
   }
 
   //  ── MESH PROCESSING ─────────────────────────────────────────────────
+  auto lod0_indices = std::vector<Mesh::Index>(gltf_callbacks.indices.size());
+  auto lod0_vertices = std::move(gltf_callbacks.vertex_positions);
+  auto lod0_normals = std::move(gltf_callbacks.vertex_normals);
+  auto lod0_texcoords = std::move(gltf_callbacks.vertex_texcoords);
+
+  meshopt_optimizeVertexCache(
+      lod0_indices.data(), gltf_callbacks.indices.data(), lod0_indices.size(), lod0_vertices.size());
+
   std::vector<glm::vec3> model_vertex_positions = {};
   std::vector<u32> model_indices = {};
 
@@ -845,11 +853,9 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
       auto triangle_offset = model_local_triangle_indices.size();
       auto meshlet_offset = model_meshlets.size();
 
-      auto raw_indices = std::span(gltf_callbacks.indices.data() + primitive.index_offset, primitive.index_count);
-      auto raw_vertex_positions = std::span(gltf_callbacks.vertex_positions.data() + primitive.vertex_offset,
-                                            primitive.vertex_count);
-      auto raw_vertex_normals = std::span(gltf_callbacks.vertex_normals.data() + primitive.vertex_offset,
-                                          primitive.vertex_count);
+      auto raw_indices = std::span(lod0_indices.data() + primitive.index_offset, primitive.index_count);
+      auto raw_vertex_positions = std::span(lod0_vertices.data() + primitive.vertex_offset, primitive.vertex_count);
+      auto raw_vertex_normals = std::span(lod0_normals.data() + primitive.vertex_offset, primitive.vertex_count);
 
       auto meshlets = std::vector<GPU::Meshlet>();
       auto meshlet_bounds = std::vector<GPU::MeshletBounds>();
@@ -931,14 +937,12 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
                                                          ox::size_bytes(model_vertex_positions));
   context.wait_on(context.upload_staging(std::span(model_vertex_positions), *mesh->vertex_positions));
 
-  mesh->vertex_normals = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                       ox::size_bytes(gltf_callbacks.vertex_normals));
-  context.wait_on(context.upload_staging(std::span(gltf_callbacks.vertex_normals), *mesh->vertex_normals));
+  mesh->vertex_normals = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, ox::size_bytes(lod0_normals));
+  context.wait_on(context.upload_staging(std::span(lod0_normals), *mesh->vertex_normals));
 
-  if (!gltf_callbacks.vertex_texcoords.empty()) {
-    mesh->texture_coords = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                         ox::size_bytes(gltf_callbacks.vertex_texcoords));
-    context.wait_on(context.upload_staging(std::span(gltf_callbacks.vertex_texcoords), *mesh->texture_coords));
+  if (!lod0_texcoords.empty()) {
+    mesh->texture_coords = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, ox::size_bytes(lod0_texcoords));
+    context.wait_on(context.upload_staging(std::span(lod0_texcoords), *mesh->texture_coords));
   }
 
   mesh->meshlets = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, ox::size_bytes(model_meshlets));
