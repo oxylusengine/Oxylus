@@ -27,19 +27,31 @@ add_requires("fastgltf v0.8.0", { system = false, debug = is_mode("debug") })
 
 add_requires("meshoptimizer v0.22")
 
-add_requires("fmt 11.1.4", { configs = {
-    header_only = true
-}, system = false })
+local fmt_version = "11.2.0"
+local fmt_configs = { header_only = false, shared = false }
+add_requires("fmt " .. fmt_version, { configs = fmt_configs, system = false })
 
 add_requires("loguru v2.1.0", { configs = {
     fmt = true,
 }, system = false })
+add_requireconfs("fmt", "loguru.fmt", {
+    override = true,
+    version = fmt_version,
+    configs = fmt_configs,
+    system = false
+})
 
 add_requires("vk-bootstrap v1.4.307", { system = false, debug = is_mode("debug") })
 
-add_requires("vuk 2025.06.15", { configs = {
+add_requires("vuk 2025.07.09", { configs = {
     debug_allocations = false,
 }, debug = is_mode("debug") })
+add_requireconfs("fmt", "vuk.fmt", {
+    override = true,
+    version = fmt_version,
+    configs = fmt_configs,
+    system = false
+})
 
 add_requires("shader-slang v2025.12.1", { system = false })
 
@@ -84,3 +96,11 @@ add_requires("zstd v1.5.7", { system = false })
 add_requires("ktx v4.4.0", { system = false, debug = true })
 
 add_requires("simdutf v6.2.0")
+
+if has_config("tests") then
+    add_requires("gtest", { configs = {
+        main = true,
+        gmock = true,
+    } })
+end
+

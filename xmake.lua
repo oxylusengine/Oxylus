@@ -32,3 +32,6 @@ includes("xmake/toolchains.lua")
 
 includes("Oxylus")
 includes("OxylusEditor")
+if has_config("tests") then
+    includes("Oxylus/tests")
+end

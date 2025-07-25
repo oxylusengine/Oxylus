@@ -48,63 +48,73 @@ struct Job : ManagedObj {
 
 class JobTracker {
 public:
-  auto start_tracking() -> void { tracking_enabled.store(true); }
-  auto stop_tracking() -> void { tracking_enabled.store(false); }
-  auto clear_tracked() -> void {
-    std::unique_lock lock(mutex);
-    jobs.clear();
-  }
-
-  auto register_job(Arc<Job> job) -> void {
-    if (!tracking_enabled.load())
-      return;
-
-    std::unique_lock lock(mutex);
-    jobs[job.get()] = {job->name, false, {}};
-  }
-
-  auto mark_completed(const Job* job) -> void {
-    if (!tracking_enabled.load())
-      return;
-
-    std::unique_lock lock(mutex);
-    if (auto it = jobs.find(job); it != jobs.end()) {
-      it->second.is_completed = true;
-      it->second.completion_time = std::chrono::steady_clock::now();
-    }
-  }
-
-  auto get_status() const -> std::vector<std::pair<std::string, bool>> {
-    std::shared_lock lock(mutex);
-    std::vector<std::pair<std::string, bool>> result;
-
-    for (const auto& [_, record] : jobs) {
-      result.emplace_back(record.name, !record.is_completed);
-    }
-
-    return result;
-  }
-
-  auto cleanup_old(std::chrono::seconds max_age = std::chrono::seconds(2)) -> void {
-    if (!tracking_enabled.load())
-      return;
-
-    std::unique_lock lock(mutex);
-    const auto now = std::chrono::steady_clock::now();
-
-    std::erase_if(jobs, [&](const auto& item) {
-      const auto& record = item.second;
-      return record.is_completed && (now - record.completion_time) > max_age;
-    });
-  }
-
-private:
   struct JobRecord {
     std::string name;
     bool is_completed;
     std::chrono::steady_clock::time_point completion_time;
   };
 
+  auto start_tracking(this JobTracker& self) -> void { self.tracking_enabled.store(true); }
+  auto stop_tracking(this JobTracker& self) -> void { self.tracking_enabled.store(false); }
+  auto clear_tracked(this JobTracker& self) -> void {
+    std::unique_lock lock(self.mutex);
+    self.jobs.clear();
+  }
+
+  auto register_job(this JobTracker& self, Arc<Job> job) -> void {
+    if (!self.tracking_enabled.load())
+      return;
+
+    std::unique_lock lock(self.mutex);
+    self.jobs[job.get()] = {job->name, false, {}};
+  }
+
+  auto mark_completed(this JobTracker& self, const Job* job) -> void {
+    if (!self.tracking_enabled.load())
+      return;
+
+    std::unique_lock lock(self.mutex);
+    if (auto it = self.jobs.find(job); it != self.jobs.end()) {
+      it->second.is_completed = true;
+      it->second.completion_time = std::chrono::steady_clock::now();
+    }
+  }
+
+  auto get_status(this const JobTracker& self) -> std::vector<std::pair<std::string, bool>> {
+    std::shared_lock lock(self.mutex);
+    std::vector<std::pair<std::string, bool>> result;
+
+    for (const auto& [_, record] : self.jobs) {
+      result.emplace_back(record.name, !record.is_completed);
+    }
+
+    return result;
+  }
+
+  auto cleanup_old(this JobTracker& self, std::chrono::seconds max_age = std::chrono::seconds(2)) -> void {
+    if (!self.tracking_enabled.load())
+      return;
+
+    std::unique_lock lock(self.mutex);
+    const auto now = std::chrono::steady_clock::now();
+
+    std::erase_if(self.jobs, [&](const auto& item) {
+      const auto& record = item.second;
+      return record.is_completed && (now - record.completion_time) > max_age;
+    });
+  }
+
+  auto find_job(this JobTracker& self, const std::string& name) -> std::optional<std::reference_wrapper<JobRecord>> {
+    std::unique_lock lock(self.mutex);
+    for (auto& [job_ptr, record] : self.jobs) {
+      if (record.name == name) {
+        return std::ref(record);
+      }
+    }
+    return std::nullopt;
+  }
+
+private:
   mutable std::shared_mutex mutex;
   std::unordered_map<const Job*, JobRecord> jobs;
   std::atomic<bool> tracking_enabled{false};

@@ -8,3 +8,10 @@ option("lua_bindings")
     set_showmenu(true)
     set_description("Enable Lua bindings")
 
+option("tests")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Enable tests")
+option_end()
+
+
