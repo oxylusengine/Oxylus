@@ -7,6 +7,7 @@
   #include "Scripting/LuaAssetManagerBindings.hpp"
   #include "Scripting/LuaAudioBindings.hpp"
   #include "Scripting/LuaDebugBindings.hpp"
+  #include "Scripting/LuaFlecsBindings.hpp"
   #include "Scripting/LuaInputBindings.hpp"
   #include "Scripting/LuaMathBindings.hpp"
   #include "Scripting/LuaPhysicsBindings.hpp"
@@ -16,25 +17,26 @@
 #endif
 
 namespace ox {
-
 auto LuaManager::init() -> std::expected<void, std::string> {
   ZoneScoped;
   _state = std::make_unique<sol::state>();
   _state->open_libraries(
       sol::lib::base, sol::lib::package, sol::lib::math, sol::lib::table, sol::lib::os, sol::lib::string);
 
+#define BIND(type) bind<type>(#type, _state.get());
+
 #ifdef OX_LUA_BINDINGS
   bind_log();
-  LuaBindings::bind_application(_state.get());
-  LuaBindings::bind_math(_state.get());
-  LuaBindings::bind_scene(_state.get());
-  LuaBindings::bind_asset_manager(_state.get());
-  LuaBindings::bind_debug_renderer(_state.get());
-  LuaBindings::bind_renderer(_state.get());
-  LuaBindings::bind_input(_state.get());
-  LuaBindings::bind_audio(_state.get());
-  LuaBindings::bind_physics(_state.get());
-  LuaBindings::bind_ui(_state.get());
+  BIND(AppBinding);
+  BIND(AssetManagerBinding);
+  BIND(AudioBinding);
+  BIND(DebugBinding);
+  BIND(FlecsBinding);
+  BIND(MathBinding);
+  BIND(PhysicsBinding);
+  BIND(RendererBinding);
+  BIND(SceneBinding);
+  BIND(UIBinding);
 #endif
 
   return {};

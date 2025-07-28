@@ -1,9 +1,10 @@
 ﻿#pragma once
 
-namespace sol {
-class state;
-}
+#include "Scripting/LuaBinding.hpp"
 
-namespace ox::LuaBindings {
-void bind_physics(sol::state* state);
-}
+namespace ox {
+class PhysicsBinding : public LuaBinding {
+public:
+  auto bind(sol::state* state) -> void override;
+};
+} // namespace ox

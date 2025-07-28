@@ -41,7 +41,7 @@ private:
   void draw_font_asset(UUID* uuid, Asset* asset);
   void draw_scene_asset(UUID* uuid, Asset* asset);
   void draw_audio_asset(UUID* uuid, Asset* asset);
-  void draw_script_asset(UUID* uuid, Asset* asset);
+  bool draw_script_asset(UUID* uuid, Asset* asset);
 
 
 };

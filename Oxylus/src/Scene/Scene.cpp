@@ -134,7 +134,11 @@ auto Scene::json_to_entity(Scene& self,
       return {{}, false};
     }
 
-    OX_CHECK_EQ(self.component_db.is_component_known(component_id), true);
+    if (!self.component_db.is_component_known(component_id)) {
+      OX_LOG_WARN("Skipping unkown component {}:{}", component_name, (u64)component_id);
+      continue;
+    }
+
     e.add(component_id);
     ECS::ComponentWrapper component(e, component_id);
     component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
@@ -348,7 +352,6 @@ auto Scene::init(this Scene& self, const std::string& name, const std::shared_pt
         if (it.event() == flecs::OnAdd || it.event() == flecs::OnSet) {
           auto* asset_man = App::get_asset_manager();
           if (auto* script_asset = asset_man->get_script(c.script_uuid)) {
-            script_asset->bind_globals(scene, it.entity(i), it.delta_time());
             script_asset->on_add(scene, it.entity(i));
           }
         } else if (it.event() == flecs::OnRemove) {
@@ -557,6 +560,8 @@ auto Scene::runtime_start(this Scene& self) -> void {
 
   self.running = true;
 
+  self.run_deferred_functions();
+
   // Physics
   {
     ZoneNamedN(z, "Physics Start", true);
@@ -646,6 +651,8 @@ auto Scene::runtime_stop(this Scene& self) -> void {
 auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void {
   ZoneScoped;
 
+  self.run_deferred_functions();
+
   // TODO: Pass our delta_time?
   self.world.progress();
 
@@ -655,6 +662,23 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   if (RendererCVar::cvar_enable_physics_debug_renderer.get()) {
     auto physics = App::get_system<Physics>(EngineSystems::Physics);
     physics->debug_draw();
+  }
+}
+
+auto Scene::defer_function(this Scene& self, const std::function<void(Scene* scene)>& func) -> void {
+  ZoneScoped;
+
+  self.deferred_functions_.emplace_back(func);
+}
+
+auto Scene::run_deferred_functions(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (!self.deferred_functions_.empty()) {
+    for (auto& func : self.deferred_functions_) {
+      func(&self);
+    }
+    self.deferred_functions_.clear();
   }
 }
 

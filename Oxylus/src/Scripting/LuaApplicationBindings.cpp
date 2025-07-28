@@ -2,11 +2,6 @@
 
 #include <sol/state.hpp>
 
-#include "Core/App.hpp"
-#include "Scripting/LuaHelpers.hpp"
-
-namespace ox::LuaBindings {
-void bind_application(sol::state* state) {
-
-}
-} // namespace ox::LuaBindings
+namespace ox {
+auto AppBinding::bind(sol::state* state) -> void {}
+} // namespace ox

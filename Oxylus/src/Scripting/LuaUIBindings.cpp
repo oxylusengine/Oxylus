@@ -4,10 +4,10 @@
 
 #include "Scripting/LuaImGuiBindings.hpp"
 
-namespace ox::LuaBindings {
-void bind_ui(sol::state* state) {
+namespace ox {
+auto UIBinding::bind(sol::state* state) -> void {
   LuaImGuiBindings::init(state);
 
   // TODO: the rest of the api
 }
-} // namespace ox::LuaBindings
+} // namespace ox

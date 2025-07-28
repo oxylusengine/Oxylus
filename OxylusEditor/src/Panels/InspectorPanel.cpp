@@ -253,9 +253,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
   }
 
   for (auto& component : components) {
-    if (!entity.has(component))
-      continue;
-    auto* entity_component = entity.get_mut(component);
+    auto* entity_component = entity.try_get_mut(component);
     if (!entity_component) {
       continue;
     }
@@ -328,6 +326,12 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                   f32 old_v = *v;
                   if (UI::property(member_name.data(), v))
                     undo_redo_system->execute_command<PropertyChangeCommand<f32>>(v, old_v, *v, member_name.data());
+                  *v = degree_helper(member_name.data(), *v);
+                },
+                [&](f64* v) {
+                  f64 old_v = *v;
+                  if (UI::property(member_name.data(), v))
+                    undo_redo_system->execute_command<PropertyChangeCommand<f64>>(v, old_v, *v, member_name.data());
                   *v = degree_helper(member_name.data(), *v);
                 },
                 [&](i32* v) {
@@ -514,6 +518,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                                   asset_man->unload_asset(*uuid);
                                 }
                                 *uuid = asset.uuid;
+                                entity.modified(component);
                               }
                             }
                             ImGui::PopID();
@@ -551,6 +556,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                         }
                         if (asset_man->load_asset(imported_asset)) {
                           *uuid = imported_asset;
+                          entity.modified(component);
                         }
                       }
                     }
@@ -593,7 +599,8 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                         break;
                       }
                       case AssetType::Script: {
-                        draw_script_asset(uuid, asset);
+                        if (draw_script_asset(uuid, asset))
+                          entity.modified(component);
                         break;
                       }
                     }
@@ -777,14 +784,14 @@ void InspectorPanel::draw_audio_asset(UUID* uuid, Asset* asset) {
   ImGui::Spacing();
 }
 
-void InspectorPanel::draw_script_asset(UUID* uuid, Asset* asset) {
+bool InspectorPanel::draw_script_asset(UUID* uuid, Asset* asset) {
   ZoneScoped;
 
   auto* asset_man = App::get_asset_manager();
 
   auto* script_asset = asset_man->get_script(*uuid);
   if (!script_asset)
-    return;
+    return false;
 
   auto script_path = script_asset->get_path();
   UI::begin_properties(ImGuiTableFlags_SizingFixedFit);
@@ -792,8 +799,10 @@ void InspectorPanel::draw_script_asset(UUID* uuid, Asset* asset) {
   UI::input_text("Path:", &script_path, ImGuiInputTextFlags_ReadOnly);
   UI::end_properties();
   auto rld_str = fmt::format("{} Reload", ICON_MDI_REFRESH);
-  if (UI::button(rld_str.c_str()))
+  if (UI::button(rld_str.c_str())) {
     script_asset->reload();
+    return true;
+  }
   ImGui::SameLine();
   auto rmv_str = fmt::format("{} Remove", ICON_MDI_TRASH_CAN);
   if (UI::button(rmv_str.c_str())) {
@@ -801,5 +810,7 @@ void InspectorPanel::draw_script_asset(UUID* uuid, Asset* asset) {
       asset_man->unload_asset(*uuid);
     *uuid = UUID(nullptr);
   }
+
+  return false;
 }
 } // namespace ox

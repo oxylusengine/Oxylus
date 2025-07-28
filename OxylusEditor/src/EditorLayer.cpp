@@ -389,6 +389,8 @@ void EditorLayer::load_default_scene(const std::shared_ptr<Scene>& scene) {
   sun.get_mut<TransformComponent>().rotation.y = glm::radians(45.f);
   sun.set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 10.f});
   sun.add<AtmosphereComponent>();
+  const auto camera = scene->create_entity("camera");
+  camera.add<CameraComponent>();
 }
 
 void EditorLayer::save_scene() {

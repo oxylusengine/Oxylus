@@ -7,8 +7,8 @@
 #include "Core/Keycodes.hpp"
 #include "Scripting/LuaHelpers.hpp"
 
-namespace ox::LuaBindings {
-void bind_input(sol::state* state) {
+namespace ox {
+auto InputBinding::bind(sol::state* state) -> void {
   ZoneScoped;
   auto input = state->create_table("Input");
 
@@ -137,4 +137,4 @@ void bind_input(sol::state* state) {
   };
   state->new_enum<MouseCode, true>("MouseButton", mouse_items);
 }
-} // namespace ox::LuaBindings
+} // namespace ox

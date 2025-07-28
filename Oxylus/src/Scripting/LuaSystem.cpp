@@ -36,6 +36,9 @@ auto LuaSystem::init_script(this LuaSystem& self, const std::string& path) -> vo
   }
 
   const auto state = App::get_system<LuaManager>(EngineSystems::LuaManager)->get_state();
+
+  if (self.environment)
+    self.environment.reset();
   self.environment = std::make_unique<sol::environment>(*state, sol::create, state->globals());
 
   const auto load_file_result = state->script_file(self.file_path, *self.environment, sol::script_pass_on_error);
@@ -80,7 +83,8 @@ auto LuaSystem::init_script(this LuaSystem& self, const std::string& path) -> vo
   if (!self.on_scene_update_func->valid())
     self.on_scene_update_func.reset();
 
-  self.on_scene_fixed_update_func = std::make_unique<sol::protected_function>((*self.environment)["on_scene_fixed_update"]);
+  self.on_scene_fixed_update_func = std::make_unique<sol::protected_function>(
+      (*self.environment)["on_scene_fixed_update"]);
   if (!self.on_scene_fixed_update_func->valid())
     self.on_scene_fixed_update_func.reset();
 
@@ -120,8 +124,8 @@ auto LuaSystem::reset_functions(this LuaSystem& self) -> void {
 
 auto LuaSystem::bind_globals(this const LuaSystem& self, Scene* scene, flecs::entity entity, f32 delta_time) -> void {
   (*self.environment)["scene"] = scene;
-  (*self.environment)["world"] = std::ref(scene->world);
-  (*self.environment)["entity"] = entity;
+  (*self.environment)["world"] = &scene->world;
+  (*self.environment)["entity"] = &entity;
   (*self.environment)["delta_time"] = delta_time;
 }
 

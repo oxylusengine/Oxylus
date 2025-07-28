@@ -75,6 +75,8 @@ public:
   auto runtime_stop(this Scene& self) -> void;
   auto runtime_update(this Scene& self, const Timestep& delta_time) -> void;
 
+  auto defer_function(this Scene& self, const std::function<void(Scene* scene)>& func) -> void;
+
   auto disable_phases(const std::vector<flecs::entity_t>& phases) -> void;
   auto enable_all_phases() -> void;
 
@@ -133,6 +135,9 @@ private:
 
   auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
   auto remove_transform(this Scene& self, flecs::entity entity) -> void;
+
+  std::vector<std::function<void(Scene* scene)>> deferred_functions_ = {};
+  auto run_deferred_functions(this Scene& self) -> void;
 
   // Renderer
   std::shared_ptr<RenderPipeline> _render_pipeline = nullptr;
