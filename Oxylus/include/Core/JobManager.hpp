@@ -160,7 +160,7 @@ public:
       std::advance(chunk_end, std::min(chunk_size, static_cast<usize>(std::distance(chunk_start, end))));
       global_index += std::distance(chunk_start, chunk_end);
 
-      self.submit(Job::create([=, func = std::forward_like<Func>(func)] {
+      self.submit(Job::create([=] {
         usize local_index = chunk_start_index;
         for (auto it = chunk_start; it != chunk_end; ++it, ++local_index) {
           std::invoke(func, *it, local_index);
@@ -208,9 +208,9 @@ public:
       holder->active_jobs.fetch_add(1, std::memory_order_relaxed);
       token->pending_jobs.fetch_add(1, std::memory_order_relaxed);
 
-      self.submit(Job::create([&self, token, holder, start, end, func = std::forward<Func>(func)]() {
+      self.submit(Job::create([&self, token, holder, start, end, cb = std::forward<Func>(func)]() {
         for (size_t i = start; i < end; ++i) {
-          func(holder->data[i], i);
+          cb(holder->data[i], i);
         }
 
         if (holder->active_jobs.fetch_sub(1, std::memory_order_release) == 1) {

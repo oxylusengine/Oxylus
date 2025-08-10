@@ -124,9 +124,9 @@ auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) ->
 
   self.tracker.register_job(job);
 
-  job->task = [original_task = std::move(job->task), job_ptr = job.get(), &tracker = self.tracker]() {
+  job->task = [original_task = std::move(job->task), job_ptr = job.get(), &t = self.tracker]() {
     original_task();
-    tracker.mark_completed(job_ptr);
+    t.mark_completed(job_ptr);
   };
 
   {
