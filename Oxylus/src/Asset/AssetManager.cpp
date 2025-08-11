@@ -92,10 +92,10 @@ auto read_material_asset_meta(simdjson::ondemand::value& doc, Material* mat) -> 
   return true;
 }
 
-auto write_mesh_asset_meta(JsonWriter& writer,
-                           std::span<UUID> embedded_texture_uuids,
-                           std::span<UUID> material_uuids,
-                           std::span<Material> materials) -> bool {
+auto write_model_asset_meta(JsonWriter& writer,
+                            std::span<UUID> embedded_texture_uuids,
+                            std::span<UUID> material_uuids,
+                            std::span<Material> materials) -> bool {
   ZoneScoped;
 
   writer["embedded_textures"].begin_array();
@@ -213,7 +213,7 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
   switch (type) {
     case AssetType::None    : return "None";
     case AssetType::Shader  : return "Shader";
-    case AssetType::Mesh    : return "Mesh";
+    case AssetType::Model   : return "Model";
     case AssetType::Texture : return "Texture";
     case AssetType::Material: return "Material";
     case AssetType::Font    : return "Font";
@@ -256,7 +256,7 @@ auto AssetManager::import_asset(const std::string& path) -> UUID {
     }
     case AssetFileType::GLB:
     case AssetFileType::GLTF: {
-      asset_type = AssetType::Mesh;
+      asset_type = AssetType::Model;
       break;
     }
     case AssetFileType::PNG:
@@ -289,8 +289,8 @@ auto AssetManager::import_asset(const std::string& path) -> UUID {
   begin_asset_meta(writer, uuid, asset_type);
 
   switch (asset_type) {
-    case AssetType::Mesh: {
-      auto gltf_model = GLTFMeshInfo::parse_info(path);
+    case AssetType::Model: {
+      auto gltf_model = GLTFModelInfo::parse_info(path);
       auto textures = std::vector<UUID>();
       auto embedded_textures = std::vector<UUID>();
       for (auto& v : gltf_model->textures) {
@@ -342,7 +342,7 @@ auto AssetManager::import_asset(const std::string& path) -> UUID {
         }
       }
 
-      write_mesh_asset_meta(writer, embedded_textures, material_uuids, materials);
+      write_model_asset_meta(writer, embedded_textures, material_uuids, materials);
     } break;
     case AssetType::Texture: {
       Texture texture = {};
@@ -471,8 +471,8 @@ auto AssetManager::export_asset(const UUID& uuid, const std::string& path) -> bo
         return false;
       }
     } break;
-    case AssetType::Mesh: {
-      if (!this->export_mesh(asset->uuid, writer, path)) {
+    case AssetType::Model: {
+      if (!this->export_model(asset->uuid, writer, path)) {
         return false;
       }
     } break;
@@ -505,18 +505,18 @@ auto AssetManager::export_texture(const UUID& uuid, JsonWriter& writer, const st
   return write_texture_asset_meta(writer, texture);
 }
 
-auto AssetManager::export_mesh(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
+auto AssetManager::export_model(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
   ZoneScoped;
 
-  auto* mesh = this->get_mesh(uuid);
-  OX_CHECK_NULL(mesh);
+  auto* model = this->get_model(uuid);
+  OX_CHECK_NULL(model);
 
-  auto materials = std::vector<Material>(mesh->materials.size());
-  for (const auto& [material_uuid, material] : std::views::zip(mesh->materials, materials)) {
+  auto materials = std::vector<Material>(model->materials.size());
+  for (const auto& [material_uuid, material] : std::views::zip(model->materials, materials)) {
     material = *this->get_material(material_uuid);
   }
 
-  return write_mesh_asset_meta(writer, mesh->embedded_textures, mesh->materials, materials);
+  return write_model_asset_meta(writer, model->embedded_textures, model->materials, materials);
 }
 
 auto AssetManager::export_scene(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
@@ -546,8 +546,8 @@ auto AssetManager::export_script(const UUID& uuid, JsonWriter& writer, const std
 auto AssetManager::load_asset(const UUID& uuid) -> bool {
   const auto* asset = this->get_asset(uuid);
   switch (asset->type) {
-    case AssetType::Mesh: {
-      return this->load_mesh(uuid);
+    case AssetType::Model: {
+      return this->load_model(uuid);
     }
     case AssetType::Texture: {
       return this->load_texture(uuid);
@@ -571,8 +571,8 @@ auto AssetManager::unload_asset(const UUID& uuid) -> bool {
   const auto* asset = this->get_asset(uuid);
   OX_CHECK_NULL(asset);
   switch (asset->type) {
-    case AssetType::Mesh: {
-      return this->unload_mesh(uuid);
+    case AssetType::Model: {
+      return this->unload_model(uuid);
     } break;
     case AssetType::Texture: {
       return this->unload_texture(uuid);
@@ -598,7 +598,7 @@ auto AssetManager::unload_asset(const UUID& uuid) -> bool {
   return false;
 }
 
-auto AssetManager::load_mesh(const UUID& uuid) -> bool {
+auto AssetManager::load_model(const UUID& uuid) -> bool {
   ZoneScoped;
 
   memory::ScopedStack stack;
@@ -613,8 +613,8 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
     return true;
   }
 
-  asset->mesh_id = mesh_map.create_slot();
-  auto* mesh = mesh_map.slot(asset->mesh_id);
+  asset->model_id = model_map.create_slot();
+  auto* model = model_map.slot(asset->model_id);
 
   std::string meta_path = asset->path + ".oxasset";
   auto meta_json = read_meta_file(meta_path);
@@ -662,19 +662,19 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
     }
 
     this->register_asset(material_uuid.value(), AssetType::Material, asset_path);
-    mesh->materials.emplace_back(material_uuid.value());
+    model->materials.emplace_back(material_uuid.value());
 
     auto& material = materials.emplace_back();
     read_material_data(&material, material_json.value_unsafe());
   }
 
   struct GLTFCallbacks {
-    Mesh* model = nullptr;
+    Model* model = nullptr;
 
     std::vector<glm::vec3> vertex_positions = {};
     std::vector<glm::vec3> vertex_normals = {};
     std::vector<glm::vec2> vertex_texcoords = {};
-    std::vector<Mesh::Index> indices = {};
+    std::vector<Model::Index> indices = {};
   };
   auto on_new_primitive = [](void* user_data,
                              u32 mesh_index,
@@ -724,9 +724,9 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
     info->vertex_texcoords[offset] = texcoord;
   };
 
-  auto on_materials_load = [mesh, materials, &texture_info_map](std::vector<GLTFMaterialInfo>& gltf_materials,
-                                                                std::vector<GLTFTextureInfo>& textures,
-                                                                std::vector<GLTFImageInfo>& images) {
+  auto on_materials_load = [model, materials, &texture_info_map](std::vector<GLTFMaterialInfo>& gltf_materials,
+                                                                 std::vector<GLTFTextureInfo>& textures,
+                                                                 std::vector<GLTFImageInfo>& images) {
     auto load_texture_bytes = [&textures, &images](u32 texture_index, TextureLoadInfo& inf) {
       if (auto& image_index = textures[texture_index].image_index; image_index.has_value()) {
         auto& image = images[image_index.value()];
@@ -753,7 +753,7 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
     auto* asset_man = app->get_asset_manager();
 
     for (const auto& [material_uuid, material, gltf_material] :
-         std::views::zip(mesh->materials, materials, gltf_materials)) {
+         std::views::zip(model->materials, materials, gltf_materials)) {
       if (auto texture_index = gltf_material.albedo_texture_index; texture_index.has_value()) {
         auto& info = texture_info_map[material.albedo_texture];
         load_texture_bytes(texture_index.value(), info);
@@ -783,15 +783,15 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
     }
   };
 
-  GLTFCallbacks gltf_callbacks = {.model = mesh};
-  auto gltf_model = GLTFMeshInfo::parse(asset_path,
-                                        {.user_data = &gltf_callbacks,
-                                         .on_new_primitive = on_new_primitive,
-                                         .on_access_index = on_access_index,
-                                         .on_access_position = on_access_position,
-                                         .on_access_normal = on_access_normal,
-                                         .on_access_texcoord = on_access_texcoord,
-                                         .on_materials_load = on_materials_load});
+  GLTFCallbacks gltf_callbacks = {.model = model};
+  auto gltf_model = GLTFModelInfo::parse(asset_path,
+                                         {.user_data = &gltf_callbacks,
+                                          .on_new_primitive = on_new_primitive,
+                                          .on_access_index = on_access_index,
+                                          .on_access_position = on_access_position,
+                                          .on_access_normal = on_access_normal,
+                                          .on_access_texcoord = on_access_texcoord,
+                                          .on_materials_load = on_materials_load});
   if (!gltf_model.has_value()) {
     OX_LOG_ERROR("Failed to parse Model '{}'!", asset_path);
     return false;
@@ -799,148 +799,288 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
 
   //  ── SCENE HIERARCHY ─────────────────────────────────────────────────
   for (const auto& node : gltf_model->nodes) {
-    mesh->nodes.push_back({.name = node.name,
-                           .child_indices = node.children,
-                           .mesh_index = node.mesh_index,
-                           .translation = node.translation,
-                           .rotation = node.rotation,
-                           .scale = node.scale});
+    model->nodes.push_back({.name = node.name,
+                            .child_indices = node.children,
+                            .mesh_index = node.mesh_index,
+                            .translation = node.translation,
+                            .rotation = node.rotation,
+                            .scale = node.scale});
   }
 
-  mesh->default_scene_index = gltf_model->defualt_scene_index.value_or(0_sz);
+  model->default_scene_index = gltf_model->defualt_scene_index.value_or(0_sz);
   for (const auto& scene : gltf_model->scenes) {
-    mesh->scenes.push_back({.name = scene.name, .node_indices = scene.node_indices});
-  }
-
-  //  ── MESH PROCESSING ─────────────────────────────────────────────────
-  std::vector<glm::vec3> model_vertex_positions = {};
-  std::vector<u32> model_indices = {};
-
-  std::vector<GPU::Meshlet> model_meshlets = {};
-  std::vector<GPU::MeshletBounds> model_meshlet_bounds = {};
-  std::vector<u8> model_local_triangle_indices = {};
-
-  for (const auto& gltf_mesh : mesh->meshes) {
-    for (auto primitive_index : gltf_mesh.primitive_indices) {
-      ZoneNamedN(z, "GPU Meshlet Generation", true);
-
-      auto& primitive = mesh->primitives[primitive_index];
-      auto vertex_offset = model_vertex_positions.size();
-      auto index_offset = model_indices.size();
-      auto triangle_offset = model_local_triangle_indices.size();
-      auto meshlet_offset = model_meshlets.size();
-
-      auto raw_indices = std::span(gltf_callbacks.indices.data() + primitive.index_offset, primitive.index_count);
-      auto raw_vertex_positions = std::span(gltf_callbacks.vertex_positions.data() + primitive.vertex_offset,
-                                            primitive.vertex_count);
-      auto raw_vertex_normals = std::span(gltf_callbacks.vertex_normals.data() + primitive.vertex_offset,
-                                          primitive.vertex_count);
-
-      auto meshlets = std::vector<GPU::Meshlet>();
-      auto meshlet_bounds = std::vector<GPU::MeshletBounds>();
-      auto meshlet_indices = std::vector<u32>();
-      auto local_triangle_indices = std::vector<u8>();
-      {
-        ZoneNamedN(z2, "Build Meshlets", true);
-        // Worst case count
-        auto max_meshlets = meshopt_buildMeshletsBound( //
-            raw_indices.size(),
-            Mesh::MAX_MESHLET_INDICES,
-            Mesh::MAX_MESHLET_PRIMITIVES);
-        auto raw_meshlets = std::vector<meshopt_Meshlet>(max_meshlets);
-        meshlet_indices.resize(max_meshlets * Mesh::MAX_MESHLET_INDICES);
-        local_triangle_indices.resize(max_meshlets * Mesh::MAX_MESHLET_PRIMITIVES * 3);
-
-        auto meshlet_count = meshopt_buildMeshlets( //
-            raw_meshlets.data(),
-            meshlet_indices.data(),
-            local_triangle_indices.data(),
-            raw_indices.data(),
-            raw_indices.size(),
-            reinterpret_cast<f32*>(raw_vertex_positions.data()),
-            raw_vertex_positions.size(),
-            sizeof(glm::vec3),
-            Mesh::MAX_MESHLET_INDICES,
-            Mesh::MAX_MESHLET_PRIMITIVES,
-            0.0);
-
-        // Trim meshlets from worst case to current case
-        raw_meshlets.resize(meshlet_count);
-        meshlets.resize(meshlet_count);
-        meshlet_bounds.resize(meshlet_count);
-        const auto& last_meshlet = raw_meshlets[meshlet_count - 1];
-        meshlet_indices.resize(last_meshlet.vertex_offset + last_meshlet.vertex_count);
-        local_triangle_indices.resize(last_meshlet.triangle_offset + ((last_meshlet.triangle_count * 3 + 3) & ~3_u32));
-
-        for (const auto& [raw_meshlet, meshlet, meshlet_aabb] :
-             std::views::zip(raw_meshlets, meshlets, meshlet_bounds)) {
-          // AABB computation
-          auto meshlet_bb_min = glm::vec3(std::numeric_limits<f32>::max());
-          auto meshlet_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
-          for (u32 i = 0; i < raw_meshlet.triangle_count * 3; i++) {
-            const auto& tri_pos = raw_vertex_positions
-                [meshlet_indices[raw_meshlet.vertex_offset + local_triangle_indices[raw_meshlet.triangle_offset + i]]];
-            meshlet_bb_min = glm::min(meshlet_bb_min, tri_pos);
-            meshlet_bb_max = glm::max(meshlet_bb_max, tri_pos);
-          }
-
-          meshlet.vertex_offset = static_cast<u32>(vertex_offset);
-          meshlet.index_offset = static_cast<u32>(index_offset + raw_meshlet.vertex_offset);
-          meshlet.triangle_offset = static_cast<u32>(triangle_offset + raw_meshlet.triangle_offset);
-          meshlet.triangle_count = raw_meshlet.triangle_count;
-          meshlet_aabb.aabb_min = meshlet_bb_min;
-          meshlet_aabb.aabb_max = meshlet_bb_max;
-        }
-
-        primitive.meshlet_count = static_cast<u32>(meshlet_count);
-        primitive.meshlet_offset = static_cast<u32>(meshlet_offset);
-        primitive.local_triangle_indices_offset = static_cast<u32>(triangle_offset);
-      }
-
-      std::ranges::move(raw_vertex_positions, std::back_inserter(model_vertex_positions));
-      std::ranges::move(meshlet_indices, std::back_inserter(model_indices));
-      std::ranges::move(meshlets, std::back_inserter(model_meshlets));
-      std::ranges::move(meshlet_bounds, std::back_inserter(model_meshlet_bounds));
-      std::ranges::move(local_triangle_indices, std::back_inserter(model_local_triangle_indices));
-    }
+    model->scenes.push_back({.name = scene.name, .node_indices = scene.node_indices});
   }
 
   auto& context = app->get_vkcontext();
 
-  mesh->indices_count = model_indices.size();
+  //  ── MESH PROCESSING ─────────────────────────────────────────────────
+  auto model_indices = std::move(gltf_callbacks.indices);
+  auto model_vertices = std::move(gltf_callbacks.vertex_positions);
+  auto model_normals = std::move(gltf_callbacks.vertex_normals);
+  auto model_texcoords = std::move(gltf_callbacks.vertex_texcoords);
 
-  mesh->indices = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, ox::size_bytes(model_indices));
-  context.wait_on(context.upload_staging(std::span(model_indices), *mesh->indices));
+  // for each model (aka gltf scene):
+  // - for each mesh:
+  // - - for each primitive:
+  // - - - for each lod:
+  // - - - - generate lods
+  // - - - - optimize and remap geometry
+  // - - - - calculate meshlets and bounds
+  //
+  for (const auto& mesh : model->meshes) {
+    for (auto primitive_index : mesh.primitive_indices) {
+      auto& primitive = model->primitives[primitive_index];
+      auto& gpu_mesh = model->gpu_meshes[primitive_index];
+      auto& gpu_mesh_buffer = model->gpu_mesh_buffers[primitive_index];
 
-  mesh->vertex_positions = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                         ox::size_bytes(model_vertex_positions));
-  context.wait_on(context.upload_staging(std::span(model_vertex_positions), *mesh->vertex_positions));
+      //  ── Geometry remapping ──────────────────────────────────────────────
+      auto primitive_indices = std::span(model_indices.data() + primitive.index_offset, primitive.index_count);
+      auto primitive_vertices = std::span(model_vertices.data() + primitive.vertex_offset, primitive.vertex_count);
+      auto primitive_normals = std::span(model_normals.data() + primitive.vertex_offset, primitive.vertex_count);
+      auto primitive_texcoords = std::span(model_texcoords.data() + primitive.vertex_offset, primitive.vertex_count);
 
-  mesh->vertex_normals = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                       ox::size_bytes(gltf_callbacks.vertex_normals));
-  context.wait_on(context.upload_staging(std::span(gltf_callbacks.vertex_normals), *mesh->vertex_normals));
+      auto remapped_vertices = std::vector<u32>(primitive_vertices.size());
+      auto vertex_count = meshopt_optimizeVertexFetchRemap(
+          remapped_vertices.data(), primitive_indices.data(), primitive_indices.size(), primitive.vertex_count);
 
-  if (!gltf_callbacks.vertex_texcoords.empty()) {
-    mesh->texture_coords = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                         ox::size_bytes(gltf_callbacks.vertex_texcoords));
-    context.wait_on(context.upload_staging(std::span(gltf_callbacks.vertex_texcoords), *mesh->texture_coords));
+      auto mesh_vertices = std::vector<glm::vec3>(vertex_count);
+      meshopt_remapVertexBuffer(mesh_vertices.data(),
+                                primitive_vertices.data(),
+                                primitive_vertices.size(),
+                                sizeof(glm::vec3),
+                                remapped_vertices.data());
+
+      auto mesh_normals = std::vector<glm::vec3>(vertex_count);
+      meshopt_remapVertexBuffer(mesh_normals.data(),
+                                primitive_normals.data(),
+                                primitive_normals.size(),
+                                sizeof(glm::vec3),
+                                remapped_vertices.data());
+
+      auto mesh_texcoords = std::vector<glm::vec2>();
+      if (!primitive_texcoords.empty()) {
+        mesh_texcoords.resize(vertex_count);
+        meshopt_remapVertexBuffer(mesh_texcoords.data(),
+                                  primitive_texcoords.data(),
+                                  primitive_texcoords.size(),
+                                  sizeof(glm::vec2),
+                                  remapped_vertices.data());
+      }
+
+      auto mesh_indices = std::vector<u32>(primitive.index_count);
+      meshopt_remapIndexBuffer(
+          mesh_indices.data(), primitive_indices.data(), primitive_indices.size(), remapped_vertices.data());
+
+      //  ── LOD generation ──────────────────────────────────────────────────
+
+      const auto mesh_upload_size = 0                               //
+                                    + ox::size_bytes(mesh_vertices) //
+                                    + ox::size_bytes(mesh_normals)  //
+                                    + ox::size_bytes(mesh_texcoords);
+      auto upload_size = mesh_upload_size;
+
+      std::pair<vuk::Value<vuk::Buffer>, u64> lod_cpu_buffers[GPU::Mesh::MAX_LODS] = {};
+      auto last_lod_indices = std::vector<u32>();
+      for (auto lod_index = 0_sz; lod_index < GPU::Mesh::MAX_LODS; lod_index++) {
+        ZoneNamedN(z, "GPU Meshlet Generation", true);
+
+        auto& cur_lod = gpu_mesh.lods[lod_index];
+
+        auto simplified_indices = std::vector<u32>();
+        if (lod_index == 0) {
+          simplified_indices = std::vector<u32>(mesh_indices.begin(), mesh_indices.end());
+        } else {
+          const auto& last_lod = gpu_mesh.lods[lod_index - 1];
+          auto lod_index_count = ((last_lod_indices.size() + 5_sz) / 6_sz) * 3_sz;
+          simplified_indices.resize(last_lod_indices.size(), 0_u32);
+          constexpr auto TARGET_ERROR = std::numeric_limits<f32>::max();
+          constexpr f32 NORMAL_WEIGHTS[] = {1.0f, 1.0f, 1.0f};
+
+          auto result_error = 0.0f;
+          auto result_index_count = meshopt_simplifyWithAttributes(simplified_indices.data(),
+                                                                   last_lod_indices.data(),
+                                                                   last_lod_indices.size(),
+                                                                   reinterpret_cast<const f32*>(mesh_vertices.data()),
+                                                                   mesh_vertices.size(),
+                                                                   sizeof(glm::vec3),
+                                                                   reinterpret_cast<const f32*>(mesh_normals.data()),
+                                                                   sizeof(glm::vec3),
+                                                                   NORMAL_WEIGHTS,
+                                                                   count_of(NORMAL_WEIGHTS),
+                                                                   nullptr,
+                                                                   lod_index_count,
+                                                                   TARGET_ERROR,
+                                                                   meshopt_SimplifyLockBorder,
+                                                                   &result_error);
+
+          cur_lod.error = last_lod.error + result_error;
+          if (result_index_count > (lod_index_count + lod_index_count / 2) || result_error > 0.5 ||
+              result_index_count < 6) {
+            // Error bound
+            break;
+          }
+
+          simplified_indices.resize(result_index_count);
+        }
+
+        gpu_mesh.lod_count += 1;
+        last_lod_indices = simplified_indices;
+
+        meshopt_optimizeVertexCache(
+            simplified_indices.data(), simplified_indices.data(), simplified_indices.size(), vertex_count);
+
+        // Worst case count
+        auto max_meshlet_count = meshopt_buildMeshletsBound(
+            simplified_indices.size(), Model::MAX_MESHLET_INDICES, Model::MAX_MESHLET_PRIMITIVES);
+        auto raw_meshlets = std::vector<meshopt_Meshlet>(max_meshlet_count);
+        auto indirect_vertex_indices = std::vector<u32>(max_meshlet_count * Model::MAX_MESHLET_INDICES);
+        auto local_triangle_indices = std::vector<u8>(max_meshlet_count * Model::MAX_MESHLET_PRIMITIVES * 3);
+
+        auto meshlet_count = meshopt_buildMeshlets(raw_meshlets.data(),
+                                                   indirect_vertex_indices.data(),
+                                                   local_triangle_indices.data(),
+                                                   simplified_indices.data(),
+                                                   simplified_indices.size(),
+                                                   reinterpret_cast<const f32*>(mesh_vertices.data()),
+                                                   mesh_vertices.size(),
+                                                   sizeof(glm::vec3),
+                                                   Model::MAX_MESHLET_INDICES,
+                                                   Model::MAX_MESHLET_PRIMITIVES,
+                                                   0.0);
+
+        // Trim meshlets from worst case to current case
+        raw_meshlets.resize(meshlet_count);
+        auto meshlets = std::vector<GPU::Meshlet>(meshlet_count);
+        const auto& last_meshlet = raw_meshlets[meshlet_count - 1];
+        indirect_vertex_indices.resize(last_meshlet.vertex_offset + last_meshlet.vertex_count);
+        local_triangle_indices.resize(last_meshlet.triangle_offset + ((last_meshlet.triangle_count * 3 + 3) & ~3_u32));
+
+        auto mesh_bb_min = glm::vec3(std::numeric_limits<f32>::max());
+        auto mesh_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
+        auto meshlet_bounds = std::vector<GPU::Bounds>(meshlet_count);
+        for (const auto& [raw_meshlet, meshlet, bounds] : std::views::zip(raw_meshlets, meshlets, meshlet_bounds)) {
+          // AABB computation
+          auto meshlet_bb_min = glm::vec3(std::numeric_limits<f32>::max());
+          auto meshlet_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
+          for (u32 i = 0; i < raw_meshlet.triangle_count * 3; i++) {
+            const auto& tri_pos =
+                mesh_vertices[indirect_vertex_indices[raw_meshlet.vertex_offset +
+                                                      local_triangle_indices[raw_meshlet.triangle_offset + i]]];
+            meshlet_bb_min = glm::min(meshlet_bb_min, tri_pos);
+            meshlet_bb_max = glm::max(meshlet_bb_max, tri_pos);
+          }
+
+          // Sphere and Cone computation
+          auto sphere_bounds = meshopt_computeMeshletBounds(&indirect_vertex_indices[raw_meshlet.vertex_offset],
+                                                            &local_triangle_indices[raw_meshlet.triangle_offset],
+                                                            raw_meshlet.triangle_count,
+                                                            reinterpret_cast<f32*>(mesh_vertices.data()),
+                                                            vertex_count,
+                                                            sizeof(glm::vec3));
+
+          meshlet.indirect_vertex_index_offset = raw_meshlet.vertex_offset;
+          meshlet.local_triangle_index_offset = raw_meshlet.triangle_offset;
+          meshlet.vertex_count = raw_meshlet.vertex_count;
+          meshlet.triangle_count = raw_meshlet.triangle_count;
+
+          bounds.aabb_center = (meshlet_bb_max + meshlet_bb_min) * 0.5f;
+          bounds.aabb_extent = meshlet_bb_max - meshlet_bb_min;
+          bounds.sphere_center = glm::make_vec3(sphere_bounds.center);
+          bounds.sphere_radius = sphere_bounds.radius;
+
+          mesh_bb_min = glm::min(mesh_bb_min, meshlet_bb_min);
+          mesh_bb_max = glm::max(mesh_bb_max, meshlet_bb_max);
+        }
+
+        gpu_mesh.bounds.aabb_center = (mesh_bb_max + mesh_bb_min) * 0.5f;
+        gpu_mesh.bounds.aabb_extent = mesh_bb_max - mesh_bb_min;
+
+        auto lod_upload_size = 0                                        //
+                               + ox::size_bytes(simplified_indices)     //
+                               + ox::size_bytes(meshlets)               //
+                               + ox::size_bytes(meshlet_bounds)         //
+                               + ox::size_bytes(local_triangle_indices) //
+                               + ox::size_bytes(indirect_vertex_indices);
+        auto cpu_lod_buffer = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, lod_upload_size);
+        auto cpu_lod_ptr = reinterpret_cast<u8*>(cpu_lod_buffer->mapped_ptr);
+
+        auto upload_offset = 0_u64;
+        cur_lod.indices = upload_offset;
+        std::memcpy(cpu_lod_ptr + upload_offset, simplified_indices.data(), ox::size_bytes(simplified_indices));
+        upload_offset += ox::size_bytes(simplified_indices);
+
+        cur_lod.meshlets = upload_offset;
+        std::memcpy(cpu_lod_ptr + upload_offset, meshlets.data(), ox::size_bytes(meshlets));
+        upload_offset += ox::size_bytes(meshlets);
+
+        cur_lod.meshlet_bounds = upload_offset;
+        std::memcpy(cpu_lod_ptr + upload_offset, meshlet_bounds.data(), ox::size_bytes(meshlet_bounds));
+        upload_offset += ox::size_bytes(meshlet_bounds);
+
+        cur_lod.local_triangle_indices = upload_offset;
+        std::memcpy(cpu_lod_ptr + upload_offset, local_triangle_indices.data(), ox::size_bytes(local_triangle_indices));
+        upload_offset += ox::size_bytes(local_triangle_indices);
+
+        cur_lod.indirect_vertex_indices = upload_offset;
+        std::memcpy(
+            cpu_lod_ptr + upload_offset, indirect_vertex_indices.data(), ox::size_bytes(indirect_vertex_indices));
+        upload_offset += ox::size_bytes(indirect_vertex_indices);
+
+        lod_cpu_buffers[lod_index] = std::pair(cpu_lod_buffer, lod_upload_size);
+        upload_size += lod_upload_size;
+      }
+
+      auto mesh_upload_offset = 0_u64;
+      gpu_mesh_buffer = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, upload_size);
+
+      // Mesh first
+      auto cpu_mesh_buffer = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, mesh_upload_size);
+      auto cpu_mesh_ptr = reinterpret_cast<u8*>(cpu_mesh_buffer->mapped_ptr);
+
+      auto gpu_mesh_bda = gpu_mesh_buffer->device_address;
+      gpu_mesh.vertex_positions = gpu_mesh_bda + mesh_upload_offset;
+      std::memcpy(cpu_mesh_ptr + mesh_upload_offset, mesh_vertices.data(), ox::size_bytes(mesh_vertices));
+      mesh_upload_offset += ox::size_bytes(mesh_vertices);
+
+      gpu_mesh.vertex_normals = gpu_mesh_bda + mesh_upload_offset;
+      std::memcpy(cpu_mesh_ptr + mesh_upload_offset, mesh_normals.data(), ox::size_bytes(mesh_normals));
+      mesh_upload_offset += ox::size_bytes(mesh_normals);
+
+      if (!mesh_texcoords.empty()) {
+        gpu_mesh.texture_coords = gpu_mesh_bda + mesh_upload_offset;
+        std::memcpy(cpu_mesh_ptr + mesh_upload_offset, mesh_texcoords.data(), ox::size_bytes(mesh_texcoords));
+        mesh_upload_offset += ox::size_bytes(mesh_texcoords);
+      }
+
+      auto gpu_mesh_subrange = vuk::discard_buf("mesh", gpu_mesh_buffer->subrange(0, mesh_upload_size));
+      gpu_mesh_subrange = context.upload_staging(std::move(cpu_mesh_buffer), std::move(gpu_mesh_subrange));
+      context.wait_on(std::move(gpu_mesh_subrange));
+
+      for (auto lod_index = 0_sz; lod_index < gpu_mesh.lod_count; lod_index++) {
+        auto&& [lod_cpu_buffer, lod_upload_size] = lod_cpu_buffers[lod_index];
+        auto& lod = gpu_mesh.lods[lod_index];
+
+        lod.indices += gpu_mesh_bda + mesh_upload_offset;
+        lod.meshlets += gpu_mesh_bda + mesh_upload_offset;
+        lod.meshlet_bounds += gpu_mesh_bda + mesh_upload_offset;
+        lod.local_triangle_indices += gpu_mesh_bda + mesh_upload_offset;
+        lod.indirect_vertex_indices += gpu_mesh_bda + mesh_upload_offset;
+
+        auto gpu_lod_subrange = vuk::discard_buf("mesh lod subrange",
+                                                 gpu_mesh_buffer->subrange(mesh_upload_offset, lod_upload_size));
+        gpu_lod_subrange = context.upload_staging(std::move(lod_cpu_buffer), std::move(gpu_lod_subrange));
+        context.wait_on(std::move(gpu_lod_subrange));
+
+        mesh_upload_offset += lod_upload_size;
+      }
+    }
   }
-
-  mesh->meshlets = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, ox::size_bytes(model_meshlets));
-  context.wait_on(context.upload_staging(std::span(model_meshlets), *mesh->meshlets));
-
-  mesh->meshlet_bounds = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                       ox::size_bytes(model_meshlet_bounds));
-  context.wait_on(context.upload_staging(std::span(model_meshlet_bounds), *mesh->meshlet_bounds));
-
-  mesh->local_triangle_indices = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                               ox::size_bytes(model_local_triangle_indices));
-  context.wait_on(context.upload_staging(std::span(model_local_triangle_indices), *mesh->local_triangle_indices));
 
   return true;
 }
 
-auto AssetManager::unload_mesh(const UUID& uuid) -> bool {
+auto AssetManager::unload_model(const UUID& uuid) -> bool {
   ZoneScoped;
 
   auto* asset = this->get_asset(uuid);
@@ -949,15 +1089,15 @@ auto AssetManager::unload_mesh(const UUID& uuid) -> bool {
     return false;
   }
 
-  auto* model = this->get_mesh(asset->mesh_id);
+  auto* model = this->get_model(asset->model_id);
   for (auto& v : model->materials) {
     this->unload_material(v);
   }
 
-  mesh_map.destroy_slot(asset->mesh_id);
-  asset->mesh_id = MeshID::Invalid;
+  model_map.destroy_slot(asset->model_id);
+  asset->model_id = ModelID::Invalid;
 
-  OX_LOG_TRACE("Unloaded mesh {}", uuid.str());
+  OX_LOG_TRACE("Unloaded model {}", uuid.str());
 
   return true;
 }
@@ -981,7 +1121,23 @@ auto AssetManager::load_texture(const UUID& uuid, const TextureLoadInfo& info) -
     texture.create(asset->path, info);
 
     auto write_lock = std::unique_lock(textures_mutex);
+    auto texture_image_view = texture.get_view()->payload;
     asset->texture_id = texture_map.create_slot(std::move(texture));
+
+    auto image_descriptor = VkDescriptorImageInfo{
+        .sampler = nullptr, .imageView = texture_image_view, .imageLayout = VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL};
+    auto descriptor_write = VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr,
+        .dstSet = this->texture_bindless_set.backing_set,
+        .dstBinding = 1,
+        .dstArrayElement = SlotMap_decode_id(asset->texture_id).index,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .pImageInfo = &image_descriptor,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr,
+    };
 
     OX_LOG_INFO("Loaded texture {} {}.", asset->uuid.str(), SlotMap_decode_id(asset->texture_id).index);
   }
@@ -1257,7 +1413,7 @@ auto AssetManager::get_asset(const UUID& uuid) -> Asset* {
   return &it->second;
 }
 
-auto AssetManager::get_mesh(const UUID& uuid) -> Mesh* {
+auto AssetManager::get_model(const UUID& uuid) -> Model* {
   ZoneScoped;
 
   const auto* asset = this->get_asset(uuid);
@@ -1265,22 +1421,22 @@ auto AssetManager::get_mesh(const UUID& uuid) -> Mesh* {
     return nullptr;
   }
 
-  OX_CHECK_EQ(asset->type, AssetType::Mesh);
-  if (asset->type != AssetType::Mesh || asset->mesh_id == MeshID::Invalid) {
+  OX_CHECK_EQ(asset->type, AssetType::Model);
+  if (asset->type != AssetType::Model || asset->model_id == ModelID::Invalid) {
     return nullptr;
   }
 
-  return mesh_map.slot(asset->mesh_id);
+  return model_map.slot(asset->model_id);
 }
 
-auto AssetManager::get_mesh(const MeshID mesh_id) -> Mesh* {
+auto AssetManager::get_model(const ModelID model_id) -> Model* {
   ZoneScoped;
 
-  if (mesh_id == MeshID::Invalid) {
+  if (model_id == ModelID::Invalid) {
     return nullptr;
   }
 
-  return mesh_map.slot(mesh_id);
+  return model_map.slot(model_id);
 }
 
 auto AssetManager::get_texture(const UUID& uuid) -> Texture* {
@@ -1338,135 +1494,27 @@ auto AssetManager::get_material(const MaterialID material_id) -> Material* {
 auto AssetManager::set_material_dirty(MaterialID material_id) -> void {
   ZoneScoped;
 
-  std::shared_lock shared_lock(materials_mutex);
+  auto read_lock = std::shared_lock(materials_mutex);
   if (std::ranges::find(dirty_materials, material_id) != dirty_materials.end()) {
     return;
   }
 
-  shared_lock.unlock();
-  materials_mutex.lock();
+  read_lock.unlock();
+  auto write_lock = std::unique_lock(materials_mutex);
   dirty_materials.emplace_back(material_id);
-  materials_mutex.unlock();
 }
 
-auto AssetManager::get_materials_buffer(this AssetManager& self,
-                                        VkContext& vk_context,
-                                        vuk::PersistentDescriptorSet& descriptor_set,
-                                        u32 textures_binding) -> vuk::Value<vuk::Buffer> {
+auto AssetManager::get_dirty_material_ids() -> std::vector<MaterialID> {
   ZoneScoped;
 
-  auto uuid_to_index = [&self, &descriptor_set, textures_binding](UUID& uuid) -> ox::option<u32> {
-    if (!self.is_texture_loaded(uuid)) {
-      return ox::nullopt;
-    }
+  auto read_lock = std::shared_lock(materials_mutex);
+  auto dirty_material_ids = std::vector(dirty_materials);
 
-    auto* texture_asset = self.get_asset(uuid);
-    auto* texture = self.get_texture(texture_asset->texture_id);
-    auto texture_index = SlotMap_decode_id(texture_asset->texture_id).index;
+  read_lock.unlock();
+  auto write_lock = std::unique_lock(materials_mutex);
+  dirty_materials.clear();
 
-    descriptor_set.update_sampled_image(
-        textures_binding, texture_index, *texture->get_view(), vuk::ImageLayout::eShaderReadOnlyOptimal);
-
-    return texture_index;
-  };
-
-  auto all_materials_count = 0_sz;
-  auto dirty_materials = std::vector<MaterialID>();
-  {
-    std::shared_lock shared_lock(self.materials_mutex);
-    if (self.material_map.size() == 0) {
-      return {};
-    }
-
-    shared_lock.unlock();
-    std::unique_lock _(self.materials_mutex);
-
-    all_materials_count = self.material_map.size();
-
-    // DO NOT MOVE!!! just take a snapshot of the contents
-    dirty_materials = self.dirty_materials;
-    self.dirty_materials.clear();
-  }
-
-  auto gpu_materials_bytes_size = all_materials_count * sizeof(GPU::Material);
-  auto dirty_material_count = dirty_materials.size();
-  auto dirty_materials_size_bytes = dirty_materials.size() * sizeof(GPU::Material);
-
-  auto materials_buffer = vuk::Value<vuk::Buffer>{};
-  bool rebuild_materials = false;
-  const auto buffer_size = self.materials_buffer ? self.materials_buffer->size : 0;
-  if (gpu_materials_bytes_size > buffer_size) {
-    if (self.materials_buffer->buffer != VK_NULL_HANDLE) {
-      vk_context.wait();
-      self.materials_buffer.reset();
-    }
-
-    self.materials_buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, gpu_materials_bytes_size);
-
-    materials_buffer = vuk::acquire_buf("materials_buffer", *self.materials_buffer, vuk::eNone);
-    vuk::fill(materials_buffer, ~0_u32);
-    rebuild_materials = true;
-  } else if (self.materials_buffer) {
-    materials_buffer = vuk::acquire_buf("materials_buffer", *self.materials_buffer, vuk::eNone);
-  }
-
-  if (rebuild_materials) {
-    auto _ = std::shared_lock(self.registry_mutex);
-    auto upload_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, gpu_materials_bytes_size);
-    auto* dst_material_ptr = reinterpret_cast<GPU::Material*>(upload_buffer->mapped_ptr);
-
-    // All loaded materials
-    auto all_materials = self.material_map.slots_unsafe();
-    for (auto& dirty_material : all_materials) {
-      auto gpu_material = GPU::Material::from_material(dirty_material,
-                                                       uuid_to_index(dirty_material.albedo_texture),
-                                                       uuid_to_index(dirty_material.normal_texture),
-                                                       uuid_to_index(dirty_material.emissive_texture),
-                                                       uuid_to_index(dirty_material.metallic_roughness_texture),
-                                                       uuid_to_index(dirty_material.occlusion_texture));
-      std::memcpy(dst_material_ptr, &gpu_material, sizeof(GPU::Material));
-      dst_material_ptr++;
-    }
-
-    materials_buffer = vk_context.upload_staging(std::move(upload_buffer), std::move(materials_buffer));
-  } else if (dirty_material_count != 0) {
-    auto upload_offsets = std::vector<u64>(dirty_material_count);
-    auto upload_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, dirty_materials_size_bytes);
-    auto* dst_material_ptr = reinterpret_cast<GPU::Material*>(upload_buffer->mapped_ptr);
-    for (const auto& [dirty_material_id, offset] : std::views::zip(dirty_materials, upload_offsets)) {
-      auto index = SlotMap_decode_id(dirty_material_id).index;
-      auto* material = self.get_material(dirty_material_id);
-      auto gpu_material = GPU::Material::from_material(*material,
-                                                       uuid_to_index(material->albedo_texture),
-                                                       uuid_to_index(material->normal_texture),
-                                                       uuid_to_index(material->emissive_texture),
-                                                       uuid_to_index(material->metallic_roughness_texture),
-                                                       uuid_to_index(material->occlusion_texture));
-
-      std::memcpy(dst_material_ptr, &gpu_material, sizeof(GPU::Material));
-      offset = index * sizeof(GPU::Material);
-      dst_material_ptr++;
-    }
-
-    materials_buffer = vuk::make_pass( //
-        "update materials",
-        [of = std::move(upload_offsets)](vuk::CommandBuffer& cmd_list,
-                                         VUK_BA(vuk::Access::eTransferRead) src_buffer,
-                                         VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
-          for (usize i = 0; i < of.size(); i++) {
-            auto offset = of[i];
-            auto src_subrange = src_buffer->subrange(i * sizeof(GPU::Material), sizeof(GPU::Material));
-            auto dst_subrange = dst_buffer->subrange(offset, sizeof(GPU::Material));
-            cmd_list.copy_buffer(src_subrange, dst_subrange);
-          }
-
-          return dst_buffer;
-        })(std::move(upload_buffer), std::move(materials_buffer));
-  } else {
-    return materials_buffer;
-  }
-
-  return materials_buffer;
+  return dirty_material_ids;
 }
 
 auto AssetManager::get_scene(const UUID& uuid) -> Scene* {

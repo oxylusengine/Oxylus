@@ -35,7 +35,7 @@ private:
   void draw_asset_info(Asset* asset);
 
   void draw_shader_asset(UUID* uuid, Asset* asset);
-  void draw_mesh_asset(UUID* uuid, Asset* asset);
+  void draw_model_asset(UUID* uuid, Asset* asset);
   void draw_texture_asset(UUID* uuid, Asset* asset);
   void draw_material_asset(UUID* uuid, Asset* asset);
   void draw_font_asset(UUID* uuid, Asset* asset);

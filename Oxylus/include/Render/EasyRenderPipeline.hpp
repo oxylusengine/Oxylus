@@ -18,6 +18,31 @@ enum class PassConfig : u32 {
 };
 consteval void enable_bitmask(PassConfig);
 
+struct FramePrepareInfo {
+  u32 mesh_instance_count = 0;
+  u32 max_meshlet_instance_count = 0;
+
+  std::span<GPU::TransformID> dirty_transform_ids = {};
+  std::span<GPU::Transforms> gpu_transforms = {};
+
+  std::span<u32> dirty_material_indices = {};
+  std::span<GPU::Material> gpu_materials = {};
+
+  std::span<GPU::Mesh> gpu_meshes = {};
+  std::span<GPU::MeshInstance> gpu_mesh_instances = {};
+};
+
+struct PreparedFrame {
+  u32 mesh_instance_count = 0;
+  vuk::Value<vuk::Buffer> transforms_buffer = {};
+  vuk::Value<vuk::Buffer> meshes_buffer = {};
+  vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
+  vuk::Value<vuk::Buffer> meshlet_instances_buffer = {};
+  vuk::Value<vuk::Buffer> visible_meshlet_instances_indices_buffer = {};
+  vuk::Value<vuk::Buffer> reordered_indices_buffer = {};
+  vuk::Value<vuk::Buffer> materials_buffer = {};
+};
+
 class EasyRenderPipeline : public RenderPipeline {
 public:
   EasyRenderPipeline() = default;
@@ -158,8 +183,6 @@ private:
   };
 
   bool initalized = false;
-
-  vuk::Unique<vuk::PersistentDescriptorSet> descriptor_set_01 = vuk::Unique<vuk::PersistentDescriptorSet>();
 
   RenderQueue2D render_queue_2d = {};
   bool saved_camera = false;

@@ -485,8 +485,8 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                             const auto asset_uuid_str = asset.uuid.str();
                             const auto file_name = fs::get_name_with_extension(asset.path);
                             const auto asset_type = asset_man->to_asset_type_sv(asset.type);
-                            // NOTE: We don't allow mesh assets to be loaded this way yet(or ever).
-                            if (asset.type == AssetType::Mesh) {
+                            // NOTE: We don't allow model assets to be loaded this way yet(or ever).
+                            if (asset.type == AssetType::Model) {
                               continue;
                             }
                             if (!asset_type_flags[asset.type]) {
@@ -568,8 +568,8 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                         draw_shader_asset(uuid, asset);
                         break;
                       }
-                      case AssetType::Mesh: {
-                        draw_mesh_asset(uuid, asset);
+                      case AssetType::Model: {
+                        draw_model_asset(uuid, asset);
                         break;
                       }
                       case AssetType::Texture: {
@@ -701,13 +701,13 @@ void InspectorPanel::draw_asset_info(Asset* asset) {
 
 void InspectorPanel::draw_shader_asset(UUID* uuid, Asset* asset) {}
 
-void InspectorPanel::draw_mesh_asset(UUID* uuid, Asset* asset) {
+void InspectorPanel::draw_model_asset(UUID* uuid, Asset* asset) {
   ZoneScoped;
 
-  auto load_event = _scene->world.entity("ox_mesh_material_load_event");
+  auto load_event = _scene->world.entity("ox_model_material_load_event");
   auto* asset_man = App::get_asset_manager();
-  if (auto* mesh = asset_man->get_mesh(*uuid)) {
-    for (auto& mat_uuid : mesh->materials) {
+  if (auto* model = asset_man->get_model(*uuid)) {
+    for (auto& mat_uuid : model->materials) {
       static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
                                                        ImGuiTreeNodeFlags_SpanAvailWidth |
                                                        ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_Framed |

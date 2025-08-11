@@ -68,7 +68,7 @@ static auto to_asset_file_type(fastgltf::MimeType mime) -> AssetFileType {
   }
 }
 
-auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) -> ox::option<GLTFMeshInfo> {
+auto GLTFModelInfo::parse(const ::fs::path& path, GLTFModelCallbacks callbacks) -> ox::option<GLTFModelInfo> {
   ZoneScoped;
 
   auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(path);
@@ -94,7 +94,7 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
   }
 #endif
 
-  GLTFMeshInfo model = {};
+  GLTFModelInfo model = {};
 
   ///////////////////////////////////////////////
   // Buffers
@@ -369,7 +369,7 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
   return model;
 }
 
-auto GLTFMeshInfo::parse_info(const ::fs::path& path) -> ox::option<GLTFMeshInfo> {
+auto GLTFModelInfo::parse_info(const ::fs::path& path) -> ox::option<GLTFModelInfo> {
   ZoneScoped;
 
   auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(path);
@@ -386,7 +386,7 @@ auto GLTFMeshInfo::parse_info(const ::fs::path& path) -> ox::option<GLTFMeshInfo
   }
 
   fastgltf::Asset asset = std::move(result.get());
-  GLTFMeshInfo model = {};
+  GLTFModelInfo model = {};
 
   ///////////////////////////////////////////////
   // Images

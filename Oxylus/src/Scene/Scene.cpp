@@ -716,11 +716,11 @@ auto Scene::create_mesh_entity(this Scene& self, const UUID& asset_uuid) -> flec
   }
 
   // acquire model
-  if (!asset_man->load_mesh(asset_uuid)) {
+  if (!asset_man->load_model(asset_uuid)) {
     return {};
   }
 
-  auto* imported_model = asset_man->get_mesh(asset_uuid);
+  auto* imported_model = asset_man->get_model(asset_uuid);
   auto& default_scene = imported_model->scenes[imported_model->default_scene_index];
   auto root_entity = self.create_entity(self.world.lookup(default_scene.name.c_str()) ? std::string{}
                                                                                       : default_scene.name);

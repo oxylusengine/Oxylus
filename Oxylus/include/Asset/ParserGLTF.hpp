@@ -60,7 +60,7 @@ struct GLTFSceneInfo {
   std::vector<usize> node_indices = {};
 };
 
-struct GLTFMeshCallbacks {
+struct GLTFModelCallbacks {
   void* user_data = nullptr;
   void (*on_new_primitive)(void* user_data,
                            u32 mesh_index,
@@ -83,7 +83,7 @@ struct GLTFMeshCallbacks {
       on_materials_load = nullptr;
 };
 
-struct GLTFMeshInfo {
+struct GLTFModelInfo {
   std::vector<GLTFSamplerInfo> samplers = {};
   std::vector<GLTFImageInfo> images = {};
   std::vector<GLTFTextureInfo> textures = {};
@@ -92,7 +92,7 @@ struct GLTFMeshInfo {
   std::vector<GLTFSceneInfo> scenes = {};
   ox::option<usize> defualt_scene_index = ox::nullopt;
 
-  static auto parse(const ::fs::path& path, GLTFMeshCallbacks callbacks = {}) -> ox::option<GLTFMeshInfo>;
-  static auto parse_info(const ::fs::path& path) -> ox::option<GLTFMeshInfo>;
+  static auto parse(const ::fs::path& path, GLTFModelCallbacks callbacks = {}) -> ox::option<GLTFModelInfo>;
+  static auto parse_info(const ::fs::path& path) -> ox::option<GLTFModelInfo>;
 };
 } // namespace ox

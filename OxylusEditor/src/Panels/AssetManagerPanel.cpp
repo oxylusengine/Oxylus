@@ -50,12 +50,12 @@ static void draw_asset_table_columns(const Asset& asset) {
     if (!asset.is_loaded())
       ImGui::Text("Invalid ID");
     else
-      ImGui::Text("%llu", static_cast<u64>(asset.texture_id));
+      ImGui::Text("%lu", static_cast<u64>(asset.texture_id));
   }
 
   {
     ImGui::TableSetColumnIndex(4);
-    ImGui::Text("%llu", static_cast<u64>(asset.ref_count));
+    ImGui::Text("%lu", static_cast<u64>(asset.ref_count));
   }
 }
 
@@ -106,8 +106,8 @@ void AssetManagerPanel::on_update() {
           shader_assets.emplace_back(asset);
           break;
         }
-        case AssetType::Mesh: {
-          mesh_assets.emplace_back(asset);
+        case AssetType::Model: {
+          model_assets.emplace_back(asset);
           break;
         }
         case AssetType::Texture: {
@@ -167,7 +167,7 @@ void AssetManagerPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
 
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
-  draw_asset_table("Mesh Assets", "meshes_table", mesh_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS);
+  draw_asset_table("Model Assets", "models_table", model_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS);
 
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
@@ -201,7 +201,7 @@ void AssetManagerPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
 void AssetManagerPanel::clear_vectors(this AssetManagerPanel& self) {
   ZoneScoped;
 
-  self.mesh_assets.clear();
+  self.model_assets.clear();
   self.texture_assets.clear();
   self.material_assets.clear();
   self.scene_assets.clear();

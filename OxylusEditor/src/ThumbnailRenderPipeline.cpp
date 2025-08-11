@@ -44,7 +44,7 @@ auto ThumbnailRenderPipeline::on_render(VkContext& vk_context, const RenderInfo&
 
   final_attachment = vuk::clear_image(final_attachment, vuk::Black<f32>);
 
-  if (mesh == nullptr)
+  if (model == nullptr)
     return final_attachment;
 
   CameraComponent cam{.position = {0, 0, 3}};
@@ -74,42 +74,43 @@ auto ThumbnailRenderPipeline::on_render(VkContext& vk_context, const RenderInfo&
 
   auto camera_buffer = vk_context.scratch_buffer(camera_data);
 
-  auto vertex_positions = *mesh->vertex_positions;
-  auto indices = *mesh->indices;
-  auto indices_count = mesh->indices_count;
-
-  auto thumbnail_pass = vuk::make_pass( //
-      "thumbnail_pass",
-      [indices_count, indices, vertex_positions](vuk::CommandBuffer& command_buffer,
-                                                 VUK_IA(vuk::eColorWrite) output,
-                                                 VUK_BA(vuk::eVertexRead) camera_buffer_) {
-        const auto vertex_pack = vuk::Packed{
-            vuk::Format::eR32G32B32Sfloat, // vec3
-        };
-
-        command_buffer.bind_graphics_pipeline("simple_forward_pipeline")
-            .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
-            .set_viewport(0, vuk::Rect2D::framebuffer())
-            .set_scissor(0, vuk::Rect2D::framebuffer())
-            .set_rasterization({})
-            .broadcast_color_blend({})
-            .push_constants(vuk::ShaderStageFlagBits::eVertex, 0, PushConstants(camera_buffer_->device_address))
-            .bind_index_buffer(indices, vuk::IndexType::eUint32)
-            .bind_vertex_buffer(0, vertex_positions, 0, vertex_pack)
-            .draw_indexed(indices_count, 1, 0, 0, 0);
-
-        return output;
-      });
-
-  return thumbnail_pass(final_attachment, camera_buffer);
+  // auto vertex_positions = *model->vertex_positions;
+  // auto indices = *model->indices;
+  // auto indices_count = model->indices_count;
+  //
+  // auto thumbnail_pass = vuk::make_pass( //
+  //     "thumbnail_pass",
+  //     [indices_count, indices, vertex_positions](vuk::CommandBuffer& command_buffer,
+  //                                                VUK_IA(vuk::eColorWrite) output,
+  //                                                VUK_BA(vuk::eVertexRead) camera_buffer_) {
+  //       const auto vertex_pack = vuk::Packed{
+  //           vuk::Format::eR32G32B32Sfloat, // vec3
+  //       };
+  //
+  //       command_buffer.bind_graphics_pipeline("simple_forward_pipeline")
+  //           .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
+  //           .set_viewport(0, vuk::Rect2D::framebuffer())
+  //           .set_scissor(0, vuk::Rect2D::framebuffer())
+  //           .set_rasterization({})
+  //           .broadcast_color_blend({})
+  //           .push_constants(vuk::ShaderStageFlagBits::eVertex, 0, PushConstants(camera_buffer_->device_address))
+  //           .bind_index_buffer(indices, vuk::IndexType::eUint32)
+  //           .bind_vertex_buffer(0, vertex_positions, 0, vertex_pack)
+  //           .draw_indexed(indices_count, 1, 0, 0, 0);
+  //
+  //       return output;
+  //     });
+  //
+  // return thumbnail_pass(final_attachment, camera_buffer);
+  return {};
 }
 
 auto ThumbnailRenderPipeline::on_update(Scene* scene) -> void {}
 
-auto ThumbnailRenderPipeline::set_mesh(this ThumbnailRenderPipeline& self, Mesh* mesh) -> void {
+auto ThumbnailRenderPipeline::set_model(this ThumbnailRenderPipeline& self, Model* model) -> void {
   ZoneScoped;
 
-  self.mesh = mesh;
+  self.model = model;
 }
 
 auto ThumbnailRenderPipeline::set_name(this ThumbnailRenderPipeline& self, const std::string& name) -> void {

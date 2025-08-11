@@ -14,6 +14,12 @@
 #include "Utils/Profiler.hpp"
 
 namespace ox {
+// i hate this
+PFN_vkCreateDescriptorPool vkCreateDescriptorPool;
+PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout;
+PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets;
+PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
+
 static VkBool32 debug_callback(const VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                                VkDebugUtilsMessageTypeFlagsEXT messageType,
                                const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -263,6 +269,11 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   fps.vkGetInstanceProcAddr = self.vkb_instance.fp_vkGetInstanceProcAddr;
   fps.vkGetDeviceProcAddr = self.vkb_instance.fp_vkGetDeviceProcAddr;
   fps.load_pfns(instance, self.device, true);
+  vkCreateDescriptorPool = fps.vkCreateDescriptorPool;
+  vkCreateDescriptorSetLayout = fps.vkCreateDescriptorSetLayout;
+  vkAllocateDescriptorSets = fps.vkAllocateDescriptorSets;
+  vkUpdateDescriptorSets = fps.vkUpdateDescriptorSets;
+
   std::vector<std::unique_ptr<vuk::Executor>> executors;
 
   executors.push_back(create_vkqueue_executor(
@@ -334,8 +345,8 @@ auto VkContext::end_frame(this VkContext& self, vuk::Value<vuk::ImageAttachment>
   auto entire_thing = vuk::enqueue_presentation(std::move(target_));
   vuk::ProfilingCallbacks cbs = self.tracy_profiler->setup_vuk_callback();
   try {
-  entire_thing.submit(*self.frame_allocator, self.compiler, {.graph_label = {}, .callbacks = cbs});
-  } catch (vuk::Exception &) {
+    entire_thing.submit(*self.frame_allocator, self.compiler, {.graph_label = {}, .callbacks = cbs});
+  } catch (vuk::Exception&) {
     // TODO: Actually handle this
   }
 
@@ -366,6 +377,82 @@ auto VkContext::wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -
 
   thread_local vuk::Compiler _compiler;
   return *fut.get(allocator, _compiler);
+}
+
+auto VkContext::create_persistent_descriptor_set(this VkContext& self,
+                                                 u32 set_index,
+                                                 std::span<VkDescriptorSetLayoutBinding> bindings,
+                                                 std::span<VkDescriptorBindingFlags> binding_flags)
+    -> vuk::PersistentDescriptorSet {
+  ZoneScoped;
+
+  OX_CHECK_EQ(bindings.size(), binding_flags.size());
+
+  auto descriptor_sizes = std::vector<VkDescriptorPoolSize>();
+  for (const auto& binding : bindings) {
+    OX_CHECK_LT(binding.descriptorType, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
+    descriptor_sizes.emplace_back(binding.descriptorType, binding.descriptorCount);
+  }
+
+  auto pool_flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+  auto pool_info = VkDescriptorPoolCreateInfo{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+      .pNext = nullptr,
+      .flags = static_cast<VkDescriptorPoolCreateFlags>(pool_flags),
+      .maxSets = 1,
+      .poolSizeCount = static_cast<u32>(descriptor_sizes.size()),
+      .pPoolSizes = descriptor_sizes.data(),
+  };
+  auto pool = VkDescriptorPool{};
+  vkCreateDescriptorPool(self.device, &pool_info, nullptr, &pool);
+
+  auto set_layout_binding_flags_info = VkDescriptorSetLayoutBindingFlagsCreateInfo{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+      .pNext = nullptr,
+      .bindingCount = static_cast<u32>(binding_flags.size()),
+      .pBindingFlags = binding_flags.data(),
+  };
+
+  auto set_layout_info = VkDescriptorSetLayoutCreateInfo{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      .pNext = &set_layout_binding_flags_info,
+      .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+      .bindingCount = static_cast<u32>(bindings.size()),
+      .pBindings = bindings.data(),
+  };
+  auto set_layout = VkDescriptorSetLayout{};
+  vkCreateDescriptorSetLayout(self.device, &set_layout_info, nullptr, &set_layout);
+
+  auto set_alloc_info = VkDescriptorSetAllocateInfo{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+      .pNext = nullptr,
+      .descriptorPool = pool,
+      .descriptorSetCount = 1,
+      .pSetLayouts = &set_layout,
+  };
+  auto descriptor_set = VkDescriptorSet{};
+  vkAllocateDescriptorSets(self.device, &set_alloc_info, &descriptor_set);
+
+  auto persistent_set_create_info = vuk::DescriptorSetLayoutCreateInfo{
+      .dslci = set_layout_info,
+      .index = set_index,
+      .bindings = std::vector(bindings.begin(), bindings.end()),
+      .flags = std::vector(binding_flags.begin(), binding_flags.end()),
+  };
+  return vuk::PersistentDescriptorSet{
+      .backing_pool = pool,
+      .set_layout_create_info = persistent_set_create_info,
+      .set_layout = set_layout,
+      .backing_set = descriptor_set,
+      .wdss = {},
+      .descriptor_bindings = {},
+  };
+}
+
+auto VkContext::commit_descriptor_set(this VkContext& self, std::span<VkWriteDescriptorSet> writes) -> void {
+  ZoneScoped;
+
+  vkUpdateDescriptorSets(self.device, writes.size(), writes.data(), 0, nullptr);
 }
 
 auto VkContext::allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment) -> vuk::Unique<vuk::Buffer> {

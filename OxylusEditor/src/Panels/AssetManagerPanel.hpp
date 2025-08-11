@@ -19,7 +19,7 @@ public:
   void on_render(vuk::Extent3D extent, vuk::Format format) override;
 
 private:
-  std::vector<Asset> mesh_assets = {};
+  std::vector<Asset> model_assets = {};
   std::vector<Asset> texture_assets = {};
   std::vector<Asset> material_assets = {};
   std::vector<Asset> scene_assets = {};

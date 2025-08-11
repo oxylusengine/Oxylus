@@ -9,14 +9,13 @@
 #include <vuk/Types.hpp>
 #include <vuk/Value.hpp>
 
-#include "Core/Base.hpp"
 #include "EditorPanel.hpp"
 #include "ThumbnailRenderPipeline.hpp"
 
 namespace ox {
 class Texture;
 
-enum class FileType { Unknown = 0, Directory, Meta, Scene, Prefab, Shader, Texture, Mesh, Audio, Script, Material };
+enum class FileType { Unknown = 0, Directory, Meta, Scene, Prefab, Shader, Texture, Model, Audio, Script, Material };
 
 class ContentPanel : public EditorPanel {
 public:
@@ -73,9 +72,9 @@ private:
   f32 _elapsed_time = 0.0f;
 
   std::shared_mutex thumbnail_mutex = {};
-  bool mesh_thumbnails_enabled = false;
+  bool model_thumbnails_enabled = false;
   ankerl::unordered_dense::map<std::string, std::shared_ptr<Texture>> thumbnail_cache_textures;
-  ankerl::unordered_dense::map<std::string, vuk::ImageAttachment> thumbnail_cache_meshes;
+  ankerl::unordered_dense::map<std::string, vuk::ImageAttachment> thumbnail_cache_models;
   ankerl::unordered_dense::map<std::string, std::unique_ptr<ThumbnailRenderPipeline>> thumbnail_render_pipeline_cache;
 
   std::shared_ptr<Texture> _white_texture;

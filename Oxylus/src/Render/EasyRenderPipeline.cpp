@@ -40,13 +40,6 @@ auto EasyRenderPipeline::init(VkContext& vk_context) -> void {
 
   vk_context.wait();
 
-  auto dslci_01 = vuk::descriptor_set_layout_create_info(
-      {
-          ds_layout_binding(BindlessID::Samplers, vuk::DescriptorType::eSampler, 6),        // Samplers
-          ds_layout_binding(BindlessID::SampledImages, vuk::DescriptorType::eSampledImage), // SampledImages
-      },
-      1);
-
   // --- Shaders ---
   auto* vfs = App::get_system<VFS>(EngineSystems::VFS);
   auto shaders_dir = vfs->resolve_physical_dir(VFS::APP_DIR, "Shaders");
@@ -54,15 +47,15 @@ auto EasyRenderPipeline::init(VkContext& vk_context) -> void {
   Slang slang = {};
   slang.create_session({.root_directory = shaders_dir,
                         .definitions = {
-                            {"CULLING_MESHLET_COUNT", std::to_string(Mesh::MAX_MESHLET_INDICES)},
-                            {"CULLING_TRIANGLE_COUNT", std::to_string(Mesh::MAX_MESHLET_PRIMITIVES)},
+                            {"CULLING_MESHLET_COUNT", std::to_string(Model::MAX_MESHLET_INDICES)},
+                            {"CULLING_TRIANGLE_COUNT", std::to_string(Model::MAX_MESHLET_PRIMITIVES)},
                             {"HISTOGRAM_THREADS_X", std::to_string(GPU::HISTOGRAM_THREADS_X)},
                             {"HISTOGRAM_THREADS_Y", std::to_string(GPU::HISTOGRAM_THREADS_Y)},
                         }});
 
   slang.create_pipeline(runtime,
                         "2d_forward_pipeline",
-                        dslci_01,
+                        this->descriptor_set_01,
                         {.path = shaders_dir + "/passes/2d_forward.slang", .entry_points = {"vs_main", "ps_main"}});
 
   // --- Sky ---
@@ -78,17 +71,17 @@ auto EasyRenderPipeline::init(VkContext& vk_context) -> void {
 
   slang.create_pipeline(runtime,
                         "sky_view_pipeline",
-                        dslci_01,
+                        this->descriptor_set_01,
                         {.path = shaders_dir + "/passes/sky_view.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "sky_aerial_perspective_pipeline",
-                        dslci_01,
+                        this->descriptor_set_01,
                         {.path = shaders_dir + "/passes/sky_aerial_perspective.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "sky_final_pipeline",
-                        dslci_01,
+                        this->descriptor_set_01,
                         {.path = shaders_dir + "/passes/sky_final.slang", .entry_points = {"vs_main", "fs_main"}});
 
   // --- VISBUFFER ---
@@ -103,7 +96,7 @@ auto EasyRenderPipeline::init(VkContext& vk_context) -> void {
   slang.create_pipeline(
       runtime,
       "visbuffer_encode",
-      dslci_01,
+      this->descriptor_set_01,
       {.path = shaders_dir + "/passes/visbuffer_encode.slang", .entry_points = {"vs_main", "fs_main"}});
 
   slang.create_pipeline(runtime,
@@ -114,15 +107,17 @@ auto EasyRenderPipeline::init(VkContext& vk_context) -> void {
   slang.create_pipeline(
       runtime,
       "visbuffer_decode",
-      dslci_01,
+      this->descriptor_set_01,
       {.path = shaders_dir + "/passes/visbuffer_decode.slang", .entry_points = {"vs_main", "fs_main"}});
 
   slang.create_pipeline(
       runtime, "debug", {}, {.path = shaders_dir + "/passes/debug.slang", .entry_points = {"vs_main", "fs_main"}});
 
   // --- PBR ---
-  slang.create_pipeline(
-      runtime, "brdf", dslci_01, {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}});
+  slang.create_pipeline(runtime,
+                        "brdf",
+                        this->descriptor_set_01,
+                        {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}});
 
   //  --- FFX ---
   slang.create_pipeline(
@@ -163,40 +158,6 @@ auto EasyRenderPipeline::init(VkContext& vk_context) -> void {
                         "fxaa_pipeline",
                         {},
                         {.path = shaders_dir + "/passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}});
-
-  // --- DescriptorSets ---
-  this->descriptor_set_01 = runtime.create_persistent_descriptorset(allocator, dslci_01, 1);
-
-  // --- Samplers ---
-  static constexpr auto hiz_sampler_ci = vuk::SamplerCreateInfo{
-      .pNext = &sampler_min_clamp_reduction_mode,
-      .magFilter = vuk::Filter::eLinear,
-      .minFilter = vuk::Filter::eLinear,
-      .mipmapMode = vuk::SamplerMipmapMode::eNearest,
-      .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-      .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-  };
-
-  const vuk::Sampler linear_sampler_clamped = runtime.acquire_sampler(vuk::LinearSamplerClamped,
-                                                                      runtime.get_frame_count());
-  const vuk::Sampler linear_sampler_repeated = runtime.acquire_sampler(vuk::LinearSamplerRepeated,
-                                                                       runtime.get_frame_count());
-  const vuk::Sampler linear_sampler_repeated_anisotropy = runtime.acquire_sampler(vuk::LinearSamplerRepeatedAnisotropy,
-                                                                                  runtime.get_frame_count());
-  const vuk::Sampler nearest_sampler_clamped = runtime.acquire_sampler(vuk::NearestSamplerClamped,
-                                                                       runtime.get_frame_count());
-  const vuk::Sampler nearest_sampler_repeated = runtime.acquire_sampler(vuk::NearestSamplerRepeated,
-                                                                        runtime.get_frame_count());
-  const vuk::Sampler hiz_sampler = runtime.acquire_sampler(hiz_sampler_ci, runtime.get_frame_count());
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 0, linear_sampler_repeated);
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 1, linear_sampler_clamped);
-
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 2, nearest_sampler_repeated);
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 3, nearest_sampler_clamped);
-
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 4, linear_sampler_repeated_anisotropy);
-
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 5, hiz_sampler);
 
   sky_transmittance_lut_view = Texture("sky_transmittance_lut");
   sky_transmittance_lut_view.create({},
@@ -327,9 +288,8 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
   camera_data.resolution = {render_info.extent.width, render_info.extent.height};
   auto camera_buffer = vk_context.scratch_buffer(std::span(&camera_data, 1));
 
-  auto material_buffer = asset_man->get_materials_buffer(
-      vk_context, *this->descriptor_set_01, BindlessID::SampledImages);
-  this->descriptor_set_01->commit(*vk_context.runtime);
+  auto material_buffer = vuk::Value<vuk::Buffer>{}; // TODO: ye
+  auto& materials_set = asset_man->get_texture_descriptor_set();
 
   render_queue_2d.update();
   render_queue_2d.sort();
@@ -500,7 +460,7 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
               .bind_image(0, 6, hiz)
               .bind_sampler(0, 7, hiz_sampler_ci)
               .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(meshlet_instance_count, cull_flags))
-              .dispatch((meshlet_instance_count + Mesh::MAX_MESHLET_INDICES - 1) / Mesh::MAX_MESHLET_INDICES);
+              .dispatch((meshlet_instance_count + Model::MAX_MESHLET_INDICES - 1) / Model::MAX_MESHLET_INDICES);
           return std::make_tuple(cull_triangles_cmd,
                                  visible_meshlet_instances_indices,
                                  meshlet_instances,
@@ -518,7 +478,7 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
 
     auto draw_command_buffer = vk_context.scratch_buffer<vuk::DrawIndexedIndirectCommand>({.instanceCount = 1});
     auto reordered_indices_buffer = vk_context.alloc_transient_buffer(
-        vuk::MemoryUsage::eGPUonly, meshlet_instance_count * Mesh::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32));
+        vuk::MemoryUsage::eGPUonly, meshlet_instance_count * Model::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32));
 
     std::tie(draw_command_buffer,
              visible_meshlet_instances_indices_buffer,
@@ -604,9 +564,9 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
              transforms_buffer_value,
              meshes_buffer_value,
              material_buffer,
-             overdraw_attachment) = vuk::make_pass(   //
+             overdraw_attachment) = vuk::make_pass( //
         "vis encode",
-        [&descriptor_set = *this->descriptor_set_01]( //
+        [&materials_set](                           //
             vuk::CommandBuffer& cmd_list,
             VUK_BA(vuk::eIndirectRead) triangle_indirect,
             VUK_BA(vuk::eIndexRead) index_buffer,
@@ -629,7 +589,7 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
               .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
               .set_viewport(0, vuk::Rect2D::framebuffer())
               .set_scissor(0, vuk::Rect2D::framebuffer())
-              .bind_persistent(1, descriptor_set)
+              .bind_persistent(1, materials_set)
               .bind_image(0, 0, overdraw)
               .bind_buffer(0, 1, camera)
               .bind_buffer(0, 2, visible_meshlet_instances_indices)
@@ -744,17 +704,17 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
              material_buffer,
              visbuffer_attachment) = vuk::make_pass( //
         "vis decode",
-        [&descriptor_set = *this->descriptor_set_01](vuk::CommandBuffer& cmd_list,
-                                                     VUK_IA(vuk::eColorWrite) albedo,
-                                                     VUK_IA(vuk::eColorWrite) normal,
-                                                     VUK_IA(vuk::eColorWrite) emissive,
-                                                     VUK_IA(vuk::eColorWrite) metallic_roughness_occlusion,
-                                                     VUK_BA(vuk::eFragmentRead) camera,
-                                                     VUK_BA(vuk::eFragmentRead) meshlet_instances,
-                                                     VUK_BA(vuk::eFragmentRead) meshes,
-                                                     VUK_BA(vuk::eFragmentRead) transforms_,
-                                                     VUK_BA(vuk::eFragmentRead) materials,
-                                                     VUK_IA(vuk::eFragmentSampled) visbuffer) {
+        [&materials_set](vuk::CommandBuffer& cmd_list,
+                         VUK_IA(vuk::eColorWrite) albedo,
+                         VUK_IA(vuk::eColorWrite) normal,
+                         VUK_IA(vuk::eColorWrite) emissive,
+                         VUK_IA(vuk::eColorWrite) metallic_roughness_occlusion,
+                         VUK_BA(vuk::eFragmentRead) camera,
+                         VUK_BA(vuk::eFragmentRead) meshlet_instances,
+                         VUK_BA(vuk::eFragmentRead) meshes,
+                         VUK_BA(vuk::eFragmentRead) transforms_,
+                         VUK_BA(vuk::eFragmentRead) materials,
+                         VUK_IA(vuk::eFragmentSampled) visbuffer) {
           cmd_list //
               .bind_graphics_pipeline("visbuffer_decode")
               .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
@@ -772,7 +732,7 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
               .bind_buffer(0, 3, meshes)
               .bind_buffer(0, 4, transforms_)
               .bind_buffer(0, 5, materials)
-              .bind_persistent(1, descriptor_set)
+              .bind_persistent(1, materials_set)
               .draw(3, 1, 0, 1);
 
           return std::make_tuple(albedo,
@@ -972,14 +932,13 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
              transforms_buffer_value) =
         vuk::make_pass(
             "2d_forward_pass",
-            [&rq2d = this->render_queue_2d,
-             &descriptor_set = *this->descriptor_set_01](vuk::CommandBuffer& command_buffer,
-                                                         VUK_IA(vuk::eColorWrite) target,
-                                                         VUK_IA(vuk::eDepthStencilRW) depth,
-                                                         VUK_BA(vuk::eVertexRead) vertex_buffer,
-                                                         VUK_BA(vuk::eVertexRead) materials,
-                                                         VUK_BA(vuk::eVertexRead) camera,
-                                                         VUK_BA(vuk::eVertexRead) transforms_) {
+            [&rq2d = this->render_queue_2d](vuk::CommandBuffer& command_buffer,
+                                            VUK_IA(vuk::eColorWrite) target,
+                                            VUK_IA(vuk::eDepthStencilRW) depth,
+                                            VUK_BA(vuk::eVertexRead) vertex_buffer,
+                                            VUK_BA(vuk::eVertexRead) materials,
+                                            VUK_BA(vuk::eVertexRead) camera,
+                                            VUK_BA(vuk::eVertexRead) transforms_) {
               const auto vertex_pack_2d = vuk::Packed{
                   vuk::Format::eR32Uint, // 4 material_id
                   vuk::Format::eR32Uint, // 4 flags
@@ -1002,7 +961,6 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
                     .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
                     .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
                     .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack_2d, vuk::VertexInputRate::eInstance)
-                    .bind_persistent(1, descriptor_set)
                     .push_constants(
                         vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
                         0,
@@ -1050,21 +1008,29 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
              sun_buffer,
              camera_buffer) = vuk::make_pass( //
         "sky view",
-        [&descriptor_set = *this->descriptor_set_01](vuk::CommandBuffer& cmd_list,
-                                                     VUK_BA(vuk::eComputeRead) atmosphere_,
-                                                     VUK_BA(vuk::eComputeRead) sun_,
-                                                     VUK_BA(vuk::eComputeRead) camera,
-                                                     VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
-                                                     VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
-                                                     VUK_IA(vuk::eComputeRW) sky_view_lut) {
+        [](vuk::CommandBuffer& cmd_list,
+           VUK_BA(vuk::eComputeRead) atmosphere_,
+           VUK_BA(vuk::eComputeRead) sun_,
+           VUK_BA(vuk::eComputeRead) camera,
+           VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
+           VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
+           VUK_IA(vuk::eComputeRW) sky_view_lut) {
+          auto linear_clamp_sampler = vuk::SamplerCreateInfo{
+              .magFilter = vuk::Filter::eLinear,
+              .minFilter = vuk::Filter::eLinear,
+              .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+              .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+              .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+          };
+
           cmd_list.bind_compute_pipeline("sky_view_pipeline")
-              .bind_persistent(1, descriptor_set)
-              .bind_image(0, 0, sky_transmittance_lut)
-              .bind_image(0, 1, sky_multiscatter_lut)
-              .bind_image(0, 2, sky_view_lut)
-              .bind_buffer(0, 3, atmosphere_)
-              .bind_buffer(0, 4, sun_)
-              .bind_buffer(0, 5, camera)
+              .bind_sampler(0, 0, linear_clamp_sampler)
+              .bind_image(0, 1, sky_transmittance_lut)
+              .bind_image(0, 2, sky_multiscatter_lut)
+              .bind_image(0, 3, sky_view_lut)
+              .bind_buffer(0, 4, atmosphere_)
+              .bind_buffer(0, 5, sun_)
+              .bind_buffer(0, 6, camera)
               .dispatch_invocations_per_pixel(sky_view_lut);
 
           return std::make_tuple(sky_view_lut, sky_transmittance_lut, sky_multiscatter_lut, atmosphere_, sun_, camera);
@@ -1081,21 +1047,29 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
              sun_buffer,
              camera_buffer) = vuk::make_pass( //
         "sky aerial perspective",
-        [&descriptor_set = *this->descriptor_set_01](vuk::CommandBuffer& cmd_list,
-                                                     VUK_BA(vuk::eComputeRead) atmosphere_,
-                                                     VUK_BA(vuk::eComputeRead) sun_,
-                                                     VUK_BA(vuk::eComputeRead) camera,
-                                                     VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
-                                                     VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
-                                                     VUK_IA(vuk::eComputeRW) sky_aerial_perspective_lut) {
+        [](vuk::CommandBuffer& cmd_list,
+           VUK_BA(vuk::eComputeRead) atmosphere_,
+           VUK_BA(vuk::eComputeRead) sun_,
+           VUK_BA(vuk::eComputeRead) camera,
+           VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
+           VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
+           VUK_IA(vuk::eComputeRW) sky_aerial_perspective_lut) {
+          auto linear_clamp_sampler = vuk::SamplerCreateInfo{
+              .magFilter = vuk::Filter::eLinear,
+              .minFilter = vuk::Filter::eLinear,
+              .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+              .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+              .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+          };
+
           cmd_list.bind_compute_pipeline("sky_aerial_perspective_pipeline")
-              .bind_persistent(1, descriptor_set)
-              .bind_image(0, 0, sky_transmittance_lut)
-              .bind_image(0, 1, sky_multiscatter_lut)
-              .bind_image(0, 2, sky_aerial_perspective_lut)
-              .bind_buffer(0, 3, atmosphere_)
-              .bind_buffer(0, 4, sun_)
-              .bind_buffer(0, 5, camera)
+              .bind_sampler(0, 0, linear_clamp_sampler)
+              .bind_image(0, 1, sky_transmittance_lut)
+              .bind_image(0, 2, sky_multiscatter_lut)
+              .bind_image(0, 3, sky_aerial_perspective_lut)
+              .bind_buffer(0, 4, atmosphere_)
+              .bind_buffer(0, 5, sun_)
+              .bind_buffer(0, 6, camera)
               .dispatch_invocations_per_pixel(sky_aerial_perspective_lut);
 
           return std::make_tuple(sky_aerial_perspective_lut, sky_transmittance_lut, atmosphere_, sun_, camera);
@@ -1108,15 +1082,23 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
 
     std::tie(final_attachment, depth_attachment, camera_buffer) = vuk::make_pass(
         "sky final",
-        [&descriptor_set = *this->descriptor_set_01](vuk::CommandBuffer& cmd_list,
-                                                     VUK_IA(vuk::eColorWrite) dst,
-                                                     VUK_BA(vuk::eFragmentRead) atmosphere_,
-                                                     VUK_BA(vuk::eFragmentRead) sun_,
-                                                     VUK_BA(vuk::eFragmentRead) camera,
-                                                     VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
-                                                     VUK_IA(vuk::eFragmentSampled) sky_aerial_perspective_lut,
-                                                     VUK_IA(vuk::eFragmentSampled) sky_view_lut,
-                                                     VUK_IA(vuk::eFragmentSampled) depth) {
+        [](vuk::CommandBuffer& cmd_list,
+           VUK_IA(vuk::eColorWrite) dst,
+           VUK_BA(vuk::eFragmentRead) atmosphere_,
+           VUK_BA(vuk::eFragmentRead) sun_,
+           VUK_BA(vuk::eFragmentRead) camera,
+           VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
+           VUK_IA(vuk::eFragmentSampled) sky_aerial_perspective_lut,
+           VUK_IA(vuk::eFragmentSampled) sky_view_lut,
+           VUK_IA(vuk::eFragmentSampled) depth) {
+          auto linear_clamp_sampler = vuk::SamplerCreateInfo{
+              .magFilter = vuk::Filter::eLinear,
+              .minFilter = vuk::Filter::eLinear,
+              .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+              .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+              .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+          };
+
           vuk::PipelineColorBlendAttachmentState blend_info = {
               .blendEnable = true,
               .srcColorBlendFactor = vuk::BlendFactor::eOne,
@@ -1128,20 +1110,20 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
           };
 
           cmd_list.bind_graphics_pipeline("sky_final_pipeline")
-              .bind_persistent(1, descriptor_set)
               .set_rasterization({})
               .set_depth_stencil({})
               .set_color_blend(dst, blend_info)
               .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
               .set_viewport(0, vuk::Rect2D::framebuffer())
               .set_scissor(0, vuk::Rect2D::framebuffer())
-              .bind_image(0, 0, sky_transmittance_lut)
-              .bind_image(0, 1, sky_aerial_perspective_lut)
-              .bind_image(0, 2, sky_view_lut)
-              .bind_image(0, 3, depth)
-              .bind_buffer(0, 4, atmosphere_)
-              .bind_buffer(0, 5, sun_)
-              .bind_buffer(0, 6, camera)
+              .bind_sampler(0, 0, linear_clamp_sampler)
+              .bind_image(0, 1, sky_transmittance_lut)
+              .bind_image(0, 2, sky_aerial_perspective_lut)
+              .bind_image(0, 3, sky_view_lut)
+              .bind_image(0, 4, depth)
+              .bind_buffer(0, 5, atmosphere_)
+              .bind_buffer(0, 6, sun_)
+              .bind_buffer(0, 7, camera)
               .draw(3, 1, 0, 0);
 
           return std::make_tuple(dst, depth, camera);

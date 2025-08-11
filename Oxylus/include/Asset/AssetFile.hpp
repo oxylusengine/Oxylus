@@ -8,7 +8,7 @@ namespace ox {
 enum class AssetType : u32 {
   None = 0,
   Shader,
-  Mesh,
+  Model,
   Texture,
   Material,
   Font,

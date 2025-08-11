@@ -63,6 +63,13 @@ public:
 
   auto wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment;
 
+  auto create_persistent_descriptor_set(this VkContext&,
+                                        u32 set_index,
+                                        std::span<VkDescriptorSetLayoutBinding> bindings,
+                                        std::span<VkDescriptorBindingFlags> binding_flags)
+      -> vuk::PersistentDescriptorSet;
+  auto commit_descriptor_set(this VkContext&, std::span<VkWriteDescriptorSet> writes) -> void;
+
   [[nodiscard]]
   auto allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;
 

@@ -26,7 +26,7 @@ public:
   void create_pipeline(this Slang& self,
                        vuk::Runtime& runtime,
                        const vuk::Name& name,
-                       const option<vuk::DescriptorSetLayoutCreateInfo>& dci,
+                       const option<vuk::PersistentDescriptorSet>& pds,
                        const CompileInfo& compile_info);
 
 private:
