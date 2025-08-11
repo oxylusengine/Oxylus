@@ -2,6 +2,7 @@
 
 #include "Core/App.hpp"
 #include "Core/UUID.hpp"
+#include "Scripting/LuaFlecsBindings.hpp"
 #include "Scripting/LuaManager.hpp"
 
 namespace ox {
@@ -68,37 +69,10 @@ Core::Core(flecs::world& world) {
       .assign_string([](UUID* data, const char* value) { *data = UUID::from_string(std::string_view(value)).value(); });
 
 #ifdef OX_LUA_BINDINGS
-  const auto state = App::get_system<LuaManager>(EngineSystems::LuaManager)->get_state();
+  auto* lua_manager = App::get_system<LuaManager>(EngineSystems::LuaManager);
+  const auto state = lua_manager->get_state();
 
-  auto component_table = state->create_named_table("Core");
-
-  auto flecs_table = state->create_named_table("flecs");
-
-  // --- id ---
-  auto id_type = flecs_table.new_usertype<flecs::id>("id");
-
-  // --- world ---
-  auto world_type = flecs_table.new_usertype<flecs::world>(
-      "world",
-
-      "entity",
-      [](flecs::world& w, const std::string& name) -> flecs::entity { return w.entity(name.c_str()); });
-
-  // --- entity ---
-  auto entity_type = flecs_table.new_usertype<flecs::entity>(
-      "entity",
-
-      "add",
-      [](flecs::entity& e, u64 component_id) -> flecs::entity { return e.add(component_id); },
-
-      "has",
-      [](flecs::entity& e, u64 component_id) -> bool { return e.has(component_id); },
-
-      "get",
-      [](flecs::entity& e, u64 component_id) -> const void* { return e.get(component_id); },
-
-      "set",
-      [](flecs::entity& e, sol::table component_data) { return e; });
+  auto core_table = state->create_named_table("Core");
 #endif
 
   // clang-format off

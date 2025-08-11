@@ -1,4 +1,4 @@
-#include "ThumbnailRenderPipeline.hpp"
+#include "ThumbnailRenderer.hpp"
 
 #include <Tracy.hpp>
 
@@ -10,7 +10,7 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
-auto ThumbnailRenderPipeline::init(VkContext& vk_context) -> void {
+auto ThumbnailRenderer::init(VkContext& vk_context) -> void {
   auto& runtime = *vk_context.runtime;
 
   // --- Shaders ---
@@ -26,16 +26,16 @@ auto ThumbnailRenderPipeline::init(VkContext& vk_context) -> void {
                         {.path = shaders_dir + "/editor/simple_forward.slang", .entry_points = {"vs_main", "fs_main"}});
 }
 
-auto ThumbnailRenderPipeline::deinit() -> void {}
+auto ThumbnailRenderer::deinit() -> void {}
 
-auto ThumbnailRenderPipeline::reset() -> void {}
+auto ThumbnailRenderer::reset() -> void {}
 
-auto ThumbnailRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& render_info)
+auto ThumbnailRenderer::render(VkContext& vk_context, vuk::Extent3D extent, vuk::Format format)
     -> vuk::Value<vuk::ImageAttachment> {
 
   if (_final_image == nullptr) {
     _final_image = std::make_unique<Texture>();
-    _final_image->create({}, {.preset = Preset::eRTT2DUnmipped, .extent = render_info.extent});
+    _final_image->create({}, {.preset = Preset::eRTT2DUnmipped, .extent = extent});
     _final_image->set_name(thumbnail_name);
   }
 
@@ -48,7 +48,7 @@ auto ThumbnailRenderPipeline::on_render(VkContext& vk_context, const RenderInfo&
     return final_attachment;
 
   CameraComponent cam{.position = {0, 0, 3}};
-  Camera::update(cam, {render_info.extent.width, render_info.extent.height});
+  Camera::update(cam, {extent.width, extent.height});
 
   const auto camera_data = GPU::CameraData{
       .position = glm::vec4(cam.position, 0.0f),
@@ -105,15 +105,13 @@ auto ThumbnailRenderPipeline::on_render(VkContext& vk_context, const RenderInfo&
   return {};
 }
 
-auto ThumbnailRenderPipeline::on_update(Scene* scene) -> void {}
-
-auto ThumbnailRenderPipeline::set_model(this ThumbnailRenderPipeline& self, Model* model) -> void {
+auto ThumbnailRenderer::set_mesh(this ThumbnailRenderer& self, Model* model) -> void {
   ZoneScoped;
 
   self.model = model;
 }
 
-auto ThumbnailRenderPipeline::set_name(this ThumbnailRenderPipeline& self, const std::string& name) -> void {
+auto ThumbnailRenderer::set_name(this ThumbnailRenderer& self, const std::string& name) -> void {
   ZoneScoped;
 
   self.thumbnail_name = name;

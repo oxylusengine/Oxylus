@@ -56,12 +56,6 @@ bool RendererConfig::save_config(const char* path) const {
           },
       },
       {
-          "ssr",
-          toml::table{
-              {"enabled", (bool)RendererCVar::cvar_ssr_enable.get()},
-          },
-      },
-      {
           "fxaa",
           toml::table{
               {"enabled", (bool)RendererCVar::cvar_fxaa_enable.get()},
@@ -99,9 +93,6 @@ bool RendererConfig::load_config(const char* path) {
   const auto bloom_config = toml["bloom"];
   RendererCVar::cvar_bloom_enable.set(bloom_config["enabled"].as_boolean()->get());
   RendererCVar::cvar_bloom_threshold.set((float)bloom_config["threshold"].as_floating_point()->get());
-
-  const auto ssr_config = toml["ssr"];
-  RendererCVar::cvar_ssr_enable.set(ssr_config["enabled"].as_boolean()->get());
 
   const auto fxaa_config = toml["fxaa"];
   RendererCVar::cvar_fxaa_enable.set(fxaa_config["enabled"].as_boolean()->get());

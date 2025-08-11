@@ -254,7 +254,7 @@ ContentPanel::ContentPanel() : EditorPanel("Contents", ICON_MDI_FOLDER_STAR, tru
                           .loaded_data = white_texture_data,
                           .extent = vuk::Extent3D{.width = 16u, .height = 16u, .depth = 1u}});
 
-  ThumbnailRenderPipeline rp;
+  ThumbnailRenderer rp;
   rp.init(App::get_vkcontext());
 }
 
@@ -269,9 +269,7 @@ void ContentPanel::init() {
 
   [[maybe_unused]]
   static filewatch::FileWatch<std::string> watch(_assets_directory.string(),
-                                                 [this](const auto&, const filewatch::Event) {
-                                                   refresh();
-                                                 });
+                                                 [this](const auto&, const filewatch::Event) { refresh(); });
 }
 
 void ContentPanel::on_update() { _elapsed_time += static_cast<float>(App::get_timestep()); }
@@ -574,7 +572,7 @@ void ContentPanel::render_body(bool grid) {
             texture_name = file.file_path;
           } else if (model_thumbnails_enabled) {
             const auto name = fs::get_file_name(file.file_path);
-            auto rp = std::make_unique<ThumbnailRenderPipeline>();
+            auto rp = std::make_unique<ThumbnailRenderer>();
             rp->set_name(name);
 
             auto* asset_man = App::get_asset_manager();
@@ -585,10 +583,9 @@ void ContentPanel::render_body(bool grid) {
               }
             }
 
-            auto thumb = rp->on_render(
-                               vk_context,
-                               RenderPipeline::RenderInfo{.extent = {(u32)thumb_image_size, (u32)thumb_image_size, 1},
-                                                          .format = vuk::Format::eR8G8B8A8Srgb})
+            auto thumb = rp->render(vk_context,
+                                    {(u32)thumb_image_size, (u32)thumb_image_size, 1},
+                                    vuk::Format::eR8G8B8A8Srgb)
                              .as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue);
 
             auto ia = vk_context.wait_on_rg(std::move(thumb), false);

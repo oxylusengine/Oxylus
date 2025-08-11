@@ -11,10 +11,10 @@ inline AutoCVar_Int cvar_frame_limit("rr.frame_limit", "Limits the framerate wit
 
 inline AutoCVar_Int cvar_draw_grid("rr.draw_grid", "draw editor scene grid", 1);
 inline AutoCVar_Float cvar_draw_grid_distance("rr.grid_distance", "max grid distance", 20.f);
+
+inline AutoCVar_Int cvar_enable_debug_renderer("rr.debug_renderer", "enable debug renderer", 1);
 inline AutoCVar_Int cvar_draw_bounding_boxes("rr.draw_bounding_boxes", "draw mesh bounding boxes", 0);
 inline AutoCVar_Int cvar_enable_physics_debug_renderer("rr.physics_debug_renderer", "enable physics debug renderer", 0);
-inline AutoCVar_Int cvar_enable_debug_renderer("rr.debug_renderer", "enable debug renderer", 1);
-inline AutoCVar_Int cvar_draw_meshlet_aabbs("rr.draw_meshlet_aabbs", "draw meshlet aabbs", 0);
 inline AutoCVar_Int cvar_freeze_culling_frustum("rr.freeze_culling_frustum", "freeze culling frustum", 0);
 inline AutoCVar_Int cvar_draw_camera_frustum("rr.draw_camera_frustum", "draw camera frustum", 0);
 inline AutoCVar_Int cvar_debug_view("rr.debug_view", "0: None, 1: Triangles, 2: Meshlets, 3: Overdraw, 4: Albdeo, 5: Normal, 6: Emissive, 7: Metallic, 8: Roughness, 9: Occlusion, 10: HiZ", 0);
@@ -22,11 +22,7 @@ inline AutoCVar_Int cvar_culling_frustum("rr.culling_frustum", "Frustum Culling"
 inline AutoCVar_Int cvar_culling_occlusion("rr.culling_occlusion", "Occlusion culling", 1);
 inline AutoCVar_Int cvar_culling_triangle("rr.culling_triangle", "Triangle culling", 1);
 
-inline AutoCVar_Int cvar_reload_render_pipeline("rr.reload_render_pipeline", "reload current scene's render pipeline", 0);
-
-inline AutoCVar_Int cvar_ssr_enable("pp.ssr", "use ssr", 1);
-inline AutoCVar_Int cvar_ssr_samples("pp.ssr_samples", "ssr samples", 30);
-inline AutoCVar_Float cvar_ssr_max_dist("pp.ssr_max_dist", "ssr max distance", 50.0);
+inline AutoCVar_Int cvar_reload_renderer("rr.reload_renderer", "reload renderer", 0);
 
 inline AutoCVar_Int cvar_gtao_enable("pp.gtao", "use gtao", 1);
 inline AutoCVar_Int cvar_gtao_quality_level("pp.gtao_quality_level", "gtao quality level", 1);

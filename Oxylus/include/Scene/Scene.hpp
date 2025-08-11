@@ -9,7 +9,7 @@
 
 #include "Core/UUID.hpp"
 #include "Memory/SlotMap.hpp"
-#include "Render/RenderPipeline.hpp"
+#include "Render/RendererInstance.hpp"
 #include "Scene/ECSModule/Core.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Utils/Timestep.hpp"
@@ -63,17 +63,16 @@ public:
   ankerl::unordered_dense::map<std::pair<UUID, usize>, std::vector<GPU::TransformID>> rendering_meshes_map = {};
 
   explicit Scene(const std::string& name = "Untitled");
-  explicit Scene(const std::string& name, const std::shared_ptr<RenderPipeline>& render_pipeline);
 
   ~Scene();
 
-  auto init(this Scene& self, //
-            const std::string& name,
-            const std::shared_ptr<RenderPipeline>& render_pipeline = nullptr) -> void;
+  auto init(this Scene& self, const std::string& name) -> void;
 
   auto runtime_start(this Scene& self) -> void;
   auto runtime_stop(this Scene& self) -> void;
   auto runtime_update(this Scene& self, const Timestep& delta_time) -> void;
+
+  auto defer_function(this Scene& self, const std::function<void(Scene* scene)>& func) -> void;
 
   auto disable_phases(const std::vector<flecs::entity_t>& phases) -> void;
   auto enable_all_phases() -> void;
@@ -117,7 +116,7 @@ public:
   auto create_character_controller(const TransformComponent& transform, CharacterControllerComponent& component) const
       -> void;
 
-  auto get_render_pipeline() -> std::shared_ptr<RenderPipeline> { return _render_pipeline; }
+  auto get_renderer_instance() -> RendererInstance* { return renderer_instance.get(); }
 
   static auto entity_to_json(JsonWriter& writer, flecs::entity e) -> void;
   static auto json_to_entity(Scene& self, //
@@ -134,8 +133,11 @@ private:
   auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
   auto remove_transform(this Scene& self, flecs::entity entity) -> void;
 
+  std::vector<std::function<void(Scene* scene)>> deferred_functions_ = {};
+  auto run_deferred_functions(this Scene& self) -> void;
+
   // Renderer
-  std::shared_ptr<RenderPipeline> _render_pipeline = nullptr;
+  std::unique_ptr<RendererInstance> renderer_instance = nullptr;
 
   // Physics
   Physics3DContactListener* contact_listener_3d;

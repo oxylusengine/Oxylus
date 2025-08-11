@@ -12,6 +12,7 @@
 #include "Core/VFS.hpp"
 #include "Modules/ModuleRegistry.hpp"
 #include "Physics/Physics.hpp"
+#include "Render/Renderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Render/Window.hpp"
@@ -34,6 +35,7 @@ auto engine_system_to_sv(EngineSystems type) -> std::string_view {
     case EngineSystems::RendererConfig: return "RendererConfig";
     case EngineSystems::Physics       : return "Physics";
     case EngineSystems::Input         : return "Input";
+    case EngineSystems::Renderer      : return "Renderer";
     case EngineSystems::Count         : return "";
     default                           : return {};
   }
@@ -55,6 +57,16 @@ App::App(const AppSpec& spec) : app_spec(spec) {
   else
     std::filesystem::current_path(app_spec.working_directory);
 
+  if (!app_spec.headless) {
+    window = Window::create(app_spec.window_info);
+    vk_context = std::make_unique<VkContext>();
+
+    const bool enable_validation = app_spec.command_line_args.contains("--vulkan-validation");
+    vk_context->create_context(window, enable_validation);
+
+    DebugRenderer::init();
+  }
+
   register_system<JobManager>(EngineSystems::JobManager);
   register_system<AssetManager>(EngineSystems::AssetManager);
   register_system<VFS>(EngineSystems::VFS);
@@ -66,7 +78,12 @@ App::App(const AppSpec& spec) : app_spec(spec) {
   register_system<Physics>(EngineSystems::Physics);
   register_system<Input>(EngineSystems::Input);
 
-  window = Window::create(app_spec.window_info);
+  auto* vfs = get_system<VFS>(EngineSystems::VFS);
+  vfs->mount_dir(VFS::APP_DIR, fs::absolute(app_spec.assets_path));
+
+  if (!app_spec.headless) {
+    register_system<Renderer>(EngineSystems::Renderer, vk_context.get());
+  }
 
   for (const auto& [type, system] : system_registry) {
     Timer timer{};
@@ -81,19 +98,11 @@ App::App(const AppSpec& spec) : app_spec(spec) {
   // Shortcut for commonly used Systems
   Input::set_instance();
 
-  vk_context = std::make_unique<VkContext>();
-
-  const bool enable_validation = app_spec.command_line_args.contains("--vulkan-validation");
-  vk_context->create_context(window, enable_validation);
-
-  DebugRenderer::init();
-
-  auto* vfs = get_system<VFS>(EngineSystems::VFS);
-  vfs->mount_dir(VFS::APP_DIR, fs::absolute(app_spec.assets_path));
-
-  auto imgui = std::make_unique<ImGuiLayer>();
-  imgui_layer = imgui.get();
-  push_layer(std::move(imgui));
+  if (!app_spec.headless) {
+    auto imgui = std::make_unique<ImGuiLayer>();
+    imgui_layer = imgui.get();
+    push_layer(std::move(imgui));
+  }
 
   auto* job_man = get_system<JobManager>(EngineSystems::JobManager);
   job_man->wait();
@@ -197,21 +206,27 @@ void App::run() {
 
     timestep.on_update();
 
-    window.poll(window_callbacks);
+    vuk::Value<vuk::ImageAttachment> swapchain_attachment = {};
+    vuk::Format format = {};
+    vuk::Extent3D extent = {};
+    if (!app_spec.headless) {
+      window.poll(window_callbacks);
 
-    auto swapchain_attachment = vk_context->new_frame();
-    swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
+      swapchain_attachment = vk_context->new_frame();
+      swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
 
-    const auto extent = swapchain_attachment->extent;
-    this->swapchain_extent = glm::vec2{extent.width, extent.height};
+      format = swapchain_attachment->format;
+      extent = swapchain_attachment->extent;
+      this->swapchain_extent = glm::vec2{extent.width, extent.height};
 
-    imgui_layer->begin_frame(timestep.get_seconds(), extent);
+      imgui_layer->begin_frame(timestep.get_seconds(), extent);
+    }
 
     {
       ZoneNamedN(z, "LayerStackUpdate", true);
       for (const auto& layer : layer_stack) {
         layer->on_update(timestep);
-        layer->on_render(extent, swapchain_attachment->format);
+        layer->on_render(extent, format);
       }
     }
 
@@ -219,21 +234,30 @@ void App::run() {
       ZoneNamedN(z, "EngineSystemUpdates", true);
       for (const auto& system : system_registry | std::views::values) {
         system->on_update();
-        system->on_render(extent, swapchain_attachment->format);
+        system->on_render(extent, format);
       }
     }
 
-    swapchain_attachment = imgui_layer->end_frame(*vk_context, std::move(swapchain_attachment));
+    if (!app_spec.headless) {
+      swapchain_attachment = imgui_layer->end_frame(*vk_context, std::move(swapchain_attachment));
 
-    vk_context->end_frame(swapchain_attachment);
+      vk_context->end_frame(swapchain_attachment);
 
-    input_sys->reset_pressed();
+      input_sys->reset_pressed();
+    }
 
     asset_man->load_deferred_assets();
 
     FrameMark;
   }
 
+  close();
+}
+
+void App::close() {
+  ZoneScoped;
+
+  is_running = false;
   {
     ZoneNamedN(z, "LayerStackOnDetach", true);
     for (const auto& layer : layer_stack) {
@@ -258,12 +282,12 @@ void App::run() {
     system_registry.clear();
   }
 
-  DebugRenderer::release();
+  if (!app_spec.headless) {
+    DebugRenderer::release();
 
-  window.destroy();
+    window.destroy();
+  }
 }
-
-void App::close() { is_running = false; }
 
 glm::vec2 App::get_swapchain_extent() const { return this->swapchain_extent; }
 

@@ -14,7 +14,6 @@
 #include "Panels/EditorSettingsPanel.hpp"
 #include "Panels/InspectorPanel.hpp"
 #include "Panels/ProjectPanel.hpp"
-#include "Panels/RendererSettingsPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Panels/StatisticsPanel.hpp"
 #include "Render/Window.hpp"
@@ -57,7 +56,6 @@ void EditorLayer::on_attach() {
   add_panel<ContentPanel>();
   add_panel<InspectorPanel>();
   add_panel<EditorSettingsPanel>();
-  add_panel<RendererSettingsPanel>();
   add_panel<ProjectPanel>();
   add_panel<StatisticsPanel>();
   add_panel<AssetManagerPanel>();
@@ -330,8 +328,7 @@ void EditorLayer::editor_shortcuts() {
 }
 
 void EditorLayer::new_scene() {
-  const std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(editor_scene->scene_name,
-                                                                   editor_scene->get_render_pipeline());
+  const std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(editor_scene->scene_name);
   editor_scene = new_scene;
   set_editor_context(new_scene);
   last_save_scene_path.clear();
@@ -373,7 +370,7 @@ bool EditorLayer::open_scene(const std::filesystem::path& path) {
       OX_LOG_WARN("Could not load {0} - not a scene file", path.filename().string());
     return false;
   }
-  const auto new_scene = std::make_shared<Scene>(editor_scene->scene_name, editor_scene->get_render_pipeline());
+  const auto new_scene = std::make_shared<Scene>(editor_scene->scene_name);
   if (new_scene->load_from_file(path.string())) {
     editor_scene = new_scene;
     set_editor_context(new_scene);
@@ -389,6 +386,8 @@ void EditorLayer::load_default_scene(const std::shared_ptr<Scene>& scene) {
   sun.get_mut<TransformComponent>().rotation.y = glm::radians(45.f);
   sun.set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 10.f});
   sun.add<AtmosphereComponent>();
+  const auto camera = scene->create_entity("camera");
+  camera.add<CameraComponent>();
 }
 
 void EditorLayer::save_scene() {
@@ -485,23 +484,19 @@ void EditorLayer::set_docking_layout(EditorLayout layout) {
 
     ImGui::DockBuilderDockWindow(viewport_panels[0]->get_id(), right_dock);
     ImGui::DockBuilderDockWindow(get_panel<SceneHierarchyPanel>()->get_id(), left_dock);
-    ImGui::DockBuilderDockWindow(get_panel<RendererSettingsPanel>()->get_id(), left_split_dock);
     ImGui::DockBuilderDockWindow(get_panel<ContentPanel>()->get_id(), left_split_dock);
     ImGui::DockBuilderDockWindow(get_panel<InspectorPanel>()->get_id(), left_dock);
   } else if (layout == EditorLayout::Classic) {
     const ImGuiID right_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Right, 0.2f, nullptr, &dockspace_id);
-    ImGuiID left_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.2f, nullptr, &dockspace_id);
-    ImGuiID left_split_vertical_dock = ImGui::DockBuilderSplitNode(
-        left_dock, ImGuiDir_Right, 0.8f, nullptr, &left_dock);
-    const ImGuiID bottom_dock = ImGui::DockBuilderSplitNode(
-        left_split_vertical_dock, ImGuiDir_Down, 0.3f, nullptr, &left_split_vertical_dock);
-    const ImGuiID left_split_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Down, 0.4f, nullptr, &left_dock);
+    ImGuiID left_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.85f, nullptr, &dockspace_id);
+    const ImGuiID left_bottom_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Down, 0.3f, nullptr, &left_dock);
+    const ImGuiID left_vertical_split_dock = ImGui::DockBuilderSplitNode(
+        left_dock, ImGuiDir_Left, 0.2f, nullptr, &left_dock);
 
-    ImGui::DockBuilderDockWindow(get_panel<SceneHierarchyPanel>()->get_id(), left_dock);
-    ImGui::DockBuilderDockWindow(get_panel<RendererSettingsPanel>()->get_id(), left_split_dock);
-    ImGui::DockBuilderDockWindow(get_panel<ContentPanel>()->get_id(), bottom_dock);
     ImGui::DockBuilderDockWindow(get_panel<InspectorPanel>()->get_id(), right_dock);
-    ImGui::DockBuilderDockWindow(viewport_panels[0]->get_id(), left_split_vertical_dock);
+    ImGui::DockBuilderDockWindow(viewport_panels[0]->get_id(), left_dock);
+    ImGui::DockBuilderDockWindow(get_panel<ContentPanel>()->get_id(), left_bottom_dock);
+    ImGui::DockBuilderDockWindow(get_panel<SceneHierarchyPanel>()->get_id(), left_vertical_split_dock);
   }
 
   ImGui::DockBuilderFinish(dockspace_id);

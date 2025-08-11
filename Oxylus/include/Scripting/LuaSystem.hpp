@@ -22,7 +22,8 @@ public:
   explicit LuaSystem(std::string path);
   ~LuaSystem() = default;
 
-  auto load(this LuaSystem& self, const std::string& path) -> void;
+  // Either use a path to load it from a lua file or pass in the lua
+  auto load(this LuaSystem& self, const std::string& path, const ox::option<std::string> script = nullopt) -> void;
   auto reload(this LuaSystem& self) -> void;
 
   auto reset_functions(this LuaSystem& self) -> void;
@@ -42,6 +43,7 @@ public:
 
 private:
   std::string file_path = {};
+  ox::option<std::string> script = {};
   ankerl::unordered_dense::map<int, std::string> errors = {};
 
   std::unique_ptr<sol::environment> environment = nullptr;
@@ -55,7 +57,7 @@ private:
   std::unique_ptr<sol::protected_function> on_scene_fixed_update_func = nullptr;
   std::unique_ptr<sol::protected_function> on_scene_render_func = nullptr;
 
-  void init_script(this LuaSystem& self, const std::string& path);
+  void init_script(this LuaSystem& self, const std::string& path, const ox::option<std::string> script = nullopt);
   static void check_result(const sol::protected_function_result& result, const char* func_name);
 };
 } // namespace ox

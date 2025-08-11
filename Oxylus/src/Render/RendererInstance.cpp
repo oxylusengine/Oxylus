@@ -1,26 +1,13 @@
-#include "Render/EasyRenderPipeline.hpp"
-
-#include <vuk/ImageAttachment.hpp>
-#include <vuk/RenderGraph.hpp>
-#include <vuk/Types.hpp>
-#include <vuk/Value.hpp>
-#include <vuk/runtime/vk/Allocator.hpp>
-#include <vuk/runtime/vk/Image.hpp>
-#include <vuk/vsl/Core.hpp>
+#include "Render/RendererInstance.hpp"
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/Mesh.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
-#include "Core/VFS.hpp"
-#include "Render/Camera.hpp"
-#include "Render/DebugRenderer.hpp"
 #include "Render/RendererConfig.hpp"
-#include "Render/Slang/Slang.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Render/Vulkan/VkContext.hpp"
-#include "Scene/ECSModule/Core.hpp"
 #include "Scene/SceneGPU.hpp"
-#include "Utils/Profiler.hpp"
 
 namespace ox {
 static constexpr auto sampler_min_clamp_reduction_mode = VkSamplerReductionModeCreateInfo{
@@ -29,9 +16,9 @@ static constexpr auto sampler_min_clamp_reduction_mode = VkSamplerReductionModeC
     .reductionMode = VK_SAMPLER_REDUCTION_MODE_MIN,
 };
 
-auto EasyRenderPipeline::init(VkContext& vk_context) -> void {
-  if (initalized)
-    return;
+RendererInstance::RendererInstance(Scene* owner_scene, Renderer& parent_renderer)
+    : scene(owner_scene),
+      renderer(parent_renderer) {
 
   initalized = true;
 
@@ -219,51 +206,54 @@ auto EasyRenderPipeline::init(VkContext& vk_context) -> void {
     this->exposure_buffer.reset();
   }
   this->exposure_buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, sizeof(GPU::HistogramLuminance));
+  render_queue_2d.init();
 }
 
-auto EasyRenderPipeline::deinit() -> void {}
+RendererInstance::~RendererInstance() {}
 
-auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& render_info)
+auto RendererInstance::render(this RendererInstance& self, const Renderer::RenderInfo& render_info)
     -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
   auto* asset_man = App::get_asset_manager();
 
   bool rebuild_transforms = false;
-  auto buffer_size = this->transforms_buffer ? this->transforms_buffer->size : 0;
-  if (ox::size_bytes(this->transforms) > buffer_size) {
-    if (this->transforms_buffer->buffer != VK_NULL_HANDLE) {
+  auto buffer_size = self.transforms_buffer ? self.transforms_buffer->size : 0;
+  if (ox::size_bytes(self.transforms) > buffer_size) {
+    if (self.transforms_buffer->buffer != VK_NULL_HANDLE) {
       // Device wait here is important, do not remove it. Why?
       // We are using ONE transform buffer for all frames, if
       // this buffer gets destroyed in the current frame, previous
       // rendering frame buffer will get corrupted and crash the GPU.
-      vk_context.wait();
-      this->transforms_buffer.reset();
+      self.renderer.vk_context->wait();
+      self.transforms_buffer.reset();
     }
 
-    this->transforms_buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                               ox::size_bytes(this->transforms));
+    self.transforms_buffer = self.renderer.vk_context->allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
+                                                                             ox::size_bytes(self.transforms));
 
     rebuild_transforms = true;
   }
 
   auto transforms_buffer_value = vuk::Value<vuk::Buffer>{};
-  if (this->transforms_buffer->buffer != VK_NULL_HANDLE) {
-    transforms_buffer_value = vuk::acquire_buf("transforms_buffer", *this->transforms_buffer, vuk::Access::eMemoryRead);
+  if (self.transforms_buffer->buffer != VK_NULL_HANDLE) {
+    transforms_buffer_value = vuk::acquire_buf("transforms_buffer", *self.transforms_buffer, vuk::Access::eMemoryRead);
   }
 
   if (rebuild_transforms) {
-    transforms_buffer_value = vk_context.upload_staging(this->transforms, std::move(transforms_buffer_value));
-  } else if (!this->dirty_transforms.empty()) {
-    auto transform_count = this->dirty_transforms.size();
+    transforms_buffer_value = self.renderer.vk_context->upload_staging(self.transforms,
+                                                                       std::move(transforms_buffer_value));
+  } else if (!self.dirty_transforms.empty()) {
+    auto transform_count = self.dirty_transforms.size();
     auto new_transforms_size_bytes = transform_count * sizeof(GPU::Transforms);
-    auto upload_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, new_transforms_size_bytes);
+    auto upload_buffer = self.renderer.vk_context->alloc_transient_buffer(vuk::MemoryUsage::eCPUonly,
+                                                                          new_transforms_size_bytes);
     auto* dst_transform_ptr = reinterpret_cast<GPU::Transforms*>(upload_buffer->mapped_ptr);
     auto upload_offsets = std::vector<u64>(transform_count);
 
-    for (const auto& [dirty_transform_id, offset] : std::views::zip(this->dirty_transforms, upload_offsets)) {
+    for (const auto& [dirty_transform_id, offset] : std::views::zip(self.dirty_transforms, upload_offsets)) {
       auto index = SlotMap_decode_id(dirty_transform_id).index;
-      const auto& transform = this->transforms[index];
+      const auto& transform = self.transforms[index];
       std::memcpy(dst_transform_ptr, &transform, sizeof(GPU::Transforms));
       offset = index * sizeof(GPU::Transforms);
       dst_transform_ptr++;
@@ -285,30 +275,30 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
         })(std::move(upload_buffer), std::move(transforms_buffer_value));
   }
 
-  camera_data.resolution = {render_info.extent.width, render_info.extent.height};
-  auto camera_buffer = vk_context.scratch_buffer(std::span(&camera_data, 1));
+  self.camera_data.resolution = {render_info.extent.width, render_info.extent.height};
+  auto camera_buffer = self.renderer.vk_context->scratch_buffer(std::span(&self.camera_data, 1));
 
   auto material_buffer = vuk::Value<vuk::Buffer>{}; // TODO: ye
   auto& materials_set = asset_man->get_texture_descriptor_set();
 
-  render_queue_2d.update();
-  render_queue_2d.sort();
-  auto vertex_buffer_2d = vk_context.scratch_buffer(std::span(render_queue_2d.sprite_data));
+  self.render_queue_2d.update();
+  self.render_queue_2d.sort();
+  auto vertex_buffer_2d = self.renderer.vk_context->scratch_buffer(std::span(self.render_queue_2d.sprite_data));
 
   const vuk::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
   const vuk::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
 
   auto atmosphere_buffer = vuk::Value<vuk::Buffer>{};
-  if (this->atmosphere.has_value()) {
-    this->atmosphere->sky_view_lut_size = sky_view_lut_extent;
-    this->atmosphere->aerial_perspective_lut_size = sky_aerial_perspective_lut_extent;
-    this->atmosphere->transmittance_lut_size = sky_transmittance_lut_view.get_extent();
-    this->atmosphere->multiscattering_lut_size = sky_multiscatter_lut_view.get_extent();
-    atmosphere_buffer = vk_context.scratch_buffer(this->atmosphere);
+  if (self.atmosphere.has_value()) {
+    self.atmosphere->sky_view_lut_size = sky_view_lut_extent;
+    self.atmosphere->aerial_perspective_lut_size = sky_aerial_perspective_lut_extent;
+    self.atmosphere->transmittance_lut_size = self.renderer.sky_transmittance_lut_view.get_extent();
+    self.atmosphere->multiscattering_lut_size = self.renderer.sky_multiscatter_lut_view.get_extent();
+    atmosphere_buffer = self.renderer.vk_context->scratch_buffer(self.atmosphere);
   }
   auto sun_buffer = vuk::Value<vuk::Buffer>{};
-  if (this->sun.has_value()) {
-    sun_buffer = vk_context.scratch_buffer(this->sun);
+  if (self.sun.has_value()) {
+    sun_buffer = self.renderer.vk_context->scratch_buffer(self.sun);
   }
 
   const auto final_attachment_ia = vuk::ImageAttachment{
@@ -338,17 +328,17 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
   };
   auto depth_attachment = vuk::clear_image(vuk::declare_ia("depth_image", depth_ia), vuk::DepthZero);
 
-  auto sky_transmittance_lut_attachment = sky_transmittance_lut_view.acquire("sky_transmittance_lut",
-                                                                             vuk::Access::eComputeSampled);
-  auto sky_multiscatter_lut_attachment = sky_multiscatter_lut_view.acquire("sky_multiscatter_lut",
-                                                                           vuk::Access::eComputeSampled);
+  auto sky_transmittance_lut_attachment = self.renderer.sky_transmittance_lut_view.acquire(
+      "sky_transmittance_lut", vuk::Access::eComputeSampled);
+  auto sky_multiscatter_lut_attachment = self.renderer.sky_multiscatter_lut_view.acquire("sky_multiscatter_lut",
+                                                                                         vuk::Access::eComputeSampled);
 
   const auto debug_view = static_cast<GPU::DebugView>(RendererCVar::cvar_debug_view.get());
   const f32 debug_heatmap_scale = 5.0;
   const auto debugging = debug_view != GPU::DebugView::None;
 
   // --- 3D Pass ---
-  if (!this->gpu_meshes.empty() && !this->gpu_meshlet_instances.empty()) {
+  if (!self.gpu_meshes.empty() && !self.gpu_meshlet_instances.empty()) {
     auto cull_flags = GPU::CullFlags::MicroTriangles | GPU::CullFlags::TriangleBackFace;
     if (static_cast<bool>(RendererCVar::cvar_culling_frustum.get())) {
       cull_flags |= GPU::CullFlags::MeshletFrustum;
@@ -360,39 +350,39 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
       cull_flags |= GPU::CullFlags::TriangleCulling;
     }
 
-    buffer_size = this->meshes_buffer ? this->meshes_buffer->size : 0;
-    if (ox::size_bytes(this->gpu_meshes) > buffer_size) {
-      if (this->meshes_buffer->buffer != VK_NULL_HANDLE) {
-        vk_context.wait();
-        this->meshes_buffer.reset();
+    buffer_size = self.meshes_buffer ? self.meshes_buffer->size : 0;
+    if (ox::size_bytes(self.gpu_meshes) > buffer_size) {
+      if (self.meshes_buffer->buffer != VK_NULL_HANDLE) {
+        self.renderer.vk_context->wait();
+        self.meshes_buffer.reset();
       }
 
-      this->meshes_buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                             ox::size_bytes(this->gpu_meshes));
+      self.meshes_buffer = self.renderer.vk_context->allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
+                                                                           ox::size_bytes(self.gpu_meshes));
     }
 
-    buffer_size = this->meshlet_instances_buffer ? this->meshlet_instances_buffer->size : 0;
-    if (ox::size_bytes(this->gpu_meshlet_instances) > buffer_size) {
-      if (this->meshlet_instances_buffer->buffer != VK_NULL_HANDLE) {
-        vk_context.wait();
-        this->meshlet_instances_buffer.reset();
+    buffer_size = self.meshlet_instances_buffer ? self.meshlet_instances_buffer->size : 0;
+    if (ox::size_bytes(self.gpu_meshlet_instances) > buffer_size) {
+      if (self.meshlet_instances_buffer->buffer != VK_NULL_HANDLE) {
+        self.renderer.vk_context->wait();
+        self.meshlet_instances_buffer.reset();
       }
 
-      this->meshlet_instances_buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                                        ox::size_bytes(this->gpu_meshlet_instances));
+      self.meshlet_instances_buffer = self.renderer.vk_context->allocate_buffer_super(
+          vuk::MemoryUsage::eGPUonly, ox::size_bytes(self.gpu_meshlet_instances));
     }
 
     vuk::Value<vuk::Buffer> meshes_buffer_value;
     vuk::Value<vuk::Buffer> meshlet_instances_buffer_value;
-    if (this->meshes_dirty) {
-      meshes_buffer_value = vk_context.upload_staging(std::span(this->gpu_meshes), *this->meshes_buffer);
-      meshlet_instances_buffer_value = vk_context.upload_staging(std::span(this->gpu_meshlet_instances),
-                                                                 *this->meshlet_instances_buffer);
-      this->meshes_dirty = false;
+    if (self.meshes_dirty) {
+      meshes_buffer_value = self.renderer.vk_context->upload_staging(std::span(self.gpu_meshes), *self.meshes_buffer);
+      meshlet_instances_buffer_value = self.renderer.vk_context->upload_staging(std::span(self.gpu_meshlet_instances),
+                                                                                *self.meshlet_instances_buffer);
+      self.meshes_dirty = false;
     } else {
-      meshes_buffer_value = vuk::acquire_buf("meshes_buffer", *this->meshes_buffer, vuk::Access::eNone);
+      meshes_buffer_value = vuk::acquire_buf("meshes_buffer", *self.meshes_buffer, vuk::Access::eNone);
       meshlet_instances_buffer_value = vuk::acquire_buf(
-          "meshlet_instances_buffer", *this->meshlet_instances_buffer, vuk::Access::eNone);
+          "meshlet_instances_buffer", *self.meshlet_instances_buffer, vuk::Access::eNone);
     }
 
     const auto hiz_extent = vuk::Extent3D{
@@ -402,24 +392,25 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
     };
 
     auto hiz_attachment = vuk::Value<vuk::ImageAttachment>{};
-    if (this->hiz_view.get_extent() != hiz_extent) {
-      if (this->hiz_view) {
-        this->hiz_view.destroy();
+    if (self.hiz_view.get_extent() != hiz_extent) {
+      if (self.hiz_view) {
+        self.hiz_view.destroy();
       }
 
-      this->hiz_view.create({}, {.preset = Preset::eSTT2D, .format = vuk::Format::eR32Sfloat, .extent = hiz_extent});
-      this->hiz_view.set_name("hiz");
+      self.hiz_view.create({}, {.preset = Preset::eSTT2D, .format = vuk::Format::eR32Sfloat, .extent = hiz_extent});
+      self.hiz_view.set_name("hiz");
 
-      hiz_attachment = this->hiz_view.acquire("hiz", vuk::eNone);
+      hiz_attachment = self.hiz_view.acquire("hiz", vuk::eNone);
       hiz_attachment = vuk::clear_image(std::move(hiz_attachment), vuk::DepthZero);
     } else {
-      hiz_attachment = this->hiz_view.acquire("hiz", vuk::eComputeRW);
+      hiz_attachment = self.hiz_view.acquire("hiz", vuk::eComputeRW);
     }
 
-    const auto meshlet_instance_count = static_cast<u32>(this->gpu_meshlet_instances.size());
+    const auto meshlet_instance_count = static_cast<u32>(self.gpu_meshlet_instances.size());
 
-    auto cull_triangles_cmd_buffer = vk_context.scratch_buffer<vuk::DispatchIndirectCommand>({.x = 0, .y = 1, .z = 1});
-    auto visible_meshlet_instances_indices_buffer = vk_context.alloc_transient_buffer(
+    auto cull_triangles_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DispatchIndirectCommand>(
+        {.x = 0, .y = 1, .z = 1});
+    auto visible_meshlet_instances_indices_buffer = self.renderer.vk_context->alloc_transient_buffer(
         vuk::MemoryUsage::eGPUonly, meshlet_instance_count * sizeof(u32));
 
     std::tie(cull_triangles_cmd_buffer,
@@ -756,7 +747,7 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
            std::move(material_buffer),
            std::move(visbuffer_attachment));
 
-    if (!debugging && atmosphere.has_value() && sun.has_value()) {
+    if (!debugging && self.atmosphere.has_value() && self.sun.has_value()) {
       // --- BRDF ---
       auto brdf_pass = vuk::make_pass(
           "brdf",
@@ -923,7 +914,7 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
   }
 
   // --- 2D Pass ---
-  if (!render_queue_2d.sprite_data.empty()) {
+  if (!self.render_queue_2d.sprite_data.empty()) {
     std::tie(final_attachment, //
              depth_attachment,
              camera_buffer,
@@ -978,7 +969,7 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
   }
 
   // --- Atmosphere Pass ---
-  if (this->atmosphere.has_value() && this->sun.has_value() && !debugging) {
+  if (self.atmosphere.has_value() && self.sun.has_value() && !debugging) {
     auto sky_view_lut_attachment = vuk::declare_ia(
         "sky_view_lut",
         {.image_type = vuk::ImageType::e2D,
@@ -1243,10 +1234,10 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
     }
 
     // --- Auto Exposure Pass ---
-    auto histogram_inf = this->histogram_info.value_or(GPU::HistogramInfo{});
+    auto histogram_inf = self.histogram_info.value_or(GPU::HistogramInfo{});
 
-    auto histogram_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUonly,
-                                                              GPU::HISTOGRAM_BIN_COUNT * sizeof(u32));
+    auto histogram_buffer = self.renderer.vk_context->alloc_transient_buffer(vuk::MemoryUsage::eGPUonly,
+                                                                             GPU::HISTOGRAM_BIN_COUNT * sizeof(u32));
     vuk::fill(histogram_buffer, 0);
 
     std::tie(final_attachment, histogram_buffer) = vuk::make_pass(
@@ -1267,9 +1258,9 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
           return std::make_tuple(src, histogram);
         })(std::move(final_attachment), std::move(histogram_buffer));
 
-    auto exposure_buffer_value = vuk::acquire_buf("exposure buffer", *this->exposure_buffer, vuk::eNone);
+    auto exposure_buffer_value = vuk::acquire_buf("exposure buffer", *self.renderer.exposure_buffer, vuk::eNone);
 
-    if (histogram_info.has_value()) {
+    if (self.histogram_info.has_value()) {
       exposure_buffer_value = vuk::make_pass(
           "histogram average",
           [pixel_count = f32(final_attachment->extent.width * final_attachment->extent.height), histogram_inf](
@@ -1328,33 +1319,33 @@ auto EasyRenderPipeline::on_render(VkContext& vk_context, const RenderInfo& rend
   return debugging ? final_attachment : result_attachment;
 }
 
-auto EasyRenderPipeline::on_update(ox::Scene* scene) -> void {
+auto RendererInstance::update(this RendererInstance& self) -> void {
   ZoneScoped;
 
   auto* asset_man = App::get_asset_manager();
 
-  this->transforms = scene->transforms.slots_unsafe();
-  this->dirty_transforms = scene->dirty_transforms;
+  self.transforms = self.scene->transforms.slots_unsafe();
+  self.dirty_transforms = self.scene->dirty_transforms;
 
   CameraComponent current_camera = {};
   CameraComponent frozen_camera = {};
   const auto freeze_culling = static_cast<bool>(RendererCVar::cvar_freeze_culling_frustum.get());
 
-  scene->world
+  self.scene->world
       .query_builder<const TransformComponent, const CameraComponent>() //
       .build()
       .each([&](flecs::entity e, const TransformComponent& tc, const CameraComponent& c) {
-        if (freeze_culling && !this->saved_camera) {
-          this->saved_camera = true;
+        if (freeze_culling && !self.saved_camera) {
+          self.saved_camera = true;
           frozen_camera = current_camera;
-        } else if (!freeze_culling && this->saved_camera) {
-          this->saved_camera = false;
+        } else if (!freeze_culling && self.saved_camera) {
+          self.saved_camera = false;
         }
 
         if (static_cast<bool>(RendererCVar::cvar_freeze_culling_frustum.get()) &&
             static_cast<bool>(RendererCVar::cvar_draw_camera_frustum.get())) {
-          const auto proj = frozen_camera.get_projection_matrix() * frozen_camera.get_view_matrix();
-          DebugRenderer::draw_frustum(proj, glm::vec4(0, 1, 0, 1), 1.0f, 0.0f); // reversed-z
+          // const auto proj = frozen_camera.get_projection_matrix() * frozen_camera.get_view_matrix();
+          //  DebugRenderer::draw_frustum(proj, glm::vec4(0, 1, 0, 1), 1.0f, 0.0f); // reversed-z
         }
 
         current_camera = c;
@@ -1362,7 +1353,7 @@ auto EasyRenderPipeline::on_update(ox::Scene* scene) -> void {
 
   CameraComponent cam = freeze_culling ? frozen_camera : current_camera;
 
-  this->camera_data = GPU::CameraData{
+  self.camera_data = GPU::CameraData{
       .position = glm::vec4(cam.position, 0.0f),
       .projection = cam.get_projection_matrix(),
       .inv_projection = cam.get_inv_projection_matrix(),
@@ -1370,28 +1361,28 @@ auto EasyRenderPipeline::on_update(ox::Scene* scene) -> void {
       .inv_view = cam.get_inv_view_matrix(),
       .projection_view = cam.get_projection_matrix() * cam.get_view_matrix(),
       .inv_projection_view = cam.get_inverse_projection_view(),
-      .previous_projection = this->previous_camera_data.projection,
-      .previous_inv_projection = this->previous_camera_data.inv_projection,
-      .previous_view = this->previous_camera_data.view,
-      .previous_inv_view = this->previous_camera_data.inv_view,
-      .previous_projection_view = this->previous_camera_data.projection_view,
-      .previous_inv_projection_view = this->previous_camera_data.inv_projection_view,
+      .previous_projection = self.previous_camera_data.projection,
+      .previous_inv_projection = self.previous_camera_data.inv_projection,
+      .previous_view = self.previous_camera_data.view,
+      .previous_inv_view = self.previous_camera_data.inv_view,
+      .previous_projection_view = self.previous_camera_data.projection_view,
+      .previous_inv_projection_view = self.previous_camera_data.inv_projection_view,
       .temporalaa_jitter = cam.jitter,
-      .temporalaa_jitter_prev = this->previous_camera_data.temporalaa_jitter_prev,
+      .temporalaa_jitter_prev = self.previous_camera_data.temporalaa_jitter_prev,
       .near_clip = cam.near_clip,
       .far_clip = cam.far_clip,
       .fov = cam.fov,
       .output_index = 0,
   };
 
-  this->previous_camera_data = this->camera_data;
+  self.previous_camera_data = self.camera_data;
 
-  math::calc_frustum_planes(camera_data.projection_view, camera_data.frustum_planes);
+  math::calc_frustum_planes(self.camera_data.projection_view, self.camera_data.frustum_planes);
 
   option<GPU::Atmosphere> atmosphere_data = nullopt;
   option<GPU::Sun> sun_data = nullopt;
 
-  scene->world
+  self.scene->world
       .query_builder<const TransformComponent, const LightComponent>() //
       .build()
       .each(
@@ -1423,22 +1414,22 @@ auto EasyRenderPipeline::on_update(ox::Scene* scene) -> void {
             }
           });
 
-  this->atmosphere = atmosphere_data;
-  this->sun = sun_data;
+  self.atmosphere = atmosphere_data;
+  self.sun = sun_data;
 
-  if (scene->meshes_dirty) {
-    this->meshes_dirty = true;
+  if (self.scene->meshes_dirty) {
+    self.meshes_dirty = true;
 
-    this->gpu_meshes.clear();
-    this->gpu_meshlet_instances.clear();
+    self.gpu_meshes.clear();
+    self.gpu_meshlet_instances.clear();
 
-    for (const auto& [rendering_mesh, transform_ids] : scene->rendering_meshes_map) {
+    for (const auto& [rendering_mesh, transform_ids] : self.scene->rendering_meshes_map) {
       auto* model = asset_man->get_mesh(rendering_mesh.first);
       const auto& mesh = model->meshes[rendering_mesh.second];
 
       // Per mesh info
-      auto mesh_offset = static_cast<u32>(this->gpu_meshes.size());
-      auto& gpu_mesh = this->gpu_meshes.emplace_back();
+      auto mesh_offset = static_cast<u32>(self.gpu_meshes.size());
+      auto& gpu_mesh = self.gpu_meshes.emplace_back();
       gpu_mesh.indices = model->indices->device_address;
       gpu_mesh.vertex_positions = model->vertex_positions->device_address;
       gpu_mesh.vertex_normals = model->vertex_normals->device_address;
@@ -1452,7 +1443,7 @@ auto EasyRenderPipeline::on_update(ox::Scene* scene) -> void {
         for (const auto primitive_index : mesh.primitive_indices) {
           auto& primitive = model->primitives[primitive_index];
           for (u32 meshlet_index = 0; meshlet_index < primitive.meshlet_count; meshlet_index++) {
-            auto& meshlet_instance = gpu_meshlet_instances.emplace_back();
+            auto& meshlet_instance = self.gpu_meshlet_instances.emplace_back();
             meshlet_instance.mesh_index = mesh_offset;
             meshlet_instance.material_index = primitive.material_index;
             meshlet_instance.transform_index = SlotMap_decode_id(transform_id).index;
@@ -1462,15 +1453,15 @@ auto EasyRenderPipeline::on_update(ox::Scene* scene) -> void {
       }
     }
 
-    scene->meshes_dirty = false;
+    self.scene->meshes_dirty = false;
   }
 
-  this->render_queue_2d.init();
+  self.render_queue_2d.init();
 
-  scene->world
+  self.scene->world
       .query_builder<const TransformComponent, const SpriteComponent>() //
       .build()
-      .each([asset_man, &scene, &cam, &rq2d = this->render_queue_2d](
+      .each([asset_man, &scene = self.scene, &cam, &rq2d = self.render_queue_2d](
                 flecs::entity e, const TransformComponent& tc, const SpriteComponent& comp) {
         const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
         if (auto* material = asset_man->get_asset(comp.material)) {
@@ -1488,7 +1479,7 @@ auto EasyRenderPipeline::on_update(ox::Scene* scene) -> void {
 
   option<GPU::HistogramInfo> hist_info = nullopt;
 
-  scene->world
+  self.scene->world
       .query_builder<const AutoExposureComponent>() //
       .build()
       .each([&hist_info](flecs::entity e, const AutoExposureComponent& c) {
@@ -1499,6 +1490,6 @@ auto EasyRenderPipeline::on_update(ox::Scene* scene) -> void {
         i.ev100_bias = c.ev100_bias;
       });
 
-  this->histogram_info = hist_info;
+  self.histogram_info = hist_info;
 }
 } // namespace ox

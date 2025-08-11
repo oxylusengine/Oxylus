@@ -1,9 +1,8 @@
-﻿#pragma once
+﻿#include "Scripting/LuaBinding.hpp"
 
-namespace sol {
-class state;
-}
-
-namespace ox::LuaBindings {
-void bind_asset_manager(sol::state* state);
-}
+namespace ox {
+class AssetManagerBinding : public LuaBinding {
+public:
+  auto bind(sol::state* state) -> void override;
+};
+} // namespace o

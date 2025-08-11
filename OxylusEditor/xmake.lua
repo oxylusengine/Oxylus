@@ -13,5 +13,10 @@ target("OxylusEditor")
         root_dir = os.scriptdir() .. "/Resources",
         output_dir = "Resources",
     })
+    add_files("../Oxylus/src/Render/Shaders/**")
+    add_rules("ox.install_shaders", {
+        root_dir = "Oxylus/src/Render/Shaders",
+        output_dir = "Resources/Shaders",
+    })
 
 target_end()

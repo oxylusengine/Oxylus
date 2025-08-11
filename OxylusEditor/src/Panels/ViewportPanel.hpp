@@ -27,6 +27,7 @@ public:
   void on_update() override;
 
 private:
+  void draw_settings_panel();
   void draw_performance_overlay();
   void draw_gizmos();
 

@@ -24,8 +24,6 @@
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Physics/PhysicsMaterial.hpp"
 #include "Render/Camera.hpp"
-#include "Render/EasyRenderPipeline.hpp"
-#include "Render/RenderPipeline.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Scene/ECSModule/ComponentWrapper.hpp"
 #include "Scene/ECSModule/Core.hpp"
@@ -134,7 +132,11 @@ auto Scene::json_to_entity(Scene& self,
       return {{}, false};
     }
 
-    OX_CHECK_EQ(self.component_db.is_component_known(component_id), true);
+    if (!self.component_db.is_component_known(component_id)) {
+      OX_LOG_WARN("Skipping unkown component {}:{}", component_name, (u64)component_id);
+      continue;
+    }
+
     e.add(component_id);
     ECS::ComponentWrapper component(e, component_id);
     component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
@@ -199,10 +201,6 @@ auto ComponentDB::is_component_known(this ComponentDB& self, flecs::id component
 
 auto ComponentDB::get_components(this ComponentDB& self) -> std::span<flecs::id> { return self.components; }
 
-Scene::Scene(const std::string& name, const std::shared_ptr<RenderPipeline>& render_pipeline) {
-  this->init(name, render_pipeline);
-}
-
 Scene::Scene(const std::string& name) { init(name); }
 
 Scene::~Scene() {
@@ -211,24 +209,16 @@ Scene::~Scene() {
 
   if (running)
     runtime_stop();
-
-  _render_pipeline->deinit();
 }
 
-auto Scene::init(this Scene& self, const std::string& name, const std::shared_ptr<RenderPipeline>& render_pipeline)
-    -> void {
+auto Scene::init(this Scene& self, const std::string& name) -> void {
   ZoneScoped;
   self.scene_name = name;
 
   self.component_db.import_module(self.world.import <Core>());
 
-  // Renderer
-  self._render_pipeline = render_pipeline;
-
-  if (!self._render_pipeline) {
-    self._render_pipeline = std::make_shared<EasyRenderPipeline>();
-    self._render_pipeline->init(App::get_vkcontext());
-  }
+  auto* renderer = App::get_system<Renderer>(EngineSystems::Renderer);
+  self.renderer_instance = renderer->new_instance(&self);
 
   self.physics_events = self.world.entity("ox_physics_events");
 
@@ -348,7 +338,6 @@ auto Scene::init(this Scene& self, const std::string& name, const std::shared_pt
         if (it.event() == flecs::OnAdd || it.event() == flecs::OnSet) {
           auto* asset_man = App::get_asset_manager();
           if (auto* script_asset = asset_man->get_script(c.script_uuid)) {
-            script_asset->bind_globals(scene, it.entity(i), it.delta_time());
             script_asset->on_add(scene, it.entity(i));
           }
         } else if (it.event() == flecs::OnRemove) {
@@ -557,6 +546,8 @@ auto Scene::runtime_start(this Scene& self) -> void {
 
   self.running = true;
 
+  self.run_deferred_functions();
+
   // Physics
   {
     ZoneNamedN(z, "Physics Start", true);
@@ -646,15 +637,34 @@ auto Scene::runtime_stop(this Scene& self) -> void {
 auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void {
   ZoneScoped;
 
+  self.run_deferred_functions();
+
   // TODO: Pass our delta_time?
   self.world.progress();
 
-  self._render_pipeline->on_update(&self);
+  self.renderer_instance->update();
   self.dirty_transforms.clear();
 
   if (RendererCVar::cvar_enable_physics_debug_renderer.get()) {
     auto physics = App::get_system<Physics>(EngineSystems::Physics);
     physics->debug_draw();
+  }
+}
+
+auto Scene::defer_function(this Scene& self, const std::function<void(Scene* scene)>& func) -> void {
+  ZoneScoped;
+
+  self.deferred_functions_.emplace_back(func);
+}
+
+auto Scene::run_deferred_functions(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (!self.deferred_functions_.empty()) {
+    for (auto& func : self.deferred_functions_) {
+      func(&self);
+    }
+    self.deferred_functions_.clear();
   }
 }
 
@@ -766,9 +776,9 @@ auto Scene::create_mesh_entity(this Scene& self, const UUID& asset_uuid) -> flec
 auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Scene> {
   ZoneScoped;
 
-  // Copies the world but not the renderer.
+  // Copies the world but not the renderer instance.
 
-  std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(src_scene->scene_name, src_scene->_render_pipeline);
+  std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(src_scene->scene_name);
 
   JsonWriter writer{};
   writer.begin_obj();
