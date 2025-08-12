@@ -1121,7 +1121,7 @@ auto AssetManager::load_texture(const UUID& uuid, const TextureLoadInfo& info) -
     texture.create(asset->path, info);
 
     auto write_lock = std::unique_lock(textures_mutex);
-    auto texture_image_view = texture.get_view()->payload;
+    auto texture_image_view = texture.get_view().payload;
     asset->texture_id = texture_map.create_slot(std::move(texture));
 
     auto image_descriptor = VkDescriptorImageInfo{

@@ -286,6 +286,8 @@ void App::close() {
     DebugRenderer::release();
 
     window.destroy();
+
+    vk_context->destroy_context();
   }
 }
 

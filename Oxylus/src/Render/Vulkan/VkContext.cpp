@@ -8,6 +8,7 @@
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 #include <vuk/runtime/vk/PipelineInstance.hpp>
 #include <vuk/runtime/vk/Query.hpp>
+#include <vuk/vsl/Core.hpp>
 
 #include "Render/RendererConfig.hpp"
 #include "Render/Window.hpp"
@@ -113,26 +114,6 @@ vuk::Swapchain make_swapchain(vuk::Allocator& allocator,
 
   return std::move(*old_swapchain);
 }
-
-VkContext::~VkContext() { runtime->wait_idle(); }
-
-auto VkContext::handle_resize(u32 width, u32 height) -> void {
-  wait();
-
-  if (width == 0 && height == 0) {
-    suspend = true;
-  } else {
-    swapchain = make_swapchain(
-        *superframe_allocator, vkb_device, surface, std::move(swapchain), present_mode, num_inflight_frames);
-  }
-}
-
-auto VkContext::set_vsync(bool enable) -> void {
-  const auto set_present_mode = enable ? vuk::PresentModeKHR::eFifo : vuk::PresentModeKHR::eImmediate;
-  present_mode = set_present_mode;
-}
-
-auto VkContext::is_vsync() const -> bool { return present_mode == vuk::PresentModeKHR::eFifo; }
 
 auto VkContext::create_context(this VkContext& self, const Window& window, bool vulkan_validation_layers) -> void {
   ZoneScoped;
@@ -318,6 +299,46 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
               patch);
 }
 
+auto VkContext::destroy_context(this VkContext& self) -> void {
+  ZoneScoped;
+  self.runtime->wait_idle();
+
+  auto destroy_resource_pool = [&self](auto& pool) -> void {
+    for (auto i = 0_sz; i < pool.size(); i++) {
+      auto* v = pool.slot_from_index(i);
+      if (v) {
+        self.superframe_allocator->deallocate({v, 1});
+      }
+    }
+
+    pool.reset();
+  };
+
+  destroy_resource_pool(self.resources.buffers);
+  destroy_resource_pool(self.resources.images);
+  destroy_resource_pool(self.resources.image_views);
+  self.resources.samplers.reset();
+  self.resources.pipelines.reset();
+}
+
+auto VkContext::handle_resize(u32 width, u32 height) -> void {
+  wait();
+
+  if (width == 0 && height == 0) {
+    suspend = true;
+  } else {
+    swapchain = make_swapchain(
+        *superframe_allocator, vkb_device, surface, std::move(swapchain), present_mode, num_inflight_frames);
+  }
+}
+
+auto VkContext::set_vsync(bool enable) -> void {
+  const auto set_present_mode = enable ? vuk::PresentModeKHR::eFifo : vuk::PresentModeKHR::eImmediate;
+  present_mode = set_present_mode;
+}
+
+auto VkContext::is_vsync() const -> bool { return present_mode == vuk::PresentModeKHR::eFifo; }
+
 auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
@@ -453,6 +474,102 @@ auto VkContext::commit_descriptor_set(this VkContext& self, std::span<VkWriteDes
   ZoneScoped;
 
   vkUpdateDescriptorSets(self.device, writes.size(), writes.data(), 0, nullptr);
+}
+
+auto VkContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {
+  ZoneScoped;
+
+  vuk::ImageCreateInfo ici;
+  ici.format = vuk::Format(image_attachment.format);
+  ici.imageType = image_attachment.image_type;
+  ici.flags = image_attachment.image_flags;
+  ici.arrayLayers = image_attachment.layer_count;
+  ici.samples = image_attachment.sample_count.count;
+  ici.tiling = image_attachment.tiling;
+  ici.mipLevels = image_attachment.level_count;
+  ici.usage = image_attachment.usage;
+  ici.extent = image_attachment.extent;
+
+  VkImageFormatListCreateInfo listci = {VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO};
+  VkFormat formats[2];
+  if (image_attachment.allow_srgb_unorm_mutable) {
+    auto unorm_fmt = srgb_to_unorm(image_attachment.format);
+    auto srgb_fmt = unorm_to_srgb(image_attachment.format);
+    formats[0] = (VkFormat)image_attachment.format;
+    formats[1] = unorm_fmt == vuk::Format::eUndefined ? (VkFormat)srgb_fmt : (VkFormat)unorm_fmt;
+    listci.pViewFormats = formats;
+    listci.viewFormatCount = formats[1] == VK_FORMAT_UNDEFINED ? 1 : 2;
+    if (listci.viewFormatCount > 1) {
+      ici.flags |= vuk::ImageCreateFlagBits::eMutableFormat;
+      ici.pNext = &listci;
+    }
+  }
+
+  vuk::Image image = {};
+
+  if (auto res = superframe_allocator->allocate_images(std::span{&image, 1}, std::span{&ici, 1}); !res) {
+    OX_LOG_ERROR("{}", res.error().error_message);
+  }
+
+  return resources.images.create_slot(std::move(image));
+}
+
+auto VkContext::destroy_image(const ImageID id) -> void {
+  ZoneScoped;
+
+  auto image = *resources.images.slot(id);
+  superframe_allocator->deallocate({&image, 1});
+  resources.images.destroy_slot(id);
+}
+
+auto VkContext::image(const ImageID id) -> vuk::Image {
+  ZoneScoped;
+
+  auto image = resources.images.slot(id);
+  return *image;
+}
+
+auto VkContext::allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID {
+  ZoneScoped;
+
+  vuk::ImageViewCreateInfo ivci;
+  OX_CHECK_EQ((bool)image_attachment.image, true);
+  ivci.flags = image_attachment.image_view_flags;
+  ivci.image = image_attachment.image.image;
+  ivci.viewType = image_attachment.view_type;
+  ivci.format = vuk::Format(image_attachment.format);
+  ivci.components = image_attachment.components;
+  ivci.view_usage = image_attachment.usage;
+
+  vuk::ImageSubresourceRange& isr = ivci.subresourceRange;
+  isr.aspectMask = format_to_aspect(ivci.format);
+  isr.baseArrayLayer = image_attachment.base_layer;
+  isr.layerCount = image_attachment.layer_count;
+  isr.baseMipLevel = image_attachment.base_level;
+  isr.levelCount = image_attachment.level_count;
+
+  vuk::ImageView view;
+
+  if (auto res = superframe_allocator->allocate_image_views(std::span{&view, 1}, std::span{&ivci, 1}); !res) {
+    OX_LOG_ERROR("{}", res.error().error_message);
+  }
+
+  return resources.image_views.create_slot(std::move(view));
+}
+
+auto VkContext::destroy_image_view(const ImageViewID id) -> void {
+  ZoneScoped;
+
+  auto view = *resources.image_views.slot(id);
+  superframe_allocator->deallocate({&view, 1});
+  resources.image_views.destroy_slot(id);
+}
+
+auto VkContext::image_view(const ImageViewID id) -> vuk::ImageView {
+  ZoneScoped;
+
+  auto view = resources.image_views.slot(id);
+  return *view;
 }
 
 auto VkContext::allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment) -> vuk::Unique<vuk::Buffer> {
