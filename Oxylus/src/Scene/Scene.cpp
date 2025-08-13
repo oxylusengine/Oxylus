@@ -738,7 +738,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       .gpu_meshes = gpu_meshes,
       .gpu_mesh_instances = gpu_mesh_instances,
   };
-  self.renderer_instance->update(update_info);
+  auto prepared_frame = self.renderer_instance->update(update_info);
   self.dirty_transforms.clear();
   self.meshes_dirty = false;
 
