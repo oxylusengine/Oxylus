@@ -35,6 +35,8 @@ in pkgs.mkShell.override {
 
   shellHook = ''
     export LD_LIBRARY_PATH=${pkgs.llvmPackages_20.libcxx}/lib:$LD_LIBRARY_PATH
+    # slang needs libstdc++
+    export LD_LIBRARY_PATH=${pkgs.gcc14.cc.lib}/lib:$LD_LIBRARY_PATH
   '';
 
   hardeningDisable = [ "all" ];
