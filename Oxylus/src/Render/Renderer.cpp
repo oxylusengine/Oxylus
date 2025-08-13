@@ -42,15 +42,9 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   auto& runtime = *vk_context->runtime;
   auto& allocator = *vk_context->superframe_allocator;
+  auto& bindless_set = vk_context->get_descriptor_set();
 
   vk_context->wait();
-
-  auto dslci_01 = vuk::descriptor_set_layout_create_info(
-      {
-          ds_layout_binding(BindlessID::Samplers, vuk::DescriptorType::eSampler, 6),        // Samplers
-          ds_layout_binding(BindlessID::SampledImages, vuk::DescriptorType::eSampledImage), // SampledImages
-      },
-      1);
 
   // --- Shaders ---
   auto* vfs = App::get_system<VFS>(EngineSystems::VFS);
@@ -67,7 +61,7 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   slang.create_pipeline(runtime,
                         "2d_forward_pipeline",
-                        dslci_01,
+                        nullptr,
                         {.path = shaders_dir + "/passes/2d_forward.slang", .entry_points = {"vs_main", "ps_main"}});
 
   // --- Sky ---
@@ -83,17 +77,17 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   slang.create_pipeline(runtime,
                         "sky_view_pipeline",
-                        dslci_01,
+                        nullptr,
                         {.path = shaders_dir + "/passes/sky_view.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "sky_aerial_perspective_pipeline",
-                        dslci_01,
+                        nullptr,
                         {.path = shaders_dir + "/passes/sky_aerial_perspective.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "sky_final_pipeline",
-                        dslci_01,
+                        nullptr,
                         {.path = shaders_dir + "/passes/sky_final.slang", .entry_points = {"vs_main", "fs_main"}});
 
   // --- VISBUFFER ---
@@ -108,7 +102,7 @@ auto Renderer::init() -> std::expected<void, std::string> {
   slang.create_pipeline(
       runtime,
       "visbuffer_encode",
-      dslci_01,
+      &bindless_set,
       {.path = shaders_dir + "/passes/visbuffer_encode.slang", .entry_points = {"vs_main", "fs_main"}});
 
   slang.create_pipeline(runtime,
@@ -119,7 +113,7 @@ auto Renderer::init() -> std::expected<void, std::string> {
   slang.create_pipeline(
       runtime,
       "visbuffer_decode",
-      dslci_01,
+      &bindless_set,
       {.path = shaders_dir + "/passes/visbuffer_decode.slang", .entry_points = {"vs_main", "fs_main"}});
 
   slang.create_pipeline(
@@ -127,7 +121,7 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   // --- PBR ---
   slang.create_pipeline(
-      runtime, "brdf", dslci_01, {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}});
+      runtime, "brdf", nullptr, {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}});
 
   //  --- FFX ---
   slang.create_pipeline(
@@ -168,40 +162,6 @@ auto Renderer::init() -> std::expected<void, std::string> {
                         "fxaa_pipeline",
                         {},
                         {.path = shaders_dir + "/passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}});
-
-  // --- DescriptorSets ---
-  this->descriptor_set_01 = runtime.create_persistent_descriptorset(allocator, dslci_01, 1);
-
-  // --- Samplers ---
-  static constexpr auto hiz_sampler_ci = vuk::SamplerCreateInfo{
-      .pNext = &sampler_min_clamp_reduction_mode,
-      .magFilter = vuk::Filter::eLinear,
-      .minFilter = vuk::Filter::eLinear,
-      .mipmapMode = vuk::SamplerMipmapMode::eNearest,
-      .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-      .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-  };
-
-  const vuk::Sampler linear_sampler_clamped = runtime.acquire_sampler(vuk::LinearSamplerClamped,
-                                                                      runtime.get_frame_count());
-  const vuk::Sampler linear_sampler_repeated = runtime.acquire_sampler(vuk::LinearSamplerRepeated,
-                                                                       runtime.get_frame_count());
-  const vuk::Sampler linear_sampler_repeated_anisotropy = runtime.acquire_sampler(vuk::LinearSamplerRepeatedAnisotropy,
-                                                                                  runtime.get_frame_count());
-  const vuk::Sampler nearest_sampler_clamped = runtime.acquire_sampler(vuk::NearestSamplerClamped,
-                                                                       runtime.get_frame_count());
-  const vuk::Sampler nearest_sampler_repeated = runtime.acquire_sampler(vuk::NearestSamplerRepeated,
-                                                                        runtime.get_frame_count());
-  const vuk::Sampler hiz_sampler = runtime.acquire_sampler(hiz_sampler_ci, runtime.get_frame_count());
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 0, linear_sampler_repeated);
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 1, linear_sampler_clamped);
-
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 2, nearest_sampler_repeated);
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 3, nearest_sampler_clamped);
-
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 4, linear_sampler_repeated_anisotropy);
-
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 5, hiz_sampler);
 
   sky_transmittance_lut_view = Texture("sky_transmittance_lut");
   sky_transmittance_lut_view.create({},

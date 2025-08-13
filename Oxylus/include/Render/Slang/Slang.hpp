@@ -17,16 +17,13 @@ public:
     std::vector<std::string> entry_points = {};
   };
 
-  void create_session(this Slang& self,
-                      const SessionInfo& session_info);
-  void add_shader(this Slang& self,
-                  vuk::PipelineBaseCreateInfo& pipeline_ci,
-                  const CompileInfo& compile_info);
+  void create_session(this Slang& self, const SessionInfo& session_info);
+  void add_shader(this Slang& self, vuk::PipelineBaseCreateInfo& pipeline_ci, const CompileInfo& compile_info);
 
   void create_pipeline(this Slang& self,
                        vuk::Runtime& runtime,
                        const vuk::Name& name,
-                       const option<vuk::DescriptorSetLayoutCreateInfo>& dci,
+                       vuk::PersistentDescriptorSet* pds,
                        const CompileInfo& compile_info);
 
 private:

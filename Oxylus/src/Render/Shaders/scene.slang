@@ -71,8 +71,8 @@ public struct Material {
 
   public func sample_albedo_color(f32x2 uv) -> f32x4 { 
     if (this.albedo_image_index != ~0u) {
-      const let color = material_images[this.albedo_image_index]
-        .sample(material_samplers[this.sampling_mode], uv);
+      const let color = global_images[this.albedo_image_index]
+        .sample(global_samplers[this.sampling_mode], uv);
       return color * this.albedo_color;
     }
 
@@ -81,8 +81,8 @@ public struct Material {
 
   public func sample_albedo_color(in UVGradient grad) -> f32x4 {
     if (this.flags & MaterialFlag::HasAlbedoImage) {
-        const let color = material_images[this.albedo_image_index]
-            .sample_grad(material_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy);
+        const let color = global_images[this.albedo_image_index]
+            .sample_grad(global_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy);
         return this.albedo_color * color;
     }
 
@@ -91,8 +91,8 @@ public struct Material {
 
   public func sample_normal_color(in UVGradient grad) -> f32x3 {
     if (this.flags & MaterialFlag::HasNormalImage) {
-        return material_images[this.normal_image_index]
-            .sample_grad(material_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).rgb;
+        return global_images[this.normal_image_index]
+            .sample_grad(global_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).rgb;
     }
 
     return { 0.0 };
@@ -100,8 +100,8 @@ public struct Material {
 
   public func sample_emissive_color(in UVGradient grad) -> f32x3 {
     if (this.flags & MaterialFlag::HasEmissiveImage) {
-        const let color = material_images[this.emissive_image_index]
-            .sample_grad(material_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).rgb;
+        const let color = global_images[this.emissive_image_index]
+            .sample_grad(global_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).rgb;
         return this.emissive_color * color;
     }
 
@@ -111,8 +111,8 @@ public struct Material {
   public func sample_metallic_roughness(in UVGradient grad) -> f32x2 {
     const let metallic_roughness = f32x2(this.metallic_factor, this.roughness_factor);
     if (this.flags & MaterialFlag::HasMetallicRoughnessImage) {
-        const let color = material_images[this.metallic_rougness_image_index]
-            .sample_grad(material_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).bg;
+        const let color = global_images[this.metallic_rougness_image_index]
+            .sample_grad(global_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).bg;
         return metallic_roughness * color;
     }
 
@@ -121,8 +121,8 @@ public struct Material {
 
   public func sample_occlusion_color(in UVGradient grad) -> f32 {
     if (this.flags & MaterialFlag::HasOcclusionImage) {
-        return material_images[this.occlusion_image_index]
-            .sample_grad(material_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).r;
+        return global_images[this.occlusion_image_index]
+            .sample_grad(global_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).r;
     }
 
     return 1.0;
@@ -313,6 +313,9 @@ public struct UVGradient {
 // --- Bindings ---
 
 [[vk::binding(0, 1)]]
-public SamplerState material_samplers[];
+public SamplerState global_samplers[];
 [[vk::binding(1, 1)]]
-public Image2D<f32x4> material_images[];
+public Image2D<f32x4> global_images[];
+[[vk::binding(2, 1)]]
+public StorageImage2D<f32x4> global_storage_images[];
+

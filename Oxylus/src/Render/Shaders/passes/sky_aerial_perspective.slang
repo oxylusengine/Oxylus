@@ -6,6 +6,7 @@ import sky;
 import scene;
 
 struct ShaderParameters {
+    Sampler sampler;
     Image2D<f32x4> sky_transmittance_lut;
     Image2D<f32x4> sky_multiscattering_lut;
     StorageImage3D<f32x4, ImageFormat::RGBA16F> sky_aerial_perspective_lut;
@@ -79,7 +80,7 @@ func cs_main(
     info.transmittance_image = params.sky_transmittance_lut;
     info.multiscattering_image = params.sky_multiscattering_lut;
 
-    const let result = integrate_single_scattered_luminance(params.atmosphere, material_samplers[1], info);
+    const let result = integrate_single_scattered_luminance(params.atmosphere, params.sampler, info);
     const let transmittance = dot(result.transmittance, f32x3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f));
     params.sky_aerial_perspective_lut.store(thread_id, f32x4(result.luminance, transmittance));
 }
