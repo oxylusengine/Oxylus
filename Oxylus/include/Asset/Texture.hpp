@@ -8,7 +8,6 @@
 
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
-#include "Render/Vulkan/VkContext.hpp"
 
 using Preset = vuk::ImageAttachment::Preset;
 
@@ -30,8 +29,8 @@ public:
 
   Texture& operator=(Texture&& other) noexcept {
     if (this != &other) {
-      image_id = std::move(other.image_id);
-      image_view_id = std::move(other.image_view_id);
+      image_ = std::move(other.image_);
+      view_ = std::move(other.view_);
       attachment_ = std::move(other.attachment_);
       name_ = std::move(other.name_);
     }
@@ -48,23 +47,26 @@ public:
 
   auto destroy() -> void;
 
+  static auto from_attachment(vuk::Allocator& allocator, vuk::ImageAttachment& ia) -> std::unique_ptr<Texture>;
+
   auto attachment() const -> vuk::ImageAttachment { return attachment_; }
   auto acquire(vuk::Name name = {}, vuk::Access last_access = vuk::Access::eFragmentSampled) const
       -> vuk::Value<vuk::ImageAttachment>;
   auto discard(vuk::Name name = {}) const -> vuk::Value<vuk::ImageAttachment>;
 
-  auto get_image() const -> const vuk::Image;
-  auto get_view() const -> const vuk::ImageView;
+  auto get_image() const -> const vuk::Unique<vuk::Image>& { return image_; }
+  auto get_view() const -> const vuk::Unique<vuk::ImageView>& { return view_; }
   auto get_extent() const -> const vuk::Extent3D& { return attachment_.extent; }
   auto get_format() const -> vuk::Format { return attachment_.format; }
 
-  auto get_name() -> const vuk::Name& { return name_; }
+  auto reset_view(vuk::Allocator& allocator) -> void;
+
+  auto get_name() -> const std::string& { return name_; }
   auto set_name(std::string_view name, const std::source_location& loc = std::source_location::current()) -> void;
 
-  auto get_image_id() const -> u64 { return (u64)image_id; }
-  auto get_view_id() const -> u64 { return (u64)image_view_id; }
+  auto get_view_id() const -> u64 { return view_->id; }
 
-  operator bool() const { return image_id != ImageID::Invalid; }
+  operator bool() const { return static_cast<bool>(image_); }
 
   static auto load_stb_image(const std::string& filename,
                              uint32_t* width = nullptr,
@@ -92,8 +94,8 @@ public:
 
 private:
   vuk::ImageAttachment attachment_ = {};
-  ImageID image_id;
-  ImageViewID image_view_id;
-  vuk::Name name_ = {};
+  vuk::Unique<vuk::Image> image_;
+  vuk::Unique<vuk::ImageView> view_;
+  std::string name_ = {};
 };
 } // namespace ox

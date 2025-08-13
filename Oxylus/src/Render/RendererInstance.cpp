@@ -1,7 +1,7 @@
 #include "Render/RendererInstance.hpp"
 
 #include "Asset/AssetManager.hpp"
-#include "Asset/Model.hpp"
+#include "Asset/Mesh.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Render/RendererConfig.hpp"

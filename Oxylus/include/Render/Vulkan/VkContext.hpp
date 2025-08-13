@@ -7,38 +7,14 @@
 #include <vuk/runtime/vk/VkRuntime.hpp>
 
 #include "Core/Option.hpp"
-#include "Memory/SlotMap.hpp"
 #include "Render/Slang/Compiler.hpp"
 
 namespace ox {
 struct Window;
 class TracyProfiler;
 
-enum class BufferID : u64 { Invalid = ~0_u64 };
-enum class ImageID : u64 { Invalid = ~0_u64 };
-enum class ImageViewID : u64 { Invalid = ~0_u64 };
-enum class SamplerID : u64 { Invalid = ~0_u64 };
-enum class PipelineID : u64 { Invalid = ~0_u64 };
-
-enum : u32 {
-  DescriptorTable_SamplerIndex = 0,
-  DescriptorTable_SampledImageIndex,
-  DescriptorTable_StorageImageIndex,
-};
-
 class VkContext {
 public:
-  struct Resources {
-    SlotMap<vuk::Buffer, BufferID> buffers = {};
-    SlotMap<vuk::Image, ImageID> images = {};
-    SlotMap<vuk::ImageView, ImageViewID> image_views = {};
-    SlotMap<vuk::Sampler, SamplerID> samplers = {};
-    SlotMap<vuk::PipelineBaseInfo*, PipelineID> pipelines = {};
-    vuk::PersistentDescriptorSet descriptor_set = {};
-  };
-
-  Resources resources = {};
-
   VkDevice device = nullptr;
   VkPhysicalDevice physical_device = nullptr;
   vkb::PhysicalDevice vkbphysical_device;
@@ -66,10 +42,9 @@ public:
   std::string device_name = {};
 
   VkContext() = default;
-  ~VkContext() = default;
+  ~VkContext();
 
   auto create_context(this VkContext& self, const Window& window, bool vulkan_validation_layers) -> void;
-  auto destroy_context(this VkContext& self) -> void;
 
   auto new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachment>;
 
@@ -94,16 +69,6 @@ public:
                                         std::span<VkDescriptorBindingFlags> binding_flags)
       -> vuk::PersistentDescriptorSet;
   auto commit_descriptor_set(this VkContext&, std::span<VkWriteDescriptorSet> writes) -> void;
-
-  auto allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID;
-  auto destroy_image(const ImageID id) -> void;
-  auto image(const ImageID id) -> vuk::Image;
-
-  auto allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID;
-  auto destroy_image_view(const ImageViewID id) -> void;
-  auto image_view(const ImageViewID id) -> vuk::ImageView;
-
-  auto get_descriptor_set() -> auto& { return resources.descriptor_set; }
 
   [[nodiscard]]
   auto allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;

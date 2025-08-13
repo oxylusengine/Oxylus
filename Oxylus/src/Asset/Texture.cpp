@@ -90,10 +90,10 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
       load_info.preset, format, {extent.width, extent.height, extent.depth}, vuk::Samples::e1);
   ia.usage |= vuk::ImageUsageFlagBits::eTransferDst | vuk::ImageUsageFlagBits::eTransferSrc;
 
-  image_id = vk_context.allocate_image(ia);
-  ia.image = vk_context.image(image_id);
-  image_view_id = vk_context.allocate_image_view(ia);
-  ia.image_view = vk_context.image_view(image_view_id);
+  auto image = *vuk::allocate_image(*allocator, ia);
+  ia.image = *image;
+  auto view = *vuk::allocate_image_view(*allocator, ia);
+  ia.image_view = *view;
 
   std::vector<u8> ktx_data = {};
   std::vector<usize> ktx_per_level_offsets = {};
@@ -168,65 +168,63 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
     fut.wait(*allocator, compiler);
   }
 
+  image_ = std::move(image);
+  view_ = std::move(view);
   attachment_ = ia;
 
-  set_name(name_.c_str(), loc);
+  set_name(name_, loc);
 }
 
 auto Texture::destroy() -> void {
   ZoneScoped;
   attachment_ = {};
   name_ = {};
+  view_.reset();
+  image_.reset();
+}
 
-  auto& vk_context = App::get_vkcontext();
+auto Texture::reset_view(vuk::Allocator& allocator) -> void {
+  ZoneScoped;
 
-  vk_context.destroy_image(image_id);
-  image_id = {};
+  auto new_view = *vuk::allocate_image_view(allocator, attachment());
+  view_ = std::move(new_view);
+  attachment_.image_view = *view_;
+}
 
-  vk_context.destroy_image_view(image_view_id);
-  image_view_id = {};
+auto Texture::from_attachment(vuk::Allocator& allocator, vuk::ImageAttachment& ia) -> std::unique_ptr<Texture> {
+  ZoneScoped;
+
+  std::unique_ptr<Texture> t = std::make_unique<Texture>();
+  t->view_ = vuk::Unique<vuk::ImageView>(allocator, ia.image_view);
+  t->image_ = vuk::Unique<vuk::Image>(allocator, ia.image);
+  t->attachment_ = ia;
+  return t;
 }
 
 vuk::Value<vuk::ImageAttachment> Texture::acquire(const vuk::Name name, const vuk::Access last_access) const {
   ZoneScoped;
-  return vuk::acquire_ia(name.is_invalid() ? name_ : name, attachment(), last_access);
+  return vuk::acquire_ia(name.is_invalid() ? vuk::Name(name_) : name, attachment(), last_access);
 }
 
 vuk::Value<vuk::ImageAttachment> Texture::discard(vuk::Name name) const {
   ZoneScoped;
-  return vuk::discard_ia(name.is_invalid() ? name_ : name, attachment());
-}
-
-auto Texture::get_image() const -> const vuk::Image {
-  ZoneScoped;
-
-  auto& vk_context = App::get_vkcontext();
-
-  return vk_context.image(image_id);
-}
-
-auto Texture::get_view() const -> const vuk::ImageView {
-  ZoneScoped;
-
-  auto& vk_context = App::get_vkcontext();
-
-  return vk_context.image_view(image_view_id);
+  return vuk::discard_ia(name.is_invalid() ? vuk::Name(name_) : name, attachment());
 }
 
 void Texture::set_name(std::string_view name, const std::source_location& loc) {
   ZoneScoped;
-  auto& vk_context = App::get_vkcontext();
-  vuk::Name new_name = vuk::Name(name);
-  if (name.empty()) {
+  auto& ctx = App::get_vkcontext();
+  if (!name.empty()) {
+    ctx.runtime->set_name(image_->image, vuk::Name(name));
+    ctx.runtime->set_name(view_->payload, vuk::Name(name));
+    name_ = name;
+  } else {
     auto file = fs::get_file_name(loc.file_name());
     const auto n = fmt::format("{0}:{1}", file, loc.line());
-    new_name = vuk::Name(n);
+    ctx.runtime->set_name(image_->image, vuk::Name(n));
+    ctx.runtime->set_name(view_->payload, vuk::Name(n));
+    name_ = n;
   }
-
-  vk_context.runtime->set_name(vk_context.image(image_id).image, vuk::Name(name));
-  vk_context.runtime->set_name(vk_context.image_view(image_view_id).payload, vuk::Name(name));
-
-  name_ = new_name;
 }
 
 std::unique_ptr<u8[]>
