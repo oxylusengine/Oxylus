@@ -240,7 +240,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         });
 
     auto cull_triangles_cmd_buffer = vk_context.scratch_buffer<vuk::DispatchIndirectCommand>({.x = 0, .y = 1, .z = 1});
-    auto visible_meshlet_instances_indices_buffer = std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer);
+    auto visible_meshlet_instances_indices_buffer = std::move(
+        self.prepared_frame.visible_meshlet_instances_indices_buffer);
 
     std::tie(camera_buffer,
              meshlet_instances_buffer,
@@ -1249,10 +1250,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.histogram_info = hist_info;
 
   if (!info.dirty_transform_ids.empty()) {
-    auto rebuild_transforms = !self.materials_buffer ||
+    auto rebuild_transforms = !self.transforms_buffer ||
                               self.transforms_buffer->size <= info.gpu_transforms.size_bytes();
-    self.transforms_buffer = vk_context.resize_buffer(std::move(self.transforms_buffer),
-                                                      info.gpu_transforms.size_bytes());
+    self.transforms_buffer = vk_context.resize_buffer(
+        std::move(self.transforms_buffer), vuk::MemoryUsage::eGPUonly, info.gpu_transforms.size_bytes());
 
     if (rebuild_transforms) {
       // If we resize buffer, we need to refill it again, so individual uploads are not required.
@@ -1302,7 +1303,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   if (!info.dirty_material_indices.empty()) {
     auto rebuild_materials = !self.materials_buffer || self.materials_buffer->size <= info.gpu_materials.size_bytes();
-    self.materials_buffer = vk_context.resize_buffer(std::move(self.materials_buffer), info.gpu_materials.size_bytes());
+    self.materials_buffer = vk_context.resize_buffer(
+        std::move(self.materials_buffer), vuk::MemoryUsage::eGPUonly, info.gpu_materials.size_bytes());
 
     if (rebuild_materials) {
       self.prepared_frame.materials_buffer = vk_context.upload_staging(info.gpu_materials, *self.materials_buffer);
@@ -1347,21 +1349,21 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   }
 
   if (!info.gpu_meshes.empty()) {
-    self.meshes_buffer = vk_context.resize_buffer(std::move(self.meshes_buffer), info.gpu_meshes.size_bytes());
+    self.meshes_buffer = vk_context.resize_buffer(
+        std::move(self.meshes_buffer), vuk::MemoryUsage::eGPUonly, info.gpu_meshes.size_bytes());
     self.prepared_frame.meshes_buffer = vk_context.upload_staging(info.gpu_meshes, *self.meshes_buffer);
   } else if (self.meshes_buffer) {
     self.prepared_frame.meshes_buffer = vuk::acquire_buf("meshes", *self.meshes_buffer, vuk::Access::eMemoryRead);
   }
 
   if (!info.gpu_mesh_instances.empty()) {
-    self.mesh_instances_buffer = vk_context.resize_buffer(std::move(self.mesh_instances_buffer),
-                                                          info.gpu_mesh_instances.size_bytes());
+    self.mesh_instances_buffer = vk_context.resize_buffer(
+        std::move(self.mesh_instances_buffer), vuk::MemoryUsage::eGPUonly, info.gpu_mesh_instances.size_bytes());
     self.prepared_frame.mesh_instances_buffer = vk_context.upload_staging(info.gpu_mesh_instances,
                                                                           *self.mesh_instances_buffer);
   } else if (self.mesh_instances_buffer) {
-
     self.prepared_frame.mesh_instances_buffer = vuk::acquire_buf(
-        "meshes", *self.meshes_buffer, vuk::Access::eMemoryRead);
+        "mesh instances", *self.mesh_instances_buffer, vuk::Access::eMemoryRead);
   }
 
   if (info.max_meshlet_instance_count > 0) {

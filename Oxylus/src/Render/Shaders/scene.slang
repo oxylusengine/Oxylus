@@ -36,6 +36,12 @@ public enum CullFlags : u32 {
     TriangleCulling,
 };
 
+public struct UVGradient {
+  public f32x2 uv;
+  public f32x2 ddx;
+  public f32x2 ddy;
+};
+
 public enum MaterialFlag : u32 {
   None = 0,
   // Image flags
@@ -62,17 +68,17 @@ public struct Material {
   public f32 metallic_factor = 0.0;
   public MaterialFlag flags = MaterialFlag::None;
   public f32 alpha_cutoff = 0.0;
-  public u32 sampling_mode = 0;
-  public u32 albedo_image_index = ~0u;
-  public u32 normal_image_index = ~0u;
-  public u32 emissive_image_index = ~0u;
-  public u32 metallic_rougness_image_index = ~0u;
-  public u32 occlusion_image_index = ~0u;
+  public u32 sampler_index = 0;
+  public u32 albedo_image_index = 0;
+  public u32 normal_image_index = 0;
+  public u32 emissive_image_index = 0;
+  public u32 metallic_rougness_image_index = 0;
+  public u32 occlusion_image_index = 0;
 
   public func sample_albedo_color(f32x2 uv) -> f32x4 { 
     if (this.albedo_image_index != ~0u) {
       const let color = global_images[this.albedo_image_index]
-        .sample(global_samplers[this.sampling_mode], uv);
+        .sample(global_samplers[this.sampler_index], uv);
       return color * this.albedo_color;
     }
 
@@ -82,7 +88,7 @@ public struct Material {
   public func sample_albedo_color(in UVGradient grad) -> f32x4 {
     if (this.flags & MaterialFlag::HasAlbedoImage) {
         const let color = global_images[this.albedo_image_index]
-            .sample_grad(global_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy);
+            .sample_grad(global_samplers[this.sampler_index], grad.uv, grad.ddx, grad.ddy);
         return this.albedo_color * color;
     }
 
@@ -92,7 +98,7 @@ public struct Material {
   public func sample_normal_color(in UVGradient grad) -> f32x3 {
     if (this.flags & MaterialFlag::HasNormalImage) {
         return global_images[this.normal_image_index]
-            .sample_grad(global_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).rgb;
+            .sample_grad(global_samplers[this.sampler_index], grad.uv, grad.ddx, grad.ddy).rgb;
     }
 
     return { 0.0 };
@@ -101,7 +107,7 @@ public struct Material {
   public func sample_emissive_color(in UVGradient grad) -> f32x3 {
     if (this.flags & MaterialFlag::HasEmissiveImage) {
         const let color = global_images[this.emissive_image_index]
-            .sample_grad(global_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).rgb;
+            .sample_grad(global_samplers[this.sampler_index], grad.uv, grad.ddx, grad.ddy).rgb;
         return this.emissive_color * color;
     }
 
@@ -112,7 +118,7 @@ public struct Material {
     const let metallic_roughness = f32x2(this.metallic_factor, this.roughness_factor);
     if (this.flags & MaterialFlag::HasMetallicRoughnessImage) {
         const let color = global_images[this.metallic_rougness_image_index]
-            .sample_grad(global_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).bg;
+            .sample_grad(global_samplers[this.sampler_index], grad.uv, grad.ddx, grad.ddy).bg;
         return metallic_roughness * color;
     }
 
@@ -122,7 +128,7 @@ public struct Material {
   public func sample_occlusion_color(in UVGradient grad) -> f32 {
     if (this.flags & MaterialFlag::HasOcclusionImage) {
         return global_images[this.occlusion_image_index]
-            .sample_grad(global_samplers[this.sampling_mode], grad.uv, grad.ddx, grad.ddy).r;
+            .sample_grad(global_samplers[this.sampler_index], grad.uv, grad.ddx, grad.ddy).r;
     }
 
     return 1.0;
@@ -213,101 +219,113 @@ public struct Transform {
   }
 };
 
-public typealias Triangle = u32x3;
 public struct Meshlet {
-    public u32 vertex_offset = 0;
-    public u32 index_offset = 0;
-    public u32 triangle_offset = 0;
+    public u32 indirect_vertex_index_offset = 0;
+    public u32 local_triangle_index_offset = 0;
+    public u32 vertex_count = 0;
     public u32 triangle_count = 0;
 
     // Takes a local triange index and returns an index to index buffer.
-    public func index(in Mesh mesh, u32 i) -> u32 {
-        return u32(mesh.local_triangle_indices[this.triangle_offset + i]);
-    }
-
-    // Returns index to an actual vertex.
-    public func vertex(in Mesh mesh, u32 index) -> u32 {
-        return mesh.indices[this.index_offset + index];
+    public func index(in MeshLOD mesh_lod, u32 i) -> u32 {
+        let local_triangle_index = u32(mesh_lod.local_triangle_indices[this.local_triangle_index_offset + i]);
+        return mesh_lod.indirect_vertex_indices[this.indirect_vertex_index_offset + local_triangle_index];
     }
 
     // Returns position of a vertex.
-    public func position(in Mesh mesh, u32 vertex) -> f32x3 {
-        return mesh.vertex_positions[this.vertex_offset + vertex];
+    public func position(in Mesh mesh, u32 index) -> f32x3 {
+        return mesh.vertex_positions[index];
     }
 
-    public func tex_coord(in Mesh mesh, u32 vertex) -> f32x2 {
+    public func tex_coord(in Mesh mesh, u32 index) -> f32x2 {
         if (mesh.texture_coords == nullptr) {
             return {};
         }
 
-        return mesh.texture_coords[this.vertex_offset + vertex];
+        return mesh.texture_coords[index];
     }
 
     // ----------------------------------------------------------
 
-    public func indices(in Mesh mesh, u32 i) -> Triangle {
-        return {
-            u32(mesh.local_triangle_indices[this.triangle_offset + i * 3 + 0]),
-            u32(mesh.local_triangle_indices[this.triangle_offset + i * 3 + 1]),
-            u32(mesh.local_triangle_indices[this.triangle_offset + i * 3 + 2]),
-        };
+    public func indices(in MeshLOD mesh_lod, u32 i) -> u32x3 {
+        let local_triangle_indices = u32x3(
+            u32(mesh_lod.local_triangle_indices[this.local_triangle_index_offset + i * 3 + 0]),
+            u32(mesh_lod.local_triangle_indices[this.local_triangle_index_offset + i * 3 + 1]),
+            u32(mesh_lod.local_triangle_indices[this.local_triangle_index_offset + i * 3 + 2]),
+        );
+
+        return { mesh_lod.indirect_vertex_indices[this.indirect_vertex_index_offset + local_triangle_indices.x],
+                 mesh_lod.indirect_vertex_indices[this.indirect_vertex_index_offset + local_triangle_indices.y],
+                 mesh_lod.indirect_vertex_indices[this.indirect_vertex_index_offset + local_triangle_indices.z] };
     }
 
-    public func vertices(in Mesh mesh, in Triangle indices) -> u32x3 {
-        return { mesh.indices[this.index_offset + indices.x],
-                 mesh.indices[this.index_offset + indices.y],
-                 mesh.indices[this.index_offset + indices.z] };
+    public func positions(in Mesh mesh, in u32x3 indices) -> f32x3x3 {
+        return { mesh.vertex_positions[indices.x],
+                 mesh.vertex_positions[indices.y],
+                 mesh.vertex_positions[indices.z] };
     }
 
-    public func positions(in Mesh mesh, in u32x3 vertices) -> f32x3x3 {
-        return { mesh.vertex_positions[this.vertex_offset + vertices.x],
-                 mesh.vertex_positions[this.vertex_offset + vertices.y],
-                 mesh.vertex_positions[this.vertex_offset + vertices.z] };
+    public func normals(in Mesh mesh, in u32x3 indices) -> f32x3x3 {
+        return { mesh.vertex_normals[indices.x],
+                 mesh.vertex_normals[indices.y],
+                 mesh.vertex_normals[indices.z] };
     }
 
-    public func normals(in Mesh mesh, in u32x3 vertices) -> f32x3x3 {
-        return { mesh.vertex_normals[this.vertex_offset + vertices.x],
-                 mesh.vertex_normals[this.vertex_offset + vertices.y],
-                 mesh.vertex_normals[this.vertex_offset + vertices.z] };
-    }
-
-    public func tex_coords(in Mesh mesh, in u32x3 vertices) -> f32x2x3 {
+    public func tex_coords(in Mesh mesh, in u32x3 indices) -> f32x2x3 {
         if (mesh.texture_coords == nullptr) {
             return {};
         }
 
-        return { mesh.texture_coords[this.vertex_offset + vertices.x],
-                 mesh.texture_coords[this.vertex_offset + vertices.y],
-                 mesh.texture_coords[this.vertex_offset + vertices.z] };
+        return { mesh.texture_coords[indices.x],
+                 mesh.texture_coords[indices.y],
+                 mesh.texture_coords[indices.z] };
     }
 };
 
-public struct MeshletBounds {
-  public f32x3 aabb_min = {};
-  public f32x3 aabb_max = {};
+public struct Bounds {
+    public f32x3 aabb_center = {};
+    public f32x3 aabb_extent = {};
+    public f32x3 sphere_center = {};
+    public f32 sphere_radius = 0.0f;
 };
 
 public struct MeshletInstance {
-  public u32 mesh_index = 0;
-  public u32 material_index = 0;
-  public u32 transform_index = 0;
-  public u32 meshlet_index = 0;
+    public u32 mesh_instance_index = 0;
+    public u32 meshlet_index = 0;
 };
+
+public struct MeshInstance {
+    public u32 mesh_index = 0;
+    public u32 lod_index = 0;
+    public u32 material_index = 0;
+    public u32 transform_index = 0;
+};
+
+public struct MeshLOD {
+    public u32 *indices = nullptr;
+    public Meshlet *meshlets = nullptr;
+    public Bounds *meshlet_bounds = nullptr;
+    public u8 *local_triangle_indices = nullptr;
+    public u32 *indirect_vertex_indices = nullptr;
+    public u32 indices_count = 0;
+    public u32 meshlet_count = 0;
+    public u32 meshlet_bounds_count = 0;
+    public u32 local_triangle_indices_count = 0;
+    public u32 indirect_vertex_indices_count = 0;
+    public f32 error = 0.0;
+};
+
+#ifndef MESH_MAX_LODS
+#define MESH_MAX_LODS 8
+#endif
 
 public struct Mesh {
-  public u32 *indices = nullptr;
-  public f32x3 *vertex_positions = nullptr;
-  public f32x3 *vertex_normals = nullptr;
-  public f32x2 *texture_coords = nullptr;
-  public Meshlet *meshlets = nullptr;
-  public MeshletBounds *meshlet_bounds = nullptr;
-  public u8 *local_triangle_indices = nullptr;
-};
-
-public struct UVGradient {
-  public f32x2 uv;
-  public f32x2 ddx;
-  public f32x2 ddy;
+    public f32x3 *vertex_positions = nullptr;
+    public f32x3 *vertex_normals = nullptr;
+    public f32x2 *texture_coords = nullptr;
+    public u32 _padding = 0;
+    public u32 lod_count = 0;
+    public MeshLOD lods[MESH_MAX_LODS] = {};
+    public Bounds bounds = {};
 };
 
 // --- Bindings ---

@@ -6,7 +6,6 @@
 #include "Core/VFS.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Slang/Slang.hpp"
-#include "Render/Utils/VukCommon.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
@@ -61,106 +60,95 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   slang.create_pipeline(runtime,
                         "2d_forward_pipeline",
-                        nullptr,
                         {.path = shaders_dir + "/passes/2d_forward.slang", .entry_points = {"vs_main", "ps_main"}});
 
   // --- Sky ---
   slang.create_pipeline(runtime,
                         "sky_transmittance_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/sky_transmittance.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "sky_multiscatter_lut_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/sky_multiscattering.slang", .entry_points = {"cs_main"}});
 
-  slang.create_pipeline(runtime,
-                        "sky_view_pipeline",
-                        nullptr,
-                        {.path = shaders_dir + "/passes/sky_view.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+      runtime, "sky_view_pipeline", {.path = shaders_dir + "/passes/sky_view.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "sky_aerial_perspective_pipeline",
-                        nullptr,
                         {.path = shaders_dir + "/passes/sky_aerial_perspective.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "sky_final_pipeline",
-                        nullptr,
                         {.path = shaders_dir + "/passes/sky_final.slang", .entry_points = {"vs_main", "fs_main"}});
 
   // --- VISBUFFER ---
   slang.create_pipeline(
-      runtime, "cull_meshlets", {}, {.path = shaders_dir + "/passes/cull_meshlets.slang", .entry_points = {"cs_main"}});
+      runtime, "cull_meshes", {.path = shaders_dir + "/passes/cull_meshes.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
-                        "cull_triangles",
-                        {},
-                        {.path = shaders_dir + "/passes/cull_triangles.slang", .entry_points = {"cs_main"}});
+                        "generate_cull_commands",
+                        {.path = shaders_dir + "/passes/generate_cull_commands.slang", .entry_points = {"cs_main"}});
+
+  slang.create_pipeline(
+      runtime, "cull_meshlets", {.path = shaders_dir + "/passes/cull_meshlets.slang", .entry_points = {"cs_main"}});
+
+  slang.create_pipeline(
+      runtime, "cull_triangles", {.path = shaders_dir + "/passes/cull_triangles.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(
       runtime,
       "visbuffer_encode",
-      &bindless_set,
-      {.path = shaders_dir + "/passes/visbuffer_encode.slang", .entry_points = {"vs_main", "fs_main"}});
+      {.path = shaders_dir + "/passes/visbuffer_encode.slang", .entry_points = {"vs_main", "fs_main"}},
+      &bindless_set);
 
-  slang.create_pipeline(runtime,
-                        "visbuffer_clear",
-                        {},
-                        {.path = shaders_dir + "/passes/visbuffer_clear.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+      runtime, "visbuffer_clear", {.path = shaders_dir + "/passes/visbuffer_clear.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(
       runtime,
       "visbuffer_decode",
-      &bindless_set,
-      {.path = shaders_dir + "/passes/visbuffer_decode.slang", .entry_points = {"vs_main", "fs_main"}});
+      {.path = shaders_dir + "/passes/visbuffer_decode.slang", .entry_points = {"vs_main", "fs_main"}},
+      &bindless_set);
 
   slang.create_pipeline(
-      runtime, "debug", {}, {.path = shaders_dir + "/passes/debug.slang", .entry_points = {"vs_main", "fs_main"}});
+      runtime, "debug", {.path = shaders_dir + "/passes/debug.slang", .entry_points = {"vs_main", "fs_main"}});
 
   // --- PBR ---
   slang.create_pipeline(
-      runtime, "brdf", nullptr, {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}});
+      runtime, "brdf", {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}});
 
   //  --- FFX ---
   slang.create_pipeline(
-      runtime, "hiz_pipeline", {}, {.path = shaders_dir + "/passes/hiz.slang", .entry_points = {"cs_main"}});
+      runtime, "hiz_pipeline", {.path = shaders_dir + "/passes/hiz.slang", .entry_points = {"cs_main"}});
 
   // --- PostProcess ---
   slang.create_pipeline(runtime,
                         "histogram_generate_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/histogram_generate.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "histogram_average_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/histogram_average.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "tonemap_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/tonemap.slang", .entry_points = {"vs_main", "fs_main"}});
 
   slang.create_pipeline(runtime,
                         "bloom_prefilter_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/bloom/bloom_prefilter.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "bloom_downsample_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/bloom/bloom_downsample.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "bloom_upsample_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/bloom/bloom_upsample.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "fxaa_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}});
 
   sky_transmittance_lut_view = Texture("sky_transmittance_lut");

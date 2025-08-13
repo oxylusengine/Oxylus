@@ -1,26 +1,22 @@
 module cull;
 
 import common;
-import scene;
 import gpu;
-
-public func normalize_plane(f32x4 p) -> f32x4 {
-    return p / length(p.xyz);
-}
+import debug_drawer;
 
 public struct ScreenAabb {
     public f32x3 min;
     public f32x3 max;
 }
 
-// https://zeux.io/2023/01/12/approximate-projected-bounds
-// returns the AABB in UV space!!! not clip space
-public func project_aabb(f32x4x4 mvp, f32 near, f32x3 aabb_min, f32x3 aabb_extent) -> Optional<ScreenAabb> {
+// Credits:
+// - https://zeux.io/2023/01/12/approximate-projected-bounds
+public func project_aabb(f32x4x4 mvp, f32 near, f32x3 aabb_center, f32x3 aabb_extent) -> Optional<ScreenAabb> {
     let SX = mul(mvp, f32x4(aabb_extent.x, 0.0, 0.0, 0.0));
     let SY = mul(mvp, f32x4(0.0, aabb_extent.y, 0.0, 0.0));
     let SZ = mul(mvp, f32x4(0.0, 0.0, aabb_extent.z, 0.0));
 
-    let P0 = mul(mvp, f32x4(aabb_min, 1.0));
+    let P0 = mul(mvp, f32x4(aabb_center - aabb_extent * 0.5, 1.0));
     let P1 = P0 + SZ;
     let P2 = P0 + SY;
     let P3 = P2 + SZ;
@@ -47,43 +43,55 @@ public func project_aabb(f32x4x4 mvp, f32 near, f32x3 aabb_min, f32x3 aabb_exten
 
     var vaabb = f32x4(vmin.xy, vmax.xy);
     // clip to uv space
-    //vaabb = vaabb.xwzy * f32x4(0.5, -0.5, 0.5, -0.5) + 0.5;
     vaabb = vaabb * 0.5 + 0.5;
     ScreenAabb ret = { f32x3(vaabb.xy, vmin.z), f32x3(vaabb.zw, vmax.z) };
     return ret;
 }
 
-func project_sphere(f32x3 center, f32 radius, f32 near, f32 P00, f32 P11) -> Optional<ScreenAabb> {
-    if (center.z < radius + near) {
-        return none;
+func normalize_plane(f32x4 p) -> f32x4 {
+    return p / length(p.xyz);
+}
+
+// Credits:
+// - https://github.com/SparkyPotato/radiance/blob/eaf18b3bbf4942234fa929ef6ad5e04e3c45fc62/shaders/passes/mesh/cull.slang#L340
+// - https://fgiesen.wordpress.com/2012/08/31/frustum-planes-from-the-projection-matrix/
+// - https://fgiesen.wordpress.com/2010/10/17/view-frustum-culling/
+public func test_frustum(in f32x4x4 mvp, in f32x3 aabb_center, in f32x3 aabb_extent) -> bool {
+    f32x4 planes[] = {
+        // Left
+        normalize_plane(mvp[3] + mvp[0]),
+        // Right
+        normalize_plane(mvp[3] - mvp[0]),
+        // Bottom
+        normalize_plane(mvp[3] + mvp[1]),
+        // Top
+        normalize_plane(mvp[3] - mvp[1]),
+        // Near
+        normalize_plane(mvp[2]),
+        // Far
+        normalize_plane(mvp[3] - mvp[2])
+    };
+
+    let aabb_half_extent = aabb_extent * 0.5;
+    [[unroll]]
+    for (uint i = 0; i < planes.getCount(); i++) {
+        let flip = asuint(planes[i].xyz) & 0x80000000;
+        let sign_flipped = asfloat(asuint(aabb_half_extent) ^ flip);
+        if (dot(aabb_center + sign_flipped, planes[i].xyz) <= -planes[i].w) {
+            return false;
+        }
     }
 
-    let cr = center * radius;
-    let czr2 = center.z * center.z - radius * radius;
-
-    let vx = sqrt(center.x * center.x + czr2);
-    let minx = (vx * center.x - cr.z) / (vx * center.z + cr.x);
-    let maxx = (vx * center.x + cr.z) / (vx * center.z - cr.x);
-
-    let vy = sqrt(center.y * center.y + czr2);
-    let miny = (vy * center.y - cr.z) / (vy * center.z + cr.y);
-    let maxy = (vy * center.y + cr.z) / (vy * center.z - cr.y);
-
-    var vaabb = f32x4(minx * P00, miny * P11, maxx * P00, maxy * P11);
-    //vaabb = vaabb.xwzy * f32x4(0.5f, -0.5f, 0.5f, -0.5f) + f32x4(0.5f); // clip space -> uv space
-    vaabb = vaabb * 0.5 + 0.5;
-    ScreenAabb ret = { f32x3(vaabb.xy, 0.0), f32x3(vaabb.zw, 0.0) };
-    return ret;
+    return true;
 }
 
 public func test_occlusion(
+    in ScreenAabb screen_aabb,
     in Image2D<f32> hiz_image,
-    in Sampler hiz_sampler,
-    in ScreenAabb screen_aabb
+    in Sampler hiz_sampler
 ) -> bool {
     var hiz_size = u32x2(0.0);
     var hiz_levels = 0;
-    // TODO: Replace this with push constants
     hiz_image.GetDimensions(0, hiz_size.x, hiz_size.y, hiz_levels);
 
     let min_uv = screen_aabb.min.xy;
@@ -104,3 +112,4 @@ public func test_occlusion(
     let d = hiz_image.sample_mip(hiz_sampler, uv, mip);
     return screen_aabb.max.z <= d;
 }
+

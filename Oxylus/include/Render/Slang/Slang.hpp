@@ -23,8 +23,8 @@ public:
   void create_pipeline(this Slang& self,
                        vuk::Runtime& runtime,
                        const vuk::Name& name,
-                       vuk::PersistentDescriptorSet* pds,
-                       const CompileInfo& compile_info);
+                       const CompileInfo& compile_info,
+                       vuk::PersistentDescriptorSet* pds = nullptr);
 
 private:
   option<SlangSession> slang_session = nullopt;

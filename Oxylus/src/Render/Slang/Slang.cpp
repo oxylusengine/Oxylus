@@ -45,8 +45,8 @@ void Slang::add_shader(this Slang& self, vuk::PipelineBaseCreateInfo& pipeline_c
 void Slang::create_pipeline(this Slang& self,
                             vuk::Runtime& runtime,
                             const vuk::Name& name,
-                            vuk::PersistentDescriptorSet* pds,
-                            const CompileInfo& compile_info) {
+                            const CompileInfo& compile_info,
+                            vuk::PersistentDescriptorSet* pds) {
   OX_CHECK_GT(compile_info.entry_points.size(), 0ul);
 
   vuk::PipelineBaseCreateInfo pipeline_ci = {};

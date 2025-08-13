@@ -22,7 +22,6 @@ auto ThumbnailRenderer::init(VkContext& vk_context) -> void {
 
   slang.create_pipeline(runtime,
                         "simple_forward_pipeline",
-                        {},
                         {.path = shaders_dir + "/editor/simple_forward.slang", .entry_points = {"vs_main", "fs_main"}});
 }
 

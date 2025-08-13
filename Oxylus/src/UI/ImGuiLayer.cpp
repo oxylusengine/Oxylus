@@ -78,7 +78,7 @@ void ImGuiLayer::on_attach() {
   slang.create_session({.root_directory = shaders_dir, .definitions = {}});
 
   slang.create_pipeline(
-      ctx, "imgui", {}, {.path = shaders_dir + "/passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}});
+      ctx, "imgui", {.path = shaders_dir + "/passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}});
 }
 
 void ImGuiLayer::on_detach() { ImGui::DestroyContext(); }
