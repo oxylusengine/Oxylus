@@ -288,6 +288,39 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
     FN_vkEnumerateInstanceVersion(&instanceVersion);
   }
 
+  // Initialize resource descriptors
+  constexpr auto MAX_DESCRIPTORS = 1024_sz; // TODO: Change this to devicelimits
+  VkDescriptorSetLayoutBinding bindless_set_info[] = {
+      // Samplers
+      {.binding = DescriptorTable_SamplerIndex,
+       .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+       .descriptorCount = MAX_DESCRIPTORS,
+       .stageFlags = VK_SHADER_STAGE_ALL,
+       .pImmutableSamplers = nullptr},
+      // Sampled Images
+      {.binding = DescriptorTable_SampledImageIndex,
+       .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+       .descriptorCount = MAX_DESCRIPTORS,
+       .stageFlags = VK_SHADER_STAGE_ALL,
+       .pImmutableSamplers = nullptr},
+      // Storage Images
+      {.binding = DescriptorTable_StorageImageIndex,
+       .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+       .descriptorCount = MAX_DESCRIPTORS,
+       .stageFlags = VK_SHADER_STAGE_ALL,
+       .pImmutableSamplers = nullptr},
+  };
+
+  constexpr static auto bindless_flags = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                                         VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+  VkDescriptorBindingFlags bindless_set_binding_flags[] = {
+      bindless_flags,
+      bindless_flags,
+      bindless_flags,
+  };
+  self.resources.descriptor_set = self.create_persistent_descriptor_set(
+      1, bindless_set_info, bindless_set_binding_flags);
+
   const u32 major = VK_VERSION_MAJOR(instanceVersion);
   const u32 minor = VK_VERSION_MINOR(instanceVersion);
   const u32 patch = VK_VERSION_PATCH(instanceVersion);
@@ -490,7 +523,9 @@ auto VkContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> 
   ici.usage = image_attachment.usage;
   ici.extent = image_attachment.extent;
 
-  VkImageFormatListCreateInfo listci = {VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO};
+  VkImageFormatListCreateInfo listci = {};
+  listci.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+
   VkFormat formats[2];
   if (image_attachment.allow_srgb_unorm_mutable) {
     auto unorm_fmt = srgb_to_unorm(image_attachment.format);
@@ -554,7 +589,56 @@ auto VkContext::allocate_image_view(const vuk::ImageAttachment& image_attachment
     OX_LOG_ERROR("{}", res.error().error_message);
   }
 
-  return resources.image_views.create_slot(std::move(view));
+  auto* image_view_handle = view.payload;
+  auto image_view_id = resources.image_views.create_slot(std::move(view));
+
+  auto& bindless_set = get_descriptor_set();
+
+  auto sampled_image_descriptor = VkDescriptorImageInfo{
+      .sampler = nullptr,
+      .imageView = image_view_handle,
+      .imageLayout = VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+  };
+
+  auto storage_image_descriptor = VkDescriptorImageInfo{
+      .sampler = nullptr,
+      .imageView = image_view_handle,
+      .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+  };
+
+  auto descriptor_count = 0_sz;
+  auto descriptor_writes = std::array<VkWriteDescriptorSet, 2>();
+  if (image_attachment.usage & vuk::ImageUsageFlagBits::eSampled) {
+    descriptor_writes[descriptor_count++] = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr,
+        .dstSet = bindless_set.backing_set,
+        .dstBinding = DescriptorTable_SampledImageIndex,
+        .dstArrayElement = SlotMap_decode_id(image_view_id).index,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .pImageInfo = &sampled_image_descriptor,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr,
+    };
+  }
+  if (image_attachment.usage & vuk::ImageUsageFlagBits::eStorage) {
+    descriptor_writes[descriptor_count++] = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr,
+        .dstSet = bindless_set.backing_set,
+        .dstBinding = DescriptorTable_StorageImageIndex,
+        .dstArrayElement = SlotMap_decode_id(image_view_id).index,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .pImageInfo = &storage_image_descriptor,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr,
+    };
+  }
+  commit_descriptor_set({descriptor_writes.data(), descriptor_count});
+
+  return image_view_id;
 }
 
 auto VkContext::destroy_image_view(const ImageViewID id) -> void {

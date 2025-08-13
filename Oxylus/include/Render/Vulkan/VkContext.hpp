@@ -20,6 +20,12 @@ enum class ImageViewID : u64 { Invalid = ~0_u64 };
 enum class SamplerID : u64 { Invalid = ~0_u64 };
 enum class PipelineID : u64 { Invalid = ~0_u64 };
 
+enum : u32 {
+  DescriptorTable_SamplerIndex = 0,
+  DescriptorTable_SampledImageIndex,
+  DescriptorTable_StorageImageIndex,
+};
+
 class VkContext {
 public:
   struct Resources {
@@ -28,6 +34,7 @@ public:
     SlotMap<vuk::ImageView, ImageViewID> image_views = {};
     SlotMap<vuk::Sampler, SamplerID> samplers = {};
     SlotMap<vuk::PipelineBaseInfo*, PipelineID> pipelines = {};
+    vuk::PersistentDescriptorSet descriptor_set = {};
   };
 
   Resources resources = {};
@@ -95,6 +102,8 @@ public:
   auto allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID;
   auto destroy_image_view(const ImageViewID id) -> void;
   auto image_view(const ImageViewID id) -> vuk::ImageView;
+
+  auto get_descriptor_set() -> auto& { return resources.descriptor_set; }
 
   [[nodiscard]]
   auto allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;

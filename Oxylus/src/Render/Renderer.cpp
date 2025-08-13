@@ -1,6 +1,6 @@
 #include "Render/Renderer.hpp"
 
-#include "Asset/Mesh.hpp"
+#include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
@@ -59,8 +59,8 @@ auto Renderer::init() -> std::expected<void, std::string> {
   Slang slang = {};
   slang.create_session({.root_directory = shaders_dir,
                         .definitions = {
-                            {"CULLING_MESHLET_COUNT", std::to_string(Mesh::MAX_MESHLET_INDICES)},
-                            {"CULLING_TRIANGLE_COUNT", std::to_string(Mesh::MAX_MESHLET_PRIMITIVES)},
+                            {"CULLING_MESHLET_COUNT", std::to_string(Model::MAX_MESHLET_INDICES)},
+                            {"CULLING_TRIANGLE_COUNT", std::to_string(Model::MAX_MESHLET_PRIMITIVES)},
                             {"HISTOGRAM_THREADS_X", std::to_string(GPU::HISTOGRAM_THREADS_X)},
                             {"HISTOGRAM_THREADS_Y", std::to_string(GPU::HISTOGRAM_THREADS_Y)},
                         }});
