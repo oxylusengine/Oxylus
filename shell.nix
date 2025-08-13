@@ -1,8 +1,7 @@
 let
   pkgs = import <nixpkgs> { };
-  pkgs-unstable = import <nixpkgs-unstable> { };
 in pkgs.mkShell.override {
-  stdenv = pkgs-unstable.llvmPackages_20.libcxxStdenv;
+  stdenv = pkgs.llvmPackages_20.libcxxStdenv;
 } {
   nativeBuildInputs = [
     pkgs.cmake
@@ -10,32 +9,32 @@ in pkgs.mkShell.override {
     pkgs.gnumake
     pkgs.xmake
 
-    pkgs-unstable.llvmPackages_20.bintools-unwrapped
-    pkgs-unstable.llvmPackages_20.libcxx
-    pkgs-unstable.llvmPackages_20.libcxx.dev
-    pkgs-unstable.llvmPackages_20.compiler-rt
-    (pkgs-unstable.llvmPackages_20.clang-tools.override {
+    pkgs.llvmPackages_20.bintools-unwrapped
+    pkgs.llvmPackages_20.libcxx
+    pkgs.llvmPackages_20.libcxx.dev
+    pkgs.llvmPackages_20.compiler-rt
+    (pkgs.llvmPackages_20.clang-tools.override {
       enableLibcxx = true;
     })
-    pkgs-unstable.mold
+    pkgs.mold
 
     pkgs.pkg-config
-    pkgs-unstable.python313
-    pkgs-unstable.python313Packages.pip
-    pkgs-unstable.python313Packages.setuptools
-    pkgs-unstable.python313Packages.wheel
+    pkgs.python313
+    pkgs.python313Packages.pip
+    pkgs.python313Packages.setuptools
+    pkgs.python313Packages.wheel
 
     pkgs.zlib.dev
 
     # for gltfpack
-    pkgs-unstable.meshoptimizer
+    pkgs.meshoptimizer
 
     # for SDL3
-    pkgs-unstable.sdl3
+    pkgs.sdl3
   ];
 
   shellHook = ''
-    export LD_LIBRARY_PATH=${pkgs-unstable.llvmPackages_20.libcxx}/lib:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=${pkgs.llvmPackages_20.libcxx}/lib:$LD_LIBRARY_PATH
   '';
 
   hardeningDisable = [ "all" ];
