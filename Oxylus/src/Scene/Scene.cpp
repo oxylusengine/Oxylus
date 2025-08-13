@@ -642,6 +642,11 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   // TODO: Pass our delta_time?
   self.world.progress();
 
+  if (RendererCVar::cvar_enable_physics_debug_renderer.get()) {
+    auto physics = App::get_system<Physics>(EngineSystems::Physics);
+    physics->debug_draw();
+  }
+
   auto* asset_man = App::get_asset_manager();
   auto max_meshlet_instance_count = 0_u32;
   auto gpu_meshes = std::vector<GPU::Mesh>();
@@ -738,14 +743,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       .gpu_meshes = gpu_meshes,
       .gpu_mesh_instances = gpu_mesh_instances,
   };
-  auto prepared_frame = self.renderer_instance->update(update_info);
+  self.renderer_instance->update(update_info);
   self.dirty_transforms.clear();
   self.meshes_dirty = false;
-
-  if (RendererCVar::cvar_enable_physics_debug_renderer.get()) {
-    auto physics = App::get_system<Physics>(EngineSystems::Physics);
-    physics->debug_draw();
-  }
 }
 
 auto Scene::defer_function(this Scene& self, const std::function<void(Scene* scene)>& func) -> void {

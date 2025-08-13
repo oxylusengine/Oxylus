@@ -39,8 +39,8 @@ public:
   RendererInstance(RendererInstance&&) = delete;
   RendererInstance& operator=(RendererInstance&&) = delete;
 
-  auto render(this RendererInstance& self, const Renderer::RenderInfo& render_info, PreparedFrame &frame) -> vuk::Value<vuk::ImageAttachment>;
-  auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> PreparedFrame;
+  auto render(this RendererInstance& self, const Renderer::RenderInfo& render_info) -> vuk::Value<vuk::ImageAttachment>;
+  auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void;
 
 private:
   Scene* scene = nullptr;
@@ -48,6 +48,7 @@ private:
   Renderer::RenderQueue2D render_queue_2d = {};
   bool saved_camera = false;
 
+  PreparedFrame prepared_frame = {};
   GPU::CameraData camera_data = {};
   GPU::CameraData previous_camera_data = {};
 
