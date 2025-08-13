@@ -699,6 +699,18 @@ auto VkContext::allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment)
   return *vuk::allocate_buffer(frame_allocator.value(), {.mem_usage = usage, .size = size, .alignment = alignment});
 }
 
+auto VkContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, u64 new_size) -> vuk::Unique<vuk::Buffer> {
+  if (new_size > buffer->size) {
+    auto usage = buffer->memory_usage;
+    wait();
+    buffer.reset();
+
+    return allocate_buffer(usage, new_size);
+  }
+
+  return std::move(buffer);
+}
+
 auto VkContext::allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment) -> vuk::Unique<vuk::Buffer> {
   return *vuk::allocate_buffer(superframe_allocator.value(),
                                {.mem_usage = usage, .size = size, .alignment = alignment});

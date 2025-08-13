@@ -107,6 +107,8 @@ public:
   [[nodiscard]]
   auto allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;
 
+  auto resize_buffer(vuk::Unique<vuk::Buffer> &&buffer, u64 new_size) -> vuk::Unique<vuk::Buffer>;
+
   [[nodiscard]]
   auto allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vuk/Types.hpp>
+
 #include "Asset/Material.hpp"
 
 namespace ox::GPU {
@@ -37,35 +39,6 @@ enum class CullFlags : u32 {
 };
 consteval void enable_bitmask(CullFlags);
 
-struct Meshlet {
-  alignas(4) u32 vertex_offset = 0;
-  alignas(4) u32 index_offset = 0;
-  alignas(4) u32 triangle_offset = 0;
-  alignas(4) u32 triangle_count = 0;
-};
-
-struct MeshletBounds {
-  alignas(4) glm::vec3 aabb_min = {};
-  alignas(4) glm::vec3 aabb_max = {};
-};
-
-struct MeshletInstance {
-  alignas(4) u32 mesh_index = 0;
-  alignas(4) u32 material_index = 0;
-  alignas(4) u32 transform_index = 0;
-  alignas(4) u32 meshlet_index = 0;
-};
-
-struct Mesh {
-  alignas(8) u64 indices = 0;
-  alignas(8) u64 vertex_positions = 0;
-  alignas(8) u64 vertex_normals = 0;
-  alignas(8) u64 texture_coords = 0;
-  alignas(8) u64 meshlets = 0;
-  alignas(8) u64 meshlet_bounds = 0;
-  alignas(8) u64 local_triangle_indices = 0;
-};
-
 enum class MaterialFlag : u32 {
   None = 0,
   // Image flags
@@ -85,58 +58,72 @@ enum class MaterialFlag : u32 {
 consteval void enable_bitmask(MaterialFlag);
 
 struct Material {
-  alignas(4) glm::vec4 albedo_color = glm::vec4(1.0f);
-  alignas(4) glm::vec2 uv_size = glm::vec3(1.0f);
-  alignas(4) glm::vec2 uv_offset = glm::vec3(0.0f);
-  alignas(4) glm::vec3 emissive_color = glm::vec3(1.0f);
+  alignas(4) glm::vec4 albedo_color = {1.0f, 1.0f, 1.0f, 1.0f};
+  alignas(4) glm::vec3 emissive_color = {0.0f, 0.0f, 0.0f};
   alignas(4) f32 roughness_factor = 0.0f;
   alignas(4) f32 metallic_factor = 0.0f;
-  alignas(4) MaterialFlag flags = MaterialFlag::None;
   alignas(4) f32 alpha_cutoff = 0.0f;
-  alignas(4) SamplingMode sampling_mode = SamplingMode::LinearRepeated;
-  alignas(4) u32 albedo_image_index = ~0_u32;
-  alignas(4) u32 normal_image_index = ~0_u32;
-  alignas(4) u32 emissive_image_index = ~0_u32;
-  alignas(4) u32 metallic_roughness_image_index = ~0_u32;
-  alignas(4) u32 occlusion_image_index = ~0_u32;
+  alignas(4) MaterialFlag flags = MaterialFlag::None;
+  alignas(4) u32 sampler_index = 0;
+  alignas(4) u32 albedo_image_index = 0;
+  alignas(4) u32 normal_image_index = 0;
+  alignas(4) u32 emissive_image_index = 0;
+  alignas(4) u32 metallic_roughness_image_index = 0;
+  alignas(4) u32 occlusion_image_index = 0;
+};
 
-  static GPU::Material from_material(const ox::Material& material,
-                                     option<u32> albedo_id = nullopt,
-                                     option<u32> normal_id = nullopt,
-                                     option<u32> emissive_id = nullopt,
-                                     option<u32> metallic_roughness_id = nullopt,
-                                     option<u32> occlusion_id = nullopt) {
-    auto mat = GPU::Material{
-        .albedo_color = material.albedo_color,
-        .uv_size = material.uv_size,
-        .uv_offset = material.uv_offset,
-        .emissive_color = material.emissive_color,
-        .roughness_factor = material.roughness_factor,
-        .metallic_factor = material.metallic_factor,
-        .alpha_cutoff = material.alpha_cutoff,
-        .sampling_mode = material.sampling_mode,
-        .albedo_image_index = albedo_id.value_or(~0_u32),
-        .normal_image_index = normal_id.value_or(~0_u32),
-        .emissive_image_index = emissive_id.value_or(~0_u32),
-        .metallic_roughness_image_index = metallic_roughness_id.value_or(~0_u32),
-        .occlusion_image_index = occlusion_id.value_or(~0_u32),
-    };
+struct Bounds {
+  alignas(4) glm::vec3 aabb_center = {};
+  alignas(4) glm::vec3 aabb_extent = {};
+  alignas(4) glm::vec3 sphere_center = {};
+  alignas(4) f32 sphere_radius = 0.0f;
+};
 
-    mat.flags |= albedo_id.has_value() ? GPU::MaterialFlag::HasAlbedoImage : GPU::MaterialFlag::None;
-    mat.flags |= normal_id.has_value() ? GPU::MaterialFlag::HasNormalImage : GPU::MaterialFlag::None;
-    mat.flags |= emissive_id.has_value() ? GPU::MaterialFlag::HasEmissiveImage : GPU::MaterialFlag::None;
-    mat.flags |= metallic_roughness_id.has_value() ? GPU::MaterialFlag::HasMetallicRoughnessImage
-                                                   : GPU::MaterialFlag::None;
-    mat.flags |= occlusion_id.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
+struct MeshletInstance {
+  alignas(4) u32 mesh_instance_index = 0;
+  alignas(4) u32 meshlet_index = 0;
+};
 
-    switch (material.alpha_mode) {
-      case AlphaMode::Opaque: mat.flags |= GPU::MaterialFlag::AlphaOpaque; break;
-      case AlphaMode::Mask  : mat.flags |= GPU::MaterialFlag::AlphaMask; break;
-      case AlphaMode::Blend : mat.flags |= GPU::MaterialFlag::AlphaBlend; break;
-    }
+struct MeshInstance {
+  alignas(4) u32 mesh_index = 0;
+  alignas(4) u32 lod_index = 0;
+  alignas(4) u32 material_index = 0;
+  alignas(4) u32 transform_index = 0;
+};
 
-    return mat;
-  };
+struct Meshlet {
+  alignas(4) u32 indirect_vertex_index_offset = 0;
+  alignas(4) u32 local_triangle_index_offset = 0;
+  alignas(4) u32 vertex_count = 0;
+  alignas(4) u32 triangle_count = 0;
+};
+
+struct MeshLOD {
+  alignas(8) u64 indices = 0;
+  alignas(8) u64 meshlets = 0;
+  alignas(8) u64 meshlet_bounds = 0;
+  alignas(8) u64 local_triangle_indices = 0;
+  alignas(8) u64 indirect_vertex_indices = 0;
+
+  alignas(4) u32 indices_count = 0;
+  alignas(4) u32 meshlet_count = 0;
+  alignas(4) u32 meshlet_bounds_count = 0;
+  alignas(4) u32 local_triangle_indices_count = 0;
+  alignas(4) u32 indirect_vertex_indices_count = 0;
+
+  alignas(4) f32 error = 0.0f;
+};
+
+struct Mesh {
+  constexpr static auto MAX_LODS = 8_sz;
+
+  alignas(8) u64 vertex_positions = 0;
+  alignas(8) u64 vertex_normals = 0;
+  alignas(8) u64 texture_coords = 0;
+  alignas(4) u32 _padding = 0;
+  alignas(4) u32 lod_count = 0;
+  alignas(8) MeshLOD lods[MAX_LODS] = {};
+  alignas(4) Bounds bounds = {};
 };
 
 struct Sun {

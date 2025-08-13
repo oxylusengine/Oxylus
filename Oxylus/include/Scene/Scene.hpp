@@ -56,11 +56,13 @@ public:
   f32 physics_interval = 1.f / 60.f; // used only on initalization
   flecs::entity physics_events = {};
 
-  bool meshes_dirty = false;
   std::vector<GPU::TransformID> dirty_transforms = {};
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
   ankerl::unordered_dense::map<std::pair<UUID, usize>, std::vector<GPU::TransformID>> rendering_meshes_map = {};
+  bool meshes_dirty = false;
+  u32 mesh_instance_count = 0;
+  u32 max_meshlet_instance_count = 0;
 
   explicit Scene(const std::string& name = "Untitled");
 
