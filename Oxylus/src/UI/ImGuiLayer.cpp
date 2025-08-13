@@ -161,7 +161,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
       [this, draw_data](vuk::CommandBuffer& command_buffer, const vuk::Buffer& vertex, const vuk::Buffer& index) {
         command_buffer //
             .bind_sampler(0, 0, vuk::LinearSamplerRepeated)
-            .bind_image(0, 1, *font_texture->get_view());
+            .bind_image(0, 1, font_texture->get_view());
         if (index.size > 0) {
           command_buffer.bind_index_buffer(index,
                                            sizeof(ImDrawIdx) == 2 ? vuk::IndexType::eUint16 : vuk::IndexType::eUint32);

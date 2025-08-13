@@ -1365,7 +1365,7 @@ auto AssetManager::get_materials_buffer(this AssetManager& self,
     auto texture_index = SlotMap_decode_id(texture_asset->texture_id).index;
 
     descriptor_set.update_sampled_image(
-        textures_binding, texture_index, *texture->get_view(), vuk::ImageLayout::eShaderReadOnlyOptimal);
+        textures_binding, texture_index, texture->get_view(), vuk::ImageLayout::eShaderReadOnlyOptimal);
 
     return texture_index;
   };

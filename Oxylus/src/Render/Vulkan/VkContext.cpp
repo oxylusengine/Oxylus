@@ -14,6 +14,12 @@
 #include "Utils/Profiler.hpp"
 
 namespace ox {
+// i hate this
+PFN_vkCreateDescriptorPool vkCreateDescriptorPool;
+PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout;
+PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets;
+PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
+
 static VkBool32 debug_callback(const VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                                VkDebugUtilsMessageTypeFlagsEXT messageType,
                                const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -107,26 +113,6 @@ vuk::Swapchain make_swapchain(vuk::Allocator& allocator,
 
   return std::move(*old_swapchain);
 }
-
-VkContext::~VkContext() { runtime->wait_idle(); }
-
-auto VkContext::handle_resize(u32 width, u32 height) -> void {
-  wait();
-
-  if (width == 0 && height == 0) {
-    suspend = true;
-  } else {
-    swapchain = make_swapchain(
-        *superframe_allocator, vkb_device, surface, std::move(swapchain), present_mode, num_inflight_frames);
-  }
-}
-
-auto VkContext::set_vsync(bool enable) -> void {
-  const auto set_present_mode = enable ? vuk::PresentModeKHR::eFifo : vuk::PresentModeKHR::eImmediate;
-  present_mode = set_present_mode;
-}
-
-auto VkContext::is_vsync() const -> bool { return present_mode == vuk::PresentModeKHR::eFifo; }
 
 auto VkContext::create_context(this VkContext& self, const Window& window, bool vulkan_validation_layers) -> void {
   ZoneScoped;
@@ -263,6 +249,10 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   fps.vkGetInstanceProcAddr = self.vkb_instance.fp_vkGetInstanceProcAddr;
   fps.vkGetDeviceProcAddr = self.vkb_instance.fp_vkGetDeviceProcAddr;
   fps.load_pfns(instance, self.device, true);
+  vkCreateDescriptorPool = fps.vkCreateDescriptorPool;
+  vkCreateDescriptorSetLayout = fps.vkCreateDescriptorSetLayout;
+  vkAllocateDescriptorSets = fps.vkAllocateDescriptorSets;
+  vkUpdateDescriptorSets = fps.vkUpdateDescriptorSets;
   std::vector<std::unique_ptr<vuk::Executor>> executors;
 
   executors.push_back(create_vkqueue_executor(
@@ -296,6 +286,39 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
     FN_vkEnumerateInstanceVersion(&instanceVersion);
   }
 
+  // Initialize resource descriptors
+  constexpr auto MAX_DESCRIPTORS = 1024_sz; // TODO: Change this to devicelimits
+  VkDescriptorSetLayoutBinding bindless_set_info[] = {
+      // Samplers
+      {.binding = DescriptorTable_SamplerIndex,
+       .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+       .descriptorCount = MAX_DESCRIPTORS,
+       .stageFlags = VK_SHADER_STAGE_ALL,
+       .pImmutableSamplers = nullptr},
+      // Sampled Images
+      {.binding = DescriptorTable_SampledImageIndex,
+       .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+       .descriptorCount = MAX_DESCRIPTORS,
+       .stageFlags = VK_SHADER_STAGE_ALL,
+       .pImmutableSamplers = nullptr},
+      // Storage Images
+      {.binding = DescriptorTable_StorageImageIndex,
+       .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+       .descriptorCount = MAX_DESCRIPTORS,
+       .stageFlags = VK_SHADER_STAGE_ALL,
+       .pImmutableSamplers = nullptr},
+  };
+
+  constexpr static auto bindless_flags = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                                         VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+  VkDescriptorBindingFlags bindless_set_binding_flags[] = {
+      bindless_flags,
+      bindless_flags,
+      bindless_flags,
+  };
+  self.resources.descriptor_set = self.create_persistent_descriptor_set(
+      1, bindless_set_info, bindless_set_binding_flags);
+
   const u32 major = VK_VERSION_MAJOR(instanceVersion);
   const u32 minor = VK_VERSION_MINOR(instanceVersion);
   const u32 patch = VK_VERSION_PATCH(instanceVersion);
@@ -306,6 +329,46 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
               minor,
               patch);
 }
+
+auto VkContext::destroy_context(this VkContext& self) -> void {
+  ZoneScoped;
+  self.runtime->wait_idle();
+
+  auto destroy_resource_pool = [&self](auto& pool) -> void {
+    for (auto i = 0_sz; i < pool.size(); i++) {
+      auto* v = pool.slot_from_index(i);
+      if (v) {
+        self.superframe_allocator->deallocate({v, 1});
+      }
+    }
+
+    pool.reset();
+  };
+
+  destroy_resource_pool(self.resources.buffers);
+  destroy_resource_pool(self.resources.images);
+  destroy_resource_pool(self.resources.image_views);
+  self.resources.samplers.reset();
+  self.resources.pipelines.reset();
+}
+
+auto VkContext::handle_resize(u32 width, u32 height) -> void {
+  wait();
+
+  if (width == 0 && height == 0) {
+    suspend = true;
+  } else {
+    swapchain = make_swapchain(
+        *superframe_allocator, vkb_device, surface, std::move(swapchain), present_mode, num_inflight_frames);
+  }
+}
+
+auto VkContext::set_vsync(bool enable) -> void {
+  const auto set_present_mode = enable ? vuk::PresentModeKHR::eFifo : vuk::PresentModeKHR::eImmediate;
+  present_mode = set_present_mode;
+}
+
+auto VkContext::is_vsync() const -> bool { return present_mode == vuk::PresentModeKHR::eFifo; }
 
 auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
@@ -334,8 +397,8 @@ auto VkContext::end_frame(this VkContext& self, vuk::Value<vuk::ImageAttachment>
   auto entire_thing = vuk::enqueue_presentation(std::move(target_));
   vuk::ProfilingCallbacks cbs = self.tracy_profiler->setup_vuk_callback();
   try {
-  entire_thing.submit(*self.frame_allocator, self.compiler, {.graph_label = {}, .callbacks = cbs});
-  } catch (vuk::Exception &) {
+    entire_thing.submit(*self.frame_allocator, self.compiler, {.graph_label = {}, .callbacks = cbs});
+  } catch (vuk::Exception&) {
     // TODO: Actually handle this
   }
 
@@ -366,6 +429,270 @@ auto VkContext::wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -
 
   thread_local vuk::Compiler _compiler;
   return *fut.get(allocator, _compiler);
+}
+
+auto VkContext::create_persistent_descriptor_set(this VkContext& self,
+                                                 u32 set_index,
+                                                 std::span<VkDescriptorSetLayoutBinding> bindings,
+                                                 std::span<VkDescriptorBindingFlags> binding_flags)
+    -> vuk::PersistentDescriptorSet {
+  ZoneScoped;
+
+  OX_CHECK_EQ(bindings.size(), binding_flags.size());
+
+  auto descriptor_sizes = std::vector<VkDescriptorPoolSize>();
+  for (const auto& binding : bindings) {
+    OX_CHECK_LT(binding.descriptorType, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
+    descriptor_sizes.emplace_back(binding.descriptorType, binding.descriptorCount);
+  }
+
+  auto pool_flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+  auto pool_info = VkDescriptorPoolCreateInfo{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+      .pNext = nullptr,
+      .flags = static_cast<VkDescriptorPoolCreateFlags>(pool_flags),
+      .maxSets = 1,
+      .poolSizeCount = static_cast<u32>(descriptor_sizes.size()),
+      .pPoolSizes = descriptor_sizes.data(),
+  };
+  auto pool = VkDescriptorPool{};
+  vkCreateDescriptorPool(self.device, &pool_info, nullptr, &pool);
+
+  auto set_layout_binding_flags_info = VkDescriptorSetLayoutBindingFlagsCreateInfo{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+      .pNext = nullptr,
+      .bindingCount = static_cast<u32>(binding_flags.size()),
+      .pBindingFlags = binding_flags.data(),
+  };
+
+  auto set_layout_info = VkDescriptorSetLayoutCreateInfo{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      .pNext = &set_layout_binding_flags_info,
+      .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+      .bindingCount = static_cast<u32>(bindings.size()),
+      .pBindings = bindings.data(),
+  };
+  auto set_layout = VkDescriptorSetLayout{};
+  vkCreateDescriptorSetLayout(self.device, &set_layout_info, nullptr, &set_layout);
+
+  auto set_alloc_info = VkDescriptorSetAllocateInfo{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+      .pNext = nullptr,
+      .descriptorPool = pool,
+      .descriptorSetCount = 1,
+      .pSetLayouts = &set_layout,
+  };
+  auto descriptor_set = VkDescriptorSet{};
+  vkAllocateDescriptorSets(self.device, &set_alloc_info, &descriptor_set);
+
+  auto persistent_set_create_info = vuk::DescriptorSetLayoutCreateInfo{
+      .dslci = set_layout_info,
+      .index = set_index,
+      .bindings = std::vector(bindings.begin(), bindings.end()),
+      .flags = std::vector(binding_flags.begin(), binding_flags.end()),
+  };
+  return vuk::PersistentDescriptorSet{
+      .backing_pool = pool,
+      .set_layout_create_info = persistent_set_create_info,
+      .set_layout = set_layout,
+      .backing_set = descriptor_set,
+      .wdss = {},
+      .descriptor_bindings = {},
+  };
+}
+
+auto VkContext::commit_descriptor_set(this VkContext& self, std::span<VkWriteDescriptorSet> writes) -> void {
+  ZoneScoped;
+
+  vkUpdateDescriptorSets(self.device, writes.size(), writes.data(), 0, nullptr);
+}
+
+auto VkContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {
+  ZoneScoped;
+
+  vuk::ImageCreateInfo ici;
+  ici.format = vuk::Format(image_attachment.format);
+  ici.imageType = image_attachment.image_type;
+  ici.flags = image_attachment.image_flags;
+  ici.arrayLayers = image_attachment.layer_count;
+  ici.samples = image_attachment.sample_count.count;
+  ici.tiling = image_attachment.tiling;
+  ici.mipLevels = image_attachment.level_count;
+  ici.usage = image_attachment.usage;
+  ici.extent = image_attachment.extent;
+
+  VkImageFormatListCreateInfo listci = {};
+  listci.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+  VkFormat formats[2];
+  if (image_attachment.allow_srgb_unorm_mutable) {
+    auto unorm_fmt = srgb_to_unorm(image_attachment.format);
+    auto srgb_fmt = unorm_to_srgb(image_attachment.format);
+    formats[0] = (VkFormat)image_attachment.format;
+    formats[1] = unorm_fmt == vuk::Format::eUndefined ? (VkFormat)srgb_fmt : (VkFormat)unorm_fmt;
+    listci.pViewFormats = formats;
+    listci.viewFormatCount = formats[1] == VK_FORMAT_UNDEFINED ? 1 : 2;
+    if (listci.viewFormatCount > 1) {
+      ici.flags |= vuk::ImageCreateFlagBits::eMutableFormat;
+      ici.pNext = &listci;
+    }
+  }
+
+  vuk::Image image = {};
+
+  if (auto res = superframe_allocator->allocate_images(std::span{&image, 1}, std::span{&ici, 1}); !res) {
+    OX_LOG_ERROR("{}", res.error().error_message);
+  }
+
+  return resources.images.create_slot(std::move(image));
+}
+
+auto VkContext::destroy_image(const ImageID id) -> void {
+  ZoneScoped;
+
+  auto image = *resources.images.slot(id);
+  superframe_allocator->deallocate({&image, 1});
+  resources.images.destroy_slot(id);
+}
+
+auto VkContext::image(const ImageID id) -> vuk::Image {
+  ZoneScoped;
+
+  auto image = resources.images.slot(id);
+  return *image;
+}
+
+auto VkContext::allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID {
+  ZoneScoped;
+
+  vuk::ImageViewCreateInfo ivci;
+  OX_CHECK_EQ((bool)image_attachment.image, true);
+  ivci.flags = image_attachment.image_view_flags;
+  ivci.image = image_attachment.image.image;
+  ivci.viewType = image_attachment.view_type;
+  ivci.format = vuk::Format(image_attachment.format);
+  ivci.components = image_attachment.components;
+  ivci.view_usage = image_attachment.usage;
+
+  vuk::ImageSubresourceRange& isr = ivci.subresourceRange;
+  isr.aspectMask = format_to_aspect(ivci.format);
+  isr.baseArrayLayer = image_attachment.base_layer;
+  isr.layerCount = image_attachment.layer_count;
+  isr.baseMipLevel = image_attachment.base_level;
+  isr.levelCount = image_attachment.level_count;
+
+  vuk::ImageView view;
+
+  if (auto res = superframe_allocator->allocate_image_views(std::span{&view, 1}, std::span{&ivci, 1}); !res) {
+    OX_LOG_ERROR("{}", res.error().error_message);
+  }
+
+  auto* image_view_handle = view.payload;
+  auto image_view_id = resources.image_views.create_slot(std::move(view));
+
+  auto& bindless_set = get_descriptor_set();
+
+  auto sampled_image_descriptor = VkDescriptorImageInfo{
+      .sampler = nullptr,
+      .imageView = image_view_handle,
+      .imageLayout = VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+  };
+
+  auto storage_image_descriptor = VkDescriptorImageInfo{
+      .sampler = nullptr,
+      .imageView = image_view_handle,
+      .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+  };
+
+  auto descriptor_count = 0_sz;
+  auto descriptor_writes = std::array<VkWriteDescriptorSet, 2>();
+  if (image_attachment.usage & vuk::ImageUsageFlagBits::eSampled) {
+    descriptor_writes[descriptor_count++] = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr,
+        .dstSet = bindless_set.backing_set,
+        .dstBinding = DescriptorTable_SampledImageIndex,
+        .dstArrayElement = SlotMap_decode_id(image_view_id).index,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .pImageInfo = &sampled_image_descriptor,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr,
+    };
+  }
+  if (image_attachment.usage & vuk::ImageUsageFlagBits::eStorage) {
+    descriptor_writes[descriptor_count++] = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr,
+        .dstSet = bindless_set.backing_set,
+        .dstBinding = DescriptorTable_StorageImageIndex,
+        .dstArrayElement = SlotMap_decode_id(image_view_id).index,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .pImageInfo = &storage_image_descriptor,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr,
+    };
+  }
+  commit_descriptor_set({descriptor_writes.data(), descriptor_count});
+
+  return image_view_id;
+}
+
+auto VkContext::destroy_image_view(const ImageViewID id) -> void {
+  ZoneScoped;
+
+  auto view = *resources.image_views.slot(id);
+  superframe_allocator->deallocate({&view, 1});
+  resources.image_views.destroy_slot(id);
+}
+
+auto VkContext::image_view(const ImageViewID id) -> vuk::ImageView {
+  ZoneScoped;
+
+  auto view = resources.image_views.slot(id);
+  return *view;
+}
+
+auto VkContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info) -> SamplerID {
+  ZoneScoped;
+
+  auto sampler = runtime->acquire_sampler(sampler_info, num_frames);
+  auto sampler_handle = sampler.payload;
+  auto sampler_id = resources.samplers.create_slot(std::move(sampler));
+
+  auto sampler_descriptor = VkDescriptorImageInfo{
+      .sampler = sampler_handle,
+      .imageView = nullptr,
+      .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+  };
+  auto& bindless_set = get_descriptor_set();
+  auto descriptor_write = VkWriteDescriptorSet{
+      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, //
+      .pNext = nullptr,
+      .dstSet = bindless_set.backing_set,
+      .dstBinding = DescriptorTable_SamplerIndex,
+      .dstArrayElement = SlotMap_decode_id(sampler_id).index,
+      .descriptorCount = 1,
+      .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+      .pImageInfo = &sampler_descriptor,
+      .pBufferInfo = nullptr,
+      .pTexelBufferView = nullptr,
+  };
+  commit_descriptor_set({&descriptor_write, 1});
+
+  return sampler_id;
+}
+
+auto VkContext::destroy_sampler(const SamplerID id) -> void {
+  ZoneScoped;
+
+  resources.samplers.destroy_slot(id);
+}
+
+auto VkContext::sampler(const SamplerID id) -> vuk::Sampler {
+  ZoneScoped;
+
+  return *resources.samplers.slot(id);
 }
 
 auto VkContext::allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment) -> vuk::Unique<vuk::Buffer> {
