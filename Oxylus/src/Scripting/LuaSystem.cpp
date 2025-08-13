@@ -25,22 +25,20 @@ auto LuaSystem::check_result(const sol::protected_function_result& result, const
   }
 }
 
-auto LuaSystem::init_script(this LuaSystem& self, const std::string& path, const ox::option<std::string> script)
-    -> void {
+auto LuaSystem::init_script(this LuaSystem& self, const std::string& path) -> void {
   ZoneScoped;
 
   self.file_path = path;
-  self.script = script;
+
+  if (!std::filesystem::exists(path)) {
+    OX_LOG_ERROR("Couldn't find the script file! {}", self.file_path);
+    return;
+  }
 
   const auto state = App::get_system<LuaManager>(EngineSystems::LuaManager)->get_state();
-
-  if (self.environment)
-    self.environment.reset();
   self.environment = std::make_unique<sol::environment>(*state, sol::create, state->globals());
 
-  const auto load_file_result = script.has_value()
-                                    ? state->script(self.script.value(), *self.environment, sol::script_pass_on_error)
-                                    : state->script_file(self.file_path, *self.environment, sol::script_pass_on_error);
+  const auto load_file_result = state->script_file(self.file_path, *self.environment, sol::script_pass_on_error);
 
   if (!load_file_result.valid()) {
     const sol::error err = load_file_result;
@@ -82,8 +80,7 @@ auto LuaSystem::init_script(this LuaSystem& self, const std::string& path, const
   if (!self.on_scene_update_func->valid())
     self.on_scene_update_func.reset();
 
-  self.on_scene_fixed_update_func = std::make_unique<sol::protected_function>(
-      (*self.environment)["on_scene_fixed_update"]);
+  self.on_scene_fixed_update_func = std::make_unique<sol::protected_function>((*self.environment)["on_scene_fixed_update"]);
   if (!self.on_scene_fixed_update_func->valid())
     self.on_scene_fixed_update_func.reset();
 
@@ -94,10 +91,10 @@ auto LuaSystem::init_script(this LuaSystem& self, const std::string& path, const
   state->collect_gc();
 }
 
-auto LuaSystem::load(this LuaSystem& self, const std::string& path, const ox::option<std::string> script) -> void {
+auto LuaSystem::load(this LuaSystem& self, const std::string& path) -> void {
   ZoneScoped;
 
-  self.init_script(path, script);
+  self.init_script(path);
 }
 
 auto LuaSystem::reload(this LuaSystem& self) -> void {
@@ -123,8 +120,8 @@ auto LuaSystem::reset_functions(this LuaSystem& self) -> void {
 
 auto LuaSystem::bind_globals(this const LuaSystem& self, Scene* scene, flecs::entity entity, f32 delta_time) -> void {
   (*self.environment)["scene"] = scene;
-  (*self.environment)["world"] = &scene->world;
-  (*self.environment)["entity"] = &entity;
+  (*self.environment)["world"] = std::ref(scene->world);
+  (*self.environment)["entity"] = entity;
   (*self.environment)["delta_time"] = delta_time;
 }
 

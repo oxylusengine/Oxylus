@@ -10,7 +10,7 @@
 #include <vuk/Value.hpp>
 
 #include "EditorPanel.hpp"
-#include "ThumbnailRenderer.hpp"
+#include "ThumbnailRenderPipeline.hpp"
 
 namespace ox {
 class Texture;
@@ -75,7 +75,7 @@ private:
   bool model_thumbnails_enabled = false;
   ankerl::unordered_dense::map<std::string, std::shared_ptr<Texture>> thumbnail_cache_textures;
   ankerl::unordered_dense::map<std::string, vuk::ImageAttachment> thumbnail_cache_models;
-  ankerl::unordered_dense::map<std::string, std::unique_ptr<ThumbnailRenderer>> thumbnail_render_pipeline_cache;
+  ankerl::unordered_dense::map<std::string, std::unique_ptr<ThumbnailRenderPipeline>> thumbnail_render_pipeline_cache;
 
   std::shared_ptr<Texture> _white_texture;
   std::filesystem::path _directory_to_delete;

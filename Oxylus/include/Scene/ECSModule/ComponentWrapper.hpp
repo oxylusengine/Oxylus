@@ -11,7 +11,6 @@ struct ComponentWrapper {
                               u8*,
                               u16*,
                               f32*,
-                              f64*,
                               i32*,
                               u32*,
                               i64*,
@@ -66,8 +65,6 @@ struct ComponentWrapper {
         data = reinterpret_cast<u16*>(self.members_data + member.offset);
       } else if (member_type == flecs::F32) {
         data = reinterpret_cast<f32*>(self.members_data + member.offset);
-      } else if (member_type == flecs::F64) {
-        data = reinterpret_cast<f64*>(self.members_data + member.offset);
       } else if (member_type == flecs::I32) {
         data = reinterpret_cast<i32*>(self.members_data + member.offset);
       } else if (member_type == flecs::U32) {

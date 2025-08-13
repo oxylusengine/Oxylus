@@ -28,13 +28,20 @@
 #endif
 
 #ifdef OX_LUA_BINDINGS
-#define ECS_BIND_TYPE(state, type) auto component_table = state->create_named_table(#type); \
-  component_table["component_id"] = (u64)component.id(); \
-  core_table[#type] = component_table
-#define ECS_BIND_MEMBER(name, type) component_table[#name] = &type::name
+#define ECS_BIND_TYPE(state, type) auto component_type = state->new_usertype<type>(#type); \
+  component_table[#type] = (u64)component.id()
+#define ECS_BIND_MEMBER(name, type) component_type[#name] = &type::name
+#define ECS_BIND_GET_FUNCTIONS(Component) \
+    entity_type.set_function("try_get_" #Component, [](flecs::entity& e) -> const Component* { \
+        return e.try_get<Component>(); \
+    }); \
+    entity_type.set_function("try_get_mut_" #Component, [](flecs::entity& e) -> Component* { \
+        return e.try_get_mut<Component>(); \
+    })
 #else
 #define ECS_BIND_TYPE(state, type)
 #define ECS_BIND_MEMBER(name, type)
+#define ECS_BIND_GET_FUNCTIONS(Component)
 #endif
 
 #ifdef ECS_REFLECT_TYPES
@@ -42,6 +49,7 @@
   using _CurrentComponentT = name; \
   auto component = world.component<name>(#name); \
   ECS_BIND_TYPE(state, name); \
+  ECS_BIND_GET_FUNCTIONS(name);
 
 #define ECS_COMPONENT_END(...) }
 
