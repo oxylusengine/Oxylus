@@ -1277,8 +1277,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
       auto update_transforms_pass = vuk::make_pass(
           "update scene transforms",
-          [upload_offsets = std::move(upload_offsets)]( //
-              vuk::CommandBuffer& cmd_list,
+          [=](vuk::CommandBuffer& cmd_list, //
               VUK_BA(vuk::Access::eTransferRead) src_buffer,
               VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
             for (usize i = 0; i < upload_offsets.size(); i++) {
@@ -1325,9 +1324,9 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
       auto update_materials_pass = vuk::make_pass(
           "update scene materials",
-          [upload_offsets = std::move(upload_offsets)](vuk::CommandBuffer& cmd_list, //
-                                                       VUK_BA(vuk::Access::eTransferRead) src_buffer,
-                                                       VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
+          [=](vuk::CommandBuffer& cmd_list, //
+              VUK_BA(vuk::Access::eTransferRead) src_buffer,
+              VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
             for (usize i = 0; i < upload_offsets.size(); i++) {
               auto offset = upload_offsets[i];
               auto src_subrange = src_buffer->subrange(i * sizeof(GPU::Material), sizeof(GPU::Material));

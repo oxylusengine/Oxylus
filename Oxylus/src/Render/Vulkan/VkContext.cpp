@@ -151,8 +151,13 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   self.surface = window.get_surface(instance);
   selector //
       .set_surface(self.surface)
-      .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
       .set_minimum_version(1, 3);
+#if 0      // for LLVMPipe
+  selector.prefer_gpu_device_type(vkb::PreferredDeviceType::cpu);
+  selector.allow_any_gpu_device_type(false);
+#else
+  selector.prefer_gpu_device_type(vkb::PreferredDeviceType::discrete);
+#endif
 
   std::vector<const c8*> device_extensions;
   device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -699,12 +704,13 @@ auto VkContext::allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment)
   return *vuk::allocate_buffer(frame_allocator.value(), {.mem_usage = usage, .size = size, .alignment = alignment});
 }
 
-auto VkContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size) -> vuk::Unique<vuk::Buffer> {
+auto VkContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
+    -> vuk::Unique<vuk::Buffer> {
   if (!buffer || new_size > buffer->size) {
     wait();
     buffer.reset();
 
-    return allocate_buffer(usage, new_size);
+    return allocate_buffer_super(usage, new_size);
   }
 
   return std::move(buffer);

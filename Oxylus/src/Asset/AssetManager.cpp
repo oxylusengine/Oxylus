@@ -900,21 +900,22 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
           constexpr f32 NORMAL_WEIGHTS[] = {1.0f, 1.0f, 1.0f};
 
           auto result_error = 0.0f;
-          auto result_index_count = meshopt_simplifyWithAttributes(simplified_indices.data(),
-                                                                   last_lod_indices.data(),
-                                                                   last_lod_indices.size(),
-                                                                   reinterpret_cast<const f32*>(mesh_vertices.data()),
-                                                                   mesh_vertices.size(),
-                                                                   sizeof(glm::vec3),
-                                                                   reinterpret_cast<const f32*>(mesh_normals.data()),
-                                                                   sizeof(glm::vec3),
-                                                                   NORMAL_WEIGHTS,
-                                                                   ox::count_of(NORMAL_WEIGHTS),
-                                                                   nullptr,
-                                                                   lod_index_count,
-                                                                   TARGET_ERROR,
-                                                                   meshopt_SimplifyLockBorder,
-                                                                   &result_error);
+          auto result_index_count = meshopt_simplifyWithAttributes( //
+              simplified_indices.data(),
+              last_lod_indices.data(),
+              last_lod_indices.size(),
+              reinterpret_cast<const f32*>(mesh_vertices.data()),
+              mesh_vertices.size(),
+              sizeof(glm::vec3),
+              reinterpret_cast<const f32*>(mesh_normals.data()),
+              sizeof(glm::vec3),
+              NORMAL_WEIGHTS,
+              ox::count_of(NORMAL_WEIGHTS),
+              nullptr,
+              lod_index_count,
+              TARGET_ERROR,
+              meshopt_SimplifyLockBorder,
+              &result_error);
 
           cur_lod.error = last_lod.error + result_error;
           if (result_index_count > (lod_index_count + lod_index_count / 2) || result_error > 0.5 ||
@@ -939,17 +940,18 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
         auto indirect_vertex_indices = std::vector<u32>(max_meshlet_count * Mesh::MAX_MESHLET_INDICES);
         auto local_triangle_indices = std::vector<u8>(max_meshlet_count * Mesh::MAX_MESHLET_PRIMITIVES * 3);
 
-        auto meshlet_count = meshopt_buildMeshlets(raw_meshlets.data(),
-                                                   indirect_vertex_indices.data(),
-                                                   local_triangle_indices.data(),
-                                                   simplified_indices.data(),
-                                                   simplified_indices.size(),
-                                                   reinterpret_cast<const f32*>(mesh_vertices.data()),
-                                                   mesh_vertices.size(),
-                                                   sizeof(glm::vec3),
-                                                   Mesh::MAX_MESHLET_INDICES,
-                                                   Mesh::MAX_MESHLET_PRIMITIVES,
-                                                   0.0);
+        auto meshlet_count = meshopt_buildMeshlets( //
+            raw_meshlets.data(),
+            indirect_vertex_indices.data(),
+            local_triangle_indices.data(),
+            simplified_indices.data(),
+            simplified_indices.size(),
+            reinterpret_cast<const f32*>(mesh_vertices.data()),
+            mesh_vertices.size(),
+            sizeof(glm::vec3),
+            Mesh::MAX_MESHLET_INDICES,
+            Mesh::MAX_MESHLET_PRIMITIVES,
+            0.0);
 
         // Trim meshlets from worst case to current case
         raw_meshlets.resize(meshlet_count);
@@ -974,12 +976,13 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
           }
 
           // Sphere and Cone computation
-          auto sphere_bounds = meshopt_computeMeshletBounds(&indirect_vertex_indices[raw_meshlet.vertex_offset],
-                                                            &local_triangle_indices[raw_meshlet.triangle_offset],
-                                                            raw_meshlet.triangle_count,
-                                                            reinterpret_cast<f32*>(mesh_vertices.data()),
-                                                            vertex_count,
-                                                            sizeof(glm::vec3));
+          auto sphere_bounds = meshopt_computeMeshletBounds( //
+              &indirect_vertex_indices[raw_meshlet.vertex_offset],
+              &local_triangle_indices[raw_meshlet.triangle_offset],
+              raw_meshlet.triangle_count,
+              reinterpret_cast<f32*>(mesh_vertices.data()),
+              vertex_count,
+              sizeof(glm::vec3));
 
           meshlet.indirect_vertex_index_offset = raw_meshlet.vertex_offset;
           meshlet.local_triangle_index_offset = raw_meshlet.triangle_offset;
