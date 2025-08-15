@@ -8,14 +8,15 @@ import visbuffer;
 #include <fullscreen.slang>
 
 struct ShaderParameters {
-    Image2D<u32> visbuffer;
     ConstantBuffer<Camera> camera;
     StructuredBuffer<MeshletInstance> meshlet_instances;
+    StructuredBuffer<MeshInstance> mesh_instances;
     StructuredBuffer<Mesh> meshes;
     StructuredBuffer<Transform> transforms;
     StructuredBuffer<Material> materials;
-};
 
+    Image2D<u32> visbuffer;
+};
 ParameterBlock<ShaderParameters> params;
 
 struct FragmentOutput {
@@ -43,43 +44,43 @@ struct PartialDeriv {
 func compute_partial_derivatives(in f32x4x3 world_positions, in f32x2 uv, in f32x2 resolution) -> PartialDeriv {
     PartialDeriv result;
 
-    const let clip_pos_0 = mul(params.camera.projection_view, f32x4(world_positions[0].xyz, 1.0));
-    const let clip_pos_1 = mul(params.camera.projection_view, f32x4(world_positions[1].xyz, 1.0));
-    const let clip_pos_2 = mul(params.camera.projection_view, f32x4(world_positions[2].xyz, 1.0));
+    let clip_pos_0 = mul(params.camera.projection_view, f32x4(world_positions[0].xyz, 1.0));
+    let clip_pos_1 = mul(params.camera.projection_view, f32x4(world_positions[1].xyz, 1.0));
+    let clip_pos_2 = mul(params.camera.projection_view, f32x4(world_positions[2].xyz, 1.0));
 
     // Partial Derivatives
-    const f32x3 inv_w = 1.0 / f32x3(clip_pos_0.w, clip_pos_1.w, clip_pos_2.w);
-    const f32x2 ndc_0 = clip_pos_0.xy * inv_w[0];
-    const f32x2 ndc_1 = clip_pos_1.xy * inv_w[1];
-    const f32x2 ndc_2 = clip_pos_2.xy * inv_w[2];
+    let inv_w = 1.0 / f32x3(clip_pos_0.w, clip_pos_1.w, clip_pos_2.w);
+    let ndc_0 = clip_pos_0.xy * inv_w[0];
+    let ndc_1 = clip_pos_1.xy * inv_w[1];
+    let ndc_2 = clip_pos_2.xy * inv_w[2];
     // Inverse area of a triangle.
     // https://cg.ivd.kit.edu/publications/2015/dais/DAIS.pdf
     // Appendix A:
     // D =
-    const f32 inv_det = 1.0 / determinant(f32x2x2(ndc_2 - ndc_1, ndc_0 - ndc_1));
+    let inv_det = 1.0 / determinant(f32x2x2(ndc_2 - ndc_1, ndc_0 - ndc_1));
     // Lambda 1 =
     result.ddx = f32x3(ndc_1.y - ndc_2.y, ndc_2.y - ndc_0.y, ndc_0.y - ndc_1.y) * inv_det * inv_w;
     // Lambda 2 =
     result.ddy = f32x3(ndc_2.x - ndc_1.x, ndc_0.x - ndc_2.x, ndc_1.x - ndc_0.x) * inv_det * inv_w;
-    f32 ddx_sum = dot(result.ddx, 1.0);
-    f32 ddy_sum = dot(result.ddy, 1.0);
+    var ddx_sum = dot(result.ddx, 1.0);
+    var ddy_sum = dot(result.ddy, 1.0);
 
-    const f32x2 delta_v = uv - ndc_0;
-    const f32 interp_inv_w = inv_w.x + delta_v.x * ddx_sum + delta_v.y * ddy_sum;
-    const f32 interp_w = 1.0 / interp_inv_w;
+    let delta_v = uv - ndc_0;
+    let interp_inv_w = inv_w.x + delta_v.x * ddx_sum + delta_v.y * ddy_sum;
+    let interp_w = 1.0 / interp_inv_w;
     result.lambda = f32x3(
         interp_w * (inv_w[0] + delta_v.x * result.ddx.x + delta_v.y * result.ddy.x),
         interp_w * (delta_v.x * result.ddx.y + delta_v.y * result.ddy.y),
         interp_w * (delta_v.x * result.ddx.z + delta_v.y * result.ddy.z)
     );
-    const f32x2 two_over_resolution = 2.0 / resolution;
+    let two_over_resolution = 2.0 / resolution;
     result.ddx *= two_over_resolution.x;
     result.ddy *= -two_over_resolution.y;
     ddx_sum *= two_over_resolution.x;
     ddy_sum *= -two_over_resolution.y;
 
-    const f32 interp_ddx_w = 1.0 / (interp_inv_w + ddx_sum);
-    const f32 interp_ddy_w = 1.0 / (interp_inv_w + ddy_sum);
+    let interp_ddx_w = 1.0 / (interp_inv_w + ddx_sum);
+    let interp_ddy_w = 1.0 / (interp_inv_w + ddy_sum);
     result.ddx = interp_ddx_w * (result.lambda * interp_inv_w + result.ddx) - result.lambda;
     result.ddy = interp_ddy_w * (result.lambda * interp_inv_w + result.ddy) - result.lambda;
 
@@ -88,37 +89,41 @@ func compute_partial_derivatives(in f32x4x3 world_positions, in f32x2 uv, in f32
 
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> FragmentOutput {
-    const u32 texel = params.visbuffer.load(u32x2(input.position.xy));
+    let texel = params.visbuffer.load(u32x2(input.position.xy));
     if (texel == ~0u) {
         discard;
     }
 
+    let vis = VisBufferData(texel);
+    let meshlet_instance_index = vis.meshlet_instance_index;
+    let meshlet_instance = params.meshlet_instances[meshlet_instance_index];
+    let mesh_instance = params.mesh_instances[meshlet_instance.mesh_instance_index];
+    let mesh = params.meshes[mesh_instance.mesh_index];
+    let material = params.materials[mesh_instance.material_index];
+    let transform = params.transforms[mesh_instance.transform_index];
+    let mesh_lod = mesh.lods[mesh_instance.lod_index];
+    let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
+
+    let indices = meshlet.indices(mesh_lod, vis.triangle_index);
+    let positions = meshlet.positions(mesh, indices);
+    let normals = meshlet.normals(mesh, indices);
+    let tex_coords = meshlet.tex_coords(mesh, indices);
+    let world_positions = transform.to_world_positions(positions);
+    let NDC = f32x3(input.tex_coord * 2.0 - 1.0, 1.0);
+    let deriv = compute_partial_derivatives(world_positions, NDC.xy, params.camera.resolution);
+    let tex_coord_grad = deriv.gradient_of(tex_coords);
+
     FragmentOutput output = {};
-
-    const let vis = VisBufferData(texel);
-    const MeshletInstance meshlet_instance = params.meshlet_instances[vis.meshlet_instance_index];
-    const Mesh mesh = params.meshes[meshlet_instance.mesh_index];
-    const Transform transform = params.transforms[meshlet_instance.transform_index];
-    const Material material = params.materials[meshlet_instance.material_index];
-
-    const Meshlet meshlet = mesh.meshlets[meshlet_instance.meshlet_index];
-    const Triangle indices = meshlet.indices(mesh, vis.triangle_index);
-    const u32x3 vertices = meshlet.vertices(mesh, indices);
-    const f32x3x3 positions = meshlet.positions(mesh, vertices);
-    const f32x3x3 normals = meshlet.normals(mesh, vertices);
-    const f32x2x3 tex_coords = meshlet.tex_coords(mesh, vertices);
-    const f32x4x3 world_positions = transform.to_world_positions(positions);
-    const f32x3 NDC = f32x3(input.tex_coord * 2.0 - 1.0, 1.0);
-    const PartialDeriv deriv = compute_partial_derivatives(world_positions, NDC.xy, params.camera.resolution);
-    const UVGradient tex_coord_grad = deriv.gradient_of(tex_coords);
 
     // ALBEDO ───────────────────────────────────────────────────────────
     output.albedo_color = material.sample_albedo_color(tex_coord_grad);
 
     // NORMALS ──────────────────────────────────────────────────────────
-    const f32x3x3 camera_relative_world_positions = { world_positions[0].xyz - params.camera.position.xyz,
-                                                      world_positions[1].xyz - params.camera.position.xyz,
-                                                      world_positions[2].xyz - params.camera.position.xyz };
+    const f32x3x3 camera_relative_world_positions = {
+        world_positions[0].xyz - params.camera.position.xyz,
+        world_positions[1].xyz - params.camera.position.xyz,
+        world_positions[2].xyz - params.camera.position.xyz,
+    };
     const f32x3 pos_ddx = mul(deriv.ddx, camera_relative_world_positions);
     const f32x3 pos_ddy = mul(deriv.ddy, camera_relative_world_positions);
 

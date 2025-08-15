@@ -6,7 +6,6 @@
 #include "Core/VFS.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Slang/Slang.hpp"
-#include "Render/Utils/VukCommon.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
@@ -42,15 +41,9 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   auto& runtime = *vk_context->runtime;
   auto& allocator = *vk_context->superframe_allocator;
+  auto& bindless_set = vk_context->get_descriptor_set();
 
   vk_context->wait();
-
-  auto dslci_01 = vuk::descriptor_set_layout_create_info(
-      {
-          ds_layout_binding(BindlessID::Samplers, vuk::DescriptorType::eSampler, 6),        // Samplers
-          ds_layout_binding(BindlessID::SampledImages, vuk::DescriptorType::eSampledImage), // SampledImages
-      },
-      1);
 
   // --- Shaders ---
   auto* vfs = App::get_system<VFS>(EngineSystems::VFS);
@@ -59,6 +52,8 @@ auto Renderer::init() -> std::expected<void, std::string> {
   Slang slang = {};
   slang.create_session({.root_directory = shaders_dir,
                         .definitions = {
+                            {"MESH_MAX_LODS", std::to_string(GPU::Mesh::MAX_LODS)},
+                            {"CULLING_MESH_COUNT", "64"},
                             {"CULLING_MESHLET_COUNT", std::to_string(Mesh::MAX_MESHLET_INDICES)},
                             {"CULLING_TRIANGLE_COUNT", std::to_string(Mesh::MAX_MESHLET_PRIMITIVES)},
                             {"HISTOGRAM_THREADS_X", std::to_string(GPU::HISTOGRAM_THREADS_X)},
@@ -67,141 +62,96 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   slang.create_pipeline(runtime,
                         "2d_forward_pipeline",
-                        dslci_01,
                         {.path = shaders_dir + "/passes/2d_forward.slang", .entry_points = {"vs_main", "ps_main"}});
 
   // --- Sky ---
   slang.create_pipeline(runtime,
                         "sky_transmittance_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/sky_transmittance.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "sky_multiscatter_lut_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/sky_multiscattering.slang", .entry_points = {"cs_main"}});
 
-  slang.create_pipeline(runtime,
-                        "sky_view_pipeline",
-                        dslci_01,
-                        {.path = shaders_dir + "/passes/sky_view.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+      runtime, "sky_view_pipeline", {.path = shaders_dir + "/passes/sky_view.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "sky_aerial_perspective_pipeline",
-                        dslci_01,
                         {.path = shaders_dir + "/passes/sky_aerial_perspective.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "sky_final_pipeline",
-                        dslci_01,
                         {.path = shaders_dir + "/passes/sky_final.slang", .entry_points = {"vs_main", "fs_main"}});
 
   // --- VISBUFFER ---
   slang.create_pipeline(
-      runtime, "cull_meshlets", {}, {.path = shaders_dir + "/passes/cull_meshlets.slang", .entry_points = {"cs_main"}});
+      runtime, "cull_meshes", {.path = shaders_dir + "/passes/cull_meshes.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
-                        "cull_triangles",
-                        {},
-                        {.path = shaders_dir + "/passes/cull_triangles.slang", .entry_points = {"cs_main"}});
+                        "generate_cull_commands",
+                        {.path = shaders_dir + "/passes/generate_cull_commands.slang", .entry_points = {"cs_main"}});
+
+  slang.create_pipeline(
+      runtime, "cull_meshlets", {.path = shaders_dir + "/passes/cull_meshlets.slang", .entry_points = {"cs_main"}});
+
+  slang.create_pipeline(
+      runtime, "cull_triangles", {.path = shaders_dir + "/passes/cull_triangles.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(
       runtime,
       "visbuffer_encode",
-      dslci_01,
-      {.path = shaders_dir + "/passes/visbuffer_encode.slang", .entry_points = {"vs_main", "fs_main"}});
+      {.path = shaders_dir + "/passes/visbuffer_encode.slang", .entry_points = {"vs_main", "fs_main"}},
+      &bindless_set);
 
-  slang.create_pipeline(runtime,
-                        "visbuffer_clear",
-                        {},
-                        {.path = shaders_dir + "/passes/visbuffer_clear.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+      runtime, "visbuffer_clear", {.path = shaders_dir + "/passes/visbuffer_clear.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(
       runtime,
       "visbuffer_decode",
-      dslci_01,
-      {.path = shaders_dir + "/passes/visbuffer_decode.slang", .entry_points = {"vs_main", "fs_main"}});
+      {.path = shaders_dir + "/passes/visbuffer_decode.slang", .entry_points = {"vs_main", "fs_main"}},
+      &bindless_set);
 
   slang.create_pipeline(
-      runtime, "debug", {}, {.path = shaders_dir + "/passes/debug.slang", .entry_points = {"vs_main", "fs_main"}});
+      runtime, "debug", {.path = shaders_dir + "/passes/debug.slang", .entry_points = {"vs_main", "fs_main"}});
 
   // --- PBR ---
   slang.create_pipeline(
-      runtime, "brdf", dslci_01, {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}});
+      runtime, "brdf", {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}});
 
   //  --- FFX ---
   slang.create_pipeline(
-      runtime, "hiz_pipeline", {}, {.path = shaders_dir + "/passes/hiz.slang", .entry_points = {"cs_main"}});
+      runtime, "hiz_pipeline", {.path = shaders_dir + "/passes/hiz.slang", .entry_points = {"cs_main"}});
 
   // --- PostProcess ---
   slang.create_pipeline(runtime,
                         "histogram_generate_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/histogram_generate.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "histogram_average_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/histogram_average.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "tonemap_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/tonemap.slang", .entry_points = {"vs_main", "fs_main"}});
 
   slang.create_pipeline(runtime,
                         "bloom_prefilter_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/bloom/bloom_prefilter.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "bloom_downsample_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/bloom/bloom_downsample.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "bloom_upsample_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/bloom/bloom_upsample.slang", .entry_points = {"cs_main"}});
 
   slang.create_pipeline(runtime,
                         "fxaa_pipeline",
-                        {},
                         {.path = shaders_dir + "/passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}});
-
-  // --- DescriptorSets ---
-  this->descriptor_set_01 = runtime.create_persistent_descriptorset(allocator, dslci_01, 1);
-
-  // --- Samplers ---
-  static constexpr auto hiz_sampler_ci = vuk::SamplerCreateInfo{
-      .pNext = &sampler_min_clamp_reduction_mode,
-      .magFilter = vuk::Filter::eLinear,
-      .minFilter = vuk::Filter::eLinear,
-      .mipmapMode = vuk::SamplerMipmapMode::eNearest,
-      .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-      .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-  };
-
-  const vuk::Sampler linear_sampler_clamped = runtime.acquire_sampler(vuk::LinearSamplerClamped,
-                                                                      runtime.get_frame_count());
-  const vuk::Sampler linear_sampler_repeated = runtime.acquire_sampler(vuk::LinearSamplerRepeated,
-                                                                       runtime.get_frame_count());
-  const vuk::Sampler linear_sampler_repeated_anisotropy = runtime.acquire_sampler(vuk::LinearSamplerRepeatedAnisotropy,
-                                                                                  runtime.get_frame_count());
-  const vuk::Sampler nearest_sampler_clamped = runtime.acquire_sampler(vuk::NearestSamplerClamped,
-                                                                       runtime.get_frame_count());
-  const vuk::Sampler nearest_sampler_repeated = runtime.acquire_sampler(vuk::NearestSamplerRepeated,
-                                                                        runtime.get_frame_count());
-  const vuk::Sampler hiz_sampler = runtime.acquire_sampler(hiz_sampler_ci, runtime.get_frame_count());
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 0, linear_sampler_repeated);
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 1, linear_sampler_clamped);
-
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 2, nearest_sampler_repeated);
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 3, nearest_sampler_clamped);
-
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 4, linear_sampler_repeated_anisotropy);
-
-  this->descriptor_set_01->update_sampler(BindlessID::Samplers, 5, hiz_sampler);
 
   sky_transmittance_lut_view = Texture("sky_transmittance_lut");
   sky_transmittance_lut_view.create({},

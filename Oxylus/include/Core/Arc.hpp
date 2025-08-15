@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <type_traits>
+#include <utility>
 
 #include "Core/Types.hpp"
 

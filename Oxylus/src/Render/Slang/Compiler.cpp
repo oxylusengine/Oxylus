@@ -278,7 +278,9 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
        .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_OPTIMIZATION_LEVEL_MAXIMAL}},
 #if OX_DEBUG
       {.name = slang::CompilerOptionName::DebugInformationFormat,
-       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_FORMAT_C7}},
+       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_FORMAT_DEFAULT}},
+      {.name = slang::CompilerOptionName::DebugInformation,
+       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_LEVEL_MAXIMAL}},
 #endif
       {.name = slang::CompilerOptionName::UseUpToDateBinaryModule,
        .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = 1}},

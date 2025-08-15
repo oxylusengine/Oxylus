@@ -672,10 +672,10 @@ void ContentPanel::render_body(bool grid) {
 
         if (thumbnail_exists) {
           UI::image(*thumbnail_cache_textures[texture_name], {thumb_image_size, thumb_image_size});
-        } else if (thumbnail_cache_meshes.contains(texture_name)) {
-          auto texture = Texture::from_attachment(*vk_context.frame_allocator, thumbnail_cache_meshes[texture_name]);
-          texture->set_name(fs::get_file_name(texture_name));
-          UI::image(*texture, {thumb_image_size, thumb_image_size});
+        } else if (false /*thumbnail_cache_meshes.contains(texture_name)*/) {
+          // auto texture = Texture::from_attachment(*vk_context.frame_allocator, thumbnail_cache_meshes[texture_name]);
+          // texture->set_name(fs::get_file_name(texture_name));
+          // UI::image(*texture, {thumb_image_size, thumb_image_size});
         } else {
           auto file_type = FileType::Unknown;
           const auto& file_type_it = FILE_TYPES.find(file.extension.empty() ? "" : file.extension);
