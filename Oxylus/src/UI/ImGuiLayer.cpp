@@ -187,14 +187,14 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
 
   size_t vertex_size = draw_data->TotalVtxCount * sizeof(ImDrawVert);
   size_t index_size = draw_data->TotalIdxCount * sizeof(ImDrawIdx);
-  auto imvert = *context.allocate_buffer(vuk::MemoryUsage::eCPUtoGPU, vertex_size, 1);
-  auto imind = *context.allocate_buffer(vuk::MemoryUsage::eCPUtoGPU, index_size, 1);
+  auto imvert = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, vertex_size, 1);
+  auto imind = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, index_size, 1);
 
   size_t vtx_dst = 0, idx_dst = 0;
   for (int n = 0; n < draw_data->CmdListsCount; n++) {
     const ImDrawList* cmd_list = draw_data->CmdLists[n];
-    auto imverto = imvert.add_offset(vtx_dst * sizeof(ImDrawVert));
-    auto imindo = imind.add_offset(idx_dst * sizeof(ImDrawIdx));
+    auto imverto = imvert->add_offset(vtx_dst * sizeof(ImDrawVert));
+    auto imindo = imind->add_offset(idx_dst * sizeof(ImDrawIdx));
 
     memcpy(imverto.mapped_ptr, cmd_list->VtxBuffer.Data, cmd_list->VtxBuffer.Size * sizeof(ImDrawVert));
     memcpy(imindo.mapped_ptr, cmd_list->IdxBuffer.Data, cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx));
@@ -208,8 +208,10 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
 
   return vuk::make_pass(
       "imgui",
-      [verts = imvert, inds = imind, reset_render_state, draw_data](
+      [reset_render_state, draw_data]( //
           vuk::CommandBuffer& command_buffer,
+          VUK_BA(vuk::Access::eVertexRead) vertex_buf,
+          VUK_BA(vuk::Access::eIndexRead) index_buf,
           VUK_IA(vuk::eColorWrite) color_rt,
           VUK_ARG(vuk::ImageAttachment[], vuk::Access::eFragmentSampled) sis,
           VUK_IA(vuk::eFragmentSampled) font) {
@@ -217,7 +219,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
             .set_rasterization(vuk::PipelineRasterizationStateCreateInfo{})
             .set_color_blend(color_rt, vuk::BlendPreset::eAlphaBlend);
 
-        reset_render_state(command_buffer, verts, inds);
+        reset_render_state(command_buffer, vertex_buf, index_buf);
         // Will project scissor/clipping rectangles into framebuffer space
         const ImVec2 clip_off = draw_data->DisplayPos;    // (0,0) unless using multi-viewports
         const ImVec2 clip_scale = draw_data
@@ -236,7 +238,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
               // (ImDrawCallback_ResetRenderState is a special callback value used by the user to request the renderer
               // to reset render state.)
               if (im_cmd->UserCallback == ImDrawCallback_ResetRenderState)
-                reset_render_state(command_buffer, verts, inds);
+                reset_render_state(command_buffer, vertex_buf, index_buf);
               else
                 im_cmd->UserCallback(cmd_list, im_cmd);
             } else {
@@ -285,7 +287,11 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
         }
 
         return color_rt;
-      })(std::move(target), std::move(sampled_images_array), std::move(font_acquired));
+      })(std::move(imvert),
+         std::move(imind),
+         std::move(target),
+         std::move(sampled_images_array),
+         std::move(font_acquired));
 }
 
 ImTextureID ImGuiLayer::add_image(vuk::Value<vuk::ImageAttachment>&& attachment) {

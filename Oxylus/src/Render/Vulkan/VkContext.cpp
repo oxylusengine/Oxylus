@@ -700,10 +700,6 @@ auto VkContext::sampler(const SamplerID id) -> vuk::Sampler {
   return *resources.samplers.slot(id);
 }
 
-auto VkContext::allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment) -> vuk::Unique<vuk::Buffer> {
-  return *vuk::allocate_buffer(frame_allocator.value(), {.mem_usage = usage, .size = size, .alignment = alignment});
-}
-
 auto VkContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
     -> vuk::Unique<vuk::Buffer> {
   if (!buffer || new_size > buffer->size) {
@@ -729,7 +725,7 @@ VkContext::alloc_transient_buffer_raw(vuk::MemoryUsage usage, usize size, usize 
   std::shared_lock _(mutex);
 
   auto buffer = *vuk::allocate_buffer(
-      superframe_allocator.value(), {.mem_usage = usage, .size = size, .alignment = alignment}, LOC);
+      frame_allocator.value(), {.mem_usage = usage, .size = size, .alignment = alignment}, LOC);
   return *buffer;
 }
 

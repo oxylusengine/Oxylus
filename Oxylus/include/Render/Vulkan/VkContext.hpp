@@ -104,9 +104,6 @@ public:
   auto get_max_viewport_count() const -> uint32_t { return vkbphysical_device.properties.limits.maxViewports; }
   auto get_descriptor_set() -> auto& { return resources.descriptor_set; }
 
-  [[nodiscard]]
-  auto allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;
-
   auto resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
       -> vuk::Unique<vuk::Buffer>;
 
