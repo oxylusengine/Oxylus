@@ -8,15 +8,15 @@
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
 #include "EditorLayer.hpp"
-#include "EditorUI.hpp"
 #include "Render/Camera.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/ECSModule/Core.hpp"
 #include "UI/ImGuiLayer.hpp"
+#include "UI/PayloadData.hpp"
+#include "UI/UI.hpp"
 #include "Utils/EditorConfig.hpp"
 #include "Utils/OxMath.hpp"
-#include "Utils/PayloadData.hpp"
 
 namespace ox {
 template <typename T>

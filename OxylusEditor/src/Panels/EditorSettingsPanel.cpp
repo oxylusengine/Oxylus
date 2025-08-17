@@ -3,7 +3,7 @@
 #include <imgui.h>
 
 #include "EditorLayer.hpp"
-#include "EditorUI.hpp"
+#include "UI/UI.hpp"
 #include "icons/IconsMaterialDesignIcons.h"
 
 namespace ox {

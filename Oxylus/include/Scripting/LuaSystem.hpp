@@ -28,19 +28,14 @@ public:
 
   auto reset_functions(this LuaSystem& self) -> void;
 
-  auto on_add(this const LuaSystem& self, Scene* scene, flecs::entity entity) -> void;
-  auto on_remove(this const LuaSystem& self, Scene* scene, flecs::entity entity) -> void;
+  auto on_add(this const LuaSystem& self, Scene* scene) -> void;
+  auto on_remove(this const LuaSystem& self, Scene* scene) -> void;
 
-  auto on_scene_start(this const LuaSystem& self, Scene* scene, flecs::entity entity) -> void;
-  auto on_scene_stop(this const LuaSystem& self, Scene* scene, flecs::entity entity) -> void;
-  auto on_scene_update(this const LuaSystem& self, Scene* scene, flecs::entity entity, f32 delta_time) -> void;
-  auto on_scene_fixed_update(this const LuaSystem& self, Scene* scene, flecs::entity entity, f32 delta_time) -> void;
-  auto on_scene_render(this const LuaSystem& self,
-                       Scene* scene,
-                       flecs::entity entity,
-                       const f32 delta_time,
-                       vuk::Extent3D extent,
-                       vuk::Format format) -> void;
+  auto on_scene_start(this const LuaSystem& self, Scene* scene) -> void;
+  auto on_scene_stop(this const LuaSystem& self, Scene* scene) -> void;
+  auto on_scene_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void;
+  auto on_scene_fixed_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void;
+  auto on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent, vuk::Format format) -> void;
 
   auto get_path() const -> const std::string& { return file_path; }
 

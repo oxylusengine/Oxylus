@@ -121,73 +121,71 @@ auto LuaSystem::reset_functions(this LuaSystem& self) -> void {
   self.on_scene_render_func.reset();
 }
 
-auto LuaSystem::on_add(this const LuaSystem& self, Scene* scene, flecs::entity entity) -> void {
+auto LuaSystem::on_add(this const LuaSystem& self, Scene* scene) -> void {
   ZoneScoped;
 
   if (!self.on_add_func)
     return;
 
-  const auto result = self.on_add_func->call(scene, entity);
+  const auto result = self.on_add_func->call(scene);
   check_result(result, "on_add");
 }
 
-auto LuaSystem::on_remove(this const LuaSystem& self, Scene* scene, flecs::entity entity) -> void {
+auto LuaSystem::on_remove(this const LuaSystem& self, Scene* scene) -> void {
   ZoneScoped;
 
   if (!self.on_remove_func)
     return;
 
-  const auto result = self.on_remove_func->call(scene, entity);
+  const auto result = self.on_remove_func->call(scene);
   check_result(result, "on_remove");
 }
 
-auto LuaSystem::on_scene_start(this const LuaSystem& self, Scene* scene, flecs::entity entity) -> void {
+auto LuaSystem::on_scene_start(this const LuaSystem& self, Scene* scene) -> void {
   ZoneScoped;
 
   if (!self.on_scene_start_func)
     return;
 
-  const auto result = self.on_scene_start_func->call(scene, entity);
+  const auto result = self.on_scene_start_func->call(scene);
   check_result(result, "on_scene_start");
 }
 
-auto LuaSystem::on_scene_update(this const LuaSystem& self, Scene* scene, flecs::entity entity, f32 delta_time)
+auto LuaSystem::on_scene_update(this const LuaSystem& self, Scene* scene, f32 delta_time)
     -> void {
   ZoneScoped;
 
   if (!self.on_scene_update_func)
     return;
 
-  const auto result = self.on_scene_update_func->call(scene, entity, delta_time);
+  const auto result = self.on_scene_update_func->call(scene, delta_time);
   check_result(result, "on_scene_update");
 }
 
 auto
-LuaSystem::on_scene_fixed_update(this const LuaSystem& self, Scene* scene, flecs::entity entity, const f32 delta_time)
+LuaSystem::on_scene_fixed_update(this const LuaSystem& self, Scene* scene, const f32 delta_time)
     -> void {
   ZoneScoped;
 
   if (!self.on_scene_fixed_update_func)
     return;
 
-  const auto result = self.on_scene_fixed_update_func->call(scene, entity, delta_time);
+  const auto result = self.on_scene_fixed_update_func->call(scene, delta_time);
   check_result(result, "on_scene_fixed_update");
 }
 
-auto LuaSystem::on_scene_stop(this const LuaSystem& self, Scene* scene, flecs::entity entity) -> void {
+auto LuaSystem::on_scene_stop(this const LuaSystem& self, Scene* scene) -> void {
   ZoneScoped;
 
   if (!self.on_scene_stop_func)
     return;
 
-  const auto result = self.on_scene_stop_func->call(scene, entity);
+  const auto result = self.on_scene_stop_func->call(scene);
   check_result(result, "on_scene_stop");
 }
 
 auto LuaSystem::on_scene_render(this const LuaSystem& self,
                                 Scene* scene,
-                                flecs::entity entity,
-                                const f32 delta_time,
                                 vuk::Extent3D extent,
                                 vuk::Format format) -> void {
   ZoneScoped;
@@ -195,7 +193,7 @@ auto LuaSystem::on_scene_render(this const LuaSystem& self,
   if (!self.on_scene_render_func)
     return;
 
-  const auto result = self.on_scene_render_func->call(scene, entity, delta_time, extent, format);
+  const auto result = self.on_scene_render_func->call(scene, extent, format);
   check_result(result, "on_scene_render");
 }
 } // namespace ox

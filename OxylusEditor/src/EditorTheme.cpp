@@ -44,7 +44,6 @@ void EditorTheme::init(this EditorTheme& self) {
   self.component_icon_map[typeid(AudioSourceComponent).hash_code()] = ICON_MDI_VOLUME_HIGH;
   self.component_icon_map[typeid(TransformComponent).hash_code()] = ICON_MDI_VECTOR_LINE;
   self.component_icon_map[typeid(MeshComponent).hash_code()] = ICON_MDI_VECTOR_SQUARE;
-  self.component_icon_map[typeid(LuaScriptComponent).hash_code()] = ICON_MDI_LANGUAGE_LUA;
   self.component_icon_map[typeid(AudioListenerComponent).hash_code()] = ICON_MDI_CIRCLE_SLICE_8;
   self.component_icon_map[typeid(RigidbodyComponent).hash_code()] = ICON_MDI_SOCCER;
   self.component_icon_map[typeid(BoxColliderComponent).hash_code()] = ICON_MDI_CHECKBOX_BLANK_OUTLINE;

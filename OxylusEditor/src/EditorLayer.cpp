@@ -8,7 +8,7 @@
 #include "Core/FileSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
-#include "EditorUI.hpp"
+#include "UI/UI.hpp"
 #include "Panels/AssetManagerPanel.hpp"
 #include "Panels/ContentPanel.hpp"
 #include "Panels/EditorSettingsPanel.hpp"
@@ -331,6 +331,7 @@ void EditorLayer::new_scene() {
   const std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(editor_scene->scene_name);
   editor_scene = new_scene;
   set_editor_context(new_scene);
+  load_default_scene(new_scene);
   last_save_scene_path.clear();
 }
 

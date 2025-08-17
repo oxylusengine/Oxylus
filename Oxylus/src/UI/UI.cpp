@@ -1,11 +1,11 @@
-#include "EditorUI.hpp"
+#include "UI/UI.hpp"
 
 #include <imgui_stdlib.h>
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "UI/ImGuiLayer.hpp"
-#include "Utils/PayloadData.hpp"
+#include "UI/PayloadData.hpp"
 
 namespace ox {
 int UI::ui_context_id = 0;

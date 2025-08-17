@@ -3,6 +3,7 @@
 #include <imgui_internal.h>
 
 #include "Scene/Scene.hpp"
+#include "UI/AssetManagerViewer.hpp"
 
 namespace ox {
 class SceneHierarchyViewer {
@@ -34,7 +35,10 @@ public:
 
   SelectedEntity selected_entity_ = {};
 
+  const UUID* selected_script_ = nullptr;
+
   bool table_hovered_ = false;
+  bool table_hovered_scripts = false;
   bool window_hovered_ = false;
 
   flecs::entity renaming_entity_ = {};
@@ -42,14 +46,14 @@ public:
   flecs::entity dragged_entity_target_ = {};
   flecs::entity deleted_entity_ = {};
 
-  const char* add_entity_icon = "Add";
+  const char* add_icon = "Add";
   const char* search_icon = "";
   const char* entity_icon = "";
+  const char* script_icon = "";
   const char* visibility_icon_on = "V";
   const char* visibility_icon_off = "NV";
 
   ImVec4 header_selected_color = ImVec4(1.00f, 0.56f, 0.00f, 0.50f);
-  ImVec2 popup_item_spacing = ImVec2(6.0f, 8.0f);
 
   SceneHierarchyViewer() = default;
   SceneHierarchyViewer(Scene* scene);
@@ -65,13 +69,17 @@ public:
 private:
   Scene* scene_ = nullptr;
 
-  ImGuiTextFilter filter_;
+  AssetManagerViewer asset_manager_viewer = {};
+
+  ImGuiTextFilter scripts_filter_;
+  ImGuiTextFilter entities_filter_;
 
   auto draw_entity_node(flecs::entity entity,
                         uint32_t depth = 0,
                         bool force_expand_tree = false,
                         bool is_part_of_prefab = false) -> ImRect;
 
-  auto draw_context_menu() -> void;
+  auto draw_entities_context_menu() -> void;
+  auto draw_scripts_context_menu() -> void;
 };
 } // namespace ox

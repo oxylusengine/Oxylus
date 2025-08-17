@@ -11,9 +11,9 @@
 #include "Core/VFS.hpp"
 #include "EditorContext.hpp"
 #include "EditorLayer.hpp"
-#include "EditorUI.hpp"
+#include "UI/PayloadData.hpp"
+#include "UI/UI.hpp"
 #include "Utils/FileWatch.hpp"
-#include "Utils/PayloadData.hpp"
 #include "Utils/Profiler.hpp"
 #include "Utils/StringUtils.hpp"
 

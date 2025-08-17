@@ -58,8 +58,8 @@ public:
 
   auto create_asset(AssetType type, const std::string& path = {}) -> UUID;
 
-  auto to_asset_file_type(const std::string& path) -> AssetFileType;
-  auto to_asset_type_sv(AssetType type) -> std::string_view;
+  static auto to_asset_file_type(const std::string& path) -> AssetFileType;
+  static auto to_asset_type_sv(AssetType type) -> std::string_view;
 
   auto import_asset(const std::string& path) -> UUID;
 

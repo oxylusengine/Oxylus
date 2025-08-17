@@ -391,11 +391,6 @@ ECS_COMPONENT_BEGIN(AudioListenerComponent)
   ECS_COMPONENT_MEMBER(cone_outer_gain, f32, 0.0f)
 ECS_COMPONENT_END();
 
-// Scripting
-ECS_COMPONENT_BEGIN(LuaScriptComponent)
-  ECS_COMPONENT_MEMBER(script_uuid, UUID, {})
-ECS_COMPONENT_END();
-
 ECS_COMPONENT_TAG(Hidden);
 
 ECS_COMPONENT_TAG(AssetOwner);

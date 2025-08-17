@@ -219,6 +219,12 @@ Scene::~Scene() {
 
   if (running)
     runtime_stop();
+
+  for (auto& [uuid, system] : lua_systems) {
+    system->on_remove(this);
+  }
+
+  lua_systems.clear();
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {
@@ -339,24 +345,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       .event(flecs::OnAdd)
       .each([](flecs::iter& it, usize i, SpriteAnimationComponent& c) { c.reset(); });
 
-  self.world.observer<LuaScriptComponent>()
-      .event(flecs::OnSet)
-      .event(flecs::OnAdd)
-      .event(flecs::OnRemove)
-      .each([scene = &self](flecs::iter& it, usize i, LuaScriptComponent& c) {
-        if (it.event() == flecs::OnAdd || it.event() == flecs::OnSet) {
-          auto* asset_man = App::get_asset_manager();
-          if (auto* script_asset = asset_man->get_script(c.script_uuid)) {
-            script_asset->on_add(scene, it.entity(i));
-          }
-        } else if (it.event() == flecs::OnRemove) {
-          auto* asset_man = App::get_asset_manager();
-          if (auto* script_asset = asset_man->get_script(c.script_uuid)) {
-            script_asset->on_remove(scene, it.entity(i));
-          }
-        }
-      });
-
   self.world.observer<MeshComponent>()
       .with<AssetOwner>()
       .event(flecs::OnRemove)
@@ -375,30 +363,12 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         asset_man->unload_asset(c.audio_source);
       });
 
-  self.world.observer<LuaScriptComponent>()
-      .with<AssetOwner>()
-      .event(flecs::OnRemove)
-      .each([](flecs::iter& it, usize i, LuaScriptComponent& c) {
-        ZoneScopedN("LuaScriptComponent AssetOwner handling");
-        auto* asset_man = App::get_asset_manager();
-        asset_man->unload_asset(c.script_uuid);
-      });
-
   // Systems run order:
   // -- PreUpdate  -> Main Systems
   // -- OnUpdate   -> Physics Systems
   // -- PostUpdate -> Renderer Systems
 
   // --- Main Systems ---
-
-  self.world.system<const LuaScriptComponent>("lua_update")
-      .kind(flecs::PreUpdate)
-      .each([s = &self](flecs::iter& it, size_t i, const LuaScriptComponent& c) {
-        auto* asset_man = App::get_asset_manager();
-        if (auto* script = asset_man->get_script(c.script_uuid)) {
-          script->on_scene_update(s, it.entity(i), it.delta_time());
-        }
-      });
 
   self.world.system<const TransformComponent, AudioListenerComponent>("audio_listener_update")
       .kind(flecs::PreUpdate)
@@ -451,16 +421,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       .run([](flecs::iter& it) {
         auto* physics = App::get_system<Physics>(EngineSystems::Physics);
         physics->step(it.delta_time());
-      });
-
-  self.world.system<const LuaScriptComponent>("lua_fixed_update")
-      .kind(flecs::OnUpdate)
-      .tick_source(physics_tick_source)
-      .each([s = &self](flecs::iter& it, size_t i, const LuaScriptComponent& c) {
-        auto* asset_man = App::get_asset_manager();
-        if (auto* script = asset_man->get_script(c.script_uuid)) {
-          script->on_scene_fixed_update(s, it.entity(i), it.delta_time());
-        }
       });
 
   self.world.system<TransformComponent, RigidbodyComponent>("rigidbody_update")
@@ -611,15 +571,8 @@ auto Scene::runtime_start(this Scene& self) -> void {
   }
 
   // Scripting
-  {
-    ZoneNamedN(z, "LuaScripting/on_scene_start", true);
-    self.world.query_builder<const LuaScriptComponent>().build().each(
-        [&self](const flecs::entity& e, const LuaScriptComponent& c) {
-          auto* asset_man = App::get_asset_manager();
-          if (auto* script = asset_man->get_script(c.script_uuid)) {
-            script->on_scene_start(&self, e);
-          }
-        });
+  for (auto& [uuid, system] : self.lua_systems) {
+    system->on_scene_start(&self);
   }
 }
 
@@ -658,15 +611,8 @@ auto Scene::runtime_stop(this Scene& self) -> void {
   }
 
   // Scripting
-  {
-    ZoneNamedN(z, "LuaScripting/on_scene_deinit", true);
-    self.world.query_builder<const LuaScriptComponent>().build().each(
-        [&self](const flecs::entity& e, const LuaScriptComponent& c) {
-          auto* asset_man = App::get_asset_manager();
-          if (auto* script = asset_man->get_script(c.script_uuid)) {
-            script->on_scene_stop(&self, e);
-          }
-        });
+  for (auto& [uuid, system] : self.lua_systems) {
+    system->on_scene_stop(&self);
   }
 }
 
@@ -674,6 +620,10 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   ZoneScoped;
 
   self.run_deferred_functions();
+
+  for (auto& [uuid, system] : self.lua_systems) {
+    system->on_scene_update(&self, (f32)delta_time);
+  }
 
   // TODO: Pass our delta_time?
   self.world.progress();
@@ -685,6 +635,33 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     auto physics = App::get_system<Physics>(EngineSystems::Physics);
     physics->debug_draw();
   }
+}
+
+auto Scene::get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, LuaSystem*>& {
+  ZoneScoped;
+
+  return self.lua_systems;
+}
+
+auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> void {
+  ZoneScoped;
+
+  auto* asset_man = App::get_asset_manager();
+  auto* script_system = asset_man->get_script(lua_script);
+
+  self.lua_systems.emplace(lua_script, script_system);
+
+  script_system->on_add(&self);
+}
+
+auto Scene::remove_lua_system(this Scene& self, const UUID& lua_script) -> void {
+  ZoneScoped;
+
+  auto* asset_man = App::get_asset_manager();
+  auto* script_system = asset_man->get_script(lua_script);
+
+  script_system->on_remove(&self);
+  self.lua_systems.erase(lua_script);
 }
 
 auto Scene::defer_function(this Scene& self, const std::function<void(Scene* scene)>& func) -> void {
@@ -722,15 +699,8 @@ auto Scene::enable_all_phases() -> void {
 void Scene::on_render(const vuk::Extent3D extent, const vuk::Format format) {
   ZoneScoped;
 
-  {
-    ZoneNamedN(z, "LuaScripting/on_render", true);
-    world.query_builder<const LuaScriptComponent>().build().each(
-        [this, extent, format](const flecs::entity& e, const LuaScriptComponent& c) {
-          auto* asset_man = App::get_asset_manager();
-          if (auto* script = asset_man->get_script(c.script_uuid)) {
-            script->on_scene_render(this, e, 0, extent, format); // TODO: Pass in delta_time instead of 0
-          }
-        });
+  for (auto& [uuid, system] : lua_systems) {
+    system->on_scene_render(this, extent, format);
   }
 }
 
@@ -814,11 +784,20 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
   ZoneScoped;
 
   // Copies the world but not the renderer instance.
+  // NOTE: Assumes the assets in src_scene are already loaded.
 
   std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(src_scene->scene_name);
 
   JsonWriter writer{};
   writer.begin_obj();
+  writer["scripts"].begin_array();
+  for (auto& [uuid, system] : src_scene->lua_systems) {
+    writer.begin_obj();
+    writer["uuid"] = uuid.str();
+    writer.end_obj();
+  }
+  writer.end_array();
+
   writer["entities"].begin_array();
   src_scene->world.query_builder().with<TransformComponent>().build().each([&writer](flecs::entity e) {
     if (e.parent() == flecs::entity::null() && !e.has<Hidden>()) {
@@ -835,9 +814,20 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
     OX_LOG_ERROR("Failed to parse scene file! {}", simdjson::error_message(doc.error()));
     return nullptr;
   }
-  auto entities_array = doc["entities"];
 
   std::vector<UUID> requested_assets = {};
+
+  auto scripts_array = doc["scripts"];
+
+  for (auto script_json : scripts_array.get_array()) {
+    auto uuid_json = script_json.value_unsafe();
+    auto script_uuid = UUID::from_string(uuid_json["uuid"].get_string().value_unsafe()).value();
+    requested_assets.emplace_back(script_uuid);
+    new_scene->add_lua_system(script_uuid);
+  }
+
+  auto entities_array = doc["entities"];
+
   for (auto entity_json : entities_array.get_array()) {
     if (!json_to_entity(*new_scene, flecs::entity::null(), entity_json.value_unsafe(), requested_assets).second) {
       return nullptr;
@@ -1233,6 +1223,14 @@ auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
 
   writer["name"] = self.scene_name;
 
+  writer["scripts"].begin_array();
+  for (auto& [uuid, system] : self.lua_systems) {
+    writer.begin_obj();
+    writer["uuid"] = uuid.str();
+    writer.end_obj();
+  }
+  writer.end_array();
+
   writer["entities"].begin_array();
   const auto q = self.world.query_builder().with<TransformComponent>().build();
   q.each([&writer](flecs::entity e) {
@@ -1278,9 +1276,21 @@ auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
 
   self.scene_name = name_json.get_string().value_unsafe();
 
+  std::vector<UUID> requested_assets = {};
+
+  auto scripts_array = doc["scripts"];
+
+  for (auto script_json : scripts_array.get_array()) {
+    auto uuid_json = script_json.value_unsafe();
+    auto uuid_str = uuid_json["uuid"].get_string();
+    if (!uuid_str.error()) {
+      auto script_uuid = UUID::from_string(uuid_str.value_unsafe()).value();
+      requested_assets.emplace_back(script_uuid);
+    }
+  }
+
   auto entities_array = doc["entities"];
 
-  std::vector<UUID> requested_assets = {};
   for (auto entity_json : entities_array.get_array()) {
     if (!json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets).second) {
       return false;
@@ -1290,8 +1300,12 @@ auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
   OX_LOG_TRACE("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
   for (const auto& uuid : requested_assets) {
     auto* asset_man = App::get_system<AssetManager>(EngineSystems::AssetManager);
-    if (uuid && asset_man->get_asset(uuid)) {
+    if (auto asset = asset_man->get_asset(uuid)) {
       asset_man->load_asset(uuid);
+
+      if (asset->type == AssetType::Script) {
+        self.add_lua_system(uuid);
+      }
     }
   }
 

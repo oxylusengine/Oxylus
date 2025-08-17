@@ -10,11 +10,12 @@
 
 namespace ox {
 SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON_MDI_VIEW_LIST, true) {
-  viewer.add_entity_icon = ICON_MDI_PLUS;
+  viewer.add_icon = ICON_MDI_PLUS;
   viewer.search_icon = ICON_MDI_MAGNIFY;
   viewer.entity_icon = ICON_MDI_CUBE_OUTLINE;
   viewer.visibility_icon_on = ICON_MDI_EYE_OUTLINE;
   viewer.visibility_icon_off = ICON_MDI_EYE_OFF_OUTLINE;
+  viewer.script_icon = ICON_MDI_SCRIPT;
 
   viewer.on_selected_entity_callback([](flecs::entity e) {
     auto& context = EditorLayer::get()->get_context();
@@ -60,6 +61,10 @@ auto SceneHierarchyPanel::on_update() -> void {
     if (ImGui::IsKeyPressed(ImGuiKey_F2)) {
       viewer.renaming_entity_ = viewer.selected_entity_.get();
     }
+  }
+
+  if (viewer.selected_script_ && ImGui::IsKeyPressed(ImGuiKey_Delete) && (viewer.table_hovered_ || viewer.table_hovered_scripts)) {
+    viewer.get_scene()->remove_lua_system(*viewer.selected_script_);
   }
 
   if (viewer.deleted_entity_) {

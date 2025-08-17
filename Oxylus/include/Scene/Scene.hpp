@@ -12,6 +12,7 @@
 #include "Render/RendererInstance.hpp"
 #include "Scene/ECSModule/Core.hpp"
 #include "Scene/SceneGPU.hpp"
+#include "Scripting/LuaSystem.hpp"
 #include "Utils/Timestep.hpp"
 // clang-format on
 
@@ -99,6 +100,10 @@ public:
 
   auto safe_entity_name(this const Scene& self, std::string prefix) -> std::string;
 
+  auto get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, LuaSystem*>&;
+  auto add_lua_system(this Scene& self, const UUID& lua_script) -> void;
+  auto remove_lua_system(this Scene& self, const UUID& lua_script) -> void;
+
   // Physics interfaces
   auto on_contact_added(const JPH::Body& body1,
                         const JPH::Body& body2,
@@ -137,6 +142,9 @@ private:
 
   std::vector<std::function<void(Scene* scene)>> deferred_functions_ = {};
   auto run_deferred_functions(this Scene& self) -> void;
+
+  // Lua
+  ankerl::unordered_dense::map<UUID, LuaSystem*> lua_systems = {};
 
   // Renderer
   std::unique_ptr<RendererInstance> renderer_instance = nullptr;

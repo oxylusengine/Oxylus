@@ -272,7 +272,10 @@ auto FlecsBinding::bind(sol::state* state) -> void {
       [](flecs::entity* e, flecs::entity e2) { e->child_of(e2); },
 
       "set_name",
-      [](flecs::entity* e, const std::string& name) { e->set_name(name.c_str()); });
+      [](flecs::entity* e, const std::string& name) { e->set_name(name.c_str()); },
+
+      "destruct",
+      [](flecs::entity* e) -> void { e->destruct(); });
 
   // --- Components ---
   auto components_table = state->create_named_table("Component");
@@ -285,81 +288,82 @@ auto FlecsBinding::bind(sol::state* state) -> void {
     return component_table;
   };
   components_table["define"] = [state](Scene* scene, const std::string& name, sol::table properties) -> sol::table {
-    scene->defer_function([state, properties, name](Scene* scene) {
-      auto component = scene->world.component(name.c_str());
+    auto component = scene->world.component(name.c_str());
 
-      sol::table defaults = state->create_table();
+    sol::table defaults = state->create_table();
 
-      properties.for_each([&](sol::object key, sol::object value) {
-        std::string field_name = key.as<std::string>();
+    properties.for_each([&](sol::object key, sol::object value) {
+      std::string field_name = key.as<std::string>();
 
-        // explicit types
-        if (value.is<sol::table>()) {
-          sol::table field_def = value.as<sol::table>();
-          if (field_def["type"]) {
-            std::string type = field_def["type"];
-            sol::object default_val = field_def["default"];
+      // explicit types
+      if (value.is<sol::table>()) {
+        sol::table field_def = value.as<sol::table>();
+        if (field_def["type"]) {
+          std::string type = field_def["type"];
+          sol::object default_val = field_def["default"];
 
-            if (type == "f32") {
-              component.member<f32>(field_name.c_str());
-              defaults[field_name] = value.as<f64>();
-            } else if (type == "f64") {
-              component.member<f64>(field_name.c_str());
-              defaults[field_name] = value.as<f64>();
-            } else if (type == "i8") {
-              component.member<i8>(field_name.c_str());
-              defaults[field_name] = value.as<f64>();
-            } else if (type == "i16") {
-              component.member<i16>(field_name.c_str());
-              defaults[field_name] = value.as<f64>();
-            } else if (type == "i32") {
-              component.member<i32>(field_name.c_str());
-              defaults[field_name] = value.as<f64>();
-            } else if (type == "i64") {
-              component.member<i64>(field_name.c_str());
-              defaults[field_name] = value.as<f64>();
-            } else if (type == "u8") {
-              component.member<u8>(field_name.c_str());
-              defaults[field_name] = value.as<f64>();
-            } else if (type == "u16") {
-              component.member<u16>(field_name.c_str());
-              defaults[field_name] = value.as<f64>();
-            } else if (type == "u32") {
-              component.member<u32>(field_name.c_str());
-              defaults[field_name] = value.as<f64>();
-            } else if (type == "u64") {
-              component.member<u64>(field_name.c_str());
-              defaults[field_name] = value.as<f64>();
-            }
+          if (type == "f32") {
+            component.member<f32>(field_name.c_str());
+            defaults[field_name] = value.as<f64>();
+          } else if (type == "f64") {
+            component.member<f64>(field_name.c_str());
+            defaults[field_name] = value.as<f64>();
+          } else if (type == "i8") {
+            component.member<i8>(field_name.c_str());
+            defaults[field_name] = value.as<f64>();
+          } else if (type == "i16") {
+            component.member<i16>(field_name.c_str());
+            defaults[field_name] = value.as<f64>();
+          } else if (type == "i32") {
+            component.member<i32>(field_name.c_str());
+            defaults[field_name] = value.as<f64>();
+          } else if (type == "i64") {
+            component.member<i64>(field_name.c_str());
+            defaults[field_name] = value.as<f64>();
+          } else if (type == "u8") {
+            component.member<u8>(field_name.c_str());
+            defaults[field_name] = value.as<f64>();
+          } else if (type == "u16") {
+            component.member<u16>(field_name.c_str());
+            defaults[field_name] = value.as<f64>();
+          } else if (type == "u32") {
+            component.member<u32>(field_name.c_str());
+            defaults[field_name] = value.as<f64>();
+          } else if (type == "u64") {
+            component.member<u64>(field_name.c_str());
+            defaults[field_name] = value.as<f64>();
           }
         }
+      }
 
-        // default types
-        if (value.is<f64>()) {
-          component.member<f64>(field_name.c_str());
-          defaults[field_name] = value.as<f64>();
-        } else if (value.is<bool>()) {
-          component.member<bool>(field_name.c_str());
-          defaults[field_name] = value.as<bool>();
-        } else if (value.is<std::string>()) {
-          component.member<std::string>(field_name.c_str());
-          defaults[field_name] = value.as<std::string>();
-        }
-      });
-
-      if (!scene->component_db.is_component_known(component))
-        scene->component_db.components.emplace_back(component);
-
-      (*state)[name]["defaults"] = defaults;
+      // default types
+      if (value.is<f64>()) {
+        component.member<f64>(field_name.c_str());
+        defaults[field_name] = value.as<f64>();
+      } else if (value.is<bool>()) {
+        component.member<bool>(field_name.c_str());
+        defaults[field_name] = value.as<bool>();
+      } else if (value.is<std::string>()) {
+        component.member<std::string>(field_name.c_str());
+        defaults[field_name] = value.as<std::string>();
+      }
     });
 
-    auto component = scene->world.component(name.c_str());
+    if (!scene->component_db.is_component_known(component))
+      scene->component_db.components.emplace_back(component);
+
+    (*state)[name]["defaults"] = defaults;
 
     sol::table component_table = state->create_table();
     component_table["component_id"] = ecs_entity_t(component);
 
     (*state)[name] = component_table;
     return component_table;
+  };
+
+  components_table["undefine"] = [](Scene* scene, sol::table component_table) -> void {
+    auto component = component_table.get<ecs_entity_t>("component_id");
+    ecs_delete(scene->world.world_, component);
   };
 }
 } // namespace ox

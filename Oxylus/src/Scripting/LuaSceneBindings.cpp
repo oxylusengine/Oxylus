@@ -11,6 +11,8 @@ auto SceneBinding::bind(sol::state* state) -> void {
   ZoneScoped;
   sol::usertype<Scene> scene_type = state->new_usertype<Scene>("Scene");
 
+  scene_type.set_function("world", [](Scene* scene) -> flecs::world* { return &scene->world; });
+
   SET_TYPE_FUNCTION(scene_type, Scene, runtime_start);
   SET_TYPE_FUNCTION(scene_type, Scene, runtime_stop);
   SET_TYPE_FUNCTION(scene_type, Scene, runtime_update);

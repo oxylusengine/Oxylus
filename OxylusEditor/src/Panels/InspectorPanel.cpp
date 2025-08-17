@@ -11,9 +11,9 @@
 #include "Core/FileSystem.hpp"
 #include "EditorLayer.hpp"
 #include "EditorTheme.hpp"
-#include "EditorUI.hpp"
 #include "Scene/ECSModule/ComponentWrapper.hpp"
-#include "Utils/PayloadData.hpp"
+#include "UI/PayloadData.hpp"
+#include "UI/UI.hpp"
 
 namespace ox {
 static f32 degree_helper(const char* id, f32 value) {

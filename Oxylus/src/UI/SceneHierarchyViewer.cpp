@@ -5,6 +5,8 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
+#include "Core/FileSystem.hpp"
+#include "UI/AssetManagerViewer.hpp"
 #include "Utils/ImGuiScoped.hpp"
 
 namespace ox {
@@ -15,105 +17,187 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
 
   ImGuiScoped::StyleVar cellpad(ImGuiStyleVar_CellPadding, {0, 0});
 
-  if (ImGui::Begin(id,
-                   visible,
-                   ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse)) {
-    const float line_height = ImGui::GetTextLineHeight();
-
-    const ImVec2 padding = ImGui::GetStyle().FramePadding;
+  if (ImGui::Begin(id, visible, ImGuiWindowFlags_NoCollapse)) {
     constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_ContextMenuInBody | ImGuiTableFlags_BordersInner |
                                             ImGuiTableFlags_ScrollY;
+    const float line_height = ImGui::GetTextLineHeight();
 
-    const float filter_cursor_pos_x = ImGui::GetCursorPosX();
-
-    filter_.Draw("###HierarchyFilter",
-                 ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_entity_icon).x + 2.0f * padding.x));
-    ImGui::SameLine();
-
-    if (ImGui::Button(add_entity_icon))
-      ImGui::OpenPopup("SceneHierarchyContextWindow");
-
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 8.0f));
-    if (ImGui::BeginPopupContextWindow("SceneHierarchyContextWindow",
-                                       ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-      draw_context_menu();
-      ImGui::EndPopup();
-    }
-    ImGui::PopStyleVar();
-
-    if (!filter_.IsActive()) {
+    float filter_cursor_pos_x = ImGui::GetCursorPosX();
+    if (ImGui::TreeNodeEx("Scripts", ImGuiTreeNodeFlags_Framed)) {
+      scripts_filter_.Draw("###HierarchyFilter",
+                           ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_icon).x + 20.0f));
       ImGui::SameLine();
-      ImGui::SetCursorPosX(filter_cursor_pos_x + ImGui::GetFontSize() * 0.5f);
-      auto search_txt = fmt::format("{} Search...", search_icon);
-      ImGui::TextUnformatted(search_txt.c_str());
-    }
 
-    const ImVec2 cursor_pos = ImGui::GetCursorPos();
-    const ImVec2 region = ImGui::GetContentRegionAvail();
-    if (region.x != 0.0f && region.y != 0.0f)
-      ImGui::InvisibleButton("##DragDropTargetBehindTable", region);
+      if (ImGui::Button(add_icon))
+        ImGui::OpenPopup("scene_h_scripts_context_window");
 
-    ImGui::SetCursorPos(cursor_pos);
-    if (ImGui::BeginTable("HierarchyTable", 3, table_flags)) {
-      ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_NoClip);
-      ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, line_height * 3.0f);
-
-      const auto vis_colon = fmt::format("  {}", visibility_icon_on);
-      ImGui::TableSetupColumn(vis_colon.c_str(), ImGuiTableColumnFlags_WidthFixed, line_height * 2.0f);
-
-      ImGui::TableSetupScrollFreeze(0, 1);
-
-      ImGui::TableNextRow(ImGuiTableRowFlags_Headers, ImGui::GetFrameHeight());
-
-      for (int column = 0; column < 3; ++column) {
-        ImGui::TableSetColumnIndex(column);
-        const char* column_name = ImGui::TableGetColumnName(column);
-        ImGui::PushID(column);
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + padding.y);
-        ImGui::TableHeader(column_name);
-        ImGui::PopID();
-      }
-
-      ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-      scene_->world.query_builder<TransformComponent>()
-          .with(flecs::Disabled)
-          .optional()
-          .build()
-          .each([this](const flecs::entity e, TransformComponent) {
-            if (e.parent() == flecs::entity::null())
-              draw_entity_node(e);
-          });
-      ImGui::PopStyleVar();
-
-      ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, popup_item_spacing);
-      if (ImGui::BeginPopupContextWindow("SceneHierarchyContextWindow",
+      if (ImGui::BeginPopupContextWindow("scene_h_scripts_context_window",
                                          ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-        selected_entity_.reset();
-        draw_context_menu();
+        draw_scripts_context_menu();
         ImGui::EndPopup();
       }
-      ImGui::PopStyleVar();
 
-      ImGui::EndTable();
-
-      table_hovered_ = ImGui::IsItemHovered();
-
-      if (ImGui::IsItemClicked()) {
-        selected_entity_.reset();
+      if (!scripts_filter_.IsActive()) {
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(filter_cursor_pos_x + ImGui::GetFontSize() * 0.5f);
+        auto search_txt = fmt::format("  {} Search scripts...", search_icon);
+        ImGui::TextUnformatted(search_txt.c_str());
       }
+
+      if (ImGui::BeginTable("ScriptsTable", 1, table_flags, ImVec2(0, 100))) {
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_NoClip);
+
+        for (auto& [uuid, system] : scene_->get_lua_systems()) {
+          auto system_name = fs::get_file_name(system->get_path());
+          if (scripts_filter_.IsActive() && !scripts_filter_.PassFilter(system_name.c_str())) {
+            continue;
+          }
+
+          ImGui::TableNextRow();
+
+          ImGui::TableNextColumn();
+
+          bool is_selected = selected_script_ != nullptr && *selected_script_ == uuid;
+
+          ImGuiTreeNodeFlags flags = (is_selected ? ImGuiTreeNodeFlags_Selected : 0);
+          flags |= ImGuiTreeNodeFlags_OpenOnArrow;
+          flags |= ImGuiTreeNodeFlags_SpanFullWidth;
+          flags |= ImGuiTreeNodeFlags_FramePadding;
+          flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+          const bool highlight = is_selected;
+          if (highlight) {
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(header_selected_color));
+            ImGui::PushStyleColor(ImGuiCol_Header, header_selected_color);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, header_selected_color);
+          }
+
+          ImGui::TreeNodeEx(uuid.str().c_str(), flags, "%s %s", script_icon, system_name.c_str());
+
+          if (highlight)
+            ImGui::PopStyleColor(2);
+
+          // Select
+          if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            selected_entity_.reset();
+            selected_script_ = &uuid;
+          }
+        }
+
+        if (ImGui::BeginPopupContextWindow("scene_h_scripts_context_window",
+                                           ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+          selected_entity_.reset();
+          selected_script_ = nullptr;
+          draw_scripts_context_menu();
+          ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupContextItem()) {
+          if (ImGui::MenuItem("Remove", "Del")) {
+            if (selected_script_) {
+              scene_->remove_lua_system(*selected_script_);
+            }
+          }
+
+          ImGui::Separator();
+
+          ImGui::EndPopup();
+        }
+
+        ImGui::EndTable();
+
+        table_hovered_scripts = ImGui::IsItemHovered();
+
+        if (ImGui::IsItemClicked()) {
+          selected_entity_.reset();
+          selected_script_ = nullptr;
+        }
+      }
+      ImGui::TreePop();
     }
+
+    filter_cursor_pos_x = ImGui::GetCursorPosX();
+
+    if (ImGui::TreeNodeEx("Entities", ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen)) {
+      entities_filter_.Draw("###HierarchyFilter",
+                            ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_icon).x + 20.0f));
+      ImGui::SameLine();
+
+      if (ImGui::Button(add_icon))
+        ImGui::OpenPopup("scene_h_entities_context_window");
+
+      if (ImGui::BeginPopupContextWindow("scene_h_entities_context_window",
+                                         ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        draw_entities_context_menu();
+        ImGui::EndPopup();
+      }
+
+      if (!entities_filter_.IsActive()) {
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(filter_cursor_pos_x + ImGui::GetFontSize() * 0.5f);
+        auto search_txt = fmt::format("  {} Search entities...", search_icon);
+        ImGui::TextUnformatted(search_txt.c_str());
+      }
+
+      const ImVec2 cursor_pos = ImGui::GetCursorPos();
+      const ImVec2 region = ImGui::GetContentRegionAvail();
+      if (region.x != 0.0f && region.y != 0.0f)
+        ImGui::InvisibleButton("##DragDropTargetBehindTable", region);
+
+      ImGui::SetCursorPos(cursor_pos);
+      if (ImGui::BeginTable("HierarchyTable", 3, table_flags)) {
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_NoClip);
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, line_height * 3.0f);
+
+        const auto vis_colon = fmt::format("  {}", visibility_icon_on);
+        ImGui::TableSetupColumn(vis_colon.c_str(), ImGuiTableColumnFlags_WidthFixed, line_height * 2.0f);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+        scene_->world.query_builder<TransformComponent>()
+            .with(flecs::Disabled)
+            .optional()
+            .build()
+            .each([this](const flecs::entity e, TransformComponent) {
+              if (e.parent() == flecs::entity::null())
+                draw_entity_node(e);
+            });
+        ImGui::PopStyleVar();
+
+        if (ImGui::BeginPopupContextWindow("scene_h_entities_context_window",
+                                           ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+          selected_entity_.reset();
+          selected_script_ = nullptr;
+          draw_entities_context_menu();
+          ImGui::EndPopup();
+        }
+
+        ImGui::EndTable();
+
+        table_hovered_ = ImGui::IsItemHovered();
+
+        if (ImGui::IsItemClicked()) {
+          selected_entity_.reset();
+          selected_script_ = nullptr;
+        }
+      }
+
+      if (ImGui::IsMouseDown(0) && window_hovered_) {
+        selected_entity_.reset();
+        selected_script_ = nullptr;
+      }
+
+      if (dragged_entity_ != flecs::entity::null() && dragged_entity_target_ != flecs::entity::null()) {
+        dragged_entity_.child_of(dragged_entity_target_);
+        dragged_entity_ = flecs::entity::null();
+        dragged_entity_target_ = flecs::entity::null();
+      }
+
+      ImGui::TreePop();
+    }
+
     window_hovered_ = ImGui::IsWindowHovered();
-
-    if (ImGui::IsMouseDown(0) && window_hovered_) {
-      selected_entity_.reset();
-    }
-
-    if (dragged_entity_ != flecs::entity::null() && dragged_entity_target_ != flecs::entity::null()) {
-      dragged_entity_.child_of(dragged_entity_target_);
-      dragged_entity_ = flecs::entity::null();
-      dragged_entity_target_ = flecs::entity::null();
-    }
   }
+
   ImGui::End();
 }
 
@@ -131,7 +215,7 @@ auto SceneHierarchyViewer::draw_entity_node(flecs::entity entity,
 
   const auto child_count = scene_->world.count(flecs::ChildOf, entity);
 
-  if (filter_.IsActive() && !filter_.PassFilter(entity.name().c_str())) {
+  if (entities_filter_.IsActive() && !entities_filter_.PassFilter(entity.name().c_str())) {
     entity.children([this](flecs::entity child) { draw_entity_node(child); });
     return {0, 0, 0, 0};
   }
@@ -170,6 +254,7 @@ auto SceneHierarchyViewer::draw_entity_node(flecs::entity entity,
   // Select
   if (!ImGui::IsItemToggledOpen() && ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
     selected_entity_.set(entity);
+    selected_script_ = nullptr;
   }
 
   // Expand recursively
@@ -178,7 +263,6 @@ auto SceneHierarchyViewer::draw_entity_node(flecs::entity entity,
 
   bool entity_deleted = false;
 
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, popup_item_spacing);
   if (ImGui::BeginPopupContextItem()) {
     if (ImGui::MenuItem("Rename", "F2"))
       renaming_entity_ = entity;
@@ -193,17 +277,17 @@ auto SceneHierarchyViewer::draw_entity_node(flecs::entity entity,
       };
 
       selected_entity_.set(clone_entity(entity));
+      selected_script_ = nullptr;
     }
     if (ImGui::MenuItem("Delete", "Del"))
       entity_deleted = true;
 
     ImGui::Separator();
 
-    draw_context_menu();
+    draw_entities_context_menu();
 
     ImGui::EndPopup();
   }
-  ImGui::PopStyleVar();
 
   ImVec2 vertical_line_start = ImGui::GetCursorScreenPos();
   vertical_line_start.x -= 0.5f;
@@ -326,7 +410,7 @@ auto SceneHierarchyViewer::draw_entity_node(flecs::entity entity,
   return node_rect;
 }
 
-auto SceneHierarchyViewer::draw_context_menu() -> void {
+auto SceneHierarchyViewer::draw_entities_context_menu() -> void {
   ZoneScoped;
 
   const bool has_context = selected_entity_.get() != flecs::entity::null();
@@ -353,10 +437,6 @@ auto SceneHierarchyViewer::draw_context_menu() -> void {
       to_select.add<CameraComponent>().get_mut<TransformComponent>().rotation.y = glm::radians(-90.f);
     }
 
-    if (ImGui::MenuItem("Lua Script")) {
-      to_select = scene_->create_entity(scene_->safe_entity_name("lua_script")).add<LuaScriptComponent>();
-    }
-
     if (ImGui::BeginMenu("Light")) {
       if (ImGui::MenuItem("Light")) {
         to_select = scene_->create_entity(scene_->safe_entity_name("light")).add<LightComponent>();
@@ -371,13 +451,11 @@ auto SceneHierarchyViewer::draw_context_menu() -> void {
 
     if (ImGui::BeginMenu("Audio")) {
       if (ImGui::MenuItem("Audio Source")) {
-        to_select = scene_->create_entity(scene_->safe_entity_name("audio_source"))
-                        .add<AudioSourceComponent>();
+        to_select = scene_->create_entity(scene_->safe_entity_name("audio_source")).add<AudioSourceComponent>();
         ImGui::CloseCurrentPopup();
       }
       if (ImGui::MenuItem("Audio Listener")) {
-        to_select = scene_->create_entity(scene_->safe_entity_name("audio_listener"))
-                        .add<AudioListenerComponent>();
+        to_select = scene_->create_entity(scene_->safe_entity_name("audio_listener")).add<AudioListenerComponent>();
         ImGui::CloseCurrentPopup();
       }
       ImGui::EndMenu();
@@ -385,8 +463,7 @@ auto SceneHierarchyViewer::draw_context_menu() -> void {
 
     if (ImGui::BeginMenu("Effects")) {
       if (ImGui::MenuItem("Particle System")) {
-        to_select = scene_->create_entity(scene_->safe_entity_name("particle_system"))
-                        .add<ParticleSystemComponent>();
+        to_select = scene_->create_entity(scene_->safe_entity_name("particle_system")).add<ParticleSystemComponent>();
       }
       ImGui::EndMenu();
     }
@@ -399,6 +476,23 @@ auto SceneHierarchyViewer::draw_context_menu() -> void {
 
   if (to_select != flecs::entity::null()) {
     selected_entity_.set(to_select);
+    selected_script_ = nullptr;
+  }
+}
+
+auto SceneHierarchyViewer::draw_scripts_context_menu() -> void {
+  ZoneScoped;
+
+  Asset selected = {};
+  asset_manager_viewer.render("AssetManagerViewer", nullptr, AssetType::Script, &selected);
+
+  if (selected.type == AssetType::Script) {
+    auto* asset_man = App::get_asset_manager();
+    if (!selected.is_loaded())
+      asset_man->load_asset(selected.uuid);
+
+    scene_->add_lua_system(selected.uuid);
+    ImGui::CloseCurrentPopup();
   }
 }
 
@@ -416,6 +510,11 @@ auto SceneHierarchyViewer::set_scene(Scene* scene) -> void {
   ZoneScoped;
   scene_ = scene;
   selected_entity_.reset();
+  selected_script_ = nullptr;
+  renaming_entity_ = {};
+  dragged_entity_ = {};
+  dragged_entity_target_ = {};
+  deleted_entity_ = {};
 }
 
 auto SceneHierarchyViewer::get_scene() -> Scene* {

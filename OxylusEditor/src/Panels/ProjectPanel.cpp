@@ -9,9 +9,8 @@
 #include "Core/Project.hpp"
 #include "Core/VFS.hpp"
 #include "EditorLayer.hpp"
-#include "EditorUI.hpp"
+#include "UI/UI.hpp"
 #include "Utils/EditorConfig.hpp"
-#include "Utils/StringUtils.hpp"
 
 namespace ox {
 ProjectPanel::ProjectPanel() : EditorPanel("Projects", ICON_MDI_ACCOUNT_BADGE, true) {}
@@ -19,13 +18,16 @@ ProjectPanel::ProjectPanel() : EditorPanel("Projects", ICON_MDI_ACCOUNT_BADGE, t
 void ProjectPanel::on_update() {}
 
 void ProjectPanel::load_project_for_editor(const std::string& filepath) {
-  const auto& active_project = EditorLayer::get()->active_project;
+  auto* editor_layer = EditorLayer::get();
+  const auto& active_project = editor_layer->active_project;
   if (active_project->load(filepath)) {
     auto* vfs = App::get_system<VFS>(EngineSystems::VFS);
     const auto start_scene = vfs->resolve_physical_dir(VFS::PROJECT_DIR, active_project->get_config().start_scene);
-    EditorLayer::get()->open_scene(start_scene);
+    if (!editor_layer->open_scene(start_scene)) {
+      editor_layer->new_scene();
+    }
     EditorConfig::get()->add_recent_project(active_project.get());
-    EditorLayer::get()->get_panel<ContentPanel>()->invalidate();
+    editor_layer->get_panel<ContentPanel>()->invalidate();
     visible = false;
   }
 }
