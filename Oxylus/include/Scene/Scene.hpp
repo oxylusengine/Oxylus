@@ -100,6 +100,7 @@ public:
 
   auto safe_entity_name(this const Scene& self, std::string prefix) -> std::string;
 
+  auto get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem*;
   auto get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, LuaSystem*>&;
   auto add_lua_system(this Scene& self, const UUID& lua_script) -> void;
   auto remove_lua_system(this Scene& self, const UUID& lua_script) -> void;

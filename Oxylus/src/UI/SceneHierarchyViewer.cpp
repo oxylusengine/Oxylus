@@ -93,6 +93,13 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
         }
 
         if (ImGui::BeginPopupContextItem()) {
+          if (ImGui::MenuItem("Reload")) {
+            if (selected_script_ && !scene_->is_running()) {
+              if (auto lua_system = scene_->get_lua_system(*selected_script_)) {
+                lua_system->reload();
+              }
+            }
+          }
           if (ImGui::MenuItem("Remove", "Del")) {
             if (selected_script_) {
               scene_->remove_lua_system(*selected_script_);

@@ -84,17 +84,29 @@ auto FlecsBinding::bind(sol::state* state) -> void {
         sol::table result = state->create_table();
         result["component_id"] = component;
 
-        result.set_function("at", [it, state](const sol::table& self, int i) -> sol::table {
-          ecs_entity_t component = self["component_id"];
+        result.set_function("at",
+                            [it, state](const sol::table& self, int i) -> sol::table {
+                              ecs_entity_t component = self["component_id"];
 
-          OX_CHECK_LT(i, it->count);
-          auto entity = it->entities[i];
+                              OX_CHECK_LT(i, it->count);
+                              auto entity = it->entities[i];
 
-          auto e = flecs::entity{it->real_world, entity};
-          return get_component_table(state, &e, component, true);
-        });
+                              auto e = flecs::entity{it->real_world, entity};
+                              return get_component_table(state, &e, component, true);
+                            }
+
+        );
 
         return result;
+      },
+
+      "entity",
+      [](ecs_iter_t* it, i32 i) -> flecs::entity {
+        OX_CHECK_LT(i, it->count);
+        auto entity = it->entities[i];
+
+        auto e = flecs::entity{it->real_world, entity};
+        return e;
       });
 
   // --- world ---
@@ -352,10 +364,9 @@ auto FlecsBinding::bind(sol::state* state) -> void {
     if (!scene->component_db.is_component_known(component))
       scene->component_db.components.emplace_back(component);
 
-    (*state)[name]["defaults"] = defaults;
-
     sol::table component_table = state->create_table();
     component_table["component_id"] = ecs_entity_t(component);
+    component_table["defaults"] = defaults;
 
     (*state)[name] = component_table;
     return component_table;

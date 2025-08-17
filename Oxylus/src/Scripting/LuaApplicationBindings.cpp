@@ -13,5 +13,31 @@ auto AppBinding::bind(sol::state* state) -> void {
 
   SET_TYPE_FUNCTION(app, App, get_asset_manager);
   SET_TYPE_FUNCTION(app, App, get_vfs);
+
+  auto timestep = state->new_usertype<Timestep>(
+      "Timestep",
+
+      "get_millis",
+      [](const Timestep* ts) { return ts->get_millis(); },
+
+      "get_elapsed_millis",
+      [](const Timestep* ts) { return ts->get_elapsed_millis(); },
+
+      "get_seconds",
+      [](const Timestep* ts) { return ts->get_seconds(); },
+
+      "get_elapsed_seconds",
+      [](const Timestep* ts) { return ts->get_elapsed_seconds(); },
+
+      "get_max_frame_time",
+      [](const Timestep* ts) { return ts->get_max_frame_time(); },
+
+      "set_max_frame_time",
+      [](Timestep* ts, f64 value) { return ts->set_max_frame_time(value); },
+
+      "reset_max_frame_time",
+      [](Timestep* ts) { return ts->reset_max_frame_time(); });
+
+  app.set_function("get_timestep", []() -> const Timestep* { return &App::get_timestep(); });
 }
 } // namespace ox

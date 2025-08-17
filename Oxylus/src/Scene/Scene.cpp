@@ -621,8 +621,12 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
   self.run_deferred_functions();
 
-  for (auto& [uuid, system] : self.lua_systems) {
-    system->on_scene_update(&self, (f32)delta_time);
+  auto pre_update_phase_enabled = !self.world.entity(flecs::PreUpdate).has(flecs::Disabled);
+  auto on_update_phase_enabled = !self.world.entity(flecs::OnUpdate).has(flecs::Disabled);
+  if (pre_update_phase_enabled && on_update_phase_enabled) {
+    for (auto& [uuid, system] : self.lua_systems) {
+      system->on_scene_update(&self, delta_time.get_seconds());
+    }
   }
 
   // TODO: Pass our delta_time?
@@ -635,6 +639,16 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     auto physics = App::get_system<Physics>(EngineSystems::Physics);
     physics->debug_draw();
   }
+}
+
+auto Scene::get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem* {
+  ZoneScoped;
+
+  if (self.lua_systems.contains(lua_script)) {
+    return self.lua_systems.at(lua_script);
+  }
+
+  return nullptr;
 }
 
 auto Scene::get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, LuaSystem*>& {
