@@ -32,7 +32,10 @@ static f32 degree_helper(const char* id, f32 value) {
   return in_radians;
 }
 
-InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION, true), _scene(nullptr) {}
+InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION, true), _scene(nullptr) {
+  viewer.search_icon = ICON_MDI_MAGNIFY;
+  viewer.filter_icon = ICON_MDI_FILTER;
+}
 
 void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
   auto* editor_layer = EditorLayer::get();
@@ -420,121 +423,24 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                   }
 
                   if (draw_asset_picker) {
-                    ImGui::SetNextWindowSize(
-                        ImVec2(ImGui::GetMainViewport()->Size.x / 2, ImGui::GetMainViewport()->Size.y / 2),
-                        ImGuiCond_Appearing);
-                    UI::center_next_window(ImGuiCond_Appearing);
-                    if (ImGui::Begin("Asset Picker", &draw_asset_picker)) {
-                      static ankerl::unordered_dense::map<AssetType, bool> asset_type_flags = {
-                          {AssetType::Shader, true},
-                          {AssetType::Texture, true},
-                          {AssetType::Material, true},
-                          {AssetType::Font, true},
-                          {AssetType::Scene, true},
-                          {AssetType::Audio, true},
-                          {AssetType::Script, true},
-                      };
+                    Asset selected = {};
+                    AssetType filter = {};
+                    viewer.render("Asset Picker", &draw_asset_picker, filter, &selected);
 
-                      ImGui::Text("Imported Assets");
-
-                      if (ImGui::Button(ICON_MDI_FILTER)) {
-                        ImGui::OpenPopup("asset_picker_filter");
-                      }
-                      if (ImGui::BeginPopup("asset_picker_filter")) {
-                        if (ImGui::Button("Select All")) {
-                          for (auto&& [type, flag] : asset_type_flags) {
-                            flag = true;
-                          }
+                    // NOTE: We don't allow mesh assets to be loaded this way yet(or ever).
+                    if (selected.type != AssetType::None && selected.type != AssetType::Mesh) {
+                      // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
+                      auto* existing_asset = asset_man->get_asset(*uuid);
+                      if (selected.uuid != *uuid && //
+                          (!existing_asset || existing_asset->type == selected.type) &&
+                          asset_man->load_asset(selected.uuid)) {
+                        if (*uuid) {
+                          asset_man->unload_asset(*uuid);
                         }
-
-                        ImGui::SameLine();
-
-                        if (ImGui::Button("Deselect All")) {
-                          for (auto&& [type, flag] : asset_type_flags) {
-                            flag = false;
-                          }
-                        }
-
-                        UI::begin_properties();
-
-                        for (auto&& [type, flag] : asset_type_flags) {
-                          UI::property(asset_man->to_asset_type_sv(type).data(), &flag);
-                        }
-
-                        UI::end_properties();
-                        ImGui::EndPopup();
+                        *uuid = selected.uuid;
+                        entity.modified(component);
                       }
-
-                      ImGui::SameLine();
-
-                      static ImGuiTextFilter filter = {};
-                      const float filter_cursor_pos_x = ImGui::GetCursorPosX();
-                      filter.Draw("##asset_filter",
-                                  ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS, "").x +
-                                                                      2.0f * ImGui::GetStyle().FramePadding.x));
-                      if (!filter.IsActive()) {
-                        ImGui::SameLine();
-                        ImGui::SetCursorPosX(filter_cursor_pos_x + ImGui::GetFontSize() * 0.5f);
-                        ImGui::TextUnformatted(ICON_MDI_MAGNIFY " Search...");
-                      }
-
-                      constexpr ImGuiTableFlags TABLE_FLAGS = ImGuiTableFlags_Resizable | ImGuiTableFlags_Hideable |
-                                                              ImGuiTableFlags_Borders |
-                                                              ImGuiTableFlags_SizingStretchProp;
-
-                      if (ImGui::BeginChild("##assets_table_window")) {
-                        if (ImGui::BeginTable("#assets_table", 3, TABLE_FLAGS)) {
-                          const auto& registry = asset_man->registry();
-                          for (const auto& asset : registry | std::views::values) {
-                            const auto asset_uuid_str = asset.uuid.str();
-                            const auto file_name = fs::get_name_with_extension(asset.path);
-                            const auto asset_type = asset_man->to_asset_type_sv(asset.type);
-                            // NOTE: We don't allow mesh assets to be loaded this way yet(or ever).
-                            if (asset.type == AssetType::Mesh) {
-                              continue;
-                            }
-                            if (!asset_type_flags[asset.type]) {
-                              continue;
-                            }
-                            if (!file_name.empty() && !filter.PassFilter(file_name.c_str())) {
-                              continue;
-                            }
-
-                            ImGui::TableNextRow(ImGuiTableRowFlags_None);
-
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::PushID(asset_uuid_str.c_str());
-                            constexpr ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_SpanAllColumns |
-                                                                              ImGuiSelectableFlags_AllowOverlap |
-                                                                              ImGuiSelectableFlags_AllowDoubleClick;
-                            if (ImGui::Selectable(asset_type.data(), false, selectable_flags, ImVec2(0.f, 20.f))) {
-                              draw_asset_picker = false;
-                              // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
-                              auto* existing_asset = asset_man->get_asset(*uuid);
-                              if (asset.uuid != *uuid && //
-                                  (!existing_asset || existing_asset->type == asset.type) &&
-                                  asset_man->load_asset(asset.uuid)) {
-                                if (*uuid) {
-                                  asset_man->unload_asset(*uuid);
-                                }
-                                *uuid = asset.uuid;
-                                entity.modified(component);
-                              }
-                            }
-                            ImGui::PopID();
-
-                            ImGui::TableSetColumnIndex(1);
-                            ImGui::TextUnformatted(file_name.c_str());
-
-                            ImGui::TableSetColumnIndex(2);
-                            ImGui::TextUnformatted(uuid_str.c_str());
-                          }
-                          ImGui::EndTable();
-                        }
-                      }
-                      ImGui::EndChild();
                     }
-                    ImGui::End();
                   }
 
                   ImGui::SameLine();

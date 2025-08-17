@@ -86,7 +86,8 @@ auto AssetManagerViewer::draw_asset_table(const char* tree_name,
 
         ImGui::TableNextRow();
         if (draw_asset_table_columns(asset)) {
-          *selected = asset;
+          if (selected)
+            *selected = asset;
         }
       }
 

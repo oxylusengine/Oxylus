@@ -37,6 +37,8 @@ public:
 
   const UUID* selected_script_ = nullptr;
 
+  AssetManagerViewer asset_manager_viewer = {};
+
   bool table_hovered_ = false;
   bool table_hovered_scripts = false;
   bool window_hovered_ = false;
@@ -68,8 +70,6 @@ public:
 
 private:
   Scene* scene_ = nullptr;
-
-  AssetManagerViewer asset_manager_viewer = {};
 
   ImGuiTextFilter scripts_filter_;
   ImGuiTextFilter entities_filter_;

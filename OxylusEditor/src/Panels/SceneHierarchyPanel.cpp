@@ -17,6 +17,9 @@ SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON
   viewer.visibility_icon_off = ICON_MDI_EYE_OFF_OUTLINE;
   viewer.script_icon = ICON_MDI_SCRIPT;
 
+  viewer.asset_manager_viewer.filter_icon = ICON_MDI_FILTER;
+  viewer.asset_manager_viewer.search_icon = ICON_MDI_MAGNIFY;
+
   viewer.on_selected_entity_callback([](flecs::entity e) {
     auto& context = EditorLayer::get()->get_context();
 

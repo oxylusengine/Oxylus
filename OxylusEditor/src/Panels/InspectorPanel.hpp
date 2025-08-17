@@ -5,6 +5,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/UUID.hpp"
 #include "EditorPanel.hpp"
+#include "UI/AssetManagerViewer.hpp"
 
 namespace ox {
 struct Material;
@@ -20,6 +21,8 @@ public:
   };
 
   flecs::world world;
+
+  AssetManagerViewer viewer = {};
 
   InspectorPanel();
 
@@ -42,7 +45,5 @@ private:
   void draw_scene_asset(UUID* uuid, Asset* asset);
   void draw_audio_asset(UUID* uuid, Asset* asset);
   bool draw_script_asset(UUID* uuid, Asset* asset);
-
-
 };
 } // namespace ox
