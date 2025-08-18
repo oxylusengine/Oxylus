@@ -1,15 +1,20 @@
 ﻿#include "Scripting/LuaPhysicsBindings.hpp"
 
+// clang-format off
+#include "Physics/Physics.hpp"
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
+#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseQuery.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <sol/state.hpp>
 
 #include "Core/App.hpp"
-#include "Jolt/Jolt.h"
-#include "Jolt/Physics/Collision/BroadPhase/BroadPhaseQuery.h"
-#include "Jolt/Physics/Collision/CastResult.h"
-#include "Physics/Physics.hpp"
 #include "Physics/RayCast.hpp"
-#include "Scene/ECSModule/Core.hpp"
 #include "Scripting/LuaHelpers.hpp"
+#include "Utils/OxMath.hpp"
+// clang-format on
 
 namespace ox {
 auto PhysicsBinding::bind(sol::state* state) -> void {
@@ -36,39 +41,207 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
       [](const JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>& collector)
           -> std::vector<JPH::BroadPhaseCastResult> { return {collector.mHits.begin(), collector.mHits.end()}; });
 
-  // -- Components ---
-  const std::initializer_list<std::pair<sol::string_view, RigidbodyComponent::BodyType>> rigidbody_body_type = {
-      ENUM_FIELD(RigidbodyComponent::BodyType, Static),
-      ENUM_FIELD(RigidbodyComponent::BodyType, Kinematic),
-      ENUM_FIELD(RigidbodyComponent::BodyType, Dynamic),
-  };
-  state->new_enum<RigidbodyComponent::BodyType, true>("RigidbodyBodyType", rigidbody_body_type);
+  state->new_usertype<JPH::BodyID>(
+      "BodyID",
 
-#if 0
-  #define RB RigidbodyComponent
-  REGISTER_COMPONENT(state, RB, FIELD(RB, type), FIELD(RB, mass), FIELD(RB, linear_drag), FIELD(RB, angular_drag), FIELD(RB, gravity_scale),
-                     FIELD(RB, allow_sleep), FIELD(RB, awake), FIELD(RB, continuous), FIELD(RB, interpolation), FIELD(RB, is_sensor));
+      "get_index",
+      [](JPH::BodyID& body_id) { return body_id.GetIndex(); },
 
-  #define BCC BoxColliderComponent
-  REGISTER_COMPONENT(state, BCC, FIELD(BCC, size), FIELD(BCC, offset), FIELD(BCC, density), FIELD(BCC, friction), FIELD(BCC, restitution));
+      "get_sequence_number",
+      [](JPH::BodyID& body_id) { return body_id.GetSequenceNumber(); },
 
-  #define SCC SphereColliderComponent
-  REGISTER_COMPONENT(state, SCC, FIELD(SCC, radius), FIELD(SCC, offset), FIELD(SCC, density), FIELD(SCC, friction), FIELD(SCC, restitution));
+      "get_index_and_sequence_number",
+      [](JPH::BodyID& body_id) { return body_id.GetIndexAndSequenceNumber(); },
 
-  #define CCC CapsuleColliderComponent
-  REGISTER_COMPONENT(state, CCC, FIELD(CCC, height), FIELD(CCC, radius), FIELD(CCC, offset), FIELD(CCC, density), FIELD(CCC, friction),
-                     FIELD(CCC, restitution));
+      "is_invalid",
+      [](JPH::BodyID& body_id) { return body_id.IsInvalid(); },
 
-  #define TCCC TaperedCapsuleColliderComponent
-  REGISTER_COMPONENT(state, TCCC, FIELD(TCCC, height), FIELD(TCCC, top_radius), FIELD(TCCC, bottom_radius), FIELD(TCCC, density), FIELD(TCCC, friction),
-                     FIELD(TCCC, restitution));
+      sol::meta_function::equal_to,
+      [](JPH::BodyID& body_id1, JPH::BodyID& body_id2) { return body_id1 == body_id2; });
 
-  #define CYCC CylinderColliderComponent
-  REGISTER_COMPONENT(state, CYCC, FIELD(CYCC, height), FIELD(CYCC, radius), FIELD(CYCC, offset), FIELD(CYCC, density), FIELD(CYCC, friction),
-                     FIELD(CYCC, restitution));
+  state->new_usertype<JPH::Body>(
+      "Body",
+      sol::no_constructor,
 
-  #define MCC MeshColliderComponent
-  REGISTER_COMPONENT(state, MCC, FIELD(MCC, offset), FIELD(MCC, friction), FIELD(MCC, restitution));
-#endif
+      "get_id",
+      &JPH::Body::GetID,
+
+      "get_body_type",
+      &JPH::Body::GetBodyType,
+
+      "is_rigid_body",
+      &JPH::Body::IsRigidBody,
+
+      "is_soft_body",
+      &JPH::Body::IsSoftBody,
+
+      "is_active",
+      &JPH::Body::IsActive,
+
+      "is_static",
+      &JPH::Body::IsStatic,
+
+      "is_kinematic",
+      &JPH::Body::IsKinematic,
+
+      "is_dynamic",
+      &JPH::Body::IsDynamic,
+
+      "can_be_kinematic_or_dynamic",
+      &JPH::Body::CanBeKinematicOrDynamic,
+
+      "is_sensor",
+      &JPH::Body::IsSensor,
+
+      "set_collide_kinematic_vs_non_dynamic",
+      &JPH::Body::SetCollideKinematicVsNonDynamic,
+
+      "get_collide_kinematic_vs_non_dynamic",
+      &JPH::Body::GetCollideKinematicVsNonDynamic,
+
+      "set_use_manifold_reduction",
+      &JPH::Body::SetUseManifoldReduction,
+
+      "get_use_manifold_reduction",
+      &JPH::Body::GetUseManifoldReduction,
+
+      "set_apply_gyroscopic_force",
+      &JPH::Body::SetApplyGyroscopicForce,
+
+      "get_apply_gyroscopic_force",
+      &JPH::Body::GetApplyGyroscopicForce,
+
+      "set_enhanced_internal_edge_removal",
+      &JPH::Body::SetEnhancedInternalEdgeRemoval,
+
+      "get_enhanced_internal_edge_removal",
+      &JPH::Body::GetEnhancedInternalEdgeRemoval,
+
+      "get_enhanced_internal_edge_removal_with_body",
+      &JPH::Body::GetEnhancedInternalEdgeRemovalWithBody,
+
+      "get_motion_type",
+      &JPH::Body::GetMotionType,
+
+      "set_motion_type",
+      &JPH::Body::SetMotionType,
+
+      "get_broad_phase_layer",
+      &JPH::Body::GetBroadPhaseLayer,
+
+      "get_object_layer",
+      &JPH::Body::GetObjectLayer,
+
+      "get_friction",
+      &JPH::Body::GetFriction,
+
+      "set_friction",
+      &JPH::Body::SetFriction,
+
+      "get_restitution",
+      &JPH::Body::GetRestitution,
+
+      "set_restitution",
+      &JPH::Body::SetRestitution,
+
+      "get_linear_velocity",
+      [](JPH::Body& body) -> glm::vec3 { return math::from_jolt(body.GetLinearVelocity()); },
+
+      "set_linear_velocity",
+      [](JPH::Body& body, const glm::vec3& v) { body.SetLinearVelocity(math::to_jolt(v)); },
+
+      "set_linear_velocity_clamped",
+      [](JPH::Body& body, const glm::vec3& v) { body.SetLinearVelocityClamped(math::to_jolt(v)); },
+
+      "get_angular_velocity",
+      [](JPH::Body& body) -> glm::vec3 { return math::from_jolt(body.GetAngularVelocity()); },
+
+      "set_angular_velocity",
+      [](JPH::Body& body, const glm::vec3& v) { body.SetAngularVelocity(math::to_jolt(v)); },
+
+      "set_angular_velocity_clamped",
+      [](JPH::Body& body, const glm::vec3& v) { body.SetAngularVelocityClamped(math::to_jolt(v)); },
+
+      "get_point_velocity_com",
+      [](JPH::Body& body, const glm::vec3& v) -> glm::vec3 {
+        return math::from_jolt(body.GetPointVelocityCOM(math::to_jolt(v)));
+      },
+
+      "get_point_velocity",
+      [](JPH::Body& body, const glm::vec3& v) -> glm::vec3 {
+        return math::from_jolt(body.GetPointVelocity(math::to_jolt(v)));
+      },
+
+      "add_force",
+      [](JPH::Body& body, const glm::vec3& v) { body.AddForce(math::to_jolt(v)); },
+
+      "add_force_at_position",
+      [](JPH::Body& body, const glm::vec3& v, const glm::vec3& v2) {
+        body.AddForce(math::to_jolt(v), math::to_jolt(v2));
+      },
+
+      "add_torque",
+      &JPH::Body::AddTorque,
+
+      "get_accumulated_force",
+      &JPH::Body::GetAccumulatedForce,
+
+      "get_accumulated_torque",
+      &JPH::Body::GetAccumulatedTorque,
+
+      "add_impulse",
+      [](JPH::Body& body, const glm::vec3& v) { body.AddImpulse(math::to_jolt(v)); },
+
+      "add_impulse_at_position",
+      [](JPH::Body& body, const glm::vec3& v, const glm::vec3& v2) {
+        body.AddImpulse(math::to_jolt(v), math::to_jolt(v2));
+      },
+
+      "add_angular_impulse",
+      &JPH::Body::AddAngularImpulse,
+
+      "move_kinematic",
+      &JPH::Body::MoveKinematic,
+
+      "get_shape",
+      &JPH::Body::GetShape,
+
+      "get_position",
+      &JPH::Body::GetPosition,
+
+      "get_rotation",
+      &JPH::Body::GetRotation,
+
+      "get_world_transform",
+      &JPH::Body::GetWorldTransform,
+
+      "get_center_of_mass_position",
+      &JPH::Body::GetCenterOfMassPosition,
+
+      "get_center_of_mass_transform",
+      &JPH::Body::GetCenterOfMassTransform,
+
+      "get_inverse_center_of_mass_transform",
+      &JPH::Body::GetInverseCenterOfMassTransform,
+
+      "get_world_space_bounds",
+      &JPH::Body::GetWorldSpaceBounds,
+
+      // "get_motion_properties",
+      // &JPH::Body::GetMotionProperties,
+      // "get_motion_properties_unchecked",
+      // &JPH::Body::GetMotionPropertiesUnchecked,
+
+      "get_world_space_surface_normal",
+      &JPH::Body::GetWorldSpaceSurfaceNormal,
+
+      "get_transformed_shape",
+      &JPH::Body::GetTransformedShape,
+
+      "get_body_creation_settings",
+      &JPH::Body::GetBodyCreationSettings,
+
+      "get_soft_body_creation_settings",
+      &JPH::Body::GetSoftBodyCreationSettings);
 }
 } // namespace ox

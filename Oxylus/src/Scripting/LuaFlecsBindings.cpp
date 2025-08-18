@@ -179,7 +179,7 @@ auto FlecsBinding::bind(sol::state* state) -> void {
       [](flecs::entity* e) -> flecs::entity_t { return e->id(); },
 
       "add",
-      [](flecs::entity* e, sol::table component_table, sol::optional<sol::table> values = {}) {
+      [](flecs::entity* e, sol::table component_table, sol::optional<sol::table> values = {}) -> flecs::entity* {
         auto component = component_table.get<ecs_entity_t>("component_id");
         e->add(component);
 
@@ -205,21 +205,23 @@ auto FlecsBinding::bind(sol::state* state) -> void {
             cur.pop();
           });
         } else {
-          component_table.get<sol::table>("defaults").for_each([&](sol::object key, sol::object value) {
-            std::string field_name = key.as<std::string>();
-            flecs::cursor cur = e->world().cursor(component, ptr);
-            cur.push();
-            cur.member(field_name.c_str());
+          if (auto defaults = component_table.get<sol::optional<sol::table>>("defaults")) {
+            defaults->for_each([&](sol::object key, sol::object value) {
+              std::string field_name = key.as<std::string>();
+              flecs::cursor cur = e->world().cursor(component, ptr);
+              cur.push();
+              cur.member(field_name.c_str());
 
-            if (value.is<f64>())
-              cur.set_float(value.as<f64>());
-            else if (value.is<bool>())
-              cur.set_float(value.as<bool>());
-            else if (value.is<std::string>())
-              cur.set_string(value.as<std::string>().c_str());
+              if (value.is<f64>())
+                cur.set_float(value.as<f64>());
+              else if (value.is<bool>())
+                cur.set_float(value.as<bool>());
+              else if (value.is<std::string>())
+                cur.set_string(value.as<std::string>().c_str());
 
-            cur.pop();
-          });
+              cur.pop();
+            });
+          }
         }
 
         return e;

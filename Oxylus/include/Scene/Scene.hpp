@@ -55,7 +55,6 @@ public:
   ComponentDB component_db = {};
 
   f32 physics_interval = 1.f / 60.f; // used only on initalization
-  flecs::entity physics_events = {};
 
   bool meshes_dirty = false;
   std::vector<GPU::TransformID> dirty_transforms = {};

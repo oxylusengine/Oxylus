@@ -1,15 +1,19 @@
 ﻿#pragma once
 
+#include <ankerl/unordered_dense.h>
 #include <flecs.h>
 #include <sol/environment.hpp>
 #include <vuk/Types.hpp>
 
-#include "Oxylus.hpp"
+#include "Core/Option.hpp"
+#include "Core/Types.hpp"
 
 namespace JPH {
 class ContactSettings;
 class ContactManifold;
 class Body;
+class BodyID;
+class SubShapeIDPair;
 } // namespace JPH
 
 namespace ox {
@@ -37,6 +41,20 @@ public:
   auto on_scene_fixed_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void;
   auto on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent, vuk::Format format) -> void;
 
+  auto on_contact_added(this const LuaSystem& self,
+                        const JPH::Body& body1,
+                        const JPH::Body& body2,
+                        const JPH::ContactManifold& manifold,
+                        const JPH::ContactSettings& settings) -> void;
+  auto on_contact_persisted(this const LuaSystem& self,
+                            const JPH::Body& body1,
+                            const JPH::Body& body2,
+                            const JPH::ContactManifold& manifold,
+                            const JPH::ContactSettings& settings) -> void;
+  auto on_contact_removed(this const LuaSystem& self, const JPH::SubShapeIDPair& sub_shape_pair) -> void;
+  auto on_body_activated(this const LuaSystem& self, const JPH::BodyID& body_id, u64 body_user_data) -> void;
+  auto on_body_deactivated(this const LuaSystem& self, const JPH::BodyID& body_id, u64 body_user_data) -> void;
+
   auto get_path() const -> const std::string& { return file_path; }
 
 private:
@@ -54,6 +72,12 @@ private:
   std::unique_ptr<sol::protected_function> on_scene_update_func = nullptr;
   std::unique_ptr<sol::protected_function> on_scene_fixed_update_func = nullptr;
   std::unique_ptr<sol::protected_function> on_scene_render_func = nullptr;
+
+  std::unique_ptr<sol::protected_function> on_contact_added_func = nullptr;
+  std::unique_ptr<sol::protected_function> on_contact_persisted_func = nullptr;
+  std::unique_ptr<sol::protected_function> on_contact_removed_func = nullptr;
+  std::unique_ptr<sol::protected_function> on_body_activated_func = nullptr;
+  std::unique_ptr<sol::protected_function> on_body_deactivated_func = nullptr;
 
   void init_script(this LuaSystem& self, const std::string& path, const ox::option<std::string> script = nullopt);
   static void check_result(const sol::protected_function_result& result, const char* func_name);

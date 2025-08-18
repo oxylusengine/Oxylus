@@ -313,51 +313,46 @@ ECS_COMPONENT_BEGIN(MeshColliderComponent)
   ECS_COMPONENT_MEMBER(restitution, f32, 0.0f)
 ECS_COMPONENT_END();
 
-struct CharacterControllerComponent {
-  void* character = nullptr; // Stored as JPHCharacter
-
+ECS_COMPONENT_BEGIN(CharacterControllerComponent)
   // Size
-  float character_height_standing = 1.35f;
-  float character_radius_standing = 0.3f;
-  float character_height_crouching = 0.8f;
-  float character_radius_crouching = 0.3f;
+  ECS_COMPONENT_MEMBER(character_height_standing, f32, 1.35f)
+  ECS_COMPONENT_MEMBER(character_radius_standing, f32, 0.3f)
+  ECS_COMPONENT_MEMBER(character_height_crouching, f32, 0.8f)
+  ECS_COMPONENT_MEMBER(character_radius_crouching, f32, 0.3f)
 
-  // Movement
-  struct MovementSettings {
-    float max_speed;
-    float acceleration;
-    float deceleration;
+  ECS_COMPONENT_MEMBER(interpolation, bool, true)
 
-    MovementSettings(const float maxSpeed,
-                     float accel,
-                     float decel) :
-        max_speed(maxSpeed),
-        acceleration(accel),
-        deceleration(decel) {}
-  };
+  ECS_COMPONENT_MEMBER(control_movement_during_jump, bool, true)
+  ECS_COMPONENT_MEMBER(jump_force, f32, 8.0f)
+  ECS_COMPONENT_MEMBER(auto_bunny_hop, bool, false)
+  ECS_COMPONENT_MEMBER(air_control, f32, 0.3f)
 
-  bool interpolation = true;
+  ECS_COMPONENT_MEMBER(max_ground_speed, f32, 7.f);
+  ECS_COMPONENT_MEMBER(ground_acceleration, f32, 14.f);
+  ECS_COMPONENT_MEMBER(ground_deceleration, f32, 10.f);
 
-  bool control_movement_during_jump = true;
-  float jump_force = 8.0f;
-  bool auto_bunny_hop = true;
-  float air_control = 0.3f;
-  MovementSettings ground_settings = MovementSettings(7, 14, 10);
-  MovementSettings air_settings = MovementSettings(7, 2, 2);
-  MovementSettings strafe_settings = MovementSettings(0.0f, 50, 50);
+  ECS_COMPONENT_MEMBER(max_air_speed, f32, 7.f)
+  ECS_COMPONENT_MEMBER(air_acceleration, f32, 2.f)
+  ECS_COMPONENT_MEMBER(air_deceleration, f32, 2.f)
 
-  float friction = 6.0f;
-  float gravity = 20;
-  float collision_tolerance = 0.05f;
+  ECS_COMPONENT_MEMBER(max_strafe_speed, f32, 0.0f)
+  ECS_COMPONENT_MEMBER(strafe_acceleration, f32, 50.f)
+  ECS_COMPONENT_MEMBER(strafe_deceleration, f32, 50.f)
+
+  ECS_COMPONENT_MEMBER(friction, f32, 6.0f)
+  ECS_COMPONENT_MEMBER(gravity, f32, 20.f)
+  ECS_COMPONENT_MEMBER(collision_tolerance, f32, 0.05f)
+
+#ifndef ECS_REFLECT_TYPES
+  void* character = nullptr; // Stored as JPHCharacter
 
   // For interpolation/extrapolation
   glm::vec3 previous_translation = glm::vec3(0.0f);
   glm::quat previous_rotation = glm::vec3(0.0f);
   glm::vec3 translation = glm::vec3(0.0f);
   glm::quat rotation = glm::vec3(0.0f);
-
-  CharacterControllerComponent() = default;
-};
+#endif
+ECS_COMPONENT_END();
 
 // Audio
 ECS_COMPONENT_BEGIN(AudioSourceComponent)

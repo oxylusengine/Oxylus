@@ -62,34 +62,49 @@ auto LuaSystem::init_script(this LuaSystem& self, const std::string& path, const
     OX_LOG_ERROR("{} {}", l, e);
   }
 
+  constexpr auto reset_unused = [](std::unique_ptr<sol::protected_function>& func) {
+    if (!func->valid()) {
+      func.reset();
+    }
+  };
+
   self.on_add_func = std::make_unique<sol::protected_function>((*self.environment)["on_add"]);
-  if (!self.on_add_func->valid())
-    self.on_add_func.reset();
+  reset_unused(self.on_add_func);
 
   self.on_remove_func = std::make_unique<sol::protected_function>((*self.environment)["on_remove"]);
-  if (!self.on_remove_func->valid())
-    self.on_remove_func.reset();
+  reset_unused(self.on_remove_func);
 
   self.on_scene_start_func = std::make_unique<sol::protected_function>((*self.environment)["on_scene_start"]);
-  if (!self.on_scene_start_func->valid())
-    self.on_scene_start_func.reset();
+  reset_unused(self.on_scene_start_func);
 
   self.on_scene_stop_func = std::make_unique<sol::protected_function>((*self.environment)["on_scene_stop"]);
-  if (!self.on_scene_stop_func->valid())
-    self.on_scene_stop_func.reset();
+  reset_unused(self.on_scene_stop_func);
 
   self.on_scene_update_func = std::make_unique<sol::protected_function>((*self.environment)["on_scene_update"]);
-  if (!self.on_scene_update_func->valid())
-    self.on_scene_update_func.reset();
+  reset_unused(self.on_scene_update_func);
 
   self.on_scene_fixed_update_func = std::make_unique<sol::protected_function>(
       (*self.environment)["on_scene_fixed_update"]);
-  if (!self.on_scene_fixed_update_func->valid())
-    self.on_scene_fixed_update_func.reset();
+  reset_unused(self.on_scene_fixed_update_func);
 
   self.on_scene_render_func = std::make_unique<sol::protected_function>((*self.environment)["on_scene_render"]);
-  if (!self.on_scene_render_func->valid())
-    self.on_scene_render_func.reset();
+  reset_unused(self.on_scene_render_func);
+
+  self.on_contact_added_func = std::make_unique<sol::protected_function>((*self.environment)["on_contact_added"]);
+  reset_unused(self.on_contact_added_func);
+
+  self.on_contact_persisted_func = std::make_unique<sol::protected_function>(
+      (*self.environment)["on_contact_persisted"]);
+  reset_unused(self.on_contact_persisted_func);
+
+  self.on_contact_removed_func = std::make_unique<sol::protected_function>((*self.environment)["on_contact_removed"]);
+  reset_unused(self.on_contact_removed_func);
+
+  self.on_body_activated_func = std::make_unique<sol::protected_function>((*self.environment)["on_body_activated"]);
+  reset_unused(self.on_body_activated_func);
+
+  self.on_body_deactivated_func = std::make_unique<sol::protected_function>((*self.environment)["on_body_deactivated"]);
+  reset_unused(self.on_body_deactivated_func);
 
   state->collect_gc();
 }
@@ -119,6 +134,12 @@ auto LuaSystem::reset_functions(this LuaSystem& self) -> void {
   self.on_scene_update_func.reset();
   self.on_scene_fixed_update_func.reset();
   self.on_scene_render_func.reset();
+
+  self.on_contact_added_func.reset();
+  self.on_contact_persisted_func.reset();
+  self.on_contact_removed_func.reset();
+  self.on_body_activated_func.reset();
+  self.on_body_deactivated_func.reset();
 }
 
 auto LuaSystem::on_add(this const LuaSystem& self, Scene* scene) -> void {
@@ -151,8 +172,7 @@ auto LuaSystem::on_scene_start(this const LuaSystem& self, Scene* scene) -> void
   check_result(result, "on_scene_start");
 }
 
-auto LuaSystem::on_scene_update(this const LuaSystem& self, Scene* scene, f32 delta_time)
-    -> void {
+auto LuaSystem::on_scene_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void {
   ZoneScoped;
 
   if (!self.on_scene_update_func)
@@ -162,9 +182,7 @@ auto LuaSystem::on_scene_update(this const LuaSystem& self, Scene* scene, f32 de
   check_result(result, "on_scene_update");
 }
 
-auto
-LuaSystem::on_scene_fixed_update(this const LuaSystem& self, Scene* scene, const f32 delta_time)
-    -> void {
+auto LuaSystem::on_scene_fixed_update(this const LuaSystem& self, Scene* scene, const f32 delta_time) -> void {
   ZoneScoped;
 
   if (!self.on_scene_fixed_update_func)
@@ -184,10 +202,8 @@ auto LuaSystem::on_scene_stop(this const LuaSystem& self, Scene* scene) -> void 
   check_result(result, "on_scene_stop");
 }
 
-auto LuaSystem::on_scene_render(this const LuaSystem& self,
-                                Scene* scene,
-                                vuk::Extent3D extent,
-                                vuk::Format format) -> void {
+auto LuaSystem::on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent, vuk::Format format)
+    -> void {
   ZoneScoped;
 
   if (!self.on_scene_render_func)
@@ -195,5 +211,64 @@ auto LuaSystem::on_scene_render(this const LuaSystem& self,
 
   const auto result = self.on_scene_render_func->call(scene, extent, format);
   check_result(result, "on_scene_render");
+}
+
+auto LuaSystem::on_contact_added(this const LuaSystem& self,
+                                 const JPH::Body& body1,
+                                 const JPH::Body& body2,
+                                 const JPH::ContactManifold& manifold,
+                                 const JPH::ContactSettings& settings) -> void {
+  ZoneScoped;
+
+  if (!self.on_contact_added_func)
+    return;
+
+  const auto result = self.on_contact_added_func->call(&body1, &body2, manifold, settings);
+  check_result(result, "on_contact_added");
+}
+
+auto LuaSystem::on_contact_persisted(this const LuaSystem& self,
+                                     const JPH::Body& body1,
+                                     const JPH::Body& body2,
+                                     const JPH::ContactManifold& manifold,
+                                     const JPH::ContactSettings& settings) -> void {
+  ZoneScoped;
+
+  if (!self.on_contact_persisted_func)
+    return;
+
+  const auto result = self.on_contact_persisted_func->call(&body1, &body2, manifold, settings);
+  check_result(result, "on_contact_persisted");
+}
+
+auto LuaSystem::on_contact_removed(this const LuaSystem& self, const JPH::SubShapeIDPair& sub_shape_pair) -> void {
+  ZoneScoped;
+
+  if (!self.on_contact_removed_func)
+    return;
+
+  const auto result = self.on_contact_removed_func->call(sub_shape_pair);
+  check_result(result, "on_contact_removed");
+}
+
+auto LuaSystem::on_body_activated(this const LuaSystem& self, const JPH::BodyID& body_id, u64 body_user_data) -> void {
+  ZoneScoped;
+
+  if (!self.on_body_activated_func)
+    return;
+
+  const auto result = self.on_body_activated_func->call(body_id, body_user_data);
+  check_result(result, "on_body_activated");
+}
+
+auto LuaSystem::on_body_deactivated(this const LuaSystem& self, const JPH::BodyID& body_id, u64 body_user_data)
+    -> void {
+  ZoneScoped;
+
+  if (!self.on_body_deactivated_func)
+    return;
+
+  const auto result = self.on_body_deactivated_func->call(body_id, body_user_data);
+  check_result(result, "on_body_deactivated");
 }
 } // namespace ox

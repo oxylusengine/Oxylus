@@ -236,8 +236,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   auto* renderer = App::get_system<Renderer>(EngineSystems::Renderer);
   self.renderer_instance = renderer->new_instance(&self);
 
-  self.physics_events = self.world.entity("ox_physics_events");
-
   self.world.observer<TransformComponent>()
       .event(flecs::OnSet)
       .event(flecs::OnAdd)
@@ -426,7 +424,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<TransformComponent, RigidbodyComponent>("rigidbody_update")
       .kind(flecs::OnUpdate)
       .tick_source(physics_tick_source)
-      .each([](flecs::entity e, TransformComponent& tc, RigidbodyComponent& rb) {
+      .each([](const flecs::entity& e, TransformComponent& tc, RigidbodyComponent& rb) {
         if (!rb.runtime_body)
           return;
 
@@ -446,13 +444,22 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         rb.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
         tc.position = rb.translation;
         tc.rotation = glm::eulerAngles(rb.rotation);
+
+        e.modified<TransformComponent>();
       });
 
   self.world.system<TransformComponent, CharacterControllerComponent>("character_controller_update")
       .kind(flecs::OnUpdate)
       .tick_source(physics_tick_source)
-      .each([](TransformComponent& tc, CharacterControllerComponent& ch) {
+      .each([s = &self](const flecs::entity& e, TransformComponent& tc, CharacterControllerComponent& ch) {
+        // if the character was created in OnUpdate phase
+        if (!ch.character) {
+          s->create_character_controller(tc, ch);
+        }
+
         auto* character = reinterpret_cast<JPH::Character*>(ch.character);
+        OX_CHECK_NULL(character);
+
         character->PostSimulation(ch.collision_tolerance);
         const JPH::Vec3 position = character->GetPosition();
         const JPH::Vec3 rotation = character->GetRotation().GetEulerAngles();
@@ -463,6 +470,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         ch.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
         tc.position = ch.translation;
         tc.rotation = glm::eulerAngles(ch.rotation);
+
+        e.modified<TransformComponent>();
       });
 
   // -- Renderer Systems ---
@@ -802,6 +811,8 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
 
   std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(src_scene->scene_name);
 
+  new_scene->scene_name = "Scene_Copy";
+
   JsonWriter writer{};
   writer.begin_obj();
   writer["scripts"].begin_array();
@@ -996,7 +1007,9 @@ auto Scene::on_contact_added(const JPH::Body& body1,
                              const JPH::ContactSettings& settings) -> void {
   ZoneScoped;
 
-  physics_events.emit<SceneEvents::OnContactAddedEvent>({body1, body2, manifold, settings});
+  for (auto& [uuid, system] : lua_systems) {
+    system->on_contact_added(body1, body2, manifold, settings);
+  }
 }
 
 auto Scene::on_contact_persisted(const JPH::Body& body1,
@@ -1005,25 +1018,33 @@ auto Scene::on_contact_persisted(const JPH::Body& body1,
                                  const JPH::ContactSettings& settings) -> void {
   ZoneScoped;
 
-  physics_events.emit<SceneEvents::OnContactPersistedEvent>({body1, body2, manifold, settings});
+  for (auto& [uuid, system] : lua_systems) {
+    system->on_contact_persisted(body1, body2, manifold, settings);
+  }
 }
 
 auto Scene::on_contact_removed(const JPH::SubShapeIDPair& sub_shape_pair) -> void {
   ZoneScoped;
 
-  physics_events.emit<SceneEvents::OnContactRemovedEvent>({sub_shape_pair});
+  for (auto& [uuid, system] : lua_systems) {
+    system->on_contact_removed(sub_shape_pair);
+  }
 }
 
 auto Scene::on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void {
   ZoneScoped;
 
-  physics_events.emit<SceneEvents::OnBodyActivatedEvent>({body_id, body_user_data});
+  for (auto& [uuid, system] : lua_systems) {
+    system->on_body_activated(body_id, (u64)body_user_data);
+  }
 }
 
 auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void {
   ZoneScoped;
 
-  physics_events.emit<SceneEvents::OnBodyDeactivatedEvent>({body_id, body_user_data});
+    for (auto& [uuid, system] : lua_systems) {
+    system->on_body_deactivated(body_id, (u64)body_user_data);
+  }
 }
 
 auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidbodyComponent& component)
@@ -1196,8 +1217,6 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
 void Scene::create_character_controller(const TransformComponent& transform,
                                         CharacterControllerComponent& component) const {
   ZoneScoped;
-  if (!running)
-    return;
 
   const auto physics = App::get_system<Physics>(EngineSystems::Physics);
 
