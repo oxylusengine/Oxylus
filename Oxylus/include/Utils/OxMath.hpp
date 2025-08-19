@@ -8,6 +8,7 @@ namespace JPH {
 class AABox;
 class Vec3;
 class Vec4;
+class Quat;
 } // namespace JPH
 
 namespace ox::math {
@@ -138,5 +139,7 @@ glm::vec3 from_jolt(const JPH::Vec3& vec);
 JPH::Vec3 to_jolt(const glm::vec3& vec);
 glm::vec4 from_jolt(const JPH::Vec4& vec);
 JPH::Vec4 to_jolt(const glm::vec4& vec);
+glm::quat from_jolt(const JPH::Quat& quat);
+JPH::Quat to_jolt(const glm::quat& quat);
 AABB from_jolt(const JPH::AABox& aabb);
 } // namespace ox::math

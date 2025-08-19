@@ -8,10 +8,12 @@
 #include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseQuery.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Character/Character.h>
 #include <sol/state.hpp>
 
 #include "Core/App.hpp"
 #include "Physics/RayCast.hpp"
+#include "Scene/ECSModule/Core.hpp"
 #include "Scripting/LuaHelpers.hpp"
 #include "Utils/OxMath.hpp"
 // clang-format on
@@ -40,6 +42,14 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
       "get_hits",
       [](const JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>& collector)
           -> std::vector<JPH::BroadPhaseCastResult> { return {collector.mHits.begin(), collector.mHits.end()}; });
+
+  physics_table.set_function("get_character", [](flecs::entity* e) -> JPH::Character* {
+    auto* cc = e->try_get<CharacterControllerComponent>();
+    OX_CHECK_NULL(cc);
+    auto* character = reinterpret_cast<JPH::Character*>(cc->character);
+    OX_CHECK_NULL(character);
+    return character;
+  });
 
   state->new_usertype<JPH::BodyID>(
       "BodyID",
@@ -243,5 +253,68 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
 
       "get_soft_body_creation_settings",
       &JPH::Body::GetSoftBodyCreationSettings);
+
+  state->new_usertype<JPH::Character>(
+      "Character",
+      sol::no_constructor,
+
+      "activate",
+      &JPH::Character::Activate,
+
+      "set_linear_and_angular_velocity",
+      [](JPH::Character& character,
+         const glm::vec3& inLinearVelocity,
+         const glm::vec3& inAngularVelocity,
+         sol::optional<bool> inLockBodies = true) {
+        character.SetLinearAndAngularVelocity(
+            math::to_jolt(inLinearVelocity), math::to_jolt(inAngularVelocity), *inLockBodies);
+      },
+
+      "get_linear_velocity",
+      [](JPH::Character& character, sol::optional<bool> inLockBodies = true) {
+        return math::from_jolt(character.GetLinearVelocity(*inLockBodies));
+      },
+
+      "set_linear_velocity",
+      [](JPH::Character& character, const glm::vec3& inLinearVelocity, sol::optional<bool> inLockBodies = true) {
+        character.SetLinearVelocity(math::to_jolt(inLinearVelocity), *inLockBodies);
+      },
+
+      "add_linear_velocity",
+      [](JPH::Character& character, const glm::vec3& inLinearVelocity, sol::optional<bool> inLockBodies = true) {
+        character.AddLinearVelocity(math::to_jolt(inLinearVelocity), *inLockBodies);
+      },
+
+      "add_impulse",
+      [](JPH::Character& character, const glm::vec3& inImpulse, sol::optional<bool> inLockBodies = true) {
+        character.AddImpulse(math::to_jolt(inImpulse), *inLockBodies);
+      },
+
+      "get_body_id",
+      &JPH::Character::GetBodyID,
+
+      "get_position",
+      [](JPH::Character& character, sol::optional<bool> inLockBodies = true) {
+        return math::from_jolt(character.GetPosition(*inLockBodies));
+      },
+
+      "set_position",
+      [](JPH::Character& character,
+         const glm::vec3& position,
+         sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate,
+         sol::optional<bool> lock_bodies = true) { character.SetPosition(math::to_jolt(position)); },
+
+      "get_rotation",
+      [](JPH::Character& character, sol::optional<bool> inLockBodies = true) {
+        return math::from_jolt(character.GetRotation(*inLockBodies));
+      },
+
+      "set_rotation",
+      [](JPH::Character& character,
+         const glm::quat& rotation,
+         sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate,
+         sol::optional<bool> inLockBodies = true) {
+        return character.SetRotation(math::to_jolt(rotation), *activation_mode, *inLockBodies);
+      });
 }
 } // namespace ox

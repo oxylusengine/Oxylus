@@ -117,5 +117,7 @@ glm::vec3 from_jolt(const JPH::Vec3& vec) { return {vec.GetX(), vec.GetY(), vec.
 JPH::Vec3 to_jolt(const glm::vec3& vec) { return {vec.x, vec.y, vec.z}; }
 glm::vec4 from_jolt(const JPH::Vec4& vec) { return {vec.GetX(), vec.GetY(), vec.GetZ(), vec.GetW()}; }
 JPH::Vec4 to_jolt(const glm::vec4& vec) { return {vec.x, vec.y, vec.z, vec.w}; }
+glm::quat from_jolt(const JPH::Quat& quat) { return {quat.GetX(), quat.GetY(), quat.GetZ(), quat.GetW()}; }
+JPH::Quat to_jolt(const glm::quat& quat) { return {quat.x, quat.y, quat.z, quat.w}; }
 AABB from_jolt(const JPH::AABox& aabb) { return {from_jolt(aabb.mMin), from_jolt(aabb.mMax)}; }
 } // namespace ox::math
