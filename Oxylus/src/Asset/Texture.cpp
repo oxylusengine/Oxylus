@@ -149,11 +149,12 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
               .depth = 1,
           };
           auto size = vuk::compute_image_size(format, level_extent);
-          auto buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, size);
+          auto buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, size);
 
           std::memcpy(buffer->mapped_ptr, ktx_data.data() + mip_data_offset, size);
           auto dst_mip = fut.mip(level);
-          vuk::copy(std::move(buffer), std::move(dst_mip));
+          auto acquired_buf = vuk::acquire_buf("transient buffer", *buffer, vuk::Access::eNone);
+          vuk::copy(std::move(acquired_buf), std::move(dst_mip));
         }
       }
     }

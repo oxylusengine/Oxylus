@@ -97,8 +97,8 @@ public:
 
 private:
   vuk::ImageAttachment attachment_ = {};
-  ImageID image_id;
-  ImageViewID image_view_id;
+  ImageID image_id = ImageID::Invalid;
+  ImageViewID image_view_id = ImageViewID::Invalid;
   SamplerID sampler_id;
   vuk::Name name_ = {};
 };
