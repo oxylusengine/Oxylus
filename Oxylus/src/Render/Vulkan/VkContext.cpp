@@ -245,10 +245,6 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   }
 
   self.vkb_device = dev_ret.value();
-  self.graphics_queue = self.vkb_device.get_queue(vkb::QueueType::graphics).value();
-  u32 graphics_queue_family_index = self.vkb_device.get_queue_index(vkb::QueueType::graphics).value();
-  self.transfer_queue = self.vkb_device.get_queue(vkb::QueueType::transfer).value();
-  auto transfer_queue_family_index = self.vkb_device.get_queue_index(vkb::QueueType::transfer).value();
   self.device = self.vkb_device.device;
   vuk::FunctionPointers fps;
   fps.vkGetInstanceProcAddr = self.vkb_instance.fp_vkGetInstanceProcAddr;
@@ -258,12 +254,19 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   vkCreateDescriptorSetLayout = fps.vkCreateDescriptorSetLayout;
   vkAllocateDescriptorSets = fps.vkAllocateDescriptorSets;
   vkUpdateDescriptorSets = fps.vkUpdateDescriptorSets;
+
   std::vector<std::unique_ptr<vuk::Executor>> executors;
 
+  self.graphics_queue = self.vkb_device.get_queue(vkb::QueueType::graphics).value();
+  u32 graphics_queue_family_index = self.vkb_device.get_queue_index(vkb::QueueType::graphics).value();
   executors.push_back(create_vkqueue_executor(
       fps, self.device, self.graphics_queue, graphics_queue_family_index, vuk::DomainFlagBits::eGraphicsQueue));
+#ifndef OX_USE_LLVMPIPE
+  self.transfer_queue = self.vkb_device.get_queue(vkb::QueueType::transfer).value();
+  auto transfer_queue_family_index = self.vkb_device.get_queue_index(vkb::QueueType::transfer).value();
   executors.push_back(create_vkqueue_executor(
       fps, self.device, self.transfer_queue, transfer_queue_family_index, vuk::DomainFlagBits::eTransferQueue));
+#endif
   executors.push_back(std::make_unique<vuk::ThisThreadExecutor>());
 
   self.runtime.emplace(
