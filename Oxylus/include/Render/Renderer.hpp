@@ -40,11 +40,6 @@ public:
 private:
   friend RendererInstance;
 
-  enum BindlessID : u32 {
-    Samplers = 0,
-    SampledImages = 1,
-  };
-
   struct DrawBatch2D {
     vuk::Name pipeline_name = {};
     u32 offset = 0;
@@ -169,7 +164,6 @@ private:
   VkContext* vk_context = nullptr;
   bool initalized = false;
 
-  vuk::Unique<vuk::PersistentDescriptorSet> descriptor_set_01 = vuk::Unique<vuk::PersistentDescriptorSet>();
   vuk::Unique<vuk::Buffer> exposure_buffer = vuk::Unique<vuk::Buffer>();
 
   Texture sky_transmittance_lut_view;

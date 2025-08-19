@@ -116,12 +116,8 @@ public:
   auto get_material(const UUID& uuid) -> Material*;
   auto get_material(MaterialID material_id) -> Material*;
   auto get_materials() -> std::span<Material>;
-  auto get_materials_dirty() -> const std::vector<MaterialID>&;
   auto set_material_dirty(MaterialID material_id) -> void;
-  auto get_materials_buffer(this AssetManager& self,
-                            VkContext& vk_context,
-                            vuk::PersistentDescriptorSet& descriptor_set,
-                            u32 textures_binding) -> vuk::Value<vuk::Buffer>;
+  auto get_dirty_material_ids(this AssetManager&) -> std::vector<MaterialID>;
 
   auto get_scene(const UUID& uuid) -> Scene*;
   auto get_scene(SceneID scene_id) -> Scene*;
@@ -139,7 +135,6 @@ private:
   std::shared_mutex textures_mutex = {};
   std::shared_mutex materials_mutex = {};
 
-  vuk::Unique<vuk::Buffer> materials_buffer = vuk::Unique<vuk::Buffer>();
   std::vector<MaterialID> dirty_materials = {};
 
   SlotMap<Mesh, MeshID> mesh_map = {};

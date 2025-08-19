@@ -8,6 +8,7 @@ target("Oxylus")
     add_forceincludes("Tracy.hpp")
 
     add_options("profile")
+    add_options("llvmpipe")
     if not has_config("lua_bindings") then
         remove_files("./src/Scripting/*Bindings*")
     else

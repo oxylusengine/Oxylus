@@ -631,7 +631,9 @@ void ContentPanel::render_body(bool grid) {
 
           ImGui::Separator();
 
-          draw_context_menu_items(path, is_dir);
+          if (auto p = draw_context_menu_items(path, is_dir); !p.empty()) {
+            directory_to_open = p;
+          }
           ImGui::EndPopup();
         }
         ImGui::PopStyleVar();
@@ -672,10 +674,10 @@ void ContentPanel::render_body(bool grid) {
 
         if (thumbnail_exists) {
           UI::image(*thumbnail_cache_textures[texture_name], {thumb_image_size, thumb_image_size});
-        } else if (thumbnail_cache_meshes.contains(texture_name)) {
-          auto texture = Texture::from_attachment(*vk_context.frame_allocator, thumbnail_cache_meshes[texture_name]);
-          texture->set_name(fs::get_file_name(texture_name));
-          UI::image(*texture, {thumb_image_size, thumb_image_size});
+        } else if (false /*thumbnail_cache_meshes.contains(texture_name)*/) {
+          // auto texture = Texture::from_attachment(*vk_context.frame_allocator, thumbnail_cache_meshes[texture_name]);
+          // texture->set_name(fs::get_file_name(texture_name));
+          // UI::image(*texture, {thumb_image_size, thumb_image_size});
         } else {
           auto file_type = FileType::Unknown;
           const auto& file_type_it = FILE_TYPES.find(file.extension.empty() ? "" : file.extension);
@@ -765,7 +767,9 @@ void ContentPanel::render_body(bool grid) {
     if (ImGui::BeginPopupContextWindow("AssetPanelHierarchyContextWindow",
                                        ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
       editor_context.reset();
-      draw_context_menu_items(_current_directory, true);
+      if (auto p = draw_context_menu_items(_current_directory, true); !p.empty()) {
+        directory_to_open = p;
+      }
       ImGui::EndPopup();
     }
     ImGui::PopStyleVar();
@@ -854,22 +858,32 @@ void ContentPanel::update_directory_entries(const std::filesystem::path& directo
   _elapsed_time = 0.0f;
 }
 
-void ContentPanel::draw_context_menu_items(const std::filesystem::path& context, bool isDir) {
-  if (isDir) {
+std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesystem::path& context, bool is_dir) {
+  std::filesystem::path dir_to_open = {};
+
+  if (ImGui::MenuItem("Open")) {
+    if (is_dir) {
+      dir_to_open = context.string();
+    } else {
+      fs::open_file_externally(context.string().c_str());
+    }
+    ImGui::CloseCurrentPopup();
+  }
+  if (is_dir) {
     if (ImGui::BeginMenu("Create")) {
       if (ImGui::MenuItem("Folder")) {
         int i = 0;
         bool created = false;
-        std::string newFolderPath;
+        std::string new_folder_path;
         while (!created) {
-          std::string folderName = "New Folder" + (i == 0 ? "" : fmt::format(" ({})", i));
-          newFolderPath = (context / folderName).string();
-          created = std::filesystem::create_directory(newFolderPath);
+          std::string folder_name = "New Folder" + (i == 0 ? "" : fmt::format(" ({})", i));
+          new_folder_path = (context / folder_name).string();
+          created = std::filesystem::create_directory(new_folder_path);
           ++i;
         }
         auto& editor_context = EditorLayer::get()->get_context();
         editor_context.reset();
-        editor_context.str = newFolderPath;
+        editor_context.str = new_folder_path;
         editor_context.type = EditorContext::Type::File;
         ImGui::CloseCurrentPopup();
       }
@@ -880,20 +894,18 @@ void ContentPanel::draw_context_menu_items(const std::filesystem::path& context,
     fs::open_folder_select_file(context.string().c_str());
     ImGui::CloseCurrentPopup();
   }
-  if (ImGui::MenuItem("Open")) {
-    fs::open_file_externally(context.string().c_str());
-    ImGui::CloseCurrentPopup();
-  }
   if (ImGui::MenuItem("Copy Path")) {
     ImGui::SetClipboardText(context.string().c_str());
     ImGui::CloseCurrentPopup();
   }
 
-  if (isDir) {
+  if (is_dir) {
     if (ImGui::MenuItem("Refresh")) {
       refresh();
       ImGui::CloseCurrentPopup();
     }
   }
+
+  return dir_to_open;
 }
 } // namespace ox

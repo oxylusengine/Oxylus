@@ -4,6 +4,31 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
+struct RendererInstanceUpdateInfo {
+  u32 mesh_instance_count = 0;
+  u32 max_meshlet_instance_count = 0;
+
+  std::span<GPU::TransformID> dirty_transform_ids = {};
+  std::span<GPU::Transforms> gpu_transforms = {};
+
+  std::span<u32> dirty_material_indices = {};
+  std::span<GPU::Material> gpu_materials = {};
+
+  std::span<GPU::Mesh> gpu_meshes = {};
+  std::span<GPU::MeshInstance> gpu_mesh_instances = {};
+};
+
+struct PreparedFrame {
+  u32 mesh_instance_count = 0;
+  vuk::Value<vuk::Buffer> transforms_buffer = {};
+  vuk::Value<vuk::Buffer> meshes_buffer = {};
+  vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
+  vuk::Value<vuk::Buffer> meshlet_instances_buffer = {};
+  vuk::Value<vuk::Buffer> visible_meshlet_instances_indices_buffer = {};
+  vuk::Value<vuk::Buffer> reordered_indices_buffer = {};
+  vuk::Value<vuk::Buffer> materials_buffer = {};
+};
+
 class RendererInstance {
 public:
   explicit RendererInstance(Scene* owner_scene, Renderer& parent_renderer);
@@ -15,7 +40,7 @@ public:
   RendererInstance& operator=(RendererInstance&&) = delete;
 
   auto render(this RendererInstance& self, const Renderer::RenderInfo& render_info) -> vuk::Value<vuk::ImageAttachment>;
-  auto update(this RendererInstance& self) -> void;
+  auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void;
 
 private:
   Scene* scene = nullptr;
@@ -23,18 +48,9 @@ private:
   Renderer::RenderQueue2D render_queue_2d = {};
   bool saved_camera = false;
 
-  std::span<GPU::Transforms> transforms = {};
-  std::vector<GPU::TransformID> dirty_transforms = {};
-  vuk::Unique<vuk::Buffer> transforms_buffer = vuk::Unique<vuk::Buffer>();
-
+  PreparedFrame prepared_frame = {};
   GPU::CameraData camera_data = {};
   GPU::CameraData previous_camera_data = {};
-
-  bool meshes_dirty = false;
-  std::vector<GPU::Mesh> gpu_meshes = {};
-  std::vector<GPU::MeshletInstance> gpu_meshlet_instances = {};
-  vuk::Unique<vuk::Buffer> meshes_buffer = vuk::Unique<vuk::Buffer>();
-  vuk::Unique<vuk::Buffer> meshlet_instances_buffer = vuk::Unique<vuk::Buffer>();
 
   option<GPU::Atmosphere> atmosphere = nullopt;
   option<GPU::Sun> sun = nullopt;
@@ -42,5 +58,9 @@ private:
   option<GPU::HistogramInfo> histogram_info = nullopt;
 
   Texture hiz_view;
+  vuk::Unique<vuk::Buffer> transforms_buffer{};
+  vuk::Unique<vuk::Buffer> mesh_instances_buffer{};
+  vuk::Unique<vuk::Buffer> meshes_buffer{};
+  vuk::Unique<vuk::Buffer> materials_buffer{};
 };
 } // namespace ox

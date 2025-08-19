@@ -7,14 +7,38 @@
 #include <vuk/runtime/vk/VkRuntime.hpp>
 
 #include "Core/Option.hpp"
+#include "Memory/SlotMap.hpp"
 #include "Render/Slang/Compiler.hpp"
 
 namespace ox {
 struct Window;
 class TracyProfiler;
 
+enum class BufferID : u64 { Invalid = ~0_u64 };
+enum class ImageID : u64 { Invalid = ~0_u64 };
+enum class ImageViewID : u64 { Invalid = ~0_u64 };
+enum class SamplerID : u64 { Invalid = ~0_u64 };
+enum class PipelineID : u64 { Invalid = ~0_u64 };
+
+enum : u32 {
+  DescriptorTable_SamplerIndex = 0,
+  DescriptorTable_SampledImageIndex,
+  DescriptorTable_StorageImageIndex,
+};
+
 class VkContext {
 public:
+  struct Resources {
+    SlotMap<vuk::Buffer, BufferID> buffers = {};
+    SlotMap<vuk::Image, ImageID> images = {};
+    SlotMap<vuk::ImageView, ImageViewID> image_views = {};
+    SlotMap<vuk::Sampler, SamplerID> samplers = {};
+    SlotMap<vuk::PipelineBaseInfo*, PipelineID> pipelines = {};
+    vuk::PersistentDescriptorSet descriptor_set = {};
+  };
+
+  Resources resources = {};
+
   VkDevice device = nullptr;
   VkPhysicalDevice physical_device = nullptr;
   vkb::PhysicalDevice vkbphysical_device;
@@ -42,29 +66,46 @@ public:
   std::string device_name = {};
 
   VkContext() = default;
-  ~VkContext();
+  ~VkContext() = default;
 
   auto create_context(this VkContext& self, const Window& window, bool vulkan_validation_layers) -> void;
+  auto destroy_context(this VkContext& self) -> void;
 
   auto new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachment>;
-
   auto end_frame(this VkContext& self, vuk::Value<vuk::ImageAttachment> target) -> void;
 
   auto handle_resize(u32 width, u32 height) -> void;
   auto set_vsync(bool enable) -> void;
-
   bool is_vsync() const;
 
-  auto get_max_viewport_count() const -> uint32_t { return vkbphysical_device.properties.limits.maxViewports; }
-
   auto wait(this VkContext& self) -> void;
-
   auto wait_on(vuk::UntypedValue&& fut) -> void;
-
   auto wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment;
 
-  [[nodiscard]]
-  auto allocate_buffer(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;
+  auto create_persistent_descriptor_set(this VkContext&,
+                                        u32 set_index,
+                                        std::span<VkDescriptorSetLayoutBinding> bindings,
+                                        std::span<VkDescriptorBindingFlags> binding_flags)
+      -> vuk::PersistentDescriptorSet;
+  auto commit_descriptor_set(this VkContext&, std::span<VkWriteDescriptorSet> writes) -> void;
+
+  auto allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID;
+  auto destroy_image(const ImageID id) -> void;
+  auto image(const ImageID id) -> vuk::Image;
+
+  auto allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID;
+  auto destroy_image_view(const ImageViewID id) -> void;
+  auto image_view(const ImageViewID id) -> vuk::ImageView;
+
+  auto allocate_sampler(const vuk::SamplerCreateInfo& sampler_info) -> SamplerID;
+  auto destroy_sampler(const SamplerID id) -> void;
+  auto sampler(const SamplerID id) -> vuk::Sampler;
+
+  auto get_max_viewport_count() const -> uint32_t { return vkbphysical_device.properties.limits.maxViewports; }
+  auto get_descriptor_set() -> auto& { return resources.descriptor_set; }
+
+  auto resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
+      -> vuk::Unique<vuk::Buffer>;
 
   [[nodiscard]]
   auto allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;

@@ -641,13 +641,110 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   // TODO: Pass our delta_time?
   self.world.progress();
 
-  self.renderer_instance->update();
-  self.dirty_transforms.clear();
-
   if (RendererCVar::cvar_enable_physics_debug_renderer.get()) {
     auto physics = App::get_system<Physics>(EngineSystems::Physics);
     physics->debug_draw();
   }
+
+  auto* asset_man = App::get_asset_manager();
+  auto max_meshlet_instance_count = 0_u32;
+  auto gpu_meshes = std::vector<GPU::Mesh>();
+  auto gpu_mesh_instances = std::vector<GPU::MeshInstance>();
+
+  if (self.meshes_dirty) {
+    for (const auto& [rendering_mesh, transform_ids] : self.rendering_meshes_map) {
+      auto* model = asset_man->get_mesh(rendering_mesh.first);
+      const auto& mesh = model->meshes[rendering_mesh.second];
+
+      for (auto primitive_index : mesh.primitive_indices) {
+        const auto& primitive = model->primitives[primitive_index];
+        const auto& gpu_mesh = model->gpu_meshes[primitive_index];
+        auto mesh_index = static_cast<u32>(gpu_meshes.size());
+        gpu_meshes.emplace_back(gpu_mesh);
+
+        //  ── INSTANCING ──────────────────────────────────────────────────
+        for (const auto transform_id : transform_ids) {
+          auto lod0_index = 0;
+          const auto& lod0 = gpu_mesh.lods[lod0_index];
+
+          auto& mesh_instance = gpu_mesh_instances.emplace_back();
+          mesh_instance.mesh_index = mesh_index;
+          mesh_instance.lod_index = lod0_index;
+          mesh_instance.material_index = primitive.material_index;
+          mesh_instance.transform_index = SlotMap_decode_id(transform_id).index;
+          max_meshlet_instance_count += lod0.meshlet_count;
+        }
+      }
+    }
+
+    self.mesh_instance_count = gpu_mesh_instances.size();
+    self.max_meshlet_instance_count = max_meshlet_instance_count;
+  }
+
+  auto uuid_to_image_index = [&](const UUID& uuid) -> option<u32> {
+    if (!asset_man->is_texture_loaded(uuid)) {
+      return nullopt;
+    }
+
+    auto* texture = asset_man->get_texture(uuid);
+    return texture->get_view_index();
+  };
+
+  auto dirty_material_ids = asset_man->get_dirty_material_ids();
+  auto gpu_materials = std::vector<GPU::Material>(dirty_material_ids.size());
+  auto dirty_material_indices = std::vector<u32>(dirty_material_ids.size());
+  for (const auto& [gpu_material, index, id] :
+       std::views::zip(gpu_materials, dirty_material_indices, dirty_material_ids)) {
+    const auto* material = asset_man->get_material(id);
+    auto albedo_image_index = uuid_to_image_index(material->albedo_texture);
+    auto normal_image_index = uuid_to_image_index(material->normal_texture);
+    auto emissive_image_index = uuid_to_image_index(material->emissive_texture);
+    auto metallic_roughness_image_index = uuid_to_image_index(material->metallic_roughness_texture);
+    auto occlusion_image_index = uuid_to_image_index(material->occlusion_texture);
+    auto sampler_index = 0_u32;
+
+    auto flags = GPU::MaterialFlag::None;
+    if (albedo_image_index.has_value()) {
+      auto* texture = asset_man->get_texture(material->albedo_texture);
+      sampler_index = texture->get_sampler_index();
+      flags |= GPU::MaterialFlag::HasAlbedoImage;
+    }
+
+    flags |= normal_image_index.has_value() ? GPU::MaterialFlag::HasNormalImage : GPU::MaterialFlag::None;
+    flags |= emissive_image_index.has_value() ? GPU::MaterialFlag::HasEmissiveImage : GPU::MaterialFlag::None;
+    flags |= metallic_roughness_image_index.has_value() ? GPU::MaterialFlag::HasMetallicRoughnessImage
+                                                        : GPU::MaterialFlag::None;
+    flags |= occlusion_image_index.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
+
+    gpu_material.albedo_color = material->albedo_color;
+    gpu_material.emissive_color = material->emissive_color;
+    gpu_material.roughness_factor = material->roughness_factor;
+    gpu_material.metallic_factor = material->metallic_factor;
+    gpu_material.alpha_cutoff = material->alpha_cutoff;
+    gpu_material.flags = flags;
+    gpu_material.sampler_index = sampler_index;
+    gpu_material.albedo_image_index = albedo_image_index.value_or(0_u32);
+    gpu_material.normal_image_index = normal_image_index.value_or(0_u32);
+    gpu_material.emissive_image_index = emissive_image_index.value_or(0_u32);
+    gpu_material.metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32);
+    gpu_material.occlusion_image_index = occlusion_image_index.value_or(0_u32);
+
+    index = SlotMap_decode_id(id).index;
+  }
+
+  auto update_info = RendererInstanceUpdateInfo{
+      .mesh_instance_count = self.mesh_instance_count,
+      .max_meshlet_instance_count = self.max_meshlet_instance_count,
+      .dirty_transform_ids = self.dirty_transforms,
+      .gpu_transforms = self.transforms.slots_unsafe(),
+      .dirty_material_indices = dirty_material_indices,
+      .gpu_materials = gpu_materials,
+      .gpu_meshes = gpu_meshes,
+      .gpu_mesh_instances = gpu_mesh_instances,
+  };
+  self.renderer_instance->update(update_info);
+  self.dirty_transforms.clear();
+  self.meshes_dirty = false;
 }
 
 auto Scene::get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem* {

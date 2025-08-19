@@ -14,7 +14,7 @@ class ImGuiLayer : public Layer {
 public:
   std::shared_ptr<Texture> font_texture = nullptr;
   std::vector<vuk::Value<vuk::ImageAttachment>> rendering_images;
-  ankerl::unordered_dense::map<u64, ImTextureID> acquired_images;
+  ankerl::unordered_dense::map<ImageViewID, ImTextureID> acquired_images;
 
   ImGuiLayer();
   ~ImGuiLayer() override = default;

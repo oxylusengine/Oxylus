@@ -12,6 +12,10 @@ option("tests")
     set_default(false)
     set_showmenu(true)
     set_description("Enable tests")
+
+option("llvmpipe")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Force LLVMPipe instead of GPU during Vulkan device creation")
+    add_defines("OX_USE_LLVMPIPE=1", { public = true })
 option_end()
-
-

@@ -45,13 +45,20 @@ void Slang::add_shader(this Slang& self, vuk::PipelineBaseCreateInfo& pipeline_c
 void Slang::create_pipeline(this Slang& self,
                             vuk::Runtime& runtime,
                             const vuk::Name& name,
-                            const option<vuk::DescriptorSetLayoutCreateInfo>& dci,
-                            const CompileInfo& compile_info) {
+                            const CompileInfo& compile_info,
+                            vuk::PersistentDescriptorSet* pds) {
   OX_CHECK_GT(compile_info.entry_points.size(), 0ul);
 
   vuk::PipelineBaseCreateInfo pipeline_ci = {};
-  if (dci.has_value())
-    pipeline_ci.explicit_set_layouts.emplace_back(*dci);
+  if (pds) {
+    pipeline_ci.explicit_set_layouts.emplace_back(pds->set_layout_create_info);
+    for (const auto& [binding, binding_flags] :
+         std::views::zip(pds->set_layout_create_info.bindings, pds->set_layout_create_info.flags)) {
+      pipeline_ci.set_binding_flags(pds->set_layout_create_info.index,
+                                    binding.binding,
+                                    static_cast<vuk::DescriptorBindingFlagBits>(binding_flags));
+    }
+  }
 
   self.add_shader(pipeline_ci, compile_info);
 
