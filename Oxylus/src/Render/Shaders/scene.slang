@@ -61,19 +61,19 @@ public enum MaterialFlag : u32 {
 
 public struct Material {
   public f32x4 albedo_color = {};
-  public f32x2 uv_size = {};
-  public f32x2 uv_offset = {};
   public f32x3 emissive_color = {};
   public f32 roughness_factor = 0.0;
   public f32 metallic_factor = 0.0;
-  public MaterialFlag flags = MaterialFlag::None;
   public f32 alpha_cutoff = 0.0;
+  public MaterialFlag flags = MaterialFlag::None;
   public u32 sampler_index = 0;
   public u32 albedo_image_index = 0;
   public u32 normal_image_index = 0;
   public u32 emissive_image_index = 0;
   public u32 metallic_rougness_image_index = 0;
   public u32 occlusion_image_index = 0;
+  public f32x2 uv_size = {};
+  public f32x2 uv_offset = {};
 
   public func sample_albedo_color(f32x2 uv) -> f32x4 { 
     if (this.albedo_image_index != ~0u) {
