@@ -152,7 +152,7 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   selector //
       .set_surface(self.surface)
       .set_minimum_version(1, 3);
-#if 0      // for LLVMPipe
+#ifdef OX_USE_LLVMPIPE
   selector.prefer_gpu_device_type(vkb::PreferredDeviceType::cpu);
   selector.allow_any_gpu_device_type(false);
 #else
