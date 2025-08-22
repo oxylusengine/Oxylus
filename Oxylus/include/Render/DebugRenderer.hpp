@@ -2,16 +2,23 @@
 
 #include <Jolt/Jolt.h>
 #include <Jolt/Renderer/DebugRenderer.h>
+#include <vuk/runtime/CommandBuffer.hpp>
 
 #include "Physics/RayCast.hpp"
 #include "Render/BoundingVolume.hpp"
-#include "Render/MeshVertex.hpp"
 
 namespace ox {
 class PhysicsDebugRenderer;
 
 class DebugRenderer {
 public:
+  struct Vertex {
+    glm::vec3 position;
+    u32 color;
+  };
+
+  static const vuk::Packed vertex_pack;
+
   static constexpr uint32_t MAX_LINES = 10'000;
   static constexpr uint32_t MAX_LINE_VERTICES = MAX_LINES * 2;
   static constexpr uint32_t MAX_LINE_INDICES = MAX_LINES * 6;

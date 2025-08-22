@@ -4,6 +4,7 @@
 #include "Asset/Mesh.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Render/Vulkan/VkContext.hpp"
@@ -23,7 +24,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
-  auto* asset_man = App::get_asset_manager();
   auto& vk_context = App::get_vkcontext();
   auto& bindless_set = vk_context.get_descriptor_set();
 
@@ -1114,6 +1114,43 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
            std::move(exposure_buffer_value));
   }
 
+  auto debug_renderer_enabled = (bool)RendererCVar::cvar_enable_debug_renderer.get();
+
+  if (debug_renderer_enabled &&
+      (self.prepared_frame.line_index_count > 0 || self.prepared_frame.triangle_index_count > 0)) {
+    auto debug_renderer_verticies_buffer = std::move(self.prepared_frame.debug_renderer_verticies_buffer);
+    auto debug_renderer_pass = vuk::make_pass(
+        "debug_renderer_pass",
+        [line_index_count = self.prepared_frame.line_index_count](vuk::CommandBuffer& cmd_list,
+                                                                  VUK_IA(vuk::eColorWrite) dst,
+                                                                  VUK_BA(vuk::eFragmentRead) dbg_vtx,
+                                                                  VUK_BA(vuk::eFragmentRead) camera) {
+          auto& dbg_index_buffer = *DebugRenderer::get_instance()->get_global_index_buffer();
+
+          cmd_list.bind_graphics_pipeline("debug_renderer_pipeline")
+              .set_depth_stencil(vuk::PipelineDepthStencilStateCreateInfo{
+                  .depthTestEnable = false,
+                  .depthWriteEnable = false,
+                  .depthCompareOp = vuk::CompareOp::eGreaterOrEqual,
+              })
+              .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
+              .broadcast_color_blend({})
+              .set_rasterization({.polygonMode = vuk::PolygonMode::eLine, .cullMode = vuk::CullModeFlagBits::eNone, .lineWidth = 3.f})
+              .set_primitive_topology(vuk::PrimitiveTopology::eLineList)
+              .set_viewport(0, vuk::Rect2D::framebuffer())
+              .set_scissor(0, vuk::Rect2D::framebuffer())
+              .bind_vertex_buffer(0, dbg_vtx, 0, DebugRenderer::vertex_pack)
+              .bind_index_buffer(dbg_index_buffer, vuk::IndexType::eUint32)
+              .bind_buffer(0, 0, camera)
+              .draw_indexed(line_index_count, 1, 0, 0, 0);
+
+          return std::make_tuple(dst, camera);
+        });
+
+    std::tie(result_attachment,
+             camera_buffer) = debug_renderer_pass(result_attachment, debug_renderer_verticies_buffer, camera_buffer);
+  }
+
   return debugging ? final_attachment : result_attachment;
 }
 
@@ -1140,8 +1177,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
         if (static_cast<bool>(RendererCVar::cvar_freeze_culling_frustum.get()) &&
             static_cast<bool>(RendererCVar::cvar_draw_camera_frustum.get())) {
-          // const auto proj = frozen_camera.get_projection_matrix() * frozen_camera.get_view_matrix();
-          //  DebugRenderer::draw_frustum(proj, glm::vec4(0, 1, 0, 1), 1.0f, 0.0f); // reversed-z
+          const auto proj = frozen_camera.get_projection_matrix() * frozen_camera.get_view_matrix();
+          DebugRenderer::draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
         }
 
         current_camera = c;
@@ -1375,5 +1412,37 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   }
 
   self.prepared_frame.mesh_instance_count = info.mesh_instance_count;
+
+  auto debug_renderer_enabled = (bool)RendererCVar::cvar_enable_debug_renderer.get();
+
+  if (debug_renderer_enabled) {
+    const auto& lines = DebugRenderer::get_instance()->get_lines(false);
+    auto [line_vertices, line_index_count] = DebugRenderer::get_vertices_from_lines(lines);
+
+    const auto& triangles = DebugRenderer::get_instance()->get_triangles(false);
+    auto [triangle_vertices, triangle_index_count] = DebugRenderer::get_vertices_from_triangles(triangles);
+
+    const u32 index_count = line_index_count + triangle_index_count;
+    OX_CHECK_LT(index_count, DebugRenderer::MAX_LINE_INDICES, "Increase DebugRenderer::MAX_LINE_INDICES");
+
+    self.prepared_frame.line_index_count = line_index_count;
+    self.prepared_frame.triangle_index_count = triangle_index_count;
+
+    std::vector<DebugRenderer::Vertex> vertices = line_vertices;
+    vertices.insert(vertices.end(), triangle_vertices.begin(), triangle_vertices.end());
+    std::span<DebugRenderer::Vertex> vertices_span = line_vertices;
+
+    if (!vertices.empty()) {
+      self.debug_renderer_verticies_buffer = vk_context.resize_buffer(
+          std::move(self.debug_renderer_verticies_buffer), vuk::MemoryUsage::eGPUonly, vertices_span.size_bytes());
+      self.prepared_frame.debug_renderer_verticies_buffer = vk_context.upload_staging(
+          vertices_span, *self.debug_renderer_verticies_buffer);
+    } else if (self.debug_renderer_verticies_buffer) {
+      self.prepared_frame.debug_renderer_verticies_buffer = vuk::acquire_buf(
+          "debug_renderer_verticies_buffer", *self.debug_renderer_verticies_buffer, vuk::Access::eMemoryRead);
+    }
+
+    DebugRenderer::reset();
+  }
 }
 } // namespace ox

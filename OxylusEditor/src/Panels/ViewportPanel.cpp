@@ -172,7 +172,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
                                            0,
                                            view_proj,
                                            frustum,
-                                           _scene.get());
+                                           _scene);
       show_component_gizmo<AudioSourceComponent>(
           editor_theme.component_icon_map.at(typeid(AudioSourceComponent).hash_code()),
           "AudioSourceComponent",
@@ -182,7 +182,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
           0,
           view_proj,
           frustum,
-          _scene.get());
+          _scene);
       show_component_gizmo<AudioListenerComponent>(
           editor_theme.component_icon_map.at(typeid(AudioListenerComponent).hash_code()),
           "AudioListenerComponent",
@@ -192,7 +192,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
           0,
           view_proj,
           frustum,
-          _scene.get());
+          _scene);
       show_component_gizmo<CameraComponent>(editor_theme.component_icon_map.at(typeid(CameraComponent).hash_code()),
                                             "CameraComponent",
                                             fixed_width,
@@ -201,7 +201,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
                                             0,
                                             view_proj,
                                             frustum,
-                                            _scene.get());
+                                            _scene);
 
       draw_gizmos();
     }
@@ -326,7 +326,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
   on_end();
 }
 
-void ViewportPanel::set_context(const std::shared_ptr<Scene>& scene, SceneHierarchyPanel& scene_hierarchy_panel) {
+void ViewportPanel::set_context(Scene* scene, SceneHierarchyPanel& scene_hierarchy_panel) {
   _scene_hierarchy_panel = &scene_hierarchy_panel;
 
   if (!scene)

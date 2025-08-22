@@ -3,11 +3,16 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Core/App.hpp"
-#include "Utils/OxMath.hpp"
 #include "Render/Vulkan/VkContext.hpp"
+#include "Utils/OxMath.hpp"
 
 namespace ox {
 DebugRenderer* DebugRenderer::instance = nullptr;
+
+const vuk::Packed DebugRenderer::vertex_pack = vuk::Packed{
+    vuk::Format::eR32G32B32Sfloat, // 12 vec
+    vuk::Format::eR32Uint,         // 4 color
+};
 
 void DebugRenderer::init() {
   ZoneScoped;
@@ -270,34 +275,58 @@ DebugRenderer::draw_aabb(const AABB& aabb, const glm::vec4& color, bool corners_
 }
 
 void DebugRenderer::draw_frustum(const glm::mat4& frustum, const glm::vec4& color, float near, float far) {
-  // Get frustum corners in world space
-  auto tln = math::unproject_uv_zo(near, {0, 1}, frustum);
-  auto trn = math::unproject_uv_zo(near, {1, 1}, frustum);
-  auto bln = math::unproject_uv_zo(near, {0, 0}, frustum);
-  auto brn = math::unproject_uv_zo(near, {1, 0}, frustum);
-
-  // Far corners are lerped slightly to near in case it is an infinite projection
-  auto tlf = math::unproject_uv_zo(glm::mix(far, near, 1e-5), {0, 1}, frustum);
-  auto trf = math::unproject_uv_zo(glm::mix(far, near, 1e-5), {1, 1}, frustum);
-  auto blf = math::unproject_uv_zo(glm::mix(far, near, 1e-5), {0, 0}, frustum);
-  auto brf = math::unproject_uv_zo(glm::mix(far, near, 1e-5), {1, 0}, frustum);
+  // Get the inverse view-projection matrix
+  glm::mat4 inv_frustum = glm::inverse(frustum);
+  
+  // For reversed-Z: near plane is at z = 1, far plane is at z = 0 in clip space
+  std::vector<glm::vec4> clip_corners = {
+    // Near plane corners (z = 1 for reversed-Z)
+    glm::vec4(-1.0f, -1.0f, 1.0f, 1.0f),  // bottom-left-near
+    glm::vec4( 1.0f, -1.0f, 1.0f, 1.0f),  // bottom-right-near
+    glm::vec4(-1.0f,  1.0f, 1.0f, 1.0f),  // top-left-near
+    glm::vec4( 1.0f,  1.0f, 1.0f, 1.0f),  // top-right-near
+    
+    // Far plane corners (z = 0 for reversed-Z)
+    glm::vec4(-1.0f, -1.0f, 0.0f, 1.0f),  // bottom-left-far
+    glm::vec4( 1.0f, -1.0f, 0.0f, 1.0f),  // bottom-right-far
+    glm::vec4(-1.0f,  1.0f, 0.0f, 1.0f),  // top-left-far
+    glm::vec4( 1.0f,  1.0f, 0.0f, 1.0f)   // top-right-far
+  };
+  
+  // Transform corners to world space and apply perspective division
+  std::vector<glm::vec3> world_corners;
+  for (const auto& corner : clip_corners) {
+    glm::vec4 world_pos = inv_frustum * corner;
+    world_pos /= world_pos.w; // Perspective division
+    world_corners.push_back(glm::vec3(world_pos));
+  }
+  
+  // Extract individual corners for readability
+  glm::vec3 bln = world_corners[0]; // bottom-left-near
+  glm::vec3 brn = world_corners[1]; // bottom-right-near
+  glm::vec3 tln = world_corners[2]; // top-left-near
+  glm::vec3 trn = world_corners[3]; // top-right-near
+  glm::vec3 blf = world_corners[4]; // bottom-left-far
+  glm::vec3 brf = world_corners[5]; // bottom-right-far
+  glm::vec3 tlf = world_corners[6]; // top-left-far
+  glm::vec3 trf = world_corners[7]; // top-right-far
 
   // Connect-the-dots
   // Near and far "squares"
-  draw_line(tln, trn, 1.0f, color, true);
-  draw_line(bln, brn, 1.0f, color, true);
-  draw_line(tln, bln, 1.0f, color, true);
-  draw_line(trn, brn, 1.0f, color, true);
-  draw_line(tlf, trf, 1.0f, color, true);
-  draw_line(blf, brf, 1.0f, color, true);
-  draw_line(tlf, blf, 1.0f, color, true);
-  draw_line(trf, brf, 1.0f, color, true);
+  draw_line(tln, trn, 1.0f, color, false);
+  draw_line(bln, brn, 1.0f, color, false);
+  draw_line(tln, bln, 1.0f, color, false);
+  draw_line(trn, brn, 1.0f, color, false);
+  draw_line(tlf, trf, 1.0f, color, false);
+  draw_line(blf, brf, 1.0f, color, false);
+  draw_line(tlf, blf, 1.0f, color, false);
+  draw_line(trf, brf, 1.0f, color, false);
 
   // Lines connecting near and far planes
-  draw_line(tln, tlf, 1.0f, color, true);
-  draw_line(trn, trf, 1.0f, color, true);
-  draw_line(bln, blf, 1.0f, color, true);
-  draw_line(brn, brf, 1.0f, color, true);
+  draw_line(tln, tlf, 1.0f, color, false);
+  draw_line(trn, trf, 1.0f, color, false);
+  draw_line(bln, blf, 1.0f, color, false);
+  draw_line(brn, brf, 1.0f, color, false);
 }
 
 void
@@ -305,17 +334,15 @@ DebugRenderer::draw_ray(const RayCast& ray, const glm::vec4& color, const float 
   draw_line(ray.get_origin(), ray.get_origin() + ray.get_direction() * distance, 1.0f, color, depth_tested);
 }
 
-std::pair<std::vector<Vertex>, uint32_t> DebugRenderer::get_vertices_from_lines(const std::vector<Line>& lines) {
-  std::vector<Vertex> vertices = {};
+std::pair<std::vector<DebugRenderer::Vertex>, uint32_t>
+DebugRenderer::get_vertices_from_lines(const std::vector<Line>& lines) {
+  std::vector<DebugRenderer::Vertex> vertices = {};
   vertices.reserve(lines.size() * 2);
   uint32_t indices = 0;
 
   for (const auto& line : lines) {
-    // store color in normals for simplicity
-    vertices.emplace_back(
-        Vertex{.position = line.p1, .normal = glm::packSnorm2x16(math::float32x3_to_oct(line.col)), .uv = {}});
-    vertices.emplace_back(
-        Vertex{.position = line.p2, .normal = glm::packSnorm2x16(math::float32x3_to_oct(line.col)), .uv = {}});
+    vertices.emplace_back(Vertex{.position = line.p1, .color = glm::packSnorm2x16(math::float32x3_to_oct(line.col))});
+    vertices.emplace_back(Vertex{.position = line.p2, .color = glm::packSnorm2x16(math::float32x3_to_oct(line.col))});
 
     indices += 2;
   }
@@ -323,20 +350,16 @@ std::pair<std::vector<Vertex>, uint32_t> DebugRenderer::get_vertices_from_lines(
   return {vertices, indices};
 }
 
-std::pair<std::vector<Vertex>, uint32_t>
+std::pair<std::vector<DebugRenderer::Vertex>, uint32_t>
 DebugRenderer::get_vertices_from_triangles(const std::vector<Triangle>& triangles) {
   std::vector<Vertex> vertices = {};
   vertices.reserve(triangles.size() * 3);
   uint32_t indices = 0;
 
   for (const auto& tri : triangles) {
-    // store color in normals for simplicity
-    vertices.emplace_back(
-        Vertex{.position = tri.p1, .normal = glm::packSnorm2x16(math::float32x3_to_oct(tri.col)), .uv = {}});
-    vertices.emplace_back(
-        Vertex{.position = tri.p2, .normal = glm::packSnorm2x16(math::float32x3_to_oct(tri.col)), .uv = {}});
-    vertices.emplace_back(
-        Vertex{.position = tri.p3, .normal = glm::packSnorm2x16(math::float32x3_to_oct(tri.col)), .uv = {}});
+    vertices.emplace_back(Vertex{.position = tri.p1, .color = glm::packSnorm2x16(math::float32x3_to_oct(tri.col))});
+    vertices.emplace_back(Vertex{.position = tri.p2, .color = glm::packSnorm2x16(math::float32x3_to_oct(tri.col))});
+    vertices.emplace_back(Vertex{.position = tri.p3, .color = glm::packSnorm2x16(math::float32x3_to_oct(tri.col))});
 
     indices += 3;
   }

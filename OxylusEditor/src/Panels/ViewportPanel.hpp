@@ -22,7 +22,7 @@ public:
 
   void on_render(vuk::Extent3D extent, vuk::Format format) override;
 
-  void set_context(const std::shared_ptr<Scene>& scene, SceneHierarchyPanel& scene_hierarchy_panel);
+  void set_context(Scene* scene, SceneHierarchyPanel& scene_hierarchy_panel);
 
   void on_update() override;
 
@@ -31,7 +31,7 @@ private:
   void draw_performance_overlay();
   void draw_gizmos();
 
-  std::shared_ptr<Scene> _scene = {};
+  Scene* _scene = nullptr;
   SceneHierarchyPanel* _scene_hierarchy_panel = nullptr;
 
   glm::vec2 _viewport_size = {};

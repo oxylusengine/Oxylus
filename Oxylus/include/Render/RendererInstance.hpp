@@ -27,6 +27,10 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> visible_meshlet_instances_indices_buffer = {};
   vuk::Value<vuk::Buffer> reordered_indices_buffer = {};
   vuk::Value<vuk::Buffer> materials_buffer = {};
+
+  u32 line_index_count = 0;
+  u32 triangle_index_count = 0;
+  vuk::Value<vuk::Buffer> debug_renderer_verticies_buffer = {};
 };
 
 class RendererInstance {
@@ -62,5 +66,6 @@ private:
   vuk::Unique<vuk::Buffer> mesh_instances_buffer{};
   vuk::Unique<vuk::Buffer> meshes_buffer{};
   vuk::Unique<vuk::Buffer> materials_buffer{};
+  vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
 };
 } // namespace ox

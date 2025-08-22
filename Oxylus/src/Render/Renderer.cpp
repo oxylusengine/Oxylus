@@ -4,18 +4,13 @@
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Slang/Slang.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
-static constexpr auto sampler_min_clamp_reduction_mode = VkSamplerReductionModeCreateInfo{
-    .sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO,
-    .pNext = nullptr,
-    .reductionMode = VK_SAMPLER_REDUCTION_MODE_MIN,
-};
-
 Renderer::Renderer(VkContext* vk_context) {
   ZoneScoped;
   this->vk_context = vk_context;
@@ -39,8 +34,9 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   initalized = true;
 
+  DebugRenderer::init();
+
   auto& runtime = *vk_context->runtime;
-  auto& allocator = *vk_context->superframe_allocator;
   auto& bindless_set = vk_context->get_descriptor_set();
 
   vk_context->wait();
@@ -153,6 +149,10 @@ auto Renderer::init() -> std::expected<void, std::string> {
                         "fxaa_pipeline",
                         {.path = shaders_dir + "/passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}});
 
+  slang.create_pipeline(runtime,
+                        "debug_renderer_pipeline",
+                        {.path = shaders_dir + "/passes/debug_renderer.slang", .entry_points = {"vs_main", "fs_main"}});
+
   sky_transmittance_lut_view = Texture("sky_transmittance_lut");
   sky_transmittance_lut_view.create({},
                                     {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
@@ -218,5 +218,11 @@ auto Renderer::init() -> std::expected<void, std::string> {
   return {};
 }
 
-auto Renderer::deinit() -> std::expected<void, std::string> { return {}; }
+auto Renderer::deinit() -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  DebugRenderer::release();
+
+  return {};
+}
 } // namespace ox

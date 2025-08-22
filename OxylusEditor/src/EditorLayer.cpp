@@ -61,7 +61,7 @@ void EditorLayer::on_attach() {
   add_panel<AssetManagerPanel>();
 
   const auto& viewport = viewport_panels.emplace_back(std::make_unique<ViewportPanel>());
-  viewport->set_context(editor_scene, *get_panel<SceneHierarchyPanel>());
+  viewport->set_context(editor_scene.get(), *get_panel<SceneHierarchyPanel>());
 
   editor_scene = std::make_shared<Scene>();
   load_default_scene(editor_scene);
@@ -221,7 +221,7 @@ void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format
         if (ImGui::BeginMenu("Window")) {
           if (ImGui::MenuItem("Add viewport", nullptr)) {
             viewport_panels.emplace_back(std::make_unique<ViewportPanel>())
-                ->set_context(editor_scene, *get_panel<SceneHierarchyPanel>());
+                ->set_context(editor_scene.get(), *get_panel<SceneHierarchyPanel>());
           }
           ImGui::MenuItem("Inspector", nullptr, &get_panel<InspectorPanel>()->visible);
           ImGui::MenuItem("Scene hierarchy", nullptr, &get_panel<SceneHierarchyPanel>()->visible);
@@ -471,7 +471,7 @@ void EditorLayer::set_editor_context(const std::shared_ptr<Scene>& scene) {
   auto* shpanel = get_panel<SceneHierarchyPanel>();
   shpanel->set_scene(scene.get());
   for (const auto& panel : viewport_panels) {
-    panel->set_context(scene, *shpanel);
+    panel->set_context(scene.get(), *shpanel);
   }
 }
 

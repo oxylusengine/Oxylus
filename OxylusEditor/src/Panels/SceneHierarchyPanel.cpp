@@ -7,6 +7,7 @@
 #include <misc/cpp/imgui_stdlib.h>
 
 #include "EditorLayer.hpp"
+#include "Render/DebugRenderer.hpp"
 
 namespace ox {
 SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON_MDI_VIEW_LIST, true) {
@@ -45,6 +46,11 @@ auto SceneHierarchyPanel::on_update() -> void {
   }
 
   if (viewer.selected_entity_.get() != flecs::entity::null()) {
+    if (auto* cam = viewer.selected_entity_.get().try_get<CameraComponent>()) {
+      const auto proj = cam->get_projection_matrix() * cam->get_view_matrix();
+      DebugRenderer::draw_frustum(proj, glm::vec4(0, 1, 0, 1), cam->near_clip, cam->far_clip);
+    }
+
     if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_D)) {
       auto clone_entity = [](flecs::entity entity) -> flecs::entity {
         std::string clone_name = entity.name().c_str();
@@ -66,7 +72,8 @@ auto SceneHierarchyPanel::on_update() -> void {
     }
   }
 
-  if (viewer.selected_script_ && ImGui::IsKeyPressed(ImGuiKey_Delete) && (viewer.table_hovered_ || viewer.table_hovered_scripts)) {
+  if (viewer.selected_script_ && ImGui::IsKeyPressed(ImGuiKey_Delete) &&
+      (viewer.table_hovered_ || viewer.table_hovered_scripts)) {
     viewer.get_scene()->remove_lua_system(*viewer.selected_script_);
   }
 

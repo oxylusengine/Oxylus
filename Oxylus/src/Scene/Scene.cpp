@@ -544,6 +544,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
                    sprite_animation.frame_size[1] * 1.f / texture_size[1]};
         material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
       });
+
+  auto* asset_man = App::get_asset_manager();
+  asset_man->set_all_materials_dirty();
 }
 
 auto Scene::runtime_start(this Scene& self) -> void {
@@ -1139,7 +1142,7 @@ auto Scene::on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_
 auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void {
   ZoneScoped;
 
-    for (auto& [uuid, system] : lua_systems) {
+  for (auto& [uuid, system] : lua_systems) {
     system->on_body_deactivated(body_id, (u64)body_user_data);
   }
 }

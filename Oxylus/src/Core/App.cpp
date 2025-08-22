@@ -63,8 +63,6 @@ App::App(const AppSpec& spec) : app_spec(spec) {
 
     const bool enable_validation = app_spec.command_line_args.contains("--vulkan-validation");
     vk_context->create_context(window, enable_validation);
-
-    DebugRenderer::init();
   }
 
   register_system<JobManager>(EngineSystems::JobManager);
@@ -286,8 +284,6 @@ void App::close() {
   }
 
   if (!app_spec.headless) {
-    DebugRenderer::release();
-
     window.destroy();
     vk_context->destroy_context();
   }
