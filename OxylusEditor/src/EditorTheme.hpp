@@ -40,6 +40,7 @@ public:
   f32 small_font_size = 12.0f;
   ImFont* regular_font = nullptr;
   ImFont* bold_font = nullptr;
+  ImFont* mono_font = nullptr;
 
   inline static ImVec4 header_selected_color;
   inline static ImVec4 header_hovered_color;
