@@ -8,7 +8,6 @@
 #include "Core/FileSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
-#include "UI/UI.hpp"
 #include "Panels/AssetManagerPanel.hpp"
 #include "Panels/ContentPanel.hpp"
 #include "Panels/EditorSettingsPanel.hpp"
@@ -17,6 +16,7 @@
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Panels/StatisticsPanel.hpp"
 #include "Render/Window.hpp"
+#include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
 #include "Utils/Command.hpp"
 #include "Utils/EditorConfig.hpp"
@@ -393,7 +393,10 @@ void EditorLayer::load_default_scene(const std::shared_ptr<Scene>& scene) {
 
 void EditorLayer::save_scene() {
   if (!last_save_scene_path.empty()) {
-    editor_scene->save_to_file(last_save_scene_path);
+    auto* job_man = App::get_job_manager();
+    job_man->push_job_name("Saving scene");
+    job_man->submit(Job::create([s = editor_scene.get(), p = last_save_scene_path]() { s->save_to_file(p); }));
+    job_man->pop_job_name();
   } else {
     save_scene_as();
   }
@@ -417,7 +420,11 @@ void EditorLayer::save_scene_as() {
             const auto path = std::string(first_path_cstr, first_path_len);
 
             if (!path.empty()) {
-              layer->editor_scene->save_to_file(path);
+              auto* job_man = App::get_job_manager();
+              job_man->push_job_name("Saving scene");
+              job_man->submit(Job::create([s = layer->editor_scene.get(), path]() { s->save_to_file(path); }));
+              job_man->pop_job_name();
+
               layer->last_save_scene_path = path;
             }
           },

@@ -104,11 +104,11 @@ App::App(const AppSpec& spec) : app_spec(spec) {
     push_layer(std::move(imgui));
   }
 
-  auto* job_man = get_system<JobManager>(EngineSystems::JobManager);
+  auto* job_man = get_job_manager();
   job_man->wait();
 }
 
-App::~App() { close(); }
+App::~App() { is_running = false; }
 
 void App::set_instance(App* instance) {
   _instance = instance;
@@ -266,6 +266,9 @@ void App::close() {
 
     layer_stack.clear();
   }
+
+  auto* job_man = App::get_job_manager();
+  job_man->wait();
 
   {
     ZoneNamedN(z, "SystemRegistryDeinit", true);
