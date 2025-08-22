@@ -15,7 +15,9 @@
 #include "Panels/ProjectPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Panels/StatisticsPanel.hpp"
+#include "Panels/TextEditorPanel.hpp"
 #include "Render/Window.hpp"
+#include "UI/TextEditor.hpp"
 #include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
 #include "Utils/Command.hpp"
@@ -52,13 +54,23 @@ void EditorLayer::on_attach() {
        .loaded_data = EngineBanner,
        .extent = vuk::Extent3D{.width = EngineBannerWidth, .height = EngineBannerHeight, .depth = 1u}});
 
-  add_panel<SceneHierarchyPanel>();
+  auto scene_hierarchy_panel = add_panel<SceneHierarchyPanel>();
   add_panel<ContentPanel>();
   add_panel<InspectorPanel>();
   add_panel<EditorSettingsPanel>();
   add_panel<ProjectPanel>();
   add_panel<StatisticsPanel>();
   add_panel<AssetManagerPanel>();
+  auto text_editor_panel = add_panel<TextEditorPanel>();
+
+  scene_hierarchy_panel->viewer.opened_script_callback = [text_editor_panel](const UUID& uuid) {
+    auto* asset_man = App::get_asset_manager();
+    auto* asset = asset_man->get_asset(uuid);
+    if (asset) {
+      text_editor_panel->visible = true;
+      text_editor_panel->text_editor.open_file(asset->path);
+    }
+  };
 
   const auto& viewport = viewport_panels.emplace_back(std::make_unique<ViewportPanel>());
   viewport->set_context(editor_scene.get(), *get_panel<SceneHierarchyPanel>());

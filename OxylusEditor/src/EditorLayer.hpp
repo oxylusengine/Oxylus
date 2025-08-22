@@ -26,8 +26,9 @@ public:
   std::vector<std::unique_ptr<ViewportPanel>> viewport_panels;
 
   template <typename T>
-  void add_panel() {
+  T* add_panel() {
     editor_panels.emplace(typeid(T).hash_code(), std::make_unique<T>());
+    return get_panel<T>();
   }
 
   template <typename T>

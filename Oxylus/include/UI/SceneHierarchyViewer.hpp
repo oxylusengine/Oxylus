@@ -36,6 +36,7 @@ public:
   SelectedEntity selected_entity_ = {};
 
   const UUID* selected_script_ = nullptr;
+  std::function<void(const UUID&)> opened_script_callback = nullptr;
 
   AssetManagerViewer asset_manager_viewer = {};
 

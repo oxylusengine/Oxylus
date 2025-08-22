@@ -42,7 +42,9 @@ std::vector<u8> read_file_binary(std::string_view file_path);
 template <typename T>
 bool write_file(const std::string_view file_path, const T& data, const std::string& comment = {}) {
   std::stringstream ss;
-  ss << comment << "\n" << data;
+  if (!comment.empty())
+    ss << comment << "\n";
+  ss << data;
   std::ofstream filestream(file_path.data());
   if (filestream.is_open()) {
     filestream << ss.str();

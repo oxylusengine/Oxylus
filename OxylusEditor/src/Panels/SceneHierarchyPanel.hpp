@@ -9,6 +9,8 @@
 namespace ox {
 class SceneHierarchyPanel : public EditorPanel {
 public:
+  SceneHierarchyViewer viewer = {};
+
   SceneHierarchyPanel();
 
   auto on_update() -> void override;
@@ -16,8 +18,5 @@ public:
 
   auto set_scene(Scene* scene) -> void { viewer.set_scene(scene); }
   auto get_scene() -> Scene* { return viewer.get_scene(); }
-
-private:
-  SceneHierarchyViewer viewer = {};
 };
 } // namespace ox

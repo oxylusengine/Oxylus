@@ -82,6 +82,10 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
             selected_entity_.reset();
             selected_script_ = &uuid;
           }
+          if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+            if (opened_script_callback)
+              opened_script_callback(uuid);
+          }
         }
 
         if (ImGui::BeginPopupContextWindow("scene_h_scripts_context_window",

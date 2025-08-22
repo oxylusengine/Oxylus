@@ -150,8 +150,7 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
 
   ImGui::SetNextWindowSize(ImVec2(ImGui::GetMainViewport()->Size.x / 2, ImGui::GetMainViewport()->Size.y / 2),
                            ImGuiCond_Appearing);
-  const auto center = ImGui::GetMainViewport()->GetCenter();
-  ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  UI::center_next_window(ImGuiCond_Appearing);
   if (ImGui::Begin(id, visible, ImGuiWindowFlags_NoCollapse)) {
     constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap |
                                               ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_FramePadding |
