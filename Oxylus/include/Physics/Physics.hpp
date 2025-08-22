@@ -15,22 +15,6 @@ class RayCast;
 
 class Physics : public ESystem {
 public:
-  using EntityLayer = uint16_t;
-
-  struct EntityLayerData {
-    std::string name = "Layer";
-    EntityLayer flags = 0xFFFF;
-    uint8_t index = 1;
-  };
-
-  // TODO: Make a way to add/change layers via editor and api
-  std::map<EntityLayer, EntityLayerData> layer_collision_mask = {
-      {BIT(0), {"Static", static_cast<uint16_t>(0xFFFF), 0}},
-      {BIT(1), {"Default", static_cast<uint16_t>(0xFFFF), 1}},
-      {BIT(2), {"Player", static_cast<uint16_t>(0xFFFF), 2}},
-      {BIT(3), {"Sensor", static_cast<uint16_t>(0xFFFF), 3}},
-  };
-
   static constexpr uint32_t MAX_BODIES = 1024;
   static constexpr uint32_t MAX_BODY_PAIRS = 1024;
   static constexpr uint32_t MAX_CONTACT_CONSTRAINS = 1024;

@@ -549,6 +549,62 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   asset_man->set_all_materials_dirty();
 }
 
+auto Scene::physics_init(this Scene& self) -> void {
+  ZoneScoped;
+
+  // Remove old bodies and reset callbacks
+  self.physics_deinit();
+
+  self.body_activation_listener_3d = std::make_unique<Physics3DBodyActivationListener>();
+  self.contact_listener_3d = std::make_unique<Physics3DContactListener>(&self);
+  const auto physics_system = App::get_system<Physics>(EngineSystems::Physics)->get_physics_system();
+  physics_system->SetBodyActivationListener(self.body_activation_listener_3d.get());
+  physics_system->SetContactListener(self.contact_listener_3d.get());
+
+  // Rigidbodies
+  self.world.query_builder<const TransformComponent, RigidbodyComponent>().build().each(
+      [&self](flecs::entity e, const TransformComponent& tc, RigidbodyComponent& rb) {
+        rb.previous_translation = rb.translation = tc.position;
+        rb.previous_rotation = rb.rotation = tc.rotation;
+        self.create_rigidbody(e, tc, rb);
+      });
+
+  // Characters
+  self.world.query_builder<const TransformComponent, CharacterControllerComponent>().build().each(
+      [&self](const TransformComponent& tc, CharacterControllerComponent& ch) {
+        self.create_character_controller(tc, ch);
+      });
+
+  physics_system->OptimizeBroadPhase();
+}
+
+auto Scene::physics_deinit(this Scene& self) -> void {
+  ZoneScoped;
+
+  const auto physics = App::get_system<Physics>(EngineSystems::Physics);
+  self.world.query_builder<RigidbodyComponent>().build().each(
+      [physics](const flecs::entity& e, const RigidbodyComponent& rb) {
+        if (rb.runtime_body) {
+          JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+          const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
+          body_interface.RemoveBody(body->GetID());
+          body_interface.DestroyBody(body->GetID());
+        }
+      });
+  self.world.query_builder<CharacterControllerComponent>().build().each(
+      [physics](const flecs::entity& e, CharacterControllerComponent& ch) {
+        if (ch.character) {
+          JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+          auto* character = reinterpret_cast<JPH::Character*>(ch.character);
+          body_interface.RemoveBody(character->GetBodyID());
+          ch.character = nullptr;
+        }
+      });
+
+  self.body_activation_listener_3d.reset();
+  self.contact_listener_3d.reset();
+}
+
 auto Scene::runtime_start(this Scene& self) -> void {
   ZoneScoped;
 
@@ -556,31 +612,7 @@ auto Scene::runtime_start(this Scene& self) -> void {
 
   self.run_deferred_functions();
 
-  // Physics
-  {
-    ZoneNamedN(z, "Physics Start", true);
-    self.body_activation_listener_3d = new Physics3DBodyActivationListener();
-    self.contact_listener_3d = new Physics3DContactListener(&self);
-    const auto physics_system = App::get_system<Physics>(EngineSystems::Physics)->get_physics_system();
-    physics_system->SetBodyActivationListener(self.body_activation_listener_3d);
-    physics_system->SetContactListener(self.contact_listener_3d);
-
-    // Rigidbodies
-    self.world.query_builder<const TransformComponent, RigidbodyComponent>().build().each(
-        [&self](flecs::entity e, const TransformComponent& tc, RigidbodyComponent& rb) {
-          rb.previous_translation = rb.translation = tc.position;
-          rb.previous_rotation = rb.rotation = tc.rotation;
-          self.create_rigidbody(e, tc, rb);
-        });
-
-    // Characters
-    self.world.query_builder<const TransformComponent, CharacterControllerComponent>().build().each(
-        [&self](const TransformComponent& tc, CharacterControllerComponent& ch) {
-          self.create_character_controller(tc, ch);
-        });
-
-    physics_system->OptimizeBroadPhase();
-  }
+  self.physics_init();
 
   // Scripting
   for (auto& [uuid, system] : self.lua_systems) {
@@ -593,34 +625,7 @@ auto Scene::runtime_stop(this Scene& self) -> void {
 
   self.running = false;
 
-  // Physics
-  {
-    ZoneNamedN(z, "physics_stop", true);
-    const auto physics = App::get_system<Physics>(EngineSystems::Physics);
-    self.world.query_builder<RigidbodyComponent>().build().each(
-        [physics](const flecs::entity& e, const RigidbodyComponent& rb) {
-          if (rb.runtime_body) {
-            JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
-            const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
-            body_interface.RemoveBody(body->GetID());
-            body_interface.DestroyBody(body->GetID());
-          }
-        });
-    self.world.query_builder<CharacterControllerComponent>().build().each(
-        [physics](const flecs::entity& e, CharacterControllerComponent& ch) {
-          if (ch.character) {
-            JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
-            auto* character = reinterpret_cast<JPH::Character*>(ch.character);
-            body_interface.RemoveBody(character->GetBodyID());
-            ch.character = nullptr;
-          }
-        });
-
-    delete self.body_activation_listener_3d;
-    delete self.contact_listener_3d;
-    self.body_activation_listener_3d = nullptr;
-    self.contact_listener_3d = nullptr;
-  }
+  self.physics_deinit();
 
   // Scripting
   for (auto& [uuid, system] : self.lua_systems) {
@@ -1153,137 +1158,103 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
   if (!running)
     return;
 
-  // TODO: We should get rid of 'new' usages and use JPH::Ref<> instead.
-
   auto physics = App::get_system<Physics>(EngineSystems::Physics);
 
   auto& body_interface = physics->get_body_interface();
   if (component.runtime_body) {
-    body_interface.DestroyBody(static_cast<JPH::Body*>(component.runtime_body)->GetID());
+    auto body_id = static_cast<JPH::Body*>(component.runtime_body)->GetID();
+    body_interface.RemoveBody(body_id);
+    body_interface.DestroyBody(body_id);
     component.runtime_body = nullptr;
   }
 
-  JPH::MutableCompoundShapeSettings compound_shape_settings;
+  JPH::MutableCompoundShapeSettings compound_shape_settings = {};
   float max_scale_component = glm::max(glm::max(transform.scale.x, transform.scale.y), transform.scale.z);
 
   const auto entity_name = std::string(entity.name());
 
-  if (const auto* bc = entity.try_get<BoxColliderComponent>()) {
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), bc->friction, bc->restitution);
+  JPH::ShapeSettings::ShapeResult shape_result = {};
+  glm::vec3 offset = {};
 
-    glm::vec3 scale = bc->size;
+  if (const auto* c = entity.try_get<BoxColliderComponent>()) {
+    const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
+        entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+
+    glm::vec3 scale = c->size;
     JPH::BoxShapeSettings shape_settings({glm::abs(scale.x), glm::abs(scale.y), glm::abs(scale.z)}, 0.05f, mat);
-    shape_settings.SetDensity(glm::max(0.001f, bc->density));
-
-    compound_shape_settings.AddShape(
-        {bc->offset.x, bc->offset.y, bc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
+    shape_settings.SetDensity(glm::max(0.001f, c->density));
+    shape_result = shape_settings.Create();
+    offset = c->offset;
   }
 
-  if (const auto* sc = entity.try_get<SphereColliderComponent>()) {
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), sc->friction, sc->restitution);
+  if (const auto* c = entity.try_get<SphereColliderComponent>()) {
+    const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
+        entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
-    float radius = 2.0f * sc->radius * max_scale_component;
+    float radius = 2.0f * c->radius * max_scale_component;
     JPH::SphereShapeSettings shape_settings(glm::max(0.01f, radius), mat);
-    shape_settings.SetDensity(glm::max(0.001f, sc->density));
-
-    compound_shape_settings.AddShape(
-        {sc->offset.x, sc->offset.y, sc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
+    shape_settings.SetDensity(glm::max(0.001f, c->density));
+    shape_result = shape_settings.Create();
+    offset = c->offset;
   }
 
-  if (const auto* cc = entity.try_get<CapsuleColliderComponent>()) {
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cc->friction, cc->restitution);
+  if (const auto* c = entity.try_get<CapsuleColliderComponent>()) {
+    const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
+        entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
-    float radius = 2.0f * cc->radius * max_scale_component;
-    JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, cc->height) * 0.5f, glm::max(0.01f, radius), mat);
-    shape_settings.SetDensity(glm::max(0.001f, cc->density));
-
-    compound_shape_settings.AddShape(
-        {cc->offset.x, cc->offset.y, cc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
+    float radius = 2.0f * c->radius * max_scale_component;
+    JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, radius), mat);
+    shape_settings.SetDensity(glm::max(0.001f, c->density));
+    shape_result = shape_settings.Create();
+    offset = c->offset;
   }
 
-  if (const auto* tcc = entity.try_get<TaperedCapsuleColliderComponent>()) {
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), tcc->friction, tcc->restitution);
+  if (const auto* c = entity.try_get<TaperedCapsuleColliderComponent>()) {
+    const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
+        entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
-    float top_radius = 2.0f * tcc->top_radius * max_scale_component;
-    float bottom_radius = 2.0f * tcc->bottom_radius * max_scale_component;
+    float top_radius = 2.0f * c->top_radius * max_scale_component;
+    float bottom_radius = 2.0f * c->bottom_radius * max_scale_component;
     JPH::TaperedCapsuleShapeSettings shape_settings(
-        glm::max(0.01f, tcc->height) * 0.5f, glm::max(0.01f, top_radius), glm::max(0.01f, bottom_radius), mat);
-    shape_settings.SetDensity(glm::max(0.001f, tcc->density));
-
-    compound_shape_settings.AddShape(
-        {tcc->offset.x, tcc->offset.y, tcc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
+        glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, top_radius), glm::max(0.01f, bottom_radius), mat);
+    shape_settings.SetDensity(glm::max(0.001f, c->density));
+    shape_result = shape_settings.Create();
+    offset = c->offset;
   }
 
-  if (const auto* cc = entity.try_get<CylinderColliderComponent>()) {
-    const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cc->friction, cc->restitution);
+  if (const auto* c = entity.try_get<CylinderColliderComponent>()) {
+    const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
+        entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
-    float radius = 2.0f * cc->radius * max_scale_component;
-    JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, cc->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
-    shape_settings.SetDensity(glm::max(0.001f, cc->density));
-
-    compound_shape_settings.AddShape(
-        {cc->offset.x, cc->offset.y, cc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
+    float radius = 2.0f * c->radius * max_scale_component;
+    JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
+    shape_settings.SetDensity(glm::max(0.001f, c->density));
+    shape_result = shape_settings.Create();
+    offset = c->offset;
   }
 
-#if TODO
-  (const auto* mc = entity.try_get<MeshColliderComponent>()) {
-    if (const auto* mesh_component = entity.get<MeshComponent>()) {
-      const auto* mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), mc->friction, mc->restitution);
-
-      // TODO: We should only get the vertices and indices for this particular MeshComponent using
-      // MeshComponent::node_index
-      auto vertices = mesh_component->mesh_base->_vertices;
-      const auto& indices = mesh_component->mesh_base->_indices;
-
-      // scale vertices
-      const auto world_transform = get_world_transform(entity);
-      for (auto& vert : vertices) {
-        glm::vec4 scaled_pos = world_transform * glm::vec4(vert.position, 1.0);
-        vert.position = glm::vec3(scaled_pos);
-      }
-
-      const uint32_t vertex_count = static_cast<uint32_t>(vertices.size());
-      const uint32_t index_count = static_cast<uint32_t>(indices.size());
-      const uint32_t triangle_count = vertex_count / 3;
-
-      JPH::VertexList vertex_list;
-      vertex_list.resize(vertex_count);
-      for (uint32_t i = 0; i < vertex_count; ++i)
-        vertex_list[i] = JPH::Float3(vertices[i].position.x, vertices[i].position.y, vertices[i].position.z);
-
-      JPH::IndexedTriangleList indexedTriangleList;
-      indexedTriangleList.resize(index_count * 2);
-
-      for (uint32_t i = 0; i < triangle_count; ++i) {
-        indexedTriangleList[i * 2 + 0].mIdx[0] = indices[i * 3 + 0];
-        indexedTriangleList[i * 2 + 0].mIdx[1] = indices[i * 3 + 1];
-        indexedTriangleList[i * 2 + 0].mIdx[2] = indices[i * 3 + 2];
-
-        indexedTriangleList[i * 2 + 1].mIdx[2] = indices[i * 3 + 0];
-        indexedTriangleList[i * 2 + 1].mIdx[1] = indices[i * 3 + 1];
-        indexedTriangleList[i * 2 + 1].mIdx[0] = indices[i * 3 + 2];
-      }
-
-      JPH::PhysicsMaterialList material_list = {};
-      material_list.emplace_back(mat);
-      JPH::MeshShapeSettings shape_settings(vertex_list, indexedTriangleList, material_list);
-      compound_shape_settings.AddShape(
-          {mc->offset.x, mc->offset.y, mc->offset.z}, JPH::Quat::sIdentity(), shape_settings.Create().Get());
-    }
+  if (shape_result.HasError()) {
+    OX_LOG_ERROR("Jolt shape error: {}", shape_result.GetError().c_str());
   }
-#endif
+
+  if (!shape_result.IsEmpty()) {
+    compound_shape_settings.AddShape({offset.x, offset.y, offset.z}, JPH::Quat::sIdentity(), shape_result.Get());
+  }
 
   // Body
   auto rotation = glm::quat(transform.rotation);
 
   u8 layer_index = 1; // Default Layer
   if (const auto* layer_component = entity.try_get<LayerComponent>()) {
-    const auto collision_mask_it = physics->layer_collision_mask.find(layer_component->layer);
-    if (collision_mask_it != physics->layer_collision_mask.end())
-      layer_index = collision_mask_it->second.index;
+    layer_index = layer_component->layer;
   }
 
-  JPH::BodyCreationSettings body_settings(compound_shape_settings.Create().Get(),
+  auto compound_shape = compound_shape_settings.Create();
+  if (compound_shape.HasError()) {
+    OX_LOG_ERROR("Jolt shape error: {}", compound_shape.GetError().c_str());
+  }
+
+  JPH::BodyCreationSettings body_settings(compound_shape.Get(),
                                           {transform.position.x, transform.position.y, transform.position.z},
                                           {rotation.x, rotation.y, rotation.z, rotation.w},
                                           static_cast<JPH::EMotionType>(component.type),
@@ -1303,6 +1274,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
   body_settings.mIsSensor = component.is_sensor;
 
   JPH::Body* body = body_interface.CreateBody(body_settings);
+
+  OX_CHECK_NULL(body, "Jolt is out of bodies!");
 
   JPH::EActivation activation = component.awake && component.type != RigidbodyComponent::BodyType::Static
                                     ? JPH::EActivation::Activate

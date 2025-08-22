@@ -70,6 +70,9 @@ public:
 
   auto init(this Scene& self, const std::string& name) -> void;
 
+  auto physics_init(this Scene& self) -> void;
+  auto physics_deinit(this Scene& self) -> void;
+
   auto runtime_start(this Scene& self) -> void;
   auto runtime_stop(this Scene& self) -> void;
   auto runtime_update(this Scene& self, const Timestep& delta_time) -> void;
@@ -152,7 +155,7 @@ private:
   std::unique_ptr<RendererInstance> renderer_instance = nullptr;
 
   // Physics
-  Physics3DContactListener* contact_listener_3d;
-  Physics3DBodyActivationListener* body_activation_listener_3d;
+  std::unique_ptr<Physics3DContactListener> contact_listener_3d;
+  std::unique_ptr<Physics3DBodyActivationListener> body_activation_listener_3d;
 };
 } // namespace ox
