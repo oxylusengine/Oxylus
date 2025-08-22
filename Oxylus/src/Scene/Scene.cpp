@@ -662,6 +662,8 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   if (self.meshes_dirty) {
     for (const auto& [rendering_mesh, transform_ids] : self.rendering_meshes_map) {
       auto* model = asset_man->get_mesh(rendering_mesh.first);
+      if (!model)
+        continue;
       const auto& mesh = model->meshes[rendering_mesh.second];
 
       for (auto primitive_index : mesh.primitive_indices) {
