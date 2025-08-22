@@ -690,7 +690,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   }
 
   auto uuid_to_image_index = [&](const UUID& uuid) -> option<u32> {
-    if (!asset_man->is_texture_loaded(uuid)) {
+    if (!uuid || !asset_man->is_texture_loaded(uuid)) {
       return nullopt;
     }
 
@@ -704,6 +704,8 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   for (const auto& [gpu_material, index, id] :
        std::views::zip(gpu_materials, dirty_material_indices, dirty_material_ids)) {
     const auto* material = asset_man->get_material(id);
+    if (!material)
+      continue;
     auto albedo_image_index = uuid_to_image_index(material->albedo_texture);
     auto normal_image_index = uuid_to_image_index(material->normal_texture);
     auto emissive_image_index = uuid_to_image_index(material->emissive_texture);
