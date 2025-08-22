@@ -32,12 +32,7 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
     ImGui::PopID();
   }
 
-  {
-    ImGui::TableSetColumnIndex(1);
-    ImGui::TextUnformatted(uuid_str.c_str());
-  }
-
-  if (ImGui::BeginPopupContextItem(0, ImGuiPopupFlags_MouseButtonRight)) {
+  if (ImGui::BeginPopupContextItem(uuid_str.c_str(), ImGuiPopupFlags_MouseButtonRight)) {
     if (ImGui::Button("Load")) {
       asset_man->load_asset(asset.uuid);
     }
@@ -59,6 +54,11 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
     ImGui::Text("RefCount: %llu", static_cast<u64>(asset.ref_count));
 
     ImGui::EndPopup();
+  }
+
+  {
+    ImGui::TableSetColumnIndex(1);
+    ImGui::TextUnformatted(uuid_str.c_str());
   }
 
   return is_selected;

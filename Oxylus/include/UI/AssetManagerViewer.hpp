@@ -33,6 +33,7 @@ private:
       {AssetType::Scene, true},
       {AssetType::Audio, true},
       {AssetType::Script, true},
+      {AssetType::Mesh, true},
   };
 
   ImGuiTextFilter text_filter = {};
