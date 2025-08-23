@@ -129,7 +129,7 @@ void EditorLayer::on_update(const Timestep& delta_time) {
 }
 
 void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format) {
-  if (const auto scene = get_active_scene(); active_scene)
+  if (const auto scene = get_active_scene())
     scene->on_render(extent, format);
 
   auto* job_man = App::get_job_manager();
@@ -458,8 +458,7 @@ void EditorLayer::on_scene_play() {
 void EditorLayer::on_scene_stop() {
   editor_context.reset();
   set_scene_state(SceneState::Edit);
-  active_scene->runtime_stop();
-  active_scene = nullptr;
+  active_scene.reset();
   set_editor_context(editor_scene);
 
   editor_scene->world
@@ -476,7 +475,7 @@ void EditorLayer::on_scene_simulate() {
   set_editor_context(active_scene);
 }
 
-std::shared_ptr<Scene> EditorLayer::get_active_scene() { return active_scene; }
+Scene* EditorLayer::get_active_scene() { return active_scene.get(); }
 
 void EditorLayer::set_editor_context(const std::shared_ptr<Scene>& scene) {
   scene->meshes_dirty = true;

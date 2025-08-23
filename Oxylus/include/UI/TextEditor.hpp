@@ -37,6 +37,6 @@ private:
   ankerl::unordered_dense::map<std::string, Document> documents = {};
   std::vector<Document*> close_queue = {};
 
-  auto draw_menu_bar(this TextEditor& self) -> void;
+  auto draw_menu_bar(this TextEditor& self, TextEditor::Document& document) -> void;
 };
 } // namespace ox

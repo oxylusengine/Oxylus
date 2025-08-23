@@ -74,7 +74,7 @@ public:
   EditorContext& get_context() { return editor_context; }
 
   void editor_shortcuts();
-  std::shared_ptr<Scene> get_active_scene();
+  Scene* get_active_scene();
   void set_editor_context(const std::shared_ptr<Scene>& scene);
   bool open_scene(const std::filesystem::path& path);
   static void load_default_scene(const std::shared_ptr<Scene>& scene);

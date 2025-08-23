@@ -8,16 +8,15 @@
 
 namespace ox {
 auto TextEditor::render(this TextEditor& self, const char* id, bool* visible) -> void {
+  ZoneScoped;
+
   ImGui::SetNextWindowSize(ImVec2(ImGui::GetMainViewport()->Size.x / 2, ImGui::GetMainViewport()->Size.y / 2),
                            ImGuiCond_Appearing);
   UI::center_next_window(ImGuiCond_Appearing);
-  if (ImGui::Begin(id, visible, ImGuiWindowFlags_MenuBar)) {
-    self.draw_menu_bar();
-
+  if (ImGui::Begin(id, visible)) {
     ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_FittingPolicyDefault_ | ImGuiTabBarFlags_Reorderable;
     tab_bar_flags |= ImGuiTabBarFlags_DrawSelectedOverline;
     if (ImGui::BeginTabBar("##tabs", tab_bar_flags)) {
-
       for (auto& [name, document] : self.documents) {
         ImGuiTabItemFlags tab_flags = (document.dirty ? ImGuiTabItemFlags_UnsavedDocument : 0);
         bool visible = ImGui::BeginTabItem(name.c_str(), &document.open, tab_flags);
@@ -30,9 +29,14 @@ auto TextEditor::render(this TextEditor& self, const char* id, bool* visible) ->
 
         document.draw_context_menu(self.close_queue);
         if (visible) {
-          ImGui::PushFont(self.body_font, self.font_size);
-          document.draw_body();
-          ImGui::PopFont();
+          if (ImGui::BeginChild("##body_window", {}, 0, ImGuiWindowFlags_MenuBar)) {
+            self.draw_menu_bar(document);
+
+            ImGui::PushFont(self.body_font, self.font_size);
+            document.draw_body();
+            ImGui::PopFont();
+          }
+          ImGui::EndChild();
           ImGui::EndTabItem();
         }
       }
@@ -151,14 +155,16 @@ auto TextEditor::Document::draw_context_menu(this TextEditor::Document& self, st
   if (!ImGui::BeginPopupContextItem())
     return;
 
+  ImGui::SetNextItemShortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_Tooltip);
   if (ImGui::MenuItem("Save", "Ctrl+S", false, self.open))
     self.save();
+  ImGui::SetNextItemShortcut(ImGuiMod_Ctrl | ImGuiKey_W, ImGuiInputFlags_Tooltip);
   if (ImGui::MenuItem("Close", "Ctrl+W", false, self.open))
     close_queue.push_back(&self);
   ImGui::EndPopup();
 }
 
-auto TextEditor::draw_menu_bar(this TextEditor& self) -> void {
+auto TextEditor::draw_menu_bar(this TextEditor& self, TextEditor::Document& document) -> void {
   ZoneScoped;
 
   if (ImGui::BeginMenuBar()) {
@@ -167,6 +173,9 @@ auto TextEditor::draw_menu_bar(this TextEditor& self) -> void {
         for (auto& [n, d] : self.documents) {
           self.close_queue.emplace_back(&d);
         }
+      }
+      if (ImGui::MenuItem("Save")) {
+        document.save();
       }
       ImGui::EndMenu();
     }

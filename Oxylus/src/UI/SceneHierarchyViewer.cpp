@@ -96,6 +96,8 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
           ImGui::EndPopup();
         }
 
+        ImGui::EndTable();
+
         if (ImGui::BeginPopupContextItem()) {
           if (ImGui::MenuItem("Reload")) {
             if (selected_script_ && !scene_->is_running()) {
@@ -110,12 +112,8 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
             }
           }
 
-          ImGui::Separator();
-
           ImGui::EndPopup();
         }
-
-        ImGui::EndTable();
 
         table_hovered_scripts = ImGui::IsItemHovered();
 
