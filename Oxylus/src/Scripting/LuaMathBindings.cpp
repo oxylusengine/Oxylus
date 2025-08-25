@@ -110,6 +110,12 @@ auto MathBinding::bind(sol::state* state) -> void {
       sol::meta_function::subtraction,
       [](const glm::mat4& a, const glm::mat4& b) { return a - b; });
 
+  auto quat = state->new_usertype<glm::quat>("quat", sol::constructors<glm::quat(glm::vec3)>());
+  SET_TYPE_FIELD(quat, glm::quat, x);
+  SET_TYPE_FIELD(quat, glm::quat, y);
+  SET_TYPE_FIELD(quat, glm::quat, z);
+  SET_TYPE_FIELD(quat, glm::quat, w);
+
   state->new_enum<Intersection>("Intersection", {{"Outside", Outside}, {"Intersects", Intersects}, {"Inside", Inside}});
 
   auto aabb = state->new_usertype<AABB>("AABB", sol::constructors<AABB(), AABB(AABB), AABB(glm::vec3, glm::vec3)>());
@@ -158,5 +164,11 @@ auto MathBinding::bind(sol::state* state) -> void {
                                        [](const glm::vec3& vec) { return glm::normalize(vec); },
                                        [](const glm::vec4& vec) { return glm::normalize(vec); }));
   glm_table.set_function("distance", [](const glm::vec3& a, const glm::vec3& b) { return glm::distance(a, b); });
+  glm_table.set_function("radians", [](f32 degrees) { return glm::radians(degrees); });
+  glm_table.set_function("degrees", [](f32 radians) { return glm::degrees(radians); });
+  glm_table.set_function("look_at",
+                         [](glm::vec3 eye, glm::vec3 center, glm::vec3 up) { return glm::lookAt(eye, center, up); });
+  glm_table.set_function("atan2", [](f32 x, f32 y) { return glm::atan2(x, y); });
+  glm_table.set_function("angle_axis", [](f32 angle, glm::vec3 v) -> glm::quat { return glm::angleAxis(angle, v); });
 }
 } // namespace ox

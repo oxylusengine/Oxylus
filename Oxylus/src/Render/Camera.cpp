@@ -68,9 +68,11 @@ Frustum Camera::get_frustum(const CameraComponent& component, const glm::vec3& p
   return frustum;
 }
 
-RayCast
-Camera::get_screen_ray(const CameraComponent& component, const glm::vec2& screen_pos, const glm::vec2& screen_size) {
-  const glm::mat4 view_proj_inverse = inverse(component.matrices.projection_matrix * component.matrices.view_matrix);
+RayCast Camera::get_screen_ray(const CameraComponent& component,
+                               const glm::vec2& screen_pos,
+                               const glm::vec2& screen_size) {
+  const glm::mat4 view_inverse = inverse(component.matrices.view_matrix);
+  const glm::mat4 proj_inverse = inverse(component.matrices.projection_matrix);
 
   float screen_x = screen_pos.x / screen_size.x;
   float screen_y = screen_pos.y / screen_size.y;
@@ -78,12 +80,17 @@ Camera::get_screen_ray(const CameraComponent& component, const glm::vec2& screen
   screen_x = 2.0f * screen_x - 1.0f;
   screen_y = 2.0f * screen_y - 1.0f;
 
-  glm::vec4 n = view_proj_inverse * glm::vec4(screen_x, screen_y, 0.0f, 1.0f);
-  n /= n.w;
+  // Transform screen coordinates to view space
+  glm::vec4 ray_view_near = proj_inverse * glm::vec4(screen_x, screen_y, 0.0f, 1.0f);
+  glm::vec4 ray_view_far = proj_inverse * glm::vec4(screen_x, screen_y, 1.0f, 1.0f);
 
-  glm::vec4 f = view_proj_inverse * glm::vec4(screen_x, screen_y, 1.0f, 1.0f);
-  f /= f.w;
+  ray_view_near /= ray_view_near.w;
+  ray_view_far /= ray_view_far.w;
 
-  return {glm::vec3(n), glm::normalize(glm::vec3(f) - glm::vec3(n))};
+  // Transform to world space
+  glm::vec3 ray_world_near = glm::vec3(view_inverse * ray_view_near);
+  glm::vec3 ray_world_far = glm::vec3(view_inverse * ray_view_far);
+
+  return {ray_world_near, glm::normalize(ray_world_far - ray_world_near)};
 }
 } // namespace ox

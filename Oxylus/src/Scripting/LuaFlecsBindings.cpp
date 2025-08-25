@@ -75,6 +75,9 @@ auto FlecsBinding::bind(sol::state* state) -> void {
   auto iter_type = flecs_table.new_usertype<ecs_iter_t>(
       "iter",
 
+      sol::call_constructor,
+      [](ecs_query_t* q) { return ecs_query_iter(q->world, q); },
+
       "count",
       [](ecs_iter_t* it) -> int32_t { return it->count; },
 
@@ -107,7 +110,10 @@ auto FlecsBinding::bind(sol::state* state) -> void {
 
         auto e = flecs::entity{it->real_world, entity};
         return e;
-      });
+      },
+
+      "query_next",
+      [](ecs_iter_t* it) -> bool { return ecs_query_next(it); });
 
   // --- world ---
   auto world_type = flecs_table.new_usertype<flecs::world>(
@@ -169,6 +175,24 @@ auto FlecsBinding::bind(sol::state* state) -> void {
         system_table["system"] = ecs_system_init(world->world_, &system_desc);
 
         return system_table;
+      },
+
+      "query",
+      [](flecs::world* world, sol::table components) {
+        std::vector<ecs_entity_t> component_ids = {};
+        component_ids.reserve(components.size());
+        components.for_each([&](sol::object key, sol::object value) {
+          sol::table component_table = value.as<sol::table>();
+          component_ids.emplace_back(component_table["component_id"].get<ecs_entity_t>());
+        });
+
+        ecs_query_desc_t desc = {};
+        for (usize i = 0; i < component_ids.size(); i++) {
+          desc.terms[i].id = component_ids[i];
+        }
+
+        ecs_query_t* q = ecs_query_init(world->world_, &desc);
+        return q;
       });
 
   // --- entity ---

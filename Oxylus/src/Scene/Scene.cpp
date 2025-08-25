@@ -421,10 +421,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         physics->step(it.delta_time());
       });
 
-  self.world.system<TransformComponent, RigidbodyComponent>("rigidbody_update")
+  self.world.system<TransformComponent, RigidBodyComponent>("rigidbody_update")
       .kind(flecs::OnUpdate)
       .tick_source(physics_tick_source)
-      .each([](const flecs::entity& e, TransformComponent& tc, RigidbodyComponent& rb) {
+      .each([](const flecs::entity& e, TransformComponent& tc, RigidBodyComponent& rb) {
         if (!rb.runtime_body)
           return;
 
@@ -562,8 +562,8 @@ auto Scene::physics_init(this Scene& self) -> void {
   physics_system->SetContactListener(self.contact_listener_3d.get());
 
   // Rigidbodies
-  self.world.query_builder<const TransformComponent, RigidbodyComponent>().build().each(
-      [&self](flecs::entity e, const TransformComponent& tc, RigidbodyComponent& rb) {
+  self.world.query_builder<const TransformComponent, RigidBodyComponent>().build().each(
+      [&self](flecs::entity e, const TransformComponent& tc, RigidBodyComponent& rb) {
         rb.previous_translation = rb.translation = tc.position;
         rb.previous_rotation = rb.rotation = tc.rotation;
         self.create_rigidbody(e, tc, rb);
@@ -582,13 +582,14 @@ auto Scene::physics_deinit(this Scene& self) -> void {
   ZoneScoped;
 
   const auto physics = App::get_system<Physics>(EngineSystems::Physics);
-  self.world.query_builder<RigidbodyComponent>().build().each(
-      [physics](const flecs::entity& e, const RigidbodyComponent& rb) {
+  self.world.query_builder<RigidBodyComponent>().build().each(
+      [physics](const flecs::entity& e, RigidBodyComponent& rb) {
         if (rb.runtime_body) {
           JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
           const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
           body_interface.RemoveBody(body->GetID());
           body_interface.DestroyBody(body->GetID());
+          rb.runtime_body = nullptr;
         }
       });
   self.world.query_builder<CharacterControllerComponent>().build().each(
@@ -631,6 +632,8 @@ auto Scene::runtime_stop(this Scene& self) -> void {
   for (auto& [uuid, system] : self.lua_systems) {
     system->on_scene_stop(&self);
   }
+  auto* lua_manager = App::get_system<LuaManager>(EngineSystems::LuaManager);
+  lua_manager->get_state()->collect_gc();
 }
 
 auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void {
@@ -1156,7 +1159,7 @@ auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_use
   }
 }
 
-auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidbodyComponent& component)
+auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component)
     -> void {
   ZoneScoped;
   if (!running)
@@ -1281,7 +1284,7 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
 
   OX_CHECK_NULL(body, "Jolt is out of bodies!");
 
-  JPH::EActivation activation = component.awake && component.type != RigidbodyComponent::BodyType::Static
+  JPH::EActivation activation = component.awake && component.type != RigidBodyComponent::BodyType::Static
                                     ? JPH::EActivation::Activate
                                     : JPH::EActivation::DontActivate;
   body_interface.AddBody(body->GetID(), activation);

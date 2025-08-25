@@ -123,7 +123,7 @@ public:
   auto on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
   auto on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
 
-  auto create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidbodyComponent& component)
+  auto create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component)
       -> void;
   auto create_character_controller(const TransformComponent& transform, CharacterControllerComponent& component) const
       -> void;

@@ -527,8 +527,8 @@ void InspectorPanel::draw_components(flecs::entity entity) {
   }
 #if 0
 
-  draw_component<RigidbodyComponent>(
-      " Rigidbody Component", entity, [](RigidbodyComponent& component, flecs::entity e) {
+  draw_component<RigidBodyComponent>(
+      " Rigidbody Component", entity, [](RigidBodyComponent& component, flecs::entity e) {
         UI::begin_properties();
 
         const char* dofs_strings[] = {
@@ -539,46 +539,46 @@ void InspectorPanel::draw_components(flecs::entity entity) {
         };
         int current_dof_selection = 3;
         switch (component.allowed_dofs) {
-          case RigidbodyComponent::AllowedDOFs::None   : current_dof_selection = 0; break;
-          case RigidbodyComponent::AllowedDOFs::All    : current_dof_selection = 1; break;
-          case RigidbodyComponent::AllowedDOFs::Plane2D: current_dof_selection = 2; break;
+          case RigidBodyComponent::AllowedDOFs::None   : current_dof_selection = 0; break;
+          case RigidBodyComponent::AllowedDOFs::All    : current_dof_selection = 1; break;
+          case RigidBodyComponent::AllowedDOFs::Plane2D: current_dof_selection = 2; break;
           default                                      : current_dof_selection = 3; break;
         }
 
         if (UI::property("Allowed degree of freedom", &current_dof_selection, dofs_strings, std::size(dofs_strings))) {
           switch (current_dof_selection) {
-            case 0: component.allowed_dofs = RigidbodyComponent::AllowedDOFs::None; break;
-            case 1: component.allowed_dofs = RigidbodyComponent::AllowedDOFs::All; break;
-            case 2: component.allowed_dofs = RigidbodyComponent::AllowedDOFs::Plane2D; break;
+            case 0: component.allowed_dofs = RigidBodyComponent::AllowedDOFs::None; break;
+            case 1: component.allowed_dofs = RigidBodyComponent::AllowedDOFs::All; break;
+            case 2: component.allowed_dofs = RigidBodyComponent::AllowedDOFs::Plane2D; break;
           }
         }
 
         ImGui::Indent();
         UI::begin_property_grid("Allowed positions", nullptr);
-        ImGui::CheckboxFlags("x", (u32*)&component.allowed_dofs, (u32)RigidbodyComponent::AllowedDOFs::TranslationX);
+        ImGui::CheckboxFlags("x", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::TranslationX);
         ImGui::SameLine();
-        ImGui::CheckboxFlags("y", (u32*)&component.allowed_dofs, (u32)RigidbodyComponent::AllowedDOFs::TranslationY);
+        ImGui::CheckboxFlags("y", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::TranslationY);
         ImGui::SameLine();
-        ImGui::CheckboxFlags("z", (u32*)&component.allowed_dofs, (u32)RigidbodyComponent::AllowedDOFs::TranslationZ);
+        ImGui::CheckboxFlags("z", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::TranslationZ);
         UI::end_property_grid();
 
         UI::begin_property_grid("Allowed rotations", nullptr);
-        ImGui::CheckboxFlags("x", (u32*)&component.allowed_dofs, (u32)RigidbodyComponent::AllowedDOFs::RotationX);
+        ImGui::CheckboxFlags("x", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::RotationX);
         ImGui::SameLine();
-        ImGui::CheckboxFlags("y", (u32*)&component.allowed_dofs, (u32)RigidbodyComponent::AllowedDOFs::RotationY);
+        ImGui::CheckboxFlags("y", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::RotationY);
         ImGui::SameLine();
-        ImGui::CheckboxFlags("z", (u32*)&component.allowed_dofs, (u32)RigidbodyComponent::AllowedDOFs::RotationZ);
+        ImGui::CheckboxFlags("z", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::RotationZ);
         UI::end_property_grid();
         ImGui::Unindent();
 
         const char* body_type_strings[] = {"Static", "Kinematic", "Dynamic"};
         int body_type = static_cast<int>(component.type);
         if (UI::property("Body Type", &body_type, body_type_strings, 3))
-          component.type = static_cast<RigidbodyComponent::BodyType>(body_type);
+          component.type = static_cast<RigidBodyComponent::BodyType>(body_type);
 
         UI::property("Allow Sleep", &component.allow_sleep);
         UI::property("Awake", &component.awake);
-        if (component.type == RigidbodyComponent::BodyType::Dynamic) {
+        if (component.type == RigidBodyComponent::BodyType::Dynamic) {
           UI::property("Mass", &component.mass, 0.01f, 10000.0f);
           UI::property("Linear Drag", &component.linear_drag);
           UI::property("Angular Drag", &component.angular_drag);

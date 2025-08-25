@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Render/Frustum.hpp"
 #include "Physics/RayCast.hpp"
+#include "Render/Frustum.hpp"
 
 namespace ox {
 struct CameraComponent;

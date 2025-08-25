@@ -209,7 +209,7 @@ auto LuaSystem::on_scene_render(this const LuaSystem& self, Scene* scene, vuk::E
   if (!self.on_scene_render_func)
     return;
 
-  const auto result = self.on_scene_render_func->call(scene, extent, format);
+  const auto result = self.on_scene_render_func->call(scene, glm::vec3(extent.width, extent.height, extent.depth), format);
   check_result(result, "on_scene_render");
 }
 

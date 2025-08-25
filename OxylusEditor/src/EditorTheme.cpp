@@ -52,7 +52,7 @@ void EditorTheme::init(this EditorTheme& self) {
   self.component_icon_map[typeid(TransformComponent).hash_code()] = ICON_MDI_VECTOR_LINE;
   self.component_icon_map[typeid(MeshComponent).hash_code()] = ICON_MDI_VECTOR_SQUARE;
   self.component_icon_map[typeid(AudioListenerComponent).hash_code()] = ICON_MDI_CIRCLE_SLICE_8;
-  self.component_icon_map[typeid(RigidbodyComponent).hash_code()] = ICON_MDI_SOCCER;
+  self.component_icon_map[typeid(RigidBodyComponent).hash_code()] = ICON_MDI_SOCCER;
   self.component_icon_map[typeid(BoxColliderComponent).hash_code()] = ICON_MDI_CHECKBOX_BLANK_OUTLINE;
   self.component_icon_map[typeid(SphereColliderComponent).hash_code()] = ICON_MDI_CIRCLE_OUTLINE;
   self.component_icon_map[typeid(CapsuleColliderComponent).hash_code()] = ICON_MDI_CIRCLE_OUTLINE;

@@ -223,7 +223,7 @@ ECS_COMPONENT_BEGIN(AutoExposureComponent)
 ECS_COMPONENT_END();
 
 // Physics
-ECS_COMPONENT_BEGIN(RigidbodyComponent)
+ECS_COMPONENT_BEGIN(RigidBodyComponent)
 #ifndef ECS_REFLECT_TYPES
   enum BodyType { Static = 0, Kinematic, Dynamic };
   enum AllowedDOFs : u32 {

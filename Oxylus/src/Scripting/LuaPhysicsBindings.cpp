@@ -16,6 +16,7 @@
 #include "Scene/ECSModule/Core.hpp"
 #include "Scripting/LuaHelpers.hpp"
 #include "Utils/OxMath.hpp"
+#include "Render/Camera.hpp"
 // clang-format on
 
 namespace ox {
@@ -43,6 +44,14 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
       [](const JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>& collector)
           -> std::vector<JPH::BroadPhaseCastResult> { return {collector.mHits.begin(), collector.mHits.end()}; });
 
+  physics_table.set_function("get_body", [](flecs::entity* e) -> JPH::Body* {
+    auto* rb = e->try_get<RigidBodyComponent>();
+    OX_CHECK_NULL(rb);
+    auto* body = static_cast<JPH::Body*>(rb->runtime_body);
+    OX_CHECK_NULL(body);
+    return body;
+  });
+
   physics_table.set_function("get_character", [](flecs::entity* e) -> JPH::Character* {
     auto* cc = e->try_get<CharacterControllerComponent>();
     OX_CHECK_NULL(cc);
@@ -50,6 +59,13 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     OX_CHECK_NULL(character);
     return character;
   });
+
+  physics_table.set_function("get_screen_ray_from_camera",
+                             [](flecs::entity* e, glm::vec2 screen_pos, glm::vec2 screen_size) -> RayCast {
+                               auto* c = e->try_get<CameraComponent>();
+                               OX_CHECK_NULL(c);
+                               return Camera::get_screen_ray(*c, screen_pos, screen_size);
+                             });
 
   state->new_usertype<JPH::BodyID>(
       "BodyID",
@@ -211,7 +227,12 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
       &JPH::Body::AddAngularImpulse,
 
       "move_kinematic",
-      &JPH::Body::MoveKinematic,
+      [](JPH::Body& body, glm::vec3 target_position, const glm::quat& target_rotation, f32 delta_time) {
+        const auto physics = App::get_system<Physics>(EngineSystems::Physics);
+        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+        body_interface.MoveKinematic(
+            body.GetID(), math::to_jolt(target_position), math::to_jolt(target_rotation), delta_time);
+      },
 
       "get_shape",
       &JPH::Body::GetShape,
@@ -221,6 +242,15 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
 
       "get_rotation",
       &JPH::Body::GetRotation,
+
+      "set_rotation",
+      [](JPH::Body* body,
+         const glm::quat& rotation,
+         sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate) {
+        const auto physics = App::get_system<Physics>(EngineSystems::Physics);
+        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+        body_interface.SetRotation(body->GetID(), math::to_jolt(rotation), *activation_mode);
+      },
 
       "get_world_transform",
       &JPH::Body::GetWorldTransform,
