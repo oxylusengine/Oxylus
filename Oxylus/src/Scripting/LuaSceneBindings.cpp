@@ -23,6 +23,13 @@ auto SceneBinding::bind(sol::state* state) -> void {
   SET_TYPE_FUNCTION(scene_type, Scene, safe_entity_name);
   SET_TYPE_FUNCTION(scene_type, Scene, physics_init);
   SET_TYPE_FUNCTION(scene_type, Scene, physics_deinit);
+  SET_TYPE_FUNCTION(scene_type, Scene, get_world_transform);
+  SET_TYPE_FUNCTION(scene_type, Scene, get_local_transform);
+
+  scene_type.set_function("get_world_position",
+                          [](Scene* scene, flecs::entity e) -> glm::vec3 { return scene->get_world_transform(e)[3]; });
+  scene_type.set_function("get_local_position",
+                          [](Scene* scene, flecs::entity e) -> glm::vec3 { return scene->get_local_transform(e)[3]; });
 
   scene_type.set_function(
       "defer", [](Scene* scene, sol::function func) { scene->defer_function([func](Scene* s) { func(s); }); });
