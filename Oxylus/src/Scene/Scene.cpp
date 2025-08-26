@@ -704,13 +704,14 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   };
 
   auto dirty_material_ids = asset_man->get_dirty_material_ids();
-  auto dirty_material_indices = std::vector<u32>(dirty_material_ids.size());
-  for (const auto& [dirty_index, dirty_id] : std::views::zip(dirty_material_indices, dirty_material_ids)) {
+  auto dirty_material_indices = std::vector<u32>();
+  for (const auto dirty_id : dirty_material_ids) {
     const auto* material = asset_man->get_material(dirty_id);
     if (!material)
       continue;
 
-    dirty_index = SlotMap_decode_id(dirty_id).index;
+    auto dirty_index = SlotMap_decode_id(dirty_id).index;
+    dirty_material_indices.push_back(dirty_index);
     if (dirty_index <= self.gpu_materials.size()) {
       self.gpu_materials.resize(dirty_index + 1, {});
     }
