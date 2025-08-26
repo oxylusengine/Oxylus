@@ -30,13 +30,23 @@ void EditorConfig::load_config() {
   for (auto& project : *config["recent_projects"].as_array()) {
     recent_projects.emplace_back(*project.as_string());
   }
-  RendererCVar::cvar_draw_grid.set(config["grid"].as_boolean()->get());
-  RendererCVar::cvar_draw_grid_distance.set((float)config["grid_distance"].as_floating_point()->get());
-  EditorCVar::cvar_camera_speed.set((float)config["camera_speed"].as_floating_point()->get());
-  EditorCVar::cvar_camera_sens.set((float)config["camera_sens"].as_floating_point()->get());
-  EditorCVar::cvar_camera_smooth.set(config["camera_smooth"].as_boolean()->get());
-  EditorCVar::cvar_file_thumbnails.set(config["file_thumbnails"].as_boolean()->get());
-  EditorCVar::cvar_file_thumbnail_size.set((float)config["file_thumbnail_size"].as_floating_point()->get());
+
+  if (auto v = config["grid"].as_boolean())
+    RendererCVar::cvar_draw_grid.set(v->get());
+  if (auto v = config["grid_distance"].as_floating_point())
+    RendererCVar::cvar_draw_grid_distance.set((float)v->get());
+  if (auto v = config["camera_speed"].as_floating_point())
+    EditorCVar::cvar_camera_speed.set((float)v->get());
+  if (auto v = config["camera_sens"].as_floating_point())
+    EditorCVar::cvar_camera_sens.set((float)v->get());
+  if (auto v = config["camera_smooth"].as_boolean())
+    EditorCVar::cvar_camera_smooth.set(v->get());
+  if (auto v = config["file_thumbnails"].as_boolean())
+    EditorCVar::cvar_file_thumbnails.set(v->get());
+  if (auto v = config["file_thumbnail_size"].as_floating_point())
+    EditorCVar::cvar_file_thumbnail_size.set(v->get());
+  if (auto v = config["show_meta_files"].as_boolean())
+    EditorCVar::cvar_show_meta_files.set(v->get());
 }
 
 void EditorConfig::save_config() const {
@@ -55,6 +65,7 @@ void EditorConfig::save_config() const {
                                      {"camera_smooth", (bool)EditorCVar::cvar_camera_smooth.get()},
                                      {"file_thumbnails", (bool)EditorCVar::cvar_file_thumbnails.get()},
                                      {"file_thumbnail_size", EditorCVar::cvar_file_thumbnail_size.get()},
+                                     {"show_meta_files", EditorCVar::cvar_show_meta_files.get()},
                                  }}};
 
   std::stringstream ss;
