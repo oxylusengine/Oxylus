@@ -360,6 +360,51 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         asset_man->unload_asset(c.audio_source);
       });
 
+  self.world.observer<RigidBodyComponent>()
+      .event(flecs::OnSet)
+      .event(flecs::OnRemove)
+      .each([&self](flecs::iter& it, usize i, RigidBodyComponent& rb) {
+        if (!self.is_running())
+          return;
+
+        if (it.event() == flecs::OnSet) {
+          auto entity = it.entity(i);
+          auto& tc = entity.get<TransformComponent>();
+          self.create_rigidbody(it.entity(i), tc, rb);
+        } else if (it.event() == flecs::OnRemove) {
+          auto physics = App::get_system<Physics>(EngineSystems::Physics);
+          auto& body_interface = physics->get_body_interface();
+          if (rb.runtime_body) {
+            auto body_id = static_cast<JPH::Body*>(rb.runtime_body)->GetID();
+            body_interface.RemoveBody(body_id);
+            body_interface.DestroyBody(body_id);
+            rb.runtime_body = nullptr;
+          }
+        }
+      });
+
+  self.world.observer<CharacterControllerComponent>()
+      .event(flecs::OnSet)
+      .event(flecs::OnRemove)
+      .each([&self](flecs::iter& it, usize i, CharacterControllerComponent& ch) {
+        if (!self.is_running())
+          return;
+
+        if (it.event() == flecs::OnSet) {
+          auto entity = it.entity(i);
+          auto& tc = entity.get<TransformComponent>();
+          self.create_character_controller(tc, ch);
+        } else if (it.event() == flecs::OnRemove) {
+          auto physics = App::get_system<Physics>(EngineSystems::Physics);
+          JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+          if (ch.character) {
+            auto* character = reinterpret_cast<JPH::Character*>(ch.character);
+            body_interface.RemoveBody(character->GetBodyID());
+            ch.character = nullptr;
+          }
+        }
+      });
+
   // Systems run order:
   // -- PreUpdate  -> Main Systems
   // -- OnUpdate   -> Physics Systems
@@ -450,12 +495,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<TransformComponent, CharacterControllerComponent>("character_controller_update")
       .kind(flecs::OnUpdate)
       .tick_source(physics_tick_source)
-      .each([s = &self](const flecs::entity& e, TransformComponent& tc, CharacterControllerComponent& ch) {
-        // if the character was created in OnUpdate phase
-        if (!ch.character) {
-          s->create_character_controller(tc, ch);
-        }
-
+      .each([](const flecs::entity& e, TransformComponent& tc, CharacterControllerComponent& ch) {
         auto* character = reinterpret_cast<JPH::Character*>(ch.character);
         OX_CHECK_NULL(character);
 
@@ -563,15 +603,19 @@ auto Scene::physics_init(this Scene& self) -> void {
   // Rigidbodies
   self.world.query_builder<const TransformComponent, RigidBodyComponent>().build().each(
       [&self](flecs::entity e, const TransformComponent& tc, RigidBodyComponent& rb) {
-        rb.previous_translation = rb.translation = tc.position;
-        rb.previous_rotation = rb.rotation = tc.rotation;
-        self.create_rigidbody(e, tc, rb);
+        if (rb.runtime_body == nullptr) {
+          rb.previous_translation = rb.translation = tc.position;
+          rb.previous_rotation = rb.rotation = tc.rotation;
+          self.create_rigidbody(e, tc, rb);
+        }
       });
 
   // Characters
   self.world.query_builder<const TransformComponent, CharacterControllerComponent>().build().each(
       [&self](const TransformComponent& tc, CharacterControllerComponent& ch) {
-        self.create_character_controller(tc, ch);
+        if (ch.character == nullptr) {
+          self.create_character_controller(tc, ch);
+        }
       });
 
   physics_system->OptimizeBroadPhase();
@@ -733,19 +777,19 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
                                                         : GPU::MaterialFlag::None;
     flags |= occlusion_image_index.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
 
-    auto gpu_material = GPU::Material {
-      .albedo_color = material->albedo_color,
-      .emissive_color = material->emissive_color,
-      .roughness_factor = material->roughness_factor,
-      .metallic_factor = material->metallic_factor,
-      .alpha_cutoff = material->alpha_cutoff,
-      .flags = flags,
-      .sampler_index = sampler_index,
-      .albedo_image_index = albedo_image_index.value_or(0_u32),
-      .normal_image_index = normal_image_index.value_or(0_u32),
-      .emissive_image_index = emissive_image_index.value_or(0_u32),
-      .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
-      .occlusion_image_index = occlusion_image_index.value_or(0_u32),
+    auto gpu_material = GPU::Material{
+        .albedo_color = material->albedo_color,
+        .emissive_color = material->emissive_color,
+        .roughness_factor = material->roughness_factor,
+        .metallic_factor = material->metallic_factor,
+        .alpha_cutoff = material->alpha_cutoff,
+        .flags = flags,
+        .sampler_index = sampler_index,
+        .albedo_image_index = albedo_image_index.value_or(0_u32),
+        .normal_image_index = normal_image_index.value_or(0_u32),
+        .emissive_image_index = emissive_image_index.value_or(0_u32),
+        .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
+        .occlusion_image_index = occlusion_image_index.value_or(0_u32),
     };
 
     self.gpu_materials[dirty_index] = gpu_material;
@@ -1166,9 +1210,6 @@ auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_use
 auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component)
     -> void {
   ZoneScoped;
-  if (!running)
-    return;
-
   auto physics = App::get_system<Physics>(EngineSystems::Physics);
 
   auto& body_interface = physics->get_body_interface();
@@ -1250,6 +1291,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
 
   if (!shape_result.IsEmpty()) {
     compound_shape_settings.AddShape({offset.x, offset.y, offset.z}, JPH::Quat::sIdentity(), shape_result.Get());
+  } else {
+    return; // No Shape
   }
 
   // Body
