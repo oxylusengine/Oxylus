@@ -18,6 +18,7 @@ inline AutoCVar_Float
     cvar_file_thumbnail_size("editor.file_thumbnail_size", "file thumbnail size in content panel", 120.0f);
 inline AutoCVar_Int cvar_show_style_editor("ui.imgui_style_editor", "show imgui style editor", 0);
 inline AutoCVar_Int cvar_show_imgui_demo("ui.imgui_demo", "show imgui demo window", 0);
+inline AutoCVar_Int cvar_show_meta_files("editor.show_meta_files", "show oxasset files in conten panel", 1);
 } // namespace EditorCVar
 
 class EditorConfig {

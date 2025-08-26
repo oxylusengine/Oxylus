@@ -325,11 +325,9 @@ void ContentPanel::render_header() {
     UI::property("Thumbnail Size",
                  EditorCVar::cvar_file_thumbnail_size.get_ptr(),
                  thumbnail_size_grid_limit - 0.1f,
-                 thumbnail_max_limit,
-                 nullptr,
-                 0.1f,
-                 "");
+                 thumbnail_max_limit);
     UI::property("Show file thumbnails", reinterpret_cast<bool*>(EditorCVar::cvar_file_thumbnails.get_ptr()));
+    UI::property("Hide meta files", reinterpret_cast<bool*>(EditorCVar::cvar_show_meta_files.get_ptr()));
     UI::end_properties();
     ImGui::EndPopup();
   }
@@ -536,6 +534,11 @@ void ContentPanel::render_body(bool grid) {
     for (auto& file : _directory_entries) {
       if (!m_filter.PassFilter(file.name.c_str()))
         continue;
+
+      if (!(bool)EditorCVar::cvar_show_meta_files.get()) {
+        if (file.type == FileType::Meta)
+          continue;
+      }
 
       ImGui::PushID(i);
 
