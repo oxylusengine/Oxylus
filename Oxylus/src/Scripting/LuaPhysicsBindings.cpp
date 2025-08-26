@@ -174,7 +174,14 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
       [](JPH::Body& body) -> glm::vec3 { return math::from_jolt(body.GetLinearVelocity()); },
 
       "set_linear_velocity",
-      [](JPH::Body& body, const glm::vec3& v) { body.SetLinearVelocity(math::to_jolt(v)); },
+      [](JPH::Body& body, glm::vec3 v) { body.SetLinearVelocity(math::to_jolt(v)); },
+
+      "add_linear_velocity",
+      [](JPH::Body& body, glm::vec3 v) {
+        const auto physics = App::get_system<Physics>(EngineSystems::Physics);
+        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+        body_interface.AddLinearVelocity(body.GetID(), math::to_jolt(v));
+      },
 
       "set_linear_velocity_clamped",
       [](JPH::Body& body, const glm::vec3& v) { body.SetLinearVelocityClamped(math::to_jolt(v)); },

@@ -193,7 +193,22 @@ auto FlecsBinding::bind(sol::state* state) -> void {
 
         ecs_query_t* q = ecs_query_init(world->world_, &desc);
         return q;
-      });
+      },
+
+      "defer",
+      [](flecs::world* world, sol::function func) { world->defer([func]() { func(); }); },
+
+      "defer_resume",
+      [](flecs::world* world) { world->defer_resume(); },
+
+      "defer_suspend",
+      [](flecs::world* world) { world->defer_suspend(); },
+
+      "defer_begin",
+      [](flecs::world* world) { world->defer_begin(); },
+
+      "defer_end",
+      [](flecs::world* world) { world->defer_end(); });
 
   // --- entity ---
   auto entity_type = state->new_usertype<flecs::entity>(
@@ -336,41 +351,48 @@ auto FlecsBinding::bind(sol::state* state) -> void {
       // explicit types
       if (value.is<sol::table>()) {
         sol::table field_def = value.as<sol::table>();
-        if (field_def["type"]) {
-          std::string type = field_def["type"];
-          sol::object default_val = field_def["default"];
+        std::string type = field_def["type"];
+        sol::object default_val = field_def["default"];
 
-          if (type == "f32") {
-            component.member<f32>(field_name.c_str());
-            defaults[field_name] = value.as<f64>();
-          } else if (type == "f64") {
-            component.member<f64>(field_name.c_str());
-            defaults[field_name] = value.as<f64>();
-          } else if (type == "i8") {
-            component.member<i8>(field_name.c_str());
-            defaults[field_name] = value.as<f64>();
-          } else if (type == "i16") {
-            component.member<i16>(field_name.c_str());
-            defaults[field_name] = value.as<f64>();
-          } else if (type == "i32") {
-            component.member<i32>(field_name.c_str());
-            defaults[field_name] = value.as<f64>();
-          } else if (type == "i64") {
-            component.member<i64>(field_name.c_str());
-            defaults[field_name] = value.as<f64>();
-          } else if (type == "u8") {
-            component.member<u8>(field_name.c_str());
-            defaults[field_name] = value.as<f64>();
-          } else if (type == "u16") {
-            component.member<u16>(field_name.c_str());
-            defaults[field_name] = value.as<f64>();
-          } else if (type == "u32") {
-            component.member<u32>(field_name.c_str());
-            defaults[field_name] = value.as<f64>();
-          } else if (type == "u64") {
-            component.member<u64>(field_name.c_str());
-            defaults[field_name] = value.as<f64>();
-          }
+        if (type == "f32") {
+          component.member<f32>(field_name.c_str());
+          defaults[field_name] = default_val.as<f64>();
+        } else if (type == "f64") {
+          component.member<f64>(field_name.c_str());
+          defaults[field_name] = default_val.as<f64>();
+        } else if (type == "i8") {
+          component.member<i8>(field_name.c_str());
+          defaults[field_name] = default_val.as<f64>();
+        } else if (type == "i16") {
+          component.member<i16>(field_name.c_str());
+          defaults[field_name] = default_val.as<f64>();
+        } else if (type == "i32") {
+          component.member<i32>(field_name.c_str());
+          defaults[field_name] = default_val.as<f64>();
+        } else if (type == "i64") {
+          component.member<i64>(field_name.c_str());
+          defaults[field_name] = default_val.as<f64>();
+        } else if (type == "u8") {
+          component.member<u8>(field_name.c_str());
+          defaults[field_name] = default_val.as<f64>();
+        } else if (type == "u16") {
+          component.member<u16>(field_name.c_str());
+          defaults[field_name] = default_val.as<f64>();
+        } else if (type == "u32") {
+          component.member<u32>(field_name.c_str());
+          defaults[field_name] = default_val.as<f64>();
+        } else if (type == "u64") {
+          component.member<u64>(field_name.c_str());
+          defaults[field_name] = default_val.as<f64>();
+        } else if (type == "vec2") {
+          component.member<glm::vec2>(field_name.c_str());
+          defaults[field_name] = default_val.as<glm::vec3>();
+        } else if (type == "vec3") {
+          component.member<glm::vec3>(field_name.c_str());
+          defaults[field_name] = default_val.as<glm::vec3>();
+        } else if (type == "vec4") {
+          component.member<glm::vec4>(field_name.c_str());
+          defaults[field_name] = default_val.as<glm::vec3>();
         }
       }
 

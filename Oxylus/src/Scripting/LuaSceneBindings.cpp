@@ -23,5 +23,8 @@ auto SceneBinding::bind(sol::state* state) -> void {
   SET_TYPE_FUNCTION(scene_type, Scene, safe_entity_name);
   SET_TYPE_FUNCTION(scene_type, Scene, physics_init);
   SET_TYPE_FUNCTION(scene_type, Scene, physics_deinit);
+
+  scene_type.set_function(
+      "defer", [](Scene* scene, sol::function func) { scene->defer_function([func](Scene* s) { func(s); }); });
 }
 } // namespace ox
