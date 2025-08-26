@@ -704,13 +704,17 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   };
 
   auto dirty_material_ids = asset_man->get_dirty_material_ids();
-  auto gpu_materials = std::vector<GPU::Material>(dirty_material_ids.size());
   auto dirty_material_indices = std::vector<u32>(dirty_material_ids.size());
-  for (const auto& [gpu_material, index, id] :
-       std::views::zip(gpu_materials, dirty_material_indices, dirty_material_ids)) {
-    const auto* material = asset_man->get_material(id);
+  for (const auto& [dirty_index, dirty_id] : std::views::zip(dirty_material_indices, dirty_material_ids)) {
+    const auto* material = asset_man->get_material(dirty_id);
     if (!material)
       continue;
+
+    dirty_index = SlotMap_decode_id(dirty_id).index;
+    if (dirty_index <= self.gpu_materials.size()) {
+      self.gpu_materials.resize(dirty_index + 1, {});
+    }
+
     auto albedo_image_index = uuid_to_image_index(material->albedo_texture);
     auto normal_image_index = uuid_to_image_index(material->normal_texture);
     auto emissive_image_index = uuid_to_image_index(material->emissive_texture);
@@ -731,20 +735,22 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
                                                         : GPU::MaterialFlag::None;
     flags |= occlusion_image_index.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
 
-    gpu_material.albedo_color = material->albedo_color;
-    gpu_material.emissive_color = material->emissive_color;
-    gpu_material.roughness_factor = material->roughness_factor;
-    gpu_material.metallic_factor = material->metallic_factor;
-    gpu_material.alpha_cutoff = material->alpha_cutoff;
-    gpu_material.flags = flags;
-    gpu_material.sampler_index = sampler_index;
-    gpu_material.albedo_image_index = albedo_image_index.value_or(0_u32);
-    gpu_material.normal_image_index = normal_image_index.value_or(0_u32);
-    gpu_material.emissive_image_index = emissive_image_index.value_or(0_u32);
-    gpu_material.metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32);
-    gpu_material.occlusion_image_index = occlusion_image_index.value_or(0_u32);
+    auto gpu_material = GPU::Material {
+      .albedo_color = material->albedo_color,
+      .emissive_color = material->emissive_color,
+      .roughness_factor = material->roughness_factor,
+      .metallic_factor = material->metallic_factor,
+      .alpha_cutoff = material->alpha_cutoff,
+      .flags = flags,
+      .sampler_index = sampler_index,
+      .albedo_image_index = albedo_image_index.value_or(0_u32),
+      .normal_image_index = normal_image_index.value_or(0_u32),
+      .emissive_image_index = emissive_image_index.value_or(0_u32),
+      .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
+      .occlusion_image_index = occlusion_image_index.value_or(0_u32),
+    };
 
-    index = SlotMap_decode_id(id).index;
+    self.gpu_materials[dirty_index] = gpu_material;
   }
 
   auto update_info = RendererInstanceUpdateInfo{
@@ -753,7 +759,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       .dirty_transform_ids = self.dirty_transforms,
       .gpu_transforms = self.transforms.slots_unsafe(),
       .dirty_material_indices = dirty_material_indices,
-      .gpu_materials = gpu_materials,
+      .gpu_materials = self.gpu_materials,
       .gpu_meshes = gpu_meshes,
       .gpu_mesh_instances = gpu_mesh_instances,
   };

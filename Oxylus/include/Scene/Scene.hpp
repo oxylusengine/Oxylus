@@ -8,7 +8,6 @@
 #include <simdjson.h>
 
 #include "Core/UUID.hpp"
-#include "Memory/SlotMap.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Scene/ECSModule/Core.hpp"
 #include "Scene/SceneGPU.hpp"
@@ -60,6 +59,9 @@ public:
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
   ankerl::unordered_dense::map<std::pair<UUID, usize>, std::vector<GPU::TransformID>> rendering_meshes_map = {};
+
+  std::vector<GPU::Material> gpu_materials = {};
+
   bool meshes_dirty = false;
   u32 mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
