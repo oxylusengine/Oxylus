@@ -144,6 +144,8 @@ public:
 private:
   bool running = false;
 
+  std::shared_mutex physics_mutex = {};
+
   auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
   auto remove_transform(this Scene& self, flecs::entity entity) -> void;
 

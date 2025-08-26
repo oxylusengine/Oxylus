@@ -60,6 +60,14 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     return character;
   });
 
+  physics_table.set_function("get_entity_from_body",
+                             [](JPH::Body* body, flecs::world* world) -> sol::optional<flecs::entity> {
+                               auto entity_id = reinterpret_cast<flecs::entity_t>(body->GetUserData());
+                               if (!entity_id)
+                                 return sol::nullopt;
+                               return flecs::entity{world->world_, entity_id};
+                             });
+
   physics_table.set_function("get_screen_ray_from_camera",
                              [](flecs::entity* e, glm::vec2 screen_pos, glm::vec2 screen_size) -> RayCast {
                                auto* c = e->try_get<CameraComponent>();

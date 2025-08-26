@@ -1167,8 +1167,10 @@ auto Scene::on_contact_added(const JPH::Body& body1,
                              const JPH::ContactSettings& settings) -> void {
   ZoneScoped;
 
+  auto write_lock = std::unique_lock(physics_mutex);
+
   for (auto& [uuid, system] : lua_systems) {
-    system->on_contact_added(body1, body2, manifold, settings);
+    system->on_contact_added(this, body1, body2, manifold, settings);
   }
 }
 
@@ -1178,32 +1180,40 @@ auto Scene::on_contact_persisted(const JPH::Body& body1,
                                  const JPH::ContactSettings& settings) -> void {
   ZoneScoped;
 
+  auto write_lock = std::unique_lock(physics_mutex);
+
   for (auto& [uuid, system] : lua_systems) {
-    system->on_contact_persisted(body1, body2, manifold, settings);
+    system->on_contact_persisted(this, body1, body2, manifold, settings);
   }
 }
 
 auto Scene::on_contact_removed(const JPH::SubShapeIDPair& sub_shape_pair) -> void {
   ZoneScoped;
 
+  auto write_lock = std::unique_lock(physics_mutex);
+
   for (auto& [uuid, system] : lua_systems) {
-    system->on_contact_removed(sub_shape_pair);
+    system->on_contact_removed(this, sub_shape_pair);
   }
 }
 
 auto Scene::on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void {
   ZoneScoped;
 
+  auto write_lock = std::unique_lock(physics_mutex);
+
   for (auto& [uuid, system] : lua_systems) {
-    system->on_body_activated(body_id, (u64)body_user_data);
+    system->on_body_activated(this, body_id, (u64)body_user_data);
   }
 }
 
 auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void {
   ZoneScoped;
 
+  auto write_lock = std::unique_lock(physics_mutex);
+
   for (auto& [uuid, system] : lua_systems) {
-    system->on_body_deactivated(body_id, (u64)body_user_data);
+    system->on_body_deactivated(this, body_id, (u64)body_user_data);
   }
 }
 
@@ -1336,7 +1346,7 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
                                     : JPH::EActivation::DontActivate;
   body_interface.AddBody(body->GetID(), activation);
 
-  body->SetUserData((u64)entity);
+  body->SetUserData(entity.id());
 
   component.runtime_body = body;
 }
@@ -1368,9 +1378,10 @@ void Scene::create_character_controller(const TransformComponent& transform,
   settings->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(),
                                            -component.character_radius_standing); // Accept contacts that touch the
                                                                                   // lower sphere of the capsule
-  // TODO: Cleanup
+
   component.character = new JPH::Character(
       settings.get(), position, JPH::Quat::sIdentity(), 0, physics->get_physics_system());
+
   reinterpret_cast<JPH::Character*>(component.character)->AddToPhysicsSystem(JPH::EActivation::Activate);
 }
 

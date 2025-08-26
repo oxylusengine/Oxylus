@@ -42,18 +42,22 @@ public:
   auto on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent, vuk::Format format) -> void;
 
   auto on_contact_added(this const LuaSystem& self,
+                        Scene* scene,
                         const JPH::Body& body1,
                         const JPH::Body& body2,
                         const JPH::ContactManifold& manifold,
                         const JPH::ContactSettings& settings) -> void;
   auto on_contact_persisted(this const LuaSystem& self,
+                            Scene* scene,
                             const JPH::Body& body1,
                             const JPH::Body& body2,
                             const JPH::ContactManifold& manifold,
                             const JPH::ContactSettings& settings) -> void;
-  auto on_contact_removed(this const LuaSystem& self, const JPH::SubShapeIDPair& sub_shape_pair) -> void;
-  auto on_body_activated(this const LuaSystem& self, const JPH::BodyID& body_id, u64 body_user_data) -> void;
-  auto on_body_deactivated(this const LuaSystem& self, const JPH::BodyID& body_id, u64 body_user_data) -> void;
+  auto on_contact_removed(this const LuaSystem& self, Scene* scene, const JPH::SubShapeIDPair& sub_shape_pair) -> void;
+  auto on_body_activated(this const LuaSystem& self, Scene* scene, const JPH::BodyID& body_id, u64 body_user_data)
+      -> void;
+  auto on_body_deactivated(this const LuaSystem& self, Scene* scene, const JPH::BodyID& body_id, u64 body_user_data)
+      -> void;
 
   auto get_path() const -> const std::string& { return file_path; }
 
