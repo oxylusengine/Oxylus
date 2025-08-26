@@ -214,9 +214,6 @@ auto ComponentDB::get_components(this ComponentDB& self) -> std::span<flecs::id>
 Scene::Scene(const std::string& name) { init(name); }
 
 Scene::~Scene() {
-  const auto* lua_manager = App::get_system<LuaManager>(EngineSystems::LuaManager);
-  lua_manager->get_state()->collect_gc();
-
   if (running)
     runtime_stop();
 
@@ -225,6 +222,8 @@ Scene::~Scene() {
   }
 
   lua_systems.clear();
+  auto* lua_manager = App::get_system<LuaManager>(EngineSystems::LuaManager);
+  lua_manager->get_state()->collect_gc();
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {
@@ -632,8 +631,6 @@ auto Scene::runtime_stop(this Scene& self) -> void {
   for (auto& [uuid, system] : self.lua_systems) {
     system->on_scene_stop(&self);
   }
-  auto* lua_manager = App::get_system<LuaManager>(EngineSystems::LuaManager);
-  lua_manager->get_state()->collect_gc();
 }
 
 auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void {
