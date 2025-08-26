@@ -20,7 +20,12 @@ public:
         self.on_selected_entity_callback(e);
     }
 
-    auto get(this SelectedEntity& self) -> flecs::entity { return self.entity; };
+    auto get(this SelectedEntity& self) -> flecs::entity {
+      if (!self.entity.is_alive()) {
+        self.entity = flecs::entity::null();
+      }
+      return self.entity;
+    };
 
     auto reset(this SelectedEntity& self) -> void {
       self.entity = flecs::entity::null();
