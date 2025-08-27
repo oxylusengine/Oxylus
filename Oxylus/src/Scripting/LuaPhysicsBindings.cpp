@@ -62,7 +62,7 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
 
   physics_table.set_function("get_entity_from_body",
                              [](JPH::Body* body, flecs::world* world) -> sol::optional<flecs::entity> {
-                               auto entity_id = reinterpret_cast<flecs::entity_t>(body->GetUserData());
+                               auto entity_id = static_cast<flecs::entity_t>(static_cast<u64>(body->GetUserData()));
                                if (!entity_id)
                                  return sol::nullopt;
                                return flecs::entity{world->world_, entity_id};

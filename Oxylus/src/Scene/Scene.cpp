@@ -35,6 +35,8 @@
 
 namespace ox {
 auto Scene::safe_entity_name(this const Scene& self, std::string prefix) -> std::string {
+  ZoneScoped;
+
   u32 index = 0;
   std::string new_entity_name = prefix;
   while (self.world.lookup(new_entity_name.data())) {
@@ -364,6 +366,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       .event(flecs::OnSet)
       .event(flecs::OnRemove)
       .each([&self](flecs::iter& it, usize i, RigidBodyComponent& rb) {
+        ZoneScopedN("Rigidbody observer");
+
         if (!self.is_running())
           return;
 
@@ -387,6 +391,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       .event(flecs::OnSet)
       .event(flecs::OnRemove)
       .each([&self](flecs::iter& it, usize i, CharacterControllerComponent& ch) {
+        ZoneScopedN("CharacterController observer");
+
         if (!self.is_running())
           return;
 
@@ -1244,9 +1250,7 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     shape_settings.SetDensity(glm::max(0.001f, c->density));
     shape_result = shape_settings.Create();
     offset = c->offset;
-  }
-
-  if (const auto* c = entity.try_get<SphereColliderComponent>()) {
+  } else if (const auto* c = entity.try_get<SphereColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
         entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
@@ -1255,9 +1259,7 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     shape_settings.SetDensity(glm::max(0.001f, c->density));
     shape_result = shape_settings.Create();
     offset = c->offset;
-  }
-
-  if (const auto* c = entity.try_get<CapsuleColliderComponent>()) {
+  } else if (const auto* c = entity.try_get<CapsuleColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
         entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
@@ -1266,9 +1268,7 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     shape_settings.SetDensity(glm::max(0.001f, c->density));
     shape_result = shape_settings.Create();
     offset = c->offset;
-  }
-
-  if (const auto* c = entity.try_get<TaperedCapsuleColliderComponent>()) {
+  } else if (const auto* c = entity.try_get<TaperedCapsuleColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
         entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
@@ -1279,9 +1279,7 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     shape_settings.SetDensity(glm::max(0.001f, c->density));
     shape_result = shape_settings.Create();
     offset = c->offset;
-  }
-
-  if (const auto* c = entity.try_get<CylinderColliderComponent>()) {
+  } else if (const auto* c = entity.try_get<CylinderColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
         entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
