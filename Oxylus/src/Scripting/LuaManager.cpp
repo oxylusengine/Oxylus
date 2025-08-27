@@ -1,6 +1,7 @@
 ﻿#include "Scripting/LuaManager.hpp"
 
 #include <sol/sol.hpp>
+
 #include "Scripting/LuaVFSBindings.hpp"
 
 #ifdef OX_LUA_BINDINGS
@@ -28,6 +29,7 @@ auto LuaManager::init() -> std::expected<void, std::string> {
 
 #ifdef OX_LUA_BINDINGS
   bind_log();
+  bind_vector();
   BIND(AppBinding);
   BIND(AssetManagerBinding);
   BIND(AudioBinding);
@@ -69,5 +71,12 @@ void LuaManager::bind_log() const {
   SET_LOG_FUNCTIONS(log, "info", OX_LOG_INFO)
   SET_LOG_FUNCTIONS(log, "warn", OX_LOG_WARN)
   SET_LOG_FUNCTIONS(log, "error", OX_LOG_ERROR)
+}
+
+void LuaManager::bind_vector() const {
+  ZoneScoped;
+
+  _state->set_function("create_number_vector", []() { return std::vector<f64>{}; });
+  _state->set_function("create_string_vector", []() { return std::vector<std::string>{}; });
 }
 } // namespace ox

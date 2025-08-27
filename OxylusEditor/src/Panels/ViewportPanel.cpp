@@ -334,7 +334,7 @@ void ViewportPanel::set_context(Scene* scene, SceneHierarchyPanel& scene_hierarc
 
   this->_scene = scene;
 
-  editor_camera = _scene->create_entity("editor_camera");
+  editor_camera = _scene->create_entity("editor_camera", true);
   editor_camera.add<CameraComponent>().add<Hidden>();
 }
 

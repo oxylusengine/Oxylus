@@ -832,6 +832,8 @@ auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> void {
   auto* asset_man = App::get_asset_manager();
   auto* script_system = asset_man->get_script(lua_script);
 
+  script_system->reload();
+
   self.lua_systems.emplace(lua_script, script_system);
 
   script_system->on_add(&self);
@@ -887,18 +889,14 @@ void Scene::on_render(const vuk::Extent3D extent, const vuk::Format format) {
   }
 }
 
-auto Scene::create_entity(const std::string& name) const -> flecs::entity {
+auto Scene::create_entity(const std::string& name, bool safe_naming) const -> flecs::entity {
   ZoneScoped;
 
-  if (auto found_entity = world.lookup(name.c_str()))
-    return found_entity;
-
-  flecs::entity e = world.entity();
+  flecs::entity e = {};
   if (name.empty()) {
-    memory::ScopedStack stack;
-    e.set_name(safe_entity_name("entity").c_str());
+    e = safe_naming ? world.entity(safe_entity_name("entity").c_str()) : world.entity();
   } else {
-    e.set_name(name.c_str());
+    e = safe_naming ? world.entity(safe_entity_name(name).c_str()) : world.entity(name.c_str());
   }
 
   return e.add<TransformComponent>().add<LayerComponent>();
@@ -922,15 +920,14 @@ auto Scene::create_mesh_entity(this Scene& self, const UUID& asset_uuid) -> flec
 
   auto* imported_model = asset_man->get_mesh(asset_uuid);
   auto& default_scene = imported_model->scenes[imported_model->default_scene_index];
-  auto root_entity = self.create_entity(self.world.lookup(default_scene.name.c_str()) ? std::string{}
-                                                                                      : default_scene.name);
+  auto root_entity = self.create_entity(default_scene.name, true);
 
   auto visit_nodes = [&self, //
                       &imported_model,
                       &asset_uuid](this auto& visitor, flecs::entity& root, std::vector<usize>& node_indices) -> void {
     for (const auto node_index : node_indices) {
       auto& cur_node = imported_model->nodes[node_index];
-      auto node_entity = self.create_entity(self.world.lookup(cur_node.name.c_str()) ? std::string{} : cur_node.name);
+      auto node_entity = self.create_entity(cur_node.name, true);
 
       const auto T = glm::translate(glm::mat4(1.0f), cur_node.translation);
       const auto R = glm::mat4_cast(cur_node.rotation);
@@ -1346,7 +1343,7 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
                                     : JPH::EActivation::DontActivate;
   body_interface.AddBody(body->GetID(), activation);
 
-  body->SetUserData(entity.id());
+  body->SetUserData(static_cast<u64>(entity.id()));
 
   component.runtime_body = body;
 }

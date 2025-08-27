@@ -16,7 +16,10 @@ auto SceneBinding::bind(sol::state* state) -> void {
   SET_TYPE_FUNCTION(scene_type, Scene, runtime_start);
   SET_TYPE_FUNCTION(scene_type, Scene, runtime_stop);
   SET_TYPE_FUNCTION(scene_type, Scene, runtime_update);
-  SET_TYPE_FUNCTION(scene_type, Scene, create_entity);
+  scene_type.set_function(
+      "create_entity", [](Scene* scene, sol::optional<std::string> name, sol::optional<bool> safe_naming) {
+        return scene->create_entity(name.has_value() ? *name : "", name.has_value() ? *safe_naming : false);
+      });
   SET_TYPE_FUNCTION(scene_type, Scene, create_mesh_entity);
   SET_TYPE_FUNCTION(scene_type, Scene, save_to_file);
   SET_TYPE_FUNCTION(scene_type, Scene, load_from_file);
@@ -31,7 +34,11 @@ auto SceneBinding::bind(sol::state* state) -> void {
   scene_type.set_function("get_local_position",
                           [](Scene* scene, flecs::entity e) -> glm::vec3 { return scene->get_local_transform(e)[3]; });
 
-  scene_type.set_function(
-      "defer", [](Scene* scene, sol::function func) { scene->defer_function([func](Scene* s) { func(s); }); });
+  scene_type.set_function("defer", [](Scene* scene, sol::function func) {
+    scene->defer_function([func](Scene* s) {
+      ZoneScopedN("scene::defer lua function");
+      func(s);
+    });
+  });
 }
 } // namespace ox

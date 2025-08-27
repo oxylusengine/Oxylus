@@ -32,5 +32,6 @@ private:
   std::unique_ptr<sol::state> _state = nullptr;
 
   void bind_log() const;
+  void bind_vector() const;
 };
 } // namespace ox
