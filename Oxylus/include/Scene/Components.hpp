@@ -1,6 +1,5 @@
 // clang-format off
 #ifndef ECS_REFLECT_TYPES
-#include <Tracy.hpp>
 
 #include "Audio/AudioEngine.hpp"
 #include "Core/UUID.hpp"
@@ -39,12 +38,10 @@ ECS_COMPONENT_BEGIN(TransformComponent)
   TransformComponent(const glm::vec3& translation) : position(translation) {}
 
   TransformComponent(const glm::mat4& transform_matrix) {
-    ZoneScoped;
     math::decompose_transform(transform_matrix, position, rotation, scale);
   }
 
   void set_from_matrix(const glm::mat4& transform_matrix) {
-    ZoneScoped;
     math::decompose_transform(transform_matrix, position, rotation, scale);
   }
 

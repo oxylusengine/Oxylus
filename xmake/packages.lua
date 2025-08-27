@@ -74,7 +74,7 @@ add_requires("joltphysics-ox v5.3.0", { configs = {
     enable_floating_point_exceptions = false,
 } })
 
-add_requires("tracy v0.11.1", { configs = {
+add_requires("tracy v0.12.2", { configs = {
     tracy_enable = has_config("profile"),
     on_demand = true,
     callstack = true,

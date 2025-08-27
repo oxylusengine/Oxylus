@@ -1,6 +1,6 @@
 #include "TextEditorPanel.hpp"
 
-#include <Tracy.hpp>
+#include <tracy/Tracy.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 

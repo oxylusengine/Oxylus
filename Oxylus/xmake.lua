@@ -5,7 +5,7 @@ target("Oxylus")
 
     add_includedirs("./include", { public = true })
     add_files("./src/**.cpp")
-    add_forceincludes("Tracy.hpp")
+    add_forceincludes("tracy/Tracy.hpp")
 
     add_options("profile")
     add_options("llvmpipe")

@@ -1,6 +1,6 @@
 #include "ThumbnailRenderer.hpp"
 
-#include <Tracy.hpp>
+#include <tracy/Tracy.hpp>
 
 #include "Core/App.hpp"
 #include "Render/Camera.hpp"

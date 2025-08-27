@@ -1,6 +1,6 @@
 #include "Notification.hpp"
 
-#include <Tracy.hpp>
+#include <tracy/Tracy.hpp>
 #include <fmt/format.h>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui_internal.h>
