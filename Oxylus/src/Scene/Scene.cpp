@@ -759,7 +759,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
     auto dirty_index = SlotMap_decode_id(dirty_id).index;
     dirty_material_indices.push_back(dirty_index);
-    if (dirty_index <= self.gpu_materials.size()) {
+    if (dirty_index >= self.gpu_materials.size()) {
       self.gpu_materials.resize(dirty_index + 1, {});
     }
 

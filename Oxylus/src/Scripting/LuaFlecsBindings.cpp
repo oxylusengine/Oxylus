@@ -13,6 +13,7 @@ static auto get_component_table(sol::state* state, flecs::entity* entity, const 
   ZoneScoped;
 
   sol::table result = state->create_table();
+  result["component_id"] = component;
 
   auto f_id = flecs::id(entity->world(), component);
   ECS::ComponentWrapper component_wrapped(*entity, f_id);
@@ -68,6 +69,9 @@ auto FlecsBinding::bind(sol::state* state) -> void {
   flecs_table.set("OnStore", EcsOnStore);
   flecs_table.set("PostFrame", EcsPostFrame);
 
+  flecs_table.set("Exclusive", EcsExclusive);
+  flecs_table.set("IsA", EcsIsA);
+
   // --- entity_t ---
   auto id_type = flecs_table.new_usertype<flecs::entity_t>("entity_t");
 
@@ -119,8 +123,22 @@ auto FlecsBinding::bind(sol::state* state) -> void {
   auto world_type = flecs_table.new_usertype<flecs::world>(
       "world",
 
+      "component",
+      [](flecs::world* w, sol::table component_table) -> flecs::entity {
+        auto component = component_table.get<ecs_entity_t>("component_id");
+
+        return flecs::entity{*w, component};
+      },
+
       "entity",
-      [](flecs::world* w, const std::string& name) -> flecs::entity { return w->entity(name.c_str()); },
+      [](flecs::world* w, const sol::optional<std::string> name) -> flecs::entity {
+        flecs::entity e = {};
+        if (name.has_value())
+          e = w->entity(name->c_str());
+        else
+          e = w->entity();
+        return e;
+      },
 
       "system",
       [state](flecs::world* world,
@@ -180,15 +198,38 @@ auto FlecsBinding::bind(sol::state* state) -> void {
       "query",
       [](flecs::world* world, sol::table components) {
         std::vector<ecs_entity_t> component_ids = {};
+        std::vector<std::pair<ecs_entity_t, ecs_entity_t>> pair_component_ids = {};
         component_ids.reserve(components.size());
+
         components.for_each([&](sol::object key, sol::object value) {
           sol::table component_table = value.as<sol::table>();
-          component_ids.emplace_back(component_table["component_id"].get<ecs_entity_t>());
+          if (auto c_id = component_table["component_id"].get<sol::optional<ecs_entity_t>>()) {
+            component_ids.emplace_back(*c_id);
+          } else {
+            std::pair<ecs_entity_t, ecs_entity_t> pair = {};
+            u32 index = 0;
+            component_table.for_each([&](sol::object key, sol::object value) {
+              ecs_entity_t c = {};
+              if (auto component_id = value.as<sol::table>().get<sol::optional<ecs_entity_t>>("component_id")) {
+                c = *component_id;
+              } else {
+                c = value.as<flecs::entity>();
+              }
+              index == 0 ? pair.first = c : pair.second = c;
+              index += 1;
+            });
+            pair_component_ids.emplace_back(pair);
+          }
         });
 
         ecs_query_desc_t desc = {};
         for (usize i = 0; i < component_ids.size(); i++) {
           desc.terms[i].id = component_ids[i];
+        }
+
+        for (usize i = component_ids.size(); i < pair_component_ids.size(); i++) {
+          desc.terms[i].first.id = pair_component_ids[i].first;
+          desc.terms[i].second.id = pair_component_ids[i].second;
         }
 
         ecs_query_t* q = ecs_query_init(world->world_, &desc);
@@ -218,51 +259,81 @@ auto FlecsBinding::bind(sol::state* state) -> void {
       [](flecs::entity* e) -> flecs::entity_t { return e->id(); },
 
       "add",
-      [](flecs::entity* e, sol::table component_table, sol::optional<sol::table> values = {}) -> flecs::entity* {
-        auto component = component_table.get<ecs_entity_t>("component_id");
-        e->add(component);
+      sol::overload(
+          [](flecs::entity* e, sol::table component_table, sol::optional<sol::table> values = {}) -> flecs::entity* {
+            auto component = component_table.get<ecs_entity_t>("component_id");
+            e->add(component);
 
-        auto* ptr = e->try_get_mut(component);
-        if (!ptr)
-          return e;
+            auto* ptr = e->try_get_mut(component);
+            if (!ptr)
+              return e;
 
-        if (values) {
-          values->for_each([&](sol::object key, sol::object value) {
-            std::string field_name = key.as<std::string>();
+            if (values) {
+              values->for_each([&](sol::object key, sol::object value) {
+                std::string field_name = key.as<std::string>();
 
-            flecs::cursor cur = e->world().cursor(component, ptr);
-            cur.push();
-            cur.member(field_name.c_str());
+                flecs::cursor cur = e->world().cursor(component, ptr);
+                cur.push();
+                cur.member(field_name.c_str());
 
-            if (value.is<f64>())
-              cur.set_float(value.as<f64>());
-            else if (value.is<bool>())
-              cur.set_float(value.as<bool>());
-            else if (value.is<std::string>())
-              cur.set_string(value.as<std::string>().c_str());
+                if (value.is<f64>())
+                  cur.set_float(value.as<f64>());
+                else if (value.is<bool>())
+                  cur.set_float(value.as<bool>());
+                else if (value.is<std::string>())
+                  cur.set_string(value.as<std::string>().c_str());
 
-            cur.pop();
-          });
+                cur.pop();
+              });
+            } else {
+              if (auto defaults = component_table.get<sol::optional<sol::table>>("defaults")) {
+                defaults->for_each([&](sol::object key, sol::object value) {
+                  std::string field_name = key.as<std::string>();
+                  flecs::cursor cur = e->world().cursor(component, ptr);
+                  cur.push();
+                  cur.member(field_name.c_str());
+
+                  if (value.is<f64>())
+                    cur.set_float(value.as<f64>());
+                  else if (value.is<bool>())
+                    cur.set_float(value.as<bool>());
+                  else if (value.is<std::string>())
+                    cur.set_string(value.as<std::string>().c_str());
+
+                  cur.pop();
+                });
+              }
+            }
+
+            return e;
+          },
+          [](flecs::entity* e, flecs::entity other) -> flecs::entity* {
+            e->add(other);
+            return e;
+          },
+          [](flecs::entity* e, ecs_entity_t other) -> flecs::entity* {
+            e->add(other);
+            return e;
+          }),
+
+      "add_pair",
+      [](flecs::entity* e, sol::object first, sol::object second) -> flecs::entity* {
+        ecs_entity_t first_component = {};
+        ecs_entity_t second_component = {};
+
+        if (auto component_id = first.as<sol::table>().get<sol::optional<ecs_entity_t>>("component_id")) {
+          first_component = flecs::entity{e->world().world_, *component_id};
         } else {
-          if (auto defaults = component_table.get<sol::optional<sol::table>>("defaults")) {
-            defaults->for_each([&](sol::object key, sol::object value) {
-              std::string field_name = key.as<std::string>();
-              flecs::cursor cur = e->world().cursor(component, ptr);
-              cur.push();
-              cur.member(field_name.c_str());
-
-              if (value.is<f64>())
-                cur.set_float(value.as<f64>());
-              else if (value.is<bool>())
-                cur.set_float(value.as<bool>());
-              else if (value.is<std::string>())
-                cur.set_string(value.as<std::string>().c_str());
-
-              cur.pop();
-            });
-          }
+          first_component = first.as<flecs::entity>();
         }
 
+        if (auto component_id = second.as<sol::table>().get<sol::optional<ecs_entity_t>>("component_id")) {
+          second_component = flecs::entity{e->world().world_, *component_id};
+        } else {
+          second_component = second.as<flecs::entity>();
+        }
+
+        ecs_add_pair(e->world().world_, *e, first_component, second_component);
         return e;
       },
 
@@ -328,7 +399,33 @@ auto FlecsBinding::bind(sol::state* state) -> void {
       [](flecs::entity* e, const std::string& name) { e->set_name(name.c_str()); },
 
       "destruct",
-      [](flecs::entity* e) -> void { e->destruct(); });
+      [](flecs::entity* e) -> void { e->destruct(); },
+
+      "parent",
+      [](flecs::entity* e) -> flecs::entity { return e->parent(); },
+
+      "is_a",
+      sol::overload(
+          [](flecs::entity* e, flecs::entity other) -> flecs::entity* {
+            e->add(flecs::IsA, other);
+            return e;
+          },
+          [](flecs::entity* e, sol::table component_table) -> flecs::entity* {
+            auto comp = component_table.get<ecs_entity_t>("component_id");
+            e->add(flecs::IsA, comp);
+            return e;
+          }),
+
+      "target",
+      [](flecs::entity* e, sol::object component_obj) -> flecs::entity {
+        ecs_entity_t component = {};
+        if (auto component_id = component_obj.as<sol::table>().get<sol::optional<ecs_entity_t>>("component_id"))
+          component = flecs::entity{e->world().world_, *component_id};
+        else
+          component = component_obj.as<flecs::entity>();
+
+        return e->target(component);
+      });
 
   // --- Components ---
   auto components_table = state->create_named_table("Component");
@@ -340,74 +437,77 @@ auto FlecsBinding::bind(sol::state* state) -> void {
     (*state)[name] = component_table;
     return component_table;
   };
-  components_table["define"] = [state](Scene* scene, const std::string& name, sol::table properties) -> sol::table {
+  components_table["define"] =
+      [state](Scene* scene, const std::string& name, sol::optional<sol::table> properties = {}) -> sol::table {
     auto component = scene->world.component(name.c_str());
 
     sol::table defaults = state->create_table();
 
-    properties.for_each([&](sol::object key, sol::object value) {
-      std::string field_name = key.as<std::string>();
+    if (properties) {
+      properties->for_each([&](sol::object key, sol::object value) {
+        std::string field_name = key.as<std::string>();
 
-      // explicit types
-      if (value.is<sol::table>()) {
-        sol::table field_def = value.as<sol::table>();
-        std::string type = field_def["type"];
-        sol::object default_val = field_def["default"];
+        // explicit types
+        if (value.is<sol::table>()) {
+          sol::table field_def = value.as<sol::table>();
+          std::string type = field_def["type"];
+          sol::object default_val = field_def["default"];
 
-        if (type == "f32") {
-          component.member<f32>(field_name.c_str());
-          defaults[field_name] = default_val.as<f64>();
-        } else if (type == "f64") {
-          component.member<f64>(field_name.c_str());
-          defaults[field_name] = default_val.as<f64>();
-        } else if (type == "i8") {
-          component.member<i8>(field_name.c_str());
-          defaults[field_name] = default_val.as<f64>();
-        } else if (type == "i16") {
-          component.member<i16>(field_name.c_str());
-          defaults[field_name] = default_val.as<f64>();
-        } else if (type == "i32") {
-          component.member<i32>(field_name.c_str());
-          defaults[field_name] = default_val.as<f64>();
-        } else if (type == "i64") {
-          component.member<i64>(field_name.c_str());
-          defaults[field_name] = default_val.as<f64>();
-        } else if (type == "u8") {
-          component.member<u8>(field_name.c_str());
-          defaults[field_name] = default_val.as<f64>();
-        } else if (type == "u16") {
-          component.member<u16>(field_name.c_str());
-          defaults[field_name] = default_val.as<f64>();
-        } else if (type == "u32") {
-          component.member<u32>(field_name.c_str());
-          defaults[field_name] = default_val.as<f64>();
-        } else if (type == "u64") {
-          component.member<u64>(field_name.c_str());
-          defaults[field_name] = default_val.as<f64>();
-        } else if (type == "vec2") {
-          component.member<glm::vec2>(field_name.c_str());
-          defaults[field_name] = default_val.as<glm::vec3>();
-        } else if (type == "vec3") {
-          component.member<glm::vec3>(field_name.c_str());
-          defaults[field_name] = default_val.as<glm::vec3>();
-        } else if (type == "vec4") {
-          component.member<glm::vec4>(field_name.c_str());
-          defaults[field_name] = default_val.as<glm::vec3>();
+          if (type == "f32") {
+            component.member<f32>(field_name.c_str());
+            defaults[field_name] = default_val.as<f64>();
+          } else if (type == "f64") {
+            component.member<f64>(field_name.c_str());
+            defaults[field_name] = default_val.as<f64>();
+          } else if (type == "i8") {
+            component.member<i8>(field_name.c_str());
+            defaults[field_name] = default_val.as<f64>();
+          } else if (type == "i16") {
+            component.member<i16>(field_name.c_str());
+            defaults[field_name] = default_val.as<f64>();
+          } else if (type == "i32") {
+            component.member<i32>(field_name.c_str());
+            defaults[field_name] = default_val.as<f64>();
+          } else if (type == "i64") {
+            component.member<i64>(field_name.c_str());
+            defaults[field_name] = default_val.as<f64>();
+          } else if (type == "u8") {
+            component.member<u8>(field_name.c_str());
+            defaults[field_name] = default_val.as<f64>();
+          } else if (type == "u16") {
+            component.member<u16>(field_name.c_str());
+            defaults[field_name] = default_val.as<f64>();
+          } else if (type == "u32") {
+            component.member<u32>(field_name.c_str());
+            defaults[field_name] = default_val.as<f64>();
+          } else if (type == "u64") {
+            component.member<u64>(field_name.c_str());
+            defaults[field_name] = default_val.as<f64>();
+          } else if (type == "vec2") {
+            component.member<glm::vec2>(field_name.c_str());
+            defaults[field_name] = default_val.as<glm::vec3>();
+          } else if (type == "vec3") {
+            component.member<glm::vec3>(field_name.c_str());
+            defaults[field_name] = default_val.as<glm::vec3>();
+          } else if (type == "vec4") {
+            component.member<glm::vec4>(field_name.c_str());
+            defaults[field_name] = default_val.as<glm::vec3>();
+          }
         }
-      }
 
-      // default types
-      if (value.is<f64>()) {
-        component.member<f64>(field_name.c_str());
-        defaults[field_name] = value.as<f64>();
-      } else if (value.is<bool>()) {
-        component.member<bool>(field_name.c_str());
-        defaults[field_name] = value.as<bool>();
-      } else if (value.is<std::string>()) {
-        component.member<std::string>(field_name.c_str());
-        defaults[field_name] = value.as<std::string>();
-      }
-    });
+        // default types
+        if (value.is<f64>()) {
+          component.member<f64>(field_name.c_str());
+          defaults[field_name] = value.as<f64>();
+        } else if (value.is<bool>()) {
+          component.member<bool>(field_name.c_str());
+          defaults[field_name] = value.as<bool>();
+        } else if (value.is<std::string>()) {
+          component.member<std::string>(field_name.c_str());
+          defaults[field_name] = value.as<std::string>();
+        }
+      });
+    }
 
     if (!scene->component_db.is_component_known(component))
       scene->component_db.components.emplace_back(component);

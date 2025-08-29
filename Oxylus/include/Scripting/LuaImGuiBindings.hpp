@@ -227,6 +227,7 @@ inline void PopButtonRepeat() { ImGui::PopButtonRepeat(); }
 
 // Cursor / Layout
 inline void Separator() { ImGui::Separator(); }
+inline void SeparatorText(const std::string& label) { ImGui::SeparatorText(label.c_str()); }
 inline void SameLine() { ImGui::SameLine(); }
 inline void SameLine(float offsetFromStartX) { ImGui::SameLine(offsetFromStartX); }
 inline void SameLine(float offsetFromStartX, float spacing) { ImGui::SameLine(offsetFromStartX, spacing); }
@@ -2861,6 +2862,7 @@ inline void init(sol::state* lua) {
 
 #pragma region Cursor / Layout
   ImGui.set_function("Separator", Separator);
+  ImGui.set_function("SeparatorText", SeparatorText);
   ImGui.set_function("SameLine", sol::overload(sol::resolve<void()>(SameLine), sol::resolve<void(float)>(SameLine)));
   ImGui.set_function("NewLine", NewLine);
   ImGui.set_function("Spacing", Spacing);

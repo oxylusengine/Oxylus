@@ -21,6 +21,24 @@
 
 namespace ox {
 auto PhysicsBinding::bind(sol::state* state) -> void {
+  state->new_enum("AllowedDOFs",
+                  "All",
+                  RigidBodyComponent::AllowedDOFs::All,
+                  "TranslationX",
+                  RigidBodyComponent::AllowedDOFs::TranslationX,
+                  "TranslationY",
+                  RigidBodyComponent::AllowedDOFs::TranslationY,
+                  "TranslationZ",
+                  RigidBodyComponent::AllowedDOFs::TranslationZ,
+                  "RotationX",
+                  RigidBodyComponent::AllowedDOFs::RotationX,
+                  "RotationY",
+                  RigidBodyComponent::AllowedDOFs::RotationY,
+                  "RotationZ",
+                  RigidBodyComponent::AllowedDOFs::RotationZ,
+                  "Plane2D",
+                  RigidBodyComponent::AllowedDOFs::Plane2D);
+
   auto raycast_type = state->new_usertype<RayCast>("RayCast", sol::constructors<RayCast(glm::vec3, glm::vec3)>());
   SET_TYPE_FUNCTION(raycast_type, RayCast, get_point_on_ray);
   SET_TYPE_FUNCTION(raycast_type, RayCast, get_direction);
