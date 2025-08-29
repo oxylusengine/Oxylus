@@ -122,7 +122,7 @@ struct Mesh {
   alignas(8) u64 vertex_positions = 0;
   alignas(8) u64 vertex_normals = 0;
   alignas(8) u64 texture_coords = 0;
-  alignas(4) u32 _padding = 0;
+  alignas(4) u32 vertex_count = 0;
   alignas(4) u32 lod_count = 0;
   alignas(8) MeshLOD lods[MAX_LODS] = {};
   alignas(4) Bounds bounds = {};

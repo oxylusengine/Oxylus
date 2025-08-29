@@ -104,7 +104,12 @@ func fs_main(VertexOutput input) -> FragmentOutput {
     let mesh_lod = mesh.lods[mesh_instance.lod_index];
     let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
 
+    FragmentOutput output = {};
+
     let indices = meshlet.indices(mesh_lod, vis.triangle_index);
+    if (any(indices > (mesh.vertex_count - 1))) {
+        return output;
+    }
     let positions = meshlet.positions(mesh, indices);
     let normals = meshlet.normals(mesh, indices);
     let tex_coords = meshlet.tex_coords(mesh, indices);
@@ -113,12 +118,10 @@ func fs_main(VertexOutput input) -> FragmentOutput {
     let deriv = compute_partial_derivatives(world_positions, NDC.xy, params.camera.resolution);
     let tex_coord_grad = deriv.gradient_of(tex_coords);
 
-    FragmentOutput output = {};
-
-    // ALBEDO ───────────────────────────────────────────────────────────
+    // ALBEDO 
     output.albedo_color = material.sample_albedo_color(tex_coord_grad);
 
-    // NORMALS ──────────────────────────────────────────────────────────
+    // NORMALS 
     const f32x3x3 camera_relative_world_positions = {
         world_positions[0].xyz - params.camera.position.xyz,
         world_positions[1].xyz - params.camera.position.xyz,
@@ -177,14 +180,13 @@ func fs_main(VertexOutput input) -> FragmentOutput {
     output.normal_color.xy = com::vec3_to_oct(normal);
     output.normal_color.zw = com::vec3_to_oct(world_normal);
 
-    // EMISSION ─────────────────────────────────────────────────────────
+    // EMISSION
     output.emission_color = material.sample_emissive_color(tex_coord_grad);
 
-    // METALLIC ROUGHNESS ───────────────────────────────────────────────
+    // METALLIC ROUGHNESS
     const f32x2 metallic_roughness_color = material.sample_metallic_roughness(tex_coord_grad);
     output.metallic_roughness_occlusion_color.xy = metallic_roughness_color;
 
-    // AMBIENT OCCLUSION ────────────────────────────────────────────────
     const f32 occlusion_color = material.sample_occlusion_color(tex_coord_grad);
     output.metallic_roughness_occlusion_color.z = occlusion_color;
 

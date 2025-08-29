@@ -322,7 +322,7 @@ public struct Mesh {
     public f32x3 *vertex_positions = nullptr;
     public f32x3 *vertex_normals = nullptr;
     public f32x2 *texture_coords = nullptr;
-    public u32 _padding = 0;
+    public u32 vertex_count = 0;
     public u32 lod_count = 0;
     public MeshLOD lods[MESH_MAX_LODS] = {};
     public Bounds bounds = {};
