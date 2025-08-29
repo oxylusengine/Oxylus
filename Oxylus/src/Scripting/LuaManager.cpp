@@ -2,7 +2,8 @@
 
 #include <sol/sol.hpp>
 
-#include "Scripting/LuaVFSBindings.hpp"
+#include "Core/App.hpp"
+#include "Core/FileSystem.hpp"
 
 #ifdef OX_LUA_BINDINGS
   #include "Scripting/LuaApplicationBindings.hpp"
@@ -16,6 +17,7 @@
   #include "Scripting/LuaRendererBindings.hpp"
   #include "Scripting/LuaSceneBindings.hpp"
   #include "Scripting/LuaUIBindings.hpp"
+  #include "Scripting/LuaVFSBindings.hpp"
 #endif
 
 namespace ox {
@@ -24,6 +26,16 @@ auto LuaManager::init() -> std::expected<void, std::string> {
   _state = std::make_unique<sol::state>();
   _state->open_libraries(
       sol::lib::base, sol::lib::package, sol::lib::math, sol::lib::table, sol::lib::os, sol::lib::string);
+
+  _state->set_function( //
+      "require_script",
+      [s = _state.get()](const std::string& virtual_dir, const std::string& path) -> sol::object {
+        ZoneScopedN("LuaRequire");
+        auto* vfs = App::get_vfs();
+        auto physical_path = vfs->resolve_physical_dir(virtual_dir, path);
+        auto script = fs::read_file(physical_path);
+        return s->require_script(path, script);
+      });
 
 #define BIND(type) bind<type>(#type, _state.get());
 
