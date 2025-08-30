@@ -127,7 +127,7 @@ public:
 
   auto create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component)
       -> void;
-  auto create_character_controller(const TransformComponent& transform, CharacterControllerComponent& component) const
+  auto create_character_controller(flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component) const
       -> void;
 
   auto get_renderer_instance() -> RendererInstance* { return renderer_instance.get(); }

@@ -399,7 +399,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         if (it.event() == flecs::OnSet) {
           auto entity = it.entity(i);
           auto& tc = entity.get<TransformComponent>();
-          self.create_character_controller(tc, ch);
+          self.create_character_controller(entity, tc, ch);
         } else if (it.event() == flecs::OnRemove) {
           auto physics = App::get_system<Physics>(EngineSystems::Physics);
           JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
@@ -618,9 +618,9 @@ auto Scene::physics_init(this Scene& self) -> void {
 
   // Characters
   self.world.query_builder<const TransformComponent, CharacterControllerComponent>().build().each(
-      [&self](const TransformComponent& tc, CharacterControllerComponent& ch) {
+      [&self](flecs::entity e, const TransformComponent& tc, CharacterControllerComponent& ch) {
         if (ch.character == nullptr) {
-          self.create_character_controller(tc, ch);
+          self.create_character_controller(e, tc, ch);
         }
       });
 
@@ -1346,7 +1346,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
   component.runtime_body = body;
 }
 
-void Scene::create_character_controller(const TransformComponent& transform,
+void Scene::create_character_controller(flecs::entity entity,
+                                        const TransformComponent& transform,
                                         CharacterControllerComponent& component) const {
   ZoneScoped;
 
@@ -1377,7 +1378,11 @@ void Scene::create_character_controller(const TransformComponent& transform,
   component.character = new JPH::Character(
       settings.get(), position, JPH::Quat::sIdentity(), 0, physics->get_physics_system());
 
-  reinterpret_cast<JPH::Character*>(component.character)->AddToPhysicsSystem(JPH::EActivation::Activate);
+  auto* ch = reinterpret_cast<JPH::Character*>(component.character);
+  ch->AddToPhysicsSystem(JPH::EActivation::Activate);
+
+  auto ch_body = physics->get_body_interface_lock().TryGetBody(ch->GetBodyID());
+  ch_body->SetUserData(static_cast<u64>(entity.id()));
 }
 
 auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {

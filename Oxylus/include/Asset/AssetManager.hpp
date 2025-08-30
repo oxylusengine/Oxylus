@@ -116,6 +116,7 @@ public:
   auto get_material(const UUID& uuid) -> Material*;
   auto get_material(MaterialID material_id) -> Material*;
   auto set_material_dirty(MaterialID material_id) -> void;
+  auto set_material_dirty(const UUID& uuid) -> void;
   auto set_all_materials_dirty(this AssetManager& self) -> void;
   auto get_dirty_material_ids(this AssetManager& self) -> std::vector<MaterialID>;
 

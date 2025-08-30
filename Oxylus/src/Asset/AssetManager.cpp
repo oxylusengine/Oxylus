@@ -1508,6 +1508,13 @@ auto AssetManager::set_material_dirty(MaterialID material_id) -> void {
   materials_mutex.unlock();
 }
 
+auto AssetManager::set_material_dirty(const UUID& uuid) -> void {
+  ZoneScoped;
+
+  auto material = get_asset(uuid);
+  set_material_dirty(material->material_id);
+}
+
 auto AssetManager::set_all_materials_dirty(this AssetManager& self) -> void {
   ZoneScoped;
 
