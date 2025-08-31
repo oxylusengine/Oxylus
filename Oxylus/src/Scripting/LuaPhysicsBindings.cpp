@@ -79,11 +79,11 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
   });
 
   physics_table.set_function("get_entity_from_body",
-                             [](JPH::Body* body, flecs::world* world) -> sol::optional<flecs::entity> {
+                             [](JPH::Body* body, ecs_world_t* world) -> sol::optional<flecs::entity> {
                                auto entity_id = static_cast<flecs::entity_t>(static_cast<u64>(body->GetUserData()));
                                if (!entity_id)
                                  return sol::nullopt;
-                               return flecs::entity{world->world_, entity_id};
+                               return flecs::entity{world, entity_id};
                              });
 
   physics_table.set_function("get_screen_ray_from_camera",

@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <glm/vec2.hpp>
 #include <imgui.h>
 #include <sol/sol.hpp>
 #include <string>
@@ -64,7 +65,7 @@ inline bool IsWindowFocused(int flags) { return ImGui::IsWindowFocused(static_ca
 inline bool IsWindowHovered() { return ImGui::IsWindowHovered(); }
 inline bool IsWindowHovered(int flags) { return ImGui::IsWindowHovered(static_cast<ImGuiHoveredFlags>(flags)); }
 
-inline ImDrawList* GetWindowDrawList() { return nullptr; /* TODO: GetWindowDrawList() ==> UNSUPPORTED */ }
+inline ImDrawList* GetWindowDrawList() { return ImGui::GetWindowDrawList(); }
 
 inline float GetWindowDpiScale() { return ImGui::GetWindowDpiScale(); }
 
@@ -206,13 +207,11 @@ inline std::tuple<float, float> GetFontTexUvWhitePixel() {
   const auto vec2{ImGui::GetFontTexUvWhitePixel()};
   return std::make_tuple(vec2.x, vec2.y);
 }
-#ifdef SOL_IMGUI_USE_COLOR_U32
 inline int GetColorU32(int idx, float alphaMul) { return ImGui::GetColorU32(static_cast<ImGuiCol>(idx), alphaMul); }
 inline int GetColorU32(float colR, float colG, float colB, float colA) {
   return ImGui::GetColorU32({colR, colG, colB, colA});
 }
 inline int GetColorU32(int col) { return ImGui::GetColorU32(ImU32(col)); }
-#endif
 
 // Parameters stacks (current window)
 inline void PushItemWidth(float itemWidth) { ImGui::PushItemWidth(itemWidth); }
@@ -2731,6 +2730,35 @@ inline void init(sol::state* lua) {
 
   sol::table ImGui = lua->create_named_table("ImGui");
 
+  ImGui.set_function("GetWindowDrawList", GetWindowDrawList);
+
+  auto draw_list = lua->new_usertype<ImDrawList>("ImDrawList");
+  draw_list.set_function("AddRectFilledMultiColor",
+                         [](ImDrawList* draw_list,
+                            glm::vec2 p_min,
+                            glm::vec2 p_max,
+                            ImU32 col_upr_left,
+                            ImU32 col_upr_right,
+                            ImU32 col_bot_right,
+                            ImU32 col_bot_left) {
+                           draw_list->AddRectFilledMultiColor(ImVec2(p_min.x, p_min.y),
+                                                              ImVec2(p_max.x, p_max.y),
+                                                              col_upr_left,
+                                                              col_upr_right,
+                                                              col_bot_right,
+                                                              col_bot_left);
+                         });
+
+  draw_list.set_function(
+      "AddNgon",
+      [](ImDrawList* draw_list, glm::vec2 center, float radius, ImU32 col, int num_segments, float thickness = 1.0f) {
+        draw_list->AddNgon(ImVec2(center.x, center.y), radius, col, num_segments, thickness);
+      });
+  draw_list.set_function("AddNgonFilled",
+                         [](ImDrawList* draw_list, glm::vec2 center, float radius, ImU32 col, int num_segments) {
+                           draw_list->AddNgonFilled(ImVec2(center.x, center.y), radius, col, num_segments);
+                         });
+
 #pragma region Windows
   ImGui.set_function("Begin",
                      sol::overload(sol::resolve<bool(const std::string&)>(Begin),
@@ -2840,12 +2868,10 @@ inline void init(sol::state* lua) {
   ImGui.set_function("GetFont", GetFont);
   ImGui.set_function("GetFontSize", GetFontSize);
   ImGui.set_function("GetFontTexUvWhitePixel", GetFontTexUvWhitePixel);
-#ifdef SOL_IMGUI_USE_COLOR_U32
   ImGui.set_function("GetColorU32",
                      sol::overload(sol::resolve<int(int, float)>(GetColorU32),
                                    sol::resolve<int(float, float, float, float)>(GetColorU32),
                                    sol::resolve<int(int)>(GetColorU32)));
-#endif
 #pragma endregion Parameters stacks(shared)
 
 #pragma region Parameters stacks (current window)

@@ -46,11 +46,15 @@ public:
   auto render(this RendererInstance& self, const Renderer::RenderInfo& render_info) -> vuk::Value<vuk::ImageAttachment>;
   auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void;
 
+  auto get_viewport_offset(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_offset; }
+
 private:
   Scene* scene = nullptr;
   Renderer& renderer;
   Renderer::RenderQueue2D render_queue_2d = {};
   bool saved_camera = false;
+
+  glm::uvec2 viewport_offset = {};
 
   PreparedFrame prepared_frame = {};
   GPU::CameraData camera_data = {};

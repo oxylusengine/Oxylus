@@ -90,6 +90,9 @@ auto LuaSystem::init_script(this LuaSystem& self, const std::string& path, const
   self.on_scene_render_func = std::make_unique<sol::protected_function>((*self.environment)["on_scene_render"]);
   reset_unused(self.on_scene_render_func);
 
+  self.on_viewport_render_func = std::make_unique<sol::protected_function>((*self.environment)["on_viewport_render"]);
+  reset_unused(self.on_viewport_render_func);
+
   self.on_contact_added_func = std::make_unique<sol::protected_function>((*self.environment)["on_contact_added"]);
   reset_unused(self.on_contact_added_func);
 
@@ -212,6 +215,18 @@ auto LuaSystem::on_scene_render(this const LuaSystem& self, Scene* scene, vuk::E
   const auto result = self.on_scene_render_func->call(
       scene, glm::vec3(extent.width, extent.height, extent.depth), format);
   check_result(result, "on_scene_render");
+}
+
+auto LuaSystem::on_viewport_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent, vuk::Format format)
+    -> void {
+  ZoneScoped;
+
+  if (!self.on_viewport_render_func)
+    return;
+
+  const auto result = self.on_viewport_render_func->call(
+      scene, glm::vec3(extent.width, extent.height, extent.depth), format);
+  check_result(result, "on_viewport_render");
 }
 
 auto LuaSystem::on_contact_added(this const LuaSystem& self,

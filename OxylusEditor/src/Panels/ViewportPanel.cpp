@@ -124,9 +124,11 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       const Renderer::RenderInfo render_info = {
           .extent = extent,
           .format = format,
+          .viewport_offset = {_viewport_position.x, _viewport_position.y},
           .picking_texel = {},
       };
       auto scene_view_image = renderer_instance->render(render_info);
+      _scene->on_viewport_render(extent, format);
       ImGui::Image(app->get_imgui_layer()->add_image(std::move(scene_view_image)),
                    ImVec2{fixed_width, _viewport_panel_size.y});
     } else {

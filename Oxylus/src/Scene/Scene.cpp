@@ -27,7 +27,6 @@
 #include "Render/RendererConfig.hpp"
 #include "Scene/ECSModule/ComponentWrapper.hpp"
 #include "Scene/ECSModule/Core.hpp"
-#include "Scene/SceneEvents.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "Utils/JsonHelpers.hpp"
 #include "Utils/JsonWriter.hpp"
@@ -39,7 +38,7 @@ auto Scene::safe_entity_name(this const Scene& self, std::string prefix) -> std:
 
   u32 index = 0;
   std::string new_entity_name = prefix;
-  while (self.world.lookup(new_entity_name.data())) {
+  while (self.world.lookup(new_entity_name.data()) > 0) {
     index += 1;
     new_entity_name = fmt::format("{}_{}", prefix, index);
   }
@@ -222,6 +221,8 @@ Scene::~Scene() {
   for (auto& [uuid, system] : lua_systems) {
     system->on_remove(this);
   }
+
+  world.release();
 
   lua_systems.clear();
   auto* lua_manager = App::get_system<LuaManager>(EngineSystems::LuaManager);
@@ -892,6 +893,17 @@ void Scene::on_render(const vuk::Extent3D extent, const vuk::Format format) {
 
   for (auto& [uuid, system] : lua_systems) {
     system->on_scene_render(this, extent, format);
+  }
+}
+
+auto Scene::on_viewport_render(vuk::Extent3D extent, vuk::Format format) -> void {
+  ZoneScoped;
+
+  if (!is_running())
+    return;
+
+  for (auto& [uuid, system] : lua_systems) {
+    system->on_viewport_render(this, extent, format);
   }
 }
 

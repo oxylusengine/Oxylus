@@ -36,7 +36,7 @@ auto MathBinding::bind(sol::state* state) -> void {
   SET_MATH_FUNCTIONS(vec2, glm::vec2, float)
 
   auto uvec2 = state->new_usertype<glm::uvec2>(
-      "UVec2", sol::constructors<glm::uvec2(uint32_t, uint32_t), glm::uvec2(uint32_t)>());
+      "uvec2", sol::constructors<glm::uvec2(uint32_t, uint32_t), glm::uvec2(uint32_t)>());
   SET_TYPE_FIELD(uvec2, glm::uvec2, x);
   SET_TYPE_FIELD(uvec2, glm::uvec2, y);
   SET_MATH_FUNCTIONS(uvec2, glm::uvec2, uint32_t)

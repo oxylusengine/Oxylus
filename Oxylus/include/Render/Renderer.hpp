@@ -14,7 +14,6 @@ class RendererInstance;
 class Scene;
 class VkContext;
 
-// TODO: Kinda useless?
 enum class PassConfig : u32 {
   None = 0,
   EnableBloom = 1 << 0,
@@ -27,6 +26,7 @@ public:
   struct RenderInfo {
     vuk::Extent3D extent;
     vuk::Format format;
+    glm::uvec2 viewport_offset = {};
     option<glm::uvec2> picking_texel = nullopt;
   };
 

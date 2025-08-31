@@ -24,6 +24,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
+  self.viewport_offset = render_info.viewport_offset;
+
   auto& vk_context = App::get_vkcontext();
   auto& bindless_set = vk_context.get_descriptor_set();
 

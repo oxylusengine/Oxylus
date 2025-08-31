@@ -7,6 +7,8 @@
 #include "Scene/ECSModule/ComponentWrapper.hpp"
 #include "Scene/Scene.hpp"
 
+struct ecs_world_t {};
+
 namespace ox {
 static auto get_component_table(sol::state* state, flecs::entity* entity, const ecs_entity_t component, bool is_mutable)
     -> sol::table {
@@ -120,28 +122,29 @@ auto FlecsBinding::bind(sol::state* state) -> void {
       [](ecs_iter_t* it) -> bool { return ecs_query_next(it); });
 
   // --- world ---
-  auto world_type = flecs_table.new_usertype<flecs::world>(
+  auto world_type = flecs_table.new_usertype<ecs_world_t>(
       "world",
 
       "component",
-      [](flecs::world* w, sol::table component_table) -> flecs::entity {
+      [](ecs_world_t* w, sol::table component_table) -> flecs::entity {
         auto component = component_table.get<ecs_entity_t>("component_id");
 
-        return flecs::entity{*w, component};
+        return flecs::entity{w, component};
       },
 
       "entity",
-      [](flecs::world* w, const sol::optional<std::string> name) -> flecs::entity {
+      [](ecs_world_t* w, const sol::optional<std::string> name) -> flecs::entity {
         flecs::entity e = {};
+        flecs::world cpp_world(w);
         if (name.has_value())
-          e = w->entity(name->c_str());
+          e = cpp_world.entity(name->c_str());
         else
-          e = w->entity();
+          e = cpp_world.entity();
         return e;
       },
 
       "system",
-      [state](flecs::world* world,
+      [state](ecs_world_t* world,
               const std::string& name,
               sol::table components,
               sol::table dependencies,
@@ -166,7 +169,7 @@ auto FlecsBinding::bind(sol::state* state) -> void {
         entity_desc.name = name.c_str();
         entity_desc.add = dependency_ids.data();
 
-        system_desc.entity = ecs_entity_init(world->world_, &entity_desc);
+        system_desc.entity = ecs_entity_init(world, &entity_desc);
 
         system_desc.callback_ctx = new std::shared_ptr<sol::function>(new sol::function(callback));
         system_desc.callback_ctx_free = [](void* ctx) {
@@ -190,13 +193,13 @@ auto FlecsBinding::bind(sol::state* state) -> void {
         }
 
         auto system_table = state->create_table();
-        system_table["system"] = ecs_system_init(world->world_, &system_desc);
+        system_table["system"] = ecs_system_init(world, &system_desc);
 
         return system_table;
       },
 
       "query",
-      [](flecs::world* world, sol::table components) {
+      [](ecs_world_t* world, sol::table components) {
         std::vector<ecs_entity_t> component_ids = {};
         std::vector<std::pair<ecs_entity_t, ecs_entity_t>> pair_component_ids = {};
         component_ids.reserve(components.size());
@@ -232,24 +235,39 @@ auto FlecsBinding::bind(sol::state* state) -> void {
           desc.terms[i].second.id = pair_component_ids[i].second;
         }
 
-        ecs_query_t* q = ecs_query_init(world->world_, &desc);
+        ecs_query_t* q = ecs_query_init(world, &desc);
         return q;
       },
 
       "defer",
-      [](flecs::world* world, sol::function func) { world->defer([func]() { func(); }); },
+      [](ecs_world_t* w, sol::function func) {
+        flecs::world cpp_world(w);
+        cpp_world.defer([func]() { func(); });
+      },
 
       "defer_resume",
-      [](flecs::world* world) { world->defer_resume(); },
+      [](ecs_world_t* w) {
+        flecs::world cpp_world(w);
+        cpp_world.defer_resume();
+      },
 
       "defer_suspend",
-      [](flecs::world* world) { world->defer_suspend(); },
+      [](ecs_world_t* w) {
+        flecs::world cpp_world(w);
+        cpp_world.defer_suspend();
+      },
 
       "defer_begin",
-      [](flecs::world* world) { world->defer_begin(); },
+      [](ecs_world_t* w) {
+        flecs::world cpp_world(w);
+        cpp_world.defer_begin();
+      },
 
       "defer_end",
-      [](flecs::world* world) { world->defer_end(); });
+      [](ecs_world_t* w) {
+        flecs::world cpp_world(w);
+        cpp_world.defer_end();
+      });
 
   // --- entity ---
   auto entity_type = state->new_usertype<flecs::entity>(
@@ -257,6 +275,12 @@ auto FlecsBinding::bind(sol::state* state) -> void {
 
       "id",
       [](flecs::entity* e) -> flecs::entity_t { return e->id(); },
+
+      "name",
+      [](flecs::entity* e) -> std::string { return e->name().c_str(); },
+
+      "path",
+      [](flecs::entity* e) -> std::string { return e->path().c_str(); },
 
       "add",
       sol::overload(
