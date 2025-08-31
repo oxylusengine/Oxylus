@@ -221,7 +221,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
 
   auto& undo_redo_system = EditorLayer::get()->undo_redo_system;
 
-  ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.9f);
+  ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + 20.0f));
   std::string new_name = entity.name().c_str();
   if (_rename_entity)
     ImGui::SetKeyboardFocusHere();
@@ -234,15 +234,33 @@ void InspectorPanel::draw_components(flecs::entity entity) {
   ImGui::SameLine();
 
   if (UI::button(ICON_MDI_PLUS)) {
-    ImGui::OpenPopup("Add Component");
+    ImGui::OpenPopup("add_component");
   }
 
   const auto components = _scene->component_db.get_components();
 
-  if (ImGui::BeginPopup("Add Component")) {
+  if (ImGui::BeginPopup("add_component")) {
+    static ImGuiTextFilter add_component_filter = {};
+    float filter_cursor_pos_x = ImGui::GetCursorPosX();
+
+    if (ImGui::IsWindowAppearing()) {
+      ImGui::SetKeyboardFocusHere();
+    }
+    add_component_filter.Draw("##scripts_filter_", ImGui::GetContentRegionAvail().x);
+    if (!add_component_filter.IsActive()) {
+      ImGui::SameLine();
+      ImGui::SetCursorPosX(filter_cursor_pos_x + ImGui::GetFontSize() * 0.5f);
+      auto search_txt = fmt::format("  {} Search components...", ICON_MDI_MAGNIFY);
+      ImGui::TextUnformatted(search_txt.c_str());
+    }
+
     for (auto& component : components) {
       auto component_entity = component.entity();
       auto component_name = component_entity.name();
+
+      if (add_component_filter.IsActive() && !add_component_filter.PassFilter(component_name.c_str())) {
+        continue;
+      }
 
       if (ImGui::MenuItem(component_name)) {
         if (entity.has(component))
@@ -525,76 +543,6 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     if (remove_component)
       entity.remove(component);
   }
-#if 0
-
-  draw_component<RigidBodyComponent>(
-      " Rigidbody Component", entity, [](RigidBodyComponent& component, flecs::entity e) {
-        UI::begin_properties();
-
-        const char* dofs_strings[] = {
-            "None",
-            "All",
-            "Plane2D",
-            "Custom",
-        };
-        int current_dof_selection = 3;
-        switch (component.allowed_dofs) {
-          case RigidBodyComponent::AllowedDOFs::None   : current_dof_selection = 0; break;
-          case RigidBodyComponent::AllowedDOFs::All    : current_dof_selection = 1; break;
-          case RigidBodyComponent::AllowedDOFs::Plane2D: current_dof_selection = 2; break;
-          default                                      : current_dof_selection = 3; break;
-        }
-
-        if (UI::property("Allowed degree of freedom", &current_dof_selection, dofs_strings, std::size(dofs_strings))) {
-          switch (current_dof_selection) {
-            case 0: component.allowed_dofs = RigidBodyComponent::AllowedDOFs::None; break;
-            case 1: component.allowed_dofs = RigidBodyComponent::AllowedDOFs::All; break;
-            case 2: component.allowed_dofs = RigidBodyComponent::AllowedDOFs::Plane2D; break;
-          }
-        }
-
-        ImGui::Indent();
-        UI::begin_property_grid("Allowed positions", nullptr);
-        ImGui::CheckboxFlags("x", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::TranslationX);
-        ImGui::SameLine();
-        ImGui::CheckboxFlags("y", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::TranslationY);
-        ImGui::SameLine();
-        ImGui::CheckboxFlags("z", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::TranslationZ);
-        UI::end_property_grid();
-
-        UI::begin_property_grid("Allowed rotations", nullptr);
-        ImGui::CheckboxFlags("x", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::RotationX);
-        ImGui::SameLine();
-        ImGui::CheckboxFlags("y", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::RotationY);
-        ImGui::SameLine();
-        ImGui::CheckboxFlags("z", (u32*)&component.allowed_dofs, (u32)RigidBodyComponent::AllowedDOFs::RotationZ);
-        UI::end_property_grid();
-        ImGui::Unindent();
-
-        const char* body_type_strings[] = {"Static", "Kinematic", "Dynamic"};
-        int body_type = static_cast<int>(component.type);
-        if (UI::property("Body Type", &body_type, body_type_strings, 3))
-          component.type = static_cast<RigidBodyComponent::BodyType>(body_type);
-
-        UI::property("Allow Sleep", &component.allow_sleep);
-        UI::property("Awake", &component.awake);
-        if (component.type == RigidBodyComponent::BodyType::Dynamic) {
-          UI::property("Mass", &component.mass, 0.01f, 10000.0f);
-          UI::property("Linear Drag", &component.linear_drag);
-          UI::property("Angular Drag", &component.angular_drag);
-          UI::property("Gravity Scale", &component.gravity_scale);
-          UI::property("Continuous", &component.continuous);
-          UI::property("Interpolation", &component.interpolation);
-
-          component.linear_drag = glm::max(component.linear_drag, 0.0f);
-          component.angular_drag = glm::max(component.angular_drag, 0.0f);
-        }
-
-        UI::property("Is Sensor", &component.is_sensor);
-        UI::end_properties();
-      });
-
-#endif
 }
 
 void InspectorPanel::draw_asset_info(Asset* asset) {
