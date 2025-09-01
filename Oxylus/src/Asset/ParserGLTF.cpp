@@ -243,7 +243,7 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
   }
 
   if (callbacks.on_materials_load) {
-    callbacks.on_materials_load(model.materials, model.textures, model.images);
+    callbacks.on_materials_load(model.materials, model.textures, model.images, model.samplers);
   }
 
   ///////////////////////////////////////////////

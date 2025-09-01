@@ -739,14 +739,24 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
 
   auto on_materials_load = [model, materials, &texture_info_map](std::vector<GLTFMaterialInfo>& gltf_materials,
                                                                  std::vector<GLTFTextureInfo>& textures,
-                                                                 std::vector<GLTFImageInfo>& images) {
-    auto load_texture_bytes = [&textures, &images](u32 texture_index, TextureLoadInfo& inf) {
-      if (auto& image_index = textures[texture_index].image_index; image_index.has_value()) {
+                                                                 std::vector<GLTFImageInfo>& images,
+                                                                 std::vector<GLTFSamplerInfo>& samplers) {
+    auto load_texture_bytes = [&textures, &images, &samplers](u32 texture_index, TextureLoadInfo& inf) {
+      auto& texture = textures[texture_index];
+      if (auto& image_index = texture.image_index; image_index.has_value()) {
         auto& image = images[image_index.value()];
 
         switch (image.file_type) {
           case AssetFileType::KTX2: inf.mime = TextureLoadInfo::MimeType::KTX; break;
           default                 : inf.mime = TextureLoadInfo::MimeType::Generic; break;
+        }
+
+        if (texture.sampler_index.has_value()) {
+          auto& sampler = samplers[texture.sampler_index.value()];
+          inf.sampler_info.minFilter = sampler.min_filter;
+          inf.sampler_info.magFilter = sampler.mag_filter;
+          inf.sampler_info.addressModeU = sampler.address_u;
+          inf.sampler_info.addressModeV = sampler.address_v;
         }
 
         std::visit(ox::match{
@@ -755,7 +765,7 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
                          if (extension == ".ktx" || extension == ".ktx2") {
                            inf.mime = TextureLoadInfo::MimeType::KTX;
                          }
-                       }, // noop
+                       },
                        [&](const std::vector<u8>& data) { inf.bytes = data; },
                    },
                    image.image_data);
@@ -1209,8 +1219,7 @@ auto AssetManager::load_material(const UUID& uuid,
     if (texture_info_map.has_value()) {
       auto& map = texture_info_map.value();
       if (map.contains(texture)) {
-        info.bytes = map[texture].bytes;
-        info.mime = map[texture].mime;
+        info = map[texture];
       }
     }
     return info;

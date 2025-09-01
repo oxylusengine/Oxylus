@@ -169,12 +169,9 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
     fut.wait(*allocator, compiler);
   }
 
-  // TODO: Actually fill the correct parameters
-  sampler_id = vk_context.allocate_sampler({
-      .magFilter = vuk::Filter::eLinear,
-      .minFilter = vuk::Filter::eLinear,
-      .maxLod = f32(ia.level_count),
-  });
+  auto sampler_ci = load_info.sampler_info;
+  sampler_ci.maxLod = f32(ia.level_count);
+  sampler_id = vk_context.allocate_sampler(sampler_ci);
   attachment_ = ia;
 
   set_name(name_.c_str(), loc);

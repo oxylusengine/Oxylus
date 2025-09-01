@@ -20,6 +20,9 @@ struct TextureLoadInfo {
   option<std::vector<u8>> bytes = ox::nullopt;
   option<void*> loaded_data = ox::nullopt;
   option<vuk::Extent3D> extent = ox::nullopt;
+  vuk::SamplerCreateInfo sampler_info = {.magFilter = vuk::Filter::eLinear,
+                                         .minFilter = vuk::Filter::eLinear,
+                                         .mipmapMode = vuk::SamplerMipmapMode::eLinear};
 };
 
 enum class TextureID : u64 { Invalid = std::numeric_limits<u64>::max() };

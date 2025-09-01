@@ -79,7 +79,8 @@ struct GLTFMeshCallbacks {
 
   std::function<void(std::vector<GLTFMaterialInfo>& gltf_materials,
                      std::vector<GLTFTextureInfo>& textures,
-                     std::vector<GLTFImageInfo>& images)>
+                     std::vector<GLTFImageInfo>& images,
+                     std::vector<GLTFSamplerInfo>& samplers)>
       on_materials_load = nullptr;
 };
 
