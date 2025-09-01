@@ -457,6 +457,15 @@ void ViewportPanel::draw_settings_panel() {
 
   constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap |
                                             ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_FramePadding;
+
+  if (open_action != -1)
+    ImGui::SetNextItemOpen(open_action != 0);
+  if (ImGui::TreeNodeEx("Scene", TREE_FLAGS, "%s", "Scene")) {
+    const auto entities_count = _scene->world.count<TransformComponent>();
+    ImGui::Text("Entities with transforms: %d", entities_count);
+    ImGui::TreePop();
+  }
+
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
   if (ImGui::TreeNodeEx("Renderer", TREE_FLAGS, "%s", "Renderer")) {
