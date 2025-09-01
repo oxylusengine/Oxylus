@@ -35,6 +35,7 @@ ECS_COMPONENT_BEGIN(TransformComponent)
 
 #ifndef ECS_REFLECT_TYPES
   TransformComponent() = default;
+  TransformComponent(glm::vec3 p, glm::vec3 r, glm::vec3 s) : position(p), rotation(r), scale(s) {}
   TransformComponent(const glm::vec3& translation) : position(translation) {}
 
   TransformComponent(const glm::mat4& transform_matrix) {
@@ -76,8 +77,6 @@ ECS_COMPONENT_BEGIN(SpriteComponent)
 
 #ifndef ECS_REFLECT_TYPES
   AABB rect = {};
-
-  SpriteComponent() {}
 #endif
 ECS_COMPONENT_END();
 
@@ -177,7 +176,78 @@ ECS_COMPONENT_BEGIN(CameraComponent)
 ECS_COMPONENT_END();
 
 ECS_COMPONENT_BEGIN(ParticleSystemComponent)
-    ECS_COMPONENT_MEMBER(placeholder, u32, 0) // so warnings shut up for now
+  ECS_COMPONENT_MEMBER(material, UUID, {})
+  ECS_COMPONENT_MEMBER(duration, f32, 3.f)
+  ECS_COMPONENT_MEMBER(looping, bool, true)
+  ECS_COMPONENT_MEMBER(start_delay, f32, 0.f)
+  ECS_COMPONENT_MEMBER(start_lifetime, f32, 3.0f)
+  ECS_COMPONENT_MEMBER(start_velocity, glm::vec3, {0.f, 2.f, 0.f})
+  ECS_COMPONENT_MEMBER(start_color, glm::vec4, {1.f, 1.f, 1.f, 1.f})
+  ECS_COMPONENT_MEMBER(start_size, glm::vec4, {1.f, 1.f, 1.f, 1.f})
+  ECS_COMPONENT_MEMBER(start_rotation, glm::vec4, {1.f, 1.f, 1.f, 1.f})
+  ECS_COMPONENT_MEMBER(gravity_modifier, f32, 0.f)
+  ECS_COMPONENT_MEMBER(simulation_speed, f32, 1.f)
+  ECS_COMPONENT_MEMBER(play_on_awake, bool, true)
+  ECS_COMPONENT_MEMBER(max_particles, u32, 100)
+  ECS_COMPONENT_MEMBER(rate_over_time, u32, 10)
+  ECS_COMPONENT_MEMBER(rate_over_distance, u32, 0)
+  ECS_COMPONENT_MEMBER(burst_count, u32, 0)
+  ECS_COMPONENT_MEMBER(position_start, glm::vec3, {-0.2f, 0.f, 0.f})
+  ECS_COMPONENT_MEMBER(position_end, glm::vec3, {0.2f, 0.f, 0.f})
+
+  ECS_COMPONENT_MEMBER(velocity_over_lifetime_enabled, bool, false)
+  ECS_COMPONENT_MEMBER(velocity_over_lifetime_start, glm::vec3, {})
+  ECS_COMPONENT_MEMBER(velocity_over_lifetime_end, glm::vec3, {})
+
+  ECS_COMPONENT_MEMBER(force_over_lifetime_enabled, bool, false)
+  ECS_COMPONENT_MEMBER(force_over_lifetime_start, glm::vec3, {})
+  ECS_COMPONENT_MEMBER(force_over_lifetime_end, glm::vec3, {})
+
+  ECS_COMPONENT_MEMBER(color_over_lifetime_enabled, bool, false)
+  ECS_COMPONENT_MEMBER(color_over_lifetime_start, glm::vec4, {0.8f, 0.2f, 0.2f, 0.0f})
+  ECS_COMPONENT_MEMBER(color_over_lifetime_end, glm::vec4, {0.2f, 0.2f, 0.75f, 1.0f})
+
+  ECS_COMPONENT_MEMBER(color_by_speed_enabled, bool, false)
+  ECS_COMPONENT_MEMBER(color_by_speed_start, glm::vec4, {0.8f, 0.2f, 0.2f, 0.0f})
+  ECS_COMPONENT_MEMBER(color_by_speed_end, glm::vec4, {0.2f, 0.2f, 0.75f, 1.0f})
+  ECS_COMPONENT_MEMBER(color_by_speed_min_speed, f32, 0.f)
+  ECS_COMPONENT_MEMBER(color_by_speed_max_speed, f32, 1.f)
+
+  ECS_COMPONENT_MEMBER(size_over_lifetime_enabled, bool, false)
+  ECS_COMPONENT_MEMBER(size_over_lifetime_start, glm::vec3, glm::vec3(0.2f))
+  ECS_COMPONENT_MEMBER(size_over_lifetime_end, glm::vec3, glm::vec3(1.0f))
+
+  ECS_COMPONENT_MEMBER(size_by_speed_enabled, bool, false)
+  ECS_COMPONENT_MEMBER(size_by_speed_start, glm::vec3, glm::vec3(0.2f))
+  ECS_COMPONENT_MEMBER(size_by_speed_end, glm::vec3, glm::vec3(1.0f))
+  ECS_COMPONENT_MEMBER(size_by_speed_min_speed, f32, 0.f)
+  ECS_COMPONENT_MEMBER(size_by_speed_max_speed, f32, 1.f)
+
+  ECS_COMPONENT_MEMBER(rotation_over_lifetime_enabled, bool, false)
+  ECS_COMPONENT_MEMBER(rotation_over_lifetime_start, glm::vec3, {})
+  ECS_COMPONENT_MEMBER(rotation_over_lifetime_end, glm::vec3, {})
+
+  ECS_COMPONENT_MEMBER(rotation_by_speed_enabled, bool, false)
+  ECS_COMPONENT_MEMBER(rotation_by_speed_start, glm::vec3, {})
+  ECS_COMPONENT_MEMBER(rotation_by_speed_end, glm::vec3, {})
+  ECS_COMPONENT_MEMBER(rotation_by_speed_min_speed, f32, 0.f)
+  ECS_COMPONENT_MEMBER(rotation_by_speed_max_speed, f32, 1.f)
+
+#ifndef ECS_REFLECT_TYPES
+  std::vector<u64> particles = {};
+  u32 pool_index = 0;
+  float system_time = 0.0f;
+  float burst_time = 0.0f;
+  float spawn_time = 0.0f;
+  glm::vec3 last_spawned_position = glm::vec3(0.0f);
+  uint32_t active_particle_count = 0;
+  bool playing = false;
+#endif
+ECS_COMPONENT_END();
+
+ECS_COMPONENT_BEGIN(ParticleComponent)
+  ECS_COMPONENT_MEMBER(color, glm::vec4, {})
+  ECS_COMPONENT_MEMBER(life_remaining, f32, 0.f)
 ECS_COMPONENT_END();
 
 ECS_COMPONENT_BEGIN(LightComponent)

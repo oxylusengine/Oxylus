@@ -722,7 +722,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
              transforms_buffer) =
         vuk::make_pass(
             "2d_forward_pass",
-            [&rq2d = self.render_queue_2d, &descriptor_set = bindless_set]( //
+            [rq2d = self.render_queue_2d, &descriptor_set = bindless_set]( //
                 vuk::CommandBuffer& command_buffer,
                 VUK_IA(vuk::eColorWrite) target,
                 VUK_IA(vuk::eDepthStencilRW) depth,
@@ -1271,6 +1271,34 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
                      distance);
           } else {
             OX_LOG_WARN("No registered transform for sprite entity: {}", e.name().c_str());
+          }
+        }
+      });
+
+  self.scene->world
+      .query_builder<const TransformComponent, const ParticleComponent>() //
+      .build()
+      .each([asset_man, &scene = self.scene, &cam, &rq2d = self.render_queue_2d](
+                flecs::entity e, const TransformComponent& tc, const ParticleComponent& comp) {
+        if (comp.life_remaining <= 0.0f)
+          return;
+
+        const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
+
+        auto particle_system_component = e.parent().try_get<ParticleSystemComponent>();
+        if (particle_system_component) {
+          if (auto* material = asset_man->get_asset(particle_system_component->material)) {
+            if (auto transform_id = scene->get_entity_transform_id(e)) {
+              SpriteComponent sprite_comp = {.sort_y = true};
+
+              rq2d.add(sprite_comp,
+                       tc.position.y,
+                       SlotMap_decode_id(*transform_id).index,
+                       SlotMap_decode_id(material->material_id).index,
+                       distance);
+            } else {
+              OX_LOG_WARN("No registered transform for sprite entity: {}", e.name().c_str());
+            }
           }
         }
       });
