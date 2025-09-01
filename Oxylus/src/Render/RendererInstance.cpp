@@ -32,8 +32,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   self.camera_data.resolution = {render_info.extent.width, render_info.extent.height};
   auto camera_buffer = self.renderer.vk_context->scratch_buffer(std::span(&self.camera_data, 1));
 
-  auto material_buffer = vuk::Value<vuk::Buffer>{};
-
   self.render_queue_2d.update();
   self.render_queue_2d.sort();
   auto vertex_buffer_2d = self.renderer.vk_context->scratch_buffer(std::span(self.render_queue_2d.sprite_data));
@@ -91,13 +89,13 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   const auto debugging = debug_view != GPU::DebugView::None;
 
   auto transforms_buffer = std::move(self.prepared_frame.transforms_buffer);
+  auto materials_buffer = std::move(self.prepared_frame.materials_buffer);
 
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0) {
     auto meshes_buffer = std::move(self.prepared_frame.meshes_buffer);
     auto mesh_instances_buffer = std::move(self.prepared_frame.mesh_instances_buffer);
     auto meshlet_instances_buffer = std::move(self.prepared_frame.meshlet_instances_buffer);
-    auto materials_buffer = std::move(self.prepared_frame.materials_buffer);
     auto reordered_indices_buffer = std::move(self.prepared_frame.reordered_indices_buffer);
 
     auto cull_flags = GPU::CullFlags::MicroTriangles | GPU::CullFlags::TriangleBackFace;
@@ -526,6 +524,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                                  mesh_instances,
                                  meshes,
                                  transforms,
+                                 materials,
                                  visbuffer,
                                  albedo,
                                  normal,
@@ -538,6 +537,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
              mesh_instances_buffer,
              meshes_buffer,
              transforms_buffer,
+             materials_buffer,
              visbuffer_attachment,
              albedo_attachment,
              normal_attachment,
@@ -718,11 +718,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
              depth_attachment,
              camera_buffer,
              vertex_buffer_2d,
-             material_buffer,
+             materials_buffer,
              transforms_buffer) =
         vuk::make_pass(
             "2d_forward_pass",
-            [&rq2d = self.render_queue_2d]( //
+            [&rq2d = self.render_queue_2d, &descriptor_set = bindless_set]( //
                 vuk::CommandBuffer& command_buffer,
                 VUK_IA(vuk::eColorWrite) target,
                 VUK_IA(vuk::eDepthStencilRW) depth,
@@ -756,6 +756,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                         vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
                         0,
                         PushConstants(materials->device_address, camera->device_address, transforms_->device_address))
+                    .bind_persistent(1, descriptor_set)
                     .draw(6, batch.count, 0, batch.offset);
               }
 
@@ -763,7 +764,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             })(std::move(final_attachment),
                std::move(depth_attachment),
                std::move(vertex_buffer_2d),
-               std::move(material_buffer),
+               std::move(materials_buffer),
                std::move(camera_buffer),
                std::move(transforms_buffer));
   }
@@ -1137,7 +1138,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
               })
               .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
               .broadcast_color_blend({})
-              .set_rasterization({.polygonMode = vuk::PolygonMode::eLine, .cullMode = vuk::CullModeFlagBits::eNone, .lineWidth = 3.f})
+              .set_rasterization(
+                  {.polygonMode = vuk::PolygonMode::eLine, .cullMode = vuk::CullModeFlagBits::eNone, .lineWidth = 3.f})
               .set_primitive_topology(vuk::PrimitiveTopology::eLineList)
               .set_viewport(0, vuk::Rect2D::framebuffer())
               .set_scissor(0, vuk::Rect2D::framebuffer())

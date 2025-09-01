@@ -433,12 +433,8 @@ auto SceneHierarchyViewer::draw_entities_context_menu() -> void {
       to_select = scene_->create_entity("entity", true);
     }
 
-    auto* asset_man = App::get_asset_manager();
-
     if (ImGui::MenuItem("Sprite")) {
       to_select = scene_->create_entity("sprite", true).add<SpriteComponent>();
-      to_select.get_mut<SpriteComponent>().material = asset_man->create_asset(AssetType::Material, {});
-      asset_man->load_material(to_select.get_mut<SpriteComponent>().material, Material{});
     }
 
     if (ImGui::MenuItem("Camera")) {

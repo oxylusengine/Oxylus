@@ -294,11 +294,17 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       });
 
   self.world.observer<SpriteComponent>()
-      .event(flecs::OnRemove) //
+      .event(flecs::OnAdd)
+      .event(flecs::OnRemove)
       .each([](flecs::iter& it, usize i, SpriteComponent& c) {
         auto* asset_man = App::get_asset_manager();
-        if (auto* material_asset = asset_man->get_asset(c.material)) {
-          asset_man->unload_asset(material_asset->uuid);
+        if (it.event() == flecs::OnAdd) {
+          c.material = asset_man->create_asset(AssetType::Material, {});
+          asset_man->load_material(c.material, Material{});
+        } else if (it.event() == flecs::OnRemove) {
+          if (auto* material_asset = asset_man->get_asset(c.material)) {
+            asset_man->unload_asset(material_asset->uuid);
+          }
         }
       });
 
