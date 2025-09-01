@@ -568,6 +568,9 @@ auto AssetManager::load_asset(const UUID& uuid) -> bool {
     case AssetType::Script: {
       return this->load_script(uuid);
     }
+    case AssetType::Material: {
+      return this->load_material(uuid, {});
+    }
     default:;
   }
 

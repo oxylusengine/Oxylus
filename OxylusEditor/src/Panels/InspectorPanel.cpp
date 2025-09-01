@@ -449,9 +449,10 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                     if (selected.type != AssetType::None && selected.type != AssetType::Mesh) {
                       // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
                       auto* existing_asset = asset_man->get_asset(*uuid);
-                      if (selected.uuid != *uuid && //
-                          (!existing_asset || existing_asset->type == selected.type) &&
-                          asset_man->load_asset(selected.uuid)) {
+                      const bool is_same_asset = selected.uuid == *uuid;
+                      const bool is_same_type = existing_asset->type == selected.type;
+                      const bool is_loaded = asset_man->load_asset(selected.uuid);
+                      if (!is_same_asset && is_same_type && is_loaded) {
                         if (*uuid) {
                           asset_man->unload_asset(*uuid);
                         }
