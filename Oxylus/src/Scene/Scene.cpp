@@ -913,7 +913,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
   if (self.meshes_dirty) {
     for (const auto& [rendering_mesh, transform_ids] : self.rendering_meshes_map) {
-      auto* model = asset_man->get_mesh(rendering_mesh.first);
+      auto* model = asset_man->get_model(rendering_mesh.first);
       if (!model)
         continue;
       const auto& mesh = model->meshes[rendering_mesh.second];
@@ -1133,11 +1133,11 @@ auto Scene::create_mesh_entity(this Scene& self, const UUID& asset_uuid) -> flec
   }
 
   // acquire model
-  if (!asset_man->load_mesh(asset_uuid)) {
+  if (!asset_man->load_model(asset_uuid)) {
     return {};
   }
 
-  auto* imported_model = asset_man->get_mesh(asset_uuid);
+  auto* imported_model = asset_man->get_model(asset_uuid);
   auto& default_scene = imported_model->scenes[imported_model->default_scene_index];
   auto root_entity = self.create_entity(default_scene.name, true);
 

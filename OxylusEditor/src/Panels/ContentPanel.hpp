@@ -16,7 +16,7 @@
 namespace ox {
 class Texture;
 
-enum class FileType { Unknown = 0, Directory, Meta, Scene, Prefab, Shader, Texture, Mesh, Audio, Script, Material };
+enum class FileType { Unknown = 0, Directory, Meta, Scene, Prefab, Shader, Texture, Model, Audio, Script, Material };
 
 class ContentPanel : public EditorPanel {
 public:

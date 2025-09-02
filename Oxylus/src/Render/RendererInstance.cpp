@@ -1,7 +1,7 @@
 #include "Render/RendererInstance.hpp"
 
 #include "Asset/AssetManager.hpp"
-#include "Asset/Mesh.hpp"
+#include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Render/DebugRenderer.hpp"
@@ -1440,7 +1440,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.visible_meshlet_instances_indices_buffer = vk_context.alloc_transient_buffer(
         vuk::MemoryUsage::eGPUonly, info.max_meshlet_instance_count * sizeof(u32));
     self.prepared_frame.reordered_indices_buffer = vk_context.alloc_transient_buffer(
-        vuk::MemoryUsage::eGPUonly, info.max_meshlet_instance_count * Mesh::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32));
+        vuk::MemoryUsage::eGPUonly, info.max_meshlet_instance_count * Model::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32));
   }
 
   self.prepared_frame.mesh_instance_count = info.mesh_instance_count;

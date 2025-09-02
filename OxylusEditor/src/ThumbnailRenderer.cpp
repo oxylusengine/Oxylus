@@ -104,7 +104,7 @@ auto ThumbnailRenderer::render(VkContext& vk_context, vuk::Extent3D extent, vuk:
   return {};
 }
 
-auto ThumbnailRenderer::set_mesh(this ThumbnailRenderer& self, Mesh* mesh) -> void {
+auto ThumbnailRenderer::set_model(this ThumbnailRenderer& self, Model* mesh) -> void {
   ZoneScoped;
 
   self.mesh = mesh;

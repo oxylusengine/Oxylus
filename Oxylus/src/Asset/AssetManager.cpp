@@ -220,7 +220,7 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
   switch (type) {
     case AssetType::None    : return "None";
     case AssetType::Shader  : return "Shader";
-    case AssetType::Mesh    : return "Mesh";
+    case AssetType::Model    : return "Model";
     case AssetType::Texture : return "Texture";
     case AssetType::Material: return "Material";
     case AssetType::Font    : return "Font";
@@ -263,7 +263,7 @@ auto AssetManager::import_asset(const std::string& path) -> UUID {
     }
     case AssetFileType::GLB:
     case AssetFileType::GLTF: {
-      asset_type = AssetType::Mesh;
+      asset_type = AssetType::Model;
       break;
     }
     case AssetFileType::PNG:
@@ -296,7 +296,7 @@ auto AssetManager::import_asset(const std::string& path) -> UUID {
   begin_asset_meta(writer, uuid, asset_type);
 
   switch (asset_type) {
-    case AssetType::Mesh: {
+    case AssetType::Model: {
       auto gltf_model = GLTFMeshInfo::parse_info(path);
       auto textures = std::vector<UUID>();
       auto embedded_textures = std::vector<UUID>();
@@ -478,8 +478,8 @@ auto AssetManager::export_asset(const UUID& uuid, const std::string& path) -> bo
         return false;
       }
     } break;
-    case AssetType::Mesh: {
-      if (!this->export_mesh(asset->uuid, writer, path)) {
+    case AssetType::Model: {
+      if (!this->export_model(asset->uuid, writer, path)) {
         return false;
       }
     } break;
@@ -512,18 +512,18 @@ auto AssetManager::export_texture(const UUID& uuid, JsonWriter& writer, const st
   return write_texture_asset_meta(writer, texture);
 }
 
-auto AssetManager::export_mesh(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
+auto AssetManager::export_model(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
   ZoneScoped;
 
-  auto* mesh = this->get_mesh(uuid);
-  OX_CHECK_NULL(mesh);
+  auto* model = this->get_model(uuid);
+  OX_CHECK_NULL(model);
 
-  auto materials = std::vector<Material>(mesh->materials.size());
-  for (const auto& [material_uuid, material] : std::views::zip(mesh->materials, materials)) {
+  auto materials = std::vector<Material>(model->materials.size());
+  for (const auto& [material_uuid, material] : std::views::zip(model->materials, materials)) {
     material = *this->get_material(material_uuid);
   }
 
-  return write_mesh_asset_meta(writer, mesh->embedded_textures, mesh->materials, materials);
+  return write_mesh_asset_meta(writer, model->embedded_textures, model->materials, materials);
 }
 
 auto AssetManager::export_scene(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
@@ -553,8 +553,8 @@ auto AssetManager::export_script(const UUID& uuid, JsonWriter& writer, const std
 auto AssetManager::load_asset(const UUID& uuid) -> bool {
   const auto* asset = this->get_asset(uuid);
   switch (asset->type) {
-    case AssetType::Mesh: {
-      return this->load_mesh(uuid);
+    case AssetType::Model: {
+      return this->load_model(uuid);
     }
     case AssetType::Texture: {
       return this->load_texture(uuid);
@@ -581,8 +581,8 @@ auto AssetManager::unload_asset(const UUID& uuid) -> bool {
   const auto* asset = this->get_asset(uuid);
   OX_CHECK_NULL(asset);
   switch (asset->type) {
-    case AssetType::Mesh: {
-      return this->unload_mesh(uuid);
+    case AssetType::Model: {
+      return this->unload_model(uuid);
     } break;
     case AssetType::Texture: {
       return this->unload_texture(uuid);
@@ -608,7 +608,7 @@ auto AssetManager::unload_asset(const UUID& uuid) -> bool {
   return false;
 }
 
-auto AssetManager::load_mesh(const UUID& uuid) -> bool {
+auto AssetManager::load_model(const UUID& uuid) -> bool {
   ZoneScoped;
 
   memory::ScopedStack stack;
@@ -623,8 +623,8 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
     return true;
   }
 
-  asset->mesh_id = mesh_map.create_slot();
-  auto* model = mesh_map.slot(asset->mesh_id);
+  asset->model_id = model_map.create_slot();
+  auto* model = model_map.slot(asset->model_id);
 
   std::string meta_path = asset->path + ".oxasset";
   auto meta_json = read_meta_file(meta_path);
@@ -679,12 +679,12 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
   }
 
   struct GLTFCallbacks {
-    Mesh* model = nullptr;
+    Model* model = nullptr;
 
     std::vector<glm::vec3> vertex_positions = {};
     std::vector<glm::vec3> vertex_normals = {};
     std::vector<glm::vec2> vertex_texcoords = {};
-    std::vector<Mesh::Index> indices = {};
+    std::vector<Model::Index> indices = {};
   };
   auto on_new_primitive = [](void* user_data,
                              u32 mesh_index,
@@ -956,10 +956,10 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
 
         // Worst case count
         auto max_meshlet_count = meshopt_buildMeshletsBound(
-            simplified_indices.size(), Mesh::MAX_MESHLET_INDICES, Mesh::MAX_MESHLET_PRIMITIVES);
+            simplified_indices.size(), Model::MAX_MESHLET_INDICES, Model::MAX_MESHLET_PRIMITIVES);
         auto raw_meshlets = std::vector<meshopt_Meshlet>(max_meshlet_count);
-        auto indirect_vertex_indices = std::vector<u32>(max_meshlet_count * Mesh::MAX_MESHLET_INDICES);
-        auto local_triangle_indices = std::vector<u8>(max_meshlet_count * Mesh::MAX_MESHLET_PRIMITIVES * 3);
+        auto indirect_vertex_indices = std::vector<u32>(max_meshlet_count * Model::MAX_MESHLET_INDICES);
+        auto local_triangle_indices = std::vector<u8>(max_meshlet_count * Model::MAX_MESHLET_PRIMITIVES * 3);
 
         auto meshlet_count = meshopt_buildMeshlets( //
             raw_meshlets.data(),
@@ -970,8 +970,8 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
             reinterpret_cast<const f32*>(mesh_vertices.data()),
             mesh_vertices.size(),
             sizeof(glm::vec3),
-            Mesh::MAX_MESHLET_INDICES,
-            Mesh::MAX_MESHLET_PRIMITIVES,
+            Model::MAX_MESHLET_INDICES,
+            Model::MAX_MESHLET_PRIMITIVES,
             0.0);
 
         // Trim meshlets from worst case to current case
@@ -1112,7 +1112,7 @@ auto AssetManager::load_mesh(const UUID& uuid) -> bool {
   return true;
 }
 
-auto AssetManager::unload_mesh(const UUID& uuid) -> bool {
+auto AssetManager::unload_model(const UUID& uuid) -> bool {
   ZoneScoped;
 
   auto* asset = this->get_asset(uuid);
@@ -1121,15 +1121,15 @@ auto AssetManager::unload_mesh(const UUID& uuid) -> bool {
     return false;
   }
 
-  auto* model = this->get_mesh(asset->mesh_id);
+  auto* model = this->get_model(asset->model_id);
   for (auto& v : model->materials) {
     this->unload_material(v);
   }
 
-  mesh_map.destroy_slot(asset->mesh_id);
-  asset->mesh_id = MeshID::Invalid;
+  model_map.destroy_slot(asset->model_id);
+  asset->model_id = ModelID::Invalid;
 
-  OX_LOG_TRACE("Unloaded mesh {}", uuid.str());
+  OX_LOG_TRACE("Unloaded model {}", uuid.str());
 
   return true;
 }
@@ -1428,7 +1428,7 @@ auto AssetManager::get_asset(const UUID& uuid) -> Asset* {
   return &it->second;
 }
 
-auto AssetManager::get_mesh(const UUID& uuid) -> Mesh* {
+auto AssetManager::get_model(const UUID& uuid) -> Model* {
   ZoneScoped;
 
   const auto* asset = this->get_asset(uuid);
@@ -1436,22 +1436,22 @@ auto AssetManager::get_mesh(const UUID& uuid) -> Mesh* {
     return nullptr;
   }
 
-  OX_CHECK_EQ(asset->type, AssetType::Mesh);
-  if (asset->type != AssetType::Mesh || asset->mesh_id == MeshID::Invalid) {
+  OX_CHECK_EQ(asset->type, AssetType::Model);
+  if (asset->type != AssetType::Model || asset->model_id == ModelID::Invalid) {
     return nullptr;
   }
 
-  return mesh_map.slot(asset->mesh_id);
+  return model_map.slot(asset->model_id);
 }
 
-auto AssetManager::get_mesh(const MeshID mesh_id) -> Mesh* {
+auto AssetManager::get_model(const ModelID model_id) -> Model* {
   ZoneScoped;
 
-  if (mesh_id == MeshID::Invalid) {
+  if (model_id == ModelID::Invalid) {
     return nullptr;
   }
 
-  return mesh_map.slot(mesh_id);
+  return model_map.slot(model_id);
 }
 
 auto AssetManager::get_texture(const UUID& uuid) -> Texture* {

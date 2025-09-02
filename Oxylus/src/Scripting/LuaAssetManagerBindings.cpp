@@ -17,7 +17,7 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
   SET_TYPE_FUNCTION(asset_manager, AssetManager, load_asset);
   SET_TYPE_FUNCTION(asset_manager, AssetManager, unload_asset);
 
-  asset_manager.set_function("get_model", [](AssetManager* am, const UUID& uuid) { return am->get_mesh(uuid); });
+  asset_manager.set_function("get_model", [](AssetManager* am, const UUID& uuid) { return am->get_model(uuid); });
   asset_manager.set_function("get_material", [](AssetManager* am, const UUID& uuid) { return am->get_material(uuid); });
   asset_manager.set_function("get_mut_material", [](AssetManager* am, const UUID& uuid) {
     am->set_material_dirty(uuid);
@@ -26,7 +26,7 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
   asset_manager.set_function("set_material_dirty",
                              [](AssetManager* am, const UUID& uuid) { am->set_material_dirty(uuid); });
 
-  auto mesh = state->new_usertype<Mesh>("Model", "materials", &Mesh::materials);
+  auto model = state->new_usertype<Model>("Model", "materials", &Model::materials);
   auto material = state->new_usertype<Material>(
       "Material",
 

@@ -445,8 +445,8 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                     AssetType filter = {};
                     viewer.render("Asset Picker", &draw_asset_picker, filter, &selected);
 
-                    // NOTE: We don't allow mesh assets to be loaded this way yet(or ever).
-                    if (selected.type != AssetType::None && selected.type != AssetType::Mesh) {
+                    // NOTE: We don't allow model assets to be loaded this way yet(or ever).
+                    if (selected.type != AssetType::None && selected.type != AssetType::Model) {
                       // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
                       auto* existing_asset = asset_man->get_asset(*uuid);
                       const bool is_same_asset = selected.uuid == *uuid;
@@ -499,8 +499,8 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                         draw_shader_asset(uuid, asset);
                         break;
                       }
-                      case AssetType::Mesh: {
-                        draw_mesh_asset(uuid, asset);
+                      case AssetType::Model: {
+                        draw_model_asset(uuid, asset);
                         break;
                       }
                       case AssetType::Texture: {
@@ -563,13 +563,13 @@ void InspectorPanel::draw_asset_info(Asset* asset) {
 
 void InspectorPanel::draw_shader_asset(UUID* uuid, Asset* asset) {}
 
-void InspectorPanel::draw_mesh_asset(UUID* uuid, Asset* asset) {
+void InspectorPanel::draw_model_asset(UUID* uuid, Asset* asset) {
   ZoneScoped;
 
   auto load_event = _scene->world.entity("ox_mesh_material_load_event");
   auto* asset_man = App::get_asset_manager();
-  if (auto* mesh = asset_man->get_mesh(*uuid)) {
-    for (auto& mat_uuid : mesh->materials) {
+  if (auto* model = asset_man->get_model(*uuid)) {
+    for (auto& mat_uuid : model->materials) {
       static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
                                                        ImGuiTreeNodeFlags_SpanAvailWidth |
                                                        ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_Framed |

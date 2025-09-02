@@ -5,7 +5,7 @@
 #include "Asset/AssetFile.hpp"
 #include "Asset/AudioSource.hpp"
 #include "Asset/Material.hpp"
-#include "Asset/Mesh.hpp"
+#include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/ESystem.hpp"
 #include "Core/UUID.hpp"
@@ -20,7 +20,7 @@ struct Asset {
   std::string path = {};
   AssetType type = AssetType::None;
   union {
-    MeshID mesh_id = MeshID::Invalid;
+    ModelID model_id = ModelID::Invalid;
     TextureID texture_id;
     MaterialID material_id;
     SceneID scene_id;
@@ -31,7 +31,7 @@ struct Asset {
   // Reference count of loads
   u64 ref_count = 0;
 
-  auto is_loaded() const -> bool { return mesh_id != MeshID::Invalid; }
+  auto is_loaded() const -> bool { return model_id != ModelID::Invalid; }
 
   auto acquire_ref() -> void { ++std::atomic_ref(ref_count); }
 
@@ -76,7 +76,7 @@ public:
 
   auto export_asset(const UUID& uuid, const std::string& path) -> bool;
   auto export_texture(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
-  auto export_mesh(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
+  auto export_model(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
   auto export_scene(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
   auto export_material(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
   auto export_script(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
@@ -84,8 +84,8 @@ public:
   auto load_asset(const UUID& uuid) -> bool;
   auto unload_asset(const UUID& uuid) -> bool;
 
-  auto load_mesh(const UUID& uuid) -> bool;
-  auto unload_mesh(const UUID& uuid) -> bool;
+  auto load_model(const UUID& uuid) -> bool;
+  auto unload_model(const UUID& uuid) -> bool;
 
   auto load_texture(const UUID& uuid, const TextureLoadInfo& info = {}) -> bool;
   auto unload_texture(const UUID& uuid) -> bool;
@@ -107,8 +107,8 @@ public:
 
   auto get_asset(const UUID& uuid) -> Asset*;
 
-  auto get_mesh(const UUID& uuid) -> Mesh*;
-  auto get_mesh(MeshID mesh_id) -> Mesh*;
+  auto get_model(const UUID& uuid) -> Model*;
+  auto get_model(ModelID mesh_id) -> Model*;
 
   auto get_texture(const UUID& uuid) -> Texture*;
   auto get_texture(TextureID texture_id) -> Texture*;
@@ -138,7 +138,7 @@ private:
 
   std::vector<MaterialID> dirty_materials = {};
 
-  SlotMap<Mesh, MeshID> mesh_map = {};
+  SlotMap<Model, ModelID> model_map = {};
   SlotMap<Texture, TextureID> texture_map = {};
   SlotMap<Material, MaterialID> material_map = {};
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};

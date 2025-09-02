@@ -116,7 +116,7 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
           shader_assets.emplace_back(asset);
           break;
         }
-        case AssetType::Mesh: {
+        case AssetType::Model: {
           mesh_assets.emplace_back(asset);
           break;
         }
@@ -223,11 +223,11 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
           "Texture Assets", "textures_table", texture_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS, selected);
     }
 
-    if (asset_type_filter_flags[AssetType::Mesh]) {
+    if (asset_type_filter_flags[AssetType::Model]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
       draw_asset_table(
-          "Mesh Assets", "meshes_table", mesh_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS, selected);
+          "Model Assets", "meshes_table", mesh_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS, selected);
     }
 
     if (asset_type_filter_flags[AssetType::Material]) {

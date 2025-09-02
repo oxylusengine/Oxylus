@@ -27,7 +27,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_S
     {FileType::Prefab, "Prefab"},
     {FileType::Shader, "Shader"},
     {FileType::Texture, "Texture"},
-    {FileType::Mesh, "Mesh"},
+    {FileType::Model, "Model"},
     {FileType::Script, "Script"},
     {FileType::Audio, "Audio"},
 };
@@ -44,7 +44,7 @@ static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
     {".bmp", FileType::Texture},     {".gif", FileType::Texture},  {".ktx", FileType::Texture},  //
     {".ktx2", FileType::Texture},    {".tiff", FileType::Texture},                               //
 
-    {".gltf", FileType::Mesh},       {".glb", FileType::Mesh},                                   //
+    {".gltf", FileType::Model},       {".glb", FileType::Model},                                   //
 
     {".mp3", FileType::Audio},       {".m4a", FileType::Audio},    {".wav", FileType::Audio},    //
     {".ogg", FileType::Audio},                                                                   //
@@ -58,7 +58,7 @@ static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
     {FileType::Prefab, {0.10f, 0.50f, 0.80f, 1.00f}},
     {FileType::Shader, {0.10f, 0.50f, 0.80f, 1.00f}},
     {FileType::Texture, {0.80f, 0.20f, 0.30f, 1.00f}},
-    {FileType::Mesh, {0.20f, 0.80f, 0.75f, 1.00f}},
+    {FileType::Model, {0.20f, 0.80f, 0.75f, 1.00f}},
     {FileType::Audio, {0.20f, 0.80f, 0.50f, 1.00f}},
     {FileType::Script, {0.0f, 16.0f, 121.0f, 1.00f}},
 };
@@ -71,7 +71,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
     {FileType::Prefab, ICON_MDI_FILE},
     {FileType::Shader, ICON_MDI_IMAGE_FILTER_BLACK_WHITE},
     {FileType::Texture, ICON_MDI_FILE_IMAGE},
-    {FileType::Mesh, ICON_MDI_VECTOR_POLYGON},
+    {FileType::Model, ICON_MDI_VECTOR_POLYGON},
     {FileType::Audio, ICON_MDI_MICROPHONE},
     {FileType::Script, ICON_MDI_LANGUAGE_LUA},
     {FileType::Material, ICON_MDI_PALETTE_SWATCH},
@@ -570,7 +570,7 @@ void ContentPanel::render_body(bool grid) {
 #endif
             texture_name = file.file_path;
           }
-        } else if (file.type == FileType::Mesh) {
+        } else if (file.type == FileType::Model) {
           if (thumbnail_cache_meshes.contains(file.file_path)) {
             texture_name = file.file_path;
           } else if (mesh_thumbnails_enabled) {
@@ -580,9 +580,9 @@ void ContentPanel::render_body(bool grid) {
 
             auto* asset_man = App::get_asset_manager();
             if (auto asset_uuid = asset_man->import_asset(file.file_path); asset_uuid) {
-              if (asset_man->load_mesh(asset_uuid)) {
-                auto* mesh_asset = asset_man->get_mesh(asset_uuid);
-                rp->set_mesh(mesh_asset);
+              if (asset_man->load_model(asset_uuid)) {
+                auto* mesh_asset = asset_man->get_model(asset_uuid);
+                rp->set_model(mesh_asset);
               }
             }
 
