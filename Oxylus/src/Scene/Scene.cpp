@@ -1139,14 +1139,14 @@ auto Scene::create_mesh_entity(this Scene& self, const UUID& asset_uuid) -> flec
 
   auto* imported_model = asset_man->get_model(asset_uuid);
   auto& default_scene = imported_model->scenes[imported_model->default_scene_index];
-  auto root_entity = self.create_entity(default_scene.name, true);
+  auto root_entity = self.create_entity(default_scene.name, default_scene.name.empty() ? false : true);
 
   auto visit_nodes = [&self, //
                       &imported_model,
                       &asset_uuid](this auto& visitor, flecs::entity& root, std::vector<usize>& node_indices) -> void {
     for (const auto node_index : node_indices) {
       auto& cur_node = imported_model->nodes[node_index];
-      auto node_entity = self.create_entity(cur_node.name, true);
+      auto node_entity = self.create_entity(cur_node.name, cur_node.name.empty() ? false : true);
 
       const auto T = glm::translate(glm::mat4(1.0f), cur_node.translation);
       const auto R = glm::mat4_cast(cur_node.rotation);
