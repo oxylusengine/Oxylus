@@ -133,6 +133,7 @@ auto Renderer::init() -> std::expected<void, std::string> {
                         "tonemap_pipeline",
                         {.path = shaders_dir + "/passes/tonemap.slang", .entry_points = {"vs_main", "fs_main"}});
 
+  // --- Bloom ---
   slang.create_pipeline(runtime,
                         "bloom_prefilter_pipeline",
                         {.path = shaders_dir + "/passes/bloom/bloom_prefilter.slang", .entry_points = {"cs_main"}});
@@ -145,6 +146,20 @@ auto Renderer::init() -> std::expected<void, std::string> {
                         "bloom_upsample_pipeline",
                         {.path = shaders_dir + "/passes/bloom/bloom_upsample.slang", .entry_points = {"cs_main"}});
 
+  // --- GTAO ---
+  slang.create_pipeline(runtime,
+                        "gtao_first_pipeline",
+                        {.path = shaders_dir + "/passes/gtao/gtao_first.slang", .entry_points = {"cs_main"}});
+
+  slang.create_pipeline(runtime,
+                        "gtao_main_pipeline",
+                        {.path = shaders_dir + "/passes/gtao/gtao_main.slang", .entry_points = {"cs_main"}});
+
+  slang.create_pipeline(runtime,
+                        "gtao_final_pipeline",
+                        {.path = shaders_dir + "/passes/gtao/gtao_final.slang", .entry_points = {"cs_main"}});
+
+  // --- FXAA ---
   slang.create_pipeline(runtime,
                         "fxaa_pipeline",
                         {.path = shaders_dir + "/passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}});

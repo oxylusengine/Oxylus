@@ -211,4 +211,30 @@ struct HistogramInfo {
   alignas(4) f32 ev100_bias = 1.0f;
 };
 
+struct GTAOConstants {
+  alignas(4) glm::ivec2 viewport_size;
+  alignas(4) glm::vec2 viewport_pixel_size; // .zw == 1.0 / ViewportSize.xy
+
+  alignas(4) glm::vec2 depth_unpack_consts;
+  alignas(4) glm::vec2 camera_tan_half_fov;
+
+  alignas(4) glm::vec2 ndc_to_view_mul;
+  alignas(4) glm::vec2 ndc_to_view_add;
+
+  alignas(4) glm::vec2 ndc_to_view_mul_x_pixel_size;
+  alignas(4) f32 effect_radius; // world (viewspace) maximum size of the shadow
+  alignas(4) f32 effect_falloff_range = 0.615f;
+
+  alignas(4) f32 radius_multiplier = 1.457f;
+  alignas(4) f32 final_value_power = 2.2f;
+  alignas(4) f32 denoise_blur_beta;
+
+  alignas(4) f32 sample_distribution_power = 2.0f;
+  alignas(4) f32 thin_occluder_compensation = 0.0f;
+  alignas(4) f32 depth_mip_sampling_fffset = 3.30f;
+  alignas(4) i32 noise_index;       // frameIndex % 64 if using TAA or 0 otherwise
+
+  alignas(4) u32 pad_ = 0;
+};
+
 } // namespace ox::GPU
