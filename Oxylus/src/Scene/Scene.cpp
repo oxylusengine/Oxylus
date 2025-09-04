@@ -1167,6 +1167,27 @@ auto Scene::create_mesh_entity(this Scene& self, const UUID& asset_uuid) -> flec
             {.mesh_index = static_cast<u32>(cur_node.mesh_index.value()), .mesh_uuid = asset_uuid});
       }
 
+      if (cur_node.light_index.has_value()) {
+        auto& node_light = imported_model->lights[cur_node.light_index.value()];
+        auto lc = LightComponent{
+            .type = static_cast<LightComponent::LightType>(node_light.type),
+            .color = node_light.color,
+            .intensity = node_light.intensity,
+        };
+
+        if (node_light.range.has_value()) {
+          lc.radius = *node_light.range;
+        }
+        if (node_light.inner_cone_angle.has_value()) {
+          lc.inner_cone_angle = *node_light.inner_cone_angle;
+        }
+        if (node_light.outer_cone_angle.has_value()) {
+          lc.inner_cone_angle = *node_light.inner_cone_angle;
+        }
+
+        node_entity.set<LightComponent>(lc);
+      }
+
       node_entity.child_of(root);
       node_entity.modified<TransformComponent>();
 
@@ -1240,7 +1261,20 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
   return new_scene;
 }
 
-auto Scene::get_world_transform(const flecs::entity entity) const -> glm::mat4 {
+auto Scene::get_world_position(const flecs::entity entity) -> glm::vec3 {
+  const auto& tc = entity.get<TransformComponent>();
+  const auto parent = entity.parent();
+  if (parent != flecs::entity::null()) {
+    const glm::vec3 parent_position = get_world_position(parent);
+    const auto& parent_tc = parent.get<TransformComponent>();
+    const glm::quat parent_rotation = glm::quat(parent_tc.rotation);
+    const glm::vec3 rotated_scaled_pos = parent_rotation * (parent_tc.scale * tc.position);
+    return parent_position + rotated_scaled_pos;
+  }
+  return tc.position;
+}
+
+auto Scene::get_world_transform(const flecs::entity entity) -> glm::mat4 {
   const auto& tc = entity.get<TransformComponent>();
   const auto parent = entity.parent();
   const glm::mat4 parent_transform = parent != flecs::entity::null() ? get_world_transform(parent) : glm::mat4(1.0f);
@@ -1248,7 +1282,7 @@ auto Scene::get_world_transform(const flecs::entity entity) const -> glm::mat4 {
          glm::scale(glm::mat4(1.0f), tc.scale);
 }
 
-auto Scene::get_local_transform(flecs::entity entity) const -> glm::mat4 {
+auto Scene::get_local_transform(flecs::entity entity) -> glm::mat4 {
   const auto& tc = entity.get<TransformComponent>();
   return glm::translate(glm::mat4(1.0f), tc.position) * glm::toMat4(glm::quat(tc.rotation)) *
          glm::scale(glm::mat4(1.0f), tc.scale);

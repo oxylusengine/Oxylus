@@ -1351,7 +1351,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           sund.intensity = lc.intensity;
         } else if (lc.type == LightComponent::LightType::Point) {
           point_lights.emplace_back(GPU::PointLight{
-              .position = tc.position,
+              .position = Scene::get_world_position(e),
               .color = lc.color,
               .intensity = lc.intensity,
               .cutoff = lc.radius,
@@ -1364,7 +1364,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           };
 
           spot_lights.emplace_back(GPU::SpotLight{
-              .position = tc.position,
+              .position = Scene::get_world_position(e),
               .direction = glm::normalize(direction),
               .color = lc.color,
               .intensity = lc.intensity,

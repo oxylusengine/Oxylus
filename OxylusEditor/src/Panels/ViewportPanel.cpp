@@ -43,12 +43,14 @@ void show_component_gizmo(const char* icon,
 
         constexpr auto icon_size = 48.f;
         ImGui::PushFont(nullptr, icon_size);
+        ImGui::PushID(entity.id());
         if (ImGui::Button(icon, {50.f, 50.f})) {
           auto& editor_context = EditorLayer::get()->get_context();
           editor_context.reset();
           editor_context.entity = entity;
           editor_context.type = EditorContext::Type::Entity;
         }
+        ImGui::PopID();
         ImGui::PopFont();
 
         ImGui::PopStyleColor(2);

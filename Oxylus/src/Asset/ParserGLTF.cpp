@@ -68,6 +68,14 @@ static auto to_asset_file_type(fastgltf::MimeType mime) -> AssetFileType {
   }
 }
 
+static auto to_gltf_light_type(fastgltf::LightType type) -> GLTFLightType {
+  switch (type) {
+    case fastgltf::LightType::Directional: return GLTFLightType::Directional;
+    case fastgltf::LightType::Point      : return GLTFLightType::Point;
+    case fastgltf::LightType::Spot       : return GLTFLightType::Spot;
+  }
+}
+
 auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) -> ox::option<GLTFMeshInfo> {
   ZoneScoped;
 
@@ -274,8 +282,14 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
       mesh_index = node.meshIndex.value();
     }
 
+    ox::option<usize> light_index = ox::nullopt;
+    if (node.lightIndex.has_value()) {
+      light_index = node.lightIndex.value();
+    }
+
     model.nodes.push_back({.name = std::string(node.name.begin(), node.name.end()),
                            .mesh_index = std::move(mesh_index),
+                           .light_index = std::move(light_index),
                            .children = std::vector(node.children.begin(), node.children.end()),
                            .translation = translation,
                            .rotation = rotation,
@@ -364,6 +378,35 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
       global_vertex_offset += primitive_vertex_count;
       global_index_offset += primitive_index_count;
     }
+  }
+
+  ///////////////////////////////////////////////
+  // Lights
+  ///////////////////////////////////////////////
+
+  u32 light_index = 0;
+  for (const auto& light : asset.lights) {
+    GLTFLightInfo gltf_light = {
+        .name = light.name.c_str(),
+        .type = to_gltf_light_type(light.type),
+        .color = {light.color.x(), light.color.y(), light.color.z()},
+        .intensity = light.intensity,
+    };
+
+    if (light.range.has_value())
+      gltf_light.range = *light.range;
+    if (light.innerConeAngle.has_value())
+      gltf_light.inner_cone_angle = *light.innerConeAngle;
+    if (light.outerConeAngle.has_value())
+      gltf_light.outer_cone_angle = *light.outerConeAngle;
+
+    model.lights.emplace_back(gltf_light);
+
+    if (callbacks.on_new_light) {
+      callbacks.on_new_light(callbacks.user_data, light_index, gltf_light);
+    }
+
+    light_index += 1;
   }
 
   return model;
