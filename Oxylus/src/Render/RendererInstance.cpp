@@ -63,7 +63,7 @@ auto update_gpu_buffer(auto& self, auto& vk_context, const auto& gpu_data, const
     std::vector<typename traits::offset_type> upload_offsets;
     upload_offsets.reserve(dirty_count);
 
-    for (const auto& [i, dirty_id] : std::views::enumerate(dirty_ids)) {
+    for (const auto& [i, dirty_id] : std::views::zip(std::views::iota(0_sz), dirty_ids)) {
       const auto index = traits::get_index(dirty_id);
       const auto& element = traits::get_element(gpu_data, index);
       std::memcpy(dst_ptr + i, &element, element_size);
@@ -75,7 +75,7 @@ auto update_gpu_buffer(auto& self, auto& vk_context, const auto& gpu_data, const
         [upload_offsets = std::move(upload_offsets)](vuk::CommandBuffer& cmd_list,
                                                      VUK_BA(vuk::Access::eTransferRead) src_buffer,
                                                      VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
-          for (const auto& [i, offset] : std::views::enumerate(upload_offsets)) {
+          for (const auto& [i, offset] : std::views::zip(std::views::iota(0_sz), upload_offsets)) {
             const auto src_subrange = src_buffer->subrange(i * element_size, element_size);
             const auto dst_subrange = dst_buffer->subrange(offset, element_size);
             cmd_list.copy_buffer(src_subrange, dst_subrange);
