@@ -39,6 +39,20 @@ struct RendererInstance::BufferTraits<GPU::Material> {
   static auto get_element(const auto& gpu_data, usize index) -> const auto& { return gpu_data[index]; }
 };
 
+template <>
+struct RendererInstance::BufferTraits<GPU::PointLight> {
+  using offset_type = u32;
+  static constexpr std::string_view buffer_name = "point_lights";
+  static constexpr std::string_view pass_name = "update point lights";
+
+  static auto get_buffer_ref(auto& self) -> auto& { return self.point_lights_buffer; }
+  static auto& get_prepared_buffer_ref(auto& self) { return self.prepared_frame.materials_buffer; }
+
+  static auto get_index(const auto& dirty_id) -> usize { return static_cast<usize>(dirty_id); }
+
+  static auto get_element(const auto& gpu_data, usize index) -> const auto& { return gpu_data[index]; }
+};
+
 template <typename T>
 auto update_gpu_buffer(auto& self, auto& vk_context, const auto& gpu_data, const auto& dirty_ids) -> void {
   using traits = RendererInstance::BufferTraits<T>;
@@ -138,11 +152,19 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     self.atmosphere->transmittance_lut_size = self.renderer.sky_transmittance_lut_view.get_extent();
     self.atmosphere->multiscattering_lut_size = self.renderer.sky_multiscatter_lut_view.get_extent();
     atmosphere_buffer = self.renderer.vk_context->scratch_buffer(self.atmosphere);
+
+    self.gpu_scene.atmosphere = *self.atmosphere;
+    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasAtmosphere;
   }
   auto sun_buffer = vuk::Value<vuk::Buffer>{};
   if (self.sun.has_value()) {
     sun_buffer = self.renderer.vk_context->scratch_buffer(self.sun);
+
+    self.gpu_scene.sun = *self.sun;
+    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasSun;
   }
+
+  auto scene_buffer = self.renderer.vk_context->scratch_buffer(std::span(&self.gpu_scene, 1));
 
   const auto final_attachment_ia = vuk::ImageAttachment{
       .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
@@ -189,6 +211,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     auto mesh_instances_buffer = std::move(self.prepared_frame.mesh_instances_buffer);
     auto meshlet_instances_buffer = std::move(self.prepared_frame.meshlet_instances_buffer);
     auto reordered_indices_buffer = std::move(self.prepared_frame.reordered_indices_buffer);
+    auto point_lights_buffer = std::move(self.prepared_frame.point_lights_buffer);
+    auto spot_lights_buffer = std::move(self.prepared_frame.spot_lights_buffer);
 
     auto cull_flags = GPU::CullFlags::MicroTriangles | GPU::CullFlags::TriangleBackFace;
     if (static_cast<bool>(RendererCVar::cvar_culling_frustum.get())) {
@@ -654,16 +678,17 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           []( //
               vuk::CommandBuffer& cmd_list,
               VUK_IA(vuk::eColorWrite) dst,
-              VUK_BA(vuk::eFragmentRead) atmosphere_,
-              VUK_BA(vuk::eFragmentRead) sun_,
-              VUK_BA(vuk::eFragmentRead) camera,
               VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
               VUK_IA(vuk::eFragmentSampled) sky_multiscatter_lut,
               VUK_IA(vuk::eFragmentSampled) depth,
               VUK_IA(vuk::eFragmentSampled) albedo,
               VUK_IA(vuk::eFragmentSampled) normal,
               VUK_IA(vuk::eFragmentSampled) emissive,
-              VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion) {
+              VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
+              VUK_BA(vuk::eFragmentRead) scene,
+              VUK_BA(vuk::eFragmentRead) camera,
+              VUK_BA(vuk::eFragmentRead) point_lights,
+              VUK_BA(vuk::eFragmentRead) spot_lights) {
             auto linear_clamp_sampler = vuk::SamplerCreateInfo{
                 .magFilter = vuk::Filter::eLinear,
                 .minFilter = vuk::Filter::eLinear,
@@ -695,30 +720,29 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                 .bind_image(0, 6, normal)
                 .bind_image(0, 7, emissive)
                 .bind_image(0, 8, metallic_roughness_occlusion)
-                .bind_buffer(0, 9, atmosphere_)
-                .bind_buffer(0, 10, sun_)
-                .bind_buffer(0, 11, camera)
+                .bind_buffer(0, 9, scene)
+                .bind_buffer(0, 10, camera)
                 .draw(3, 1, 0, 0);
-            return std::make_tuple(dst, atmosphere_, sun_, camera, sky_transmittance_lut, sky_multiscatter_lut, depth);
+            return std::make_tuple(dst, sky_transmittance_lut, sky_multiscatter_lut, depth, scene, camera);
           });
 
       std::tie(final_attachment,
-               atmosphere_buffer,
-               sun_buffer,
-               camera_buffer,
                sky_transmittance_lut_attachment,
                sky_multiscatter_lut_attachment,
-               depth_attachment) = brdf_pass(std::move(final_attachment),
-                                             std::move(atmosphere_buffer),
-                                             std::move(sun_buffer),
-                                             std::move(camera_buffer),
-                                             std::move(sky_transmittance_lut_attachment),
-                                             std::move(sky_multiscatter_lut_attachment),
-                                             std::move(depth_attachment),
-                                             std::move(albedo_attachment),
-                                             std::move(normal_attachment),
-                                             std::move(emissive_attachment),
-                                             std::move(metallic_roughness_occlusion_attachment));
+               depth_attachment,
+               scene_buffer,
+               camera_buffer) = brdf_pass(std::move(final_attachment),
+                                          std::move(sky_transmittance_lut_attachment),
+                                          std::move(sky_multiscatter_lut_attachment),
+                                          std::move(depth_attachment),
+                                          std::move(albedo_attachment),
+                                          std::move(normal_attachment),
+                                          std::move(emissive_attachment),
+                                          std::move(metallic_roughness_occlusion_attachment),
+                                          std::move(scene_buffer),
+                                          std::move(camera_buffer),
+                                          std::move(point_lights_buffer),
+                                          std::move(spot_lights_buffer));
     } else {
       const auto debug_attachment_ia = vuk::ImageAttachment{
           .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
@@ -1311,40 +1335,87 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   option<GPU::Atmosphere> atmosphere_data = nullopt;
   option<GPU::Sun> sun_data = nullopt;
 
+  std::vector<GPU::PointLight> point_lights = {};
+  std::vector<GPU::SpotLight> spot_lights = {};
+
   self.scene->world
       .query_builder<const TransformComponent, const LightComponent>() //
       .build()
-      .each(
-          [&sun_data, &atmosphere_data, cam](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
-            if (lc.type == LightComponent::LightType::Directional) {
-              auto& sund = sun_data.emplace();
-              sund.direction.x = glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y);
-              sund.direction.y = glm::sin(tc.rotation.x) * glm::sin(tc.rotation.y);
-              sund.direction.z = glm::cos(tc.rotation.y);
-              sund.intensity = lc.intensity;
-            }
-
-            if (const auto* atmos_info = e.try_get<AtmosphereComponent>()) {
-              auto& atmos = atmosphere_data.emplace();
-              atmos.rayleigh_scatter = atmos_info->rayleigh_scattering * 1e-3f;
-              atmos.rayleigh_density = atmos_info->rayleigh_density;
-              atmos.mie_scatter = atmos_info->mie_scattering * 1e-3f;
-              atmos.mie_density = atmos_info->mie_density;
-              atmos.mie_extinction = atmos_info->mie_extinction * 1e-3f;
-              atmos.mie_asymmetry = atmos_info->mie_asymmetry;
-              atmos.ozone_absorption = atmos_info->ozone_absorption * 1e-3f;
-              atmos.ozone_height = atmos_info->ozone_height;
-              atmos.ozone_thickness = atmos_info->ozone_thickness;
-              atmos.aerial_perspective_start_km = atmos_info->aerial_perspective_start_km;
-
-              f32 eye_altitude = cam.position.y * GPU::CAMERA_SCALE_UNIT;
-              eye_altitude += atmos.planet_radius + GPU::PLANET_RADIUS_OFFSET;
-              atmos.eye_position = glm::vec3(0.0f, eye_altitude, 0.0f);
-            }
+      .each([&sun_data, &atmosphere_data, cam, &point_lights, &spot_lights](
+                flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
+        if (lc.type == LightComponent::LightType::Directional) {
+          auto& sund = sun_data.emplace();
+          sund.direction.x = glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y);
+          sund.direction.y = glm::sin(tc.rotation.x) * glm::sin(tc.rotation.y);
+          sund.direction.z = glm::cos(tc.rotation.y);
+          sund.intensity = lc.intensity;
+        } else if (lc.type == LightComponent::LightType::Point) {
+          point_lights.emplace_back(GPU::PointLight{
+              .position = tc.position,
+              .color = lc.color,
+              .intensity = lc.intensity,
+              .cutoff = lc.radius,
           });
+        } else if (lc.type == LightComponent::LightType::Spot) {
+          glm::vec3 direction = {
+              glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y),
+              -glm::sin(tc.rotation.x),
+              glm::cos(tc.rotation.x) * glm::cos(tc.rotation.y),
+          };
+
+          spot_lights.emplace_back(GPU::SpotLight{
+              .position = tc.position,
+              .direction = glm::normalize(direction),
+              .color = lc.color,
+              .intensity = lc.intensity,
+              .cutoff = lc.radius,
+              .inner_cone_angle = lc.inner_cone_angle,
+              .outer_cone_angle = lc.outer_cone_angle,
+          });
+        }
+
+        if (const auto* atmos_info = e.try_get<AtmosphereComponent>()) {
+          auto& atmos = atmosphere_data.emplace();
+          atmos.rayleigh_scatter = atmos_info->rayleigh_scattering * 1e-3f;
+          atmos.rayleigh_density = atmos_info->rayleigh_density;
+          atmos.mie_scatter = atmos_info->mie_scattering * 1e-3f;
+          atmos.mie_density = atmos_info->mie_density;
+          atmos.mie_extinction = atmos_info->mie_extinction * 1e-3f;
+          atmos.mie_asymmetry = atmos_info->mie_asymmetry;
+          atmos.ozone_absorption = atmos_info->ozone_absorption * 1e-3f;
+          atmos.ozone_height = atmos_info->ozone_height;
+          atmos.ozone_thickness = atmos_info->ozone_thickness;
+          atmos.aerial_perspective_start_km = atmos_info->aerial_perspective_start_km;
+
+          f32 eye_altitude = cam.position.y * GPU::CAMERA_SCALE_UNIT;
+          eye_altitude += atmos.planet_radius + GPU::PLANET_RADIUS_OFFSET;
+          atmos.eye_position = glm::vec3(0.0f, eye_altitude, 0.0f);
+        }
+      });
 
   self.atmosphere = atmosphere_data;
   self.sun = sun_data;
+
+  if (point_lights.empty()) {
+    point_lights.emplace_back(GPU::PointLight{});
+  }
+  self.point_lights_buffer = vk_context.resize_buffer(
+      std::move(self.point_lights_buffer), vuk::MemoryUsage::eGPUonly, std::span(point_lights).size_bytes());
+  self.prepared_frame.point_lights_buffer = vk_context.upload_staging(std::span(point_lights),
+                                                                      *self.point_lights_buffer);
+
+  if (spot_lights.empty()) {
+    spot_lights.emplace_back(GPU::SpotLight{});
+  }
+  self.spot_lights_buffer = vk_context.resize_buffer(
+      std::move(self.spot_lights_buffer), vuk::MemoryUsage::eGPUonly, std::span(spot_lights).size_bytes());
+  self.prepared_frame.spot_lights_buffer = vk_context.upload_staging(std::span(spot_lights), *self.spot_lights_buffer);
+
+  self.gpu_scene.light_settings.point_light_count = (u32)point_lights.size();
+  self.gpu_scene.light_settings.spot_light_count = (u32)spot_lights.size();
+
+  self.gpu_scene.point_lights = self.point_lights_buffer->device_address;
+  self.gpu_scene.spot_lights = self.spot_lights_buffer->device_address;
 
   self.render_queue_2d.init();
 

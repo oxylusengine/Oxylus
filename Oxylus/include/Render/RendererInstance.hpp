@@ -27,6 +27,8 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> visible_meshlet_instances_indices_buffer = {};
   vuk::Value<vuk::Buffer> reordered_indices_buffer = {};
   vuk::Value<vuk::Buffer> materials_buffer = {};
+  vuk::Value<vuk::Buffer> point_lights_buffer = {};
+  vuk::Value<vuk::Buffer> spot_lights_buffer = {};
 
   u32 line_index_count = 0;
   u32 triangle_index_count = 0;
@@ -63,6 +65,8 @@ private:
   GPU::CameraData camera_data = {};
   GPU::CameraData previous_camera_data = {};
 
+  GPU::Scene gpu_scene = {};
+
   option<GPU::Atmosphere> atmosphere = nullopt;
   option<GPU::Sun> sun = nullopt;
 
@@ -74,5 +78,7 @@ private:
   vuk::Unique<vuk::Buffer> meshes_buffer{};
   vuk::Unique<vuk::Buffer> materials_buffer{};
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
+  vuk::Unique<vuk::Buffer> point_lights_buffer{};
+  vuk::Unique<vuk::Buffer> spot_lights_buffer{};
 };
 } // namespace ox

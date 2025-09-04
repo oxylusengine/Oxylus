@@ -195,6 +195,46 @@ struct CameraData {
   alignas(4) glm::vec2 resolution = {};
 };
 
+struct PointLight {
+  glm::vec3 position;
+  glm::vec3 color;
+  f32 intensity;
+  f32 cutoff;
+};
+
+struct SpotLight {
+  alignas(4) glm::vec3 position;
+  alignas(4) glm::vec3 direction;
+  alignas(4) glm::vec3 color;
+  alignas(4) f32 intensity;
+  alignas(4) f32 cutoff;
+  alignas(4) f32 inner_cone_angle;
+  alignas(4) f32 outer_cone_angle;
+};
+
+enum class SceneFlags : u32 {
+  None = 0,
+  HasSun = 1 << 0,
+  HasAtmosphere = 1 << 1,
+  HasEyeAdaptation = 1 << 2,
+};
+consteval void enable_bitmask(SceneFlags);
+
+struct LightSettings {
+  alignas(4) u32 point_light_count = 0;
+  alignas(4) u32 spot_light_count = 0;
+};
+
+struct Scene {
+  alignas(4) SceneFlags scene_flags;
+  alignas(4) LightSettings light_settings;
+
+  alignas(4) Atmosphere atmosphere;
+  alignas(4) Sun sun;
+  alignas(8) u64 point_lights;
+  alignas(8) u64 spot_lights;
+};
+
 constexpr static u32 HISTOGRAM_THREADS_X = 16;
 constexpr static u32 HISTOGRAM_THREADS_Y = 16;
 constexpr static u32 HISTOGRAM_BIN_COUNT = HISTOGRAM_THREADS_X * HISTOGRAM_THREADS_Y;
@@ -210,5 +250,4 @@ struct HistogramInfo {
   alignas(4) f32 adaptation_speed = 1.1f;
   alignas(4) f32 ev100_bias = 1.0f;
 };
-
 } // namespace ox::GPU
