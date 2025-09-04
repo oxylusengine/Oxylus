@@ -6,7 +6,7 @@ import scene;
 import gtao;
 
 struct ShaderParameters {
-  Camera camera_buffer;
+  ConstantBuffer<Camera> camera_buffer;
   Texture2D<f32> srcWorkingDepth;   // viewspace depth with MIPs, output by XeGTAO_PrefilterDepths16x16 and consumed by XeGTAO_MainPass
   Texture2D<float4> srcNormalmap;   // source normal map (if used) / default: uint
   RWTexture2D<uint> outWorkingAOTerm;   // output AO term (includes bent normals if enabled - packed as R11G11B10 scaled by AO)
