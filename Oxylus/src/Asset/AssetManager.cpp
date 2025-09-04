@@ -1220,6 +1220,7 @@ auto AssetManager::load_material(const UUID& uuid,
       auto& map = texture_info_map.value();
       if (map.contains(texture)) {
         info = map[texture];
+        info.format = format;
       }
     }
     return info;
