@@ -11,6 +11,98 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
+template <>
+struct RendererInstance::BufferTraits<GPU::Transforms> {
+  using offset_type = u64;
+  static constexpr std::string_view buffer_name = "transforms";
+  static constexpr std::string_view pass_name = "update scene transforms";
+
+  static auto get_buffer_ref(auto& self) -> auto& { return self.transforms_buffer; }
+  static auto& get_prepared_buffer_ref(auto& self) { return self.prepared_frame.transforms_buffer; }
+
+  static auto get_index(const auto& dirty_id) -> usize { return SlotMap_decode_id(dirty_id).index; }
+
+  static auto get_element(const auto& gpu_data, usize index) -> const auto& { return gpu_data[index]; }
+};
+
+template <>
+struct RendererInstance::BufferTraits<GPU::Material> {
+  using offset_type = u32;
+  static constexpr std::string_view buffer_name = "materials";
+  static constexpr std::string_view pass_name = "update scene materials";
+
+  static auto get_buffer_ref(auto& self) -> auto& { return self.materials_buffer; }
+  static auto& get_prepared_buffer_ref(auto& self) { return self.prepared_frame.materials_buffer; }
+
+  static auto get_index(const auto& dirty_id) -> usize { return static_cast<usize>(dirty_id); }
+
+  static auto get_element(const auto& gpu_data, usize index) -> const auto& { return gpu_data[index]; }
+};
+
+template <typename T>
+auto update_gpu_buffer(auto& self, auto& vk_context, const auto& gpu_data, const auto& dirty_ids) -> void {
+  using traits = RendererInstance::BufferTraits<T>;
+
+  const auto data_size_bytes = gpu_data.size_bytes();
+  constexpr auto element_size = sizeof(T);
+
+  auto& buffer_ref = traits::get_buffer_ref(self);
+
+  const auto rebuild_needed = !buffer_ref || buffer_ref->size <= data_size_bytes;
+  buffer_ref = vk_context.resize_buffer(std::move(buffer_ref), vuk::MemoryUsage::eGPUonly, data_size_bytes);
+
+  if (rebuild_needed) {
+    traits::get_prepared_buffer_ref(self) = vk_context.upload_staging(gpu_data, *buffer_ref);
+  } else {
+    const auto dirty_count = dirty_ids.size();
+    const auto dirty_size_bytes = dirty_count * element_size;
+
+    auto upload_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_size_bytes);
+    auto* dst_ptr = reinterpret_cast<T*>(upload_buffer->mapped_ptr);
+
+    std::vector<typename traits::offset_type> upload_offsets;
+    upload_offsets.reserve(dirty_count);
+
+    for (const auto& [i, dirty_id] : std::views::zip(std::views::iota(0_sz), dirty_ids)) {
+      const auto index = traits::get_index(dirty_id);
+      const auto& element = traits::get_element(gpu_data, index);
+      std::memcpy(dst_ptr + i, &element, element_size);
+      upload_offsets.push_back(static_cast<typename traits::offset_type>(index * element_size));
+    }
+
+    auto update_pass = vuk::make_pass(
+        traits::pass_name,
+        [upload_offsets = std::move(upload_offsets)](vuk::CommandBuffer& cmd_list,
+                                                     VUK_BA(vuk::Access::eTransferRead) src_buffer,
+                                                     VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
+          for (const auto& [i, offset] : std::views::zip(std::views::iota(0_sz), upload_offsets)) {
+            const auto src_subrange = src_buffer->subrange(i * element_size, element_size);
+            const auto dst_subrange = dst_buffer->subrange(offset, element_size);
+            cmd_list.copy_buffer(src_subrange, dst_subrange);
+          }
+          return dst_buffer;
+        });
+
+    auto buffer_handle = vuk::acquire_buf(traits::buffer_name, *buffer_ref, vuk::Access::eMemoryRead);
+    traits::get_prepared_buffer_ref(self) = update_pass(std::move(upload_buffer), std::move(buffer_handle));
+  }
+}
+
+template <typename T>
+auto update_buffer_if_dirty(auto& self, auto& vk_context, const auto& gpu_data, const auto& dirty_ids) -> void {
+  using traits = RendererInstance::BufferTraits<T>;
+
+  if (!dirty_ids.empty()) {
+    update_gpu_buffer<T>(self, vk_context, gpu_data, dirty_ids);
+  } else {
+    auto& buffer_ref = traits::get_buffer_ref(self);
+    if (buffer_ref) {
+      traits::get_prepared_buffer_ref(self) = vuk::acquire_buf(
+          traits::buffer_name, *buffer_ref, vuk::Access::eMemoryRead);
+    }
+  }
+}
+
 RendererInstance::RendererInstance(Scene* owner_scene, Renderer& parent_renderer)
     : scene(owner_scene),
       renderer(parent_renderer) {
@@ -1318,103 +1410,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   self.histogram_info = hist_info;
 
-  if (!info.dirty_transform_ids.empty()) {
-    auto rebuild_transforms = !self.transforms_buffer ||
-                              self.transforms_buffer->size <= info.gpu_transforms.size_bytes();
-    self.transforms_buffer = vk_context.resize_buffer(
-        std::move(self.transforms_buffer), vuk::MemoryUsage::eGPUonly, info.gpu_transforms.size_bytes());
-
-    if (rebuild_transforms) {
-      // If we resize buffer, we need to refill it again, so individual uploads are not required.
-      self.prepared_frame.transforms_buffer = vk_context.upload_staging(info.gpu_transforms, *self.transforms_buffer);
-    } else {
-      // Buffer is not resized, upload individual transforms.
-
-      auto dirty_transforms_count = info.dirty_transform_ids.size();
-      auto dirty_transforms_size_bytes = dirty_transforms_count * sizeof(GPU::Transforms);
-      auto upload_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_transforms_size_bytes);
-      auto* dst_transform_ptr = reinterpret_cast<GPU::Transforms*>(upload_buffer->mapped_ptr);
-      auto upload_offsets = std::vector<u64>(dirty_transforms_count);
-
-      for (const auto& [dirty_transform_id, offset] : std::views::zip(info.dirty_transform_ids, upload_offsets)) {
-        auto index = SlotMap_decode_id(dirty_transform_id).index;
-        const auto& transform = info.gpu_transforms[index];
-        std::memcpy(dst_transform_ptr, &transform, sizeof(GPU::Transforms));
-        offset = index * sizeof(GPU::Transforms);
-        dst_transform_ptr++;
-      }
-
-      auto update_transforms_pass = vuk::make_pass(
-          "update scene transforms",
-          [=](vuk::CommandBuffer& cmd_list, //
-              VUK_BA(vuk::Access::eTransferRead) src_buffer,
-              VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
-            for (usize i = 0; i < upload_offsets.size(); i++) {
-              auto offset = upload_offsets[i];
-              auto src_subrange = src_buffer->subrange(i * sizeof(GPU::Transforms), sizeof(GPU::Transforms));
-              auto dst_subrange = dst_buffer->subrange(offset, sizeof(GPU::Transforms));
-              cmd_list.copy_buffer(src_subrange, dst_subrange);
-            }
-
-            return dst_buffer;
-          });
-
-      self.prepared_frame.transforms_buffer = vuk::acquire_buf(
-          "transforms", *self.transforms_buffer, vuk::Access::eMemoryRead);
-      self.prepared_frame.transforms_buffer = update_transforms_pass(std::move(upload_buffer),
-                                                                     std::move(self.prepared_frame.transforms_buffer));
-    }
-  } else if (self.transforms_buffer) {
-    self.prepared_frame.transforms_buffer = vuk::acquire_buf(
-        "transforms", *self.transforms_buffer, vuk::Access::eMemoryRead);
-  }
-
-  if (!info.dirty_material_indices.empty()) {
-    auto rebuild_materials = !self.materials_buffer || self.materials_buffer->size <= info.gpu_materials.size_bytes();
-    self.materials_buffer = vk_context.resize_buffer(
-        std::move(self.materials_buffer), vuk::MemoryUsage::eGPUonly, info.gpu_materials.size_bytes());
-
-    if (rebuild_materials) {
-      self.prepared_frame.materials_buffer = vk_context.upload_staging(info.gpu_materials, *self.materials_buffer);
-    } else {
-      // TODO: Literally repeating code, find a solution to this
-      auto dirty_materials_count = info.dirty_material_indices.size();
-      auto dirty_materials_size_bytes = dirty_materials_count * sizeof(GPU::Material);
-      auto upload_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_materials_size_bytes);
-      auto* dst_materials_ptr = reinterpret_cast<GPU::Material*>(upload_buffer->mapped_ptr);
-      auto upload_offsets = std::vector<u32>(dirty_materials_count);
-
-      for (const auto& [dirty_material, index, offset] :
-           std::views::zip(info.gpu_materials, info.dirty_material_indices, upload_offsets)) {
-        std::memcpy(dst_materials_ptr, &dirty_material, sizeof(GPU::Material));
-        offset = index * sizeof(GPU::Material);
-        dst_materials_ptr++;
-      }
-
-      auto update_materials_pass = vuk::make_pass(
-          "update scene materials",
-          [=](vuk::CommandBuffer& cmd_list, //
-              VUK_BA(vuk::Access::eTransferRead) src_buffer,
-              VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
-            for (usize i = 0; i < upload_offsets.size(); i++) {
-              auto offset = upload_offsets[i];
-              auto src_subrange = src_buffer->subrange(i * sizeof(GPU::Material), sizeof(GPU::Material));
-              auto dst_subrange = dst_buffer->subrange(offset, sizeof(GPU::Material));
-              cmd_list.copy_buffer(src_subrange, dst_subrange);
-            }
-
-            return dst_buffer;
-          });
-
-      self.prepared_frame.materials_buffer = vuk::acquire_buf(
-          "materials", *self.materials_buffer, vuk::Access::eMemoryRead);
-      self.prepared_frame.materials_buffer = update_materials_pass(std::move(upload_buffer),
-                                                                   std::move(self.prepared_frame.materials_buffer));
-    }
-  } else if (self.materials_buffer) {
-    self.prepared_frame.materials_buffer = vuk::acquire_buf(
-        "materials", *self.materials_buffer, vuk::Access::eMemoryRead);
-  }
+  update_buffer_if_dirty<GPU::Transforms>(self, vk_context, info.gpu_transforms, info.dirty_transform_ids);
+  update_buffer_if_dirty<GPU::Material>(self, vk_context, info.gpu_materials, info.dirty_material_indices);
 
   if (!info.gpu_meshes.empty()) {
     self.meshes_buffer = vk_context.resize_buffer(
