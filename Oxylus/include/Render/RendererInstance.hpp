@@ -35,6 +35,9 @@ struct PreparedFrame {
 
 class RendererInstance {
 public:
+  template <typename T>
+  struct BufferTraits;
+
   explicit RendererInstance(Scene* owner_scene, Renderer& parent_renderer);
   ~RendererInstance();
 
