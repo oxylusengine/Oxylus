@@ -14,7 +14,7 @@ struct ShaderParameters {
 func cs_main(
     u32x2 thread_id : SV_DispatchThreadID,
     uniform ParameterBlock<ShaderParameters> params,
-    uniform i32x3 occlusion_noisy_extent
+    uniform i32x2 occlusion_noisy_extent
 ) -> void {
     let pixel_coordinates = i32x2(thread_id.xy);
     let uv = f32x2(pixel_coordinates) / f32x2(occlusion_noisy_extent.xy);

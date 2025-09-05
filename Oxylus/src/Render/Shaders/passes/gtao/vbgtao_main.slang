@@ -18,6 +18,14 @@ struct ShaderParameters {
     SamplerState linear_clamp_sampler;
 };
 
+struct VBGTAOSettings {
+    f32 thickness = 0.25;
+    u32 slice_count = 3;
+    u32 samples_per_slice_side = 3;
+    f32 effect_radius = 0.5;
+    u32 noise_index = 0;
+};
+
 f32 fast_sqrt(f32 x) {
     return (asfloat( 0x1fbd1df5 + ( asint( x ) >> 1 ) ));
 }
@@ -29,10 +37,9 @@ f32 fast_acos(f32 inX) {
     return (inX >= 0) ? res : PI - res;
 }
 
-func load_noise(u32x2 coord, in Texture2D<u16> hilbert_noise) -> f32x2{
-    var index = hilbert_noise.Load(i32x3(coord % 64, 0)).r;
-    // TODO: Temporal jitter (or if you have consts.frameIndex, etc...)
-    //index += 288*(temporalIndex%64);
+func load_noise(u32x2 coord, in Texture2D<u16> hilbert_noise, u32 noise_index) -> f32x2{
+    var index = (u32)hilbert_noise.Load(i32x3(coord % 64, 0)).r;
+    index += 288 * (noise_index % 64);
 
     // R2 sequence - see http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
     return f32x2(frac(0.5 + index * float2(0.75487766624669276005, 0.5698402909980532659114)));
@@ -142,11 +149,12 @@ func processSample(
 func cs_main(
     const uint2 pixel_coordinates : SV_DispatchThreadID, 
     uniform ParameterBlock<ShaderParameters> params,
+    uniform VBGTAOSettings settings
 ) -> void {
-    let thickness = 0.25;
-    let slice_count = 3.0;
-    let samples_per_slice_side = 3.0;
-    let effect_radius = 0.5 * 1.457;
+    let thickness = settings.thickness;
+    var slice_count = settings.slice_count;
+    var samples_per_slice_side = settings.samples_per_slice_side;
+    let effect_radius = settings.effect_radius * 1.457;
     let falloff_range = 0.615 * effect_radius;
     let falloff_from = effect_radius * (1.0 - 0.615);
     let falloff_mul = -1.0 / falloff_range;
@@ -158,7 +166,7 @@ func cs_main(
     let pixel_position = reconstruct_view_space_position(uv, pixel_depth, params.camera);
     let pixel_normal = load_normal_view_space(uv, params.camera, params.normals, params.point_clamp_sampler);
     let view_vec = normalize(-pixel_position);
-    let noise = load_noise(pixel_coordinates, params.hilbert_noise);
+    let noise = load_noise(pixel_coordinates, params.hilbert_noise, settings.noise_index);
     let sample_scale = (-0.5 * effect_radius * params.camera.projection[0][0]) / pixel_position.z;
     var visibility = 0.0;
     var occluded_sample_count = 0u;

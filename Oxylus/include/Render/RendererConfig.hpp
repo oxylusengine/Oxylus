@@ -24,15 +24,9 @@ inline AutoCVar_Int cvar_culling_triangle("rr.culling_triangle", "Triangle culli
 
 inline AutoCVar_Int cvar_reload_renderer("rr.reload_renderer", "reload renderer", 0);
 
-inline AutoCVar_Int cvar_gtao_enable("pp.gtao", "use gtao", 1);
-inline AutoCVar_Int cvar_gtao_quality_level("pp.gtao_quality_level", "gtao quality level", 3);
-inline AutoCVar_Int cvar_gtao_denoise_passes("pp.gtao_denoise_passes", "amount of gtao denoise blur passes", 3);
-inline AutoCVar_Float cvar_gtao_radius("pp.gtao_radius", "gtao radius", 0.5f);
-inline AutoCVar_Float cvar_gtao_falloff_range("pp.gtao_falloff_range", "gtao falloff range", 0.615f);
-inline AutoCVar_Float cvar_gtao_sample_distribution_power("pp.gtao_sample_distribution_power", "gtao sample distribution power", 2.0f);
-inline AutoCVar_Float cvar_gtao_thin_occluder_compensation("pp.gtao_thin_occluder_compensation", "gtao thin occluder compensation", 0.0f);
-inline AutoCVar_Float cvar_gtao_final_value_power("pp.gtao_final_value_power", "gtao final value power", 2.2f);
-inline AutoCVar_Float cvar_gtao_depth_mip_sampling_offset("pp.gtao_depth_mip_sampling_offset", "gtao depth mip sampling offset", 3.30f);
+inline AutoCVar_Int cvar_vbgtao_enable("pp.vbgtao", "use vbgtao", 1);
+inline AutoCVar_Int cvar_vbgtao_quality_level("pp.vbgtao_quality_level", "vbgtao quality level", 3);
+inline AutoCVar_Float cvar_vbgtao_radius("pp.vbgtao_radius", "vbgtao radius", 0.5f);
 
 inline AutoCVar_Int cvar_bloom_enable("pp.bloom", "use bloom", 1);
 inline AutoCVar_Int cvar_bloom_mips("pp.bloom_mips", "amount of mips used in bloom pass", 8);

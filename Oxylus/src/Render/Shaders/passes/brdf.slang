@@ -9,7 +9,6 @@ import scene;
 #include <fullscreen.slang>
 
 struct ShaderParameters {
-    Sampler nearest_clamp_sampler;
     Sampler linear_clamp_sampler;
     Sampler linear_repeat_sampler;
     Image2D<f32x4> sky_transmittance_lut;
@@ -23,8 +22,6 @@ struct ShaderParameters {
     ConstantBuffer<Scene> scene;
     ConstantBuffer<Camera> camera;
 };
-
-ParameterBlock<ShaderParameters> params;
 
 func lights_attenuate_point(f32 to_light_dist, f32 cutoff) -> f32 {
     f32 win = (to_light_dist / cutoff);
@@ -138,7 +135,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     bool gtao_enabled = pass_config & PassConfig::EnableGTAO;
     f32 screen_space_occlusion = 1.0;
     if (gtao_enabled) {
-        screen_space_occlusion = params.gtao_image.Load(u32x3(pixel_pos, 0)).r;
+        screen_space_occlusion = params.gtao_image.load(pixel_pos).r;
     }
 
     occlusion = min(occlusion, screen_space_occlusion);
@@ -215,7 +212,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
 
     f32 eye_gradient = dot(N, sky_info.eye_dir);
     eye_gradient = (eye_gradient + 1.0) * 0.375 + 0.25;
-    f32x3 ambient_contribution = com::rec709_oetf(sky_result.luminance) * albedo_color * occlusion * eye_gradient;
+    f32x3 ambient_contribution = com::rec709_oetf(sky_result.luminance) * albedo_color * eye_gradient * occlusion;
 
     // MATERIAL COLOR (Sun Light) ──────────────────────────────────────
     // https://marmosetco.tumblr.com/post/81245981087
@@ -226,7 +223,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
 
     const f32 NoL = max(dot(N, L), 0.0);
     f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic);
-    f32x3 material_surface_color = brdf * horizon * diffuse_light * NoL;
+    f32x3 material_surface_color = brdf * horizon * diffuse_light * NoL * occlusion;
 
     // FINAL ────────────────────────────────────────────────────────────
     f32x3 final_color = material_surface_color + total_lighting + ambient_contribution + emission;

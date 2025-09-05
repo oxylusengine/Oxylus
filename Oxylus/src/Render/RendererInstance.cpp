@@ -211,7 +211,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     pass_config_flags |= PassConfig::EnableBloom;
   if (static_cast<bool>(RendererCVar::cvar_fxaa_enable.get()))
     pass_config_flags |= PassConfig::EnableFXAA;
-  if (static_cast<bool>(RendererCVar::cvar_gtao_enable.get()))
+  if (static_cast<bool>(RendererCVar::cvar_vbgtao_enable.get()))
     pass_config_flags |= PassConfig::EnableGTAO;
 
   // --- 3D Pass ---
@@ -732,13 +732,13 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
       auto vbgtao_generate_pass = vuk::make_pass( //
           "vbgtao generate",
-          [](vuk::CommandBuffer& command_buffer,
-             VUK_BA(vuk::eComputeUniformRead) camera,
-             VUK_IA(vuk::eComputeSampled) prefiltered_depth,
-             VUK_IA(vuk::eComputeSampled) normals,
-             VUK_IA(vuk::eComputeSampled) hilbert_noise,
-             VUK_IA(vuk::eComputeRW) ambient_occlusion,
-             VUK_IA(vuk::eComputeRW) depth_differences) {
+          [inf = *self.vbgtao_info](vuk::CommandBuffer& command_buffer,
+                                    VUK_BA(vuk::eComputeUniformRead) camera,
+                                    VUK_IA(vuk::eComputeSampled) prefiltered_depth,
+                                    VUK_IA(vuk::eComputeSampled) normals,
+                                    VUK_IA(vuk::eComputeSampled) hilbert_noise,
+                                    VUK_IA(vuk::eComputeRW) ambient_occlusion,
+                                    VUK_IA(vuk::eComputeRW) depth_differences) {
             auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
                 .magFilter = vuk::Filter::eNearest,
                 .minFilter = vuk::Filter::eNearest,
@@ -766,6 +766,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                 .bind_image(0, 5, depth_differences)
                 .bind_sampler(0, 6, nearest_clamp_sampler)
                 .bind_sampler(0, 7, linear_clamp_sampler)
+                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(inf))
                 .dispatch_invocations_per_pixel(ambient_occlusion);
 
             return std::make_tuple(camera, normals, ambient_occlusion, depth_differences);
@@ -803,29 +804,32 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                                                                       std::move(vbgtao_noisy_occlusion_attachment),
                                                                       std::move(vbgtao_depth_differences_attachment));
 
-      auto vbgtao_denoise_pass = vuk::make_pass("vbgtao denoise",
-                                                [](vuk::CommandBuffer& command_buffer, //
-                                                   VUK_IA(vuk::eComputeSampled) noisy_occlusion,
-                                                   VUK_IA(vuk::eComputeSampled) depth_differences,
-                                                   VUK_IA(vuk::eComputeRW) ambient_occlusion) {
-                                                  auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
-                                                      .magFilter = vuk::Filter::eNearest,
-                                                      .minFilter = vuk::Filter::eNearest,
-                                                      .mipmapMode = vuk::SamplerMipmapMode::eNearest,
-                                                      .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-                                                      .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-                                                      .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
-                                                  };
+      auto vbgtao_denoise_pass = vuk::make_pass( //
+          "vbgtao denoise",
+          [](vuk::CommandBuffer& command_buffer,
+             VUK_IA(vuk::eComputeSampled) noisy_occlusion,
+             VUK_IA(vuk::eComputeSampled) depth_differences,
+             VUK_IA(vuk::eComputeRW) ambient_occlusion) {
+            auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
+                .magFilter = vuk::Filter::eNearest,
+                .minFilter = vuk::Filter::eNearest,
+                .mipmapMode = vuk::SamplerMipmapMode::eNearest,
+                .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+                .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+                .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+            };
 
-                                                  command_buffer.bind_compute_pipeline("vbgtao_denoise_pipeline")
-                                                      .bind_image(0, 0, noisy_occlusion)
-                                                      .bind_image(0, 1, depth_differences)
-                                                      .bind_image(0, 2, ambient_occlusion)
-                                                      .bind_sampler(0, 3, nearest_clamp_sampler)
-                                                      .dispatch_invocations_per_pixel(ambient_occlusion);
+            glm::ivec2 occlusion_noisy_extent = {noisy_occlusion->extent.width, noisy_occlusion->extent.height};
+            command_buffer.bind_compute_pipeline("vbgtao_denoise_pipeline")
+                .bind_image(0, 0, noisy_occlusion)
+                .bind_image(0, 1, depth_differences)
+                .bind_image(0, 2, ambient_occlusion)
+                .bind_sampler(0, 3, nearest_clamp_sampler)
+                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(occlusion_noisy_extent))
+                .dispatch_invocations_per_pixel(ambient_occlusion);
 
-                                                  return ambient_occlusion;
-                                                });
+            return ambient_occlusion;
+          });
 
       vbgtao_occlusion_attachment = vbgtao_denoise_pass(std::move(vbgtao_noisy_occlusion_attachment),
                                                         std::move(vbgtao_depth_differences_attachment),
@@ -850,8 +854,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
               VUK_BA(vuk::eFragmentRead) scene,
               VUK_BA(vuk::eFragmentRead) camera,
               VUK_BA(vuk::eFragmentRead) point_lights,
-              VUK_BA(vuk::eFragmentRead) spot_lights
-              ) {
+              VUK_BA(vuk::eFragmentRead) spot_lights) {
             auto linear_clamp_sampler = vuk::SamplerCreateInfo{
                 .magFilter = vuk::Filter::eLinear,
                 .minFilter = vuk::Filter::eLinear,
@@ -867,24 +870,22 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                 .addressModeV = vuk::SamplerAddressMode::eRepeat,
             };
 
-            cmd_list //
-                .bind_graphics_pipeline("brdf")
+            cmd_list.bind_graphics_pipeline("brdf")
                 .set_rasterization({})
                 .set_color_blend(dst, vuk::BlendPreset::eOff)
                 .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
                 .set_viewport(0, vuk::Rect2D::framebuffer())
                 .set_scissor(0, vuk::Rect2D::framebuffer())
-                .bind_sampler(0, 0, nearest_clamp_sampler)
-                .bind_sampler(0, 1, linear_clamp_sampler)
-                .bind_sampler(0, 2, linear_repeat_sampler)
-                .bind_image(0, 3, sky_transmittance_lut)
-                .bind_image(0, 4, sky_multiscatter_lut)
-                .bind_image(0, 5, depth)
-                .bind_image(0, 6, albedo)
-                .bind_image(0, 7, normal)
-                .bind_image(0, 8, emissive)
-                .bind_image(0, 9, metallic_roughness_occlusion)
-                .bind_image(0, 10, gtao)
+                .bind_sampler(0, 0, linear_clamp_sampler)
+                .bind_sampler(0, 1, linear_repeat_sampler)
+                .bind_image(0, 2, sky_transmittance_lut)
+                .bind_image(0, 3, sky_multiscatter_lut)
+                .bind_image(0, 4, depth)
+                .bind_image(0, 5, albedo)
+                .bind_image(0, 6, normal)
+                .bind_image(0, 7, emissive)
+                .bind_image(0, 8, metallic_roughness_occlusion)
+                .bind_image(0, 9, gtao)
                 .bind_buffer(0, 10, scene)
                 .bind_buffer(0, 11, camera)
                 .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(pass_config_flags))
@@ -1706,61 +1707,37 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     DebugRenderer::reset();
   }
 
-  auto gtao_enabled = (bool)RendererCVar::cvar_gtao_enable.get();
+  auto gtao_enabled = (bool)RendererCVar::cvar_vbgtao_enable.get();
   if (gtao_enabled && self.viewport_size.x > 0) {
-    auto& gtao_info = self.vbgtao_info.emplace();
+    auto& vbgtao_info = self.vbgtao_info.emplace();
+    vbgtao_info.effect_radius = RendererCVar::cvar_vbgtao_radius.get();
 
-    auto p = cam.get_projection_matrix();
-    const auto proj_matrix = glm::value_ptr(p);
-    const bool row_major = false; // glm is column major
+    switch (RendererCVar::cvar_vbgtao_quality_level.get()) {
+      case 0: {
+        vbgtao_info.slice_count = 1;
+        vbgtao_info.samples_per_slice_side = 2;
+        break;
+      }
+      case 1: {
+        vbgtao_info.slice_count = 2;
+        vbgtao_info.samples_per_slice_side = 2;
+        break;
+      }
+      case 2: {
+        vbgtao_info.slice_count = 3;
+        vbgtao_info.samples_per_slice_side = 3;
+        break;
+      }
+      case 3: {
+        vbgtao_info.slice_count = 9;
+        vbgtao_info.samples_per_slice_side = 3;
+        break;
+      }
+    }
 
-    const auto viewport_width = self.viewport_size.x;
-    const auto viewport_height = self.viewport_size.y;
-
-    gtao_info.viewport_size = {viewport_width, viewport_height};
-    gtao_info.viewport_pixel_size = {1.0f / (float)viewport_width, 1.0f / (float)viewport_height};
-
-    // For right-handed projection matrix
-    // float depth_linearize_mul = (row_major) ? (-proj_matrix[2 * 4 + 3]) : (-proj_matrix[3 * 4 + 2]); // -P[2][3]
-    float depth_linearize_mul = -p[3][2];
-
-    // float depth_linearize_add = (row_major) ? (-proj_matrix[2 * 4 + 2]) : (-proj_matrix[2 * 4 + 2]); // -P[2][2]
-    float depth_linearize_add = -p[2][2];
-
-    // The handedness check might not be needed now, but keeping it for safety:
-    if (depth_linearize_mul * depth_linearize_add < 0)
-      depth_linearize_add = -depth_linearize_add;
-
-    gtao_info.depth_unpack_consts = {depth_linearize_mul, depth_linearize_add};
-
-    float tan_half_fov_y = 1.0f / p[1][1];
-    float tan_half_fov_x = 1.0F / p[0][0];
-
-    gtao_info.camera_tan_half_fov = {tan_half_fov_x, -tan_half_fov_y};
-
-    gtao_info.ndc_to_view_mul = {gtao_info.camera_tan_half_fov.x * 2.0f, gtao_info.camera_tan_half_fov.y * -2.0f};
-    gtao_info.ndc_to_view_add = {gtao_info.camera_tan_half_fov.x * -1.0f, gtao_info.camera_tan_half_fov.y * 1.0f};
-
-    gtao_info.ndc_to_view_mul_x_pixel_size = {gtao_info.ndc_to_view_mul.x * gtao_info.viewport_pixel_size.x,
-                                              gtao_info.ndc_to_view_mul.y * -gtao_info.viewport_pixel_size.y};
-
-    gtao_info.effect_radius = RendererCVar::cvar_gtao_radius.get();
-
-    gtao_info.effect_falloff_range = RendererCVar::cvar_gtao_falloff_range.get();
-
-    gtao_info.denoise_blur_beta = (RendererCVar::cvar_gtao_denoise_passes.get() == 0)
-                                      ? (1e4f)
-                                      : (1.2f); // high value disables denoise - more elegant &
-                                                // correct way would be do set all edges to 0
-
-    gtao_info.radius_multiplier = 1.457f;
-    gtao_info.sample_distribution_power = RendererCVar::cvar_gtao_sample_distribution_power.get();
-    gtao_info.thin_occluder_compensation = RendererCVar::cvar_gtao_thin_occluder_compensation.get();
-    gtao_info.final_value_power = RendererCVar::cvar_gtao_final_value_power.get();
-    gtao_info.depth_mip_sampling_fffset = RendererCVar::cvar_gtao_depth_mip_sampling_offset.get();
-    // gtao_info.noise_index = (RendererCVar::cvar_gtao_denoise_passes.get() > 0) ? (frameCounter % 64) : (0); // TODO:
-    // If we have TAA
-    gtao_info.noise_index = 0;
+    // vbgtao_info.noise_index = (RendererCVar::cvar_gtao_denoise_passes.get() > 0) ? (frameCounter % 64) : (0); //
+    // TODO: If we have TAA
+    vbgtao_info.noise_index = 0;
   }
 }
 } // namespace ox
