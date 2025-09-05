@@ -18,6 +18,7 @@ enum class PassConfig : u32 {
   None = 0,
   EnableBloom = 1 << 0,
   EnableFXAA = 1 << 1,
+  EnableGTAO = 1 << 2,
 };
 consteval void enable_bitmask(PassConfig);
 
@@ -168,5 +169,6 @@ private:
 
   Texture sky_transmittance_lut_view;
   Texture sky_multiscatter_lut_view;
+  Texture hilbert_noise_lut;
 };
 } // namespace ox

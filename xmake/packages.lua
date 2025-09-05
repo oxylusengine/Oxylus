@@ -43,7 +43,7 @@ add_requireconfs("fmt", "loguru.fmt", {
 
 add_requires("vk-bootstrap v1.4.307", { system = false, debug = is_mode("debug") })
 
-add_requires("vuk 2025.07.09", { configs = {
+add_requires("vuk 2025.09.01", { configs = {
     debug_allocations = false,
 }, debug = is_mode("debug"), private = false})
 add_requireconfs("fmt", "vuk.fmt", {

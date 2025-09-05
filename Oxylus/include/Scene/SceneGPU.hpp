@@ -250,4 +250,12 @@ struct HistogramInfo {
   alignas(4) f32 adaptation_speed = 1.1f;
   alignas(4) f32 ev100_bias = 1.0f;
 };
+
+struct VBGTAOSettings {
+  alignas(4) f32 thickness = 0.25;
+  alignas(4) u32 slice_count = 3;
+  alignas(4) u32 samples_per_slice_side = 3;
+  alignas(4) f32 effect_radius = 0.5;
+  alignas(4) u32 noise_index = 0;
+};
 } // namespace ox::GPU

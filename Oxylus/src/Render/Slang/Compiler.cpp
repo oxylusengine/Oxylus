@@ -301,7 +301,10 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
       {.name = slang::CompilerOptionName::Capability,
        .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvGroupNonUniformBallot"}},
       {.name = slang::CompilerOptionName::Capability,
-       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvGroupNonUniformShuffle"}}};
+       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvGroupNonUniformShuffle"}},
+      {.name = slang::CompilerOptionName::Capability,
+       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvImageGatherExtended"}}};
+
   std::vector<slang::PreprocessorMacroDesc> macros;
   macros.reserve(info.definitions.size());
   for (const auto& [first, second] : info.definitions) {

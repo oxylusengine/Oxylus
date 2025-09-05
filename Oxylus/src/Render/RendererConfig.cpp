@@ -45,7 +45,9 @@ bool RendererConfig::save_config(const char* path) const {
       {
           "gtao",
           toml::table{
-              {"enabled", (bool)RendererCVar::cvar_gtao_enable.get()},
+              {"enabled", (bool)RendererCVar::cvar_vbgtao_enable.get()},
+              {"radius", RendererCVar::cvar_vbgtao_radius.get()},
+              {"quality_level", RendererCVar::cvar_vbgtao_quality_level.get()},
           },
       },
       {
@@ -74,28 +76,49 @@ bool RendererConfig::load_config(const char* path) {
 
   toml::table toml = toml::parse(content);
 
-  const auto display_config = toml["display"];
-  RendererCVar::cvar_vsync.set(display_config["vsync"].as_boolean()->get());
+  if (const auto display_config = toml["display"]) {
+    if (auto v = display_config["vsync"].as_boolean())
+      RendererCVar::cvar_vsync.set(v->get());
+  }
 
-  const auto debug_config = toml["debug"];
-  RendererCVar::cvar_enable_debug_renderer.set(debug_config["debug_renderer"].as_boolean()->get());
-  RendererCVar::cvar_draw_bounding_boxes.set(debug_config["bounding_boxes"].as_boolean()->get());
-  RendererCVar::cvar_enable_physics_debug_renderer.set(debug_config["physics_debug_renderer"].as_boolean()->get());
+  if (const auto debug_config = toml["debug"]) {
+    if (auto v = debug_config["debug_renderer"].as_boolean())
+      RendererCVar::cvar_enable_debug_renderer.set(v->get());
+    if (auto v = debug_config["bounding_boxes"].as_boolean())
+      RendererCVar::cvar_draw_bounding_boxes.set(v->get());
+    if (auto v = debug_config["physics_debug_renderer"].as_boolean())
+      RendererCVar::cvar_enable_physics_debug_renderer.set(v->get());
+  }
 
-  const auto color_config = toml["color"];
-  RendererCVar::cvar_tonemapper.set((int)color_config["tonemapper"].as_integer()->get());
-  RendererCVar::cvar_exposure.set((float)color_config["exposure"].as_floating_point()->get());
-  RendererCVar::cvar_gamma.set((float)color_config["gamma"].as_floating_point()->get());
+  if (const auto color_config = toml["color"]) {
+    if (auto v = color_config["tonemapper"].as_integer())
+      RendererCVar::cvar_tonemapper.set(v->get());
+    if (auto v = color_config["exposure"].as_floating_point())
+      RendererCVar::cvar_exposure.set(v->get());
+    if (auto v = color_config["gamma"].as_floating_point())
+      RendererCVar::cvar_gamma.set(v->get());
+  }
 
-  const auto gtao_config = toml["gtao"];
-  RendererCVar::cvar_gtao_enable.set(gtao_config["enabled"].as_boolean()->get());
+  if (const auto gtao_config = toml["gtao"]) {
+    if (auto v = gtao_config["enabled"].as_boolean())
+      RendererCVar::cvar_vbgtao_enable.set(v->get());
+    if (auto v = gtao_config["radius"].as_floating_point())
+      RendererCVar::cvar_vbgtao_radius.set(v->get());
+    if (auto v = gtao_config["quality_level"].as_integer())
+      RendererCVar::cvar_vbgtao_quality_level.set(v->get());
+  }
 
-  const auto bloom_config = toml["bloom"];
-  RendererCVar::cvar_bloom_enable.set(bloom_config["enabled"].as_boolean()->get());
-  RendererCVar::cvar_bloom_threshold.set((float)bloom_config["threshold"].as_floating_point()->get());
+  if (const auto bloom_config = toml["bloom"]) {
+    if (auto v = bloom_config["enabled"].as_boolean())
+      RendererCVar::cvar_bloom_enable.set(v->get());
+    if (auto v = bloom_config["threshold"].as_floating_point())
+      RendererCVar::cvar_bloom_threshold.set(v->get());
+  }
 
-  const auto fxaa_config = toml["fxaa"];
-  RendererCVar::cvar_fxaa_enable.set(fxaa_config["enabled"].as_boolean()->get());
+  if (const auto fxaa_config = toml["fxaa"]) {
+    if (auto v = fxaa_config["enabled"].as_boolean())
+      RendererCVar::cvar_fxaa_enable.set(v->get());
+  }
 
   return true;
 }
