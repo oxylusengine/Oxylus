@@ -66,7 +66,7 @@ private:
 
   option<GPU::HistogramInfo> histogram_info = nullopt;
 
-  option<GPU::GTAOConstants> gtao_info = nullopt;
+  option<GPU::GTAOConstants> vbgtao_info = nullopt;
 
   Texture hiz_view;
   vuk::Unique<vuk::Buffer> transforms_buffer{};

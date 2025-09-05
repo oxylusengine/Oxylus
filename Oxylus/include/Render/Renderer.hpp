@@ -169,5 +169,6 @@ private:
 
   Texture sky_transmittance_lut_view;
   Texture sky_multiscatter_lut_view;
+  Texture hilbert_noise_lut;
 };
 } // namespace ox

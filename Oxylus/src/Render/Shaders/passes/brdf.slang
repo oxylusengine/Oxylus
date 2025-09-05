@@ -19,7 +19,7 @@ struct ShaderParameters {
     Image2D<f32x4> normal_image;
     Image2D<f32x3> emissive_image;
     Image2D<f32x3> metallic_roughness_occlusion_image;
-    Image2D<u8> gtao_image;
+    Image2D<f32> gtao_image;
     ConstantBuffer<Atmosphere> atmosphere;
     ConstantBuffer<Sun> sun;
     ConstantBuffer<Camera> camera;
@@ -47,13 +47,12 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     f32 occlusion = metallic_roughness_occlusion.z;
 
     bool gtao_enabled = pass_config & PassConfig::EnableGTAO;
-    f32 ao_vis = 1.0;
+    f32 screen_space_occlusion = 1.0;
     if (gtao_enabled) {
-        u8 value = params.gtao_image.sample_mip(params.nearest_clamp_sampler, input.tex_coord, 0.0).r;
-        ao_vis = value / 255.0;
+        screen_space_occlusion = params.gtao_image.Load(u32x3(pixel_pos, 0)).r;
     }
 
-    occlusion = min(occlusion, ao_vis);
+    occlusion = min(occlusion, screen_space_occlusion);
 
     const f32x3 NDC = f32x3(input.tex_coord * 2.0 - 1.0, depth);
     const f32x4 world_position_h = mul(params.camera.inv_projection_view, f32x4(NDC, 1.0));
@@ -104,7 +103,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     f32x3 material_surface_color = brdf * horizon  * sun_illuminance * NoL;
 
     // FINAL ────────────────────────────────────────────────────────────
-    f32x3 final_color = f32x3(ao_vis);
+    f32x3 final_color = material_surface_color + ambient_contribution + emission;
 
     return f32x4(final_color, 1.0);
 }
