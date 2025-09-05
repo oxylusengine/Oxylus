@@ -220,7 +220,7 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
   switch (type) {
     case AssetType::None    : return "None";
     case AssetType::Shader  : return "Shader";
-    case AssetType::Model    : return "Model";
+    case AssetType::Model   : return "Model";
     case AssetType::Texture : return "Texture";
     case AssetType::Material: return "Material";
     case AssetType::Font    : return "Font";
@@ -806,15 +806,30 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     }
   };
 
+  auto on_new_light = [](void* user_data, usize light_index, const GLTFLightInfo& light) {
+    auto* info = static_cast<GLTFCallbacks*>(user_data);
+
+    info->model->lights.emplace_back(Model::Light{
+        .name = light.name,
+        .type = static_cast<Model::LightType>(light.type),
+        .color = light.color,
+        .intensity = light.intensity,
+        .range = light.range,
+        .inner_cone_angle = light.inner_cone_angle,
+        .outer_cone_angle = light.outer_cone_angle,
+    });
+  };
+
   GLTFCallbacks gltf_callbacks = {.model = model};
   auto gltf_model = GLTFMeshInfo::parse(asset_path,
                                         {.user_data = &gltf_callbacks,
                                          .on_new_primitive = on_new_primitive,
+                                         .on_new_light = on_new_light,
+                                         .on_materials_load = on_materials_load,
                                          .on_access_index = on_access_index,
                                          .on_access_position = on_access_position,
                                          .on_access_normal = on_access_normal,
-                                         .on_access_texcoord = on_access_texcoord,
-                                         .on_materials_load = on_materials_load});
+                                         .on_access_texcoord = on_access_texcoord});
   if (!gltf_model.has_value()) {
     OX_LOG_ERROR("Failed to parse Model '{}'!", asset_path);
     return false;
@@ -825,6 +840,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     model->nodes.push_back({.name = node.name,
                             .child_indices = node.children,
                             .mesh_index = node.mesh_index,
+                            .light_index = node.light_index,
                             .translation = node.translation,
                             .rotation = node.rotation,
                             .scale = node.scale});
@@ -1220,6 +1236,7 @@ auto AssetManager::load_material(const UUID& uuid,
       auto& map = texture_info_map.value();
       if (map.contains(texture)) {
         info = map[texture];
+        info.format = format;
       }
     }
     return info;

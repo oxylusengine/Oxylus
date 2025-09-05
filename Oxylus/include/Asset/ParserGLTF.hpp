@@ -1,6 +1,6 @@
 #pragma once
 
-#include <fastgltf/core.hpp>
+#include <variant>
 #include <vuk/runtime/vk/Image.hpp>
 
 #include "Asset/AssetFile.hpp"
@@ -49,6 +49,7 @@ struct GLTFMaterialInfo {
 struct GLTFNodeInfo {
   std::string name = {};
   ox::option<usize> mesh_index = ox::nullopt;
+  ox::option<usize> light_index = ox::nullopt;
   std::vector<usize> children = {};
   glm::vec3 translation = {};
   glm::quat rotation = {};
@@ -60,6 +61,18 @@ struct GLTFSceneInfo {
   std::vector<usize> node_indices = {};
 };
 
+enum class GLTFLightType { Directional, Point, Spot };
+
+struct GLTFLightInfo {
+  std::string name;
+  GLTFLightType type;
+  glm::vec3 color = {1.0f, 1.0f, 1.0f};
+  float intensity = 1.0f;
+  ox::option<f32> range = ox::nullopt;
+  ox::option<f32> inner_cone_angle = ox::nullopt;
+  ox::option<f32> outer_cone_angle = ox::nullopt;
+};
+
 struct GLTFMeshCallbacks {
   void* user_data = nullptr;
   void (*on_new_primitive)(void* user_data,
@@ -69,6 +82,13 @@ struct GLTFMeshCallbacks {
                            u32 vertex_count,
                            u32 index_offset,
                            u32 index_count) = nullptr;
+  void (*on_new_light)(void* user_data, usize light_index, const GLTFLightInfo& light);
+
+  std::function<void(std::vector<GLTFMaterialInfo>& gltf_materials,
+                     std::vector<GLTFTextureInfo>& textures,
+                     std::vector<GLTFImageInfo>& images,
+                     std::vector<GLTFSamplerInfo>& samplers)>
+      on_materials_load = nullptr;
 
   // Accessors
   void (*on_access_index)(void* user_data, u32 mesh_index, u64 offset, u32 index) = nullptr;
@@ -76,12 +96,6 @@ struct GLTFMeshCallbacks {
   void (*on_access_normal)(void* user_data, u32 mesh_index, u64 offset, glm::vec3 normal) = nullptr;
   void (*on_access_texcoord)(void* user_data, u32 mesh_index, u64 offset, glm::vec2 texcoord) = nullptr;
   void (*on_access_color)(void* user_data, u32 mesh_index, u64 offset, glm::vec4 color) = nullptr;
-
-  std::function<void(std::vector<GLTFMaterialInfo>& gltf_materials,
-                     std::vector<GLTFTextureInfo>& textures,
-                     std::vector<GLTFImageInfo>& images,
-                     std::vector<GLTFSamplerInfo>& samplers)>
-      on_materials_load = nullptr;
 };
 
 struct GLTFMeshInfo {
@@ -91,6 +105,7 @@ struct GLTFMeshInfo {
   std::vector<GLTFMaterialInfo> materials = {};
   std::vector<GLTFNodeInfo> nodes = {};
   std::vector<GLTFSceneInfo> scenes = {};
+  std::vector<GLTFLightInfo> lights = {};
   ox::option<usize> defualt_scene_index = ox::nullopt;
 
   static auto parse(const ::fs::path& path, GLTFMeshCallbacks callbacks = {}) -> ox::option<GLTFMeshInfo>;

@@ -194,6 +194,45 @@ public struct Atmosphere {
     public i32x3 aerial_perspective_lut_size;
 };
 
+public struct PointLight {
+  public f32x3 position;
+  public f32x3 color;
+  public f32 intensity;
+  public f32 cutoff;
+};
+
+public struct SpotLight {
+  public f32x3 position;
+  public f32x3 direction;
+  public f32x3 color;
+  public f32 intensity;
+  public f32 cutoff;
+  public f32 inner_cone_angle;
+  public f32 outer_cone_angle;
+};
+
+public enum SceneFlags : u32 {
+  None = 0,
+  HasSun = 1 << 0,
+  HasAtmosphere = 1 << 1,
+  HasEyeAdaptation = 1 << 2,
+};
+
+public struct LightSettings {
+  public u32 point_light_count = 0;
+  public u32 spot_light_count = 0;
+};
+
+public struct Scene {
+  public SceneFlags scene_flags;
+  public LightSettings light_settings;
+
+  public Atmosphere atmosphere;
+  public Sun sun;
+  public PointLight* point_lights;
+  public SpotLight* spot_lights;
+};
+
 public struct Transform {
   public mat4 local = {};
   public mat4 world = {};
