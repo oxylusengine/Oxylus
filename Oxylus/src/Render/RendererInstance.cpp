@@ -1405,6 +1405,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         "debug_renderer_pass",
         [line_index_count = self.prepared_frame.line_index_count](vuk::CommandBuffer& cmd_list,
                                                                   VUK_IA(vuk::eColorWrite) dst,
+                                                                  VUK_IA(vuk::eFragmentSampled) depth_img,
                                                                   VUK_BA(vuk::eFragmentRead) dbg_vtx,
                                                                   VUK_BA(vuk::eFragmentRead) camera) {
           auto& dbg_index_buffer = *DebugRenderer::get_instance()->get_global_index_buffer();
@@ -1416,7 +1417,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                   .depthCompareOp = vuk::CompareOp::eGreaterOrEqual,
               })
               .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
-              .broadcast_color_blend({})
+              .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
               .set_rasterization(
                   {.polygonMode = vuk::PolygonMode::eLine, .cullMode = vuk::CullModeFlagBits::eNone, .lineWidth = 3.f})
               .set_primitive_topology(vuk::PrimitiveTopology::eLineList)
@@ -1425,13 +1426,14 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
               .bind_vertex_buffer(0, dbg_vtx, 0, DebugRenderer::vertex_pack)
               .bind_index_buffer(dbg_index_buffer, vuk::IndexType::eUint32)
               .bind_buffer(0, 0, camera)
+              .bind_image(0, 1, depth_img)
               .draw_indexed(line_index_count, 1, 0, 0, 0);
 
-          return std::make_tuple(dst, camera);
+          return std::make_tuple(dst, camera, depth_img);
         });
 
     std::tie(result_attachment,
-             camera_buffer) = debug_renderer_pass(result_attachment, debug_renderer_verticies_buffer, camera_buffer);
+             camera_buffer, depth_attachment) = debug_renderer_pass(result_attachment, depth_attachment, debug_renderer_verticies_buffer, camera_buffer);
   }
 
   return debugging ? final_attachment : result_attachment;
@@ -1515,21 +1517,23 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           sund.direction.z = glm::cos(tc.rotation.y);
           sund.intensity = lc.intensity;
         } else if (lc.type == LightComponent::LightType::Point) {
+          const glm::vec3 world_pos = Scene::get_world_position(e);
           point_lights.emplace_back(GPU::PointLight{
-              .position = Scene::get_world_position(e),
+              .position = world_pos,
               .color = lc.color,
               .intensity = lc.intensity,
               .cutoff = lc.radius,
           });
         } else if (lc.type == LightComponent::LightType::Spot) {
-          glm::vec3 direction = {
+          const glm::vec3 direction = {
               glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y),
               -glm::sin(tc.rotation.x),
               glm::cos(tc.rotation.x) * glm::cos(tc.rotation.y),
           };
 
+          const glm::vec3 world_pos = Scene::get_world_position(e);
           spot_lights.emplace_back(GPU::SpotLight{
-              .position = Scene::get_world_position(e),
+              .position = world_pos,
               .direction = glm::normalize(direction),
               .color = lc.color,
               .intensity = lc.intensity,

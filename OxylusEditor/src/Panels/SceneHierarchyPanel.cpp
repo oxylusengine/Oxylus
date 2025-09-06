@@ -50,6 +50,14 @@ auto SceneHierarchyPanel::on_update() -> void {
       const auto proj = cam->get_projection_matrix() * cam->get_view_matrix();
       DebugRenderer::draw_frustum(proj, glm::vec4(0, 1, 0, 1), cam->near_clip, cam->far_clip);
     }
+    if (auto* light = viewer.selected_entity_.get().try_get<LightComponent>()) {
+      const glm::vec3 world_pos = Scene::get_world_position(viewer.selected_entity_.get());
+      if (light->type == LightComponent::Point) {
+        DebugRenderer::draw_sphere(light->radius, world_pos, glm::vec4(0, 1.f, 0.f, 1.f));
+      } else if (light->type == LightComponent::Spot) {
+
+      }
+    }
 
     if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_D)) {
       auto clone_entity = [](flecs::entity entity) -> flecs::entity {
