@@ -4,6 +4,8 @@ import common;
 import gpu;
 import scene;
 
+import lens;
+
 #include <passes/histogram.slang>
 
 [[vk::binding(0, 0)]]
@@ -15,7 +17,9 @@ Image2D<f32x4> bloom_image;
 
 struct PushConstants {
     HistogramLuminance *luminance;
-    PassConfig pass_config;
+    SceneFlags scene_flags;
+    PostProcessSettings post_process_settings;
+    i32x2 screen_size;
 };
 [[vk::push_constant]] PushConstants C;
 
@@ -171,7 +175,12 @@ float3 agx_tonemapping(float3 color) {
 f32x4 fs_main(VertexOutput input) {
     f32x3 color = input_image.sample_mip(sampler, input.tex_coord, 0.0).rgb;
 
-    if (C.pass_config & PassConfig::EnableBloom) {
+    if (C.scene_flags & SceneFlags::HasChromaticAberration) {
+        f32x2 rgmag = FfxLensGetRGMag(C.post_process_settings.chromatic_aberration_amount);
+        color = FfxLensSampleWithChromaticAberration(input_image, sampler, i32x2(input.position.xy), C.screen_size / 2, rgmag.x, rgmag.y);
+    }
+
+    if (C.scene_flags & SceneFlags::HasBloom) {
         f32x3 bloom = bloom_image.sample_mip(sampler, input.tex_coord, 0.0).rgb;
         color += bloom;
     }
@@ -183,6 +192,18 @@ f32x4 fs_main(VertexOutput input) {
     //color = ACES_Fitted(color);
     //color = PBRNeutralToneMapping(color);  // this looks like shit, figure out why
     color = agx_tonemapping(color);
+
+    if (C.scene_flags & SceneFlags::HasVignette) {
+        FfxLensApplyVignette(i32x2(input.position.xy), C.screen_size / 2, color, C.post_process_settings.vignette_amount);
+    }
+
+    if (C.scene_flags & SceneFlags::HasFilmGrain) {
+        FfxLensApplyFilmGrain(i32x2(input.position.xy), 
+        color, 
+        C.post_process_settings.film_grain_scale,
+        C.post_process_settings.film_grain_amount, 
+        C.post_process_settings.film_grain_seed);
+    }
 
     return f32x4(color, 1.0);
 }

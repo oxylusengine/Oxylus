@@ -97,8 +97,9 @@ public:
 
   static auto copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Scene>;
 
-  auto get_world_transform(flecs::entity entity) const -> glm::mat4;
-  auto get_local_transform(flecs::entity entity) const -> glm::mat4;
+  static auto get_world_position(flecs::entity entity) -> glm::vec3;
+  static auto get_world_transform(flecs::entity entity) -> glm::mat4;
+  static auto get_local_transform(flecs::entity entity) -> glm::mat4;
 
   auto get_entity_transform_id(flecs::entity entity) const -> option<GPU::TransformID>;
   auto get_entity_transform(GPU::TransformID transform_id) const -> const GPU::Transforms*;

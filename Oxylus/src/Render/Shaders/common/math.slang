@@ -1,5 +1,6 @@
 implementing common;
 
+public static constexpr f32 HALF_PI = 1.57079632679;
 public static constexpr f32 PI = 3.1415926535897932384626433832795;
 public static constexpr f32 TAU = 6.283185307179586476925286766559;
 

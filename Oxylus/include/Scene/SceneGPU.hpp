@@ -195,6 +195,52 @@ struct CameraData {
   alignas(4) glm::vec2 resolution = {};
 };
 
+struct PointLight {
+  glm::vec3 position;
+  glm::vec3 color;
+  f32 intensity;
+  f32 cutoff;
+};
+
+struct SpotLight {
+  alignas(4) glm::vec3 position;
+  alignas(4) glm::vec3 direction;
+  alignas(4) glm::vec3 color;
+  alignas(4) f32 intensity;
+  alignas(4) f32 cutoff;
+  alignas(4) f32 inner_cone_angle;
+  alignas(4) f32 outer_cone_angle;
+};
+
+enum class SceneFlags : u32 {
+  None = 0,
+  HasSun = 1 << 0,
+  HasAtmosphere = 1 << 1,
+  HasEyeAdaptation = 1 << 2,
+  HasBloom = 1 << 3,
+  HasFXAA = 1 << 4,
+  HasGTAO = 1 << 5,
+  HasFilmGrain = 1 << 6,
+  HasChromaticAberration = 1 << 7,
+  HasVignette = 1 << 8,
+};
+consteval void enable_bitmask(SceneFlags);
+
+struct LightSettings {
+  alignas(4) u32 point_light_count = 0;
+  alignas(4) u32 spot_light_count = 0;
+};
+
+struct Scene {
+  alignas(4) SceneFlags scene_flags;
+  alignas(4) LightSettings light_settings;
+
+  alignas(4) Atmosphere atmosphere;
+  alignas(4) Sun sun;
+  alignas(8) u64 point_lights;
+  alignas(8) u64 spot_lights;
+};
+
 constexpr static u32 HISTOGRAM_THREADS_X = 16;
 constexpr static u32 HISTOGRAM_THREADS_Y = 16;
 constexpr static u32 HISTOGRAM_BIN_COUNT = HISTOGRAM_THREADS_X * HISTOGRAM_THREADS_Y;
@@ -211,30 +257,20 @@ struct HistogramInfo {
   alignas(4) f32 ev100_bias = 1.0f;
 };
 
-struct GTAOConstants {
-  alignas(4) glm::ivec2 viewport_size;
-  alignas(4) glm::vec2 viewport_pixel_size; // .zw == 1.0 / ViewportSize.xy
-
-  alignas(4) glm::vec2 depth_unpack_consts;
-  alignas(4) glm::vec2 camera_tan_half_fov;
-
-  alignas(4) glm::vec2 ndc_to_view_mul;
-  alignas(4) glm::vec2 ndc_to_view_add;
-
-  alignas(4) glm::vec2 ndc_to_view_mul_x_pixel_size;
-  alignas(4) f32 effect_radius; // world (viewspace) maximum size of the shadow
-  alignas(4) f32 effect_falloff_range = 0.615f;
-
-  alignas(4) f32 radius_multiplier = 1.457f;
-  alignas(4) f32 final_value_power = 2.2f;
-  alignas(4) f32 denoise_blur_beta;
-
-  alignas(4) f32 sample_distribution_power = 2.0f;
-  alignas(4) f32 thin_occluder_compensation = 0.0f;
-  alignas(4) f32 depth_mip_sampling_fffset = 3.30f;
-  alignas(4) i32 noise_index;       // frameIndex % 64 if using TAA or 0 otherwise
-
-  alignas(4) u32 pad_ = 0;
+struct VBGTAOSettings {
+  alignas(4) f32 thickness = 0.25;
+  alignas(4) u32 slice_count = 3;
+  alignas(4) u32 samples_per_slice_side = 3;
+  alignas(4) f32 effect_radius = 0.5;
+  alignas(4) u32 noise_index = 0;
+  alignas(4) f32 final_power = 2.2;
 };
 
+struct PostProcessSettings {
+  alignas(4) f32 chromatic_aberration_amount = 0.5f;
+  alignas(4) f32 vignette_amount = 0.5f;
+  alignas(4) f32 film_grain_scale = 1.0f;
+  alignas(4) f32 film_grain_amount = 0.5f;
+  alignas(4) u32 film_grain_seed = 0;
+};
 } // namespace ox::GPU

@@ -162,6 +162,7 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
     vuk::Compiler compiler{};
 
     if (ia.usage & vuk::ImageUsageFlagBits::eStorage && ia.usage & vuk::ImageUsageFlagBits::eSampled) {
+      fut = fut.as_released(vuk::eComputeSampled, vuk::DomainFlagBits::eGraphicsQueue);
     } else {
       fut = fut.as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue);
     }

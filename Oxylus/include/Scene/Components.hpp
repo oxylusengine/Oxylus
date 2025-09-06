@@ -257,10 +257,8 @@ ECS_COMPONENT_BEGIN(LightComponent)
   ECS_COMPONENT_MEMBER(type, u32, LightType::Point)
   ECS_COMPONENT_MEMBER(color, glm::vec3, {1.0f, 1.0f, 1.0f})
   ECS_COMPONENT_MEMBER(intensity, f32, 1.0f)
-  ECS_COMPONENT_MEMBER(range, f32, 1.0f)
-  ECS_COMPONENT_MEMBER(radius, f32, 0.025f)
-  ECS_COMPONENT_MEMBER(length, f32, 0.0f)
-  ECS_COMPONENT_MEMBER(outer_cone_angle, f32, glm::pi<float>() / 4.0f)
+  ECS_COMPONENT_MEMBER(radius, f32, 1.0f)
+  ECS_COMPONENT_MEMBER(outer_cone_angle, f32, 70)
   ECS_COMPONENT_MEMBER(inner_cone_angle, f32, 0.0f)
   ECS_COMPONENT_MEMBER(cast_shadows, bool, true)
   ECS_COMPONENT_MEMBER(shadow_map_res, u32, 1024)
@@ -287,6 +285,19 @@ ECS_COMPONENT_BEGIN(AutoExposureComponent)
   ECS_COMPONENT_MEMBER(max_exposure, f32, 18.f)
   ECS_COMPONENT_MEMBER(adaptation_speed, f32, 1.1f)
   ECS_COMPONENT_MEMBER(ev100_bias, f32, 1.f)
+ECS_COMPONENT_END();
+
+ECS_COMPONENT_BEGIN(VignetteComponent)
+  ECS_COMPONENT_MEMBER(amount, f32, 0.5f)
+ECS_COMPONENT_END();
+
+ECS_COMPONENT_BEGIN(ChromaticAberrationComponent)
+  ECS_COMPONENT_MEMBER(amount, f32, 0.5f)
+ECS_COMPONENT_END();
+
+ECS_COMPONENT_BEGIN(FilmGrainComponent)
+  ECS_COMPONENT_MEMBER(amount, f32, 0.6f)
+  ECS_COMPONENT_MEMBER(scale, f32, 0.7f)
 ECS_COMPONENT_END();
 
 // Physics

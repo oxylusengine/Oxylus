@@ -7,13 +7,6 @@ public const static f32 CAMERA_SCALE_UNIT     = 0.01;
 public const static f32 INV_CAMERA_SCALE_UNIT = 1.0 / CAMERA_SCALE_UNIT;
 public const static f32 PLANET_RADIUS_OFFSET  = 0.001;
 
-public enum class PassConfig : u32 {
-  None = 0,
-  EnableBloom = 1 << 0,
-  EnableFXAA = 1 << 1,
-  EnableGTAO = 1 << 2,
-};
-
 public enum DebugView : i32 {
   None = 0,
   Triangles,
@@ -194,6 +187,51 @@ public struct Atmosphere {
     public i32x3 aerial_perspective_lut_size;
 };
 
+public struct PointLight {
+  public f32x3 position;
+  public f32x3 color;
+  public f32 intensity;
+  public f32 cutoff;
+};
+
+public struct SpotLight {
+  public f32x3 position;
+  public f32x3 direction;
+  public f32x3 color;
+  public f32 intensity;
+  public f32 cutoff;
+  public f32 inner_cone_angle;
+  public f32 outer_cone_angle;
+};
+
+public enum SceneFlags : u32 {
+  None = 0,
+  HasSun = 1 << 0,
+  HasAtmosphere = 1 << 1,
+  HasEyeAdaptation = 1 << 2,
+  HasBloom = 1 << 3,
+  HasFXAA = 1 << 4,
+  HasGTAO = 1 << 5,
+  HasFilmGrain = 1 << 6,
+  HasChromaticAberration = 1 << 7,
+  HasVignette = 1 << 8,
+};
+
+public struct LightSettings {
+  public u32 point_light_count = 0;
+  public u32 spot_light_count = 0;
+};
+
+public struct Scene {
+  public SceneFlags scene_flags;
+  public LightSettings light_settings;
+
+  public Atmosphere atmosphere;
+  public Sun sun;
+  public PointLight* point_lights;
+  public SpotLight* spot_lights;
+};
+
 public struct Transform {
   public mat4 local = {};
   public mat4 world = {};
@@ -327,6 +365,23 @@ public struct Mesh {
     public u32 lod_count = 0;
     public MeshLOD lods[MESH_MAX_LODS] = {};
     public Bounds bounds = {};
+};
+
+public struct VBGTAOSettings {
+    public f32 thickness = 0.25;
+    public u32 slice_count = 3;
+    public u32 samples_per_slice_side = 3;
+    public f32 effect_radius = 0.5;
+    public u32 noise_index = 0;
+    public f32 final_power = 2.2;
+};
+
+public struct PostProcessSettings {
+    public f32 chromatic_aberration_amount;
+    public f32 vignette_amount;
+    public f32 film_grain_scale;
+    public f32 film_grain_amount;
+    public u32 film_grain_seed;
 };
 
 // --- Bindings ---

@@ -31,6 +31,7 @@ struct Model {
     std::string name = {};
     std::vector<usize> child_indices = {};
     ox::option<usize> mesh_index = ox::nullopt;
+    ox::option<usize> light_index = ox::nullopt;
     glm::vec3 translation = {};
     glm::quat rotation = {};
     glm::vec3 scale = {};
@@ -41,12 +42,25 @@ struct Model {
     std::vector<usize> node_indices = {};
   };
 
+  enum class LightType { Directional, Point, Spot };
+
+  struct Light {
+    std::string name;
+    LightType type;
+    glm::vec3 color = {1.0f, 1.0f, 1.0f};
+    float intensity = 1.0f;
+    ox::option<f32> range = ox::nullopt;
+    ox::option<f32> inner_cone_angle = ox::nullopt;
+    ox::option<f32> outer_cone_angle = ox::nullopt;
+  };
+
   std::vector<UUID> embedded_textures = {};
   std::vector<UUID> materials = {};
   std::vector<Primitive> primitives = {};
   std::vector<GLTFMesh> meshes = {};
   std::vector<Node> nodes = {};
   std::vector<Scene> scenes = {};
+  std::vector<Light> lights = {};
 
   usize default_scene_index = 0;
 

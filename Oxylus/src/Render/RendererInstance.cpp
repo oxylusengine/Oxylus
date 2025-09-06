@@ -11,6 +11,112 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
+template <>
+struct RendererInstance::BufferTraits<GPU::Transforms> {
+  using offset_type = u64;
+  static constexpr std::string_view buffer_name = "transforms";
+  static constexpr std::string_view pass_name = "update scene transforms";
+
+  static auto get_buffer_ref(auto& self) -> auto& { return self.transforms_buffer; }
+  static auto& get_prepared_buffer_ref(auto& self) { return self.prepared_frame.transforms_buffer; }
+
+  static auto get_index(const auto& dirty_id) -> usize { return SlotMap_decode_id(dirty_id).index; }
+
+  static auto get_element(const auto& gpu_data, usize index) -> const auto& { return gpu_data[index]; }
+};
+
+template <>
+struct RendererInstance::BufferTraits<GPU::Material> {
+  using offset_type = u32;
+  static constexpr std::string_view buffer_name = "materials";
+  static constexpr std::string_view pass_name = "update scene materials";
+
+  static auto get_buffer_ref(auto& self) -> auto& { return self.materials_buffer; }
+  static auto& get_prepared_buffer_ref(auto& self) { return self.prepared_frame.materials_buffer; }
+
+  static auto get_index(const auto& dirty_id) -> usize { return static_cast<usize>(dirty_id); }
+
+  static auto get_element(const auto& gpu_data, usize index) -> const auto& { return gpu_data[index]; }
+};
+
+template <>
+struct RendererInstance::BufferTraits<GPU::PointLight> {
+  using offset_type = u32;
+  static constexpr std::string_view buffer_name = "point_lights";
+  static constexpr std::string_view pass_name = "update point lights";
+
+  static auto get_buffer_ref(auto& self) -> auto& { return self.point_lights_buffer; }
+  static auto& get_prepared_buffer_ref(auto& self) { return self.prepared_frame.materials_buffer; }
+
+  static auto get_index(const auto& dirty_id) -> usize { return static_cast<usize>(dirty_id); }
+
+  static auto get_element(const auto& gpu_data, usize index) -> const auto& { return gpu_data[index]; }
+};
+
+template <typename T>
+auto update_gpu_buffer(auto& self, auto& vk_context, const auto& gpu_data, const auto& dirty_ids) -> void {
+  using traits = RendererInstance::BufferTraits<T>;
+
+  const auto data_size_bytes = gpu_data.size_bytes();
+  constexpr auto element_size = sizeof(T);
+
+  auto& buffer_ref = traits::get_buffer_ref(self);
+
+  const auto rebuild_needed = !buffer_ref || buffer_ref->size <= data_size_bytes;
+  buffer_ref = vk_context.resize_buffer(std::move(buffer_ref), vuk::MemoryUsage::eGPUonly, data_size_bytes);
+
+  if (rebuild_needed) {
+    traits::get_prepared_buffer_ref(self) = vk_context.upload_staging(gpu_data, *buffer_ref);
+  } else {
+    const auto dirty_count = dirty_ids.size();
+    const auto dirty_size_bytes = dirty_count * element_size;
+
+    auto upload_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_size_bytes);
+    auto* dst_ptr = reinterpret_cast<T*>(upload_buffer->mapped_ptr);
+
+    std::vector<typename traits::offset_type> upload_offsets;
+    upload_offsets.reserve(dirty_count);
+
+    for (const auto& [i, dirty_id] : std::views::zip(std::views::iota(0_sz), dirty_ids)) {
+      const auto index = traits::get_index(dirty_id);
+      const auto& element = traits::get_element(gpu_data, index);
+      std::memcpy(dst_ptr + i, &element, element_size);
+      upload_offsets.push_back(static_cast<typename traits::offset_type>(index * element_size));
+    }
+
+    auto update_pass = vuk::make_pass(
+        traits::pass_name,
+        [upload_offsets = std::move(upload_offsets)](vuk::CommandBuffer& cmd_list,
+                                                     VUK_BA(vuk::Access::eTransferRead) src_buffer,
+                                                     VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
+          for (const auto& [i, offset] : std::views::zip(std::views::iota(0_sz), upload_offsets)) {
+            const auto src_subrange = src_buffer->subrange(i * element_size, element_size);
+            const auto dst_subrange = dst_buffer->subrange(offset, element_size);
+            cmd_list.copy_buffer(src_subrange, dst_subrange);
+          }
+          return dst_buffer;
+        });
+
+    auto buffer_handle = vuk::acquire_buf(traits::buffer_name, *buffer_ref, vuk::Access::eMemoryRead);
+    traits::get_prepared_buffer_ref(self) = update_pass(std::move(upload_buffer), std::move(buffer_handle));
+  }
+}
+
+template <typename T>
+auto update_buffer_if_dirty(auto& self, auto& vk_context, const auto& gpu_data, const auto& dirty_ids) -> void {
+  using traits = RendererInstance::BufferTraits<T>;
+
+  if (!dirty_ids.empty()) {
+    update_gpu_buffer<T>(self, vk_context, gpu_data, dirty_ids);
+  } else {
+    auto& buffer_ref = traits::get_buffer_ref(self);
+    if (buffer_ref) {
+      traits::get_prepared_buffer_ref(self) = vuk::acquire_buf(
+          traits::buffer_name, *buffer_ref, vuk::Access::eMemoryRead);
+    }
+  }
+}
+
 RendererInstance::RendererInstance(Scene* owner_scene, Renderer& parent_renderer)
     : scene(owner_scene),
       renderer(parent_renderer) {
@@ -47,11 +153,19 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     self.atmosphere->transmittance_lut_size = self.renderer.sky_transmittance_lut_view.get_extent();
     self.atmosphere->multiscattering_lut_size = self.renderer.sky_multiscatter_lut_view.get_extent();
     atmosphere_buffer = self.renderer.vk_context->scratch_buffer(self.atmosphere);
+
+    self.gpu_scene.atmosphere = *self.atmosphere;
+    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasAtmosphere;
   }
   auto sun_buffer = vuk::Value<vuk::Buffer>{};
   if (self.sun.has_value()) {
     sun_buffer = self.renderer.vk_context->scratch_buffer(self.sun);
+
+    self.gpu_scene.sun = *self.sun;
+    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasSun;
   }
+
+  auto scene_buffer = self.renderer.vk_context->scratch_buffer(std::span(&self.gpu_scene, 1));
 
   const auto final_attachment_ia = vuk::ImageAttachment{
       .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
@@ -92,13 +206,12 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   auto transforms_buffer = std::move(self.prepared_frame.transforms_buffer);
   auto materials_buffer = std::move(self.prepared_frame.materials_buffer);
 
-  PassConfig pass_config_flags = PassConfig::None;
   if (static_cast<bool>(RendererCVar::cvar_bloom_enable.get()))
-    pass_config_flags |= PassConfig::EnableBloom;
+    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasBloom;
   if (static_cast<bool>(RendererCVar::cvar_fxaa_enable.get()))
-    pass_config_flags |= PassConfig::EnableFXAA;
-  if (static_cast<bool>(RendererCVar::cvar_gtao_enable.get()))
-    pass_config_flags |= PassConfig::EnableGTAO;
+    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasFXAA;
+  if (static_cast<bool>(RendererCVar::cvar_vbgtao_enable.get()))
+    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasGTAO;
 
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0) {
@@ -106,6 +219,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     auto mesh_instances_buffer = std::move(self.prepared_frame.mesh_instances_buffer);
     auto meshlet_instances_buffer = std::move(self.prepared_frame.meshlet_instances_buffer);
     auto reordered_indices_buffer = std::move(self.prepared_frame.reordered_indices_buffer);
+    auto point_lights_buffer = std::move(self.prepared_frame.point_lights_buffer);
+    auto spot_lights_buffer = std::move(self.prepared_frame.spot_lights_buffer);
 
     auto cull_flags = GPU::CullFlags::MicroTriangles | GPU::CullFlags::TriangleBackFace;
     if (static_cast<bool>(RendererCVar::cvar_culling_frustum.get())) {
@@ -564,195 +679,21 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         std::move(emissive_attachment),
         std::move(metallic_roughness_occlusion_attachment));
 
-    auto gtao_output_ia = vuk::ImageAttachment{
-        .format = vuk::Format::eR8Uint,
-        .sample_count = vuk::SampleCountFlagBits::e1,
-        .view_type = vuk::ImageViewType::e2D,
-        .level_count = 1,
-        .layer_count = 1,
-    };
+    auto vbgtao_occlusion_attachment = vuk::declare_ia("vbgtao occlusion",
+                                                       {.format = vuk::Format::eR16Sfloat,
+                                                        .sample_count = vuk::Samples::e1,
+                                                        .view_type = vuk::ImageViewType::e2D,
+                                                        .level_count = 1,
+                                                        .layer_count = 1});
+    vbgtao_occlusion_attachment.same_extent_as(depth_attachment);
+    vbgtao_occlusion_attachment = vuk::clear_image(std::move(vbgtao_occlusion_attachment), vuk::White<f32>);
 
-    auto gtao_output = vuk::clear_image(vuk::declare_ia("gtao_output", gtao_output_ia), vuk::Black<u32>);
-    gtao_output.same_extent_as(depth_attachment);
-
-    if (self.gtao_info.has_value() && (pass_config_flags & PassConfig::EnableGTAO)) {
-      const auto depth_ia = vuk::ImageAttachment{
-          .format = vuk::Format::eR32Sfloat,
-          .sample_count = vuk::SampleCountFlagBits::e1,
-          .level_count = 5,
-          .layer_count = 1,
-      };
-      auto gtao_depth = vuk::clear_image(vuk::declare_ia("gtao_depth_image", depth_ia), vuk::Black<f32>);
-      gtao_depth.same_extent_as(depth_attachment);
-      auto mip0 = gtao_depth.mip(0);
-      auto mip1 = gtao_depth.mip(1);
-      auto mip2 = gtao_depth.mip(2);
-      auto mip3 = gtao_depth.mip(3);
-      auto mip4 = gtao_depth.mip(4);
-
-      auto gtao_first_pass = vuk::make_pass( //
-          "gtao_first_pass",
-          [gtao_inf = self.gtao_info.value()](vuk::CommandBuffer& command_buffer,
-                                              VUK_IA(vuk::eComputeSampled) depth_input,
-                                              VUK_IA(vuk::eComputeRW) depth_mip0,
-                                              VUK_IA(vuk::eComputeRW) depth_mip1,
-                                              VUK_IA(vuk::eComputeRW) depth_mip2,
-                                              VUK_IA(vuk::eComputeRW) depth_mip3,
-                                              VUK_IA(vuk::eComputeRW) depth_mip4) {
-            command_buffer.bind_compute_pipeline("gtao_first_pipeline")
-                .bind_image(0, 0, depth_input)
-                .bind_image(0, 1, depth_mip0)
-                .bind_image(0, 2, depth_mip1)
-                .bind_image(0, 3, depth_mip2)
-                .bind_image(0, 4, depth_mip3)
-                .bind_image(0, 5, depth_mip4)
-                .bind_sampler(0, 6, vuk::NearestSamplerClamped)
-                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(gtao_inf))
-                .dispatch((depth_input->extent.width + 16 - 1) / 16, (depth_input->extent.height + 16 - 1) / 16);
-
-            return depth_input;
-          });
-
-      depth_attachment = gtao_first_pass(depth_attachment, mip0, mip1, mip2, mip3, mip4);
-
-      auto main_image_ia = vuk::ImageAttachment{
-          .format = vuk::Format::eR8Uint,
-          .sample_count = vuk::SampleCountFlagBits::e1,
-          .view_type = vuk::ImageViewType::e2D,
-          .level_count = 1,
-          .layer_count = 1,
-      };
-
-      auto gtao_main_image = vuk::clear_image(vuk::declare_ia("gtao_main_image", main_image_ia), vuk::Black<u32>);
-      main_image_ia.format = vuk::Format::eR8Unorm;
-      auto gtao_edge_image = vuk::clear_image(vuk::declare_ia("gtao_edge_image", main_image_ia), vuk::Black<f32>);
-
-      gtao_main_image.same_extent_as(depth_attachment);
-      gtao_edge_image.same_extent_as(depth_attachment);
-
-      auto gtao_normal_debug_ia = vuk::ImageAttachment{
-          .format = vuk::Format::eB10G11R11UfloatPack32,
-          .sample_count = vuk::SampleCountFlagBits::e1,
-          .view_type = vuk::ImageViewType::e2D,
-          .level_count = 1,
-          .layer_count = 1,
-      };
-      auto gtao_normals_debug_image = vuk::clear_image(vuk::declare_ia("gtao_normals_debug_image", gtao_normal_debug_ia), vuk::Black<f32>);
-      gtao_normals_debug_image.same_extent_as(depth_attachment);
-
-      auto gtao_main_pass = vuk::make_pass(
-          "gtao_main_pass",
-          [gtao_inf = self.gtao_info.value(),
-           quality_level = RendererCVar::cvar_gtao_quality_level.get()](vuk::CommandBuffer& command_buffer,
-                                                                        VUK_IA(vuk::eComputeRW) main_image,
-                                                                        VUK_IA(vuk::eComputeRW) edge_image,
-                                                                        VUK_IA(vuk::eComputeRW) gtao_normals,
-                                                                        VUK_IA(vuk::eComputeSampled) gtao_depth_input,
-                                                                        VUK_IA(vuk::eComputeSampled) normal_input,
-                                                                        VUK_BA(vuk::eComputeRead) camera) {
-            command_buffer.bind_compute_pipeline("gtao_main_pipeline")
-                .bind_buffer(0, 0, camera)
-                .bind_image(0, 1, gtao_depth_input)
-                .bind_image(0, 2, normal_input)
-                .bind_image(0, 3, main_image)
-                .bind_image(0, 4, edge_image)
-                .bind_image(0, 5, gtao_normals)
-                .bind_sampler(0, 6, vuk::NearestSamplerClamped)
-                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(gtao_inf, quality_level))
-                .dispatch((main_image->extent.width + 8 - 1) / 8, (main_image->extent.height + 8 - 1) / 8);
-
-            return std::make_tuple(main_image, edge_image, normal_input, gtao_normals, camera);
-          });
-
-      std::tie(gtao_main_image, gtao_edge_image, normal_attachment, gtao_normals_debug_image, camera_buffer) = gtao_main_pass(
-          gtao_main_image, gtao_edge_image, gtao_normals_debug_image, gtao_depth, normal_attachment, camera_buffer);
-
-      const u32 pass_count = std::max(
-          1u,
-          static_cast<u32>(
-              RendererCVar::cvar_gtao_denoise_passes.get())); // should be at least one for now. TODO: NO IT SHOULDN'T
-
-      auto denoise_input_output = gtao_main_image;
-      for (u32 i = 0; i < pass_count; i++) {
-        auto denoise_pass = vuk::make_pass(
-            "gtao_denoise_pass",
-            [gtao_inf = self.gtao_info.value()](vuk::CommandBuffer& command_buffer,
-                                                VUK_IA(vuk::eComputeRW) output,
-                                                VUK_IA(vuk::eComputeSampled) input,
-                                                VUK_IA(vuk::eComputeSampled) edge_image) {
-              u32 last_pass = false;
-              constexpr auto XE_GTAO_NUMTHREADS_X = 8;
-              constexpr auto XE_GTAO_NUMTHREADS_Y = 8;
-
-              command_buffer.bind_compute_pipeline("gtao_final_pipeline")
-                  .bind_image(0, 0, input)
-                  .bind_image(0, 1, edge_image)
-                  .bind_image(0, 2, output)
-                  .bind_sampler(0, 3, vuk::NearestSamplerClamped)
-                  .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(gtao_inf, last_pass))
-                  .dispatch((output->extent.width + XE_GTAO_NUMTHREADS_X * 2 - 1) / (XE_GTAO_NUMTHREADS_X * 2),
-                            (output->extent.height + XE_GTAO_NUMTHREADS_Y - 1) / XE_GTAO_NUMTHREADS_Y,
-                            1);
-
-              return output;
-            });
-
-        auto d_ia = vuk::ImageAttachment{
-            .format = vuk::Format::eR8Uint,
-            .sample_count = vuk::SampleCountFlagBits::e1,
-            .view_type = vuk::ImageViewType::e2D,
-            .level_count = 1,
-            .layer_count = 1,
-        };
-        auto denoise_image = vuk::declare_ia("gtao_denoised_image", d_ia);
-        denoise_image.same_extent_as(gtao_main_image);
-
-        auto denoise_output = denoise_pass(denoise_image, denoise_input_output, gtao_edge_image);
-        denoise_input_output = denoise_output;
-      }
-
-      auto gtao_final_pass = vuk::make_pass(
-          "gtao_final_pass",
-          [gtao_inf = self.gtao_info.value()](vuk::CommandBuffer& command_buffer,
-                                              VUK_IA(vuk::eComputeRW) final_image,
-                                              VUK_IA(vuk::eComputeSampled) denoise_input,
-                                              VUK_IA(vuk::eComputeSampled) edge_input) {
-            u32 last_pass = true;
-            constexpr auto XE_GTAO_NUMTHREADS_X = 8;
-            constexpr auto XE_GTAO_NUMTHREADS_Y = 8;
-
-            command_buffer.bind_compute_pipeline("gtao_final_pipeline")
-                .bind_image(0, 0, denoise_input)
-                .bind_image(0, 1, edge_input)
-                .bind_image(0, 2, final_image)
-                .bind_sampler(0, 3, vuk::NearestSamplerClamped)
-                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(gtao_inf, last_pass))
-                .dispatch((final_image->extent.width + XE_GTAO_NUMTHREADS_X * 2 - 1) / (XE_GTAO_NUMTHREADS_X * 2),
-                          (final_image->extent.height + XE_GTAO_NUMTHREADS_Y - 1) / XE_GTAO_NUMTHREADS_Y,
-                          1);
-            return final_image;
-          });
-
-      gtao_output = gtao_final_pass(gtao_output, denoise_input_output, gtao_edge_image);
-    }
-
-    if (!debugging && self.atmosphere.has_value() && self.sun.has_value()) {
-      // --- BRDF ---
-      auto brdf_pass = vuk::make_pass(
-          "brdf",
-          [pass_config_flags](vuk::CommandBuffer& cmd_list,
-                              VUK_IA(vuk::eColorWrite) dst,
-                              VUK_BA(vuk::eFragmentRead) atmosphere_,
-                              VUK_BA(vuk::eFragmentRead) sun_,
-                              VUK_BA(vuk::eFragmentRead) camera,
-                              VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
-                              VUK_IA(vuk::eFragmentSampled) sky_multiscatter_lut,
-                              VUK_IA(vuk::eFragmentSampled) depth,
-                              VUK_IA(vuk::eFragmentSampled) albedo,
-                              VUK_IA(vuk::eFragmentSampled) normal,
-                              VUK_IA(vuk::eFragmentSampled) emissive,
-                              VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
-                              VUK_IA(vuk::eFragmentSampled) gtao) {
+    if (self.vbgtao_info.has_value() && (self.gpu_scene.scene_flags & GPU::SceneFlags::HasGTAO)) {
+      auto vbgtao_prefilter_pass = vuk::make_pass(
+          "vbgtao prefilter",
+          [](vuk::CommandBuffer& command_buffer, //
+             VUK_IA(vuk::eComputeSampled) depth_input,
+             VUK_IA(vuk::eComputeRW) dst_image) {
             auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
                 .magFilter = vuk::Filter::eNearest,
                 .minFilter = vuk::Filter::eNearest,
@@ -761,6 +702,158 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                 .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
             };
 
+            command_buffer.bind_compute_pipeline("vbgtao_prefilter_pipeline")
+                .bind_image(0, 0, depth_input)
+                .bind_image(0, 1, dst_image->mip(0))
+                .bind_image(0, 2, dst_image->mip(1))
+                .bind_image(0, 3, dst_image->mip(2))
+                .bind_image(0, 4, dst_image->mip(3))
+                .bind_image(0, 5, dst_image->mip(4))
+                .bind_sampler(0, 6, nearest_clamp_sampler)
+                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, depth_input->extent)
+                .dispatch((depth_input->extent.width + 16 - 1) / 16, (depth_input->extent.height + 16 - 1) / 16);
+
+            return std::make_tuple(depth_input, dst_image);
+          });
+
+      auto vbgtao_depth_attachment = vuk::declare_ia(
+          "vbgtao depth",
+          {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+           .format = vuk::Format::eR32Sfloat,
+           .sample_count = vuk::Samples::e1,
+           .level_count = 5,
+           .layer_count = 1});
+      vbgtao_depth_attachment.same_extent_as(depth_attachment);
+      vbgtao_depth_attachment = vuk::clear_image(std::move(vbgtao_depth_attachment), vuk::Black<f32>);
+
+      std::tie(depth_attachment, vbgtao_depth_attachment) = vbgtao_prefilter_pass(std::move(depth_attachment),
+                                                                                  std::move(vbgtao_depth_attachment));
+
+      auto vbgtao_generate_pass = vuk::make_pass( //
+          "vbgtao generate",
+          [inf = *self.vbgtao_info](vuk::CommandBuffer& command_buffer,
+                                    VUK_BA(vuk::eComputeUniformRead) camera,
+                                    VUK_IA(vuk::eComputeSampled) prefiltered_depth,
+                                    VUK_IA(vuk::eComputeSampled) normals,
+                                    VUK_IA(vuk::eComputeSampled) hilbert_noise,
+                                    VUK_IA(vuk::eComputeRW) ambient_occlusion,
+                                    VUK_IA(vuk::eComputeRW) depth_differences) {
+            auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
+                .magFilter = vuk::Filter::eNearest,
+                .minFilter = vuk::Filter::eNearest,
+                .mipmapMode = vuk::SamplerMipmapMode::eNearest,
+                .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+                .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+                .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+            };
+
+            auto linear_clamp_sampler = vuk::SamplerCreateInfo{
+                .magFilter = vuk::Filter::eLinear,
+                .minFilter = vuk::Filter::eLinear,
+                .mipmapMode = vuk::SamplerMipmapMode::eLinear,
+                .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+                .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+                .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+            };
+
+            command_buffer.bind_compute_pipeline("vbgtao_main_pipeline")
+                .bind_buffer(0, 0, camera)
+                .bind_image(0, 1, prefiltered_depth)
+                .bind_image(0, 2, normals)
+                .bind_image(0, 3, hilbert_noise)
+                .bind_image(0, 4, ambient_occlusion)
+                .bind_image(0, 5, depth_differences)
+                .bind_sampler(0, 6, nearest_clamp_sampler)
+                .bind_sampler(0, 7, linear_clamp_sampler)
+                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(inf))
+                .dispatch_invocations_per_pixel(ambient_occlusion);
+
+            return std::make_tuple(camera, normals, ambient_occlusion, depth_differences);
+          });
+
+      auto vbgtao_noisy_occlusion_attachment = vuk::declare_ia(
+          "vbgtao noisy occlusion",
+          {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+           .format = vuk::Format::eR16Sfloat,
+           .sample_count = vuk::Samples::e1});
+      vbgtao_noisy_occlusion_attachment.same_shape_as(final_attachment);
+      vbgtao_noisy_occlusion_attachment = vuk::clear_image(std::move(vbgtao_noisy_occlusion_attachment),
+                                                           vuk::White<f32>);
+
+      auto vbgtao_depth_differences_attachment = vuk::declare_ia(
+          "vbgtao depth differences",
+          {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+           .format = vuk::Format::eR32Uint,
+           .sample_count = vuk::Samples::e1});
+      vbgtao_depth_differences_attachment.same_shape_as(final_attachment);
+      vbgtao_depth_differences_attachment = vuk::clear_image(std::move(vbgtao_depth_differences_attachment),
+                                                             vuk::Black<f32>);
+
+      auto hilbert_noise_lut_attachment = self.renderer.hilbert_noise_lut.acquire("hilbert noise",
+                                                                                  vuk::eComputeSampled);
+
+      std::tie(
+          camera_buffer,
+          normal_attachment,
+          vbgtao_noisy_occlusion_attachment,
+          vbgtao_depth_differences_attachment) = vbgtao_generate_pass(std::move(camera_buffer),
+                                                                      std::move(vbgtao_depth_attachment),
+                                                                      std::move(normal_attachment),
+                                                                      std::move(hilbert_noise_lut_attachment),
+                                                                      std::move(vbgtao_noisy_occlusion_attachment),
+                                                                      std::move(vbgtao_depth_differences_attachment));
+
+      auto vbgtao_denoise_pass = vuk::make_pass( //
+          "vbgtao denoise",
+          [inf = *self.vbgtao_info](vuk::CommandBuffer& command_buffer,
+                                    VUK_IA(vuk::eComputeSampled) noisy_occlusion,
+                                    VUK_IA(vuk::eComputeSampled) depth_differences,
+                                    VUK_IA(vuk::eComputeRW) ambient_occlusion) {
+            auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
+                .magFilter = vuk::Filter::eNearest,
+                .minFilter = vuk::Filter::eNearest,
+                .mipmapMode = vuk::SamplerMipmapMode::eNearest,
+                .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+                .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+                .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+            };
+
+            glm::ivec2 occlusion_noisy_extent = {noisy_occlusion->extent.width, noisy_occlusion->extent.height};
+            command_buffer.bind_compute_pipeline("vbgtao_denoise_pipeline")
+                .bind_image(0, 0, noisy_occlusion)
+                .bind_image(0, 1, depth_differences)
+                .bind_image(0, 2, ambient_occlusion)
+                .bind_sampler(0, 3, nearest_clamp_sampler)
+                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(occlusion_noisy_extent, inf))
+                .dispatch_invocations_per_pixel(ambient_occlusion);
+
+            return ambient_occlusion;
+          });
+
+      vbgtao_occlusion_attachment = vbgtao_denoise_pass(std::move(vbgtao_noisy_occlusion_attachment),
+                                                        std::move(vbgtao_depth_differences_attachment),
+                                                        std::move(vbgtao_occlusion_attachment));
+    }
+
+    if (!debugging && self.atmosphere.has_value() && self.sun.has_value()) {
+      // --- BRDF ---
+      auto brdf_pass = vuk::make_pass(
+          "brdf",
+          [scene_flags = self.gpu_scene.scene_flags]( //
+              vuk::CommandBuffer& cmd_list,
+              VUK_IA(vuk::eColorWrite) dst,
+              VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
+              VUK_IA(vuk::eFragmentSampled) sky_multiscatter_lut,
+              VUK_IA(vuk::eFragmentSampled) depth,
+              VUK_IA(vuk::eFragmentSampled) albedo,
+              VUK_IA(vuk::eFragmentSampled) normal,
+              VUK_IA(vuk::eFragmentSampled) emissive,
+              VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
+              VUK_IA(vuk::eFragmentSampled) gtao,
+              VUK_BA(vuk::eFragmentRead) scene,
+              VUK_BA(vuk::eFragmentRead) camera,
+              VUK_BA(vuk::eFragmentRead) point_lights,
+              VUK_BA(vuk::eFragmentRead) spot_lights) {
             auto linear_clamp_sampler = vuk::SamplerCreateInfo{
                 .magFilter = vuk::Filter::eLinear,
                 .minFilter = vuk::Filter::eLinear,
@@ -776,50 +869,47 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                 .addressModeV = vuk::SamplerAddressMode::eRepeat,
             };
 
-            cmd_list //
-                .bind_graphics_pipeline("brdf")
+            cmd_list.bind_graphics_pipeline("brdf")
                 .set_rasterization({})
                 .set_color_blend(dst, vuk::BlendPreset::eOff)
                 .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
                 .set_viewport(0, vuk::Rect2D::framebuffer())
                 .set_scissor(0, vuk::Rect2D::framebuffer())
-                .bind_sampler(0, 0, nearest_clamp_sampler)
-                .bind_sampler(0, 1, linear_clamp_sampler)
-                .bind_sampler(0, 2, linear_repeat_sampler)
-                .bind_image(0, 3, sky_transmittance_lut)
-                .bind_image(0, 4, sky_multiscatter_lut)
-                .bind_image(0, 5, depth)
-                .bind_image(0, 6, albedo)
-                .bind_image(0, 7, normal)
-                .bind_image(0, 8, emissive)
-                .bind_image(0, 9, metallic_roughness_occlusion)
-                .bind_image(0, 10, gtao)
-                .bind_buffer(0, 11, atmosphere_)
-                .bind_buffer(0, 12, sun_)
-                .bind_buffer(0, 13, camera)
-                .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(pass_config_flags))
+                .bind_sampler(0, 0, linear_clamp_sampler)
+                .bind_sampler(0, 1, linear_repeat_sampler)
+                .bind_image(0, 2, sky_transmittance_lut)
+                .bind_image(0, 3, sky_multiscatter_lut)
+                .bind_image(0, 4, depth)
+                .bind_image(0, 5, albedo)
+                .bind_image(0, 6, normal)
+                .bind_image(0, 7, emissive)
+                .bind_image(0, 8, metallic_roughness_occlusion)
+                .bind_image(0, 9, gtao)
+                .bind_buffer(0, 10, scene)
+                .bind_buffer(0, 11, camera)
+                .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(scene_flags))
                 .draw(3, 1, 0, 0);
-            return std::make_tuple(dst, atmosphere_, sun_, camera, sky_transmittance_lut, sky_multiscatter_lut, depth);
+            return std::make_tuple(dst, sky_transmittance_lut, sky_multiscatter_lut, depth, scene, camera);
           });
 
       std::tie(final_attachment,
-               atmosphere_buffer,
-               sun_buffer,
-               camera_buffer,
                sky_transmittance_lut_attachment,
                sky_multiscatter_lut_attachment,
-               depth_attachment) = brdf_pass(std::move(final_attachment),
-                                             std::move(atmosphere_buffer),
-                                             std::move(sun_buffer),
-                                             std::move(camera_buffer),
-                                             std::move(sky_transmittance_lut_attachment),
-                                             std::move(sky_multiscatter_lut_attachment),
-                                             std::move(depth_attachment),
-                                             std::move(albedo_attachment),
-                                             std::move(normal_attachment),
-                                             std::move(emissive_attachment),
-                                             std::move(metallic_roughness_occlusion_attachment),
-                                             std::move(gtao_output));
+               depth_attachment,
+               scene_buffer,
+               camera_buffer) = brdf_pass(std::move(final_attachment),
+                                          std::move(sky_transmittance_lut_attachment),
+                                          std::move(sky_multiscatter_lut_attachment),
+                                          std::move(depth_attachment),
+                                          std::move(albedo_attachment),
+                                          std::move(normal_attachment),
+                                          std::move(emissive_attachment),
+                                          std::move(metallic_roughness_occlusion_attachment),
+                                          std::move(vbgtao_occlusion_attachment),
+                                          std::move(scene_buffer),
+                                          std::move(camera_buffer),
+                                          std::move(point_lights_buffer),
+                                          std::move(spot_lights_buffer));
     } else {
       const auto debug_attachment_ia = vuk::ImageAttachment{
           .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
@@ -1125,7 +1215,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   // --- Post Processing ---
   if (!debugging) {
     // --- FXAA Pass ---
-    if (pass_config_flags & PassConfig::EnableFXAA) {
+    if (self.gpu_scene.scene_flags & GPU::SceneFlags::HasFXAA) {
       final_attachment = vuk::make_pass("fxaa", [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eColorWrite) out) {
         const glm::vec2 inverse_screen_size = 1.f / glm::vec2(out->extent.width, out->extent.height);
         cmd_list.bind_graphics_pipeline("fxaa_pipeline")
@@ -1162,7 +1252,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     auto bloom_up_image = vuk::clear_image(vuk::declare_ia("bloom_up_image", bloom_ia), vuk::Black<float>);
     bloom_up_image.same_extent_as(final_attachment);
 
-    if (pass_config_flags & PassConfig::EnableBloom) {
+    if (self.gpu_scene.scene_flags & GPU::SceneFlags::HasBloom) {
       std::tie(final_attachment, bloom_down_image) = vuk::make_pass(
           "bloom_prefilter",
           [bloom_threshold,
@@ -1279,11 +1369,13 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     // --- Tonemap Pass ---
     result_attachment = vuk::make_pass(
         "tonemap",
-        [pass_config_flags](vuk::CommandBuffer& cmd_list,
-                            VUK_IA(vuk::eColorWrite) dst,
-                            VUK_IA(vuk::eFragmentSampled) src,
-                            VUK_IA(vuk::eFragmentSampled) bloom_src,
-                            VUK_BA(vuk::eFragmentRead) exposure) {
+        [scene_flags = self.gpu_scene.scene_flags,
+         pp = self.post_proces_settings](vuk::CommandBuffer& cmd_list,
+                                         VUK_IA(vuk::eColorWrite) dst,
+                                         VUK_IA(vuk::eFragmentSampled) src,
+                                         VUK_IA(vuk::eFragmentSampled) bloom_src,
+                                         VUK_BA(vuk::eFragmentRead) exposure) {
+          const auto size = glm::ivec2(src->extent.width, src->extent.height);
           cmd_list.bind_graphics_pipeline("tonemap_pipeline")
               .set_rasterization({})
               .set_color_blend(dst, vuk::BlendPreset::eOff)
@@ -1294,7 +1386,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
               .bind_image(0, 1, src)
               .bind_image(0, 2, bloom_src)
               .push_constants(
-                  vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(exposure->device_address, pass_config_flags))
+                  vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(exposure->device_address, scene_flags, pp, size))
               .draw(3, 1, 0, 0);
 
           return dst;
@@ -1351,6 +1443,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   auto* asset_man = App::get_asset_manager();
   auto& vk_context = App::get_vkcontext();
 
+  self.gpu_scene.scene_flags = {};
+
   CameraComponent current_camera = {};
   CameraComponent frozen_camera = {};
   const auto freeze_culling = static_cast<bool>(RendererCVar::cvar_freeze_culling_frustum.get());
@@ -1406,40 +1500,87 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   option<GPU::Atmosphere> atmosphere_data = nullopt;
   option<GPU::Sun> sun_data = nullopt;
 
+  std::vector<GPU::PointLight> point_lights = {};
+  std::vector<GPU::SpotLight> spot_lights = {};
+
   self.scene->world
       .query_builder<const TransformComponent, const LightComponent>() //
       .build()
-      .each(
-          [&sun_data, &atmosphere_data, cam](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
-            if (lc.type == LightComponent::LightType::Directional) {
-              auto& sund = sun_data.emplace();
-              sund.direction.x = glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y);
-              sund.direction.y = glm::sin(tc.rotation.x) * glm::sin(tc.rotation.y);
-              sund.direction.z = glm::cos(tc.rotation.y);
-              sund.intensity = lc.intensity;
-            }
-
-            if (const auto* atmos_info = e.try_get<AtmosphereComponent>()) {
-              auto& atmos = atmosphere_data.emplace();
-              atmos.rayleigh_scatter = atmos_info->rayleigh_scattering * 1e-3f;
-              atmos.rayleigh_density = atmos_info->rayleigh_density;
-              atmos.mie_scatter = atmos_info->mie_scattering * 1e-3f;
-              atmos.mie_density = atmos_info->mie_density;
-              atmos.mie_extinction = atmos_info->mie_extinction * 1e-3f;
-              atmos.mie_asymmetry = atmos_info->mie_asymmetry;
-              atmos.ozone_absorption = atmos_info->ozone_absorption * 1e-3f;
-              atmos.ozone_height = atmos_info->ozone_height;
-              atmos.ozone_thickness = atmos_info->ozone_thickness;
-              atmos.aerial_perspective_start_km = atmos_info->aerial_perspective_start_km;
-
-              f32 eye_altitude = cam.position.y * GPU::CAMERA_SCALE_UNIT;
-              eye_altitude += atmos.planet_radius + GPU::PLANET_RADIUS_OFFSET;
-              atmos.eye_position = glm::vec3(0.0f, eye_altitude, 0.0f);
-            }
+      .each([&sun_data, &atmosphere_data, cam, &point_lights, &spot_lights](
+                flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
+        if (lc.type == LightComponent::LightType::Directional) {
+          auto& sund = sun_data.emplace();
+          sund.direction.x = glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y);
+          sund.direction.y = glm::sin(tc.rotation.x) * glm::sin(tc.rotation.y);
+          sund.direction.z = glm::cos(tc.rotation.y);
+          sund.intensity = lc.intensity;
+        } else if (lc.type == LightComponent::LightType::Point) {
+          point_lights.emplace_back(GPU::PointLight{
+              .position = Scene::get_world_position(e),
+              .color = lc.color,
+              .intensity = lc.intensity,
+              .cutoff = lc.radius,
           });
+        } else if (lc.type == LightComponent::LightType::Spot) {
+          glm::vec3 direction = {
+              glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y),
+              -glm::sin(tc.rotation.x),
+              glm::cos(tc.rotation.x) * glm::cos(tc.rotation.y),
+          };
+
+          spot_lights.emplace_back(GPU::SpotLight{
+              .position = Scene::get_world_position(e),
+              .direction = glm::normalize(direction),
+              .color = lc.color,
+              .intensity = lc.intensity,
+              .cutoff = lc.radius,
+              .inner_cone_angle = lc.inner_cone_angle,
+              .outer_cone_angle = lc.outer_cone_angle,
+          });
+        }
+
+        if (const auto* atmos_info = e.try_get<AtmosphereComponent>()) {
+          auto& atmos = atmosphere_data.emplace();
+          atmos.rayleigh_scatter = atmos_info->rayleigh_scattering * 1e-3f;
+          atmos.rayleigh_density = atmos_info->rayleigh_density;
+          atmos.mie_scatter = atmos_info->mie_scattering * 1e-3f;
+          atmos.mie_density = atmos_info->mie_density;
+          atmos.mie_extinction = atmos_info->mie_extinction * 1e-3f;
+          atmos.mie_asymmetry = atmos_info->mie_asymmetry;
+          atmos.ozone_absorption = atmos_info->ozone_absorption * 1e-3f;
+          atmos.ozone_height = atmos_info->ozone_height;
+          atmos.ozone_thickness = atmos_info->ozone_thickness;
+          atmos.aerial_perspective_start_km = atmos_info->aerial_perspective_start_km;
+
+          f32 eye_altitude = cam.position.y * GPU::CAMERA_SCALE_UNIT;
+          eye_altitude += atmos.planet_radius + GPU::PLANET_RADIUS_OFFSET;
+          atmos.eye_position = glm::vec3(0.0f, eye_altitude, 0.0f);
+        }
+      });
 
   self.atmosphere = atmosphere_data;
   self.sun = sun_data;
+
+  if (point_lights.empty()) {
+    point_lights.emplace_back(GPU::PointLight{});
+  }
+  self.point_lights_buffer = vk_context.resize_buffer(
+      std::move(self.point_lights_buffer), vuk::MemoryUsage::eGPUonly, std::span(point_lights).size_bytes());
+  self.prepared_frame.point_lights_buffer = vk_context.upload_staging(std::span(point_lights),
+                                                                      *self.point_lights_buffer);
+
+  if (spot_lights.empty()) {
+    spot_lights.emplace_back(GPU::SpotLight{});
+  }
+  self.spot_lights_buffer = vk_context.resize_buffer(
+      std::move(self.spot_lights_buffer), vuk::MemoryUsage::eGPUonly, std::span(spot_lights).size_bytes());
+  self.prepared_frame.spot_lights_buffer = vk_context.upload_staging(std::span(spot_lights), *self.spot_lights_buffer);
+
+  self.gpu_scene.light_settings.point_light_count = (u32)point_lights.size();
+  self.gpu_scene.light_settings.spot_light_count = (u32)spot_lights.size();
+
+  self.gpu_scene.point_lights = self.point_lights_buffer->device_address;
+  self.gpu_scene.spot_lights = self.spot_lights_buffer->device_address;
 
   self.render_queue_2d.init();
 
@@ -1505,103 +1646,37 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   self.histogram_info = hist_info;
 
-  if (!info.dirty_transform_ids.empty()) {
-    auto rebuild_transforms = !self.transforms_buffer ||
-                              self.transforms_buffer->size <= info.gpu_transforms.size_bytes();
-    self.transforms_buffer = vk_context.resize_buffer(
-        std::move(self.transforms_buffer), vuk::MemoryUsage::eGPUonly, info.gpu_transforms.size_bytes());
+  self.scene->world
+      .query_builder<const TransformComponent, const VignetteComponent>() //
+      .build()
+      .each([&](flecs::entity e, const TransformComponent& tc, const VignetteComponent& c) {
+        self.post_proces_settings.vignette_amount = c.amount;
 
-    if (rebuild_transforms) {
-      // If we resize buffer, we need to refill it again, so individual uploads are not required.
-      self.prepared_frame.transforms_buffer = vk_context.upload_staging(info.gpu_transforms, *self.transforms_buffer);
-    } else {
-      // Buffer is not resized, upload individual transforms.
+        self.gpu_scene.scene_flags |= GPU::SceneFlags::HasVignette;
+      });
 
-      auto dirty_transforms_count = info.dirty_transform_ids.size();
-      auto dirty_transforms_size_bytes = dirty_transforms_count * sizeof(GPU::Transforms);
-      auto upload_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_transforms_size_bytes);
-      auto* dst_transform_ptr = reinterpret_cast<GPU::Transforms*>(upload_buffer->mapped_ptr);
-      auto upload_offsets = std::vector<u64>(dirty_transforms_count);
+  self.scene->world
+      .query_builder<const TransformComponent, const ChromaticAberrationComponent>() //
+      .build()
+      .each([&](flecs::entity e, const TransformComponent& tc, const ChromaticAberrationComponent& c) {
+        self.post_proces_settings.chromatic_aberration_amount = c.amount;
 
-      for (const auto& [dirty_transform_id, offset] : std::views::zip(info.dirty_transform_ids, upload_offsets)) {
-        auto index = SlotMap_decode_id(dirty_transform_id).index;
-        const auto& transform = info.gpu_transforms[index];
-        std::memcpy(dst_transform_ptr, &transform, sizeof(GPU::Transforms));
-        offset = index * sizeof(GPU::Transforms);
-        dst_transform_ptr++;
-      }
+        self.gpu_scene.scene_flags |= GPU::SceneFlags::HasChromaticAberration;
+      });
 
-      auto update_transforms_pass = vuk::make_pass(
-          "update scene transforms",
-          [=](vuk::CommandBuffer& cmd_list, //
-              VUK_BA(vuk::Access::eTransferRead) src_buffer,
-              VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
-            for (usize i = 0; i < upload_offsets.size(); i++) {
-              auto offset = upload_offsets[i];
-              auto src_subrange = src_buffer->subrange(i * sizeof(GPU::Transforms), sizeof(GPU::Transforms));
-              auto dst_subrange = dst_buffer->subrange(offset, sizeof(GPU::Transforms));
-              cmd_list.copy_buffer(src_subrange, dst_subrange);
-            }
+  self.scene->world
+      .query_builder<const TransformComponent, const FilmGrainComponent>() //
+      .build()
+      .each([&](flecs::entity e, const TransformComponent& tc, const FilmGrainComponent& c) {
+        self.post_proces_settings.film_grain_amount = c.amount;
+        self.post_proces_settings.film_grain_scale = c.scale;
+        self.post_proces_settings.film_grain_seed = vk_context.num_frames % 16;
 
-            return dst_buffer;
-          });
+        self.gpu_scene.scene_flags |= GPU::SceneFlags::HasFilmGrain;
+      });
 
-      self.prepared_frame.transforms_buffer = vuk::acquire_buf(
-          "transforms", *self.transforms_buffer, vuk::Access::eMemoryRead);
-      self.prepared_frame.transforms_buffer = update_transforms_pass(std::move(upload_buffer),
-                                                                     std::move(self.prepared_frame.transforms_buffer));
-    }
-  } else if (self.transforms_buffer) {
-    self.prepared_frame.transforms_buffer = vuk::acquire_buf(
-        "transforms", *self.transforms_buffer, vuk::Access::eMemoryRead);
-  }
-
-  if (!info.dirty_material_indices.empty()) {
-    auto rebuild_materials = !self.materials_buffer || self.materials_buffer->size <= info.gpu_materials.size_bytes();
-    self.materials_buffer = vk_context.resize_buffer(
-        std::move(self.materials_buffer), vuk::MemoryUsage::eGPUonly, info.gpu_materials.size_bytes());
-
-    if (rebuild_materials) {
-      self.prepared_frame.materials_buffer = vk_context.upload_staging(info.gpu_materials, *self.materials_buffer);
-    } else {
-      // TODO: Literally repeating code, find a solution to this
-      auto dirty_materials_count = info.dirty_material_indices.size();
-      auto dirty_materials_size_bytes = dirty_materials_count * sizeof(GPU::Material);
-      auto upload_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_materials_size_bytes);
-      auto* dst_materials_ptr = reinterpret_cast<GPU::Material*>(upload_buffer->mapped_ptr);
-      auto upload_offsets = std::vector<u32>(dirty_materials_count);
-
-      for (const auto& [dirty_material, index, offset] :
-           std::views::zip(info.gpu_materials, info.dirty_material_indices, upload_offsets)) {
-        std::memcpy(dst_materials_ptr, &dirty_material, sizeof(GPU::Material));
-        offset = index * sizeof(GPU::Material);
-        dst_materials_ptr++;
-      }
-
-      auto update_materials_pass = vuk::make_pass(
-          "update scene materials",
-          [=](vuk::CommandBuffer& cmd_list, //
-              VUK_BA(vuk::Access::eTransferRead) src_buffer,
-              VUK_BA(vuk::Access::eTransferWrite) dst_buffer) {
-            for (usize i = 0; i < upload_offsets.size(); i++) {
-              auto offset = upload_offsets[i];
-              auto src_subrange = src_buffer->subrange(i * sizeof(GPU::Material), sizeof(GPU::Material));
-              auto dst_subrange = dst_buffer->subrange(offset, sizeof(GPU::Material));
-              cmd_list.copy_buffer(src_subrange, dst_subrange);
-            }
-
-            return dst_buffer;
-          });
-
-      self.prepared_frame.materials_buffer = vuk::acquire_buf(
-          "materials", *self.materials_buffer, vuk::Access::eMemoryRead);
-      self.prepared_frame.materials_buffer = update_materials_pass(std::move(upload_buffer),
-                                                                   std::move(self.prepared_frame.materials_buffer));
-    }
-  } else if (self.materials_buffer) {
-    self.prepared_frame.materials_buffer = vuk::acquire_buf(
-        "materials", *self.materials_buffer, vuk::Access::eMemoryRead);
-  }
+  update_buffer_if_dirty<GPU::Transforms>(self, vk_context, info.gpu_transforms, info.dirty_transform_ids);
+  update_buffer_if_dirty<GPU::Material>(self, vk_context, info.gpu_materials, info.dirty_material_indices);
 
   if (!info.gpu_meshes.empty()) {
     self.meshes_buffer = vk_context.resize_buffer(
@@ -1664,61 +1739,39 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     DebugRenderer::reset();
   }
 
-  auto gtao_enabled = (bool)RendererCVar::cvar_gtao_enable.get();
+  auto gtao_enabled = (bool)RendererCVar::cvar_vbgtao_enable.get();
   if (gtao_enabled && self.viewport_size.x > 0) {
-    auto& gtao_info = self.gtao_info.emplace();
+    auto& vbgtao_info = self.vbgtao_info.emplace();
+    vbgtao_info.thickness = RendererCVar::cvar_vbgtao_thickness.get();
+    vbgtao_info.effect_radius = RendererCVar::cvar_vbgtao_radius.get();
 
-    auto p = cam.get_projection_matrix();
-    const auto proj_matrix = glm::value_ptr(p);
-    const bool row_major = false; // glm is column major
+    switch (RendererCVar::cvar_vbgtao_quality_level.get()) {
+      case 0: {
+        vbgtao_info.slice_count = 1;
+        vbgtao_info.samples_per_slice_side = 2;
+        break;
+      }
+      case 1: {
+        vbgtao_info.slice_count = 2;
+        vbgtao_info.samples_per_slice_side = 2;
+        break;
+      }
+      case 2: {
+        vbgtao_info.slice_count = 3;
+        vbgtao_info.samples_per_slice_side = 3;
+        break;
+      }
+      case 3: {
+        vbgtao_info.slice_count = 9;
+        vbgtao_info.samples_per_slice_side = 3;
+        break;
+      }
+    }
 
-    const auto viewport_width = self.viewport_size.x;
-    const auto viewport_height = self.viewport_size.y;
-
-    gtao_info.viewport_size = {viewport_width, viewport_height};
-    gtao_info.viewport_pixel_size = {1.0f / (float)viewport_width, 1.0f / (float)viewport_height};
-
-    // For right-handed projection matrix
-    //float depth_linearize_mul = (row_major) ? (-proj_matrix[2 * 4 + 3]) : (-proj_matrix[3 * 4 + 2]); // -P[2][3]
-    float depth_linearize_mul = -p[3][2];
-
-    //float depth_linearize_add = (row_major) ? (-proj_matrix[2 * 4 + 2]) : (-proj_matrix[2 * 4 + 2]); // -P[2][2]
-    float depth_linearize_add = -p[2][2];
-
-    // The handedness check might not be needed now, but keeping it for safety:
-    if (depth_linearize_mul * depth_linearize_add < 0)
-      depth_linearize_add = -depth_linearize_add;
-
-    gtao_info.depth_unpack_consts = {depth_linearize_mul, depth_linearize_add};
-
-    float tan_half_fov_y = 1.0f / p[1][1];
-    float tan_half_fov_x = 1.0F / p[0][0];
-
-    gtao_info.camera_tan_half_fov = {tan_half_fov_x, -tan_half_fov_y};
-
-    gtao_info.ndc_to_view_mul = {gtao_info.camera_tan_half_fov.x * 2.0f, gtao_info.camera_tan_half_fov.y * -2.0f};
-    gtao_info.ndc_to_view_add = {gtao_info.camera_tan_half_fov.x * -1.0f, gtao_info.camera_tan_half_fov.y * 1.0f};
-
-    gtao_info.ndc_to_view_mul_x_pixel_size = {gtao_info.ndc_to_view_mul.x * gtao_info.viewport_pixel_size.x,
-                                              gtao_info.ndc_to_view_mul.y * -gtao_info.viewport_pixel_size.y};
-
-    gtao_info.effect_radius = RendererCVar::cvar_gtao_radius.get();
-
-    gtao_info.effect_falloff_range = RendererCVar::cvar_gtao_falloff_range.get();
-
-    gtao_info.denoise_blur_beta = (RendererCVar::cvar_gtao_denoise_passes.get() == 0)
-                                      ? (1e4f)
-                                      : (1.2f); // high value disables denoise - more elegant &
-                                                // correct way would be do set all edges to 0
-
-    gtao_info.radius_multiplier = 1.457f;
-    gtao_info.sample_distribution_power = RendererCVar::cvar_gtao_sample_distribution_power.get();
-    gtao_info.thin_occluder_compensation = RendererCVar::cvar_gtao_thin_occluder_compensation.get();
-    gtao_info.final_value_power = RendererCVar::cvar_gtao_final_value_power.get();
-    gtao_info.depth_mip_sampling_fffset = RendererCVar::cvar_gtao_depth_mip_sampling_offset.get();
-    // gtao_info.noise_index = (RendererCVar::cvar_gtao_denoise_passes.get() > 0) ? (frameCounter % 64) : (0); // TODO:
-    // If we have TAA
-    gtao_info.noise_index = 0;
+    // vbgtao_info.noise_index = (RendererCVar::cvar_gtao_denoise_passes.get() > 0) ? (frameCounter % 64) : (0); //
+    // TODO: If we have TAA
+    vbgtao_info.noise_index = 0;
+    vbgtao_info.final_power = RendererCVar::cvar_vbgtao_final_power.get();
   }
 }
 } // namespace ox
