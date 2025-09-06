@@ -217,6 +217,12 @@ enum class SceneFlags : u32 {
   HasSun = 1 << 0,
   HasAtmosphere = 1 << 1,
   HasEyeAdaptation = 1 << 2,
+  HasBloom = 1 << 3,
+  HasFXAA = 1 << 4,
+  HasGTAO = 1 << 5,
+  HasFilmGrain = 1 << 6,
+  HasChromaticAberration = 1 << 7,
+  HasVignette = 1 << 8,
 };
 consteval void enable_bitmask(SceneFlags);
 
@@ -249,5 +255,22 @@ struct HistogramInfo {
   alignas(4) f32 max_exposure = 18.0f;
   alignas(4) f32 adaptation_speed = 1.1f;
   alignas(4) f32 ev100_bias = 1.0f;
+};
+
+struct VBGTAOSettings {
+  alignas(4) f32 thickness = 0.25;
+  alignas(4) u32 slice_count = 3;
+  alignas(4) u32 samples_per_slice_side = 3;
+  alignas(4) f32 effect_radius = 0.5;
+  alignas(4) u32 noise_index = 0;
+  alignas(4) f32 final_power = 2.2;
+};
+
+struct PostProcessSettings {
+  alignas(4) f32 chromatic_aberration_amount = 0.5f;
+  alignas(4) f32 vignette_amount = 0.5f;
+  alignas(4) f32 film_grain_scale = 1.0f;
+  alignas(4) f32 film_grain_amount = 0.5f;
+  alignas(4) u32 film_grain_seed = 0;
 };
 } // namespace ox::GPU

@@ -133,6 +133,7 @@ auto Renderer::init() -> std::expected<void, std::string> {
                         "tonemap_pipeline",
                         {.path = shaders_dir + "/passes/tonemap.slang", .entry_points = {"vs_main", "fs_main"}});
 
+  // --- Bloom ---
   slang.create_pipeline(runtime,
                         "bloom_prefilter_pipeline",
                         {.path = shaders_dir + "/passes/bloom/bloom_prefilter.slang", .entry_points = {"cs_main"}});
@@ -145,6 +146,20 @@ auto Renderer::init() -> std::expected<void, std::string> {
                         "bloom_upsample_pipeline",
                         {.path = shaders_dir + "/passes/bloom/bloom_upsample.slang", .entry_points = {"cs_main"}});
 
+  // --- VBGTAO ---
+  slang.create_pipeline(runtime,
+                        "vbgtao_prefilter_pipeline",
+                        {.path = shaders_dir + "/passes/gtao/vbgtao_prefilter.slang", .entry_points = {"cs_main"}});
+
+  slang.create_pipeline(runtime,
+                        "vbgtao_main_pipeline",
+                        {.path = shaders_dir + "/passes/gtao/vbgtao_main.slang", .entry_points = {"cs_main"}});
+
+  slang.create_pipeline(runtime,
+                        "vbgtao_denoise_pipeline",
+                        {.path = shaders_dir + "/passes/gtao/vbgtao_denoise.slang", .entry_points = {"cs_main"}});
+
+  // --- FXAA ---
   slang.create_pipeline(runtime,
                         "fxaa_pipeline",
                         {.path = shaders_dir + "/passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}});
@@ -164,6 +179,43 @@ auto Renderer::init() -> std::expected<void, std::string> {
                                    {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
                                     .format = vuk::Format::eR16G16B16A16Sfloat,
                                     .extent = vuk::Extent3D{.width = 32u, .height = 32u, .depth = 1u}});
+
+  constexpr auto HILBERT_NOISE_LUT_WIDTH = 64_u32;
+  auto hilbert_index = [](u32 pos_x, u32 pos_y) -> u16 {
+    auto index = 0_u32;
+    for (auto cur_level = HILBERT_NOISE_LUT_WIDTH / 2; cur_level > 0_u32; cur_level /= 2_u32) {
+      auto region_x = (pos_x & cur_level) > 0_u32;
+      auto region_y = (pos_y & cur_level) > 0_u32;
+      index += cur_level * cur_level * ((3_u32 * region_x) ^ region_y);
+      if (region_y == 0_u32) {
+        if (region_x == 1_u32) {
+          pos_x = (HILBERT_NOISE_LUT_WIDTH - 1_u32) - pos_x;
+          pos_y = (HILBERT_NOISE_LUT_WIDTH - 1_u32) - pos_y;
+        }
+
+        auto temp_pos_x = pos_x;
+        pos_x = pos_y;
+        pos_y = temp_pos_x;
+      }
+    }
+
+    return index;
+  };
+
+  u16 hilbert_noise[HILBERT_NOISE_LUT_WIDTH * HILBERT_NOISE_LUT_WIDTH] = {};
+  for (auto y = 0_u32; y < HILBERT_NOISE_LUT_WIDTH; y++) {
+    for (auto x = 0_u32; x < HILBERT_NOISE_LUT_WIDTH; x++) {
+      hilbert_noise[y * HILBERT_NOISE_LUT_WIDTH + x] = hilbert_index(x, y);
+    }
+  }
+
+  hilbert_noise_lut = Texture("hilbert_noise_lut");
+  hilbert_noise_lut.create(
+      {},
+      {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
+       .format = vuk::Format::eR16Uint,
+       .loaded_data = hilbert_noise,
+       .extent = vuk::Extent3D{.width = HILBERT_NOISE_LUT_WIDTH, .height = HILBERT_NOISE_LUT_WIDTH, .depth = 1u}});
 
   auto temp_atmos_info = GPU::Atmosphere{};
   temp_atmos_info.transmittance_lut_size = sky_transmittance_lut_view.get_extent();

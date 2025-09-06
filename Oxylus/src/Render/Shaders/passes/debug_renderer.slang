@@ -1,9 +1,11 @@
 import common;
 
 import scene;
+import gpu;
 
 struct ShaderParameters {
   ConstantBuffer<Camera> camera;
+  Image2D<f32> depth_image;
 };
 
 struct VertexInput {
@@ -42,6 +44,18 @@ func vs_main(VertexInput input, uniform ParameterBlock<ShaderParameters> params)
 }
 
 [[shader("fragment")]]
-func fs_main(VertexOutput input) -> f32x4 {
-  return input.color;
+func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params) -> f32x4 {
+  const f32 scene_depth = params.depth_image.load(u32x2(input.position.xy));
+  const f32 fragment_depth = input.position.z;
+
+  f32x4 final_color = input.color;
+
+  const f32 near_geometry_threshold = 0.99; // Adjust based on your depth range
+
+  bool is_occluded = !(scene_depth > 0.0 && scene_depth < fragment_depth && scene_depth < near_geometry_threshold);
+  if (is_occluded && scene_depth != 0.0) {
+    final_color.rgb *= 0.4;
+  }
+
+  return final_color;
 }

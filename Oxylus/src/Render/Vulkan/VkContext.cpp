@@ -187,6 +187,8 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   vk10_features.features.samplerAnisotropy = true;
   vk10_features.features.multiDrawIndirect = true;
   vk10_features.features.fragmentStoresAndAtomics = true;
+  vk10_features.features.shaderImageGatherExtended = true;
+  vk10_features.features.shaderInt16 = true;
 
   VkPhysicalDeviceVulkan11Features vk11_features{};
   vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;

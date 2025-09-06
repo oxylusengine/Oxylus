@@ -18,11 +18,10 @@ struct ShaderParameters {
     Image2D<f32x4> normal_image;
     Image2D<f32x3> emissive_image;
     Image2D<f32x3> metallic_roughness_occlusion_image;
+    Image2D<f32> gtao_image;
     ConstantBuffer<Scene> scene;
     ConstantBuffer<Camera> camera;
 };
-
-ParameterBlock<ShaderParameters> params;
 
 func lights_attenuate_point(f32 to_light_dist, f32 cutoff) -> f32 {
     f32 win = (to_light_dist / cutoff);
@@ -113,7 +112,7 @@ f32x3 calculate_spot_light_contribution(
 }
 
 [[shader("fragment")]]
-func fs_main(VertexOutput input) -> f32x4 {
+func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params, uniform SceneFlags scene_flags) -> f32x4 {
     const u32x2 pixel_pos = u32x2(input.position.xy);
     const f32 depth = params.depth_image.load(pixel_pos);
     if (depth == 0.0) {
@@ -131,7 +130,15 @@ func fs_main(VertexOutput input) -> f32x4 {
     const f32x3 metallic_roughness_occlusion = params.metallic_roughness_occlusion_image.load(pixel_pos);
     const f32 metallic = metallic_roughness_occlusion.x;
     const f32 roughness = metallic_roughness_occlusion.y;
-    const f32 occlusion = metallic_roughness_occlusion.z;
+    f32 occlusion = metallic_roughness_occlusion.z;
+
+    bool gtao_enabled = scene_flags & SceneFlags::HasGTAO;
+    f32 screen_space_occlusion = 1.0;
+    if (gtao_enabled) {
+        screen_space_occlusion = params.gtao_image.load(pixel_pos).r;
+    }
+
+    occlusion = min(occlusion, screen_space_occlusion);
 
     const f32x3 NDC = f32x3(input.tex_coord * 2.0 - 1.0, depth);
     const f32x4 world_position_h = mul(params.camera.inv_projection_view, f32x4(NDC, 1.0));
@@ -205,7 +212,7 @@ func fs_main(VertexOutput input) -> f32x4 {
 
     f32 eye_gradient = dot(N, sky_info.eye_dir);
     eye_gradient = (eye_gradient + 1.0) * 0.375 + 0.25;
-    f32x3 ambient_contribution = com::rec709_oetf(sky_result.luminance) * albedo_color * occlusion * eye_gradient;
+    f32x3 ambient_contribution = com::rec709_oetf(sky_result.luminance) * albedo_color * eye_gradient * occlusion;
 
     // MATERIAL COLOR (Sun Light) ──────────────────────────────────────
     // https://marmosetco.tumblr.com/post/81245981087
@@ -216,7 +223,7 @@ func fs_main(VertexOutput input) -> f32x4 {
 
     const f32 NoL = max(dot(N, L), 0.0);
     f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic);
-    f32x3 material_surface_color = brdf * horizon * diffuse_light * NoL;
+    f32x3 material_surface_color = brdf * horizon * diffuse_light * NoL * occlusion;
 
     // FINAL ────────────────────────────────────────────────────────────
     f32x3 final_color = material_surface_color + total_lighting + ambient_contribution + emission;

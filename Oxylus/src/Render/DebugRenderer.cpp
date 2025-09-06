@@ -87,7 +87,7 @@ void DebugRenderer::draw_circle(int num_verts,
                                 const glm::quat& rotation,
                                 const glm::vec4& color,
                                 bool depth_tested) {
-  float step = 360.0f / float(num_verts);
+  float step = (2.0f * glm::pi<f32>()) / float(num_verts); // Use radians
 
   for (int i = 0; i < num_verts; i++) {
     float cx = glm::cos(step * i) * radius;
@@ -103,9 +103,34 @@ void DebugRenderer::draw_circle(int num_verts,
 }
 
 void DebugRenderer::draw_sphere(float radius, const glm::vec3& position, const glm::vec4& color, bool depth_tested) {
-  draw_circle(20, radius, position, glm::quat(glm::vec3(0.0f, 0.0f, 0.0f)), color, depth_tested);
-  draw_circle(20, radius, position, glm::quat(glm::vec3(90.0f, 0.0f, 0.0f)), color, depth_tested);
-  draw_circle(20, radius, position, glm::quat(glm::vec3(0.0f, 90.0f, 90.0f)), color, depth_tested);
+  int num_verts = 16;
+
+  draw_circle(num_verts, radius, position, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), color, depth_tested);
+  draw_circle(num_verts,
+              radius,
+              position,
+              glm::angleAxis(glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+              color,
+              depth_tested);
+  draw_circle(num_verts,
+              radius,
+              position,
+              glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+              color,
+              depth_tested);
+
+  draw_circle(num_verts,
+              radius,
+              position,
+              glm::angleAxis(glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+              color,
+              depth_tested);
+ draw_circle(num_verts,
+             radius,
+             position,
+             glm::angleAxis(glm::radians(135.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+             color,
+             depth_tested);
 }
 
 void draw_arc(int num_verts,
@@ -277,22 +302,22 @@ DebugRenderer::draw_aabb(const AABB& aabb, const glm::vec4& color, bool corners_
 void DebugRenderer::draw_frustum(const glm::mat4& frustum, const glm::vec4& color, float near, float far) {
   // Get the inverse view-projection matrix
   glm::mat4 inv_frustum = glm::inverse(frustum);
-  
+
   // For reversed-Z: near plane is at z = 1, far plane is at z = 0 in clip space
   std::vector<glm::vec4> clip_corners = {
-    // Near plane corners (z = 1 for reversed-Z)
-    glm::vec4(-1.0f, -1.0f, 1.0f, 1.0f),  // bottom-left-near
-    glm::vec4( 1.0f, -1.0f, 1.0f, 1.0f),  // bottom-right-near
-    glm::vec4(-1.0f,  1.0f, 1.0f, 1.0f),  // top-left-near
-    glm::vec4( 1.0f,  1.0f, 1.0f, 1.0f),  // top-right-near
-    
-    // Far plane corners (z = 0 for reversed-Z)
-    glm::vec4(-1.0f, -1.0f, 0.0f, 1.0f),  // bottom-left-far
-    glm::vec4( 1.0f, -1.0f, 0.0f, 1.0f),  // bottom-right-far
-    glm::vec4(-1.0f,  1.0f, 0.0f, 1.0f),  // top-left-far
-    glm::vec4( 1.0f,  1.0f, 0.0f, 1.0f)   // top-right-far
+      // Near plane corners (z = 1 for reversed-Z)
+      glm::vec4(-1.0f, -1.0f, 1.0f, 1.0f), // bottom-left-near
+      glm::vec4(1.0f, -1.0f, 1.0f, 1.0f),  // bottom-right-near
+      glm::vec4(-1.0f, 1.0f, 1.0f, 1.0f),  // top-left-near
+      glm::vec4(1.0f, 1.0f, 1.0f, 1.0f),   // top-right-near
+
+      // Far plane corners (z = 0 for reversed-Z)
+      glm::vec4(-1.0f, -1.0f, 0.0f, 1.0f), // bottom-left-far
+      glm::vec4(1.0f, -1.0f, 0.0f, 1.0f),  // bottom-right-far
+      glm::vec4(-1.0f, 1.0f, 0.0f, 1.0f),  // top-left-far
+      glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)    // top-right-far
   };
-  
+
   // Transform corners to world space and apply perspective division
   std::vector<glm::vec3> world_corners;
   for (const auto& corner : clip_corners) {
@@ -300,7 +325,7 @@ void DebugRenderer::draw_frustum(const glm::mat4& frustum, const glm::vec4& colo
     world_pos /= world_pos.w; // Perspective division
     world_corners.push_back(glm::vec3(world_pos));
   }
-  
+
   // Extract individual corners for readability
   glm::vec3 bln = world_corners[0]; // bottom-left-near
   glm::vec3 brn = world_corners[1]; // bottom-right-near

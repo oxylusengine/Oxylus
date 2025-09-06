@@ -59,6 +59,7 @@ private:
   Renderer::RenderQueue2D render_queue_2d = {};
   bool saved_camera = false;
 
+  glm::uvec2 viewport_size = {};
   glm::uvec2 viewport_offset = {};
 
   PreparedFrame prepared_frame = {};
@@ -71,6 +72,10 @@ private:
   option<GPU::Sun> sun = nullopt;
 
   option<GPU::HistogramInfo> histogram_info = nullopt;
+
+  option<GPU::VBGTAOSettings> vbgtao_info = nullopt;
+
+  GPU::PostProcessSettings post_proces_settings = {};
 
   Texture hiz_view;
   vuk::Unique<vuk::Buffer> transforms_buffer{};

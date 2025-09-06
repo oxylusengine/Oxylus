@@ -535,17 +535,11 @@ void ViewportPanel::draw_settings_panel() {
       ImGui::SetNextItemOpen(open_action != 0);
     if (ImGui::TreeNodeEx("GTAO", TREE_FLAGS, "%s", "GTAO")) {
       if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-        UI::property("Enabled", (bool*)RendererCVar::cvar_gtao_enable.get_ptr());
-        UI::property<int>("Denoise Passes", RendererCVar::cvar_gtao_denoise_passes.get_ptr(), 1, 5);
-        UI::property<float>("Radius", RendererCVar::cvar_gtao_radius.get_ptr(), 0, 1);
-        UI::property<float>("Falloff Range", RendererCVar::cvar_gtao_falloff_range.get_ptr(), 0, 1);
-        UI::property<float>(
-            "Sample Distribution Power", RendererCVar::cvar_gtao_sample_distribution_power.get_ptr(), 0, 5);
-        UI::property<float>(
-            "Thin Occluder Compensation", RendererCVar::cvar_gtao_thin_occluder_compensation.get_ptr(), 0, 5);
-        UI::property<float>("Final Value Power", RendererCVar::cvar_gtao_final_value_power.get_ptr(), 0, 5);
-        UI::property<float>(
-            "Depth Mip Sampling Offset", RendererCVar::cvar_gtao_depth_mip_sampling_offset.get_ptr(), 0, 5);
+        UI::property("Enabled", (bool*)RendererCVar::cvar_vbgtao_enable.get_ptr());
+        UI::property("Quality Level", RendererCVar::cvar_vbgtao_quality_level.get_ptr(), 1, 4);
+        UI::property<float>("Radius", RendererCVar::cvar_vbgtao_radius.get_ptr(), 0.1, 5);
+        UI::property<float>("Thickness", RendererCVar::cvar_vbgtao_thickness.get_ptr(), 0.0f, 5.f);
+        UI::property<float>("Final Power", RendererCVar::cvar_vbgtao_final_power.get_ptr(), 0, 10);
         UI::end_properties();
       }
       ImGui::TreePop();
