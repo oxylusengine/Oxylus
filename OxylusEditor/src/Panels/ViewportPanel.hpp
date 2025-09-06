@@ -28,11 +28,12 @@ public:
 
 private:
   void draw_settings_panel();
-  void draw_performance_overlay();
+  void draw_stats_overlay(vuk::Extent3D extent, bool draw_scene_stats);
   void draw_gizmos();
 
   Scene* _scene = nullptr;
   SceneHierarchyPanel* _scene_hierarchy_panel = nullptr;
+  bool draw_scene_stats = false;
 
   glm::vec2 _viewport_size = {};
   glm::vec2 _viewport_bounds[2] = {};

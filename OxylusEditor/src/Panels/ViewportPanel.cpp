@@ -62,8 +62,6 @@ void show_component_gizmo(const char* icon,
 ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true) { ZoneScoped; }
 
 void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
-  draw_performance_overlay();
-
   constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar;
 
   if (on_begin(flags)) {
@@ -80,6 +78,9 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       if (ImGui::MenuItem(ICON_MDI_COG)) {
         viewport_settings_popup = true;
       }
+      if (ImGui::MenuItem(ICON_MDI_INFORMATION, nullptr, draw_scene_stats)) {
+        draw_scene_stats = !draw_scene_stats;
+      }
       auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
       ImGui::SetCursorPosX(_viewport_panel_size.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
       if (ImGui::MenuItem(ICON_MDI_ARROW_EXPAND_ALL)) {
@@ -87,6 +88,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       }
       ImGui::EndMenuBar();
     }
+
+    draw_stats_overlay(extent, draw_scene_stats);
 
     if (viewport_settings_popup)
       ImGui::OpenPopup("ViewportSettings");
@@ -338,7 +341,7 @@ void ViewportPanel::set_context(Scene* scene, SceneHierarchyPanel& scene_hierarc
 
   this->_scene = scene;
 
-  editor_camera = _scene->create_entity("editor_camera", true);
+  editor_camera = _scene->create_entity("editor_camera", false);
   editor_camera.add<CameraComponent>().add<Hidden>();
 }
 
@@ -437,13 +440,51 @@ void ViewportPanel::on_update() {
   cam.zoom = static_cast<float>(EditorCVar::cvar_camera_zoom.get());
 }
 
-void ViewportPanel::draw_performance_overlay() {
+void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw_scene_stats) {
   if (!performance_overlay_visible)
     return;
-  UI::draw_framerate_overlay(ImVec2(_viewport_position.x, _viewport_position.y),
-                             ImVec2(_viewport_panel_size.x, _viewport_panel_size.y),
-                             {15, 55},
-                             &performance_overlay_visible);
+  auto work_pos = ImVec2(_viewport_position.x, _viewport_position.y);
+  auto work_size = ImVec2(_viewport_panel_size.x, _viewport_panel_size.y);
+  auto padding = glm::vec2{15, 55};
+
+  ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
+                                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                  ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImVec2 window_pos, window_pos_pivot;
+  window_pos.x = work_pos.x + work_size.x - padding.x;
+  window_pos.y = work_pos.y + padding.y;
+  window_pos_pivot.x = 1.0f;
+  window_pos_pivot.y = 0.0f;
+  ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
+  ImGui::SetNextWindowViewport(viewport->ID);
+  ImGui::SetNextWindowBgAlpha(0.35f);
+  ImGui::SetNextWindowSize(draw_scene_stats ? ImVec2({220.f, 0.f}) : ImVec2(0.f, 0.f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  if (ImGui::Begin("##Performance Overlay", nullptr, window_flags)) {
+    ImGui::Text("%.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+    if (draw_scene_stats) {
+      ImGui::Text("Render resolution: %dx%d", extent.width, extent.height);
+      ImGui::Text("Scripts in scene: %zu", _scene->get_lua_systems().size());
+      const auto transform_entities_count = _scene->world.count<TransformComponent>();
+      ImGui::Text("Entities with transforms: %d", transform_entities_count);
+      const auto mesh_entities_count = _scene->world.count<MeshComponent>();
+      ImGui::Text("Entities with mesh: %d", mesh_entities_count);
+      const auto light_entities_count = _scene->world.count<LightComponent>();
+      ImGui::Text("Entities with light: %d", light_entities_count);
+      const auto sprite_entities_count = _scene->world.count<SpriteComponent>();
+      ImGui::Text("Entities with sprite: %d", sprite_entities_count);
+      const auto particle_entities_count = _scene->world.count<ParticleSystemComponent>();
+      ImGui::Text("Entities with particle: %d", particle_entities_count);
+      const auto rigidbody_entities_count = _scene->world.count<RigidBodyComponent>();
+      ImGui::Text("Entities with rigidbody: %d", rigidbody_entities_count);
+      const auto audio_entities_count = _scene->world.count<AudioSourceComponent>();
+      ImGui::Text("Entities with audio: %d", audio_entities_count);
+    }
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(2);
 }
 
 void ViewportPanel::draw_settings_panel() {
