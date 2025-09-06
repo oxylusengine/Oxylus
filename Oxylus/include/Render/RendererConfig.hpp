@@ -26,7 +26,9 @@ inline AutoCVar_Int cvar_reload_renderer("rr.reload_renderer", "reload renderer"
 
 inline AutoCVar_Int cvar_vbgtao_enable("pp.vbgtao", "use vbgtao", 1);
 inline AutoCVar_Int cvar_vbgtao_quality_level("pp.vbgtao_quality_level", "vbgtao quality level", 3);
+inline AutoCVar_Float cvar_vbgtao_thickness("pp.vbgtao_thickness", "vbgtao thickness", 0.25f);
 inline AutoCVar_Float cvar_vbgtao_radius("pp.vbgtao_radius", "vbgtao radius", 0.5f);
+inline AutoCVar_Float cvar_vbgtao_final_power("pp.vbgtao_final_power", "vbgtao final power", 2.2f);
 
 inline AutoCVar_Int cvar_bloom_enable("pp.bloom", "use bloom", 1);
 inline AutoCVar_Int cvar_bloom_mips("pp.bloom_mips", "amount of mips used in bloom pass", 8);

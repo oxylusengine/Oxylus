@@ -14,14 +14,6 @@ class RendererInstance;
 class Scene;
 class VkContext;
 
-enum class PassConfig : u32 {
-  None = 0,
-  EnableBloom = 1 << 0,
-  EnableFXAA = 1 << 1,
-  EnableGTAO = 1 << 2,
-};
-consteval void enable_bitmask(PassConfig);
-
 class Renderer : public ESystem {
 public:
   struct RenderInfo {

@@ -75,6 +75,8 @@ private:
 
   option<GPU::VBGTAOSettings> vbgtao_info = nullopt;
 
+  GPU::PostProcessSettings post_proces_settings = {};
+
   Texture hiz_view;
   vuk::Unique<vuk::Buffer> transforms_buffer{};
   vuk::Unique<vuk::Buffer> mesh_instances_buffer{};

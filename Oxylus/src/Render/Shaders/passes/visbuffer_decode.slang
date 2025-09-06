@@ -131,7 +131,7 @@ func fs_main(VertexOutput input) -> FragmentOutput {
     const f32x3 pos_ddy = mul(deriv.ddy, camera_relative_world_positions);
 
     const f32x3x3 world_normals = transform.to_world_normals(normals);
-    const f32x3 world_normal = mul(deriv.lambda, world_normals);
+    const f32x3 world_normal = normalize(mul(deriv.lambda, world_normals));
 
     const f32x3 pos_ddx_s = pos_ddx - dot(pos_ddx, world_normal) * world_normal;
     const f32x3 pos_ddy_s = pos_ddy - dot(pos_ddy, world_normal) * world_normal;
@@ -158,7 +158,7 @@ func fs_main(VertexOutput input) -> FragmentOutput {
         f32x3 sampled_normal = material.sample_normal_color(tex_coord_grad);
         // NOTE: This is here to convert tangent spaces to our correct spaces.
         // for example, normal map's R component is +Y for our world. @grok is this true?
-        sampled_normal = f32x3(sampled_normal.y, sampled_normal.x, sampled_normal.z);
+        // sampled_normal = f32x3(sampled_normal.y, sampled_normal.x, sampled_normal.z);
 
         if (material.flags & MaterialFlag::NormalTwoComponent) {
             sampled_normal = f32x3(sampled_normal.yx * 2.0 - 1.0, 0.0);

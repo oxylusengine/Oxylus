@@ -112,7 +112,7 @@ f32x3 calculate_spot_light_contribution(
 }
 
 [[shader("fragment")]]
-func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params, uniform PassConfig pass_config) -> f32x4 {
+func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params, uniform SceneFlags scene_flags) -> f32x4 {
     const u32x2 pixel_pos = u32x2(input.position.xy);
     const f32 depth = params.depth_image.load(pixel_pos);
     if (depth == 0.0) {
@@ -132,7 +132,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     const f32 roughness = metallic_roughness_occlusion.y;
     f32 occlusion = metallic_roughness_occlusion.z;
 
-    bool gtao_enabled = pass_config & PassConfig::EnableGTAO;
+    bool gtao_enabled = scene_flags & SceneFlags::HasGTAO;
     f32 screen_space_occlusion = 1.0;
     if (gtao_enabled) {
         screen_space_occlusion = params.gtao_image.load(pixel_pos).r;

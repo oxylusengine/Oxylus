@@ -536,8 +536,10 @@ void ViewportPanel::draw_settings_panel() {
     if (ImGui::TreeNodeEx("GTAO", TREE_FLAGS, "%s", "GTAO")) {
       if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
         UI::property("Enabled", (bool*)RendererCVar::cvar_vbgtao_enable.get_ptr());
-        UI::property("Quality Level", RendererCVar::cvar_vbgtao_quality_level.get_ptr());
-        UI::property<float>("Radius", RendererCVar::cvar_vbgtao_radius.get_ptr(), 0, 1);
+        UI::property("Quality Level", RendererCVar::cvar_vbgtao_quality_level.get_ptr(), 1, 4);
+        UI::property<float>("Radius", RendererCVar::cvar_vbgtao_radius.get_ptr(), 0.1, 5);
+        UI::property<float>("Thickness", RendererCVar::cvar_vbgtao_thickness.get_ptr(), 0.0f, 5.f);
+        UI::property<float>("Final Power", RendererCVar::cvar_vbgtao_final_power.get_ptr(), 0, 10);
         UI::end_properties();
       }
       ImGui::TreePop();

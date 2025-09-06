@@ -14,7 +14,8 @@ struct ShaderParameters {
 func cs_main(
     u32x2 thread_id : SV_DispatchThreadID,
     uniform ParameterBlock<ShaderParameters> params,
-    uniform i32x2 occlusion_noisy_extent
+    uniform i32x2 occlusion_noisy_extent,
+    uniform VBGTAOSettings settings
 ) -> void {
     let pixel_coordinates = i32x2(thread_id.xy);
     let uv = f32x2(pixel_coordinates) / f32x2(occlusion_noisy_extent.xy);
@@ -74,7 +75,8 @@ func cs_main(
     sum_weight += bottom_left_weight;
     sum_weight += bottom_right_weight;
 
-    let denoised_visibility = sum / sum_weight;
+    var denoised_visibility = sum / sum_weight;
+    denoised_visibility = pow(max(denoised_visibility, 0.0f), settings.final_power);
 
     params.ambient_occlusion.Store(pixel_coordinates, denoised_visibility);
 }

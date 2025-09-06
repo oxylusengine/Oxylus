@@ -18,22 +18,14 @@ struct ShaderParameters {
     SamplerState linear_clamp_sampler;
 };
 
-struct VBGTAOSettings {
-    f32 thickness = 0.25;
-    u32 slice_count = 3;
-    u32 samples_per_slice_side = 3;
-    f32 effect_radius = 0.5;
-    u32 noise_index = 0;
-};
-
 f32 fast_sqrt(f32 x) {
     return (asfloat( 0x1fbd1df5 + ( asint( x ) >> 1 ) ));
 }
 // input [-1, 1] and output [0, PI], from https://seblagarde.wordpress.com/2014/12/01/inverse-trigonometric-functions-gpu-optimization-for-amd-gcn-architecture/
-f32 fast_acos(f32 inX) { 
-    f32 x = abs(inX); 
+f32 fast_acos(f32 inX) {
+    f32 x = abs(inX);
     f32 res = -0.156583 * x + HALF_PI;
-    res *= fast_sqrt(1.0 - x); 
+    res *= fast_sqrt(1.0 - x);
     return (inX >= 0) ? res : PI - res;
 }
 
@@ -81,12 +73,12 @@ func load_and_reconstruct_view_space_position(
 
 func calculate_edges(
     i32x2 pixel_coord,
-    f32x2 uv,
+    in f32x2 resolution,
     in Texture2D<f32> src_depth,
     in SamplerState sampler_point_clamp,
     in RWTexture2D<u32> edges
 ) -> f32 {
-    // TODO: Replace gather
+    let uv = f32x2(pixel_coord) / resolution;
     let depths_upper_left = src_depth.GatherRed(sampler_point_clamp, uv);
     let depths_bottom_right = src_depth.GatherRed(sampler_point_clamp, uv, i32x2(1, 1));
     let depth_center = depths_upper_left.y;
@@ -94,7 +86,7 @@ func calculate_edges(
     let depth_top = depths_upper_left.z;
     let depth_bottom = depths_bottom_right.x;
     let depth_right = depths_bottom_right.z;
-    
+
     var edge_info = f32x4(depth_left, depth_right, depth_top, depth_bottom) - depth_center;
     let slope_left_right = (edge_info.y - edge_info.x) * 0.5;
     let slope_top_bottom = (edge_info.w - edge_info.z) * 0.5;
@@ -103,11 +95,11 @@ func calculate_edges(
     let bias = 0.25; // Using the bias and then saturating nudges the values a bit
     let scale = depth_center * 0.011; // Weight the edges by their distance from the camera
     edge_info = saturate((1.0 + bias) - edge_info / scale); // Apply the bias and scale, and invert edge_info so that small values become large, and vice versa
-    
+
     // Pack the edge info into the texture
     let edge_info_packed = packUnorm4x8(edge_info);
     edges[pixel_coord] = edge_info_packed;
-    
+
     return depth_center;
 }
 
@@ -119,7 +111,7 @@ func updateSectors(
 ) -> u32 {
     let start_horizon = u32(min_horizon * samples_per_slice);
     let angle_horizon = u32(ceil((max_horizon - min_horizon) * samples_per_slice));
-    
+
     return bitfieldInsert(bitmask, 0xFFFFFFFFu, start_horizon, angle_horizon);
 }
 
@@ -133,21 +125,21 @@ func processSample(
     inout u32 bitmask,
 ) -> void {
     let delta_position_back_face = delta_position - view_vec * thickness;
-    
+
     var front_back_horizon = f32x2(
         fast_acos(dot(normalize(delta_position), view_vec)),
         fast_acos(dot(normalize(delta_position_back_face), view_vec)),
     );
-    
+
     front_back_horizon = saturate(fma(f32x2(sampling_direction), -front_back_horizon, n));
     front_back_horizon = select(sampling_direction >= 0.0, front_back_horizon.yx, front_back_horizon.xy);
-    
+
     bitmask = updateSectors(front_back_horizon.x, front_back_horizon.y, samples_per_slice, bitmask);
 }
 
 [[numthreads(16, 16, 1)]]
 func cs_main(
-    const uint2 pixel_coordinates : SV_DispatchThreadID, 
+    const uint2 pixel_coordinates : SV_DispatchThreadID,
     uniform ParameterBlock<ShaderParameters> params,
     uniform VBGTAOSettings settings
 ) -> void {
@@ -159,9 +151,9 @@ func cs_main(
     let falloff_from = effect_radius * (1.0 - 0.615);
     let falloff_mul = -1.0 / falloff_range;
     let falloff_add = falloff_from / falloff_range + 1.0;
-    
+
     let uv = (f32x2(pixel_coordinates) + 0.5) / params.camera.resolution;
-    var pixel_depth = calculate_edges(pixel_coordinates, uv, params.prefiltered_depth, params.point_clamp_sampler, params.depth_differences);
+    var pixel_depth = calculate_edges(pixel_coordinates, params.camera.resolution, params.prefiltered_depth, params.point_clamp_sampler, params.depth_differences);
     pixel_depth += 0.00001;
     let pixel_position = reconstruct_view_space_position(uv, pixel_depth, params.camera);
     let pixel_normal = load_normal_view_space(uv, params.camera, params.normals, params.point_clamp_sampler);
@@ -174,43 +166,43 @@ func cs_main(
         let slice = slice_t + noise.x;
         let phi = (PI / slice_count) * slice;
         let omega = f32x2(cos(phi), sin(phi));
-        
+
         let direction = f32x3(omega.xy, 0.0);
         let orthographic_direction = direction - (dot(direction, view_vec) * view_vec);
         let axis = cross(direction, view_vec);
         let projected_normal = pixel_normal - axis * dot(pixel_normal, axis);
         let projected_normal_length = max(length(projected_normal), 1e-6);
-        
+
         let sign_norm = sign(dot(orthographic_direction, projected_normal));
         let cos_norm = saturate(dot(projected_normal, view_vec) / projected_normal_length);
         let n = f32x2(((PI * 0.5) - sign_norm * fast_acos(cos_norm)) * (1.0 / PI));
-        
+
         var bitmask = 0u;
-        
+
         let sample_mul = f32x2(omega.x, -omega.y) * sample_scale;
         for (var sample_t = 0.0; sample_t < samples_per_slice_side; sample_t += 1.0) {
             var sample_noise = (slice_t + sample_t * samples_per_slice_side) * 0.6180339887498948482;
             sample_noise = fract(noise.y + sample_noise);
-            
+
             var s = (sample_t + sample_noise) / samples_per_slice_side;
             s *= s; // https://github.com/GameTechDev/XeGTAO#sample-distribution
             let sample = s * sample_mul;
-            
+
             let sample_mip_level = clamp(log2(length(sample * params.camera.resolution)) - 3.3, 0.0, 5.0); // https://github.com/GameTechDev/XeGTAO#memory-bandwidth-bottleneck
             let sample_position_1 = load_and_reconstruct_view_space_position(uv + sample, sample_mip_level, params.camera, params.prefiltered_depth, params.linear_clamp_sampler);
             let sample_position_2 = load_and_reconstruct_view_space_position(uv - sample, sample_mip_level, params.camera, params.prefiltered_depth, params.linear_clamp_sampler);
-            
+
             let sample_difference_1 = sample_position_1 - pixel_position;
             let sample_difference_2 = sample_position_2 - pixel_position;
-            
+
             processSample(thickness, sample_difference_1, view_vec, -1.0, n, samples_per_slice_side * 2.0, bitmask);
             processSample(thickness, sample_difference_2, view_vec, 1.0, n, samples_per_slice_side * 2.0, bitmask);
         }
-        
+
         let bit_count = countbits(bitmask);
         occluded_sample_count += bit_count;
     }
-    
+
     visibility = 1.0 - f32(occluded_sample_count) / (slice_count * 2.0 * samples_per_slice_side);
     visibility = clamp(visibility, 0.03, 1.0);
     params.ambient_occlusion[pixel_coordinates] = visibility;
