@@ -19,6 +19,7 @@ public enum DebugView : i32 {
   Roughness,
   Occlusion,
   HiZ,
+  GTAO,
 };
 
 [[Flags]]

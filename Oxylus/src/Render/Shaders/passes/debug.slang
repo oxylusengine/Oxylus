@@ -18,6 +18,7 @@ struct ShaderParameters {
     Image2D<f32x3> emissive_image;
     Image2D<f32x3> metallic_roughness_occlusion_image;
     Image2D<f32> hiz_image;
+    Image2D<f32> gtao_image;
 
     ConstantBuffer<Camera> camera;
     StructuredBuffer<u32> visible_meshlet_instances_indices;
@@ -62,5 +63,88 @@ func fs_main(
     }
 
     var color = f32x3(0.0, 0.0, 0.0);
+        let vis_data = VisBufferData(texel);
+    switch (debug_view) {
+        case DebugView::Triangles: {
+            let h = hash(vis_data.triangle_index);
+            color = f32x3(f32(h & 255), f32((h >> 8) & 255), f32((h >> 16) & 255)) / 255.0;
+        } break;
+        case DebugView::Meshlets: {
+            let h = hash(params.visible_meshlet_instances_indices[vis_data.meshlet_instance_index]);
+            color = f32x3(f32(h & 255), f32((h >> 8) & 255), f32((h >> 16) & 255)) / 255.0;
+        } break;
+        case DebugView::Overdraw: {
+            let draw_scale = clamp(heatmap_scale, 0.0, 100.0) / 100.0;
+            let draw_count = f32(params.overdraw.load(u32x2(input.position.xy)));
+            let heat = 1.0 - exp2(-draw_count * draw_scale);
+            color = inferno(heat);
+        } break;
+        case DebugView::Albedo: {
+            color = params.albedo_image.sample_mip(params.linear_repeat_sampler, input.tex_coord, 0).rgb;
+        } break;
+        case DebugView::Normal: {
+            let sampled_normal = params.normal_image.load(u32x2(input.position.xy));
+            f32x3 mapped_normal = com::oct_to_vec3(sampled_normal.xy);
+            color = mapped_normal * 0.5 + 0.5;
+        } break;
+        case DebugView::Emissive: {
+            color = params.emissive_image.load(u32x2(input.position.xy)).rgb;
+        } break;
+        case DebugView::Metallic: {
+            color = params.metallic_roughness_occlusion_image.load(u32x2(input.position.xy)).rrr;
+        } break;
+        case DebugView::Roughness: {
+            color = params.metallic_roughness_occlusion_image.load(u32x2(input.position.xy)).ggg;
+        } break;
+        case DebugView::Occlusion: {
+            color = params.metallic_roughness_occlusion_image.load(u32x2(input.position.xy)).bbb;
+        } break;
+        case DebugView::GTAO: {
+            color = params.gtao_image.load(u32x2(input.position.xy)).rrr;
+            break;
+        }
+        #if 0
+        case DebugView::HiZ: 
+        {
+            let meshlet_instance_index = params.visible_meshlet_instances_indices[vis_data.meshlet_instance_index];
+            let meshlet_instance = params.meshlet_instances[meshlet_instance_index];
+            let mesh = params.meshes[meshlet_instance.mesh_index];
+            let meshlet_index = meshlet_instance.meshlet_index;
+            let meshlet = mesh.meshlets[meshlet_index];
+            let transform = params.transforms[meshlet_instance.transform_index];
+            let prev_mvp = mul(params.camera.previous_projection_view, transform.world);
+
+            let bounds = mesh.meshlet_bounds[meshlet_index];
+            let aabb_extent = bounds.aabb_max - bounds.aabb_min;
+
+            if (let ret = project_aabb(prev_mvp, params.camera.near_clip, bounds.aabb_min, aabb_extent)) {
+                ScreenAabb screen_aabb = ret;
+                let hiz_size = params.camera.resolution;
+                screen_aabb.min.xy *= hiz_size;
+                screen_aabb.max.xy *= hiz_size;
+
+                let min_texel = u32x2(max(screen_aabb.min.xy, 0.0));
+                let max_texel = u32x2(min(screen_aabb.max.xy, hiz_size - 1.0));
+                let size = max_texel - min_texel + 1u;
+                let max_size = max(size.x, size.y);
+                var mip = firstbithigh(max_size - 1);
+
+                let smin = min_texel >> mip;
+                let smax = max_texel >> mip;
+                if (any(smax - smin > 1)) {
+                    mip += 1;
+                }
+
+                // 0.619, 0.499 = 0.99414
+                var uv = ((f32x2(min_texel) + f32x2(max_texel)) * 0.5) / f32x2(hiz_size);
+                let d = params.hiz_image.sample_mip(params.hiz_sampler, uv, mip);
+                return f32x4(uv, d, mip);
+            }
+
+        } break;
+        #endif
+        default:;
+    }
+
     return f32x4(color, 1.0);
 }

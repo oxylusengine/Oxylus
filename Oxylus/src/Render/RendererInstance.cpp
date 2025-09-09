@@ -688,6 +688,13 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     vbgtao_occlusion_attachment.same_extent_as(depth_attachment);
     vbgtao_occlusion_attachment = vuk::clear_image(std::move(vbgtao_occlusion_attachment), vuk::White<f32>);
 
+    auto vbgtao_noisy_occlusion_attachment = vuk::declare_ia(
+        "vbgtao noisy occlusion",
+        {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+         .format = vuk::Format::eR16Sfloat,
+         .sample_count = vuk::Samples::e1});
+    vbgtao_noisy_occlusion_attachment.same_shape_as(final_attachment);
+
     if (self.vbgtao_info.has_value() && (self.gpu_scene.scene_flags & GPU::SceneFlags::HasGTAO)) {
       auto vbgtao_prefilter_pass = vuk::make_pass(
           "vbgtao prefilter",
@@ -771,15 +778,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             return std::make_tuple(camera, normals, ambient_occlusion, depth_differences);
           });
 
-      auto vbgtao_noisy_occlusion_attachment = vuk::declare_ia(
-          "vbgtao noisy occlusion",
-          {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-           .format = vuk::Format::eR16Sfloat,
-           .sample_count = vuk::Samples::e1});
-      vbgtao_noisy_occlusion_attachment.same_shape_as(final_attachment);
-      vbgtao_noisy_occlusion_attachment = vuk::clear_image(std::move(vbgtao_noisy_occlusion_attachment),
-                                                           vuk::White<f32>);
-
       auto vbgtao_depth_differences_attachment = vuk::declare_ia(
           "vbgtao depth differences",
           {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
@@ -791,6 +789,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
       auto hilbert_noise_lut_attachment = self.renderer.hilbert_noise_lut.acquire("hilbert noise",
                                                                                   vuk::eComputeSampled);
+
+      vbgtao_noisy_occlusion_attachment = vuk::clear_image(std::move(vbgtao_noisy_occlusion_attachment),
+                                                           vuk::White<f32>);
 
       std::tie(
           camera_buffer,
@@ -827,12 +828,13 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                 .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(occlusion_noisy_extent, inf))
                 .dispatch_invocations_per_pixel(ambient_occlusion);
 
-            return ambient_occlusion;
+            return std::make_tuple(ambient_occlusion, noisy_occlusion);
           });
 
-      vbgtao_occlusion_attachment = vbgtao_denoise_pass(std::move(vbgtao_noisy_occlusion_attachment),
-                                                        std::move(vbgtao_depth_differences_attachment),
-                                                        std::move(vbgtao_occlusion_attachment));
+      std::tie(vbgtao_occlusion_attachment,
+               vbgtao_noisy_occlusion_attachment) = vbgtao_denoise_pass(std::move(vbgtao_noisy_occlusion_attachment),
+                                                                        std::move(vbgtao_depth_differences_attachment),
+                                                                        std::move(vbgtao_occlusion_attachment));
     }
 
     if (!debugging && self.atmosphere.has_value() && self.sun.has_value()) {
@@ -922,7 +924,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       auto debug_attachment = vuk::clear_image(vuk::declare_ia("debug_attachment", debug_attachment_ia),
                                                vuk::Black<float>);
 
-      std::tie(debug_attachment, depth_attachment, camera_buffer) = vuk::make_pass(
+      std::tie(debug_attachment, depth_attachment, camera_buffer, vbgtao_noisy_occlusion_attachment) = vuk::make_pass(
           "debug pass",
           [debug_view,
            debug_heatmap_scale]( //
@@ -936,6 +938,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
               VUK_IA(vuk::eFragmentSampled) emissive,
               VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
               VUK_IA(vuk::eFragmentSampled) hiz,
+              VUK_IA(vuk::eFragmentSampled) gtao,
               VUK_BA(vuk::eFragmentRead) camera,
               VUK_BA(vuk::eFragmentRead) visible_meshlet_instances_indices,
               VUK_BA(vuk::eFragmentRead) meshlet_instances,
@@ -965,17 +968,18 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
                 .bind_image(0, 7, emissive)
                 .bind_image(0, 8, metallic_roughness_occlusion)
                 .bind_image(0, 9, hiz)
-                .bind_buffer(0, 10, camera)
-                .bind_buffer(0, 11, visible_meshlet_instances_indices)
-                .bind_buffer(0, 12, meshlet_instances)
-                .bind_buffer(0, 13, meshes)
-                .bind_buffer(0, 14, transforms_)
+                .bind_image(0, 10, gtao)
+                .bind_buffer(0, 11, camera)
+                .bind_buffer(0, 12, visible_meshlet_instances_indices)
+                .bind_buffer(0, 13, meshlet_instances)
+                .bind_buffer(0, 14, meshes)
+                .bind_buffer(0, 15, transforms_)
                 .push_constants(vuk::ShaderStageFlagBits::eFragment,
                                 0,
                                 PushConstants(std::to_underlying(debug_view), debug_heatmap_scale))
                 .draw(3, 1, 0, 0);
 
-            return std::make_tuple(dst, depth, camera);
+            return std::make_tuple(dst, depth, camera, gtao);
           })(std::move(debug_attachment),
              std::move(visbuffer_attachment),
              std::move(depth_attachment),
@@ -985,6 +989,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
              std::move(emissive_attachment),
              std::move(metallic_roughness_occlusion_attachment),
              std::move(hiz_attachment),
+             std::move(vbgtao_noisy_occlusion_attachment),
              std::move(camera_buffer),
              std::move(visible_meshlet_instances_indices_buffer),
              std::move(meshlet_instances_buffer),
@@ -1385,8 +1390,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
               .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
               .bind_image(0, 1, src)
               .bind_image(0, 2, bloom_src)
-              .push_constants(
-                  vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(exposure->device_address, scene_flags, pp, size))
+              .push_constants(vuk::ShaderStageFlagBits::eFragment,
+                              0,
+                              PushConstants(exposure->device_address, scene_flags, pp, size))
               .draw(3, 1, 0, 0);
 
           return dst;
@@ -1432,8 +1438,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           return std::make_tuple(dst, camera, depth_img);
         });
 
-    std::tie(result_attachment,
-             camera_buffer, depth_attachment) = debug_renderer_pass(result_attachment, depth_attachment, debug_renderer_verticies_buffer, camera_buffer);
+    std::tie(result_attachment, camera_buffer, depth_attachment) = debug_renderer_pass(
+        result_attachment, depth_attachment, debug_renderer_verticies_buffer, camera_buffer);
   }
 
   return debugging ? final_attachment : result_attachment;

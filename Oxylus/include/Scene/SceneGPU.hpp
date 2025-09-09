@@ -24,6 +24,7 @@ enum class DebugView : i32 {
   Roughness,
   Occlusion,
   HiZ,
+  GTAO,
 
   Count,
 };

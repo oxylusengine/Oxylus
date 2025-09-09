@@ -17,7 +17,7 @@ inline AutoCVar_Int cvar_draw_bounding_boxes("rr.draw_bounding_boxes", "draw mes
 inline AutoCVar_Int cvar_enable_physics_debug_renderer("rr.physics_debug_renderer", "enable physics debug renderer", 0);
 inline AutoCVar_Int cvar_freeze_culling_frustum("rr.freeze_culling_frustum", "freeze culling frustum", 0);
 inline AutoCVar_Int cvar_draw_camera_frustum("rr.draw_camera_frustum", "draw camera frustum", 0);
-inline AutoCVar_Int cvar_debug_view("rr.debug_view", "0: None, 1: Triangles, 2: Meshlets, 3: Overdraw, 4: Albdeo, 5: Normal, 6: Emissive, 7: Metallic, 8: Roughness, 9: Occlusion, 10: HiZ", 0);
+inline AutoCVar_Int cvar_debug_view("rr.debug_view", "0: None, 1: Triangles, 2: Meshlets, 3: Overdraw, 4: Albdeo, 5: Normal, 6: Emissive, 7: Metallic, 8: Roughness, 9: Occlusion, 10: HiZ, 11: GTAO", 0);
 inline AutoCVar_Int cvar_culling_frustum("rr.culling_frustum", "Frustum Culling", 1);
 inline AutoCVar_Int cvar_culling_occlusion("rr.culling_occlusion", "Occlusion culling", 1);
 inline AutoCVar_Int cvar_culling_triangle("rr.culling_triangle", "Triangle culling", 1);
@@ -28,7 +28,7 @@ inline AutoCVar_Int cvar_vbgtao_enable("pp.vbgtao", "use vbgtao", 1);
 inline AutoCVar_Int cvar_vbgtao_quality_level("pp.vbgtao_quality_level", "vbgtao quality level", 3);
 inline AutoCVar_Float cvar_vbgtao_thickness("pp.vbgtao_thickness", "vbgtao thickness", 0.25f);
 inline AutoCVar_Float cvar_vbgtao_radius("pp.vbgtao_radius", "vbgtao radius", 0.5f);
-inline AutoCVar_Float cvar_vbgtao_final_power("pp.vbgtao_final_power", "vbgtao final power", 2.2f);
+inline AutoCVar_Float cvar_vbgtao_final_power("pp.vbgtao_final_power", "vbgtao final power", 1.2f);
 
 inline AutoCVar_Int cvar_bloom_enable("pp.bloom", "use bloom", 1);
 inline AutoCVar_Int cvar_bloom_mips("pp.bloom_mips", "amount of mips used in bloom pass", 8);
