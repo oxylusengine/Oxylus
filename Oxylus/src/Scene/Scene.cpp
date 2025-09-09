@@ -74,24 +74,26 @@ auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
     writer["name"] = component.path;
     component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
       auto& member_json = writer[member_name];
-      std::visit(ox::match{
-                     [](const auto&) {},
-                     [&](bool* v) { member_json = *v; },
-                     [&](u16* v) { member_json = *v; },
-                     [&](f32* v) { member_json = *v; },
-                     [&](i32* v) { member_json = *v; },
-                     [&](u32* v) { member_json = *v; },
-                     [&](i64* v) { member_json = *v; },
-                     [&](u64* v) { member_json = *v; },
-                     [&](glm::vec2* v) { member_json = *v; },
-                     [&](glm::vec3* v) { member_json = *v; },
-                     [&](glm::vec4* v) { member_json = *v; },
-                     [&](glm::quat* v) { member_json = *v; },
-                     [&](glm::mat4* v) { member_json = std::span(glm::value_ptr(*v), 16); },
-                     [&](std::string* v) { member_json = *v; },
-                     [&](UUID* v) { member_json = v->str().c_str(); },
-                 },
-                 member);
+      std::visit(
+        ox::match{
+          [](const auto&) {},
+          [&](bool* v) { member_json = *v; },
+          [&](u16* v) { member_json = *v; },
+          [&](f32* v) { member_json = *v; },
+          [&](i32* v) { member_json = *v; },
+          [&](u32* v) { member_json = *v; },
+          [&](i64* v) { member_json = *v; },
+          [&](u64* v) { member_json = *v; },
+          [&](glm::vec2* v) { member_json = *v; },
+          [&](glm::vec3* v) { member_json = *v; },
+          [&](glm::vec4* v) { member_json = *v; },
+          [&](glm::quat* v) { member_json = *v; },
+          [&](glm::mat4* v) { member_json = std::span(glm::value_ptr(*v), 16); },
+          [&](std::string* v) { member_json = *v; },
+          [&](UUID* v) { member_json = v->str().c_str(); },
+        },
+        member
+      );
     });
     writer.end_obj();
   }
@@ -104,10 +106,9 @@ auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   writer.end_obj();
 }
 
-auto Scene::json_to_entity(Scene& self,
-                           flecs::entity root,
-                           simdjson::ondemand::value& json,
-                           std::vector<UUID>& requested_assets) -> std::pair<flecs::entity, bool> {
+auto Scene::json_to_entity(
+  Scene& self, flecs::entity root, simdjson::ondemand::value& json, std::vector<UUID>& requested_assets
+) -> std::pair<flecs::entity, bool> {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -158,27 +159,29 @@ auto Scene::json_to_entity(Scene& self,
         return;
       }
 
-      std::visit(ox::match{
-                     [](const auto&) {},
-                     [&](bool* v) { *v = static_cast<bool>(member_json.get_bool().value_unsafe()); },
-                     [&](u16* v) { *v = static_cast<u16>(member_json.get_uint64().value_unsafe()); },
-                     [&](f32* v) { *v = static_cast<f32>(member_json.get_double().value_unsafe()); },
-                     [&](i32* v) { *v = static_cast<i32>(member_json.get_int64().value_unsafe()); },
-                     [&](u32* v) { *v = static_cast<u32>(member_json.get_uint64().value_unsafe()); },
-                     [&](i64* v) { *v = member_json.get_int64().value_unsafe(); },
-                     [&](u64* v) { *v = member_json.get_uint64().value_unsafe(); },
-                     [&](glm::vec2* v) { json_to_vec(member_json.value_unsafe(), *v); },
-                     [&](glm::vec3* v) { json_to_vec(member_json.value_unsafe(), *v); },
-                     [&](glm::vec4* v) { json_to_vec(member_json.value_unsafe(), *v); },
-                     [&](glm::quat* v) { json_to_quat(member_json.value_unsafe(), *v); },
-                     // [&](glm::mat4 *v) {json_to_mat(member_json.value(), *v); },
-                     [&](std::string* v) { *v = member_json.get_string().value_unsafe(); },
-                     [&](UUID* v) {
-                       *v = UUID::from_string(member_json.get_string().value_unsafe()).value();
-                       requested_assets.push_back(*v);
-                     },
-                 },
-                 member);
+      std::visit(
+        ox::match{
+          [](const auto&) {},
+          [&](bool* v) { *v = static_cast<bool>(member_json.get_bool().value_unsafe()); },
+          [&](u16* v) { *v = static_cast<u16>(member_json.get_uint64().value_unsafe()); },
+          [&](f32* v) { *v = static_cast<f32>(member_json.get_double().value_unsafe()); },
+          [&](i32* v) { *v = static_cast<i32>(member_json.get_int64().value_unsafe()); },
+          [&](u32* v) { *v = static_cast<u32>(member_json.get_uint64().value_unsafe()); },
+          [&](i64* v) { *v = member_json.get_int64().value_unsafe(); },
+          [&](u64* v) { *v = member_json.get_uint64().value_unsafe(); },
+          [&](glm::vec2* v) { json_to_vec(member_json.value_unsafe(), *v); },
+          [&](glm::vec3* v) { json_to_vec(member_json.value_unsafe(), *v); },
+          [&](glm::vec4* v) { json_to_vec(member_json.value_unsafe(), *v); },
+          [&](glm::quat* v) { json_to_quat(member_json.value_unsafe(), *v); },
+          // [&](glm::mat4 *v) {json_to_mat(member_json.value(), *v); },
+          [&](std::string* v) { *v = member_json.get_string().value_unsafe(); },
+          [&](UUID* v) {
+            *v = UUID::from_string(member_json.get_string().value_unsafe()).value();
+            requested_assets.push_back(*v);
+          },
+        },
+        member
+      );
     });
 
     e.modified(component_id);
@@ -240,59 +243,59 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.renderer_instance = renderer->new_instance(&self);
 
   self.world.observer<TransformComponent>()
-      .event(flecs::OnSet)
-      .event(flecs::OnAdd)
-      .event(flecs::OnRemove)
-      .each([&self](flecs::iter& it, usize i, TransformComponent&) {
-        auto entity = it.entity(i);
-        if (it.event() == flecs::OnSet) {
-          self.set_dirty(entity);
-        } else if (it.event() == flecs::OnAdd) {
-          self.add_transform(entity);
-          self.set_dirty(entity);
-        } else if (it.event() == flecs::OnRemove) {
-          self.remove_transform(entity);
-        }
-      });
+    .event(flecs::OnSet)
+    .event(flecs::OnAdd)
+    .event(flecs::OnRemove)
+    .each([&self](flecs::iter& it, usize i, TransformComponent&) {
+      auto entity = it.entity(i);
+      if (it.event() == flecs::OnSet) {
+        self.set_dirty(entity);
+      } else if (it.event() == flecs::OnAdd) {
+        self.add_transform(entity);
+        self.set_dirty(entity);
+      } else if (it.event() == flecs::OnRemove) {
+        self.remove_transform(entity);
+      }
+    });
 
   self.world.observer<TransformComponent, MeshComponent>()
-      .event(flecs::OnAdd)
-      .event(flecs::OnSet)
-      .event(flecs::OnRemove)
-      .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
-        auto entity = it.entity(i);
-        const auto mesh_event = it.event_id() == self.world.component<MeshComponent>();
-        if (it.event() == flecs::OnSet) {
-          if (!self.entity_transforms_map.contains(entity))
-            self.add_transform(entity);
-          self.set_dirty(entity);
-
-          if (mesh_event && mc.mesh_uuid)
-            self.attach_mesh(entity, mc.mesh_uuid, mc.mesh_index);
-        } else if (it.event() == flecs::OnAdd) {
+    .event(flecs::OnAdd)
+    .event(flecs::OnSet)
+    .event(flecs::OnRemove)
+    .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
+      auto entity = it.entity(i);
+      const auto mesh_event = it.event_id() == self.world.component<MeshComponent>();
+      if (it.event() == flecs::OnSet) {
+        if (!self.entity_transforms_map.contains(entity))
           self.add_transform(entity);
-          self.set_dirty(entity);
-        } else if (it.event() == flecs::OnRemove) {
-          if (mc.mesh_uuid)
-            self.detach_mesh(entity, mc.mesh_uuid, mc.mesh_index);
+        self.set_dirty(entity);
 
-          self.remove_transform(entity);
-        }
-      });
+        if (mesh_event && mc.mesh_uuid)
+          self.attach_mesh(entity, mc.mesh_uuid, mc.mesh_index);
+      } else if (it.event() == flecs::OnAdd) {
+        self.add_transform(entity);
+        self.set_dirty(entity);
+      } else if (it.event() == flecs::OnRemove) {
+        if (mc.mesh_uuid)
+          self.detach_mesh(entity, mc.mesh_uuid, mc.mesh_index);
+
+        self.remove_transform(entity);
+      }
+    });
 
   self.world.observer<TransformComponent, SpriteComponent>()
-      .event(flecs::OnSet)
-      .event(flecs::OnAdd)
-      .each([&self](flecs::iter& it, usize i, TransformComponent&, SpriteComponent& sprite) {
-        auto entity = it.entity(i);
-        // Set sprite rect
-        if (auto id = self.get_entity_transform_id(entity)) {
-          if (auto* transform = self.get_entity_transform(*id)) {
-            sprite.rect = AABB(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(0.5, 0.5, 0.5));
-            sprite.rect = sprite.rect.get_transformed(transform->world);
-          }
+    .event(flecs::OnSet)
+    .event(flecs::OnAdd)
+    .each([&self](flecs::iter& it, usize i, TransformComponent&, SpriteComponent& sprite) {
+      auto entity = it.entity(i);
+      // Set sprite rect
+      if (auto id = self.get_entity_transform_id(entity)) {
+        if (auto* transform = self.get_entity_transform(*id)) {
+          sprite.rect = AABB(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(0.5, 0.5, 0.5));
+          sprite.rect = sprite.rect.get_transformed(transform->world);
         }
-      });
+      }
+    });
 
   self.world.observer<SpriteComponent>().event(flecs::OnAdd).each([](flecs::iter& it, usize i, SpriteComponent& c) {
     auto* asset_man = App::get_asset_manager();
@@ -303,170 +306,172 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   });
 
   self.world.observer<SpriteComponent>()
-      .event(flecs::OnRemove)
-      .with<AssetOwner>()
-      .each([](flecs::iter& it, usize i, SpriteComponent& c) {
-        auto* asset_man = App::get_asset_manager();
-        if (it.event() == flecs::OnRemove) {
-          if (auto* material_asset = asset_man->get_asset(c.material)) {
-            asset_man->unload_asset(material_asset->uuid);
-          }
+    .event(flecs::OnRemove)
+    .with<AssetOwner>()
+    .each([](flecs::iter& it, usize i, SpriteComponent& c) {
+      auto* asset_man = App::get_asset_manager();
+      if (it.event() == flecs::OnRemove) {
+        if (auto* material_asset = asset_man->get_asset(c.material)) {
+          asset_man->unload_asset(material_asset->uuid);
         }
-      });
+      }
+    });
 
   self.world.observer<AudioListenerComponent>()
-      .event(flecs::OnSet)
-      .event(flecs::OnAdd)
-      .each([](flecs::iter& it, usize i, AudioListenerComponent& c) {
-        auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
-        audio_engine->set_listener_cone(c.listener_index, c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain);
-      });
+    .event(flecs::OnSet)
+    .event(flecs::OnAdd)
+    .each([](flecs::iter& it, usize i, AudioListenerComponent& c) {
+      auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
+      audio_engine->set_listener_cone(c.listener_index, c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain);
+    });
 
   self.world.observer<AudioSourceComponent>()
-      .event(flecs::OnSet)
-      .event(flecs::OnAdd)
-      .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
-        auto* asset_man = App::get_asset_manager();
-        auto* audio_asset = asset_man->get_audio(c.audio_source);
-        if (!audio_asset)
-          return;
+    .event(flecs::OnSet)
+    .event(flecs::OnAdd)
+    .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
+      auto* asset_man = App::get_asset_manager();
+      auto* audio_asset = asset_man->get_audio(c.audio_source);
+      if (!audio_asset)
+        return;
 
-        auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
-        audio_engine->set_source_volume(audio_asset->get_source(), c.volume);
-        audio_engine->set_source_pitch(audio_asset->get_source(), c.pitch);
-        audio_engine->set_source_looping(audio_asset->get_source(), c.looping);
-        audio_engine->set_source_attenuation_model(audio_asset->get_source(),
-                                                   static_cast<AudioEngine::AttenuationModelType>(c.attenuation_model));
-        audio_engine->set_source_roll_off(audio_asset->get_source(), c.roll_off);
-        audio_engine->set_source_min_gain(audio_asset->get_source(), c.min_gain);
-        audio_engine->set_source_max_gain(audio_asset->get_source(), c.max_gain);
-        audio_engine->set_source_min_distance(audio_asset->get_source(), c.min_distance);
-        audio_engine->set_source_max_distance(audio_asset->get_source(), c.max_distance);
-        audio_engine->set_source_cone(
-            audio_asset->get_source(), c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain);
-      });
+      auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
+      audio_engine->set_source_volume(audio_asset->get_source(), c.volume);
+      audio_engine->set_source_pitch(audio_asset->get_source(), c.pitch);
+      audio_engine->set_source_looping(audio_asset->get_source(), c.looping);
+      audio_engine->set_source_attenuation_model(
+        audio_asset->get_source(), static_cast<AudioEngine::AttenuationModelType>(c.attenuation_model)
+      );
+      audio_engine->set_source_roll_off(audio_asset->get_source(), c.roll_off);
+      audio_engine->set_source_min_gain(audio_asset->get_source(), c.min_gain);
+      audio_engine->set_source_max_gain(audio_asset->get_source(), c.max_gain);
+      audio_engine->set_source_min_distance(audio_asset->get_source(), c.min_distance);
+      audio_engine->set_source_max_distance(audio_asset->get_source(), c.max_distance);
+      audio_engine->set_source_cone(
+        audio_asset->get_source(), c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain
+      );
+    });
 
   self.world.observer<SpriteAnimationComponent>()
-      .event(flecs::OnSet)
-      .event(flecs::OnAdd)
-      .each([](flecs::iter& it, usize i, SpriteAnimationComponent& c) { c.reset(); });
+    .event(flecs::OnSet)
+    .event(flecs::OnAdd)
+    .each([](flecs::iter& it, usize i, SpriteAnimationComponent& c) { c.reset(); });
 
   self.world.observer<MeshComponent>()
-      .with<AssetOwner>()
-      .event(flecs::OnRemove)
-      .each([](flecs::iter& it, usize i, MeshComponent& c) {
-        ZoneScopedN("MeshComponent AssetOwner handling");
-        auto* asset_man = App::get_asset_manager();
-        asset_man->unload_asset(c.mesh_uuid);
-      });
+    .with<AssetOwner>()
+    .event(flecs::OnRemove)
+    .each([](flecs::iter& it, usize i, MeshComponent& c) {
+      ZoneScopedN("MeshComponent AssetOwner handling");
+      auto* asset_man = App::get_asset_manager();
+      asset_man->unload_asset(c.mesh_uuid);
+    });
 
   self.world.observer<AudioSourceComponent>()
-      .with<AssetOwner>()
-      .event(flecs::OnRemove)
-      .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
-        ZoneScopedN("AudioSourceComponent AssetOwner handling");
-        auto* asset_man = App::get_asset_manager();
-        asset_man->unload_asset(c.audio_source);
-      });
+    .with<AssetOwner>()
+    .event(flecs::OnRemove)
+    .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
+      ZoneScopedN("AudioSourceComponent AssetOwner handling");
+      auto* asset_man = App::get_asset_manager();
+      asset_man->unload_asset(c.audio_source);
+    });
 
   self.world.observer<RigidBodyComponent>()
-      .event(flecs::OnSet)
-      .event(flecs::OnRemove)
-      .each([&self](flecs::iter& it, usize i, RigidBodyComponent& rb) {
-        ZoneScopedN("Rigidbody observer");
+    .event(flecs::OnSet)
+    .event(flecs::OnRemove)
+    .each([&self](flecs::iter& it, usize i, RigidBodyComponent& rb) {
+      ZoneScopedN("Rigidbody observer");
 
-        if (!self.is_running())
-          return;
+      if (!self.is_running())
+        return;
 
-        if (it.event() == flecs::OnSet) {
-          auto entity = it.entity(i);
-          auto& tc = entity.get<TransformComponent>();
-          self.create_rigidbody(it.entity(i), tc, rb);
-        } else if (it.event() == flecs::OnRemove) {
-          auto physics = App::get_system<Physics>(EngineSystems::Physics);
-          auto& body_interface = physics->get_body_interface();
-          if (rb.runtime_body) {
-            auto body_id = static_cast<JPH::Body*>(rb.runtime_body)->GetID();
-            body_interface.RemoveBody(body_id);
-            body_interface.DestroyBody(body_id);
-            rb.runtime_body = nullptr;
-          }
+      if (it.event() == flecs::OnSet) {
+        auto entity = it.entity(i);
+        auto& tc = entity.get<TransformComponent>();
+        self.create_rigidbody(it.entity(i), tc, rb);
+      } else if (it.event() == flecs::OnRemove) {
+        auto physics = App::get_system<Physics>(EngineSystems::Physics);
+        auto& body_interface = physics->get_body_interface();
+        if (rb.runtime_body) {
+          auto body_id = static_cast<JPH::Body*>(rb.runtime_body)->GetID();
+          body_interface.RemoveBody(body_id);
+          body_interface.DestroyBody(body_id);
+          rb.runtime_body = nullptr;
         }
-      });
+      }
+    });
 
   self.world.observer<CharacterControllerComponent>()
-      .event(flecs::OnSet)
-      .event(flecs::OnRemove)
-      .each([&self](flecs::iter& it, usize i, CharacterControllerComponent& ch) {
-        ZoneScopedN("CharacterController observer");
+    .event(flecs::OnSet)
+    .event(flecs::OnRemove)
+    .each([&self](flecs::iter& it, usize i, CharacterControllerComponent& ch) {
+      ZoneScopedN("CharacterController observer");
 
-        if (!self.is_running())
-          return;
+      if (!self.is_running())
+        return;
 
-        if (it.event() == flecs::OnSet) {
-          auto entity = it.entity(i);
-          auto& tc = entity.get<TransformComponent>();
-          self.create_character_controller(entity, tc, ch);
-        } else if (it.event() == flecs::OnRemove) {
-          auto physics = App::get_system<Physics>(EngineSystems::Physics);
-          JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
-          if (ch.character) {
-            auto* character = reinterpret_cast<JPH::Character*>(ch.character);
-            body_interface.RemoveBody(character->GetBodyID());
-            ch.character = nullptr;
-          }
+      if (it.event() == flecs::OnSet) {
+        auto entity = it.entity(i);
+        auto& tc = entity.get<TransformComponent>();
+        self.create_character_controller(entity, tc, ch);
+      } else if (it.event() == flecs::OnRemove) {
+        auto physics = App::get_system<Physics>(EngineSystems::Physics);
+        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+        if (ch.character) {
+          auto* character = reinterpret_cast<JPH::Character*>(ch.character);
+          body_interface.RemoveBody(character->GetBodyID());
+          ch.character = nullptr;
         }
-      });
+      }
+    });
 
   self.world.observer<ParticleSystemComponent>()
-      .event(flecs::OnSet)
-      .event(flecs::OnAdd)
-      .event(flecs::OnRemove)
-      .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
-        auto* asset_man = App::get_asset_manager();
-        if (it.event() == flecs::OnAdd) {
-          if (c.play_on_awake) {
-            c.system_time = 0.0f;
-            c.playing = true;
-          }
-          if (!c.material)
-            c.material = asset_man->create_asset(AssetType::Material, {});
-          asset_man->load_material(c.material, Material{});
-
-          auto parent = it.entity(i);
-          for (u32 k = 0; k < c.max_particles; k++) {
-            auto particle = it.world().entity().set<TransformComponent>({{}, {}, {0.5f, 0.5f, 0.5f}});
-            particle.set<ParticleComponent>({.life_remaining = c.start_lifetime});
-            c.particles.emplace_back(particle);
-            particle.child_of(parent);
-          }
-        } else if (it.event() == flecs::OnRemove) {
-          for (auto p : c.particles) {
-            flecs::entity e{it.world(), p};
-            e.destruct();
-          }
-        } else if (it.event() == flecs::OnSet) {
-          if (auto* asset = asset_man->get_asset(c.material)) {
-            if (!asset->is_loaded()) {
-              asset_man->load_material(c.material, Material{});
-            }
-          }
-
-          asset_man->set_material_dirty(c.material);
+    .event(flecs::OnSet)
+    .event(flecs::OnAdd)
+    .event(flecs::OnRemove)
+    .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
+      auto* asset_man = App::get_asset_manager();
+      if (it.event() == flecs::OnAdd) {
+        if (c.play_on_awake) {
+          c.system_time = 0.0f;
+          c.playing = true;
         }
-      });
+        if (!c.material)
+          c.material = asset_man->create_asset(AssetType::Material, {});
+        asset_man->load_material(c.material, Material{});
+
+        auto parent = it.entity(i);
+        for (u32 k = 0; k < c.max_particles; k++) {
+          auto particle = it.world().entity().set<TransformComponent>({{}, {}, {0.5f, 0.5f, 0.5f}});
+          particle.set<ParticleComponent>({.life_remaining = c.start_lifetime});
+          c.particles.emplace_back(particle);
+          particle.child_of(parent);
+        }
+      } else if (it.event() == flecs::OnRemove) {
+        for (auto p : c.particles) {
+          flecs::entity e{it.world(), p};
+          e.destruct();
+        }
+      } else if (it.event() == flecs::OnSet) {
+        if (auto* asset = asset_man->get_asset(c.material)) {
+          if (!asset->is_loaded()) {
+            asset_man->load_material(c.material, Material{});
+          }
+        }
+
+        asset_man->set_material_dirty(c.material);
+      }
+    });
 
   self.world.observer<ParticleSystemComponent>()
-      .event(flecs::OnRemove)
-      .with<AssetOwner>()
-      .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
-        auto* asset_man = App::get_asset_manager();
-        if (it.event() == flecs::OnRemove) {
-          if (auto* material_asset = asset_man->get_asset(c.material)) {
-            asset_man->unload_asset(material_asset->uuid);
-          }
+    .event(flecs::OnRemove)
+    .with<AssetOwner>()
+    .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
+      auto* asset_man = App::get_asset_manager();
+      if (it.event() == flecs::OnRemove) {
+        if (auto* material_asset = asset_man->get_asset(c.material)) {
+          asset_man->unload_asset(material_asset->uuid);
         }
-      });
+      }
+    });
 
   // Systems run order:
   // -- PreUpdate  -> Main Systems
@@ -476,41 +481,44 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   // --- Main Systems ---
 
   self.world.system<const TransformComponent, AudioListenerComponent>("audio_listener_update")
-      .kind(flecs::PreUpdate)
-      .each([&self](const flecs::entity& e, const TransformComponent& tc, AudioListenerComponent& ac) {
-        if (ac.active) {
-          auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
-          const glm::mat4 inverted = glm::inverse(self.get_world_transform(e));
-          const glm::vec3 forward = normalize(glm::vec3(inverted[2]));
-          audio_engine->set_listener_position(ac.listener_index, tc.position);
-          audio_engine->set_listener_direction(ac.listener_index, -forward);
-          audio_engine->set_listener_cone(
-              ac.listener_index, ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
-        }
-      });
+    .kind(flecs::PreUpdate)
+    .each([&self](const flecs::entity& e, const TransformComponent& tc, AudioListenerComponent& ac) {
+      if (ac.active) {
+        auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
+        const glm::mat4 inverted = glm::inverse(self.get_world_transform(e));
+        const glm::vec3 forward = normalize(glm::vec3(inverted[2]));
+        audio_engine->set_listener_position(ac.listener_index, tc.position);
+        audio_engine->set_listener_direction(ac.listener_index, -forward);
+        audio_engine->set_listener_cone(
+          ac.listener_index, ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain
+        );
+      }
+    });
 
   self.world.system<const TransformComponent, AudioSourceComponent>("audio_source_update")
-      .kind(flecs::PreUpdate)
-      .each([](const flecs::entity& e, const TransformComponent& tc, const AudioSourceComponent& ac) {
-        auto* asset_man = App::get_asset_manager();
-        if (auto* audio = asset_man->get_audio(ac.audio_source)) {
-          auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
-          audio_engine->set_source_attenuation_model(
-              audio->get_source(), static_cast<AudioEngine::AttenuationModelType>(ac.attenuation_model));
-          audio_engine->set_source_volume(audio->get_source(), ac.volume);
-          audio_engine->set_source_pitch(audio->get_source(), ac.pitch);
-          audio_engine->set_source_looping(audio->get_source(), ac.looping);
-          audio_engine->set_source_spatialization(audio->get_source(), ac.looping);
-          audio_engine->set_source_roll_off(audio->get_source(), ac.roll_off);
-          audio_engine->set_source_min_gain(audio->get_source(), ac.min_gain);
-          audio_engine->set_source_max_gain(audio->get_source(), ac.max_gain);
-          audio_engine->set_source_min_distance(audio->get_source(), ac.min_distance);
-          audio_engine->set_source_max_distance(audio->get_source(), ac.max_distance);
-          audio_engine->set_source_cone(
-              audio->get_source(), ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
-          audio_engine->set_source_doppler_factor(audio->get_source(), ac.doppler_factor);
-        }
-      });
+    .kind(flecs::PreUpdate)
+    .each([](const flecs::entity& e, const TransformComponent& tc, const AudioSourceComponent& ac) {
+      auto* asset_man = App::get_asset_manager();
+      if (auto* audio = asset_man->get_audio(ac.audio_source)) {
+        auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
+        audio_engine->set_source_attenuation_model(
+          audio->get_source(), static_cast<AudioEngine::AttenuationModelType>(ac.attenuation_model)
+        );
+        audio_engine->set_source_volume(audio->get_source(), ac.volume);
+        audio_engine->set_source_pitch(audio->get_source(), ac.pitch);
+        audio_engine->set_source_looping(audio->get_source(), ac.looping);
+        audio_engine->set_source_spatialization(audio->get_source(), ac.looping);
+        audio_engine->set_source_roll_off(audio->get_source(), ac.roll_off);
+        audio_engine->set_source_min_gain(audio->get_source(), ac.min_gain);
+        audio_engine->set_source_max_gain(audio->get_source(), ac.max_gain);
+        audio_engine->set_source_min_distance(audio->get_source(), ac.min_distance);
+        audio_engine->set_source_max_distance(audio->get_source(), ac.max_distance);
+        audio_engine->set_source_cone(
+          audio->get_source(), ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain
+        );
+        audio_engine->set_source_doppler_factor(audio->get_source(), ac.doppler_factor);
+      }
+    });
 
   // --- Physics Systems ---
 
@@ -520,277 +528,284 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   const auto physics_tick_source = self.world.timer().interval(self.physics_interval);
 
   self.world
-      .system("physics_step") //
-      .kind(flecs::OnUpdate)
-      .tick_source(physics_tick_source)
-      .run([](flecs::iter& it) {
-        auto* physics = App::get_system<Physics>(EngineSystems::Physics);
-        physics->step(it.delta_time());
-      });
+    .system("physics_step") //
+    .kind(flecs::OnUpdate)
+    .tick_source(physics_tick_source)
+    .run([](flecs::iter& it) {
+      auto* physics = App::get_system<Physics>(EngineSystems::Physics);
+      physics->step(it.delta_time());
+    });
 
   self.world.system<TransformComponent, RigidBodyComponent>("rigidbody_update")
-      .kind(flecs::OnUpdate)
-      .tick_source(physics_tick_source)
-      .each([](const flecs::entity& e, TransformComponent& tc, RigidBodyComponent& rb) {
-        if (!rb.runtime_body)
-          return;
+    .kind(flecs::OnUpdate)
+    .tick_source(physics_tick_source)
+    .each([](const flecs::entity& e, TransformComponent& tc, RigidBodyComponent& rb) {
+      if (!rb.runtime_body)
+        return;
 
-        auto* physics = App::get_system<Physics>(EngineSystems::Physics);
-        const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
-        const auto& body_interface = physics->get_physics_system()->GetBodyInterface();
+      auto* physics = App::get_system<Physics>(EngineSystems::Physics);
+      const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
+      const auto& body_interface = physics->get_physics_system()->GetBodyInterface();
 
-        if (!body_interface.IsActive(body->GetID()))
-          return;
+      if (!body_interface.IsActive(body->GetID()))
+        return;
 
-        const JPH::Vec3 position = body->GetPosition();
-        const JPH::Vec3 rotation = body->GetRotation().GetEulerAngles();
+      const JPH::Vec3 position = body->GetPosition();
+      const JPH::Vec3 rotation = body->GetRotation().GetEulerAngles();
 
-        rb.previous_translation = rb.translation;
-        rb.previous_rotation = rb.rotation;
-        rb.translation = {position.GetX(), position.GetY(), position.GetZ()};
-        rb.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
-        tc.position = rb.translation;
-        tc.rotation = glm::eulerAngles(rb.rotation);
+      rb.previous_translation = rb.translation;
+      rb.previous_rotation = rb.rotation;
+      rb.translation = {position.GetX(), position.GetY(), position.GetZ()};
+      rb.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
+      tc.position = rb.translation;
+      tc.rotation = glm::eulerAngles(rb.rotation);
 
-        e.modified<TransformComponent>();
-      });
+      e.modified<TransformComponent>();
+    });
 
   self.world.system<TransformComponent, CharacterControllerComponent>("character_controller_update")
-      .kind(flecs::OnUpdate)
-      .tick_source(physics_tick_source)
-      .each([](const flecs::entity& e, TransformComponent& tc, CharacterControllerComponent& ch) {
-        auto* character = reinterpret_cast<JPH::Character*>(ch.character);
-        OX_CHECK_NULL(character);
+    .kind(flecs::OnUpdate)
+    .tick_source(physics_tick_source)
+    .each([](const flecs::entity& e, TransformComponent& tc, CharacterControllerComponent& ch) {
+      auto* character = reinterpret_cast<JPH::Character*>(ch.character);
+      OX_CHECK_NULL(character);
 
-        character->PostSimulation(ch.collision_tolerance);
-        const JPH::Vec3 position = character->GetPosition();
-        const JPH::Vec3 rotation = character->GetRotation().GetEulerAngles();
+      character->PostSimulation(ch.collision_tolerance);
+      const JPH::Vec3 position = character->GetPosition();
+      const JPH::Vec3 rotation = character->GetRotation().GetEulerAngles();
 
-        ch.previous_translation = ch.translation;
-        ch.previous_rotation = ch.rotation;
-        ch.translation = {position.GetX(), position.GetY(), position.GetZ()};
-        ch.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
-        tc.position = ch.translation;
-        tc.rotation = glm::eulerAngles(ch.rotation);
+      ch.previous_translation = ch.translation;
+      ch.previous_rotation = ch.rotation;
+      ch.translation = {position.GetX(), position.GetY(), position.GetZ()};
+      ch.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
+      tc.position = ch.translation;
+      tc.rotation = glm::eulerAngles(ch.rotation);
 
-        e.modified<TransformComponent>();
-      });
+      e.modified<TransformComponent>();
+    });
 
   // -- Renderer Systems ---
 
   self.world.system<const TransformComponent, ParticleSystemComponent>("particle_system_update")
-      .kind(flecs::PostUpdate)
-      .each([](flecs::iter& it, usize i, const TransformComponent& tc, ParticleSystemComponent& component) {
-        const auto emit = [&it, &component](flecs::entity parent, glm::vec3 position, u32 count) {
-          if (component.active_particle_count >= component.max_particles)
-            return;
+    .kind(flecs::PostUpdate)
+    .each([](flecs::iter& it, usize i, const TransformComponent& tc, ParticleSystemComponent& component) {
+      const auto emit = [&it, &component](flecs::entity parent, glm::vec3 position, u32 count) {
+        if (component.active_particle_count >= component.max_particles)
+          return;
 
-          for (uint32_t i = 0; i < count; ++i) {
-            if (++component.pool_index >= component.max_particles)
-              component.pool_index = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+          if (++component.pool_index >= component.max_particles)
+            component.pool_index = 0;
 
-            auto particle = flecs::entity{it.world(), component.particles[component.pool_index]};
+          auto particle = flecs::entity{it.world(), component.particles[component.pool_index]};
 
-            const auto random_float = [](f32 min, f32 max) {
-              f32 r = App::get_system<Random>(EngineSystems::Random)->get_float();
-              return min + r * (max - min);
-            };
+          const auto random_float = [](f32 min, f32 max) {
+            f32 r = App::get_system<Random>(EngineSystems::Random)->get_float();
+            return min + r * (max - min);
+          };
 
-            auto new_position = position;
-            new_position.x += random_float(component.position_start.x, component.position_end.x);
-            new_position.y += random_float(component.position_start.y, component.position_end.y);
-            new_position.z += random_float(component.position_start.z, component.position_end.z);
+          auto new_position = position;
+          new_position.x += random_float(component.position_start.x, component.position_end.x);
+          new_position.y += random_float(component.position_start.y, component.position_end.y);
+          new_position.z += random_float(component.position_start.z, component.position_end.z);
 
-            particle.set<TransformComponent>({new_position});
-            particle.set<ParticleComponent>({.life_remaining = component.start_lifetime});
-          }
-        };
+          particle.set<TransformComponent>({new_position});
+          particle.set<ParticleComponent>({.life_remaining = component.start_lifetime});
+        }
+      };
 
-        OX_CHECK_EQ(component.particles.size(), component.max_particles);
+      OX_CHECK_EQ(component.particles.size(), component.max_particles);
 
-        auto entity = it.entity(i);
+      auto entity = it.entity(i);
 
-        const float sim_ts = it.delta_time() * component.simulation_speed;
+      const float sim_ts = it.delta_time() * component.simulation_speed;
 
-        if (component.playing && !component.looping)
-          component.system_time += sim_ts;
-        const float delay = component.start_delay;
-        if (component.playing && (component.looping || (component.system_time <= delay + component.duration &&
-                                                        component.system_time > delay))) {
-          // Emit particles in unit time
-          component.spawn_time += sim_ts;
-          if (component.spawn_time >= 1.0f / static_cast<float>(component.rate_over_time)) {
-            component.spawn_time = 0.0f;
-            emit(entity, tc.position, 1);
-          }
-
-          // Emit particles over unit distance
-          if (glm::distance2(component.last_spawned_position, tc.position) > 1.0f) {
-            component.last_spawned_position = tc.position;
-            emit(entity, tc.position, component.rate_over_distance);
-          }
-
-          // Emit bursts of particles over time
-          component.burst_time += sim_ts;
-          if (component.burst_time >= component.burst_time) {
-            component.burst_time = 0.0f;
-            emit(entity, tc.position, component.burst_count);
-          }
+      if (component.playing && !component.looping)
+        component.system_time += sim_ts;
+      const float delay = component.start_delay;
+      if (component.playing && (component.looping || (component.system_time <= delay + component.duration &&
+                                                      component.system_time > delay))) {
+        // Emit particles in unit time
+        component.spawn_time += sim_ts;
+        if (component.spawn_time >= 1.0f / static_cast<float>(component.rate_over_time)) {
+          component.spawn_time = 0.0f;
+          emit(entity, tc.position, 1);
         }
 
-        component.active_particle_count = 0;
-      });
+        // Emit particles over unit distance
+        if (glm::distance2(component.last_spawned_position, tc.position) > 1.0f) {
+          component.last_spawned_position = tc.position;
+          emit(entity, tc.position, component.rate_over_distance);
+        }
+
+        // Emit bursts of particles over time
+        component.burst_time += sim_ts;
+        if (component.burst_time >= component.burst_time) {
+          component.burst_time = 0.0f;
+          emit(entity, tc.position, component.burst_count);
+        }
+      }
+
+      component.active_particle_count = 0;
+    });
 
   self.world.system<TransformComponent, ParticleComponent>("particle_update")
-      .kind(flecs::PostUpdate)
-      .each([](flecs::iter& it, usize i, TransformComponent& particle_tc, ParticleComponent& particle) {
-        if (particle.life_remaining <= 0.0f)
-          return;
+    .kind(flecs::PostUpdate)
+    .each([](flecs::iter& it, usize i, TransformComponent& particle_tc, ParticleComponent& particle) {
+      if (particle.life_remaining <= 0.0f)
+        return;
 
-        auto evaluate_over_time = []<typename T>(T start, T end, f32 factor) -> T {
-          return glm::lerp(end, start, factor);
-        };
+      auto evaluate_over_time = []<typename T>(T start, T end, f32 factor) -> T {
+        return glm::lerp(end, start, factor);
+      };
 
-        auto evaluate_by_speed = []<typename T>(T start, T end, f32 min_speed, f32 max_speed, f32 speed) -> T {
-          f32 factor = math::inverse_lerp_clamped(min_speed, max_speed, speed);
-          return glm::lerp(end, start, factor);
-        };
+      auto evaluate_by_speed = []<typename T>(T start, T end, f32 min_speed, f32 max_speed, f32 speed) -> T {
+        f32 factor = math::inverse_lerp_clamped(min_speed, max_speed, speed);
+        return glm::lerp(end, start, factor);
+      };
 
-        auto particle_entity = it.entity(i);
-        auto parent = particle_entity.parent();
-        auto component = parent.get<ParticleSystemComponent>();
+      auto particle_entity = it.entity(i);
+      auto parent = particle_entity.parent();
+      auto component = parent.get<ParticleSystemComponent>();
 
-        float sim_ts = it.delta_time() * component.simulation_speed;
+      float sim_ts = it.delta_time() * component.simulation_speed;
 
-        particle.life_remaining -= sim_ts;
+      particle.life_remaining -= sim_ts;
 
-        const float t = glm::clamp(particle.life_remaining / component.start_lifetime, 0.0f, 1.0f);
+      const float t = glm::clamp(particle.life_remaining / component.start_lifetime, 0.0f, 1.0f);
 
-        glm::vec3 velocity = component.start_velocity;
-        if (component.velocity_over_lifetime_enabled)
-          velocity *= evaluate_over_time(
-              component.velocity_over_lifetime_start, component.velocity_over_lifetime_end, t);
+      glm::vec3 velocity = component.start_velocity;
+      if (component.velocity_over_lifetime_enabled)
+        velocity *= evaluate_over_time(component.velocity_over_lifetime_start, component.velocity_over_lifetime_end, t);
 
-        glm::vec3 force(0.0f);
-        if (component.force_over_lifetime_enabled)
-          force = evaluate_over_time(component.force_over_lifetime_start, component.force_over_lifetime_end, t);
+      glm::vec3 force(0.0f);
+      if (component.force_over_lifetime_enabled)
+        force = evaluate_over_time(component.force_over_lifetime_start, component.force_over_lifetime_end, t);
 
-        force.y += component.gravity_modifier * -9.8f;
-        velocity += force * sim_ts;
+      force.y += component.gravity_modifier * -9.8f;
+      velocity += force * sim_ts;
 
-        const float velocity_magnitude = glm::length(velocity);
+      const float velocity_magnitude = glm::length(velocity);
 
-        // Color
-        particle.color = component.start_color;
-        if (component.color_over_lifetime_enabled)
-          particle.color *= evaluate_over_time(
-              component.color_over_lifetime_start, component.color_over_lifetime_end, t);
-        if (component.color_by_speed_enabled)
-          particle.color *= evaluate_by_speed(component.color_by_speed_start,
-                                              component.color_by_speed_end,
-                                              component.color_by_speed_min_speed,
-                                              component.color_by_speed_max_speed,
-                                              velocity_magnitude);
+      // Color
+      particle.color = component.start_color;
+      if (component.color_over_lifetime_enabled)
+        particle.color *= evaluate_over_time(component.color_over_lifetime_start, component.color_over_lifetime_end, t);
+      if (component.color_by_speed_enabled)
+        particle.color *= evaluate_by_speed(
+          component.color_by_speed_start,
+          component.color_by_speed_end,
+          component.color_by_speed_min_speed,
+          component.color_by_speed_max_speed,
+          velocity_magnitude
+        );
 
-        // Size
-        particle_tc.scale = component.start_size;
-        if (component.size_over_lifetime_enabled)
-          particle_tc.scale *= evaluate_over_time(
-              component.size_over_lifetime_start, component.size_over_lifetime_end, t);
-        if (component.size_by_speed_enabled)
-          particle_tc.scale *= evaluate_by_speed(component.size_by_speed_start,
-                                                 component.size_by_speed_end,
-                                                 component.size_by_speed_min_speed,
-                                                 component.size_by_speed_max_speed,
-                                                 velocity_magnitude);
+      // Size
+      particle_tc.scale = component.start_size;
+      if (component.size_over_lifetime_enabled)
+        particle_tc.scale *= evaluate_over_time(
+          component.size_over_lifetime_start, component.size_over_lifetime_end, t
+        );
+      if (component.size_by_speed_enabled)
+        particle_tc.scale *= evaluate_by_speed(
+          component.size_by_speed_start,
+          component.size_by_speed_end,
+          component.size_by_speed_min_speed,
+          component.size_by_speed_max_speed,
+          velocity_magnitude
+        );
 
-        // Rotation
-        particle_tc.rotation = component.start_rotation;
-        if (component.rotation_over_lifetime_enabled)
-          particle_tc.rotation += evaluate_over_time(
-              component.rotation_over_lifetime_start, component.rotation_over_lifetime_end, t);
-        if (component.rotation_by_speed_enabled)
-          particle_tc.rotation += evaluate_by_speed(component.rotation_by_speed_start,
-                                                    component.rotation_by_speed_end,
-                                                    component.rotation_by_speed_min_speed,
-                                                    component.rotation_by_speed_max_speed,
-                                                    velocity_magnitude);
+      // Rotation
+      particle_tc.rotation = component.start_rotation;
+      if (component.rotation_over_lifetime_enabled)
+        particle_tc.rotation += evaluate_over_time(
+          component.rotation_over_lifetime_start, component.rotation_over_lifetime_end, t
+        );
+      if (component.rotation_by_speed_enabled)
+        particle_tc.rotation += evaluate_by_speed(
+          component.rotation_by_speed_start,
+          component.rotation_by_speed_end,
+          component.rotation_by_speed_min_speed,
+          component.rotation_by_speed_max_speed,
+          velocity_magnitude
+        );
 
-        particle_tc.position += velocity * sim_ts;
+      particle_tc.position += velocity * sim_ts;
 
-        particle_entity.modified<TransformComponent>();
+      particle_entity.modified<TransformComponent>();
 
-        ++component.active_particle_count;
-      });
+      ++component.active_particle_count;
+    });
 
   self.world.system<const TransformComponent, CameraComponent>("camera_update")
-      .kind(flecs::PostUpdate)
-      .each([](const TransformComponent& tc, CameraComponent& cc) {
-        const auto screen_extent = App::get()->get_swapchain_extent();
-        cc.position = tc.position;
-        cc.pitch = tc.rotation.x;
-        cc.yaw = tc.rotation.y;
-        Camera::update(cc, screen_extent);
-      });
+    .kind(flecs::PostUpdate)
+    .each([](const TransformComponent& tc, CameraComponent& cc) {
+      const auto screen_extent = App::get()->get_swapchain_extent();
+      cc.position = tc.position;
+      cc.pitch = tc.rotation.x;
+      cc.yaw = tc.rotation.y;
+      Camera::update(cc, screen_extent);
+    });
 
   self.world.system<const TransformComponent, MeshComponent>("meshes_update")
-      .kind(flecs::PostUpdate)
-      .each([](const TransformComponent& tc, MeshComponent& mc) {});
+    .kind(flecs::PostUpdate)
+    .each([](const TransformComponent& tc, MeshComponent& mc) {});
 
   self.world.system<SpriteComponent>("sprite_update")
-      .kind(flecs::PostUpdate)
-      .each([](const flecs::entity entity, SpriteComponent& sprite) {
-        if (RendererCVar::cvar_draw_bounding_boxes.get()) {
-          DebugRenderer::draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
-        }
-      });
+    .kind(flecs::PostUpdate)
+    .each([](const flecs::entity entity, SpriteComponent& sprite) {
+      if (RendererCVar::cvar_draw_bounding_boxes.get()) {
+        DebugRenderer::draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
+      }
+    });
 
   self.world.system<SpriteComponent, SpriteAnimationComponent>("sprite_animation_update")
-      .kind(flecs::PostUpdate)
-      .each([](flecs::iter& it, size_t, SpriteComponent& sprite, SpriteAnimationComponent& sprite_animation) {
-        const auto asset_manager = App::get_system<AssetManager>(EngineSystems::AssetManager);
-        auto* material = asset_manager->get_material(sprite.material);
+    .kind(flecs::PostUpdate)
+    .each([](flecs::iter& it, size_t, SpriteComponent& sprite, SpriteAnimationComponent& sprite_animation) {
+      const auto asset_manager = App::get_system<AssetManager>(EngineSystems::AssetManager);
+      auto* material = asset_manager->get_material(sprite.material);
 
-        if (sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
-            !material->albedo_texture)
-          return;
+      if (sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
+          !material->albedo_texture)
+        return;
 
-        const auto dt = glm::clamp(static_cast<float>(it.delta_time()), 0.0f, 0.25f);
-        const auto time = sprite_animation.current_time + dt;
+      const auto dt = glm::clamp(static_cast<float>(it.delta_time()), 0.0f, 0.25f);
+      const auto time = sprite_animation.current_time + dt;
 
-        sprite_animation.current_time = time;
+      sprite_animation.current_time = time;
 
-        const float duration = static_cast<float>(sprite_animation.num_frames) / sprite_animation.fps;
-        u32 frame = math::flooru32(sprite_animation.num_frames * (time / duration));
+      const float duration = static_cast<float>(sprite_animation.num_frames) / sprite_animation.fps;
+      u32 frame = math::flooru32(sprite_animation.num_frames * (time / duration));
 
-        if (time > duration) {
-          if (sprite_animation.inverted) {
-            // Remove/add a frame depending on the direction
-            const float frame_length = 1.0f / sprite_animation.fps;
-            sprite_animation.current_time -= duration - frame_length;
-          } else {
-            sprite_animation.current_time -= duration;
-          }
+      if (time > duration) {
+        if (sprite_animation.inverted) {
+          // Remove/add a frame depending on the direction
+          const float frame_length = 1.0f / sprite_animation.fps;
+          sprite_animation.current_time -= duration - frame_length;
+        } else {
+          sprite_animation.current_time -= duration;
         }
+      }
 
-        if (sprite_animation.loop)
-          frame %= sprite_animation.num_frames;
-        else
-          frame = glm::min(frame, sprite_animation.num_frames - 1);
+      if (sprite_animation.loop)
+        frame %= sprite_animation.num_frames;
+      else
+        frame = glm::min(frame, sprite_animation.num_frames - 1);
 
-        frame = sprite_animation.inverted ? sprite_animation.num_frames - 1 - frame : frame;
+      frame = sprite_animation.inverted ? sprite_animation.num_frames - 1 - frame : frame;
 
-        const u32 frame_x = frame % sprite_animation.columns;
-        const u32 frame_y = frame / sprite_animation.columns;
+      const u32 frame_x = frame % sprite_animation.columns;
+      const u32 frame_y = frame / sprite_animation.columns;
 
-        const auto* albedo_texture = asset_manager->get_texture(material->albedo_texture);
-        auto& uv_size = material->uv_size;
+      const auto* albedo_texture = asset_manager->get_texture(material->albedo_texture);
+      auto& uv_size = material->uv_size;
 
-        auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
-        uv_size = {sprite_animation.frame_size[0] * 1.f / texture_size[0],
-                   sprite_animation.frame_size[1] * 1.f / texture_size[1]};
-        material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
-      });
+      auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
+      uv_size = {
+        sprite_animation.frame_size[0] * 1.f / texture_size[0], sprite_animation.frame_size[1] * 1.f / texture_size[1]
+      };
+      material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
+    });
 
   auto* asset_man = App::get_asset_manager();
   asset_man->set_all_materials_dirty();
@@ -810,21 +825,23 @@ auto Scene::physics_init(this Scene& self) -> void {
 
   // Rigidbodies
   self.world.query_builder<const TransformComponent, RigidBodyComponent>().build().each(
-      [&self](flecs::entity e, const TransformComponent& tc, RigidBodyComponent& rb) {
-        if (rb.runtime_body == nullptr) {
-          rb.previous_translation = rb.translation = tc.position;
-          rb.previous_rotation = rb.rotation = tc.rotation;
-          self.create_rigidbody(e, tc, rb);
-        }
-      });
+    [&self](flecs::entity e, const TransformComponent& tc, RigidBodyComponent& rb) {
+      if (rb.runtime_body == nullptr) {
+        rb.previous_translation = rb.translation = tc.position;
+        rb.previous_rotation = rb.rotation = tc.rotation;
+        self.create_rigidbody(e, tc, rb);
+      }
+    }
+  );
 
   // Characters
   self.world.query_builder<const TransformComponent, CharacterControllerComponent>().build().each(
-      [&self](flecs::entity e, const TransformComponent& tc, CharacterControllerComponent& ch) {
-        if (ch.character == nullptr) {
-          self.create_character_controller(e, tc, ch);
-        }
-      });
+    [&self](flecs::entity e, const TransformComponent& tc, CharacterControllerComponent& ch) {
+      if (ch.character == nullptr) {
+        self.create_character_controller(e, tc, ch);
+      }
+    }
+  );
 
   physics_system->OptimizeBroadPhase();
 }
@@ -834,24 +851,26 @@ auto Scene::physics_deinit(this Scene& self) -> void {
 
   const auto physics = App::get_system<Physics>(EngineSystems::Physics);
   self.world.query_builder<RigidBodyComponent>().build().each(
-      [physics](const flecs::entity& e, RigidBodyComponent& rb) {
-        if (rb.runtime_body) {
-          JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
-          const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
-          body_interface.RemoveBody(body->GetID());
-          body_interface.DestroyBody(body->GetID());
-          rb.runtime_body = nullptr;
-        }
-      });
+    [physics](const flecs::entity& e, RigidBodyComponent& rb) {
+      if (rb.runtime_body) {
+        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+        const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
+        body_interface.RemoveBody(body->GetID());
+        body_interface.DestroyBody(body->GetID());
+        rb.runtime_body = nullptr;
+      }
+    }
+  );
   self.world.query_builder<CharacterControllerComponent>().build().each(
-      [physics](const flecs::entity& e, CharacterControllerComponent& ch) {
-        if (ch.character) {
-          JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
-          auto* character = reinterpret_cast<JPH::Character*>(ch.character);
-          body_interface.RemoveBody(character->GetBodyID());
-          ch.character = nullptr;
-        }
-      });
+    [physics](const flecs::entity& e, CharacterControllerComponent& ch) {
+      if (ch.character) {
+        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+        auto* character = reinterpret_cast<JPH::Character*>(ch.character);
+        body_interface.RemoveBody(character->GetBodyID());
+        ch.character = nullptr;
+      }
+    }
+  );
 
   self.body_activation_listener_3d.reset();
   self.contact_listener_3d.reset();
@@ -907,6 +926,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   }
 
   auto* asset_man = App::get_asset_manager();
+  auto meshlet_instance_visibility_offset = 0_u32;
   auto max_meshlet_instance_count = 0_u32;
   auto gpu_meshes = std::vector<GPU::Mesh>();
   auto gpu_mesh_instances = std::vector<GPU::MeshInstance>();
@@ -934,6 +954,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
           mesh_instance.lod_index = lod0_index;
           mesh_instance.material_index = primitive.material_index;
           mesh_instance.transform_index = SlotMap_decode_id(transform_id).index;
+          mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
+
+          meshlet_instance_visibility_offset += lod0.meshlet_count;
           max_meshlet_instance_count += lod0.meshlet_count;
         }
       }
@@ -986,32 +1009,32 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     flags |= occlusion_image_index.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
 
     auto gpu_material = GPU::Material{
-        .albedo_color = material->albedo_color,
-        .emissive_color = material->emissive_color,
-        .roughness_factor = material->roughness_factor,
-        .metallic_factor = material->metallic_factor,
-        .alpha_cutoff = material->alpha_cutoff,
-        .flags = flags,
-        .sampler_index = sampler_index,
-        .albedo_image_index = albedo_image_index.value_or(0_u32),
-        .normal_image_index = normal_image_index.value_or(0_u32),
-        .emissive_image_index = emissive_image_index.value_or(0_u32),
-        .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
-        .occlusion_image_index = occlusion_image_index.value_or(0_u32),
+      .albedo_color = material->albedo_color,
+      .emissive_color = material->emissive_color,
+      .roughness_factor = material->roughness_factor,
+      .metallic_factor = material->metallic_factor,
+      .alpha_cutoff = material->alpha_cutoff,
+      .flags = flags,
+      .sampler_index = sampler_index,
+      .albedo_image_index = albedo_image_index.value_or(0_u32),
+      .normal_image_index = normal_image_index.value_or(0_u32),
+      .emissive_image_index = emissive_image_index.value_or(0_u32),
+      .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
+      .occlusion_image_index = occlusion_image_index.value_or(0_u32),
     };
 
     self.gpu_materials[dirty_index] = gpu_material;
   }
 
   auto update_info = RendererInstanceUpdateInfo{
-      .mesh_instance_count = self.mesh_instance_count,
-      .max_meshlet_instance_count = self.max_meshlet_instance_count,
-      .dirty_transform_ids = self.dirty_transforms,
-      .gpu_transforms = self.transforms.slots_unsafe(),
-      .dirty_material_indices = dirty_material_indices,
-      .gpu_materials = self.gpu_materials,
-      .gpu_meshes = gpu_meshes,
-      .gpu_mesh_instances = gpu_mesh_instances,
+    .mesh_instance_count = self.mesh_instance_count,
+    .max_meshlet_instance_count = self.max_meshlet_instance_count,
+    .dirty_transform_ids = self.dirty_transforms,
+    .gpu_transforms = self.transforms.slots_unsafe(),
+    .dirty_material_indices = dirty_material_indices,
+    .gpu_materials = self.gpu_materials,
+    .gpu_meshes = gpu_meshes,
+    .gpu_mesh_instances = gpu_mesh_instances,
   };
   self.renderer_instance->update(update_info);
   self.dirty_transforms.clear();
@@ -1164,15 +1187,16 @@ auto Scene::create_mesh_entity(this Scene& self, const UUID& asset_uuid) -> flec
 
       if (cur_node.mesh_index.has_value()) {
         node_entity.set<MeshComponent>(
-            {.mesh_index = static_cast<u32>(cur_node.mesh_index.value()), .mesh_uuid = asset_uuid});
+          {.mesh_index = static_cast<u32>(cur_node.mesh_index.value()), .mesh_uuid = asset_uuid}
+        );
       }
 
       if (cur_node.light_index.has_value()) {
         auto& node_light = imported_model->lights[cur_node.light_index.value()];
         auto lc = LightComponent{
-            .type = static_cast<LightComponent::LightType>(node_light.type),
-            .color = node_light.color,
-            .intensity = node_light.intensity,
+          .type = static_cast<LightComponent::LightType>(node_light.type),
+          .color = node_light.color,
+          .intensity = node_light.intensity,
         };
 
         if (node_light.range.has_value()) {
@@ -1411,10 +1435,12 @@ auto Scene::detach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh
   return true;
 }
 
-auto Scene::on_contact_added(const JPH::Body& body1,
-                             const JPH::Body& body2,
-                             const JPH::ContactManifold& manifold,
-                             const JPH::ContactSettings& settings) -> void {
+auto Scene::on_contact_added(
+  const JPH::Body& body1,
+  const JPH::Body& body2,
+  const JPH::ContactManifold& manifold,
+  const JPH::ContactSettings& settings
+) -> void {
   ZoneScoped;
 
   auto write_lock = std::unique_lock(physics_mutex);
@@ -1424,10 +1450,12 @@ auto Scene::on_contact_added(const JPH::Body& body1,
   }
 }
 
-auto Scene::on_contact_persisted(const JPH::Body& body1,
-                                 const JPH::Body& body2,
-                                 const JPH::ContactManifold& manifold,
-                                 const JPH::ContactSettings& settings) -> void {
+auto Scene::on_contact_persisted(
+  const JPH::Body& body1,
+  const JPH::Body& body2,
+  const JPH::ContactManifold& manifold,
+  const JPH::ContactSettings& settings
+) -> void {
   ZoneScoped;
 
   auto write_lock = std::unique_lock(physics_mutex);
@@ -1468,7 +1496,7 @@ auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_use
 }
 
 auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component)
-    -> void {
+  -> void {
   ZoneScoped;
   auto physics = App::get_system<Physics>(EngineSystems::Physics);
 
@@ -1490,7 +1518,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
 
   if (const auto* c = entity.try_get<BoxColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
-        entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+      entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution
+    );
 
     glm::vec3 scale = c->size;
     JPH::BoxShapeSettings shape_settings({glm::abs(scale.x), glm::abs(scale.y), glm::abs(scale.z)}, 0.05f, mat);
@@ -1499,7 +1528,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     offset = c->offset;
   } else if (const auto* c = entity.try_get<SphereColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
-        entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+      entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution
+    );
 
     float radius = 2.0f * c->radius * max_scale_component;
     JPH::SphereShapeSettings shape_settings(glm::max(0.01f, radius), mat);
@@ -1508,7 +1538,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     offset = c->offset;
   } else if (const auto* c = entity.try_get<CapsuleColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
-        entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+      entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution
+    );
 
     float radius = 2.0f * c->radius * max_scale_component;
     JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, radius), mat);
@@ -1517,18 +1548,21 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     offset = c->offset;
   } else if (const auto* c = entity.try_get<TaperedCapsuleColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
-        entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+      entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution
+    );
 
     float top_radius = 2.0f * c->top_radius * max_scale_component;
     float bottom_radius = 2.0f * c->bottom_radius * max_scale_component;
     JPH::TaperedCapsuleShapeSettings shape_settings(
-        glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, top_radius), glm::max(0.01f, bottom_radius), mat);
+      glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, top_radius), glm::max(0.01f, bottom_radius), mat
+    );
     shape_settings.SetDensity(glm::max(0.001f, c->density));
     shape_result = shape_settings.Create();
     offset = c->offset;
   } else if (const auto* c = entity.try_get<CylinderColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
-        entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+      entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution
+    );
 
     float radius = 2.0f * c->radius * max_scale_component;
     JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
@@ -1560,11 +1594,13 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     OX_LOG_ERROR("Jolt shape error: {}", compound_shape.GetError().c_str());
   }
 
-  JPH::BodyCreationSettings body_settings(compound_shape.Get(),
-                                          {transform.position.x, transform.position.y, transform.position.z},
-                                          {rotation.x, rotation.y, rotation.z, rotation.w},
-                                          static_cast<JPH::EMotionType>(component.type),
-                                          layer_index);
+  JPH::BodyCreationSettings body_settings(
+    compound_shape.Get(),
+    {transform.position.x, transform.position.y, transform.position.z},
+    {rotation.x, rotation.y, rotation.z, rotation.w},
+    static_cast<JPH::EMotionType>(component.type),
+    layer_index
+  );
 
   JPH::MassProperties mass_properties;
   mass_properties.mMass = glm::max(0.01f, component.mass);
@@ -1584,8 +1620,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
   OX_CHECK_NULL(body, "Jolt is out of bodies!");
 
   JPH::EActivation activation = component.awake && component.type != RigidBodyComponent::BodyType::Static
-                                    ? JPH::EActivation::Activate
-                                    : JPH::EActivation::DontActivate;
+                                  ? JPH::EActivation::Activate
+                                  : JPH::EActivation::DontActivate;
   body_interface.AddBody(body->GetID(), activation);
 
   body->SetUserData(static_cast<u64>(entity.id()));
@@ -1593,37 +1629,41 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
   component.runtime_body = body;
 }
 
-void Scene::create_character_controller(flecs::entity entity,
-                                        const TransformComponent& transform,
-                                        CharacterControllerComponent& component) const {
+void Scene::create_character_controller(
+  flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
+) const {
   ZoneScoped;
 
   const auto physics = App::get_system<Physics>(EngineSystems::Physics);
 
   const auto position = JPH::Vec3(transform.position.x, transform.position.y, transform.position.z);
   const auto capsule_shape = JPH::RotatedTranslatedShapeSettings(
-                                 JPH::Vec3(0,
-                                           0.5f * component.character_height_standing +
-                                               component.character_radius_standing,
-                                           0),
-                                 JPH::Quat::sIdentity(),
-                                 new JPH::CapsuleShape(0.5f * component.character_height_standing,
-                                                       component.character_radius_standing))
-                                 .Create()
-                                 .Get();
+                               JPH::Vec3(
+                                 0, 0.5f * component.character_height_standing + component.character_radius_standing, 0
+                               ),
+                               JPH::Quat::sIdentity(),
+                               new JPH::CapsuleShape(
+                                 0.5f * component.character_height_standing, component.character_radius_standing
+                               )
+  )
+                               .Create()
+                               .Get();
 
   // Create character
   const std::shared_ptr<JPH::CharacterSettings> settings = std::make_shared<JPH::CharacterSettings>();
   settings->mMaxSlopeAngle = JPH::DegreesToRadians(45.0f);
   settings->mLayer = PhysicsLayers::MOVING;
   settings->mShape = capsule_shape;
-  settings->mFriction = 0.0f;                                                     // For now this is not set.
-  settings->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(),
-                                           -component.character_radius_standing); // Accept contacts that touch the
-                                                                                  // lower sphere of the capsule
+  settings->mFriction = 0.0f; // For now this is not set.
+  settings->mSupportingVolume = JPH::Plane(
+    JPH::Vec3::sAxisY(),
+    -component.character_radius_standing
+  ); // Accept contacts that touch the
+     // lower sphere of the capsule
 
   component.character = new JPH::Character(
-      settings.get(), position, JPH::Quat::sIdentity(), 0, physics->get_physics_system());
+    settings.get(), position, JPH::Quat::sIdentity(), 0, physics->get_physics_system()
+  );
 
   auto* ch = reinterpret_cast<JPH::Character*>(component.character);
   ch->AddToPhysicsSystem(JPH::EActivation::Activate);

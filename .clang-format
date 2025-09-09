@@ -40,8 +40,10 @@ BreakTemplateDeclarations: Yes
 BreakBeforeTernaryOperators: true
 BreakAfterAttributes: Always
 Cpp11BracedListStyle: true
-AlignAfterOpenBracket: Align
+BracedInitializerIndentWidth: 2
+AlignAfterOpenBracket: BlockIndent
 ColumnLimit: 120
+ContinuationIndentWidth: 2
 NamespaceIndentation: None
 FixNamespaceComments: true
 IndentCaseLabels: true
