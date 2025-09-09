@@ -17,8 +17,7 @@ AlignConsecutiveShortCaseStatements:
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
 AlignOperands: true
-# LambdaBodyIndentation: OuterScope
-AlignEscapedNewlines: Left
+AlignEscapedNewlines: false
 PackConstructorInitializers: CurrentLine
 BreakArrays: true
 AlignTrailingComments:
@@ -40,7 +39,7 @@ BreakTemplateDeclarations: Yes
 BreakBeforeTernaryOperators: true
 BreakAfterAttributes: Always
 Cpp11BracedListStyle: true
-AlignAfterOpenBracket: Align
+AlignAfterOpenBracket: BlockIndent
 ColumnLimit: 120
 NamespaceIndentation: None
 FixNamespaceComments: true
@@ -55,4 +54,6 @@ SpacesInAngles: false
 TabWidth: 2
 UseTab: Never
 PenaltyBreakAssignment: 300
-#PenaltyBreakBeforeFirstCallParameter: 300
+IndentWidth: 2
+BracedInitializerIndentWidth: 2
+ContinuationIndentWidth: 2
