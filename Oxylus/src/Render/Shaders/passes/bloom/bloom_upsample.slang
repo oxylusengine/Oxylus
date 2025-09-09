@@ -26,7 +26,11 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID, uniform ParameterBlock<Shade
 
   f32x2 uv = (img_coords + 0.5) / img_size;
 
-  f32x3 result = upsample(params.source_image_upsample, params.sampler, uv) 
+  u32 srcwidth, srcheight, srclevels;
+  params.source_image_upsample.GetDimensions(0, srcwidth, srcheight, srclevels);
+  f32x2 texel_size = 1.0 / f32x2(srcwidth, srcheight);
+  f32x3 result = upsample_simple(params.source_image_upsample, params.sampler, uv, texel_size)
                 + params.source_image_downsample.SampleLevel(params.sampler, uv, 0).rgb;
+
   params.result_image.Store(img_coords, f32x4(result, 1.0));
 }

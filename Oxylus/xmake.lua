@@ -36,7 +36,7 @@ target("Oxylus")
     if is_mode("debug")  then
         add_defines("OX_DEBUG", { public = true })
         add_defines("_DEBUG", { public = true })
-    elseif is_mode("release") then
+    elseif is_mode("release") or is_mode("releasedbg") then
         add_defines("OX_RELEASE", { public = true })
         add_defines("NDEBUG", { public = true })
     elseif is_mode("dist") then

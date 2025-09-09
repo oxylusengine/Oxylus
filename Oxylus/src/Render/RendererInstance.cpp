@@ -1240,7 +1240,26 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     // --- Bloom Pass ---
     const f32 bloom_threshold = RendererCVar::cvar_bloom_threshold.get();
     const f32 bloom_clamp = RendererCVar::cvar_bloom_clamp.get();
-    const u32 bloom_mip_count = static_cast<u32>(RendererCVar::cvar_bloom_mips.get());
+    const u32 bloom_quality_level = static_cast<u32>(RendererCVar::cvar_bloom_quality_level.get());
+    u32 bloom_mip_count = 8;
+    switch (bloom_quality_level) {
+      case 0: {
+        bloom_mip_count = 4;
+        break;
+      }
+      case 1: {
+        bloom_mip_count = 5;
+        break;
+      }
+      case 2: {
+        bloom_mip_count = 6;
+        break;
+      }
+      case 3: {
+        bloom_mip_count = 8;
+        break;
+      }
+    }
 
     auto bloom_ia = vuk::ImageAttachment{
         .format = vuk::Format::eB10G11R11UfloatPack32,

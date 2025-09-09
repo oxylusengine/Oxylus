@@ -19,6 +19,7 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
+#include "Core/JobManager.hpp"
 #include "Memory/Stack.hpp"
 #include "Physics/Physics.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
@@ -1038,6 +1039,9 @@ auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> void {
   ZoneScoped;
 
   auto* asset_man = App::get_asset_manager();
+  if (!asset_man->get_asset(lua_script)->is_loaded()) {
+    asset_man->load_asset(lua_script);
+  }
   auto* script_system = asset_man->get_script(lua_script);
 
   script_system->reload();
@@ -1718,11 +1722,11 @@ auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
   OX_LOG_TRACE("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
   for (const auto& uuid : requested_assets) {
     auto* asset_man = App::get_system<AssetManager>(EngineSystems::AssetManager);
-    if (auto asset = asset_man->get_asset(uuid)) {
-      asset_man->load_asset(uuid);
-
+    if (auto asset = asset_man->get_asset(uuid); asset) {
       if (asset->type == AssetType::Script) {
         self.add_lua_system(uuid);
+      } else {
+        asset_man->load_asset(uuid);
       }
     }
   }
