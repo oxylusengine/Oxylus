@@ -16,7 +16,7 @@ namespace ox {
 struct TextureLoadInfo {
   Preset preset = Preset::eMap2D;
   vuk::Format format = vuk::Format::eR8G8B8A8Srgb;
-  enum class MimeType { Generic, KTX } mime = MimeType::Generic;
+  enum class MimeType { Generic, KTX, DDS } mime = MimeType::Generic;
   option<std::vector<u8>> bytes = ox::nullopt;
   option<void*> loaded_data = ox::nullopt;
   option<vuk::Extent3D> extent = ox::nullopt;

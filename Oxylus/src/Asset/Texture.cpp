@@ -11,6 +11,7 @@
 #include "Core/App.hpp"
 #include "Core/FileSystem.hpp"
 #include "Render/RendererCommon.hpp"
+#include "Render/Utils/DDS.hpp"
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
@@ -21,9 +22,11 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
   auto& allocator = vk_context.superframe_allocator;
 
   const auto is_generic = load_info.mime == TextureLoadInfo::MimeType::Generic;
+  const auto is_dds = load_info.mime == TextureLoadInfo::MimeType::DDS;
 
   std::unique_ptr<u8[]> stb_data = nullptr;
   std::unique_ptr<ktxTexture2, decltype([](ktxTexture2* p) { ktxTexture_Destroy(ktxTexture(p)); })> ktx_texture = {};
+  dds::Image dds_image = {};
 
   auto extent = load_info.extent.value_or(vuk::Extent3D{0, 0, 1});
   u32 chans = {};
@@ -39,6 +42,22 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
                                             &extent.height,
                                             &chans);
     }
+  } else if (is_dds) {
+    if (!path.empty()) {
+      auto result = dds::readFile(path, &dds_image);
+      if (result != dds::ReadResult::Success) {
+        OX_LOG_INFO("Error while loading dds. {}", path);
+      }
+    } else if (load_info.bytes.has_value()) {
+      auto result = dds::readImage((std::uint8_t*)load_info.bytes->data(), load_info.bytes->size(), &dds_image);
+      if (result != dds::ReadResult::Success) {
+        OX_LOG_INFO("Error while loading dds. {}", path);
+      }
+    }
+
+    extent.width = dds_image.width;
+    extent.height = dds_image.height;
+    format = static_cast<vuk::Format>(dds::getVulkanFormat(dds_image.format, dds_image.supportsAlpha));
   } else if (!is_generic) {
     ktxTexture2* ktx{};
     if (path.empty()) {
@@ -97,47 +116,65 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
 
   std::vector<u8> ktx_data = {};
   std::vector<usize> ktx_per_level_offsets = {};
-  const void* final_data = load_info.loaded_data
-                               .or_else([&ia, is_generic, &stb_data, &ktx_data, &ktx_per_level_offsets, &ktx_texture] {
-                                 if (!is_generic) {
-                                   ia.level_count = ktx_texture->numLevels;
+  const void* final_data =
+      load_info.loaded_data
+          .or_else([&ia, is_generic, is_dds, &stb_data, &ktx_data, &ktx_per_level_offsets, &ktx_texture, &dds_image] {
+            if (!is_generic && !is_dds) {
+              ia.level_count = ktx_texture->numLevels;
 
-                                   ktx_per_level_offsets.resize(ia.level_count);
+              ktx_per_level_offsets.resize(ia.level_count);
 
-                                   for (u32 level = 0; level < ia.level_count; level++) {
-                                     u64 offset = 0;
-                                     auto offset_result = ktxTexture_GetImageOffset(
-                                         ktxTexture(ktx_texture.get()), level, 0, 0, &offset);
-                                     if (offset_result != KTX_SUCCESS) {
-                                       OX_LOG_ERROR("Failed to get KTX2 offset.");
-                                       return option<void*>(nullptr);
-                                     }
+              for (u32 level = 0; level < ia.level_count; level++) {
+                u64 offset = 0;
+                auto offset_result = ktxTexture_GetImageOffset(ktxTexture(ktx_texture.get()), level, 0, 0, &offset);
+                if (offset_result != KTX_SUCCESS) {
+                  OX_LOG_ERROR("Failed to get KTX2 offset.");
+                  return option<void*>(nullptr);
+                }
 
-                                     auto* image_data = ktxTexture_GetData(ktxTexture(ktx_texture.get())) + offset;
-                                     auto image_size = ktxTexture_GetImageSize(ktxTexture(ktx_texture.get()), level);
+                auto* image_data = ktxTexture_GetData(ktxTexture(ktx_texture.get())) + offset;
+                auto image_size = ktxTexture_GetImageSize(ktxTexture(ktx_texture.get()), level);
 
-                                     auto output_offset = static_cast<usize>(ktx_data.size());
-                                     ktx_per_level_offsets[level] = output_offset;
-                                     ktx_data.resize(ktx_data.size() + image_size);
-                                     std::memcpy(ktx_data.data() + output_offset, image_data, image_size);
-                                   }
+                auto output_offset = static_cast<usize>(ktx_data.size());
+                ktx_per_level_offsets[level] = output_offset;
+                ktx_data.resize(ktx_data.size() + image_size);
+                std::memcpy(ktx_data.data() + output_offset, image_data, image_size);
+              }
 
-                                   return option<void*>{ktx_data.data()};
-                                 }
+              return option<void*>{ktx_data.data()};
+            } else if (is_dds) {
+              ia.level_count = dds_image.numMips;
+              ia.layer_count = dds_image.arraySize;
 
-                                 return option<void*>{stb_data.get()};
-                               })
-                               .value();
+              return option<void*>{dds_image.data.data()};
+            }
+
+            return option<void*>{stb_data.get()};
+          })
+          .value();
 
   if (final_data != nullptr) {
     vuk::Value<vuk::ImageAttachment> fut = {};
 
-    if (ktx_data.empty()) {
+    if (is_generic) {
       fut = vuk::host_data_to_image(*allocator, vuk::DomainFlagBits::eTransferOnTransfer, ia, final_data);
       if (ia.level_count > 1) {
         fut = vuk::generate_mips(fut, ia.level_count);
       }
-    } else {
+    } else if (is_dds) {
+      if (ia.level_count > 1) {
+        fut = vuk::discard_ia("iv", ia);
+
+        for (u32 level = 0; level < ia.level_count; level++) {
+          auto mip = dds_image.mipmaps[level];
+          auto buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, mip.size());
+          std::memcpy(buffer->mapped_ptr, mip.data(), mip.size());
+          auto dst_mip = fut.mip(level);
+          auto acquired_buf = vuk::acquire_buf("transient buffer", *buffer, vuk::Access::eNone);
+          vuk::copy(std::move(acquired_buf), std::move(dst_mip));
+        }
+      }
+    } else if (!ktx_data.empty()) {
       if (ia.level_count > 1) {
         fut = vuk::discard_ia("iv", ia);
 

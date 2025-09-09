@@ -206,6 +206,7 @@ auto AssetManager::to_asset_file_type(const std::string& path) -> AssetFileType 
     case fnv64_c("PNG")    : return AssetFileType::PNG;
     case fnv64_c("JPG")    :
     case fnv64_c("JPEG")   : return AssetFileType::JPEG;
+    case fnv64_c("DDS")    : return AssetFileType::DDS;
     case fnv64_c("JSON")   : return AssetFileType::JSON;
     case fnv64_c("OXASSET"): return AssetFileType::Meta;
     case fnv64_c("KTX2")   : return AssetFileType::KTX2;
@@ -268,6 +269,7 @@ auto AssetManager::import_asset(const std::string& path) -> UUID {
     }
     case AssetFileType::PNG:
     case AssetFileType::JPEG:
+    case AssetFileType::DDS:
     case AssetFileType::KTX2: {
       asset_type = AssetType::Texture;
       break;
@@ -748,6 +750,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
 
         switch (image.file_type) {
           case AssetFileType::KTX2: inf.mime = TextureLoadInfo::MimeType::KTX; break;
+          case AssetFileType::DDS : inf.mime = TextureLoadInfo::MimeType::DDS; break;
           default                 : inf.mime = TextureLoadInfo::MimeType::Generic; break;
         }
 
@@ -764,6 +767,8 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
                          auto extension = p.extension();
                          if (extension == ".ktx" || extension == ".ktx2") {
                            inf.mime = TextureLoadInfo::MimeType::KTX;
+                         } else if (extension == ".dds") {
+                           inf.mime = TextureLoadInfo::MimeType::DDS;
                          }
                        },
                        [&](const std::vector<u8>& data) { inf.bytes = data; },

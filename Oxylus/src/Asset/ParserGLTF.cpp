@@ -64,6 +64,7 @@ static auto to_asset_file_type(fastgltf::MimeType mime) -> AssetFileType {
     case fastgltf::MimeType::JPEG: return AssetFileType::JPEG;
     case fastgltf::MimeType::PNG : return AssetFileType::PNG;
     case fastgltf::MimeType::KTX2: return AssetFileType::KTX2;
+    case fastgltf::MimeType::DDS : return AssetFileType::DDS;
     default                      : return AssetFileType::None;
   }
 }

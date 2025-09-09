@@ -26,6 +26,7 @@ enum class AssetFileType : u32 {
   GLTF,
   PNG,
   JPEG,
+  DDS,
   JSON,
   KTX2,
   LUA,
