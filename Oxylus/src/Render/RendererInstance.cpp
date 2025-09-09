@@ -1512,60 +1512,84 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     bloom_up_image.same_extent_as(final_attachment);
 
     if (self.gpu_scene.scene_flags & GPU::SceneFlags::HasBloom) {
-      std::tie(final_attachment, bloom_down_image) = vuk::
-        make_pass("bloom_prefilter", [bloom_threshold, bloom_clamp](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRead) src, VUK_IA(vuk::eComputeRW) out) {
+      auto bloom_prefilter_pass = vuk::
+        make_pass("bloom prefilter", [bloom_threshold, bloom_clamp](//
+          vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRead) src, VUK_IA(vuk::eComputeRW) out) {
           cmd_list //
             .bind_compute_pipeline("bloom_prefilter_pipeline")
-            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(bloom_threshold, bloom_clamp))
             .bind_image(0, 0, out)
             .bind_image(0, 1, src)
             .bind_sampler(0, 2, vuk::NearestMagLinearMinSamplerClamped)
+            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(bloom_threshold, bloom_clamp))
             .dispatch_invocations_per_pixel(src);
 
           return std::make_tuple(src, out);
-        })(final_attachment, bloom_down_image.mip(0));
+        });
 
-      auto converge = vuk::make_pass(
-        "bloom_converge", [](vuk::CommandBuffer& command_buffer, VUK_IA(vuk::eComputeRW) output) { return output; }
+      std::tie(final_attachment, bloom_down_image) = bloom_prefilter_pass(
+        std::move(final_attachment), std::move(bloom_down_image)
       );
-      auto prefiltered_downsample_image = converge(bloom_down_image);
-      auto src_mip = prefiltered_downsample_image.mip(0);
 
-      for (uint32_t i = 1; i < bloom_mip_count; i++) {
-        src_mip = vuk::
-          make_pass("bloom_downsample", [](vuk::CommandBuffer& command_buffer, VUK_IA(vuk::eComputeSampled) src, VUK_IA(vuk::eComputeRW) out) {
-            command_buffer.bind_compute_pipeline("bloom_downsample_pipeline")
-              .bind_image(0, 0, out)
-              .bind_image(0, 1, src)
-              .bind_sampler(0, 2, vuk::LinearMipmapNearestSamplerClamped)
-              .dispatch_invocations_per_pixel(src);
-            return out;
-          })(src_mip, prefiltered_downsample_image.mip(i));
-      }
+      auto bloom_downsample_pass = vuk::
+        make_pass("bloom downsample", [](//
+          vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeSampled) bloom) {
+          cmd_list //
+            .bind_compute_pipeline("bloom_downsample_pipeline")
+            .bind_sampler(0, 2, vuk::LinearMipmapNearestSamplerClamped);
+
+            auto extent = bloom->extent;
+            auto mip_count = bloom->level_count;
+            for (auto i = 1_u32; i < mip_count; i++) {
+              auto mip_width = std::max(1_u32, extent.width >> i);
+              auto mip_height = std::max(1_u32, extent.height >> i);
+              auto prev_mip = bloom->mip(i - 1);
+              auto mip = bloom->mip(i);
+
+              cmd_list.image_barrier(prev_mip, vuk::eComputeWrite, vuk::eComputeSampled);
+              cmd_list.bind_image(0, 0, mip);
+              cmd_list.bind_image(0, 1, prev_mip);
+              cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height));
+              cmd_list.dispatch_invocations(mip_width, mip_height);
+            }
+
+            cmd_list.image_barrier(bloom, vuk::eComputeSampled, vuk::eComputeRW);
+
+          return bloom;
+        });
+
+      bloom_down_image = bloom_downsample_pass(std::move(bloom_down_image));
 
       // Upsampling
       // https://www.froyok.fr/blog/2021-12-ue4-custom-bloom/resources/code/bloom_down_up_demo.jpg
 
-      auto downsampled_image = converge(prefiltered_downsample_image);
-      auto upsample_src_mip = downsampled_image.mip(bloom_mip_count - 1);
+      auto bloom_upsample_pass = vuk::make_pass(
+        "bloom_upsample",
+        [](
+          vuk::CommandBuffer& cmd_list, //
+          VUK_IA(vuk::eComputeRW) bloom_upsampled,
+          VUK_IA(vuk::eComputeSampled) bloom_downsampled
+        ) {
+          auto extent = bloom_upsampled->extent;
+          auto mip_count = bloom_upsampled->level_count;
 
-      for (int32_t i = (int32_t)bloom_mip_count - 2; i >= 0; i--) {
-        upsample_src_mip = vuk::make_pass( //
-            "bloom_upsample",
-            [](vuk::CommandBuffer& command_buffer,
-               VUK_IA(vuk::eComputeRW) out,
-               VUK_IA(vuk::eComputeSampled) src1,
-               VUK_IA(vuk::eComputeSampled) src2) {
-              command_buffer.bind_compute_pipeline("bloom_upsample_pipeline")
-                  .bind_image(0, 0, out)
-                  .bind_image(0, 1, src1)
-                  .bind_image(0, 2, src2)
-                  .bind_sampler(0, 3, vuk::NearestMagLinearMinSamplerClamped)
-                  .dispatch_invocations_per_pixel(out);
+          cmd_list //
+            .bind_compute_pipeline("bloom_upsample_pipeline")
+            .bind_image(0, 1, bloom_downsampled->mip(mip_count))
+            .bind_sampler(0, 3, vuk::NearestMagLinearMinSamplerClamped);
 
-              return out;
-            })(bloom_up_image.mip(i), upsample_src_mip, downsampled_image.mip(i));
-      }
+          for (auto i = mip_count - 1_u32; i >= 0; i--) {
+            auto mip_width = std::max(1_u32, extent.width >> i);
+            auto mip_height = std::max(1_u32, extent.height >> i);
+
+            cmd_list.bind_image(0, 0, bloom_upsampled->mip(i));
+            cmd_list.bind_image(0, 1, bloom_downsampled->mip(i));
+            cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height));
+            cmd_list.dispatch_invocations(mip_width, mip_height);
+          }
+
+          return bloom_upsampled;
+        }
+      );
     }
 
     // --- Auto Exposure Pass ---
