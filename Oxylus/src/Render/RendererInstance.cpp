@@ -1574,15 +1574,15 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
           cmd_list //
             .bind_compute_pipeline("bloom_upsample_pipeline")
-            .bind_image(0, 1, bloom_downsampled->mip(mip_count))
+            .bind_image(0, 1, bloom_downsampled->mip(mip_count - 1))
             .bind_sampler(0, 3, vuk::NearestMagLinearMinSamplerClamped);
 
-          for (auto i = mip_count - 1_u32; i >= 0; i--) {
+          for (int32_t i = (int32_t)mip_count - 2; i >= 0; i--) {
             auto mip_width = std::max(1_u32, extent.width >> i);
             auto mip_height = std::max(1_u32, extent.height >> i);
 
             cmd_list.bind_image(0, 0, bloom_upsampled->mip(i));
-            cmd_list.bind_image(0, 1, bloom_downsampled->mip(i));
+            cmd_list.bind_image(0, 2, bloom_downsampled->mip(i));
             cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height));
             cmd_list.dispatch_invocations(mip_width, mip_height);
           }
@@ -1590,6 +1590,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           return bloom_upsampled;
         }
       );
+      bloom_up_image = bloom_upsample_pass(bloom_up_image, bloom_down_image);
     }
 
     // --- Auto Exposure Pass ---
