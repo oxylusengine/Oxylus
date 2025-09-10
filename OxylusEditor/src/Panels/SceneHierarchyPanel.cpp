@@ -43,6 +43,8 @@ auto SceneHierarchyPanel::on_update() -> void {
   if (editor_context.type == EditorContext::Type::Entity) {
     if (editor_context.entity.has_value())
       viewer.selected_entity_.set(editor_context.entity.value());
+  } else {
+    viewer.selected_entity_.entity = flecs::entity::null();
   }
 
   if (viewer.selected_entity_.get() != flecs::entity::null()) {
@@ -55,7 +57,6 @@ auto SceneHierarchyPanel::on_update() -> void {
       if (light->type == LightComponent::Point) {
         DebugRenderer::draw_sphere(light->radius, world_pos, glm::vec4(0, 1.f, 0.f, 1.f));
       } else if (light->type == LightComponent::Spot) {
-
       }
     }
 

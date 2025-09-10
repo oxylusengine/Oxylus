@@ -8,8 +8,7 @@
 namespace ox {
 class SceneHierarchyViewer {
 public:
-  class SelectedEntity {
-  public:
+  struct SelectedEntity {
     std::function<void(flecs::entity)> on_selected_entity_callback = {};
     std::function<void()> on_selected_entity_reset_callback = {};
 
@@ -34,7 +33,6 @@ public:
         self.on_selected_entity_reset_callback();
     }
 
-  private:
     flecs::entity entity = flecs::entity::null();
   };
 
@@ -80,10 +78,9 @@ private:
   ImGuiTextFilter scripts_filter_;
   ImGuiTextFilter entities_filter_;
 
-  auto draw_entity_node(flecs::entity entity,
-                        uint32_t depth = 0,
-                        bool force_expand_tree = false,
-                        bool is_part_of_prefab = false) -> ImRect;
+  auto draw_entity_node(
+    flecs::entity entity, uint32_t depth = 0, bool force_expand_tree = false, bool is_part_of_prefab = false
+  ) -> ImRect;
 
   auto draw_entities_context_menu() -> void;
   auto draw_scripts_context_menu() -> void;

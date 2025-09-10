@@ -58,6 +58,7 @@ public:
   std::vector<GPU::TransformID> dirty_transforms = {};
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
+  ankerl::unordered_dense::map<u32, flecs::entity> transform_index_entities_map = {};
   ankerl::unordered_dense::map<std::pair<UUID, usize>, std::vector<GPU::TransformID>> rendering_meshes_map = {};
 
   std::vector<GPU::Material> gpu_materials = {};
@@ -114,31 +115,38 @@ public:
   auto remove_lua_system(this Scene& self, const UUID& lua_script) -> void;
 
   // Physics interfaces
-  auto on_contact_added(const JPH::Body& body1,
-                        const JPH::Body& body2,
-                        const JPH::ContactManifold& manifold,
-                        const JPH::ContactSettings& settings) -> void;
-  auto on_contact_persisted(const JPH::Body& body1,
-                            const JPH::Body& body2,
-                            const JPH::ContactManifold& manifold,
-                            const JPH::ContactSettings& settings) -> void;
+  auto on_contact_added(
+    const JPH::Body& body1,
+    const JPH::Body& body2,
+    const JPH::ContactManifold& manifold,
+    const JPH::ContactSettings& settings
+  ) -> void;
+  auto on_contact_persisted(
+    const JPH::Body& body1,
+    const JPH::Body& body2,
+    const JPH::ContactManifold& manifold,
+    const JPH::ContactSettings& settings
+  ) -> void;
   auto on_contact_removed(const JPH::SubShapeIDPair& sub_shape_pair) -> void;
 
   auto on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
   auto on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
 
   auto create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component)
-      -> void;
-  auto create_character_controller(flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component) const
-      -> void;
+    -> void;
+  auto create_character_controller(
+    flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
+  ) const -> void;
 
   auto get_renderer_instance() -> RendererInstance* { return renderer_instance.get(); }
 
   static auto entity_to_json(JsonWriter& writer, flecs::entity e) -> void;
-  static auto json_to_entity(Scene& self, //
-                             flecs::entity root,
-                             simdjson::ondemand::value& json,
-                             std::vector<UUID>& requested_assets) -> std::pair<flecs::entity, bool>;
+  static auto json_to_entity(
+    Scene& self, //
+    flecs::entity root,
+    simdjson::ondemand::value& json,
+    std::vector<UUID>& requested_assets
+  ) -> std::pair<flecs::entity, bool>;
 
   auto save_to_file(this const Scene& self, std::string path) -> bool;
   auto load_from_file(this Scene& self, const std::string& path) -> bool;

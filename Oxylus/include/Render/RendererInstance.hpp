@@ -4,6 +4,79 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
+enum class RenderStage {
+  Initialization,
+  Culling,
+  VisBufferEncode,
+  VisBufferDecode,
+  Lighting,
+  PostProcessing,
+  Atmosphere,
+  Debug,
+  FinalOutput,
+  Count,
+};
+
+enum class StagePosition {
+  Before,
+  After,
+};
+
+struct StageDependency {
+  RenderStage target_stage;
+  StagePosition position;
+  int order = 0;
+};
+
+struct RenderStageContext {
+  RendererInstance& renderer_instance;
+  RenderStage current_stage;
+  VkContext& vk_context;
+
+  glm::uvec2 viewport_size;
+
+  ankerl::unordered_dense::map<std::string, vuk::Value<vuk::Buffer>> buffer_resources = {};
+  ankerl::unordered_dense::map<std::string, vuk::Value<vuk::ImageAttachment>> image_resources = {};
+
+  RenderStageContext(RendererInstance& instance, RenderStage stage, VkContext& vkctx)
+      : renderer_instance(instance),
+        current_stage(stage),
+        vk_context(vkctx) {}
+
+  auto get_buffer_resource(this const RenderStageContext& self, const std::string& name) -> vuk::Value<vuk::Buffer> {
+    return std::move(self.buffer_resources.at(name));
+  }
+
+  auto get_image_resource(this const RenderStageContext& self, const std::string& name)
+    -> vuk::Value<vuk::ImageAttachment> {
+    return std::move(self.image_resources.at(name));
+  }
+
+  auto set_viewport_size(this RenderStageContext& self, glm::uvec2 size) -> RenderStageContext& {
+    self.viewport_size = size;
+    return self;
+  }
+
+  auto set_buffer_resource(this RenderStageContext& self, const std::string& name, vuk::Value<vuk::Buffer> value)
+    -> RenderStageContext& {
+    self.buffer_resources[name] = value;
+    return self;
+  }
+
+  auto
+  set_image_resource(this RenderStageContext& self, const std::string& name, vuk::Value<vuk::ImageAttachment> value)
+    -> RenderStageContext& {
+    self.image_resources[name] = value;
+    return self;
+  }
+};
+
+struct RenderStageCallback {
+  std::function<void(RenderStageContext&)> callback;
+  StageDependency dependency;
+  std::string name;
+};
+
 struct RendererInstanceUpdateInfo {
   u32 mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
@@ -48,12 +121,40 @@ public:
   RendererInstance(RendererInstance&&) = delete;
   RendererInstance& operator=(RendererInstance&&) = delete;
 
+  auto add_stage_callback(this RendererInstance& self, RenderStageCallback callback) -> void;
+
+  auto add_stage_before(
+    this RendererInstance& self,
+    RenderStage stage,
+    const std::string& name,
+    std::function<void(RenderStageContext&)> callback,
+    int order = 0
+  ) -> void;
+
+  auto add_stage_after(
+    this RendererInstance& self,
+    RenderStage stage,
+    const std::string& name,
+    std::function<void(RenderStageContext&)> callback,
+    int order = 0
+  ) -> void;
+
+  auto clear_stages(this RendererInstance& self) -> void;
+
   auto render(this RendererInstance& self, const Renderer::RenderInfo& render_info) -> vuk::Value<vuk::ImageAttachment>;
   auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void;
 
   auto get_viewport_offset(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_offset; }
 
 private:
+  std::vector<RenderStageCallback> stage_callbacks_;
+  std::vector<std::vector<usize>> before_callbacks_;
+  std::vector<std::vector<usize>> after_callbacks_;
+
+  auto rebuild_execution_order(this RendererInstance& self) -> void;
+  auto execute_stages_before(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx) -> void;
+  auto execute_stages_after(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx) -> void;
+
   Scene* scene = nullptr;
   Renderer& renderer;
   Renderer::RenderQueue2D render_queue_2d = {};
