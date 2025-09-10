@@ -656,14 +656,16 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         std::move(depth_attachment),
         std::move(overdraw_attachment));
 
-    RenderStageContext ctx(self, RenderStage::VisBufferEncode, vk_context);
+    RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, vk_context);
     ctx.set_viewport_size(self.viewport_size)
+      .set_image_resource("depth_attachment", std::move(depth_attachment))
       .set_image_resource("visbuffer_attachment", std::move(visbuffer_attachment))
       .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances_buffer))
       .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances_buffer));
 
     self.execute_stages_after(RenderStage::VisBufferEncode, ctx);
 
+    depth_attachment = ctx.get_image_resource("depth_attachment");
     visbuffer_attachment = ctx.get_image_resource("visbuffer_attachment");
     meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
     mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
@@ -1554,6 +1556,13 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
         return dst;
       })(std::move(result_attachment), std::move(final_attachment), std::move(bloom_up_image), std::move(exposure_buffer_value));
+
+    RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, vk_context);
+    ctx.set_viewport_size(self.viewport_size).set_image_resource("result_attachment", std::move(result_attachment));
+
+    self.execute_stages_after(RenderStage::PostProcessing, ctx);
+
+    result_attachment = ctx.get_image_resource("result_attachment");
   }
 
   auto debug_renderer_enabled = (bool)RendererCVar::cvar_enable_debug_renderer.get();

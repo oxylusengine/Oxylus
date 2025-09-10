@@ -28,8 +28,14 @@ struct StageDependency {
   int order = 0;
 };
 
+struct SharedResources {
+  ankerl::unordered_dense::map<std::string, vuk::Value<vuk::Buffer>> buffer_resources = {};
+  ankerl::unordered_dense::map<std::string, vuk::Value<vuk::ImageAttachment>> image_resources = {};
+};
+
 struct RenderStageContext {
   RendererInstance& renderer_instance;
+  SharedResources& shared_resources;
   RenderStage current_stage;
   VkContext& vk_context;
 
@@ -38,8 +44,9 @@ struct RenderStageContext {
   ankerl::unordered_dense::map<std::string, vuk::Value<vuk::Buffer>> buffer_resources = {};
   ankerl::unordered_dense::map<std::string, vuk::Value<vuk::ImageAttachment>> image_resources = {};
 
-  RenderStageContext(RendererInstance& instance, RenderStage stage, VkContext& vkctx)
+  RenderStageContext(RendererInstance& instance, SharedResources& shared_resources, RenderStage stage, VkContext& vkctx)
       : renderer_instance(instance),
+        shared_resources(shared_resources),
         current_stage(stage),
         vk_context(vkctx) {}
 
@@ -47,9 +54,29 @@ struct RenderStageContext {
     return std::move(self.buffer_resources.at(name));
   }
 
+  auto get_shared_buffer_resource(this const RenderStageContext& self, const std::string& name)
+    -> option<vuk::Value<vuk::Buffer>> {
+    const auto it = self.shared_resources.buffer_resources.find(name);
+    if (it == self.shared_resources.buffer_resources.end()) {
+      return nullopt;
+    }
+
+    return std::move(it->second);
+  }
+
   auto get_image_resource(this const RenderStageContext& self, const std::string& name)
     -> vuk::Value<vuk::ImageAttachment> {
     return std::move(self.image_resources.at(name));
+  }
+
+  auto get_shared_image_resource(this const RenderStageContext& self, const std::string& name)
+    -> option<vuk::Value<vuk::ImageAttachment>> {
+    const auto it = self.shared_resources.image_resources.find(name);
+    if (it == self.shared_resources.image_resources.end()) {
+      return nullopt;
+    }
+
+    return std::move(it->second);
   }
 
   auto set_viewport_size(this RenderStageContext& self, glm::uvec2 size) -> RenderStageContext& {
@@ -63,10 +90,23 @@ struct RenderStageContext {
     return self;
   }
 
+  auto set_shared_buffer_resource(this RenderStageContext& self, const std::string& name, vuk::Value<vuk::Buffer> value)
+    -> RenderStageContext& {
+    self.shared_resources.buffer_resources[name] = value;
+    return self;
+  }
+
   auto
   set_image_resource(this RenderStageContext& self, const std::string& name, vuk::Value<vuk::ImageAttachment> value)
     -> RenderStageContext& {
     self.image_resources[name] = value;
+    return self;
+  }
+
+  auto set_shared_image_resource(
+    this RenderStageContext& self, const std::string& name, vuk::Value<vuk::ImageAttachment> value
+  ) -> RenderStageContext& {
+    self.shared_resources.image_resources[name] = value;
     return self;
   }
 };
@@ -147,6 +187,7 @@ public:
   auto get_viewport_offset(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_offset; }
 
 private:
+  SharedResources shared_resources = {};
   std::vector<RenderStageCallback> stage_callbacks_;
   std::vector<std::vector<usize>> before_callbacks_;
   std::vector<std::vector<usize>> after_callbacks_;
