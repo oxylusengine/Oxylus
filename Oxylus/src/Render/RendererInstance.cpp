@@ -827,7 +827,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             VUK_BA(vuk::eFragmentRead) meshes,
             VUK_BA(vuk::eFragmentRead) transforms,
             VUK_BA(vuk::eFragmentRead) materials,
-            VUK_IA(vuk::eFragmentRead) visbuffer,
+            VUK_IA(vuk::eFragmentSampled) visbuffer,
             VUK_IA(vuk::eColorRW) albedo,
             VUK_IA(vuk::eColorRW) normal,
             VUK_IA(vuk::eColorRW) emissive,
@@ -1514,7 +1514,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     if (self.gpu_scene.scene_flags & GPU::SceneFlags::HasBloom) {
       auto bloom_prefilter_pass = vuk::
         make_pass("bloom prefilter", [bloom_threshold, bloom_clamp](//
-          vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRead) src, VUK_IA(vuk::eComputeRW) out) {
+          vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeSampled) src, VUK_IA(vuk::eComputeRW) out) {
           cmd_list //
             .bind_compute_pipeline("bloom_prefilter_pipeline")
             .bind_image(0, 0, out)
@@ -1603,8 +1603,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     );
     vuk::fill(histogram_buffer, 0);
 
-    std::tie(final_attachment, histogram_buffer) = vuk::
-      make_pass("histogram generate", [histogram_inf](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRead) src, VUK_BA(vuk::eComputeRW) histogram) {
+    std::tie(final_attachment, histogram_buffer) = 
+      vuk:: make_pass("histogram generate", [histogram_inf](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eComputeRead) src,
+        VUK_BA(vuk::eComputeRW) histogram) {
         cmd_list.bind_compute_pipeline("histogram_generate_pipeline")
               .bind_image(0, 0, src)
               .push_constants(vuk::ShaderStageFlagBits::eCompute,
@@ -1655,7 +1658,12 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
     // --- Tonemap Pass ---
     result_attachment = vuk::
-      make_pass("tonemap", [scene_flags = self.gpu_scene.scene_flags, pp = self.post_proces_settings](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eColorWrite) dst, VUK_IA(vuk::eFragmentSampled) src, VUK_IA(vuk::eFragmentSampled) bloom_src, VUK_BA(vuk::eFragmentRead) exposure) {
+      make_pass("tonemap", [scene_flags = self.gpu_scene.scene_flags, pp = self.post_proces_settings]
+        (vuk::CommandBuffer& cmd_list,
+         VUK_IA(vuk::eColorWrite) dst,
+         VUK_IA(vuk::eFragmentSampled) src,
+         VUK_IA(vuk::eFragmentSampled) bloom_src,
+         VUK_BA(vuk::eFragmentUniformRead) exposure) {
         const auto size = glm::ivec2(src->extent.width, src->extent.height);
         cmd_list.bind_graphics_pipeline("tonemap_pipeline")
           .set_rasterization({})
