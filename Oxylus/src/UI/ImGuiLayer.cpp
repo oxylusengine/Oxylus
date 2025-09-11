@@ -44,14 +44,16 @@ void ImGuiLayer::build_fonts() {
   io.Fonts->Build();
   io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
   font_texture = std::make_shared<Texture>();
-  font_texture->create({},
-                       {
-                           .preset = Preset::eRTT2DUnmipped,
-                           .format = vuk::Format::eR8G8B8A8Srgb,
-                           .mime = {},
-                           .loaded_data = pixels,
-                           .extent = vuk::Extent3D{static_cast<u32>(width), static_cast<u32>(height), 1u},
-                       });
+  font_texture->create(
+    {},
+    {
+      .preset = Preset::eRTT2DUnmipped,
+      .format = vuk::Format::eR8G8B8A8Srgb,
+      .mime = {},
+      .loaded_data = pixels,
+      .extent = vuk::Extent3D{static_cast<u32>(width), static_cast<u32>(height), 1u},
+    }
+  );
 }
 
 void ImGuiLayer::on_attach() {
@@ -78,7 +80,8 @@ void ImGuiLayer::on_attach() {
   slang.create_session({.root_directory = shaders_dir, .definitions = {}});
 
   slang.create_pipeline(
-      ctx, "imgui", {.path = shaders_dir + "/passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}});
+    ctx, "imgui", {.path = shaders_dir + "/passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
 }
 
 void ImGuiLayer::on_detach() { ImGui::DestroyContext(); }
@@ -133,60 +136,96 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
 
   ImDrawData* draw_data = ImGui::GetDrawData();
 
-  if (draw_data->Textures != nullptr) {
-    for (ImTextureData* tex : *draw_data->Textures) {
-      if (tex->Status == ImTextureStatus_WantCreate || tex->Status == ImTextureStatus_WantUpdates) {
-        if (font_texture) {
-          font_texture->destroy();
-        }
+  if (draw_data->Textures) {
+    for (auto* texture : *draw_data->Textures) {
+      auto acquired = false;
+      auto acquired_image = vuk::Value<vuk::ImageAttachment>{};
+      auto upload_offset = vuk::Offset3D(texture->UpdateRect.x, texture->UpdateRect.y, 0);
+      auto upload_extent = vuk::Extent3D(texture->UpdateRect.w, texture->UpdateRect.h, 1);
 
-        font_texture = std::make_shared<Texture>();
-        font_texture->create(
+      switch (texture->Status) {
+        case ImTextureStatus_WantCreate: {
+          font_texture = std::make_shared<Texture>();
+          font_texture->create(
             {},
-            {
-                .preset = Preset::eRTT2DUnmipped,
-                .format = vuk::Format::eR8G8B8A8Srgb,
-                .mime = {},
-                .loaded_data = tex->GetPixels(),
-                .extent = vuk::Extent3D{static_cast<u32>(tex->Width), static_cast<u32>(tex->Height), 1u},
-            });
+            {.preset = Preset::eRTT2DUnmipped,
+             .format = vuk::Format::eR8G8B8A8Srgb,
+             .mime = {},
+             .loaded_data = texture->GetPixels(),
+             .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u}}
+          );
 
-        tex->SetTexID(1);
-        tex->SetStatus(ImTextureStatus_OK);
+          acquired_image = font_texture->acquire("imgui image", vuk::eNone);
+          acquired = true;
+
+          upload_offset = {};
+          upload_extent = font_texture->get_extent();
+
+          [[fallthrough]];
+        }
+        case ImTextureStatus_WantUpdates: {
+          auto upload_pitch = upload_extent.width * texture->BytesPerPixel;
+          auto buffer_size = ox::align_up(upload_pitch * upload_extent.height, 8);
+          auto upload_buffer = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, buffer_size);
+          auto* buffer_ptr = reinterpret_cast<u8*>(upload_buffer->mapped_ptr);
+          for (auto y = 0_u32; y < upload_extent.height; y++) {
+            auto* pixels = static_cast<u8*>(
+              texture->GetPixelsAt(upload_offset.x, upload_offset.y + static_cast<i32>(y))
+            );
+            std::memcpy(buffer_ptr + upload_pitch * y, pixels, upload_pitch);
+          }
+
+          auto upload_pass = vuk::make_pass(
+            "upload",
+            [upload_offset, upload_extent](
+              vuk::CommandBuffer& cmd_list, //
+              VUK_BA(vuk::eTransferRead) src,
+              VUK_IA(vuk::eTransferWrite) dst
+            ) {
+              auto buffer_copy_region = vuk::BufferImageCopy{
+                .bufferOffset = src->offset,
+                .imageSubresource = {.aspectMask = vuk::ImageAspectFlagBits::eColor, .layerCount = 1},
+                .imageOffset = upload_offset,
+                .imageExtent = upload_extent,
+              };
+              cmd_list.copy_buffer_to_image(src, dst, buffer_copy_region);
+              return dst;
+            }
+          );
+
+          if (!acquired) {
+            acquired_image = font_texture->acquire("imgui image", vuk::eNone);
+          }
+
+          acquired_image = upload_pass(std::move(upload_buffer), std::move(acquired_image));
+          auto texture_id = this->add_image(std::move(acquired_image));
+          texture->SetTexID(texture_id);
+          texture->SetStatus(ImTextureStatus_OK);
+        } break;
+        case ImTextureStatus_OK: {
+          acquired_image = font_texture->acquire("imgui image", vuk::eFragmentSampled);
+          auto texture_id = this->add_image(std::move(acquired_image));
+          texture->SetTexID(texture_id);
+        } break;
+        case ImTextureStatus_WantDestroy: {
+          font_texture->destroy();
+        } break;
+        case ImTextureStatus_Destroyed:;
       }
     }
   }
 
-  auto reset_render_state =
-      [this, draw_data](vuk::CommandBuffer& command_buffer, const vuk::Buffer& vertex, const vuk::Buffer& index) {
-        command_buffer //
-            .bind_sampler(0, 0, vuk::LinearSamplerRepeated)
-            .bind_image(0, 1, font_texture->get_view());
-        if (index.size > 0) {
-          command_buffer.bind_index_buffer(index,
-                                           sizeof(ImDrawIdx) == 2 ? vuk::IndexType::eUint16 : vuk::IndexType::eUint32);
-        }
-        command_buffer
-            .bind_vertex_buffer(
-                0,
-                vertex,
-                0,
-                vuk::Packed{vuk::Format::eR32G32Sfloat, vuk::Format::eR32G32Sfloat, vuk::Format::eR8G8B8A8Unorm})
-            .bind_graphics_pipeline("imgui")
-            .set_viewport(0, vuk::Rect2D::framebuffer());
-        struct PC {
-          float translate[2];
-          float scale[2];
-        } pc;
-        pc.scale[0] = 2.0f / draw_data->DisplaySize.x;
-        pc.scale[1] = 2.0f / draw_data->DisplaySize.y;
-        pc.translate[0] = -1.0f - draw_data->DisplayPos.x * pc.scale[0];
-        pc.translate[1] = -1.0f - draw_data->DisplayPos.y * pc.scale[1];
-        command_buffer.push_constants(vuk::ShaderStageFlagBits::eVertex, 0, pc);
-      };
-
+  auto sampled_images_array = vuk::declare_array("imgui_sampled", std::span(rendering_images));
   size_t vertex_size = draw_data->TotalVtxCount * sizeof(ImDrawVert);
   size_t index_size = draw_data->TotalIdxCount * sizeof(ImDrawIdx);
+  if (!draw_data || vertex_size == 0) {
+    if (!rendering_images.empty()) {
+      context.wait_on(std::move(sampled_images_array));
+    }
+
+    return target;
+  }
+
   auto imvert = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, vertex_size, 1);
   auto imind = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, index_size, 1);
 
@@ -203,8 +242,29 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
     idx_dst += cmd_list->IdxBuffer.Size;
   }
 
-  auto sampled_images_array = vuk::declare_array("imgui_sampled", std::span(rendering_images));
-  auto font_acquired = font_texture->acquire();
+  auto reset_render_state =
+    [draw_data](vuk::CommandBuffer& command_buffer, const vuk::Buffer& vertex, const vuk::Buffer& index) {
+      if (index.size > 0) {
+        command_buffer.bind_index_buffer(
+          index, sizeof(ImDrawIdx) == 2 ? vuk::IndexType::eUint16 : vuk::IndexType::eUint32
+        );
+      }
+      command_buffer
+        .bind_vertex_buffer(
+          0, vertex, 0, vuk::Packed{vuk::Format::eR32G32Sfloat, vuk::Format::eR32G32Sfloat, vuk::Format::eR8G8B8A8Unorm}
+        )
+        .bind_graphics_pipeline("imgui")
+        .set_viewport(0, vuk::Rect2D::framebuffer());
+      struct PC {
+        float translate[2];
+        float scale[2];
+      } pc;
+      pc.scale[0] = 2.0f / draw_data->DisplaySize.x;
+      pc.scale[1] = 2.0f / draw_data->DisplaySize.y;
+      pc.translate[0] = -1.0f - draw_data->DisplayPos.x * pc.scale[0];
+      pc.translate[1] = -1.0f - draw_data->DisplayPos.y * pc.scale[1];
+      command_buffer.push_constants(vuk::ShaderStageFlagBits::eVertex, 0, pc);
+    };
 
   return vuk::make_pass(
       "imgui",
@@ -213,8 +273,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
           VUK_BA(vuk::Access::eVertexRead) vertex_buf,
           VUK_BA(vuk::Access::eIndexRead) index_buf,
           VUK_IA(vuk::eColorWrite) color_rt,
-          VUK_ARG(vuk::ImageAttachment[], vuk::Access::eFragmentSampled) sis,
-          VUK_IA(vuk::eFragmentSampled) font) {
+          VUK_ARG(vuk::ImageAttachment[], vuk::Access::eFragmentSampled) sis) {
         command_buffer.set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
             .set_rasterization(vuk::PipelineRasterizationStateCreateInfo{})
             .set_color_blend(color_rt, vuk::BlendPreset::eAlphaBlend);
@@ -266,13 +325,9 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
 
                 command_buffer.bind_sampler(
                     0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear});
-                if (im_cmd->TexRef._TexData == NULL && im_cmd->TexRef._TexID != 0) {
-                  const auto index = im_cmd->GetTexID() - 1;
-                  const auto& image = sis[index];
-                  command_buffer.bind_image(0, 1, image);
-                } else {
-                  command_buffer.bind_image(0, 1, font);
-                }
+                const auto index = im_cmd->GetTexID() - 1;
+                const auto& image = sis[index];
+                command_buffer.bind_image(0, 1, image);
 
                 command_buffer.draw_indexed(im_cmd->ElemCount,
                                             1,
@@ -290,8 +345,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
       })(std::move(imvert),
          std::move(imind),
          std::move(target),
-         std::move(sampled_images_array),
-         std::move(font_acquired));
+         std::move(sampled_images_array));
 }
 
 ImTextureID ImGuiLayer::add_image(vuk::Value<vuk::ImageAttachment>&& attachment) {
@@ -356,7 +410,8 @@ void ImGuiLayer::on_key(u32 key_code, u32 scan_code, u16 mods, bool down) {
   const auto key = to_imgui_key(static_cast<SDL_Keycode>(key_code), static_cast<SDL_Scancode>(scan_code));
   imgui.AddKeyEvent(key, down);
   imgui.SetKeyEventNativeData(
-      key, static_cast<i32>(key_code), static_cast<i32>(scan_code), static_cast<i32>(scan_code));
+    key, static_cast<i32>(key_code), static_cast<i32>(scan_code), static_cast<i32>(scan_code)
+  );
 }
 
 void ImGuiLayer::on_text_input(const c8* text) {

@@ -20,9 +20,9 @@ struct TextureLoadInfo {
   option<std::vector<u8>> bytes = ox::nullopt;
   option<void*> loaded_data = ox::nullopt;
   option<vuk::Extent3D> extent = ox::nullopt;
-  vuk::SamplerCreateInfo sampler_info = {.magFilter = vuk::Filter::eLinear,
-                                         .minFilter = vuk::Filter::eLinear,
-                                         .mipmapMode = vuk::SamplerMipmapMode::eLinear};
+  vuk::SamplerCreateInfo sampler_info = {
+    .magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear, .mipmapMode = vuk::SamplerMipmapMode::eLinear
+  };
 };
 
 enum class TextureID : u64 { Invalid = std::numeric_limits<u64>::max() };
@@ -46,16 +46,22 @@ public:
 
   ~Texture() = default;
 
-  auto create(const std::string& path,
-              const TextureLoadInfo& load_info,
-              const std::source_location& loc = std::source_location::current()) -> void;
+  auto create(
+    const std::string& path,
+    const TextureLoadInfo& load_info,
+    const std::source_location& loc = std::source_location::current()
+  ) -> void;
 
   auto destroy() -> void;
 
   auto attachment() const -> vuk::ImageAttachment { return attachment_; }
-  auto acquire(vuk::Name name = {}, vuk::Access last_access = vuk::Access::eFragmentSampled) const
-      -> vuk::Value<vuk::ImageAttachment>;
-  auto discard(vuk::Name name = {}) const -> vuk::Value<vuk::ImageAttachment>;
+  auto acquire(
+    vuk::Name name = {},
+    vuk::Access last_access = vuk::Access::eFragmentSampled,
+    vuk::source_location LOC = VUK_HERE_AND_NOW()
+  ) const -> vuk::Value<vuk::ImageAttachment>;
+  auto discard(vuk::Name name = {}, vuk::source_location LOC = VUK_HERE_AND_NOW()) const
+    -> vuk::Value<vuk::ImageAttachment>;
 
   auto get_image() const -> const vuk::Image;
   auto get_view() const -> const vuk::ImageView;
@@ -74,19 +80,23 @@ public:
 
   operator bool() const { return image_id != ImageID::Invalid; }
 
-  static auto load_stb_image(const std::string& filename,
-                             uint32_t* width = nullptr,
-                             uint32_t* height = nullptr,
-                             uint32_t* bits = nullptr,
-                             bool srgb = true) -> std::unique_ptr<u8[]>;
+  static auto load_stb_image(
+    const std::string& filename,
+    uint32_t* width = nullptr,
+    uint32_t* height = nullptr,
+    uint32_t* bits = nullptr,
+    bool srgb = true
+  ) -> std::unique_ptr<u8[]>;
 
-  static auto load_stb_image_from_memory(void* buffer,
-                                         size_t len,
-                                         uint32_t* width = nullptr,
-                                         uint32_t* height = nullptr,
-                                         uint32_t* bits = nullptr,
-                                         bool flipY = false,
-                                         bool srgb = true) -> std::unique_ptr<u8[]>;
+  static auto load_stb_image_from_memory(
+    void* buffer,
+    size_t len,
+    uint32_t* width = nullptr,
+    uint32_t* height = nullptr,
+    uint32_t* bits = nullptr,
+    bool flipY = false,
+    bool srgb = true
+  ) -> std::unique_ptr<u8[]>;
 
   static auto get_magenta_texture(uint32_t width, uint32_t height, uint32_t channels) -> u8*;
 
@@ -94,7 +104,8 @@ public:
 
   static auto get_mip_count(const vuk::Extent3D extent) -> uint32_t {
     return static_cast<uint32_t>(
-               log2f(static_cast<float>(std::max(std::max(extent.width, extent.height), extent.depth)))) +
+             log2f(static_cast<float>(std::max(std::max(extent.width, extent.height), extent.depth)))
+           ) +
            1;
   }
 
