@@ -1475,20 +1475,24 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   if (!debugging) {
     // --- FXAA Pass ---
     if (self.gpu_scene.scene_flags & GPU::SceneFlags::HasFXAA) {
-      final_attachment = vuk::make_pass("fxaa", [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eColorWrite) out) {
-        const glm::vec2 inverse_screen_size = 1.f / glm::vec2(out->extent.width, out->extent.height);
-        cmd_list.bind_graphics_pipeline("fxaa_pipeline")
-          .bind_image(0, 0, out)
-          .set_rasterization({})
-          .set_color_blend(out, {})
-          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-          .set_viewport(0, vuk::Rect2D::framebuffer())
-          .set_scissor(0, vuk::Rect2D::framebuffer())
-          .bind_sampler(0, 1, vuk::LinearSamplerClamped)
-          .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(inverse_screen_size))
-          .draw(3, 1, 0, 0);
-        return out;
-      })(final_attachment);
+      auto fxaa_pass = vuk::make_pass(
+        "fxaa", [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eColorRead) dst, VUK_IA(vuk::eFragmentSampled) src) {
+          const glm::vec2 inverse_screen_size = 1.f / glm::vec2(src->extent.width, src->extent.height);
+          cmd_list.bind_graphics_pipeline("fxaa_pipeline")
+            .set_rasterization({})
+            .set_color_blend(dst, {})
+            .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+            .set_viewport(0, vuk::Rect2D::framebuffer())
+            .set_scissor(0, vuk::Rect2D::framebuffer())
+            .bind_image(0, 0, src)
+            .bind_sampler(0, 1, vuk::LinearSamplerClamped)
+            .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(inverse_screen_size))
+            .draw(3, 1, 0, 0);
+          return src;
+        }
+      );
+
+        // TODO: Find a solution for this
     }
 
     // --- Bloom Pass ---
@@ -1603,11 +1607,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     );
     vuk::fill(histogram_buffer, 0);
 
-    std::tie(final_attachment, histogram_buffer) = 
-      vuk:: make_pass("histogram generate", [histogram_inf](
-        vuk::CommandBuffer& cmd_list,
-        VUK_IA(vuk::eComputeRead) src,
-        VUK_BA(vuk::eComputeRW) histogram) {
+    std::tie(final_attachment, histogram_buffer) = vuk::
+      make_pass("histogram generate", [histogram_inf](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRead) src, VUK_BA(vuk::eComputeRW) histogram) {
         cmd_list.bind_compute_pipeline("histogram_generate_pipeline")
               .bind_image(0, 0, src)
               .push_constants(vuk::ShaderStageFlagBits::eCompute,
@@ -1658,12 +1659,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
     // --- Tonemap Pass ---
     result_attachment = vuk::
-      make_pass("tonemap", [scene_flags = self.gpu_scene.scene_flags, pp = self.post_proces_settings]
-        (vuk::CommandBuffer& cmd_list,
-         VUK_IA(vuk::eColorWrite) dst,
-         VUK_IA(vuk::eFragmentSampled) src,
-         VUK_IA(vuk::eFragmentSampled) bloom_src,
-         VUK_BA(vuk::eFragmentUniformRead) exposure) {
+      make_pass("tonemap", [scene_flags = self.gpu_scene.scene_flags, pp = self.post_proces_settings](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eColorWrite) dst, VUK_IA(vuk::eFragmentSampled) src, VUK_IA(vuk::eFragmentSampled) bloom_src, VUK_BA(vuk::eFragmentUniformRead) exposure) {
         const auto size = glm::ivec2(src->extent.width, src->extent.height);
         cmd_list.bind_graphics_pipeline("tonemap_pipeline")
           .set_rasterization({})
