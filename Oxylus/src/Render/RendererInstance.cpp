@@ -1492,7 +1492,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         }
       );
 
-        // TODO: Find a solution for this
+      // TODO: Find a solution for this
     }
 
     // --- Bloom Pass ---
@@ -1608,7 +1608,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     vuk::fill(histogram_buffer, 0);
 
     std::tie(final_attachment, histogram_buffer) = vuk::
-      make_pass("histogram generate", [histogram_inf](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRead) src, VUK_BA(vuk::eComputeRW) histogram) {
+      make_pass("histogram generate", [histogram_inf](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeSampled) src, VUK_BA(vuk::eComputeRW) histogram) {
         cmd_list.bind_compute_pipeline("histogram_generate_pipeline")
               .bind_image(0, 0, src)
               .push_constants(vuk::ShaderStageFlagBits::eCompute,
