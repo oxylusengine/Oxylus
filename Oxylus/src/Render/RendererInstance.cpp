@@ -1520,7 +1520,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .bind_image(0, 0, out)
             .bind_image(0, 1, src)
             .bind_sampler(0, 2, vuk::NearestMagLinearMinSamplerClamped)
-            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(bloom_threshold, bloom_clamp))
+            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(bloom_threshold, bloom_clamp, src->extent))
             .dispatch_invocations_per_pixel(src);
 
           return std::make_tuple(src, out);
