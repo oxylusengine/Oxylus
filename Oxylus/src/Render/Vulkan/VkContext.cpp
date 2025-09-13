@@ -20,10 +20,12 @@ PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout;
 PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets;
 PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
 
-static VkBool32 debug_callback(const VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-                               VkDebugUtilsMessageTypeFlagsEXT messageType,
-                               const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-                               void* pUserData) {
+static VkBool32 debug_callback(
+  const VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+  VkDebugUtilsMessageTypeFlagsEXT messageType,
+  const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+  void* pUserData
+) {
   std::string prefix;
   if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT) {
     prefix = "VULKAN VERBOSE: ";
@@ -52,20 +54,24 @@ static VkBool32 debug_callback(const VkDebugUtilsMessageSeverityFlagBitsEXT mess
   return VK_FALSE;
 }
 
-vuk::Swapchain make_swapchain(vuk::Allocator& allocator,
-                              vkb::Device& vkbdevice,
-                              VkSurfaceKHR surface,
-                              option<vuk::Swapchain> old_swapchain,
-                              vuk::PresentModeKHR present_mode,
-                              u32 frame_count) {
+vuk::Swapchain make_swapchain(
+  vuk::Allocator& allocator,
+  vkb::Device& vkbdevice,
+  VkSurfaceKHR surface,
+  option<vuk::Swapchain> old_swapchain,
+  vuk::PresentModeKHR present_mode,
+  u32 frame_count
+) {
   vkb::SwapchainBuilder swb(vkbdevice, surface);
   swb.set_desired_min_image_count(frame_count)
-      .set_desired_format(
-          vuk::SurfaceFormatKHR{.format = vuk::Format::eR8G8B8A8Srgb, .colorSpace = vuk::ColorSpaceKHR::eSrgbNonlinear})
-      .add_fallback_format(
-          vuk::SurfaceFormatKHR{.format = vuk::Format::eB8G8R8A8Srgb, .colorSpace = vuk::ColorSpaceKHR::eSrgbNonlinear})
-      .set_image_usage_flags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-      .set_desired_present_mode(static_cast<VkPresentModeKHR>(present_mode));
+    .set_desired_format(
+      vuk::SurfaceFormatKHR{.format = vuk::Format::eR8G8B8A8Srgb, .colorSpace = vuk::ColorSpaceKHR::eSrgbNonlinear}
+    )
+    .add_fallback_format(
+      vuk::SurfaceFormatKHR{.format = vuk::Format::eB8G8R8A8Srgb, .colorSpace = vuk::ColorSpaceKHR::eSrgbNonlinear}
+    )
+    .set_image_usage_flags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+    .set_desired_present_mode(static_cast<VkPresentModeKHR>(present_mode));
 
   bool recycling = false;
   vkb::Result vkswapchain = {vkb::Swapchain{}};
@@ -92,18 +98,18 @@ vuk::Swapchain make_swapchain(vuk::Allocator& allocator,
 
   for (uint32_t i = 0; i < (uint32_t)images.size(); i++) {
     vuk::ImageAttachment attachment = {
-        .image = vuk::Image{.image = images[i], .allocation = nullptr},
-        .image_view = vuk::ImageView{{0}, views[i]},
-        .usage = vuk::ImageUsageFlagBits::eColorAttachment | vuk::ImageUsageFlagBits::eTransferDst,
-        .extent = {.width = vkswapchain->extent.width, .height = vkswapchain->extent.height, .depth = 1},
-        .format = static_cast<vuk::Format>(vkswapchain->image_format),
-        .sample_count = vuk::Samples::e1,
-        .view_type = vuk::ImageViewType::e2D,
-        .components = {},
-        .base_level = 0,
-        .level_count = 1,
-        .base_layer = 0,
-        .layer_count = 1,
+      .image = vuk::Image{.image = images[i], .allocation = nullptr},
+      .image_view = vuk::ImageView{{0}, views[i]},
+      .usage = vuk::ImageUsageFlagBits::eColorAttachment | vuk::ImageUsageFlagBits::eTransferDst,
+      .extent = {.width = vkswapchain->extent.width, .height = vkswapchain->extent.height, .depth = 1},
+      .format = static_cast<vuk::Format>(vkswapchain->image_format),
+      .sample_count = vuk::Samples::e1,
+      .view_type = vuk::ImageViewType::e2D,
+      .components = {},
+      .base_level = 0,
+      .level_count = 1,
+      .base_layer = 0,
+      .layer_count = 1,
     };
     old_swapchain->images.push_back(attachment);
   }
@@ -118,20 +124,21 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   ZoneScoped;
   vkb::InstanceBuilder builder;
   builder //
-      .set_app_name("Oxylus App")
-      .set_engine_name("Oxylus")
-      .require_api_version(1, 3, 0)
-      .set_app_version(0, 1, 0);
+    .set_app_name("Oxylus App")
+    .set_engine_name("Oxylus")
+    .require_api_version(1, 3, 0)
+    .set_app_version(0, 1, 0);
 
   if (vulkan_validation_layers) {
     OX_LOG_INFO("Enabled vulkan validation layers.");
     builder.request_validation_layers().set_debug_callback(
-        [](const VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-           const VkDebugUtilsMessageTypeFlagsEXT messageType,
-           const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-           void* pUserData) -> VkBool32 {
-          return debug_callback(messageSeverity, messageType, pCallbackData, pUserData);
-        });
+      [](
+        const VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+        const VkDebugUtilsMessageTypeFlagsEXT messageType,
+        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+        void* pUserData
+      ) -> VkBool32 { return debug_callback(messageSeverity, messageType, pCallbackData, pUserData); }
+    );
   }
 
   std::vector<const c8*> instance_extensions;
@@ -142,7 +149,8 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   auto inst_ret = builder.build();
   if (!inst_ret) {
     OX_LOG_ERROR(
-        "Couldn't initialize the instance! Make sure your GPU drivers are up to date and it supports Vulkan 1.3");
+      "Couldn't initialize the instance! Make sure your GPU drivers are up to date and it supports Vulkan 1.3"
+    );
   }
 
   self.vkb_instance = inst_ret.value();
@@ -150,8 +158,8 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   vkb::PhysicalDeviceSelector selector{self.vkb_instance};
   self.surface = window.get_surface(instance);
   selector //
-      .set_surface(self.surface)
-      .set_minimum_version(1, 3);
+    .set_surface(self.surface)
+    .set_minimum_version(1, 3);
 #ifdef OX_USE_LLVMPIPE
   selector.prefer_gpu_device_type(vkb::PreferredDeviceType::cpu);
   selector.allow_any_gpu_device_type(false);
@@ -234,12 +242,12 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   vk14_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES;
   vk14_features.pushDescriptor = true;
   device_builder //
-      .add_pNext(&vk14_features)
-      .add_pNext(&vk13_features)
-      .add_pNext(&vk12_features)
-      .add_pNext(&vk11_features)
-      .add_pNext(&image_atomic_int64_features)
-      .add_pNext(&vk10_features);
+    .add_pNext(&vk14_features)
+    .add_pNext(&vk13_features)
+    .add_pNext(&vk12_features)
+    .add_pNext(&vk11_features)
+    .add_pNext(&image_atomic_int64_features)
+    .add_pNext(&vk10_features);
 
   auto dev_ret = device_builder.build();
   if (!dev_ret) {
@@ -262,17 +270,20 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   self.graphics_queue = self.vkb_device.get_queue(vkb::QueueType::graphics).value();
   u32 graphics_queue_family_index = self.vkb_device.get_queue_index(vkb::QueueType::graphics).value();
   executors.push_back(create_vkqueue_executor(
-      fps, self.device, self.graphics_queue, graphics_queue_family_index, vuk::DomainFlagBits::eGraphicsQueue));
+    fps, self.device, self.graphics_queue, graphics_queue_family_index, vuk::DomainFlagBits::eGraphicsQueue
+  ));
 #ifndef OX_USE_LLVMPIPE
   self.transfer_queue = self.vkb_device.get_queue(vkb::QueueType::transfer).value();
   auto transfer_queue_family_index = self.vkb_device.get_queue_index(vkb::QueueType::transfer).value();
   executors.push_back(create_vkqueue_executor(
-      fps, self.device, self.transfer_queue, transfer_queue_family_index, vuk::DomainFlagBits::eTransferQueue));
+    fps, self.device, self.transfer_queue, transfer_queue_family_index, vuk::DomainFlagBits::eTransferQueue
+  ));
 #endif
   executors.push_back(std::make_unique<vuk::ThisThreadExecutor>());
 
   self.runtime.emplace(
-      vuk::RuntimeCreateParameters{instance, self.device, self.physical_device, std::move(executors), fps});
+    vuk::RuntimeCreateParameters{instance, self.device, self.physical_device, std::move(executors), fps}
+  );
 
   self.set_vsync(static_cast<bool>(RendererCVar::cvar_vsync.get()));
 
@@ -291,7 +302,8 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
 
   u32 instanceVersion = VK_API_VERSION_1_0;
   auto FN_vkEnumerateInstanceVersion = PFN_vkEnumerateInstanceVersion(
-      fps.vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion"));
+    fps.vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion")
+  );
   if (FN_vkEnumerateInstanceVersion) {
     FN_vkEnumerateInstanceVersion(&instanceVersion);
   }
@@ -299,45 +311,44 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   // Initialize resource descriptors
   constexpr auto MAX_DESCRIPTORS = 1024_sz; // TODO: Change this to devicelimits
   VkDescriptorSetLayoutBinding bindless_set_info[] = {
-      // Samplers
-      {.binding = DescriptorTable_SamplerIndex,
-       .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-       .descriptorCount = MAX_DESCRIPTORS,
-       .stageFlags = VK_SHADER_STAGE_ALL,
-       .pImmutableSamplers = nullptr},
-      // Sampled Images
-      {.binding = DescriptorTable_SampledImageIndex,
-       .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-       .descriptorCount = MAX_DESCRIPTORS,
-       .stageFlags = VK_SHADER_STAGE_ALL,
-       .pImmutableSamplers = nullptr},
-      // Storage Images
-      {.binding = DescriptorTable_StorageImageIndex,
-       .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-       .descriptorCount = MAX_DESCRIPTORS,
-       .stageFlags = VK_SHADER_STAGE_ALL,
-       .pImmutableSamplers = nullptr},
+    // Samplers
+    {.binding = DescriptorTable_SamplerIndex,
+     .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+     .descriptorCount = MAX_DESCRIPTORS,
+     .stageFlags = VK_SHADER_STAGE_ALL,
+     .pImmutableSamplers = nullptr},
+    // Sampled Images
+    {.binding = DescriptorTable_SampledImageIndex,
+     .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+     .descriptorCount = MAX_DESCRIPTORS,
+     .stageFlags = VK_SHADER_STAGE_ALL,
+     .pImmutableSamplers = nullptr},
+    // Storage Images
+    {.binding = DescriptorTable_StorageImageIndex,
+     .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+     .descriptorCount = MAX_DESCRIPTORS,
+     .stageFlags = VK_SHADER_STAGE_ALL,
+     .pImmutableSamplers = nullptr},
   };
 
   constexpr static auto bindless_flags = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
                                          VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
   VkDescriptorBindingFlags bindless_set_binding_flags[] = {
-      bindless_flags,
-      bindless_flags,
-      bindless_flags,
+    bindless_flags,
+    bindless_flags,
+    bindless_flags,
   };
   self.resources.descriptor_set = self.create_persistent_descriptor_set(
-      1, bindless_set_info, bindless_set_binding_flags);
+    1, bindless_set_info, bindless_set_binding_flags
+  );
 
   const u32 major = VK_VERSION_MAJOR(instanceVersion);
   const u32 minor = VK_VERSION_MINOR(instanceVersion);
   const u32 patch = VK_VERSION_PATCH(instanceVersion);
 
-  OX_LOG_INFO("Vulkan context initialized using device: {} with Vulkan Version: {}.{}.{}",
-              self.device_name,
-              major,
-              minor,
-              patch);
+  OX_LOG_INFO(
+    "Vulkan context initialized using device: {} with Vulkan Version: {}.{}.{}", self.device_name, major, minor, patch
+  );
 }
 
 auto VkContext::destroy_context(this VkContext& self) -> void {
@@ -369,7 +380,8 @@ auto VkContext::handle_resize(u32 width, u32 height) -> void {
     suspend = true;
   } else {
     swapchain = make_swapchain(
-        *superframe_allocator, vkb_device, surface, std::move(swapchain), present_mode, num_inflight_frames);
+      *superframe_allocator, vkb_device, surface, std::move(swapchain), present_mode, num_inflight_frames
+    );
   }
 }
 
@@ -391,9 +403,28 @@ auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachme
   self.frame_allocator.emplace(frame_resource);
   self.runtime->next_frame();
 
+  {
+    // Just lock the entire thing instead of demoting/promoting it at each iter
+    auto write_lock = std::unique_lock(self.pending_image_buffers_mutex);
+
+    for (auto it = self.pending_image_buffers.begin(); it != self.pending_image_buffers.end();) {
+      auto image_buffer = &*it;
+      if (*image_buffer->poll() == vuk::Signal::Status::eHostAvailable) {
+        auto evaluated_buffer = vuk::eval<vuk::Buffer>(image_buffer->get_head());
+        OX_CHECK_EQ(evaluated_buffer.holds_value(), true);
+        self.superframe_allocator->deallocate({&evaluated_buffer.value(), 1});
+        it = self.pending_image_buffers.erase(it);
+        continue;
+      }
+
+      ++it;
+    }
+  }
+
   if (!self.swapchain.has_value()) {
     self.swapchain = make_swapchain(
-        *self.superframe_allocator, self.vkb_device, self.surface, {}, self.present_mode, self.num_inflight_frames);
+      *self.superframe_allocator, self.vkb_device, self.surface, {}, self.present_mode, self.num_inflight_frames
+    );
   }
   auto acquired_swapchain = vuk::acquire_swapchain(*self.swapchain);
   auto acquired_image = vuk::acquire_next_image("present_image", std::move(acquired_swapchain));
@@ -441,11 +472,12 @@ auto VkContext::wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -
   return *fut.get(allocator, _compiler);
 }
 
-auto VkContext::create_persistent_descriptor_set(this VkContext& self,
-                                                 u32 set_index,
-                                                 std::span<VkDescriptorSetLayoutBinding> bindings,
-                                                 std::span<VkDescriptorBindingFlags> binding_flags)
-    -> vuk::PersistentDescriptorSet {
+auto VkContext::create_persistent_descriptor_set(
+  this VkContext& self,
+  u32 set_index,
+  std::span<VkDescriptorSetLayoutBinding> bindings,
+  std::span<VkDescriptorBindingFlags> binding_flags
+) -> vuk::PersistentDescriptorSet {
   ZoneScoped;
 
   OX_CHECK_EQ(bindings.size(), binding_flags.size());
@@ -458,56 +490,56 @@ auto VkContext::create_persistent_descriptor_set(this VkContext& self,
 
   auto pool_flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
   auto pool_info = VkDescriptorPoolCreateInfo{
-      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-      .pNext = nullptr,
-      .flags = static_cast<VkDescriptorPoolCreateFlags>(pool_flags),
-      .maxSets = 1,
-      .poolSizeCount = static_cast<u32>(descriptor_sizes.size()),
-      .pPoolSizes = descriptor_sizes.data(),
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = static_cast<VkDescriptorPoolCreateFlags>(pool_flags),
+    .maxSets = 1,
+    .poolSizeCount = static_cast<u32>(descriptor_sizes.size()),
+    .pPoolSizes = descriptor_sizes.data(),
   };
   auto pool = VkDescriptorPool{};
   vkCreateDescriptorPool(self.device, &pool_info, nullptr, &pool);
 
   auto set_layout_binding_flags_info = VkDescriptorSetLayoutBindingFlagsCreateInfo{
-      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-      .pNext = nullptr,
-      .bindingCount = static_cast<u32>(binding_flags.size()),
-      .pBindingFlags = binding_flags.data(),
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+    .pNext = nullptr,
+    .bindingCount = static_cast<u32>(binding_flags.size()),
+    .pBindingFlags = binding_flags.data(),
   };
 
   auto set_layout_info = VkDescriptorSetLayoutCreateInfo{
-      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-      .pNext = &set_layout_binding_flags_info,
-      .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-      .bindingCount = static_cast<u32>(bindings.size()),
-      .pBindings = bindings.data(),
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+    .pNext = &set_layout_binding_flags_info,
+    .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+    .bindingCount = static_cast<u32>(bindings.size()),
+    .pBindings = bindings.data(),
   };
   auto set_layout = VkDescriptorSetLayout{};
   vkCreateDescriptorSetLayout(self.device, &set_layout_info, nullptr, &set_layout);
 
   auto set_alloc_info = VkDescriptorSetAllocateInfo{
-      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-      .pNext = nullptr,
-      .descriptorPool = pool,
-      .descriptorSetCount = 1,
-      .pSetLayouts = &set_layout,
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+    .pNext = nullptr,
+    .descriptorPool = pool,
+    .descriptorSetCount = 1,
+    .pSetLayouts = &set_layout,
   };
   auto descriptor_set = VkDescriptorSet{};
   vkAllocateDescriptorSets(self.device, &set_alloc_info, &descriptor_set);
 
   auto persistent_set_create_info = vuk::DescriptorSetLayoutCreateInfo{
-      .dslci = set_layout_info,
-      .index = set_index,
-      .bindings = std::vector(bindings.begin(), bindings.end()),
-      .flags = std::vector(binding_flags.begin(), binding_flags.end()),
+    .dslci = set_layout_info,
+    .index = set_index,
+    .bindings = std::vector(bindings.begin(), bindings.end()),
+    .flags = std::vector(binding_flags.begin(), binding_flags.end()),
   };
   return vuk::PersistentDescriptorSet{
-      .backing_pool = pool,
-      .set_layout_create_info = persistent_set_create_info,
-      .set_layout = set_layout,
-      .backing_set = descriptor_set,
-      .wdss = {},
-      .descriptor_bindings = {},
+    .backing_pool = pool,
+    .set_layout_create_info = persistent_set_create_info,
+    .set_layout = set_layout,
+    .backing_set = descriptor_set,
+    .wdss = {},
+    .descriptor_bindings = {},
   };
 }
 
@@ -602,45 +634,45 @@ auto VkContext::allocate_image_view(const vuk::ImageAttachment& image_attachment
   auto& bindless_set = get_descriptor_set();
 
   auto sampled_image_descriptor = VkDescriptorImageInfo{
-      .sampler = nullptr,
-      .imageView = image_view_handle,
-      .imageLayout = VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+    .sampler = nullptr,
+    .imageView = image_view_handle,
+    .imageLayout = VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
   };
 
   auto storage_image_descriptor = VkDescriptorImageInfo{
-      .sampler = nullptr,
-      .imageView = image_view_handle,
-      .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+    .sampler = nullptr,
+    .imageView = image_view_handle,
+    .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
   };
 
   auto descriptor_count = 0_sz;
   auto descriptor_writes = std::array<VkWriteDescriptorSet, 2>();
   if (image_attachment.usage & vuk::ImageUsageFlagBits::eSampled) {
     descriptor_writes[descriptor_count++] = {
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .pNext = nullptr,
-        .dstSet = bindless_set.backing_set,
-        .dstBinding = DescriptorTable_SampledImageIndex,
-        .dstArrayElement = SlotMap_decode_id(image_view_id).index,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-        .pImageInfo = &sampled_image_descriptor,
-        .pBufferInfo = nullptr,
-        .pTexelBufferView = nullptr,
+      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+      .pNext = nullptr,
+      .dstSet = bindless_set.backing_set,
+      .dstBinding = DescriptorTable_SampledImageIndex,
+      .dstArrayElement = SlotMap_decode_id(image_view_id).index,
+      .descriptorCount = 1,
+      .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+      .pImageInfo = &sampled_image_descriptor,
+      .pBufferInfo = nullptr,
+      .pTexelBufferView = nullptr,
     };
   }
   if (image_attachment.usage & vuk::ImageUsageFlagBits::eStorage) {
     descriptor_writes[descriptor_count++] = {
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .pNext = nullptr,
-        .dstSet = bindless_set.backing_set,
-        .dstBinding = DescriptorTable_StorageImageIndex,
-        .dstArrayElement = SlotMap_decode_id(image_view_id).index,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        .pImageInfo = &storage_image_descriptor,
-        .pBufferInfo = nullptr,
-        .pTexelBufferView = nullptr,
+      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+      .pNext = nullptr,
+      .dstSet = bindless_set.backing_set,
+      .dstBinding = DescriptorTable_StorageImageIndex,
+      .dstArrayElement = SlotMap_decode_id(image_view_id).index,
+      .descriptorCount = 1,
+      .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+      .pImageInfo = &storage_image_descriptor,
+      .pBufferInfo = nullptr,
+      .pTexelBufferView = nullptr,
     };
   }
   commit_descriptor_set({descriptor_writes.data(), descriptor_count});
@@ -671,22 +703,22 @@ auto VkContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info) -> 
   auto sampler_id = resources.samplers.create_slot(std::move(sampler));
 
   auto sampler_descriptor = VkDescriptorImageInfo{
-      .sampler = sampler_handle,
-      .imageView = nullptr,
-      .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .sampler = sampler_handle,
+    .imageView = nullptr,
+    .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
   };
   auto& bindless_set = get_descriptor_set();
   auto descriptor_write = VkWriteDescriptorSet{
-      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, //
-      .pNext = nullptr,
-      .dstSet = bindless_set.backing_set,
-      .dstBinding = DescriptorTable_SamplerIndex,
-      .dstArrayElement = SlotMap_decode_id(sampler_id).index,
-      .descriptorCount = 1,
-      .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-      .pImageInfo = &sampler_descriptor,
-      .pBufferInfo = nullptr,
-      .pTexelBufferView = nullptr,
+    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, //
+    .pNext = nullptr,
+    .dstSet = bindless_set.backing_set,
+    .dstBinding = DescriptorTable_SamplerIndex,
+    .dstArrayElement = SlotMap_decode_id(sampler_id).index,
+    .descriptorCount = 1,
+    .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+    .pImageInfo = &sampler_descriptor,
+    .pBufferInfo = nullptr,
+    .pTexelBufferView = nullptr,
   };
   commit_descriptor_set({&descriptor_write, 1});
 
@@ -706,7 +738,7 @@ auto VkContext::sampler(const SamplerID id) -> vuk::Sampler {
 }
 
 auto VkContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
-    -> vuk::Unique<vuk::Buffer> {
+  -> vuk::Unique<vuk::Buffer> {
   if (!buffer || new_size > buffer->size) {
     wait();
     buffer.reset();
@@ -718,24 +750,46 @@ auto VkContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsag
 }
 
 auto VkContext::allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment) -> vuk::Unique<vuk::Buffer> {
-  return *vuk::allocate_buffer(superframe_allocator.value(),
-                               {.mem_usage = usage, .size = size, .alignment = alignment});
+  return *vuk::allocate_buffer(
+    superframe_allocator.value(), {.mem_usage = usage, .size = size, .alignment = alignment}
+  );
+}
+
+auto VkContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, vuk::source_location LOC) noexcept
+  -> vuk::Value<vuk::Buffer> {
+  ZoneScoped;
+
+  auto write_lock = std::unique_lock(pending_image_buffers_mutex);
+  auto alignment = vuk::format_to_texel_block_size(format);
+  auto size = vuk::compute_image_size(format, extent);
+
+  auto buffer_handle = vuk::Buffer{};
+  auto buffer_info = vuk::BufferCreateInfo{
+    .mem_usage = vuk::MemoryUsage::eCPUtoGPU, .size = size, .alignment = alignment
+  };
+  superframe_allocator->allocate_buffers({&buffer_handle, 1}, {&buffer_info, 1}, LOC);
+
+  auto buffer = vuk::acquire_buf("image buffer", buffer_handle, vuk::eNone, LOC);
+  pending_image_buffers.emplace(buffer);
+
+  return buffer;
 }
 
 auto
 VkContext::alloc_transient_buffer_raw(vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC)
-    -> vuk::Buffer {
+  -> vuk::Buffer {
   ZoneScoped;
 
   std::shared_lock _(mutex);
 
   auto buffer = *vuk::allocate_buffer(
-      frame_allocator.value(), {.mem_usage = usage, .size = size, .alignment = alignment}, LOC);
+    frame_allocator.value(), {.mem_usage = usage, .size = size, .alignment = alignment}, LOC
+  );
   return *buffer;
 }
 
 auto VkContext::alloc_transient_buffer(vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC)
-    -> vuk::Value<vuk::Buffer> {
+  -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
   auto buffer = alloc_transient_buffer_raw(usage, size, alignment, LOC);
@@ -743,37 +797,38 @@ auto VkContext::alloc_transient_buffer(vuk::MemoryUsage usage, usize size, usize
 }
 
 auto VkContext::upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Buffer>&& dst, vuk::source_location LOC)
-    -> vuk::Value<vuk::Buffer> {
+  -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
   auto upload_pass = vuk::make_pass(
-      "upload staging",
-      [](vuk::CommandBuffer& cmd_list,
-         VUK_BA(vuk::Access::eTransferRead) src_ba,
-         VUK_BA(vuk::Access::eTransferWrite) dst_ba) {
-        cmd_list.copy_buffer(src_ba, dst_ba);
-        return dst_ba;
-      },
-      vuk::DomainFlagBits::eAny,
-      LOC);
+    "upload staging",
+    [](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::Access::eTransferRead) src_ba,
+      VUK_BA(vuk::Access::eTransferWrite) dst_ba
+    ) {
+      cmd_list.copy_buffer(src_ba, dst_ba);
+      return dst_ba;
+    },
+    vuk::DomainFlagBits::eAny,
+    LOC
+  );
 
   return upload_pass(std::move(src), std::move(dst));
 }
 
 auto
 VkContext::upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC)
-    -> vuk::Value<vuk::Buffer> {
+  -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
   auto dst_buffer = vuk::discard_buf("dst", dst.subrange(dst_offset, src->size), LOC);
   return upload_staging(std::move(src), std::move(dst_buffer), LOC);
 }
 
-auto VkContext::upload_staging(void* data,
-                               u64 data_size,
-                               vuk::Value<vuk::Buffer>&& dst,
-                               u64 dst_offset,
-                               vuk::source_location LOC) -> vuk::Value<vuk::Buffer> {
+auto VkContext::upload_staging(
+  void* data, u64 data_size, vuk::Value<vuk::Buffer>&& dst, u64 dst_offset, vuk::source_location LOC
+) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
   auto cpu_buffer = alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, data_size, 8, LOC);
@@ -784,7 +839,7 @@ auto VkContext::upload_staging(void* data,
 }
 
 auto VkContext::upload_staging(void* data, u64 data_size, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC)
-    -> vuk::Value<vuk::Buffer> {
+  -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
   auto cpu_buffer = alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, data_size, 8, LOC);
@@ -795,7 +850,7 @@ auto VkContext::upload_staging(void* data, u64 data_size, vuk::Buffer& dst, u64 
 }
 
 auto VkContext::scratch_buffer(const void* data, u64 size, usize alignment, vuk::source_location LOC)
-    -> vuk::Value<vuk::Buffer> {
+  -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
 #define SCRATCH_BUFFER_USE_BAR
@@ -805,15 +860,14 @@ auto VkContext::scratch_buffer(const void* data, u64 size, usize alignment, vuk:
   auto gpu_buffer = alloc_transient_buffer(vuk::MemoryUsage::eGPUonly, size, alignment, LOC);
 
   auto upload_pass = vuk::make_pass(
-      "scratch_buffer",
-      [](vuk::CommandBuffer& cmd_list,
-         VUK_BA(vuk::Access::eTransferRead) src,
-         VUK_BA(vuk::Access::eTransferWrite) dst) {
-        cmd_list.copy_buffer(src, dst);
-        return dst;
-      },
-      vuk::DomainFlagBits::eAny,
-      LOC);
+    "scratch_buffer",
+    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::Access::eTransferRead) src, VUK_BA(vuk::Access::eTransferWrite) dst) {
+      cmd_list.copy_buffer(src, dst);
+      return dst;
+    },
+    vuk::DomainFlagBits::eAny,
+    LOC
+  );
 
   return upload_pass(std::move(cpu_buffer), std::move(gpu_buffer));
 #else

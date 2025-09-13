@@ -143,7 +143,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
       auto upload_offset = vuk::Offset3D(texture->UpdateRect.x, texture->UpdateRect.y, 0);
       auto upload_extent = vuk::Extent3D(texture->UpdateRect.w, texture->UpdateRect.h, 1);
 
-#if 1
+#if 0
       if (texture->Status == ImTextureStatus_WantCreate || texture->Status == ImTextureStatus_WantUpdates) {
         if (font_texture) {
           font_texture->destroy();
@@ -167,7 +167,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
       texture->SetTexID(texture_id);
 #endif
 
-#if 0
+#if 1
       switch (texture->Status) {
         case ImTextureStatus_WantCreate: {
           font_texture = std::make_shared<Texture>();
@@ -176,7 +176,6 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
             {.preset = Preset::eRTT2DUnmipped,
              .format = vuk::Format::eR8G8B8A8Srgb,
              .mime = {},
-             .loaded_data = texture->GetPixels(),
              .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u}}
           );
           font_texture->set_name("font_texture");
@@ -191,8 +190,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
         }
         case ImTextureStatus_WantUpdates: {
           auto upload_pitch = upload_extent.width * texture->BytesPerPixel;
-          auto buffer_size = ox::align_up(upload_pitch * upload_extent.height, 8);
-          auto upload_buffer = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, buffer_size);
+          auto upload_buffer = context.alloc_image_buffer(font_texture->get_format(), upload_extent);
           auto* buffer_ptr = reinterpret_cast<u8*>(upload_buffer->mapped_ptr);
           for (auto y = 0_u32; y < upload_extent.height; y++) {
             auto* pixels = static_cast<u8*>(
