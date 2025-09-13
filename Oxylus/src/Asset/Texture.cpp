@@ -220,7 +220,7 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
   sampler_id = vk_context.allocate_sampler(sampler_ci);
   attachment_ = ia;
 
-  set_name(name_.c_str(), loc);
+  set_name(name_, loc);
 }
 
 auto Texture::disable_transition() -> Texture& {
@@ -273,7 +273,7 @@ void Texture::set_name(const vuk::Name& name, const std::source_location& loc) {
   ZoneScoped;
   auto& vk_context = App::get_vkcontext();
   vuk::Name new_name = name;
-  if (new_name == "UNNAMED") {
+  if (new_name.is_invalid()) {
     auto file = fs::get_file_name(loc.file_name());
     const auto n = fmt::format("{0}:{1}", file, loc.line());
     new_name = vuk::Name(n);
