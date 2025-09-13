@@ -619,9 +619,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   };
   auto depth_attachment = vuk::clear_image(vuk::declare_ia("depth_image", depth_ia), vuk::DepthZero);
 
-  const auto hiz_extent = vuk::Extent3D{
-    .width = (depth_ia.extent.width + 1_u32) >> 1_u32,
-    .height = (depth_ia.extent.height + 1_u32) >> 1_u32,
+  auto hiz_extent = vuk::Extent3D{
+    .width = std::bit_ceil((depth_ia.extent.width + 1) >> 1),
+    .height = std::bit_ceil((depth_ia.extent.height + 1) >> 1),
     .depth = 1,
   };
 
