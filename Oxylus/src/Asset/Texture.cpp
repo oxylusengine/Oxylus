@@ -204,7 +204,9 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
 
     vuk::Compiler compiler{};
 
-    if (transition_) {
+    if (release_as_ != vuk::eNone) {
+      fut = fut.as_released(release_as_, vuk::DomainFlagBits::eGraphicsQueue);
+    } else if (transition_) {
       if (ia.usage & vuk::ImageUsageFlagBits::eStorage && ia.usage & vuk::ImageUsageFlagBits::eSampled) {
         fut = fut.as_released(vuk::eComputeSampled, vuk::DomainFlagBits::eGraphicsQueue);
       } else {
@@ -228,6 +230,11 @@ auto Texture::disable_transition() -> Texture& {
   return *this;
 }
 
+auto Texture::release_as(vuk::Access access) -> Texture& {
+  release_as_ = access;
+  return *this;
+}
+
 auto Texture::destroy() -> void {
   ZoneScoped;
   attachment_ = {};
@@ -240,6 +247,9 @@ auto Texture::destroy() -> void {
 
   vk_context.destroy_image_view(image_view_id);
   image_view_id = {};
+
+  vk_context.destroy_sampler(sampler_id);
+  sampler_id = {};
 }
 
 vuk::Value<vuk::ImageAttachment>

@@ -631,9 +631,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       self.hiz_view.destroy();
     }
 
-    self.hiz_view.disable_transition().create(
-      {}, {.preset = Preset::eSTT2D, .format = vuk::Format::eR32Sfloat, .extent = hiz_extent}
-    );
+    self.hiz_view.create({}, {.preset = Preset::eSTT2D, .format = vuk::Format::eR32Sfloat, .extent = hiz_extent});
     self.hiz_view.set_name("hiz");
 
     hiz_attachment = self.hiz_view.acquire("hiz", vuk::eNone);
@@ -931,7 +929,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
     auto vbgtao_occlusion_attachment = vuk::declare_ia(
       "vbgtao occlusion",
-      {.format = vuk::Format::eR16Sfloat,
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+       .format = vuk::Format::eR16Sfloat,
        .sample_count = vuk::Samples::e1,
        .view_type = vuk::ImageViewType::e2D,
        .level_count = 1,
@@ -947,6 +946,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
        .sample_count = vuk::Samples::e1}
     );
     vbgtao_noisy_occlusion_attachment.same_shape_as(final_attachment);
+    vbgtao_noisy_occlusion_attachment = vuk::clear_image(std::move(vbgtao_noisy_occlusion_attachment), vuk::White<f32>);
 
     if (self.vbgtao_info.has_value() && (self.gpu_scene.scene_flags & GPU::SceneFlags::HasGTAO)) {
       auto vbgtao_prefilter_pass = vuk::make_pass(
@@ -1477,8 +1477,17 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   if (!debugging) {
     // --- FXAA Pass ---
     if (self.gpu_scene.scene_flags & GPU::SceneFlags::HasFXAA) {
+      auto fxaa_attachment = vuk::declare_ia(
+        "fxaa_attachment",
+        {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+         .sample_count = vuk::Samples::e1}
+      );
+      fxaa_attachment.same_shape_as(final_attachment);
+      fxaa_attachment.same_format_as(final_attachment);
+      fxaa_attachment = vuk::clear_image(std::move(fxaa_attachment), vuk::Black<f32>);
+
       auto fxaa_pass = vuk::make_pass(
-        "fxaa", [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eColorRead) dst, VUK_IA(vuk::eFragmentSampled) src) {
+        "fxaa", [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eColorWrite) dst, VUK_IA(vuk::eFragmentSampled) src) {
           const glm::vec2 inverse_screen_size = 1.f / glm::vec2(src->extent.width, src->extent.height);
           cmd_list.bind_graphics_pipeline("fxaa_pipeline")
             .set_rasterization({})
@@ -1490,11 +1499,12 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .bind_sampler(0, 1, vuk::LinearSamplerClamped)
             .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(inverse_screen_size))
             .draw(3, 1, 0, 0);
-          return src;
+          return std::make_tuple(dst, src);
         }
       );
 
-      // TODO: Find a solution for this
+      std::tie(fxaa_attachment, final_attachment) = fxaa_pass(fxaa_attachment, final_attachment);
+      std::swap(final_attachment, fxaa_attachment);
     }
 
     // --- Bloom Pass ---
@@ -1503,6 +1513,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     const u32 bloom_mip_count = static_cast<u32>(RendererCVar::cvar_bloom_mips.get());
 
     auto bloom_ia = vuk::ImageAttachment{
+      .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
       .format = vuk::Format::eB10G11R11UfloatPack32,
       .sample_count = vuk::SampleCountFlagBits::e1,
       .level_count = bloom_mip_count,
@@ -1660,8 +1671,15 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     }
 
     // --- Tonemap Pass ---
-    result_attachment = vuk::
-      make_pass("tonemap", [scene_flags = self.gpu_scene.scene_flags, pp = self.post_proces_settings](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eColorWrite) dst, VUK_IA(vuk::eFragmentSampled) src, VUK_IA(vuk::eFragmentSampled) bloom_src, VUK_BA(vuk::eFragmentUniformRead) exposure) {
+    auto tonemap_pass = vuk::make_pass(
+      "tonemap",
+      [scene_flags = self.gpu_scene.scene_flags, pp = self.post_proces_settings](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eColorWrite) dst,
+        VUK_IA(vuk::eFragmentSampled) src,
+        VUK_IA(vuk::eFragmentSampled) bloom_src,
+        VUK_BA(vuk::eFragmentUniformRead) exposure
+      ) {
         const auto size = glm::ivec2(src->extent.width, src->extent.height);
         cmd_list.bind_graphics_pipeline("tonemap_pipeline")
           .set_rasterization({})
@@ -1678,7 +1696,15 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           .draw(3, 1, 0, 0);
 
         return dst;
-      })(std::move(result_attachment), std::move(final_attachment), std::move(bloom_up_image), std::move(exposure_buffer_value));
+      }
+    );
+
+    result_attachment = tonemap_pass(
+      std::move(result_attachment),
+      std::move(final_attachment),
+      std::move(bloom_up_image),
+      std::move(exposure_buffer_value)
+    );
   }
 
   auto debug_renderer_enabled = (bool)RendererCVar::cvar_enable_debug_renderer.get();
@@ -1692,7 +1718,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) dst,
         VUK_IA(vuk::eFragmentSampled) depth_img,
-        VUK_BA(vuk::eFragmentRead) dbg_vtx,
+        VUK_BA(vuk::eMemoryRead) dbg_vtx,
         VUK_BA(vuk::eFragmentRead) camera
       ) {
         auto& dbg_index_buffer = *DebugRenderer::get_instance()->get_global_index_buffer();

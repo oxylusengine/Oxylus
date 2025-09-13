@@ -53,6 +53,7 @@ public:
   ) -> void;
 
   auto disable_transition() -> Texture&;
+  auto release_as(vuk::Access access) -> Texture&;
 
   auto destroy() -> void;
 
@@ -118,5 +119,6 @@ private:
   SamplerID sampler_id;
   vuk::Name name_ = {};
   bool transition_ = true;
+  vuk::Access release_as_ = vuk::eNone;
 };
 } // namespace ox
