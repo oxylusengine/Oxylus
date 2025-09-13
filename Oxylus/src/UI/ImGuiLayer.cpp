@@ -143,6 +143,31 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
       auto upload_offset = vuk::Offset3D(texture->UpdateRect.x, texture->UpdateRect.y, 0);
       auto upload_extent = vuk::Extent3D(texture->UpdateRect.w, texture->UpdateRect.h, 1);
 
+#if 1
+      if (texture->Status == ImTextureStatus_WantCreate || texture->Status == ImTextureStatus_WantUpdates) {
+        if (font_texture) {
+          font_texture->destroy();
+        }
+
+        font_texture = std::make_shared<Texture>();
+        font_texture->create(
+          {},
+          {.preset = Preset::eRTT2DUnmipped,
+           .format = vuk::Format::eR8G8B8A8Srgb,
+           .mime = {},
+           .loaded_data = texture->GetPixels(),
+           .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u}}
+        );
+        font_texture->set_name("font_texture");
+
+        texture->SetStatus(ImTextureStatus_OK);
+      }
+
+      auto texture_id = this->add_image(*font_texture);
+      texture->SetTexID(texture_id);
+#endif
+
+#if 0
       switch (texture->Status) {
         case ImTextureStatus_WantCreate: {
           font_texture = std::make_shared<Texture>();
@@ -154,8 +179,9 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
              .loaded_data = texture->GetPixels(),
              .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u}}
           );
+          font_texture->set_name("font_texture");
 
-          acquired_image = font_texture->acquire("imgui image", vuk::eNone);
+          acquired_image = font_texture->acquire({}, vuk::eNone);
           acquired = true;
 
           upload_offset = {};
@@ -194,7 +220,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
           );
 
           if (!acquired) {
-            acquired_image = font_texture->acquire("imgui image", vuk::eNone);
+            acquired_image = font_texture->acquire({}, vuk::eNone);
           }
 
           acquired_image = upload_pass(std::move(upload_buffer), std::move(acquired_image));
@@ -203,7 +229,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
           texture->SetStatus(ImTextureStatus_OK);
         } break;
         case ImTextureStatus_OK: {
-          acquired_image = font_texture->acquire("imgui image", vuk::eFragmentSampled);
+          acquired_image = font_texture->acquire({}, vuk::eFragmentSampled);
           auto texture_id = this->add_image(std::move(acquired_image));
           texture->SetTexID(texture_id);
         } break;
@@ -212,6 +238,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
         } break;
         case ImTextureStatus_Destroyed:;
       }
+#endif
     }
   }
 
@@ -325,7 +352,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
 
                 command_buffer.bind_sampler(
                     0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear});
-                const auto index = im_cmd->GetTexID() - 1;
+                const auto index = im_cmd->GetTexID();
                 const auto& image = sis[index];
                 command_buffer.bind_image(0, 1, image);
 
@@ -350,7 +377,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
 
 ImTextureID ImGuiLayer::add_image(vuk::Value<vuk::ImageAttachment>&& attachment) {
   rendering_images.emplace_back(std::move(attachment));
-  return rendering_images.size();
+  return rendering_images.size() - 1;
 }
 
 ImTextureID ImGuiLayer::add_image(const Texture& texture) {
