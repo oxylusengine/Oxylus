@@ -631,7 +631,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       self.hiz_view.destroy();
     }
 
-    self.hiz_view.create({}, {.preset = Preset::eSTT2D, .format = vuk::Format::eR32Sfloat, .extent = hiz_extent});
+    self.hiz_view.disable_transition().create(
+      {}, {.preset = Preset::eSTT2D, .format = vuk::Format::eR32Sfloat, .extent = hiz_extent}
+    );
     self.hiz_view.set_name("hiz");
 
     hiz_attachment = self.hiz_view.acquire("hiz", vuk::eNone);
@@ -1534,32 +1536,32 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         std::move(final_attachment), std::move(bloom_down_image)
       );
 
-      auto bloom_downsample_pass = vuk::
-        make_pass("bloom downsample", [](//
-          vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeSampled) bloom) {
+      auto bloom_downsample_pass = vuk::make_pass(
+        "bloom downsample", [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) bloom) {
           cmd_list //
             .bind_compute_pipeline("bloom_downsample_pipeline")
             .bind_sampler(0, 2, vuk::LinearMipmapNearestSamplerClamped);
 
-            auto extent = bloom->extent;
-            auto mip_count = bloom->level_count;
-            for (auto i = 1_u32; i < mip_count; i++) {
-              auto mip_width = std::max(1_u32, extent.width >> i);
-              auto mip_height = std::max(1_u32, extent.height >> i);
-              auto prev_mip = bloom->mip(i - 1);
-              auto mip = bloom->mip(i);
+          auto extent = bloom->extent;
+          auto mip_count = bloom->level_count;
+          for (auto i = 1_u32; i < mip_count; i++) {
+            auto mip_width = std::max(1_u32, extent.width >> i);
+            auto mip_height = std::max(1_u32, extent.height >> i);
+            auto prev_mip = bloom->mip(i - 1);
+            auto mip = bloom->mip(i);
 
-              cmd_list.image_barrier(prev_mip, vuk::eComputeWrite, vuk::eComputeSampled);
-              cmd_list.bind_image(0, 0, mip);
-              cmd_list.bind_image(0, 1, prev_mip);
-              cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height));
-              cmd_list.dispatch_invocations(mip_width, mip_height);
-            }
+            cmd_list.image_barrier(prev_mip, vuk::eComputeWrite, vuk::eComputeSampled)
+              .bind_image(0, 0, mip)
+              .bind_image(0, 1, prev_mip)
+              .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height))
+              .dispatch_invocations(mip_width, mip_height);
+          }
 
-            cmd_list.image_barrier(bloom, vuk::eComputeSampled, vuk::eComputeRW);
+          cmd_list.image_barrier(bloom, vuk::eComputeSampled, vuk::eComputeRW);
 
           return bloom;
-        });
+        }
+      );
 
       bloom_down_image = bloom_downsample_pass(std::move(bloom_down_image));
 

@@ -204,10 +204,12 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
 
     vuk::Compiler compiler{};
 
-    if (ia.usage & vuk::ImageUsageFlagBits::eStorage && ia.usage & vuk::ImageUsageFlagBits::eSampled) {
-      fut = fut.as_released(vuk::eComputeSampled, vuk::DomainFlagBits::eGraphicsQueue);
-    } else {
-      fut = fut.as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue);
+    if (transition_) {
+      if (ia.usage & vuk::ImageUsageFlagBits::eStorage && ia.usage & vuk::ImageUsageFlagBits::eSampled) {
+        fut = fut.as_released(vuk::eComputeSampled, vuk::DomainFlagBits::eGraphicsQueue);
+      } else {
+        fut = fut.as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue);
+      }
     }
 
     fut.wait(*allocator, compiler);
@@ -219,6 +221,11 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
   attachment_ = ia;
 
   set_name(name_.c_str(), loc);
+}
+
+auto Texture::disable_transition() -> Texture& {
+  transition_ = false;
+  return *this;
 }
 
 auto Texture::destroy() -> void {
@@ -238,12 +245,12 @@ auto Texture::destroy() -> void {
 vuk::Value<vuk::ImageAttachment>
 Texture::acquire(const vuk::Name name, const vuk::Access last_access, vuk::source_location LOC) const {
   ZoneScoped;
-  return vuk::acquire_ia(name.is_invalid() ? name_ : name, attachment(), last_access, LOC);
+  return vuk::acquire_ia(name.is_invalid() ? get_name() : name, attachment(), last_access, LOC);
 }
 
 vuk::Value<vuk::ImageAttachment> Texture::discard(vuk::Name name, vuk::source_location LOC) const {
   ZoneScoped;
-  return vuk::discard_ia(name.is_invalid() ? name_ : name, attachment(), LOC);
+  return vuk::discard_ia(name.is_invalid() ? get_name() : name, attachment(), LOC);
 }
 
 auto Texture::get_image() const -> const vuk::Image {
@@ -262,18 +269,18 @@ auto Texture::get_view() const -> const vuk::ImageView {
   return vk_context.image_view(image_view_id);
 }
 
-void Texture::set_name(std::string_view name, const std::source_location& loc) {
+void Texture::set_name(const vuk::Name& name, const std::source_location& loc) {
   ZoneScoped;
   auto& vk_context = App::get_vkcontext();
-  vuk::Name new_name = vuk::Name(name);
-  if (name.empty()) {
+  vuk::Name new_name = name;
+  if (new_name == "UNNAMED") {
     auto file = fs::get_file_name(loc.file_name());
     const auto n = fmt::format("{0}:{1}", file, loc.line());
     new_name = vuk::Name(n);
   }
 
-  vk_context.runtime->set_name(vk_context.image(image_id).image, vuk::Name(name));
-  vk_context.runtime->set_name(vk_context.image_view(image_view_id).payload, vuk::Name(name));
+  vk_context.runtime->set_name(vk_context.image(image_id).image, new_name);
+  vk_context.runtime->set_name(vk_context.image_view(image_view_id).payload, new_name);
 
   name_ = new_name;
 }

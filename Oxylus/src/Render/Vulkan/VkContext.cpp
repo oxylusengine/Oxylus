@@ -55,6 +55,7 @@ static VkBool32 debug_callback(
 }
 
 vuk::Swapchain make_swapchain(
+  vuk::Runtime& runtime,
   vuk::Allocator& allocator,
   vkb::Device& vkbdevice,
   VkSurfaceKHR surface,
@@ -97,6 +98,8 @@ vuk::Swapchain make_swapchain(
   old_swapchain->images.clear();
 
   for (uint32_t i = 0; i < (uint32_t)images.size(); i++) {
+    auto name = fmt::format("swapchain_image_{}", i);
+    runtime.set_name(images[i], vuk::Name(name));
     vuk::ImageAttachment attachment = {
       .image = vuk::Image{.image = images[i], .allocation = nullptr},
       .image_view = vuk::ImageView{{0}, views[i]},
@@ -380,7 +383,7 @@ auto VkContext::handle_resize(u32 width, u32 height) -> void {
     suspend = true;
   } else {
     swapchain = make_swapchain(
-      *superframe_allocator, vkb_device, surface, std::move(swapchain), present_mode, num_inflight_frames
+      *runtime, *superframe_allocator, vkb_device, surface, std::move(swapchain), present_mode, num_inflight_frames
     );
   }
 }
@@ -425,7 +428,13 @@ auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachme
 
   if (!self.swapchain.has_value()) {
     self.swapchain = make_swapchain(
-      *self.superframe_allocator, self.vkb_device, self.surface, {}, self.present_mode, self.num_inflight_frames
+      *self.runtime,
+      *self.superframe_allocator,
+      self.vkb_device,
+      self.surface,
+      {},
+      self.present_mode,
+      self.num_inflight_frames
     );
   }
   auto acquired_swapchain = vuk::acquire_swapchain(*self.swapchain);

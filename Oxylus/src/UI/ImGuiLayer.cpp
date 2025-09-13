@@ -139,10 +139,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
 
   if (draw_data->Textures) {
     for (auto* texture : *draw_data->Textures) {
-      auto acquired = false;
       auto acquired_image = vuk::Value<vuk::ImageAttachment>{};
-      auto upload_offset = vuk::Offset3D(texture->UpdateRect.x, texture->UpdateRect.y, 0);
-      auto upload_extent = vuk::Extent3D(texture->UpdateRect.w, texture->UpdateRect.h, 1);
 
 #if 1
       if (texture->Status == ImTextureStatus_WantCreate || texture->Status == ImTextureStatus_WantUpdates) {
@@ -167,6 +164,10 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
       auto texture_id = this->add_image(*font_texture);
       texture->SetTexID(texture_id);
 #else
+      auto acquired = false;
+      auto upload_offset = vuk::Offset3D(texture->UpdateRect.x, texture->UpdateRect.y, 0);
+      auto upload_extent = vuk::Extent3D(texture->UpdateRect.w, texture->UpdateRect.h, 1);
+
       switch (texture->Status) {
         case ImTextureStatus_WantCreate: {
           font_texture = std::make_shared<Texture>();

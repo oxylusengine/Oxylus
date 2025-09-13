@@ -52,6 +52,8 @@ public:
     const std::source_location& loc = std::source_location::current()
   ) -> void;
 
+  auto disable_transition() -> Texture&;
+
   auto destroy() -> void;
 
   auto attachment() const -> vuk::ImageAttachment { return attachment_; }
@@ -68,8 +70,8 @@ public:
   auto get_extent() const -> const vuk::Extent3D& { return attachment_.extent; }
   auto get_format() const -> vuk::Format { return attachment_.format; }
 
-  auto get_name() -> const vuk::Name& { return name_; }
-  auto set_name(std::string_view name, const std::source_location& loc = std::source_location::current()) -> void;
+  auto get_name() const -> const vuk::Name& { return name_; }
+  auto set_name(const vuk::Name& name, const std::source_location& loc = std::source_location::current()) -> void;
 
   auto get_image_id() const -> ImageID { return image_id; }
   auto get_view_id() const -> ImageViewID { return image_view_id; }
@@ -115,5 +117,6 @@ private:
   ImageViewID image_view_id = ImageViewID::Invalid;
   SamplerID sampler_id;
   vuk::Name name_ = {};
+  bool transition_ = true;
 };
 } // namespace ox
