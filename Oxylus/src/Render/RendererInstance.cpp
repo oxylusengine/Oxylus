@@ -529,7 +529,7 @@ draw_hiz(vuk::Value<vuk::ImageAttachment>& hiz_attachment, vuk::Value<vuk::Image
           cmd_list.bind_image(0, 1, src);
         } else {
           auto prev_mip = dst->mip(i - 1);
-          cmd_list.image_barrier(prev_mip, vuk::eComputeWrite, vuk::eComputeSampled);
+          cmd_list.image_barrier(prev_mip, vuk::eComputeRW, vuk::eComputeSampled);
           cmd_list.bind_image(0, 1, prev_mip);
         }
 
@@ -626,7 +626,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   };
 
   auto hiz_attachment = vuk::Value<vuk::ImageAttachment>{};
-  if (self.hiz_view.get_extent() != hiz_extent) {
+  if (self.hiz_view.get_extent() != hiz_extent || !self.hiz_view) {
     if (self.hiz_view) {
       self.hiz_view.destroy();
     }
