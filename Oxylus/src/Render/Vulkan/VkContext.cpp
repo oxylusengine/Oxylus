@@ -406,14 +406,16 @@ auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachme
   {
     // Just lock the entire thing instead of demoting/promoting it at each iter
     auto write_lock = std::unique_lock(self.pending_image_buffers_mutex);
+    auto* graphics_executor = static_cast<vuk::QueueExecutor*>(
+      self.runtime->get_executor(vuk::DomainFlagBits::eGraphicsQueue)
+    );
+    auto current_time_point = *graphics_executor->get_sync_value();
 
-    for (auto it = self.pending_image_buffers.begin(); it != self.pending_image_buffers.end();) {
-      auto image_buffer = &*it;
-      if (*image_buffer->poll() == vuk::Signal::Status::eHostAvailable) {
-        auto evaluated_buffer = vuk::eval<vuk::Buffer>(image_buffer->get_head());
-        OX_CHECK_EQ(evaluated_buffer.holds_value(), true);
-        self.superframe_allocator->deallocate({&evaluated_buffer.value(), 1});
-        it = self.pending_image_buffers.erase(it);
+    for (auto it = self.tracked_buffers.begin(); it != self.tracked_buffers.end();) {
+      auto& [allocation_time_point, tracked_buffer] = *it;
+      if (current_time_point > allocation_time_point) {
+        self.superframe_allocator->deallocate({&tracked_buffer, 1});
+        it = self.tracked_buffers.erase(it);
         continue;
       }
 
@@ -458,7 +460,7 @@ auto VkContext::wait_on(vuk::UntypedValue&& fut) -> void {
   ZoneScoped;
 
   thread_local vuk::Compiler _compiler;
-  fut.wait(frame_allocator.value(), _compiler);
+  fut.wait(superframe_allocator.value(), _compiler);
 }
 
 auto VkContext::wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment {
@@ -768,11 +770,13 @@ auto VkContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, vuk
     .mem_usage = vuk::MemoryUsage::eCPUtoGPU, .size = size, .alignment = alignment
   };
   superframe_allocator->allocate_buffers({&buffer_handle, 1}, {&buffer_info, 1}, LOC);
+  auto* graphics_executor = static_cast<vuk::QueueExecutor*>(
+    runtime->get_executor(vuk::DomainFlagBits::eGraphicsQueue)
+  );
+  auto allocation_time_point = *graphics_executor->get_sync_value();
+  tracked_buffers.emplace(std::pair(allocation_time_point, buffer_handle));
 
-  auto buffer = vuk::acquire_buf("image buffer", buffer_handle, vuk::eNone, LOC);
-  pending_image_buffers.emplace(buffer);
-
-  return buffer;
+  return vuk::acquire_buf("image buffer", buffer_handle, vuk::eNone, LOC);
 }
 
 auto

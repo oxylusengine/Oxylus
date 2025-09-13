@@ -69,6 +69,7 @@ void ImGuiLayer::on_attach() {
   io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
   io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
   io.BackendRendererName = "oxylus";
+  io.Fonts->TexDesiredFormat = ImTextureFormat_RGBA32;
 
   auto& allocator = *App::get_vkcontext().superframe_allocator;
   auto& ctx = allocator.get_context();

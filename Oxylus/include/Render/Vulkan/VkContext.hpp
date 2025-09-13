@@ -49,7 +49,7 @@ public:
   option<vuk::DeviceSuperFrameResource> superframe_resource;
   option<vuk::Allocator> superframe_allocator = nullopt;
   option<vuk::Allocator> frame_allocator = nullopt;
-  plf::colony<vuk::Value<vuk::Buffer>> pending_image_buffers = {};
+  plf::colony<std::pair<u64, vuk::Buffer>> tracked_buffers = {};
   std::shared_mutex pending_image_buffers_mutex = {};
 
   bool suspend = false;
