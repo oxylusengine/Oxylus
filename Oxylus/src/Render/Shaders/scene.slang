@@ -24,11 +24,11 @@ public enum DebugView : i32 {
 
 [[Flags]]
 public enum CullFlags : u32 {
-    MeshletFrustum,
-    TriangleBackFace,
-    MicroTriangles,
-    OcclusionCulling,
-    TriangleCulling,
+  MeshFrustum,
+  MeshletFrustum,
+  MeshletOcclusion,
+  TriangleBackFace,
+  MicroTriangles,
 };
 
 public struct UVGradient {
@@ -155,6 +155,7 @@ public struct Camera {
   public f32 fov = 0;
   public u32 output_index = 0;
   public f32x2 resolution;
+  public f32 acceptable_lod_error;
 };
 
 public struct Sun {
@@ -338,6 +339,7 @@ public struct MeshInstance {
     public u32 lod_index = 0;
     public u32 material_index = 0;
     public u32 transform_index = 0;
+    public u32 meshlet_instance_visibility_offset = 0;
 };
 
 public struct MeshLOD {

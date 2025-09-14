@@ -31,8 +31,8 @@ public:
 
   /// Mouse
   static bool get_mouse_clicked(const MouseCode key) { return _instance->input_data.mouse_clicked[int(key)]; }
+  static bool get_mouse_released(const MouseCode key) { return _instance->input_data.mouse_released[int(key)]; }
   static bool get_mouse_held(const MouseCode key) { return _instance->input_data.mouse_held[int(key)]; }
-  // TODO: get_mouse_released()
   static glm::vec2 get_mouse_position();
   static glm::vec2 get_mouse_position_rel();
 
@@ -60,6 +60,7 @@ private:
     bool key_held[MAX_KEYS] = {};
     bool mouse_held[MAX_BUTTONS] = {};
     bool mouse_clicked[MAX_BUTTONS] = {};
+    bool mouse_released[MAX_BUTTONS] = {};
 
     float mouse_offset_x = {};
     float mouse_offset_y = {};
@@ -75,6 +76,7 @@ private:
   void set_key_released(const KeyCode key, const bool a) { input_data.key_released[int(key)] = a; }
   void set_key_held(const KeyCode key, const bool a) { input_data.key_held[int(key)] = a; }
   void set_mouse_clicked(const MouseCode key, const bool a) { input_data.mouse_clicked[int(key)] = a; }
+  void set_mouse_released(const MouseCode key, const bool a) { input_data.mouse_released[int(key)] = a; }
   void set_mouse_held(const MouseCode key, const bool a) { input_data.mouse_held[int(key)] = a; }
 };
 } // namespace ox

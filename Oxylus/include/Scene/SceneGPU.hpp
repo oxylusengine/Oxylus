@@ -30,13 +30,13 @@ enum class DebugView : i32 {
 };
 
 enum class CullFlags : u32 {
-  MeshletFrustum = 1 << 0,
-  TriangleBackFace = 1 << 1,
-  MicroTriangles = 1 << 2,
-  OcclusionCulling = 1 << 3,
-  TriangleCulling = 1 << 4,
+  MeshFrustum = 1 << 0,
+  MeshletFrustum = 1 << 1,
+  MeshletOcclusion = 1 << 2,
+  TriangleBackFace = 1 << 3,
+  MicroTriangles = 1 << 4,
 
-  All = MeshletFrustum | TriangleBackFace | MicroTriangles | OcclusionCulling | TriangleCulling,
+  All = ~0_u32,
 };
 consteval void enable_bitmask(CullFlags);
 
@@ -92,6 +92,7 @@ struct MeshInstance {
   alignas(4) u32 lod_index = 0;
   alignas(4) u32 material_index = 0;
   alignas(4) u32 transform_index = 0;
+  alignas(4) u32 meshlet_instance_visibility_offset = 0;
 };
 
 struct Meshlet {
@@ -194,6 +195,7 @@ struct CameraData {
   alignas(4) f32 fov = 0;
   alignas(4) u32 output_index = 0;
   alignas(4) glm::vec2 resolution = {};
+  alignas(4) f32 acceptable_lod_error = 2.0f; // TODO: Make this configurable
 };
 
 struct PointLight {

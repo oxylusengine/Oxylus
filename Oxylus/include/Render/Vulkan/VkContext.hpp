@@ -49,6 +49,8 @@ public:
   option<vuk::DeviceSuperFrameResource> superframe_resource;
   option<vuk::Allocator> superframe_allocator = nullopt;
   option<vuk::Allocator> frame_allocator = nullopt;
+  plf::colony<std::pair<u64, vuk::Buffer>> tracked_buffers = {};
+  std::shared_mutex pending_image_buffers_mutex = {};
 
   bool suspend = false;
   vuk::PresentModeKHR present_mode = vuk::PresentModeKHR::eFifo;
@@ -82,11 +84,12 @@ public:
   auto wait_on(vuk::UntypedValue&& fut) -> void;
   auto wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment;
 
-  auto create_persistent_descriptor_set(this VkContext&,
-                                        u32 set_index,
-                                        std::span<VkDescriptorSetLayoutBinding> bindings,
-                                        std::span<VkDescriptorBindingFlags> binding_flags)
-      -> vuk::PersistentDescriptorSet;
+  auto create_persistent_descriptor_set(
+    this VkContext&,
+    u32 set_index,
+    std::span<VkDescriptorSetLayoutBinding> bindings,
+    std::span<VkDescriptorBindingFlags> binding_flags
+  ) -> vuk::PersistentDescriptorSet;
   auto commit_descriptor_set(this VkContext&, std::span<VkWriteDescriptorSet> writes) -> void;
 
   auto allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID;
@@ -105,33 +108,36 @@ public:
   auto get_descriptor_set() -> auto& { return resources.descriptor_set; }
 
   auto resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
-      -> vuk::Unique<vuk::Buffer>;
+    -> vuk::Unique<vuk::Buffer>;
 
   [[nodiscard]]
   auto allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;
+
+  [[nodiscard]]
+  auto alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, OX_THISCALL) noexcept -> vuk::Value<vuk::Buffer>;
 
   [[nodiscard]]
   auto alloc_transient_buffer_raw(vuk::MemoryUsage usage, usize size, usize alignment = 8, OX_THISCALL) -> vuk::Buffer;
 
   [[nodiscard]]
   auto alloc_transient_buffer(vuk::MemoryUsage usage, usize size, usize alignment = 8, OX_THISCALL)
-      -> vuk::Value<vuk::Buffer>;
+    -> vuk::Value<vuk::Buffer>;
 
   [[nodiscard]]
   auto upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Buffer>&& dst, OX_THISCALL)
-      -> vuk::Value<vuk::Buffer>;
+    -> vuk::Value<vuk::Buffer>;
 
   [[nodiscard]]
   auto upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Buffer& dst, u64 dst_offset = 0, OX_THISCALL)
-      -> vuk::Value<vuk::Buffer>;
+    -> vuk::Value<vuk::Buffer>;
 
   [[nodiscard]]
   auto upload_staging(void* data, u64 data_size, vuk::Value<vuk::Buffer>&& dst, u64 dst_offset = 0, OX_THISCALL)
-      -> vuk::Value<vuk::Buffer>;
+    -> vuk::Value<vuk::Buffer>;
 
   [[nodiscard]]
   auto upload_staging(void* data, u64 data_size, vuk::Buffer& dst, u64 dst_offset = 0, OX_THISCALL)
-      -> vuk::Value<vuk::Buffer>;
+    -> vuk::Value<vuk::Buffer>;
 
   template <typename T>
   [[nodiscard]]
@@ -142,7 +148,7 @@ public:
   template <typename T>
   [[nodiscard]]
   auto upload_staging(std::span<T> span, vuk::Value<vuk::Buffer>&& dst, u64 dst_offset = 0, OX_THISCALL)
-      -> vuk::Value<vuk::Buffer> {
+    -> vuk::Value<vuk::Buffer> {
     return upload_staging(reinterpret_cast<void*>(span.data()), span.size_bytes(), std::move(dst), dst_offset, LOC);
   }
 
