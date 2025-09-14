@@ -28,7 +28,6 @@ struct GLTFImageInfo {
 struct GLTFTextureInfo {
   ox::option<usize> sampler_index;
   ox::option<usize> image_index;
-  // TODO: dds images maybe?
 };
 
 struct GLTFMaterialInfo {

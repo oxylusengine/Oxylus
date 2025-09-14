@@ -36,11 +36,13 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
     if (!path.empty()) {
       stb_data = load_stb_image(path, &extent.width, &extent.height, &chans);
     } else if (load_info.bytes.has_value()) {
-      stb_data = load_stb_image_from_memory((void*)load_info.bytes->data(), //
-                                            load_info.bytes->size(),
-                                            &extent.width,
-                                            &extent.height,
-                                            &chans);
+      stb_data = load_stb_image_from_memory(
+        (void*)load_info.bytes->data(), //
+        load_info.bytes->size(),
+        &extent.width,
+        &extent.height,
+        &chans
+      );
     }
   } else if (is_dds) {
     if (!path.empty()) {
@@ -62,16 +64,19 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
     ktxTexture2* ktx{};
     if (path.empty()) {
       OX_CHECK_EQ(load_info.bytes.has_value(), true);
-      if (const auto result = ktxTexture2_CreateFromMemory(load_info.bytes->data(), //
-                                                           load_info.bytes->size(),
-                                                           KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
-                                                           &ktx);
+      if (const auto result = ktxTexture2_CreateFromMemory(
+            load_info.bytes->data(), //
+            load_info.bytes->size(),
+            KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+            &ktx
+          );
           result != KTX_SUCCESS) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     } else {
       if (const auto result = ktxTexture2_CreateFromNamedFile(
-              path.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
+            path.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx
+          );
           result != KTX_SUCCESS) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
@@ -106,7 +111,8 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
   OX_CHECK_NE(extent.depth, 0u, "Depth can't be 0!");
 
   auto ia = vuk::ImageAttachment::from_preset(
-      load_info.preset, format, {extent.width, extent.height, extent.depth}, vuk::Samples::e1);
+    load_info.preset, format, {extent.width, extent.height, extent.depth}, vuk::Samples::e1
+  );
   ia.usage |= vuk::ImageUsageFlagBits::eTransferDst | vuk::ImageUsageFlagBits::eTransferSrc;
 
   image_id = vk_context.allocate_image(ia);
@@ -117,41 +123,41 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
   std::vector<u8> ktx_data = {};
   std::vector<usize> ktx_per_level_offsets = {};
   const void* final_data =
-      load_info.loaded_data
-          .or_else([&ia, is_generic, is_dds, &stb_data, &ktx_data, &ktx_per_level_offsets, &ktx_texture, &dds_image] {
-            if (!is_generic && !is_dds) {
-              ia.level_count = ktx_texture->numLevels;
+    load_info.loaded_data
+      .or_else([&ia, is_generic, is_dds, &stb_data, &ktx_data, &ktx_per_level_offsets, &ktx_texture, &dds_image] {
+        if (!is_generic && !is_dds) {
+          ia.level_count = ktx_texture->numLevels;
 
-              ktx_per_level_offsets.resize(ia.level_count);
+          ktx_per_level_offsets.resize(ia.level_count);
 
-              for (u32 level = 0; level < ia.level_count; level++) {
-                u64 offset = 0;
-                auto offset_result = ktxTexture_GetImageOffset(ktxTexture(ktx_texture.get()), level, 0, 0, &offset);
-                if (offset_result != KTX_SUCCESS) {
-                  OX_LOG_ERROR("Failed to get KTX2 offset.");
-                  return option<void*>(nullptr);
-                }
-
-                auto* image_data = ktxTexture_GetData(ktxTexture(ktx_texture.get())) + offset;
-                auto image_size = ktxTexture_GetImageSize(ktxTexture(ktx_texture.get()), level);
-
-                auto output_offset = static_cast<usize>(ktx_data.size());
-                ktx_per_level_offsets[level] = output_offset;
-                ktx_data.resize(ktx_data.size() + image_size);
-                std::memcpy(ktx_data.data() + output_offset, image_data, image_size);
-              }
-
-              return option<void*>{ktx_data.data()};
-            } else if (is_dds) {
-              ia.level_count = dds_image.numMips;
-              ia.layer_count = dds_image.arraySize;
-
-              return option<void*>{dds_image.data.data()};
+          for (u32 level = 0; level < ia.level_count; level++) {
+            u64 offset = 0;
+            auto offset_result = ktxTexture_GetImageOffset(ktxTexture(ktx_texture.get()), level, 0, 0, &offset);
+            if (offset_result != KTX_SUCCESS) {
+              OX_LOG_ERROR("Failed to get KTX2 offset.");
+              return option<void*>(nullptr);
             }
 
-            return option<void*>{stb_data.get()};
-          })
-          .value();
+            auto* image_data = ktxTexture_GetData(ktxTexture(ktx_texture.get())) + offset;
+            auto image_size = ktxTexture_GetImageSize(ktxTexture(ktx_texture.get()), level);
+
+            auto output_offset = static_cast<usize>(ktx_data.size());
+            ktx_per_level_offsets[level] = output_offset;
+            ktx_data.resize(ktx_data.size() + image_size);
+            std::memcpy(ktx_data.data() + output_offset, image_data, image_size);
+          }
+
+          return option<void*>{ktx_data.data()};
+        } else if (is_dds) {
+          ia.level_count = dds_image.numMips;
+          ia.layer_count = dds_image.arraySize;
+
+          return option<void*>{dds_image.data.data()};
+        }
+
+        return option<void*>{stb_data.get()};
+      })
+      .value();
 
   if (final_data != nullptr) {
     vuk::Value<vuk::ImageAttachment> fut = {};
@@ -181,9 +187,9 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
         for (u32 level = 0; level < ia.level_count; level++) {
           auto mip_data_offset = ktx_per_level_offsets[level];
           auto level_extent = vuk::Extent3D{
-              .width = extent.width >> level,
-              .height = extent.height >> level,
-              .depth = 1,
+            .width = extent.width >> level,
+            .height = extent.height >> level,
+            .depth = 1,
           };
           auto size = vuk::compute_image_size(format, level_extent);
           auto buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, size);
@@ -198,10 +204,14 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
 
     vuk::Compiler compiler{};
 
-    if (ia.usage & vuk::ImageUsageFlagBits::eStorage && ia.usage & vuk::ImageUsageFlagBits::eSampled) {
-      fut = fut.as_released(vuk::eComputeSampled, vuk::DomainFlagBits::eGraphicsQueue);
-    } else {
-      fut = fut.as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue);
+    if (release_as_ != vuk::eNone) {
+      fut = fut.as_released(release_as_, vuk::DomainFlagBits::eGraphicsQueue);
+    } else if (transition_) {
+      if (ia.usage & vuk::ImageUsageFlagBits::eStorage && ia.usage & vuk::ImageUsageFlagBits::eSampled) {
+        fut = fut.as_released(vuk::eComputeSampled, vuk::DomainFlagBits::eGraphicsQueue);
+      } else {
+        fut = fut.as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue);
+      }
     }
 
     fut.wait(*allocator, compiler);
@@ -212,7 +222,17 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
   sampler_id = vk_context.allocate_sampler(sampler_ci);
   attachment_ = ia;
 
-  set_name(name_.c_str(), loc);
+  set_name(name_, loc);
+}
+
+auto Texture::disable_transition() -> Texture& {
+  transition_ = false;
+  return *this;
+}
+
+auto Texture::release_as(vuk::Access access) -> Texture& {
+  release_as_ = access;
+  return *this;
 }
 
 auto Texture::destroy() -> void {
@@ -227,16 +247,20 @@ auto Texture::destroy() -> void {
 
   vk_context.destroy_image_view(image_view_id);
   image_view_id = {};
+
+  vk_context.destroy_sampler(sampler_id);
+  sampler_id = {};
 }
 
-vuk::Value<vuk::ImageAttachment> Texture::acquire(const vuk::Name name, const vuk::Access last_access) const {
+vuk::Value<vuk::ImageAttachment>
+Texture::acquire(const vuk::Name name, const vuk::Access last_access, vuk::source_location LOC) const {
   ZoneScoped;
-  return vuk::acquire_ia(name.is_invalid() ? name_ : name, attachment(), last_access);
+  return vuk::acquire_ia(name.is_invalid() ? get_name() : name, attachment(), last_access, LOC);
 }
 
-vuk::Value<vuk::ImageAttachment> Texture::discard(vuk::Name name) const {
+vuk::Value<vuk::ImageAttachment> Texture::discard(vuk::Name name, vuk::source_location LOC) const {
   ZoneScoped;
-  return vuk::discard_ia(name.is_invalid() ? name_ : name, attachment());
+  return vuk::discard_ia(name.is_invalid() ? get_name() : name, attachment(), LOC);
 }
 
 auto Texture::get_image() const -> const vuk::Image {
@@ -255,18 +279,18 @@ auto Texture::get_view() const -> const vuk::ImageView {
   return vk_context.image_view(image_view_id);
 }
 
-void Texture::set_name(std::string_view name, const std::source_location& loc) {
+void Texture::set_name(const vuk::Name& name, const std::source_location& loc) {
   ZoneScoped;
   auto& vk_context = App::get_vkcontext();
-  vuk::Name new_name = vuk::Name(name);
-  if (name.empty()) {
+  vuk::Name new_name = name;
+  if (new_name.is_invalid()) {
     auto file = fs::get_file_name(loc.file_name());
     const auto n = fmt::format("{0}:{1}", file, loc.line());
     new_name = vuk::Name(n);
   }
 
-  vk_context.runtime->set_name(vk_context.image(image_id).image, vuk::Name(name));
-  vk_context.runtime->set_name(vk_context.image_view(image_view_id).payload, vuk::Name(name));
+  vk_context.runtime->set_name(vk_context.image(image_id).image, new_name);
+  vk_context.runtime->set_name(vk_context.image_view(image_view_id).payload, new_name);
 
   name_ = new_name;
 }
@@ -304,13 +328,15 @@ Texture::load_stb_image(const std::string& filename, uint32_t* width, uint32_t* 
 }
 
 std::unique_ptr<u8[]> Texture::load_stb_image_from_memory(
-    void* buffer, size_t len, uint32_t* width, uint32_t* height, uint32_t* bits, bool flipY, bool srgb) {
+  void* buffer, size_t len, uint32_t* width, uint32_t* height, uint32_t* bits, bool flipY, bool srgb
+) {
   ZoneScoped;
 
   int tex_width = 0, tex_height = 0, tex_channels = 0;
   int size_of_channel = 8;
   const auto pixels = stbi_load_from_memory(
-      static_cast<stbi_uc*>(buffer), static_cast<int>(len), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
+    static_cast<stbi_uc*>(buffer), static_cast<int>(len), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha
+  );
 
   if (stbi_is_16_bit_from_memory(static_cast<stbi_uc*>(buffer), static_cast<int>(len))) {
     size_of_channel = 16;

@@ -7,7 +7,7 @@ import gpu;
 
 struct ShaderParameters {
   Image2D<f32x4> source_image_upsample;
-  SamplerState sampler;
+  Sampler sampler;
 };
 
 #define EDGE_THRESHOLD_MIN 0.0312

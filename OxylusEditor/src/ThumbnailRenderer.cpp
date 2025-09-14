@@ -35,7 +35,7 @@ auto ThumbnailRenderer::render(VkContext& vk_context, vuk::Extent3D extent, vuk:
   if (_final_image == nullptr) {
     _final_image = std::make_unique<Texture>();
     _final_image->create({}, {.preset = Preset::eRTT2DUnmipped, .extent = extent});
-    _final_image->set_name(thumbnail_name);
+    _final_image->set_name(vuk::Name(thumbnail_name));
   }
 
   auto final_attachment = vuk::acquire_ia(

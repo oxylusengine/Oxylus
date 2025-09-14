@@ -155,9 +155,11 @@ void App::run() {
     const auto ox_button = Input::to_mouse_code(button);
     if (down) {
       input_system->set_mouse_clicked(ox_button, true);
+      input_system->set_mouse_released(ox_button, false);
       input_system->set_mouse_held(ox_button, true);
     } else {
       input_system->set_mouse_clicked(ox_button, false);
+      input_system->set_mouse_released(ox_button, true);
       input_system->set_mouse_held(ox_button, false);
     }
   };

@@ -405,9 +405,9 @@ ECS_COMPONENT_BEGIN(CharacterControllerComponent)
   ECS_COMPONENT_MEMBER(auto_bunny_hop, bool, false)
   ECS_COMPONENT_MEMBER(air_control, f32, 0.3f)
 
-  ECS_COMPONENT_MEMBER(max_ground_speed, f32, 7.f);
-  ECS_COMPONENT_MEMBER(ground_acceleration, f32, 14.f);
-  ECS_COMPONENT_MEMBER(ground_deceleration, f32, 10.f);
+  ECS_COMPONENT_MEMBER(max_ground_speed, f32, 7.f)
+  ECS_COMPONENT_MEMBER(ground_acceleration, f32, 14.f)
+  ECS_COMPONENT_MEMBER(ground_deceleration, f32, 10.f)
 
   ECS_COMPONENT_MEMBER(max_air_speed, f32, 7.f)
   ECS_COMPONENT_MEMBER(air_acceleration, f32, 2.f)

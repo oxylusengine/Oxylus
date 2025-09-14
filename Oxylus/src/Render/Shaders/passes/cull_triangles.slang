@@ -1,26 +1,24 @@
-module cull_triangles;
-
 import common;
 import gpu;
 import scene;
 
 import visbuffer;
 
-struct ShaderParameters {
-    ConstantBuffer<Camera> camera;
-    StructuredBuffer<u32> visible_meshlet_instances_indices;
-    StructuredBuffer<MeshletInstance> meshlet_instances;
-    StructuredBuffer<MeshInstance> mesh_instances;
-    StructuredBuffer<Mesh> meshes;
-    StructuredBuffer<Transform> transforms;
-
-    RWStructuredBuffer<DrawIndexedIndirectCommand> draw_cmd;
-    RWStructuredBuffer<u32> reordered_indices;
-};
+[[vk::constant_id(0)]] const bool LATE = false;
+[[vk::binding(0)]] ConstantBuffer<Camera> camera;
+[[vk::binding(1)]] StructuredBuffer<u32> visible_meshlet_instances_count;
+[[vk::binding(2)]] StructuredBuffer<u32> visible_meshlet_instances_indices;
+[[vk::binding(3)]] StructuredBuffer<MeshletInstance> meshlet_instances;
+[[vk::binding(4)]] StructuredBuffer<MeshInstance> mesh_instances;
+[[vk::binding(5)]] StructuredBuffer<Mesh> meshes;
+[[vk::binding(6)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(7)]] RWStructuredBuffer<DrawIndexedIndirectCommand> draw_cmd;
+[[vk::binding(8)]] RWStructuredBuffer<u32> reordered_indices;
 
 groupshared u32 base_index_shared;
 groupshared u32 triangles_passed_shared;
 groupshared mat4 model_view_proj_shared;
+groupshared u32 meshlet_triangle_count_shared;
 
 // https://github.com/GPUOpen-Effects/GeometryFX/blob/master/amd_geometryfx/src/Shaders/AMD_GeometryFX_Filtering.hlsl
 // Parameters: vertices in UV space, viewport extent
@@ -111,50 +109,62 @@ func test_triangle(in f32x3x3 positions, in f32x2 resolution, CullFlags cull_fla
 func cs_main(
     uint3 group_id : SV_GroupID,
     uint3 group_thread_id : SV_GroupThreadID,
-    uniform ParameterBlock<ShaderParameters> params,
     uniform CullFlags cull_flags
 ) -> void {
+    var visible_meshlet_instance_index = group_id.x;
+    if (LATE) {
+        visible_meshlet_instance_index += visible_meshlet_instances_count[0];
+    }
+
     let local_index = group_thread_id.x;
     let triangle_index = local_index * 3;
-    let visible_meshlet_index = group_id.x;
-    let meshlet_instance_index = params.visible_meshlet_instances_indices[visible_meshlet_index];
-    let meshlet_instance = params.meshlet_instances[meshlet_instance_index];
-    let mesh_instance = params.mesh_instances[meshlet_instance.mesh_instance_index];
-    let mesh = params.meshes[mesh_instance.mesh_index];
-    let mesh_lod = mesh.lods[mesh_instance.lod_index];
-    let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
+
+    let meshlet_instance_index = visible_meshlet_instances_indices[visible_meshlet_instance_index];
+    let meshlet_instance = meshlet_instances[meshlet_instance_index];
+    let mesh_instance = mesh_instances[meshlet_instance.mesh_instance_index];
 
     if (local_index == 0) {
         triangles_passed_shared = 0;
-        let transform = params.transforms[mesh_instance.transform_index];
-        model_view_proj_shared = mul(params.camera.projection_view, transform.world);
+    
+        let mesh = meshes[mesh_instance.mesh_index];
+        let mesh_lod = mesh.lods[mesh_instance.lod_index];
+        let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
+        meshlet_triangle_count_shared = meshlet.triangle_count;
+
+        let transform = transforms[mesh_instance.transform_index];
+        model_view_proj_shared = mul(camera.projection_view, transform.world);
     }
 
-    com::control_barrier(com::memory_order_acq_rel);
+    GroupMemoryBarrierWithGroupSync();
 
     var triangle_passed = false;
     var active_triangle_index = 0;
-    if (local_index < meshlet.triangle_count) {
+    if (local_index < meshlet_triangle_count_shared) {
+        let mesh = meshes[mesh_instance.mesh_index];
+        let mesh_lod = mesh.lods[mesh_instance.lod_index];
+        let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
+
         let indices = meshlet.indices(mesh_lod, local_index);
         let positions = meshlet.positions(mesh, indices);
-        triangle_passed = test_triangle(positions, params.camera.resolution, cull_flags, local_index);
+        triangle_passed = test_triangle(positions, camera.resolution, cull_flags, local_index);
+        triangle_passed = true;
         if (triangle_passed) {
-            active_triangle_index = com::atomic_add(triangles_passed_shared, 1, com::memory_order_relaxed);
+            active_triangle_index = __atomic_add(triangles_passed_shared, 1, MemoryOrder::Relaxed);
         }
     }
 
-    com::control_barrier(com::memory_order_acq_rel);
+    GroupMemoryBarrierWithGroupSync();
 
     if (local_index == 0) {
-        base_index_shared = com::atomic_add(params.draw_cmd[0].index_count, triangles_passed_shared * 3, com::memory_order_relaxed);
+        base_index_shared = __atomic_add(draw_cmd[0].index_count, triangles_passed_shared * 3, MemoryOrder::Relaxed);
     }
 
-    com::control_barrier(com::memory_order_acq_rel);
+    GroupMemoryBarrierWithGroupSync();
 
     if (triangle_passed) {
         let index_offset = base_index_shared + active_triangle_index * 3;
-        params.reordered_indices[index_offset + 0] = (meshlet_instance_index << MESHLET_PRIMITIVE_BITS) | ((triangle_index + 0) & MESHLET_PRIMITIVE_MASK);
-        params.reordered_indices[index_offset + 1] = (meshlet_instance_index << MESHLET_PRIMITIVE_BITS) | ((triangle_index + 1) & MESHLET_PRIMITIVE_MASK);
-        params.reordered_indices[index_offset + 2] = (meshlet_instance_index << MESHLET_PRIMITIVE_BITS) | ((triangle_index + 2) & MESHLET_PRIMITIVE_MASK);
+        reordered_indices[index_offset + 0] = (meshlet_instance_index << MESHLET_PRIMITIVE_BITS) | ((triangle_index + 0) & MESHLET_PRIMITIVE_MASK);
+        reordered_indices[index_offset + 1] = (meshlet_instance_index << MESHLET_PRIMITIVE_BITS) | ((triangle_index + 1) & MESHLET_PRIMITIVE_MASK);
+        reordered_indices[index_offset + 2] = (meshlet_instance_index << MESHLET_PRIMITIVE_BITS) | ((triangle_index + 2) & MESHLET_PRIMITIVE_MASK);
     }
 }

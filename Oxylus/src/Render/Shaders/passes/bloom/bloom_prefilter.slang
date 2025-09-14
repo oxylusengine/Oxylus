@@ -13,23 +13,20 @@ struct ShaderParameters {
 struct PushConstants {
   f32 threshold;
   f32 clamp;
+  u32x3 img_size;
 };
 
 [[shader("compute")]]
 [[numthreads(16, 16, 1)]]
 func cs_main(u32x3 thread_id : SV_DispatchThreadID, 
-            uniform ParameterBlock<ShaderParameters> params, 
+            uniform ParameterBlock<ShaderParameters> params,
             uniform PushConstants pc) {
   u32x2 img_coords = thread_id.xy;
 
-  u32 width, height, levels;
-  params.result_image.GetDimensions(0, width, height, levels);
-  u32x2 img_size = u32x2(width, height);
-
-  if (any(img_coords >= img_size))
+  if (any(img_coords >= pc.img_size.xy))
     return;
 
-  f32x2 uv = (img_coords + 0.5f) / img_size;
+  f32x2 uv = (img_coords + 0.5f) / pc.img_size.xy;
 
   const f32 epsilon = 0.0001f;
 
