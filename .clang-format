@@ -42,7 +42,6 @@ Cpp11BracedListStyle: true
 BracedInitializerIndentWidth: 2
 AlignAfterOpenBracket: BlockIndent
 ColumnLimit: 120
-ContinuationIndentWidth: 2
 NamespaceIndentation: None
 FixNamespaceComments: true
 IndentCaseLabels: true
@@ -57,5 +56,4 @@ TabWidth: 2
 UseTab: Never
 PenaltyBreakAssignment: 300
 IndentWidth: 2
-BracedInitializerIndentWidth: 2
 ContinuationIndentWidth: 2

@@ -236,6 +236,7 @@ auto RendererInstance::add_stage_after(
 ) -> void {
   StageDependency dep{.target_stage = stage, .position = StagePosition::After, .order = order};
   self.add_stage_callback(RenderStageCallback{.callback = std::move(callback), .dependency = dep, .name = name});
+}
 
 static auto cull_meshes(
   GPU::CullFlags cull_flags,
@@ -908,7 +909,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       materials_buffer,
       camera_buffer
     );
-    
+
     RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, vk_context);
     ctx.set_viewport_size(self.viewport_size)
       .set_image_resource("depth_attachment", std::move(depth_attachment))
@@ -1830,13 +1831,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       std::move(bloom_up_image),
       std::move(exposure_buffer_value)
     );
-    
+
     RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, vk_context);
     ctx.set_viewport_size(self.viewport_size).set_image_resource("result_attachment", std::move(result_attachment));
 
-    self.execute_stages_
-    
-    (RenderStage::PostProcessing, ctx);
+    self.execute_stages_after(RenderStage::PostProcessing, ctx);
 
     result_attachment = ctx.get_image_resource("result_attachment");
   }
@@ -2172,6 +2171,19 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
     self.prepared_frame.mesh_instances_buffer = vk_context.upload_staging(
       info.gpu_mesh_instances, *self.mesh_instances_buffer
+    );
+
+    auto meshlet_instance_visibility_mask_size_bytes = (info.max_meshlet_instance_count + 31) / 32 * sizeof(u32);
+    self.meshlet_instance_visibility_mask_buffer = vk_context.resize_buffer(
+      std::move(self.meshlet_instance_visibility_mask_buffer),
+      vuk::MemoryUsage::eGPUonly,
+      meshlet_instance_visibility_mask_size_bytes
+    );
+    auto meshlet_instance_visibility_mask_buffer = vuk::acquire_buf(
+      "meshlet instances visibility mask", *self.meshlet_instance_visibility_mask_buffer, vuk::eNone
+    );
+    self.prepared_frame.meshlet_instance_visibility_mask_buffer = zero_fill_pass(
+      std::move(meshlet_instance_visibility_mask_buffer)
     );
   } else if (self.mesh_instances_buffer) {
     self.prepared_frame.mesh_instances_buffer = vuk::acquire_buf(
