@@ -21,6 +21,7 @@ struct ShaderParameters {
     Image2D<f32> gtao_image;
     ConstantBuffer<Scene> scene;
     ConstantBuffer<Camera> camera;
+    ConstantBuffer<Lights> lights;
 };
 
 func lights_attenuate_point(f32 to_light_dist, f32 cutoff) -> f32 {
@@ -112,7 +113,7 @@ f32x3 calculate_spot_light_contribution(
 }
 
 [[shader("fragment")]]
-func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params, uniform SceneFlags scene_flags) -> f32x4 {
+func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params) -> f32x4 {
     const u32x2 pixel_pos = u32x2(input.position.xy);
     const f32 depth = params.depth_image.load(pixel_pos);
     if (depth == 0.0) {
@@ -132,7 +133,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     const f32 roughness = metallic_roughness_occlusion.y;
     f32 occlusion = metallic_roughness_occlusion.z;
 
-    bool gtao_enabled = scene_flags & SceneFlags::HasGTAO;
+    bool gtao_enabled = params.scene.scene_flags & SceneFlags::HasGTAO;
     f32 screen_space_occlusion = 1.0;
     if (gtao_enabled) {
         screen_space_occlusion = params.gtao_image.load(pixel_pos).r;
@@ -144,9 +145,11 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     const f32x4 world_position_h = mul(params.camera.inv_projection_view, f32x4(NDC, 1.0));
     const f32x3 world_position = world_position_h.xyz / world_position_h.w;
 
+    let directional_light = params.lights.directional_light;
+
     // PBR constants
     const f32x3 V = normalize(params.camera.position.xyz - world_position);
-    const f32x3 L = normalize(params.scene.sun.direction); // temp
+    const f32x3 L = normalize(directional_light.direction);
     const f32x3 N = mapped_normal;
 
     f32x3 diffuse_light = f32x3(0, 0, 0);
@@ -158,12 +161,12 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     f32 sun_cos_theta = dot(L, up_vec);
     f32x2 transmittance_uv = transmittance_params_to_lut_uv(params.scene.atmosphere, f32x2(h, sun_cos_theta));
     f32x3 sun_transmittance = params.sky_transmittance_lut.sample_mip(params.linear_clamp_sampler, transmittance_uv, 0.0).rgb;
-    diffuse_light += sun_transmittance * params.scene.sun.intensity;
+    diffuse_light += sun_transmittance * directional_light.intensity;
 
     f32x3 total_lighting = f32x3(0.0, 0.0, 0.0);
 
-    for(int point_light_idx = 0; point_light_idx < params.scene.light_settings.point_light_count; ++point_light_idx) {
-        PointLight light = params.scene.point_lights[point_light_idx];
+    for(int point_light_idx = 0; point_light_idx < params.lights.point_light_count; point_light_idx++) {
+        PointLight light = params.lights.point_lights[point_light_idx];
 
         f32x3 point_light_contribution = point_light_contribution(
             world_position,
@@ -178,8 +181,8 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
         total_lighting += point_light_contribution;
     }
 
-    for(int spot_light_idx = 0; spot_light_idx < params.scene.light_settings.spot_light_count; ++spot_light_idx) {
-        SpotLight light = params.scene.spot_lights[spot_light_idx];
+    for(int spot_light_idx = 0; spot_light_idx < params.lights.spot_light_count; spot_light_idx++) {
+        SpotLight light = params.lights.spot_lights[spot_light_idx];
 
         f32x3 spot_light_contribution = calculate_spot_light_contribution(
             world_position,
@@ -199,7 +202,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     AtmosphereIntegrateInfo sky_info = {};
     sky_info.eye_pos = ray_pos_planet;
     sky_info.sun_dir = L;
-    sky_info.sun_intensity = params.scene.sun.intensity;
+    sky_info.sun_intensity = directional_light.intensity;
     sky_info.sampling.variable_sample_count = true;
     sky_info.sampling.min_sample_count = 1;
     sky_info.sampling.max_sample_count = 4;

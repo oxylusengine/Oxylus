@@ -139,8 +139,7 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
   vuk::Value<vuk::Buffer> meshlet_instance_visibility_mask_buffer = {};
   vuk::Value<vuk::Buffer> materials_buffer = {};
-  vuk::Value<vuk::Buffer> point_lights_buffer = {};
-  vuk::Value<vuk::Buffer> spot_lights_buffer = {};
+  vuk::Value<vuk::Buffer> lights_buffer{};
 
   u32 line_index_count = 0;
   u32 triangle_index_count = 0;
@@ -210,7 +209,7 @@ private:
   GPU::Scene gpu_scene = {};
 
   option<GPU::Atmosphere> atmosphere = nullopt;
-  option<GPU::Sun> sun = nullopt;
+  option<GPU::Lights> lights = nullopt;
 
   option<GPU::HistogramInfo> histogram_info = nullopt;
 
@@ -225,7 +224,6 @@ private:
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
   vuk::Unique<vuk::Buffer> materials_buffer{};
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
-  vuk::Unique<vuk::Buffer> point_lights_buffer{};
-  vuk::Unique<vuk::Buffer> spot_lights_buffer{};
+  vuk::Unique<vuk::Buffer> lights_buffer{};
 };
 } // namespace ox

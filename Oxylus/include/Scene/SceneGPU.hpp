@@ -130,11 +130,6 @@ struct Mesh {
   alignas(4) Bounds bounds = {};
 };
 
-struct Sun {
-  alignas(4) glm::vec3 direction = {};
-  alignas(4) f32 intensity = 10.0f;
-};
-
 constexpr static f32 CAMERA_SCALE_UNIT = 0.01f;
 constexpr static f32 INV_CAMERA_SCALE_UNIT = 1.0f / CAMERA_SCALE_UNIT;
 constexpr static f32 PLANET_RADIUS_OFFSET = 0.001f;
@@ -198,11 +193,27 @@ struct CameraData {
   alignas(4) f32 acceptable_lod_error = 2.0f; // TODO: Make this configurable
 };
 
+#define MAX_POINT_LIGHTS 1024
+#define MAX_SPOT_LIGHTS 1024
+
+#define MAX_DIRECTIONAL_SHADOW_CASCADES 4
+#define DIRECTIONAL_SHADOW_MAP_SIZE 2048
+struct DirectionalLight {
+  alignas(4) glm::vec3 direction = {};
+  alignas(4) f32 intensity = 10.0f;
+
+  alignas(4) glm::mat4 light_view_projection[MAX_DIRECTIONAL_SHADOW_CASCADES] = {};
+  alignas(4) glm::vec4 cascade_splits = {};
+  alignas(4) glm::vec4 cascade_offsets[MAX_DIRECTIONAL_SHADOW_CASCADES] = {};
+  alignas(4) glm::vec4 cascade_scales[MAX_DIRECTIONAL_SHADOW_CASCADES] = {};
+  alignas(4) u32 cascade_count = 0;
+};
+
 struct PointLight {
-  glm::vec3 position;
-  glm::vec3 color;
-  f32 intensity;
-  f32 cutoff;
+  alignas(4) glm::vec3 position;
+  alignas(4) glm::vec3 color;
+  alignas(4) f32 intensity;
+  alignas(4) f32 cutoff;
 };
 
 struct SpotLight {
@@ -215,9 +226,17 @@ struct SpotLight {
   alignas(4) f32 outer_cone_angle;
 };
 
+struct Lights {
+  alignas(4) DirectionalLight direction_light = {};
+  alignas(4) u32 point_light_count = 0;
+  alignas(4) u32 spot_light_count = 0;
+  alignas(4) PointLight point_lights[MAX_POINT_LIGHTS] = {};
+  alignas(4) SpotLight spot_lights[MAX_SPOT_LIGHTS] = {};
+};
+
 enum class SceneFlags : u32 {
   None = 0,
-  HasSun = 1 << 0,
+  HasDirectionalLight = 1 << 0,
   HasAtmosphere = 1 << 1,
   HasEyeAdaptation = 1 << 2,
   HasBloom = 1 << 3,
@@ -229,19 +248,10 @@ enum class SceneFlags : u32 {
 };
 consteval void enable_bitmask(SceneFlags);
 
-struct LightSettings {
-  alignas(4) u32 point_light_count = 0;
-  alignas(4) u32 spot_light_count = 0;
-};
-
 struct Scene {
   alignas(4) SceneFlags scene_flags;
-  alignas(4) LightSettings light_settings;
-
   alignas(4) Atmosphere atmosphere;
-  alignas(4) Sun sun;
-  alignas(8) u64 point_lights;
-  alignas(8) u64 spot_lights;
+  alignas(8) u64 lights;
 };
 
 constexpr static u32 HISTOGRAM_THREADS_X = 16;

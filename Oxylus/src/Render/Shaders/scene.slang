@@ -158,11 +158,6 @@ public struct Camera {
   public f32 acceptable_lod_error;
 };
 
-public struct Sun {
-    public f32x3 direction;
-    public f32   intensity;
-};
-
 public struct Atmosphere {
     public f32x3 eye_pos;
 
@@ -189,6 +184,35 @@ public struct Atmosphere {
     public i32x3 aerial_perspective_lut_size;
 };
 
+public enum SceneFlags : u32 {
+  None = 0,
+  HasDirectionalLight = 1 << 0,
+  HasAtmosphere = 1 << 1,
+  HasEyeAdaptation = 1 << 2,
+  HasBloom = 1 << 3,
+  HasFXAA = 1 << 4,
+  HasGTAO = 1 << 5,
+  HasFilmGrain = 1 << 6,
+  HasChromaticAberration = 1 << 7,
+  HasVignette = 1 << 8,
+};
+
+#define MAX_POINT_LIGHTS 1024
+#define MAX_SPOT_LIGHTS 1024
+
+#define MAX_DIRECTIONAL_SHADOW_CASCADES 4
+#define DIRECTIONAL_SHADOW_MAP_SIZE 2048
+public struct DirectionalLight {
+  public f32x3 direction;
+  public f32 intensity;
+
+  public f32x4x4 light_view_projection[MAX_DIRECTIONAL_SHADOW_CASCADES];
+  public f32x4 cascade_splits;
+  public f32x4 cascade_offsets[MAX_DIRECTIONAL_SHADOW_CASCADES];
+  public f32x4 cascade_scales[MAX_DIRECTIONAL_SHADOW_CASCADES];
+  public u32 cascade_count;
+};
+
 public struct PointLight {
   public f32x3 position;
   public f32x3 color;
@@ -206,32 +230,18 @@ public struct SpotLight {
   public f32 outer_cone_angle;
 };
 
-public enum SceneFlags : u32 {
-  None = 0,
-  HasSun = 1 << 0,
-  HasAtmosphere = 1 << 1,
-  HasEyeAdaptation = 1 << 2,
-  HasBloom = 1 << 3,
-  HasFXAA = 1 << 4,
-  HasGTAO = 1 << 5,
-  HasFilmGrain = 1 << 6,
-  HasChromaticAberration = 1 << 7,
-  HasVignette = 1 << 8,
-};
-
-public struct LightSettings {
+public struct Lights {
+  public DirectionalLight directional_light;
   public u32 point_light_count = 0;
   public u32 spot_light_count = 0;
+  public PointLight point_lights[MAX_POINT_LIGHTS];
+  public SpotLight spot_lights[MAX_SPOT_LIGHTS];
 };
 
 public struct Scene {
   public SceneFlags scene_flags;
-  public LightSettings light_settings;
-
   public Atmosphere atmosphere;
-  public Sun sun;
-  public PointLight* point_lights;
-  public SpotLight* spot_lights;
+  public Lights* lights;
 };
 
 public struct Transform {
