@@ -145,6 +145,99 @@ RendererInstance::RendererInstance(Scene* owner_scene, Renderer& parent_renderer
 
 RendererInstance::~RendererInstance() {}
 
+auto RendererInstance::add_stage_callback(this RendererInstance& self, RenderStageCallback callback) -> void {
+  ZoneScoped;
+  self.stage_callbacks_.emplace_back(std::move(callback));
+  self.rebuild_execution_order();
+}
+
+auto RendererInstance::clear_stages(this RendererInstance& self) -> void {
+  ZoneScoped;
+  self.stage_callbacks_.clear();
+}
+
+auto RendererInstance::rebuild_execution_order(this RendererInstance& self) -> void {
+  ZoneScoped;
+
+  constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
+  if (self.before_callbacks_.size() != stage_count) {
+    self.before_callbacks_.resize(stage_count);
+  }
+  if (self.after_callbacks_.size() != stage_count) {
+    self.after_callbacks_.resize(stage_count);
+  }
+
+  for (auto& vec : self.before_callbacks_)
+    vec.clear();
+  for (auto& vec : self.after_callbacks_)
+    vec.clear();
+
+  std::sort(
+    self.stage_callbacks_.begin(),
+    self.stage_callbacks_.end(),
+    [](const RenderStageCallback& a, const RenderStageCallback& b) { return a.dependency.order < b.dependency.order; }
+  );
+
+  for (usize i = 0; i < self.stage_callbacks_.size(); ++i) {
+    const auto& callback = self.stage_callbacks_[i];
+    usize stage_index = static_cast<usize>(callback.dependency.target_stage);
+
+    if (callback.dependency.position == StagePosition::Before) {
+      self.before_callbacks_[stage_index].emplace_back(i);
+    } else {
+      self.after_callbacks_[stage_index].emplace_back(i);
+    }
+  }
+}
+
+auto
+RendererInstance::execute_stages_before(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx)
+  -> void {
+  ZoneScoped;
+
+  usize stage_index = static_cast<usize>(stage);
+
+  for (usize callback_idx : self.before_callbacks_[stage_index]) {
+    const auto& callback = self.stage_callbacks_[callback_idx];
+    callback.callback(ctx);
+  }
+}
+
+auto
+RendererInstance::execute_stages_after(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx)
+  -> void {
+  ZoneScoped;
+
+  usize stage_index = static_cast<usize>(stage);
+
+  for (usize callback_idx : self.after_callbacks_[stage_index]) {
+    const auto& callback = self.stage_callbacks_[callback_idx];
+    callback.callback(ctx);
+  }
+}
+
+auto RendererInstance::add_stage_before(
+  this RendererInstance& self,
+  RenderStage stage,
+  const std::string& name,
+  std::function<void(RenderStageContext&)> callback,
+  int order
+) -> void {
+  StageDependency dep{.target_stage = stage, .position = StagePosition::Before, .order = order};
+  self.add_stage_callback(RenderStageCallback{.callback = std::move(callback), .dependency = dep, .name = name});
+}
+
+auto RendererInstance::add_stage_after(
+  this RendererInstance& self,
+  RenderStage stage,
+  const std::string& name,
+  std::function<void(RenderStageContext&)> callback,
+  int order
+) -> void {
+  StageDependency dep{.target_stage = stage, .position = StagePosition::After, .order = order};
+  self.add_stage_callback(RenderStageCallback{.callback = std::move(callback), .dependency = dep, .name = name});
+}
+
 static auto cull_meshes(
   GPU::CullFlags cull_flags,
   u32 mesh_instance_count,
@@ -816,6 +909,20 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       materials_buffer,
       camera_buffer
     );
+
+    RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, vk_context);
+    ctx.set_viewport_size(self.viewport_size)
+      .set_image_resource("depth_attachment", std::move(depth_attachment))
+      .set_image_resource("visbuffer_attachment", std::move(visbuffer_attachment))
+      .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances_buffer))
+      .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances_buffer));
+
+    self.execute_stages_after(RenderStage::VisBufferEncode, ctx);
+
+    depth_attachment = ctx.get_image_resource("depth_attachment");
+    visbuffer_attachment = ctx.get_image_resource("visbuffer_attachment");
+    meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
+    mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
 
     auto vis_decode_pass = vuk::make_pass( //
         "vis decode",
@@ -1724,6 +1831,13 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       std::move(bloom_up_image),
       std::move(exposure_buffer_value)
     );
+
+    RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, vk_context);
+    ctx.set_viewport_size(self.viewport_size).set_image_resource("result_attachment", std::move(result_attachment));
+
+    self.execute_stages_after(RenderStage::PostProcessing, ctx);
+
+    result_attachment = ctx.get_image_resource("result_attachment");
   }
 
   auto debug_renderer_enabled = (bool)RendererCVar::cvar_enable_debug_renderer.get();
@@ -1772,6 +1886,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       result_attachment, depth_attachment, debug_renderer_verticies_buffer, camera_buffer
     );
   }
+
+  self.clear_stages();
 
   return debugging ? final_attachment : result_attachment;
 }

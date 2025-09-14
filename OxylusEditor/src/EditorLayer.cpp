@@ -47,12 +47,13 @@ void EditorLayer::on_attach() {
 
   engine_banner = std::make_shared<Texture>();
   engine_banner->create(
-      {},
-      {.preset = Preset::eRTT2DUnmipped,
-       .format = vuk::Format::eR8G8B8A8Srgb,
-       .mime = {},
-       .loaded_data = EngineBanner,
-       .extent = vuk::Extent3D{.width = EngineBannerWidth, .height = EngineBannerHeight, .depth = 1u}});
+    {},
+    {.preset = Preset::eRTT2DUnmipped,
+     .format = vuk::Format::eR8G8B8A8Srgb,
+     .mime = {},
+     .loaded_data = EngineBanner,
+     .extent = vuk::Extent3D{.width = EngineBannerWidth, .height = EngineBannerHeight, .depth = 1u}}
+  );
 
   auto scene_hierarchy_panel = add_panel<SceneHierarchyPanel>();
   add_panel<ContentPanel>();
@@ -233,7 +234,7 @@ void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format
         if (ImGui::BeginMenu("Window")) {
           if (ImGui::MenuItem("Add viewport", nullptr)) {
             viewport_panels.emplace_back(std::make_unique<ViewportPanel>())
-                ->set_context(editor_scene.get(), *get_panel<SceneHierarchyPanel>());
+              ->set_context(editor_scene.get(), *get_panel<SceneHierarchyPanel>());
           }
           ImGui::MenuItem("Inspector", nullptr, &get_panel<InspectorPanel>()->visible);
           ImGui::MenuItem("Scene hierarchy", nullptr, &get_panel<SceneHierarchyPanel>()->visible);
@@ -271,7 +272,8 @@ void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format
           // Project name text
           const std::string& project_name = active_project->get_config().name;
           ImGui::SetCursorPos(
-              ImVec2(ImGui::GetMainViewport()->Size.x - 10 - ImGui::CalcTextSize(project_name.c_str()).x, 0));
+            ImVec2(ImGui::GetMainViewport()->Size.x - 10 - ImGui::CalcTextSize(project_name.c_str()).x, 0)
+          );
           ImGuiScoped::StyleColor b_color1(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
           ImGuiScoped::StyleColor b_color2(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
           ImGui::Button(project_name.c_str());
@@ -351,25 +353,25 @@ void EditorLayer::open_scene_file_dialog() {
   const auto& window = App::get()->get_window();
   FileDialogFilter dialog_filters[] = {{.name = "Oxylus scene file(.oxscene)", .pattern = "oxscene"}};
   window.show_dialog({
-      .kind = DialogKind::OpenFile,
-      .user_data = this,
-      .callback =
-          [](void* user_data, const c8* const* files, i32) {
-            auto* layer = static_cast<EditorLayer*>(user_data);
-            if (!files || !*files) {
-              return;
-            }
+    .kind = DialogKind::OpenFile,
+    .user_data = this,
+    .callback =
+      [](void* user_data, const c8* const* files, i32) {
+        auto* layer = static_cast<EditorLayer*>(user_data);
+        if (!files || !*files) {
+          return;
+        }
 
-            const auto first_path_cstr = *files;
-            const auto first_path_len = std::strlen(first_path_cstr);
-            const auto path = std::string(first_path_cstr, first_path_len);
-            if (!path.empty())
-              layer->open_scene(path);
-          },
-      .title = "Oxylus scene file...",
-      .default_path = fs::current_path(),
-      .filters = dialog_filters,
-      .multi_select = false,
+        const auto first_path_cstr = *files;
+        const auto first_path_len = std::strlen(first_path_cstr);
+        const auto path = std::string(first_path_cstr, first_path_len);
+        if (!path.empty())
+          layer->open_scene(path);
+      },
+    .title = "Oxylus scene file...",
+    .default_path = fs::current_path(),
+    .filters = dialog_filters,
+    .multi_select = false,
   });
 }
 
@@ -422,32 +424,32 @@ void EditorLayer::save_scene_as() {
   const auto& window = App::get()->get_window();
   FileDialogFilter dialog_filters[] = {{.name = "Oxylus Scene(.oxscene)", .pattern = "oxscene"}};
   window.show_dialog({
-      .kind = DialogKind::SaveFile,
-      .user_data = this,
-      .callback =
-          [](void* user_data, const c8* const* files, i32) {
-            const auto layer = static_cast<EditorLayer*>(user_data);
-            if (!files || !*files) {
-              return;
-            }
+    .kind = DialogKind::SaveFile,
+    .user_data = this,
+    .callback =
+      [](void* user_data, const c8* const* files, i32) {
+        const auto layer = static_cast<EditorLayer*>(user_data);
+        if (!files || !*files) {
+          return;
+        }
 
-            const auto first_path_cstr = *files;
-            const auto first_path_len = std::strlen(first_path_cstr);
-            const auto path = std::string(first_path_cstr, first_path_len);
+        const auto first_path_cstr = *files;
+        const auto first_path_len = std::strlen(first_path_cstr);
+        const auto path = std::string(first_path_cstr, first_path_len);
 
-            if (!path.empty()) {
-              auto* job_man = App::get_job_manager();
-              job_man->push_job_name("Saving scene");
-              job_man->submit(Job::create([s = layer->editor_scene.get(), path]() { s->save_to_file(path); }));
-              job_man->pop_job_name();
+        if (!path.empty()) {
+          auto* job_man = App::get_job_manager();
+          job_man->push_job_name("Saving scene");
+          job_man->submit(Job::create([s = layer->editor_scene.get(), path]() { s->save_to_file(path); }));
+          job_man->pop_job_name();
 
-              layer->last_save_scene_path = path;
-            }
-          },
-      .title = "New Scene...",
-      .default_path = "NewScene.oxscene",
-      .filters = dialog_filters,
-      .multi_select = false,
+          layer->last_save_scene_path = path;
+        }
+      },
+    .title = "New Scene...",
+    .default_path = "NewScene.oxscene",
+    .filters = dialog_filters,
+    .multi_select = false,
   });
 }
 
@@ -466,10 +468,10 @@ void EditorLayer::on_scene_stop() {
   set_editor_context(editor_scene);
 
   editor_scene->world
-      .query_builder() //
-      .with<TransformComponent>()
-      .build()
-      .each([](flecs::entity e) { e.modified<TransformComponent>(); });
+    .query_builder() //
+    .with<TransformComponent>()
+    .build()
+    .each([](flecs::entity e) { e.modified<TransformComponent>(); });
 }
 
 void EditorLayer::on_scene_simulate() {
@@ -514,7 +516,8 @@ void EditorLayer::set_docking_layout(EditorLayout layout) {
     ImGuiID left_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.85f, nullptr, &dockspace_id);
     const ImGuiID left_bottom_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Down, 0.3f, nullptr, &left_dock);
     const ImGuiID left_vertical_split_dock = ImGui::DockBuilderSplitNode(
-        left_dock, ImGuiDir_Left, 0.2f, nullptr, &left_dock);
+      left_dock, ImGuiDir_Left, 0.2f, nullptr, &left_dock
+    );
 
     ImGui::DockBuilderDockWindow(get_panel<InspectorPanel>()->get_id(), right_dock);
     ImGui::DockBuilderDockWindow(viewport_panels[0]->get_id(), left_dock);

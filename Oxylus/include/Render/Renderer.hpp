@@ -20,7 +20,6 @@ public:
     vuk::Extent3D extent;
     vuk::Format format;
     glm::uvec2 viewport_offset = {};
-    option<glm::uvec2> picking_texel = nullopt;
   };
 
   Renderer(VkContext* vk_context);

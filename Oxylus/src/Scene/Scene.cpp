@@ -1370,6 +1370,7 @@ auto Scene::add_transform(this Scene& self, flecs::entity entity) -> GPU::Transf
 
   auto id = self.transforms.create_slot();
   self.entity_transforms_map.emplace(entity, id);
+  self.transform_index_entities_map.emplace(SlotMap_decode_id(id).index, entity);
 
   return id;
 }
@@ -1382,6 +1383,7 @@ auto Scene::remove_transform(this Scene& self, flecs::entity entity) -> void {
     return;
   }
 
+  self.transform_index_entities_map.erase(SlotMap_decode_id(it->second).index);
   self.transforms.destroy_slot(it->second);
   self.entity_transforms_map.erase(it);
 }
