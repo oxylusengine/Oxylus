@@ -503,14 +503,6 @@ void ViewportPanel::draw_settings_panel() {
 
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
-  if (ImGui::TreeNodeEx("Scene", TREE_FLAGS, "%s", "Scene")) {
-    const auto entities_count = _scene->world.count<TransformComponent>();
-    ImGui::Text("Entities with transforms: %d", entities_count);
-    ImGui::TreePop();
-  }
-
-  if (open_action != -1)
-    ImGui::SetNextItemOpen(open_action != 0);
   if (ImGui::TreeNodeEx("Renderer", TREE_FLAGS, "%s", "Renderer")) {
     ImGui::Text("GPU: %s", App::get_vkcontext().device_name.c_str());
     if (UI::icon_button(ICON_MDI_RELOAD, "Reload renderer"))
@@ -558,6 +550,8 @@ void ViewportPanel::draw_settings_panel() {
         UI::property("Enabled", (bool*)RendererCVar::cvar_bloom_enable.get_ptr());
         UI::property<float>("Threshold", RendererCVar::cvar_bloom_threshold.get_ptr(), 0, 5);
         UI::property<float>("Clamp", RendererCVar::cvar_bloom_clamp.get_ptr(), 0, 5);
+        const char* quality_levels[4] = {"Low", "Medium", "High", "Ultra"};
+        UI::property("Quality Level", RendererCVar::cvar_bloom_quality_level.get_ptr(), quality_levels, 4);
         UI::end_properties();
       }
       ImGui::TreePop();
@@ -578,7 +572,8 @@ void ViewportPanel::draw_settings_panel() {
     if (ImGui::TreeNodeEx("GTAO", TREE_FLAGS, "%s", "GTAO")) {
       if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
         UI::property("Enabled", (bool*)RendererCVar::cvar_vbgtao_enable.get_ptr());
-        UI::property("Quality Level", RendererCVar::cvar_vbgtao_quality_level.get_ptr(), 1, 4);
+        const char* quality_levels[4] = {"Low", "Medium", "High", "Ultra"};
+        UI::property("Quality Level", RendererCVar::cvar_vbgtao_quality_level.get_ptr(), quality_levels, 4);
         UI::property<float>("Radius", RendererCVar::cvar_vbgtao_radius.get_ptr(), 0.1, 5);
         UI::property<float>("Thickness", RendererCVar::cvar_vbgtao_thickness.get_ptr(), 0.0f, 5.f);
         UI::property<float>("Final Power", RendererCVar::cvar_vbgtao_final_power.get_ptr(), 0, 10);

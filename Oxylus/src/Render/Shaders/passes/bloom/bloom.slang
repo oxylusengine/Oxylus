@@ -39,19 +39,46 @@ public f32x3 downsample(Image2D<f32x4> src, SamplerState sampler, f32x2 uv, floa
 }
 
 public f32x3 upsample(Image2D<f32x4> src, SamplerState sampler, f32x2 uv) {
-  f32x3 result = src.SampleLevel(sampler, uv, 0, i32x2(-1, 1)).rgb * 1.0;
-  result += src.SampleLevel(sampler, uv, 0, i32x2( 0, 1)).rgb * 2.0;
-  result += src.SampleLevel(sampler, uv, 0, i32x2( 1, 1)).rgb * 1.0;
+  u32 width, height, levels;
+  src.GetDimensions(0, width, height, levels);
+  f32x2 texel_size = 1.0 / f32x2(width, height);
 
-  result += src.SampleLevel(sampler, uv, 0, i32x2(-1, 0)).rgb * 2.0;
-  result += src.SampleLevel(sampler, uv, 0).rgb * 4.0;
-  result += src.SampleLevel(sampler, uv, 0, i32x2( 1, 0)).rgb * 2.0;
+  f32x4 red_samples = src.GatherRed(sampler, uv);
+  f32x4 green_samples = src.GatherGreen(sampler, uv);
+  f32x4 blue_samples = src.GatherBlue(sampler, uv);
 
-  result += src.SampleLevel(sampler, uv, 0, i32x2(-1, -1)).rgb * 1.0;
-  result += src.SampleLevel(sampler, uv, 0, i32x2( 0, -1)).rgb * 2.0;
-  result += src.SampleLevel(sampler, uv, 0, i32x2( 1, -1)).rgb * 1.0;
+  f32x3 top_left = src.SampleLevel(sampler, uv + f32x2(-texel_size.x, texel_size.y), 0).rgb;
+  f32x3 top_center = src.SampleLevel(sampler, uv + f32x2(0, texel_size.y), 0).rgb;
+  f32x3 left_center = src.SampleLevel(sampler, uv + f32x2(-texel_size.x, 0), 0).rgb;
+  f32x3 bottom_left = src.SampleLevel(sampler, uv + f32x2(-texel_size.x, -texel_size.y), 0).rgb;
+  f32x3 bottom_center = src.SampleLevel(sampler, uv + f32x2(0, -texel_size.y), 0).rgb;
+
+  f32x3 top_right = f32x3(red_samples.x, green_samples.x, blue_samples.x);
+  f32x3 center = f32x3(red_samples.z, green_samples.z, blue_samples.z);
+  f32x3 right_center = f32x3(red_samples.w, green_samples.w, blue_samples.w);
+  f32x3 bottom_right = f32x3(red_samples.y, green_samples.y, blue_samples.y);
+
+  f32x3 result = top_left * 1.0 + top_center * 2.0 + top_right * 1.0;
+  result += left_center * 2.0 + center * 4.0 + right_center * 2.0;
+  result += bottom_left * 1.0 + bottom_center * 2.0 + bottom_right * 1.0;
 
   return result / 16.0;
+}
+
+public f32x3 upsample_simple(Image2D<f32x4> src, SamplerState sampler, f32x2 uv, f32x2 texel_size) {
+  f32x2 offsets[4] = {
+    f32x2(-texel_size.x, -texel_size.y),
+    f32x2( texel_size.x, -texel_size.y),
+    f32x2(-texel_size.x,  texel_size.y),
+    f32x2( texel_size.x,  texel_size.y)
+  };
+
+  f32x3 result = 0.0;
+  for (u32 i = 0; i < 4; i++) {
+    result += src.SampleLevel(sampler, uv + offsets[i], 0).rgb;
+  }
+
+  return result * 0.25;
 }
 
 public f32x3 prefilter(f32x3 color, f32 clamp_value, f32 threshold, f32 epsilon) {

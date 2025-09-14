@@ -17,8 +17,7 @@ AlignConsecutiveShortCaseStatements:
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
 AlignOperands: true
-# LambdaBodyIndentation: OuterScope
-AlignEscapedNewlines: Left
+AlignEscapedNewlines: false
 PackConstructorInitializers: CurrentLine
 BreakArrays: true
 AlignTrailingComments:
@@ -57,4 +56,6 @@ SpacesInAngles: false
 TabWidth: 2
 UseTab: Never
 PenaltyBreakAssignment: 300
-#PenaltyBreakBeforeFirstCallParameter: 300
+IndentWidth: 2
+BracedInitializerIndentWidth: 2
+ContinuationIndentWidth: 2

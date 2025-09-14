@@ -25,13 +25,13 @@ inline AutoCVar_Int cvar_culling_triangle("rr.culling_triangle", "Triangle culli
 inline AutoCVar_Int cvar_reload_renderer("rr.reload_renderer", "reload renderer", 0);
 
 inline AutoCVar_Int cvar_vbgtao_enable("pp.vbgtao", "use vbgtao", 1);
-inline AutoCVar_Int cvar_vbgtao_quality_level("pp.vbgtao_quality_level", "vbgtao quality level", 3);
+inline AutoCVar_Int cvar_vbgtao_quality_level("pp.vbgtao_quality_level", "0: Low, 1: Medium, 2: High, 3: Ultra", 3);
 inline AutoCVar_Float cvar_vbgtao_thickness("pp.vbgtao_thickness", "vbgtao thickness", 0.25f);
 inline AutoCVar_Float cvar_vbgtao_radius("pp.vbgtao_radius", "vbgtao radius", 0.5f);
 inline AutoCVar_Float cvar_vbgtao_final_power("pp.vbgtao_final_power", "vbgtao final power", 1.2f);
 
 inline AutoCVar_Int cvar_bloom_enable("pp.bloom", "use bloom", 1);
-inline AutoCVar_Int cvar_bloom_mips("pp.bloom_mips", "amount of mips used in bloom pass", 8);
+inline AutoCVar_Int cvar_bloom_quality_level("pp.bloom_quality_level", "0: Low, 1: Medium, 2: High, 3: Ultra", 3);
 inline AutoCVar_Float cvar_bloom_threshold("pp.bloom_threshold", "bloom threshold", 2.5f);
 inline AutoCVar_Float cvar_bloom_clamp("pp.bloom_clamp", "bloom clmap", 3);
 
