@@ -45,7 +45,6 @@ func gaussian_blur(
 }
 
 [[shader("fragment")]]
-[[numthreads(16, 16, 1)]]
 func fs_main(
   VertexOutput input,
   uniform ParameterBlock<ShaderParameters> params
