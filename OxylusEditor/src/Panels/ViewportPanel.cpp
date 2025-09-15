@@ -162,9 +162,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
     auto renderer_instance = _scene->get_renderer_instance();
     if (renderer_instance != nullptr) {
       constexpr auto get_mouse_texel_coords =
-        [](
-          glm::uvec2 render_size, glm::vec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos
-        ) -> glm::uvec2 {
+        [](glm::uvec2 render_size, glm::vec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos)
+        -> glm::uvec2 {
         ImVec2 rendered_min = {window_pos.x + content_min.x, window_pos.y + content_min.y};
         ImVec2 rendered_max = {window_pos.x + content_max.x, window_pos.y + content_max.y};
         ImVec2 rendered_size = {rendered_max.x - rendered_min.x, rendered_max.y - rendered_min.y};
@@ -184,7 +183,11 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
 
       auto mouse_pos = ImGui::GetMousePos();
       glm::uvec2 picking_texel = get_mouse_texel_coords(
-        {extent.width, extent.height}, _viewport_position, viewport_min_region, viewport_max_region, mouse_pos
+        {extent.width, extent.height},
+        _viewport_position,
+        viewport_min_region,
+        viewport_max_region,
+        mouse_pos
       );
 
       renderer_instance->add_stage_after(
@@ -205,20 +208,22 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             [picking_texel](
               vuk::CommandBuffer& cmd_list,
               VUK_BA(vuk::eComputeWrite) buffer,
-              VUK_IA(vuk::eComputeSampled) visbuffer,
-              VUK_BA(vuk::eComputeRead) meshlet_instances,
-              VUK_BA(vuk::eComputeRead) mesh_instances
+              VUK_IA(vuk::eComputeSampled) visbuffer_,
+              VUK_BA(vuk::eComputeRead) meshlet_instances_,
+              VUK_BA(vuk::eComputeRead) mesh_instances_
             ) {
               cmd_list.bind_compute_pipeline("mouse_picking_pipeline")
-                .bind_buffer(0, 0, meshlet_instances)
-                .bind_buffer(0, 1, mesh_instances)
-                .bind_image(0, 2, visbuffer)
+                .bind_buffer(0, 0, meshlet_instances_)
+                .bind_buffer(0, 1, mesh_instances_)
+                .bind_image(0, 2, visbuffer_)
                 .push_constants(
-                  vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(picking_texel, buffer->device_address)
+                  vuk::ShaderStageFlagBits::eCompute,
+                  0,
+                  PushConstants(picking_texel, buffer->device_address)
                 )
                 .dispatch(1, 1, 1);
 
-              return std::make_tuple(buffer, visbuffer, meshlet_instances, mesh_instances);
+              return std::make_tuple(buffer, visbuffer_, meshlet_instances_, mesh_instances_);
             }
           );
 
@@ -229,7 +234,9 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
           auto read_pass = vuk::make_pass(
             "mouse_picking_read_pass",
             [s, viewport_hovered, using_gizmo](
-              vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eHostRead) buffer, VUK_IA(vuk::eComputeSampled) visbuffer
+              vuk::CommandBuffer& cmd_list,
+              VUK_BA(vuk::eHostRead) buffer,
+              VUK_IA(vuk::eComputeSampled) visbuffer_
             ) {
               u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
 
@@ -260,7 +267,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
                 }
               }
 
-              return std::make_tuple(buffer, visbuffer);
+              return std::make_tuple(buffer, visbuffer_);
             }
           );
 
@@ -280,11 +287,11 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             [s](
               vuk::CommandBuffer& cmd_list,
               VUK_IA(vuk::eComputeRW) result,
-              VUK_BA(vuk::eHostRead) buffer,
-              VUK_IA(vuk::eComputeSampled) visbuffer,
+              VUK_BA(vuk::eHostRead) entity_buffer,
+              VUK_IA(vuk::eComputeSampled) visbuffer_,
               VUK_IA(vuk::eComputeSampled) depth,
-              VUK_BA(vuk::eComputeRead) meshlet_instances,
-              VUK_BA(vuk::eComputeRead) mesh_instances
+              VUK_BA(vuk::eComputeRead) meshlet_instances_,
+              VUK_BA(vuk::eComputeRead) mesh_instances_
             ) {
               auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
                 .magFilter = vuk::Filter::eNearest,
@@ -319,36 +326,41 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
                   }
                 }
 
-                auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
-                std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
-                cmd_list.bind_compute_pipeline("highlighting_pipeline")
-                  .bind_buffer(0, 0, meshlet_instances)
-                  .bind_buffer(0, 1, mesh_instances)
-                  .bind_image(0, 2, visbuffer)
-                  .bind_image(0, 3, depth)
-                  .bind_image(0, 4, result)
-                  .bind_sampler(0, 6, nearest_clamp_sampler)
-                  .push_constants(
-                    vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size())
-                  )
-                  .dispatch_invocations_per_pixel(visbuffer);
+                if (transform_indices.empty()) {
+                  auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
+                  std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
+                  cmd_list.bind_compute_pipeline("highlighting_pipeline")
+                    .bind_buffer(0, 0, meshlet_instances_)
+                    .bind_buffer(0, 1, mesh_instances_)
+                    .bind_image(0, 2, visbuffer_)
+                    .bind_image(0, 3, depth)
+                    .bind_image(0, 4, result)
+                    .bind_sampler(0, 6, nearest_clamp_sampler)
+                    .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size()))
+                    .dispatch_invocations_per_pixel(visbuffer_);
+                }
               }
 
-              return std::make_tuple(result, buffer, visbuffer, depth, meshlet_instances, mesh_instances);
+              return std::make_tuple(result, entity_buffer, visbuffer_, depth, meshlet_instances_, mesh_instances_);
             }
           );
 
-          // std::tie(
-          //   highlight_attachment, readback_buffer, visbuffer, depth_attachment, meshlet_instances, mesh_instances
-          // ) =
-          //   highlight_pass(
-          //     std::move(highlight_attachment),
-          //     std::move(readback_buffer),
-          //     std::move(visbuffer),
-          //     std::move(depth_attachment),
-          //     std::move(meshlet_instances),
-          //     std::move(mesh_instances)
-          //   );
+          std::tie(
+            highlight_attachment,
+            readback_buffer,
+            visbuffer,
+            depth_attachment,
+            meshlet_instances,
+            mesh_instances
+          ) =
+            highlight_pass(
+              std::move(highlight_attachment),
+              std::move(readback_buffer),
+              std::move(visbuffer),
+              std::move(depth_attachment),
+              std::move(meshlet_instances),
+              std::move(mesh_instances)
+            );
 
           ctx.set_shared_image_resource("highlight_attachment", highlight_attachment)
             .set_image_resource("depth_attachment", std::move(depth_attachment))
@@ -358,8 +370,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
         }
       );
 
-      renderer_instance->add_stage_after(
-        RenderStage::PostProcessing, "entity_highlighting", [](RenderStageContext& ctx) {
+      renderer_instance
+        ->add_stage_after(RenderStage::PostProcessing, "entity_highlighting", [](RenderStageContext& ctx) {
           auto result_attachment = ctx.get_image_resource("result_attachment");
           auto highlight_attachment = ctx.get_shared_image_resource("highlight_attachment");
 
@@ -393,12 +405,12 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             }
           );
 
-          // std::tie(result_attachment, highlight_attachment) = highlight_pass(result_attachment, *highlight_attachment);
+          // std::tie(result_attachment, highlight_attachment) = highlight_pass(result_attachment,
+          // *highlight_attachment);
 
           ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
             .set_image_resource("result_attachment", std::move(result_attachment));
-        }
-      );
+        });
 
       const Renderer::RenderInfo render_info = {
         .extent = extent,
@@ -408,7 +420,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       auto scene_view_image = renderer_instance->render(render_info);
       _scene->on_viewport_render(extent, format);
       ImGui::Image(
-        app->get_imgui_layer()->add_image(std::move(scene_view_image)), ImVec2{fixed_width, _viewport_panel_size.y}
+        app->get_imgui_layer()->add_image(std::move(scene_view_image)),
+        ImVec2{fixed_width, _viewport_panel_size.y}
       );
     } else {
       const auto warning_text = "No scene render output!";
@@ -499,7 +512,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       const ImVec2 button_size = {frame_height, frame_height};
       constexpr float button_count = 8.0f;
       const ImVec2 gizmo_position = {
-        _viewport_bounds[0].x + _gizmo_position.x, _viewport_bounds[0].y + _gizmo_position.y
+        _viewport_bounds[0].x + _gizmo_position.x,
+        _viewport_bounds[0].y + _gizmo_position.y
       };
       const ImRect bb(
         gizmo_position.x,
@@ -561,7 +575,11 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
           auto& cam = editor_camera.get_mut<CameraComponent>();
           UI::push_id();
           if (UI::toggle_button(
-                ICON_MDI_CAMERA, cam.projection == CameraComponent::Projection::Orthographic, button_size, alpha, alpha
+                ICON_MDI_CAMERA,
+                cam.projection == CameraComponent::Projection::Orthographic,
+                button_size,
+                alpha,
+                alpha
               ))
             cam.projection = cam.projection == CameraComponent::Projection::Orthographic
                                ? CameraComponent::Projection::Perspective
@@ -728,7 +746,7 @@ void ViewportPanel::on_update() {
   cam.zoom = static_cast<float>(EditorCVar::cvar_camera_zoom.get());
 }
 
-void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw_scene_stats) {
+void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw) {
   if (!performance_overlay_visible)
     return;
   auto work_pos = ImVec2(_viewport_position.x, _viewport_position.y);
@@ -747,12 +765,12 @@ void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw_scene_sta
   ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
   ImGui::SetNextWindowViewport(viewport->ID);
   ImGui::SetNextWindowBgAlpha(0.35f);
-  ImGui::SetNextWindowSize(draw_scene_stats ? ImVec2({220.f, 0.f}) : ImVec2(0.f, 0.f));
+  ImGui::SetNextWindowSize(draw ? ImVec2({220.f, 0.f}) : ImVec2(0.f, 0.f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   if (ImGui::Begin("##Performance Overlay", nullptr, window_flags)) {
     ImGui::Text("%.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-    if (draw_scene_stats) {
+    if (draw) {
       ImGui::Text("Render resolution: %dx%d", extent.width, extent.height);
       ImGui::Text("Scripts in scene: %zu", _scene->get_lua_systems().size());
       const auto transform_entities_count = _scene->world.count<TransformComponent>();
@@ -806,23 +824,26 @@ void ViewportPanel::draw_settings_panel() {
       if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
         UI::property("Enable debug renderer", (bool*)RendererCVar::cvar_enable_debug_renderer.get_ptr());
         UI::property(
-          "Enable physics debug renderer", (bool*)RendererCVar::cvar_enable_physics_debug_renderer.get_ptr()
+          "Enable physics debug renderer",
+          (bool*)RendererCVar::cvar_enable_physics_debug_renderer.get_ptr()
         );
         UI::property("Draw bounding boxes", (bool*)RendererCVar::cvar_draw_bounding_boxes.get_ptr());
         UI::property("Freeze culling frustum", (bool*)RendererCVar::cvar_freeze_culling_frustum.get_ptr());
         UI::property("Draw camera frustum", (bool*)RendererCVar::cvar_draw_camera_frustum.get_ptr());
-        const char* debug_views[12] = {"None",
-                                       "Triangles",
-                                       "Meshlets",
-                                       "Overdraw",
-                                       "Albdeo",
-                                       "Normal",
-                                       "Emissive",
-                                       "Metallic",
-                                       "Roughness",
-                                       "Occlusion",
-                                       "HiZ",
-                                       "GTAO"};
+        const char* debug_views[12] = {
+          "None",
+          "Triangles",
+          "Meshlets",
+          "Overdraw",
+          "Albdeo",
+          "Normal",
+          "Emissive",
+          "Metallic",
+          "Roughness",
+          "Occlusion",
+          "HiZ",
+          "GTAO"
+        };
         UI::property("Debug View", RendererCVar::cvar_debug_view.get_ptr(), debug_views, 12);
         UI::property("Enable frustum culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
         UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
@@ -986,7 +1007,11 @@ void ViewportPanel::draw_gizmos() {
 
         auto old_tc = *tc;
         undo_redo_system->execute_command<ComponentChangeCommand<TransformComponent>>(
-          selected_entity, tc, old_tc, *tc, "gizmo transform"
+          selected_entity,
+          tc,
+          old_tc,
+          *tc,
+          "gizmo transform"
         );
 
         selected_entity.modified<TransformComponent>();

@@ -11,9 +11,9 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
-Renderer::Renderer(VkContext* vk_context) {
+Renderer::Renderer(VkContext* vk_ctx) {
   ZoneScoped;
-  this->vk_context = vk_context;
+  this->vk_context = vk_ctx;
 }
 
 auto Renderer::new_instance(Scene* scene) -> std::unique_ptr<RendererInstance> {

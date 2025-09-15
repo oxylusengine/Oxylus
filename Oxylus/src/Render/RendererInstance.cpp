@@ -87,7 +87,7 @@ auto update_gpu_buffer(auto& self, auto& vk_context, const auto& gpu_data, const
 
     auto update_pass = vuk::make_pass(
       traits::pass_name,
-      [upload_offsets = std::move(upload_offsets)](
+      [upload_offsets](
         vuk::CommandBuffer& cmd_list,
         VUK_BA(vuk::Access::eTransferRead) src_buffer,
         VUK_BA(vuk::Access::eTransferWrite) dst_buffer
@@ -1338,7 +1338,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           VUK_IA(vuk::eFragmentSampled) emissive,
           VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
           VUK_IA(vuk::eFragmentSampled) gtao,
-          VUK_BA(vuk::eFragmentRead) scene,
+          VUK_BA(vuk::eFragmentRead) scene_,
           VUK_BA(vuk::eFragmentRead) camera,
           VUK_BA(vuk::eFragmentRead) lights,
           VUK_BA(vuk::eMemoryRead) point_lights,
@@ -1375,11 +1375,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .bind_image(0, 7, emissive)
             .bind_image(0, 8, metallic_roughness_occlusion)
             .bind_image(0, 9, gtao)
-            .bind_buffer(0, 10, scene)
+            .bind_buffer(0, 10, scene_)
             .bind_buffer(0, 11, camera)
             .bind_buffer(0, 12, lights)
             .draw(3, 1, 0, 0);
-          return std::make_tuple(dst, sky_transmittance_lut, sky_multiscatter_lut, depth, scene, camera, lights);
+          return std::make_tuple(dst, sky_transmittance_lut, sky_multiscatter_lut, depth, scene_, camera, lights);
         }
       );
 
@@ -2281,12 +2281,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     .query_builder<const TransformComponent, const SpriteComponent>() //
     .build()
     .each([asset_man,
-           &scene = self.scene,
+           &s = self.scene,
            &cam,
            &rq2d = self.render_queue_2d](flecs::entity e, const TransformComponent& tc, const SpriteComponent& comp) {
       const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
       if (auto* material = asset_man->get_asset(comp.material)) {
-        if (auto transform_id = scene->get_entity_transform_id(e)) {
+        if (auto transform_id = s->get_entity_transform_id(e)) {
           rq2d.add(
             comp,
             tc.position.y,
@@ -2304,7 +2304,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     .query_builder<const TransformComponent, const ParticleComponent>() //
     .build()
     .each([asset_man,
-           &scene = self.scene,
+           &s = self.scene,
            &cam,
            &rq2d = self.render_queue_2d](flecs::entity e, const TransformComponent& tc, const ParticleComponent& comp) {
       if (comp.life_remaining <= 0.0f)
@@ -2315,7 +2315,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       auto particle_system_component = e.parent().try_get<ParticleSystemComponent>();
       if (particle_system_component) {
         if (auto* material = asset_man->get_asset(particle_system_component->material)) {
-          if (auto transform_id = scene->get_entity_transform_id(e)) {
+          if (auto transform_id = s->get_entity_transform_id(e)) {
             SpriteComponent sprite_comp = {.sort_y = true};
 
             rq2d.add(

@@ -95,13 +95,13 @@ auto FlecsBinding::bind(sol::state* state) -> void {
 
         result.set_function("at",
                             [it, state](const sol::table& self, int i) -> sol::table {
-                              ecs_entity_t component = self["component_id"];
+                              ecs_entity_t c = self["component_id"];
 
                               OX_CHECK_LT(i, it->count);
                               auto entity = it->entities[i];
 
                               auto e = flecs::entity{it->real_world, entity};
-                              return get_component_table(state, &e, component, true);
+                              return get_component_table(state, &e, c, true);
                             }
 
         );
@@ -211,12 +211,12 @@ auto FlecsBinding::bind(sol::state* state) -> void {
           } else {
             std::pair<ecs_entity_t, ecs_entity_t> pair = {};
             u32 index = 0;
-            component_table.for_each([&](sol::object key, sol::object value) {
+            component_table.for_each([&](sol::object k, sol::object v) {
               ecs_entity_t c = {};
-              if (auto component_id = value.as<sol::table>().get<sol::optional<ecs_entity_t>>("component_id")) {
+              if (auto component_id = v.as<sol::table>().get<sol::optional<ecs_entity_t>>("component_id")) {
                 c = *component_id;
               } else {
-                c = value.as<flecs::entity>();
+                c = v.as<flecs::entity>();
               }
               index == 0 ? pair.first = c : pair.second = c;
               index += 1;

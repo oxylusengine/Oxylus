@@ -22,7 +22,7 @@ public:
     glm::uvec2 viewport_offset = {};
   };
 
-  Renderer(VkContext* vk_context);
+  Renderer(VkContext* vk_ctx);
 
   auto init() -> std::expected<void, std::string> override;
   auto deinit() -> std::expected<void, std::string> override;

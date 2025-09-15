@@ -44,9 +44,9 @@ struct RenderStageContext {
   ankerl::unordered_dense::map<std::string, vuk::Value<vuk::Buffer>> buffer_resources = {};
   ankerl::unordered_dense::map<std::string, vuk::Value<vuk::ImageAttachment>> image_resources = {};
 
-  RenderStageContext(RendererInstance& instance, SharedResources& shared_resources, RenderStage stage, VkContext& vkctx)
+  RenderStageContext(RendererInstance& instance, SharedResources& shared_r, RenderStage stage, VkContext& vkctx)
       : renderer_instance(instance),
-        shared_resources(shared_resources),
+        shared_resources(shared_r),
         current_stage(stage),
         vk_context(vkctx) {}
 
