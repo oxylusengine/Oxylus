@@ -205,7 +205,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             [picking_texel](
               vuk::CommandBuffer& cmd_list,
               VUK_BA(vuk::eComputeWrite) buffer,
-              VUK_IA(vuk::eComputeRead) visbuffer,
+              VUK_IA(vuk::eComputeSampled) visbuffer,
               VUK_BA(vuk::eComputeRead) meshlet_instances,
               VUK_BA(vuk::eComputeRead) mesh_instances
             ) {
@@ -229,7 +229,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
           auto read_pass = vuk::make_pass(
             "mouse_picking_read_pass",
             [s, viewport_hovered, using_gizmo](
-              vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eHostRead) buffer, VUK_IA(vuk::eComputeRead) visbuffer
+              vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eHostRead) buffer, VUK_IA(vuk::eComputeSampled) visbuffer
             ) {
               u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
 
@@ -393,7 +393,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             }
           );
 
-          std::tie(result_attachment, highlight_attachment) = highlight_pass(result_attachment, *highlight_attachment);
+          // std::tie(result_attachment, highlight_attachment) = highlight_pass(result_attachment, *highlight_attachment);
 
           ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
             .set_image_resource("result_attachment", std::move(result_attachment));
