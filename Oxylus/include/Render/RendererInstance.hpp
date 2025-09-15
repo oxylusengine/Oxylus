@@ -222,6 +222,7 @@ private:
   GPU::PostProcessSettings post_proces_settings = {};
 
   Texture hiz_view;
+  Texture directional_shadow_hiz_view;
   vuk::Unique<vuk::Buffer> transforms_buffer{};
   vuk::Unique<vuk::Buffer> mesh_instances_buffer{};
   vuk::Unique<vuk::Buffer> meshes_buffer{};
