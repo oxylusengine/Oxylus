@@ -218,7 +218,18 @@ RendererInstance::RendererInstance(Scene* owner_scene, Renderer& parent_renderer
     : scene(owner_scene),
       renderer(parent_renderer) {
 
+  auto& vk_context = App::get_vkcontext();
   render_queue_2d.init();
+
+  spot_lights_buffer = vk_context.allocate_buffer_super(
+    vuk::MemoryUsage::eGPUonly,
+    MAX_SPOT_LIGHTS * sizeof(GPU::SpotLight)
+  );
+  point_lights_buffer = vk_context.allocate_buffer_super(
+    vuk::MemoryUsage::eGPUonly,
+    MAX_POINT_LIGHTS * sizeof(GPU::PointLight)
+  );
+
   rebuild_execution_order();
 }
 
@@ -751,9 +762,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   const vuk::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
 
   auto lights_buffer = std::move(self.prepared_frame.lights_buffer);
-  if (self.lights.has_value()) {
-    self.gpu_scene.lights = lights_buffer->device_address;
-  }
+  auto point_lights_buffer = std::move(self.prepared_frame.point_lights_buffer);
+  auto spot_lights_buffer = std::move(self.prepared_frame.spot_lights_buffer);
+  self.gpu_scene.lights = lights_buffer->device_address;
 
   auto atmosphere_buffer = vuk::Value<vuk::Buffer>{};
   if (self.atmosphere.has_value()) {
@@ -1312,7 +1323,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       );
     }
 
-    if (!debugging && self.atmosphere.has_value() && self.lights.has_value()) {
+    if (!debugging && self.atmosphere.has_value()) {
       // --- BRDF ---
       auto brdf_pass = vuk::make_pass(
         "brdf",
@@ -1329,7 +1340,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           VUK_IA(vuk::eFragmentSampled) gtao,
           VUK_BA(vuk::eFragmentRead) scene,
           VUK_BA(vuk::eFragmentRead) camera,
-          VUK_BA(vuk::eFragmentRead) lights
+          VUK_BA(vuk::eFragmentRead) lights,
+          VUK_BA(vuk::eMemoryRead) point_lights,
+          VUK_BA(vuk::eMemoryRead) spot_lights
         ) {
           auto linear_clamp_sampler = vuk::SamplerCreateInfo{
             .magFilter = vuk::Filter::eLinear,
@@ -1391,7 +1404,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           std::move(vbgtao_occlusion_attachment),
           std::move(scene_buffer),
           std::move(camera_buffer),
-          std::move(lights_buffer)
+          std::move(lights_buffer),
+          // This is the first pass that uses lights, if we have
+          // any passes above using lights, make sure to move them up
+          std::move(point_lights_buffer),
+          std::move(spot_lights_buffer)
         );
     } else {
       const auto debug_attachment_ia = vuk::ImageAttachment{
@@ -1552,7 +1569,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   }
 
   // --- Atmosphere Pass ---
-  if (self.atmosphere.has_value() && self.lights.has_value() && !debugging) {
+  if (self.atmosphere.has_value() && !debugging) {
     auto sky_view_lut_attachment = vuk::declare_ia(
       "sky_view_lut",
       {.image_type = vuk::ImageType::e2D,
@@ -2217,31 +2234,46 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       }
     });
 
-  const auto has_lights = directional_light.has_value() || !point_lights.empty() || !spot_lights.empty();
-  if (has_lights) {
-    auto& lights = self.lights.emplace();
-    lights.point_light_count = static_cast<u32>(point_lights.size());
-    lights.spot_light_count = static_cast<u32>(spot_lights.size());
+  auto lights = GPU::Lights{
+    .direction_light = directional_light.value_or(GPU::DirectionalLight{}),
+    .point_light_count = static_cast<u32>(point_lights.size()),
+    .spot_light_count = static_cast<u32>(spot_lights.size()),
+    .point_lights = self.point_lights_buffer->device_address,
+    .spot_lights = self.spot_lights_buffer->device_address,
+  };
 
-    if (directional_light.has_value()) {
-      lights.direction_light = directional_light.value();
-    }
-
-    if (!point_lights.empty()) {
-      std::memcpy(lights.point_lights, point_lights.data(), point_lights.size() * sizeof(GPU::PointLight));
-    }
-
-    if (!spot_lights.empty()) {
-      std::memcpy(lights.spot_lights, spot_lights.data(), spot_lights.size() * sizeof(GPU::SpotLight));
-    }
-
-    self.lights_buffer = vk_context.resize_buffer(
-      std::move(self.lights_buffer),
-      vuk::MemoryUsage::eGPUonly,
-      std::span(&lights, 1).size_bytes()
+  // TODO: Keep track of updated lights and only update them.
+  if (!point_lights.empty()) {
+    auto point_lights_size_bytes = ox::size_bytes(point_lights);
+    auto src_point_lights_buffer = vk_context.alloc_transient_buffer(
+      vuk::MemoryUsage::eCPUtoGPU,
+      point_lights_size_bytes
     );
-    self.prepared_frame.lights_buffer = vk_context.upload_staging(std::span(&lights, 1), *self.lights_buffer);
+    std::memcpy(src_point_lights_buffer->mapped_ptr, point_lights.data(), point_lights_size_bytes);
+
+    auto dst_point_lights_buffer = vuk::acquire_buf(
+      "point lights",
+      self.point_lights_buffer->subrange(0, point_lights_size_bytes),
+      vuk::eMemoryRead
+    );
+    self.prepared_frame.point_lights_buffer = vuk::copy(
+      std::move(src_point_lights_buffer),
+      std::move(dst_point_lights_buffer)
+    );
+  } else {
+    self.prepared_frame
+      .point_lights_buffer = vuk::acquire_buf("point lights", *self.point_lights_buffer, vuk::eMemoryRead);
   }
+
+  if (!spot_lights.empty()) {
+    self.prepared_frame
+      .spot_lights_buffer = vuk::acquire_buf("spot lights", *self.spot_lights_buffer, vuk::eMemoryRead);
+  } else {
+    self.prepared_frame
+      .spot_lights_buffer = vuk::acquire_buf("spot lights", *self.spot_lights_buffer, vuk::eMemoryRead);
+  }
+
+  self.prepared_frame.lights_buffer = vk_context.scratch_buffer(lights);
 
   self.render_queue_2d.init();
 

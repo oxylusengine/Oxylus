@@ -230,8 +230,9 @@ struct Lights {
   alignas(4) DirectionalLight direction_light = {};
   alignas(4) u32 point_light_count = 0;
   alignas(4) u32 spot_light_count = 0;
-  alignas(4) PointLight point_lights[MAX_POINT_LIGHTS] = {};
-  alignas(4) SpotLight spot_lights[MAX_SPOT_LIGHTS] = {};
+  alignas(4) u32 _padding = 0;
+  alignas(8) u64 point_lights = 0;
+  alignas(8) u64 spot_lights = 0;
 };
 
 enum class SceneFlags : u32 {

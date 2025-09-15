@@ -222,9 +222,9 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             }
           );
 
-          std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
-            std::move(readback_buffer), std::move(visbuffer), std::move(meshlet_instances), std::move(mesh_instances)
-          );
+          // std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
+          //   std::move(readback_buffer), std::move(visbuffer), std::move(meshlet_instances), std::move(mesh_instances)
+          // );
 
           auto read_pass = vuk::make_pass(
             "mouse_picking_read_pass",
@@ -264,7 +264,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             }
           );
 
-          std::tie(readback_buffer, visbuffer) = read_pass(std::move(readback_buffer), std::move(visbuffer));
+          // std::tie(readback_buffer, visbuffer) = read_pass(std::move(readback_buffer), std::move(visbuffer));
 
           auto highlight_attachment = vuk::declare_ia(
             "highlight",
@@ -338,17 +338,17 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             }
           );
 
-          std::tie(
-            highlight_attachment, readback_buffer, visbuffer, depth_attachment, meshlet_instances, mesh_instances
-          ) =
-            highlight_pass(
-              std::move(highlight_attachment),
-              std::move(readback_buffer),
-              std::move(visbuffer),
-              std::move(depth_attachment),
-              std::move(meshlet_instances),
-              std::move(mesh_instances)
-            );
+          // std::tie(
+          //   highlight_attachment, readback_buffer, visbuffer, depth_attachment, meshlet_instances, mesh_instances
+          // ) =
+          //   highlight_pass(
+          //     std::move(highlight_attachment),
+          //     std::move(readback_buffer),
+          //     std::move(visbuffer),
+          //     std::move(depth_attachment),
+          //     std::move(meshlet_instances),
+          //     std::move(mesh_instances)
+          //   );
 
           ctx.set_shared_image_resource("highlight_attachment", highlight_attachment)
             .set_image_resource("depth_attachment", std::move(depth_attachment))

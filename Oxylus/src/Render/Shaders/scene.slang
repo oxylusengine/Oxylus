@@ -234,8 +234,9 @@ public struct Lights {
   public DirectionalLight directional_light;
   public u32 point_light_count = 0;
   public u32 spot_light_count = 0;
-  public PointLight point_lights[MAX_POINT_LIGHTS];
-  public SpotLight spot_lights[MAX_SPOT_LIGHTS];
+  u32 _padding;
+  public PointLight *point_lights;
+  public SpotLight *spot_lights;
 };
 
 public struct Scene {
