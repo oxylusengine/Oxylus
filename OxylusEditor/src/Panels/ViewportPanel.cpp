@@ -190,6 +190,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
         mouse_pos
       );
 
+#if 0
       renderer_instance->add_stage_after(
         RenderStage::VisBufferEncode,
         "mouse_picking",
@@ -411,6 +412,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
           ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
             .set_image_resource("result_attachment", std::move(result_attachment));
         });
+#endif
 
       const Renderer::RenderInfo render_info = {
         .extent = extent,
