@@ -517,7 +517,10 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         visible_meshlet_instances_count_buffer,
         transforms_buffer,
         directional_light_hiz_attachment,
-        light_camera_buffer
+        light_camera_data.projection_view,
+        self.camera_data.position,
+        self.camera_data.resolution,
+        self.camera_data.acceptable_lod_error
       );
 
       auto early_draw_visbuffer_cmd_buffer = cull_meshlets(
@@ -612,7 +615,10 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         visible_meshlet_instances_count_buffer,
         transforms_buffer,
         hiz_attachment,
-        camera_buffer
+        self.camera_data.projection_view,
+        self.camera_data.position,
+        self.camera_data.resolution,
+        self.camera_data.acceptable_lod_error
       );
 
       auto early_draw_visbuffer_cmd_buffer = cull_meshlets(

@@ -17,7 +17,10 @@ auto cull_meshes(
   vuk::Value<vuk::Buffer>& visible_meshlet_instances_count_buffer,
   vuk::Value<vuk::Buffer>& transforms_buffer,
   vuk::Value<vuk::ImageAttachment>& hiz_attachment,
-  vuk::Value<vuk::Buffer>& camera_buffer
+  glm::mat4& frustum_projection_view,
+  glm::vec4& observer_position,
+  glm::vec2& observer_resolution,
+  f32 acceptable_lod_error
 ) -> vuk::Value<vuk::Buffer>;
 auto cull_meshlets(
   bool late,

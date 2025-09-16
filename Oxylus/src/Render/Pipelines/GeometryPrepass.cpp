@@ -27,15 +27,22 @@ auto cull_meshes(
   vuk::Value<vuk::Buffer>& visible_meshlet_instances_count_buffer,
   vuk::Value<vuk::Buffer>& transforms_buffer,
   vuk::Value<vuk::ImageAttachment>& hiz_attachment,
-  vuk::Value<vuk::Buffer>& camera_buffer
+  glm::mat4& frustum_projection_view,
+  glm::vec4& observer_position,
+  glm::vec2& observer_resolution,
+  f32 acceptable_lod_error
 ) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
   auto vis_cull_meshes_pass = vuk::make_pass(
     "vis cull meshes",
-    [cull_flags, mesh_instance_count](
+    [cull_flags,
+     mesh_instance_count,
+     frustum_projection_view,
+     observer_position,
+     observer_resolution,
+     acceptable_lod_error](
       vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeRead) camera,
       VUK_BA(vuk::eComputeRead) meshes,
       VUK_BA(vuk::eComputeRead) transforms,
       VUK_IA(vuk::eComputeSampled) hiz,
@@ -45,19 +52,28 @@ auto cull_meshes(
     ) {
       cmd_list //
         .bind_compute_pipeline("cull_meshes")
-        .bind_buffer(0, 0, camera)
-        .bind_buffer(0, 1, meshes)
-        .bind_buffer(0, 2, transforms)
-        .bind_image(0, 3, hiz)
-        .bind_sampler(0, 4, hiz_sampler_info)
-        .bind_buffer(0, 5, mesh_instances)
-        .bind_buffer(0, 6, meshlet_instances)
-        .bind_buffer(0, 7, visible_meshlet_instances_count)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mesh_instance_count, cull_flags))
+        .bind_buffer(0, 0, meshes)
+        .bind_buffer(0, 1, transforms)
+        .bind_image(0, 2, hiz)
+        .bind_sampler(0, 3, hiz_sampler_info)
+        .bind_buffer(0, 4, mesh_instances)
+        .bind_buffer(0, 5, meshlet_instances)
+        .bind_buffer(0, 6, visible_meshlet_instances_count)
+        .push_constants(
+          vuk::ShaderStageFlagBits::eCompute,
+          0,
+          PushConstants(
+            mesh_instance_count,
+            cull_flags,
+            frustum_projection_view,
+            glm::vec3(observer_position),
+            glm::max(observer_resolution.x, observer_resolution.y),
+            acceptable_lod_error
+          )
+        )
         .dispatch_invocations(mesh_instance_count);
 
       return std::make_tuple(
-        camera,
         meshes,
         transforms,
         hiz,
@@ -69,7 +85,6 @@ auto cull_meshes(
   );
 
   std::tie(
-    camera_buffer,
     meshes_buffer,
     transforms_buffer,
     hiz_attachment,
@@ -78,7 +93,6 @@ auto cull_meshes(
     visible_meshlet_instances_count_buffer
   ) =
     vis_cull_meshes_pass(
-      std::move(camera_buffer),
       std::move(meshes_buffer),
       std::move(transforms_buffer),
       std::move(hiz_attachment),
