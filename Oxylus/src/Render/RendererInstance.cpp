@@ -4,10 +4,9 @@
 #include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
-#include "Memory/Stack.hpp"
 #include "Render/DebugRenderer.hpp"
-#include "Render/MeshRenderer.hpp"
 #include "Render/RendererConfig.hpp"
+#include "Render/RendererPipeline.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/SceneGPU.hpp"
@@ -406,20 +405,16 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     .depth = 1,
   };
 
-  auto hiz_attachment = vuk::Value<vuk::ImageAttachment>{};
-  if (self.hiz_view.get_extent() != hiz_extent || !self.hiz_view) {
-    if (self.hiz_view) {
-      self.hiz_view.destroy();
-    }
-
-    self.hiz_view.create({}, {.preset = Preset::eSTT2D, .format = vuk::Format::eR32Sfloat, .extent = hiz_extent});
-    self.hiz_view.set_name("hiz");
-
-    hiz_attachment = self.hiz_view.acquire("hiz", vuk::eNone);
-    hiz_attachment = vuk::clear_image(std::move(hiz_attachment), vuk::DepthZero);
-  } else {
-    hiz_attachment = self.hiz_view.acquire("hiz", vuk::eComputeSampled);
-  }
+  auto hiz_attachment = vuk::declare_ia(
+    "hiz",
+    {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+     .extent = hiz_extent,
+     .format = vuk::Format::eR32Sfloat,
+     .sample_count = vuk::SampleCountFlagBits::e1,
+     .level_count = Texture::get_mip_count(hiz_extent),
+     .layer_count = 1}
+  );
+  hiz_attachment = vuk::clear_image(std::move(hiz_attachment), vuk::DepthZero);
 
   auto sky_transmittance_lut_attachment = self.renderer.sky_transmittance_lut_view.acquire(
     "sky_transmittance_lut",
@@ -441,9 +436,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   if (self.prepared_frame.mesh_instance_count > 0) {
     auto meshes_buffer = std::move(self.prepared_frame.meshes_buffer);
     auto mesh_instances_buffer = std::move(self.prepared_frame.mesh_instances_buffer);
-    auto meshlet_instance_visibility_mask_buffer = std::move(
-      self.prepared_frame.meshlet_instance_visibility_mask_buffer
-    );
     auto meshlet_instances_buffer = vk_context.alloc_transient_buffer(
       vuk::MemoryUsage::eGPUonly,
       self.prepared_frame.max_meshlet_instance_count * sizeof(GPU::MeshletInstance)
@@ -456,7 +448,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       vuk::MemoryUsage::eGPUonly,
       self.prepared_frame.max_meshlet_instance_count * Model::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32)
     );
-    auto visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32[3]>({});
 
     auto cull_flags = GPU::CullFlags::MicroTriangles | GPU::CullFlags::TriangleBackFace;
     if (static_cast<bool>(RendererCVar::cvar_culling_frustum.get())) {
@@ -470,124 +461,227 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       cull_flags |= GPU::CullFlags::MicroTriangles;
     }
 
-    vuk::Value<vuk::ImageAttachment> directional_shadows_vis_buffer{};
-    vuk::Value<vuk::ImageAttachment> directional_shadows_overdraw_attachment{};
+    // TODOs:
+    // [ ] This context shares mesh buffers with the main pass which is problematic
+    // [x] This context should have its own camera_buffer with light's data instead of using the main camera buffer
+    //   Might need to refactor visbuffer_encode.slang to allow for multiple cameras for cascades.
+    // [x] Shadows should render with specified extent from the light component (light_component.shadow_res). hiz,
+    // depth, visbuffer
+    //   I just used main extent for now.
+    // [ ] Conditional rendering of directional shadows (light_component.cast_shadows)
+    // [ ] cull passes actually use position of cameras too which we don't fill so its 0.
+
+    // WARN: We will just crash if the scene does not have any lights!!
+    // Only first cascade for now
+    GPU::CameraData light_camera_data = self.directional_light_cameras[0];
+    auto directional_light_shadowmap_attachment = vuk::declare_ia(
+      "directional light shadowmap",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eDepthStencilAttachment,
+       .extent =
+         {static_cast<u32>(light_camera_data.resolution.x), static_cast<u32>(light_camera_data.resolution.y), 1},
+       .format = vuk::Format::eD32Sfloat,
+       .sample_count = vuk::SampleCountFlagBits::e1,
+       .level_count = 1,
+       .layer_count = 1}
+    );
+    directional_light_shadowmap_attachment = vuk::clear_image(
+      std::move(directional_light_shadowmap_attachment),
+      vuk::DepthZero
+    );
+
+    auto directional_light_hiz_attachment = vuk::declare_ia(
+      "directional light hiz",
+      {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+       .format = vuk::Format::eR32Sfloat,
+       .sample_count = vuk::SampleCountFlagBits::e1,
+       .level_count = Texture::get_mip_count(hiz_extent),
+       .layer_count = 1}
+    );
+    directional_light_hiz_attachment.same_extent_as(directional_light_shadowmap_attachment);
+    directional_light_hiz_attachment = vuk::clear_image(std::move(directional_light_hiz_attachment), vuk::DepthZero);
+
     {
-      // TODOs:
-      // [ ] This context shares mesh buffers with the main pass which is problematic
-      // [x] This context should have its own camera_buffer with light's data instead of using the main camera buffer
-      //   Might need to refactor visbuffer_encode.slang to allow for multiple cameras for cascades.
-      // [x] Shadows should render with specified extent from the light component (light_component.shadow_res). hiz,
-      // depth, visbuffer
-      //   I just used main extent for now.
-      // [ ] Conditional rendering of directional shadows (light_component.cast_shadows)
-      // [ ] cull passes actually use position of cameras too which we don't fill so its 0.
-
-      // WARN: We will just crash if the scene does not have any lights!!
-      // Only first cascade for now
-      GPU::CameraData light_camera_data = self.directional_light_cameras[0];
-
       auto light_camera_buffer = self.renderer.vk_context->scratch_buffer(std::span(&light_camera_data, 1));
 
-      auto light_extent = vuk::Extent3D{
-        static_cast<u32>(light_camera_data.resolution.x),
-        static_cast<u32>(light_camera_data.resolution.y),
-        1
-      };
-      const auto directional_shadows_depth_ia = vuk::ImageAttachment{
-        .extent = light_extent,
-        .format = vuk::Format::eD32Sfloat,
-        .sample_count = vuk::SampleCountFlagBits::e1,
-        .level_count = 1,
-        .layer_count = 1,
-      };
-      auto directional_shadows_depth_attachment = vuk::clear_image(
-        vuk::declare_ia("directional_shadows_depth", directional_shadows_depth_ia),
-        vuk::DepthZero
+      auto visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32[3]>({});
+      auto meshlet_instance_visibility_mask_buffer = std::move(
+        self.prepared_frame.secondary_meshlet_instance_visibility_mask_buffer
+      );
+      auto cull_meshlets_cmd_buffer = cull_meshes(
+        cull_flags,
+        self.prepared_frame.mesh_instance_count,
+        vk_context,
+        meshes_buffer,
+        mesh_instances_buffer,
+        meshlet_instances_buffer,
+        visible_meshlet_instances_count_buffer,
+        transforms_buffer,
+        directional_light_hiz_attachment,
+        light_camera_buffer
       );
 
-      // NOTE: This assumes light_extent is already in power of two form
-      auto directional_shadow_hiz_attachment = vuk::Value<vuk::ImageAttachment>{};
-      if (self.directional_shadow_hiz_view.get_extent() != light_extent || !self.directional_shadow_hiz_view) {
-        if (self.directional_shadow_hiz_view) {
-          self.directional_shadow_hiz_view.destroy();
-        }
+      auto early_draw_visbuffer_cmd_buffer = cull_meshlets(
+        false,
+        cull_flags,
+        vk_context,
+        directional_light_hiz_attachment,
+        cull_meshlets_cmd_buffer,
+        visible_meshlet_instances_count_buffer,
+        visible_meshlet_instances_indices_buffer,
+        meshlet_instance_visibility_mask_buffer,
+        reordered_indices_buffer,
+        meshes_buffer,
+        mesh_instances_buffer,
+        meshlet_instances_buffer,
+        transforms_buffer,
+        light_camera_buffer
+      );
 
-        self.directional_shadow_hiz_view.create(
-          {},
-          {.preset = Preset::eSTT2D, .format = vuk::Format::eR32Sfloat, .extent = light_extent}
-        );
-        self.directional_shadow_hiz_view.set_name("directional_shadow_hiz");
+      draw_visbuffer_depth_only(
+        false,
+        directional_light_shadowmap_attachment,
+        early_draw_visbuffer_cmd_buffer,
+        reordered_indices_buffer,
+        meshes_buffer,
+        mesh_instances_buffer,
+        meshlet_instances_buffer,
+        transforms_buffer,
+        light_camera_buffer
+      );
 
-        directional_shadow_hiz_attachment = self.directional_shadow_hiz_view.acquire(
-          "directional_shadow_hiz",
-          vuk::eNone
-        );
-        directional_shadow_hiz_attachment = vuk::clear_image(
-          std::move(directional_shadow_hiz_attachment),
-          vuk::DepthZero
-        );
-      } else {
-        directional_shadow_hiz_attachment = self.directional_shadow_hiz_view.acquire(
-          "directional_shadow_hiz",
-          vuk::eComputeSampled
-        );
-      }
+      generate_hiz(directional_light_hiz_attachment, directional_light_shadowmap_attachment);
 
-      MeshRenderContext mesh_ctx;
-      mesh_ctx.camera_buffer = light_camera_buffer;
-      mesh_ctx.transforms_buffer = transforms_buffer;
-      mesh_ctx.materials_buffer = materials_buffer;
-      mesh_ctx.meshes_buffer = meshes_buffer;
-      mesh_ctx.mesh_instances_buffer = mesh_instances_buffer;
-      mesh_ctx.meshlet_instances_buffer = meshlet_instances_buffer;
-      mesh_ctx.meshlet_instance_visibility_mask_buffer = meshlet_instance_visibility_mask_buffer;
-      mesh_ctx.visible_meshlet_instances_indices_buffer = visible_meshlet_instances_indices_buffer;
-      mesh_ctx.reordered_indices_buffer = reordered_indices_buffer;
-      mesh_ctx.visible_meshlet_instances_count_buffer = visible_meshlet_instances_count_buffer;
+      auto late_draw_visbuffer_cmd_buffer = cull_meshlets(
+        true,
+        cull_flags,
+        vk_context,
+        directional_light_hiz_attachment,
+        cull_meshlets_cmd_buffer,
+        visible_meshlet_instances_count_buffer,
+        visible_meshlet_instances_indices_buffer,
+        meshlet_instance_visibility_mask_buffer,
+        reordered_indices_buffer,
+        meshes_buffer,
+        mesh_instances_buffer,
+        meshlet_instances_buffer,
+        transforms_buffer,
+        light_camera_buffer
+      );
 
-      mesh_ctx.depth_attachment = directional_shadows_depth_attachment;
-      mesh_ctx.hiz_attachment = directional_shadow_hiz_attachment;
-
-      mesh_ctx.mesh_instance_count = self.prepared_frame.mesh_instance_count;
-      mesh_ctx.max_meshlet_instance_count = self.prepared_frame.max_meshlet_instance_count;
-
-      MeshRenderer mesh_renderer(vk_context, bindless_set);
-      std::tie(directional_shadows_overdraw_attachment, directional_shadows_vis_buffer) = mesh_renderer
-                                                                                            .set_extent(light_extent)
-                                                                                            .set_pass_name(
-                                                                                              "directional_shadows"
-                                                                                            )
-                                                                                            .set_cull_flags(cull_flags)
-                                                                                            .render(mesh_ctx);
+      draw_visbuffer_depth_only(
+        true,
+        directional_light_shadowmap_attachment,
+        late_draw_visbuffer_cmd_buffer,
+        reordered_indices_buffer,
+        meshes_buffer,
+        mesh_instances_buffer,
+        meshlet_instances_buffer,
+        transforms_buffer,
+        light_camera_buffer
+      );
     }
 
-    vuk::Value<vuk::ImageAttachment> visbuffer_attachment{};
-    vuk::Value<vuk::ImageAttachment> overdraw_attachment{};
+    auto visbuffer_attachment = vuk::declare_ia(
+      "visbuffer",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+       .format = vuk::Format::eR32Uint,
+       .sample_count = vuk::SampleCountFlagBits::e1}
+    );
+    visbuffer_attachment.same_shape_as(final_attachment);
+
+    auto overdraw_attachment = vuk::declare_ia(
+      "overdraw",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+       .sample_count = vuk::SampleCountFlagBits::e1}
+    );
+    overdraw_attachment.similar_to(visbuffer_attachment);
+    clear_visbuffer(visbuffer_attachment, overdraw_attachment);
+
     {
-      MeshRenderContext mesh_ctx;
-      mesh_ctx.camera_buffer = camera_buffer;
-      mesh_ctx.transforms_buffer = transforms_buffer;
-      mesh_ctx.materials_buffer = materials_buffer;
-      mesh_ctx.meshes_buffer = meshes_buffer;
-      mesh_ctx.mesh_instances_buffer = mesh_instances_buffer;
-      mesh_ctx.meshlet_instances_buffer = meshlet_instances_buffer;
-      mesh_ctx.meshlet_instance_visibility_mask_buffer = meshlet_instance_visibility_mask_buffer;
-      mesh_ctx.visible_meshlet_instances_indices_buffer = visible_meshlet_instances_indices_buffer;
-      mesh_ctx.reordered_indices_buffer = reordered_indices_buffer;
-      mesh_ctx.visible_meshlet_instances_count_buffer = visible_meshlet_instances_count_buffer;
+      auto visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32[3]>({});
+      auto meshlet_instance_visibility_mask_buffer = std::move(
+        self.prepared_frame.meshlet_instance_visibility_mask_buffer
+      );
+      auto cull_meshlets_cmd_buffer = cull_meshes(
+        cull_flags,
+        self.prepared_frame.mesh_instance_count,
+        vk_context,
+        meshes_buffer,
+        mesh_instances_buffer,
+        meshlet_instances_buffer,
+        visible_meshlet_instances_count_buffer,
+        transforms_buffer,
+        hiz_attachment,
+        camera_buffer
+      );
 
-      mesh_ctx.depth_attachment = depth_attachment;
-      mesh_ctx.hiz_attachment = hiz_attachment;
+      auto early_draw_visbuffer_cmd_buffer = cull_meshlets(
+        false,
+        cull_flags,
+        vk_context,
+        hiz_attachment,
+        cull_meshlets_cmd_buffer,
+        visible_meshlet_instances_count_buffer,
+        visible_meshlet_instances_indices_buffer,
+        meshlet_instance_visibility_mask_buffer,
+        reordered_indices_buffer,
+        meshes_buffer,
+        mesh_instances_buffer,
+        meshlet_instances_buffer,
+        transforms_buffer,
+        camera_buffer
+      );
 
-      mesh_ctx.mesh_instance_count = self.prepared_frame.mesh_instance_count;
-      mesh_ctx.max_meshlet_instance_count = self.prepared_frame.max_meshlet_instance_count;
+      draw_visbuffer(
+        false,
+        bindless_set,
+        depth_attachment,
+        visbuffer_attachment,
+        overdraw_attachment,
+        early_draw_visbuffer_cmd_buffer,
+        reordered_indices_buffer,
+        meshes_buffer,
+        mesh_instances_buffer,
+        meshlet_instances_buffer,
+        transforms_buffer,
+        materials_buffer,
+        camera_buffer
+      );
 
-      MeshRenderer mesh_renderer(vk_context, bindless_set);
-      std::tie(visbuffer_attachment, overdraw_attachment) = mesh_renderer.set_extent(render_info.extent)
-                                                              .set_pass_name("main")
-                                                              .set_cull_flags(cull_flags)
-                                                              .render(mesh_ctx);
+      generate_hiz(hiz_attachment, depth_attachment);
+
+      auto late_draw_visbuffer_cmd_buffer = cull_meshlets(
+        true,
+        cull_flags,
+        vk_context,
+        hiz_attachment,
+        cull_meshlets_cmd_buffer,
+        visible_meshlet_instances_count_buffer,
+        visible_meshlet_instances_indices_buffer,
+        meshlet_instance_visibility_mask_buffer,
+        reordered_indices_buffer,
+        meshes_buffer,
+        mesh_instances_buffer,
+        meshlet_instances_buffer,
+        transforms_buffer,
+        camera_buffer
+      );
+
+      draw_visbuffer(
+        true,
+        bindless_set,
+        depth_attachment,
+        visbuffer_attachment,
+        overdraw_attachment,
+        late_draw_visbuffer_cmd_buffer,
+        reordered_indices_buffer,
+        meshes_buffer,
+        mesh_instances_buffer,
+        meshlet_instances_buffer,
+        transforms_buffer,
+        materials_buffer,
+        camera_buffer
+      );
     }
 
     RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, vk_context);
@@ -984,7 +1078,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           std::move(emissive_attachment),
           std::move(metallic_roughness_occlusion_attachment),
           std::move(vbgtao_occlusion_attachment),
-          std::move(directional_shadows_vis_buffer),
+          std::move(directional_light_shadowmap_attachment),
           std::move(scene_buffer),
           std::move(camera_buffer),
           std::move(lights_buffer),
@@ -1999,6 +2093,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
 
     auto meshlet_instance_visibility_mask_size_bytes = (info.max_meshlet_instance_count + 31) / 32 * sizeof(u32);
+
     self.meshlet_instance_visibility_mask_buffer = vk_context.resize_buffer(
       std::move(self.meshlet_instance_visibility_mask_buffer),
       vuk::MemoryUsage::eGPUonly,
@@ -2012,6 +2107,20 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshlet_instance_visibility_mask_buffer = zero_fill_pass(
       std::move(meshlet_instance_visibility_mask_buffer)
     );
+
+    self.secondary_meshlet_instance_visibility_mask_buffer = vk_context.resize_buffer(
+      std::move(self.secondary_meshlet_instance_visibility_mask_buffer),
+      vuk::MemoryUsage::eGPUonly,
+      meshlet_instance_visibility_mask_size_bytes
+    );
+    auto secondary_meshlet_instance_visibility_mask_buffer = vuk::acquire_buf(
+      "secondary meshlet instances visibility mask",
+      *self.secondary_meshlet_instance_visibility_mask_buffer,
+      vuk::eNone
+    );
+    self.prepared_frame.secondary_meshlet_instance_visibility_mask_buffer = zero_fill_pass(
+      std::move(secondary_meshlet_instance_visibility_mask_buffer)
+    );
   } else if (self.mesh_instances_buffer) {
     self.prepared_frame.mesh_instances_buffer = vuk::acquire_buf(
       "mesh instances",
@@ -2021,6 +2130,11 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshlet_instance_visibility_mask_buffer = vuk::acquire_buf(
       "meshlet instances visibility mask",
       *self.meshlet_instance_visibility_mask_buffer,
+      vuk::eMemoryRead
+    );
+    self.prepared_frame.secondary_meshlet_instance_visibility_mask_buffer = vuk::acquire_buf(
+      "secondary meshlet instances visibility mask",
+      *self.secondary_meshlet_instance_visibility_mask_buffer,
       vuk::eMemoryRead
     );
   }
