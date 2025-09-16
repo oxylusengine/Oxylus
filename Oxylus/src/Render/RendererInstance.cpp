@@ -1002,7 +1002,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       // --- BRDF ---
       auto brdf_pass = vuk::make_pass(
         "brdf",
-        [](
+        [directional_light_cameras = self.directional_light_cameras](
           vuk::CommandBuffer& cmd_list,
           VUK_IA(vuk::eColorWrite) dst,
           VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
@@ -1035,6 +1035,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .addressModeV = vuk::SamplerAddressMode::eRepeat,
           };
 
+          glm::mat4 light_projection = {};
+          if (!directional_light_cameras.empty()) {
+            light_projection = directional_light_cameras[0].projection_view;
+          }
+
           cmd_list.bind_graphics_pipeline("brdf")
             .set_rasterization({})
             .set_color_blend(dst, vuk::BlendPreset::eOff)
@@ -1051,9 +1056,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .bind_image(0, 7, emissive)
             .bind_image(0, 8, metallic_roughness_occlusion)
             .bind_image(0, 9, gtao)
-            .bind_buffer(0, 10, scene_)
-            .bind_buffer(0, 11, camera)
-            .bind_buffer(0, 12, lights)
+            .bind_image(0, 10, shadows)
+            .bind_buffer(0, 11, scene_)
+            .bind_buffer(0, 12, camera)
+            .bind_buffer(0, 13, lights)
+            .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(light_projection))
             .draw(3, 1, 0, 0);
           return std::make_tuple(dst, sky_transmittance_lut, sky_multiscatter_lut, depth, scene_, camera, lights);
         }

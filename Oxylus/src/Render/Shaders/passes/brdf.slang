@@ -19,6 +19,7 @@ struct ShaderParameters {
     Image2D<f32x3> emissive_image;
     Image2D<f32x3> metallic_roughness_occlusion_image;
     Image2D<f32> gtao_image;
+    Image2D<f32> directional_shadows_map;
     ConstantBuffer<Scene> scene;
     ConstantBuffer<Camera> camera;
     ConstantBuffer<Lights> lights;
@@ -112,8 +113,114 @@ f32x3 calculate_spot_light_contribution(
     return brdf * radiance * NdotL;
 }
 
+static const f32x2 POISSON_DISK[16] = {
+    f32x2(-0.94201624, -0.39906216),
+    f32x2(0.94558609, -0.76890725),
+    f32x2(-0.094184101, -0.92938870),
+    f32x2(0.34495938, 0.29387760),
+    f32x2(-0.91588581, 0.45771432),
+    f32x2(-0.81544232, -0.87912464),
+    f32x2(-0.38277543, 0.27676845),
+    f32x2(0.97484398, 0.75648379),
+    f32x2(0.44323325, -0.97511554),
+    f32x2(0.53742981, -0.47373420),
+    f32x2(-0.26496911, -0.41893023),
+    f32x2(0.79197514, 0.19090188),
+    f32x2(-0.24188840, 0.99706507),
+    f32x2(-0.81409955, 0.91437590),
+    f32x2(0.19984126, 0.78641367),
+    f32x2(0.14383161, -0.14100790)
+};
+
+f32 poisson_disk_shadow(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, f32 bias, f32 filter_radius) {
+    f32 shadow = 0.0;
+    for (int i = 0; i < 16; ++i) {
+        f32x2 offset = POISSON_DISK[i] * filter_radius;
+        f32 shadow_depth = shadow_map.sample_mip(shadow_sampler, shadow_coord.xy + offset, 0).r;
+        shadow += (shadow_coord.z + bias) < shadow_depth ? 0.0 : 1.0;
+    }
+    return shadow / 16.0;
+}
+
+f32 pcf_shadow(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, f32 bias, f32 texel_size) {
+    f32 shadow = 0.0;
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            f32x2 offset = f32x2(x, y) * texel_size;
+            f32 shadow_depth = shadow_map.sample_mip(shadow_sampler, shadow_coord.xy + offset, 0).r;
+            shadow += (shadow_coord.z + bias) < shadow_depth ? 0.0 : 1.0;
+        }
+    }
+    return shadow / 9.0;
+}
+
+f32 find_blocker_distance(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, f32 light_size, f32 bias) {
+    f32 search_radius = light_size * (shadow_coord.z - 0.1) / shadow_coord.z;
+    f32 blocker_sum = 0.0;
+    f32 num_blockers = 0.0;
+
+    for (int i = 0; i < 16; ++i) {
+        f32x2 offset = POISSON_DISK[i] * search_radius;
+        f32 shadow_depth = shadow_map.sample_mip(shadow_sampler, shadow_coord.xy + offset, 0).r;
+
+        if ((shadow_coord.z + bias) > shadow_depth) {
+            blocker_sum += shadow_depth;
+            num_blockers += 1.0;
+        }
+    }
+
+    if (num_blockers == 0.0) return -1.0;
+    return blocker_sum / num_blockers;
+}
+
+f32 contact_hardening_shadow(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord,
+                           f32 light_size, f32 bias, f32x3 world_pos, f32x3 light_pos) {
+    f32 light_distance = length(light_pos - world_pos);
+
+    f32 avg_blocker_depth = find_blocker_distance(shadow_map, shadow_sampler, shadow_coord, light_size * 0.1, bias);
+
+    if (avg_blocker_depth < 0.0) return 0.0;
+
+    f32 blocker_world_distance = avg_blocker_depth * light_distance;
+    f32 receiver_world_distance = shadow_coord.z * light_distance;
+
+    f32 penumbra_size = light_size * (receiver_world_distance - blocker_world_distance) / blocker_world_distance;
+    f32 filter_radius = penumbra_size / light_distance;
+
+    filter_radius = clamp(filter_radius, 0.001, 0.05);
+
+    return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord, bias, filter_radius);
+}
+
+u32 get_cascade_index(f32 view_depth) {
+    return 0;
+}
+
+f32 sample_shadow_map(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x4x4 light_view_projection[4],
+                         f32x3 world_position, f32x3 normal, f32x3 light_direction, f32x3 camera_position) {
+    f32 view_depth = length(world_position - camera_position);
+    u32 cascade_index = get_cascade_index(view_depth);
+
+    f32x4x4 projection = light_view_projection[cascade_index];
+    f32x4 shadow_coord = mul(projection, f32x4(world_position, 1.0));
+
+    shadow_coord.xyz /= shadow_coord.w;
+    shadow_coord.xy = shadow_coord.xy * 0.5 + 0.5;
+
+    if (shadow_coord.x < 0.0 || shadow_coord.x > 1.0 ||
+        shadow_coord.y < 0.0 || shadow_coord.y > 1.0) {
+        return 0.0;
+    }
+
+    f32 bias = max(0.002 * (1.0 - dot(normal, -light_direction)), 0.0005);
+
+    //return pcf_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, bias, 0.002);
+    //return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, bias, 0.002);
+    return contact_hardening_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, 0.1, bias, world_position, 1000);
+}
+
 [[shader("fragment")]]
-func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params) -> f32x4 {
+func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params, uniform f32x4x4 directional_light_projection) -> f32x4 {
     const u32x2 pixel_pos = u32x2(input.position.xy);
     const f32 depth = params.depth_image.load(pixel_pos);
     if (depth == 0.0) {
@@ -152,6 +259,14 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     const f32x3 L = normalize(directional_light.direction);
     const f32x3 N = mapped_normal;
 
+    f32x4x4 directional_light_projections[4] = {};
+    directional_light_projections[0] = directional_light_projection;
+    f32 directional_shadows = sample_shadow_map(params.directional_shadows_map,
+                                params.linear_clamp_sampler,
+                                directional_light_projections,
+                                world_position,
+                                N, directional_light.direction, params.camera.position.xyz);
+
     f32x3 diffuse_light = f32x3(0, 0, 0);
 
     // SUN LIGHT COLOR ──────────────────────────────────────────────────
@@ -161,7 +276,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     f32 sun_cos_theta = dot(L, up_vec);
     f32x2 transmittance_uv = transmittance_params_to_lut_uv(params.scene.atmosphere, f32x2(h, sun_cos_theta));
     f32x3 sun_transmittance = params.sky_transmittance_lut.sample_mip(params.linear_clamp_sampler, transmittance_uv, 0.0).rgb;
-    diffuse_light += sun_transmittance * directional_light.intensity;
+    diffuse_light += sun_transmittance * directional_light.intensity * directional_shadows;
 
     f32x3 total_lighting = f32x3(0.0, 0.0, 0.0);
 
