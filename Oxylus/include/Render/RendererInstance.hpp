@@ -213,6 +213,8 @@ private:
 
   GPU::Scene gpu_scene = {};
 
+  std::vector<GPU::CameraData> directional_light_cameras = {};
+
   option<GPU::Atmosphere> atmosphere = nullopt;
 
   option<GPU::HistogramInfo> histogram_info = nullopt;

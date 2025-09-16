@@ -123,106 +123,92 @@ auto update_buffer_if_dirty(auto& self, auto& vk_context, const auto& gpu_data, 
   }
 }
 
-// NOTE: Not tested!
 auto calculate_cascaded_shadow_matrices(
-  GPU::DirectionalLight& light, const CameraComponent& camera, const glm::vec3& light_direction
+  std::vector<GPU::CameraData>& light_cameras,
+  GPU::DirectionalLight& light,
+  const CameraComponent& camera,
+  u32 shadow_map_res,
+  const std::vector<f32>& cascade_distances
 ) -> void {
   ZoneScoped;
 
-  const f32 near_clip = camera.near_clip;
-  const f32 far_clip = camera.far_clip;
-  const f32 clip_range = far_clip - near_clip;
+  const glm::vec3 normalized_direction = glm::normalize(light.direction);
+  const glm::vec3 light_position = normalized_direction * 100.0f;
+  const glm::vec3 target = glm::vec3(0.0f);
 
-  light.cascade_count = MAX_DIRECTIONAL_SHADOW_CASCADES;
-
-  for (u32 i = 0; i < light.cascade_count; ++i) {
-    const f32 p = (i + 1) / static_cast<f32>(light.cascade_count);
-    const f32 log = near_clip * std::pow(far_clip / near_clip, p);
-    const f32 uniform = near_clip + clip_range * p;
-    const f32 d = 0.95f * log + 0.05f * uniform;
-
-    light.cascade_splits[i] = d;
+  glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+  if (glm::abs(glm::dot(normalized_direction, up)) > 0.99f) {
+    // If light direction is nearly parallel to world up use different up vector
+    up = glm::vec3(0.0f, 0.0f, 1.0f);
   }
 
-  const f32 cascade_split_lambda = 0.95f;
+  auto light_view = glm::lookAt(light_position, target, up);
+  const auto unproj = camera.get_inverse_projection_view();
 
-  for (u32 i = 0; i < light.cascade_count; ++i) {
-    const f32 prev_split = (i == 0) ? near_clip : light.cascade_splits[i - 1];
-    const f32 split = light.cascade_splits[i];
+  glm::vec4 frustum_corners[8] = {
+    math::transform_coord(glm::vec4(-1.f, -1.f, 1.f, 1.f), unproj), // near
+    math::transform_coord(glm::vec4(-1.f, -1.f, 0.f, 1.f), unproj), // far
+    math::transform_coord(glm::vec4(-1.f, 1.f, 1.f, 1.f), unproj),  // near
+    math::transform_coord(glm::vec4(-1.f, 1.f, 0.f, 1.f), unproj),  // far
+    math::transform_coord(glm::vec4(1.f, -1.f, 1.f, 1.f), unproj),  // near
+    math::transform_coord(glm::vec4(1.f, -1.f, 0.f, 1.f), unproj),  // far
+    math::transform_coord(glm::vec4(1.f, 1.f, 1.f, 1.f), unproj),   // near
+    math::transform_coord(glm::vec4(1.f, 1.f, 0.f, 1.f), unproj),   // far
+  };
 
-    glm::vec3 frustum_corners[8] = {
-      glm::vec3(-1.0f, 1.0f, -1.0f),  // near top-left
-      glm::vec3(1.0f, 1.0f, -1.0f),   // near top-right
-      glm::vec3(1.0f, -1.0f, -1.0f),  // near bottom-right
-      glm::vec3(-1.0f, -1.0f, -1.0f), // near bottom-left
-      glm::vec3(-1.0f, 1.0f, 1.0f),   // far top-left
-      glm::vec3(1.0f, 1.0f, 1.0f),    // far top-right
-      glm::vec3(1.0f, -1.0f, 1.0f),   // far bottom-right
-      glm::vec3(-1.0f, -1.0f, 1.0f)   // far bottom-left
+  const u32 cascade_count = MAX_DIRECTIONAL_SHADOW_CASCADES;
+  light_cameras.resize(cascade_count);
+
+  // Compute shadow cameras:
+  for (u32 cascade = 0; cascade < cascade_count; ++cascade) {
+    // Compute cascade bounds in light-view-space from the main frustum corners:
+    const f32 far_plane = camera.far_clip;
+    const f32 split_near = cascade == 0 ? 0 : cascade_distances[cascade - 1] / far_plane;
+    const f32 split_far = cascade_distances[cascade] / far_plane;
+
+    glm::vec4 corners[8] = {
+      math::transform(lerp(frustum_corners[0], frustum_corners[1], split_near), light_view),
+      math::transform(lerp(frustum_corners[0], frustum_corners[1], split_far), light_view),
+      math::transform(lerp(frustum_corners[2], frustum_corners[3], split_near), light_view),
+      math::transform(lerp(frustum_corners[2], frustum_corners[3], split_far), light_view),
+      math::transform(lerp(frustum_corners[4], frustum_corners[5], split_near), light_view),
+      math::transform(lerp(frustum_corners[4], frustum_corners[5], split_far), light_view),
+      math::transform(lerp(frustum_corners[6], frustum_corners[7], split_near), light_view),
+      math::transform(lerp(frustum_corners[6], frustum_corners[7], split_far), light_view),
     };
 
-    const glm::mat4 inv_cam = glm::inverse(camera.get_projection_matrix() * camera.get_view_matrix());
-    for (u32 j = 0; j < 8; ++j) {
-      glm::vec4 inv_corner = inv_cam * glm::vec4(frustum_corners[j], 1.0f);
-      frustum_corners[j] = glm::vec3(inv_corner) / inv_corner.w;
+    // Compute cascade bounding sphere center:
+    glm::vec4 center = {};
+    for (usize j = 0; j < std::size(corners); ++j) {
+      center += corners[j];
+    }
+    center /= f32(std::size(corners));
+
+    // Compute cascade bounding sphere radius:
+    f32 radius = 0;
+    for (usize j = 0; j < std::size(corners); ++j) {
+      radius = std::max(radius, glm::length(corners[j] - center));
     }
 
-    const f32 near_clip_space = 1.0f;
-    const f32 far_clip_space = 0.0f;
+    // Fit AABB onto bounding sphere:
+    auto v_radius = glm::vec4(radius);
+    auto v_min = center - v_radius;
+    auto v_max = center + v_radius;
 
-    const f32 prev_split_factor = 1.0f - ((prev_split - near_clip) / clip_range);
-    const f32 split_factor = 1.0f - ((split - near_clip) / clip_range);
+    // Extrude bounds to avoid early shadow clipping:
+    f32 ext = abs(center.z - v_min.z);
+    ext = std::max(ext, std::min(1500.0f, far_plane) * 0.5f);
+    v_min.z = center.z - ext;
+    v_max.z = center.z + ext;
 
-    for (u32 j = 0; j < 4; ++j) {
-      glm::vec3 near_corner = frustum_corners[j];
-      glm::vec3 far_corner = frustum_corners[j + 4];
+    const auto light_projection = glm::ortho(v_min.x, v_max.x, v_min.y, v_max.y, v_max.z, v_min.z); // reversed Z
+    const auto proj_view = light_projection * light_view;
 
-      frustum_corners[j] = glm::mix(near_corner, far_corner, prev_split_factor);
-      frustum_corners[j + 4] = glm::mix(near_corner, far_corner, split_factor);
-    }
-
-    glm::vec3 frustum_center = glm::vec3(0.0f);
-    for (u32 j = 0; j < 8; ++j) {
-      frustum_center += frustum_corners[j];
-    }
-    frustum_center /= 8.0f;
-
-    const glm::vec3 light_position = frustum_center - light_direction * 50.0f;
-    const glm::mat4 light_view = glm::lookAt(light_position, frustum_center, glm::vec3(0.0f, 1.0f, 0.0f));
-
-    f32 min_x = std::numeric_limits<f32>::max();
-    f32 max_x = std::numeric_limits<f32>::lowest();
-    f32 min_y = std::numeric_limits<f32>::max();
-    f32 max_y = std::numeric_limits<f32>::lowest();
-    f32 min_z = std::numeric_limits<f32>::max();
-    f32 max_z = std::numeric_limits<f32>::lowest();
-
-    for (u32 j = 0; j < 8; ++j) {
-      const glm::vec4 light_corner = light_view * glm::vec4(frustum_corners[j], 1.0f);
-      min_x = std::min(min_x, light_corner.x);
-      max_x = std::max(max_x, light_corner.x);
-      min_y = std::min(min_y, light_corner.y);
-      max_y = std::max(max_y, light_corner.y);
-      min_z = std::min(min_z, light_corner.z);
-      max_z = std::max(max_z, light_corner.z);
-    }
-
-    const f32 z_padding = 50.0f;
-    const f32 near_plane = max_z + z_padding;
-    const f32 far_plane = min_z - z_padding;
-
-    const glm::mat4 light_projection = glm::ortho(min_x, max_x, min_y, max_y, near_plane, far_plane);
-
-    light.light_view_projection[i] = light_projection * light_view;
-
-    light.cascade_offsets[i] = glm::vec4(-min_x / (max_x - min_x), -min_y / (max_y - min_y), 0.0f, static_cast<f32>(i));
-
-    light.cascade_scales[i] = glm::vec4(
-      1.0f / (max_x - min_x),
-      1.0f / (max_y - min_y),
-      1.0f / (near_plane - far_plane),
-      1.0f
-    );
+    light_cameras[cascade].near_clip = camera.near_clip;
+    light_cameras[cascade].far_clip = camera.far_clip;
+    light_cameras[cascade].resolution = {shadow_map_res, shadow_map_res};
+    light_cameras[cascade].projection_view = proj_view;
+    math::calc_frustum_planes(light_cameras[cascade].projection_view, light_cameras[cascade].frustum_planes);
   }
 }
 
@@ -435,27 +421,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     hiz_attachment = self.hiz_view.acquire("hiz", vuk::eComputeSampled);
   }
 
-  auto directional_shadow_hiz_attachment = vuk::Value<vuk::ImageAttachment>{};
-  if (self.directional_shadow_hiz_view.get_extent() != hiz_extent || !self.directional_shadow_hiz_view) {
-    if (self.directional_shadow_hiz_view) {
-      self.directional_shadow_hiz_view.destroy();
-    }
-
-    self.directional_shadow_hiz_view.create(
-      {},
-      {.preset = Preset::eSTT2D, .format = vuk::Format::eR32Sfloat, .extent = hiz_extent}
-    );
-    self.directional_shadow_hiz_view.set_name("directional_shadow_hiz");
-
-    directional_shadow_hiz_attachment = self.directional_shadow_hiz_view.acquire("directional_shadow_hiz", vuk::eNone);
-    directional_shadow_hiz_attachment = vuk::clear_image(std::move(directional_shadow_hiz_attachment), vuk::DepthZero);
-  } else {
-    directional_shadow_hiz_attachment = self.directional_shadow_hiz_view.acquire(
-      "directional_shadow_hiz",
-      vuk::eComputeSampled
-    );
-  }
-
   auto sky_transmittance_lut_attachment = self.renderer.sky_transmittance_lut_view.acquire(
     "sky_transmittance_lut",
     vuk::Access::eComputeSampled
@@ -505,31 +470,72 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       cull_flags |= GPU::CullFlags::MicroTriangles;
     }
 
-    const auto directional_shadows_depth_ia = vuk::ImageAttachment{
-      .extent = render_info.extent,
-      .format = vuk::Format::eD32Sfloat,
-      .sample_count = vuk::SampleCountFlagBits::e1,
-      .level_count = 1,
-      .layer_count = 1,
-    };
-    auto directional_shadows_depth_attachment = vuk::clear_image(
-      vuk::declare_ia("directional_shadows_depth", directional_shadows_depth_ia),
-      vuk::DepthZero
-    );
-
     vuk::Value<vuk::ImageAttachment> directional_shadows_vis_buffer{};
     vuk::Value<vuk::ImageAttachment> directional_shadows_overdraw_attachment{};
     {
       // TODOs:
-      // - This context shares mesh buffers with the main pass which is problematic
-      // - This context should have its own camera_buffer with light's data instead of using the main camera buffer
+      // [ ] This context shares mesh buffers with the main pass which is problematic
+      // [x] This context should have its own camera_buffer with light's data instead of using the main camera buffer
       //   Might need to refactor visbuffer_encode.slang to allow for multiple cameras for cascades.
-      // - Shadows should render with specified extent from the light component (light_component.shadow_res). hiz, depth, visbuffer
+      // [x] Shadows should render with specified extent from the light component (light_component.shadow_res). hiz,
+      // depth, visbuffer
       //   I just used main extent for now.
-      // - Conditional rendering of directional shadows (light_component.cast_shadows)
+      // [ ] Conditional rendering of directional shadows (light_component.cast_shadows)
+      // [ ] cull passes actually use position of cameras too which we don't fill so its 0.
+
+      // WARN: We will just crash if the scene does not have any lights!!
+      // Only first cascade for now
+      GPU::CameraData light_camera_data = self.directional_light_cameras[0];
+
+      auto light_camera_buffer = self.renderer.vk_context->scratch_buffer(std::span(&light_camera_data, 1));
+
+      auto light_extent = vuk::Extent3D{
+        static_cast<u32>(light_camera_data.resolution.x),
+        static_cast<u32>(light_camera_data.resolution.y),
+        1
+      };
+      const auto directional_shadows_depth_ia = vuk::ImageAttachment{
+        .extent = light_extent,
+        .format = vuk::Format::eD32Sfloat,
+        .sample_count = vuk::SampleCountFlagBits::e1,
+        .level_count = 1,
+        .layer_count = 1,
+      };
+      auto directional_shadows_depth_attachment = vuk::clear_image(
+        vuk::declare_ia("directional_shadows_depth", directional_shadows_depth_ia),
+        vuk::DepthZero
+      );
+
+      // NOTE: This assumes light_extent is already in power of two form
+      auto directional_shadow_hiz_attachment = vuk::Value<vuk::ImageAttachment>{};
+      if (self.directional_shadow_hiz_view.get_extent() != light_extent || !self.directional_shadow_hiz_view) {
+        if (self.directional_shadow_hiz_view) {
+          self.directional_shadow_hiz_view.destroy();
+        }
+
+        self.directional_shadow_hiz_view.create(
+          {},
+          {.preset = Preset::eSTT2D, .format = vuk::Format::eR32Sfloat, .extent = light_extent}
+        );
+        self.directional_shadow_hiz_view.set_name("directional_shadow_hiz");
+
+        directional_shadow_hiz_attachment = self.directional_shadow_hiz_view.acquire(
+          "directional_shadow_hiz",
+          vuk::eNone
+        );
+        directional_shadow_hiz_attachment = vuk::clear_image(
+          std::move(directional_shadow_hiz_attachment),
+          vuk::DepthZero
+        );
+      } else {
+        directional_shadow_hiz_attachment = self.directional_shadow_hiz_view.acquire(
+          "directional_shadow_hiz",
+          vuk::eComputeSampled
+        );
+      }
 
       MeshRenderContext mesh_ctx;
-      mesh_ctx.camera_buffer = camera_buffer;
+      mesh_ctx.camera_buffer = light_camera_buffer;
       mesh_ctx.transforms_buffer = transforms_buffer;
       mesh_ctx.materials_buffer = materials_buffer;
       mesh_ctx.meshes_buffer = meshes_buffer;
@@ -547,13 +553,13 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       mesh_ctx.max_meshlet_instance_count = self.prepared_frame.max_meshlet_instance_count;
 
       MeshRenderer mesh_renderer(vk_context, bindless_set);
-      std::tie(
-        directional_shadows_overdraw_attachment,
-        directional_shadows_vis_buffer
-      ) = mesh_renderer.set_extent(render_info.extent)
-            .set_pass_name("directional_shadows")
-            .set_cull_flags(cull_flags)
-            .render(mesh_ctx);
+      std::tie(directional_shadows_overdraw_attachment, directional_shadows_vis_buffer) = mesh_renderer
+                                                                                            .set_extent(light_extent)
+                                                                                            .set_pass_name(
+                                                                                              "directional_shadows"
+                                                                                            )
+                                                                                            .set_cull_flags(cull_flags)
+                                                                                            .render(mesh_ctx);
     }
 
     vuk::Value<vuk::ImageAttachment> visbuffer_attachment{};
@@ -1759,7 +1765,13 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         dir_light.intensity = lc.intensity;
 
         if (lc.cast_shadows) {
-          calculate_cascaded_shadow_matrices(dir_light, current_camera, dir_light.direction);
+          calculate_cascaded_shadow_matrices(
+            self.directional_light_cameras,
+            dir_light,
+            current_camera,
+            lc.shadow_map_res,
+            lc.cascade_distances
+          );
         }
       } else if (lc.type == LightComponent::LightType::Point) {
         const glm::vec3 world_pos = Scene::get_world_position(e);

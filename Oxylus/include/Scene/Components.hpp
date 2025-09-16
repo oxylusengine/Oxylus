@@ -261,9 +261,9 @@ ECS_COMPONENT_BEGIN(LightComponent)
   ECS_COMPONENT_MEMBER(outer_cone_angle, f32, 70)
   ECS_COMPONENT_MEMBER(inner_cone_angle, f32, 0.0f)
   ECS_COMPONENT_MEMBER(cast_shadows, bool, true)
-  ECS_COMPONENT_MEMBER(shadow_map_res, u32, 1024)
+  ECS_COMPONENT_MEMBER(shadow_map_res, u32, 2048)
 #ifndef ECS_REFLECT_TYPES
-  RectPacker::Rect shadow_rect = {};
+  ECS_COMPONENT_MEMBER(cascade_distances, std::vector<f32>, {8, 80, 800, 8000})
 #endif
 ECS_COMPONENT_END();
 

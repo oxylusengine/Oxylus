@@ -205,12 +205,6 @@ public enum SceneFlags : u32 {
 public struct DirectionalLight {
   public f32x3 direction;
   public f32 intensity;
-
-  public f32x4x4 light_view_projection[MAX_DIRECTIONAL_SHADOW_CASCADES];
-  public f32x4 cascade_splits;
-  public f32x4 cascade_offsets[MAX_DIRECTIONAL_SHADOW_CASCADES];
-  public f32x4 cascade_scales[MAX_DIRECTIONAL_SHADOW_CASCADES];
-  public u32 cascade_count;
 };
 
 public struct PointLight {

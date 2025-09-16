@@ -201,12 +201,6 @@ struct CameraData {
 struct DirectionalLight {
   alignas(4) glm::vec3 direction = {};
   alignas(4) f32 intensity = 10.0f;
-
-  alignas(4) glm::mat4 light_view_projection[MAX_DIRECTIONAL_SHADOW_CASCADES] = {};
-  alignas(4) glm::vec4 cascade_splits = {};
-  alignas(4) glm::vec4 cascade_offsets[MAX_DIRECTIONAL_SHADOW_CASCADES] = {};
-  alignas(4) glm::vec4 cascade_scales[MAX_DIRECTIONAL_SHADOW_CASCADES] = {};
-  alignas(4) u32 cascade_count = 0;
 };
 
 struct PointLight {
