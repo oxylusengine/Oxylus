@@ -8,10 +8,9 @@ import cull;
 [[vk::binding(2)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(3)]] StructuredBuffer<Transform> transforms;
 [[vk::binding(4)]] StructuredBuffer<u32> all_visible_meshlet_instances_count;
-[[vk::binding(5)]] StructuredBuffer<u32> meshlet_instance_visibility_mask;
-[[vk::binding(6)]] RWStructuredBuffer<u32> visible_meshlet_instances_count;
-[[vk::binding(7)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
-[[vk::binding(8)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
+[[vk::binding(5)]] RWStructuredBuffer<u32> visible_meshlet_instances_count;
+[[vk::binding(6)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
+[[vk::binding(7)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
 
 #ifndef CULLING_MESHLET_COUNT
 #define CULLING_MESHLET_COUNT 64
@@ -39,13 +38,7 @@ func cs_main(
     let mesh_lod = mesh.lods[mesh_instance.lod_index];
     let bounds = mesh_lod.meshlet_bounds[meshlet_instance.meshlet_index];
 
-    let meshlet_instance_visibility_index = mesh_instance.meshlet_instance_visibility_offset + meshlet_instance.meshlet_index;
-    let visibility_mask_index = meshlet_instance_visibility_index / 32;
-    let bit_index = meshlet_instance_visibility_index - visibility_mask_index * 32;
-    let visibility_bit = 1 << bit_index;
-    let is_visible = (meshlet_instance_visibility_mask[visibility_mask_index] & visibility_bit) != 0;
-
-    if (is_visible && test_frustum(mvp, bounds.aabb_center, bounds.aabb_extent)) {
+    if (test_frustum(mvp, bounds.aabb_center, bounds.aabb_extent)) {
         let index = __atomic_add(visible_meshlet_instances_count[0], 1, MemoryOrder::Relaxed);
         visible_meshlet_instances_indices[index] = meshlet_instance_index;
 

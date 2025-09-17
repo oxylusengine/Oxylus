@@ -138,7 +138,6 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> meshes_buffer = {};
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
   vuk::Value<vuk::Buffer> meshlet_instance_visibility_mask_buffer = {};
-  vuk::Value<vuk::Buffer> secondary_meshlet_instance_visibility_mask_buffer = {};
   vuk::Value<vuk::Buffer> materials_buffer = {};
   vuk::Value<vuk::Buffer> lights_buffer{};
   // We still need them to ensure correct sync after we update lights
@@ -227,11 +226,6 @@ private:
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
   vuk::Unique<vuk::Buffer> point_lights_buffer{};
   vuk::Unique<vuk::Buffer> spot_lights_buffer{};
-
-  // This is for main camera
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
-  // This is for directional light
-  // TODO: Find a better name
-  vuk::Unique<vuk::Buffer> secondary_meshlet_instance_visibility_mask_buffer{};
 };
 } // namespace ox

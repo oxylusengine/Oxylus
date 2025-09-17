@@ -19,8 +19,7 @@ auto cull_meshes(
   vuk::Value<vuk::Buffer>& mesh_instances_buffer,
   vuk::Value<vuk::Buffer>& meshlet_instances_buffer,
   vuk::Value<vuk::Buffer>& visible_meshlet_instances_count_buffer,
-  vuk::Value<vuk::Buffer>& transforms_buffer,
-  vuk::Value<vuk::ImageAttachment>& hiz_attachment
+  vuk::Value<vuk::Buffer>& transforms_buffer
 ) -> vuk::Value<vuk::Buffer>;
 auto cull_meshlets(
   VkContext& ctx,
@@ -69,7 +68,6 @@ auto cull_shadowmap_meshlets(
   vuk::Value<vuk::Buffer>& all_visible_meshlet_instances_count_buffer,
   vuk::Value<vuk::Buffer>& visible_meshlet_instances_count_buffer,
   vuk::Value<vuk::Buffer>& visible_meshlet_instances_indices_buffer,
-  vuk::Value<vuk::Buffer>& meshlet_instance_visibility_mask_buffer,
   vuk::Value<vuk::Buffer>& reordered_indices_buffer,
   vuk::Value<vuk::Buffer>& meshes_buffer,
   vuk::Value<vuk::Buffer>& mesh_instances_buffer,
@@ -77,7 +75,6 @@ auto cull_shadowmap_meshlets(
   vuk::Value<vuk::Buffer>& transforms_buffer
 ) -> vuk::Value<vuk::Buffer>;
 auto draw_shadowmap(
-  bool late,
   u32 cascade_index,
   glm::mat4& projection_view,
   vuk::Value<vuk::ImageAttachment>& depth_attachment,
@@ -88,7 +85,6 @@ auto draw_shadowmap(
   vuk::Value<vuk::Buffer>& meshlet_instances_buffer,
   vuk::Value<vuk::Buffer>& transforms_buffer
 ) -> void;
-auto generate_hiz(
-  vuk::Value<vuk::ImageAttachment>& hiz_attachment, vuk::Value<vuk::ImageAttachment>& depth_attachment, bool is_array
-) -> void;
+auto generate_hiz(vuk::Value<vuk::ImageAttachment>& hiz_attachment, vuk::Value<vuk::ImageAttachment>& depth_attachment)
+  -> void;
 } // namespace ox

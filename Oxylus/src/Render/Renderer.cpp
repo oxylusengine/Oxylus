@@ -167,11 +167,6 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   //  --- FFX ---
   slang.create_pipeline(runtime, "hiz", {.path = shaders_dir + "/passes/hiz.slang", .entry_points = {"cs_main"}});
-  slang.create_pipeline(
-    runtime,
-    "hiz_arrayed",
-    {.path = shaders_dir + "/passes/hiz.slang", .entry_points = {"cs_main_arrayed"}}
-  );
 
   // --- PostProcess ---
   slang.create_pipeline(

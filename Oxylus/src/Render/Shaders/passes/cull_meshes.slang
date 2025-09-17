@@ -6,12 +6,10 @@ import debug_drawer;
 
 [[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(1)]] StructuredBuffer<Transform> transforms;
-[[vk::binding(2)]] Image2D<f32> hiz_image;
-[[vk::binding(3)]] Sampler hiz_sampler;
-[[vk::binding(4)]] RWStructuredBuffer<MeshInstance> mesh_instances;
-[[vk::binding(5)]] RWStructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(6)]] RWStructuredBuffer<u32> visible_meshlet_instances_count;
-[[vk::binding(7)]] RWStructuredBuffer<DebugDrawer> debug_drawer;
+[[vk::binding(2)]] RWStructuredBuffer<MeshInstance> mesh_instances;
+[[vk::binding(3)]] RWStructuredBuffer<MeshletInstance> meshlet_instances;
+[[vk::binding(4)]] RWStructuredBuffer<u32> visible_meshlet_instances_count;
+[[vk::binding(5)]] RWStructuredBuffer<DebugDrawer> debug_drawer;
 
 #ifndef CULLING_MESHES_COUNT
 #define CULLING_MESHES_COUNT 64

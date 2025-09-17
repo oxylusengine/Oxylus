@@ -29,8 +29,7 @@ auto cull_meshes(
   vuk::Value<vuk::Buffer>& mesh_instances_buffer,
   vuk::Value<vuk::Buffer>& meshlet_instances_buffer,
   vuk::Value<vuk::Buffer>& visible_meshlet_instances_count_buffer,
-  vuk::Value<vuk::Buffer>& transforms_buffer,
-  vuk::Value<vuk::ImageAttachment>& hiz_attachment
+  vuk::Value<vuk::Buffer>& transforms_buffer
 ) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
@@ -45,7 +44,6 @@ auto cull_meshes(
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eComputeRead) meshes,
       VUK_BA(vuk::eComputeRead) transforms,
-      VUK_IA(vuk::eComputeSampled) hiz,
       VUK_BA(vuk::eComputeRW) mesh_instances,
       VUK_BA(vuk::eComputeRW) meshlet_instances,
       VUK_BA(vuk::eComputeRW) visible_meshlet_instances_count
@@ -54,11 +52,9 @@ auto cull_meshes(
         .bind_compute_pipeline("cull_meshes")
         .bind_buffer(0, 0, meshes)
         .bind_buffer(0, 1, transforms)
-        .bind_image(0, 2, hiz)
-        .bind_sampler(0, 3, hiz_sampler_info)
-        .bind_buffer(0, 4, mesh_instances)
-        .bind_buffer(0, 5, meshlet_instances)
-        .bind_buffer(0, 6, visible_meshlet_instances_count)
+        .bind_buffer(0, 2, mesh_instances)
+        .bind_buffer(0, 3, meshlet_instances)
+        .bind_buffer(0, 4, visible_meshlet_instances_count)
         .push_constants(
           vuk::ShaderStageFlagBits::eCompute,
           0,
@@ -76,7 +72,6 @@ auto cull_meshes(
       return std::make_tuple(
         meshes,
         transforms,
-        hiz,
         mesh_instances,
         meshlet_instances,
         visible_meshlet_instances_count
@@ -87,7 +82,6 @@ auto cull_meshes(
   std::tie(
     meshes_buffer,
     transforms_buffer,
-    hiz_attachment,
     mesh_instances_buffer,
     meshlet_instances_buffer,
     visible_meshlet_instances_count_buffer
@@ -95,7 +89,6 @@ auto cull_meshes(
     vis_cull_meshes_pass(
       std::move(meshes_buffer),
       std::move(transforms_buffer),
-      std::move(hiz_attachment),
       std::move(mesh_instances_buffer),
       std::move(meshlet_instances_buffer),
       std::move(visible_meshlet_instances_count_buffer)
@@ -436,7 +429,6 @@ auto cull_shadowmap_meshlets(
   vuk::Value<vuk::Buffer>& all_visible_meshlet_instances_count_buffer,
   vuk::Value<vuk::Buffer>& visible_meshlet_instances_count_buffer,
   vuk::Value<vuk::Buffer>& visible_meshlet_instances_indices_buffer,
-  vuk::Value<vuk::Buffer>& meshlet_instance_visibility_mask_buffer,
   vuk::Value<vuk::Buffer>& reordered_indices_buffer,
   vuk::Value<vuk::Buffer>& meshes_buffer,
   vuk::Value<vuk::Buffer>& mesh_instances_buffer,
@@ -457,7 +449,6 @@ auto cull_shadowmap_meshlets(
       VUK_BA(vuk::eComputeRead) meshes,
       VUK_BA(vuk::eComputeRead) transforms,
       VUK_BA(vuk::eComputeRead) all_visible_meshlet_instances_count,
-      VUK_BA(vuk::eComputeRead) meshlet_instance_visibility_mask,
       VUK_BA(vuk::eComputeRW) visible_meshlet_instances_count,
       VUK_BA(vuk::eComputeRW) visible_meshlet_instances_indices,
       VUK_BA(vuk::eComputeRW) cull_triangles_cmd
@@ -469,10 +460,9 @@ auto cull_shadowmap_meshlets(
         .bind_buffer(0, 2, meshes)
         .bind_buffer(0, 3, transforms)
         .bind_buffer(0, 4, all_visible_meshlet_instances_count)
-        .bind_buffer(0, 5, meshlet_instance_visibility_mask)
-        .bind_buffer(0, 6, visible_meshlet_instances_count)
-        .bind_buffer(0, 7, visible_meshlet_instances_indices)
-        .bind_buffer(0, 8, cull_triangles_cmd)
+        .bind_buffer(0, 5, visible_meshlet_instances_count)
+        .bind_buffer(0, 6, visible_meshlet_instances_indices)
+        .bind_buffer(0, 7, cull_triangles_cmd)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, projection_view)
         .dispatch_indirect(dispatch_cmd);
 
@@ -483,7 +473,6 @@ auto cull_shadowmap_meshlets(
         meshes,
         transforms,
         all_visible_meshlet_instances_count,
-        meshlet_instance_visibility_mask,
         visible_meshlet_instances_count,
         visible_meshlet_instances_indices,
         cull_triangles_cmd
@@ -500,7 +489,6 @@ auto cull_shadowmap_meshlets(
     meshes_buffer,
     transforms_buffer,
     all_visible_meshlet_instances_count_buffer,
-    meshlet_instance_visibility_mask_buffer,
     visible_meshlet_instances_count_buffer,
     visible_meshlet_instances_indices_buffer,
     cull_triangles_cmd_buffer
@@ -512,7 +500,6 @@ auto cull_shadowmap_meshlets(
       std::move(meshes_buffer),
       std::move(transforms_buffer),
       std::move(all_visible_meshlet_instances_count_buffer),
-      std::move(meshlet_instance_visibility_mask_buffer),
       std::move(visible_meshlet_instances_count_buffer),
       std::move(visible_meshlet_instances_indices_buffer),
       std::move(cull_triangles_cmd_buffer)
@@ -589,7 +576,6 @@ auto cull_shadowmap_meshlets(
 }
 
 auto draw_shadowmap(
-  bool late,
   u32 cascade_index,
   glm::mat4& projection_view,
   vuk::Value<vuk::ImageAttachment>& depth_attachment,
@@ -604,7 +590,7 @@ auto draw_shadowmap(
   memory::ScopedStack stack;
 
   auto draw_shadowmap_pass = vuk::make_pass(
-    stack.format("draw shadowmap {} casecade {}", late ? "late" : "early", cascade_index),
+    stack.format("draw shadowmap casecade {}",  cascade_index),
     [projection_view](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eIndirectRead) triangle_indirect,
@@ -655,14 +641,13 @@ auto draw_shadowmap(
     );
 }
 
-auto generate_hiz(
-  vuk::Value<vuk::ImageAttachment>& hiz_attachment, vuk::Value<vuk::ImageAttachment>& depth_attachment, bool is_array
-) -> void {
+auto generate_hiz(vuk::Value<vuk::ImageAttachment>& hiz_attachment, vuk::Value<vuk::ImageAttachment>& depth_attachment)
+  -> void {
   ZoneScoped;
 
   auto hiz_generate_pass = vuk::make_pass(
     "hiz generate",
-    [is_array](
+    [](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeSampled) src,
       VUK_IA(vuk::eComputeRW) dst
@@ -671,7 +656,7 @@ auto generate_hiz(
       auto mip_count = dst->level_count;
 
       cmd_list //
-        .bind_compute_pipeline(is_array ? "hiz_arrayed" : "hiz")
+        .bind_compute_pipeline("hiz")
         .bind_sampler(0, 0, hiz_sampler_info);
 
       for (auto i = 0_u32; i < mip_count; i++) {
@@ -679,8 +664,7 @@ auto generate_hiz(
         auto mip_height = std::max(1_u32, extent.height >> i);
 
         if (i == 0) {
-          // bind to both descriptors to silence vuk, this is intentional
-          cmd_list.bind_image(0, is_array ? 2 : 1, src);
+          cmd_list.bind_image(0, 1, src);
         } else {
           auto prev_mip = dst->mip(i - 1);
           cmd_list.image_barrier(prev_mip, vuk::eComputeRW, vuk::eComputeSampled);
@@ -688,7 +672,7 @@ auto generate_hiz(
         }
 
         auto cur_mip = dst->mip(i);
-        cmd_list.bind_image(0, 3, cur_mip);
+        cmd_list.bind_image(0, 2, cur_mip);
         cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height, i));
         cmd_list.dispatch_invocations(mip_width, mip_height);
       }

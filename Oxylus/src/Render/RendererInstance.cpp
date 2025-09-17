@@ -490,147 +490,53 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
     if (self.directional_light.has_value()) {
       auto directional_light_resolution = glm::vec2(directional_light_shadowmap_size, directional_light_shadowmap_size);
-      auto directional_light_hiz_attachment = vuk::declare_ia(
-        "directional light hiz",
-        {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
-         .format = vuk::Format::eR32Sfloat,
-         .sample_count = vuk::SampleCountFlagBits::e1,
-         .level_count = Texture::get_mip_count(directional_light_shadowmap_extent),
-         .layer_count = 1}
-      );
-      directional_light_hiz_attachment.same_extent_as(directional_light_shadowmap_attachment);
-      directional_light_hiz_attachment = vuk::clear_image(std::move(directional_light_hiz_attachment), vuk::DepthZero);
-
-      auto meshlet_instance_visibility_mask_buffer = std::move(
-        self.prepared_frame.secondary_meshlet_instance_visibility_mask_buffer
-      );
-
-      auto all_visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
-      auto cull_meshlets_cmd_buffer = vuk::Value<vuk::Buffer>{};
       for (u32 cascade_index = 0; cascade_index < directional_light_cascade_count; cascade_index++) {
         auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
         auto& current_cascade_projection_view = directional_light_info.cascades[cascade_index].projection_view;
 
-        if (cascade_index == 0) {
-          auto early_visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
-          auto late_visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
-          cull_meshlets_cmd_buffer = cull_meshes(
-            vk_context,
-            GPU::CullFlags::MeshFrustum,
-            self.prepared_frame.mesh_instance_count,
-            current_cascade_projection_view,
-            self.camera_data.position,
-            self.camera_data.resolution,
-            self.camera_data.acceptable_lod_error,
-            meshes_buffer,
-            mesh_instances_buffer,
-            meshlet_instances_buffer,
-            all_visible_meshlet_instances_count_buffer,
-            transforms_buffer,
-            directional_light_hiz_attachment
-          );
+        auto all_visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
+        auto cull_meshlets_cmd_buffer = cull_meshes(
+          vk_context,
+          GPU::CullFlags::MeshFrustum,
+          self.prepared_frame.mesh_instance_count,
+          current_cascade_projection_view,
+          self.camera_data.position,
+          self.camera_data.resolution,
+          self.camera_data.acceptable_lod_error,
+          meshes_buffer,
+          mesh_instances_buffer,
+          meshlet_instances_buffer,
+          all_visible_meshlet_instances_count_buffer,
+          transforms_buffer
+        );
+        auto visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
+        auto draw_shadowmap_cmd_buffer = cull_shadowmap_meshlets(
+          vk_context,
+          cascade_index,
+          directional_light_resolution,
+          current_cascade_projection_view,
+          cull_meshlets_cmd_buffer,
+          all_visible_meshlet_instances_count_buffer,
+          visible_meshlet_instances_count_buffer,
+          visible_meshlet_instances_indices_buffer,
+          reordered_indices_buffer,
+          meshes_buffer,
+          mesh_instances_buffer,
+          meshlet_instances_buffer,
+          transforms_buffer
+        );
 
-          auto early_draw_visbuffer_cmd_buffer = cull_meshlets(
-            vk_context,
-            false,
-            GPU::CullFlags::MeshFrustum | GPU::CullFlags::MeshletOcclusion,
-            0.001,
-            directional_light_resolution,
-            current_cascade_projection_view,
-            directional_light_hiz_attachment,
-            cull_meshlets_cmd_buffer,
-            all_visible_meshlet_instances_count_buffer,
-            early_visible_meshlet_instances_count_buffer,
-            late_visible_meshlet_instances_count_buffer,
-            visible_meshlet_instances_indices_buffer,
-            meshlet_instance_visibility_mask_buffer,
-            reordered_indices_buffer,
-            meshes_buffer,
-            mesh_instances_buffer,
-            meshlet_instances_buffer,
-            transforms_buffer
-          );
-
-          draw_shadowmap(
-            false,
-            cascade_index,
-            current_cascade_projection_view,
-            current_cascade_attachment,
-            early_draw_visbuffer_cmd_buffer,
-            reordered_indices_buffer,
-            meshes_buffer,
-            mesh_instances_buffer,
-            meshlet_instances_buffer,
-            transforms_buffer
-          );
-
-          generate_hiz(directional_light_hiz_attachment, current_cascade_attachment, true);
-
-          auto late_draw_visbuffer_cmd_buffer = cull_meshlets(
-            vk_context,
-            true,
-            GPU::CullFlags::MeshFrustum | GPU::CullFlags::MeshletOcclusion,
-            0.001,
-            directional_light_resolution,
-            current_cascade_projection_view,
-            directional_light_hiz_attachment,
-            cull_meshlets_cmd_buffer,
-            all_visible_meshlet_instances_count_buffer,
-            early_visible_meshlet_instances_count_buffer,
-            late_visible_meshlet_instances_count_buffer,
-            visible_meshlet_instances_indices_buffer,
-            meshlet_instance_visibility_mask_buffer,
-            reordered_indices_buffer,
-            meshes_buffer,
-            mesh_instances_buffer,
-            meshlet_instances_buffer,
-            transforms_buffer
-          );
-
-          draw_shadowmap(
-            true,
-            cascade_index,
-            current_cascade_projection_view,
-            current_cascade_attachment,
-            late_draw_visbuffer_cmd_buffer,
-            reordered_indices_buffer,
-            meshes_buffer,
-            mesh_instances_buffer,
-            meshlet_instances_buffer,
-            transforms_buffer
-          );
-        } else {
-          auto visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
-          auto draw_shadowmap_cmd_buffer = cull_shadowmap_meshlets(
-            vk_context,
-            cascade_index,
-            directional_light_resolution,
-            current_cascade_projection_view,
-            cull_meshlets_cmd_buffer,
-            all_visible_meshlet_instances_count_buffer,
-            visible_meshlet_instances_count_buffer,
-            visible_meshlet_instances_indices_buffer,
-            meshlet_instance_visibility_mask_buffer,
-            reordered_indices_buffer,
-            meshes_buffer,
-            mesh_instances_buffer,
-            meshlet_instances_buffer,
-            transforms_buffer
-          );
-
-          draw_shadowmap(
-            true,
-            cascade_index,
-            current_cascade_projection_view,
-            current_cascade_attachment,
-            draw_shadowmap_cmd_buffer,
-            reordered_indices_buffer,
-            meshes_buffer,
-            mesh_instances_buffer,
-            meshlet_instances_buffer,
-            transforms_buffer
-          );
-        }
+        draw_shadowmap(
+          cascade_index,
+          current_cascade_projection_view,
+          current_cascade_attachment,
+          draw_shadowmap_cmd_buffer,
+          reordered_indices_buffer,
+          meshes_buffer,
+          mesh_instances_buffer,
+          meshlet_instances_buffer,
+          transforms_buffer
+        );
       }
     }
 
@@ -669,8 +575,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         mesh_instances_buffer,
         meshlet_instances_buffer,
         visible_meshlet_instances_count_buffer,
-        transforms_buffer,
-        hiz_attachment
+        transforms_buffer
       );
 
       auto early_draw_visbuffer_cmd_buffer = cull_meshlets(
@@ -710,7 +615,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         materials_buffer
       );
 
-      generate_hiz(hiz_attachment, depth_attachment, false);
+      generate_hiz(hiz_attachment, depth_attachment);
 
       auto late_draw_visbuffer_cmd_buffer = cull_meshlets(
         vk_context,
@@ -2168,20 +2073,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshlet_instance_visibility_mask_buffer = zero_fill_pass(
       std::move(meshlet_instance_visibility_mask_buffer)
     );
-
-    self.secondary_meshlet_instance_visibility_mask_buffer = vk_context.resize_buffer(
-      std::move(self.secondary_meshlet_instance_visibility_mask_buffer),
-      vuk::MemoryUsage::eGPUonly,
-      meshlet_instance_visibility_mask_size_bytes
-    );
-    auto secondary_meshlet_instance_visibility_mask_buffer = vuk::acquire_buf(
-      "secondary meshlet instances visibility mask",
-      *self.secondary_meshlet_instance_visibility_mask_buffer,
-      vuk::eNone
-    );
-    self.prepared_frame.secondary_meshlet_instance_visibility_mask_buffer = zero_fill_pass(
-      std::move(secondary_meshlet_instance_visibility_mask_buffer)
-    );
   } else if (self.mesh_instances_buffer) {
     self.prepared_frame.mesh_instances_buffer = vuk::acquire_buf(
       "mesh instances",
@@ -2191,11 +2082,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshlet_instance_visibility_mask_buffer = vuk::acquire_buf(
       "meshlet instances visibility mask",
       *self.meshlet_instance_visibility_mask_buffer,
-      vuk::eMemoryRead
-    );
-    self.prepared_frame.secondary_meshlet_instance_visibility_mask_buffer = vuk::acquire_buf(
-      "secondary meshlet instances visibility mask",
-      *self.secondary_meshlet_instance_visibility_mask_buffer,
       vuk::eMemoryRead
     );
   }
