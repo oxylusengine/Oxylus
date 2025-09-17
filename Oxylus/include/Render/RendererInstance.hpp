@@ -214,14 +214,10 @@ private:
 
   GPU::Scene gpu_scene = {};
 
-  std::vector<GPU::CameraData> directional_light_cameras = {};
-
+  option<GPU::DirectionalLight> directional_light = nullopt;
   option<GPU::Atmosphere> atmosphere = nullopt;
-
   option<GPU::HistogramInfo> histogram_info = nullopt;
-
   option<GPU::VBGTAOSettings> vbgtao_info = nullopt;
-
   GPU::PostProcessSettings post_proces_settings = {};
 
   vuk::Unique<vuk::Buffer> transforms_buffer{};

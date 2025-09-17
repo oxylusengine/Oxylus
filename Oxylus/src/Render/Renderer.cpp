@@ -148,6 +148,18 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   slang.create_pipeline(
     runtime,
+    "shadowmap_draw",
+    {.path = shaders_dir + "/passes/shadowmap_draw.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "shadowmap_cull_meshlets",
+    {.path = shaders_dir + "/passes/shadowmap_cull_meshlets.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
     "debug",
     {.path = shaders_dir + "/passes/debug.slang", .entry_points = {"vs_main", "fs_main"}}
   );
@@ -161,6 +173,11 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   //  --- FFX ---
   slang.create_pipeline(runtime, "hiz", {.path = shaders_dir + "/passes/hiz.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "hiz_arrayed",
+    {.path = shaders_dir + "/passes/hiz.slang", .entry_points = {"cs_main_arrayed"}}
+  );
 
   // --- PostProcess ---
   slang.create_pipeline(

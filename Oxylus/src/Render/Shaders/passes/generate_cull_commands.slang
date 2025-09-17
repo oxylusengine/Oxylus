@@ -7,5 +7,5 @@ import gpu;
 [[shader("compute")]]
 [[numthreads(1, 1, 1)]]
 func cs_main() -> void {
-    cull_meshlets_cmd[0].x = (visible_meshlet_instances_count[2] + (CULLING_MESHLET_COUNT - 1)) / CULLING_MESHLET_COUNT;
+    cull_meshlets_cmd[0].x = (visible_meshlet_instances_count[0] + (CULLING_MESHLET_COUNT - 1)) / CULLING_MESHLET_COUNT;
 }

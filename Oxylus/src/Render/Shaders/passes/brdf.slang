@@ -19,7 +19,7 @@ struct ShaderParameters {
     Image2D<f32x3> emissive_image;
     Image2D<f32x3> metallic_roughness_occlusion_image;
     Image2D<f32> gtao_image;
-    Image2D<f32> directional_shadows_map;
+    Texture2DArray<f32> directional_shadows_map;
     ConstantBuffer<Scene> scene;
     ConstantBuffer<Camera> camera;
     ConstantBuffer<Lights> lights;
@@ -132,36 +132,36 @@ static const f32x2 POISSON_DISK[16] = {
     f32x2(0.14383161, -0.14100790)
 };
 
-f32 poisson_disk_shadow(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, f32 bias, f32 filter_radius) {
+f32 poisson_disk_shadow(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, f32 bias, f32 filter_radius) {
     f32 shadow = 0.0;
     for (int i = 0; i < 16; ++i) {
         f32x2 offset = POISSON_DISK[i] * filter_radius;
-        f32 shadow_depth = shadow_map.sample_mip(shadow_sampler, shadow_coord.xy + offset, 0).r;
+        f32 shadow_depth = shadow_map.SampleLevel(shadow_sampler, f32x3(shadow_coord.xy + offset, 0.0), 0).r;
         shadow += (shadow_coord.z + bias) < shadow_depth ? 0.0 : 1.0;
     }
     return shadow / 16.0;
 }
 
-f32 pcf_shadow(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, f32 bias, f32 texel_size) {
+f32 pcf_shadow(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, f32 bias, f32 texel_size) {
     f32 shadow = 0.0;
     for (int x = -1; x <= 1; ++x) {
         for (int y = -1; y <= 1; ++y) {
             f32x2 offset = f32x2(x, y) * texel_size;
-            f32 shadow_depth = shadow_map.sample_mip(shadow_sampler, shadow_coord.xy + offset, 0).r;
+            f32 shadow_depth = shadow_map.SampleLevel(shadow_sampler, f32x3(shadow_coord.xy + offset, 0.0), 0).r;
             shadow += (shadow_coord.z + bias) < shadow_depth ? 0.0 : 1.0;
         }
     }
     return shadow / 9.0;
 }
 
-f32 find_blocker_distance(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, f32 light_size, f32 bias) {
+f32 find_blocker_distance(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, f32 light_size, f32 bias) {
     f32 search_radius = light_size * (shadow_coord.z - 0.1) / shadow_coord.z;
     f32 blocker_sum = 0.0;
     f32 num_blockers = 0.0;
 
     for (int i = 0; i < 16; ++i) {
         f32x2 offset = POISSON_DISK[i] * search_radius;
-        f32 shadow_depth = shadow_map.sample_mip(shadow_sampler, shadow_coord.xy + offset, 0).r;
+        f32 shadow_depth = shadow_map.SampleLevel(shadow_sampler, f32x3(shadow_coord.xy + offset, 0.0), 0).r;
 
         if ((shadow_coord.z + bias) > shadow_depth) {
             blocker_sum += shadow_depth;
@@ -173,7 +173,7 @@ f32 find_blocker_distance(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x3
     return blocker_sum / num_blockers;
 }
 
-f32 contact_hardening_shadow(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord,
+f32 contact_hardening_shadow(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord,
                            f32 light_size, f32 bias, f32x3 world_pos, f32x3 light_pos) {
     f32 light_distance = length(light_pos - world_pos);
 
@@ -196,7 +196,7 @@ u32 get_cascade_index(f32 view_depth) {
     return 0;
 }
 
-f32 sample_shadow_map(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x4x4 light_view_projection[4],
+f32 sample_shadow_map(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x4x4 light_view_projection[4],
                          f32x3 world_position, f32x3 normal, f32x3 light_direction, f32x3 camera_position) {
     f32 view_depth = length(world_position - camera_position);
     u32 cascade_index = get_cascade_index(view_depth);
@@ -220,7 +220,7 @@ f32 sample_shadow_map(Image2D<f32> shadow_map, Sampler shadow_sampler, f32x4x4 l
 }
 
 [[shader("fragment")]]
-func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params, uniform f32x4x4 directional_light_projection) -> f32x4 {
+func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params) -> f32x4 {
     const u32x2 pixel_pos = u32x2(input.position.xy);
     const f32 depth = params.depth_image.load(pixel_pos);
     if (depth == 0.0) {
@@ -260,7 +260,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     const f32x3 N = mapped_normal;
 
     f32x4x4 directional_light_projections[4] = {};
-    directional_light_projections[0] = directional_light_projection;
+    directional_light_projections[0] = params.lights.directional_light.cascades[0].projection_view;
     f32 directional_shadows = sample_shadow_map(params.directional_shadows_map,
                                 params.linear_clamp_sampler,
                                 directional_light_projections,

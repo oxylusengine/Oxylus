@@ -72,7 +72,7 @@ func cs_main(
     mesh_instance.lod_index = lod_index;
     let mesh_lod = mesh.lods[lod_index];
     let meshlet_count = mesh_lod.meshlet_count;
-    var base_meshlet_instance_offset = __atomic_add(visible_meshlet_instances_count[2], meshlet_count, MemoryOrder::Relaxed);
+    var base_meshlet_instance_offset = __atomic_add(visible_meshlet_instances_count[0], meshlet_count, MemoryOrder::Relaxed);
     for (u32 i = 0; i < meshlet_count; i++) {
         let offset = base_meshlet_instance_offset + i;
         meshlet_instances[offset].mesh_instance_index = mesh_instance_index;
