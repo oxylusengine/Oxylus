@@ -129,12 +129,6 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   slang.create_pipeline(
     runtime,
-    "visbuffer_encode_depth",
-    {.path = shaders_dir + "/passes/visbuffer_encode_depth.slang", .entry_points = {"vs_main", "fs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
     "visbuffer_clear",
     {.path = shaders_dir + "/passes/visbuffer_clear.slang", .entry_points = {"cs_main"}}
   );
