@@ -6,7 +6,7 @@ for _, file in ipairs(os.files("./**/Test*.cpp")) do
         set_languages("cxx23")
 
         add_deps("Oxylus")
-        add_forceincludes("Tracy.hpp")
+        add_forceincludes("tracy/Tracy.hpp")
 
         add_files(file)
 
