@@ -62,6 +62,7 @@ struct Packet {
 
   template <typename T>
   auto add(this Packet& self, const T& value) -> Packet& {
+    ZoneScoped;
     static_assert(std::is_arithmetic_v<T> || std::is_enum_v<T>, "T must be an arithmetic type or enum");
     const u8* bytes = reinterpret_cast<const u8*>(&value);
     self.data.insert(self.data.end(), bytes, bytes + sizeof(T));
@@ -69,6 +70,7 @@ struct Packet {
   }
 
   auto add_string(this Packet& self, const std::string& str) -> Packet& {
+    ZoneScoped;
     // length first, data second
     self.add<u32>(static_cast<u32>(str.size()));
     self.data.insert(self.data.end(), str.begin(), str.end());
@@ -76,6 +78,7 @@ struct Packet {
   }
 
   auto add_bytes(this Packet& self, const std::vector<u8>& bytes) -> Packet& {
+    ZoneScoped;
     // length first, data second
     self.add<u32>(static_cast<u32>(bytes.size()));
     self.data.insert(self.data.end(), bytes.begin(), bytes.end());
@@ -83,6 +86,7 @@ struct Packet {
   }
 
   auto add_bytes(this Packet& self, const u8* data, usize size) -> Packet& {
+    ZoneScoped;
     // length first, data second
     self.add<u32>(static_cast<u32>(size));
     self.data.insert(self.data.end(), data, data + size);
@@ -91,6 +95,7 @@ struct Packet {
 
   template <typename T>
   auto read(this const Packet& self, usize& offset) -> std::expected<T, std::string> {
+    ZoneScoped;
     static_assert(std::is_arithmetic_v<T> || std::is_enum_v<T>, "T must be an arithmetic type or enum");
 
     if (offset + sizeof(T) > self.data.size()) {
@@ -104,6 +109,7 @@ struct Packet {
   }
 
   auto read_string(this const Packet& self, usize& offset) -> std::expected<std::string, std::string> {
+    ZoneScoped;
     auto length_result = self.read<u32>(offset);
     if (!length_result) {
       return std::unexpected(length_result.error());
@@ -120,6 +126,7 @@ struct Packet {
   }
 
   auto read_bytes(this const Packet& self, usize& offset) -> std::expected<std::vector<u8>, std::string> {
+    ZoneScoped;
     auto length_result = self.read<u32>(offset);
     if (!length_result) {
       return std::unexpected(length_result.error());

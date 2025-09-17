@@ -41,14 +41,14 @@ public:
 private:
   static constexpr auto INVALID_PORT = ~0_u16;
 
-  ENetHost* host_ = nullptr;
-  uint16_t port_ = INVALID_PORT;
-  ankerl::unordered_dense::map<u32, Peer> peers_ = {};
-  u32 max_clients_ = 0;
-  bool running_ = false;
+  ENetHost* host = nullptr;
+  uint16_t port = INVALID_PORT;
+  ankerl::unordered_dense::map<u32, Peer> peers = {};
+  u32 max_clients = 0;
+  bool running = false;
   std::shared_mutex peers_mutex = {};
   std::atomic<u32> next_peer_id = {};
-  std::shared_ptr<ServerEventHandler> event_handler_ = nullptr;
+  std::shared_ptr<ServerEventHandler> event_handler = nullptr;
 
   auto handle_peer_connect(this Server& self, ENetPeer* peer) -> void;
   auto handle_peer_disconnect(this Server& self, ENetPeer* peer) -> void;

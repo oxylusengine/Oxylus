@@ -42,13 +42,13 @@ public:
   auto ping_server(this Client& self) -> void;
 
 private:
-  ENetHost* host_ = nullptr;
-  ENetPeer* server_ = nullptr;
-  ankerl::unordered_dense::map<u32, Peer> remote_peers_ = {};
-  std::atomic<State> state_ = State::Disconnected;
-  std::shared_ptr<ClientEventHandler> event_handler_ = nullptr;
-  std::shared_mutex peer_mutex_ = {};
-  u32 connection_timeout_ = 3000;
-  u32 disconnect_timeout_ = 3000;
+  ENetHost* host = nullptr;
+  ENetPeer* server = nullptr;
+  ankerl::unordered_dense::map<u32, Peer> remote_peers = {};
+  std::atomic<State> state = State::Disconnected;
+  std::shared_ptr<ClientEventHandler> event_handler = nullptr;
+  std::shared_mutex peer_mutex = {};
+  u32 connection_timeout = 3000;
+  u32 disconnect_timeout = 3000;
 };
 } // namespace ox
