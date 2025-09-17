@@ -11,12 +11,12 @@ import debug_drawer;
 [[vk::binding(4)]] RWStructuredBuffer<u32> visible_meshlet_instances_count;
 [[vk::binding(5)]] RWStructuredBuffer<DebugDrawer> debug_drawer;
 
-#ifndef CULLING_MESHES_COUNT
-#define CULLING_MESHES_COUNT 64
+#ifndef CULLING_MESH_COUNT
+#define CULLING_MESH_COUNT 64
 #endif
 
 [[shader("compute")]]
-[[numthreads(CULLING_MESHES_COUNT, 1, 1)]]
+[[numthreads(CULLING_MESH_COUNT, 1, 1)]]
 func cs_main(
     uint3 thread_id : SV_DispatchThreadID,
     uniform u32 mesh_instances_count,
