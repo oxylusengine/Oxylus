@@ -27,6 +27,11 @@ struct ShaderParameters {
 };
 
 func lights_attenuate_point(f32 to_light_dist, f32 cutoff) -> f32 {
+    // infinite cutoff
+    if (cutoff <= 0.0) {
+        return 1.0 / (to_light_dist * to_light_dist + 0.1f);
+    }
+
     f32 win = (to_light_dist / cutoff);
     win = win * win * win * win;
     win = max(0.0, 1.0 - win);

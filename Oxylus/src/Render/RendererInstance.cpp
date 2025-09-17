@@ -123,10 +123,7 @@ auto update_buffer_if_dirty(auto& self, auto& vk_context, const auto& gpu_data, 
 }
 
 auto calculate_cascaded_shadow_matrices(
-  GPU::DirectionalLight& light,
-  const CameraComponent& camera,
-  u32 shadow_map_res,
-  const f32 cascade_distances[4]
+  GPU::DirectionalLight& light, const CameraComponent& camera, u32 shadow_map_res, const f32 cascade_distances[4]
 ) -> void {
   ZoneScoped;
 
@@ -1920,8 +1917,22 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   }
 
   if (!spot_lights.empty()) {
-    self.prepared_frame
-      .spot_lights_buffer = vuk::acquire_buf("spot lights", *self.spot_lights_buffer, vuk::eMemoryRead);
+    auto spot_lights_size_bytes = ox::size_bytes(spot_lights);
+    auto src_spot_lights_buffer = vk_context.alloc_transient_buffer(
+      vuk::MemoryUsage::eCPUtoGPU,
+      spot_lights_size_bytes
+    );
+    std::memcpy(src_spot_lights_buffer->mapped_ptr, spot_lights.data(), spot_lights_size_bytes);
+
+    auto dst_spot_lights_buffer = vuk::acquire_buf(
+      "spot lights",
+      self.spot_lights_buffer->subrange(0, spot_lights_size_bytes),
+      vuk::eMemoryRead
+    );
+    self.prepared_frame.spot_lights_buffer = vuk::copy(
+      std::move(src_spot_lights_buffer),
+      std::move(dst_spot_lights_buffer)
+    );
   } else {
     self.prepared_frame
       .spot_lights_buffer = vuk::acquire_buf("spot lights", *self.spot_lights_buffer, vuk::eMemoryRead);

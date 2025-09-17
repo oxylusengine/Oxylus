@@ -394,8 +394,9 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
         .intensity = light.intensity,
     };
 
-    if (light.range.has_value())
-      gltf_light.range = *light.range;
+    // If range is not present then it means its infinite in gltf standard.
+    gltf_light.range = light.range.value_or(-1.f);
+
     if (light.innerConeAngle.has_value())
       gltf_light.inner_cone_angle = *light.innerConeAngle;
     if (light.outerConeAngle.has_value())
