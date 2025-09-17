@@ -126,7 +126,7 @@ auto calculate_cascaded_shadow_matrices(
   GPU::DirectionalLight& light,
   const CameraComponent& camera,
   u32 shadow_map_res,
-  const std::vector<f32>& cascade_distances
+  const f32 cascade_distances[4]
 ) -> void {
   ZoneScoped;
 
@@ -1829,9 +1829,14 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         dir_light.direction.z = glm::cos(tc.rotation.y);
         dir_light.intensity = lc.intensity;
         dir_light.cascade_size = lc.shadow_map_res;
+        // TODO: Hardcoded
+        dir_light.cascade_distances[0] = lc.cascade_distance_0;
+        dir_light.cascade_distances[1] = lc.cascade_distance_1;
+        dir_light.cascade_distances[2] = lc.cascade_distance_2;
+        dir_light.cascade_distances[3] = lc.cascade_distance_3;
 
         if (lc.cast_shadows) {
-          calculate_cascaded_shadow_matrices(dir_light, current_camera, lc.shadow_map_res, lc.cascade_distances);
+          calculate_cascaded_shadow_matrices(dir_light, current_camera, lc.shadow_map_res, dir_light.cascade_distances);
         }
       } else if (lc.type == LightComponent::LightType::Point) {
         const glm::vec3 world_pos = Scene::get_world_position(e);

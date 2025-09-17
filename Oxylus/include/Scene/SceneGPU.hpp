@@ -197,7 +197,6 @@ struct CameraData {
 #define MAX_SPOT_LIGHTS 1024
 
 #define MAX_DIRECTIONAL_SHADOW_CASCADES 4
-#define DIRECTIONAL_SHADOW_MAP_SIZE 2048
 
 struct DirectionalLightCascade {
   alignas(4) glm::mat4 projection_view = {};
@@ -205,6 +204,7 @@ struct DirectionalLightCascade {
 
 struct DirectionalLight {
   alignas(4) DirectionalLightCascade cascades[MAX_DIRECTIONAL_SHADOW_CASCADES] = {};
+  alignas(4) f32 cascade_distances[MAX_DIRECTIONAL_SHADOW_CASCADES] = {};
   alignas(4) glm::vec3 color = {1.0, 1.0, 1.0};
   alignas(4) f32 intensity = 1.0f;
   alignas(4) glm::vec3 direction = {};

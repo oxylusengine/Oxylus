@@ -262,9 +262,10 @@ ECS_COMPONENT_BEGIN(LightComponent)
   ECS_COMPONENT_MEMBER(inner_cone_angle, f32, 0.0f)
   ECS_COMPONENT_MEMBER(cast_shadows, bool, true)
   ECS_COMPONENT_MEMBER(shadow_map_res, u32, 2048)
-#ifndef ECS_REFLECT_TYPES
-  ECS_COMPONENT_MEMBER(cascade_distances, std::vector<f32>, {8, 80, 800, 8000})
-#endif
+  ECS_COMPONENT_MEMBER(cascade_distance_0, f32, 30)
+  ECS_COMPONENT_MEMBER(cascade_distance_1, f32, 80)
+  ECS_COMPONENT_MEMBER(cascade_distance_2, f32, 800)
+  ECS_COMPONENT_MEMBER(cascade_distance_3, f32, 8000)
 ECS_COMPONENT_END();
 
 ECS_COMPONENT_BEGIN(AtmosphereComponent)
