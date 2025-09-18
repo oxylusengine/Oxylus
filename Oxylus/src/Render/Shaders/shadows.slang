@@ -102,40 +102,22 @@ f32x3 get_cascade_debug_color(u32 cascade_index) {
     }
 }
 
-struct CascadeBlendResult {
-    u32 cascade0;
-    u32 cascade1;
-    f32 blend_factor;
-};
+f32 sample_cascade(
+    in DirectionalLightCascade cascade,
+    Texture2DArray<f32> shadow_map,
+    Sampler shadow_sampler,
+    f32x3 world_position,
+    f32x3 normal,
+    f32x3 light_direction,
+    u32 cascade_index
+) {
+    constexpr static let normal_bias = 1.8;
+    constexpr static let depth_bias = 0.02;
+    let normal_offset = normal_bias * cascade.texel_size * normal;
+    let depth_offset = depth_bias * light_direction;
+    let offset_position = f32x3(world_position.xyz + normal_offset + depth_offset);
 
-CascadeBlendResult get_cascade_blend_info(f32 cascade_distances[MAX_DIRECTIONAL_SHADOW_CASCADES], f32 view_depth, f32 near_plane, f32 far_plane) {
-    const f32 BLEND_ZONE = 2.0; // TODO: Configurable ?
-    const u32 CASCADE_COUNT = MAX_DIRECTIONAL_SHADOW_CASCADES;
-
-    CascadeBlendResult result;
-    result.cascade0 = CASCADE_COUNT - 1;
-    result.cascade1 = CASCADE_COUNT - 1;
-    result.blend_factor = 1.0;
-
-    for (u32 i = 0; i < CASCADE_COUNT; ++i) {
-        if (view_depth <= cascade_distances[i]) {
-            result.cascade0 = i;
-
-            if (i < (CASCADE_COUNT - 1) && view_depth > (cascade_distances[i] - BLEND_ZONE)) {
-                result.cascade1 = i + 1;
-                result.blend_factor = (cascade_distances[i] - view_depth) / BLEND_ZONE;
-                result.blend_factor = saturate(result.blend_factor);
-            }
-            break;
-        }
-    }
-
-    return result;
-}
-
-f32 sample_cascade(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x4x4 light_projection,
-                  f32x3 world_position, f32x3 normal, f32x3 light_direction, u32 cascade_index) {
-    f32x4 shadow_coord = mul(light_projection, f32x4(world_position, 1.0));
+    f32x4 shadow_coord = mul(cascade.projection_view, f32x4(offset_position, 1.0));
     shadow_coord.xyz /= shadow_coord.w;
     shadow_coord.xy = shadow_coord.xy * 0.5 + 0.5;
 
@@ -144,33 +126,52 @@ f32 sample_cascade(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x4
         return 0.0;
     }
 
-    f32 fragment_depth = shadow_coord.z;
-    f32 bias = max(0.002 * (1.0 - dot(normal, -light_direction)), 0.0005);
-    bias *= (1.0 + f32(cascade_index) * 0.5);
-
+    let sample_coord = f32x3(shadow_coord.xy, f32(cascade_index));
+    let shadow_depth = shadow_map.SampleLevel(shadow_sampler, sample_coord, 0).r;
+    return shadow_coord.z < shadow_depth ? 0.0 : 1.0;
     //return pcf_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, bias, 1.0 / 2048.0);
-    return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, bias, 0.002);
-    //return contact_hardening_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, 0.1, bias, world_position, f32x3(0,1000,0));
+    // return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, bias, 0.002);
+    //return contact_hardening_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, 0.1, bias, offset_position, f32x3(0,1000,0));
 }
 
-public f32 sample_shadow_map(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, DirectionalLightCascade cascades[MAX_DIRECTIONAL_SHADOW_CASCADES],
-                    f32 cascade_distances[MAX_DIRECTIONAL_SHADOW_CASCADES], f32x3 world_position, f32x3 normal, f32x3 light_direction, f32x3 camera_position,
-                    f32 camera_near, f32 camera_far) {
-    f32 view_depth = length(world_position - camera_position);
-    CascadeBlendResult cascade_info = get_cascade_blend_info(cascade_distances, view_depth, camera_near, camera_far);
 
-    let light_view_projection_1 = cascades[cascade_info.cascade0].projection_view;
-    let light_view_projection_2 = cascades[cascade_info.cascade1].projection_view;
-
-    f32 shadow0 = sample_cascade(shadow_map, shadow_sampler, light_view_projection_1,
-                                world_position, normal, light_direction, cascade_info.cascade0);
-
-    if (cascade_info.cascade0 == cascade_info.cascade1) {
-        return shadow0;
+public func get_cascade_index(in DirectionalLight light, f32 view_z) -> u32 {
+    for (var i = 0u; i < light.cascade_count; i++) {
+        if (view_z < light.cascades[i].far_bound) {
+            return i;
+        }
     }
 
-    f32 shadow1 = sample_cascade(shadow_map, shadow_sampler, light_view_projection_2,
-                                world_position, normal, light_direction, cascade_info.cascade1);
+    return light.cascade_count;
+}
 
-    return lerp(shadow1, shadow0, cascade_info.blend_factor);
+public f32 sample_shadow_map(
+    in DirectionalLight light,
+    Texture2DArray<f32> shadow_map,
+    Sampler shadow_sampler,
+    f32x3 world_position,
+    f32x3 normal,
+    f32x3 light_direction,
+    f32x3 camera_position,
+    f32 camera_near,
+    f32 camera_far
+) {
+    f32 view_depth = length(world_position - camera_position);
+    let cascade_index = get_cascade_index(light, view_depth);
+
+    var shadow = sample_cascade(light.cascades[cascade_index], shadow_map, shadow_sampler,
+                                world_position, normal, light_direction, cascade_index);
+
+    let next_cascade_index = cascade_index + 1u;
+    if (next_cascade_index < light.cascade_count) {
+        let this_far_bound = light.cascades[cascade_index].far_bound;
+        let next_near_bound = (1.0 - light.cascades_overlap_proportion) * this_far_bound;
+        if (view_depth >= next_near_bound) {
+            var next_shadow = sample_cascade(light.cascades[next_cascade_index], shadow_map, shadow_sampler,
+                                world_position, normal, light_direction, next_cascade_index);
+
+            shadow = lerp(shadow, next_shadow, (view_depth - next_near_bound) / (this_far_bound - next_near_bound));
+        }
+    }
+    return shadow;
 }

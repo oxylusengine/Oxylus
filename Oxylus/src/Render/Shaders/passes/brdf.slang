@@ -161,13 +161,13 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     const f32x3 L = normalize(directional_light.direction);
     const f32x3 N = mapped_normal;
 
-    f32 directional_shadows = sample_shadow_map(params.directional_shadows_map,
-                                                params.linear_clamp_sampler,
-                                                params.lights.directional_light.cascades,
-                                                params.lights.directional_light.cascade_distances,
-                                                world_position,
-                                                N, directional_light.direction, params.camera.position.xyz,
-                                                params.camera.near_clip, params.camera.far_clip);
+    f32 directional_shadows = sample_shadow_map(
+        params.lights.directional_light,
+        params.directional_shadows_map,
+        params.linear_clamp_sampler,
+        world_position,
+        N, directional_light.direction, params.camera.position.xyz,
+        params.camera.near_clip, params.camera.far_clip);
 
     f32x3 diffuse_light = f32x3(0, 0, 0);
 
