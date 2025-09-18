@@ -1,7 +1,5 @@
 #include "Render/RendererInstance.hpp"
 
-#include <ankerl/svector.h>
-
 #include "Asset/AssetManager.hpp"
 #include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
@@ -124,41 +122,10 @@ auto update_buffer_if_dirty(auto& self, auto& vk_context, const auto& gpu_data, 
   }
 }
 
-auto calculate_cascade_bounds(usize cascade_count, f32 nearest_bound, f32 maximum_shadow_distance)
-  -> ankerl::svector<f32, MAX_DIRECTIONAL_SHADOW_CASCADES> {
-  if (cascade_count == 1) {
-    return {maximum_shadow_distance};
-  }
-
-  auto far_bounds = ankerl::svector<f32, MAX_DIRECTIONAL_SHADOW_CASCADES>();
-  auto base = glm::pow(maximum_shadow_distance / nearest_bound, 1.0 / static_cast<f32>((cascade_count - 1)));
-  for (u32 i = 0; i < cascade_count; i++) {
-    far_bounds.push_back(nearest_bound * glm::pow(base, static_cast<f32>(i)));
-  }
-
-  return far_bounds;
-}
-
 auto calculate_cascaded_shadow_matrices(
-  GPU::DirectionalLight& light, const LightComponent& light_comp, const CameraComponent& camera
+  GPU::DirectionalLight& light, const CameraComponent& camera, u32 shadow_map_res, const f32 cascade_distances[4]
 ) -> void {
   ZoneScoped;
-
-  light.cascade_count = light_comp.cascade_count;
-  light.cascade_overlap_propotion = light_comp.cascade_overlap_propotion;
-  light.depth_bias = light_comp.depth_bias;
-  light.normal_bias = light_comp.normal_bias;
-
-  auto overlap_factor = 1.0 - light_comp.cascade_overlap_propotion;
-  auto far_bounds = calculate_cascade_bounds(
-    light_comp.cascade_count,
-    light_comp.first_cascade_far_bound,
-    light_comp.maximum_shadow_distance
-  );
-  auto near_bounds = ankerl::svector<f32, MAX_DIRECTIONAL_SHADOW_CASCADES>();
-  for (auto& far_bound : far_bounds) {
-    near_bounds.push_back(overlap_factor * far_bound);
-  }
 
   const glm::vec3 normalized_direction = glm::normalize(light.direction);
   const glm::vec3 light_position = normalized_direction * 100.0f;
@@ -184,19 +151,15 @@ auto calculate_cascaded_shadow_matrices(
     math::transform_coord(glm::vec4(1.f, 1.f, 0.f, 1.f), unproj),   // far
   };
 
-  auto body_diagonal = glm::length2(frustum_corners[0] - frustum_corners[6]);
-  auto far_plane_diagonal = glm::length2(frustum_corners[4] - frustum_corners[6]);
-  auto body_diagonal_length_sq = glm::dot(body_diagonal, body_diagonal);
-  auto far_plane_diagonal_length_sq = glm::dot(far_plane_diagonal, far_plane_diagonal);
-  auto cascade_diameter = std::ceil(std::sqrt(std::max(body_diagonal_length_sq, far_plane_diagonal_length_sq)));
-  light.texel_size = cascade_diameter / light.cascade_size;
+  const u32 cascade_count = MAX_DIRECTIONAL_SHADOW_CASCADES;
+  light.cascade_count = cascade_count;
 
   // Compute shadow cameras:
-  for (u32 cascade_index = 0; cascade_index < light.cascade_count; ++cascade_index) {
+  for (u32 cascade = 0; cascade < cascade_count; ++cascade) {
     // Compute cascade bounds in light-view-space from the main frustum corners:
-    auto& cascade = light.cascades[cascade_index];
-    auto split_near = near_bounds[cascade_index];
-    auto split_far = far_bounds[cascade_index];
+    const f32 far_plane = camera.far_clip;
+    const f32 split_near = cascade == 0 ? 0 : cascade_distances[cascade - 1] / far_plane;
+    const f32 split_far = cascade_distances[cascade] / far_plane;
 
     glm::vec4 corners[8] = {
       math::transform(lerp(frustum_corners[0], frustum_corners[1], split_near), light_view),
@@ -211,14 +174,14 @@ auto calculate_cascaded_shadow_matrices(
 
     // Compute cascade bounding sphere center:
     glm::vec4 center = {};
-    for (usize j = 0; j < ox::count_of(corners); ++j) {
+    for (usize j = 0; j < std::size(corners); ++j) {
       center += corners[j];
     }
-    center /= f32(ox::count_of(corners));
+    center /= f32(std::size(corners));
 
     // Compute cascade bounding sphere radius:
     f32 radius = 0;
-    for (usize j = 0; j < ox::count_of(corners); ++j) {
+    for (usize j = 0; j < std::size(corners); ++j) {
       radius = std::max(radius, glm::length(corners[j] - center));
     }
 
@@ -229,15 +192,14 @@ auto calculate_cascaded_shadow_matrices(
 
     // Extrude bounds to avoid early shadow clipping:
     f32 ext = abs(center.z - v_min.z);
-    ext = std::max(ext, std::min(1500.0f, camera.far_clip) * 0.5f);
+    ext = std::max(ext, std::min(1500.0f, far_plane) * 0.5f);
     v_min.z = center.z - ext;
     v_max.z = center.z + ext;
 
     const auto light_projection = glm::ortho(v_min.x, v_max.x, v_min.y, v_max.y, v_max.z, v_min.z); // reversed Z
     const auto proj_view = light_projection * light_view;
 
-    cascade.projection_view = proj_view;
-    cascade.far_bound = split_far;
+    light.cascades[cascade].projection_view = proj_view;
   }
 }
 
@@ -1041,15 +1003,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .addressModeV = vuk::SamplerAddressMode::eRepeat,
           };
 
-          auto directional_light_sampler = vuk::SamplerCreateInfo{
-            .magFilter = vuk::Filter::eLinear,
-            .minFilter = vuk::Filter::eLinear,
-            .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-            .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-            .compareEnable = true,
-            .compareOp = vuk::CompareOp::eGreaterOrEqual,
-          };
-
           cmd_list.bind_graphics_pipeline("brdf")
             .set_rasterization({})
             .set_color_blend(dst, vuk::BlendPreset::eOff)
@@ -1067,10 +1020,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .bind_image(0, 8, metallic_roughness_occlusion)
             .bind_image(0, 9, gtao)
             .bind_image(0, 10, shadows)
-            .bind_sampler(0, 11, directional_light_sampler)
-            .bind_buffer(0, 12, scene_)
-            .bind_buffer(0, 13, camera)
-            .bind_buffer(0, 14, lights)
+            .bind_buffer(0, 11, scene_)
+            .bind_buffer(0, 12, camera)
+            .bind_buffer(0, 13, lights)
             .draw(3, 1, 0, 0);
           return std::make_tuple(dst, sky_transmittance_lut, sky_multiscatter_lut, depth, scene_, camera, lights);
         }
@@ -1874,9 +1826,14 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         dir_light.direction.z = glm::cos(tc.rotation.y);
         dir_light.intensity = lc.intensity;
         dir_light.cascade_size = lc.shadow_map_res;
+        // TODO: Hardcoded
+        dir_light.cascade_distances[0] = lc.cascade_distance_0;
+        dir_light.cascade_distances[1] = lc.cascade_distance_1;
+        dir_light.cascade_distances[2] = lc.cascade_distance_2;
+        dir_light.cascade_distances[3] = lc.cascade_distance_3;
 
         if (lc.cast_shadows) {
-          calculate_cascaded_shadow_matrices(dir_light, lc, current_camera);
+          calculate_cascaded_shadow_matrices(dir_light, current_camera, lc.shadow_map_res, dir_light.cascade_distances);
         }
       } else if (lc.type == LightComponent::LightType::Point) {
         const glm::vec3 world_pos = Scene::get_world_position(e);

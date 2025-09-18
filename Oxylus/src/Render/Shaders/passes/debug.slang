@@ -4,7 +4,6 @@ import gpu;
 import scene;
 import visbuffer;
 import cull;
-import shadows;
 
 #include <fullscreen.slang>
 
@@ -36,13 +35,6 @@ func hash(uint a) -> u32 {
     a = (a + 0xfd7046c5) + (a << 3);
     a = (a ^ 0xb55a4f09) ^ (a >> 16);
     return a;
-}
-
-func hsv_to_rgb(f32x3 hsv) -> f32x3 {
-    constexpr static let FRAC_PI_3 = 1.0471975512;
-    let n = f32x3(5.0, 3.0, 1.0);
-    let k = (n + hsv.x / FRAC_PI_3) % 6.0;
-    return hsv.z - hsv.z * hsv.y * max(0.0, min(k, min(4.0 - k, 1.0)));
 }
 
 func inferno(f32 t) -> f32x3 {
@@ -109,10 +101,48 @@ func fs_main(
         } break;
         case DebugView::GTAO: {
             color = params.gtao_image.load(u32x2(input.position.xy)).rrr;
+            break;
+        }
+        #if 0
+        case DebugView::HiZ: 
+        {
+            let meshlet_instance_index = params.visible_meshlet_instances_indices[vis_data.meshlet_instance_index];
+            let meshlet_instance = params.meshlet_instances[meshlet_instance_index];
+            let mesh = params.meshes[meshlet_instance.mesh_index];
+            let meshlet_index = meshlet_instance.meshlet_index;
+            let meshlet = mesh.meshlets[meshlet_index];
+            let transform = params.transforms[meshlet_instance.transform_index];
+            let prev_mvp = mul(params.camera.previous_projection_view, transform.world);
+
+            let bounds = mesh.meshlet_bounds[meshlet_index];
+            let aabb_extent = bounds.aabb_max - bounds.aabb_min;
+
+            if (let ret = project_aabb(prev_mvp, params.camera.near_clip, bounds.aabb_min, aabb_extent)) {
+                ScreenAabb screen_aabb = ret;
+                let hiz_size = params.camera.resolution;
+                screen_aabb.min.xy *= hiz_size;
+                screen_aabb.max.xy *= hiz_size;
+
+                let min_texel = u32x2(max(screen_aabb.min.xy, 0.0));
+                let max_texel = u32x2(min(screen_aabb.max.xy, hiz_size - 1.0));
+                let size = max_texel - min_texel + 1u;
+                let max_size = max(size.x, size.y);
+                var mip = firstbithigh(max_size - 1);
+
+                let smin = min_texel >> mip;
+                let smax = max_texel >> mip;
+                if (any(smax - smin > 1)) {
+                    mip += 1;
+                }
+
+                // 0.619, 0.499 = 0.99414
+                var uv = ((f32x2(min_texel) + f32x2(max_texel)) * 0.5) / f32x2(hiz_size);
+                let d = params.hiz_image.sample_mip(params.hiz_sampler, uv, mip);
+                return f32x4(uv, d, mip);
+            }
+
         } break;
-        case DebugView::CSM: {
-            let overlay_alpha = 0.95;
-        } break;
+        #endif
         default:;
     }
 

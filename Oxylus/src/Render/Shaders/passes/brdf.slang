@@ -21,7 +21,6 @@ struct ShaderParameters {
     Image2D<f32x3> metallic_roughness_occlusion_image;
     Image2D<f32> gtao_image;
     Texture2DArray<f32> directional_shadows_map;
-    SamplerComparisonState directional_shadows_map_sampler;
     ConstantBuffer<Scene> scene;
     ConstantBuffer<Camera> camera;
     ConstantBuffer<Lights> lights;
@@ -162,18 +161,13 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     const f32x3 L = normalize(directional_light.direction);
     const f32x3 N = mapped_normal;
 
-    let view_z = dot(f32x4(params.camera.view[0].z,
-        params.camera.view[1].z,
-        params.camera.view[2].z,
-        params.camera.view[3].z),
-        f32x4(world_position, 1.0));
-    f32 directional_shadows = sample_directional_light(
-        params.lights.directional_light,
-        params.directional_shadows_map,
-        params.directional_shadows_map_sampler,
-        input.position,
-        mapped_normal,
-        view_z);
+    f32 directional_shadows = sample_shadow_map(params.directional_shadows_map,
+                                                params.linear_clamp_sampler,
+                                                params.lights.directional_light.cascades,
+                                                params.lights.directional_light.cascade_distances,
+                                                world_position,
+                                                N, directional_light.direction, params.camera.position.xyz,
+                                                params.camera.near_clip, params.camera.far_clip);
 
     f32x3 diffuse_light = f32x3(0, 0, 0);
 
