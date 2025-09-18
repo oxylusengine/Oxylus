@@ -97,10 +97,13 @@ add_requires("ktx v4.4.0", { system = false, debug = true })
 
 add_requires("simdutf v6.2.0")
 
+add_requires("svector v1.0.3", {system = false})
+
 if has_config("tests") then
     add_requires("gtest", { debug = is_mode("debug"), configs = {
         main = true,
         gmock = true,
     } })
 end
+
 

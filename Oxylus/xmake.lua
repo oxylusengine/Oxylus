@@ -93,6 +93,7 @@ target("Oxylus")
         "simdutf",
         "plf_colony",
         "shader-slang",
+        "svector",
         { public = true })
 
 target_end()

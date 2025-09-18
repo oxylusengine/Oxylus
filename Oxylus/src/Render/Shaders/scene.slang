@@ -18,8 +18,9 @@ public enum DebugView : i32 {
   Metallic,
   Roughness,
   Occlusion,
-  HiZ,
   GTAO,
+  CSM,
+  LOD,
 };
 
 [[Flags]]
@@ -204,16 +205,21 @@ public enum SceneFlags : u32 {
 
 public struct DirectionalLightCascade {
   public f32x4x4 projection_view;
+  public f32 far_bound;
 };
 
 public struct DirectionalLight {
   public DirectionalLightCascade cascades[MAX_DIRECTIONAL_SHADOW_CASCADES];
-  public f32 cascade_distances[MAX_DIRECTIONAL_SHADOW_CASCADES];
   public f32x3 color;
   public f32 intensity;
   public f32x3 direction;
   public u32 cascade_count;
   public u32 cascade_size;
+  public f32 cascades_overlap_proportion;
+  public f32 depth_bias;
+  public f32 normal_bias;
+  public f32 soft_shadow_size;
+  public f32 texel_size;
 };
 
 public struct PointLight {
