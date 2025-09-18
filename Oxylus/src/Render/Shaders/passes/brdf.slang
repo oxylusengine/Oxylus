@@ -47,6 +47,7 @@ f32x3 point_light_contribution(
     f32x3 albedo_color,
     f32 roughness,
     f32 metallic,
+    f32x3 ambient_light_occluded,
     PointLight light
 ) {
     f32x3 light_vector = light.position - world_position;
@@ -65,7 +66,7 @@ f32x3 point_light_contribution(
         return f32x3(0.0, 0.0, 0.0);
     }
 
-    f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic);
+    f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic, ambient_light_occluded);
 
     f32x3 radiance = light.color * attenuation * light.intensity;
 
@@ -90,6 +91,7 @@ f32x3 calculate_spot_light_contribution(
     f32x3 albedo_color,
     f32 roughness,
     f32 metallic,
+    f32x3 ambient_light_occluded,
     SpotLight light
 ) {
     f32x3 light_vector = light.position - world_position;
@@ -112,7 +114,7 @@ f32x3 calculate_spot_light_contribution(
         return f32x3(0.0, 0.0, 0.0);
     }
 
-    f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic);
+    f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic, ambient_light_occluded);
 
     f32x3 radiance = light.color * total_attenuation * light.intensity;
 
@@ -169,8 +171,29 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
 
     f32x3 diffuse_light = f32x3(0, 0, 0);
 
-    // SUN LIGHT COLOR ──────────────────────────────────────────────────
+    // SKY AMBIENT COLOR ────────────────────────────────────────────────
     const f32x3 ray_pos_planet = f32x3(0.0, world_position.y, 0.0) * CAMERA_SCALE_UNIT + f32x3(0.0, params.scene.atmosphere.planet_radius, 0.0);
+
+    AtmosphereIntegrateInfo sky_info = {};
+    sky_info.eye_pos = ray_pos_planet;
+    sky_info.sun_dir = L;
+    sky_info.sun_intensity = directional_light.intensity;
+    sky_info.sampling.variable_sample_count = true;
+    sky_info.sampling.min_sample_count = 1;
+    sky_info.sampling.max_sample_count = 4;
+    sky_info.transmittance_image = params.sky_transmittance_lut;
+    sky_info.multiscattering_image = params.sky_multiscattering_lut;
+    sky_info.eval_mie_phase = false;
+
+    sky_info.eye_dir = f32x3(0.0, 1.0, 0.0);
+    const let sky_result = integrate_single_scattered_luminance(params.scene.atmosphere, params.linear_clamp_sampler, sky_info);
+
+    f32x3 ambient_light = com::rec709_oetf(sky_result.luminance);
+    f32x3 ambient_light_occluded = ambient_light * occlusion;
+    f32 eye_gradient = dot(N, sky_info.eye_dir);
+    eye_gradient = (eye_gradient + 1.0) * 0.375 + 0.25;
+
+    // SUN LIGHT COLOR ──────────────────────────────────────────────────
     f32 h = length(ray_pos_planet);
     f32x3 up_vec = normalize(ray_pos_planet);
     f32 sun_cos_theta = dot(L, up_vec);
@@ -190,6 +213,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
             albedo_color,
             roughness,
             metallic,
+            ambient_light_occluded,
             light
         );
 
@@ -206,31 +230,14 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
             albedo_color,
             roughness,
             metallic,
+            ambient_light_occluded,
             light
         );
 
         total_lighting += spot_light_contribution;
     }
 
-
-    // SKY AMBIENT COLOR ────────────────────────────────────────────────
-    AtmosphereIntegrateInfo sky_info = {};
-    sky_info.eye_pos = ray_pos_planet;
-    sky_info.sun_dir = L;
-    sky_info.sun_intensity = directional_light.intensity;
-    sky_info.sampling.variable_sample_count = true;
-    sky_info.sampling.min_sample_count = 1;
-    sky_info.sampling.max_sample_count = 4;
-    sky_info.transmittance_image = params.sky_transmittance_lut;
-    sky_info.multiscattering_image = params.sky_multiscattering_lut;
-    sky_info.eval_mie_phase = false;
-
-    sky_info.eye_dir = f32x3(0.0, 1.0, 0.0);
-    const let sky_result = integrate_single_scattered_luminance(params.scene.atmosphere, params.linear_clamp_sampler, sky_info);
-
-    f32 eye_gradient = dot(N, sky_info.eye_dir);
-    eye_gradient = (eye_gradient + 1.0) * 0.375 + 0.25;
-    f32x3 ambient_contribution = com::rec709_oetf(sky_result.luminance) * albedo_color * eye_gradient * occlusion;
+    f32x3 ambient_contribution = ambient_light * albedo_color * eye_gradient;
 
     // MATERIAL COLOR (Sun Light) ──────────────────────────────────────
     // https://marmosetco.tumblr.com/post/81245981087
@@ -240,7 +247,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     horizon *= horizon;
 
     const f32 NoL = max(dot(N, L), 0.0);
-    f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic);
+    f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic, ambient_light_occluded);
     f32x3 material_surface_color = brdf * horizon * diffuse_light * NoL * occlusion;
 
     // FINAL ────────────────────────────────────────────────────────────
