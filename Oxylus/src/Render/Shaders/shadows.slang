@@ -34,7 +34,7 @@ f32 poisson_disk_shadow(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, 
         f32x2 offset = POISSON_DISK[i] * filter_radius;
         f32x3 sample_coord = f32x3(shadow_coord.xy + offset, f32(cascade_index));
         f32 shadow_depth = shadow_map.SampleLevel(shadow_sampler, sample_coord, 0).r;
-        shadow += (shadow_coord.z + bias) < shadow_depth ? 0.0 : 1.0;
+        shadow += (shadow_coord.z) < shadow_depth ? 0.0 : 1.0;
     }
     return shadow / 16.0;
 }
@@ -112,7 +112,7 @@ f32 sample_cascade(
     u32 cascade_index
 ) {
     constexpr static let normal_bias = 1.8;
-    constexpr static let depth_bias = 0.02;
+    constexpr static let depth_bias = 0.002;
     let normal_offset = normal_bias * cascade.texel_size * normal;
     let depth_offset = depth_bias * light_direction;
     let offset_position = f32x3(world_position.xyz + normal_offset + depth_offset);
@@ -127,10 +127,10 @@ f32 sample_cascade(
     }
 
     let sample_coord = f32x3(shadow_coord.xy, f32(cascade_index));
-    let shadow_depth = shadow_map.SampleLevel(shadow_sampler, sample_coord, 0).r;
-    return shadow_coord.z < shadow_depth ? 0.0 : 1.0;
+    //let shadow_depth = shadow_map.SampleLevel(shadow_sampler, sample_coord, 0).r;
+    //return shadow_coord.z < shadow_depth ? 0.0 : 1.0;
     //return pcf_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, bias, 1.0 / 2048.0);
-    // return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, bias, 0.002);
+    return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, depth_bias, 0.002);
     //return contact_hardening_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, 0.1, bias, offset_position, f32x3(0,1000,0));
 }
 
