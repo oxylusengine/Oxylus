@@ -237,7 +237,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
         total_lighting += spot_light_contribution;
     }
 
-    f32x3 ambient_contribution = ambient_light * albedo_color * eye_gradient;
+    f32x3 ambient_contribution = ambient_light_occluded * albedo_color * eye_gradient;
 
     // MATERIAL COLOR (Sun Light) ──────────────────────────────────────
     // https://marmosetco.tumblr.com/post/81245981087
