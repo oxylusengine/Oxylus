@@ -212,6 +212,8 @@ struct DirectionalLight {
   alignas(4) u32 cascade_count = {};
   alignas(4) u32 cascade_size = {};
   alignas(4) f32 cascades_overlap_proportion = {};
+  alignas(4) f32 depth_bias = {};
+  alignas(4) f32 normal_bias = {};
 };
 
 struct PointLight {

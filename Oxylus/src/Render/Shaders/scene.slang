@@ -216,6 +216,8 @@ public struct DirectionalLight {
   public u32 cascade_count;
   public u32 cascade_size;
   public f32 cascades_overlap_proportion;
+  public f32 depth_bias;
+  public f32 normal_bias;
 };
 
 public struct PointLight {

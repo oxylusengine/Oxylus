@@ -267,6 +267,8 @@ ECS_COMPONENT_BEGIN(LightComponent)
   ECS_COMPONENT_MEMBER(maximum_shadow_distance, f32, 150.0f)
   ECS_COMPONENT_MEMBER(minimum_shadow_distance, f32, 0.01f)
   ECS_COMPONENT_MEMBER(cascade_overlap_propotion, f32, 0.2f)
+  ECS_COMPONENT_MEMBER(depth_bias, f32, 0.002f)
+  ECS_COMPONENT_MEMBER(normal_bias, f32, 1.8f)
 ECS_COMPONENT_END();
 
 ECS_COMPONENT_BEGIN(AtmosphereComponent)

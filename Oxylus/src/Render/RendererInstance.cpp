@@ -142,9 +142,6 @@ auto calculate_cascaded_shadow_matrices(
 ) -> void {
   ZoneScoped;
 
-  light.cascades_overlap_proportion = light_comp.cascade_overlap_propotion;
-  light.cascade_count = light_comp.cascade_count;
-
   auto overlap_factor = 1.0 - light_comp.cascade_overlap_propotion;
   auto far_bounds = calculate_cascade_bounds(4, light_comp.first_cascade_far_bound, light_comp.maximum_shadow_distance);
   auto near_bounds = std::array<f32, MAX_DIRECTIONAL_SHADOW_CASCADES>();
@@ -178,11 +175,13 @@ auto calculate_cascaded_shadow_matrices(
   };
 
   // Compute shadow cameras:
-  for (u32 cascade = 0; cascade < light.cascade_count; ++cascade) {
+  for (u32 cascade_index = 0; cascade_index < light.cascade_count; ++cascade_index) {
+    auto &cascade = light.cascades[cascade_index];
+
     // Compute cascade bounds in light-view-space from the main frustum corners:
     const f32 far_plane = camera.far_clip;
-    const f32 split_near = near_bounds[cascade] / far_plane;
-    const f32 split_far = far_bounds[cascade] / far_plane;
+    const f32 split_near = near_bounds[cascade_index] / far_plane;
+    const f32 split_far = far_bounds[cascade_index] / far_plane;
 
     glm::vec4 corners[8] = {
       math::transform(lerp(frustum_corners[0], frustum_corners[1], split_near), light_view),
@@ -226,9 +225,9 @@ auto calculate_cascaded_shadow_matrices(
 
     auto light_projection = glm::ortho(left, right, bottom, top, z_far, z_near); // reversed Z
 
-    light.cascades[cascade].projection_view = light_projection * light_view;
-    light.cascades[cascade].far_bound = far_bounds[cascade];
-    light.cascades[cascade].texel_size = cascade_texel_size;
+    cascade.projection_view = light_projection * light_view;
+    cascade.far_bound = far_bounds[cascade_index];
+    cascade.texel_size = cascade_texel_size;
   }
 }
 
@@ -1850,11 +1849,16 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.gpu_scene.scene_flags |= GPU::SceneFlags::HasDirectionalLight;
 
         auto& dir_light = self.directional_light.emplace();
+        dir_light.color = lc.color;
+        dir_light.intensity = lc.intensity;
         dir_light.direction.x = glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y);
         dir_light.direction.y = glm::sin(tc.rotation.x) * glm::sin(tc.rotation.y);
         dir_light.direction.z = glm::cos(tc.rotation.y);
-        dir_light.intensity = lc.intensity;
+        dir_light.cascade_count = lc.cascade_count;
         dir_light.cascade_size = lc.shadow_map_res;
+        dir_light.cascades_overlap_proportion = lc.cascade_overlap_propotion;
+        dir_light.depth_bias = lc.depth_bias;
+        dir_light.normal_bias = lc.normal_bias;
 
         if (lc.cast_shadows) {
           calculate_cascaded_shadow_matrices(dir_light, lc, current_camera);
