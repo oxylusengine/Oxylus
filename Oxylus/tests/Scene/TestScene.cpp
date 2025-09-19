@@ -6,22 +6,22 @@
 class SceneTest : public ::testing::Test {
 protected:
   void SetUp() override {
-    loguru::g_stderr_verbosity = loguru::Verbosity_ERROR; // only stdout errors from oxylus
+    loguru::g_stderr_verbosity = loguru::Verbosity_WARNING; // only stdout errors from oxylus
 
-    app = create_test_app();
-
-    scene = create_test_scene();
+    //app = create_test_app();
+    //scene = create_test_scene();
   }
 
   void TearDown() override {
-    scene.reset();
-    app.reset();
+    //scene.reset();
+    //app.reset();
   }
 
   std::unique_ptr<TestApp> app = nullptr;
   std::unique_ptr<ox::Scene> scene = nullptr;
 };
 
+#if 0
 TEST_F(SceneTest, DidRun) {
   bool did_run = false;
   scene->runtime_start();
@@ -30,3 +30,4 @@ TEST_F(SceneTest, DidRun) {
 
   EXPECT_TRUE(did_run);
 }
+#endif

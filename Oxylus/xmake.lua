@@ -93,6 +93,7 @@ target("Oxylus")
         "simdutf",
         "plf_colony",
         "shader-slang",
+        "enet-ox",
         { public = true })
 
 target_end()
