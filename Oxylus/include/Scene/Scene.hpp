@@ -89,7 +89,7 @@ public:
 
   auto create_entity(const std::string& name = "", bool safe_naming = false) const -> flecs::entity;
 
-  auto create_mesh_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity;
+  auto create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity;
   auto attach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh_uuid, usize mesh_index) -> bool;
   auto detach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh_uuid, usize mesh_index) -> bool;
 

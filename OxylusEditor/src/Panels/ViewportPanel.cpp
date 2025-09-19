@@ -428,7 +428,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
         if (path.extension() == ".gltf" || path.extension() == ".glb") {
           auto* asset_man = App::get_asset_manager();
           if (auto asset = asset_man->import_asset(path.string()))
-            _scene->create_mesh_entity(asset);
+            _scene->create_model_entity(asset);
         }
       }
 

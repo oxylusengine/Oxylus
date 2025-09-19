@@ -22,7 +22,7 @@ auto SceneBinding::bind(sol::state* state) -> void {
       "create_entity", [](Scene* scene, sol::optional<std::string> name, sol::optional<bool> safe_naming) {
         return scene->create_entity(name.has_value() ? *name : "", safe_naming.has_value() ? *safe_naming : false);
       });
-  SET_TYPE_FUNCTION(scene_type, Scene, create_mesh_entity);
+  SET_TYPE_FUNCTION(scene_type, Scene, create_model_entity);
   SET_TYPE_FUNCTION(scene_type, Scene, save_to_file);
   SET_TYPE_FUNCTION(scene_type, Scene, load_from_file);
   SET_TYPE_FUNCTION(scene_type, Scene, safe_entity_name);

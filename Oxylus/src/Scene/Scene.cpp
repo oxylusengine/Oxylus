@@ -1148,7 +1148,7 @@ auto Scene::create_entity(const std::string& name, bool safe_naming) const -> fl
   return e.add<TransformComponent>().add<LayerComponent>();
 }
 
-auto Scene::create_mesh_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity {
+auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity {
   ZoneScoped;
 
   auto* asset_man = App::get_asset_manager();
