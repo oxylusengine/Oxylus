@@ -200,7 +200,9 @@ public enum SceneFlags : u32 {
 #define MAX_POINT_LIGHTS 1024
 #define MAX_SPOT_LIGHTS 1024
 
+#ifndef MAX_DIRECTIONAL_SHADOW_CASCADES
 #define MAX_DIRECTIONAL_SHADOW_CASCADES 4
+#endif
 
 public struct DirectionalLightCascade {
   public f32x4x4 projection_view;

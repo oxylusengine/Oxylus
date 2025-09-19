@@ -122,6 +122,24 @@ auto update_buffer_if_dirty(auto& self, auto& vk_context, const auto& gpu_data, 
   }
 }
 
+auto get_frustum_corners(f32 fov, f32 aspect_ratio, f32 z_near, f32 z_far) -> std::array<glm::vec3, 8> {
+  auto tan_half_fov = glm::tan(fov / 2.0f);
+  auto a = glm::abs(z_near) * tan_half_fov;
+  auto b = glm::abs(z_far) * tan_half_fov;
+
+  return std::array<glm::vec3, 8>{
+    glm::vec3(a * aspect_ratio, -a, z_near),  // bottom right
+    glm::vec3(a * aspect_ratio, a, z_near),   // top right
+    glm::vec3(-a * aspect_ratio, a, z_near),  // top left
+    glm::vec3(-a * aspect_ratio, -a, z_near), // bottom left
+    glm::vec3(b * aspect_ratio, -b, z_far),   // bottom right
+    glm::vec3(b * aspect_ratio, b, z_far),    // top right
+    glm::vec3(-b * aspect_ratio, b, z_far),   // top left
+    glm::vec3(-b * aspect_ratio, -b, z_far),  // bottom left
+
+  };
+}
+
 auto calculate_cascade_bounds(usize cascade_count, f32 nearest_bound, f32 maximum_shadow_distance)
   -> std::array<f32, MAX_DIRECTIONAL_SHADOW_CASCADES> {
   if (cascade_count == 1) {
@@ -143,68 +161,52 @@ auto calculate_cascaded_shadow_matrices(
   ZoneScoped;
 
   auto overlap_factor = 1.0 - light_comp.cascade_overlap_propotion;
-  auto far_bounds = calculate_cascade_bounds(4, light_comp.first_cascade_far_bound, light_comp.maximum_shadow_distance);
+  auto far_bounds = calculate_cascade_bounds(
+    light.cascade_count,
+    light_comp.first_cascade_far_bound,
+    light_comp.maximum_shadow_distance
+  );
   auto near_bounds = std::array<f32, MAX_DIRECTIONAL_SHADOW_CASCADES>();
   near_bounds[0] = light_comp.minimum_shadow_distance;
-  for (u32 i = 1; i < light_comp.cascade_count; i++) {
+  for (u32 i = 1; i < light.cascade_count; i++) {
     near_bounds[i] = overlap_factor * far_bounds[i - 1];
   }
 
-  const glm::vec3 normalized_direction = glm::normalize(light.direction);
-  const glm::vec3 light_position = normalized_direction * 100.0f;
-  const glm::vec3 target = glm::vec3(0.0f);
+  auto forward = glm::normalize(light.direction);
+  auto up = (glm::abs(glm::dot(forward, glm::vec3(0, 1, 0))) > 0.99f) ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
+  auto right = glm::normalize(glm::cross(up, forward));
+  up = glm::cross(forward, right);
 
-  glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
-  if (glm::abs(glm::dot(normalized_direction, up)) > 0.99f) {
-    // If light direction is nearly parallel to world up use different up vector
-    up = glm::vec3(0.0f, 0.0f, 1.0f);
-  }
-
-  auto light_view = glm::lookAt(light_position, target, up);
-  const auto unproj = camera.get_inverse_projection_view();
-
-  glm::vec4 frustum_corners[8] = {
-    math::transform_coord(glm::vec4(-1.f, -1.f, 1.f, 1.f), unproj), // near
-    math::transform_coord(glm::vec4(-1.f, -1.f, 0.f, 1.f), unproj), // far
-    math::transform_coord(glm::vec4(-1.f, 1.f, 1.f, 1.f), unproj),  // near
-    math::transform_coord(glm::vec4(-1.f, 1.f, 0.f, 1.f), unproj),  // far
-    math::transform_coord(glm::vec4(1.f, -1.f, 1.f, 1.f), unproj),  // near
-    math::transform_coord(glm::vec4(1.f, -1.f, 0.f, 1.f), unproj),  // far
-    math::transform_coord(glm::vec4(1.f, 1.f, 1.f, 1.f), unproj),   // near
-    math::transform_coord(glm::vec4(1.f, 1.f, 0.f, 1.f), unproj),   // far
-  };
+  auto world_from_light = glm::mat4(
+    glm::vec4(right, 0.0f),
+    glm::vec4(up, 0.0f),
+    glm::vec4(forward, 0.0f),
+    glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)
+  );
+  auto light_to_world_inverse = glm::transpose(world_from_light);
+  auto light_from_camera = light_to_world_inverse * camera.get_view_matrix();
 
   // Compute shadow cameras:
   for (u32 cascade_index = 0; cascade_index < light.cascade_count; ++cascade_index) {
-    auto &cascade = light.cascades[cascade_index];
+    auto& cascade = light.cascades[cascade_index];
 
     // Compute cascade bounds in light-view-space from the main frustum corners:
-    const f32 far_plane = camera.far_clip;
-    const f32 split_near = near_bounds[cascade_index] / far_plane;
-    const f32 split_far = far_bounds[cascade_index] / far_plane;
+    const f32 split_near = near_bounds[cascade_index];
+    const f32 split_far = far_bounds[cascade_index];
 
-    glm::vec4 corners[8] = {
-      math::transform(lerp(frustum_corners[0], frustum_corners[1], split_near), light_view),
-      math::transform(lerp(frustum_corners[0], frustum_corners[1], split_far), light_view),
-      math::transform(lerp(frustum_corners[2], frustum_corners[3], split_near), light_view),
-      math::transform(lerp(frustum_corners[2], frustum_corners[3], split_far), light_view),
-      math::transform(lerp(frustum_corners[4], frustum_corners[5], split_near), light_view),
-      math::transform(lerp(frustum_corners[4], frustum_corners[5], split_far), light_view),
-      math::transform(lerp(frustum_corners[6], frustum_corners[7], split_near), light_view),
-      math::transform(lerp(frustum_corners[6], frustum_corners[7], split_far), light_view),
-    };
+    auto corners = get_frustum_corners(camera.fov, camera.aspect, split_near, split_far);
 
     auto min = glm::vec3(std::numeric_limits<f32>::max());
     auto max = glm::vec3(std::numeric_limits<f32>::lowest());
     for (const auto& corner : corners) {
-      auto corner_light_view = glm::vec3(corner);
-      min = glm::min(min, corner_light_view);
-      max = glm::max(max, corner_light_view);
+      auto light_view_corner = glm::vec3(light_from_camera * glm::vec4(corner, 1.0f));
+      min = glm::min(min, light_view_corner);
+      max = glm::max(max, light_view_corner);
     }
 
-    f32 width = max.x - min.x;
-    f32 height = max.y - min.y;
-    f32 cascade_diameter = glm::max(width, height);
+    auto body_diagonal = glm::length2(corners[0] - corners[6]);
+    auto far_plane_diagonal = glm::length2(corners[4] - corners[6]);
+    auto cascade_diameter = glm::ceil(glm::sqrt(glm::max(body_diagonal, far_plane_diagonal)));
     f32 cascade_texel_size = cascade_diameter / static_cast<f32>(light.cascade_size);
 
     glm::vec3 center = glm::vec3(
@@ -213,19 +215,26 @@ auto calculate_cascaded_shadow_matrices(
       max.z
     );
 
-    f32 ext = abs(max.z - min.z);
-    ext = std::max(ext, std::min(1500.0f, far_plane) * 0.5f);
-    f32 z_near = min.z - ext;
-    f32 z_far = max.z + ext;
+    auto world_from_light_transpose = glm::transpose(world_from_light);
+    auto cascade_from_world = glm::mat4(
+      world_from_light_transpose[0],
+      world_from_light_transpose[1],
+      world_from_light_transpose[2],
+      glm::vec4(-center, 1.0f)
+    );
 
-    f32 left = center.x - cascade_diameter * 0.5f;
-    f32 right = center.x + cascade_diameter * 0.5f;
-    f32 bottom = center.y - cascade_diameter * 0.5f;
-    f32 top = center.y + cascade_diameter * 0.5f;
+    auto z_extension = camera.far_clip * 0.5f;
+    auto extended_min_z = min.z - z_extension;
+    auto extended_max_z = max.z + z_extension;
+    auto r = 1.0f / (extended_max_z - extended_min_z);
+    auto clip_from_cascade = glm::mat4(
+      glm::vec4(2.0 / cascade_diameter, 0.0, 0.0, 0.0),
+      glm::vec4(0.0, 2.0 / cascade_diameter, 0.0, 0.0),
+      glm::vec4(0.0, 0.0, r, 0.0),
+      glm::vec4(0.0, 0.0, -extended_min_z * r, 1.0)
+    );
 
-    auto light_projection = glm::ortho(left, right, bottom, top, z_far, z_near); // reversed Z
-
-    cascade.projection_view = light_projection * light_view;
+    cascade.projection_view = clip_from_cascade * cascade_from_world;
     cascade.far_bound = far_bounds[cascade_index];
     cascade.texel_size = cascade_texel_size;
   }
@@ -562,6 +571,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           meshlet_instances_buffer,
           transforms_buffer
         );
+
+        // return current_cascade_attachment;
       }
     }
 
@@ -1854,7 +1865,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         dir_light.direction.x = glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y);
         dir_light.direction.y = glm::sin(tc.rotation.x) * glm::sin(tc.rotation.y);
         dir_light.direction.z = glm::cos(tc.rotation.y);
-        dir_light.cascade_count = lc.cascade_count;
+        dir_light.cascade_count = ox::min(lc.cascade_count, static_cast<u32>(MAX_DIRECTIONAL_SHADOW_CASCADES));
         dir_light.cascade_size = lc.shadow_map_res;
         dir_light.cascades_overlap_proportion = lc.cascade_overlap_propotion;
         dir_light.depth_bias = lc.depth_bias;

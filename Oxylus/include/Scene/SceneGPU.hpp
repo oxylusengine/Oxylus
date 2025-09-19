@@ -196,7 +196,7 @@ struct CameraData {
 #define MAX_POINT_LIGHTS 1024
 #define MAX_SPOT_LIGHTS 1024
 
-#define MAX_DIRECTIONAL_SHADOW_CASCADES 4
+#define MAX_DIRECTIONAL_SHADOW_CASCADES 6
 
 struct DirectionalLightCascade {
   alignas(4) glm::mat4 projection_view = {};

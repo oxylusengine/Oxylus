@@ -49,6 +49,7 @@ auto Renderer::init() -> std::expected<void, std::string> {
   slang.create_session(
     {.root_directory = shaders_dir,
      .definitions = {
+       {"MAX_DIRECTIONAL_SHADOW_CASCADES", std::to_string(MAX_DIRECTIONAL_SHADOW_CASCADES)},
        {"MESH_MAX_LODS", std::to_string(GPU::Mesh::MAX_LODS)},
        {"CULLING_MESH_COUNT", "64"},
        {"CULLING_MESHLET_COUNT", std::to_string(Model::MAX_MESHLET_INDICES)},
