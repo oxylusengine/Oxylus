@@ -161,13 +161,16 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     const f32x3 L = normalize(directional_light.direction);
     const f32x3 N = mapped_normal;
 
+    let view_z = -mul(params.camera.view, f32x4(world_position, 1.0)).z;
     f32 directional_shadows = sample_shadow_map(
         params.lights.directional_light,
         params.directional_shadows_map,
         params.linear_clamp_sampler,
+        view_z,
         world_position,
-        N, directional_light.direction, params.camera.position.xyz,
-        params.camera.near_clip, params.camera.far_clip);
+        N, directional_light.direction);
+
+    let cascade_index = get_cascade_index(params.lights.directional_light, view_z);
 
     f32x3 diffuse_light = f32x3(0, 0, 0);
 
@@ -200,6 +203,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     f32x2 transmittance_uv = transmittance_params_to_lut_uv(params.scene.atmosphere, f32x2(h, sun_cos_theta));
     f32x3 sun_transmittance = params.sky_transmittance_lut.sample_mip(params.linear_clamp_sampler, transmittance_uv, 0.0).rgb;
     diffuse_light += sun_transmittance * directional_light.intensity * directional_shadows;
+    // diffuse_light = cascade_debug_visualization(diffuse_light, cascade_index, view_z);
 
     f32x3 total_lighting = f32x3(0.0, 0.0, 0.0);
 

@@ -123,7 +123,7 @@ auto update_buffer_if_dirty(auto& self, auto& vk_context, const auto& gpu_data, 
 }
 
 auto get_frustum_corners(f32 fov, f32 aspect_ratio, f32 z_near, f32 z_far) -> std::array<glm::vec3, 8> {
-  auto tan_half_fov = glm::tan(fov / 2.0f);
+  auto tan_half_fov = glm::tan(glm::radians(fov) / 2.0f);
   auto a = glm::abs(z_near) * tan_half_fov;
   auto b = glm::abs(z_far) * tan_half_fov;
 
@@ -175,7 +175,7 @@ auto calculate_cascaded_shadow_matrices(
   auto forward = glm::normalize(light.direction);
   auto up = (glm::abs(glm::dot(forward, glm::vec3(0, 1, 0))) > 0.99f) ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
   auto right = glm::normalize(glm::cross(up, forward));
-  up = glm::cross(forward, right);
+  up = glm::normalize(glm::cross(forward, right));
 
   auto world_from_light = glm::mat4(
     glm::vec4(right, 0.0f),
@@ -186,14 +186,10 @@ auto calculate_cascaded_shadow_matrices(
   auto light_to_world_inverse = glm::transpose(world_from_light);
   auto light_from_camera = light_to_world_inverse * camera.get_view_matrix();
 
-  // Compute shadow cameras:
   for (u32 cascade_index = 0; cascade_index < light.cascade_count; ++cascade_index) {
     auto& cascade = light.cascades[cascade_index];
-
-    // Compute cascade bounds in light-view-space from the main frustum corners:
-    const f32 split_near = near_bounds[cascade_index];
-    const f32 split_far = far_bounds[cascade_index];
-
+    auto split_near = near_bounds[cascade_index];
+    auto split_far = far_bounds[cascade_index];
     auto corners = get_frustum_corners(camera.fov, camera.aspect, split_near, split_far);
 
     auto min = glm::vec3(std::numeric_limits<f32>::max());
@@ -223,7 +219,7 @@ auto calculate_cascaded_shadow_matrices(
       glm::vec4(-center, 1.0f)
     );
 
-    auto z_extension = camera.far_clip * 0.5f;
+    auto z_extension = camera.far_clip * 2.1f;
     auto extended_min_z = min.z - z_extension;
     auto extended_max_z = max.z + z_extension;
     auto r = 1.0f / (extended_max_z - extended_min_z);
@@ -235,7 +231,7 @@ auto calculate_cascaded_shadow_matrices(
     );
 
     cascade.projection_view = clip_from_cascade * cascade_from_world;
-    cascade.far_bound = far_bounds[cascade_index];
+    cascade.far_bound = split_far;
     cascade.texel_size = cascade_texel_size;
   }
 }
