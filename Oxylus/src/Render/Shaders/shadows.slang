@@ -28,7 +28,7 @@ static const f32x2 POISSON_DISK[16] = {
     f32x2(0.14383161, -0.14100790)
 };
 
-f32 poisson_disk_shadow(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, u32 cascade_index, f32 bias, f32 filter_radius) {
+f32 poisson_disk_shadow(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, u32 cascade_index, f32 filter_radius) {
     f32 shadow = 0.0;
     for (int i = 0; i < 16; ++i) {
         f32x2 offset = POISSON_DISK[i] * filter_radius;
@@ -88,7 +88,7 @@ f32 contact_hardening_shadow(Texture2DArray<f32> shadow_map, Sampler shadow_samp
 
     filter_radius = clamp(filter_radius, 0.001, 0.05);
 
-    return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord, cascade_index, bias, filter_radius);
+    return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord, cascade_index, filter_radius);
 }
 
 // TODO: Move this to color, yes i could actually do this instead of writing this text
@@ -172,12 +172,10 @@ f32 sample_cascade(
         return 1.0;
     }
 
-    let sample_coord = f32x3(light_local.xy, f32(cascade_index));
-    let shadow_depth = shadow_map.SampleLevel(shadow_sampler, sample_coord, 0).r;
-    return light_local.z < shadow_depth ? 0.0 : 1.0;
-
+    // let sample_coord = f32x3(light_local.xy, f32(cascade_index));
+    // let shadow_depth = shadow_map.SampleLevel(shadow_sampler, sample_coord, 0).r;
     //return pcf_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, bias, 1.0 / 2048.0);
-    //return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, depth_bias, 0.002);
+    return poisson_disk_shadow(shadow_map, shadow_sampler, light_local.xyz, cascade_index, 0.002);
     //return contact_hardening_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, 0.1, bias, offset_position, f32x3(0,1000,0));
 }
 

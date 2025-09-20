@@ -136,7 +136,6 @@ auto get_frustum_corners(f32 fov, f32 aspect_ratio, f32 z_near, f32 z_far) -> st
     glm::vec3(b * aspect_ratio, b, z_far),    // top right
     glm::vec3(-b * aspect_ratio, b, z_far),   // top left
     glm::vec3(-b * aspect_ratio, -b, z_far),  // bottom left
-
   };
 }
 
@@ -190,7 +189,7 @@ auto calculate_cascaded_shadow_matrices(
     auto& cascade = light.cascades[cascade_index];
     auto split_near = near_bounds[cascade_index];
     auto split_far = far_bounds[cascade_index];
-    auto corners = get_frustum_corners(camera.fov, camera.aspect, split_near, split_far);
+    auto corners = get_frustum_corners(camera.fov, camera.aspect, -split_near, -split_far);
 
     auto min = glm::vec3(std::numeric_limits<f32>::max());
     auto max = glm::vec3(std::numeric_limits<f32>::lowest());
@@ -219,7 +218,7 @@ auto calculate_cascaded_shadow_matrices(
       glm::vec4(-center, 1.0f)
     );
 
-    auto z_extension = camera.far_clip * 1.5f;
+    auto z_extension = camera.far_clip * 0.5f;
     auto extended_min_z = min.z - z_extension;
     auto extended_max_z = max.z + z_extension;
     auto r = 1.0f / (extended_max_z - extended_min_z);
@@ -567,10 +566,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           meshlet_instances_buffer,
           transforms_buffer
         );
-
-        if (debugging && cascade_index == 0) {
-          return current_cascade_attachment;
-        }
       }
     }
 
