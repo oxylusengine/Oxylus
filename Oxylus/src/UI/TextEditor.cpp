@@ -19,7 +19,7 @@ auto TextEditor::render(this TextEditor& self, const char* id, bool* visible) ->
     if (ImGui::BeginTabBar("##tabs", tab_bar_flags)) {
       for (auto& [name, document] : self.documents) {
         ImGuiTabItemFlags tab_flags = (document.dirty ? ImGuiTabItemFlags_UnsavedDocument : 0);
-        bool visible = ImGui::BeginTabItem(name.c_str(), &document.open, tab_flags);
+        bool is_visible = ImGui::BeginTabItem(name.c_str(), &document.open, tab_flags);
 
         // Cancel attempt to close when unsaved add to save queue so we can display a popup.
         if (!document.open && document.dirty) {
@@ -28,7 +28,7 @@ auto TextEditor::render(this TextEditor& self, const char* id, bool* visible) ->
         }
 
         document.draw_context_menu(self.close_queue);
-        if (visible) {
+        if (is_visible) {
           if (ImGui::BeginChild("##body_window", {}, 0, ImGuiWindowFlags_MenuBar)) {
             self.draw_menu_bar(document);
 

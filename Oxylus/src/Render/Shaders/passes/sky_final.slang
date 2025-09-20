@@ -12,7 +12,7 @@ struct ShaderParameters {
     Image2D<f32x4> sky_view_lut;
     Image2D<f32> depth_image;
     ConstantBuffer<Atmosphere> atmosphere;
-    ConstantBuffer<Sun> sun;
+    ConstantBuffer<Lights> lights;
     ConstantBuffer<Camera> camera;
 };
 
@@ -60,13 +60,15 @@ f32x4 fs_main(VertexOutput input) : SV_TARGET {
             params.atmosphere, params.sky_aerial_perspective_lut, params.sampler, input.tex_coord, camera_relative_pos);
     }
 
+    let directional_light = params.lights.directional_light;
+
     f32x3 eye_dir = normalize(clip_pos - params.camera.position.xyz);
     f32x3 eye_pos = params.atmosphere.eye_pos;
     f32 h = length(eye_pos);
     f32x3 up = f32x3(0.0, 1.0, 0.0);
     f32x3 right = normalize(cross(up, eye_dir));
     f32x3 forward = normalize(cross(right, up));
-    const f32x3 sun_dir = normalize(params.sun.direction);
+    const f32x3 sun_dir = normalize(directional_light.direction);
     f32x2 light_on_plane = normalize(f32x2(dot(sun_dir, forward), dot(sun_dir, right)));
 
     f32 view_zenith_cos_angle = dot(eye_dir, up);
@@ -82,7 +84,7 @@ f32x4 fs_main(VertexOutput input) : SV_TARGET {
     f32x3 sun_transmittance = params.sky_transmittance_lut.sample_mip(params.sampler, transmittance_uv, 0.0).rgb;
 
     if (!planet_intersection.hasValue) {
-        luminance += draw_sun(eye_dir, params.sun.direction, 1.0) * params.sun.intensity * sun_transmittance;
+        luminance += draw_sun(eye_dir, directional_light.direction, 1.0) * directional_light.intensity * sun_transmittance;
     }
 
     return f32x4(luminance, 1.0 - transmittance);
