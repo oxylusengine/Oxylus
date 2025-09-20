@@ -184,7 +184,7 @@ auto calculate_cascaded_shadow_matrices(
     glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)
   );
   auto light_to_world_inverse = glm::transpose(world_from_light);
-  auto light_from_camera = light_to_world_inverse * camera.get_view_matrix();
+  auto camera_to_world = camera.get_inv_view_matrix();
 
   for (u32 cascade_index = 0; cascade_index < light.cascade_count; ++cascade_index) {
     auto& cascade = light.cascades[cascade_index];
@@ -195,7 +195,8 @@ auto calculate_cascaded_shadow_matrices(
     auto min = glm::vec3(std::numeric_limits<f32>::max());
     auto max = glm::vec3(std::numeric_limits<f32>::lowest());
     for (const auto& corner : corners) {
-      auto light_view_corner = glm::vec3(light_from_camera * glm::vec4(corner, 1.0f));
+      auto world_corner = camera_to_world * glm::vec4(corner, 1.0f);
+      auto light_view_corner = glm::vec3(light_to_world_inverse * world_corner);
       min = glm::min(min, light_view_corner);
       max = glm::max(max, light_view_corner);
     }
@@ -211,15 +212,14 @@ auto calculate_cascaded_shadow_matrices(
       max.z
     );
 
-    auto world_from_light_transpose = glm::transpose(world_from_light);
     auto cascade_from_world = glm::mat4(
-      world_from_light_transpose[0],
-      world_from_light_transpose[1],
-      world_from_light_transpose[2],
+      light_to_world_inverse[0],
+      light_to_world_inverse[1],
+      light_to_world_inverse[2],
       glm::vec4(-center, 1.0f)
     );
 
-    auto z_extension = camera.far_clip * 2.1f;
+    auto z_extension = camera.far_clip * 1.5f;
     auto extended_min_z = min.z - z_extension;
     auto extended_max_z = max.z + z_extension;
     auto r = 1.0f / (extended_max_z - extended_min_z);
@@ -568,7 +568,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           transforms_buffer
         );
 
-        // return current_cascade_attachment;
+        if (debugging && cascade_index == 0) {
+          return current_cascade_attachment;
+        }
       }
     }
 

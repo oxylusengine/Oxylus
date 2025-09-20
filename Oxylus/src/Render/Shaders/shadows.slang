@@ -104,7 +104,7 @@ public func cascade_debug_visualization(
     u32 cascade_index,
     f32 view_z
 ) -> f32x3 {
-    let overlay_alpha = 0.95;
+    let overlay_alpha = 0.70;
     let cascade_color_hsv = f32x3(
         f32(cascade_index) / f32(MAX_DIRECTIONAL_SHADOW_CASCADES + 1u) * TAU,
         1.0,

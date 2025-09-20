@@ -203,7 +203,10 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     f32x2 transmittance_uv = transmittance_params_to_lut_uv(params.scene.atmosphere, f32x2(h, sun_cos_theta));
     f32x3 sun_transmittance = params.sky_transmittance_lut.sample_mip(params.linear_clamp_sampler, transmittance_uv, 0.0).rgb;
     diffuse_light += sun_transmittance * directional_light.intensity * directional_shadows;
-    // diffuse_light = cascade_debug_visualization(diffuse_light, cascade_index, view_z);
+
+    if (true) {
+        diffuse_light = cascade_debug_visualization(diffuse_light, cascade_index, view_z);
+    }
 
     f32x3 total_lighting = f32x3(0.0, 0.0, 0.0);
 
