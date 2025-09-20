@@ -28,7 +28,7 @@ static const f32x2 POISSON_DISK[16] = {
     f32x2(0.14383161, -0.14100790)
 };
 
-f32 poisson_disk_shadow(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, u32 cascade_index, f32 bias, f32 filter_radius) {
+f32 poisson_disk_shadow(Texture2DArray<f32> shadow_map, Sampler shadow_sampler, f32x3 shadow_coord, u32 cascade_index, f32 filter_radius) {
     f32 shadow = 0.0;
     for (int i = 0; i < 16; ++i) {
         f32x2 offset = POISSON_DISK[i] * filter_radius;
@@ -88,18 +88,69 @@ f32 contact_hardening_shadow(Texture2DArray<f32> shadow_map, Sampler shadow_samp
 
     filter_radius = clamp(filter_radius, 0.001, 0.05);
 
-    return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord, cascade_index, bias, filter_radius);
+    return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord, cascade_index, filter_radius);
 }
 
+// TODO: Move this to color, yes i could actually do this instead of writing this text
+// but i am SO FUCKING LAZY
+func hsv_to_rgb(f32x3 hsv) -> f32x3 {
+    let n = f32x3(5.0, 3.0, 1.0);
+    let k = (n + hsv.x / 1.0471975512) % 6.0;
+    return hsv.z - hsv.z * hsv.y * max(f32x3(0.0), min(k, min(4.0 - k, f32x3(1.0))));
+}
 
-f32x3 get_cascade_debug_color(u32 cascade_index) {
-    switch (cascade_index) {
-        case 0: return f32x3(1.0, 0.0, 0.0); // Red - closest
-        case 1: return f32x3(0.0, 1.0, 0.0); // Green
-        case 2: return f32x3(0.0, 0.0, 1.0); // Blue
-        case 3: return f32x3(1.0, 1.0, 0.0); // Yellow - furthest
-        default: return f32x3(1.0, 0.0, 1.0); // Magenta - error
+public func cascade_debug_visualization(
+    f32x3 output_color,
+    u32 cascade_index,
+    f32 view_z
+) -> f32x3 {
+    let overlay_alpha = 0.70;
+    let cascade_color_hsv = f32x3(
+        f32(cascade_index) / f32(MAX_DIRECTIONAL_SHADOW_CASCADES + 1u) * TAU,
+        1.0,
+        0.5
+    );
+    let cascade_color = hsv_to_rgb(cascade_color_hsv);
+    return f32x3(
+        (1.0 - overlay_alpha) * output_color.rgb + overlay_alpha * cascade_color
+    );
+}
+
+public func get_cascade_index(in DirectionalLight light, f32 view_z) -> u32 {
+    for (var i = 0u; i < light.cascade_count; i++) {
+        if (view_z < light.cascades[i].far_bound) {
+            return i;
+        }
     }
+
+    return light.cascade_count - 1;
+}
+
+// Converts from world space to the uv position in the light's shadow map.
+//
+// The depth is stored in the return value's z coordinate. If the return value's
+// w coordinate is 0.0, then we landed outside the shadow map entirely.
+func world_to_directional_light_local(
+    in DirectionalLightCascade cascade,
+    f32x3 offset_position
+) -> f32x4 {
+    let offset_position_clip = mul(cascade.projection_view, f32x4(offset_position, 1.0));
+    if (offset_position_clip.w <= 0.0) {
+        return 0.0;
+    }
+
+    let offset_position_ndc = offset_position_clip.xyz / offset_position_clip.w;
+    // No shadow outside the orthographic projection volume
+    if (any(offset_position_ndc.xy < -1.0) ||
+        any(offset_position_ndc.xy > 1.0) ||
+        offset_position_ndc.z < 0.0 ||
+        offset_position_ndc.z > 1.0) {
+        return 0.0;
+    }
+
+    let light_local = offset_position_ndc.xy * 0.5 + 0.5;
+    let depth = offset_position_ndc.z;
+    return f32x4(light_local, depth, 1.0);
 }
 
 f32 sample_cascade(
@@ -116,46 +167,28 @@ f32 sample_cascade(
     let depth_offset = light.depth_bias * light_direction;
     let offset_position = f32x3(world_position.xyz + normal_offset + depth_offset);
 
-    var shadow_coord = mul(cascade.projection_view, f32x4(offset_position, 1.0));
-    shadow_coord.xyz /= shadow_coord.w;
-    shadow_coord.xy = shadow_coord.xy * 0.5 + 0.5;
-
-    if (any(shadow_coord.xy > 1.0) || any(shadow_coord.xy < 0.0)) {
-        return 0.0;
+    let light_local = world_to_directional_light_local(cascade, offset_position);
+    if (light_local.w == 0.0) {
+        return 1.0;
     }
 
-    let sample_coord = f32x3(shadow_coord.xy, f32(cascade_index));
-    let shadow_depth = shadow_map.SampleLevel(shadow_sampler, sample_coord, 0).r;
-    return shadow_coord.z < shadow_depth ? 0.0 : 1.0;
+    // let sample_coord = f32x3(light_local.xy, f32(cascade_index));
+    // let shadow_depth = shadow_map.SampleLevel(shadow_sampler, sample_coord, 0).r;
     //return pcf_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, bias, 1.0 / 2048.0);
-    //return poisson_disk_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, depth_bias, 0.002);
+    return poisson_disk_shadow(shadow_map, shadow_sampler, light_local.xyz, cascade_index, 0.002);
     //return contact_hardening_shadow(shadow_map, shadow_sampler, shadow_coord.xyz, cascade_index, 0.1, bias, offset_position, f32x3(0,1000,0));
-}
-
-
-public func get_cascade_index(in DirectionalLight light, f32 view_z) -> u32 {
-    for (var i = 0u; i < light.cascade_count; i++) {
-        if (view_z < light.cascades[i].far_bound) {
-            return i;
-        }
-    }
-
-    return light.cascade_count;
 }
 
 public f32 sample_shadow_map(
     in DirectionalLight light,
     Texture2DArray<f32> shadow_map,
     Sampler shadow_sampler,
+    f32 view_z,
     f32x3 world_position,
     f32x3 normal,
-    f32x3 light_direction,
-    f32x3 camera_position,
-    f32 camera_near,
-    f32 camera_far
+    f32x3 light_direction
 ) {
-    f32 view_depth = length(world_position - camera_position);
-    let cascade_index = get_cascade_index(light, view_depth);
+    let cascade_index = get_cascade_index(light, view_z);
 
     var shadow = sample_cascade(
         light,
@@ -170,7 +203,7 @@ public f32 sample_shadow_map(
     if (next_cascade_index < light.cascade_count) {
         let this_far_bound = light.cascades[cascade_index].far_bound;
         let next_near_bound = (1.0 - light.cascades_overlap_proportion) * this_far_bound;
-        if (view_depth >= next_near_bound) {
+        if (view_z >= next_near_bound) {
             var next_shadow = sample_cascade(
                 light,
                 shadow_map,
@@ -180,7 +213,7 @@ public f32 sample_shadow_map(
                 light_direction,
                 next_cascade_index);
 
-            shadow = lerp(shadow, next_shadow, (view_depth - next_near_bound) / (this_far_bound - next_near_bound));
+            shadow = lerp(shadow, next_shadow, (view_z - next_near_bound) / (this_far_bound - next_near_bound));
         }
     }
     return shadow;
