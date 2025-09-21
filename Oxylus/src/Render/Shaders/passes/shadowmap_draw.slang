@@ -1,5 +1,3 @@
-module visbuffer_encode;
-
 import common;
 import gpu;
 import scene;
