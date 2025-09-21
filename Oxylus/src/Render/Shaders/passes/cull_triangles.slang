@@ -148,7 +148,6 @@ func cs_main(
         let indices = meshlet.indices(mesh_lod, local_index);
         let positions = meshlet.positions(mesh, indices);
         triangle_passed = test_triangle(positions, resolution, cull_flags, local_index);
-        triangle_passed = true;
         if (triangle_passed) {
             active_triangle_index = __atomic_add(triangles_passed_shared, 1, MemoryOrder::Relaxed);
         }
