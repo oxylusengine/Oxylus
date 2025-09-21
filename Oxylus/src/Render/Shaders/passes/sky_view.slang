@@ -11,7 +11,7 @@ struct ShaderParameters {
     Image2D<f32x4> sky_multiscattering_lut;
     StorageImage2D<f32x4, ImageFormat::RGBA16F> sky_view_lut;
     ConstantBuffer<Atmosphere> atmosphere;
-    ConstantBuffer<Sun> sun;
+    ConstantBuffer<Lights> lights;
     ConstantBuffer<Camera> camera;
 };
 
@@ -32,15 +32,16 @@ func cs_main(
         return;
     }
 
+    let directional_light = params.lights.directional_light;
     f32x3 up_vec = eye_pos / h;
-    f32 sun_zenith_cos_angle = dot(normalize(params.sun.direction), up_vec);
+    f32 sun_zenith_cos_angle = dot(normalize(directional_light.direction), up_vec);
     f32x3 sun_dir = normalize(f32x3(com::safe_sqrt(1.0 - sun_zenith_cos_angle * sun_zenith_cos_angle), sun_zenith_cos_angle, 0.0));
 
     AtmosphereIntegrateInfo info = {};
     info.eye_pos = eye_pos;
     info.eye_dir = eye_dir;
     info.sun_dir = sun_dir;
-    info.sun_intensity = params.sun.intensity;
+    info.sun_intensity = directional_light.intensity;
 
     const int sample_count = 48;
     info.sampling.variable_sample_count = true;

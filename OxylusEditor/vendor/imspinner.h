@@ -6,6 +6,7 @@
 #pragma clang diagnostic ignored "-Wunused-variable"
 #pragma clang diagnostic ignored "-Wsign-compare"
 #pragma clang diagnostic ignored "-Wunused-but-set-variable"
+#pragma clang diagnostic ignored "-Wshadow-all"
 
 /*
  * The MIT License (MIT)

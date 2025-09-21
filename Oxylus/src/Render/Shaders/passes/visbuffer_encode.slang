@@ -6,7 +6,6 @@ import scene;
 import visbuffer;
 
 struct ShaderParameters {
-    ConstantBuffer<Camera> camera;
     StructuredBuffer<MeshletInstance> meshlet_instances;
     StructuredBuffer<MeshInstance> mesh_instances;
     StructuredBuffer<Mesh> meshes;
@@ -26,7 +25,7 @@ struct VertexOutput {
 };
 
 [[shader("vertex")]]
-func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
+func vs_main(u32 vertex_index : SV_VertexID, uniform f32x4x4 projection_view) -> VertexOutput {
     let vis = VisBufferData(vertex_index);
     let meshlet_instance = params.meshlet_instances[vis.meshlet_instance_index];
     let mesh_instance = params.mesh_instances[meshlet_instance.mesh_instance_index];
@@ -39,7 +38,7 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
     let vertex_pos = meshlet.position(mesh, index);
     let tex_coord = meshlet.tex_coord(mesh, index);
     let world_pos = transform.to_world_position(vertex_pos);
-    let clip_pos = mul(params.camera.projection_view, f32x4(world_pos.xyz, 1.0));
+    let clip_pos = mul(projection_view, f32x4(world_pos.xyz, 1.0));
 
     VertexOutput output;
     output.position = clip_pos;
