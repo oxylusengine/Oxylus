@@ -25,12 +25,19 @@ target("Oxylus")
         add_defines("_CRT_SECURE_NO_WARNINGS", { force = true, public = true  })
 
         remove_files("./src/OS/Linux*")
+        remove_files("./src/OS/MacOS*")
 
         add_defines("OX_PLATFORM_WINDOWS", { public = true })
     elseif is_plat("linux") then
         remove_files("./src/OS/Win32*")
+        remove_files("./src/OS/MacOS*")
 
         add_defines("OX_PLATFORM_LINUX", { public = true })
+    elseif is_plat("macosx") then
+        remove_files("./src/OS/Win32*")
+        remove_files("./src/OS/Linux*")
+
+        add_defines("OX_PLATFORM_MACOSX", { public = true })
     end
 
     if is_mode("debug")  then
@@ -75,7 +82,7 @@ target("Oxylus")
         "imguizmo",
         "glm",
         "flecs-ox",
-        "fastgltf",
+        "fastgltf-ox",
         "meshoptimizer",
         "fmt",
         "loguru",
@@ -83,7 +90,6 @@ target("Oxylus")
         "vuk",
         "libsdl3",
         "toml++",
-        "rapidjson",
         "joltphysics-ox",
         "tracy",
         "sol2",

@@ -25,7 +25,7 @@ add_requires("glm 1.0.1", { configs = {
 
 add_requires("flecs-ox v4.1.0")
 
-add_requires("fastgltf v0.8.0", { system = false, debug = is_mode("debug") })
+add_requires("fastgltf-ox v0.8.0", { system = false, debug = is_mode("debug") })
 
 add_requires("meshoptimizer v0.22")
 
@@ -62,7 +62,7 @@ add_requires("libsdl3")
 
 add_requires("toml++ v3.4.0")
 
-add_requires("simdjson v3.12.2")
+add_requires("simdjson-ox v3.12.2")
 
 add_requires("joltphysics-ox v5.3.0", { configs = {
     debug_renderer = true,
