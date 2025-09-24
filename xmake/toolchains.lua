@@ -39,3 +39,5 @@ toolchain("mac-clang")
     set_toolset("mm", "clang")
     set_toolset("mxx", "clang++")
     set_toolset("as", "clang")
+
+    add_ldflags("-isysroot", "$(shell xcrun --show-sdk-path)")
