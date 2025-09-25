@@ -33,7 +33,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_S
 };
 
 static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
-    {"", FileType::Directory},                                                                   //
+    {"", FileType::Unknown},                                                                   //
     {".oxasset", FileType::Meta},                                                                //
     {".oxscene", FileType::Scene},                                                               //
     {".oxprefab", FileType::Prefab},                                                             //
@@ -159,10 +159,10 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(const std:
   for (const auto& entry : std::filesystem::directory_iterator(path)) {
     ImGuiTreeNodeFlags nodeFlags = flags;
 
-    auto& entryPath = entry.path();
+    auto& entry_path = entry.path();
 
-    const bool entryIsFile = !std::filesystem::is_directory(entryPath);
-    if (entryIsFile)
+    const bool entry_is_file = !std::filesystem::is_directory(entry_path);
+    if (entry_is_file)
       nodeFlags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
     ImGui::TableNextRow();
@@ -182,38 +182,38 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(const std:
     ImGui::PopStyleColor(selected ? 2 : 1);
 
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-      if (!entryIsFile)
-        update_directory_entries(entryPath);
+      if (!entry_is_file)
+        update_directory_entries(entry_path);
 
       node_clicked = *count;
       any_node_clicked = true;
     }
 
-    const std::string filepath = entryPath.string();
+    const std::string filepath = entry_path.string();
 
-    if (!entryIsFile)
-      drag_drop_target(entryPath);
-    drag_drop_from(entryPath);
+    if (!entry_is_file)
+      drag_drop_target(entry_path);
+    drag_drop_from(entry_path);
 
     auto name = fs::get_name_with_extension(filepath);
 
-    const char* folderIcon = ICON_MDI_FILE;
-    if (entryIsFile) {
-      auto fileType = FileType::Unknown;
-      const auto& fileTypeIt = FILE_TYPES.find(entryPath.extension().string());
-      if (fileTypeIt != FILE_TYPES.end())
-        fileType = fileTypeIt->second;
+    const char* folder_icon = ICON_MDI_FILE;
+    if (entry_is_file) {
+      auto file_type = FileType::Unknown;
+      const auto& file_type_it = FILE_TYPES.find(entry_path.extension().string());
+      if (file_type_it != FILE_TYPES.end())
+        file_type = file_type_it->second;
 
-      const auto& fileTypeIconIt = FILE_TYPES_TO_ICON.find(fileType);
-      if (fileTypeIconIt != FILE_TYPES_TO_ICON.end())
-        folderIcon = fileTypeIconIt->second;
+      const auto& file_type_icon_it = FILE_TYPES_TO_ICON.find(file_type);
+      if (file_type_icon_it != FILE_TYPES_TO_ICON.end())
+        folder_icon = file_type_icon_it->second;
     } else {
-      folderIcon = open ? ICON_MDI_FOLDER_OPEN : ICON_MDI_FOLDER;
+      folder_icon = open ? ICON_MDI_FOLDER_OPEN : ICON_MDI_FOLDER;
     }
 
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Text, editor_theme.asset_icon_color);
-    ImGui::TextUnformatted(folderIcon);
+    ImGui::TextUnformatted(folder_icon);
     ImGui::PopStyleColor();
     ImGui::SameLine();
     ImGui::TextUnformatted(name.data());
@@ -221,9 +221,9 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(const std:
 
     (*count)--;
 
-    if (!entryIsFile) {
+    if (!entry_is_file) {
       if (open) {
-        const auto [isClicked, clickedNode] = directory_tree_view_recursive(entryPath, count, selectionMask, flags);
+        const auto [isClicked, clickedNode] = directory_tree_view_recursive(entry_path, count, selectionMask, flags);
 
         if (!any_node_clicked) {
           any_node_clicked = isClicked;
@@ -682,13 +682,8 @@ void ContentPanel::render_body(bool grid) {
           // texture->set_name(fs::get_file_name(texture_name));
           // UI::image(*texture, {thumb_image_size, thumb_image_size});
         } else {
-          auto file_type = FileType::Unknown;
-          const auto& file_type_it = FILE_TYPES.find(file.extension.empty() ? "" : file.extension);
-          if (file_type_it != FILE_TYPES.end()) {
-            file_type = file_type_it->second;
-          }
           ImGui::PushFont(nullptr, thumb_image_size);
-          ImGui::TextUnformatted(FILE_TYPES_TO_ICON.at(file_type));
+          ImGui::TextUnformatted(file.icon.c_str());
           ImGui::PopFont();
         }
 
@@ -845,11 +840,14 @@ void ContentPanel::update_directory_entries(const std::filesystem::path& directo
     if (file_type_color_it != TYPE_COLORS.end())
       file_type_color = file_type_color_it->second;
 
+    const auto file_icon = directory_entry.is_directory() ? ICON_MDI_FOLDER : FILE_TYPES_TO_ICON.at(file_type);
+
     File entry = {filename,
                   path.string(),
                   extension,
                   directory_entry,
                   nullptr,
+                  file_icon,
                   directory_entry.is_directory(),
                   file_type,
                   file_type_string,
