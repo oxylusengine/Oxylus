@@ -144,10 +144,8 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
     );
   }
 
-  std::vector<const c8*> instance_extensions;
-  instance_extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
-  instance_extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
-  builder.enable_extensions(instance_extensions);
+  builder.enable_extension(VK_KHR_SURFACE_EXTENSION_NAME)
+    .enable_extension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 
   auto inst_ret = builder.build();
   if (!inst_ret) {
@@ -174,8 +172,10 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   device_extensions.push_back(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
   device_extensions.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+#ifndef OX_PLATFORM_MACOSX
   device_extensions.push_back(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME);
-  // device_extensions.push_back(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
+  device_extensions.push_back(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
+#endif
   selector.add_required_extensions(device_extensions);
 
   if (auto phys_ret = selector.select(); !phys_ret) {
@@ -230,7 +230,9 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   vk12_features.shaderInt8 = true;
   vk12_features.vulkanMemoryModelDeviceScope = true;
   vk12_features.shaderSubgroupExtendedTypes = true;
+#ifndef OX_PLATFORM_MACOSX
   vk12_features.samplerFilterMinmax = true;
+#endif
 
   VkPhysicalDeviceVulkan13Features vk13_features = {};
   vk13_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -270,16 +272,39 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
 
   std::vector<std::unique_ptr<vuk::Executor>> executors;
 
-  self.graphics_queue = self.vkb_device.get_queue(vkb::QueueType::graphics).value();
+  auto graphics_queue_result = self.vkb_device.get_queue(vkb::QueueType::graphics);
+  if (!graphics_queue_result) {
+    OX_LOG_FATAL("Failed creating graphics queue. Error: {}", graphics_queue_result.error().message());
+  }
+  self.graphics_queue = graphics_queue_result.value();
   u32 graphics_queue_family_index = self.vkb_device.get_queue_index(vkb::QueueType::graphics).value();
   executors.push_back(create_vkqueue_executor(
-    fps, self.device, self.graphics_queue, graphics_queue_family_index, vuk::DomainFlagBits::eGraphicsQueue
+    fps,
+    self.device,
+    self.graphics_queue,
+    graphics_queue_family_index,
+    vuk::DomainFlagBits::eGraphicsQueue
   ));
-#ifndef OX_USE_LLVMPIPE
-  self.transfer_queue = self.vkb_device.get_queue(vkb::QueueType::transfer).value();
-  auto transfer_queue_family_index = self.vkb_device.get_queue_index(vkb::QueueType::transfer).value();
+#if !defined(OX_USE_LLVMPIPE) && !defined(OX_PLATFORM_MACOSX)
+  auto transfer_queue_result = self.vkb_device.get_queue(vkb::QueueType::transfer);
+  if (!transfer_queue_result) {
+    OX_LOG_ERROR("Failed creating transfer queue. Error: {}", transfer_queue_result.error().message());
+  }
+  self.transfer_queue = transfer_queue_result.value();
+  auto transfer_queue_family_index_result = self.vkb_device.get_queue_index(vkb::QueueType::transfer);
+  if (!transfer_queue_family_index_result) {
+    OX_LOG_FATAL(
+      "Failed getting transfer queue family index. Error: {}",
+      transfer_queue_family_index_result.error().message()
+    );
+  }
+  auto transfer_queue_family_index = transfer_queue_family_index_result.value();
   executors.push_back(create_vkqueue_executor(
-    fps, self.device, self.transfer_queue, transfer_queue_family_index, vuk::DomainFlagBits::eTransferQueue
+    fps,
+    self.device,
+    self.transfer_queue,
+    transfer_queue_family_index,
+    vuk::DomainFlagBits::eTransferQueue
   ));
 #endif
   executors.push_back(std::make_unique<vuk::ThisThreadExecutor>());
@@ -341,16 +366,19 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
     bindless_flags,
     bindless_flags,
   };
-  self.resources.descriptor_set = self.create_persistent_descriptor_set(
-    1, bindless_set_info, bindless_set_binding_flags
-  );
+  self.resources.descriptor_set = self
+                                    .create_persistent_descriptor_set(1, bindless_set_info, bindless_set_binding_flags);
 
   const u32 major = VK_VERSION_MAJOR(instanceVersion);
   const u32 minor = VK_VERSION_MINOR(instanceVersion);
   const u32 patch = VK_VERSION_PATCH(instanceVersion);
 
   OX_LOG_INFO(
-    "Vulkan context initialized using device: {} with Vulkan Version: {}.{}.{}", self.device_name, major, minor, patch
+    "Vulkan context initialized using device: {} with Vulkan Version: {}.{}.{}",
+    self.device_name,
+    major,
+    minor,
+    patch
   );
 }
 
@@ -383,7 +411,13 @@ auto VkContext::handle_resize(u32 width, u32 height) -> void {
     suspend = true;
   } else {
     swapchain = make_swapchain(
-      *runtime, *superframe_allocator, vkb_device, surface, std::move(swapchain), present_mode, num_inflight_frames
+      *runtime,
+      *superframe_allocator,
+      vkb_device,
+      surface,
+      std::move(swapchain),
+      present_mode,
+      num_inflight_frames
     );
   }
 }
@@ -762,7 +796,8 @@ auto VkContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsag
 
 auto VkContext::allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment) -> vuk::Unique<vuk::Buffer> {
   return *vuk::allocate_buffer(
-    superframe_allocator.value(), {.mem_usage = usage, .size = size, .alignment = alignment}
+    superframe_allocator.value(),
+    {.mem_usage = usage, .size = size, .alignment = alignment}
   );
 }
 
@@ -776,7 +811,9 @@ auto VkContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, vuk
 
   auto buffer_handle = vuk::Buffer{};
   auto buffer_info = vuk::BufferCreateInfo{
-    .mem_usage = vuk::MemoryUsage::eCPUtoGPU, .size = size, .alignment = alignment
+    .mem_usage = vuk::MemoryUsage::eCPUtoGPU,
+    .size = size,
+    .alignment = alignment
   };
   superframe_allocator->allocate_buffers({&buffer_handle, 1}, {&buffer_info, 1}, LOC);
   auto* graphics_executor = static_cast<vuk::QueueExecutor*>(
@@ -796,7 +833,9 @@ VkContext::alloc_transient_buffer_raw(vuk::MemoryUsage usage, usize size, usize 
   std::shared_lock _(mutex);
 
   auto buffer = *vuk::allocate_buffer(
-    frame_allocator.value(), {.mem_usage = usage, .size = size, .alignment = alignment}, LOC
+    frame_allocator.value(),
+    {.mem_usage = usage, .size = size, .alignment = alignment},
+    LOC
   );
   return *buffer;
 }
