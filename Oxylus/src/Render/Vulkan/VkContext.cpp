@@ -174,8 +174,8 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   device_extensions.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 #ifndef OX_PLATFORM_MACOSX
   device_extensions.push_back(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME);
-  device_extensions.push_back(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
 #endif
+  device_extensions.push_back(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
   selector.add_required_extensions(device_extensions);
 
   if (auto phys_ret = selector.select(); !phys_ret) {
