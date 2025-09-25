@@ -5,15 +5,14 @@ import scene;
 import visbuffer;
 
 [[vk::constant_id(0)]] const bool LATE = false;
-[[vk::binding(0)]] ConstantBuffer<Camera> camera;
-[[vk::binding(1)]] StructuredBuffer<u32> visible_meshlet_instances_count;
-[[vk::binding(2)]] StructuredBuffer<u32> visible_meshlet_instances_indices;
-[[vk::binding(3)]] StructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(4)]] StructuredBuffer<MeshInstance> mesh_instances;
-[[vk::binding(5)]] StructuredBuffer<Mesh> meshes;
-[[vk::binding(6)]] StructuredBuffer<Transform> transforms;
-[[vk::binding(7)]] RWStructuredBuffer<DrawIndexedIndirectCommand> draw_cmd;
-[[vk::binding(8)]] RWStructuredBuffer<u32> reordered_indices;
+[[vk::binding(0)]] StructuredBuffer<u32> early_visible_meshlet_instances_count;
+[[vk::binding(1)]] StructuredBuffer<u32> visible_meshlet_instances_indices;
+[[vk::binding(2)]] StructuredBuffer<MeshletInstance> meshlet_instances;
+[[vk::binding(3)]] StructuredBuffer<MeshInstance> mesh_instances;
+[[vk::binding(4)]] StructuredBuffer<Mesh> meshes;
+[[vk::binding(5)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(6)]] RWStructuredBuffer<DrawIndexedIndirectCommand> draw_cmd;
+[[vk::binding(7)]] RWStructuredBuffer<u32> reordered_indices;
 
 groupshared u32 base_index_shared;
 groupshared u32 triangles_passed_shared;
@@ -109,11 +108,13 @@ func test_triangle(in f32x3x3 positions, in f32x2 resolution, CullFlags cull_fla
 func cs_main(
     uint3 group_id : SV_GroupID,
     uint3 group_thread_id : SV_GroupThreadID,
-    uniform CullFlags cull_flags
+    uniform CullFlags cull_flags,
+    uniform f32x2 resolution,
+    uniform f32x4x4 projection_view
 ) -> void {
     var visible_meshlet_instance_index = group_id.x;
     if (LATE) {
-        visible_meshlet_instance_index += visible_meshlet_instances_count[0];
+        visible_meshlet_instance_index += early_visible_meshlet_instances_count[0];
     }
 
     let local_index = group_thread_id.x;
@@ -132,7 +133,7 @@ func cs_main(
         meshlet_triangle_count_shared = meshlet.triangle_count;
 
         let transform = transforms[mesh_instance.transform_index];
-        model_view_proj_shared = mul(camera.projection_view, transform.world);
+        model_view_proj_shared = mul(projection_view, transform.world);
     }
 
     GroupMemoryBarrierWithGroupSync();
@@ -146,8 +147,7 @@ func cs_main(
 
         let indices = meshlet.indices(mesh_lod, local_index);
         let positions = meshlet.positions(mesh, indices);
-        triangle_passed = test_triangle(positions, camera.resolution, cull_flags, local_index);
-        triangle_passed = true;
+        triangle_passed = test_triangle(positions, resolution, cull_flags, local_index);
         if (triangle_passed) {
             active_triangle_index = __atomic_add(triangles_passed_shared, 1, MemoryOrder::Relaxed);
         }

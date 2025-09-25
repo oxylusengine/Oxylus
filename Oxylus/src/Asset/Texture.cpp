@@ -131,7 +131,7 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
           ktx_per_level_offsets.resize(ia.level_count);
 
           for (u32 level = 0; level < ia.level_count; level++) {
-            u64 offset = 0;
+            ktx_size_t offset = 0;
             auto offset_result = ktxTexture_GetImageOffset(ktxTexture(ktx_texture.get()), level, 0, 0, &offset);
             if (offset_result != KTX_SUCCESS) {
               OX_LOG_ERROR("Failed to get KTX2 offset.");

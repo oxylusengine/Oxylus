@@ -21,11 +21,11 @@ struct AssetDirectory {
 
   ~AssetDirectory();
 
-  auto add_subdir(this AssetDirectory& self, const ::fs::path& path) -> AssetDirectory*;
+  auto add_subdir(this AssetDirectory& self, const ::fs::path& dir_path) -> AssetDirectory*;
 
   auto add_subdir(this AssetDirectory& self, std::unique_ptr<AssetDirectory>&& directory) -> AssetDirectory*;
 
-  auto add_asset(this AssetDirectory& self, const ::fs::path& path) -> UUID;
+  auto add_asset(this AssetDirectory& self, const ::fs::path& dir_path) -> UUID;
 
   auto refresh(this AssetDirectory& self) -> void;
 };

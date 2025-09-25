@@ -1,3 +1,5 @@
+add_repositories("local repo", {rootdir = os.scriptdir()})
+
 add_requires("stb 2024.06.01")
 
 add_requires("miniaudio 0.11.22")
@@ -23,7 +25,7 @@ add_requires("glm 1.0.1", { configs = {
 
 add_requires("flecs-ox v4.1.0")
 
-add_requires("fastgltf v0.8.0", { system = false, debug = is_mode("debug") })
+add_requires("fastgltf-ox v0.8.0", { system = false, debug = is_mode("debug") })
 
 add_requires("meshoptimizer v0.22")
 
@@ -60,7 +62,7 @@ add_requires("libsdl3")
 
 add_requires("toml++ v3.4.0")
 
-add_requires("simdjson v3.12.2")
+add_requires("simdjson-ox v3.12.2")
 
 add_requires("joltphysics-ox v5.3.0", { configs = {
     debug_renderer = true,
@@ -93,7 +95,7 @@ add_requires("plf_colony v7.41")
 add_requires("dylib v2.2.1")
 
 add_requires("zstd v1.5.7", { system = false })
-add_requires("ktx v4.4.0", { system = false, debug = true })
+add_requires("ktx-ox v4.4.0", { system = false, debug = false })
 
 add_requires("simdutf v6.2.0")
 

@@ -43,7 +43,7 @@ auto ThumbnailRenderer::render(VkContext& vk_context, vuk::Extent3D extent, vuk:
 
   final_attachment = vuk::clear_image(final_attachment, vuk::Black<f32>);
 
-  if (mesh == nullptr)
+  if (model_ == nullptr)
     return final_attachment;
 
   CameraComponent cam{.position = {0, 0, 3}};
@@ -104,10 +104,10 @@ auto ThumbnailRenderer::render(VkContext& vk_context, vuk::Extent3D extent, vuk:
   return {};
 }
 
-auto ThumbnailRenderer::set_model(this ThumbnailRenderer& self, Model* mesh) -> void {
+auto ThumbnailRenderer::set_model(this ThumbnailRenderer& self, Model* model) -> void {
   ZoneScoped;
 
-  self.mesh = mesh;
+  self.model_ = model;
 }
 
 auto ThumbnailRenderer::set_name(this ThumbnailRenderer& self, const std::string& name) -> void {

@@ -38,15 +38,32 @@ public func GGX_energy_compensation(f32 NdotV, f32 alpha, f32x3 Fss) -> f32x3 {
     return 1.0 + Fss * (1.0 - Ess) / Ess;
 }
 
-public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 roughness, f32 metallic) -> f32x3 {
+// https://github.com/lander-vr/godot/blob/56730d0cb2e4fd06c0ef23c7e44d8e9e8e64edf0/drivers/gles3/shaders/scene.glsl
+public f32 specular_occlusion_ambient(f32x3 ambient_light, f32 roughness, f32 metallic) {
+    // Calculate luminance of ambient light using standard weights
+    f32 specular_occlusion = (ambient_light.r * 0.3 + ambient_light.g * 0.59 + ambient_light.b * 0.11) * 2.0;
+
+    // Preserve speculars on bright areas
+    specular_occlusion = min(specular_occlusion * 4.0, 1.0);
+
+    // Reflectivity factor based on material properties
+    f32 reflective_f = (1.0 - roughness) * metallic;
+
+    // Magic number 10.0 gives intended effect - low enough for occlusion, high enough for reaction to lights
+    specular_occlusion = max(min(reflective_f * specular_occlusion * 10.0, 1.0), specular_occlusion);
+
+    return specular_occlusion;
+}
+
+public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 roughness, f32 metallic, f32x3 ambient_light_occluded) -> f32x3 {
     f32x3 H = normalize(V + L);
     f32 NoV = abs(dot(N, V)) + 1e-5;
     f32 NoL = max(dot(N, L), 0.0);
     f32 NoH = max(dot(N, H), 0.0);
     f32 LoH = max(dot(L, H), 0.0);
 
-    const f32 reflectance = 0.5;
-    f32x3 F0 = 0.16 * reflectance * reflectance * (1.0 - metallic) + albedo * metallic;
+    const f32x3 dielectric_f0 = f32x3(0.04);
+    f32x3 F0 = lerp(dielectric_f0, albedo, metallic);
 
     // Microfacet
     f32 roughness2 = roughness * roughness;
@@ -58,7 +75,8 @@ public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 roughness, f32 met
 
     // Reflectance (Cook-Torrance)
     // V already divided by denominator
-    f32x3 specular = F * D * G2;
+    f32 specular_occlusion = specular_occlusion_ambient(ambient_light_occluded, roughness, metallic);
+    f32x3 specular = F * D * G2 * specular_occlusion;
     // Diffuse
     f32x3 diffuse = (1.0 - metallic) * albedo * Fd_Lambert();
     // Frensel combination

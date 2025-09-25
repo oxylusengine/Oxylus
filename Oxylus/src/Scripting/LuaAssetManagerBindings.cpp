@@ -7,9 +7,9 @@
 
 namespace ox {
 auto AssetManagerBinding::bind(sol::state* state) -> void {
-  auto uuid = state->new_usertype<UUID>("UUID");
+  auto uuid_type = state->new_usertype<UUID>("UUID");
 
-  SET_TYPE_FUNCTION(uuid, UUID, str);
+  SET_TYPE_FUNCTION(uuid_type, UUID, str);
 
   auto asset_manager = state->new_usertype<AssetManager>("AssetManager");
 

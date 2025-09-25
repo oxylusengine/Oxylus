@@ -286,16 +286,16 @@ inline void TextUnformatted(const std::string& text) { ImGui::TextUnformatted(te
 inline void TextUnformatted(const std::string& text, const std::string& textEnd) {
   ImGui::TextUnformatted(text.c_str(), textEnd.c_str());
 }
-inline void Text(const char* text) { ImGui::Text(text); }
+inline void Text(const char* text) { ImGui::Text("%s", text); }
 inline void TextColored(float colR, float colG, float colB, float colA, const std::string& text) {
-  ImGui::TextColored({colR, colG, colB, colA}, text.c_str());
+  ImGui::TextColored({colR, colG, colB, colA}, "%s", text.c_str());
 }
-inline void TextDisabled(const std::string& text) { ImGui::TextDisabled(text.c_str()); }
-inline void TextWrapped(const std::string text) { ImGui::TextWrapped(text.c_str()); }
+inline void TextDisabled(const std::string& text) { ImGui::TextDisabled("%s", text.c_str()); }
+inline void TextWrapped(const std::string text) { ImGui::TextWrapped("%s", text.c_str()); }
 inline void LabelText(const std::string& label, const std::string& text) {
-  ImGui::LabelText(label.c_str(), text.c_str());
+  ImGui::LabelText(label.c_str(), "%s", text.c_str());
 }
-inline void BulletText(const std::string& text) { ImGui::BulletText(text.c_str()); }
+inline void BulletText(const std::string& text) { ImGui::BulletText("%s", text.c_str()); }
 
 // Widgets: Main
 inline bool Button(const std::string& label) { return ImGui::Button(label.c_str()); }
@@ -1646,7 +1646,7 @@ inline void SetColorEditOptions(int flags) { ImGui::SetColorEditOptions(static_c
 // Widgets: Trees
 inline bool TreeNode(const std::string& label) { return ImGui::TreeNode(label.c_str()); }
 inline bool TreeNode(const std::string& label, const std::string& fmt) {
-  return ImGui::TreeNode(label.c_str(), fmt.c_str());
+  return ImGui::TreeNode(label.c_str(), "%s", fmt.c_str());
 }
 /* TODO: TreeNodeV(...) (2) ==> UNSUPPORTED */
 inline bool TreeNodeEx(const std::string& label) { return ImGui::TreeNodeEx(label.c_str()); }
@@ -1654,7 +1654,7 @@ inline bool TreeNodeEx(const std::string& label, int flags) {
   return ImGui::TreeNodeEx(label.c_str(), static_cast<ImGuiTreeNodeFlags>(flags));
 }
 inline bool TreeNodeEx(const std::string& label, int flags, const std::string& fmt) {
-  return ImGui::TreeNodeEx(label.c_str(), static_cast<ImGuiTreeNodeFlags>(flags), fmt.c_str());
+  return ImGui::TreeNodeEx(label.c_str(), static_cast<ImGuiTreeNodeFlags>(flags), "%s", fmt.c_str());
 }
 /* TODO: TreeNodeExV(...) (2) ==> UNSUPPORTED */
 inline void TreePush(const std::string& str_id) { ImGui::TreePush(str_id.c_str()); }
@@ -1770,7 +1770,7 @@ MenuItem(const std::string& label, const std::string& shortcut, bool selected, b
 // Tooltips
 inline void BeginTooltip() { ImGui::BeginTooltip(); }
 inline void EndTooltip() { ImGui::EndTooltip(); }
-inline void SetTooltip(const std::string& fmt) { ImGui::SetTooltip(fmt.c_str()); }
+inline void SetTooltip(const std::string& fmt) { ImGui::SetTooltip("%s", fmt.c_str()); }
 
 inline void SetTooltipV() { /* TODO: SetTooltipV(...) ==> UNSUPPORTED */ }
 
@@ -1882,7 +1882,7 @@ inline void LogToClipboard() { ImGui::LogToClipboard(); }
 inline void LogToClipboard(int auto_open_depth) { ImGui::LogToClipboard(auto_open_depth); }
 inline void LogFinish() { ImGui::LogFinish(); }
 inline void LogButtons() { ImGui::LogButtons(); }
-inline void LogText(const std::string& fmt) { ImGui::LogText(fmt.c_str()); }
+inline void LogText(const std::string& fmt) { ImGui::LogText("%s", fmt.c_str()); }
 
 // Drag and Drop
 // TODO: Drag and Drop ==> UNSUPPORTED

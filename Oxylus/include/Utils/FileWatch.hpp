@@ -954,7 +954,7 @@ private:
                      IsWChar<C>::value ? kCFStringEncodingUTF32 : kCFStringEncodingUTF8,
                      0,
                      false,
-                     (u8*)buffer,
+                     (uint8_t*)buffer,
                      PATH_MAX,
                      &written);
 
@@ -1028,7 +1028,7 @@ private:
   FSEventStreamRef openStream(const StringType& directory) {
     CFStringEncoding encoding = IsWChar<C>::value ? kCFStringEncodingUTF32 : kCFStringEncodingASCII;
     CFStringRef path = CFStringCreateWithBytes(
-        kCFAllocatorDefault, (const u8*)directory.data(), directory.size(), encoding, false);
+        kCFAllocatorDefault, (const uint8_t*)directory.data(), directory.size(), encoding, false);
     CFArrayRef paths = CFArrayCreate(kCFAllocatorDefault, (const void**)&path, 1, nullptr);
     FSEventStreamContext context{.info = (void*)this};
     FSEventStreamRef event = FSEventStreamCreate(kCFAllocatorDefault,

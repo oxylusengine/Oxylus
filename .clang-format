@@ -32,6 +32,7 @@ PointerAlignment: Left
 QualifierAlignment: Left
 BinPackParameters: OnePerLine
 BinPackArguments: false
+AllowAllArgumentsOnNextLine: false
 BreakBeforeBraces: Attach
 BreakBeforeBinaryOperators: None
 BreakAfterReturnType: Automatic
