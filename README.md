@@ -18,28 +18,25 @@ Be aware that Oxylus is still in it's early stages of development. Some importan
 ## Feature Highlights 
 - Modular Vulkan renderer built using [vuk](https://github.com/martty/vuk) with modern rendering features:
 	- Meshlet Rendering
+		- Occlusion, frustum and triangle culling
+		- Automatic LOD generation and selection
 	- GI with [Brixelizer](https://gpuopen.com/fidelityfx-brixelizer/)
-	- [GTAO](https://github.com/GameTechDev/XeGTAO)
+	- [GT-VBAO](https://cdrinmatane.github.io/posts/ssaovb-code/)
 	- [SSSR](https://gpuopen.com/fidelityfx-sssr/)
 	- [AMD FSR 3](https://gpuopen.com/fidelityfx-super-resolution-3/)
-	- PCF Cascaded Directional, Spot and Point Light Shadows
-	- Physically Based Bloom
-	- Depth Of Field 
-	- HDR
-	- Tonemapping 
-	- Chromatic Aberration
-	- Film Grain
-	- Vignette
-	- Sharpen
-	- and many more various post-processing effects.
-	- 2D Pipeline
+	- Virtual Directional, Spot and Point Light Shadows
+	- Physically-based sky and atmosphere
+	- Physically-based Bloom, Depth Of Field, HDR, Tonemapping, Auto Exposure, Chromatic Aberration, Film Grain, Vignette, Sharpen and various other post-processing effects.
+	- 2D Rendering
 		- Animated sprites
 		- Tilemaps
-- Multithreaded physics with [Jolt](https://github.com/jrouwe/JoltPhysics).   
-- Lua scripting with [flecs](https://github.com/SanderMertens/flecs) events and systems.
-	- Automatic component reflection with [sol3](https://github.com/ThePhD/sol2) and flecs.
+  - Advanced Particle System
+- Multithreaded physics with [Jolt](https://github.com/jrouwe/JoltPhysics).
+- Extensive Lua scripting with [flecs](https://github.com/SanderMertens/flecs) events and systems.
+  - Can write the whole game without ever touching C++, except app initalization and custom rendering.
 - A featureful editor built with [Dear ImGui](https://github.com/ocornut/imgui) to aid the development process. 
 - 3D Audio with [miniaudio](https://github.com/mackron/miniaudio)
+- Networking with [enet](https://github.com/zpl-c/enet)
 
 ## Building
 Windows, Linux and Mac (with MoltenVK) is supported.
@@ -52,14 +49,14 @@ Windows, Linux and Mac (with MoltenVK) is supported.
 - To configure the project run:
   - `xmake f --toolchain=clang --runtimes=c++_static -m debug`
 	- Change `--toolchain=` for the toolchain you want to use. 
+      - ex: `clang-cl` for Windows, `nix-clang` for nixos, `mac-clang` for macOS. Check `xmake/toolchains.lua` for details. 
 	- Pick a mode `-m debug, release, dist`
 	- Optionals:
       - `--lua_bindings` Compile lua bindings (`true` by default)
       - `--profile` Enable tracy profiler (`false` by default)
+      - `--tests` Enable tests. (`false` by default)
 - To build the project run:
 	- `xmake build`
 - To run the editor with xmake run:
   - `xmake r OxylusEditor`
-- Or to manually run it make sure to copy required binaries in `/build/bin` to executable directory created by this command:
-	- `xmake install -o ./build`
 
