@@ -253,6 +253,7 @@ enum class SceneFlags : u32 {
   HasFilmGrain = 1 << 6,
   HasChromaticAberration = 1 << 7,
   HasVignette = 1 << 8,
+  HasContactShadows = 1 << 9,
 };
 consteval void enable_bitmask(SceneFlags);
 

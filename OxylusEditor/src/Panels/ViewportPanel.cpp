@@ -894,6 +894,19 @@ void ViewportPanel::draw_settings_panel() {
       ImGui::TreePop();
     }
 
+    if (open_action != -1)
+      ImGui::SetNextItemOpen(open_action != 0);
+    if (ImGui::TreeNodeEx("Contact Shadows", TREE_FLAGS, "%s", "Contact Shadows")) {
+      if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+        UI::property("Enabled", (bool*)RendererCVar::cvar_contact_shadows.get_ptr());
+        UI::property("Steps", RendererCVar::cvar_contact_shadows_steps.get_ptr(), 1, 64);
+        UI::property<float>("Thickness", RendererCVar::cvar_contact_shadows_thickness.get_ptr(), 0.0, 5);
+        UI::property<float>("Length", RendererCVar::cvar_contact_shadows_length.get_ptr(), 0.0, 5);
+        UI::end_properties();
+      }
+      ImGui::TreePop();
+    }
+
     ImGui::TreePop();
   }
 

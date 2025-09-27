@@ -392,6 +392,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     self.gpu_scene.scene_flags |= GPU::SceneFlags::HasFXAA;
   if (static_cast<bool>(RendererCVar::cvar_vbgtao_enable.get()))
     self.gpu_scene.scene_flags |= GPU::SceneFlags::HasGTAO;
+  if (static_cast<bool>(RendererCVar::cvar_contact_shadows.get()))
+    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasContactShadows;
 
   auto scene_buffer = self.renderer.vk_context->scratch_buffer(std::span(&self.gpu_scene, 1));
 
@@ -998,6 +1000,66 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       );
     }
 
+    auto contact_shadows_attachment = vuk::declare_ia(
+      "contact shadows",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+       .format = vuk::Format::eR32Sfloat,
+       .sample_count = vuk::SampleCountFlagBits::e1}
+    );
+    contact_shadows_attachment.same_shape_as(final_attachment);
+    contact_shadows_attachment = vuk::clear_image(std::move(contact_shadows_attachment), vuk::Black<f32>);
+
+    if (self.directional_light.has_value()) {
+      auto contact_shadows_pass = vuk::make_pass(
+        "contact_shadows",
+        [sun_dir = self.directional_light->direction](
+          vuk::CommandBuffer& cmd_list,
+          VUK_IA(vuk::eComputeRW) result,
+          VUK_IA(vuk::eComputeSampled) src_depth,
+          VUK_BA(vuk::eComputeRead) camera
+        ) {
+          auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
+            .magFilter = vuk::Filter::eNearest,
+            .minFilter = vuk::Filter::eNearest,
+            .mipmapMode = vuk::SamplerMipmapMode::eNearest,
+            .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+            .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+            .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+          };
+
+          auto linear_clamp_sampler = vuk::SamplerCreateInfo{
+            .magFilter = vuk::Filter::eLinear,
+            .minFilter = vuk::Filter::eLinear,
+            .mipmapMode = vuk::SamplerMipmapMode::eLinear,
+            .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+            .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+            .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+          };
+
+          const u32 steps = static_cast<u32>(RendererCVar::cvar_contact_shadows_steps.get());
+          const f32 thickness = RendererCVar::cvar_contact_shadows_thickness.get();
+          const f32 length = RendererCVar::cvar_contact_shadows_length.get();
+
+          cmd_list.bind_compute_pipeline("contact_shadows_pipeline")
+            .bind_image(0, 0, src_depth)
+            .bind_image(0, 1, result)
+            .bind_buffer(0, 2, camera)
+            .bind_sampler(0, 3, nearest_clamp_sampler)
+            .bind_sampler(0, 4, linear_clamp_sampler)
+            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sun_dir, steps, thickness, length))
+            .dispatch_invocations_per_pixel(result);
+
+          return std::make_tuple(result, src_depth, camera);
+        }
+      );
+
+      std::tie(contact_shadows_attachment, depth_attachment, camera_buffer) = contact_shadows_pass(
+        contact_shadows_attachment,
+        depth_attachment,
+        camera_buffer
+      );
+    }
+
     if (!debugging && self.atmosphere.has_value()) {
       // --- BRDF ---
       auto brdf_pass = vuk::make_pass(
@@ -1014,6 +1076,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
           VUK_IA(vuk::eFragmentSampled) gtao,
           VUK_IA(vuk::eFragmentSampled) shadows,
+          VUK_IA(vuk::eFragmentSampled) contact_shadows,
           VUK_BA(vuk::eFragmentRead) scene_,
           VUK_BA(vuk::eFragmentRead) camera,
           VUK_BA(vuk::eFragmentRead) lights,
@@ -1051,10 +1114,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .bind_image(0, 7, emissive)
             .bind_image(0, 8, metallic_roughness_occlusion)
             .bind_image(0, 9, gtao)
-            .bind_image(0, 10, shadows)
-            .bind_buffer(0, 11, scene_)
-            .bind_buffer(0, 12, camera)
-            .bind_buffer(0, 13, lights)
+            .bind_image(0, 10, contact_shadows)
+            .bind_image(0, 11, shadows)
+            .bind_buffer(0, 12, scene_)
+            .bind_buffer(0, 13, camera)
+            .bind_buffer(0, 14, lights)
             .draw(3, 1, 0, 0);
           return std::make_tuple(dst, sky_transmittance_lut, sky_multiscatter_lut, depth, scene_, camera, lights);
         }
@@ -1080,6 +1144,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           std::move(metallic_roughness_occlusion_attachment),
           std::move(vbgtao_occlusion_attachment),
           std::move(directional_light_shadowmap_attachment),
+          std::move(contact_shadows_attachment),
           std::move(scene_buffer),
           std::move(camera_buffer),
           std::move(lights_buffer),

@@ -195,6 +195,7 @@ public enum SceneFlags : u32 {
   HasFilmGrain = 1 << 6,
   HasChromaticAberration = 1 << 7,
   HasVignette = 1 << 8,
+  HasContactShadows = 1 << 9,
 };
 
 #define MAX_POINT_LIGHTS 1024

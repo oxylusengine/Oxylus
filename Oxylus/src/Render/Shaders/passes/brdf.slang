@@ -20,6 +20,7 @@ struct ShaderParameters {
     Image2D<f32x3> emissive_image;
     Image2D<f32x3> metallic_roughness_occlusion_image;
     Image2D<f32> gtao_image;
+    Image2D<f32> contact_shadows;
     Texture2DArray<f32> directional_shadows_map;
     ConstantBuffer<Scene> scene;
     ConstantBuffer<Camera> camera;
@@ -196,13 +197,19 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     f32 eye_gradient = dot(N, sky_info.eye_dir);
     eye_gradient = (eye_gradient + 1.0) * 0.375 + 0.25;
 
+    f32 contact_shadows = 1.0f;
+    bool contact_shadows_enabled = params.scene.scene_flags & SceneFlags::HasContactShadows;
+    if (contact_shadows_enabled) {
+        contact_shadows = 1.0f - params.contact_shadows.load(pixel_pos).r;
+    }
+
     // SUN LIGHT COLOR ──────────────────────────────────────────────────
     f32 h = length(ray_pos_planet);
     f32x3 up_vec = normalize(ray_pos_planet);
     f32 sun_cos_theta = dot(L, up_vec);
     f32x2 transmittance_uv = transmittance_params_to_lut_uv(params.scene.atmosphere, f32x2(h, sun_cos_theta));
     f32x3 sun_transmittance = params.sky_transmittance_lut.sample_mip(params.linear_clamp_sampler, transmittance_uv, 0.0).rgb;
-    diffuse_light += sun_transmittance * directional_light.intensity * directional_shadows;
+    diffuse_light += sun_transmittance * directional_light.intensity * directional_shadows * contact_shadows;
 
     f32x3 total_lighting = f32x3(0.0, 0.0, 0.0);
 

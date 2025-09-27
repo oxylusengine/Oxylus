@@ -239,6 +239,12 @@ auto Renderer::init() -> std::expected<void, std::string> {
     {.path = shaders_dir + "/passes/debug_renderer.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
+  slang.create_pipeline(
+    runtime,
+    "contact_shadows_pipeline",
+    {.path = shaders_dir + "/passes/contact_shadows.slang", .entry_points = {"cs_main"}}
+  );
+
   sky_transmittance_lut_view = Texture("sky_transmittance_lut");
   sky_transmittance_lut_view.create(
     {},
