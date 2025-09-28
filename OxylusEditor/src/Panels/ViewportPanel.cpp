@@ -203,232 +203,9 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
         mouse_pos
       );
 
-      renderer_instance->add_stage_after(
-        RenderStage::VisBufferEncode,
-        "mouse_picking",
-        [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = _scene](
-          RenderStageContext& ctx
-        ) {
-          auto depth_attachment = ctx.get_image_resource("depth_attachment");
-          auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
-          auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
-          auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
-
-          auto readback_buffer = ctx.vk_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
-
-          auto write_pass = vuk::make_pass(
-            "mouse_picking_write_pass",
-            [picking_texel](
-              vuk::CommandBuffer& cmd_list,
-              VUK_BA(vuk::eComputeWrite) buffer,
-              VUK_IA(vuk::eComputeSampled) visbuffer_,
-              VUK_BA(vuk::eComputeRead) meshlet_instances_,
-              VUK_BA(vuk::eComputeRead) mesh_instances_
-            ) {
-              cmd_list.bind_compute_pipeline("mouse_picking_pipeline")
-                .bind_buffer(0, 0, meshlet_instances_)
-                .bind_buffer(0, 1, mesh_instances_)
-                .bind_image(0, 2, visbuffer_)
-                .push_constants(
-                  vuk::ShaderStageFlagBits::eCompute,
-                  0,
-                  PushConstants(picking_texel, buffer->device_address)
-                )
-                .dispatch(1, 1, 1);
-
-              return std::make_tuple(buffer, visbuffer_, meshlet_instances_, mesh_instances_);
-            }
-          );
-
-          std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
-            std::move(readback_buffer),
-            std::move(visbuffer),
-            std::move(meshlet_instances),
-            std::move(mesh_instances)
-          );
-
-          auto read_pass = vuk::make_pass(
-            "mouse_picking_read_pass",
-            [s, viewport_hovered, using_gizmo](
-              vuk::CommandBuffer& cmd_list,
-              VUK_BA(vuk::eHostRead) buffer,
-              VUK_IA(vuk::eComputeSampled) visbuffer_
-            ) {
-              u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
-
-              if (!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewport_hovered) {
-                if (transform_index != ~0_u32) {
-                  if (s->transform_index_entities_map.contains(transform_index)) {
-                    auto& editor_context = EditorLayer::get()->get_context();
-
-                    // first pick the parent if parent is already picked then pick the actual entity
-                    auto entity = s->transform_index_entities_map.at(transform_index);
-                    auto top_parent = entity;
-                    while (top_parent.parent() != flecs::entity::null()) {
-                      top_parent = top_parent.parent();
-                    }
-                    if (editor_context.entity.has_value()) {
-                      if (editor_context.entity.value() == top_parent) {
-                        top_parent = entity;
-                      }
-                    }
-
-                    editor_context.reset();
-                    editor_context.entity = top_parent;
-                    editor_context.type = EditorContext::Type::Entity;
-                  }
-                } else {
-                  auto& editor_context = EditorLayer::get()->get_context();
-                  editor_context.reset();
-                }
-              }
-
-              return std::make_tuple(buffer, visbuffer_);
-            }
-          );
-
-          std::tie(readback_buffer, visbuffer) = read_pass(std::move(readback_buffer), std::move(visbuffer));
-
-          auto highlight_attachment = vuk::declare_ia(
-            "highlight",
-            {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-             .format = vuk::Format::eR32Sfloat,
-             .sample_count = vuk::Samples::e1}
-          );
-          highlight_attachment.same_shape_as(visbuffer);
-          highlight_attachment = vuk::clear_image(std::move(highlight_attachment), vuk::Black<f32>);
-
-          auto highlight_pass = vuk::make_pass(
-            "highlighting_pass",
-            [s](
-              vuk::CommandBuffer& cmd_list,
-              VUK_IA(vuk::eComputeRW) result,
-              VUK_BA(vuk::eHostRead) entity_buffer,
-              VUK_IA(vuk::eComputeSampled) visbuffer_,
-              VUK_IA(vuk::eComputeSampled) depth,
-              VUK_BA(vuk::eComputeRead) meshlet_instances_,
-              VUK_BA(vuk::eComputeRead) mesh_instances_
-            ) {
-              auto& editor_context = EditorLayer::get()->get_context();
-
-              std::vector<u32> transform_indices = {};
-
-              if (editor_context.entity.has_value()) {
-                // if selected entity is not a mesh check if it has mesh childs
-                if (!editor_context.entity->has<MeshComponent>()) {
-                  editor_context.entity->children([s, &transform_indices](flecs::entity e) {
-                    if (e.has<MeshComponent>()) {
-                      auto transform_id = s->get_entity_transform_id(e);
-                      if (transform_id.has_value()) {
-                        auto transform_index = SlotMap_decode_id(*transform_id).index;
-                        transform_indices.emplace_back(transform_index);
-                      }
-                    }
-                  });
-                } else {
-                  auto transform_id = s->get_entity_transform_id(*editor_context.entity);
-                  if (transform_id.has_value()) {
-                    auto transform_index = SlotMap_decode_id(*transform_id).index;
-                    transform_indices.emplace_back(transform_index);
-                  }
-                }
-
-                if (!transform_indices.empty()) {
-                  auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
-                  std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
-                  cmd_list.bind_compute_pipeline("highlighting_pipeline")
-                    .bind_buffer(0, 0, meshlet_instances_)
-                    .bind_buffer(0, 1, mesh_instances_)
-                    .bind_image(0, 2, visbuffer_)
-                    .bind_image(0, 3, depth)
-                    .bind_image(0, 4, result)
-                    .bind_sampler(0, 6, vuk::NearestSamplerClamped)
-                    .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size()))
-                    .dispatch_invocations_per_pixel(visbuffer_);
-                }
-              }
-
-              return std::make_tuple(result, entity_buffer, visbuffer_, depth, meshlet_instances_, mesh_instances_);
-            }
-          );
-
-          std::tie(
-            highlight_attachment,
-            readback_buffer,
-            visbuffer,
-            depth_attachment,
-            meshlet_instances,
-            mesh_instances
-          ) =
-            highlight_pass(
-              std::move(highlight_attachment),
-              std::move(readback_buffer),
-              std::move(visbuffer),
-              std::move(depth_attachment),
-              std::move(meshlet_instances),
-              std::move(mesh_instances)
-            );
-
-          ctx.set_shared_image_resource("highlight_attachment", highlight_attachment)
-            .set_image_resource("depth_attachment", std::move(depth_attachment))
-            .set_image_resource("visbuffer_attachment", std::move(visbuffer))
-            .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
-            .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
-        }
-      );
-
-      renderer_instance
-        ->add_stage_after(RenderStage::PostProcessing, "entity_highlighting", [](RenderStageContext& ctx) {
-          auto result_attachment = ctx.get_image_resource("result_attachment");
-          auto highlight_attachment = ctx.get_shared_image_resource("highlight_attachment");
-
-          if (!highlight_attachment.has_value())
-            return;
-
-          auto highlight_applied_attachment = vuk::declare_ia(
-            "highlight_applied_attachment",
-            {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-             .sample_count = vuk::Samples::e1}
-          );
-          highlight_applied_attachment.same_shape_as(result_attachment);
-          highlight_applied_attachment.same_format_as(result_attachment);
-          highlight_applied_attachment = vuk::clear_image(std::move(highlight_applied_attachment), vuk::Black<f32>);
-
-          auto highlight_pass = vuk::make_pass(
-            "apply_highlighting_pass",
-            [](
-              vuk::CommandBuffer& cmd_list,
-              VUK_IA(vuk::eColorRW) result,
-              VUK_IA(vuk::eFragmentSampled) source,
-              VUK_IA(vuk::eFragmentSampled) highlight
-            ) {
-              cmd_list.bind_graphics_pipeline("apply_highlighting_pipeline")
-                .set_rasterization({})
-                .broadcast_color_blend({})
-                .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-                .set_viewport(0, vuk::Rect2D::framebuffer())
-                .set_scissor(0, vuk::Rect2D::framebuffer())
-                .bind_image(0, 0, highlight)
-                .bind_image(0, 1, source)
-                .bind_sampler(0, 2, vuk::LinearSamplerClamped)
-                .draw(3, 1, 0, 0);
-
-              return std::make_tuple(result, source, highlight);
-            }
-          );
-
-          std::tie(highlight_applied_attachment, result_attachment, highlight_attachment) = highlight_pass(
-            highlight_applied_attachment,
-            result_attachment,
-            *highlight_attachment
-          );
-
-          ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
-            .set_image_resource(
-              "result_attachment",
-              std::move(highlight_applied_attachment)
-            ); // change result_attachment to highlight applied attachment
-        });
+      if (mouse_picking_enabled_) {
+        mouse_picking_stages(renderer_instance, picking_texel);
+      }
 
       const Renderer::RenderInfo render_info = {
         .extent = extent,
@@ -906,7 +683,7 @@ void ViewportPanel::draw_gizmo_settings_panel() {
   if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
     UI::property("Draw Component Gizmos", &draw_component_gizmos_);
     UI::property("Component Gizmos Size", &gizmo_icon_size_);
-    UI::property("Selection Outline", &draw_selection_outline_);
+    UI::property("Entity Highlighting", &draw_entity_highlighting_);
     UI::end_properties();
   }
 }
@@ -1060,6 +837,225 @@ void ViewportPanel::draw_gizmos() {
   }
 }
 
-auto setup_mouse_picking(RendererInstance& renderer) -> void {}
+auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void {
+  renderer_instance->add_stage_after(
+    RenderStage::VisBufferEncode,
+    "mouse_picking",
+    [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = _scene](
+      RenderStageContext& ctx
+    ) {
+      auto depth_attachment = ctx.get_image_resource("depth_attachment");
+      auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
+      auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
+      auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
+
+      auto readback_buffer = ctx.vk_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+
+      auto write_pass = vuk::make_pass(
+        "mouse_picking_write_pass",
+        [picking_texel](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eComputeWrite) buffer,
+          VUK_IA(vuk::eComputeSampled) visbuffer_,
+          VUK_BA(vuk::eComputeRead) meshlet_instances_,
+          VUK_BA(vuk::eComputeRead) mesh_instances_
+        ) {
+          cmd_list.bind_compute_pipeline("mouse_picking_pipeline")
+            .bind_buffer(0, 0, meshlet_instances_)
+            .bind_buffer(0, 1, mesh_instances_)
+            .bind_image(0, 2, visbuffer_)
+            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(picking_texel, buffer->device_address))
+            .dispatch(1, 1, 1);
+
+          return std::make_tuple(buffer, visbuffer_, meshlet_instances_, mesh_instances_);
+        }
+      );
+
+      std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
+        std::move(readback_buffer),
+        std::move(visbuffer),
+        std::move(meshlet_instances),
+        std::move(mesh_instances)
+      );
+
+      auto read_pass = vuk::make_pass(
+        "mouse_picking_read_pass",
+        [s, viewport_hovered, using_gizmo](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eHostRead) buffer,
+          VUK_IA(vuk::eComputeSampled) visbuffer_
+        ) {
+          u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
+
+          if (!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewport_hovered) {
+            if (transform_index != ~0_u32) {
+              if (s->transform_index_entities_map.contains(transform_index)) {
+                auto& editor_context = EditorLayer::get()->get_context();
+
+                // first pick the parent if parent is already picked then pick the actual entity
+                auto entity = s->transform_index_entities_map.at(transform_index);
+                auto top_parent = entity;
+                while (top_parent.parent() != flecs::entity::null()) {
+                  top_parent = top_parent.parent();
+                }
+                if (editor_context.entity.has_value()) {
+                  if (editor_context.entity.value() == top_parent) {
+                    top_parent = entity;
+                  }
+                }
+
+                editor_context.reset();
+                editor_context.entity = top_parent;
+                editor_context.type = EditorContext::Type::Entity;
+              }
+            } else {
+              auto& editor_context = EditorLayer::get()->get_context();
+              editor_context.reset();
+            }
+          }
+
+          return std::make_tuple(buffer, visbuffer_);
+        }
+      );
+
+      std::tie(readback_buffer, visbuffer) = read_pass(std::move(readback_buffer), std::move(visbuffer));
+
+      auto highlight_attachment = vuk::declare_ia(
+        "highlight",
+        {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+         .format = vuk::Format::eR32Sfloat,
+         .sample_count = vuk::Samples::e1}
+      );
+      highlight_attachment.same_shape_as(visbuffer);
+      highlight_attachment = vuk::clear_image(std::move(highlight_attachment), vuk::Black<f32>);
+
+      auto highlight_pass = vuk::make_pass(
+        "highlighting_pass",
+        [s](
+          vuk::CommandBuffer& cmd_list,
+          VUK_IA(vuk::eComputeRW) result,
+          VUK_BA(vuk::eHostRead) entity_buffer,
+          VUK_IA(vuk::eComputeSampled) visbuffer_,
+          VUK_IA(vuk::eComputeSampled) depth,
+          VUK_BA(vuk::eComputeRead) meshlet_instances_,
+          VUK_BA(vuk::eComputeRead) mesh_instances_
+        ) {
+          auto& editor_context = EditorLayer::get()->get_context();
+
+          std::vector<u32> transform_indices = {};
+
+          if (editor_context.entity.has_value()) {
+            // if selected entity is not a mesh check if it has mesh childs
+            if (!editor_context.entity->has<MeshComponent>()) {
+              editor_context.entity->children([s, &transform_indices](flecs::entity e) {
+                if (e.has<MeshComponent>()) {
+                  auto transform_id = s->get_entity_transform_id(e);
+                  if (transform_id.has_value()) {
+                    auto transform_index = SlotMap_decode_id(*transform_id).index;
+                    transform_indices.emplace_back(transform_index);
+                  }
+                }
+              });
+            } else {
+              auto transform_id = s->get_entity_transform_id(*editor_context.entity);
+              if (transform_id.has_value()) {
+                auto transform_index = SlotMap_decode_id(*transform_id).index;
+                transform_indices.emplace_back(transform_index);
+              }
+            }
+
+            if (!transform_indices.empty()) {
+              auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
+              std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
+              cmd_list.bind_compute_pipeline("highlighting_pipeline")
+                .bind_buffer(0, 0, meshlet_instances_)
+                .bind_buffer(0, 1, mesh_instances_)
+                .bind_image(0, 2, visbuffer_)
+                .bind_image(0, 3, depth)
+                .bind_image(0, 4, result)
+                .bind_sampler(0, 6, vuk::NearestSamplerClamped)
+                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size()))
+                .dispatch_invocations_per_pixel(visbuffer_);
+            }
+          }
+
+          return std::make_tuple(result, entity_buffer, visbuffer_, depth, meshlet_instances_, mesh_instances_);
+        }
+      );
+
+      std::tie(highlight_attachment, readback_buffer, visbuffer, depth_attachment, meshlet_instances, mesh_instances) =
+        highlight_pass(
+          std::move(highlight_attachment),
+          std::move(readback_buffer),
+          std::move(visbuffer),
+          std::move(depth_attachment),
+          std::move(meshlet_instances),
+          std::move(mesh_instances)
+        );
+
+      ctx.set_shared_image_resource("highlight_attachment",std::move(highlight_attachment))
+        .set_image_resource("depth_attachment", std::move(depth_attachment))
+        .set_image_resource("visbuffer_attachment", std::move(visbuffer))
+        .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
+        .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
+    }
+  );
+
+  if (!draw_entity_highlighting_) {
+    return;
+  }
+
+  renderer_instance->add_stage_after(RenderStage::PostProcessing, "entity_highlighting", [](RenderStageContext& ctx) {
+    auto result_attachment = ctx.get_image_resource("result_attachment");
+    auto highlight_attachment = ctx.get_shared_image_resource("highlight_attachment");
+
+    if (!highlight_attachment.has_value()) {
+      ctx.set_image_resource("result_attachment", std::move(result_attachment));
+      return;
+    }
+
+    auto highlight_applied_attachment = vuk::declare_ia(
+      "highlight_applied_attachment",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+       .sample_count = vuk::Samples::e1}
+    );
+    highlight_applied_attachment.same_shape_as(result_attachment);
+    highlight_applied_attachment.same_format_as(result_attachment);
+    highlight_applied_attachment = vuk::clear_image(std::move(highlight_applied_attachment), vuk::Black<f32>);
+
+    auto highlight_pass = vuk::make_pass(
+      "apply_highlighting_pass",
+      [](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eColorRW) result,
+        VUK_IA(vuk::eFragmentSampled) source,
+        VUK_IA(vuk::eFragmentSampled) highlight
+      ) {
+        cmd_list.bind_graphics_pipeline("apply_highlighting_pipeline")
+          .set_rasterization({})
+          .broadcast_color_blend({})
+          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+          .set_viewport(0, vuk::Rect2D::framebuffer())
+          .set_scissor(0, vuk::Rect2D::framebuffer())
+          .bind_image(0, 0, highlight)
+          .bind_image(0, 1, source)
+          .bind_sampler(0, 2, vuk::LinearSamplerClamped)
+          .draw(3, 1, 0, 0);
+
+        return std::make_tuple(result, source, highlight);
+      }
+    );
+
+    std::tie(highlight_applied_attachment, result_attachment, *highlight_attachment) = highlight_pass(
+      highlight_applied_attachment,
+      result_attachment,
+      *highlight_attachment
+    );
+
+    // change result_attachment to highlight applied attachment
+    ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
+      .set_image_resource("result_attachment", std::move(highlight_applied_attachment));
+  });
+}
 
 } // namespace ox

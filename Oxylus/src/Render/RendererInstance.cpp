@@ -251,6 +251,10 @@ RendererInstance::RendererInstance(Scene* owner_scene, Renderer& parent_renderer
     MAX_POINT_LIGHTS * sizeof(GPU::PointLight)
   );
 
+  constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
+  before_callbacks_.resize(stage_count);
+  after_callbacks_.resize(stage_count);
+
   rebuild_execution_order();
 }
 
@@ -271,33 +275,46 @@ auto RendererInstance::rebuild_execution_order(this RendererInstance& self) -> v
   ZoneScoped;
 
   constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
-  if (self.before_callbacks_.size() != stage_count) {
-    self.before_callbacks_.resize(stage_count);
-  }
-  if (self.after_callbacks_.size() != stage_count) {
-    self.after_callbacks_.resize(stage_count);
-  }
 
-  for (auto& vec : self.before_callbacks_)
+  for (auto& vec : self.before_callbacks_) {
     vec.clear();
-  for (auto& vec : self.after_callbacks_)
+  }
+  for (auto& vec : self.after_callbacks_) {
     vec.clear();
+  }
 
   std::sort(
     self.stage_callbacks_.begin(),
     self.stage_callbacks_.end(),
-    [](const RenderStageCallback& a, const RenderStageCallback& b) { return a.dependency.order < b.dependency.order; }
+    [](const RenderStageCallback& a, const RenderStageCallback& b) noexcept {
+      return a.dependency.order < b.dependency.order;
+    }
   );
 
   for (usize i = 0; i < self.stage_callbacks_.size(); ++i) {
     const auto& callback = self.stage_callbacks_[i];
-    usize stage_index = static_cast<usize>(callback.dependency.target_stage);
+    const usize stage_index = static_cast<usize>(callback.dependency.target_stage);
+
+    if (stage_index >= stage_count) [[unlikely]] {
+      continue;
+    }
+
+    if (!callback.callback) [[unlikely]] {
+      continue;
+    }
 
     if (callback.dependency.position == StagePosition::Before) {
       self.before_callbacks_[stage_index].emplace_back(i);
-    } else {
+    } else if (callback.dependency.position == StagePosition::After) {
       self.after_callbacks_[stage_index].emplace_back(i);
     }
+  }
+
+  for (auto& vec : self.before_callbacks_) {
+    vec.shrink_to_fit();
+  }
+  for (auto& vec : self.after_callbacks_) {
+    vec.shrink_to_fit();
   }
 }
 
@@ -306,11 +323,29 @@ RendererInstance::execute_stages_before(this const RendererInstance& self, Rende
   -> void {
   ZoneScoped;
 
-  usize stage_index = static_cast<usize>(stage);
+  const usize stage_index = static_cast<usize>(stage);
+  constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
 
-  for (usize callback_idx : self.before_callbacks_[stage_index]) {
+  if (stage_index >= stage_count) [[unlikely]] {
+    return;
+  }
+
+  if (stage_index >= self.before_callbacks_.size()) [[unlikely]] {
+    return;
+  }
+
+  const auto& callbacks = self.before_callbacks_[stage_index];
+
+  for (const usize callback_idx : callbacks) {
+    if (callback_idx >= self.stage_callbacks_.size()) [[unlikely]] {
+      continue;
+    }
+
     const auto& callback = self.stage_callbacks_[callback_idx];
-    callback.callback(ctx);
+
+    if (callback.callback) [[likely]] {
+      callback.callback(ctx);
+    }
   }
 }
 
@@ -319,14 +354,31 @@ RendererInstance::execute_stages_after(this const RendererInstance& self, Render
   -> void {
   ZoneScoped;
 
-  usize stage_index = static_cast<usize>(stage);
+  const usize stage_index = static_cast<usize>(stage);
+  constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
 
-  for (usize callback_idx : self.after_callbacks_[stage_index]) {
+  if (stage_index >= stage_count) [[unlikely]] {
+    return;
+  }
+
+  if (stage_index >= self.after_callbacks_.size()) [[unlikely]] {
+    return;
+  }
+
+  const auto& callbacks = self.after_callbacks_[stage_index];
+
+  for (const usize callback_idx : callbacks) {
+    if (callback_idx >= self.stage_callbacks_.size()) [[unlikely]] {
+      continue;
+    }
+
     const auto& callback = self.stage_callbacks_[callback_idx];
-    callback.callback(ctx);
+
+    if (callback.callback) [[likely]] {
+      callback.callback(ctx);
+    }
   }
 }
-
 auto RendererInstance::add_stage_before(
   this RendererInstance& self,
   RenderStage stage,
@@ -486,16 +538,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       cull_flags |= GPU::CullFlags::TriangleBackFace;
       cull_flags |= GPU::CullFlags::MicroTriangles;
     }
-
-    // TODOs:
-    // [ ] This context shares mesh buffers with the main pass which is problematic
-    // [x] This context should have its own camera_buffer with light's data instead of using the main camera buffer
-    //   Might need to refactor visbuffer_encode.slang to allow for multiple cameras for cascades.
-    // [x] Shadows should render with specified extent from the light component (light_component.shadow_res). hiz,
-    // depth, visbuffer
-    //   I just used main extent for now.
-    // [ ] Conditional rendering of directional shadows (light_component.cast_shadows)
-    // [ ] cull passes actually use position of cameras too which we don't fill so its 0.
 
     auto directional_light_info = self.directional_light.value_or(GPU::DirectionalLight{});
     auto directional_light_cascade_count = max(directional_light_info.cascade_count, 1_u32);
