@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Render/Renderer.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
@@ -87,4 +88,19 @@ auto draw_shadowmap(
 ) -> void;
 auto generate_hiz(vuk::Value<vuk::ImageAttachment>& hiz_attachment, vuk::Value<vuk::ImageAttachment>& depth_attachment)
   -> void;
+
+//
+// Forward 2D Pipeline
+//
+auto forward_2d_pass(
+  Renderer::RenderQueue2D& rq2d,
+  vuk::PersistentDescriptorSet& descriptor_set,
+  vuk::Value<vuk::ImageAttachment>& final_attachment,
+  vuk::Value<vuk::ImageAttachment>& depth_attachment,
+  vuk::Value<vuk::Buffer>& vertex_buffer_2d,
+  vuk::Value<vuk::Buffer>& materials_buffer,
+  vuk::Value<vuk::Buffer>& camera_buffer,
+  vuk::Value<vuk::Buffer>& transforms_buffer
+) -> void;
+
 } // namespace ox

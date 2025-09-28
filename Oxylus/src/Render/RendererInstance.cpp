@@ -408,8 +408,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   self.viewport_size = {render_info.extent.width, render_info.extent.height};
   self.viewport_offset = render_info.viewport_offset;
 
-  auto& vk_context = App::get_vkcontext();
-  auto& bindless_set = vk_context.get_descriptor_set();
+  auto& bindless_set = self.renderer.vk_context->get_descriptor_set();
 
   self.camera_data.resolution = {render_info.extent.width, render_info.extent.height};
   auto camera_buffer = self.renderer.vk_context->scratch_buffer(std::span(&self.camera_data, 1));
@@ -514,15 +513,15 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   if (self.prepared_frame.mesh_instance_count > 0) {
     auto meshes_buffer = std::move(self.prepared_frame.meshes_buffer);
     auto mesh_instances_buffer = std::move(self.prepared_frame.mesh_instances_buffer);
-    auto meshlet_instances_buffer = vk_context.alloc_transient_buffer(
+    auto meshlet_instances_buffer = self.renderer.vk_context->alloc_transient_buffer(
       vuk::MemoryUsage::eGPUonly,
       self.prepared_frame.max_meshlet_instance_count * sizeof(GPU::MeshletInstance)
     );
-    auto visible_meshlet_instances_indices_buffer = vk_context.alloc_transient_buffer(
+    auto visible_meshlet_instances_indices_buffer = self.renderer.vk_context->alloc_transient_buffer(
       vuk::MemoryUsage::eGPUonly,
       self.prepared_frame.max_meshlet_instance_count * sizeof(u32)
     );
-    auto reordered_indices_buffer = vk_context.alloc_transient_buffer(
+    auto reordered_indices_buffer = self.renderer.vk_context->alloc_transient_buffer(
       vuk::MemoryUsage::eGPUonly,
       self.prepared_frame.max_meshlet_instance_count * Model::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32)
     );
@@ -567,9 +566,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
         auto& current_cascade_projection_view = directional_light_info.cascades[cascade_index].projection_view;
 
-        auto all_visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
+        auto all_visible_meshlet_instances_count_buffer = self.renderer.vk_context->scratch_buffer<u32>({});
         auto cull_meshlets_cmd_buffer = cull_meshes(
-          vk_context,
+          *self.renderer.vk_context,
           GPU::CullFlags::MeshFrustum,
           self.prepared_frame.mesh_instance_count,
           current_cascade_projection_view,
@@ -582,9 +581,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           all_visible_meshlet_instances_count_buffer,
           transforms_buffer
         );
-        auto visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
+        auto visible_meshlet_instances_count_buffer = self.renderer.vk_context->scratch_buffer<u32>({});
         auto draw_shadowmap_cmd_buffer = cull_shadowmap_meshlets(
-          vk_context,
+          *self.renderer.vk_context,
           cascade_index,
           directional_light_resolution,
           current_cascade_projection_view,
@@ -630,14 +629,14 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     clear_visbuffer(visbuffer_attachment, overdraw_attachment);
 
     {
-      auto visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
-      auto early_visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
-      auto late_visible_meshlet_instances_count_buffer = vk_context.scratch_buffer<u32>({});
+      auto visible_meshlet_instances_count_buffer = self.renderer.vk_context->scratch_buffer<u32>({});
+      auto early_visible_meshlet_instances_count_buffer = self.renderer.vk_context->scratch_buffer<u32>({});
+      auto late_visible_meshlet_instances_count_buffer = self.renderer.vk_context->scratch_buffer<u32>({});
       auto meshlet_instance_visibility_mask_buffer = std::move(
         self.prepared_frame.meshlet_instance_visibility_mask_buffer
       );
       auto cull_meshlets_cmd_buffer = cull_meshes(
-        vk_context,
+        *self.renderer.vk_context,
         cull_flags,
         self.prepared_frame.mesh_instance_count,
         self.camera_data.projection_view,
@@ -652,7 +651,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       );
 
       auto early_draw_visbuffer_cmd_buffer = cull_meshlets(
-        vk_context,
+        *self.renderer.vk_context,
         false,
         cull_flags,
         self.camera_data.near_clip,
@@ -691,7 +690,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       generate_hiz(hiz_attachment, depth_attachment);
 
       auto late_draw_visbuffer_cmd_buffer = cull_meshlets(
-        vk_context,
+        *self.renderer.vk_context,
         true,
         cull_flags,
         self.camera_data.near_clip,
@@ -728,7 +727,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       );
     }
 
-    RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, vk_context);
+    RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, *self.renderer.vk_context);
     ctx.set_viewport_size(self.viewport_size)
       .set_image_resource("depth_attachment", std::move(depth_attachment))
       .set_image_resource("visbuffer_attachment", std::move(visbuffer_attachment))
@@ -1294,63 +1293,16 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
   // --- 2D Pass ---
   if (!self.render_queue_2d.sprite_data.empty()) {
-    auto forward_2d_pass = vuk::make_pass("2d_forward_pass",
-      [rq2d = self.render_queue_2d, &descriptor_set = bindless_set]( //
-        vuk::CommandBuffer& command_buffer,
-        VUK_IA(vuk::eColorWrite) target,
-        VUK_IA(vuk::eDepthStencilRW) depth,
-        VUK_BA(vuk::eVertexRead) vertex_buffer,
-        VUK_BA(vuk::eVertexRead) materials,
-        VUK_BA(vuk::eVertexRead) camera,
-        VUK_BA(vuk::eVertexRead) transforms_) {
-        const auto vertex_pack_2d = vuk::Packed{
-          vuk::Format::eR32Uint, // 4 material_id
-          vuk::Format::eR32Uint, // 4 flags
-          vuk::Format::eR32Uint, // 4 transforms_id
-        };
-
-        for (const auto& batch : rq2d.batches) {
-          if (batch.count < 1)
-            continue;
-
-          command_buffer.bind_graphics_pipeline(batch.pipeline_name)
-            .set_depth_stencil(vuk::PipelineDepthStencilStateCreateInfo{
-              .depthTestEnable = true,
-              .depthWriteEnable = true,
-              .depthCompareOp = vuk::CompareOp::eGreaterOrEqual,
-            })
-            .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
-            .set_viewport(0, vuk::Rect2D::framebuffer())
-            .set_scissor(0, vuk::Rect2D::framebuffer())
-            .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
-            .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
-            .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack_2d, vuk::VertexInputRate::eInstance)
-            .push_constants(vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
-              0,
-              PushConstants(materials->device_address, camera->device_address, transforms_->device_address))
-            .bind_persistent(1, descriptor_set)
-            .draw(6, batch.count, 0, batch.offset);
-        }
-
-        return std::make_tuple(target, depth, camera, vertex_buffer, materials, transforms_);
-      });
-
-    std::tie(
-      final_attachment, //
+    forward_2d_pass(
+      self.render_queue_2d,
+      bindless_set,
+      final_attachment,
       depth_attachment,
-      camera_buffer,
       vertex_buffer_2d,
       materials_buffer,
+      camera_buffer,
       transforms_buffer
-    ) =
-      forward_2d_pass(
-        std::move(final_attachment),
-        std::move(depth_attachment),
-        std::move(vertex_buffer_2d),
-        std::move(materials_buffer),
-        std::move(camera_buffer),
-        std::move(transforms_buffer)
-      );
+    );
   }
 
   // --- Atmosphere Pass ---
@@ -1823,7 +1775,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       std::move(exposure_buffer_value)
     );
 
-    RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, vk_context);
+    RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, *self.renderer.vk_context);
     ctx.set_viewport_size(self.viewport_size).set_image_resource("result_attachment", std::move(result_attachment));
 
     self.execute_stages_after(RenderStage::PostProcessing, ctx);
@@ -1889,7 +1841,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   ZoneScoped;
 
   auto* asset_man = App::get_asset_manager();
-  auto& vk_context = App::get_vkcontext();
+  auto& vk_context = *self.renderer.vk_context;
 
   self.gpu_scene.scene_flags = {};
 
