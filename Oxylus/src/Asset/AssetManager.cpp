@@ -305,6 +305,10 @@ auto AssetManager::import_asset(const std::string& path) -> UUID {
   switch (asset_type) {
     case AssetType::Model: {
       auto gltf_model = GLTFMeshInfo::parse_info(path);
+      if (!gltf_model.has_value()) {
+        OX_LOG_ERROR("Couldn't generate metadata for asset: {}", path);
+        return UUID(nullptr);
+      }
       auto textures = std::vector<UUID>();
       auto embedded_textures = std::vector<UUID>();
       for (auto& v : gltf_model->textures) {
