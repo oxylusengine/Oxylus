@@ -132,4 +132,19 @@ auto atmosphere_pass(
   vuk::Value<vuk::ImageAttachment>& final_attachment,
   vuk::Value<vuk::ImageAttachment>& depth_attachment
 ) -> void;
+
+//
+// VBGTAO Pipeline
+//
+auto vbgtao_pass(
+  vuk::Value<vuk::ImageAttachment>& depth_attachment,
+  vuk::Value<vuk::ImageAttachment>& final_attachment,
+  vuk::Value<vuk::ImageAttachment>& normal_attachment,
+  vuk::Value<vuk::ImageAttachment>& hilbert_noise_lut_attachment,
+  vuk::Value<vuk::ImageAttachment>& vbgtao_noisy_occlusion_attachment,
+  vuk::Value<vuk::ImageAttachment>& vbgtao_occlusion_attachment,
+  vuk::Value<vuk::Buffer>& camera_buffer,
+  GPU::VBGTAOSettings& gtao_settings
+) -> void;
+
 } // namespace ox
