@@ -147,4 +147,15 @@ auto vbgtao_pass(
   GPU::VBGTAOSettings& gtao_settings
 ) -> void;
 
+//
+// Bloom Pipeline
+//
+auto bloom_pass(
+  f32 bloom_threshold,
+  f32 bloom_clamp,
+  vuk::Value<vuk::ImageAttachment>& final_attachment,
+  vuk::Value<vuk::ImageAttachment>& bloom_down_image,
+  vuk::Value<vuk::ImageAttachment>& bloom_up_image
+) -> void;
+
 } // namespace ox

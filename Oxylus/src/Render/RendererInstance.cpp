@@ -852,24 +852,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           VUK_IA(vuk::eComputeSampled) src_depth,
           VUK_BA(vuk::eComputeRead) camera
         ) {
-          auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
-            .magFilter = vuk::Filter::eNearest,
-            .minFilter = vuk::Filter::eNearest,
-            .mipmapMode = vuk::SamplerMipmapMode::eNearest,
-            .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-            .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-            .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
-          };
-
-          auto linear_clamp_sampler = vuk::SamplerCreateInfo{
-            .magFilter = vuk::Filter::eLinear,
-            .minFilter = vuk::Filter::eLinear,
-            .mipmapMode = vuk::SamplerMipmapMode::eLinear,
-            .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-            .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-            .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
-          };
-
           const u32 steps = static_cast<u32>(RendererCVar::cvar_contact_shadows_steps.get());
           const f32 thickness = RendererCVar::cvar_contact_shadows_thickness.get();
           const f32 length = RendererCVar::cvar_contact_shadows_length.get();
@@ -878,8 +860,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .bind_image(0, 0, src_depth)
             .bind_image(0, 1, result)
             .bind_buffer(0, 2, camera)
-            .bind_sampler(0, 3, nearest_clamp_sampler)
-            .bind_sampler(0, 4, linear_clamp_sampler)
+            .bind_sampler(0, 3, vuk::NearestSamplerClamped)
+            .bind_sampler(0, 4, vuk::LinearSamplerClamped)
             .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sun_dir, steps, thickness, length))
             .dispatch_invocations_per_pixel(result);
 
@@ -917,29 +899,14 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           VUK_BA(vuk::eMemoryRead) point_lights,
           VUK_BA(vuk::eMemoryRead) spot_lights
         ) {
-          auto linear_clamp_sampler = vuk::SamplerCreateInfo{
-            .magFilter = vuk::Filter::eLinear,
-            .minFilter = vuk::Filter::eLinear,
-            .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-            .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-            .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
-          };
-
-          auto linear_repeat_sampler = vuk::SamplerCreateInfo{
-            .magFilter = vuk::Filter::eLinear,
-            .minFilter = vuk::Filter::eLinear,
-            .addressModeU = vuk::SamplerAddressMode::eRepeat,
-            .addressModeV = vuk::SamplerAddressMode::eRepeat,
-          };
-
           cmd_list.bind_graphics_pipeline("brdf")
             .set_rasterization({})
             .set_color_blend(dst, vuk::BlendPreset::eOff)
             .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
             .set_viewport(0, vuk::Rect2D::framebuffer())
             .set_scissor(0, vuk::Rect2D::framebuffer())
-            .bind_sampler(0, 0, linear_clamp_sampler)
-            .bind_sampler(0, 1, linear_repeat_sampler)
+            .bind_sampler(0, 0, vuk::LinearSamplerClamped)
+            .bind_sampler(0, 1, vuk::LinearSamplerRepeated)
             .bind_image(0, 2, sky_transmittance_lut)
             .bind_image(0, 3, sky_multiscatter_lut)
             .bind_image(0, 4, depth)
@@ -1021,13 +988,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           VUK_BA(vuk::eFragmentRead) meshes,
           VUK_BA(vuk::eFragmentRead) transforms_
         ) {
-          auto linear_repeat_sampler = vuk::SamplerCreateInfo{
-            .magFilter = vuk::Filter::eLinear,
-            .minFilter = vuk::Filter::eLinear,
-            .addressModeU = vuk::SamplerAddressMode::eRepeat,
-            .addressModeV = vuk::SamplerAddressMode::eRepeat,
-          };
-
           cmd_list //
             .bind_graphics_pipeline("debug")
             .set_rasterization({})
@@ -1035,7 +995,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
             .set_viewport(0, vuk::Rect2D::framebuffer())
             .set_scissor(0, vuk::Rect2D::framebuffer())
-            .bind_sampler(0, 0, linear_repeat_sampler)
+            .bind_sampler(0, 0, vuk::LinearSamplerRepeated)
             .bind_sampler(0, 1, hiz_sampler_info)
             .bind_image(0, 2, visbuffer)
             .bind_image(0, 3, depth)
@@ -1215,93 +1175,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     bloom_up_image.same_extent_as(final_attachment);
 
     if (self.gpu_scene.scene_flags & GPU::SceneFlags::HasBloom) {
-      auto bloom_prefilter_pass = vuk::make_pass("bloom prefilter",
-        [bloom_threshold, bloom_clamp]( //
-          vuk::CommandBuffer& cmd_list,
-          VUK_IA(vuk::eComputeSampled) src,
-          VUK_IA(vuk::eComputeRW) out) {
-          cmd_list //
-            .bind_compute_pipeline("bloom_prefilter_pipeline")
-            .bind_image(0, 0, out)
-            .bind_image(0, 1, src)
-            .bind_sampler(0, 2, vuk::NearestMagLinearMinSamplerClamped)
-            .push_constants(vuk::ShaderStageFlagBits::eCompute,
-              0,
-              PushConstants(bloom_threshold, bloom_clamp, src->extent))
-            .dispatch_invocations_per_pixel(src);
-
-          return std::make_tuple(src, out);
-        });
-
-      std::tie(final_attachment, bloom_down_image) = bloom_prefilter_pass(
-        std::move(final_attachment),
-        std::move(bloom_down_image)
-      );
-
-      auto bloom_downsample_pass = vuk::make_pass(
-        "bloom downsample",
-        [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) bloom) {
-          cmd_list //
-            .bind_compute_pipeline("bloom_downsample_pipeline")
-            .bind_sampler(0, 2, vuk::LinearMipmapNearestSamplerClamped);
-
-          auto extent = bloom->extent;
-          auto mip_count = bloom->level_count;
-          for (auto i = 1_u32; i < mip_count; i++) {
-            auto mip_width = std::max(1_u32, extent.width >> i);
-            auto mip_height = std::max(1_u32, extent.height >> i);
-            auto prev_mip = bloom->mip(i - 1);
-            auto mip = bloom->mip(i);
-
-            cmd_list.image_barrier(prev_mip, vuk::eComputeWrite, vuk::eComputeSampled)
-              .bind_image(0, 0, mip)
-              .bind_image(0, 1, prev_mip)
-              .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height))
-              .dispatch_invocations(mip_width, mip_height);
-          }
-
-          cmd_list.image_barrier(bloom, vuk::eComputeSampled, vuk::eComputeRW);
-
-          return bloom;
-        }
-      );
-
-      bloom_down_image = bloom_downsample_pass(std::move(bloom_down_image));
-
-      // Upsampling
-      // https://www.froyok.fr/blog/2021-12-ue4-custom-bloom/resources/code/bloom_down_up_demo.jpg
-
-      auto bloom_upsample_pass = vuk::make_pass(
-        "bloom_upsample",
-        [](
-          vuk::CommandBuffer& cmd_list, //
-          VUK_IA(vuk::eComputeRW) bloom_upsampled,
-          VUK_IA(vuk::eComputeSampled) bloom_downsampled
-        ) {
-          auto extent = bloom_upsampled->extent;
-          auto mip_count = bloom_upsampled->level_count;
-
-          cmd_list //
-            .bind_compute_pipeline("bloom_upsample_pipeline")
-            .bind_image(0, 1, bloom_downsampled->mip(mip_count - 1))
-            .bind_sampler(0, 3, vuk::NearestMagLinearMinSamplerClamped);
-
-          for (int32_t i = (int32_t)mip_count - 2; i >= 0; i--) {
-            auto mip_width = std::max(1_u32, extent.width >> i);
-            auto mip_height = std::max(1_u32, extent.height >> i);
-
-            cmd_list.image_barrier(bloom_upsampled->mip(i), vuk::eComputeWrite, vuk::eComputeWrite);
-            cmd_list.bind_image(0, 0, bloom_upsampled->mip(i));
-            cmd_list.bind_image(0, 2, bloom_downsampled->mip(i));
-            cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height));
-            cmd_list.dispatch_invocations(mip_width, mip_height);
-          }
-
-          return bloom_upsampled;
-        }
-      );
-
-      bloom_up_image = bloom_upsample_pass(bloom_up_image, bloom_down_image);
+      bloom_pass(bloom_threshold, bloom_clamp, final_attachment, bloom_down_image, bloom_up_image);
     }
 
     // --- Auto Exposure Pass ---
