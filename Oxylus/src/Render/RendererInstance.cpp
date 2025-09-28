@@ -741,59 +741,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
     mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
 
-    auto vis_decode_pass = vuk::make_pass(
-      "vis decode",
-      [&descriptor_set = bindless_set](
-        vuk::CommandBuffer& cmd_list,
-        VUK_BA(vuk::eFragmentRead) camera,
-        VUK_BA(vuk::eFragmentRead) meshlet_instances,
-        VUK_BA(vuk::eFragmentRead) mesh_instances,
-        VUK_BA(vuk::eFragmentRead) meshes,
-        VUK_BA(vuk::eFragmentRead) transforms,
-        VUK_BA(vuk::eFragmentRead) materials,
-        VUK_IA(vuk::eFragmentSampled) visbuffer,
-        VUK_IA(vuk::eColorRW) albedo,
-        VUK_IA(vuk::eColorRW) normal,
-        VUK_IA(vuk::eColorRW) emissive,
-        VUK_IA(vuk::eColorRW) metallic_roughness_occlusion
-      ) {
-        cmd_list //
-          .bind_graphics_pipeline("visbuffer_decode")
-          .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
-          .set_depth_stencil({})
-          .set_color_blend(albedo, vuk::BlendPreset::eOff)
-          .set_color_blend(normal, vuk::BlendPreset::eOff)
-          .set_color_blend(emissive, vuk::BlendPreset::eOff)
-          .set_color_blend(metallic_roughness_occlusion, vuk::BlendPreset::eOff)
-          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-          .set_viewport(0, vuk::Rect2D::framebuffer())
-          .set_scissor(0, vuk::Rect2D::framebuffer())
-          .bind_persistent(1, descriptor_set)
-          .bind_buffer(0, 0, camera)
-          .bind_buffer(0, 1, meshlet_instances)
-          .bind_buffer(0, 2, mesh_instances)
-          .bind_buffer(0, 3, meshes)
-          .bind_buffer(0, 4, transforms)
-          .bind_buffer(0, 5, materials)
-          .bind_image(0, 6, visbuffer)
-          .draw(3, 1, 0, 1);
-
-        return std::make_tuple(
-          camera,
-          meshlet_instances,
-          mesh_instances,
-          meshes,
-          transforms,
-          materials,
-          visbuffer,
-          albedo,
-          normal,
-          emissive,
-          metallic_roughness_occlusion
-        );
-      }
-    );
-
     auto albedo_attachment = vuk::declare_ia(
       "albedo",
       {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
@@ -833,7 +780,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       vuk::Black<f32>
     );
 
-    std::tie(
+    vis_decode(
+      bindless_set,
       camera_buffer,
       meshlet_instances_buffer,
       mesh_instances_buffer,
@@ -845,20 +793,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       normal_attachment,
       emissive_attachment,
       metallic_roughness_occlusion_attachment
-    ) =
-      vis_decode_pass(
-        std::move(camera_buffer),
-        std::move(meshlet_instances_buffer),
-        std::move(mesh_instances_buffer),
-        std::move(meshes_buffer),
-        std::move(transforms_buffer),
-        std::move(materials_buffer),
-        std::move(visbuffer_attachment),
-        std::move(albedo_attachment),
-        std::move(normal_attachment),
-        std::move(emissive_attachment),
-        std::move(metallic_roughness_occlusion_attachment)
-      );
+    );
 
     auto vbgtao_occlusion_attachment = vuk::declare_ia(
       "vbgtao occlusion",
@@ -1286,6 +1221,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         std::move(meshes_buffer),
         std::move(transforms_buffer)
       );
+
+      self.clear_stages();
 
       return debug_attachment; // Early return debug attachment
     }

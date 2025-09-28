@@ -89,6 +89,21 @@ auto draw_shadowmap(
 auto generate_hiz(vuk::Value<vuk::ImageAttachment>& hiz_attachment, vuk::Value<vuk::ImageAttachment>& depth_attachment)
   -> void;
 
+auto vis_decode(
+  vuk::PersistentDescriptorSet& descriptor_set,
+  vuk::Value<vuk::Buffer>& camera_buffer,
+  vuk::Value<vuk::Buffer>& meshlet_instances_buffer,
+  vuk::Value<vuk::Buffer>& mesh_instances_buffer,
+  vuk::Value<vuk::Buffer>& meshes_buffer,
+  vuk::Value<vuk::Buffer>& transforms_buffer,
+  vuk::Value<vuk::Buffer>& materials_buffer,
+  vuk::Value<vuk::ImageAttachment>& visbuffer_attachment,
+  vuk::Value<vuk::ImageAttachment>& albedo_attachment,
+  vuk::Value<vuk::ImageAttachment>& normal_attachment,
+  vuk::Value<vuk::ImageAttachment>& emissive_attachment,
+  vuk::Value<vuk::ImageAttachment>& metallic_roughness_occlusion_attachment
+) -> void;
+
 //
 // Forward 2D Pipeline
 //
