@@ -24,7 +24,7 @@
 namespace ox {
 template <typename T>
 void show_component_gizmo(
-  const char* icon,
+  f32 icon_size,
   const std::string& name,
   const float width,
   const float height,
@@ -34,35 +34,36 @@ void show_component_gizmo(
   const Frustum& frustum,
   Scene* scene
 ) {
-  scene->world.query_builder<T>().build().each(
-    [view_proj, width, height, xpos, ypos, scene, frustum, icon, name](flecs::entity entity, const T&) {
-      const glm::vec3 pos = scene->get_world_transform(entity)[3];
+  auto* editor_layer = EditorLayer::get();
+  auto& editor_theme = editor_layer->editor_theme;
 
-      if (frustum.is_inside(pos) == (uint32_t)Intersection::Outside)
-        return;
+  const char* icon = editor_theme.component_icon_map.at(typeid(T).hash_code());
+  scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T&) {
+    const glm::vec3 pos = scene->get_world_transform(entity)[3];
 
-      const glm::vec2 screen_pos = math::world_to_screen(pos, view_proj, width, height, xpos, ypos);
-      ImGui::SetCursorPos({screen_pos.x - ImGui::GetFontSize() * 0.5f, screen_pos.y - ImGui::GetFontSize() * 0.5f});
-      ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.7f, 0.7f, 0.0f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.1f));
+    if (frustum.is_inside(pos) == (uint32_t)Intersection::Outside)
+      return;
 
-      constexpr auto icon_size = 48.f;
-      ImGui::PushFont(nullptr, icon_size);
-      ImGui::PushID(entity.id());
-      if (ImGui::Button(icon, {50.f, 50.f})) {
-        auto& editor_context = EditorLayer::get()->get_context();
-        editor_context.reset();
-        editor_context.entity = entity;
-        editor_context.type = EditorContext::Type::Entity;
-      }
-      ImGui::PopID();
-      ImGui::PopFont();
+    const glm::vec2 screen_pos = math::world_to_screen(pos, view_proj, width, height, xpos, ypos);
+    ImGui::SetCursorPos({screen_pos.x - (icon_size / 2.f), screen_pos.y - (icon_size / 2.f)});
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.7f, 0.7f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.1f));
 
-      ImGui::PopStyleColor(2);
-
-      UI::tooltip_hover(name.data());
+    ImGui::PushFont(nullptr, icon_size);
+    ImGui::PushID(entity.id());
+    if (ImGui::Button(icon, {icon_size, icon_size})) {
+      auto& editor_context = EditorLayer::get()->get_context();
+      editor_context.reset();
+      editor_context.entity = entity;
+      editor_context.type = EditorContext::Type::Entity;
     }
-  );
+    ImGui::PopID();
+    ImGui::PopFont();
+
+    ImGui::PopStyleColor(2);
+
+    UI::tooltip_hover(name.data());
+  });
 }
 
 ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true) {
@@ -101,13 +102,12 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
 
   if (on_begin(flags)) {
     bool viewport_settings_popup = false;
+    bool gizmo_settings_popup = false;
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
     auto& style = ImGui::GetStyle();
 
     auto* editor_layer = EditorLayer::get();
-
-    auto& editor_theme = editor_layer->editor_theme;
 
     if (ImGui::BeginMenuBar()) {
       if (ImGui::MenuItem(ICON_MDI_COG)) {
@@ -115,6 +115,9 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       }
       if (ImGui::MenuItem(ICON_MDI_INFORMATION, nullptr, draw_scene_stats)) {
         draw_scene_stats = !draw_scene_stats;
+      }
+      if (ImGui::MenuItem(ICON_MDI_SPHERE, nullptr, draw_scene_stats)) {
+        gizmo_settings_popup = true;
       }
       auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
       ImGui::SetCursorPosX(_viewport_panel_size.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
@@ -127,12 +130,22 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
     draw_stats_overlay(extent, draw_scene_stats);
 
     if (viewport_settings_popup)
-      ImGui::OpenPopup("ViewportSettings");
+      ImGui::OpenPopup("viewport_settings");
 
     ImGui::SetNextWindowSize(ImVec2(345, 0));
     ImGui::SetNextWindowBgAlpha(0.85f);
-    if (ImGui::BeginPopup("ViewportSettings")) {
+    if (ImGui::BeginPopup("viewport_settings")) {
       draw_settings_panel();
+      ImGui::EndPopup();
+    }
+
+    if (gizmo_settings_popup)
+      ImGui::OpenPopup("gizmo_settings");
+
+    ImGui::SetNextWindowSize(ImVec2(345, 0));
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    if (ImGui::BeginPopup("gizmo_settings")) {
+      draw_gizmo_settings_panel();
       ImGui::EndPopup();
     }
 
@@ -453,57 +466,6 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
     if (editor_camera.has<CameraComponent>() && !_scene->is_running()) {
       if (editor_layer->scene_state == EditorLayer::SceneState::Edit)
         editor_camera.enable();
-
-      const auto& cam = editor_camera.get<CameraComponent>();
-      auto projection = cam.get_projection_matrix();
-      projection[1][1] *= -1;
-      glm::mat4 view_proj = projection * cam.get_view_matrix();
-      const Frustum& frustum = Camera::get_frustum(cam, cam.position);
-
-      show_component_gizmo<LightComponent>(
-        editor_theme.component_icon_map.at(typeid(LightComponent).hash_code()),
-        "LightComponent",
-        fixed_width,
-        _viewport_panel_size.y,
-        0,
-        0,
-        view_proj,
-        frustum,
-        _scene
-      );
-      show_component_gizmo<AudioSourceComponent>(
-        editor_theme.component_icon_map.at(typeid(AudioSourceComponent).hash_code()),
-        "AudioSourceComponent",
-        fixed_width,
-        _viewport_panel_size.y,
-        0,
-        0,
-        view_proj,
-        frustum,
-        _scene
-      );
-      show_component_gizmo<AudioListenerComponent>(
-        editor_theme.component_icon_map.at(typeid(AudioListenerComponent).hash_code()),
-        "AudioListenerComponent",
-        fixed_width,
-        _viewport_panel_size.y,
-        0,
-        0,
-        view_proj,
-        frustum,
-        _scene
-      );
-      show_component_gizmo<CameraComponent>(
-        editor_theme.component_icon_map.at(typeid(CameraComponent).hash_code()),
-        "CameraComponent",
-        fixed_width,
-        _viewport_panel_size.y,
-        0,
-        0,
-        view_proj,
-        frustum,
-        _scene
-      );
 
       draw_gizmos();
     }
@@ -937,10 +899,72 @@ void ViewportPanel::draw_settings_panel() {
   }
 }
 
+void ViewportPanel::draw_gizmo_settings_panel() {
+  if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+    UI::property("Draw Component Gizmos", &draw_component_gizmos_);
+    UI::property("Component Gizmos Size", &gizmo_icon_size_);
+    UI::property("Selection Outline", &draw_selection_outline_);
+    UI::end_properties();
+  }
+}
+
 void ViewportPanel::draw_gizmos() {
   auto* editor_layer = EditorLayer::get();
   auto& editor_context = editor_layer->get_context();
   auto& undo_redo_system = editor_layer->undo_redo_system;
+
+  const auto& cam = editor_camera.get<CameraComponent>();
+  auto projection = cam.get_projection_matrix();
+  projection[1][1] *= -1;
+  glm::mat4 view_proj = projection * cam.get_view_matrix();
+  const Frustum& frustum = Camera::get_frustum(cam, cam.position);
+
+  if (draw_component_gizmos_) {
+    show_component_gizmo<LightComponent>(
+      gizmo_icon_size_,
+      "LightComponent",
+      _viewport_panel_size.x,
+      _viewport_panel_size.y,
+      0,
+      0,
+      view_proj,
+      frustum,
+      _scene
+    );
+    show_component_gizmo<AudioSourceComponent>(
+      gizmo_icon_size_,
+      "AudioSourceComponent",
+      _viewport_panel_size.x,
+      _viewport_panel_size.y,
+      0,
+      0,
+      view_proj,
+      frustum,
+      _scene
+    );
+    show_component_gizmo<AudioListenerComponent>(
+      gizmo_icon_size_,
+      "AudioListenerComponent",
+      _viewport_panel_size.x,
+      _viewport_panel_size.y,
+      0,
+      0,
+      view_proj,
+      frustum,
+      _scene
+    );
+    show_component_gizmo<CameraComponent>(
+      gizmo_icon_size_,
+      "CameraComponent",
+      _viewport_panel_size.x,
+      _viewport_panel_size.y,
+      0,
+      0,
+      view_proj,
+      frustum,
+      _scene
+    );
+  }
 
   const flecs::entity selected_entity = editor_context.entity.value_or(flecs::entity::null());
 
