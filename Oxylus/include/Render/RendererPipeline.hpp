@@ -103,4 +103,18 @@ auto forward_2d_pass(
   vuk::Value<vuk::Buffer>& transforms_buffer
 ) -> void;
 
+//
+// Atmosphere Pipeline
+//
+auto atmosphere_pass(
+  vuk::Value<vuk::Buffer>& atmosphere_buffer,
+  vuk::Value<vuk::Buffer>& lights_buffer,
+  vuk::Value<vuk::Buffer>& camera_buffer,
+  vuk::Value<vuk::ImageAttachment>& sky_transmittance_lut_attachment,
+  vuk::Value<vuk::ImageAttachment>& sky_multiscatter_lut_attachment,
+  vuk::Value<vuk::ImageAttachment>& sky_view_lut_attachment,
+  vuk::Value<vuk::ImageAttachment>& sky_aerial_perspective_attachment,
+  vuk::Value<vuk::ImageAttachment>& final_attachment,
+  vuk::Value<vuk::ImageAttachment>& depth_attachment
+) -> void;
 } // namespace ox
