@@ -203,7 +203,6 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
         mouse_pos
       );
 
-#if 0
       renderer_instance->add_stage_after(
         RenderStage::VisBufferEncode,
         "mouse_picking",
@@ -241,9 +240,12 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             }
           );
 
-          // std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
-          //   std::move(readback_buffer), std::move(visbuffer), std::move(meshlet_instances), std::move(mesh_instances)
-          // );
+          std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
+            std::move(readback_buffer),
+            std::move(visbuffer),
+            std::move(meshlet_instances),
+            std::move(mesh_instances)
+          );
 
           auto read_pass = vuk::make_pass(
             "mouse_picking_read_pass",
@@ -285,7 +287,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             }
           );
 
-          // std::tie(readback_buffer, visbuffer) = read_pass(std::move(readback_buffer), std::move(visbuffer));
+          std::tie(readback_buffer, visbuffer) = read_pass(std::move(readback_buffer), std::move(visbuffer));
 
           auto highlight_attachment = vuk::declare_ia(
             "highlight",
@@ -307,15 +309,6 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
               VUK_BA(vuk::eComputeRead) meshlet_instances_,
               VUK_BA(vuk::eComputeRead) mesh_instances_
             ) {
-              auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
-                .magFilter = vuk::Filter::eNearest,
-                .minFilter = vuk::Filter::eNearest,
-                .mipmapMode = vuk::SamplerMipmapMode::eNearest,
-                .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-                .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-                .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
-              };
-
               auto& editor_context = EditorLayer::get()->get_context();
 
               std::vector<u32> transform_indices = {};
@@ -340,7 +333,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
                   }
                 }
 
-                if (transform_indices.empty()) {
+                if (!transform_indices.empty()) {
                   auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
                   std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
                   cmd_list.bind_compute_pipeline("highlighting_pipeline")
@@ -349,7 +342,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
                     .bind_image(0, 2, visbuffer_)
                     .bind_image(0, 3, depth)
                     .bind_image(0, 4, result)
-                    .bind_sampler(0, 6, nearest_clamp_sampler)
+                    .bind_sampler(0, 6, vuk::NearestSamplerClamped)
                     .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size()))
                     .dispatch_invocations_per_pixel(visbuffer_);
                 }
@@ -392,18 +385,23 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
           if (!highlight_attachment.has_value())
             return;
 
+          auto highlight_applied_attachment = vuk::declare_ia(
+            "highlight_applied_attachment",
+            {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+             .sample_count = vuk::Samples::e1}
+          );
+          highlight_applied_attachment.same_shape_as(result_attachment);
+          highlight_applied_attachment.same_format_as(result_attachment);
+          highlight_applied_attachment = vuk::clear_image(std::move(highlight_applied_attachment), vuk::Black<f32>);
+
           auto highlight_pass = vuk::make_pass(
             "apply_highlighting_pass",
-            [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eColorRW) result, VUK_IA(vuk::eFragmentSampled) highlight) {
-              auto linear_clamp_sampler = vuk::SamplerCreateInfo{
-                .magFilter = vuk::Filter::eLinear,
-                .minFilter = vuk::Filter::eLinear,
-                .mipmapMode = vuk::SamplerMipmapMode::eLinear,
-                .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-                .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-                .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
-              };
-
+            [](
+              vuk::CommandBuffer& cmd_list,
+              VUK_IA(vuk::eColorRW) result,
+              VUK_IA(vuk::eFragmentSampled) source,
+              VUK_IA(vuk::eFragmentSampled) highlight
+            ) {
               cmd_list.bind_graphics_pipeline("apply_highlighting_pipeline")
                 .set_rasterization({})
                 .broadcast_color_blend({})
@@ -411,21 +409,26 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
                 .set_viewport(0, vuk::Rect2D::framebuffer())
                 .set_scissor(0, vuk::Rect2D::framebuffer())
                 .bind_image(0, 0, highlight)
-                .bind_image(0, 1, result)
-                .bind_sampler(0, 2, linear_clamp_sampler)
+                .bind_image(0, 1, source)
+                .bind_sampler(0, 2, vuk::LinearSamplerClamped)
                 .draw(3, 1, 0, 0);
 
-              return std::make_tuple(result, highlight);
+              return std::make_tuple(result, source, highlight);
             }
           );
 
-          // std::tie(result_attachment, highlight_attachment) = highlight_pass(result_attachment,
-          // *highlight_attachment);
+          std::tie(highlight_applied_attachment, result_attachment, highlight_attachment) = highlight_pass(
+            highlight_applied_attachment,
+            result_attachment,
+            *highlight_attachment
+          );
 
           ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
-            .set_image_resource("result_attachment", std::move(result_attachment));
+            .set_image_resource(
+              "result_attachment",
+              std::move(highlight_applied_attachment)
+            ); // change result_attachment to highlight applied attachment
         });
-#endif
 
       const Renderer::RenderInfo render_info = {
         .extent = extent,
@@ -999,8 +1002,6 @@ void ViewportPanel::draw_gizmos() {
       _viewport_bounds[1].x - _viewport_bounds[0].x,
       _viewport_bounds[1].y - _viewport_bounds[0].y
     );
-
-    const auto& cam = editor_camera.get<CameraComponent>();
 
     auto camera_projection = cam.get_projection_matrix();
     camera_projection[1][1] *= -1;
