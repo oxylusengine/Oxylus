@@ -158,4 +158,28 @@ auto bloom_pass(
   vuk::Value<vuk::ImageAttachment>& bloom_up_image
 ) -> void;
 
+//
+// Debug Pipeline
+//
+
+auto debug_pass(
+  GPU::DebugView debug_view,
+  f32 debug_heatmap_scale,
+  vuk::Value<vuk::ImageAttachment>& debug_attachment,
+  vuk::Value<vuk::ImageAttachment>& visbuffer_attachment,
+  vuk::Value<vuk::ImageAttachment>& depth_attachment,
+  vuk::Value<vuk::ImageAttachment>& overdraw_attachment,
+  vuk::Value<vuk::ImageAttachment>& albedo_attachment,
+  vuk::Value<vuk::ImageAttachment>& normal_attachment,
+  vuk::Value<vuk::ImageAttachment>& emissive_attachment,
+  vuk::Value<vuk::ImageAttachment>& metallic_roughness_occlusion_attachment,
+  vuk::Value<vuk::ImageAttachment>& hiz_attachment,
+  vuk::Value<vuk::ImageAttachment>& vbgtao_noisy_occlusion_attachment,
+  vuk::Value<vuk::Buffer>& camera_buffer,
+  vuk::Value<vuk::Buffer>& visible_meshlet_instances_indices_buffer,
+  vuk::Value<vuk::Buffer>& meshlet_instances_buffer,
+  vuk::Value<vuk::Buffer>& meshes_buffer,
+  vuk::Value<vuk::Buffer>& transforms_buffer
+) -> void;
+
 } // namespace ox
