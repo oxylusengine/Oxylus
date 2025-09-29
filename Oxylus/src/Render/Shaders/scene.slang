@@ -242,9 +242,9 @@ public struct SpotLight {
 
 public struct Lights {
   public DirectionalLight directional_light;
+  public u32 directional_light_has_shadows = 0;
   public u32 point_light_count = 0;
   public u32 spot_light_count = 0;
-  u32 _padding;
   public PointLight *point_lights;
   public SpotLight *spot_lights;
 };

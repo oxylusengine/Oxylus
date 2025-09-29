@@ -538,18 +538,14 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       cull_flags |= GPU::CullFlags::MicroTriangles;
     }
 
+    auto directional_shadows_enabled = self.directional_light_cast_shadows;
     auto directional_light_info = self.directional_light.value_or(GPU::DirectionalLight{});
-    auto directional_light_cascade_count = max(directional_light_info.cascade_count, 1_u32);
-    auto directional_light_shadowmap_size = max(directional_light_info.cascade_size, 1_u32);
-    auto directional_light_shadowmap_extent = vuk::Extent3D{
-      directional_light_shadowmap_size,
-      directional_light_shadowmap_size,
-      1
-    };
+    auto directional_light_cascade_count = max(directional_light_info.cascade_count, 2_u32);
+    auto directional_light_shadowmap_size = directional_shadows_enabled ? max(directional_light_info.cascade_size, 1_u32) : 1;
     auto directional_light_shadowmap_attachment = vuk::declare_ia(
       "directional light shadowmap",
       {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eDepthStencilAttachment,
-       .extent = directional_light_shadowmap_extent,
+       .extent = vuk::Extent3D{directional_light_shadowmap_size, directional_light_shadowmap_size, 1},
        .format = vuk::Format::eD32Sfloat,
        .sample_count = vuk::SampleCountFlagBits::e1,
        .level_count = 1,
@@ -560,7 +556,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       vuk::DepthZero
     );
 
-    if (self.directional_light.has_value()) {
+    if (self.directional_light.has_value() && directional_shadows_enabled) {
       auto directional_light_resolution = glm::vec2(directional_light_shadowmap_size, directional_light_shadowmap_size);
       for (u32 cascade_index = 0; cascade_index < directional_light_cascade_count; cascade_index++) {
         auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
@@ -891,11 +887,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           VUK_IA(vuk::eFragmentSampled) emissive,
           VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
           VUK_IA(vuk::eFragmentSampled) gtao,
-          VUK_IA(vuk::eFragmentSampled) shadows,
           VUK_IA(vuk::eFragmentSampled) contact_shadows,
+          VUK_IA(vuk::eFragmentSampled) shadows,
           VUK_BA(vuk::eFragmentRead) scene_,
           VUK_BA(vuk::eFragmentRead) camera,
-          VUK_BA(vuk::eFragmentRead) lights,
+          VUK_BA(vuk::eMemoryRead) lights,
           VUK_BA(vuk::eMemoryRead) point_lights,
           VUK_BA(vuk::eMemoryRead) spot_lights
         ) {
@@ -919,7 +915,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .bind_image(0, 11, shadows)
             .bind_buffer(0, 12, scene_)
             .bind_buffer(0, 13, camera)
-            .bind_buffer(0, 14, lights)
             .draw(3, 1, 0, 0);
           return std::make_tuple(dst, sky_transmittance_lut, sky_multiscatter_lut, depth, scene_, camera, lights);
         }
@@ -944,8 +939,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           std::move(emissive_attachment),
           std::move(metallic_roughness_occlusion_attachment),
           std::move(vbgtao_occlusion_attachment),
-          std::move(directional_light_shadowmap_attachment),
           std::move(contact_shadows_attachment),
+          std::move(directional_light_shadowmap_attachment),
           std::move(scene_buffer),
           std::move(camera_buffer),
           std::move(lights_buffer),
@@ -1390,6 +1385,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         dir_light.depth_bias = lc.depth_bias;
         dir_light.normal_bias = lc.normal_bias;
 
+        self.directional_light_cast_shadows = lc.cast_shadows;
+
         if (lc.cast_shadows) {
           calculate_cascaded_shadow_matrices(dir_light, lc, current_camera);
         }
@@ -1445,6 +1442,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   auto lights = GPU::Lights{
     .direction_light = self.directional_light.value_or(GPU::DirectionalLight{}),
+    .directional_light_has_shadows = static_cast<u32>(self.directional_light_cast_shadows),
     .point_light_count = static_cast<u32>(point_lights.size()),
     .spot_light_count = static_cast<u32>(spot_lights.size()),
     .point_lights = self.point_lights_buffer->device_address,

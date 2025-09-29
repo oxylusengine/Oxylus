@@ -24,7 +24,6 @@ struct ShaderParameters {
     Texture2DArray<f32> directional_shadows_map;
     ConstantBuffer<Scene> scene;
     ConstantBuffer<Camera> camera;
-    ConstantBuffer<Lights> lights;
 };
 
 func lights_attenuate_point(f32 to_light_dist, f32 cutoff) -> f32 {
@@ -155,7 +154,8 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     const f32x4 world_position_h = mul(params.camera.inv_projection_view, f32x4(NDC, 1.0));
     const f32x3 world_position = world_position_h.xyz / world_position_h.w;
 
-    let directional_light = params.lights.directional_light;
+    let lights = params.scene.lights;
+    let directional_light = lights.directional_light;
 
     // PBR constants
     const f32x3 V = normalize(params.camera.position.xyz - world_position);
@@ -163,15 +163,17 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
     const f32x3 N = mapped_normal;
 
     let view_z = -mul(params.camera.view, f32x4(world_position, 1.0)).z;
-    f32 directional_shadows = sample_shadow_map(
-        params.lights.directional_light,
-        params.directional_shadows_map,
-        params.linear_clamp_sampler,
-        view_z,
-        world_position,
-        N, directional_light.direction);
-
-    let cascade_index = get_cascade_index(params.lights.directional_light, view_z);
+    f32 directional_shadows = 1.0f;
+    if (lights.directional_light_has_shadows != 0) {
+        directional_shadows = sample_shadow_map(
+           directional_light,
+           params.directional_shadows_map,
+           params.linear_clamp_sampler,
+           view_z,
+           world_position,
+           N,
+           directional_light.direction);
+    }
 
     f32x3 diffuse_light = f32x3(0, 0, 0);
 
@@ -213,8 +215,8 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
 
     f32x3 total_lighting = f32x3(0.0, 0.0, 0.0);
 
-    for(int point_light_idx = 0; point_light_idx < params.lights.point_light_count; point_light_idx++) {
-        PointLight light = params.lights.point_lights[point_light_idx];
+    for(int point_light_idx = 0; point_light_idx < lights.point_light_count; point_light_idx++) {
+        PointLight light = lights.point_lights[point_light_idx];
 
         f32x3 point_light_contribution = point_light_contribution(
             world_position,
@@ -230,8 +232,8 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
         total_lighting += point_light_contribution;
     }
 
-    for(int spot_light_idx = 0; spot_light_idx < params.lights.spot_light_count; spot_light_idx++) {
-        SpotLight light = params.lights.spot_lights[spot_light_idx];
+    for(int spot_light_idx = 0; spot_light_idx < lights.spot_light_count; spot_light_idx++) {
+        SpotLight light = lights.spot_lights[spot_light_idx];
 
         f32x3 spot_light_contribution = calculate_spot_light_contribution(
             world_position,
