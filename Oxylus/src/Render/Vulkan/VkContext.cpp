@@ -168,15 +168,13 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   selector.prefer_gpu_device_type(vkb::PreferredDeviceType::discrete);
 #endif
 
-  std::vector<const c8*> device_extensions;
-  device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  device_extensions.push_back(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
-  device_extensions.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+  selector.add_required_extension(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
+    .add_required_extension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME)
+    .add_required_extension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)
 #ifndef OX_PLATFORM_MACOSX
-  device_extensions.push_back(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME);
+    .add_required_extension(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME)
 #endif
-  device_extensions.push_back(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
-  selector.add_required_extensions(device_extensions);
+    .add_required_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
 
   if (auto phys_ret = selector.select(); !phys_ret) {
     OX_LOG_ERROR("{}", phys_ret.full_error().type.message());

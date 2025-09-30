@@ -44,7 +44,7 @@ public:
   vkb::PhysicalDevice vkbphysical_device;
   VkQueue graphics_queue = nullptr;
   VkQueue transfer_queue = nullptr;
-  std::optional<vuk::Runtime> runtime;
+  option<vuk::Runtime> runtime;
 
   option<vuk::DeviceSuperFrameResource> superframe_resource;
   option<vuk::Allocator> superframe_allocator = nullopt;
@@ -105,7 +105,7 @@ public:
   auto sampler(const SamplerID id) -> vuk::Sampler;
 
   auto get_max_viewport_count() const -> uint32_t { return vkbphysical_device.properties.limits.maxViewports; }
-  auto get_descriptor_set() -> auto& { return resources.descriptor_set; }
+  auto get_descriptor_set() -> vuk::PersistentDescriptorSet& { return resources.descriptor_set; }
 
   auto resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
     -> vuk::Unique<vuk::Buffer>;
