@@ -213,6 +213,7 @@ private:
 
   GPU::Scene gpu_scene = {};
 
+  bool directional_light_cast_shadows = true;
   option<GPU::DirectionalLight> directional_light = nullopt;
   option<GPU::Atmosphere> atmosphere = nullopt;
   option<GPU::HistogramInfo> histogram_info = nullopt;

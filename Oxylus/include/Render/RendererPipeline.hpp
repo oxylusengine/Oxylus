@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Render/Renderer.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
@@ -87,4 +88,98 @@ auto draw_shadowmap(
 ) -> void;
 auto generate_hiz(vuk::Value<vuk::ImageAttachment>& hiz_attachment, vuk::Value<vuk::ImageAttachment>& depth_attachment)
   -> void;
+
+auto vis_decode(
+  vuk::PersistentDescriptorSet& descriptor_set,
+  vuk::Value<vuk::Buffer>& camera_buffer,
+  vuk::Value<vuk::Buffer>& meshlet_instances_buffer,
+  vuk::Value<vuk::Buffer>& mesh_instances_buffer,
+  vuk::Value<vuk::Buffer>& meshes_buffer,
+  vuk::Value<vuk::Buffer>& transforms_buffer,
+  vuk::Value<vuk::Buffer>& materials_buffer,
+  vuk::Value<vuk::ImageAttachment>& visbuffer_attachment,
+  vuk::Value<vuk::ImageAttachment>& albedo_attachment,
+  vuk::Value<vuk::ImageAttachment>& normal_attachment,
+  vuk::Value<vuk::ImageAttachment>& emissive_attachment,
+  vuk::Value<vuk::ImageAttachment>& metallic_roughness_occlusion_attachment
+) -> void;
+
+//
+// Forward 2D Pipeline
+//
+auto forward_2d_pass(
+  Renderer::RenderQueue2D& rq2d,
+  vuk::PersistentDescriptorSet& descriptor_set,
+  vuk::Value<vuk::ImageAttachment>& final_attachment,
+  vuk::Value<vuk::ImageAttachment>& depth_attachment,
+  vuk::Value<vuk::Buffer>& vertex_buffer_2d,
+  vuk::Value<vuk::Buffer>& materials_buffer,
+  vuk::Value<vuk::Buffer>& camera_buffer,
+  vuk::Value<vuk::Buffer>& transforms_buffer
+) -> void;
+
+//
+// Atmosphere Pipeline
+//
+auto atmosphere_pass(
+  vuk::Value<vuk::Buffer>& atmosphere_buffer,
+  vuk::Value<vuk::Buffer>& lights_buffer,
+  vuk::Value<vuk::Buffer>& camera_buffer,
+  vuk::Value<vuk::ImageAttachment>& sky_transmittance_lut_attachment,
+  vuk::Value<vuk::ImageAttachment>& sky_multiscatter_lut_attachment,
+  vuk::Value<vuk::ImageAttachment>& sky_view_lut_attachment,
+  vuk::Value<vuk::ImageAttachment>& sky_aerial_perspective_attachment,
+  vuk::Value<vuk::ImageAttachment>& final_attachment,
+  vuk::Value<vuk::ImageAttachment>& depth_attachment
+) -> void;
+
+//
+// VBGTAO Pipeline
+//
+auto vbgtao_pass(
+  vuk::Value<vuk::ImageAttachment>& depth_attachment,
+  vuk::Value<vuk::ImageAttachment>& final_attachment,
+  vuk::Value<vuk::ImageAttachment>& normal_attachment,
+  vuk::Value<vuk::ImageAttachment>& hilbert_noise_lut_attachment,
+  vuk::Value<vuk::ImageAttachment>& vbgtao_noisy_occlusion_attachment,
+  vuk::Value<vuk::ImageAttachment>& vbgtao_occlusion_attachment,
+  vuk::Value<vuk::Buffer>& camera_buffer,
+  GPU::VBGTAOSettings& gtao_settings
+) -> void;
+
+//
+// Bloom Pipeline
+//
+auto bloom_pass(
+  f32 bloom_threshold,
+  f32 bloom_clamp,
+  vuk::Value<vuk::ImageAttachment>& final_attachment,
+  vuk::Value<vuk::ImageAttachment>& bloom_down_image,
+  vuk::Value<vuk::ImageAttachment>& bloom_up_image
+) -> void;
+
+//
+// Debug Pipeline
+//
+
+auto debug_pass(
+  GPU::DebugView debug_view,
+  f32 debug_heatmap_scale,
+  vuk::Value<vuk::ImageAttachment>& debug_attachment,
+  vuk::Value<vuk::ImageAttachment>& visbuffer_attachment,
+  vuk::Value<vuk::ImageAttachment>& depth_attachment,
+  vuk::Value<vuk::ImageAttachment>& overdraw_attachment,
+  vuk::Value<vuk::ImageAttachment>& albedo_attachment,
+  vuk::Value<vuk::ImageAttachment>& normal_attachment,
+  vuk::Value<vuk::ImageAttachment>& emissive_attachment,
+  vuk::Value<vuk::ImageAttachment>& metallic_roughness_occlusion_attachment,
+  vuk::Value<vuk::ImageAttachment>& hiz_attachment,
+  vuk::Value<vuk::ImageAttachment>& vbgtao_noisy_occlusion_attachment,
+  vuk::Value<vuk::Buffer>& camera_buffer,
+  vuk::Value<vuk::Buffer>& visible_meshlet_instances_indices_buffer,
+  vuk::Value<vuk::Buffer>& meshlet_instances_buffer,
+  vuk::Value<vuk::Buffer>& meshes_buffer,
+  vuk::Value<vuk::Buffer>& transforms_buffer
+) -> void;
+
 } // namespace ox

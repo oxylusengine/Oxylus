@@ -484,8 +484,8 @@ auto VkContext::end_frame(this VkContext& self, vuk::Value<vuk::ImageAttachment>
   vuk::ProfilingCallbacks cbs = self.tracy_profiler->setup_vuk_callback();
   try {
     entire_thing.submit(*self.frame_allocator, self.compiler, {.graph_label = {}, .callbacks = cbs});
-  } catch (vuk::Exception&) {
-    // TODO: Actually handle this
+  } catch (vuk::Exception& exception) {
+    OX_LOG_ERROR("Queue submit exception thrown: {}", exception.error_message);
   }
 
   self.current_frame = (self.current_frame + 1) % self.num_inflight_frames;

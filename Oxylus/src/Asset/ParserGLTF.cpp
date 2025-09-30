@@ -114,15 +114,15 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
   // sources::Vector is not used for importing, ignore it
   for (const auto& v : asset.buffers) {
     auto visitor = fastgltf::visitor{
-        [](const auto&) {},
-        [&](const fastgltf::sources::ByteView& view) {
-          // Embedded byte
-          buffers.emplace_back(std::bit_cast<u8*>(view.bytes.data()), view.bytes.size_bytes());
-        },
-        [&](const fastgltf::sources::Array& arr) {
-          // Embedded array
-          buffers.emplace_back(std::bit_cast<u8*>(arr.bytes.data()), arr.bytes.size_bytes());
-        },
+      [](const auto&) {},
+      [&](const fastgltf::sources::ByteView& view) {
+        // Embedded byte
+        buffers.emplace_back(std::bit_cast<u8*>(view.bytes.data()), view.bytes.size_bytes());
+      },
+      [&](const fastgltf::sources::Array& arr) {
+        // Embedded array
+        buffers.emplace_back(std::bit_cast<u8*>(arr.bytes.data()), arr.bytes.size_bytes());
+      },
     };
     std::visit(visitor, v.data);
   }
@@ -145,45 +145,45 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
 
   for (const auto& v : asset.images) {
     auto visitor = fastgltf::visitor{
-        [](const auto&) {},
-        [&](const fastgltf::sources::ByteView& view) {
-          // Embedded buffer
-          std::vector<u8> pixels(view.bytes.size_bytes());
-          std::memcpy(pixels.data(), view.bytes.data(), view.bytes.size_bytes());
+      [](const auto&) {},
+      [&](const fastgltf::sources::ByteView& view) {
+        // Embedded buffer
+        std::vector<u8> pixels(view.bytes.size_bytes());
+        std::memcpy(pixels.data(), view.bytes.data(), view.bytes.size_bytes());
 
-          auto& image_info = model.images.emplace_back();
-          image_info.image_data.emplace<std::vector<u8>>(std::move(pixels));
-          image_info.file_type = to_asset_file_type(view.mimeType);
-        },
-        [&](const fastgltf::sources::BufferView& view) {
-          // Embedded buffer
-          auto& buffer_view = asset.bufferViews[view.bufferViewIndex];
-          auto& buffer = buffers[buffer_view.bufferIndex];
+        auto& image_info = model.images.emplace_back();
+        image_info.image_data.emplace<std::vector<u8>>(std::move(pixels));
+        image_info.file_type = to_asset_file_type(view.mimeType);
+      },
+      [&](const fastgltf::sources::BufferView& view) {
+        // Embedded buffer
+        auto& buffer_view = asset.bufferViews[view.bufferViewIndex];
+        auto& buffer = buffers[buffer_view.bufferIndex];
 
-          std::vector<u8> pixels(buffer_view.byteLength);
-          std::memcpy(pixels.data(), buffer.data() + buffer_view.byteOffset, buffer_view.byteLength);
+        std::vector<u8> pixels(buffer_view.byteLength);
+        std::memcpy(pixels.data(), buffer.data() + buffer_view.byteOffset, buffer_view.byteLength);
 
-          auto& image_info = model.images.emplace_back();
-          image_info.image_data.emplace<std::vector<u8>>(std::move(pixels));
-          image_info.file_type = to_asset_file_type(view.mimeType);
-        },
-        [&](const fastgltf::sources::Array& arr) {
-          // Embedded array
-          std::vector<u8> pixels(arr.bytes.size_bytes());
-          std::memcpy(pixels.data(), arr.bytes.data(), arr.bytes.size_bytes());
+        auto& image_info = model.images.emplace_back();
+        image_info.image_data.emplace<std::vector<u8>>(std::move(pixels));
+        image_info.file_type = to_asset_file_type(view.mimeType);
+      },
+      [&](const fastgltf::sources::Array& arr) {
+        // Embedded array
+        std::vector<u8> pixels(arr.bytes.size_bytes());
+        std::memcpy(pixels.data(), arr.bytes.data(), arr.bytes.size_bytes());
 
-          auto& image_info = model.images.emplace_back();
-          image_info.image_data.emplace<std::vector<u8>>(std::move(pixels));
-          image_info.file_type = to_asset_file_type(arr.mimeType);
-        },
-        [&](const fastgltf::sources::URI& uri) {
-          // External file
-          const auto& image_file_path = path.parent_path() / uri.uri.fspath();
+        auto& image_info = model.images.emplace_back();
+        image_info.image_data.emplace<std::vector<u8>>(std::move(pixels));
+        image_info.file_type = to_asset_file_type(arr.mimeType);
+      },
+      [&](const fastgltf::sources::URI& uri) {
+        // External file
+        const auto& image_file_path = path.parent_path() / uri.uri.fspath();
 
-          auto& image_info = model.images.emplace_back();
-          image_info.image_data.emplace<fs::path>(image_file_path);
-          image_info.file_type = to_asset_file_type(uri.mimeType);
-        },
+        auto& image_info = model.images.emplace_back();
+        image_info.image_data.emplace<fs::path>(image_file_path);
+        image_info.file_type = to_asset_file_type(uri.mimeType);
+      },
     };
     std::visit(visitor, v.data);
   }
@@ -202,6 +202,11 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
       texture.image_index = v.imageIndex.value();
     } else if (v.basisuImageIndex.has_value()) {
       texture.image_index = v.basisuImageIndex.value();
+    } else if (v.webpImageIndex.has_value()) {
+      OX_LOG_ERROR("WEBP format is not supported!");
+      return nullopt;
+    } else if (v.ddsImageIndex.has_value()) {
+      texture.image_index = v.ddsImageIndex.value();
     }
   }
 
@@ -214,18 +219,18 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
     auto& pbr = v.pbrData;
 
     material.albedo_color = {
-        pbr.baseColorFactor[0],
-        pbr.baseColorFactor[1],
-        pbr.baseColorFactor[2],
-        pbr.baseColorFactor[3],
+      pbr.baseColorFactor[0],
+      pbr.baseColorFactor[1],
+      pbr.baseColorFactor[2],
+      pbr.baseColorFactor[3],
     };
     material.metallic_factor = pbr.metallicFactor;
     material.roughness_factor = pbr.roughnessFactor;
     material.emissive_color = {
-        v.emissiveFactor[0],
-        v.emissiveFactor[1],
-        v.emissiveFactor[2],
-        v.emissiveStrength,
+      v.emissiveFactor[0],
+      v.emissiveFactor[1],
+      v.emissiveFactor[2],
+      v.emissiveStrength,
     };
     material.alpha_mode = static_cast<GLTFAlphaMode>(v.alphaMode);
     material.alpha_cutoff = v.alphaCutoff;
@@ -288,13 +293,15 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
       light_index = node.lightIndex.value();
     }
 
-    model.nodes.push_back({.name = std::string(node.name.begin(), node.name.end()),
-                           .mesh_index = std::move(mesh_index),
-                           .light_index = std::move(light_index),
-                           .children = std::vector(node.children.begin(), node.children.end()),
-                           .translation = translation,
-                           .rotation = rotation,
-                           .scale = scale});
+    model.nodes.push_back(
+      {.name = std::string(node.name.begin(), node.name.end()),
+       .mesh_index = std::move(mesh_index),
+       .light_index = std::move(light_index),
+       .children = std::vector(node.children.begin(), node.children.end()),
+       .translation = translation,
+       .rotation = rotation,
+       .scale = scale}
+    );
   }
 
   if (asset.defaultScene.has_value()) {
@@ -302,8 +309,10 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
   }
 
   for (const auto& scene : asset.scenes) {
-    model.scenes.push_back({.name = std::string(scene.name.begin(), scene.name.end()),
-                            .node_indices = std::vector(scene.nodeIndices.begin(), scene.nodeIndices.end())});
+    model.scenes.push_back(
+      {.name = std::string(scene.name.begin(), scene.name.end()),
+       .node_indices = std::vector(scene.nodeIndices.begin(), scene.nodeIndices.end())}
+    );
   }
 
   ///////////////////////////////////////////////
@@ -331,13 +340,15 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
       u32 primitive_index_count = static_cast<u32>(index_accessor.count);
 
       if (callbacks.on_new_primitive) {
-        callbacks.on_new_primitive(callbacks.user_data,
-                                   mesh_index,
-                                   static_cast<u32>(primitive.materialIndex.value()),
-                                   global_vertex_offset,
-                                   primitive_vertex_count,
-                                   global_index_offset,
-                                   primitive_index_count);
+        callbacks.on_new_primitive(
+          callbacks.user_data,
+          mesh_index,
+          static_cast<u32>(primitive.materialIndex.value()),
+          global_vertex_offset,
+          primitive_vertex_count,
+          global_index_offset,
+          primitive_index_count
+        );
       }
 
       if (callbacks.on_access_index) {
@@ -388,10 +399,10 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
   u32 light_index = 0;
   for (const auto& light : asset.lights) {
     GLTFLightInfo gltf_light = {
-        .name = light.name.c_str(),
-        .type = to_gltf_light_type(light.type),
-        .color = {light.color.x(), light.color.y(), light.color.z()},
-        .intensity = light.intensity,
+      .name = light.name.c_str(),
+      .type = to_gltf_light_type(light.type),
+      .color = {light.color.x(), light.color.y(), light.color.z()},
+      .intensity = light.intensity,
     };
 
     // If range is not present then it means its infinite in gltf standard.
@@ -439,33 +450,33 @@ auto GLTFMeshInfo::parse_info(const ::fs::path& path) -> ox::option<GLTFMeshInfo
 
   for (const auto& v : asset.images) {
     auto visitor = fastgltf::visitor{
-        [](const auto&) {},
-        [&](const fastgltf::sources::ByteView& view) {
-          // Embedded buffer
-          auto& image_info = model.images.emplace_back();
-          image_info.image_data.emplace<std::vector<u8>>();
-          image_info.file_type = to_asset_file_type(view.mimeType);
-        },
-        [&](const fastgltf::sources::BufferView& view) {
-          // Embedded buffer
-          auto& image_info = model.images.emplace_back();
-          image_info.image_data.emplace<std::vector<u8>>();
-          image_info.file_type = to_asset_file_type(view.mimeType);
-        },
-        [&](const fastgltf::sources::Array& arr) {
-          // Embedded array
-          auto& image_info = model.images.emplace_back();
-          image_info.image_data.emplace<std::vector<u8>>();
-          image_info.file_type = to_asset_file_type(arr.mimeType);
-        },
-        [&](const fastgltf::sources::URI& uri) {
-          // External file
-          const auto& image_file_path = path.parent_path() / uri.uri.fspath();
+      [](const auto&) {},
+      [&](const fastgltf::sources::ByteView& view) {
+        // Embedded buffer
+        auto& image_info = model.images.emplace_back();
+        image_info.image_data.emplace<std::vector<u8>>();
+        image_info.file_type = to_asset_file_type(view.mimeType);
+      },
+      [&](const fastgltf::sources::BufferView& view) {
+        // Embedded buffer
+        auto& image_info = model.images.emplace_back();
+        image_info.image_data.emplace<std::vector<u8>>();
+        image_info.file_type = to_asset_file_type(view.mimeType);
+      },
+      [&](const fastgltf::sources::Array& arr) {
+        // Embedded array
+        auto& image_info = model.images.emplace_back();
+        image_info.image_data.emplace<std::vector<u8>>();
+        image_info.file_type = to_asset_file_type(arr.mimeType);
+      },
+      [&](const fastgltf::sources::URI& uri) {
+        // External file
+        const auto& image_file_path = path.parent_path() / uri.uri.fspath();
 
-          auto& image_info = model.images.emplace_back();
-          image_info.image_data.emplace<fs::path>(image_file_path);
-          image_info.file_type = to_asset_file_type(uri.mimeType);
-        },
+        auto& image_info = model.images.emplace_back();
+        image_info.image_data.emplace<fs::path>(image_file_path);
+        image_info.file_type = to_asset_file_type(uri.mimeType);
+      },
     };
     std::visit(visitor, v.data);
   }
@@ -484,6 +495,11 @@ auto GLTFMeshInfo::parse_info(const ::fs::path& path) -> ox::option<GLTFMeshInfo
       texture.image_index = v.imageIndex.value();
     } else if (v.basisuImageIndex.has_value()) {
       texture.image_index = v.basisuImageIndex.value();
+    } else if (v.webpImageIndex.has_value()) {
+      OX_LOG_ERROR("WEBP format is not supported!");
+      return nullopt;
+    } else if (v.ddsImageIndex.has_value()) {
+      texture.image_index = v.ddsImageIndex.value();
     }
   }
 
@@ -496,18 +512,18 @@ auto GLTFMeshInfo::parse_info(const ::fs::path& path) -> ox::option<GLTFMeshInfo
     auto& pbr = v.pbrData;
 
     material.albedo_color = {
-        pbr.baseColorFactor[0],
-        pbr.baseColorFactor[1],
-        pbr.baseColorFactor[2],
-        pbr.baseColorFactor[3],
+      pbr.baseColorFactor[0],
+      pbr.baseColorFactor[1],
+      pbr.baseColorFactor[2],
+      pbr.baseColorFactor[3],
     };
     material.metallic_factor = pbr.metallicFactor;
     material.roughness_factor = pbr.roughnessFactor;
     material.emissive_color = {
-        v.emissiveFactor[0],
-        v.emissiveFactor[1],
-        v.emissiveFactor[2],
-        v.emissiveStrength,
+      v.emissiveFactor[0],
+      v.emissiveFactor[1],
+      v.emissiveFactor[2],
+      v.emissiveStrength,
     };
     material.alpha_mode = static_cast<GLTFAlphaMode>(v.alphaMode);
     material.alpha_cutoff = v.alphaCutoff;

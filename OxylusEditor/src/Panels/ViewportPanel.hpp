@@ -28,8 +28,10 @@ public:
 
 private:
   void draw_settings_panel();
+  void draw_gizmo_settings_panel();
   void draw_stats_overlay(vuk::Extent3D extent, bool draw_scene_stats);
   void draw_gizmos();
+  auto mouse_picking_stages(RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void;
 
   Scene* _scene = nullptr;
   SceneHierarchyPanel* _scene_hierarchy_panel = nullptr;
@@ -43,6 +45,11 @@ private:
   glm::vec2 _gizmo_position = glm::vec2(1.0f, 1.0f);
   int _gizmo_type = -1;
   int _gizmo_mode = 0;
+
+  bool draw_component_gizmos_ = true;
+  f32 gizmo_icon_size_ = 32.f;
+  bool draw_entity_highlighting_ = true;
+  bool mouse_picking_enabled_ = true;
 
   std::vector<vuk::Unique<vuk::Buffer>> id_buffers = {};
 

@@ -195,6 +195,7 @@ public enum SceneFlags : u32 {
   HasFilmGrain = 1 << 6,
   HasChromaticAberration = 1 << 7,
   HasVignette = 1 << 8,
+  HasContactShadows = 1 << 9,
 };
 
 #define MAX_POINT_LIGHTS 1024
@@ -241,9 +242,9 @@ public struct SpotLight {
 
 public struct Lights {
   public DirectionalLight directional_light;
+  public u32 directional_light_has_shadows = 0;
   public u32 point_light_count = 0;
   public u32 spot_light_count = 0;
-  u32 _padding;
   public PointLight *point_lights;
   public SpotLight *spot_lights;
 };

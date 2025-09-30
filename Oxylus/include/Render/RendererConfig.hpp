@@ -24,6 +24,11 @@ inline AutoCVar_Int cvar_culling_triangle("rr.culling_triangle", "Triangle culli
 
 inline AutoCVar_Int cvar_reload_renderer("rr.reload_renderer", "reload renderer", 0);
 
+inline AutoCVar_Int cvar_contact_shadows("pp.contact_shadows", "enable contact shadows", 1);
+inline AutoCVar_Int cvar_contact_shadows_steps("pp.contact_shadows_steps", "contact shadows steps", 8);
+inline AutoCVar_Float cvar_contact_shadows_thickness("pp.contact_shadows_thickness", "contact shadows thickness", 0.1);
+inline AutoCVar_Float cvar_contact_shadows_length("pp.contact_shadows_thickness", "contact shadows length", 0.01);
+
 inline AutoCVar_Int cvar_vbgtao_enable("pp.vbgtao", "use vbgtao", 1);
 inline AutoCVar_Int cvar_vbgtao_quality_level("pp.vbgtao_quality_level", "0: Low, 1: Medium, 2: High, 3: Ultra", 3);
 inline AutoCVar_Float cvar_vbgtao_thickness("pp.vbgtao_thickness", "vbgtao thickness", 0.25f);

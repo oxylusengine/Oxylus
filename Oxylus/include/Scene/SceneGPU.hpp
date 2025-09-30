@@ -235,9 +235,9 @@ struct SpotLight {
 
 struct Lights {
   alignas(4) DirectionalLight direction_light = {};
+  alignas(4) u32 directional_light_has_shadows = 1;
   alignas(4) u32 point_light_count = 0;
   alignas(4) u32 spot_light_count = 0;
-  alignas(4) u32 _padding = 0;
   alignas(8) u64 point_lights = 0;
   alignas(8) u64 spot_lights = 0;
 };
@@ -253,6 +253,7 @@ enum class SceneFlags : u32 {
   HasFilmGrain = 1 << 6,
   HasChromaticAberration = 1 << 7,
   HasVignette = 1 << 8,
+  HasContactShadows = 1 << 9,
 };
 consteval void enable_bitmask(SceneFlags);
 
