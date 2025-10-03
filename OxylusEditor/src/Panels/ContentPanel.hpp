@@ -54,6 +54,7 @@ private:
     std::string extension;
     std::filesystem::directory_entry directory_entry;
     std::shared_ptr<Texture> thumbnail = nullptr;
+    std::string icon;
     bool is_directory = false;
 
     FileType type;

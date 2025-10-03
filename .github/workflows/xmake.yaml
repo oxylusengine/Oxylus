@@ -30,6 +30,9 @@ jobs:
           # - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: gcc-14,   mode: release, runtime: stdc++_static }
           # - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: gcc-14,   mode: debug,   runtime: stdc++_static }
 
+          - { runner: macos-26,  os: macos,   arch: arm64, toolchain: mac-clang, mode: release, runtime: c++_static }
+          - { runner: macos-26,  os: macos,   arch: arm64, toolchain: mac-clang, mode: debug,   runtime: c++_static }
+
     runs-on: ${{ matrix.platform.runner }}
     steps:
       - name: Get current date as package key
@@ -93,7 +96,7 @@ jobs:
           key: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.platform.mode }}-${{ matrix.platform.runtime }}-${{ matrix.platform.toolchain }}-${{ steps.dep_hash.outputs.hash }}-W${{ steps.cache_key.outputs.key }}
 
       - name: Configure xmake and install dependencies
-        run: xmake config -v --toolchain=${{ matrix.platform.toolchain }} --arch=${{ matrix.platform.arch }} --mode=${{ matrix.platform.mode }} --runtimes=${{ matrix.platform.runtime }} --yes --policies=package.precompiled:n --profile=y --lua_bindings=y
+        run: xmake config -v --toolchain=${{ matrix.platform.toolchain }} --arch=${{ matrix.platform.arch }} --mode=${{ matrix.platform.mode }} --runtimes=${{ matrix.platform.runtime }} --yes --policies=package.precompiled:n --profile=n --lua_bindings=y --tests=false
 
       # Save dependencies
       - name: Save cached xmake dependencies

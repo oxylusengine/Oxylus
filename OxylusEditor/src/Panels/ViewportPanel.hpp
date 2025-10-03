@@ -1,8 +1,5 @@
 #pragma once
 
-#include <vuk/runtime/vk/PipelineInstance.hpp>
-#include <vuk/runtime/vk/Query.hpp>
-
 #include "EditorPanel.hpp"
 #include "Scene/Scene.hpp"
 #include "SceneHierarchyPanel.hpp"
