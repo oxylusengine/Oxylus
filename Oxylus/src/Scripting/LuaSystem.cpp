@@ -30,7 +30,7 @@ auto LuaSystem::init_script(this LuaSystem& self, const std::string& path, const
   ZoneScoped;
 
   self.file_path = path;
-  self.script = script;
+  self.script_ = script;
 
   const auto state = App::get_system<LuaManager>(EngineSystems::LuaManager)->get_state();
 
@@ -39,7 +39,7 @@ auto LuaSystem::init_script(this LuaSystem& self, const std::string& path, const
   self.environment = std::make_unique<sol::environment>(*state, sol::create, state->globals());
 
   const auto load_file_result = script.has_value()
-                                    ? state->script(self.script.value(), *self.environment, sol::script_pass_on_error)
+                                    ? state->script(self.script_.value(), *self.environment, sol::script_pass_on_error)
                                     : state->script_file(self.file_path, *self.environment, sol::script_pass_on_error);
 
   if (!load_file_result.valid()) {

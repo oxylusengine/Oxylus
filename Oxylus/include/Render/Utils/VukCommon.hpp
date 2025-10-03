@@ -108,7 +108,6 @@ inline SamplerCreateInfo LinearSamplerClamped = {
     .addressModeU = SamplerAddressMode::eClampToEdge,
     .addressModeV = SamplerAddressMode::eClampToEdge,
     .addressModeW = SamplerAddressMode::eClampToEdge,
-    .borderColor = BorderColor::eFloatOpaqueWhite,
 };
 
 inline SamplerCreateInfo CmpDepthSampler = {

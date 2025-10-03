@@ -1,3 +1,5 @@
+add_repositories("local repo", {rootdir = os.scriptdir()})
+
 add_requires("stb 2024.06.01")
 
 add_requires("miniaudio 0.11.22")
@@ -93,7 +95,7 @@ add_requires("plf_colony v7.41")
 add_requires("dylib v2.2.1")
 
 add_requires("zstd v1.5.7", { system = false })
-add_requires("ktx v4.4.0", { system = false, debug = true })
+add_requires("ktx-ox v4.4.0", { system = false, debug = false })
 
 add_requires("simdutf v6.2.0")
 

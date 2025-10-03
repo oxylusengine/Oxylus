@@ -6,7 +6,7 @@
 
 namespace ox {
 auto VFSBinding::bind(sol::state* state) -> void {
-  auto vfs = state->new_usertype<VFS>(
+  auto vfs_type = state->new_usertype<VFS>(
       "VFS",
 
       "APP_DIR",

@@ -64,7 +64,7 @@ public:
 
 private:
   std::string file_path = {};
-  ox::option<std::string> script = {};
+  ox::option<std::string> script_ = {};
   ankerl::unordered_dense::map<int, std::string> errors = {};
 
   std::unique_ptr<sol::environment> environment = nullptr;

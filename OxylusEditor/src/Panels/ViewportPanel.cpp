@@ -24,7 +24,7 @@
 namespace ox {
 template <typename T>
 void show_component_gizmo(
-  const char* icon,
+  f32 icon_size,
   const std::string& name,
   const float width,
   const float height,
@@ -34,35 +34,36 @@ void show_component_gizmo(
   const Frustum& frustum,
   Scene* scene
 ) {
-  scene->world.query_builder<T>().build().each(
-    [view_proj, width, height, xpos, ypos, scene, frustum, icon, name](flecs::entity entity, const T&) {
-      const glm::vec3 pos = scene->get_world_transform(entity)[3];
+  auto* editor_layer = EditorLayer::get();
+  auto& editor_theme = editor_layer->editor_theme;
 
-      if (frustum.is_inside(pos) == (uint32_t)Intersection::Outside)
-        return;
+  const char* icon = editor_theme.component_icon_map.at(typeid(T).hash_code());
+  scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T&) {
+    const glm::vec3 pos = scene->get_world_transform(entity)[3];
 
-      const glm::vec2 screen_pos = math::world_to_screen(pos, view_proj, width, height, xpos, ypos);
-      ImGui::SetCursorPos({screen_pos.x - ImGui::GetFontSize() * 0.5f, screen_pos.y - ImGui::GetFontSize() * 0.5f});
-      ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.7f, 0.7f, 0.0f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.1f));
+    if (frustum.is_inside(pos) == (uint32_t)Intersection::Outside)
+      return;
 
-      constexpr auto icon_size = 48.f;
-      ImGui::PushFont(nullptr, icon_size);
-      ImGui::PushID(entity.id());
-      if (ImGui::Button(icon, {50.f, 50.f})) {
-        auto& editor_context = EditorLayer::get()->get_context();
-        editor_context.reset();
-        editor_context.entity = entity;
-        editor_context.type = EditorContext::Type::Entity;
-      }
-      ImGui::PopID();
-      ImGui::PopFont();
+    const glm::vec2 screen_pos = math::world_to_screen(pos, view_proj, width, height, xpos, ypos);
+    ImGui::SetCursorPos({screen_pos.x - (icon_size / 2.f), screen_pos.y - (icon_size / 2.f)});
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.7f, 0.7f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.1f));
 
-      ImGui::PopStyleColor(2);
-
-      UI::tooltip_hover(name.data());
+    ImGui::PushFont(nullptr, icon_size);
+    ImGui::PushID(entity.id());
+    if (ImGui::Button(icon, {icon_size, icon_size})) {
+      auto& editor_context = EditorLayer::get()->get_context();
+      editor_context.reset();
+      editor_context.entity = entity;
+      editor_context.type = EditorContext::Type::Entity;
     }
-  );
+    ImGui::PopID();
+    ImGui::PopFont();
+
+    ImGui::PopStyleColor(2);
+
+    UI::tooltip_hover(name.data());
+  });
 }
 
 ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true) {
@@ -101,13 +102,12 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
 
   if (on_begin(flags)) {
     bool viewport_settings_popup = false;
+    bool gizmo_settings_popup = false;
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
     auto& style = ImGui::GetStyle();
 
     auto* editor_layer = EditorLayer::get();
-
-    auto& editor_theme = editor_layer->editor_theme;
 
     if (ImGui::BeginMenuBar()) {
       if (ImGui::MenuItem(ICON_MDI_COG)) {
@@ -115,6 +115,9 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       }
       if (ImGui::MenuItem(ICON_MDI_INFORMATION, nullptr, draw_scene_stats)) {
         draw_scene_stats = !draw_scene_stats;
+      }
+      if (ImGui::MenuItem(ICON_MDI_SPHERE, nullptr, draw_scene_stats)) {
+        gizmo_settings_popup = true;
       }
       auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
       ImGui::SetCursorPosX(_viewport_panel_size.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
@@ -127,12 +130,22 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
     draw_stats_overlay(extent, draw_scene_stats);
 
     if (viewport_settings_popup)
-      ImGui::OpenPopup("ViewportSettings");
+      ImGui::OpenPopup("viewport_settings");
 
     ImGui::SetNextWindowSize(ImVec2(345, 0));
     ImGui::SetNextWindowBgAlpha(0.85f);
-    if (ImGui::BeginPopup("ViewportSettings")) {
+    if (ImGui::BeginPopup("viewport_settings")) {
       draw_settings_panel();
+      ImGui::EndPopup();
+    }
+
+    if (gizmo_settings_popup)
+      ImGui::OpenPopup("gizmo_settings");
+
+    ImGui::SetNextWindowSize(ImVec2(345, 0));
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    if (ImGui::BeginPopup("gizmo_settings")) {
+      draw_gizmo_settings_panel();
       ImGui::EndPopup();
     }
 
@@ -162,9 +175,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
     auto renderer_instance = _scene->get_renderer_instance();
     if (renderer_instance != nullptr) {
       constexpr auto get_mouse_texel_coords =
-        [](
-          glm::uvec2 render_size, glm::vec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos
-        ) -> glm::uvec2 {
+        [](glm::uvec2 render_size, glm::vec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos)
+        -> glm::uvec2 {
         ImVec2 rendered_min = {window_pos.x + content_min.x, window_pos.y + content_min.y};
         ImVec2 rendered_max = {window_pos.x + content_max.x, window_pos.y + content_max.y};
         ImVec2 rendered_size = {rendered_max.x - rendered_min.x, rendered_max.y - rendered_min.y};
@@ -184,221 +196,16 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
 
       auto mouse_pos = ImGui::GetMousePos();
       glm::uvec2 picking_texel = get_mouse_texel_coords(
-        {extent.width, extent.height}, _viewport_position, viewport_min_region, viewport_max_region, mouse_pos
+        {extent.width, extent.height},
+        _viewport_position,
+        viewport_min_region,
+        viewport_max_region,
+        mouse_pos
       );
 
-      renderer_instance->add_stage_after(
-        RenderStage::VisBufferEncode,
-        "mouse_picking",
-        [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = _scene](
-          RenderStageContext& ctx
-        ) {
-          auto depth_attachment = ctx.get_image_resource("depth_attachment");
-          auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
-          auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
-          auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
-
-          auto readback_buffer = ctx.vk_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
-
-          auto write_pass = vuk::make_pass(
-            "mouse_picking_write_pass",
-            [picking_texel](
-              vuk::CommandBuffer& cmd_list,
-              VUK_BA(vuk::eComputeWrite) buffer,
-              VUK_IA(vuk::eComputeSampled) visbuffer,
-              VUK_BA(vuk::eComputeRead) meshlet_instances,
-              VUK_BA(vuk::eComputeRead) mesh_instances
-            ) {
-              cmd_list.bind_compute_pipeline("mouse_picking_pipeline")
-                .bind_buffer(0, 0, meshlet_instances)
-                .bind_buffer(0, 1, mesh_instances)
-                .bind_image(0, 2, visbuffer)
-                .push_constants(
-                  vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(picking_texel, buffer->device_address)
-                )
-                .dispatch(1, 1, 1);
-
-              return std::make_tuple(buffer, visbuffer, meshlet_instances, mesh_instances);
-            }
-          );
-
-          std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
-            std::move(readback_buffer), std::move(visbuffer), std::move(meshlet_instances), std::move(mesh_instances)
-          );
-
-          auto read_pass = vuk::make_pass(
-            "mouse_picking_read_pass",
-            [s, viewport_hovered, using_gizmo](
-              vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eHostRead) buffer, VUK_IA(vuk::eComputeSampled) visbuffer
-            ) {
-              u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
-
-              if (!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewport_hovered) {
-                if (transform_index != ~0_u32) {
-                  if (s->transform_index_entities_map.contains(transform_index)) {
-                    auto& editor_context = EditorLayer::get()->get_context();
-
-                    // first pick the parent if parent is already picked then pick the actual entity
-                    auto entity = s->transform_index_entities_map.at(transform_index);
-                    auto top_parent = entity;
-                    while (top_parent.parent() != flecs::entity::null()) {
-                      top_parent = top_parent.parent();
-                    }
-                    if (editor_context.entity.has_value()) {
-                      if (editor_context.entity.value() == top_parent) {
-                        top_parent = entity;
-                      }
-                    }
-
-                    editor_context.reset();
-                    editor_context.entity = top_parent;
-                    editor_context.type = EditorContext::Type::Entity;
-                  }
-                } else {
-                  auto& editor_context = EditorLayer::get()->get_context();
-                  editor_context.reset();
-                }
-              }
-
-              return std::make_tuple(buffer, visbuffer);
-            }
-          );
-
-          std::tie(readback_buffer, visbuffer) = read_pass(std::move(readback_buffer), std::move(visbuffer));
-
-          auto highlight_attachment = vuk::declare_ia(
-            "highlight",
-            {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-             .format = vuk::Format::eR32Sfloat,
-             .sample_count = vuk::Samples::e1}
-          );
-          highlight_attachment.same_shape_as(visbuffer);
-          highlight_attachment = vuk::clear_image(std::move(highlight_attachment), vuk::Black<f32>);
-
-          auto highlight_pass = vuk::make_pass(
-            "highlighting_pass",
-            [s](
-              vuk::CommandBuffer& cmd_list,
-              VUK_IA(vuk::eComputeRW) result,
-              VUK_BA(vuk::eHostRead) buffer,
-              VUK_IA(vuk::eComputeSampled) visbuffer,
-              VUK_IA(vuk::eComputeSampled) depth,
-              VUK_BA(vuk::eComputeRead) meshlet_instances,
-              VUK_BA(vuk::eComputeRead) mesh_instances
-            ) {
-              auto nearest_clamp_sampler = vuk::SamplerCreateInfo{
-                .magFilter = vuk::Filter::eNearest,
-                .minFilter = vuk::Filter::eNearest,
-                .mipmapMode = vuk::SamplerMipmapMode::eNearest,
-                .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-                .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-                .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
-              };
-
-              auto& editor_context = EditorLayer::get()->get_context();
-
-              std::vector<u32> transform_indices = {};
-
-              if (editor_context.entity.has_value()) {
-                // if selected entity is not a mesh check if it has mesh childs
-                if (!editor_context.entity->has<MeshComponent>()) {
-                  editor_context.entity->children([s, &transform_indices](flecs::entity e) {
-                    if (e.has<MeshComponent>()) {
-                      auto transform_id = s->get_entity_transform_id(e);
-                      if (transform_id.has_value()) {
-                        auto transform_index = SlotMap_decode_id(*transform_id).index;
-                        transform_indices.emplace_back(transform_index);
-                      }
-                    }
-                  });
-                } else {
-                  auto transform_id = s->get_entity_transform_id(*editor_context.entity);
-                  if (transform_id.has_value()) {
-                    auto transform_index = SlotMap_decode_id(*transform_id).index;
-                    transform_indices.emplace_back(transform_index);
-                  }
-                }
-
-                auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
-                std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
-                cmd_list.bind_compute_pipeline("highlighting_pipeline")
-                  .bind_buffer(0, 0, meshlet_instances)
-                  .bind_buffer(0, 1, mesh_instances)
-                  .bind_image(0, 2, visbuffer)
-                  .bind_image(0, 3, depth)
-                  .bind_image(0, 4, result)
-                  .bind_sampler(0, 6, nearest_clamp_sampler)
-                  .push_constants(
-                    vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size())
-                  )
-                  .dispatch_invocations_per_pixel(visbuffer);
-              }
-
-              return std::make_tuple(result, buffer, visbuffer, depth, meshlet_instances, mesh_instances);
-            }
-          );
-
-          std::tie(
-            highlight_attachment, readback_buffer, visbuffer, depth_attachment, meshlet_instances, mesh_instances
-          ) =
-            highlight_pass(
-              std::move(highlight_attachment),
-              std::move(readback_buffer),
-              std::move(visbuffer),
-              std::move(depth_attachment),
-              std::move(meshlet_instances),
-              std::move(mesh_instances)
-            );
-
-          ctx.set_shared_image_resource("highlight_attachment", highlight_attachment)
-            .set_image_resource("depth_attachment", std::move(depth_attachment))
-            .set_image_resource("visbuffer_attachment", std::move(visbuffer))
-            .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
-            .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
-        }
-      );
-
-      renderer_instance->add_stage_after(
-        RenderStage::PostProcessing, "entity_highlighting", [](RenderStageContext& ctx) {
-          auto result_attachment = ctx.get_image_resource("result_attachment");
-          auto highlight_attachment = ctx.get_shared_image_resource("highlight_attachment");
-
-          if (!highlight_attachment.has_value())
-            return;
-
-          auto highlight_pass = vuk::make_pass(
-            "apply_highlighting_pass",
-            [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eColorRW) result, VUK_IA(vuk::eFragmentSampled) highlight) {
-              auto linear_clamp_sampler = vuk::SamplerCreateInfo{
-                .magFilter = vuk::Filter::eLinear,
-                .minFilter = vuk::Filter::eLinear,
-                .mipmapMode = vuk::SamplerMipmapMode::eLinear,
-                .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-                .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-                .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
-              };
-
-              cmd_list.bind_graphics_pipeline("apply_highlighting_pipeline")
-                .set_rasterization({})
-                .broadcast_color_blend({})
-                .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-                .set_viewport(0, vuk::Rect2D::framebuffer())
-                .set_scissor(0, vuk::Rect2D::framebuffer())
-                .bind_image(0, 0, highlight)
-                .bind_image(0, 1, result)
-                .bind_sampler(0, 2, linear_clamp_sampler)
-                .draw(3, 1, 0, 0);
-
-              return std::make_tuple(result, highlight);
-            }
-          );
-
-          // std::tie(result_attachment, highlight_attachment) = highlight_pass(result_attachment, *highlight_attachment);
-
-          ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
-            .set_image_resource("result_attachment", std::move(result_attachment));
-        }
-      );
+      if (mouse_picking_enabled_) {
+        mouse_picking_stages(renderer_instance, picking_texel);
+      }
 
       const Renderer::RenderInfo render_info = {
         .extent = extent,
@@ -408,7 +215,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       auto scene_view_image = renderer_instance->render(render_info);
       _scene->on_viewport_render(extent, format);
       ImGui::Image(
-        app->get_imgui_layer()->add_image(std::move(scene_view_image)), ImVec2{fixed_width, _viewport_panel_size.y}
+        app->get_imgui_layer()->add_image(std::move(scene_view_image)),
+        ImVec2{fixed_width, _viewport_panel_size.y}
       );
     } else {
       const auto warning_text = "No scene render output!";
@@ -439,57 +247,6 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       if (editor_layer->scene_state == EditorLayer::SceneState::Edit)
         editor_camera.enable();
 
-      const auto& cam = editor_camera.get<CameraComponent>();
-      auto projection = cam.get_projection_matrix();
-      projection[1][1] *= -1;
-      glm::mat4 view_proj = projection * cam.get_view_matrix();
-      const Frustum& frustum = Camera::get_frustum(cam, cam.position);
-
-      show_component_gizmo<LightComponent>(
-        editor_theme.component_icon_map.at(typeid(LightComponent).hash_code()),
-        "LightComponent",
-        fixed_width,
-        _viewport_panel_size.y,
-        0,
-        0,
-        view_proj,
-        frustum,
-        _scene
-      );
-      show_component_gizmo<AudioSourceComponent>(
-        editor_theme.component_icon_map.at(typeid(AudioSourceComponent).hash_code()),
-        "AudioSourceComponent",
-        fixed_width,
-        _viewport_panel_size.y,
-        0,
-        0,
-        view_proj,
-        frustum,
-        _scene
-      );
-      show_component_gizmo<AudioListenerComponent>(
-        editor_theme.component_icon_map.at(typeid(AudioListenerComponent).hash_code()),
-        "AudioListenerComponent",
-        fixed_width,
-        _viewport_panel_size.y,
-        0,
-        0,
-        view_proj,
-        frustum,
-        _scene
-      );
-      show_component_gizmo<CameraComponent>(
-        editor_theme.component_icon_map.at(typeid(CameraComponent).hash_code()),
-        "CameraComponent",
-        fixed_width,
-        _viewport_panel_size.y,
-        0,
-        0,
-        view_proj,
-        frustum,
-        _scene
-      );
-
       draw_gizmos();
     }
     {
@@ -499,7 +256,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       const ImVec2 button_size = {frame_height, frame_height};
       constexpr float button_count = 8.0f;
       const ImVec2 gizmo_position = {
-        _viewport_bounds[0].x + _gizmo_position.x, _viewport_bounds[0].y + _gizmo_position.y
+        _viewport_bounds[0].x + _gizmo_position.x,
+        _viewport_bounds[0].y + _gizmo_position.y
       };
       const ImRect bb(
         gizmo_position.x,
@@ -561,7 +319,11 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
           auto& cam = editor_camera.get_mut<CameraComponent>();
           UI::push_id();
           if (UI::toggle_button(
-                ICON_MDI_CAMERA, cam.projection == CameraComponent::Projection::Orthographic, button_size, alpha, alpha
+                ICON_MDI_CAMERA,
+                cam.projection == CameraComponent::Projection::Orthographic,
+                button_size,
+                alpha,
+                alpha
               ))
             cam.projection = cam.projection == CameraComponent::Projection::Orthographic
                                ? CameraComponent::Projection::Perspective
@@ -728,7 +490,7 @@ void ViewportPanel::on_update() {
   cam.zoom = static_cast<float>(EditorCVar::cvar_camera_zoom.get());
 }
 
-void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw_scene_stats) {
+void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw) {
   if (!performance_overlay_visible)
     return;
   auto work_pos = ImVec2(_viewport_position.x, _viewport_position.y);
@@ -747,12 +509,12 @@ void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw_scene_sta
   ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
   ImGui::SetNextWindowViewport(viewport->ID);
   ImGui::SetNextWindowBgAlpha(0.35f);
-  ImGui::SetNextWindowSize(draw_scene_stats ? ImVec2({220.f, 0.f}) : ImVec2(0.f, 0.f));
+  ImGui::SetNextWindowSize(draw ? ImVec2({220.f, 0.f}) : ImVec2(0.f, 0.f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   if (ImGui::Begin("##Performance Overlay", nullptr, window_flags)) {
     ImGui::Text("%.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-    if (draw_scene_stats) {
+    if (draw) {
       ImGui::Text("Render resolution: %dx%d", extent.width, extent.height);
       ImGui::Text("Scripts in scene: %zu", _scene->get_lua_systems().size());
       const auto transform_entities_count = _scene->world.count<TransformComponent>();
@@ -806,23 +568,26 @@ void ViewportPanel::draw_settings_panel() {
       if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
         UI::property("Enable debug renderer", (bool*)RendererCVar::cvar_enable_debug_renderer.get_ptr());
         UI::property(
-          "Enable physics debug renderer", (bool*)RendererCVar::cvar_enable_physics_debug_renderer.get_ptr()
+          "Enable physics debug renderer",
+          (bool*)RendererCVar::cvar_enable_physics_debug_renderer.get_ptr()
         );
         UI::property("Draw bounding boxes", (bool*)RendererCVar::cvar_draw_bounding_boxes.get_ptr());
         UI::property("Freeze culling frustum", (bool*)RendererCVar::cvar_freeze_culling_frustum.get_ptr());
         UI::property("Draw camera frustum", (bool*)RendererCVar::cvar_draw_camera_frustum.get_ptr());
-        const char* debug_views[12] = {"None",
-                                       "Triangles",
-                                       "Meshlets",
-                                       "Overdraw",
-                                       "Albdeo",
-                                       "Normal",
-                                       "Emissive",
-                                       "Metallic",
-                                       "Roughness",
-                                       "Occlusion",
-                                       "HiZ",
-                                       "GTAO"};
+        const char* debug_views[12] = {
+          "None",
+          "Triangles",
+          "Meshlets",
+          "Overdraw",
+          "Albdeo",
+          "Normal",
+          "Emissive",
+          "Metallic",
+          "Roughness",
+          "Occlusion",
+          "HiZ",
+          "GTAO"
+        };
         UI::property("Debug View", RendererCVar::cvar_debug_view.get_ptr(), debug_views, 12);
         UI::property("Enable frustum culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
         UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
@@ -871,6 +636,19 @@ void ViewportPanel::draw_settings_panel() {
       ImGui::TreePop();
     }
 
+    if (open_action != -1)
+      ImGui::SetNextItemOpen(open_action != 0);
+    if (ImGui::TreeNodeEx("Contact Shadows", TREE_FLAGS, "%s", "Contact Shadows")) {
+      if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+        UI::property("Enabled", (bool*)RendererCVar::cvar_contact_shadows.get_ptr());
+        UI::property("Steps", RendererCVar::cvar_contact_shadows_steps.get_ptr(), 1, 64);
+        UI::property<float>("Thickness", RendererCVar::cvar_contact_shadows_thickness.get_ptr(), 0.0, 5);
+        UI::property<float>("Length", RendererCVar::cvar_contact_shadows_length.get_ptr(), 0.0, 5);
+        UI::end_properties();
+      }
+      ImGui::TreePop();
+    }
+
     ImGui::TreePop();
   }
 
@@ -901,10 +679,72 @@ void ViewportPanel::draw_settings_panel() {
   }
 }
 
+void ViewportPanel::draw_gizmo_settings_panel() {
+  if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+    UI::property("Draw Component Gizmos", &draw_component_gizmos_);
+    UI::property("Component Gizmos Size", &gizmo_icon_size_);
+    UI::property("Entity Highlighting", &draw_entity_highlighting_);
+    UI::end_properties();
+  }
+}
+
 void ViewportPanel::draw_gizmos() {
   auto* editor_layer = EditorLayer::get();
   auto& editor_context = editor_layer->get_context();
   auto& undo_redo_system = editor_layer->undo_redo_system;
+
+  const auto& cam = editor_camera.get<CameraComponent>();
+  auto projection = cam.get_projection_matrix();
+  projection[1][1] *= -1;
+  glm::mat4 view_proj = projection * cam.get_view_matrix();
+  const Frustum& frustum = Camera::get_frustum(cam, cam.position);
+
+  if (draw_component_gizmos_) {
+    show_component_gizmo<LightComponent>(
+      gizmo_icon_size_,
+      "LightComponent",
+      _viewport_panel_size.x,
+      _viewport_panel_size.y,
+      0,
+      0,
+      view_proj,
+      frustum,
+      _scene
+    );
+    show_component_gizmo<AudioSourceComponent>(
+      gizmo_icon_size_,
+      "AudioSourceComponent",
+      _viewport_panel_size.x,
+      _viewport_panel_size.y,
+      0,
+      0,
+      view_proj,
+      frustum,
+      _scene
+    );
+    show_component_gizmo<AudioListenerComponent>(
+      gizmo_icon_size_,
+      "AudioListenerComponent",
+      _viewport_panel_size.x,
+      _viewport_panel_size.y,
+      0,
+      0,
+      view_proj,
+      frustum,
+      _scene
+    );
+    show_component_gizmo<CameraComponent>(
+      gizmo_icon_size_,
+      "CameraComponent",
+      _viewport_panel_size.x,
+      _viewport_panel_size.y,
+      0,
+      0,
+      view_proj,
+      frustum,
+      _scene
+    );
+  }
 
   const flecs::entity selected_entity = editor_context.entity.value_or(flecs::entity::null());
 
@@ -939,8 +779,6 @@ void ViewportPanel::draw_gizmos() {
       _viewport_bounds[1].x - _viewport_bounds[0].x,
       _viewport_bounds[1].y - _viewport_bounds[0].y
     );
-
-    const auto& cam = editor_camera.get<CameraComponent>();
 
     auto camera_projection = cam.get_projection_matrix();
     camera_projection[1][1] *= -1;
@@ -986,7 +824,11 @@ void ViewportPanel::draw_gizmos() {
 
         auto old_tc = *tc;
         undo_redo_system->execute_command<ComponentChangeCommand<TransformComponent>>(
-          selected_entity, tc, old_tc, *tc, "gizmo transform"
+          selected_entity,
+          tc,
+          old_tc,
+          *tc,
+          "gizmo transform"
         );
 
         selected_entity.modified<TransformComponent>();
@@ -995,6 +837,225 @@ void ViewportPanel::draw_gizmos() {
   }
 }
 
-auto setup_mouse_picking(RendererInstance& renderer) -> void {}
+auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void {
+  renderer_instance->add_stage_after(
+    RenderStage::VisBufferEncode,
+    "mouse_picking",
+    [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = _scene](
+      RenderStageContext& ctx
+    ) {
+      auto depth_attachment = ctx.get_image_resource("depth_attachment");
+      auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
+      auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
+      auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
+
+      auto readback_buffer = ctx.vk_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+
+      auto write_pass = vuk::make_pass(
+        "mouse_picking_write_pass",
+        [picking_texel](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eComputeWrite) buffer,
+          VUK_IA(vuk::eComputeSampled) visbuffer_,
+          VUK_BA(vuk::eComputeRead) meshlet_instances_,
+          VUK_BA(vuk::eComputeRead) mesh_instances_
+        ) {
+          cmd_list.bind_compute_pipeline("mouse_picking_pipeline")
+            .bind_buffer(0, 0, meshlet_instances_)
+            .bind_buffer(0, 1, mesh_instances_)
+            .bind_image(0, 2, visbuffer_)
+            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(picking_texel, buffer->device_address))
+            .dispatch(1, 1, 1);
+
+          return std::make_tuple(buffer, visbuffer_, meshlet_instances_, mesh_instances_);
+        }
+      );
+
+      std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
+        std::move(readback_buffer),
+        std::move(visbuffer),
+        std::move(meshlet_instances),
+        std::move(mesh_instances)
+      );
+
+      auto read_pass = vuk::make_pass(
+        "mouse_picking_read_pass",
+        [s, viewport_hovered, using_gizmo](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eHostRead) buffer,
+          VUK_IA(vuk::eComputeSampled) visbuffer_
+        ) {
+          u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
+
+          if (!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewport_hovered) {
+            if (transform_index != ~0_u32) {
+              if (s->transform_index_entities_map.contains(transform_index)) {
+                auto& editor_context = EditorLayer::get()->get_context();
+
+                // first pick the parent if parent is already picked then pick the actual entity
+                auto entity = s->transform_index_entities_map.at(transform_index);
+                auto top_parent = entity;
+                while (top_parent.parent() != flecs::entity::null()) {
+                  top_parent = top_parent.parent();
+                }
+                if (editor_context.entity.has_value()) {
+                  if (editor_context.entity.value() == top_parent) {
+                    top_parent = entity;
+                  }
+                }
+
+                editor_context.reset();
+                editor_context.entity = top_parent;
+                editor_context.type = EditorContext::Type::Entity;
+              }
+            } else {
+              auto& editor_context = EditorLayer::get()->get_context();
+              editor_context.reset();
+            }
+          }
+
+          return std::make_tuple(buffer, visbuffer_);
+        }
+      );
+
+      std::tie(readback_buffer, visbuffer) = read_pass(std::move(readback_buffer), std::move(visbuffer));
+
+      auto highlight_attachment = vuk::declare_ia(
+        "highlight",
+        {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+         .format = vuk::Format::eR32Sfloat,
+         .sample_count = vuk::Samples::e1}
+      );
+      highlight_attachment.same_shape_as(visbuffer);
+      highlight_attachment = vuk::clear_image(std::move(highlight_attachment), vuk::Black<f32>);
+
+      auto highlight_pass = vuk::make_pass(
+        "highlighting_pass",
+        [s](
+          vuk::CommandBuffer& cmd_list,
+          VUK_IA(vuk::eComputeRW) result,
+          VUK_BA(vuk::eHostRead) entity_buffer,
+          VUK_IA(vuk::eComputeSampled) visbuffer_,
+          VUK_IA(vuk::eComputeSampled) depth,
+          VUK_BA(vuk::eComputeRead) meshlet_instances_,
+          VUK_BA(vuk::eComputeRead) mesh_instances_
+        ) {
+          auto& editor_context = EditorLayer::get()->get_context();
+
+          std::vector<u32> transform_indices = {};
+
+          if (editor_context.entity.has_value()) {
+            // if selected entity is not a mesh check if it has mesh childs
+            if (!editor_context.entity->has<MeshComponent>()) {
+              editor_context.entity->children([s, &transform_indices](flecs::entity e) {
+                if (e.has<MeshComponent>()) {
+                  auto transform_id = s->get_entity_transform_id(e);
+                  if (transform_id.has_value()) {
+                    auto transform_index = SlotMap_decode_id(*transform_id).index;
+                    transform_indices.emplace_back(transform_index);
+                  }
+                }
+              });
+            } else {
+              auto transform_id = s->get_entity_transform_id(*editor_context.entity);
+              if (transform_id.has_value()) {
+                auto transform_index = SlotMap_decode_id(*transform_id).index;
+                transform_indices.emplace_back(transform_index);
+              }
+            }
+
+            if (!transform_indices.empty()) {
+              auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
+              std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
+              cmd_list.bind_compute_pipeline("highlighting_pipeline")
+                .bind_buffer(0, 0, meshlet_instances_)
+                .bind_buffer(0, 1, mesh_instances_)
+                .bind_image(0, 2, visbuffer_)
+                .bind_image(0, 3, depth)
+                .bind_image(0, 4, result)
+                .bind_sampler(0, 6, vuk::NearestSamplerClamped)
+                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size()))
+                .dispatch_invocations_per_pixel(visbuffer_);
+            }
+          }
+
+          return std::make_tuple(result, entity_buffer, visbuffer_, depth, meshlet_instances_, mesh_instances_);
+        }
+      );
+
+      std::tie(highlight_attachment, readback_buffer, visbuffer, depth_attachment, meshlet_instances, mesh_instances) =
+        highlight_pass(
+          std::move(highlight_attachment),
+          std::move(readback_buffer),
+          std::move(visbuffer),
+          std::move(depth_attachment),
+          std::move(meshlet_instances),
+          std::move(mesh_instances)
+        );
+
+      ctx.set_shared_image_resource("highlight_attachment",std::move(highlight_attachment))
+        .set_image_resource("depth_attachment", std::move(depth_attachment))
+        .set_image_resource("visbuffer_attachment", std::move(visbuffer))
+        .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
+        .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
+    }
+  );
+
+  if (!draw_entity_highlighting_) {
+    return;
+  }
+
+  renderer_instance->add_stage_after(RenderStage::PostProcessing, "entity_highlighting", [](RenderStageContext& ctx) {
+    auto result_attachment = ctx.get_image_resource("result_attachment");
+    auto highlight_attachment = ctx.get_shared_image_resource("highlight_attachment");
+
+    if (!highlight_attachment.has_value()) {
+      ctx.set_image_resource("result_attachment", std::move(result_attachment));
+      return;
+    }
+
+    auto highlight_applied_attachment = vuk::declare_ia(
+      "highlight_applied_attachment",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+       .sample_count = vuk::Samples::e1}
+    );
+    highlight_applied_attachment.same_shape_as(result_attachment);
+    highlight_applied_attachment.same_format_as(result_attachment);
+    highlight_applied_attachment = vuk::clear_image(std::move(highlight_applied_attachment), vuk::Black<f32>);
+
+    auto highlight_pass = vuk::make_pass(
+      "apply_highlighting_pass",
+      [](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eColorRW) result,
+        VUK_IA(vuk::eFragmentSampled) source,
+        VUK_IA(vuk::eFragmentSampled) highlight
+      ) {
+        cmd_list.bind_graphics_pipeline("apply_highlighting_pipeline")
+          .set_rasterization({})
+          .broadcast_color_blend({})
+          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+          .set_viewport(0, vuk::Rect2D::framebuffer())
+          .set_scissor(0, vuk::Rect2D::framebuffer())
+          .bind_image(0, 0, highlight)
+          .bind_image(0, 1, source)
+          .bind_sampler(0, 2, vuk::LinearSamplerClamped)
+          .draw(3, 1, 0, 0);
+
+        return std::make_tuple(result, source, highlight);
+      }
+    );
+
+    std::tie(highlight_applied_attachment, result_attachment, *highlight_attachment) = highlight_pass(
+      highlight_applied_attachment,
+      result_attachment,
+      *highlight_attachment
+    );
+
+    // change result_attachment to highlight applied attachment
+    ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
+      .set_image_resource("result_attachment", std::move(highlight_applied_attachment));
+  });
+}
 
 } // namespace ox

@@ -340,16 +340,16 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       audio_engine->set_source_pitch(audio_asset->get_source(), c.pitch);
       audio_engine->set_source_looping(audio_asset->get_source(), c.looping);
       audio_engine->set_source_attenuation_model(
-        audio_asset->get_source(), static_cast<AudioEngine::AttenuationModelType>(c.attenuation_model)
+        audio_asset->get_source(),
+        static_cast<AudioEngine::AttenuationModelType>(c.attenuation_model)
       );
       audio_engine->set_source_roll_off(audio_asset->get_source(), c.roll_off);
       audio_engine->set_source_min_gain(audio_asset->get_source(), c.min_gain);
       audio_engine->set_source_max_gain(audio_asset->get_source(), c.max_gain);
       audio_engine->set_source_min_distance(audio_asset->get_source(), c.min_distance);
       audio_engine->set_source_max_distance(audio_asset->get_source(), c.max_distance);
-      audio_engine->set_source_cone(
-        audio_asset->get_source(), c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain
-      );
+      audio_engine
+        ->set_source_cone(audio_asset->get_source(), c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain);
     });
 
   self.world.observer<SpriteAnimationComponent>()
@@ -490,9 +490,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         const glm::vec3 forward = normalize(glm::vec3(inverted[2]));
         audio_engine->set_listener_position(ac.listener_index, tc.position);
         audio_engine->set_listener_direction(ac.listener_index, -forward);
-        audio_engine->set_listener_cone(
-          ac.listener_index, ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain
-        );
+        audio_engine
+          ->set_listener_cone(ac.listener_index, ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
       }
     });
 
@@ -503,7 +502,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       if (auto* audio = asset_man->get_audio(ac.audio_source)) {
         auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
         audio_engine->set_source_attenuation_model(
-          audio->get_source(), static_cast<AudioEngine::AttenuationModelType>(ac.attenuation_model)
+          audio->get_source(),
+          static_cast<AudioEngine::AttenuationModelType>(ac.attenuation_model)
         );
         audio_engine->set_source_volume(audio->get_source(), ac.volume);
         audio_engine->set_source_pitch(audio->get_source(), ac.pitch);
@@ -514,9 +514,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         audio_engine->set_source_max_gain(audio->get_source(), ac.max_gain);
         audio_engine->set_source_min_distance(audio->get_source(), ac.min_distance);
         audio_engine->set_source_max_distance(audio->get_source(), ac.max_distance);
-        audio_engine->set_source_cone(
-          audio->get_source(), ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain
-        );
+        audio_engine
+          ->set_source_cone(audio->get_source(), ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
         audio_engine->set_source_doppler_factor(audio->get_source(), ac.doppler_factor);
       }
     });
@@ -594,7 +593,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         if (component.active_particle_count >= component.max_particles)
           return;
 
-        for (uint32_t i = 0; i < count; ++i) {
+        for (uint32_t pool_idx = 0; pool_idx < count; ++pool_idx) {
           if (++component.pool_index >= component.max_particles)
             component.pool_index = 0;
 
@@ -704,9 +703,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       // Size
       particle_tc.scale = component.start_size;
       if (component.size_over_lifetime_enabled)
-        particle_tc.scale *= evaluate_over_time(
-          component.size_over_lifetime_start, component.size_over_lifetime_end, t
-        );
+        particle_tc
+          .scale *= evaluate_over_time(component.size_over_lifetime_start, component.size_over_lifetime_end, t);
       if (component.size_by_speed_enabled)
         particle_tc.scale *= evaluate_by_speed(
           component.size_by_speed_start,
@@ -720,7 +718,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       particle_tc.rotation = component.start_rotation;
       if (component.rotation_over_lifetime_enabled)
         particle_tc.rotation += evaluate_over_time(
-          component.rotation_over_lifetime_start, component.rotation_over_lifetime_end, t
+          component.rotation_over_lifetime_start,
+          component.rotation_over_lifetime_end,
+          t
         );
       if (component.rotation_by_speed_enabled)
         particle_tc.rotation += evaluate_by_speed(
@@ -803,7 +803,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
       auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
       uv_size = {
-        sprite_animation.frame_size[0] * 1.f / texture_size[0], sprite_animation.frame_size[1] * 1.f / texture_size[1]
+        sprite_animation.frame_size[0] * 1.f / texture_size[0],
+        sprite_animation.frame_size[1] * 1.f / texture_size[1]
       };
       material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
     });
@@ -1523,9 +1524,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
   glm::vec3 offset = {};
 
   if (const auto* c = entity.try_get<BoxColliderComponent>()) {
-    const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
-      entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution
-    );
+    const JPH::Ref<PhysicsMaterial3D>
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
     glm::vec3 scale = c->size;
     JPH::BoxShapeSettings shape_settings({glm::abs(scale.x), glm::abs(scale.y), glm::abs(scale.z)}, 0.05f, mat);
@@ -1533,9 +1533,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     shape_result = shape_settings.Create();
     offset = c->offset;
   } else if (const auto* c = entity.try_get<SphereColliderComponent>()) {
-    const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
-      entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution
-    );
+    const JPH::Ref<PhysicsMaterial3D>
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
     float radius = 2.0f * c->radius * max_scale_component;
     JPH::SphereShapeSettings shape_settings(glm::max(0.01f, radius), mat);
@@ -1543,9 +1542,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     shape_result = shape_settings.Create();
     offset = c->offset;
   } else if (const auto* c = entity.try_get<CapsuleColliderComponent>()) {
-    const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
-      entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution
-    );
+    const JPH::Ref<PhysicsMaterial3D>
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
     float radius = 2.0f * c->radius * max_scale_component;
     JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, radius), mat);
@@ -1553,22 +1551,23 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
     shape_result = shape_settings.Create();
     offset = c->offset;
   } else if (const auto* c = entity.try_get<TaperedCapsuleColliderComponent>()) {
-    const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
-      entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution
-    );
+    const JPH::Ref<PhysicsMaterial3D>
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
     float top_radius = 2.0f * c->top_radius * max_scale_component;
     float bottom_radius = 2.0f * c->bottom_radius * max_scale_component;
     JPH::TaperedCapsuleShapeSettings shape_settings(
-      glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, top_radius), glm::max(0.01f, bottom_radius), mat
+      glm::max(0.01f, c->height) * 0.5f,
+      glm::max(0.01f, top_radius),
+      glm::max(0.01f, bottom_radius),
+      mat
     );
     shape_settings.SetDensity(glm::max(0.001f, c->density));
     shape_result = shape_settings.Create();
     offset = c->offset;
   } else if (const auto* c = entity.try_get<CylinderColliderComponent>()) {
-    const JPH::Ref<PhysicsMaterial3D> mat = new PhysicsMaterial3D(
-      entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution
-    );
+    const JPH::Ref<PhysicsMaterial3D>
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
 
     float radius = 2.0f * c->radius * max_scale_component;
     JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
@@ -1643,17 +1642,14 @@ void Scene::create_character_controller(
   const auto physics = App::get_system<Physics>(EngineSystems::Physics);
 
   const auto position = JPH::Vec3(transform.position.x, transform.position.y, transform.position.z);
-  const auto capsule_shape = JPH::RotatedTranslatedShapeSettings(
-                               JPH::Vec3(
-                                 0, 0.5f * component.character_height_standing + component.character_radius_standing, 0
-                               ),
-                               JPH::Quat::sIdentity(),
-                               new JPH::CapsuleShape(
-                                 0.5f * component.character_height_standing, component.character_radius_standing
-                               )
-  )
-                               .Create()
-                               .Get();
+  const auto capsule_shape =
+    JPH::RotatedTranslatedShapeSettings(
+      JPH::Vec3(0, 0.5f * component.character_height_standing + component.character_radius_standing, 0),
+      JPH::Quat::sIdentity(),
+      new JPH::CapsuleShape(0.5f * component.character_height_standing, component.character_radius_standing)
+    )
+      .Create()
+      .Get();
 
   // Create character
   const std::shared_ptr<JPH::CharacterSettings> settings = std::make_shared<JPH::CharacterSettings>();
@@ -1667,9 +1663,8 @@ void Scene::create_character_controller(
   ); // Accept contacts that touch the
      // lower sphere of the capsule
 
-  component.character = new JPH::Character(
-    settings.get(), position, JPH::Quat::sIdentity(), 0, physics->get_physics_system()
-  );
+  component
+    .character = new JPH::Character(settings.get(), position, JPH::Quat::sIdentity(), 0, physics->get_physics_system());
 
   auto* ch = reinterpret_cast<JPH::Character*>(component.character);
   ch->AddToPhysicsSystem(JPH::EActivation::Activate);

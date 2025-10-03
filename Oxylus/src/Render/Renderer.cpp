@@ -11,9 +11,9 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
-Renderer::Renderer(VkContext* vk_context) {
+Renderer::Renderer(VkContext* vk_ctx) {
   ZoneScoped;
-  this->vk_context = vk_context;
+  this->vk_context = vk_ctx;
 }
 
 auto Renderer::new_instance(Scene* scene) -> std::unique_ptr<RendererInstance> {
@@ -46,139 +46,220 @@ auto Renderer::init() -> std::expected<void, std::string> {
   auto shaders_dir = vfs->resolve_physical_dir(VFS::APP_DIR, "Shaders");
 
   Slang slang = {};
-  slang.create_session({.root_directory = shaders_dir,
-                        .definitions = {
-                            {"MESH_MAX_LODS", std::to_string(GPU::Mesh::MAX_LODS)},
-                            {"CULLING_MESH_COUNT", "64"},
-                            {"CULLING_MESHLET_COUNT", std::to_string(Model::MAX_MESHLET_INDICES)},
-                            {"CULLING_TRIANGLE_COUNT", std::to_string(Model::MAX_MESHLET_PRIMITIVES)},
-                            {"HISTOGRAM_THREADS_X", std::to_string(GPU::HISTOGRAM_THREADS_X)},
-                            {"HISTOGRAM_THREADS_Y", std::to_string(GPU::HISTOGRAM_THREADS_Y)},
-                        }});
-
-  slang.create_pipeline(runtime,
-                        "2d_forward_pipeline",
-                        {.path = shaders_dir + "/passes/2d_forward.slang", .entry_points = {"vs_main", "ps_main"}});
-
-  // --- Sky ---
-  slang.create_pipeline(runtime,
-                        "sky_transmittance_pipeline",
-                        {.path = shaders_dir + "/passes/sky_transmittance.slang", .entry_points = {"cs_main"}});
-
-  slang.create_pipeline(runtime,
-                        "sky_multiscatter_lut_pipeline",
-                        {.path = shaders_dir + "/passes/sky_multiscattering.slang", .entry_points = {"cs_main"}});
+  slang.create_session(
+    {.root_directory = shaders_dir,
+     .definitions = {
+       {"MAX_DIRECTIONAL_SHADOW_CASCADES", std::to_string(MAX_DIRECTIONAL_SHADOW_CASCADES)},
+       {"MESH_MAX_LODS", std::to_string(GPU::Mesh::MAX_LODS)},
+       {"CULLING_MESH_COUNT", "64"},
+       {"CULLING_MESHLET_COUNT", std::to_string(Model::MAX_MESHLET_INDICES)},
+       {"CULLING_TRIANGLE_COUNT", std::to_string(Model::MAX_MESHLET_PRIMITIVES)},
+       {"HISTOGRAM_THREADS_X", std::to_string(GPU::HISTOGRAM_THREADS_X)},
+       {"HISTOGRAM_THREADS_Y", std::to_string(GPU::HISTOGRAM_THREADS_Y)},
+     }}
+  );
 
   slang.create_pipeline(
-      runtime, "sky_view_pipeline", {.path = shaders_dir + "/passes/sky_view.slang", .entry_points = {"cs_main"}});
+    runtime,
+    "2d_forward_pipeline",
+    {.path = shaders_dir + "/passes/2d_forward.slang", .entry_points = {"vs_main", "ps_main"}}
+  );
 
-  slang.create_pipeline(runtime,
-                        "sky_aerial_perspective_pipeline",
-                        {.path = shaders_dir + "/passes/sky_aerial_perspective.slang", .entry_points = {"cs_main"}});
+  // --- Sky ---
+  slang.create_pipeline(
+    runtime,
+    "sky_transmittance_pipeline",
+    {.path = shaders_dir + "/passes/sky_transmittance.slang", .entry_points = {"cs_main"}}
+  );
 
-  slang.create_pipeline(runtime,
-                        "sky_final_pipeline",
-                        {.path = shaders_dir + "/passes/sky_final.slang", .entry_points = {"vs_main", "fs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "sky_multiscatter_lut_pipeline",
+    {.path = shaders_dir + "/passes/sky_multiscattering.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "sky_view_pipeline",
+    {.path = shaders_dir + "/passes/sky_view.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "sky_aerial_perspective_pipeline",
+    {.path = shaders_dir + "/passes/sky_aerial_perspective.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "sky_final_pipeline",
+    {.path = shaders_dir + "/passes/sky_final.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
 
   // --- VISBUFFER ---
   slang.create_pipeline(
-      runtime, "cull_meshes", {.path = shaders_dir + "/passes/cull_meshes.slang", .entry_points = {"cs_main"}});
-
-  slang.create_pipeline(runtime,
-                        "generate_cull_commands",
-                        {.path = shaders_dir + "/passes/generate_cull_commands.slang", .entry_points = {"cs_main"}});
-
-  slang.create_pipeline(
-      runtime, "cull_meshlets", {.path = shaders_dir + "/passes/cull_meshlets.slang", .entry_points = {"cs_main"}});
+    runtime,
+    "cull_meshes",
+    {.path = shaders_dir + "/passes/cull_meshes.slang", .entry_points = {"cs_main"}}
+  );
 
   slang.create_pipeline(
-      runtime, "cull_triangles", {.path = shaders_dir + "/passes/cull_triangles.slang", .entry_points = {"cs_main"}});
+    runtime,
+    "generate_cull_commands",
+    {.path = shaders_dir + "/passes/generate_cull_commands.slang", .entry_points = {"cs_main"}}
+  );
 
   slang.create_pipeline(
-      runtime,
-      "visbuffer_encode",
-      {.path = shaders_dir + "/passes/visbuffer_encode.slang", .entry_points = {"vs_main", "fs_main"}},
-      &bindless_set);
+    runtime,
+    "cull_meshlets",
+    {.path = shaders_dir + "/passes/cull_meshlets.slang", .entry_points = {"cs_main"}}
+  );
 
   slang.create_pipeline(
-      runtime, "visbuffer_clear", {.path = shaders_dir + "/passes/visbuffer_clear.slang", .entry_points = {"cs_main"}});
+    runtime,
+    "cull_triangles",
+    {.path = shaders_dir + "/passes/cull_triangles.slang", .entry_points = {"cs_main"}}
+  );
 
   slang.create_pipeline(
-      runtime,
-      "visbuffer_decode",
-      {.path = shaders_dir + "/passes/visbuffer_decode.slang", .entry_points = {"vs_main", "fs_main"}},
-      &bindless_set);
+    runtime,
+    "visbuffer_encode",
+    {.path = shaders_dir + "/passes/visbuffer_encode.slang", .entry_points = {"vs_main", "fs_main"}},
+    &bindless_set
+  );
 
   slang.create_pipeline(
-      runtime, "debug", {.path = shaders_dir + "/passes/debug.slang", .entry_points = {"vs_main", "fs_main"}});
+    runtime,
+    "visbuffer_clear",
+    {.path = shaders_dir + "/passes/visbuffer_clear.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "visbuffer_decode",
+    {.path = shaders_dir + "/passes/visbuffer_decode.slang", .entry_points = {"vs_main", "fs_main"}},
+    &bindless_set
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "shadowmap_draw",
+    {.path = shaders_dir + "/passes/shadowmap_draw.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "shadowmap_cull_meshlets",
+    {.path = shaders_dir + "/passes/shadowmap_cull_meshlets.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "debug",
+    {.path = shaders_dir + "/passes/debug.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
 
   // --- PBR ---
   slang.create_pipeline(
-      runtime, "brdf", {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}});
+    runtime,
+    "brdf",
+    {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
 
   //  --- FFX ---
-  slang.create_pipeline(
-      runtime, "hiz", {.path = shaders_dir + "/passes/hiz.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(runtime, "hiz", {.path = shaders_dir + "/passes/hiz.slang", .entry_points = {"cs_main"}});
 
   // --- PostProcess ---
-  slang.create_pipeline(runtime,
-                        "histogram_generate_pipeline",
-                        {.path = shaders_dir + "/passes/histogram_generate.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "histogram_generate_pipeline",
+    {.path = shaders_dir + "/passes/histogram_generate.slang", .entry_points = {"cs_main"}}
+  );
 
-  slang.create_pipeline(runtime,
-                        "histogram_average_pipeline",
-                        {.path = shaders_dir + "/passes/histogram_average.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "histogram_average_pipeline",
+    {.path = shaders_dir + "/passes/histogram_average.slang", .entry_points = {"cs_main"}}
+  );
 
-  slang.create_pipeline(runtime,
-                        "tonemap_pipeline",
-                        {.path = shaders_dir + "/passes/tonemap.slang", .entry_points = {"vs_main", "fs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "tonemap_pipeline",
+    {.path = shaders_dir + "/passes/tonemap.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
 
   // --- Bloom ---
-  slang.create_pipeline(runtime,
-                        "bloom_prefilter_pipeline",
-                        {.path = shaders_dir + "/passes/bloom/bloom_prefilter.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "bloom_prefilter_pipeline",
+    {.path = shaders_dir + "/passes/bloom/bloom_prefilter.slang", .entry_points = {"cs_main"}}
+  );
 
-  slang.create_pipeline(runtime,
-                        "bloom_downsample_pipeline",
-                        {.path = shaders_dir + "/passes/bloom/bloom_downsample.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "bloom_downsample_pipeline",
+    {.path = shaders_dir + "/passes/bloom/bloom_downsample.slang", .entry_points = {"cs_main"}}
+  );
 
-  slang.create_pipeline(runtime,
-                        "bloom_upsample_pipeline",
-                        {.path = shaders_dir + "/passes/bloom/bloom_upsample.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "bloom_upsample_pipeline",
+    {.path = shaders_dir + "/passes/bloom/bloom_upsample.slang", .entry_points = {"cs_main"}}
+  );
 
   // --- VBGTAO ---
-  slang.create_pipeline(runtime,
-                        "vbgtao_prefilter_pipeline",
-                        {.path = shaders_dir + "/passes/gtao/vbgtao_prefilter.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "vbgtao_prefilter_pipeline",
+    {.path = shaders_dir + "/passes/gtao/vbgtao_prefilter.slang", .entry_points = {"cs_main"}}
+  );
 
-  slang.create_pipeline(runtime,
-                        "vbgtao_main_pipeline",
-                        {.path = shaders_dir + "/passes/gtao/vbgtao_main.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "vbgtao_main_pipeline",
+    {.path = shaders_dir + "/passes/gtao/vbgtao_main.slang", .entry_points = {"cs_main"}}
+  );
 
-  slang.create_pipeline(runtime,
-                        "vbgtao_denoise_pipeline",
-                        {.path = shaders_dir + "/passes/gtao/vbgtao_denoise.slang", .entry_points = {"cs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "vbgtao_denoise_pipeline",
+    {.path = shaders_dir + "/passes/gtao/vbgtao_denoise.slang", .entry_points = {"cs_main"}}
+  );
 
   // --- FXAA ---
-  slang.create_pipeline(runtime,
-                        "fxaa_pipeline",
-                        {.path = shaders_dir + "/passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "fxaa_pipeline",
+    {.path = shaders_dir + "/passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
 
-  slang.create_pipeline(runtime,
-                        "debug_renderer_pipeline",
-                        {.path = shaders_dir + "/passes/debug_renderer.slang", .entry_points = {"vs_main", "fs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "debug_renderer_pipeline",
+    {.path = shaders_dir + "/passes/debug_renderer.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "contact_shadows_pipeline",
+    {.path = shaders_dir + "/passes/contact_shadows.slang", .entry_points = {"cs_main"}}
+  );
 
   sky_transmittance_lut_view = Texture("sky_transmittance_lut");
-  sky_transmittance_lut_view.create({},
-                                    {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
-                                     .format = vuk::Format::eR16G16B16A16Sfloat,
-                                     .extent = vuk::Extent3D{.width = 256u, .height = 64u, .depth = 1u}});
+  sky_transmittance_lut_view.create(
+    {},
+    {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
+     .format = vuk::Format::eR16G16B16A16Sfloat,
+     .extent = vuk::Extent3D{.width = 256u, .height = 64u, .depth = 1u}}
+  );
 
   sky_multiscatter_lut_view = Texture("sky_multiscatter_lut");
-  sky_multiscatter_lut_view.create({},
-                                   {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
-                                    .format = vuk::Format::eR16G16B16A16Sfloat,
-                                    .extent = vuk::Extent3D{.width = 32u, .height = 32u, .depth = 1u}});
+  sky_multiscatter_lut_view.create(
+    {},
+    {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
+     .format = vuk::Format::eR16G16B16A16Sfloat,
+     .extent = vuk::Extent3D{.width = 32u, .height = 32u, .depth = 1u}}
+  );
 
   constexpr auto HILBERT_NOISE_LUT_WIDTH = 64_u32;
   auto hilbert_index = [](u32 pos_x, u32 pos_y) -> u16 {
@@ -211,11 +292,12 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   hilbert_noise_lut = Texture("hilbert_noise_lut");
   hilbert_noise_lut.create(
-      {},
-      {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
-       .format = vuk::Format::eR16Uint,
-       .loaded_data = hilbert_noise,
-       .extent = vuk::Extent3D{.width = HILBERT_NOISE_LUT_WIDTH, .height = HILBERT_NOISE_LUT_WIDTH, .depth = 1u}});
+    {},
+    {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
+     .format = vuk::Format::eR16Uint,
+     .loaded_data = hilbert_noise,
+     .extent = vuk::Extent3D{.width = HILBERT_NOISE_LUT_WIDTH, .height = HILBERT_NOISE_LUT_WIDTH, .depth = 1u}}
+  );
 
   auto temp_atmos_info = GPU::Atmosphere{};
   temp_atmos_info.transmittance_lut_size = sky_transmittance_lut_view.get_extent();
@@ -224,39 +306,38 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   auto transmittance_lut_attachment = sky_transmittance_lut_view.discard("sky_transmittance_lut");
 
-  std::tie(transmittance_lut_attachment, temp_atmos_buffer) = vuk::make_pass(
-      "transmittance_lut_pass",
-      [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) dst, VUK_BA(vuk::eComputeRead) atmos) {
-        cmd_list.bind_compute_pipeline("sky_transmittance_pipeline")
-            .bind_image(0, 0, dst)
-            .bind_buffer(0, 1, atmos)
-            .dispatch_invocations_per_pixel(dst);
+  std::tie(transmittance_lut_attachment, temp_atmos_buffer) = vuk::
+    make_pass("transmittance_lut_pass", [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) dst, VUK_BA(vuk::eComputeRead) atmos) {
+      cmd_list.bind_compute_pipeline("sky_transmittance_pipeline")
+        .bind_image(0, 0, dst)
+        .bind_buffer(0, 1, atmos)
+        .dispatch_invocations_per_pixel(dst);
 
-        return std::make_tuple(dst, atmos);
-      })(std::move(transmittance_lut_attachment), std::move(temp_atmos_buffer));
+      return std::make_tuple(dst, atmos);
+    })(std::move(transmittance_lut_attachment), std::move(temp_atmos_buffer));
 
   auto multiscatter_lut_attachment = sky_multiscatter_lut_view.discard("sky_multiscatter_lut");
 
-  std::tie(transmittance_lut_attachment, multiscatter_lut_attachment, temp_atmos_buffer) = vuk::make_pass(
-      "sky_multiscatter_lut_pass",
-      [](vuk::CommandBuffer& cmd_list,
-         VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
-         VUK_IA(vuk::eComputeRW) sky_multiscatter_lut,
-         VUK_BA(vuk::eComputeRead) atmos) {
-        cmd_list.bind_compute_pipeline("sky_multiscatter_lut_pipeline")
-            .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
-            .bind_image(0, 1, sky_transmittance_lut)
-            .bind_image(0, 2, sky_multiscatter_lut)
-            .bind_buffer(0, 3, atmos)
-            .dispatch_invocations_per_pixel(sky_multiscatter_lut);
+  std::tie(transmittance_lut_attachment, multiscatter_lut_attachment, temp_atmos_buffer) = vuk::
+    make_pass("sky_multiscatter_lut_pass", [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeSampled) sky_transmittance_lut, VUK_IA(vuk::eComputeRW) sky_multiscatter_lut, VUK_BA(vuk::eComputeRead) atmos) {
+      cmd_list.bind_compute_pipeline("sky_multiscatter_lut_pipeline")
+        .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
+        .bind_image(0, 1, sky_transmittance_lut)
+        .bind_image(0, 2, sky_multiscatter_lut)
+        .bind_buffer(0, 3, atmos)
+        .dispatch_invocations_per_pixel(sky_multiscatter_lut);
 
-        return std::make_tuple(sky_transmittance_lut, sky_multiscatter_lut, atmos);
-      })(std::move(transmittance_lut_attachment), std::move(multiscatter_lut_attachment), std::move(temp_atmos_buffer));
+      return std::make_tuple(sky_transmittance_lut, sky_multiscatter_lut, atmos);
+    })(std::move(transmittance_lut_attachment), std::move(multiscatter_lut_attachment), std::move(temp_atmos_buffer));
 
-  transmittance_lut_attachment = transmittance_lut_attachment.as_released(vuk::eComputeSampled,
-                                                                          vuk::DomainFlagBits::eGraphicsQueue);
-  multiscatter_lut_attachment = multiscatter_lut_attachment.as_released(vuk::eComputeSampled,
-                                                                        vuk::DomainFlagBits::eGraphicsQueue);
+  transmittance_lut_attachment = transmittance_lut_attachment.as_released(
+    vuk::eComputeSampled,
+    vuk::DomainFlagBits::eGraphicsQueue
+  );
+  multiscatter_lut_attachment = multiscatter_lut_attachment.as_released(
+    vuk::eComputeSampled,
+    vuk::DomainFlagBits::eGraphicsQueue
+  );
 
   vk_context->wait_on(std::move(transmittance_lut_attachment));
   vk_context->wait_on(std::move(multiscatter_lut_attachment));
@@ -264,8 +345,10 @@ auto Renderer::init() -> std::expected<void, std::string> {
   if (this->exposure_buffer) {
     this->exposure_buffer.reset();
   }
-  this->exposure_buffer = vk_context->allocate_buffer_super(vuk::MemoryUsage::eGPUonly,
-                                                            sizeof(GPU::HistogramLuminance));
+  this->exposure_buffer = vk_context->allocate_buffer_super(
+    vuk::MemoryUsage::eGPUonly,
+    sizeof(GPU::HistogramLuminance)
+  );
 
   return {};
 }

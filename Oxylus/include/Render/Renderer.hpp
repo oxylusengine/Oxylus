@@ -22,16 +22,6 @@ public:
     glm::uvec2 viewport_offset = {};
   };
 
-  Renderer(VkContext* vk_context);
-
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
-
-  auto new_instance(Scene* scene) -> std::unique_ptr<RendererInstance>;
-
-private:
-  friend RendererInstance;
-
   struct DrawBatch2D {
     vuk::Name pipeline_name = {};
     u32 offset = 0;
@@ -62,22 +52,20 @@ private:
       };
       static_assert(sizeof(SortKey) == sizeof(u64));
       const SortKey a = {
-          .bits =
-              {
-                  .distance_y = math::unpack_u32_low(flags16_distance16) & RENDER_FLAGS_2D_SORT_Y
-                                    ? math::unpack_u32_high(material_id16_ypos16)
-                                    : 0u,
-                  .distance_z = math::unpack_u32_high(flags16_distance16),
-              },
+        .bits = {
+          .distance_y = math::unpack_u32_low(flags16_distance16) & RENDER_FLAGS_2D_SORT_Y
+                          ? math::unpack_u32_high(material_id16_ypos16)
+                          : 0u,
+          .distance_z = math::unpack_u32_high(flags16_distance16),
+        },
       };
       const SortKey b = {
-          .bits =
-              {
-                  .distance_y = math::unpack_u32_low(other.flags16_distance16) & RENDER_FLAGS_2D_SORT_Y
-                                    ? math::unpack_u32_high(other.material_id16_ypos16)
-                                    : 0u,
-                  .distance_z = math::unpack_u32_high(other.flags16_distance16),
-              },
+        .bits = {
+          .distance_y = math::unpack_u32_low(other.flags16_distance16) & RENDER_FLAGS_2D_SORT_Y
+                          ? math::unpack_u32_high(other.material_id16_ypos16)
+                          : 0u,
+          .distance_z = math::unpack_u32_high(other.flags16_distance16),
+        },
       };
       return a.value > b.value;
     }
@@ -105,21 +93,20 @@ private:
     // TODO: sort pipelines
     void update() {
       const vuk::Name
-          pipeline_name = "2d_forward_pipeline"; // TODO: hardcoded until we have a modular material shader system
+        pipeline_name = "2d_forward_pipeline"; // TODO: hardcoded until we have a modular material shader system
       if (current_pipeline_name != pipeline_name) {
-        batches.emplace_back(DrawBatch2D{
-            .pipeline_name = pipeline_name, .offset = previous_offset, .count = num_sprites - previous_offset});
+        batches.emplace_back(
+          DrawBatch2D{.pipeline_name = pipeline_name, .offset = previous_offset, .count = num_sprites - previous_offset}
+        );
         current_pipeline_name = pipeline_name;
       }
 
       previous_offset = num_sprites;
     }
 
-    void add(const SpriteComponent& sprite,
-             const float& position_y,
-             u32 transform_id,
-             u32 material_id,
-             const float distance) {
+    void add(
+      const SpriteComponent& sprite, const float& position_y, u32 transform_id, u32 material_id, const float distance
+    ) {
       u16 flags = 0;
       if (sprite.sort_y)
         flags |= RENDER_FLAGS_2D_SORT_Y;
@@ -130,11 +117,13 @@ private:
       const u32 flags_and_distance = math::pack_u16(flags, glm::packHalf1x16(distance));
       const u32 materialid_and_ypos = math::pack_u16(static_cast<u16>(material_id), glm::packHalf1x16(position_y));
 
-      sprite_data.emplace_back(SpriteGPUData{
+      sprite_data.emplace_back(
+        SpriteGPUData{
           .material_id16_ypos16 = materialid_and_ypos,
           .flags16_distance16 = flags_and_distance,
           .transform_id = transform_id,
-      });
+        }
+      );
 
       num_sprites += 1;
     }
@@ -152,6 +141,16 @@ private:
       sprite_data.clear();
     }
   };
+
+  Renderer(VkContext* vk_ctx);
+
+  auto init() -> std::expected<void, std::string> override;
+  auto deinit() -> std::expected<void, std::string> override;
+
+  auto new_instance(Scene* scene) -> std::unique_ptr<RendererInstance>;
+
+private:
+  friend RendererInstance;
 
   VkContext* vk_context = nullptr;
   bool initalized = false;

@@ -54,8 +54,8 @@ AssetDirectory::~AssetDirectory() {
   }
 }
 
-auto AssetDirectory::add_subdir(this AssetDirectory& self, const ::fs::path& path) -> AssetDirectory* {
-  auto dir = std::make_unique<AssetDirectory>(path, &self);
+auto AssetDirectory::add_subdir(this AssetDirectory& self, const ::fs::path& dir_path) -> AssetDirectory* {
+  auto dir = std::make_unique<AssetDirectory>(dir_path, &self);
 
   return self.add_subdir(std::move(dir));
 }
@@ -68,9 +68,9 @@ auto AssetDirectory::add_subdir(this AssetDirectory& self, std::unique_ptr<Asset
   return ptr;
 }
 
-auto AssetDirectory::add_asset(this AssetDirectory& self, const ::fs::path& path) -> UUID {
+auto AssetDirectory::add_asset(this AssetDirectory& self, const ::fs::path& dir_path) -> UUID {
   auto* asset_man = App::get_asset_manager();
-  auto asset_uuid = asset_man->import_asset(path.string());
+  auto asset_uuid = asset_man->import_asset(dir_path.string());
   if (!asset_uuid) {
     return UUID(nullptr);
   }

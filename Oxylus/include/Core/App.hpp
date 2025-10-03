@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/ESystem.hpp"
+#include "Core/EventSystem.hpp"
 #include "Core/Layer.hpp"
 #include "Core/VFS.hpp"
 #include "Render/Vulkan/VkContext.hpp"
@@ -68,7 +69,8 @@ struct AppSpec {
 };
 
 enum class EngineSystems {
-  JobManager = 0,
+  EventSystem = 0,
+  JobManager,
   AssetManager,
   VFS,
   Random,
@@ -115,6 +117,7 @@ public:
   static AssetManager* get_asset_manager();
   static VFS* get_vfs();
   static JobManager* get_job_manager();
+  static EventSystem* get_event_system();
 
   template <typename T, typename... Args>
   void register_system(const EngineSystems type, Args&&... args) {

@@ -89,7 +89,7 @@ target("Oxylus")
         "sol2",
         "unordered_dense",
         "dylib",
-        "ktx",
+        "ktx-ox",
         "simdutf",
         "plf_colony",
         "shader-slang",

@@ -261,10 +261,14 @@ ECS_COMPONENT_BEGIN(LightComponent)
   ECS_COMPONENT_MEMBER(outer_cone_angle, f32, 70)
   ECS_COMPONENT_MEMBER(inner_cone_angle, f32, 0.0f)
   ECS_COMPONENT_MEMBER(cast_shadows, bool, true)
-  ECS_COMPONENT_MEMBER(shadow_map_res, u32, 1024)
-#ifndef ECS_REFLECT_TYPES
-  RectPacker::Rect shadow_rect = {};
-#endif
+  ECS_COMPONENT_MEMBER(shadow_map_res, u32, 2048)
+  ECS_COMPONENT_MEMBER(cascade_count, u32, 4)
+  ECS_COMPONENT_MEMBER(first_cascade_far_bound, f32, 10.0f)
+  ECS_COMPONENT_MEMBER(maximum_shadow_distance, f32, 1000.0f)
+  ECS_COMPONENT_MEMBER(minimum_shadow_distance, f32, 0.01f)
+  ECS_COMPONENT_MEMBER(cascade_overlap_propotion, f32, 0.2f)
+  ECS_COMPONENT_MEMBER(depth_bias, f32, 0.002f)
+  ECS_COMPONENT_MEMBER(normal_bias, f32, 1.8f)
 ECS_COMPONENT_END();
 
 ECS_COMPONENT_BEGIN(AtmosphereComponent)

@@ -60,11 +60,10 @@ func fs_main(
         resolution,
         params.edge_image,
         params.linear_sampler,
-        2.0,  // blur radius
+        1.0,  // blur radius
         1.0   // sigma
     );
 
     let outline_color = f32x4(0, 1, 0, 1);
     return lerp(source, outline_color, blurred_outline);
-
 }

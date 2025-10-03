@@ -44,9 +44,9 @@ struct RenderStageContext {
   ankerl::unordered_dense::map<std::string, vuk::Value<vuk::Buffer>> buffer_resources = {};
   ankerl::unordered_dense::map<std::string, vuk::Value<vuk::ImageAttachment>> image_resources = {};
 
-  RenderStageContext(RendererInstance& instance, SharedResources& shared_resources, RenderStage stage, VkContext& vkctx)
+  RenderStageContext(RendererInstance& instance, SharedResources& shared_r, RenderStage stage, VkContext& vkctx)
       : renderer_instance(instance),
-        shared_resources(shared_resources),
+        shared_resources(shared_r),
         current_stage(stage),
         vk_context(vkctx) {}
 
@@ -139,8 +139,12 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
   vuk::Value<vuk::Buffer> meshlet_instance_visibility_mask_buffer = {};
   vuk::Value<vuk::Buffer> materials_buffer = {};
-  vuk::Value<vuk::Buffer> point_lights_buffer = {};
-  vuk::Value<vuk::Buffer> spot_lights_buffer = {};
+  vuk::Value<vuk::Buffer> lights_buffer{};
+  // We still need them to ensure correct sync after we update lights
+  // even if we are not explicitly using just them as descriptors
+  // (they are BDA in lights_buffer struct)
+  vuk::Value<vuk::Buffer> point_lights_buffer{};
+  vuk::Value<vuk::Buffer> spot_lights_buffer{};
 
   u32 line_index_count = 0;
   u32 triangle_index_count = 0;
@@ -209,23 +213,20 @@ private:
 
   GPU::Scene gpu_scene = {};
 
+  bool directional_light_cast_shadows = true;
+  option<GPU::DirectionalLight> directional_light = nullopt;
   option<GPU::Atmosphere> atmosphere = nullopt;
-  option<GPU::Sun> sun = nullopt;
-
   option<GPU::HistogramInfo> histogram_info = nullopt;
-
   option<GPU::VBGTAOSettings> vbgtao_info = nullopt;
-
   GPU::PostProcessSettings post_proces_settings = {};
 
-  Texture hiz_view;
   vuk::Unique<vuk::Buffer> transforms_buffer{};
   vuk::Unique<vuk::Buffer> mesh_instances_buffer{};
   vuk::Unique<vuk::Buffer> meshes_buffer{};
-  vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
   vuk::Unique<vuk::Buffer> materials_buffer{};
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
   vuk::Unique<vuk::Buffer> point_lights_buffer{};
   vuk::Unique<vuk::Buffer> spot_lights_buffer{};
+  vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
 };
 } // namespace ox

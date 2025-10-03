@@ -5,6 +5,7 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Audio/AudioEngine.hpp"
+#include "Core/EventSystem.hpp"
 #include "Core/FileSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
@@ -25,6 +26,7 @@
 namespace ox {
 auto engine_system_to_sv(EngineSystems type) -> std::string_view {
   switch (type) {
+    case EngineSystems::EventSystem   : return "EventSystem";
     case EngineSystems::JobManager    : return "JobManager";
     case EngineSystems::AssetManager  : return "AssetManager";
     case EngineSystems::VFS           : return "VFS";
@@ -65,6 +67,7 @@ App::App(const AppSpec& spec) : app_spec(spec) {
     vk_context->create_context(window, enable_validation);
   }
 
+  register_system<EventSystem>(EngineSystems::EventSystem);
   register_system<JobManager>(EngineSystems::JobManager);
   register_system<AssetManager>(EngineSystems::AssetManager);
   register_system<VFS>(EngineSystems::VFS);
@@ -170,12 +173,14 @@ void App::run() {
     const auto input_system = get_system<Input>(EngineSystems::Input);
     input_system->input_data.scroll_offset_y = offset.y;
   };
-  window_callbacks.on_key = [](void* user_data,
-                               const SDL_Keycode key_code,
-                               const SDL_Scancode scan_code,
-                               const u16 mods,
-                               const bool down,
-                               const bool repeat) {
+  window_callbacks.on_key = [](
+                              void* user_data,
+                              const SDL_Keycode key_code,
+                              const SDL_Scancode scan_code,
+                              const u16 mods,
+                              const bool down,
+                              const bool repeat
+                            ) {
     const auto* app = static_cast<App*>(user_data);
     app->imgui_layer->on_key(key_code, scan_code, mods, down);
 
@@ -300,4 +305,5 @@ AssetManager* App::get_asset_manager() { return _instance->get_system<AssetManag
 VFS* App::get_vfs() { return _instance->get_system<VFS>(EngineSystems::VFS); }
 
 JobManager* App::get_job_manager() { return _instance->get_system<JobManager>(EngineSystems::JobManager); }
+EventSystem* App::get_event_system() { return _instance->get_system<EventSystem>(EngineSystems::EventSystem); }
 } // namespace ox
