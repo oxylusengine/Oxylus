@@ -106,3 +106,7 @@ if has_config("tests") then
     } })
 end
 
+add_requires("enet-ox v2.6.5",{ configs = {
+    test = false,
+    use_more_peers = false,
+}})
