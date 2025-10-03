@@ -64,7 +64,7 @@ add_requires("toml++ v3.4.0")
 
 add_requires("simdjson-ox v3.12.2")
 
-add_requires("joltphysics-ox v5.3.0", { configs = {
+add_requires("joltphysics-ox v5.4.0", { configs = {
     debug_renderer = true,
     rtti = true,
     avx = true,
