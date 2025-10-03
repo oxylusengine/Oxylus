@@ -42,5 +42,5 @@ toolchain("mac-clang")
 
     add_ldflags("-isysroot", "$(shell xcrun --show-sdk-path)")
 
-    add_ldflags("-L$(shell brew --prefix llvm)/lib/c++")
-    add_ldflags("-Wl,-rpath,$(shell brew --prefix llvm)/lib/c++")
+    add_ldflags("-L$(shell brew --prefix llvm@21)/lib/c++")
+    add_ldflags("-Wl,-rpath,$(shell brew --prefix llvm@21)/lib/c++")
