@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ankerl/unordered_dense.h>
+#include <atomic>
 #include <expected>
 #include <shared_mutex>
 
