@@ -3,7 +3,9 @@
 #include <ankerl/unordered_dense.h>
 #include <enet.h>
 #include <expected>
+#include <shared_mutex>
 
+#include "Client.hpp"
 #include "Networking/Packet.hpp"
 #include "Networking/Peer.hpp"
 
@@ -29,6 +31,7 @@ public:
   auto set_max_clients(this Server& self, u32 clients) -> Server&;
   auto set_event_handler(this Server& self, std::shared_ptr<ServerEventHandler> handler) -> Server&;
 
+  auto get_peer(this Server& self, const Client& client) -> const Peer&;
   auto get_peer_count(this Server& self) -> usize;
   auto is_running(this const Server& self) -> bool;
 
@@ -37,17 +40,18 @@ public:
   auto update(this Server& self) -> void;
   auto flush(this Server& self) -> void;
   auto send_packet(this Server& self, const Peer& peer, const Packet& packet) -> std::expected<void, std::string>;
+  auto send_packet_to_all(this Server& self, const Packet& packet) -> std::expected<void, std::string>;
 
 private:
   static constexpr auto INVALID_PORT = ~0_u16;
 
   ENetHost* host = nullptr;
   uint16_t port = INVALID_PORT;
-  ankerl::unordered_dense::map<u32, Peer> peers = {};
+  ankerl::unordered_dense::map<usize, Peer> peers = {};
   u32 max_clients = 0;
   bool running = false;
   std::shared_mutex peers_mutex = {};
-  std::atomic<u32> next_peer_id = {};
+  std::atomic<usize> next_peer_id = {};
   std::shared_ptr<ServerEventHandler> event_handler = nullptr;
 
   auto handle_peer_connect(this Server& self, ENetPeer* peer) -> void;

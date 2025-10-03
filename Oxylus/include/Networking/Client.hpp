@@ -2,6 +2,7 @@
 
 #include <ankerl/unordered_dense.h>
 #include <expected>
+#include <shared_mutex>
 
 #include "Networking/Peer.hpp"
 #include "Packet.hpp"
@@ -31,6 +32,8 @@ public:
 
   auto is_connected(this const Client& self) -> bool;
   auto get_state(this const Client& self) -> State;
+  auto get_enet_server(this const Client& self) -> ENetPeer*;
+  auto get_enet_host(this const Client& self) -> ENetHost*;
 
   auto connect(this Client& self, const std::string& host_name, u16 port) -> std::expected<void, std::string>;
   auto request_connection(this Client& self, const std::string& host_name, u16 port)

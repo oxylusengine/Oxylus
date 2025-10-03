@@ -25,6 +25,14 @@ auto Server::set_event_handler(this Server& self, std::shared_ptr<ServerEventHan
   return self;
 }
 
+auto Server::get_peer(this Server& self, const Client& client) -> const Peer& {
+  auto client_host = client.get_enet_server();
+
+  usize peer_id = reinterpret_cast<usize>(client_host->data);
+
+  return self.peers.at(peer_id);
+}
+
 auto Server::get_peer_count(this Server& self) -> usize {
   ZoneScoped;
 
@@ -50,11 +58,17 @@ auto Server::start(this Server& self) -> std::expected<void, std::string> {
   }
 
   self.running = true;
+
+  OX_LOG_INFO("Server started {}", self.port);
+
   return {};
 }
 
 auto Server::stop(this Server& self) -> std::expected<void, std::string> {
   ZoneScoped;
+
+  if (!self.running)
+    return {};
 
   self.running = false;
   if (self.host) {
@@ -78,6 +92,8 @@ auto Server::stop(this Server& self) -> std::expected<void, std::string> {
   }
 
   self.peers.clear();
+
+  OX_LOG_INFO("Server stopeed {}", self.port);
 
   return {};
 }
@@ -130,7 +146,32 @@ auto Server::send_packet(this Server& self, const Peer& peer, const Packet& pack
   ENetPacket* enet_packet = enet_packet_create(serialized.data(), serialized.size(), ENET_PACKET_FLAG_RELIABLE);
 
   if (enet_peer_send(peer.peer, 0, enet_packet) < 0) {
+    enet_packet_destroy(enet_packet);
     return std::unexpected("Couldn't send packet to peer");
+  }
+
+  return {};
+}
+
+auto Server::send_packet_to_all(this Server& self, const Packet& packet) -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  std::vector<u8> serialized = packet.serialize();
+
+  // TODO: Configurable packet flag
+  ENetPacket* enet_packet = enet_packet_create(serialized.data(), serialized.size(), ENET_PACKET_FLAG_RELIABLE);
+
+  for (usize i = 0; i < self.host->peerCount; i++) {
+    auto peer = &self.host->peers[i];
+    if (!peer->data)
+      continue;
+    usize peer_id = reinterpret_cast<usize>(peer->data);
+    OX_LOG_INFO("{}", peer_id);
+
+    if (enet_peer_send(peer, 0, enet_packet) < 0) {
+      enet_packet_destroy(enet_packet);
+      return std::unexpected("Couldn't send packet to peer");
+    }
   }
 
   return {};
@@ -139,7 +180,7 @@ auto Server::send_packet(this Server& self, const Peer& peer, const Packet& pack
 auto Server::handle_peer_connect(this Server& self, ENetPeer* peer) -> void {
   ZoneScoped;
 
-  u32 peer_id = self.next_peer_id++;
+  usize peer_id = self.next_peer_id++;
   std::string peer_name = fmt::format("peer_{}", peer_id);
 
   bool allow_connection = true;
@@ -159,15 +200,15 @@ auto Server::handle_peer_connect(this Server& self, ENetPeer* peer) -> void {
     self.event_handler->on_peer_init(new_peer);
   }
 
-  new_peer.peer->data = reinterpret_cast<void*>(static_cast<uintptr_t>(peer_id));
+  new_peer.peer->data = reinterpret_cast<void*>(peer_id);
 
   if (self.event_handler) {
     self.event_handler->on_peer_connected(new_peer);
   }
 
-  self.peers.emplace(peer_id, std::move(new_peer));
+  OX_LOG_INFO("Peer connected: {}:{}", peer_name, peer_id);
 
-  OX_LOG_INFO("Peer connected, {}", peer_id);
+  self.peers.emplace(peer_id, std::move(new_peer));
 
   // TODO: broadcast message
 }
@@ -175,13 +216,13 @@ auto Server::handle_peer_connect(this Server& self, ENetPeer* peer) -> void {
 auto Server::handle_peer_disconnect(this Server& self, ENetPeer* peer) -> void {
   ZoneScoped;
 
-  u32 peer_id = static_cast<u32>(reinterpret_cast<uintptr_t>(peer->data));
+  usize peer_id = reinterpret_cast<usize>(peer->data);
 
   auto write_lock = std::unique_lock(self.peers_mutex);
   auto it = self.peers.find(peer_id);
   if (it != self.peers.end()) {
     std::string peer_name = it->second.name;
-    OX_LOG_INFO("Peer disconnected peer_name:{}", peer_name, peer_id);
+    OX_LOG_INFO("Peer disconnected: {}:{}", peer_name, peer_id);
 
     if (self.event_handler) {
       self.event_handler->on_peer_disconnected(it->second);
@@ -196,7 +237,7 @@ auto Server::handle_peer_disconnect(this Server& self, ENetPeer* peer) -> void {
 auto Server::handle_peer_disconnect_timeout(this Server& self, ENetPeer* peer) -> void {
   ZoneScoped;
 
-  u32 peer_id = static_cast<u32>(reinterpret_cast<uintptr_t>(peer->data));
+  usize peer_id = reinterpret_cast<usize>(peer->data);
 
   auto write_lock = std::unique_lock(self.peers_mutex);
   auto it = self.peers.find(peer_id);
@@ -218,7 +259,7 @@ auto Server::handle_peer_packet(this Server& self, ENetPeer* enet_peer, ENetPack
   ZoneScoped;
 
   auto packet = Packet::parse_packet(enet_packet);
-  u32 peer_id = static_cast<u32>(reinterpret_cast<uintptr_t>(enet_peer->data));
+  usize peer_id = reinterpret_cast<usize>(enet_peer->data);
 
   // Drop invalid packet
   if (!packet.has_value()) {

@@ -28,6 +28,18 @@ auto Client::get_state(this const Client& self) -> State {
   return self.state;
 }
 
+auto Client::get_enet_server(this const Client& self) -> ENetPeer* {
+  ZoneScoped;
+
+  return self.server;
+}
+
+auto Client::get_enet_host(this const Client& self) -> ENetHost* {
+  ZoneScoped;
+
+  return self.host;
+}
+
 auto Client::connect(this Client& self, const std::string& host_name, u16 port) -> std::expected<void, std::string> {
   ZoneScoped;
 
@@ -189,8 +201,7 @@ auto Client::update(this Client& self) -> void {
   }
 }
 
-auto Client::send_packet(this Client& self, const Packet& packet)
-  -> std::expected<void, std::string> {
+auto Client::send_packet(this Client& self, const Packet& packet) -> std::expected<void, std::string> {
   ZoneScoped;
 
   if (self.state != State::Connected || !self.server) {
@@ -203,6 +214,7 @@ auto Client::send_packet(this Client& self, const Packet& packet)
   ENetPacket* enet_packet = enet_packet_create(serialized.data(), serialized.size(), ENET_PACKET_FLAG_RELIABLE);
 
   if (enet_peer_send(self.server, 0, enet_packet) < 0) {
+    enet_packet_destroy(enet_packet);
     return std::unexpected("Couldn't send packet to peer");
   }
 
