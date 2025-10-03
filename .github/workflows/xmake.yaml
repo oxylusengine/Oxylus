@@ -9,7 +9,7 @@ on:
 
 env:
   VULKAN_VERSION: 1.4.309.0
-  LLVM_VERSION: 20
+  LLVM_VERSION: 21
   LLVM_WINDOWS_VERSION: 20.1.4
 
 jobs:
@@ -73,11 +73,12 @@ jobs:
       - name: Install LLVM for MacOS
         if: ${{ matrix.platform.os == 'macos' }}
         run: |
-          brew install llvm@21
-          echo "LLVM_21_PATH=$(brew --prefix llvm@21)" >> $GITHUB_ENV
-          echo "CC=$LLVM_21_PATH/bin/clang" >> $GITHUB_ENV
-          echo "CXX=$LLVM_21_PATH/bin/clang++" >> $GITHUB_ENV
-          echo "PATH=$LLVM_21_PATH/bin:$PATH" >> $GITHUB_ENV
+          brew uninstall llvm@20
+          brew install llvm@${{ env.LLVM_VERSION }}
+          echo "LLVM_PATH=$(brew --prefix llvm@${{ env.LLVM_VERSION }})" >> $GITHUB_ENV
+          echo "CC=$LLVM_PATH/bin/clang" >> $GITHUB_ENV
+          echo "CXX=$LLVM_PATH/bin/clang++" >> $GITHUB_ENV
+          echo "PATH=$LLVM_PATH/bin:$PATH" >> $GITHUB_ENV
 
       # Install xmake
       - name: Setup xmake
