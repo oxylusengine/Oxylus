@@ -1,9 +1,9 @@
 #include "EditorPanel.hpp"
 
-#include <fmt/format.h>
+#include <cstdlib>
+#include <imgui.h>
 
-#include "Utils/StringUtils.hpp"
-#include "imgui.h"
+#include "Utils/Log.hpp"
 
 namespace ox {
 uint32_t EditorPanel::_count = 0;

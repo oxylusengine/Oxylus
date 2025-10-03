@@ -1,6 +1,7 @@
 #pragma once
 
 // clang-format off
+#include <type_traits>
 #include <Jolt/Jolt.h>
 #include <Jolt/Core/Core.h>
 #include <Jolt/Physics/Body/Body.h>

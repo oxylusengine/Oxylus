@@ -6,6 +6,8 @@
 
 #include "Core/Types.hpp"
 
+#include <tracy/Tracy.hpp>
+
 namespace ox {
 struct ManagedObj {
 private:
