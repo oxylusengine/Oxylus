@@ -70,6 +70,15 @@ jobs:
         with:
           version: "${{env.LLVM_WINDOWS_VERSION}}"
 
+      - name: Install LLVM for MacOS
+        if: ${{ matrix.platform.os == 'macos' }}
+        run: |
+          brew install llvm@21
+          echo "LLVM_21_PATH=$(brew --prefix llvm@21)" >> $GITHUB_ENV
+          echo "CC=$LLVM_21_PATH/bin/clang" >> $GITHUB_ENV
+          echo "CXX=$LLVM_21_PATH/bin/clang++" >> $GITHUB_ENV
+          echo "PATH=$LLVM_21_PATH/bin:$PATH" >> $GITHUB_ENV
+
       # Install xmake
       - name: Setup xmake
         uses: xmake-io/github-action-setup-xmake@v1

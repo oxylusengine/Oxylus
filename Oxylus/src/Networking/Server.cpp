@@ -93,7 +93,7 @@ auto Server::stop(this Server& self) -> std::expected<void, std::string> {
 
   self.peers.clear();
 
-  OX_LOG_INFO("Server stopeed {}", self.port);
+  OX_LOG_INFO("Server stopped {}", self.port);
 
   return {};
 }
