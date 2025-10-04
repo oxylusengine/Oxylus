@@ -13,9 +13,19 @@ for _, file in ipairs(os.files("./**/Test*.cpp")) do
 
         add_packages("gtest")
 
-        set_policy("build.sanitizer.address", true)
-        set_policy("build.sanitizer.undefined", true)
-        set_policy("build.sanitizer.leak", true)
+        if is_plat("linux", "macosx") then
+            set_policy("build.sanitizer.address", true)
+            set_policy("build.sanitizer.undefined", true)
+            if is_plat("linux") then
+                set_policy("build.sanitizer.leak", true)
+            end
+        elseif is_plat("windows") then
+            -- ASAN is available on Windows with recent MSVC and Clang(only on debug builds)
+            -- Enable it and let xmake handle toolchain compatibility
+            if not is_mode("debug") then
+                set_policy("build.sanitizer.address", true)
+            end
+        end
 
         if is_plat("windows") then
             add_ldflags("/subsystem:console")
