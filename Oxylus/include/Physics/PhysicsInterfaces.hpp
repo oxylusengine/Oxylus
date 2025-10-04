@@ -1,5 +1,4 @@
 ﻿#pragma once
-#include <type_traits>
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>

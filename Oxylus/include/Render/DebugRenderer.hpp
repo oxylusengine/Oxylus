@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include <type_traits>
 #include <Jolt/Jolt.h>
 #include <Jolt/Renderer/DebugRenderer.h>
 #include <vuk/runtime/CommandBuffer.hpp>

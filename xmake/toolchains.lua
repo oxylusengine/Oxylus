@@ -44,3 +44,8 @@ toolchain("mac-clang")
 
     add_ldflags("-L$(shell brew --prefix llvm@21)/lib/c++")
     add_ldflags("-Wl,-rpath,$(shell brew --prefix llvm@21)/lib/c++")
+
+    add_cxxflags("-includecstdlib")
+    add_cxxflags("-includetype_traits")
+    add_cxxflags("-isystem $(shell brew --prefix llvm@21)/include/c++/v1")
+
