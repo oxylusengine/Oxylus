@@ -47,7 +47,8 @@ auto Renderer::init() -> std::expected<void, std::string> {
 
   Slang slang = {};
   slang.create_session(
-    {.root_directory = shaders_dir,
+    {.optimization_level = Slang::OptimizationLevel::Maximal,
+     .root_directory = shaders_dir,
      .definitions = {
        {"MAX_DIRECTIONAL_SHADOW_CASCADES", std::to_string(MAX_DIRECTIONAL_SHADOW_CASCADES)},
        {"MESH_MAX_LODS", std::to_string(GPU::Mesh::MAX_LODS)},

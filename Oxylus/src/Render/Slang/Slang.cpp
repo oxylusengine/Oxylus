@@ -12,7 +12,10 @@ void Slang::create_session(this Slang& self, const SessionInfo& session_info) {
   auto& ctx = App::get_vkcontext();
 
   self.slang_session = ctx.shader_compiler.new_session(
-      {.definitions = session_info.definitions, .root_directory = session_info.root_directory});
+    {.optimizaton_level = std::to_underlying(session_info.optimization_level),
+     .definitions = session_info.definitions,
+     .root_directory = session_info.root_directory}
+  );
 }
 
 void Slang::add_shader(this Slang& self, vuk::PipelineBaseCreateInfo& pipeline_ci, const CompileInfo& compile_info) {
@@ -27,8 +30,8 @@ void Slang::add_shader(this Slang& self, vuk::PipelineBaseCreateInfo& pipeline_c
   const auto module_name = fs::get_file_name(compile_info.path);
 
   auto slang_module = self.slang_session->load_module({
-      .path = compile_info.path,
-      .module_name = module_name,
+    .path = compile_info.path,
+    .module_name = module_name,
   });
 
   for (auto& v : compile_info.entry_points) {
@@ -42,11 +45,13 @@ void Slang::add_shader(this Slang& self, vuk::PipelineBaseCreateInfo& pipeline_c
   }
 }
 
-void Slang::create_pipeline(this Slang& self,
-                            vuk::Runtime& runtime,
-                            const vuk::Name& name,
-                            const CompileInfo& compile_info,
-                            vuk::PersistentDescriptorSet* pds) {
+void Slang::create_pipeline(
+  this Slang& self,
+  vuk::Runtime& runtime,
+  const vuk::Name& name,
+  const CompileInfo& compile_info,
+  vuk::PersistentDescriptorSet* pds
+) {
   OX_CHECK_GT(compile_info.entry_points.size(), 0ul);
 
   vuk::PipelineBaseCreateInfo pipeline_ci = {};
@@ -54,9 +59,11 @@ void Slang::create_pipeline(this Slang& self,
     pipeline_ci.explicit_set_layouts.emplace_back(pds->set_layout_create_info);
     for (const auto& [binding, binding_flags] :
          std::views::zip(pds->set_layout_create_info.bindings, pds->set_layout_create_info.flags)) {
-      pipeline_ci.set_binding_flags(pds->set_layout_create_info.index,
-                                    binding.binding,
-                                    static_cast<vuk::DescriptorBindingFlagBits>(binding_flags));
+      pipeline_ci.set_binding_flags(
+        pds->set_layout_create_info.index,
+        binding.binding,
+        static_cast<vuk::DescriptorBindingFlagBits>(binding_flags)
+      );
     }
   }
 

@@ -5,6 +5,7 @@
 
 namespace ox {
 struct SlangSessionInfo {
+  i32 optimizaton_level;
   std::vector<std::pair<std::string, std::string>> definitions = {};
   std::string root_directory = {};
 };

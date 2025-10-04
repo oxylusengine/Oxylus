@@ -275,7 +275,7 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
 
   slang::CompilerOptionEntry entries[] = {
       {.name = slang::CompilerOptionName::Optimization,
-       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_OPTIMIZATION_LEVEL_MAXIMAL}},
+       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = info.optimizaton_level}},
 #if OX_DEBUG
       {.name = slang::CompilerOptionName::DebugInformationFormat,
        .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_FORMAT_DEFAULT}},
