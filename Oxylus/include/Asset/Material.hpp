@@ -27,7 +27,7 @@ struct Material {
   f32 roughness_factor = 0.0f;
   f32 metallic_factor = 0.0f;
   AlphaMode alpha_mode = AlphaMode::Opaque;
-  f32 alpha_cutoff = 0.0f;
+  f32 alpha_cutoff = 0.1f;
   SamplingMode sampling_mode = SamplingMode::LinearRepeated;
   UUID albedo_texture = {};
   UUID normal_texture = {};

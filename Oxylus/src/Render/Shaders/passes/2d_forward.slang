@@ -36,7 +36,7 @@ VOutput vs_main(VertexInput input, u32 vertex_id : SV_VertexID) {
   Material material = C.materials[material_index];
 
   mat4 transform = C.transforms[input.transform_id].world;
-  
+
   f32x4 uv_size_offset = f32x4(material.uv_size, material.uv_offset);
 
   const u32 vertex_index = vertex_id % 6;
@@ -52,18 +52,27 @@ VOutput vs_main(VertexInput input, u32 vertex_id : SV_VertexID) {
   f32x4 world_position = f32x4(f32x2(positions[vertex_index].xy * f32x2((f32)((bool)flip ? -1 : 1), 1)), 0, 1);
   world_position = mul(transform, world_position);
 
-  output.position = mul(C.camera_buffer[0].projection_view, f32x4(world_position.xyz, 1.0f));
+  output.position = mul(C.camera_buffer.projection_view, f32x4(world_position.xyz, 1.0f));
   output.material_index = material_index;
 
   return output;
 }
 
 [[shader("fragment")]]
-f32x4 ps_main(VOutput input) : SV_Target0 {
+f32x4 fs_main(VOutput input) : SV_Target0 {
   const Material material = C.materials[input.material_index];
 
   f32x2 uv = input.uv_alpha.xy;
-  f32x4 color = material.sample_albedo_color(uv);
+  UVGradient grad;
+  grad.uv = uv;
+  grad.ddx = ddx(uv);
+  grad.ddy = ddy(uv);
+
+  f32x4 color = material.sample_albedo_color(grad);
+
+  if (color.w <= material.alpha_cutoff) {
+    discard;
+  }
 
   return color;
 }

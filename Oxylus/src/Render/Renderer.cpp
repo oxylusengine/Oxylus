@@ -63,7 +63,8 @@ auto Renderer::init() -> std::expected<void, std::string> {
   slang.create_pipeline(
     runtime,
     "2d_forward_pipeline",
-    {.path = shaders_dir + "/passes/2d_forward.slang", .entry_points = {"vs_main", "ps_main"}}
+    {.path = shaders_dir + "/passes/2d_forward.slang", .entry_points = {"vs_main", "fs_main"}},
+    &bindless_set
   );
 
   // --- Sky ---

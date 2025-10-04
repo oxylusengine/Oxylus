@@ -72,7 +72,7 @@ struct Material {
   alignas(4) u32 metallic_roughness_image_index = 0;
   alignas(4) u32 occlusion_image_index = 0;
   alignas(4) glm::vec2 uv_size = {};
-  alignas(4) glm::vec2 uv_offfset = {};
+  alignas(4) glm::vec2 uv_offset = {};
 };
 
 struct Bounds {

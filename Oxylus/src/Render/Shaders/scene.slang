@@ -70,16 +70,6 @@ public struct Material {
   public f32x2 uv_size = {};
   public f32x2 uv_offset = {};
 
-  public func sample_albedo_color(f32x2 uv) -> f32x4 { 
-    if (this.flags & MaterialFlag::HasAlbedoImage) {
-      const let color = global_images[this.albedo_image_index]
-        .sample(global_samplers[this.sampler_index], uv);
-      return this.albedo_color * color;
-    }
-
-    return this.albedo_color;
-  }
-
   public func sample_albedo_color(in UVGradient grad) -> f32x4 {
     if (this.flags & MaterialFlag::HasAlbedoImage) {
         const let color = global_images[this.albedo_image_index]

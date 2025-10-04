@@ -1023,6 +1023,8 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       .emissive_image_index = emissive_image_index.value_or(0_u32),
       .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
       .occlusion_image_index = occlusion_image_index.value_or(0_u32),
+      .uv_size = material->uv_size,
+      .uv_offset = material->uv_offset,
     };
 
     self.gpu_materials[dirty_index] = gpu_material;

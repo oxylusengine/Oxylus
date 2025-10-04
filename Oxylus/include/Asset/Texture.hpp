@@ -21,7 +21,12 @@ struct TextureLoadInfo {
   option<void*> loaded_data = ox::nullopt;
   option<vuk::Extent3D> extent = ox::nullopt;
   vuk::SamplerCreateInfo sampler_info = {
-    .magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear, .mipmapMode = vuk::SamplerMipmapMode::eLinear
+    .magFilter = vuk::Filter::eLinear,
+    .minFilter = vuk::Filter::eLinear,
+    .mipmapMode = vuk::SamplerMipmapMode::eLinear,
+    .addressModeU = vuk::SamplerAddressMode::eRepeat,
+    .addressModeV = vuk::SamplerAddressMode::eRepeat,
+    .addressModeW = vuk::SamplerAddressMode::eRepeat,
   };
 };
 
