@@ -26,6 +26,7 @@
 #include "Physics/PhysicsMaterial.hpp"
 #include "Render/Camera.hpp"
 #include "Render/RendererConfig.hpp"
+#include "Render/Utils/VukCommon.hpp"
 #include "Scene/ECSModule/ComponentWrapper.hpp"
 #include "Scene/ECSModule/Core.hpp"
 #include "Scripting/LuaManager.hpp"
@@ -999,9 +1000,31 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
     auto flags = GPU::MaterialFlag::None;
     if (albedo_image_index.has_value()) {
+      flags |= GPU::MaterialFlag::HasAlbedoImage;
+
+      // Incase we wanted to change a material's sampler after it's creation
+      // we should prefer material's sampler over texture's default sampler.
+      auto& vk_context = App::get_vkcontext();
+
       auto* texture = asset_man->get_texture(material->albedo_texture);
       sampler_index = texture->get_sampler_index();
-      flags |= GPU::MaterialFlag::HasAlbedoImage;
+
+      auto texture_sampler = vk_context.resources.samplers.slot(texture->get_sampler_id());
+
+      vuk::SamplerCreateInfo sampler_ci = {};
+      switch (material->sampling_mode) {
+        case SamplingMode::LinearRepeated          : sampler_ci = vuk::LinearSamplerRepeated; break;
+        case SamplingMode::LinearClamped           : sampler_ci = vuk::LinearSamplerClamped; break;
+        case SamplingMode::NearestRepeated         : sampler_ci = vuk::NearestSamplerRepeated; break;
+        case SamplingMode::NearestClamped          : sampler_ci = vuk::NearestSamplerClamped; break;
+        case SamplingMode::LinearRepeatedAnisotropy: sampler_ci = vuk::LinearSamplerRepeatedAnisotropy; break;
+      }
+      auto material_sampler = vk_context.runtime->acquire_sampler(sampler_ci, vk_context.num_frames);
+      if (texture_sampler->id != material_sampler.id) {
+        auto sampler_id = vk_context.allocate_sampler(sampler_ci);
+        auto sampler_index_from_material = SlotMap_decode_id(sampler_id).index;
+        sampler_index = sampler_index_from_material;
+      }
     }
 
     flags |= normal_image_index.has_value() ? GPU::MaterialFlag::HasNormalImage : GPU::MaterialFlag::None;
