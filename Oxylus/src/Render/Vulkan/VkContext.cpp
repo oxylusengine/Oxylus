@@ -170,14 +170,13 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
 
   selector.add_required_extension(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
     .add_required_extension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME)
-    .add_required_extension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)
 #ifndef OX_PLATFORM_MACOSX
     .add_required_extension(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME)
 #endif
-    .add_required_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
+    .add_required_extension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 
   if (auto phys_ret = selector.select(); !phys_ret) {
-    OX_LOG_ERROR("{}", phys_ret.full_error().type.message());
+    OX_LOG_FATAL("{}", phys_ret.full_error().type.message());
   } else {
     self.vkbphysical_device = phys_ret.value();
     self.device_name = phys_ret.value().name;
