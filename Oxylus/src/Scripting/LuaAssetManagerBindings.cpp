@@ -27,6 +27,19 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
     am->set_material_dirty(uuid);
   });
 
+  state->new_enum(
+    "SamplingMode",
+
+    "LinearRepeated",
+    SamplingMode::LinearRepeated,
+    "LinearClamped",
+    SamplingMode::LinearClamped,
+    "NearestRepeated",
+    SamplingMode::NearestRepeated,
+    "NearestClamped",
+    SamplingMode::NearestClamped
+  );
+
   auto model = state->new_usertype<Model>("Model", "materials", &Model::materials);
   auto material = state->new_usertype<Material>(
     "Material",
@@ -40,6 +53,11 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
     &Material::emissive_color,
     "set_emissive_color",
     [](Material* mat, glm::vec4 v) { mat->emissive_color = v; },
+
+    "sampling_mode",
+    &Material::sampling_mode,
+    "set_sampling_mode",
+    [](Material* mat, u32 sampling_mode) { mat->sampling_mode = static_cast<SamplingMode>(sampling_mode); },
 
     "albedo_texture",
     &Material::albedo_texture,
