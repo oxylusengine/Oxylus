@@ -13,6 +13,10 @@ for _, file in ipairs(os.files("./**/Test*.cpp")) do
 
         add_packages("gtest")
 
+        set_policy("build.sanitizer.address", true)
+        set_policy("build.sanitizer.undefined", true)
+        set_policy("build.sanitizer.leak", true)
+
         if is_plat("windows") then
             add_ldflags("/subsystem:console")
         end
