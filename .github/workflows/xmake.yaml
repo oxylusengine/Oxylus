@@ -77,9 +77,8 @@ jobs:
           brew uninstall llvm@20
           brew install llvm@${{ env.LLVM_MACOS_VERSION }}
           echo "LLVM_PATH=$(brew --prefix llvm@${{ env.LLVM_MACOS_VERSION }})" >> $GITHUB_ENV
-          echo "CC=$LLVM_PATH/bin/clang" >> $GITHUB_ENV
-          echo "CXX=$LLVM_PATH/bin/clang++" >> $GITHUB_ENV
           echo "PATH=$LLVM_PATH/bin:$PATH" >> $GITHUB_ENV
+          echo "LDFLAGS=-L$LLVM_PATH/lib/c++ -Wl,-rpath,$LLVM_PATH/lib/c++" >> $GITHUB_ENV
 
       # Install xmake
       - name: Setup xmake
