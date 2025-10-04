@@ -23,21 +23,28 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
     am->set_material_dirty(uuid);
     return am->get_material(uuid);
   });
-  asset_manager.set_function("set_material_dirty",
-                             [](AssetManager* am, const UUID& uuid) { am->set_material_dirty(uuid); });
+  asset_manager.set_function("set_material_dirty", [](AssetManager* am, const UUID& uuid) {
+    am->set_material_dirty(uuid);
+  });
 
   auto model = state->new_usertype<Model>("Model", "materials", &Model::materials);
   auto material = state->new_usertype<Material>(
-      "Material",
+    "Material",
 
-      "albedo_color",
-      &Material::albedo_color,
-      "set_albedo_color",
-      [](Material* mat, glm::vec4 v) { mat->albedo_color = v; },
+    "albedo_color",
+    &Material::albedo_color,
+    "set_albedo_color",
+    [](Material* mat, glm::vec4 v) { mat->albedo_color = v; },
 
-      "emissive_color",
-      &Material::emissive_color,
-      "set_emissive_color",
-      [](Material* mat, glm::vec4 v) { mat->emissive_color = v; });
+    "emissive_color",
+    &Material::emissive_color,
+    "set_emissive_color",
+    [](Material* mat, glm::vec4 v) { mat->emissive_color = v; },
+
+    "albedo_texture",
+    &Material::albedo_texture,
+    "set_albedo_texture",
+    [](Material* mat, UUID albedo_texture) { mat->albedo_texture = albedo_texture; }
+  );
 }
 } // namespace ox
