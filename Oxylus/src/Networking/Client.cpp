@@ -1,26 +1,37 @@
 #include "Networking/Client.hpp"
 
+#include <thread>
+
 namespace ox {
+
 Client::~Client() { auto _ = disconnect(); }
 
 auto Client::set_event_handler(this Client& self, std::shared_ptr<ClientEventHandler> handler) -> Client& {
+  ZoneScoped;
   self.event_handler = handler;
   return self;
 }
 
-auto Client::set_connect_timeout(this Client& self, u32 timeout) -> Client& {
-  self.connection_timeout = timeout;
+auto Client::set_connect_timeout(this Client& self, u32 timeout_ms) -> Client& {
+  ZoneScoped;
+  self.connection_timeout = timeout_ms;
   return self;
 }
 
-auto Client::set_disconnect_timeout(this Client& self, u32 timeout) -> Client& {
-  self.disconnect_timeout = timeout;
+auto Client::set_disconnect_timeout(this Client& self, u32 timeout_ms) -> Client& {
+  ZoneScoped;
+  self.disconnect_timeout = timeout_ms;
   return self;
 }
 
 auto Client::is_connected(this const Client& self) -> bool {
   ZoneScoped;
   return self.state == State::Connected;
+}
+
+auto Client::is_connecting(this const Client& self) -> bool {
+  ZoneScoped;
+  return self.state == State::Connecting;
 }
 
 auto Client::get_state(this const Client& self) -> State {
@@ -30,47 +41,28 @@ auto Client::get_state(this const Client& self) -> State {
 
 auto Client::get_enet_server(this const Client& self) -> ENetPeer* {
   ZoneScoped;
-
   return self.server;
 }
 
 auto Client::get_enet_host(this const Client& self) -> ENetHost* {
   ZoneScoped;
-
   return self.host;
 }
 
-auto Client::connect(this Client& self, const std::string& host_name, u16 port) -> std::expected<void, std::string> {
+auto Client::connect_async(this Client& self, const std::string& host_name, u16 port)
+  -> std::expected<void, std::string> {
   ZoneScoped;
 
-  auto request_result = self.request_connection(host_name, port);
-  if (!request_result.has_value()) {
-    return request_result;
-  }
-
-  auto result = self.wait_for_connection();
-  if (result.has_value()) {
-    return {};
-  }
-
-  enet_peer_reset(self.server);
-  enet_host_destroy(self.host);
-
-  self.state = State::Error;
-
-  return result;
-}
-
-auto Client::request_connection(this Client& self, const std::string& host_name, u16 port)
-  -> std::expected<void, std::string> {
   if (self.state != State::Disconnected) {
     return std::unexpected("Client is not in disconnected state");
   }
 
   self.state = State::Connecting;
+  self.connection_start_time = std::chrono::steady_clock::now();
 
   self.host = enet_host_create(nullptr, 1, 2, 0, 0);
   if (!self.host) {
+    self.transition_to_error("Failed to create ENet client host");
     return std::unexpected("Failed to create ENet client host");
   }
 
@@ -82,37 +74,107 @@ auto Client::request_connection(this Client& self, const std::string& host_name,
   if (!self.server) {
     enet_host_destroy(self.host);
     self.host = nullptr;
-    return std::unexpected("Failed to connect to server");
+    self.transition_to_error("Failed to initiate connection to server");
+    return std::unexpected("Failed to initiate connection to server");
   }
 
   return {};
 }
 
-auto Client::wait_for_connection(this Client& self) -> std::expected<void, std::string> {
+auto Client::connect(this Client& self, const std::string& host_name, u16 port) -> std::expected<void, std::string> {
   ZoneScoped;
 
-  ENetEvent event;
+  auto connect_result = self.connect_async(host_name, port);
+  if (!connect_result.has_value()) {
+    return connect_result;
+  }
+
+  // Poll until connected or timeout
+  auto start = std::chrono::steady_clock::now();
+  while (self.state == State::Connecting) {
+    self.update();
+
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
+                     .count();
+
+    if (elapsed >= self.connection_timeout) {
+      enet_peer_reset(self.server);
+      enet_host_destroy(self.host);
+      self.host = nullptr;
+      self.server = nullptr;
+      self.transition_to_error("Connection timeout");
+      return std::unexpected("Connection timeout");
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
   if (self.state == State::Connected) {
     return {};
   }
 
-  if (enet_host_service(self.host, &event, self.connection_timeout) > 0 && event.type == ENET_EVENT_TYPE_CONNECT) {
-    self.state = State::Connected;
+  return std::unexpected("Connection failed");
+}
 
-    if (self.event_handler) {
-      self.event_handler->on_connected();
-    }
+auto Client::update(this Client& self) -> void {
+  ZoneScoped;
 
-    return {};
+  if (!self.host) {
+    return;
   }
 
-  return std::unexpected("Server did not respond");
+  using namespace std::chrono;
+
+  // Check for connection timeout in Connecting state
+  if (self.state == State::Connecting) {
+    auto elapsed = duration_cast<milliseconds>(steady_clock::now() - self.connection_start_time).count();
+
+    if (elapsed >= self.connection_timeout) {
+      self.transition_to_error("Connection timeout");
+      return;
+    }
+  }
+
+  // Process all pending events (non-blocking)
+  ENetEvent event;
+  while (enet_host_service(self.host, &event, 0) > 0) {
+    switch (event.type) {
+      case ENET_EVENT_TYPE_CONNECT: {
+        self.handle_connect_event();
+        break;
+      }
+
+      case ENET_EVENT_TYPE_DISCONNECT: {
+        self.handle_disconnect_event();
+        break;
+      }
+
+      case ENET_EVENT_TYPE_RECEIVE: {
+        self.handle_receive_event(event.packet);
+        enet_packet_destroy(event.packet);
+        break;
+      }
+
+      default: break;
+    }
+  }
 }
 
 auto Client::disconnect(this Client& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
-  if (self.state == State::Disconnected || self.state == State::Error) {
+  if (self.state == State::Disconnected) {
+    return {};
+  }
+
+  if (self.state == State::Error) {
+    // Clean up without graceful disconnect
+    if (self.host) {
+      enet_host_destroy(self.host);
+      self.host = nullptr;
+    }
+    self.server = nullptr;
+    self.state = State::Disconnected;
     return {};
   }
 
@@ -121,8 +183,18 @@ auto Client::disconnect(this Client& self) -> std::expected<void, std::string> {
   if (self.server) {
     enet_peer_disconnect(self.server, 0);
 
+    // Wait for disconnect acknowledgment
     ENetEvent event;
-    while (enet_host_service(self.host, &event, self.disconnect_timeout) > 0) {
+    auto start = std::chrono::steady_clock::now();
+
+    while (enet_host_service(self.host, &event, 0) > 0 || self.server != nullptr) {
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
+                       .count();
+
+      if (elapsed >= self.disconnect_timeout) {
+        break; // Timeout - force disconnect
+      }
+
       switch (event.type) {
         case ENET_EVENT_TYPE_RECEIVE: {
           enet_packet_destroy(event.packet);
@@ -136,8 +208,10 @@ auto Client::disconnect(this Client& self) -> std::expected<void, std::string> {
       }
     }
 
+    // Force disconnect if still connected
     if (self.server) {
       enet_peer_reset(self.server);
+      self.server = nullptr;
     }
   }
 
@@ -146,8 +220,6 @@ auto Client::disconnect(this Client& self) -> std::expected<void, std::string> {
     self.host = nullptr;
   }
 
-  self.remote_peers.clear();
-
   if (self.event_handler) {
     self.event_handler->on_disconnected();
   }
@@ -155,50 +227,6 @@ auto Client::disconnect(this Client& self) -> std::expected<void, std::string> {
   self.state = State::Disconnected;
 
   return {};
-}
-
-auto Client::update(this Client& self) -> void {
-  ZoneScoped;
-
-  if (!self.host) {
-    return;
-  }
-
-  ENetEvent event;
-  while (enet_host_service(self.host, &event, 0) > 0) {
-    switch (event.type) {
-      case ENET_EVENT_TYPE_CONNECT: {
-        self.state = State::Connected;
-        if (self.event_handler) {
-          self.event_handler->on_connected();
-        }
-        break;
-      }
-
-      case ENET_EVENT_TYPE_DISCONNECT: {
-        self.state = State::Disconnected;
-        if (self.event_handler) {
-          self.event_handler->on_disconnected();
-        }
-        break;
-      }
-
-      case ENET_EVENT_TYPE_RECEIVE: {
-        if (self.state == State::Connected) {
-          auto packet = Packet::parse_packet(event.packet);
-          if (packet.has_value()) {
-            if (self.event_handler) {
-              self.event_handler->on_packet_received(*packet);
-            }
-          }
-        }
-        enet_packet_destroy(event.packet);
-        break;
-      }
-
-      default: break;
-    }
-  }
 }
 
 auto Client::send_packet(this Client& self, const Packet& packet) -> std::expected<void, std::string> {
@@ -210,12 +238,11 @@ auto Client::send_packet(this Client& self, const Packet& packet) -> std::expect
 
   std::vector<u8> serialized = packet.serialize();
 
-  // TODO: Configurable packet flag
   ENetPacket* enet_packet = enet_packet_create(serialized.data(), serialized.size(), ENET_PACKET_FLAG_RELIABLE);
 
   if (enet_peer_send(self.server, 0, enet_packet) < 0) {
     enet_packet_destroy(enet_packet);
-    return std::unexpected("Couldn't send packet to peer");
+    return std::unexpected("Failed to send packet to server");
   }
 
   return {};
@@ -224,7 +251,50 @@ auto Client::send_packet(this Client& self, const Packet& packet) -> std::expect
 auto Client::ping_server(this Client& self) -> void {
   ZoneScoped;
 
-  enet_peer_ping(self.server);
+  if (self.server) {
+    enet_peer_ping(self.server);
+  }
+}
+
+auto Client::handle_connect_event() -> void {
+  if (state == State::Connecting) {
+    state = State::Connected;
+    if (event_handler) {
+      event_handler->on_connected();
+    }
+  }
+}
+
+auto Client::handle_disconnect_event() -> void {
+  bool was_connected = (state == State::Connected);
+  state = State::Disconnected;
+  server = nullptr;
+
+  if (event_handler) {
+    if (was_connected) {
+      event_handler->on_disconnected();
+    } else {
+      event_handler->on_connection_failed("Server refused connection");
+    }
+  }
+}
+
+auto Client::handle_receive_event(ENetPacket* enet_packet) -> void {
+  if (state != State::Connected) {
+    return; // Ignore packets if not connected
+  }
+
+  auto packet = Packet::parse_packet(enet_packet);
+  if (packet.has_value() && event_handler) {
+    event_handler->on_packet_received(*packet);
+  }
+}
+
+auto Client::transition_to_error(const std::string& reason) -> void {
+  state = State::Error;
+  if (event_handler) {
+    event_handler->on_connection_failed(reason);
+  }
 }
 
 } // namespace ox
