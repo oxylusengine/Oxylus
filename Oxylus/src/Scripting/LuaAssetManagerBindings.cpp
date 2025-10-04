@@ -17,6 +17,7 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
   SET_TYPE_FUNCTION(asset_manager, AssetManager, load_asset);
   SET_TYPE_FUNCTION(asset_manager, AssetManager, unload_asset);
 
+  asset_manager.set_function("load_asset", [](AssetManager* am, const UUID& uuid) { return am->load_asset(uuid); });
   asset_manager.set_function("get_model", [](AssetManager* am, const UUID& uuid) { return am->get_model(uuid); });
   asset_manager.set_function("get_material", [](AssetManager* am, const UUID& uuid) { return am->get_material(uuid); });
   asset_manager.set_function("get_mut_material", [](AssetManager* am, const UUID& uuid) {
@@ -62,7 +63,7 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
     "albedo_texture",
     &Material::albedo_texture,
     "set_albedo_texture",
-    [](Material* mat, UUID albedo_texture) { mat->albedo_texture = albedo_texture; }
+    [](Material* mat, const UUID& albedo_texture) { mat->albedo_texture = albedo_texture; }
   );
 }
 } // namespace ox
