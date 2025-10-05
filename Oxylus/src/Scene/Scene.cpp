@@ -1640,8 +1640,10 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
   body_settings.mLinearDamping = glm::max(0.0f, component.linear_drag);
   body_settings.mAngularDamping = glm::max(0.0f, component.angular_drag);
   body_settings.mMotionQuality = component.continuous ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
-  body_settings.mGravityFactor = component.gravity_scale;
+  body_settings.mGravityFactor = component.gravity_factor;
   body_settings.mAllowedDOFs = static_cast<JPH::EAllowedDOFs>(component.allowed_dofs);
+  body_settings.mFriction = component.friction;
+  body_settings.mRestitution = component.restitution;
 
   body_settings.mIsSensor = component.is_sensor;
 
