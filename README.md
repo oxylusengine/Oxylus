@@ -1,5 +1,6 @@
 # Oxylus Engine
-![Logo](https://i.imgur.com/4JpO3vl.png)     
+<img src="https://i.imgur.com/i07VA5r.png" height="230" />
+
 [![CI](https://img.shields.io/github/actions/workflow/status/Hatrickek/OxylusEngine/xmake.yaml?&style=for-the-badge&logo=cmake&logoColor=orange&labelColor=black)](https://github.com/Hatrickek/OxylusEngine/actions/workflows/xmake.yaml)
 [![Discord](https://img.shields.io/discord/1364938544736370820?style=for-the-badge&logo=discord&logoColor=orange&label=Discord&link=https%3A%2F%2Fdiscord.gg%2FcbQDJrWszk)](https://discord.gg/cbQDJrWszk)
 ## About   
