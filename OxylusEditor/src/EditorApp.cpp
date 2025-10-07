@@ -21,16 +21,18 @@ App* create_application(const AppCommandLineArgs& args) {
 #endif
   spec.working_directory = std::filesystem::current_path().string();
   spec.command_line_args = args;
-  const WindowInfo::Icon icon = {.data = EngineLogo, .data_length = EngineLogoLen};
+  const WindowInfo::Icon icon = {
+    .loaded = WindowInfo::Icon::Loaded{.data = engine_logo, .width = engine_logoWidth, .height = engine_logoHeight}
+  };
   spec.window_info = {
-      .title = spec.name,
-      .icon = icon,
-      .width = 1720,
-      .height = 900,
+    .title = spec.name,
+    .icon = icon,
+    .width = 1720,
+    .height = 900,
 #if 0
       .flags = WindowFlag::Centered,
 #else
-      .flags = WindowFlag::Centered | WindowFlag::Resizable,
+    .flags = WindowFlag::Centered | WindowFlag::Resizable,
 #endif
   };
 

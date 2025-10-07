@@ -49,13 +49,14 @@ void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
 
   UI::center_next_window();
   if (ImGui::BeginPopupModal("ProjectSelector", nullptr, flags)) {
-    const auto banner_size = EditorLayer::get()->engine_banner->get_extent();
+    auto banner_image = EditorLayer::get()->engine_banner;
+    const auto banner_size = banner_image->get_extent();
     const float x = static_cast<float>(banner_size.width);
     const float y = static_cast<float>(ImGui::GetFrameHeight());
 
     const auto& window = App::get()->get_window();
 
-    UI::image(*EditorLayer::get()->engine_banner, {x, static_cast<float>(banner_size.height)});
+    UI::image(*banner_image, {x, static_cast<float>(banner_size.height)});
     UI::spacing(2);
     ImGui::SeparatorText("Projects");
     UI::spacing(2);

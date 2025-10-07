@@ -50,7 +50,7 @@ struct WindowCallbacks {
   void (*on_mouse_scroll)(void* user_data, glm::vec2 offset) = nullptr;
   void (*on_text_input)(void* user_data, const c8* text) = nullptr;
   void (*on_key)(void* user_data, SDL_Keycode key_code, SDL_Scancode scan_code, u16 mods, bool down, bool repeat) =
-      nullptr;
+    nullptr;
   void (*on_close)(void* user_data) = nullptr;
 };
 
@@ -76,12 +76,15 @@ struct ShowDialogInfo {
 };
 
 struct WindowInfo {
-  // fill either data and data_length or just path
   struct Icon {
-    u8* data = nullptr;
-    u32 data_length = 0;
+    struct Loaded {
+      void* data = nullptr;
+      u32 width = 0;
+      u32 height = 0;
+    };
+    option<Loaded> loaded = nullopt;
 
-    std::string path = {};
+    option<std::string> path = nullopt;
   };
 
   constexpr static i32 USE_PRIMARY_MONITOR = 0;

@@ -86,25 +86,28 @@ Window Window::create(const WindowInfo& info) {
   SDL_DestroyProperties(window_properties);
 
   impl->cursors = {
-      SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT),
-      SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT),
-      SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_MOVE),
-      SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NS_RESIZE),
-      SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_EW_RESIZE),
-      SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NESW_RESIZE),
-      SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NWSE_RESIZE),
-      SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER),
-      SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NOT_ALLOWED),
-      SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_MOVE),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NS_RESIZE),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_EW_RESIZE),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NESW_RESIZE),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NWSE_RESIZE),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NOT_ALLOWED),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR),
   };
 
   void* image_data = nullptr;
   int width = {}, height = {}, channels = {};
-  if (info.icon.data != nullptr && info.icon.data_length > 0) {
-    image_data = stbi_load_from_memory(
-        info.icon.data, static_cast<int>(info.icon.data_length), &width, &height, &channels, 4);
-  } else if (!info.icon.path.empty()) {
-    image_data = stbi_load(info.icon.path.c_str(), &width, &height, &channels, 4);
+  if (info.icon.path.has_value()) {
+    image_data = stbi_load(info.icon.path->c_str(), &width, &height, &channels, 4);
+  } else if (info.icon.loaded.has_value()) {
+    OX_CHECK_GT(info.icon.loaded->width, 0);
+    OX_CHECK_GT(info.icon.loaded->height, 0);
+    image_data = info.icon.loaded->data;
+    width = info.icon.loaded->width;
+    height = info.icon.loaded->height;
   }
   if (image_data != nullptr) {
     const auto surface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_ABGR8888, image_data, width * 4);
@@ -112,7 +115,8 @@ Window Window::create(const WindowInfo& info) {
       OX_LOG_ERROR("Couldn't set window icon!");
     }
     SDL_DestroySurface(surface);
-    stbi_image_free(image_data);
+    if (!info.icon.loaded.has_value())
+      stbi_image_free(image_data);
   }
 
   i32 real_width;
@@ -217,12 +221,12 @@ option<SystemDisplay> Window::display_at(const u32 monitor_id) {
   }
 
   return SystemDisplay{
-      .name = monitor_name,
-      .position = {position_bounds.x, position_bounds.y},
-      .work_area = {work_bounds.x, work_bounds.y, work_bounds.w, work_bounds.h},
-      .resolution = {display_mode->w, display_mode->h},
-      .refresh_rate = display_mode->refresh_rate,
-      .content_scale = scale,
+    .name = monitor_name,
+    .position = {position_bounds.x, position_bounds.y},
+    .work_area = {work_bounds.x, work_bounds.y, work_bounds.w, work_bounds.h},
+    .resolution = {display_mode->w, display_mode->h},
+    .refresh_rate = display_mode->refresh_rate,
+    .content_scale = scale,
   };
 }
 

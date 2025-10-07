@@ -51,8 +51,8 @@ void EditorLayer::on_attach() {
     {.preset = Preset::eRTT2DUnmipped,
      .format = vuk::Format::eR8G8B8A8Srgb,
      .mime = {},
-     .loaded_data = EngineBanner,
-     .extent = vuk::Extent3D{.width = EngineBannerWidth, .height = EngineBannerHeight, .depth = 1u}}
+     .loaded_data = editor_banner,
+     .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u}}
   );
 
   auto scene_hierarchy_panel = add_panel<SceneHierarchyPanel>();
