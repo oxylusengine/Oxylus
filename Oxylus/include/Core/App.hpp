@@ -21,22 +21,26 @@ struct AppSpec {
   std::string assets_path = "Resources";
   bool headless = false;
   AppCommandLineArgs command_line_args = {};
-  WindowInfo window_info = {};
 };
 
 class App {
 public:
-  App(const AppSpec& spec);
+  App();
   virtual ~App();
 
   static App* get() { return instance_; }
   static void set_instance(App* instance);
 
-  void run(this App& self);
-  void close(this App& self);
+  auto run(this App& self) -> void;
+  auto close(this App& self) -> void;
 
   auto push_imgui_layer(this App& self) -> App&;
-  App& push_layer(std::unique_ptr<Layer>&& layer);
+  auto push_layer(this App& self, std::unique_ptr<Layer>&& layer) -> App&;
+
+  auto with_name(this App& self, std::string name) -> App&;
+  auto with_args(this App& self, AppCommandLineArgs args) -> App&;
+  auto with_window(this App& self, WindowInfo window_info) -> App&;
+  auto with_working_directory(this App& self, std::string dir) -> App&;
 
   template <typename T, typename... Args>
   auto with(this App& self, Args&&... args) -> App& {
@@ -52,29 +56,30 @@ public:
     return get()->registry.get<T>();
   }
 
-  const AppSpec& get_specification() const { return app_spec; }
-  const AppCommandLineArgs& get_command_line_args() const { return app_spec.command_line_args; }
+  auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
+  auto get_imgui_layer(this const App& self) -> ImGuiLayer*;
+  auto get_window(this const App& self) -> const Window&;
+  auto get_swapchain_extent(this const App& self) -> glm::vec2;
 
-  ImGuiLayer* get_imgui_layer() const { return imgui_layer; }
-
-  const Window& get_window() const { return window; }
-  static VkContext& get_vkcontext() { return *instance_->vk_context; }
-  glm::vec2 get_swapchain_extent() const;
-
-  static const Timestep& get_timestep() { return instance_->timestep; }
-
-  bool asset_directory_exists() const;
-
-  static auto get_vfs() -> VFS& { return get()->vfs; }
+  static auto get_vkcontext() -> VkContext&;
+  static auto get_timestep() -> const Timestep&;
+  static auto get_vfs() -> VFS&;
 
 private:
   static App* instance_;
-  AppSpec app_spec = {};
+
+  std::string name = "Oxylus App";
+  std::string assets_path = "Resources";
+  std::string working_directory = {};
+  AppCommandLineArgs command_line_args = {};
+  option<WindowInfo> window_info = nullopt;
+
+  std::unique_ptr<VkContext> vk_context = nullptr;
+  option<Window> window = nullopt;
+  glm::vec2 swapchain_extent = {};
+
   std::vector<std::unique_ptr<Layer>> layer_stack = {};
   ImGuiLayer* imgui_layer = nullptr;
-  std::unique_ptr<VkContext> vk_context = nullptr;
-  Window window = {};
-  glm::vec2 swapchain_extent = {};
 
   VFS vfs = {};
   ModuleRegistry registry = {};
@@ -85,8 +90,6 @@ private:
   float last_frame_time = 0.0f;
 
   friend int ::main(int argc, char** argv);
-
-  auto init(this App& self) -> void;
 };
 
 App* create_application(const AppCommandLineArgs& args);

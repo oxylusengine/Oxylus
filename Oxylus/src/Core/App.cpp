@@ -1,31 +1,25 @@
 #include "Core/App.hpp"
 
-#include <ranges>
 #include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetManager.hpp"
-#include "Audio/AudioEngine.hpp"
 #include "Core/EventSystem.hpp"
 #include "Core/FileSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Core/Layer.hpp"
 #include "Core/VFS.hpp"
-#include "Physics/Physics.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Render/Window.hpp"
-#include "Scripting/LuaManager.hpp"
 #include "UI/ImGuiLayer.hpp"
 #include "Utils/Profiler.hpp"
-#include "Utils/Random.hpp"
-#include "Utils/Timer.hpp"
 
 namespace ox {
 App* App::instance_ = nullptr;
 
-App::App(const AppSpec& spec) : app_spec(spec) {
+App::App() {
   ZoneScoped;
   if (instance_) {
     OX_LOG_ERROR("Application already exists!");
@@ -33,40 +27,11 @@ App::App(const AppSpec& spec) : app_spec(spec) {
   }
 
   instance_ = this;
-
-  this->init();
 }
 
 App::~App() { is_running = false; }
 
 void App::set_instance(App* instance) { instance_ = instance; }
-
-auto App::init(this App& self) -> void {
-  ZoneScoped;
-
-  if (self.app_spec.working_directory.empty())
-    self.app_spec.working_directory = std::filesystem::current_path().string();
-  else
-    std::filesystem::current_path(self.app_spec.working_directory);
-
-  self.vfs.mount_dir(VFS::APP_DIR, fs::absolute(self.app_spec.assets_path));
-
-  if (!self.app_spec.headless) {
-    self.window = Window::create(self.app_spec.window_info);
-    self.vk_context = std::make_unique<VkContext>();
-
-    const bool enable_validation = self.app_spec.command_line_args.contains("--vulkan-validation");
-    self.vk_context->create_context(self.window, enable_validation);
-  }
-
-  // Internal modules
-  self.with<EventSystem>().with<JobManager>();
-  if (!self.app_spec.headless) {
-    self.with<RendererConfig>().with<Renderer>(self.vk_context.get());
-  }
-
-  self.mod<JobManager>().wait();
-}
 
 auto App::push_imgui_layer(this App& self) -> App& {
   auto imgui = std::make_unique<ImGuiLayer>();
@@ -76,15 +41,88 @@ auto App::push_imgui_layer(this App& self) -> App& {
   return self;
 }
 
-App& App::push_layer(std::unique_ptr<Layer>&& layer) {
-  layer_stack.emplace_back(std::move(layer));
+App& App::push_layer(this App& self, std::unique_ptr<Layer>&& layer) {
+  self.layer_stack.emplace_back(std::move(layer));
+  return self;
+}
 
-  return *this;
+auto App::with_name(this App& self, std::string name) -> App& {
+  self.name = name;
+  return self;
+}
+
+auto App::with_args(this App& self, AppCommandLineArgs args) -> App& {
+  self.command_line_args = args;
+  return self;
+}
+
+auto App::with_window(this App& self, WindowInfo window_info) -> App& {
+  self.window_info = window_info;
+  return self;
+}
+
+auto App::with_working_directory(this App& self, std::string dir) -> App& {
+  self.working_directory = dir;
+  return self;
+}
+
+auto App::get_command_line_args(this const App& self) -> const AppCommandLineArgs& {
+  return self.command_line_args; //
+}
+
+auto App::get_imgui_layer(this const App& self) -> ImGuiLayer* {
+  OX_CHECK_NULL(self.imgui_layer);
+  return self.imgui_layer;
+}
+
+auto App::get_window(this const App& self) -> const Window& {
+  OX_ASSERT(self.window.has_value());
+  return self.window.value();
+}
+
+auto App::get_swapchain_extent(this const App& self) -> glm::vec2 {
+  return self.swapchain_extent; //
+}
+
+auto App::get_vkcontext() -> VkContext& {
+  return *instance_->vk_context; //
+}
+
+auto App::get_timestep() -> const Timestep& {
+  return instance_->timestep; //
+}
+
+auto App::get_vfs() -> VFS& {
+  return instance_->vfs; //
 }
 
 void App::run(this App& self) {
   ZoneScoped;
 
+  if (self.working_directory.empty())
+    self.working_directory = std::filesystem::current_path().string();
+  else
+    std::filesystem::current_path(self.working_directory);
+
+  self.vfs.mount_dir(VFS::APP_DIR, fs::absolute(self.assets_path));
+
+  if (self.window_info.has_value()) {
+    self.window = Window::create(*self.window_info);
+    self.vk_context = std::make_unique<VkContext>();
+
+    const bool enable_validation = self.command_line_args.contains("--vulkan-validation");
+    self.vk_context->create_context(*self.window, enable_validation);
+  }
+
+  // Internal modules
+  self.with<EventSystem>().with<JobManager>();
+  if (self.window.has_value()) {
+    self.with<RendererConfig>().with<Renderer>(self.vk_context.get());
+  }
+
+  self.mod<JobManager>().wait();
+
+  // Optional modules
   self.registry.init();
 
   self.mod<JobManager>().wait();
@@ -178,8 +216,8 @@ void App::run(this App& self) {
     vuk::Value<vuk::ImageAttachment> swapchain_attachment = {};
     vuk::Format format = {};
     vuk::Extent3D extent = {};
-    if (!self.app_spec.headless) {
-      self.window.poll(window_callbacks);
+    if (self.window.has_value()) {
+      self.window->poll(window_callbacks);
 
       swapchain_attachment = self.vk_context->new_frame();
       swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
@@ -202,7 +240,7 @@ void App::run(this App& self) {
     self.registry.update(self.timestep.get_millis());
     self.registry.render(extent, format);
 
-    if (!self.app_spec.headless) {
+    if (self.window_info.has_value()) {
       swapchain_attachment = self.imgui_layer->end_frame(*self.vk_context, std::move(swapchain_attachment));
 
       self.vk_context->end_frame(swapchain_attachment);
@@ -236,13 +274,9 @@ void App::close(this App& self) {
 
   self.registry.deinit();
 
-  if (!self.app_spec.headless) {
-    self.window.destroy();
+  if (self.window.has_value()) {
+    self.window->destroy();
     self.vk_context->destroy_context();
   }
 }
-
-glm::vec2 App::get_swapchain_extent() const { return this->swapchain_extent; }
-
-bool App::asset_directory_exists() const { return std::filesystem::exists(app_spec.assets_path); }
 } // namespace ox

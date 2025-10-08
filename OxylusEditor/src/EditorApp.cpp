@@ -12,44 +12,48 @@
 namespace ox {
 class OxylusEditor : public App {
 public:
-  OxylusEditor(const AppSpec& spec) : App(spec) {}
+  OxylusEditor() : App() {}
 };
 
 App* create_application(const AppCommandLineArgs& args) {
-  AppSpec spec;
+  std::string name = "Oxylus Engine - Editor";
 #ifdef OX_RELEASE
-  spec.name = "Oxylus Engine - Editor - Release";
+  name = "Oxylus Engine - Editor - Release";
 #endif
 #ifdef OX_DEBUG
-  spec.name = "Oxylus Engine - Editor - Debug";
+  name = "Oxylus Engine - Editor - Debug";
 #endif
 #ifdef OX_DISTRIBUTION
-  spec.name = "Oxylus Engine - Editor - Dist";
+  name = "Oxylus Engine - Editor - Dist";
 #endif
-  spec.working_directory = std::filesystem::current_path().string();
-  spec.command_line_args = args;
-  const WindowInfo::Icon icon = {
-    .loaded = WindowInfo::Icon::Loaded{.data = engine_logo, .width = engine_logoWidth, .height = engine_logoHeight}
-  };
-  spec.window_info = {
-    .title = spec.name,
-    .icon = icon,
-    .width = 1720,
-    .height = 900,
-#if 0
-      .flags = WindowFlag::Centered,
-#else
-    .flags = WindowFlag::Centered | WindowFlag::Resizable,
-#endif
-  };
 
-  const auto app = new OxylusEditor(spec);
-  app->with<AssetManager>()
+  const auto app = new OxylusEditor();
+  app->with_name(name)
+    .with_args(args)
+    .with_working_directory(fs::current_path().string())
+    .with_window(
+      WindowInfo{
+        .title = name,
+        .icon =
+          WindowInfo::Icon{
+            .loaded =
+              WindowInfo::Icon::Loaded{
+                .data = engine_logo,
+                .width = engine_logoWidth,
+                .height = engine_logoHeight,
+              }
+          },
+        .width = 1720,
+        .height = 900,
+        .flags = WindowFlag::Centered | WindowFlag::Resizable,
+      }
+    )
+    .with<AssetManager>()
     .with<AudioEngine>()
-    .with<LuaManager>()
     .with<Physics>()
     .with<Input>()
     .with<NetworkManager>()
+    .with<LuaManager>()
     .push_imgui_layer()
     .push_layer(std::make_unique<EditorLayer>());
 
