@@ -15,14 +15,6 @@ class Layer;
 class ImGuiLayer;
 class VkContext;
 
-struct AppSpec {
-  std::string name = "Oxylus App";
-  std::string working_directory = {};
-  std::string assets_path = "Resources";
-  bool headless = false;
-  AppCommandLineArgs command_line_args = {};
-};
-
 class App {
 public:
   App();
