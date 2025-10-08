@@ -39,10 +39,7 @@ App::App(const AppSpec& spec) : app_spec(spec) {
 
 App::~App() { is_running = false; }
 
-void App::set_instance(App* instance) {
-  instance_ = instance;
-  mod<Input>().set_instance();
-}
+void App::set_instance(App* instance) { instance_ = instance; }
 
 auto App::init(this App& self) -> void {
   ZoneScoped;
@@ -68,8 +65,7 @@ auto App::init(this App& self) -> void {
     self.with<RendererConfig>().with<Renderer>(self.vk_context.get());
   }
 
-  auto& job_man = self.mod<JobManager>();
-  job_man.wait();
+  self.mod<JobManager>().wait();
 }
 
 auto App::push_imgui_layer(this App& self) -> App& {
@@ -91,14 +87,11 @@ void App::run(this App& self) {
 
   self.registry.init();
 
+  self.mod<JobManager>().wait();
+
   for (auto& layer : self.layer_stack) {
     layer->on_attach();
   }
-
-  auto& input_sys = self.mod<Input>();
-  Input::set_instance(); // TODO: Get rid off
-
-  auto& asset_man = self.mod<AssetManager>();
 
   WindowCallbacks window_callbacks = {};
   window_callbacks.user_data = &self;
@@ -214,10 +207,10 @@ void App::run(this App& self) {
 
       self.vk_context->end_frame(swapchain_attachment);
 
-      input_sys.reset_pressed();
+      App::mod<Input>().reset_pressed();
     }
 
-    asset_man.load_deferred_assets();
+    self.mod<AssetManager>().load_deferred_assets();
 
     FrameMark;
   }

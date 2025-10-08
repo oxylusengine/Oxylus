@@ -10,6 +10,7 @@
 #include <thread>
 
 #include "Core/Arc.hpp"
+#include "Core/Option.hpp"
 
 namespace ox {
 using JobFn = std::function<void()>;
@@ -105,7 +106,7 @@ public:
     });
   }
 
-  auto find_job(this JobTracker& self, const std::string& name) -> std::optional<std::reference_wrapper<JobRecord>> {
+  auto find_job(this JobTracker& self, const std::string& name) -> ox::option<std::reference_wrapper<JobRecord>> {
     std::unique_lock lock(self.mutex);
     for (auto& [job_ptr, record] : self.jobs) {
       if (record.name == name) {

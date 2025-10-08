@@ -20,8 +20,6 @@ public:
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
 
-  static void set_instance();
-
   void reset_pressed();
   void reset();
 
@@ -29,33 +27,32 @@ public:
   static MouseCode to_mouse_code(SDL_MouseButtonFlags key);
 
   /// Keyboard
-  static bool get_key_pressed(const KeyCode key) { return _instance->input_data.key_pressed[int(key)]; }
-  static bool get_key_released(const KeyCode key) { return _instance->input_data.key_released[int(key)]; }
-  static bool get_key_held(const KeyCode key) { return _instance->input_data.key_held[int(key)]; }
+  bool get_key_pressed(const KeyCode key) { return input_data.key_pressed[int(key)]; }
+  bool get_key_released(const KeyCode key) { return input_data.key_released[int(key)]; }
+  bool get_key_held(const KeyCode key) { return input_data.key_held[int(key)]; }
 
   /// Mouse
-  static bool get_mouse_clicked(const MouseCode key) { return _instance->input_data.mouse_clicked[int(key)]; }
-  static bool get_mouse_released(const MouseCode key) { return _instance->input_data.mouse_released[int(key)]; }
-  static bool get_mouse_held(const MouseCode key) { return _instance->input_data.mouse_held[int(key)]; }
-  static glm::vec2 get_mouse_position();
-  static glm::vec2 get_mouse_position_rel();
+  bool get_mouse_clicked(const MouseCode key) { return input_data.mouse_clicked[int(key)]; }
+  bool get_mouse_released(const MouseCode key) { return input_data.mouse_released[int(key)]; }
+  bool get_mouse_held(const MouseCode key) { return input_data.mouse_held[int(key)]; }
+  glm::vec2 get_mouse_position();
+  glm::vec2 get_mouse_position_rel();
 
-  static void set_mouse_position_global(float x, float y);
-  static void set_mouse_position_window(const Window& window, glm::vec2 position);
+  void set_mouse_position_global(float x, float y);
+  void set_mouse_position_window(const Window& window, glm::vec2 position);
 
-  static bool get_relative_mouse_mode_window(const Window& window);
-  static void set_relative_mouse_mode_window(const Window& window, bool enabled);
+  bool get_relative_mouse_mode_window(const Window& window);
+  void set_relative_mouse_mode_window(const Window& window, bool enabled);
 
-  static float get_mouse_offset_x();
-  static float get_mouse_offset_y();
-  static float get_mouse_scroll_offset_y();
-  static bool get_mouse_moved();
+  float get_mouse_offset_x();
+  float get_mouse_offset_y();
+  float get_mouse_scroll_offset_y();
+  bool get_mouse_moved();
 
 private:
 #define MAX_KEYS 512
 #define MAX_BUTTONS 32
 
-  static Input* _instance;
   friend class App;
 
   struct InputData {

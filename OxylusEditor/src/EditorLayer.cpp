@@ -312,23 +312,24 @@ void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format
 }
 
 void EditorLayer::editor_shortcuts() {
-  if (Input::get_key_held(KeyCode::LeftControl)) {
-    if (Input::get_key_pressed(KeyCode::Z)) {
+  auto& input_sys = App::mod<Input>();
+  if (input_sys.get_key_held(KeyCode::LeftControl)) {
+    if (input_sys.get_key_pressed(KeyCode::Z)) {
       undo();
     }
-    if (Input::get_key_pressed(KeyCode::Y)) {
+    if (input_sys.get_key_pressed(KeyCode::Y)) {
       redo();
     }
-    if (Input::get_key_pressed(KeyCode::N)) {
+    if (input_sys.get_key_pressed(KeyCode::N)) {
       new_scene();
     }
-    if (Input::get_key_pressed(KeyCode::S)) {
+    if (input_sys.get_key_pressed(KeyCode::S)) {
       save_scene();
     }
-    if (Input::get_key_pressed(KeyCode::O)) {
+    if (input_sys.get_key_pressed(KeyCode::O)) {
       open_scene_file_dialog();
     }
-    if (Input::get_key_held(KeyCode::LeftShift) && Input::get_key_pressed(KeyCode::S)) {
+    if (input_sys.get_key_held(KeyCode::LeftShift) && input_sys.get_key_pressed(KeyCode::S)) {
       save_scene_as();
     }
   }

@@ -3,16 +3,9 @@
 #include "Core/App.hpp"
 
 namespace ox {
-Input* Input::_instance = nullptr;
-
 auto Input::init() -> std::expected<void, std::string> { return {}; }
 
 auto Input::deinit() -> std::expected<void, std::string> { return {}; }
-
-void Input::set_instance() {
-  if (_instance == nullptr)
-    _instance = &App::mod<Input>();
-}
 
 void Input::reset_pressed() {
   ZoneScoped;
@@ -35,9 +28,9 @@ void Input::reset() {
   input_data.mouse_moved = false;
 }
 
-glm::vec2 Input::get_mouse_position() { return _instance->input_data.mouse_pos; }
+glm::vec2 Input::get_mouse_position() { return input_data.mouse_pos; }
 
-glm::vec2 Input::get_mouse_position_rel() { return _instance->input_data.mouse_pos_rel; }
+glm::vec2 Input::get_mouse_position_rel() { return input_data.mouse_pos_rel; }
 
 void Input::set_mouse_position_global(const float x, const float y) {
   ZoneScoped;
@@ -63,13 +56,13 @@ void Input::set_mouse_position_window(const Window& window, glm::vec2 position) 
   SDL_WarpMouseInWindow(static_cast<SDL_Window*>(window.get_handle()), position.x, position.y);
 }
 
-float Input::get_mouse_offset_x() { return _instance->input_data.mouse_offset_x; }
+float Input::get_mouse_offset_x() { return input_data.mouse_offset_x; }
 
-float Input::get_mouse_offset_y() { return _instance->input_data.mouse_offset_y; }
+float Input::get_mouse_offset_y() { return input_data.mouse_offset_y; }
 
-float Input::get_mouse_scroll_offset_y() { return _instance->input_data.scroll_offset_y; }
+float Input::get_mouse_scroll_offset_y() { return input_data.scroll_offset_y; }
 
-bool Input::get_mouse_moved() { return _instance->input_data.mouse_moved; }
+bool Input::get_mouse_moved() { return input_data.mouse_moved; }
 
 KeyCode Input::to_keycode(SDL_Keycode keycode, SDL_Scancode scancode) {
   switch (scancode) {
