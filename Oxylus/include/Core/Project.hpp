@@ -7,7 +7,6 @@ struct ProjectConfig {
 
   std::string start_scene = {};
   std::string asset_directory = {};
-  std::string module_name = {};
 };
 
 struct AssetDirectory {
@@ -50,10 +49,6 @@ public:
   auto get_asset_directory() -> const std::unique_ptr<AssetDirectory>& { return asset_directory; }
 
   auto register_assets(const std::string& path) -> void;
-
-  auto load_module() -> void;
-  auto unload_module() const -> void;
-  auto check_module() -> void;
 
 private:
   ProjectConfig project_config = {};

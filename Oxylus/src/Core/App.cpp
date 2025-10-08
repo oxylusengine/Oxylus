@@ -11,7 +11,6 @@
 #include "Core/JobManager.hpp"
 #include "Core/Layer.hpp"
 #include "Core/VFS.hpp"
-#include "Modules/ModuleRegistry.hpp"
 #include "Physics/Physics.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererConfig.hpp"
@@ -74,7 +73,6 @@ App::App(const AppSpec& spec) : app_spec(spec) {
   register_system<Random>(EngineSystems::Random);
   register_system<AudioEngine>(EngineSystems::AudioEngine);
   register_system<LuaManager>(EngineSystems::LuaManager);
-  register_system<ModuleRegistry>(EngineSystems::ModuleRegistry);
   register_system<RendererConfig>(EngineSystems::RendererConfig);
   register_system<Physics>(EngineSystems::Physics);
   register_system<Input>(EngineSystems::Input);

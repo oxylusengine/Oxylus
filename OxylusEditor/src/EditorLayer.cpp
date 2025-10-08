@@ -17,7 +17,6 @@
 #include "Panels/StatisticsPanel.hpp"
 #include "Panels/TextEditorPanel.hpp"
 #include "Render/Window.hpp"
-#include "UI/TextEditor.hpp"
 #include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
 #include "Utils/Command.hpp"
@@ -91,15 +90,12 @@ void EditorLayer::on_attach() {
 
 void EditorLayer::on_detach() {
   editor_config.save_config();
-  active_project->unload_module();
 
   auto* job_man = App::get_job_manager();
   job_man->get_tracker().stop_tracking();
 }
 
 void EditorLayer::on_update(const Timestep& delta_time) {
-  active_project->check_module();
-
   for (const auto& panel : editor_panels | std::views::values) {
     if (!panel->visible)
       continue;
@@ -225,9 +221,6 @@ void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format
           ImGui::EndDisabled();
           if (ImGui::MenuItem("Settings")) {
             get_panel<EditorSettingsPanel>()->visible = true;
-          }
-          if (ImGui::MenuItem("Reload project module")) {
-            active_project->load_module();
           }
           ImGui::EndMenu();
         }

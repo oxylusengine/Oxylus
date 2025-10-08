@@ -6,8 +6,6 @@
 #include "Core/ProjectSerializer.hpp"
 #include "Core/UUID.hpp"
 #include "Core/VFS.hpp"
-#include "Modules/ModuleRegistry.hpp"
-#include "Modules/ModuleUtil.hpp"
 
 namespace ox {
 struct AssetDirectoryCallbacks {
@@ -87,39 +85,6 @@ auto Project::register_assets(const std::string& path) -> void {
   populate_directory(this->asset_directory.get(), {});
 }
 
-void Project::load_module() {
-  if (get_config().module_name.empty())
-    return;
-
-  const auto module_path = fs::append_paths(get_project_directory(), project_config.module_name);
-  ModuleUtil::load_module(project_config.module_name, module_path);
-  auto* module_registry = App::get_system<ModuleRegistry>(EngineSystems::ModuleRegistry);
-  if (auto* module = module_registry->get_lib(project_config.module_name))
-    last_module_write_time = std::filesystem::last_write_time(module->path + dylib::filename_components::suffix);
-}
-
-void Project::unload_module() const {
-  if (!project_config.module_name.empty())
-    ModuleUtil::unload_module(project_config.module_name);
-}
-
-void Project::check_module() {
-  if (get_config().module_name.empty())
-    return;
-
-  auto* module_registry = App::get_system<ModuleRegistry>(EngineSystems::ModuleRegistry);
-  if (auto* module = module_registry->get_lib(project_config.module_name)) {
-    const auto& module_path = module->path + dylib::filename_components::suffix;
-    if (std::filesystem::last_write_time(module_path).time_since_epoch().count() !=
-        last_module_write_time.time_since_epoch().count()) {
-      ModuleUtil::unload_module(project_config.module_name);
-      ModuleUtil::load_module(project_config.module_name, module->path);
-      last_module_write_time = std::filesystem::last_write_time(module_path);
-      OX_LOG_INFO("Reloaded {} module.", project_config.module_name);
-    }
-  }
-}
-
 auto Project::new_project(this Project& self,
                           const std::string& project_dir,
                           const std::string& project_name,
@@ -167,8 +132,6 @@ auto Project::load(this Project& self, const std::string& path) -> bool {
 
     self.asset_directory.reset();
     self.register_assets(asset_dir_path);
-
-    self.load_module();
 
     OX_LOG_INFO("Project loaded: {0}", self.project_config.name);
     return true;

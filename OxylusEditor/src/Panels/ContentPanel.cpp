@@ -13,9 +13,7 @@
 #include "EditorLayer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
-#include "Utils/FileWatch.hpp"
 #include "Utils/Profiler.hpp"
-#include "Utils/StringUtils.hpp"
 
 namespace ox {
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_STRING = {
@@ -266,10 +264,6 @@ void ContentPanel::init() {
   _assets_directory = assets_dir;
   _current_directory = _assets_directory;
   refresh();
-
-  [[maybe_unused]]
-  static filewatch::FileWatch<std::string> watch(_assets_directory.string(),
-                                                 [this](const auto&, const filewatch::Event) { refresh(); });
 }
 
 void ContentPanel::on_update() { _elapsed_time += static_cast<float>(App::get_timestep()); }
