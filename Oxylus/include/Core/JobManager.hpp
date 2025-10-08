@@ -80,7 +80,7 @@ public:
     }
   }
 
-  auto get_status(this const JobTracker& self) -> std::vector<std::pair<std::string, bool>> {
+  auto get_status(this JobTracker& self) -> std::vector<std::pair<std::string, bool>> {
     std::shared_lock lock(self.mutex);
     std::vector<std::pair<std::string, bool>> result;
 
@@ -115,8 +115,8 @@ public:
   }
 
 private:
-  mutable std::shared_mutex mutex;
-  std::unordered_map<const Job*, JobRecord> jobs;
+  std::shared_mutex mutex = {};
+  std::unordered_map<const Job*, JobRecord> jobs = {};
   std::atomic<bool> tracking_enabled{false};
 };
 

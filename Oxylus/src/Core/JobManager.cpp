@@ -72,7 +72,7 @@ JobManager::JobManager(u32 threads) {
 auto JobManager::shutdown(this JobManager& self) -> void {
   ZoneScoped;
 
-  std::unique_lock _(self.mutex);
+  std::unique_lock lock(self.mutex);
   self.running = false;
   self.condition_var.notify_all();
 }
@@ -88,7 +88,7 @@ auto JobManager::worker(this JobManager& self, u32 id) -> void {
   OX_DEFER() { this_thread_worker.id = ~0_u32; };
 
   while (true) {
-    auto lock = std::unique_lock(self.mutex);
+    std::unique_lock lock(self.mutex);
     while (self.jobs.empty()) {
       if (!self.running) {
         return;
@@ -130,7 +130,7 @@ auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) ->
   };
 
   {
-    std::unique_lock _(self.mutex);
+    std::unique_lock lock(self.mutex);
     if (prioritize) {
       self.jobs.push_front(std::move(job));
     } else {

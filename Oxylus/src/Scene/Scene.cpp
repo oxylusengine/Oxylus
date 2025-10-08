@@ -19,7 +19,6 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
-#include "Core/JobManager.hpp"
 #include "Memory/Stack.hpp"
 #include "Physics/Physics.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
@@ -1548,57 +1547,57 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
   JPH::ShapeSettings::ShapeResult shape_result = {};
   glm::vec3 offset = {};
 
-  if (const auto* c = entity.try_get<BoxColliderComponent>()) {
+  if (const auto* bc = entity.try_get<BoxColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D>
-      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), bc->friction, bc->restitution);
 
-    glm::vec3 scale = c->size;
+    glm::vec3 scale = bc->size;
     JPH::BoxShapeSettings shape_settings({glm::abs(scale.x), glm::abs(scale.y), glm::abs(scale.z)}, 0.05f, mat);
-    shape_settings.SetDensity(glm::max(0.001f, c->density));
+    shape_settings.SetDensity(glm::max(0.001f, bc->density));
     shape_result = shape_settings.Create();
-    offset = c->offset;
-  } else if (const auto* c = entity.try_get<SphereColliderComponent>()) {
+    offset = bc->offset;
+  } else if (const auto* scc = entity.try_get<SphereColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D>
-      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), scc->friction, scc->restitution);
 
-    float radius = 2.0f * c->radius * max_scale_component;
+    float radius = 2.0f * scc->radius * max_scale_component;
     JPH::SphereShapeSettings shape_settings(glm::max(0.01f, radius), mat);
-    shape_settings.SetDensity(glm::max(0.001f, c->density));
+    shape_settings.SetDensity(glm::max(0.001f, scc->density));
     shape_result = shape_settings.Create();
-    offset = c->offset;
-  } else if (const auto* c = entity.try_get<CapsuleColliderComponent>()) {
+    offset = scc->offset;
+  } else if (const auto* ccc = entity.try_get<CapsuleColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D>
-      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), ccc->friction, ccc->restitution);
 
-    float radius = 2.0f * c->radius * max_scale_component;
-    JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, radius), mat);
-    shape_settings.SetDensity(glm::max(0.001f, c->density));
+    float radius = 2.0f * ccc->radius * max_scale_component;
+    JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, ccc->height) * 0.5f, glm::max(0.01f, radius), mat);
+    shape_settings.SetDensity(glm::max(0.001f, ccc->density));
     shape_result = shape_settings.Create();
-    offset = c->offset;
-  } else if (const auto* c = entity.try_get<TaperedCapsuleColliderComponent>()) {
+    offset = ccc->offset;
+  } else if (const auto* tcc = entity.try_get<TaperedCapsuleColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D>
-      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), tcc->friction, tcc->restitution);
 
-    float top_radius = 2.0f * c->top_radius * max_scale_component;
-    float bottom_radius = 2.0f * c->bottom_radius * max_scale_component;
+    float top_radius = 2.0f * tcc->top_radius * max_scale_component;
+    float bottom_radius = 2.0f * tcc->bottom_radius * max_scale_component;
     JPH::TaperedCapsuleShapeSettings shape_settings(
-      glm::max(0.01f, c->height) * 0.5f,
+      glm::max(0.01f, tcc->height) * 0.5f,
       glm::max(0.01f, top_radius),
       glm::max(0.01f, bottom_radius),
       mat
     );
-    shape_settings.SetDensity(glm::max(0.001f, c->density));
+    shape_settings.SetDensity(glm::max(0.001f, tcc->density));
     shape_result = shape_settings.Create();
-    offset = c->offset;
-  } else if (const auto* c = entity.try_get<CylinderColliderComponent>()) {
+    offset = tcc->offset;
+  } else if (const auto* cycc = entity.try_get<CylinderColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D>
-      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), c->friction, c->restitution);
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cycc->friction, cycc->restitution);
 
-    float radius = 2.0f * c->radius * max_scale_component;
-    JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, c->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
-    shape_settings.SetDensity(glm::max(0.001f, c->density));
+    float radius = 2.0f * cycc->radius * max_scale_component;
+    JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, cycc->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
+    shape_settings.SetDensity(glm::max(0.001f, cycc->density));
     shape_result = shape_settings.Create();
-    offset = c->offset;
+    offset = cycc->offset;
   }
 
   if (shape_result.HasError()) {
