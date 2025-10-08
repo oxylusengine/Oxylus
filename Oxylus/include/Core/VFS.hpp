@@ -1,17 +1,15 @@
 #pragma once
 
-#include "Core/ESystem.hpp"
+#include <ankerl/unordered_dense.h>
+#include <string>
 
 namespace ox {
-class VFS : public ESystem {
+class VFS {
 public:
   static constexpr auto APP_DIR = "app_dir";
 
   // Only used by OxylusEditor. Virtual directory registered for projects.
   static constexpr auto PROJECT_DIR = "project_dir";
-
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
 
   auto is_mounted_dir(const std::string& virtual_dir) -> bool;
 

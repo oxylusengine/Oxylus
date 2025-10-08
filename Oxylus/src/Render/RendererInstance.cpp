@@ -1302,7 +1302,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void {
   ZoneScoped;
 
-  auto* asset_man = App::get_asset_manager();
+  auto& asset_man = App::mod<AssetManager>();
   auto& vk_context = *self.renderer.vk_context;
 
   self.gpu_scene.scene_flags = {};
@@ -1501,12 +1501,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.scene->world
     .query_builder<const TransformComponent, const SpriteComponent>() //
     .build()
-    .each([asset_man,
+    .each([&asset_man,
            &s = self.scene,
            &cam,
            &rq2d = self.render_queue_2d](flecs::entity e, const TransformComponent& tc, const SpriteComponent& comp) {
       const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
-      if (auto* material = asset_man->get_asset(comp.material)) {
+      if (auto* material = asset_man.get_asset(comp.material)) {
         if (auto transform_id = s->get_entity_transform_id(e)) {
           rq2d.add(
             comp,
@@ -1524,7 +1524,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.scene->world
     .query_builder<const TransformComponent, const ParticleComponent>() //
     .build()
-    .each([asset_man,
+    .each([&asset_man,
            &s = self.scene,
            &cam,
            &rq2d = self.render_queue_2d](flecs::entity e, const TransformComponent& tc, const ParticleComponent& comp) {
@@ -1535,7 +1535,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
       auto particle_system_component = e.parent().try_get<ParticleSystemComponent>();
       if (particle_system_component) {
-        if (auto* material = asset_man->get_asset(particle_system_component->material)) {
+        if (auto* material = asset_man.get_asset(particle_system_component->material)) {
           if (auto transform_id = s->get_entity_transform_id(e)) {
             SpriteComponent sprite_comp = {.sort_y = true};
 

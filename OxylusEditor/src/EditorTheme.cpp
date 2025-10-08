@@ -16,11 +16,11 @@ static ImVec4 lighten(ImVec4 c, float p) {
 void EditorTheme::init(this EditorTheme& self) {
   const auto* app = App::get();
 
-  auto* vfs = App::get_system<VFS>(EngineSystems::VFS);
-  auto regular_font_path = vfs->resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraSans-Regular.ttf");
-  auto bold_font_path = vfs->resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraSans-Bold.ttf");
-  auto icon_font_path = vfs->resolve_physical_dir(VFS::APP_DIR, "Fonts/materialdesignicons-webfont.ttf");
-  auto mono_font_path = vfs->resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraMono-Regular.ttf");
+  auto& vfs = App::get_vfs();
+  auto regular_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraSans-Regular.ttf");
+  auto bold_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraSans-Bold.ttf");
+  auto icon_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/materialdesignicons-webfont.ttf");
+  auto mono_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraMono-Regular.ttf");
 
   auto* imguilayer = app->get_imgui_layer();
 

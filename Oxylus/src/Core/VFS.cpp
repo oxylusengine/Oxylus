@@ -3,10 +3,6 @@
 #include "Core/FileSystem.hpp"
 
 namespace ox {
-auto VFS::init() -> std::expected<void, std::string> { return {}; }
-
-auto VFS::deinit() -> std::expected<void, std::string> { return {}; }
-
 auto VFS::is_mounted_dir(const std::string& virtual_dir) -> bool {
   ZoneScoped;
   return mapped_dirs.contains(virtual_dir);

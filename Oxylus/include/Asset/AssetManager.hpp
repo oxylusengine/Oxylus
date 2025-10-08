@@ -7,7 +7,6 @@
 #include "Asset/Material.hpp"
 #include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
-#include "Core/ESystem.hpp"
 #include "Core/UUID.hpp"
 #include "Memory/SlotMap.hpp"
 #include "Scene/Scene.hpp"
@@ -39,16 +38,18 @@ struct Asset {
 };
 
 using AssetRegistry = ankerl::unordered_dense::map<UUID, Asset>;
-class AssetManager : public ESystem {
+class AssetManager {
 public:
+  constexpr static auto MODULE_NAME = "AssetManager";
+
   struct AssetMetaFile {
     simdjson::padded_string contents;
     simdjson::ondemand::parser parser;
     simdjson::simdjson_result<simdjson::ondemand::document> doc;
   };
 
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
   auto registry() const -> const AssetRegistry&;
 
@@ -91,9 +92,11 @@ public:
   auto unload_texture(const UUID& uuid) -> bool;
   auto is_texture_loaded(const UUID& uuid) -> bool;
 
-  auto load_material(const UUID& uuid,
-                     const Material& material_info,
-                     option<ankerl::unordered_dense::map<UUID, TextureLoadInfo>> texture_info_map = nullopt) -> bool;
+  auto load_material(
+    const UUID& uuid,
+    const Material& material_info,
+    option<ankerl::unordered_dense::map<UUID, TextureLoadInfo>> texture_info_map = nullopt
+  ) -> bool;
   auto unload_material(const UUID& uuid) -> bool;
 
   auto load_scene(const UUID& uuid) -> bool;

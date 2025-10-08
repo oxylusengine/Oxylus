@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "Core/Types.hpp"
 
 namespace ox {
@@ -54,8 +56,10 @@ struct option_flag_val<f64, std::enable_if_t<std::numeric_limits<double>::is_iec
 template <typename T>
 struct option_flag {
 private:
-  static_assert(!std::is_same_v<std::nullopt_t, std::remove_cvref_t<decltype(option_flag_val<T>::nullopt)>>,
-                "To use option_flag, `T` must have option_flag_val defined!");
+  static_assert(
+    !std::is_same_v<std::nullopt_t, std::remove_cvref_t<decltype(option_flag_val<T>::nullopt)>>,
+    "To use option_flag, `T` must have option_flag_val defined!"
+  );
 
   struct Dummy {
     // Make sure it's non-trivial, we don't want to initialize value with its default value.
@@ -149,8 +153,8 @@ public:
   }
 
   template <typename U = T, std::enable_if_t<std::is_constructible_v<T, U&&>, int> = 0>
-  option_flag& operator=(U&& _new) noexcept(std::is_nothrow_assignable_v<T&, U> &&
-                                            std::is_nothrow_constructible_v<T, U>) {
+  option_flag&
+  operator=(U&& _new) noexcept(std::is_nothrow_assignable_v<T&, U> && std::is_nothrow_constructible_v<T, U>) {
     if (has_value()) {
       value_ = std::forward<U>(_new);
     } else {
@@ -159,9 +163,9 @@ public:
     return *this;
   }
 
-  template <typename U,
-            std::enable_if_t<std::conjunction_v<std::is_constructible<T, const U&>, std::is_assignable<T&, const U&>>,
-                             int> = 0>
+  template <
+    typename U,
+    std::enable_if_t<std::conjunction_v<std::is_constructible<T, const U&>, std::is_assignable<T&, const U&>>, int> = 0>
   option_flag& operator=(const option_flag<U>& other) {
     if (other.has_value()) {
       if (has_value()) {
@@ -175,10 +179,12 @@ public:
     return *this;
   }
 
-  template <typename U,
-            std::enable_if_t<std::conjunction_v<std::is_constructible<T, U>, std::is_assignable<T&, U>>, int> = 0>
-  option_flag& operator=(option_flag<U>&& other) noexcept(std::is_nothrow_assignable_v<T&, T> &&
-                                                          std::is_nothrow_constructible_v<T, T>) {
+  template <
+    typename U,
+    std::enable_if_t<std::conjunction_v<std::is_constructible<T, U>, std::is_assignable<T&, U>>, int> = 0>
+  option_flag& operator=(
+    option_flag<U>&& other
+  ) noexcept(std::is_nothrow_assignable_v<T&, T> && std::is_nothrow_constructible_v<T, T>) {
     if (other.has_value()) {
       if (has_value()) {
         value_ = std::move(other.value_);
@@ -226,10 +232,10 @@ bool operator>=(const option_flag<T>& opt, const U& value) {
 }
 
 template <typename T>
-using option =
-    std::conditional_t<!std::is_same_v<std::nullopt_t, std::remove_const_t<decltype(option_flag_val<T>::nullopt)>>,
-                       option_flag<T>,
-                       std::optional<T>>;
+using option = std::conditional_t<
+  !std::is_same_v<std::nullopt_t, std::remove_const_t<decltype(option_flag_val<T>::nullopt)>>,
+  option_flag<T>,
+  std::optional<T>>;
 
 template <typename T>
 using option_ref = option<std::reference_wrapper<T>>;

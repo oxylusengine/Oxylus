@@ -161,6 +161,15 @@ auto AssetManager::deinit() -> std::expected<void, std::string> {
     }
   }
 
+  asset_registry.clear();
+  dirty_materials.clear();
+  model_map.reset();
+  texture_map.reset();
+  material_map.reset();
+  scene_map.reset();
+  audio_map.reset();
+  script_map.reset();
+
   return {};
 }
 
@@ -708,7 +717,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
                             u32 index_offset,
                             u32 index_count
                           ) {
-    auto* asset_man = App::get_asset_manager();
+    auto& asset_man = App::mod<AssetManager>();
     auto* info = static_cast<GLTFCallbacks*>(user_data);
     if (info->model->meshes.size() <= mesh_index) {
       info->model->meshes.resize(mesh_index + 1);
@@ -717,7 +726,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     auto& gltf_mesh = info->model->meshes[mesh_index];
     auto primitive_index = info->model->primitives.size();
     auto& primitive = info->model->primitives.emplace_back();
-    auto* material_asset = asset_man->get_asset(info->model->materials[material_index]);
+    auto* material_asset = asset_man.get_asset(info->model->materials[material_index]);
     auto global_material_index = SlotMap_decode_id(material_asset->material_id).index;
 
     info->model->gpu_meshes.emplace_back();
@@ -799,7 +808,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     };
 
     auto* app = App::get();
-    auto* asset_man = app->get_asset_manager();
+    auto& asset_man = app->mod<AssetManager>();
 
     for (const auto& [material_uuid, material, gltf_material] :
          std::views::zip(model->materials, materials, gltf_materials)) {
@@ -828,7 +837,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
         load_texture_bytes(texture_index.value(), info);
       }
 
-      asset_man->load_material(material_uuid, material, texture_info_map);
+      asset_man.load_material(material_uuid, material, texture_info_map);
     }
   };
 
@@ -883,7 +892,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     model->scenes.push_back({.name = scene.name, .node_indices = scene.node_indices});
   }
 
-  auto& context = app->get_vkcontext();
+  auto& context = App::get()->get_vkcontext();
   //  ── MESH PROCESSING ─────────────────────────────────────────────────
   auto model_indices = std::move(gltf_callbacks.indices);
   auto model_vertices = std::move(gltf_callbacks.vertex_positions);
@@ -1302,7 +1311,7 @@ auto AssetManager::load_material(
     return info;
   };
 
-  auto* job_man = App::get_job_manager();
+  auto& job_man = App::mod<JobManager>();
 
   if (material->albedo_texture) {
     auto info = get_info(material->albedo_texture, vuk::Format::eR8G8B8A8Srgb);
@@ -1329,19 +1338,19 @@ auto AssetManager::load_material(
     load_infos.emplace_back(LoadInfo{material->occlusion_texture, asset->material_id, info});
   }
 
-  job_man->push_job_name(fmt::format("Material job: {}", asset->uuid.str()));
-  job_man->for_each_async(
+  job_man.push_job_name(fmt::format("Material job: {}", asset->uuid.str()));
+  job_man.for_each_async(
     load_infos,
     [](LoadInfo& info, usize index) {
-      auto* asset_man = App::get_asset_manager();
-      asset_man->load_texture(info.texture_uuid, info.texture_load_info);
+      auto& asset_man = App::mod<AssetManager>();
+      asset_man.load_texture(info.texture_uuid, info.texture_load_info);
     },
     [material_id = asset->material_id]() {
-      auto* asset_man = App::get_asset_manager();
-      asset_man->set_material_dirty(material_id);
+      auto& asset_man = App::mod<AssetManager>();
+      asset_man.set_material_dirty(material_id);
     }
   );
-  job_man->pop_job_name();
+  job_man.pop_job_name();
 
   asset->acquire_ref();
   return true;

@@ -171,8 +171,10 @@ bool UI::texture_property(const char* label, UUID& texture_uuid, const char* too
   const ImVec2 x_button_size = {button_size / 4.0f, button_size};
   const float tooltip_size = frame_height * 11.0f;
 
-  ImGui::SetCursorPos({ImGui::GetContentRegionMax().x - button_size - x_button_size.x,
-                       ImGui::GetCursorPosY() + ImGui::GetStyle().FramePadding.y});
+  ImGui::SetCursorPos(
+    {ImGui::GetContentRegionMax().x - button_size - x_button_size.x,
+     ImGui::GetCursorPosY() + ImGui::GetStyle().FramePadding.y}
+  );
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{0, 0});
   ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.25f, 0.25f, 0.25f, 1.0f});
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
@@ -180,9 +182,9 @@ bool UI::texture_property(const char* label, UUID& texture_uuid, const char* too
 
   static auto texture_load_func = [](UUID* asset, const std::string& path) {
     if (!path.empty()) {
-      auto* asset_man = App::get_asset_manager();
-      if (auto new_texture = asset_man->import_asset(path)) {
-        if (asset_man->load_texture(new_texture))
+      auto& asset_man = App::mod<AssetManager>();
+      if (auto new_texture = asset_man.import_asset(path)) {
+        if (asset_man.load_texture(new_texture))
           *asset = new_texture;
       }
     }
@@ -192,35 +194,35 @@ bool UI::texture_property(const char* label, UUID& texture_uuid, const char* too
     const auto& window = App::get()->get_window();
     FileDialogFilter dialog_filters[] = {{.name = "Texture file", .pattern = "png"}};
     window.show_dialog({
-        .kind = DialogKind::OpenFile,
-        .user_data = &asset,
-        .callback =
-            [](void* user_data, const c8* const* files, i32) {
-              auto* usr_d = static_cast<UUID*>(user_data);
-              if (!files || !*files) {
-                return;
-              }
+      .kind = DialogKind::OpenFile,
+      .user_data = &asset,
+      .callback =
+        [](void* user_data, const c8* const* files, i32) {
+          auto* usr_d = static_cast<UUID*>(user_data);
+          if (!files || !*files) {
+            return;
+          }
 
-              const auto first_path_cstr = *files;
-              const auto first_path_len = std::strlen(first_path_cstr);
-              const auto path = std::string(first_path_cstr, first_path_len);
+          const auto first_path_cstr = *files;
+          const auto first_path_len = std::strlen(first_path_cstr);
+          const auto path = std::string(first_path_cstr, first_path_len);
 
-              texture_load_func(usr_d, path);
-            },
-        .title = "Texture file",
-        .default_path = ::fs::current_path(),
-        .filters = dialog_filters,
-        .multi_select = false,
+          texture_load_func(usr_d, path);
+        },
+      .title = "Texture file",
+      .default_path = ::fs::current_path(),
+      .filters = dialog_filters,
+      .multi_select = false,
     });
   };
 
-  auto* asset_man = App::get_asset_manager();
+  auto& asset_man = App::mod<AssetManager>();
 
-  auto* texture_asset = texture_uuid ? asset_man->get_asset(texture_uuid) : nullptr;
+  auto* texture_asset = texture_uuid ? asset_man.get_asset(texture_uuid) : nullptr;
 
   // rect button with the texture
   if (texture_asset) {
-    auto texture = asset_man->get_texture(texture_uuid);
+    auto texture = asset_man.get_texture(texture_uuid);
     if (texture) {
       if (ImGui::ImageButton(label, App::get()->get_imgui_layer()->add_image(*texture), {button_size, button_size})) {
         dialog_load_func(&texture_uuid);
@@ -229,9 +231,12 @@ bool UI::texture_property(const char* label, UUID& texture_uuid, const char* too
       // tooltip
       if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
         ImGui::BeginTooltip();
-        const auto* texture_underlying = asset_man->get_texture(texture_asset->texture_id);
+        const auto* texture_underlying = asset_man.get_texture(texture_asset->texture_id);
         const auto txt_name = fmt::format(
-            "{}:{}", texture_asset->path, vuk::format_to_sv(texture_underlying->get_format()));
+          "{}:{}",
+          texture_asset->path,
+          vuk::format_to_sv(texture_underlying->get_format())
+        );
         ImGui::TextUnformatted(txt_name.c_str());
         ImGui::Spacing();
         ImGui::Image(App::get()->get_imgui_layer()->add_image(*texture), {tooltip_size, tooltip_size});
@@ -278,12 +283,14 @@ bool UI::button(const char* label, const ImVec2& size, const char* tooltip) {
   return changed;
 }
 
-bool UI::toggle_button(const char* label,
-                       const bool state,
-                       const ImVec2 size,
-                       const float alpha,
-                       const float pressed_alpha,
-                       const ImGuiButtonFlags button_flags) {
+bool UI::toggle_button(
+  const char* label,
+  const bool state,
+  const ImVec2 size,
+  const float alpha,
+  const float pressed_alpha,
+  const ImGuiButtonFlags button_flags
+) {
   if (state) {
     ImVec4 color = ImGui::GetStyle().Colors[ImGuiCol_ButtonActive];
 
@@ -309,12 +316,14 @@ bool UI::toggle_button(const char* label,
   return clicked;
 }
 
-bool UI::input_text(const char* label,
-                    std::string* str,
-                    ImGuiInputTextFlags flags,
-                    ImGuiInputTextCallback callback,
-                    void* user_data,
-                    const char* tooltip) {
+bool UI::input_text(
+  const char* label,
+  std::string* str,
+  ImGuiInputTextFlags flags,
+  ImGuiInputTextCallback callback,
+  void* user_data,
+  const char* tooltip
+) {
   push_frame_style();
   begin_property_grid(label, tooltip);
   bool changed = ImGui::InputText(label, str, flags, callback, user_data);
@@ -471,31 +480,37 @@ bool UI::draw_vec2_control(const char* label, glm::vec2& values, const char* too
   return changed;
 }
 
-void UI::image(const Texture& texture,
-               ImVec2 size,
-               const ImVec2& uv0,
-               const ImVec2& uv1,
-               const ImVec4& tint_col,
-               const ImVec4& border_col) {
+void UI::image(
+  const Texture& texture,
+  ImVec2 size,
+  const ImVec2& uv0,
+  const ImVec2& uv1,
+  const ImVec4& tint_col,
+  const ImVec4& border_col
+) {
   ImGui::Image(App::get()->get_imgui_layer()->add_image(texture), size, uv0, uv1, tint_col, border_col);
 }
 
-void UI::image(vuk::Value<vuk::ImageAttachment>&& attch,
-               ImVec2 size,
-               const ImVec2& uv0,
-               const ImVec2& uv1,
-               const ImVec4& tint_col,
-               const ImVec4& border_col) {
+void UI::image(
+  vuk::Value<vuk::ImageAttachment>&& attch,
+  ImVec2 size,
+  const ImVec2& uv0,
+  const ImVec2& uv1,
+  const ImVec4& tint_col,
+  const ImVec4& border_col
+) {
   ImGui::Image(App::get()->get_imgui_layer()->add_image(std::move(attch)), size, uv0, uv1, tint_col, border_col);
 }
 
-bool UI::image_button(const char* id,
-                      const Texture& texture,
-                      const ImVec2 size,
-                      const ImVec2& uv0,
-                      const ImVec2& uv1,
-                      const ImVec4& tint_col,
-                      const ImVec4& bg_col) {
+bool UI::image_button(
+  const char* id,
+  const Texture& texture,
+  const ImVec2 size,
+  const ImVec2& uv0,
+  const ImVec2& uv1,
+  const ImVec4& tint_col,
+  const ImVec4& bg_col
+) {
   return ImGui::ImageButton(id, App::get()->get_imgui_layer()->add_image(texture), size, uv0, uv1, bg_col, tint_col);
 }
 
@@ -524,14 +539,16 @@ bool UI::icon_button(const char* icon, const char* label, const ImVec4 icon_colo
   return clicked;
 }
 
-void UI::clipped_text(const ImVec2& pos_min,
-                      const ImVec2& pos_max,
-                      const char* text,
-                      const char* text_end,
-                      const ImVec2* text_size_if_known,
-                      const ImVec2& align,
-                      const ImRect* clip_rect,
-                      const float wrap_width) {
+void UI::clipped_text(
+  const ImVec2& pos_min,
+  const ImVec2& pos_max,
+  const char* text,
+  const char* text_end,
+  const ImVec2* text_size_if_known,
+  const ImVec2& align,
+  const ImRect* clip_rect,
+  const float wrap_width
+) {
   // Hide anything after a '##' string
   const char* text_display_end = ImGui::FindRenderedTextEnd(text, text_end);
   const int text_len = static_cast<int>(text_display_end - text);
@@ -541,20 +558,31 @@ void UI::clipped_text(const ImVec2& pos_min,
   const ImGuiContext& g = *GImGui;
   const ImGuiWindow* window = g.CurrentWindow;
   clipped_text(
-      window->DrawList, pos_min, pos_max, text, text_display_end, text_size_if_known, align, clip_rect, wrap_width);
+    window->DrawList,
+    pos_min,
+    pos_max,
+    text,
+    text_display_end,
+    text_size_if_known,
+    align,
+    clip_rect,
+    wrap_width
+  );
   if (g.LogEnabled)
     ImGui::LogRenderedText(&pos_min, text, text_display_end);
 }
 
-void UI::clipped_text(ImDrawList* draw_list,
-                      const ImVec2& pos_min,
-                      const ImVec2& pos_max,
-                      const char* text,
-                      const char* text_display_end,
-                      const ImVec2* text_size_if_known,
-                      const ImVec2& align,
-                      const ImRect* clip_rect,
-                      const float wrap_width) {
+void UI::clipped_text(
+  ImDrawList* draw_list,
+  const ImVec2& pos_min,
+  const ImVec2& pos_max,
+  const char* text,
+  const char* text_display_end,
+  const ImVec2* text_size_if_known,
+  const ImVec2& align,
+  const ImRect* clip_rect,
+  const float wrap_width
+) {
   // Perform CPU side clipping for single clipped element to avoid ui::using scissor state
   ImVec2 pos = pos_min;
   const ImVec2 text_size = text_size_if_known ? *text_size_if_known
@@ -574,7 +602,15 @@ void UI::clipped_text(ImDrawList* draw_list,
   // Render
   const ImVec4 fine_clip_rect(clip_min->x, clip_min->y, clip_max->x, clip_max->y);
   draw_list->AddText(
-      nullptr, 0.0f, pos, ImGui::GetColorU32(ImGuiCol_Text), text, text_display_end, wrap_width, &fine_clip_rect);
+    nullptr,
+    0.0f,
+    pos,
+    ImGui::GetColorU32(ImGuiCol_Text),
+    text,
+    text_display_end,
+    wrap_width,
+    &fine_clip_rect
+  );
 }
 
 void UI::draw_framerate_overlay(const ImVec2 work_pos, const ImVec2 work_size, const ImVec2 padding, bool* visible) {

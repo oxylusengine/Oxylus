@@ -21,23 +21,25 @@
 
 namespace ox {
 auto PhysicsBinding::bind(sol::state* state) -> void {
-  state->new_enum("AllowedDOFs",
-                  "All",
-                  RigidBodyComponent::AllowedDOFs::All,
-                  "TranslationX",
-                  RigidBodyComponent::AllowedDOFs::TranslationX,
-                  "TranslationY",
-                  RigidBodyComponent::AllowedDOFs::TranslationY,
-                  "TranslationZ",
-                  RigidBodyComponent::AllowedDOFs::TranslationZ,
-                  "RotationX",
-                  RigidBodyComponent::AllowedDOFs::RotationX,
-                  "RotationY",
-                  RigidBodyComponent::AllowedDOFs::RotationY,
-                  "RotationZ",
-                  RigidBodyComponent::AllowedDOFs::RotationZ,
-                  "Plane2D",
-                  RigidBodyComponent::AllowedDOFs::Plane2D);
+  state->new_enum(
+    "AllowedDOFs",
+    "All",
+    RigidBodyComponent::AllowedDOFs::All,
+    "TranslationX",
+    RigidBodyComponent::AllowedDOFs::TranslationX,
+    "TranslationY",
+    RigidBodyComponent::AllowedDOFs::TranslationY,
+    "TranslationZ",
+    RigidBodyComponent::AllowedDOFs::TranslationZ,
+    "RotationX",
+    RigidBodyComponent::AllowedDOFs::RotationX,
+    "RotationY",
+    RigidBodyComponent::AllowedDOFs::RotationY,
+    "RotationZ",
+    RigidBodyComponent::AllowedDOFs::RotationZ,
+    "Plane2D",
+    RigidBodyComponent::AllowedDOFs::Plane2D
+  );
 
   auto raycast_type = state->new_usertype<RayCast>("RayCast", sol::constructors<RayCast(glm::vec3, glm::vec3)>());
   SET_TYPE_FUNCTION(raycast_type, RayCast, get_point_on_ray);
@@ -45,7 +47,8 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
   SET_TYPE_FUNCTION(raycast_type, RayCast, get_origin);
 
   auto collector_type = state->new_usertype<JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>>(
-      "RayCastCollector");
+    "RayCastCollector"
+  );
   collector_type.set_function("had_hit", &JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>::HadHit);
   collector_type.set_function("sort", &JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>::Sort);
 
@@ -53,14 +56,17 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
   result_type["fraction"] = &JPH::BroadPhaseCastResult::mFraction;
 
   auto physics_table = state->create_table("Physics");
-  physics_table.set_function("cast_ray",
-                             [](const RayCast& ray) -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> {
-                               return App::get_system<Physics>(EngineSystems::Physics)->cast_ray(ray);
-                             });
   physics_table.set_function(
-      "get_hits",
-      [](const JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>& collector)
-          -> std::vector<JPH::BroadPhaseCastResult> { return {collector.mHits.begin(), collector.mHits.end()}; });
+    "cast_ray",
+    [](const RayCast& ray) -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> {
+      return App::mod<Physics>().cast_ray(ray);
+    }
+  );
+  physics_table.set_function(
+    "get_hits",
+    [](const JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>& collector)
+      -> std::vector<JPH::BroadPhaseCastResult> { return {collector.mHits.begin(), collector.mHits.end()}; }
+  );
 
   physics_table.set_function("get_body", [](flecs::entity* e) -> JPH::Body* {
     auto* rb = e->try_get<RigidBodyComponent>();
@@ -78,306 +84,319 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     return character;
   });
 
-  physics_table.set_function("get_entity_from_body",
-                             [](JPH::Body* body, ecs_world_t* world) -> sol::optional<flecs::entity> {
-                               auto entity_id = static_cast<flecs::entity_t>(static_cast<u64>(body->GetUserData()));
-                               if (!entity_id)
-                                 return sol::nullopt;
-                               return flecs::entity{world, entity_id};
-                             });
+  physics_table.set_function(
+    "get_entity_from_body",
+    [](JPH::Body* body, ecs_world_t* world) -> sol::optional<flecs::entity> {
+      auto entity_id = static_cast<flecs::entity_t>(static_cast<u64>(body->GetUserData()));
+      if (!entity_id)
+        return sol::nullopt;
+      return flecs::entity{world, entity_id};
+    }
+  );
 
-  physics_table.set_function("get_screen_ray_from_camera",
-                             [](flecs::entity* e, glm::vec2 screen_pos, glm::vec2 screen_size) -> RayCast {
-                               auto* c = e->try_get<CameraComponent>();
-                               OX_CHECK_NULL(c);
-                               return Camera::get_screen_ray(*c, screen_pos, screen_size);
-                             });
+  physics_table.set_function(
+    "get_screen_ray_from_camera",
+    [](flecs::entity* e, glm::vec2 screen_pos, glm::vec2 screen_size) -> RayCast {
+      auto* c = e->try_get<CameraComponent>();
+      OX_CHECK_NULL(c);
+      return Camera::get_screen_ray(*c, screen_pos, screen_size);
+    }
+  );
 
   state->new_usertype<JPH::BodyID>(
-      "BodyID",
+    "BodyID",
 
-      "get_index",
-      [](JPH::BodyID& body_id) { return body_id.GetIndex(); },
+    "get_index",
+    [](JPH::BodyID& body_id) { return body_id.GetIndex(); },
 
-      "get_sequence_number",
-      [](JPH::BodyID& body_id) { return body_id.GetSequenceNumber(); },
+    "get_sequence_number",
+    [](JPH::BodyID& body_id) { return body_id.GetSequenceNumber(); },
 
-      "get_index_and_sequence_number",
-      [](JPH::BodyID& body_id) { return body_id.GetIndexAndSequenceNumber(); },
+    "get_index_and_sequence_number",
+    [](JPH::BodyID& body_id) { return body_id.GetIndexAndSequenceNumber(); },
 
-      "is_invalid",
-      [](JPH::BodyID& body_id) { return body_id.IsInvalid(); },
+    "is_invalid",
+    [](JPH::BodyID& body_id) { return body_id.IsInvalid(); },
 
-      sol::meta_function::equal_to,
-      [](JPH::BodyID& body_id1, JPH::BodyID& body_id2) { return body_id1 == body_id2; });
+    sol::meta_function::equal_to,
+    [](JPH::BodyID& body_id1, JPH::BodyID& body_id2) { return body_id1 == body_id2; }
+  );
 
   state->new_usertype<JPH::Body>(
-      "Body",
-      sol::no_constructor,
+    "Body",
+    sol::no_constructor,
 
-      "get_id",
-      &JPH::Body::GetID,
+    "get_id",
+    &JPH::Body::GetID,
 
-      "get_body_type",
-      &JPH::Body::GetBodyType,
+    "get_body_type",
+    &JPH::Body::GetBodyType,
 
-      "is_rigid_body",
-      &JPH::Body::IsRigidBody,
+    "is_rigid_body",
+    &JPH::Body::IsRigidBody,
 
-      "is_soft_body",
-      &JPH::Body::IsSoftBody,
+    "is_soft_body",
+    &JPH::Body::IsSoftBody,
 
-      "is_active",
-      &JPH::Body::IsActive,
+    "is_active",
+    &JPH::Body::IsActive,
 
-      "is_static",
-      &JPH::Body::IsStatic,
+    "is_static",
+    &JPH::Body::IsStatic,
 
-      "is_kinematic",
-      &JPH::Body::IsKinematic,
+    "is_kinematic",
+    &JPH::Body::IsKinematic,
 
-      "is_dynamic",
-      &JPH::Body::IsDynamic,
+    "is_dynamic",
+    &JPH::Body::IsDynamic,
 
-      "can_be_kinematic_or_dynamic",
-      &JPH::Body::CanBeKinematicOrDynamic,
+    "can_be_kinematic_or_dynamic",
+    &JPH::Body::CanBeKinematicOrDynamic,
 
-      "is_sensor",
-      &JPH::Body::IsSensor,
+    "is_sensor",
+    &JPH::Body::IsSensor,
 
-      "set_collide_kinematic_vs_non_dynamic",
-      &JPH::Body::SetCollideKinematicVsNonDynamic,
+    "set_collide_kinematic_vs_non_dynamic",
+    &JPH::Body::SetCollideKinematicVsNonDynamic,
 
-      "get_collide_kinematic_vs_non_dynamic",
-      &JPH::Body::GetCollideKinematicVsNonDynamic,
+    "get_collide_kinematic_vs_non_dynamic",
+    &JPH::Body::GetCollideKinematicVsNonDynamic,
 
-      "set_use_manifold_reduction",
-      &JPH::Body::SetUseManifoldReduction,
+    "set_use_manifold_reduction",
+    &JPH::Body::SetUseManifoldReduction,
 
-      "get_use_manifold_reduction",
-      &JPH::Body::GetUseManifoldReduction,
+    "get_use_manifold_reduction",
+    &JPH::Body::GetUseManifoldReduction,
 
-      "set_apply_gyroscopic_force",
-      &JPH::Body::SetApplyGyroscopicForce,
+    "set_apply_gyroscopic_force",
+    &JPH::Body::SetApplyGyroscopicForce,
 
-      "get_apply_gyroscopic_force",
-      &JPH::Body::GetApplyGyroscopicForce,
+    "get_apply_gyroscopic_force",
+    &JPH::Body::GetApplyGyroscopicForce,
 
-      "set_enhanced_internal_edge_removal",
-      &JPH::Body::SetEnhancedInternalEdgeRemoval,
+    "set_enhanced_internal_edge_removal",
+    &JPH::Body::SetEnhancedInternalEdgeRemoval,
 
-      "get_enhanced_internal_edge_removal",
-      &JPH::Body::GetEnhancedInternalEdgeRemoval,
+    "get_enhanced_internal_edge_removal",
+    &JPH::Body::GetEnhancedInternalEdgeRemoval,
 
-      "get_enhanced_internal_edge_removal_with_body",
-      &JPH::Body::GetEnhancedInternalEdgeRemovalWithBody,
+    "get_enhanced_internal_edge_removal_with_body",
+    &JPH::Body::GetEnhancedInternalEdgeRemovalWithBody,
 
-      "get_motion_type",
-      &JPH::Body::GetMotionType,
+    "get_motion_type",
+    &JPH::Body::GetMotionType,
 
-      "set_motion_type",
-      &JPH::Body::SetMotionType,
+    "set_motion_type",
+    &JPH::Body::SetMotionType,
 
-      "get_broad_phase_layer",
-      &JPH::Body::GetBroadPhaseLayer,
+    "get_broad_phase_layer",
+    &JPH::Body::GetBroadPhaseLayer,
 
-      "get_object_layer",
-      &JPH::Body::GetObjectLayer,
+    "get_object_layer",
+    &JPH::Body::GetObjectLayer,
 
-      "get_friction",
-      &JPH::Body::GetFriction,
+    "get_friction",
+    &JPH::Body::GetFriction,
 
-      "set_friction",
-      &JPH::Body::SetFriction,
+    "set_friction",
+    &JPH::Body::SetFriction,
 
-      "get_restitution",
-      &JPH::Body::GetRestitution,
+    "get_restitution",
+    &JPH::Body::GetRestitution,
 
-      "set_restitution",
-      &JPH::Body::SetRestitution,
+    "set_restitution",
+    &JPH::Body::SetRestitution,
 
-      "get_linear_velocity",
-      [](JPH::Body& body) -> glm::vec3 { return math::from_jolt(body.GetLinearVelocity()); },
+    "get_linear_velocity",
+    [](JPH::Body& body) -> glm::vec3 { return math::from_jolt(body.GetLinearVelocity()); },
 
-      "set_linear_velocity",
-      [](JPH::Body& body, glm::vec3 v) { body.SetLinearVelocity(math::to_jolt(v)); },
+    "set_linear_velocity",
+    [](JPH::Body& body, glm::vec3 v) { body.SetLinearVelocity(math::to_jolt(v)); },
 
-      "add_linear_velocity",
-      [](JPH::Body& body, glm::vec3 v) {
-        const auto physics = App::get_system<Physics>(EngineSystems::Physics);
-        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
-        body_interface.AddLinearVelocity(body.GetID(), math::to_jolt(v));
-      },
+    "add_linear_velocity",
+    [](JPH::Body& body, glm::vec3 v) {
+      auto& physics = App::mod<Physics>();
+      JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
+      body_interface.AddLinearVelocity(body.GetID(), math::to_jolt(v));
+    },
 
-      "set_linear_velocity_clamped",
-      [](JPH::Body& body, const glm::vec3& v) { body.SetLinearVelocityClamped(math::to_jolt(v)); },
+    "set_linear_velocity_clamped",
+    [](JPH::Body& body, const glm::vec3& v) { body.SetLinearVelocityClamped(math::to_jolt(v)); },
 
-      "get_angular_velocity",
-      [](JPH::Body& body) -> glm::vec3 { return math::from_jolt(body.GetAngularVelocity()); },
+    "get_angular_velocity",
+    [](JPH::Body& body) -> glm::vec3 { return math::from_jolt(body.GetAngularVelocity()); },
 
-      "set_angular_velocity",
-      [](JPH::Body& body, const glm::vec3& v) { body.SetAngularVelocity(math::to_jolt(v)); },
+    "set_angular_velocity",
+    [](JPH::Body& body, const glm::vec3& v) { body.SetAngularVelocity(math::to_jolt(v)); },
 
-      "set_angular_velocity_clamped",
-      [](JPH::Body& body, const glm::vec3& v) { body.SetAngularVelocityClamped(math::to_jolt(v)); },
+    "set_angular_velocity_clamped",
+    [](JPH::Body& body, const glm::vec3& v) { body.SetAngularVelocityClamped(math::to_jolt(v)); },
 
-      "get_point_velocity_com",
-      [](JPH::Body& body, const glm::vec3& v) -> glm::vec3 {
-        return math::from_jolt(body.GetPointVelocityCOM(math::to_jolt(v)));
-      },
+    "get_point_velocity_com",
+    [](JPH::Body& body, const glm::vec3& v) -> glm::vec3 {
+      return math::from_jolt(body.GetPointVelocityCOM(math::to_jolt(v)));
+    },
 
-      "get_point_velocity",
-      [](JPH::Body& body, const glm::vec3& v) -> glm::vec3 {
-        return math::from_jolt(body.GetPointVelocity(math::to_jolt(v)));
-      },
+    "get_point_velocity",
+    [](JPH::Body& body, const glm::vec3& v) -> glm::vec3 {
+      return math::from_jolt(body.GetPointVelocity(math::to_jolt(v)));
+    },
 
-      "add_force",
-      [](JPH::Body& body, const glm::vec3& v) { body.AddForce(math::to_jolt(v)); },
+    "add_force",
+    [](JPH::Body& body, const glm::vec3& v) { body.AddForce(math::to_jolt(v)); },
 
-      "add_force_at_position",
-      [](JPH::Body& body, const glm::vec3& v, const glm::vec3& v2) {
-        body.AddForce(math::to_jolt(v), math::to_jolt(v2));
-      },
+    "add_force_at_position",
+    [](JPH::Body& body, const glm::vec3& v, const glm::vec3& v2) {
+      body.AddForce(math::to_jolt(v), math::to_jolt(v2));
+    },
 
-      "add_torque",
-      &JPH::Body::AddTorque,
+    "add_torque",
+    &JPH::Body::AddTorque,
 
-      "get_accumulated_force",
-      &JPH::Body::GetAccumulatedForce,
+    "get_accumulated_force",
+    &JPH::Body::GetAccumulatedForce,
 
-      "get_accumulated_torque",
-      &JPH::Body::GetAccumulatedTorque,
+    "get_accumulated_torque",
+    &JPH::Body::GetAccumulatedTorque,
 
-      "add_impulse",
-      [](JPH::Body& body, const glm::vec3& v) { body.AddImpulse(math::to_jolt(v)); },
+    "add_impulse",
+    [](JPH::Body& body, const glm::vec3& v) { body.AddImpulse(math::to_jolt(v)); },
 
-      "add_impulse_at_position",
-      [](JPH::Body& body, const glm::vec3& v, const glm::vec3& v2) {
-        body.AddImpulse(math::to_jolt(v), math::to_jolt(v2));
-      },
+    "add_impulse_at_position",
+    [](JPH::Body& body, const glm::vec3& v, const glm::vec3& v2) {
+      body.AddImpulse(math::to_jolt(v), math::to_jolt(v2));
+    },
 
-      "add_angular_impulse",
-      &JPH::Body::AddAngularImpulse,
+    "add_angular_impulse",
+    &JPH::Body::AddAngularImpulse,
 
-      "move_kinematic",
-      [](JPH::Body& body, glm::vec3 target_position, const glm::quat& target_rotation, f32 delta_time) {
-        const auto physics = App::get_system<Physics>(EngineSystems::Physics);
-        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
-        body_interface.MoveKinematic(
-            body.GetID(), math::to_jolt(target_position), math::to_jolt(target_rotation), delta_time);
-      },
+    "move_kinematic",
+    [](JPH::Body& body, glm::vec3 target_position, const glm::quat& target_rotation, f32 delta_time) {
+      auto& physics = App::mod<Physics>();
+      JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
+      body_interface
+        .MoveKinematic(body.GetID(), math::to_jolt(target_position), math::to_jolt(target_rotation), delta_time);
+    },
 
-      "get_shape",
-      &JPH::Body::GetShape,
+    "get_shape",
+    &JPH::Body::GetShape,
 
-      "get_position",
-      &JPH::Body::GetPosition,
+    "get_position",
+    &JPH::Body::GetPosition,
 
-      "get_rotation",
-      &JPH::Body::GetRotation,
+    "get_rotation",
+    &JPH::Body::GetRotation,
 
-      "set_rotation",
-      [](JPH::Body* body,
-         const glm::quat& rotation,
-         sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate) {
-        const auto physics = App::get_system<Physics>(EngineSystems::Physics);
-        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
-        body_interface.SetRotation(body->GetID(), math::to_jolt(rotation), *activation_mode);
-      },
+    "set_rotation",
+    [](
+      JPH::Body* body,
+      const glm::quat& rotation,
+      sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate
+    ) {
+      auto& physics = App::mod<Physics>();
+      JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
+      body_interface.SetRotation(body->GetID(), math::to_jolt(rotation), *activation_mode);
+    },
 
-      "get_world_transform",
-      &JPH::Body::GetWorldTransform,
+    "get_world_transform",
+    &JPH::Body::GetWorldTransform,
 
-      "get_center_of_mass_position",
-      &JPH::Body::GetCenterOfMassPosition,
+    "get_center_of_mass_position",
+    &JPH::Body::GetCenterOfMassPosition,
 
-      "get_center_of_mass_transform",
-      &JPH::Body::GetCenterOfMassTransform,
+    "get_center_of_mass_transform",
+    &JPH::Body::GetCenterOfMassTransform,
 
-      "get_inverse_center_of_mass_transform",
-      &JPH::Body::GetInverseCenterOfMassTransform,
+    "get_inverse_center_of_mass_transform",
+    &JPH::Body::GetInverseCenterOfMassTransform,
 
-      "get_world_space_bounds",
-      &JPH::Body::GetWorldSpaceBounds,
+    "get_world_space_bounds",
+    &JPH::Body::GetWorldSpaceBounds,
 
-      // "get_motion_properties",
-      // &JPH::Body::GetMotionProperties,
-      // "get_motion_properties_unchecked",
-      // &JPH::Body::GetMotionPropertiesUnchecked,
+    // "get_motion_properties",
+    // &JPH::Body::GetMotionProperties,
+    // "get_motion_properties_unchecked",
+    // &JPH::Body::GetMotionPropertiesUnchecked,
 
-      "get_world_space_surface_normal",
-      &JPH::Body::GetWorldSpaceSurfaceNormal,
+    "get_world_space_surface_normal",
+    &JPH::Body::GetWorldSpaceSurfaceNormal,
 
-      "get_transformed_shape",
-      &JPH::Body::GetTransformedShape,
+    "get_transformed_shape",
+    &JPH::Body::GetTransformedShape,
 
-      "get_body_creation_settings",
-      &JPH::Body::GetBodyCreationSettings,
+    "get_body_creation_settings",
+    &JPH::Body::GetBodyCreationSettings,
 
-      "get_soft_body_creation_settings",
-      &JPH::Body::GetSoftBodyCreationSettings);
+    "get_soft_body_creation_settings",
+    &JPH::Body::GetSoftBodyCreationSettings
+  );
 
   state->new_usertype<JPH::Character>(
-      "Character",
-      sol::no_constructor,
+    "Character",
+    sol::no_constructor,
 
-      "activate",
-      &JPH::Character::Activate,
+    "activate",
+    &JPH::Character::Activate,
 
-      "set_linear_and_angular_velocity",
-      [](JPH::Character& character,
-         const glm::vec3& inLinearVelocity,
-         const glm::vec3& inAngularVelocity,
-         sol::optional<bool> inLockBodies = true) {
-        character.SetLinearAndAngularVelocity(
-            math::to_jolt(inLinearVelocity), math::to_jolt(inAngularVelocity), *inLockBodies);
-      },
+    "set_linear_and_angular_velocity",
+    [](
+      JPH::Character& character,
+      const glm::vec3& inLinearVelocity,
+      const glm::vec3& inAngularVelocity,
+      sol::optional<bool> inLockBodies = true
+    ) {
+      character
+        .SetLinearAndAngularVelocity(math::to_jolt(inLinearVelocity), math::to_jolt(inAngularVelocity), *inLockBodies);
+    },
 
-      "get_linear_velocity",
-      [](JPH::Character& character, sol::optional<bool> inLockBodies = true) {
-        return math::from_jolt(character.GetLinearVelocity(*inLockBodies));
-      },
+    "get_linear_velocity",
+    [](JPH::Character& character, sol::optional<bool> inLockBodies = true) {
+      return math::from_jolt(character.GetLinearVelocity(*inLockBodies));
+    },
 
-      "set_linear_velocity",
-      [](JPH::Character& character, const glm::vec3& inLinearVelocity, sol::optional<bool> inLockBodies = true) {
-        character.SetLinearVelocity(math::to_jolt(inLinearVelocity), *inLockBodies);
-      },
+    "set_linear_velocity",
+    [](JPH::Character& character, const glm::vec3& inLinearVelocity, sol::optional<bool> inLockBodies = true) {
+      character.SetLinearVelocity(math::to_jolt(inLinearVelocity), *inLockBodies);
+    },
 
-      "add_linear_velocity",
-      [](JPH::Character& character, const glm::vec3& inLinearVelocity, sol::optional<bool> inLockBodies = true) {
-        character.AddLinearVelocity(math::to_jolt(inLinearVelocity), *inLockBodies);
-      },
+    "add_linear_velocity",
+    [](JPH::Character& character, const glm::vec3& inLinearVelocity, sol::optional<bool> inLockBodies = true) {
+      character.AddLinearVelocity(math::to_jolt(inLinearVelocity), *inLockBodies);
+    },
 
-      "add_impulse",
-      [](JPH::Character& character, const glm::vec3& inImpulse, sol::optional<bool> inLockBodies = true) {
-        character.AddImpulse(math::to_jolt(inImpulse), *inLockBodies);
-      },
+    "add_impulse",
+    [](JPH::Character& character, const glm::vec3& inImpulse, sol::optional<bool> inLockBodies = true) {
+      character.AddImpulse(math::to_jolt(inImpulse), *inLockBodies);
+    },
 
-      "get_body_id",
-      &JPH::Character::GetBodyID,
+    "get_body_id",
+    &JPH::Character::GetBodyID,
 
-      "get_position",
-      [](JPH::Character& character, sol::optional<bool> inLockBodies = true) {
-        return math::from_jolt(character.GetPosition(*inLockBodies));
-      },
+    "get_position",
+    [](JPH::Character& character, sol::optional<bool> inLockBodies = true) {
+      return math::from_jolt(character.GetPosition(*inLockBodies));
+    },
 
-      "set_position",
-      [](JPH::Character& character,
-         const glm::vec3& position,
-         sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate,
-         sol::optional<bool> lock_bodies = true) { character.SetPosition(math::to_jolt(position)); },
+    "set_position",
+    [](
+      JPH::Character& character,
+      const glm::vec3& position,
+      sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate,
+      sol::optional<bool> lock_bodies = true
+    ) { character.SetPosition(math::to_jolt(position)); },
 
-      "get_rotation",
-      [](JPH::Character& character, sol::optional<bool> inLockBodies = true) {
-        return math::from_jolt(character.GetRotation(*inLockBodies));
-      },
+    "get_rotation",
+    [](JPH::Character& character, sol::optional<bool> inLockBodies = true) {
+      return math::from_jolt(character.GetRotation(*inLockBodies));
+    },
 
-      "set_rotation",
-      [](JPH::Character& character,
-         const glm::quat& rotation,
-         sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate,
-         sol::optional<bool> inLockBodies = true) {
-        return character.SetRotation(math::to_jolt(rotation), *activation_mode, *inLockBodies);
-      });
+    "set_rotation",
+    [](
+      JPH::Character& character,
+      const glm::quat& rotation,
+      sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate,
+      sol::optional<bool> inLockBodies = true
+    ) { return character.SetRotation(math::to_jolt(rotation), *activation_mode, *inLockBodies); }
+  );
 }
 } // namespace ox

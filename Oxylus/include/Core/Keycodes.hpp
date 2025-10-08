@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Core/Types.hpp"
+
 namespace ox {
 enum class KeyCode : u16 {
   None = UINT16_MAX,

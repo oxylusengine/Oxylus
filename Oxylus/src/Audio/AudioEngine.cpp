@@ -2,6 +2,7 @@
 
 #define MINIAUDIO_IMPLEMENTATION
 
+#include <glm/common.hpp>
 #include <miniaudio.h>
 
 namespace ox {
@@ -140,7 +141,7 @@ auto AudioEngine::set_source_velocity(ma_sound* sound, const glm::vec3& velocity
 }
 
 auto AudioEngine::set_listener_cone(u32 listener_index, f32 cone_inner_angle, f32 cone_outer_angle, f32 cone_outer_gain)
-    -> void {
+  -> void {
   ma_engine_listener_set_cone(engine, listener_index, cone_inner_angle, cone_outer_angle, cone_outer_gain);
 }
 

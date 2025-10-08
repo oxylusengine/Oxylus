@@ -31,8 +31,8 @@ auto LuaManager::init() -> std::expected<void, std::string> {
       "require_script",
       [s = _state.get()](const std::string& virtual_dir, const std::string& path) -> sol::object {
         ZoneScopedN("LuaRequire");
-        auto* vfs = App::get_vfs();
-        auto physical_path = vfs->resolve_physical_dir(virtual_dir, path);
+        auto& vfs = App::get_vfs();
+        auto physical_path = vfs.resolve_physical_dir(virtual_dir, path);
         auto script = fs::read_file(physical_path);
         return s->require_script(path, script);
       });

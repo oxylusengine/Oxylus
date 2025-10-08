@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Core/ESystem.hpp"
 #include "Utils/CVars.hpp"
 
 namespace ox {
@@ -51,8 +50,10 @@ inline AutoCVar_Float cvar_gamma("pp.gamma", "screen gamma", 2.2f);
 // clang-format on
 } // namespace RendererCVar
 
-class RendererConfig : public ESystem {
+class RendererConfig {
 public:
+  constexpr static auto MODULE_NAME = "RendererConfig";
+
   enum Tonemaps {
     TONEMAP_DISABLED = 0,
     TONEMAP_ACES = 1,
@@ -61,8 +62,8 @@ public:
     TONEMAP_REINHARD = 4,
   };
 
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
   bool save_config(const char* path) const;
   bool load_config(const char* path);

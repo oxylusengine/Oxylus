@@ -69,8 +69,8 @@ Core::Core(flecs::world& world) {
       .assign_string([](UUID* data, const char* value) { *data = UUID::from_string(std::string_view(value)).value(); });
 
 #ifdef OX_LUA_BINDINGS
-  auto* lua_manager = App::get_system<LuaManager>(EngineSystems::LuaManager);
-  const auto state = lua_manager->get_state();
+  auto& lua_manager = App::mod<LuaManager>();
+  const auto state = lua_manager.get_state();
 
   auto core_table = state->create_named_table("Core");
 #endif

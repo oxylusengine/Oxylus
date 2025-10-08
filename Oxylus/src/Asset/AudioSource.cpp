@@ -12,7 +12,7 @@ auto AudioSource::load(const std::string& path) -> bool {
   ZoneScoped;
 
   _sound = new ma_sound;
-  auto* engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine)->get_engine();
+  auto* engine = App::mod<AudioEngine>().get_engine();
   const ma_result result = ma_sound_init_from_file(
       engine, path.c_str(), MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, _sound);
   if (result != MA_SUCCESS) {

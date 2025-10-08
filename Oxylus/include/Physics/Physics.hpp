@@ -1,7 +1,6 @@
 #pragma once
 
 // clang-format off
-#include "Core/ESystem.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Render/DebugRenderer.hpp"
 
@@ -13,8 +12,10 @@
 namespace ox {
 class RayCast;
 
-class Physics : public ESystem {
+class Physics {
 public:
+  constexpr static auto MODULE_NAME = "Physics";
+
   static constexpr uint32_t MAX_BODIES = 1024;
   static constexpr uint32_t MAX_BODY_PAIRS = 1024;
   static constexpr uint32_t MAX_CONTACT_CONSTRAINS = 1024;
@@ -22,8 +23,8 @@ public:
   ObjectVsBroadPhaseLayerFilterImpl object_vs_broad_phase_layer_filter_interface;
   ObjectLayerPairFilterImpl object_layer_pair_filter_interface;
 
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
   void step(float physicsTs);
   void debug_draw();
 

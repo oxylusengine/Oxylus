@@ -32,7 +32,7 @@ auto LuaSystem::init_script(this LuaSystem& self, const std::string& path, const
   self.file_path = path;
   self.script_ = script;
 
-  const auto state = App::get_system<LuaManager>(EngineSystems::LuaManager)->get_state();
+  const auto state = App::mod<LuaManager>().get_state();
 
   if (self.environment)
     self.environment.reset();

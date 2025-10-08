@@ -230,8 +230,8 @@ Scene::~Scene() {
   world.release();
 
   lua_systems.clear();
-  auto* lua_manager = App::get_system<LuaManager>(EngineSystems::LuaManager);
-  lua_manager->get_state()->collect_gc();
+  auto& lua_manager = App::mod<LuaManager>();
+  lua_manager.get_state()->collect_gc();
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {
@@ -240,8 +240,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.component_db.import_module(self.world.import <Core>());
 
-  auto* renderer = App::get_system<Renderer>(EngineSystems::Renderer);
-  self.renderer_instance = renderer->new_instance(&self);
+  auto& renderer = App::mod<Renderer>();
+  self.renderer_instance = renderer.new_instance(&self);
 
   self.world.observer<TransformComponent>()
     .event(flecs::OnSet)
@@ -299,10 +299,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     });
 
   self.world.observer<SpriteComponent>().event(flecs::OnAdd).each([](flecs::iter& it, usize i, SpriteComponent& c) {
-    auto* asset_man = App::get_asset_manager();
+    auto& asset_man = App::mod<AssetManager>();
     if (it.event() == flecs::OnAdd) {
-      c.material = asset_man->create_asset(AssetType::Material, {});
-      asset_man->load_material(c.material, Material{});
+      c.material = asset_man.create_asset(AssetType::Material, {});
+      asset_man.load_material(c.material, Material{});
     }
   });
 
@@ -310,10 +310,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnRemove)
     .with<AssetOwner>()
     .each([](flecs::iter& it, usize i, SpriteComponent& c) {
-      auto* asset_man = App::get_asset_manager();
+      auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {
-        if (auto* material_asset = asset_man->get_asset(c.material)) {
-          asset_man->unload_asset(material_asset->uuid);
+        if (auto* material_asset = asset_man.get_asset(c.material)) {
+          asset_man.unload_asset(material_asset->uuid);
         }
       }
     });
@@ -322,34 +322,34 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .each([](flecs::iter& it, usize i, AudioListenerComponent& c) {
-      auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
-      audio_engine->set_listener_cone(c.listener_index, c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain);
+      auto& audio_engine = App::mod<AudioEngine>();
+      audio_engine.set_listener_cone(c.listener_index, c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain);
     });
 
   self.world.observer<AudioSourceComponent>()
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
-      auto* asset_man = App::get_asset_manager();
-      auto* audio_asset = asset_man->get_audio(c.audio_source);
+      auto& asset_man = App::mod<AssetManager>();
+      auto* audio_asset = asset_man.get_audio(c.audio_source);
       if (!audio_asset)
         return;
 
-      auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
-      audio_engine->set_source_volume(audio_asset->get_source(), c.volume);
-      audio_engine->set_source_pitch(audio_asset->get_source(), c.pitch);
-      audio_engine->set_source_looping(audio_asset->get_source(), c.looping);
-      audio_engine->set_source_attenuation_model(
+      auto& audio_engine = App::mod<AudioEngine>();
+      audio_engine.set_source_volume(audio_asset->get_source(), c.volume);
+      audio_engine.set_source_pitch(audio_asset->get_source(), c.pitch);
+      audio_engine.set_source_looping(audio_asset->get_source(), c.looping);
+      audio_engine.set_source_attenuation_model(
         audio_asset->get_source(),
         static_cast<AudioEngine::AttenuationModelType>(c.attenuation_model)
       );
-      audio_engine->set_source_roll_off(audio_asset->get_source(), c.roll_off);
-      audio_engine->set_source_min_gain(audio_asset->get_source(), c.min_gain);
-      audio_engine->set_source_max_gain(audio_asset->get_source(), c.max_gain);
-      audio_engine->set_source_min_distance(audio_asset->get_source(), c.min_distance);
-      audio_engine->set_source_max_distance(audio_asset->get_source(), c.max_distance);
+      audio_engine.set_source_roll_off(audio_asset->get_source(), c.roll_off);
+      audio_engine.set_source_min_gain(audio_asset->get_source(), c.min_gain);
+      audio_engine.set_source_max_gain(audio_asset->get_source(), c.max_gain);
+      audio_engine.set_source_min_distance(audio_asset->get_source(), c.min_distance);
+      audio_engine.set_source_max_distance(audio_asset->get_source(), c.max_distance);
       audio_engine
-        ->set_source_cone(audio_asset->get_source(), c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain);
+        .set_source_cone(audio_asset->get_source(), c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain);
     });
 
   self.world.observer<SpriteAnimationComponent>()
@@ -362,8 +362,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnRemove)
     .each([](flecs::iter& it, usize i, MeshComponent& c) {
       ZoneScopedN("MeshComponent AssetOwner handling");
-      auto* asset_man = App::get_asset_manager();
-      asset_man->unload_asset(c.mesh_uuid);
+      auto& asset_man = App::mod<AssetManager>();
+      asset_man.unload_asset(c.mesh_uuid);
     });
 
   self.world.observer<AudioSourceComponent>()
@@ -371,8 +371,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnRemove)
     .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
       ZoneScopedN("AudioSourceComponent AssetOwner handling");
-      auto* asset_man = App::get_asset_manager();
-      asset_man->unload_asset(c.audio_source);
+      auto& asset_man = App::mod<AssetManager>();
+      asset_man.unload_asset(c.audio_source);
     });
 
   self.world.observer<RigidBodyComponent>()
@@ -389,8 +389,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         auto& tc = entity.get<TransformComponent>();
         self.create_rigidbody(it.entity(i), tc, rb);
       } else if (it.event() == flecs::OnRemove) {
-        auto physics = App::get_system<Physics>(EngineSystems::Physics);
-        auto& body_interface = physics->get_body_interface();
+        auto& physics = App::mod<Physics>();
+        auto& body_interface = physics.get_body_interface();
         if (rb.runtime_body) {
           auto body_id = static_cast<JPH::Body*>(rb.runtime_body)->GetID();
           body_interface.RemoveBody(body_id);
@@ -414,8 +414,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         auto& tc = entity.get<TransformComponent>();
         self.create_character_controller(entity, tc, ch);
       } else if (it.event() == flecs::OnRemove) {
-        auto physics = App::get_system<Physics>(EngineSystems::Physics);
-        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+        auto& physics = App::mod<Physics>();
+        JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
         if (ch.character) {
           auto* character = reinterpret_cast<JPH::Character*>(ch.character);
           body_interface.RemoveBody(character->GetBodyID());
@@ -429,15 +429,15 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnAdd)
     .event(flecs::OnRemove)
     .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
-      auto* asset_man = App::get_asset_manager();
+      auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnAdd) {
         if (c.play_on_awake) {
           c.system_time = 0.0f;
           c.playing = true;
         }
         if (!c.material)
-          c.material = asset_man->create_asset(AssetType::Material, {});
-        asset_man->load_material(c.material, Material{});
+          c.material = asset_man.create_asset(AssetType::Material, {});
+        asset_man.load_material(c.material, Material{});
 
         auto parent = it.entity(i);
         for (u32 k = 0; k < c.max_particles; k++) {
@@ -452,13 +452,13 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           e.destruct();
         }
       } else if (it.event() == flecs::OnSet) {
-        if (auto* asset = asset_man->get_asset(c.material)) {
+        if (auto* asset = asset_man.get_asset(c.material)) {
           if (!asset->is_loaded()) {
-            asset_man->load_material(c.material, Material{});
+            asset_man.load_material(c.material, Material{});
           }
         }
 
-        asset_man->set_material_dirty(c.material);
+        asset_man.set_material_dirty(c.material);
       }
     });
 
@@ -466,10 +466,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnRemove)
     .with<AssetOwner>()
     .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
-      auto* asset_man = App::get_asset_manager();
+      auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {
-        if (auto* material_asset = asset_man->get_asset(c.material)) {
-          asset_man->unload_asset(material_asset->uuid);
+        if (auto* material_asset = asset_man.get_asset(c.material)) {
+          asset_man.unload_asset(material_asset->uuid);
         }
       }
     });
@@ -485,38 +485,36 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .kind(flecs::PreUpdate)
     .each([&self](const flecs::entity& e, const TransformComponent& tc, AudioListenerComponent& ac) {
       if (ac.active) {
-        auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
+        auto& audio_engine = App::mod<AudioEngine>();
         const glm::mat4 inverted = glm::inverse(self.get_world_transform(e));
         const glm::vec3 forward = normalize(glm::vec3(inverted[2]));
-        audio_engine->set_listener_position(ac.listener_index, tc.position);
-        audio_engine->set_listener_direction(ac.listener_index, -forward);
-        audio_engine
-          ->set_listener_cone(ac.listener_index, ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
+        audio_engine.set_listener_position(ac.listener_index, tc.position);
+        audio_engine.set_listener_direction(ac.listener_index, -forward);
+        audio_engine.set_listener_cone(ac.listener_index, ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
       }
     });
 
   self.world.system<const TransformComponent, AudioSourceComponent>("audio_source_update")
     .kind(flecs::PreUpdate)
     .each([](const flecs::entity& e, const TransformComponent& tc, const AudioSourceComponent& ac) {
-      auto* asset_man = App::get_asset_manager();
-      if (auto* audio = asset_man->get_audio(ac.audio_source)) {
-        auto* audio_engine = App::get_system<AudioEngine>(EngineSystems::AudioEngine);
-        audio_engine->set_source_attenuation_model(
+      auto& asset_man = App::mod<AssetManager>();
+      if (auto* audio = asset_man.get_audio(ac.audio_source)) {
+        auto& audio_engine = App::mod<AudioEngine>();
+        audio_engine.set_source_attenuation_model(
           audio->get_source(),
           static_cast<AudioEngine::AttenuationModelType>(ac.attenuation_model)
         );
-        audio_engine->set_source_volume(audio->get_source(), ac.volume);
-        audio_engine->set_source_pitch(audio->get_source(), ac.pitch);
-        audio_engine->set_source_looping(audio->get_source(), ac.looping);
-        audio_engine->set_source_spatialization(audio->get_source(), ac.looping);
-        audio_engine->set_source_roll_off(audio->get_source(), ac.roll_off);
-        audio_engine->set_source_min_gain(audio->get_source(), ac.min_gain);
-        audio_engine->set_source_max_gain(audio->get_source(), ac.max_gain);
-        audio_engine->set_source_min_distance(audio->get_source(), ac.min_distance);
-        audio_engine->set_source_max_distance(audio->get_source(), ac.max_distance);
-        audio_engine
-          ->set_source_cone(audio->get_source(), ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
-        audio_engine->set_source_doppler_factor(audio->get_source(), ac.doppler_factor);
+        audio_engine.set_source_volume(audio->get_source(), ac.volume);
+        audio_engine.set_source_pitch(audio->get_source(), ac.pitch);
+        audio_engine.set_source_looping(audio->get_source(), ac.looping);
+        audio_engine.set_source_spatialization(audio->get_source(), ac.looping);
+        audio_engine.set_source_roll_off(audio->get_source(), ac.roll_off);
+        audio_engine.set_source_min_gain(audio->get_source(), ac.min_gain);
+        audio_engine.set_source_max_gain(audio->get_source(), ac.max_gain);
+        audio_engine.set_source_min_distance(audio->get_source(), ac.min_distance);
+        audio_engine.set_source_max_distance(audio->get_source(), ac.max_distance);
+        audio_engine.set_source_cone(audio->get_source(), ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
+        audio_engine.set_source_doppler_factor(audio->get_source(), ac.doppler_factor);
       }
     });
 
@@ -532,8 +530,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .kind(flecs::OnUpdate)
     .tick_source(physics_tick_source)
     .run([](flecs::iter& it) {
-      auto* physics = App::get_system<Physics>(EngineSystems::Physics);
-      physics->step(it.delta_time());
+      auto& physics = App::mod<Physics>();
+      physics.step(it.delta_time());
     });
 
   self.world.system<TransformComponent, RigidBodyComponent>("rigidbody_update")
@@ -543,9 +541,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       if (!rb.runtime_body)
         return;
 
-      auto* physics = App::get_system<Physics>(EngineSystems::Physics);
+      auto& physics = App::mod<Physics>();
       const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
-      const auto& body_interface = physics->get_physics_system()->GetBodyInterface();
+      const auto& body_interface = physics.get_physics_system()->GetBodyInterface();
 
       if (!body_interface.IsActive(body->GetID()))
         return;
@@ -600,7 +598,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           auto particle = flecs::entity{it.world(), component.particles[component.pool_index]};
 
           const auto random_float = [](f32 min, f32 max) {
-            f32 r = App::get_system<Random>(EngineSystems::Random)->get_float();
+            static Random random = {};
+            f32 r = random.get_float();
             return min + r * (max - min);
           };
 
@@ -763,8 +762,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<SpriteComponent, SpriteAnimationComponent>("sprite_animation_update")
     .kind(flecs::PostUpdate)
     .each([](flecs::iter& it, size_t, SpriteComponent& sprite, SpriteAnimationComponent& sprite_animation) {
-      const auto asset_manager = App::get_system<AssetManager>(EngineSystems::AssetManager);
-      auto* material = asset_manager->get_material(sprite.material);
+      auto& asset_manager = App::mod<AssetManager>();
+      auto* material = asset_manager.get_material(sprite.material);
 
       if (sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
           !material->albedo_texture)
@@ -798,7 +797,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       const u32 frame_x = frame % sprite_animation.columns;
       const u32 frame_y = frame / sprite_animation.columns;
 
-      const auto* albedo_texture = asset_manager->get_texture(material->albedo_texture);
+      const auto* albedo_texture = asset_manager.get_texture(material->albedo_texture);
       auto& uv_size = material->uv_size;
 
       auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
@@ -809,8 +808,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
     });
 
-  auto* asset_man = App::get_asset_manager();
-  asset_man->set_all_materials_dirty();
+  auto& asset_man = App::mod<AssetManager>();
+  asset_man.set_all_materials_dirty();
 }
 
 auto Scene::physics_init(this Scene& self) -> void {
@@ -821,7 +820,7 @@ auto Scene::physics_init(this Scene& self) -> void {
 
   self.body_activation_listener_3d = std::make_unique<Physics3DBodyActivationListener>();
   self.contact_listener_3d = std::make_unique<Physics3DContactListener>(&self);
-  const auto physics_system = App::get_system<Physics>(EngineSystems::Physics)->get_physics_system();
+  const auto physics_system = App::mod<Physics>().get_physics_system();
   physics_system->SetBodyActivationListener(self.body_activation_listener_3d.get());
   physics_system->SetContactListener(self.contact_listener_3d.get());
 
@@ -851,11 +850,11 @@ auto Scene::physics_init(this Scene& self) -> void {
 auto Scene::physics_deinit(this Scene& self) -> void {
   ZoneScoped;
 
-  const auto physics = App::get_system<Physics>(EngineSystems::Physics);
+  auto& physics = App::mod<Physics>();
   self.world.query_builder<RigidBodyComponent>().build().each(
-    [physics](const flecs::entity& e, RigidBodyComponent& rb) {
+    [&physics](const flecs::entity& e, RigidBodyComponent& rb) {
       if (rb.runtime_body) {
-        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+        JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
         const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
         body_interface.RemoveBody(body->GetID());
         body_interface.DestroyBody(body->GetID());
@@ -864,9 +863,9 @@ auto Scene::physics_deinit(this Scene& self) -> void {
     }
   );
   self.world.query_builder<CharacterControllerComponent>().build().each(
-    [physics](const flecs::entity& e, CharacterControllerComponent& ch) {
+    [&physics](const flecs::entity& e, CharacterControllerComponent& ch) {
       if (ch.character) {
-        JPH::BodyInterface& body_interface = physics->get_physics_system()->GetBodyInterface();
+        JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
         auto* character = reinterpret_cast<JPH::Character*>(ch.character);
         body_interface.RemoveBody(character->GetBodyID());
         ch.character = nullptr;
@@ -923,11 +922,11 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   self.world.progress();
 
   if (RendererCVar::cvar_enable_physics_debug_renderer.get()) {
-    auto physics = App::get_system<Physics>(EngineSystems::Physics);
-    physics->debug_draw();
+    auto& physics = App::mod<Physics>();
+    physics.debug_draw();
   }
 
-  auto* asset_man = App::get_asset_manager();
+  auto& asset_man = App::mod<AssetManager>();
   auto meshlet_instance_visibility_offset = 0_u32;
   auto max_meshlet_instance_count = 0_u32;
   auto gpu_meshes = std::vector<GPU::Mesh>();
@@ -935,7 +934,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
   if (self.meshes_dirty) {
     for (const auto& [rendering_mesh, transform_ids] : self.rendering_meshes_map) {
-      auto* model = asset_man->get_model(rendering_mesh.first);
+      auto* model = asset_man.get_model(rendering_mesh.first);
       if (!model)
         continue;
       const auto& mesh = model->meshes[rendering_mesh.second];
@@ -969,18 +968,18 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   }
 
   auto uuid_to_image_index = [&](const UUID& uuid) -> option<u32> {
-    if (!uuid || !asset_man->is_texture_loaded(uuid)) {
+    if (!uuid || !asset_man.is_texture_loaded(uuid)) {
       return nullopt;
     }
 
-    auto* texture = asset_man->get_texture(uuid);
+    auto* texture = asset_man.get_texture(uuid);
     return texture->get_view_index();
   };
 
-  auto dirty_material_ids = asset_man->get_dirty_material_ids();
+  auto dirty_material_ids = asset_man.get_dirty_material_ids();
   auto dirty_material_indices = std::vector<u32>();
   for (const auto dirty_id : dirty_material_ids) {
-    const auto* material = asset_man->get_material(dirty_id);
+    const auto* material = asset_man.get_material(dirty_id);
     if (!material)
       continue;
 
@@ -1005,7 +1004,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       // we should prefer material's sampler over texture's default sampler.
       auto& vk_context = App::get_vkcontext();
 
-      auto* texture = asset_man->get_texture(material->albedo_texture);
+      auto* texture = asset_man.get_texture(material->albedo_texture);
       sampler_index = texture->get_sampler_index();
 
       auto texture_sampler = vk_context.resources.samplers.slot(texture->get_sampler_id());
@@ -1086,11 +1085,11 @@ auto Scene::get_lua_systems(this const Scene& self) -> const ankerl::unordered_d
 auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> void {
   ZoneScoped;
 
-  auto* asset_man = App::get_asset_manager();
-  if (!asset_man->get_asset(lua_script)->is_loaded()) {
-    asset_man->load_asset(lua_script);
+  auto& asset_man = App::mod<AssetManager>();
+  if (!asset_man.get_asset(lua_script)->is_loaded()) {
+    asset_man.load_asset(lua_script);
   }
-  auto* script_system = asset_man->get_script(lua_script);
+  auto* script_system = asset_man.get_script(lua_script);
 
   script_system->reload();
 
@@ -1102,8 +1101,8 @@ auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> void {
 auto Scene::remove_lua_system(this Scene& self, const UUID& lua_script) -> void {
   ZoneScoped;
 
-  auto* asset_man = App::get_asset_manager();
-  auto* script_system = asset_man->get_script(lua_script);
+  auto& asset_man = App::mod<AssetManager>();
+  auto* script_system = asset_man.get_script(lua_script);
 
   script_system->on_remove(&self);
   self.lua_systems.erase(lua_script);
@@ -1176,20 +1175,20 @@ auto Scene::create_entity(const std::string& name, bool safe_naming) const -> fl
 auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity {
   ZoneScoped;
 
-  auto* asset_man = App::get_asset_manager();
+  auto& asset_man = App::mod<AssetManager>();
 
   // sanity check
-  if (!asset_man->get_asset(asset_uuid)) {
+  if (!asset_man.get_asset(asset_uuid)) {
     OX_LOG_ERROR("Cannot import an invalid model '{}' into the scene!", asset_uuid.str());
     return {};
   }
 
   // acquire model
-  if (!asset_man->load_model(asset_uuid)) {
+  if (!asset_man.load_model(asset_uuid)) {
     return {};
   }
 
-  auto* imported_model = asset_man->get_model(asset_uuid);
+  auto* imported_model = asset_man.get_model(asset_uuid);
   auto& default_scene = imported_model->scenes[imported_model->default_scene_index];
   auto root_entity = self.create_entity(default_scene.name, default_scene.name.empty() ? false : true);
 
@@ -1529,9 +1528,9 @@ auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_use
 auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component)
   -> void {
   ZoneScoped;
-  auto physics = App::get_system<Physics>(EngineSystems::Physics);
+  auto& physics = App::mod<Physics>();
 
-  auto& body_interface = physics->get_body_interface();
+  auto& body_interface = physics.get_body_interface();
   if (component.runtime_body) {
     auto body_id = static_cast<JPH::Body*>(component.runtime_body)->GetID();
     body_interface.RemoveBody(body_id);
@@ -1594,7 +1593,8 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cycc->friction, cycc->restitution);
 
     float radius = 2.0f * cycc->radius * max_scale_component;
-    JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, cycc->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
+    JPH::CylinderShapeSettings
+      shape_settings(glm::max(0.01f, cycc->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
     shape_settings.SetDensity(glm::max(0.001f, cycc->density));
     shape_result = shape_settings.Create();
     offset = cycc->offset;
@@ -1665,7 +1665,7 @@ void Scene::create_character_controller(
 ) const {
   ZoneScoped;
 
-  const auto physics = App::get_system<Physics>(EngineSystems::Physics);
+  auto& physics = App::mod<Physics>();
 
   const auto position = JPH::Vec3(transform.position.x, transform.position.y, transform.position.z);
   const auto capsule_shape =
@@ -1690,12 +1690,12 @@ void Scene::create_character_controller(
      // lower sphere of the capsule
 
   component
-    .character = new JPH::Character(settings.get(), position, JPH::Quat::sIdentity(), 0, physics->get_physics_system());
+    .character = new JPH::Character(settings.get(), position, JPH::Quat::sIdentity(), 0, physics.get_physics_system());
 
   auto* ch = reinterpret_cast<JPH::Character*>(component.character);
   ch->AddToPhysicsSystem(JPH::EActivation::Activate);
 
-  auto ch_body = physics->get_body_interface_lock().TryGetBody(ch->GetBodyID());
+  auto ch_body = physics.get_body_interface_lock().TryGetBody(ch->GetBodyID());
   ch_body->SetUserData(static_cast<u64>(entity.id()));
 }
 
@@ -1784,12 +1784,12 @@ auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
 
   OX_LOG_TRACE("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
   for (const auto& uuid : requested_assets) {
-    auto* asset_man = App::get_system<AssetManager>(EngineSystems::AssetManager);
-    if (auto asset = asset_man->get_asset(uuid); asset) {
+    auto& asset_man = App::mod<AssetManager>();
+    if (auto asset = asset_man.get_asset(uuid); asset) {
       if (asset->type == AssetType::Script) {
         self.add_lua_system(uuid);
       } else {
-        asset_man->load_asset(uuid);
+        asset_man.load_asset(uuid);
       }
     }
   }

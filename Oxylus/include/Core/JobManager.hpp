@@ -2,13 +2,14 @@
 
 #include <condition_variable>
 #include <deque>
+#include <expected>
 #include <functional>
 #include <shared_mutex>
+#include <span>
 #include <stack>
 #include <thread>
 
 #include "Core/Arc.hpp"
-#include "Core/ESystem.hpp"
 
 namespace ox {
 using JobFn = std::function<void()>;
@@ -126,14 +127,16 @@ struct ThreadWorker {
 
 inline thread_local ThreadWorker this_thread_worker;
 
-class JobManager : public ESystem {
+class JobManager {
 public:
+  constexpr static auto MODULE_NAME = "JobManager";
+
   static constexpr u32 auto_thread_count = 0;
   JobManager(u32 threads = auto_thread_count);
   ~JobManager() = default;
 
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
   auto shutdown(this JobManager& self) -> void;
   auto worker(this JobManager& self, u32 id) -> void;

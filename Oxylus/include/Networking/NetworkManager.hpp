@@ -1,11 +1,14 @@
 #pragma once
 
-#include "Core/ESystem.hpp"
+#include <expected>
+#include <string>
 
 namespace ox {
-class NetworkManager : public ESystem {
+class NetworkManager {
 public:
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
+  constexpr static auto MODULE_NAME = "NetworkManager";
+
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 };
 } // namespace ox

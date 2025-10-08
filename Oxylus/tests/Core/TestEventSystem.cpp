@@ -1,6 +1,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <latch>
+#include <thread>
 
 #include "Core/EventSystem.hpp"
 

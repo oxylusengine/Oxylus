@@ -103,8 +103,8 @@ Window Window::create(const WindowInfo& info) {
   if (info.icon.path.has_value()) {
     image_data = stbi_load(info.icon.path->c_str(), &width, &height, &channels, 4);
   } else if (info.icon.loaded.has_value()) {
-    OX_CHECK_GT(info.icon.loaded->width, 0);
-    OX_CHECK_GT(info.icon.loaded->height, 0);
+    OX_CHECK_GT(info.icon.loaded->width, 0u);
+    OX_CHECK_GT(info.icon.loaded->height, 0u);
     image_data = info.icon.loaded->data;
     width = info.icon.loaded->width;
     height = info.icon.loaded->height;

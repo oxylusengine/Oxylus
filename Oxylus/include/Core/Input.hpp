@@ -2,19 +2,23 @@
 
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
+#include <expected>
+#include <glm/ext/vector_float2.hpp>
+#include <string>
 
-#include "Core/ESystem.hpp"
 #include "Core/Keycodes.hpp"
 
 namespace ox {
 struct Window;
 
-class Input : public ESystem {
+class Input {
 public:
+  constexpr static auto MODULE_NAME = "Input";
+
   enum class CursorState { Disabled = 0x00034003, Normal = 0x00034001, Hidden = 0x00034002 };
 
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
   static void set_instance();
 

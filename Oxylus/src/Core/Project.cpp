@@ -44,10 +44,10 @@ auto populate_directory(AssetDirectory* dir, const AssetDirectoryCallbacks& call
 AssetDirectory::AssetDirectory(::fs::path path_, AssetDirectory* parent_) : path(std::move(path_)), parent(parent_) {}
 
 AssetDirectory::~AssetDirectory() {
-  auto* asset_man = App::get_asset_manager();
+  auto& asset_man = App::mod<AssetManager>();
   for (const auto& asset_uuid : this->asset_uuids) {
-    if (asset_man->get_asset(asset_uuid)) {
-      asset_man->delete_asset(asset_uuid);
+    if (asset_man.get_asset(asset_uuid)) {
+      asset_man.delete_asset(asset_uuid);
     }
   }
 }
@@ -67,8 +67,8 @@ auto AssetDirectory::add_subdir(this AssetDirectory& self, std::unique_ptr<Asset
 }
 
 auto AssetDirectory::add_asset(this AssetDirectory& self, const ::fs::path& dir_path) -> UUID {
-  auto* asset_man = App::get_asset_manager();
-  auto asset_uuid = asset_man->import_asset(dir_path.string());
+  auto& asset_man = App::mod<AssetManager>();
+  auto asset_uuid = asset_man.import_asset(dir_path.string());
   if (!asset_uuid) {
     return UUID(nullptr);
   }
@@ -109,7 +109,7 @@ auto Project::new_project(this Project& self,
 
   const auto asset_dir_path = fs::append_paths(fs::get_directory(self.project_file_path),
                                                self.project_config.asset_directory);
-  App::get_vfs()->mount_dir(VFS::PROJECT_DIR, asset_dir_path);
+  App::get_vfs().mount_dir(VFS::PROJECT_DIR, asset_dir_path);
 
   self.register_assets(asset_dir_path);
 
@@ -125,10 +125,10 @@ auto Project::load(this Project& self, const std::string& path) -> bool {
     const auto asset_dir_path = fs::append_paths(fs::get_directory(self.project_file_path),
                                                  self.project_config.asset_directory);
 
-    auto* vfs = App::get_vfs();
-    if (vfs->is_mounted_dir(VFS::PROJECT_DIR))
-      vfs->unmount_dir(VFS::PROJECT_DIR);
-    vfs->mount_dir(VFS::PROJECT_DIR, asset_dir_path);
+    auto& vfs = App::get_vfs();
+    if (vfs.is_mounted_dir(VFS::PROJECT_DIR))
+      vfs.unmount_dir(VFS::PROJECT_DIR);
+    vfs.mount_dir(VFS::PROJECT_DIR, asset_dir_path);
 
     self.asset_directory.reset();
     self.register_assets(asset_dir_path);

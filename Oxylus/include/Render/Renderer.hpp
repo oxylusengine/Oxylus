@@ -5,7 +5,6 @@
 #include <vuk/runtime/vk/Descriptor.hpp>
 
 #include "Asset/Texture.hpp"
-#include "Core/ESystem.hpp"
 #include "Scene/ECSModule/Core.hpp"
 #include "Utils/OxMath.hpp"
 
@@ -14,8 +13,10 @@ class RendererInstance;
 class Scene;
 class VkContext;
 
-class Renderer : public ESystem {
+class Renderer {
 public:
+  constexpr static auto MODULE_NAME = "Renderer";
+
   struct RenderInfo {
     vuk::Extent3D extent;
     vuk::Format format;
@@ -144,8 +145,8 @@ public:
 
   Renderer(VkContext* vk_ctx);
 
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
   auto new_instance(Scene* scene) -> std::unique_ptr<RendererInstance>;
 

@@ -81,7 +81,7 @@ static bool drag_drop_target(const std::filesystem::path& drop_path) {
     if (payload) {
       auto* asset = static_cast<PayloadData*>(payload->Data);
 
-      auto* asset_man = App::get_asset_manager();
+      auto& asset_man = App::mod<AssetManager>();
 
       ::fs::path file_path = {};
       u32 counter = 0;
@@ -91,7 +91,7 @@ static bool drag_drop_target(const std::filesystem::path& drop_path) {
         counter++;
       } while (::fs::exists(file_path / ".oxasset"));
 
-      if (!asset_man->export_asset(asset->uuid, file_path.string()))
+      if (!asset_man.export_asset(asset->uuid, file_path.string()))
         OX_LOG_ERROR("Couldn't export asset!");
       return true;
     }
@@ -257,10 +257,11 @@ ContentPanel::ContentPanel() : EditorPanel("Contents", ICON_MDI_FOLDER_STAR, tru
 }
 
 void ContentPanel::init() {
-  if (!App::get_vfs()->is_mounted_dir(VFS::PROJECT_DIR))
+  auto vfs = App::get_vfs();
+  if (!vfs.is_mounted_dir(VFS::PROJECT_DIR))
     return;
 
-  auto assets_dir = App::get_vfs()->resolve_physical_dir(VFS::PROJECT_DIR, "");
+  auto assets_dir = vfs.resolve_physical_dir(VFS::PROJECT_DIR, "");
   _assets_directory = assets_dir;
   _current_directory = _assets_directory;
   refresh();
@@ -297,10 +298,11 @@ void ContentPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
 }
 
 void ContentPanel::invalidate() {
-  if (!App::get_vfs()->is_mounted_dir(VFS::PROJECT_DIR))
+  auto vfs = App::get_vfs();
+  if (!vfs.is_mounted_dir(VFS::PROJECT_DIR))
     return;
 
-  auto assets_dir = App::get_vfs()->resolve_physical_dir(VFS::PROJECT_DIR, "");
+  auto assets_dir = vfs.resolve_physical_dir(VFS::PROJECT_DIR, "");
   _assets_directory = assets_dir;
   _current_directory = _assets_directory;
   refresh();
@@ -572,10 +574,10 @@ void ContentPanel::render_body(bool grid) {
             auto rp = std::make_unique<ThumbnailRenderer>();
             rp->set_name(name);
 
-            auto* asset_man = App::get_asset_manager();
-            if (auto asset_uuid = asset_man->import_asset(file.file_path); asset_uuid) {
-              if (asset_man->load_model(asset_uuid)) {
-                auto* mesh_asset = asset_man->get_model(asset_uuid);
+            auto& asset_man = App::mod<AssetManager>();
+            if (auto asset_uuid = asset_man.import_asset(file.file_path); asset_uuid) {
+              if (asset_man.load_model(asset_uuid)) {
+                auto* mesh_asset = asset_man.get_model(asset_uuid);
                 rp->set_model(mesh_asset);
               }
             }

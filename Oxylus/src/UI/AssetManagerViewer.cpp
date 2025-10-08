@@ -12,7 +12,7 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
 
   bool is_selected = false;
 
-  auto* asset_man = App::get_asset_manager();
+  auto& asset_man = App::mod<AssetManager>();
 
   const auto uuid_str = asset.uuid.str();
 
@@ -34,14 +34,14 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
 
   if (ImGui::BeginPopupContextItem(uuid_str.c_str(), ImGuiPopupFlags_MouseButtonRight)) {
     if (ImGui::Button("Load")) {
-      asset_man->load_asset(asset.uuid);
+      asset_man.load_asset(asset.uuid);
     }
 
     ImGui::SameLine();
 
     if (ImGui::Button("Unload")) {
       if (asset.ref_count < 1)
-        asset_man->unload_asset(asset.uuid);
+        asset_man.unload_asset(asset.uuid);
       else
         OX_LOG_ERROR("Can't unload asset with {} references!", asset.ref_count);
     }
@@ -101,9 +101,9 @@ auto AssetManagerViewer::draw_asset_table(const char* tree_name,
 auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default_filter, Asset* selected) -> void {
   ZoneScoped;
 
-  auto* asset_manager = App::get_asset_manager();
+  auto& asset_man = App::mod<AssetManager>();
 
-  const auto& registry = asset_manager->registry();
+  const auto& registry = asset_man.registry();
 
   for (const auto& [uuid, asset] : registry) {
     if (uuid) {

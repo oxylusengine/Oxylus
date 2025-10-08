@@ -33,8 +33,8 @@ EditorLayer::EditorLayer() : Layer("Editor Layer") { instance = this; }
 void EditorLayer::on_attach() {
   ZoneScoped;
 
-  auto* job_man = App::get_job_manager();
-  job_man->get_tracker().start_tracking();
+  auto& job_man = App::mod<JobManager>();
+  job_man.get_tracker().start_tracking();
 
   undo_redo_system = std::make_unique<UndoRedoSystem>();
 
@@ -64,8 +64,8 @@ void EditorLayer::on_attach() {
   auto text_editor_panel = add_panel<TextEditorPanel>();
 
   scene_hierarchy_panel->viewer.opened_script_callback = [text_editor_panel](const UUID& uuid) {
-    auto* asset_man = App::get_asset_manager();
-    auto* asset = asset_man->get_asset(uuid);
+    auto& asset_man = App::mod<AssetManager>();
+    auto* asset = asset_man.get_asset(uuid);
     if (asset) {
       text_editor_panel->visible = true;
       text_editor_panel->text_editor.open_file(asset->path);
@@ -91,8 +91,8 @@ void EditorLayer::on_attach() {
 void EditorLayer::on_detach() {
   editor_config.save_config();
 
-  auto* job_man = App::get_job_manager();
-  job_man->get_tracker().stop_tracking();
+  auto& job_man = App::mod<JobManager>();
+  job_man.get_tracker().stop_tracking();
 }
 
 void EditorLayer::on_update(const Timestep& delta_time) {
@@ -129,9 +129,9 @@ void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format
   if (const auto scene = get_active_scene())
     scene->on_render(extent, format);
 
-  auto* job_man = App::get_job_manager();
+  auto& job_man = App::mod<JobManager>();
 
-  auto status = job_man->get_tracker().get_status();
+  auto status = job_man.get_tracker().get_status();
   for (const auto& [name, is_working] : status) {
     if (name == "Completion callback")
       continue;
@@ -140,7 +140,7 @@ void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format
     notification_system.add(std::move(notification));
   }
 
-  job_man->get_tracker().cleanup_old();
+  job_man.get_tracker().cleanup_old();
   notification_system.draw();
 
   if (EditorCVar::cvar_show_style_editor.get())
@@ -379,8 +379,8 @@ bool EditorLayer::open_scene(const std::filesystem::path& path) {
     return false;
   }
 
-  auto* job_man = App::get_job_manager();
-  job_man->wait();
+  auto& job_man = App::mod<JobManager>();
+  job_man.wait();
 
   const auto new_scene = std::make_shared<Scene>(editor_scene->scene_name);
   if (new_scene->load_from_file(path.string())) {
@@ -404,10 +404,10 @@ void EditorLayer::load_default_scene(const std::shared_ptr<Scene>& scene) {
 
 void EditorLayer::save_scene() {
   if (!last_save_scene_path.empty()) {
-    auto* job_man = App::get_job_manager();
-    job_man->push_job_name("Saving scene");
-    job_man->submit(Job::create([s = editor_scene.get(), p = last_save_scene_path]() { s->save_to_file(p); }));
-    job_man->pop_job_name();
+    auto& job_man = App::mod<JobManager>();
+    job_man.push_job_name("Saving scene");
+    job_man.submit(Job::create([s = editor_scene.get(), p = last_save_scene_path]() { s->save_to_file(p); }));
+    job_man.pop_job_name();
   } else {
     save_scene_as();
   }
@@ -431,10 +431,10 @@ void EditorLayer::save_scene_as() {
         const auto path = std::string(first_path_cstr, first_path_len);
 
         if (!path.empty()) {
-          auto* job_man = App::get_job_manager();
-          job_man->push_job_name("Saving scene");
-          job_man->submit(Job::create([s = layer->editor_scene.get(), path]() { s->save_to_file(path); }));
-          job_man->pop_job_name();
+          auto& job_man = App::mod<JobManager>();
+          job_man.push_job_name("Saving scene");
+          job_man.submit(Job::create([s = layer->editor_scene.get(), path]() { s->save_to_file(path); }));
+          job_man.pop_job_name();
 
           layer->last_save_scene_path = path;
         }

@@ -1,9 +1,15 @@
 #pragma once
 
+#include <algorithm>
+#include <atomic>
+#include <expected>
+#include <functional>
+#include <iterator>
+#include <mutex>
+#include <shared_mutex>
 #include <tracy/Tracy.hpp>
 #include <typeindex>
 
-#include "Core/ESystem.hpp"
 #include "Core/Option.hpp"
 #include "Utils/Log.hpp"
 
@@ -123,10 +129,12 @@ private:
   std::atomic<HandlerId> next_id_ = {1};
 };
 
-class EventSystem : public ESystem {
+class EventSystem {
 public:
-  auto init() -> std::expected<void, std::string> override { return {}; }
-  auto deinit() -> std::expected<void, std::string> override {
+  constexpr static auto MODULE_NAME = "EventSystem";
+
+  auto init() -> std::expected<void, std::string> { return {}; }
+  auto deinit() -> std::expected<void, std::string> {
     shutdown();
     return {};
   }

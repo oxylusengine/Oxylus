@@ -492,9 +492,9 @@ auto SceneHierarchyViewer::draw_scripts_context_menu() -> void {
   asset_manager_viewer.render("AssetManagerViewer", nullptr, AssetType::Script, &selected);
 
   if (selected.type == AssetType::Script) {
-    auto* asset_man = App::get_asset_manager();
+    auto& asset_man = App::mod<AssetManager>();
     if (!selected.is_loaded())
-      asset_man->load_asset(selected.uuid);
+    asset_man.load_asset(selected.uuid);
 
     scene_->add_lua_system(selected.uuid);
     ImGui::CloseCurrentPopup();

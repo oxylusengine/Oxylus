@@ -42,8 +42,8 @@ auto Renderer::init() -> std::expected<void, std::string> {
   vk_context->wait();
 
   // --- Shaders ---
-  auto* vfs = App::get_system<VFS>(EngineSystems::VFS);
-  auto shaders_dir = vfs->resolve_physical_dir(VFS::APP_DIR, "Shaders");
+  auto& vfs = App::get_vfs();
+  auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
 
   Slang slang = {};
   slang.create_session(

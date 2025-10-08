@@ -71,8 +71,8 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
   auto& vk_context = App::get_vkcontext();
   auto& runtime = *vk_context.runtime;
   if (!runtime.is_pipeline_available("mouse_picking_pipeline")) {
-    auto* vfs = App::get_system<VFS>(EngineSystems::VFS);
-    auto shaders_dir = vfs->resolve_physical_dir(VFS::APP_DIR, "Shaders");
+    auto& vfs = App::get_vfs();
+    auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
     Slang slang = {};
     slang.create_session({.root_directory = shaders_dir, .definitions = {}});
 
@@ -233,8 +233,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
           editor_layer->open_scene(path);
         }
         if (path.extension() == ".gltf" || path.extension() == ".glb") {
-          auto* asset_man = App::get_asset_manager();
-          if (auto asset = asset_man->import_asset(path.string()))
+          auto& asset_man = App::mod<AssetManager>();
+          if (auto asset = asset_man.import_asset(path.string()))
             _scene->create_model_entity(asset);
         }
       }

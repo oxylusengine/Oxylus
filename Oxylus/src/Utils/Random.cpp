@@ -1,17 +1,15 @@
 ﻿#include "Utils/Random.hpp"
 
+#include <glm/geometric.hpp>
 #include <random>
 
 namespace ox {
 thread_local std::mt19937 random_engine;
 thread_local std::uniform_int_distribution<std::mt19937::result_type> rnd_distribution;
 
-auto Random::init() -> std::expected<void, std::string> {
+Random::Random() {
   random_engine.seed(std::random_device()());
-  return {};
 }
-
-auto Random::deinit() -> std::expected<void, std::string> { return {}; }
 
 uint32_t Random::get_uint() { return rnd_distribution(random_engine); }
 

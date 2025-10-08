@@ -1,6 +1,13 @@
+#include "Audio/AudioEngine.hpp"
 #include "Core/EmbeddedLogo.hpp"
 #include "Core/EntryPoint.hpp"
+#include "Core/EventSystem.hpp"
+#include "Core/Input.hpp"
+#include "Core/JobManager.hpp"
 #include "EditorLayer.hpp"
+#include "Networking/NetworkManager.hpp"
+#include "Physics/Physics.hpp"
+#include "Scripting/LuaManager.hpp"
 
 namespace ox {
 class OxylusEditor : public App {
@@ -11,13 +18,13 @@ public:
 App* create_application(const AppCommandLineArgs& args) {
   AppSpec spec;
 #ifdef OX_RELEASE
-  spec.name = "Oxylus Engine - Editor (Vulkan) - Release";
+  spec.name = "Oxylus Engine - Editor - Release";
 #endif
 #ifdef OX_DEBUG
-  spec.name = "Oxylus Engine - Editor (Vulkan) - Debug";
+  spec.name = "Oxylus Engine - Editor - Debug";
 #endif
 #ifdef OX_DISTRIBUTION
-  spec.name = "Oxylus Engine - Editor (Vulkan) - Dist";
+  spec.name = "Oxylus Engine - Editor - Dist";
 #endif
   spec.working_directory = std::filesystem::current_path().string();
   spec.command_line_args = args;
@@ -37,7 +44,14 @@ App* create_application(const AppCommandLineArgs& args) {
   };
 
   const auto app = new OxylusEditor(spec);
-  app->push_layer(std::make_unique<EditorLayer>());
+  app->with<AssetManager>()
+    .with<AudioEngine>()
+    .with<LuaManager>()
+    .with<Physics>()
+    .with<Input>()
+    .with<NetworkManager>()
+    .push_imgui_layer()
+    .push_layer(std::make_unique<EditorLayer>());
 
   return app;
 }

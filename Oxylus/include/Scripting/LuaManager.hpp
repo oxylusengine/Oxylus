@@ -1,15 +1,18 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
+#include <expected>
 #include <sol/state.hpp>
 
-#include "Core/ESystem.hpp"
 #include "Scripting/LuaBinding.hpp"
 
 namespace ox {
-class LuaManager : public ESystem {
+class LuaManager {
 public:
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
+  constexpr static auto MODULE_NAME = "LuaManager";
+
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
   auto get_state() const -> sol::state* { return _state.get(); }
 
@@ -21,7 +24,7 @@ public:
     self.bindings.emplace(name, std::move(binding));
   }
 
-  template<typename T>
+  template <typename T>
   auto get_binding(this LuaManager& self, const std::string& name) -> T* {
     static_assert(std::is_base_of_v<LuaBinding, T>, "T must derive from LuaBinding");
     return dynamic_cast<T*>(self.bindings[name].get());

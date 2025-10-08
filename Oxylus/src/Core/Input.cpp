@@ -11,7 +11,7 @@ auto Input::deinit() -> std::expected<void, std::string> { return {}; }
 
 void Input::set_instance() {
   if (_instance == nullptr)
-    _instance = App::get_system<Input>(EngineSystems::Input);
+    _instance = &App::mod<Input>();
 }
 
 void Input::reset_pressed() {

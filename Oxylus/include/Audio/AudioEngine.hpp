@@ -1,18 +1,22 @@
 #pragma once
 
-#include "Core/ESystem.hpp"
-
+#include <expected>
+#include <glm/ext/vector_float3.hpp>
+#include <string>
+#include "Core/Types.hpp"
 struct ma_engine;
 struct ma_sound;
 
 namespace ox {
 
-class AudioEngine : public ESystem {
+class AudioEngine {
 public:
+  constexpr static auto MODULE_NAME = "AudioEngine";
+
   enum AttenuationModelType : u32 { None = 0, Inverse, Linear, Exponential };
 
-  auto init() -> std::expected<void, std::string> override;
-  auto deinit() -> std::expected<void, std::string> override;
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
   auto get_engine() const -> ma_engine*;
 
