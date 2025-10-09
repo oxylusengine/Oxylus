@@ -14,8 +14,8 @@ std::string fs::current_path() { return std::filesystem::current_path().generic_
 std::pair<std::string, std::string> fs::split_path(const std::string_view full_path) {
   const size_t found = full_path.find_last_of("/\\");
   return {
-      std::string(full_path.substr(0, found + 1)), // directory
-      std::string(full_path.substr(found + 1)),    // file
+    std::string(full_path.substr(0, found + 1)), // directory
+    std::string(full_path.substr(found + 1)),    // file
   };
 }
 
@@ -61,6 +61,13 @@ void fs::open_folder_select_file(const std::string_view path) {
   if (const auto pidl = ILCreateFromPath(widePath)) {
     SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0); // TODO: check for result
     ILFree(pidl);
+  }
+#elif OX_PLATFORM_MACOSX
+  std::string command = "open -R \"" + std::string(path) + "\"";
+  int result = system(command.c_str());
+
+  if (result != 0) {
+    OX_LOG_WARN("Failed to open folder and select file: {}", path);
   }
 #else
   OX_LOG_WARN("Not implemented on this platform!");
