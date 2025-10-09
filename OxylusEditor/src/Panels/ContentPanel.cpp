@@ -8,6 +8,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Core/FileSystem.hpp"
+#include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
 #include "EditorContext.hpp"
 #include "EditorLayer.hpp"
@@ -16,7 +17,7 @@
 #include "Utils/Profiler.hpp"
 
 namespace ox {
-static constexpr std::array<std::string, 1> IGNORE_LIST = {".DS_Store"};
+static const std::array<std::string, 1> IGNORE_LIST = {".DS_Store"};
 
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_STRING = {
   {FileType::Unknown, "Unknown"},
@@ -566,10 +567,8 @@ void ContentPanel::render_body(bool grid) {
           if (thumbnail_cache_textures.contains(file.file_path)) {
             texture_name = file.file_path;
           } else {
-#if 0
-            // make sure this runs only if it's not already queued
-            if (ThreadManager::get()->asset_thread.get_queue_size() == 0) {
-              ThreadManager::get()->asset_thread.queue_job([this, file_path = file.file_path] {
+            auto& job_man = App::mod<JobManager>();
+            job_man.submit(Job::create([this, file_path = file.file_path](){
                 auto thumbnail_texture = std::make_shared<Texture>();
                 auto file_extension = fs::get_file_extension(file_path);
                 TextureLoadInfo::MimeType mime_type = TextureLoadInfo::MimeType::Generic;
@@ -579,9 +578,8 @@ void ContentPanel::render_body(bool grid) {
                 thumbnail_texture->create(file_path, {.preset = Preset::eRTT2DUnmipped, .mime = mime_type});
                 auto write_lock = std::unique_lock(thumbnail_mutex);
                 thumbnail_cache_textures.emplace(file_path, thumbnail_texture);
-              });
-          }
-#endif
+            }));
+
             texture_name = file.file_path;
           }
         } else if (file.type == FileType::Model) {
