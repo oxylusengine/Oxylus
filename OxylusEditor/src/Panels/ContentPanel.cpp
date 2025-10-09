@@ -16,64 +16,72 @@
 #include "Utils/Profiler.hpp"
 
 namespace ox {
-static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_STRING = {
-    {FileType::Unknown, "Unknown"},
-    {FileType::Directory, "Directory"},
+static constexpr std::array<std::string, 1> IGNORE_LIST = {".DS_Store"};
 
-    {FileType::Meta, "Meta"},
-    {FileType::Scene, "Scene"},
-    {FileType::Prefab, "Prefab"},
-    {FileType::Shader, "Shader"},
-    {FileType::Texture, "Texture"},
-    {FileType::Model, "Model"},
-    {FileType::Script, "Script"},
-    {FileType::Audio, "Audio"},
+static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_STRING = {
+  {FileType::Unknown, "Unknown"},
+  {FileType::Directory, "Directory"},
+
+  {FileType::Meta, "Meta"},
+  {FileType::Scene, "Scene"},
+  {FileType::Prefab, "Prefab"},
+  {FileType::Shader, "Shader"},
+  {FileType::Texture, "Texture"},
+  {FileType::Model, "Model"},
+  {FileType::Script, "Script"},
+  {FileType::Audio, "Audio"},
 };
 
 static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
-    {"", FileType::Unknown},                                                                   //
-    {".oxasset", FileType::Meta},                                                                //
-    {".oxscene", FileType::Scene},                                                               //
-    {".oxprefab", FileType::Prefab},                                                             //
-    {".hlsl", FileType::Shader},     {".hlsli", FileType::Shader}, {".glsl", FileType::Shader},  //
-    {".frag", FileType::Shader},     {".vert", FileType::Shader},  {".slang", FileType::Shader}, //
+  {"", FileType::Unknown},                                                                     //
+  {".oxasset", FileType::Meta},                                                                //
+  {".oxscene", FileType::Scene},                                                               //
+  {".oxprefab", FileType::Prefab},                                                             //
+  {".hlsl", FileType::Shader},     {".hlsli", FileType::Shader}, {".glsl", FileType::Shader},  //
+  {".frag", FileType::Shader},     {".vert", FileType::Shader},  {".slang", FileType::Shader}, //
 
-    {".png", FileType::Texture},     {".jpg", FileType::Texture},  {".jpeg", FileType::Texture}, //
-    {".bmp", FileType::Texture},     {".gif", FileType::Texture},  {".ktx", FileType::Texture},  //
-    {".ktx2", FileType::Texture},    {".tiff", FileType::Texture},                               //
+  {".png", FileType::Texture},     {".jpg", FileType::Texture},  {".jpeg", FileType::Texture}, //
+  {".bmp", FileType::Texture},     {".gif", FileType::Texture},  {".ktx", FileType::Texture},  //
+  {".ktx2", FileType::Texture},    {".tiff", FileType::Texture},                               //
 
-    {".gltf", FileType::Model},       {".glb", FileType::Model},                                   //
+  {".gltf", FileType::Model},      {".glb", FileType::Model},                                  //
 
-    {".mp3", FileType::Audio},       {".m4a", FileType::Audio},    {".wav", FileType::Audio},    //
-    {".ogg", FileType::Audio},                                                                   //
+  {".mp3", FileType::Audio},       {".m4a", FileType::Audio},    {".wav", FileType::Audio},    //
+  {".ogg", FileType::Audio},                                                                   //
 
-    {".lua", FileType::Script},                                                                  //
+  {".lua", FileType::Script},                                                                  //
 };
 
 static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
-    {FileType::Meta, {0.75f, 0.35f, 0.20f, 1.00f}},
-    {FileType::Scene, {0.75f, 0.35f, 0.20f, 1.00f}},
-    {FileType::Prefab, {0.10f, 0.50f, 0.80f, 1.00f}},
-    {FileType::Shader, {0.10f, 0.50f, 0.80f, 1.00f}},
-    {FileType::Texture, {0.80f, 0.20f, 0.30f, 1.00f}},
-    {FileType::Model, {0.20f, 0.80f, 0.75f, 1.00f}},
-    {FileType::Audio, {0.20f, 0.80f, 0.50f, 1.00f}},
-    {FileType::Script, {0.0f, 16.0f, 121.0f, 1.00f}},
+  {FileType::Meta, {0.75f, 0.35f, 0.20f, 1.00f}},
+  {FileType::Scene, {0.75f, 0.35f, 0.20f, 1.00f}},
+  {FileType::Prefab, {0.10f, 0.50f, 0.80f, 1.00f}},
+  {FileType::Shader, {0.10f, 0.50f, 0.80f, 1.00f}},
+  {FileType::Texture, {0.80f, 0.20f, 0.30f, 1.00f}},
+  {FileType::Model, {0.20f, 0.80f, 0.75f, 1.00f}},
+  {FileType::Audio, {0.20f, 0.80f, 0.50f, 1.00f}},
+  {FileType::Script, {0.0f, 16.0f, 121.0f, 1.00f}},
 };
 
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_ICON = {
-    {FileType::Unknown, ICON_MDI_FILE},
-    {FileType::Directory, ICON_MDI_FOLDER},
-    {FileType::Meta, ICON_MDI_FILE_DOCUMENT},
-    {FileType::Scene, ICON_MDI_IMAGE_FILTER_HDR},
-    {FileType::Prefab, ICON_MDI_FILE},
-    {FileType::Shader, ICON_MDI_IMAGE_FILTER_BLACK_WHITE},
-    {FileType::Texture, ICON_MDI_FILE_IMAGE},
-    {FileType::Model, ICON_MDI_VECTOR_POLYGON},
-    {FileType::Audio, ICON_MDI_MICROPHONE},
-    {FileType::Script, ICON_MDI_LANGUAGE_LUA},
-    {FileType::Material, ICON_MDI_PALETTE_SWATCH},
+  {FileType::Unknown, ICON_MDI_FILE},
+  {FileType::Directory, ICON_MDI_FOLDER},
+  {FileType::Meta, ICON_MDI_FILE_DOCUMENT},
+  {FileType::Scene, ICON_MDI_IMAGE_FILTER_HDR},
+  {FileType::Prefab, ICON_MDI_FILE},
+  {FileType::Shader, ICON_MDI_IMAGE_FILTER_BLACK_WHITE},
+  {FileType::Texture, ICON_MDI_FILE_IMAGE},
+  {FileType::Model, ICON_MDI_VECTOR_POLYGON},
+  {FileType::Audio, ICON_MDI_MICROPHONE},
+  {FileType::Script, ICON_MDI_LANGUAGE_LUA},
+  {FileType::Material, ICON_MDI_PALETTE_SWATCH},
 };
+
+static auto is_ignored_file(const std::string& filename) -> bool {
+  ZoneScoped;
+  auto ignored_file_found = std::ranges::contains(IGNORE_LIST, filename);
+  return ignored_file_found;
+}
 
 static bool drag_drop_target(const std::filesystem::path& drop_path) {
   if (ImGui::BeginDragDropTarget()) {
@@ -140,10 +148,9 @@ static void open_file(const std::filesystem::path& path) {
   }
 }
 
-std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(const std::filesystem::path& path,
-                                                                      uint32_t* count,
-                                                                      int* selectionMask,
-                                                                      ImGuiTreeNodeFlags flags) {
+std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(
+  const std::filesystem::path& path, uint32_t* count, int* selectionMask, ImGuiTreeNodeFlags flags
+) {
   ZoneScoped;
 
   auto& editor_theme = EditorLayer::get()->editor_theme;
@@ -158,6 +165,9 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(const std:
     ImGuiTreeNodeFlags nodeFlags = flags;
 
     auto& entry_path = entry.path();
+
+    if (is_ignored_file(entry.path().filename().string()))
+      continue;
 
     const bool entry_is_file = !std::filesystem::is_directory(entry_path);
     if (entry_is_file)
@@ -245,12 +255,14 @@ ContentPanel::ContentPanel() : EditorPanel("Contents", ICON_MDI_FOLDER_STAR, tru
   _white_texture = std::make_shared<Texture>();
   char white_texture_data[16 * 16 * 4];
   memset(white_texture_data, 0xff, 16 * 16 * 4);
-  _white_texture->create({},
-                         {.preset = Preset::eRTT2DUnmipped,
-                          .format = vuk::Format::eR8G8B8A8Unorm,
-                          .mime = {},
-                          .loaded_data = white_texture_data,
-                          .extent = vuk::Extent3D{.width = 16u, .height = 16u, .depth = 1u}});
+  _white_texture->create(
+    {},
+    {.preset = Preset::eRTT2DUnmipped,
+     .format = vuk::Format::eR8G8B8A8Unorm,
+     .mime = {},
+     .loaded_data = white_texture_data,
+     .extent = vuk::Extent3D{.width = 16u, .height = 16u, .depth = 1u}}
+  );
 
   ThumbnailRenderer rp;
   rp.init(App::get_vkcontext());
@@ -318,10 +330,12 @@ void ContentPanel::render_header() {
 
   if (ImGui::BeginPopup("SettingsPopup")) {
     UI::begin_properties(ImGuiTableFlags_SizingStretchSame);
-    UI::property("Thumbnail Size",
-                 EditorCVar::cvar_file_thumbnail_size.get_ptr(),
-                 thumbnail_size_grid_limit - 0.1f,
-                 thumbnail_max_limit);
+    UI::property(
+      "Thumbnail Size",
+      EditorCVar::cvar_file_thumbnail_size.get_ptr(),
+      thumbnail_size_grid_limit - 0.1f,
+      thumbnail_max_limit
+    );
     UI::property("Show file thumbnails", reinterpret_cast<bool*>(EditorCVar::cvar_file_thumbnails.get_ptr()));
     UI::property("Hide meta files", reinterpret_cast<bool*>(EditorCVar::cvar_show_meta_files.get_ptr()));
     UI::end_properties();
@@ -460,7 +474,11 @@ void ContentPanel::render_side_view() {
     if (opened) {
       uint32_t count = 0;
       const auto [is_clicked, clicked_node] = directory_tree_view_recursive(
-          _assets_directory, &count, &selection_mask, tree_node_flags);
+        _assets_directory,
+        &count,
+        &selection_mask,
+        tree_node_flags
+      );
 
       if (is_clicked) {
         // (process outside of tree loop to avoid visual inconsistencies during the clicking frame)
@@ -582,10 +600,12 @@ void ContentPanel::render_body(bool grid) {
               }
             }
 
-            auto thumb = rp->render(vk_context,
-                                    {(u32)thumb_image_size, (u32)thumb_image_size, 1},
-                                    vuk::Format::eR8G8B8A8Srgb)
-                             .as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue);
+            auto thumb = rp->render(
+                             vk_context,
+                             {(u32)thumb_image_size, (u32)thumb_image_size, 1},
+                             vuk::Format::eR8G8B8A8Srgb
+            )
+                           .as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue);
 
             auto ia = vk_context.wait_on_rg(std::move(thumb), false);
 
@@ -658,11 +678,13 @@ void ContentPanel::render_body(bool grid) {
         // Foreground Image
         ImGui::SetCursorPos({cursor_pos.x + padding, cursor_pos.y + padding});
         ImGui::SetItemAllowOverlap();
-        UI::image(*_white_texture,
-                  {background_thumbnail_size.x - padding * 2.f, background_thumbnail_size.y - padding * 2.f},
-                  {},
-                  {},
-                  EditorLayer::get()->editor_theme.window_bg_alternative_color);
+        UI::image(
+          *_white_texture,
+          {background_thumbnail_size.x - padding * 2.f, background_thumbnail_size.y - padding * 2.f},
+          {},
+          {},
+          EditorLayer::get()->editor_theme.window_bg_alternative_color
+        );
 
         // Thumbnail Image
         ImGui::SetCursorPos({cursor_pos.x + thumbnail_padding * 0.75f, cursor_pos.y + thumbnail_padding});
@@ -686,27 +708,39 @@ void ContentPanel::render_body(bool grid) {
         // Type Color frame
         const ImVec2 type_color_frame_size = {scaled_thumbnail_size_x, scaled_thumbnail_size_x * 0.03f};
         ImGui::SetCursorPosX(cursor_pos.x + padding);
-        UI::image(*_white_texture,
-                  type_color_frame_size,
-                  {0, 0},
-                  {1, 1},
-                  is_dir ? ImVec4(0.0f, 0.0f, 0.0f, 0.0f) : file.file_type_indicator_color);
+        UI::image(
+          *_white_texture,
+          type_color_frame_size,
+          {0, 0},
+          {1, 1},
+          is_dir ? ImVec4(0.0f, 0.0f, 0.0f, 0.0f) : file.file_type_indicator_color
+        );
 
         const ImVec2 rect_min = ImGui::GetItemRectMin();
         const ImVec2 rect_size = ImGui::GetItemRectSize();
         const ImRect clip_rect = ImRect(
-            {rect_min.x + padding * 1.0f, rect_min.y + padding * 2.0f},
-            {rect_min.x + rect_size.x, rect_min.y + scaled_thumbnail_size_x - editor_theme.regular_font_size * 2.0f});
+          {rect_min.x + padding * 1.0f, rect_min.y + padding * 2.0f},
+          {rect_min.x + rect_size.x, rect_min.y + scaled_thumbnail_size_x - editor_theme.regular_font_size * 2.0f}
+        );
         ImGui::PushFont(nullptr, 14.f);
         UI::clipped_text(
-            clip_rect.Min, clip_rect.Max, filename, nullptr, nullptr, {0, 0}, nullptr, clip_rect.GetSize().x);
+          clip_rect.Min,
+          clip_rect.Max,
+          filename,
+          nullptr,
+          nullptr,
+          {0, 0},
+          nullptr,
+          clip_rect.GetSize().x
+        );
         ImGui::PopFont();
 
         if (!is_dir) {
           constexpr auto y_pos_pad = 10.f;
           ImGui::SetCursorPos(
-              {cursor_pos.x + padding * 2.0f,
-               cursor_pos.y + background_thumbnail_size.y - editor_theme.small_font_size * 2.0f + y_pos_pad});
+            {cursor_pos.x + padding * 2.0f,
+             cursor_pos.y + background_thumbnail_size.y - editor_theme.small_font_size * 2.0f + y_pos_pad}
+          );
           ImGui::BeginDisabled();
           ImGui::PushFont(nullptr, editor_theme.small_font_size);
           ImGui::TextUnformatted(file.file_type_string.data());
@@ -758,8 +792,10 @@ void ContentPanel::render_body(bool grid) {
     }
 
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, editor_theme.popup_item_spacing);
-    if (ImGui::BeginPopupContextWindow("AssetPanelHierarchyContextWindow",
-                                       ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+    if (ImGui::BeginPopupContextWindow(
+          "AssetPanelHierarchyContextWindow",
+          ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+        )) {
       editor_context.reset();
       if (auto p = draw_context_menu_items(_current_directory, true); !p.empty()) {
         directory_to_open = p;
@@ -782,8 +818,10 @@ void ContentPanel::render_body(bool grid) {
   }
 
   if (ImGui::BeginPopupModal("Delete?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-    ImGui::Text("%s will be deleted. \nAre you sure? This operation cannot be undone!\n\n",
-                _directory_to_delete.string().c_str());
+    ImGui::Text(
+      "%s will be deleted. \nAre you sure? This operation cannot be undone!\n\n",
+      _directory_to_delete.string().c_str()
+    );
     ImGui::Separator();
     if (ImGui::Button("OK", ImVec2(120, 0))) {
       std::filesystem::remove_all(_directory_to_delete);
@@ -821,6 +859,9 @@ void ContentPanel::update_directory_entries(const std::filesystem::path& directo
     const std::string filename = relative_path.filename().string();
     const std::string extension = relative_path.extension().string();
 
+    if (is_ignored_file(filename))
+      continue;
+
     auto file_type = FileType::Unknown;
     const auto& file_type_it = FILE_TYPES.find(extension);
     if (file_type_it != FILE_TYPES.end())
@@ -838,22 +879,26 @@ void ContentPanel::update_directory_entries(const std::filesystem::path& directo
 
     const auto file_icon = directory_entry.is_directory() ? ICON_MDI_FOLDER : FILE_TYPES_TO_ICON.at(file_type);
 
-    File entry = {filename,
-                  path.string(),
-                  extension,
-                  directory_entry,
-                  nullptr,
-                  file_icon,
-                  directory_entry.is_directory(),
-                  file_type,
-                  file_type_string,
-                  file_type_color};
+    File entry = {
+      filename,
+      path.string(),
+      extension,
+      directory_entry,
+      nullptr,
+      file_icon,
+      directory_entry.is_directory(),
+      file_type,
+      file_type_string,
+      file_type_color
+    };
 
     _directory_entries.push_back(entry);
   }
 
   _elapsed_time = 0.0f;
 }
+
+void ContentPanel::refresh() { update_directory_entries(_current_directory); }
 
 std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesystem::path& context, bool is_dir) {
   std::filesystem::path dir_to_open = {};

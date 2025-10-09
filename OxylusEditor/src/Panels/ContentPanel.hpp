@@ -44,7 +44,7 @@ private:
   void render_side_view();
   void render_body(bool grid);
   void update_directory_entries(const std::filesystem::path& directory);
-  void refresh() { update_directory_entries(_current_directory); }
+  void refresh();
 
   std::filesystem::path draw_context_menu_items(const std::filesystem::path& context, bool isDir);
 
