@@ -541,7 +541,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     auto directional_shadows_enabled = self.directional_light_cast_shadows;
     auto directional_light_info = self.directional_light.value_or(GPU::DirectionalLight{});
     auto directional_light_cascade_count = max(directional_light_info.cascade_count, 2_u32);
-    auto directional_light_shadowmap_size = directional_shadows_enabled ? max(directional_light_info.cascade_size, 1_u32) : 1;
+    auto directional_light_shadowmap_size = directional_shadows_enabled
+                                              ? max(directional_light_info.cascade_size, 1_u32)
+                                              : 1;
     auto directional_light_shadowmap_attachment = vuk::declare_ia(
       "directional light shadowmap",
       {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eDepthStencilAttachment,
@@ -1238,10 +1240,15 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     );
 
     RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, *self.renderer.vk_context);
-    ctx.set_viewport_size(self.viewport_size).set_image_resource("result_attachment", std::move(result_attachment));
+    ctx.set_viewport_size(self.viewport_size)
+      .set_buffer_resource("camera_buffer", std::move(camera_buffer))
+      .set_image_resource("depth_attachment", std::move(depth_attachment))
+      .set_image_resource("result_attachment", std::move(result_attachment));
 
     self.execute_stages_after(RenderStage::PostProcessing, ctx);
 
+    camera_buffer = ctx.get_buffer_resource("camera_buffer");
+    depth_attachment = ctx.get_image_resource("depth_attachment");
     result_attachment = ctx.get_image_resource("result_attachment");
   }
 

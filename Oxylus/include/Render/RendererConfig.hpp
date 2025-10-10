@@ -8,9 +8,6 @@ namespace RendererCVar {
 inline AutoCVar_Int cvar_vsync("rr.vsync", "toggle vsync", 1);
 inline AutoCVar_Int cvar_frame_limit("rr.frame_limit", "Limits the framerate with a sleep. 0: Disable, > 0: Enable", 0);
 
-inline AutoCVar_Int cvar_draw_grid("rr.draw_grid", "draw editor scene grid", 1);
-inline AutoCVar_Float cvar_draw_grid_distance("rr.grid_distance", "max grid distance", 20.f);
-
 inline AutoCVar_Int cvar_enable_debug_renderer("rr.debug_renderer", "enable debug renderer", 1);
 inline AutoCVar_Int cvar_draw_bounding_boxes("rr.draw_bounding_boxes", "draw mesh bounding boxes", 0);
 inline AutoCVar_Int cvar_enable_physics_debug_renderer("rr.physics_debug_renderer", "enable physics debug renderer", 0);

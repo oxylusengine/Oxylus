@@ -17,6 +17,9 @@ class Renderer {
 public:
   constexpr static auto MODULE_NAME = "Renderer";
 
+  vuk::Unique<vuk::Buffer> quad_vertex_buffer = vuk::Unique<vuk::Buffer>();
+  vuk::Unique<vuk::Buffer> quad_index_buffer = vuk::Unique<vuk::Buffer>();
+
   struct RenderInfo {
     vuk::Extent3D extent;
     vuk::Format format;
@@ -145,8 +148,8 @@ public:
 
   Renderer(VkContext* vk_ctx);
 
-  auto init() -> std::expected<void, std::string>;
-  auto deinit() -> std::expected<void, std::string>;
+  auto init(this Renderer& self) -> std::expected<void, std::string>;
+  auto deinit(this Renderer& self) -> std::expected<void, std::string>;
 
   auto new_instance(Scene* scene) -> std::unique_ptr<RendererInstance>;
 

@@ -32,9 +32,9 @@ void EditorConfig::load_config() {
   }
 
   if (auto v = config["grid"].as_boolean())
-    RendererCVar::cvar_draw_grid.set(v->get());
+    EditorCVar::cvar_draw_grid.set(v->get());
   if (auto v = config["grid_distance"].as_floating_point())
-    RendererCVar::cvar_draw_grid_distance.set((float)v->get());
+    EditorCVar::cvar_draw_grid_distance.set((float)v->get());
   if (auto v = config["camera_speed"].as_floating_point())
     EditorCVar::cvar_camera_speed.set((float)v->get());
   if (auto v = config["camera_sens"].as_floating_point())
@@ -58,8 +58,8 @@ void EditorConfig::save_config() const {
   const auto root = toml::table{{"editor_config",
                                  toml::table{
                                      {"recent_projects", recent_projects_array},
-                                     {"grid", (bool)RendererCVar::cvar_draw_grid.get()},
-                                     {"grid_distance", RendererCVar::cvar_draw_grid_distance.get()},
+                                     {"grid", (bool)EditorCVar::cvar_draw_grid.get()},
+                                     {"grid_distance", EditorCVar::cvar_draw_grid_distance.get()},
                                      {"camera_speed", EditorCVar::cvar_camera_speed.get()},
                                      {"camera_sens", EditorCVar::cvar_camera_sens.get()},
                                      {"camera_smooth", (bool)EditorCVar::cvar_camera_smooth.get()},

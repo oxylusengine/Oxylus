@@ -5,7 +5,7 @@ import gpu;
 import scene;
 
 struct ShaderParameters {
-  Image2D<f32> edge_image;
+  Image2D<f32> outline_image;
   Image2D<f32x4> source_image;
   Sampler linear_sampler;
 };
@@ -50,15 +50,15 @@ func fs_main(
   uniform ParameterBlock<ShaderParameters> params
 ) -> f32x4 {
     let source = params.source_image.Sample(params.linear_sampler, input.tex_coord);
-    let outline = params.edge_image.Sample(params.linear_sampler, input.tex_coord).r;
+    let outline = params.outline_image.Sample(params.linear_sampler, input.tex_coord).r;
 
     u32 width, height;
-    params.edge_image.GetDimensions(width, height);
+    params.outline_image.GetDimensions(width, height);
     let resolution = u32x2(width, height);
     let blurred_outline = gaussian_blur(
         input.tex_coord,
         resolution,
-        params.edge_image,
+        params.outline_image,
         params.linear_sampler,
         1.0,  // blur radius
         1.0   // sigma

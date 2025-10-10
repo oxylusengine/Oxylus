@@ -93,6 +93,18 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
       "apply_highlighting_pipeline",
       {.path = shaders_dir + "/editor/apply_highlighting.slang", .entry_points = {"vs_main", "fs_main"}}
     );
+
+    slang.create_pipeline(
+      runtime,
+      "grid_pipeline",
+      {.path = shaders_dir + "/editor/grid.slang", .entry_points = {"vs_main", "fs_main"}}
+    );
+
+    slang.create_pipeline(
+      runtime,
+      "apply_grid_pipeline",
+      {.path = shaders_dir + "/editor/apply_grid.slang", .entry_points = {"vs_main", "fs_main"}}
+    );
   }
 }
 
@@ -206,6 +218,10 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
         mouse_picking_stages(renderer_instance, picking_texel);
       }
 
+      if (static_cast<bool>(EditorCVar::cvar_draw_grid.get())) {
+        grid_stage(renderer_instance);
+      }
+
       const Renderer::RenderInfo render_info = {
         .extent = extent,
         .format = format,
@@ -311,8 +327,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
               alpha
             ))
           _gizmo_mode = _gizmo_mode == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
-        if (UI::toggle_button(ICON_MDI_GRID, RendererCVar::cvar_draw_grid.get(), button_size, alpha, alpha))
-          RendererCVar::cvar_draw_grid.toggle();
+        if (UI::toggle_button(ICON_MDI_GRID, EditorCVar::cvar_draw_grid.get(), button_size, alpha, alpha))
+          EditorCVar::cvar_draw_grid.toggle();
 
         if (editor_camera.has<CameraComponent>()) {
           auto& cam = editor_camera.get_mut<CameraComponent>();
@@ -655,12 +671,6 @@ void ViewportPanel::draw_settings_panel() {
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
   if (ImGui::TreeNodeEx("Viewport", TREE_FLAGS, "%s", "Viewport")) {
-    if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-      UI::property("Draw grid", (bool*)RendererCVar::cvar_draw_grid.get_ptr());
-      UI::property<float>("Grid distance", RendererCVar::cvar_draw_grid_distance.get_ptr(), 10.f, 100.0f);
-      UI::end_properties();
-    }
-
     if (open_action != -1)
       ImGui::SetNextItemOpen(open_action != 0);
     if (ImGui::TreeNodeEx("Camera", TREE_FLAGS, "%s", "Camera")) {
@@ -681,6 +691,9 @@ void ViewportPanel::draw_settings_panel() {
 
 void ViewportPanel::draw_gizmo_settings_panel() {
   if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+    UI::property("Draw grid", (bool*)EditorCVar::cvar_draw_grid.get_ptr());
+    UI::property<float>("Grid distance", EditorCVar::cvar_draw_grid_distance.get_ptr(), 10.f, 10000.0f);
+
     UI::property("Draw Component Gizmos", &draw_component_gizmos_);
     UI::property("Component Gizmos Size", &gizmo_icon_size_);
     UI::property("Entity Highlighting", &draw_entity_highlighting_);
@@ -994,7 +1007,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
           std::move(mesh_instances)
         );
 
-      ctx.set_shared_image_resource("highlight_attachment",std::move(highlight_attachment))
+      ctx.set_shared_image_resource("highlight_attachment", std::move(highlight_attachment))
         .set_image_resource("depth_attachment", std::move(depth_attachment))
         .set_image_resource("visbuffer_attachment", std::move(visbuffer))
         .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
@@ -1056,6 +1069,118 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
     // change result_attachment to highlight applied attachment
     ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
       .set_image_resource("result_attachment", std::move(highlight_applied_attachment));
+  });
+}
+
+auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
+  ZoneScoped;
+
+  renderer_instance->add_stage_after(RenderStage::PostProcessing, "grid_stage", [](RenderStageContext& ctx) {
+    auto result_attachment = ctx.get_image_resource("result_attachment");
+    auto depth_attachment = ctx.get_image_resource("depth_attachment");
+    auto camera_buffer = ctx.get_buffer_resource("camera_buffer");
+
+    auto grid_pass = vuk::make_pass(
+      "grid_pass",
+      [](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eColorWrite) out,
+        VUK_IA(vuk::eDepthStencilRead) depth,
+        VUK_BA(vuk::eVertexRead) camera
+      ) {
+        const auto vertex_pack = vuk::Packed{
+          vuk::Format::eR32G32B32Sfloat,
+          vuk::Format::eR32G32Sfloat,
+        };
+
+        auto& renderer = App::mod<Renderer>();
+
+        const auto position = glm::vec3(0.f, 0.f, 0.f);
+        const auto rotation = glm::vec3(glm::radians(90.f), 0.f, 0.f);
+        const auto scale = glm::vec3(
+          EditorCVar::cvar_draw_grid_distance.get(),
+          EditorCVar::cvar_draw_grid_distance.get(),
+          EditorCVar::cvar_draw_grid_distance.get()
+        );
+        auto grid_transform = glm::translate(glm::mat4(1.0f), position) * glm::toMat4(glm::quat(rotation)) *
+                              glm::scale(glm::mat4(1.0f), scale);
+
+        cmd_list.bind_graphics_pipeline("grid_pipeline")
+          .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
+          .set_viewport(0, vuk::Rect2D::framebuffer())
+          .set_scissor(0, vuk::Rect2D::framebuffer())
+          .set_depth_stencil(
+            {.depthTestEnable = true, .depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eGreaterOrEqual}
+          )
+          .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
+          .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
+          .bind_vertex_buffer(0, *renderer.quad_vertex_buffer, 0, vertex_pack)
+          .push_constants(
+            vuk::ShaderStageFlagBits::eVertex,
+            0,
+            PushConstants(camera->device_address, grid_transform, EditorCVar::cvar_draw_grid_distance.get())
+          )
+          .bind_index_buffer(*renderer.quad_index_buffer, vuk::IndexType::eUint32)
+          .draw_indexed(6, 1, 0, 0, 0);
+
+        return std::make_tuple(out, depth, camera);
+      }
+    );
+
+    auto grid_attachment = vuk::declare_ia(
+      "grid_attachment",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+       .sample_count = vuk::Samples::e1}
+    );
+    grid_attachment.same_format_as(result_attachment);
+    grid_attachment.same_shape_as(result_attachment);
+
+    std::tie(grid_attachment, depth_attachment, camera_buffer) = grid_pass(
+      grid_attachment,
+      depth_attachment,
+      camera_buffer
+    );
+
+    auto apply_grid_pass = vuk::make_pass(
+      "apply_grid_pass",
+      [](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eColorWrite) out,
+        VUK_IA(vuk::eFragmentSampled) source,
+        VUK_IA(vuk::eFragmentSampled) grid
+      ) {
+        cmd_list.bind_graphics_pipeline("apply_grid_pipeline")
+          .set_rasterization({})
+          .broadcast_color_blend({})
+          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+          .set_viewport(0, vuk::Rect2D::framebuffer())
+          .set_scissor(0, vuk::Rect2D::framebuffer())
+          .bind_image(0, 0, grid)
+          .bind_image(0, 1, source)
+          .bind_sampler(0, 2, vuk::LinearSamplerClamped)
+          .draw(3, 1, 0, 0);
+
+        return std::make_tuple(out, source, grid);
+      }
+    );
+
+    auto grid_applied_attachment = vuk::declare_ia(
+      "grid_applied_attachment",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+       .sample_count = vuk::Samples::e1}
+    );
+    grid_applied_attachment.same_format_as(result_attachment);
+    grid_applied_attachment.same_shape_as(result_attachment);
+
+    std::tie(grid_applied_attachment, result_attachment, grid_attachment) = apply_grid_pass(
+      grid_applied_attachment,
+      result_attachment,
+      grid_attachment
+    );
+
+    ctx.set_image_resource("result_attachment", std::move(grid_applied_attachment))
+      .set_image_resource("depth_attachment", std::move(depth_attachment))
+      .set_buffer_resource("camera_buffer", std::move(camera_buffer));
   });
 }
 

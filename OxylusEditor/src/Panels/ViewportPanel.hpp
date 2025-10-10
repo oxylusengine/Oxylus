@@ -29,6 +29,7 @@ private:
   void draw_stats_overlay(vuk::Extent3D extent, bool draw_scene_stats);
   void draw_gizmos();
   auto mouse_picking_stages(RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void;
+  auto grid_stage(RendererInstance* renderer_instance) -> void;
 
   Scene* _scene = nullptr;
   SceneHierarchyPanel* _scene_hierarchy_panel = nullptr;
