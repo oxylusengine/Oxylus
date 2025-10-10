@@ -10,7 +10,6 @@
 
 #include "Core/App.hpp"
 #include "Core/FileSystem.hpp"
-#include "Render/RendererCommon.hpp"
 #include "Render/Utils/DDS.hpp"
 #include "Render/Utils/VukCommon.hpp"
 
@@ -74,9 +73,8 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     } else {
-      if (const auto result = ktxTexture2_CreateFromNamedFile(
-            path.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx
-          );
+      if (const auto
+            result = ktxTexture2_CreateFromNamedFile(path.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
           result != KTX_SUCCESS) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
@@ -111,7 +109,10 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
   OX_CHECK_NE(extent.depth, 0u, "Depth can't be 0!");
 
   auto ia = vuk::ImageAttachment::from_preset(
-    load_info.preset, format, {extent.width, extent.height, extent.depth}, vuk::Samples::e1
+    load_info.preset,
+    format,
+    {extent.width, extent.height, extent.depth},
+    vuk::Samples::e1
   );
   ia.usage |= vuk::ImageUsageFlagBits::eTransferDst | vuk::ImageUsageFlagBits::eTransferSrc;
 
@@ -335,7 +336,12 @@ std::unique_ptr<u8[]> Texture::load_stb_image_from_memory(
   int tex_width = 0, tex_height = 0, tex_channels = 0;
   int size_of_channel = 8;
   const auto pixels = stbi_load_from_memory(
-    static_cast<stbi_uc*>(buffer), static_cast<int>(len), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha
+    static_cast<stbi_uc*>(buffer),
+    static_cast<int>(len),
+    &tex_width,
+    &tex_height,
+    &tex_channels,
+    STBI_rgb_alpha
   );
 
   if (stbi_is_16_bit_from_memory(static_cast<stbi_uc*>(buffer), static_cast<int>(len))) {
