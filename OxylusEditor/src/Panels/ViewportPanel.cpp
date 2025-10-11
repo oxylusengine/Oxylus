@@ -1118,8 +1118,9 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
           .push_constants(
             vuk::ShaderStageFlagBits::eVertex,
             0,
-            PushConstants(camera->device_address, grid_transform, EditorCVar::cvar_draw_grid_distance.get())
+            PushConstants(grid_transform, EditorCVar::cvar_draw_grid_distance.get())
           )
+          .bind_buffer(0, 0, camera)
           .bind_index_buffer(*renderer.quad_index_buffer, vuk::IndexType::eUint32)
           .draw_indexed(6, 1, 0, 0, 0);
 
@@ -1134,6 +1135,7 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
     );
     grid_attachment.same_format_as(result_attachment);
     grid_attachment.same_shape_as(result_attachment);
+    grid_attachment = vuk::clear_image(grid_attachment, vuk::Black<f32>);
 
     std::tie(grid_attachment, depth_attachment, camera_buffer) = grid_pass(
       grid_attachment,
@@ -1171,6 +1173,7 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
     );
     grid_applied_attachment.same_format_as(result_attachment);
     grid_applied_attachment.same_shape_as(result_attachment);
+    grid_applied_attachment = vuk::clear_image(grid_applied_attachment, vuk::Black<f32>);
 
     std::tie(grid_applied_attachment, result_attachment, grid_attachment) = apply_grid_pass(
       grid_applied_attachment,

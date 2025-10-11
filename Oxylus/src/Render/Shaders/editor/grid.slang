@@ -7,15 +7,13 @@ import gpu;
 #define EPSILON 0.00001
 
 struct PushConstants {
-  Camera* camera_buffer;
   f32x4x4 grid_transform;
   f32 grid_scale;
 };
 [[vk::push_constant]] PushConstants C;
 
 struct ShaderParameters {
-  Image2D<f32> depth_image;
-  Sampler depth_sampler;
+  ConstantBuffer<Camera> camera;
 };
 
 struct Vertex {
@@ -25,8 +23,8 @@ struct Vertex {
 
 struct VOutput {
   f32x4 Position : SV_Position;
-  f32x2 uv : TEXCOORD;
-  f32x2 world_uv : TEXCOORD;
+  f32x2 uv : TEXCOORD0;
+  f32x2 world_uv : TEXCOORD1;
 };
 
 float PristineGrid(float2 uv, float2 lineWidth) {
@@ -47,27 +45,29 @@ float PristineGrid(float2 uv, float2 lineWidth) {
 }
 
 [[shader("vertex")]]
-VOutput vs_main(Vertex inVertex) {
-  f32x4x4 mvp = mul(C.camera_buffer.projection_view, C.grid_transform);
+VOutput vs_main(uniform ParameterBlock<ShaderParameters> params, Vertex inVertex) {
   VOutput output;
+
+  f32x4x4 mvp = mul(params.camera.projection_view, C.grid_transform);
   output.Position = mul(mvp, f32x4(inVertex.position, 1.0));
 
-  f32 grid_scale = C.grid_scale;
   output.world_uv = inVertex.uv;
+
+  f32 grid_scale = C.grid_scale;
   output.uv = inVertex.uv * grid_scale;
 
   return output;
 }
 
 [[shader("fragment")]]
-f32x4 fs_main(VOutput input, f32x4 pixel_position : SV_Position) {
+f32x4 fs_main(VOutput input) {
   f32 line_width_x = 0.01f;
   f32 line_width_y = 0.01f;
   float grid = PristineGrid(input.uv, float2(line_width_x, line_width_y));
 
   f32x3 color = f32x3(grid, grid, grid);
 
-  f32 axis_width = 0.01f / C.grid_scale;
+  f32 axis_width = line_width_x / C.grid_scale;
 
   f32 distToXAxis = abs(input.world_uv.y - 0.5);
   if (distToXAxis < axis_width) {
