@@ -1,8 +1,9 @@
 #pragma once
 
+#include <glm/mat4x4.hpp>
 #include <vuk/Types.hpp>
 
-#include "Asset/Material.hpp"
+#include "Core/Types.hpp"
 
 namespace ox::GPU {
 enum class TransformID : u64 { Invalid = ~0_u64 };
@@ -280,12 +281,12 @@ struct HistogramInfo {
 };
 
 struct VBGTAOSettings {
-  alignas(4) f32 thickness = 0.25;
+  alignas(4) f32 thickness = 0.25f;
   alignas(4) u32 slice_count = 3;
   alignas(4) u32 samples_per_slice_side = 3;
-  alignas(4) f32 effect_radius = 0.5;
+  alignas(4) f32 effect_radius = 0.5f;
   alignas(4) u32 noise_index = 0;
-  alignas(4) f32 final_power = 2.2;
+  alignas(4) f32 final_power = 2.2f;
 };
 
 struct PostProcessSettings {

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <filesystem>
+#include <glm/gtx/quaternion.hpp>
+#include <span>
 #include <sstream>
 
 #include "Utils/StringUtils.hpp"
@@ -119,7 +122,7 @@ struct JsonWriter {
     return *this;
   }
 
-  JsonWriter& operator=(::fs::path& v) {
+  JsonWriter& operator=(std::filesystem::path& v) {
     str(v.string());
     return *this;
   }

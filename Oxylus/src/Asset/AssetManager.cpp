@@ -1,5 +1,6 @@
 #include "Asset/AssetManager.hpp"
 
+#include <glm/gtc/type_ptr.hpp>
 #include <meshoptimizer.h>
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
@@ -207,7 +208,7 @@ auto AssetManager::to_asset_file_type(const std::string& path) -> AssetFileType 
   ZoneScoped;
   memory::ScopedStack stack;
 
-  auto extension = ox::fs::get_file_extension(path);
+  auto extension = fs::get_file_extension(path);
 
   if (extension.empty()) {
     return AssetFileType::None;
@@ -330,7 +331,7 @@ auto AssetManager::import_asset(const std::string& path) -> UUID {
               texture_uuid = this->create_asset(AssetType::Texture, {});
               embedded_textures.push_back(texture_uuid);
             },
-            [&](const ::fs::path& image_path) { //
+            [&](const std::filesystem::path& image_path) { //
               texture_uuid = this->import_asset(image_path.string());
             },
           },
@@ -435,7 +436,7 @@ auto AssetManager::register_asset(const std::string& path) -> UUID {
     return UUID(nullptr);
   }
 
-  auto asset_path = ::fs::path(path);
+  auto asset_path = std::filesystem::path(path);
   asset_path.replace_extension("");
   auto uuid = UUID::from_string(uuid_json.value_unsafe()).value();
   auto type = static_cast<AssetType>(type_json.value_unsafe().get_uint64());
@@ -788,7 +789,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
 
         std::visit(
           ox::match{
-            [&](const ::fs::path& p) {
+            [&](const std::filesystem::path& p) {
               auto extension = p.extension();
 
               memory::ScopedStack s;

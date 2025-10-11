@@ -3,7 +3,9 @@
 #define TOML_HEADER_ONLY 0
 #include <toml++/toml.hpp>
 
-#include "Oxylus.hpp"
+#include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
 
 namespace ox {
 inline toml::array get_toml_array(const glm::vec2& vec) { return toml::array{vec.x, vec.y}; }

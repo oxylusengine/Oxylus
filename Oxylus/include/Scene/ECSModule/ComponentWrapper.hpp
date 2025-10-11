@@ -1,28 +1,35 @@
 #pragma once
 
 #include <flecs.h>
+#include <glm/gtx/quaternion.hpp>
+#include <glm/mat4x4.hpp>
+#include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
+#include <variant>
 
 #include "Core/UUID.hpp"
 
 namespace ox::ECS {
 struct ComponentWrapper {
-  using Member = std::variant<std::monostate,
-                              bool*,
-                              u8*,
-                              u16*,
-                              f32*,
-                              f64*,
-                              i32*,
-                              u32*,
-                              i64*,
-                              u64*,
-                              glm::vec2*,
-                              glm::vec3*,
-                              glm::vec4*,
-                              glm::mat4*,
-                              glm::quat*,
-                              std::string*,
-                              UUID*>;
+  using Member = std::variant<
+    std::monostate,
+    bool*,
+    u8*,
+    u16*,
+    f32*,
+    f64*,
+    i32*,
+    u32*,
+    i64*,
+    u64*,
+    glm::vec2*,
+    glm::vec3*,
+    glm::vec4*,
+    glm::mat4*,
+    glm::quat*,
+    std::string*,
+    UUID*>;
   flecs::entity component_entity = {};
   std::string path = {};
   std::string_view name = {};

@@ -1,6 +1,7 @@
 #include "Core/ProjectSerializer.hpp"
 
 #include "Core/FileSystem.hpp"
+#include "Utils/Log.hpp"
 #include "Utils/Toml.hpp"
 
 namespace ox {
@@ -8,12 +9,12 @@ bool ProjectSerializer::serialize(const std::string& file_path) const {
   const auto& config = project->get_config();
 
   const auto root = toml::table{{
-      "project",
-      toml::table{
-          {"name", config.name},
-          {"asset_directory", config.asset_directory},
-          {"start_scene", config.start_scene},
-      },
+    "project",
+    toml::table{
+      {"name", config.name},
+      {"asset_directory", config.asset_directory},
+      {"start_scene", config.start_scene},
+    },
   }};
 
   return fs::write_file(file_path, root, "# Oxylus project file");

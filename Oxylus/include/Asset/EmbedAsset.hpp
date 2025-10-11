@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "Oxylus.hpp"
+#include <string>
 
 namespace ox {
 class EmbedAsset {

@@ -1,6 +1,6 @@
 #include "Utils/Log.hpp"
 
-#include "Oxylus.hpp"
+#include <filesystem>
 
 namespace ox {
 void Log::init(int argc, char** argv) {

@@ -1,6 +1,9 @@
 ﻿#include "Asset/EmbedAsset.hpp"
 
+#include <fstream>
+
 #include "Asset/Texture.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 void

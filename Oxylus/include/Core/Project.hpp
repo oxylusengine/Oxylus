@@ -1,6 +1,10 @@
 #pragma once
 
+#include <deque>
+#include <filesystem>
+
 #include "Core/UUID.hpp"
+
 namespace ox {
 struct ProjectConfig {
   std::string name = "Untitled";
@@ -10,21 +14,21 @@ struct ProjectConfig {
 };
 
 struct AssetDirectory {
-  ::fs::path path = {};
+  std::filesystem::path path = {};
 
   AssetDirectory* parent = nullptr;
   std::deque<std::unique_ptr<AssetDirectory>> subdirs = {};
   ankerl::unordered_dense::set<UUID> asset_uuids = {};
 
-  AssetDirectory(::fs::path path_, AssetDirectory* parent_);
+  AssetDirectory(std::filesystem::path path_, AssetDirectory* parent_);
 
   ~AssetDirectory();
 
-  auto add_subdir(this AssetDirectory& self, const ::fs::path& dir_path) -> AssetDirectory*;
+  auto add_subdir(this AssetDirectory& self, const std::filesystem::path& dir_path) -> AssetDirectory*;
 
   auto add_subdir(this AssetDirectory& self, std::unique_ptr<AssetDirectory>&& directory) -> AssetDirectory*;
 
-  auto add_asset(this AssetDirectory& self, const ::fs::path& dir_path) -> UUID;
+  auto add_asset(this AssetDirectory& self, const std::filesystem::path& dir_path) -> UUID;
 
   auto refresh(this AssetDirectory& self) -> void;
 };
@@ -33,10 +37,12 @@ class Project {
 public:
   Project() = default;
 
-  auto new_project(this Project& self,
-                   const std::string& project_dir,
-                   const std::string& project_name,
-                   const std::string& project_asset_dir) -> bool;
+  auto new_project(
+    this Project& self,
+    const std::string& project_dir,
+    const std::string& project_name,
+    const std::string& project_asset_dir
+  ) -> bool;
   auto load(this Project& self, const std::string& path) -> bool;
   auto save(this Project& self, const std::string& path) -> bool;
 
@@ -54,7 +60,7 @@ private:
   ProjectConfig project_config = {};
   std::string project_directory = {};
   std::string project_file_path = {};
-  ::fs::file_time_type last_module_write_time = {};
+  std::filesystem::file_time_type last_module_write_time = {};
   std::unique_ptr<AssetDirectory> asset_directory = nullptr;
 };
 } // namespace ox

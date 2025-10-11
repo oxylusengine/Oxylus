@@ -1,6 +1,10 @@
 ﻿#pragma once
 
-#include "Oxylus.hpp"
+#include <ankerl/unordered_dense.h>
+#include <shared_mutex>
+#include <vector>
+
+#include "Core/Types.hpp"
 
 namespace ox {
 enum class CVarFlags : u32 {
@@ -100,10 +104,9 @@ struct AutoCVar_Int : AutoCVar<int32_t> {
 };
 
 struct AutoCVar_String : AutoCVar<std::string> {
-  AutoCVar_String(const char* name,
-                  const char* description,
-                  const char* default_value,
-                  CVarFlags flags = CVarFlags::None);
+  AutoCVar_String(
+    const char* name, const char* description, const char* default_value, CVarFlags flags = CVarFlags::None
+  );
 
   std::string get() const;
   void set(std::string&& val) const;

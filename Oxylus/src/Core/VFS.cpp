@@ -1,6 +1,7 @@
 #include "Core/VFS.hpp"
 
 #include "Core/FileSystem.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 auto VFS::is_mounted_dir(const std::string& virtual_dir) -> bool {

@@ -2,7 +2,7 @@
 #include <ankerl/unordered_dense.h>
 #include <imgui.h>
 
-#include "Oxylus.hpp"
+#include "Core/Types.hpp"
 
 struct ImFont;
 

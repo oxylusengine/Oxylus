@@ -2,8 +2,7 @@
 
 #include <vuk/Value.hpp>
 #include <vuk/vsl/Core.hpp>
-
-#include "Oxylus.hpp"
+#include "Core/Types.hpp"
 
 namespace ox {
 

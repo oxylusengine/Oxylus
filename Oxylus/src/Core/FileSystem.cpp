@@ -1,5 +1,8 @@
 ﻿#include "Core/FileSystem.hpp"
 
+#include <filesystem>
+
+#include "Utils/Log.hpp"
 #include "Utils/StringUtils.hpp"
 
 #ifdef OX_PLATFORM_WINDOWS

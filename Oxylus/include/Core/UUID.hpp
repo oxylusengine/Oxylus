@@ -1,6 +1,9 @@
 #pragma once
 
-#include "Oxylus.hpp"
+#include "Core/Option.hpp"
+#include "Core/Types.hpp"
+
+#include <ankerl/unordered_dense.h>
 
 namespace ox {
 struct UUID {

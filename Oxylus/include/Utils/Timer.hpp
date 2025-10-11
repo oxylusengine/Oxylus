@@ -1,6 +1,8 @@
 ﻿#pragma once
 
-#include "Oxylus.hpp"
+#include <chrono>
+
+#include "Core/Types.hpp"
 
 typedef std::chrono::time_point<std::chrono::high_resolution_clock> TimeStamp;
 

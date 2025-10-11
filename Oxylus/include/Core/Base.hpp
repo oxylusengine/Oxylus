@@ -35,4 +35,7 @@ struct defer {
 
 #define OX_DEFER(...) ::ox::defer OX_UNIQUE_VAR() = [__VA_ARGS__]
 
+#define OX_CALLSTACK std::source_location LOC
+#define OX_THISCALL OX_CALLSTACK = std::source_location::current()
+
 } // namespace ox

@@ -6,6 +6,7 @@
 #include <vuk/runtime/vk/DeviceFrameResource.hpp>
 #include <vuk/runtime/vk/VkRuntime.hpp>
 
+#include "Core/Base.hpp"
 #include "Core/Option.hpp"
 #include "Memory/SlotMap.hpp"
 #include "Render/Slang/Compiler.hpp"

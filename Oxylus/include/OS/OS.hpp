@@ -1,6 +1,9 @@
 #pragma once
 
-#include "Oxylus.hpp"
+#include <string_view>
+#include <thread>
+
+#include "Core/Types.hpp"
 
 namespace ox {
 namespace os {

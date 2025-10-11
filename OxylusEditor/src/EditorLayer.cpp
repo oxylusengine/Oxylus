@@ -370,12 +370,12 @@ void EditorLayer::open_scene_file_dialog() {
 }
 
 bool EditorLayer::open_scene(const std::filesystem::path& path) {
-  if (!::fs::exists(path)) {
+  if (!std::filesystem::exists(path)) {
     OX_LOG_WARN("Could not find scene: {0}", path.filename().string());
     return false;
   }
   if (path.extension().string() != ".oxscene") {
-    if (!::fs::is_directory(path))
+    if (!std::filesystem::is_directory(path))
       OX_LOG_WARN("Could not load {0} - not a scene file", path.filename().string());
     return false;
   }

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
-#include "Oxylus.hpp"
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/vec3.hpp>
 
 namespace ox {
 struct Plane {
@@ -10,9 +11,9 @@ struct Plane {
   Plane() = default;
   Plane(glm::vec3 norm) : normal(glm::normalize(norm)) {}
 
-  Plane(const glm::vec3& p1, const glm::vec3& norm) : normal(normalize(norm)), distance(dot(normal, p1)) {}
+  Plane(const glm::vec3& p1, const glm::vec3& norm) : normal(glm::normalize(norm)), distance(glm::dot(normal, p1)) {}
 
-  float get_distance(const glm::vec3& point) const { return dot(normal, point) - distance; }
+  float get_distance(const glm::vec3& point) const { return glm::dot(normal, point) - distance; }
 
   bool intersect(const Plane other) const {
     const auto d = glm::cross(normal, other.normal);

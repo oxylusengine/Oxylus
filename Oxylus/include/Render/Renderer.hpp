@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/ext/vector_uint2.hpp>
+#include <glm/gtc/packing.hpp>
 #include <vuk/Value.hpp>
 #include <vuk/runtime/vk/Descriptor.hpp>
 

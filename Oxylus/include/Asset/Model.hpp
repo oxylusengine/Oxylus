@@ -1,9 +1,11 @@
 #pragma once
 
+#include <glm/gtx/quaternion.hpp>
 #include <vuk/Buffer.hpp>
 
 #include "Core/UUID.hpp"
 #include "Scene/SceneGPU.hpp"
+
 namespace ox {
 
 enum class ModelID : u64 { Invalid = std::numeric_limits<u64>::max() };

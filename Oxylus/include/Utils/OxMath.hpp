@@ -1,7 +1,9 @@
 #pragma once
 
+#include <glm/gtx/quaternion.hpp>
 #include <tracy/Tracy.hpp>
 
+#include "Core/Types.hpp"
 #include "Render/BoundingVolume.hpp"
 
 namespace JPH {
@@ -80,12 +82,9 @@ inline auto calc_frustum_planes(glm::mat4& view_proj_mat, glm::vec4 (&planes)[6]
 bool decompose_transform(const glm::mat4& transform, glm::vec3& translation, glm::vec3& rotation, glm::vec3& scale);
 
 template <typename T>
-static T smooth_damp(const T& current,
-                     const T& target,
-                     T& current_velocity,
-                     float smooth_time,
-                     const float max_speed,
-                     float delta_time) {
+static T smooth_damp(
+  const T& current, const T& target, T& current_velocity, float smooth_time, const float max_speed, float delta_time
+) {
   ZoneScoped;
   // Based on Game Programming Gems 4 Chapter 1.10
   smooth_time = glm::max(0.0001F, smooth_time);
@@ -129,7 +128,8 @@ float lerp(float a, float b, float t);
 float inverse_lerp(float a, float b, float value);
 float inverse_lerp_clamped(float a, float b, float value);
 glm::vec2 world_to_screen(
-    const glm::vec3& world_pos, const glm::mat4& mvp, float width, float height, float win_pos_x, float win_pos_y);
+  const glm::vec3& world_pos, const glm::mat4& mvp, float width, float height, float win_pos_x, float win_pos_y
+);
 
 glm::vec4 transform(const glm::vec4& vec, const glm::mat4& view);
 glm::vec4 transform_normal(const glm::vec4& vec, const glm::mat4& mat);

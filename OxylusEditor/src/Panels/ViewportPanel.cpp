@@ -244,7 +244,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
     if (ImGui::BeginDragDropTarget()) {
       if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
         const auto* payload = PayloadData::from_payload(imgui_payload);
-        const auto path = ::fs::path(payload->get_str());
+        const auto path = std::filesystem::path(payload->get_str());
         if (path.extension() == ".oxscene") {
           editor_layer->open_scene(path);
         }

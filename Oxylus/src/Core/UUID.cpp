@@ -1,5 +1,7 @@
 #include "Core/UUID.hpp"
 
+#include <algorithm>
+#include <fmt/core.h>
 #include <random>
 
 namespace ox {
@@ -70,12 +72,14 @@ option<UUID> UUID::from_string(std::string_view str) {
 std::string UUID::str() const {
   ZoneScoped;
 
-  return fmt::format("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-                     static_cast<u32>(this->m_data.u64x2[0] >> 32_u64),
-                     static_cast<u32>((this->m_data.u64x2[0] >> 16_u64) & 0x0000ffff_u64),
-                     static_cast<u32>(this->m_data.u64x2[0] & 0x0000ffff_u64),
-                     static_cast<u32>(this->m_data.u64x2[1] >> 48_u64),
-                     this->m_data.u64x2[1] & 0x0000ffffffffffff_u64);
+  return fmt::format(
+    "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+    static_cast<u32>(this->m_data.u64x2[0] >> 32_u64),
+    static_cast<u32>((this->m_data.u64x2[0] >> 16_u64) & 0x0000ffff_u64),
+    static_cast<u32>(this->m_data.u64x2[0] & 0x0000ffff_u64),
+    static_cast<u32>(this->m_data.u64x2[1] >> 48_u64),
+    this->m_data.u64x2[1] & 0x0000ffffffffffff_u64
+  );
 }
 
 } // namespace ox

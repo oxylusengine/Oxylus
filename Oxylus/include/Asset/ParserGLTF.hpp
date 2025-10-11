@@ -1,9 +1,14 @@
 #pragma once
 
+#include <filesystem>
+#include <glm/gtx/quaternion.hpp>
+#include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
 #include <variant>
 #include <vuk/runtime/vk/Image.hpp>
 
 #include "Asset/AssetFile.hpp"
+#include "Core/Option.hpp"
 
 namespace ox {
 enum class GLTFAlphaMode : u32 {
@@ -22,7 +27,7 @@ struct GLTFSamplerInfo {
 struct GLTFImageInfo {
   std::string name = {};
   AssetFileType file_type = {};
-  std::variant<::fs::path, std::vector<u8>> image_data = {};
+  std::variant<std::filesystem::path, std::vector<u8>> image_data = {};
 };
 
 struct GLTFTextureInfo {
@@ -74,20 +79,24 @@ struct GLTFLightInfo {
 
 struct GLTFMeshCallbacks {
   void* user_data = nullptr;
-  void (*on_new_primitive)(void* user_data,
-                           u32 mesh_index,
-                           u32 material_index,
-                           u32 vertex_offset,
-                           u32 vertex_count,
-                           u32 index_offset,
-                           u32 index_count) = nullptr;
+  void (*on_new_primitive)(
+    void* user_data,
+    u32 mesh_index,
+    u32 material_index,
+    u32 vertex_offset,
+    u32 vertex_count,
+    u32 index_offset,
+    u32 index_count
+  ) = nullptr;
   void (*on_new_light)(void* user_data, usize light_index, const GLTFLightInfo& light);
 
-  std::function<void(std::vector<GLTFMaterialInfo>& gltf_materials,
-                     std::vector<GLTFTextureInfo>& textures,
-                     std::vector<GLTFImageInfo>& images,
-                     std::vector<GLTFSamplerInfo>& samplers)>
-      on_materials_load = nullptr;
+  std::function<void(
+    std::vector<GLTFMaterialInfo>& gltf_materials,
+    std::vector<GLTFTextureInfo>& textures,
+    std::vector<GLTFImageInfo>& images,
+    std::vector<GLTFSamplerInfo>& samplers
+  )>
+    on_materials_load = nullptr;
 
   // Accessors
   void (*on_access_index)(void* user_data, u32 mesh_index, u64 offset, u32 index) = nullptr;
@@ -107,7 +116,7 @@ struct GLTFMeshInfo {
   std::vector<GLTFLightInfo> lights = {};
   ox::option<usize> defualt_scene_index = ox::nullopt;
 
-  static auto parse(const ::fs::path& path, GLTFMeshCallbacks callbacks = {}) -> ox::option<GLTFMeshInfo>;
-  static auto parse_info(const ::fs::path& path) -> ox::option<GLTFMeshInfo>;
+  static auto parse(const std::filesystem::path& path, GLTFMeshCallbacks callbacks = {}) -> ox::option<GLTFMeshInfo>;
+  static auto parse_info(const std::filesystem::path& path) -> ox::option<GLTFMeshInfo>;
 };
 } // namespace ox

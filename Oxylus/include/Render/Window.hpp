@@ -1,6 +1,10 @@
 #pragma once
 
 #include <SDL3/SDL_keycode.h>
+#include <filesystem>
+#include <glm/vec2.hpp>
+#include <glm/vec4.hpp>
+#include <span>
 #include <vulkan/vulkan_core.h>
 
 #include "Core/Handle.hpp"
@@ -70,7 +74,7 @@ struct ShowDialogInfo {
   void* user_data = nullptr;
   void (*callback)(void* user_data, const c8* const* files, i32 filter) = nullptr;
   std::string_view title = {};
-  ::fs::path default_path = {};
+  std::filesystem::path default_path = {};
   std::span<FileDialogFilter> filters = {};
   bool multi_select = false;
 };

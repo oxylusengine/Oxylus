@@ -1,8 +1,7 @@
 ﻿#pragma once
 
 #include <stb_rect_pack.h>
-
-#include "Oxylus.hpp"
+#include <vector>
 
 namespace ox {
 class RectPacker {

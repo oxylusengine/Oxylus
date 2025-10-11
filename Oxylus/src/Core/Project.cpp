@@ -15,7 +15,7 @@ struct AssetDirectoryCallbacks {
 };
 
 auto populate_directory(AssetDirectory* dir, const AssetDirectoryCallbacks& callbacks) -> void {
-  for (const auto& entry : ::fs::directory_iterator(dir->path)) {
+  for (const auto& entry : std::filesystem::directory_iterator(dir->path)) {
     const auto& path = entry.path();
     if (entry.is_directory()) {
       AssetDirectory* cur_subdir = nullptr;
@@ -41,7 +41,7 @@ auto populate_directory(AssetDirectory* dir, const AssetDirectoryCallbacks& call
   }
 }
 
-AssetDirectory::AssetDirectory(::fs::path path_, AssetDirectory* parent_) : path(std::move(path_)), parent(parent_) {}
+AssetDirectory::AssetDirectory(std::filesystem::path path_, AssetDirectory* parent_) : path(std::move(path_)), parent(parent_) {}
 
 AssetDirectory::~AssetDirectory() {
   auto& asset_man = App::mod<AssetManager>();
@@ -52,7 +52,7 @@ AssetDirectory::~AssetDirectory() {
   }
 }
 
-auto AssetDirectory::add_subdir(this AssetDirectory& self, const ::fs::path& dir_path) -> AssetDirectory* {
+auto AssetDirectory::add_subdir(this AssetDirectory& self, const std::filesystem::path& dir_path) -> AssetDirectory* {
   auto dir = std::make_unique<AssetDirectory>(dir_path, &self);
 
   return self.add_subdir(std::move(dir));
@@ -66,7 +66,7 @@ auto AssetDirectory::add_subdir(this AssetDirectory& self, std::unique_ptr<Asset
   return ptr;
 }
 
-auto AssetDirectory::add_asset(this AssetDirectory& self, const ::fs::path& dir_path) -> UUID {
+auto AssetDirectory::add_asset(this AssetDirectory& self, const std::filesystem::path& dir_path) -> UUID {
   auto& asset_man = App::mod<AssetManager>();
   auto asset_uuid = asset_man.import_asset(dir_path.string());
   if (!asset_uuid) {
@@ -97,10 +97,10 @@ auto Project::new_project(this Project& self,
   if (project_dir.empty())
     return false;
 
-  ::fs::create_directory(project_dir);
+  std::filesystem::create_directory(project_dir);
 
   const auto asset_folder_dir = fs::append_paths(project_dir, project_asset_dir);
-  ::fs::create_directory(asset_folder_dir);
+  std::filesystem::create_directory(asset_folder_dir);
 
   self.project_file_path = fs::append_paths(project_dir, project_name + ".oxproj");
 

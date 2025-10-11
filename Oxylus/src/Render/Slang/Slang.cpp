@@ -1,6 +1,7 @@
 #include "Render/Slang/Slang.hpp"
 
 #include <vuk/runtime/vk/Pipeline.hpp>
+#include <ranges>
 
 #include "Core/App.hpp"
 #include "Core/FileSystem.hpp"

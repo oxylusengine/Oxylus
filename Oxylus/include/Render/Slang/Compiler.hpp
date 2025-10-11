@@ -1,5 +1,8 @@
 #pragma once
 
+#include <vector>
+#include <glm/gtx/compatibility.hpp>
+
 #include "Core/Handle.hpp"
 #include "Core/Option.hpp"
 

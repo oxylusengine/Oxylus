@@ -1,7 +1,9 @@
 ﻿#include "Render/BoundingVolume.hpp"
 
-#include "Render/Frustum.hpp"
+#include <glm/gtx/quaternion.hpp>
+
 #include "Physics/RayCast.hpp"
+#include "Render/Frustum.hpp"
 
 namespace ox {
 void AABB::translate(const glm::vec3& translation) {
@@ -31,12 +33,14 @@ void AABB::transform(const glm::mat4& transform) {
   ZoneScoped;
   const glm::vec3 new_center = transform * glm::vec4(get_center(), 1.0f);
   const glm::vec3 old_edge = get_size() * 0.5f;
-  const glm::vec3 new_edge = glm::vec3(glm::abs(transform[0][0]) * old_edge.x + glm::abs(transform[1][0]) * old_edge.y +
-                                           glm::abs(transform[2][0]) * old_edge.z,
-                                       glm::abs(transform[0][1]) * old_edge.x + glm::abs(transform[1][1]) * old_edge.y +
-                                           glm::abs(transform[2][1]) * old_edge.z,
-                                       glm::abs(transform[0][2]) * old_edge.x + glm::abs(transform[1][2]) * old_edge.y +
-                                           glm::abs(transform[2][2]) * old_edge.z);
+  const glm::vec3 new_edge = glm::vec3(
+    glm::abs(transform[0][0]) * old_edge.x + glm::abs(transform[1][0]) * old_edge.y +
+      glm::abs(transform[2][0]) * old_edge.z,
+    glm::abs(transform[0][1]) * old_edge.x + glm::abs(transform[1][1]) * old_edge.y +
+      glm::abs(transform[2][1]) * old_edge.z,
+    glm::abs(transform[0][2]) * old_edge.x + glm::abs(transform[1][2]) * old_edge.y +
+      glm::abs(transform[2][2]) * old_edge.z
+  );
 
   min = new_center - new_edge;
   max = new_center + new_edge;
@@ -113,24 +117,24 @@ bool AABB::intersects(const RayCast& ray) const {
   const float tx1 = (min.x - ray.get_origin().x) * ray.get_direction_inverse().x;
   const float tx2 = (max.x - ray.get_origin().x) * ray.get_direction_inverse().x;
 
-  float tmin = std::min(tx1, tx2);
-  float tmax = std::max(tx1, tx2);
+  float tmin = glm::min(tx1, tx2);
+  float tmax = glm::max(tx1, tx2);
   if (ray.t_max < tmin || ray.t_min > tmax)
     return false;
 
   const float ty1 = (min.y - ray.get_origin().y) * ray.get_direction_inverse().y;
   const float ty2 = (max.y - ray.get_origin().y) * ray.get_direction_inverse().y;
 
-  tmin = std::max(tmin, std::min(ty1, ty2));
-  tmax = std::min(tmax, std::max(ty1, ty2));
+  tmin = glm::max(tmin, glm::min(ty1, ty2));
+  tmax = glm::min(tmax, glm::max(ty1, ty2));
   if (ray.t_max < tmin || ray.t_min > tmax)
     return false;
 
   const float tz1 = (min.z - ray.get_origin().z) * ray.get_direction_inverse().z;
   const float tz2 = (max.z - ray.get_origin().z) * ray.get_direction_inverse().z;
 
-  tmin = std::max(tmin, std::min(tz1, tz2));
-  tmax = std::min(tmax, std::max(tz1, tz2));
+  tmin = glm::max(tmin, glm::min(tz1, tz2));
+  tmax = glm::min(tmax, glm::max(tz1, tz2));
   if (ray.t_max < tmin || ray.t_min > tmax)
     return false;
 

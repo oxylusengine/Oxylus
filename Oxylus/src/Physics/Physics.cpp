@@ -1,13 +1,15 @@
 #include "Physics/Physics.hpp"
 
+#include <Jolt/Physics/Body/BodyManager.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/RegisterTypes.h>
 #include <cstdarg>
 
-#include "Jolt/Physics/Body/BodyManager.h"
-#include "Jolt/Physics/Collision/CastResult.h"
-#include "Jolt/Physics/Collision/RayCast.h"
-#include "Jolt/RegisterTypes.h"
 #include "Physics/RayCast.hpp"
+#include "Utils/Log.hpp"
 #include "Utils/OxMath.hpp"
+
 
 namespace ox {
 static void TraceImpl(const char* inFMT, ...) {
@@ -47,13 +49,15 @@ auto Physics::init() -> std::expected<void, std::string> {
   job_system = new JPH::JobSystemThreadPool();
   job_system->Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, (int)std::thread::hardware_concurrency() - 1);
   physics_system = new JPH::PhysicsSystem();
-  physics_system->Init(MAX_BODIES,
-                       0,
-                       MAX_BODY_PAIRS,
-                       MAX_CONTACT_CONSTRAINS,
-                       layer_interface,
-                       object_vs_broad_phase_layer_filter_interface,
-                       object_layer_pair_filter_interface);
+  physics_system->Init(
+    MAX_BODIES,
+    0,
+    MAX_BODY_PAIRS,
+    MAX_CONTACT_CONSTRAINS,
+    layer_interface,
+    object_vs_broad_phase_layer_filter_interface,
+    object_layer_pair_filter_interface
+  );
 
   return {};
 }

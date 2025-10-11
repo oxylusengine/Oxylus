@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Oxylus.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 template <typename T>

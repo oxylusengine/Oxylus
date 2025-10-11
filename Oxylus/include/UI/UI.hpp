@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <vuk/Value.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include "Asset/Texture.hpp"
 #include "Core/UUID.hpp"

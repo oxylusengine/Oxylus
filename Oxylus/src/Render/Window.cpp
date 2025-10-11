@@ -6,6 +6,8 @@
 #include <ranges>
 #include <stb_image.h>
 
+#include "Core/Base.hpp"
+#include "Core/Enum.hpp"
 #include "Core/Handle.hpp"
 #include "Memory/Stack.hpp"
 #include "Utils/Log.hpp"

@@ -1,9 +1,11 @@
 ﻿#pragma once
 
+#include <ankerl/unordered_dense.h>
 #include <charconv>
+#include <functional>
 #include <imgui.h>
 
-#include "Oxylus.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 class RuntimeConsole {
@@ -52,9 +54,11 @@ public:
   RuntimeConsole();
   ~RuntimeConsole();
 
-  void register_command(const std::string& command,
-                        const std::string& on_succes_log,
-                        const std::function<void(const ParsedCommandValue& value)>& action);
+  void register_command(
+    const std::string& command,
+    const std::string& on_succes_log,
+    const std::function<void(const ParsedCommandValue& value)>& action
+  );
   void register_command(const std::string& command, const std::string& on_succes_log, int32_t* value);
   void register_command(const std::string& command, const std::string& on_succes_log, std::string* value);
   void register_command(const std::string& command, const std::string& on_succes_log, bool* value);

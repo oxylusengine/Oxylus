@@ -3,8 +3,10 @@
 #include <fastgltf/core.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include "Core/Option.hpp"
+#include "Utils/Log.hpp"
 
 template <>
 struct fastgltf::ElementTraits<glm::vec4> : fastgltf::ElementTraitsBase<glm::vec4, AccessorType::Vec4, float> {};
@@ -77,7 +79,7 @@ static auto to_gltf_light_type(fastgltf::LightType type) -> GLTFLightType {
   }
 }
 
-auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) -> ox::option<GLTFMeshInfo> {
+auto GLTFMeshInfo::parse(const std::filesystem::path& path, GLTFMeshCallbacks callbacks) -> ox::option<GLTFMeshInfo> {
   ZoneScoped;
 
   auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(path);
@@ -181,7 +183,7 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
         const auto& image_file_path = path.parent_path() / uri.uri.fspath();
 
         auto& image_info = model.images.emplace_back();
-        image_info.image_data.emplace<fs::path>(image_file_path);
+        image_info.image_data.emplace<std::filesystem::path>(image_file_path);
         image_info.file_type = to_asset_file_type(uri.mimeType);
       },
     };
@@ -425,7 +427,7 @@ auto GLTFMeshInfo::parse(const ::fs::path& path, GLTFMeshCallbacks callbacks) ->
   return model;
 }
 
-auto GLTFMeshInfo::parse_info(const ::fs::path& path) -> ox::option<GLTFMeshInfo> {
+auto GLTFMeshInfo::parse_info(const std::filesystem::path& path) -> ox::option<GLTFMeshInfo> {
   ZoneScoped;
 
   auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(path);
@@ -474,7 +476,7 @@ auto GLTFMeshInfo::parse_info(const ::fs::path& path) -> ox::option<GLTFMeshInfo
         const auto& image_file_path = path.parent_path() / uri.uri.fspath();
 
         auto& image_info = model.images.emplace_back();
-        image_info.image_data.emplace<fs::path>(image_file_path);
+        image_info.image_data.emplace<std::filesystem::path>(image_file_path);
         image_info.file_type = to_asset_file_type(uri.mimeType);
       },
     };

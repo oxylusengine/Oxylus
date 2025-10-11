@@ -4,12 +4,14 @@
 #include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
+#include "Core/Enum.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/RendererPipeline.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/SceneGPU.hpp"
+
 
 namespace ox {
 static constexpr auto sampler_min_clamp_reduction_mode = VkSamplerReductionModeCreateInfo{

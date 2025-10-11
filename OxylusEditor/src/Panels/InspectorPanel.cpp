@@ -116,7 +116,7 @@ void InspectorPanel::draw_material_properties(Material* material, const UUID& ma
     if (ImGui::BeginDragDropTarget()) {
       if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
         const auto* payload = PayloadData::from_payload(imgui_payload);
-        if (const std::string ext = ox::fs::get_file_extension(payload->str); ext == "oxasset") {
+        if (const std::string ext = fs::get_file_extension(payload->str); ext == "oxasset") {
           load_event.emit<DialogLoadEvent>({payload->str});
         }
       }

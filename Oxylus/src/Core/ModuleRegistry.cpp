@@ -1,5 +1,7 @@
 #include "Core/ModuleRegistry.hpp"
 
+#include <ranges>
+
 #include "Utils/Timer.hpp"
 
 namespace ox {

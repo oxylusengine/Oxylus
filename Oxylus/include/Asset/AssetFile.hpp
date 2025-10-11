@@ -2,7 +2,7 @@
 
 #include <vuk/Types.hpp>
 
-#include "Oxylus.hpp"
+#include "Core/Types.hpp"
 
 namespace ox {
 enum class AssetType : u32 {

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
-#include "Oxylus.hpp"
+#include <glm/vec3.hpp>
+#include <glm/mat4x4.hpp>
 
 namespace ox {
 class RayCast;

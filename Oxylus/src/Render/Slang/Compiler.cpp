@@ -1,10 +1,13 @@
 #include "Render/Slang/Compiler.hpp"
 
+#include <filesystem>
+#include <glm/gtc/type_ptr.hpp>
 #include <slang-com-ptr.h>
 #include <slang.h>
 
 #include "Core/FileSystem.hpp"
 #include "Memory/Stack.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 struct SlangBlob : ISlangBlob {
@@ -133,7 +136,11 @@ auto SlangModule::get_entry_point(std::string_view name) -> option<SlangEntryPoi
   {
     Slang::ComPtr<slang::IBlob> diagnostics_blob;
     const auto result = impl->session->session->createCompositeComponentType(
-        component_types.data(), u32(component_types.size()), composed_program.writeRef(), diagnostics_blob.writeRef());
+      component_types.data(),
+      u32(component_types.size()),
+      composed_program.writeRef(),
+      diagnostics_blob.writeRef()
+    );
     if (diagnostics_blob) {
       OX_LOG_INFO("{}", (const char*)diagnostics_blob->getBufferPointer());
     }
@@ -171,7 +178,7 @@ auto SlangModule::get_entry_point(std::string_view name) -> option<SlangEntryPoi
   std::memcpy(ir.data(), spirv_code->getBufferPointer(), spirv_code->getBufferSize());
 
   return SlangEntryPoint{
-      .ir = std::move(ir),
+    .ir = std::move(ir),
   };
 }
 
@@ -242,7 +249,11 @@ auto SlangSession::load_module(const SlangModuleInfo& info) -> option<SlangModul
 
   Slang::ComPtr<slang::IBlob> diagnostics_blob;
   slang_module = impl->session->loadModuleFromSourceString(
-      info.module_name.c_str(), path_str.c_str(), source_data.c_str(), diagnostics_blob.writeRef());
+    info.module_name.c_str(),
+    path_str.c_str(),
+    source_data.c_str(),
+    diagnostics_blob.writeRef()
+  );
 
   if (diagnostics_blob) {
     OX_LOG_INFO("{}", (const char*)diagnostics_blob->getBufferPointer());
@@ -274,36 +285,37 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
   auto slang_fs = std::make_unique<SlangVirtualFS>(info.root_directory);
 
   slang::CompilerOptionEntry entries[] = {
-      {.name = slang::CompilerOptionName::Optimization,
-       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = info.optimizaton_level}},
+    {.name = slang::CompilerOptionName::Optimization,
+     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = info.optimizaton_level}},
 #if OX_DEBUG
-      {.name = slang::CompilerOptionName::DebugInformationFormat,
-       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_FORMAT_DEFAULT}},
-      {.name = slang::CompilerOptionName::DebugInformation,
-       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_LEVEL_MAXIMAL}},
+    {.name = slang::CompilerOptionName::DebugInformationFormat,
+     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_FORMAT_DEFAULT}},
+    {.name = slang::CompilerOptionName::DebugInformation,
+     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_LEVEL_MAXIMAL}},
 #endif
-      {.name = slang::CompilerOptionName::UseUpToDateBinaryModule,
-       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = 1}},
-      {.name = slang::CompilerOptionName::GLSLForceScalarLayout,
-       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = 1}},
-      {.name = slang::CompilerOptionName::Language,
-       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "slang"}},
-      {.name = slang::CompilerOptionName::VulkanUseEntryPointName,
-       .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = 1}},
-      {.name = slang::CompilerOptionName::DisableWarning,
-       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "39001"}},
-      {.name = slang::CompilerOptionName::DisableWarning,
-       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "41012"}},
-      {.name = slang::CompilerOptionName::DisableWarning,
-       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "41017"}},
-      {.name = slang::CompilerOptionName::Capability,
-       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "vk_mem_model"}},
-      {.name = slang::CompilerOptionName::Capability,
-       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvGroupNonUniformBallot"}},
-      {.name = slang::CompilerOptionName::Capability,
-       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvGroupNonUniformShuffle"}},
-      {.name = slang::CompilerOptionName::Capability,
-       .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvImageGatherExtended"}}};
+    {.name = slang::CompilerOptionName::UseUpToDateBinaryModule,
+     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = 1}},
+    {.name = slang::CompilerOptionName::GLSLForceScalarLayout,
+     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = 1}},
+    {.name = slang::CompilerOptionName::Language,
+     .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "slang"}},
+    {.name = slang::CompilerOptionName::VulkanUseEntryPointName,
+     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = 1}},
+    {.name = slang::CompilerOptionName::DisableWarning,
+     .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "39001"}},
+    {.name = slang::CompilerOptionName::DisableWarning,
+     .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "41012"}},
+    {.name = slang::CompilerOptionName::DisableWarning,
+     .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "41017"}},
+    {.name = slang::CompilerOptionName::Capability,
+     .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "vk_mem_model"}},
+    {.name = slang::CompilerOptionName::Capability,
+     .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvGroupNonUniformBallot"}},
+    {.name = slang::CompilerOptionName::Capability,
+     .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvGroupNonUniformShuffle"}},
+    {.name = slang::CompilerOptionName::Capability,
+     .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvImageGatherExtended"}}
+  };
 
   std::vector<slang::PreprocessorMacroDesc> macros;
   macros.reserve(info.definitions.size());
@@ -312,28 +324,28 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
   }
 
   slang::TargetDesc target_desc = {
-      .format = SLANG_SPIRV,
-      .profile = impl->global_session->findProfile("spirv_1_5"),
-      .flags = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY,
-      .floatingPointMode = SLANG_FLOATING_POINT_MODE_FAST,
-      .lineDirectiveMode = SLANG_LINE_DIRECTIVE_MODE_STANDARD,
-      .forceGLSLScalarBufferLayout = true,
-      .compilerOptionEntries = entries,
-      .compilerOptionEntryCount = static_cast<u32>(count_of(entries)),
+    .format = SLANG_SPIRV,
+    .profile = impl->global_session->findProfile("spirv_1_5"),
+    .flags = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY,
+    .floatingPointMode = SLANG_FLOATING_POINT_MODE_FAST,
+    .lineDirectiveMode = SLANG_LINE_DIRECTIVE_MODE_STANDARD,
+    .forceGLSLScalarBufferLayout = true,
+    .compilerOptionEntries = entries,
+    .compilerOptionEntryCount = static_cast<u32>(count_of(entries)),
   };
 
   const auto search_path = info.root_directory;
   const auto* search_path_cstr = search_path.c_str();
   const c8* search_paths[] = {search_path_cstr};
   const slang::SessionDesc session_desc = {
-      .targets = &target_desc,
-      .targetCount = 1,
-      .defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR,
-      .searchPaths = search_paths,
-      .searchPathCount = count_of(search_paths),
-      .preprocessorMacros = macros.data(),
-      .preprocessorMacroCount = static_cast<u32>(macros.size()),
-      .fileSystem = slang_fs.get(),
+    .targets = &target_desc,
+    .targetCount = 1,
+    .defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR,
+    .searchPaths = search_paths,
+    .searchPathCount = count_of(search_paths),
+    .preprocessorMacros = macros.data(),
+    .preprocessorMacroCount = static_cast<u32>(macros.size()),
+    .fileSystem = slang_fs.get(),
   };
   Slang::ComPtr<slang::ISession> session;
   if (SLANG_FAILED(impl->global_session->createSession(session_desc, session.writeRef()))) {

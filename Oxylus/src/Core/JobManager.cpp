@@ -1,7 +1,9 @@
 #include "Core/JobManager.hpp"
 
+#include "Core/Base.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/OS.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 auto Barrier::create() -> Arc<Barrier> { return Arc<Barrier>::create(); }

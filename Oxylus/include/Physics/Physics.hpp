@@ -1,6 +1,8 @@
 #pragma once
 
 // clang-format off
+#include <expected>
+
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Render/DebugRenderer.hpp"
 

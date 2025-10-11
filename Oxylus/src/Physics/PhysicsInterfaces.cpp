@@ -4,6 +4,7 @@
 
 #include "Physics/PhysicsMaterial.hpp"
 #include "Scene/Scene.hpp"
+#include "Utils/Log.hpp"
 
 bool ObjectLayerPairFilterImpl::ShouldCollide(JPH::ObjectLayer inObject1, JPH::ObjectLayer inObject2) const {
   using namespace JPH;
@@ -61,10 +62,9 @@ void Physics3DBodyActivationListener::OnBodyDeactivated(const JPH::BodyID& inBod
   /* Body Deactivated */
 }
 
-void Physics3DContactListener::GetFrictionAndRestitution(const JPH::Body& inBody,
-                                                         const JPH::SubShapeID& inSubShapeID,
-                                                         float& outFriction,
-                                                         float& outRestitution) {
+void Physics3DContactListener::GetFrictionAndRestitution(
+  const JPH::Body& inBody, const JPH::SubShapeID& inSubShapeID, float& outFriction, float& outRestitution
+) {
   ZoneScoped;
 
   // Get the material that corresponds to the sub shape ID
@@ -79,10 +79,12 @@ void Physics3DContactListener::GetFrictionAndRestitution(const JPH::Body& inBody
   }
 }
 
-void Physics3DContactListener::OverrideContactSettings(const JPH::Body& inBody1,
-                                                       const JPH::Body& inBody2,
-                                                       const JPH::ContactManifold& inManifold,
-                                                       JPH::ContactSettings& ioSettings) {
+void Physics3DContactListener::OverrideContactSettings(
+  const JPH::Body& inBody1,
+  const JPH::Body& inBody2,
+  const JPH::ContactManifold& inManifold,
+  JPH::ContactSettings& ioSettings
+) {
   ZoneScoped;
 
   // Get the custom friction and restitution for both bodies
@@ -95,19 +97,23 @@ void Physics3DContactListener::OverrideContactSettings(const JPH::Body& inBody1,
   ioSettings.mCombinedRestitution = JPH::max(restitution1, restitution2);
 }
 
-JPH::ValidateResult Physics3DContactListener::OnContactValidate(const JPH::Body& inBody1,
-                                                                const JPH::Body& inBody2,
-                                                                JPH::RVec3Arg inBaseOffset,
-                                                                const JPH::CollideShapeResult& inCollisionResult) {
+JPH::ValidateResult Physics3DContactListener::OnContactValidate(
+  const JPH::Body& inBody1,
+  const JPH::Body& inBody2,
+  JPH::RVec3Arg inBaseOffset,
+  const JPH::CollideShapeResult& inCollisionResult
+) {
   ZoneScoped;
 
   return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
 }
 
-void Physics3DContactListener::OnContactAdded(const JPH::Body& inBody1,
-                                              const JPH::Body& inBody2,
-                                              const JPH::ContactManifold& inManifold,
-                                              JPH::ContactSettings& ioSettings) {
+void Physics3DContactListener::OnContactAdded(
+  const JPH::Body& inBody1,
+  const JPH::Body& inBody2,
+  const JPH::ContactManifold& inManifold,
+  JPH::ContactSettings& ioSettings
+) {
   ZoneScoped;
 
   OverrideContactSettings(inBody1, inBody2, inManifold, ioSettings);
@@ -115,10 +121,12 @@ void Physics3DContactListener::OnContactAdded(const JPH::Body& inBody1,
   _scene->on_contact_added(inBody1, inBody2, inManifold, ioSettings);
 }
 
-void Physics3DContactListener::OnContactPersisted(const JPH::Body& inBody1,
-                                                  const JPH::Body& inBody2,
-                                                  const JPH::ContactManifold& inManifold,
-                                                  JPH::ContactSettings& ioSettings) {
+void Physics3DContactListener::OnContactPersisted(
+  const JPH::Body& inBody1,
+  const JPH::Body& inBody2,
+  const JPH::ContactManifold& inManifold,
+  JPH::ContactSettings& ioSettings
+) {
   ZoneScoped;
 
   OverrideContactSettings(inBody1, inBody2, inManifold, ioSettings);

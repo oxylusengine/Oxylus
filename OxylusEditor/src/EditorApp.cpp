@@ -1,6 +1,7 @@
 #include "Audio/AudioEngine.hpp"
 #include "Core/EmbeddedLogo.hpp"
 #include "Core/EntryPoint.hpp"
+#include "Core/Enum.hpp"
 #include "Core/EventSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
@@ -30,7 +31,7 @@ App* create_application(const AppCommandLineArgs& args) {
   const auto app = new OxylusEditor();
   app->with_name(name)
     .with_args(args)
-    .with_working_directory(fs::current_path().string())
+    .with_working_directory(std::filesystem::current_path().string())
     .with_window(
       WindowInfo{
         .title = name,

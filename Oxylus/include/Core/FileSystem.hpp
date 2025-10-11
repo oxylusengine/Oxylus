@@ -1,6 +1,10 @@
 ﻿#pragma once
 
-#include "Oxylus.hpp"
+#include <fstream>
+#include <sstream>
+#include <vector>
+
+#include "Core/Types.hpp"
 
 namespace ox {
 /// @brief A lightweight std::filesystem alternative and a safe wrapper for std::filesystem

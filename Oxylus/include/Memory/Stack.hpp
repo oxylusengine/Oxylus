@@ -1,8 +1,10 @@
 #pragma once
 
-#include "Oxylus.hpp"
-
+#include <algorithm>
+#include <fmt/core.h>
 #include <simdutf.h>
+
+#include "Core/Types.hpp"
 
 namespace ox::memory {
 struct ThreadStack {

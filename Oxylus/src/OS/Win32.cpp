@@ -1,4 +1,7 @@
+#include <string>
+
 #include "OS/OS.hpp"
+
 
 #ifndef WIN32_LEAN_AND_MEAN
   #define WIN32_LEAN_AND_MEAN

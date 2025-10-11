@@ -210,7 +210,7 @@ bool UI::texture_property(const char* label, UUID& texture_uuid, const char* too
           texture_load_func(usr_d, path);
         },
       .title = "Texture file",
-      .default_path = ::fs::current_path(),
+      .default_path = std::filesystem::current_path(),
       .filters = dialog_filters,
       .multi_select = false,
     });

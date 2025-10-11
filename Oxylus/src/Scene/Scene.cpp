@@ -19,6 +19,7 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
+#include "Core/Enum.hpp"
 #include "Memory/Stack.hpp"
 #include "Physics/Physics.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
@@ -33,6 +34,7 @@
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Random.hpp"
 #include "Utils/Timestep.hpp"
+
 
 namespace ox {
 auto Scene::safe_entity_name(this const Scene& self, std::string prefix) -> std::string {

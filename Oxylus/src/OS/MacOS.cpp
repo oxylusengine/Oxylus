@@ -7,6 +7,7 @@
 
 #include "Memory/Stack.hpp"
 #include "OS/OS.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 auto os::mem_page_size() -> u64 {
