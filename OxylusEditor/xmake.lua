@@ -5,7 +5,7 @@ target("OxylusEditor")
     add_deps("Oxylus")
 
     add_includedirs("./src")
-    add_includedirs("./vendor", { public = true })
+    add_sysincludedirs("./vendor", { public = true })
     add_files("./src/**.cpp")
 
     add_files("./Resources/**")
