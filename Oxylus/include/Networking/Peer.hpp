@@ -1,8 +1,10 @@
 #pragma once
 
-#include <enet.h>
+#include <string>
 
 #include "Core/Types.hpp"
+
+typedef struct _ENetPeer ENetPeer;
 
 namespace ox {
 struct Peer {
@@ -10,6 +12,6 @@ struct Peer {
   std::string name;
   ENetPeer* peer;
 
-  Peer(usize id_, const std::string& name_, ENetPeer* peer_ = nullptr) : id(id_), name(name_), peer(peer_) {}
+  Peer(usize id_, const std::string& name_, ENetPeer* peer_ = nullptr);
 };
 } // namespace ox

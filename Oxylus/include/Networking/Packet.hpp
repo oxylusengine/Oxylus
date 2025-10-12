@@ -1,7 +1,7 @@
 #pragma once
 
-#include <enet.h>
 #include <expected>
+#include <string>
 #include <vector>
 
 #include "Core/Option.hpp"
@@ -15,22 +15,22 @@ struct Packet {
   Packet(u32 id) : packet_id(id) {}
   Packet(u32 id, const std::vector<u8>& message) : packet_id(id), data(message) {}
 
-  static auto parse_packet(ENetPacket* enet_packet) -> option<Packet> {
+  static auto parse_packet(usize data_length, u8* data_) -> option<Packet> {
     ZoneScoped;
 
     // Packet only needs packet_id (4 bytes)
-    if (enet_packet->dataLength < sizeof(u32)) {
+    if (data_length < sizeof(u32)) {
       return nullopt;
     }
 
-    const uint8_t* buffer = enet_packet->data;
+    const uint8_t* buffer = data_;
     u32 packet_id;
 
     std::memcpy(&packet_id, buffer, sizeof(u32));
     buffer += sizeof(u32);
 
     std::vector<u8> packet_data = {};
-    usize remaining_data = enet_packet->dataLength - sizeof(u32);
+    usize remaining_data = data_length - sizeof(u32);
     if (remaining_data > 0) {
       packet_data.resize(remaining_data);
       std::memcpy(packet_data.data(), buffer, remaining_data);
@@ -85,11 +85,11 @@ struct Packet {
     return self;
   }
 
-  auto add_bytes(this Packet& self, const u8* data, usize size) -> Packet& {
+  auto add_bytes(this Packet& self, const u8* data_, usize size) -> Packet& {
     ZoneScoped;
     // length first, data second
     self.add<u32>(static_cast<u32>(size));
-    self.data.insert(self.data.end(), data, data + size);
+    self.data.insert(self.data.end(), data_, data_ + size);
     return self;
   }
 

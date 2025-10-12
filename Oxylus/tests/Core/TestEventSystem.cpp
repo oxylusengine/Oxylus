@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <latch>
 #include <thread>
+#include <array>
 
 #include "Core/EventSystem.hpp"
 

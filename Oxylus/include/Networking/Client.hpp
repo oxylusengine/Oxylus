@@ -1,12 +1,15 @@
 #pragma once
 
 #include <chrono>
-#include <enet.h>
 #include <expected>
 #include <memory>
 #include <string>
 
 #include "Packet.hpp"
+
+typedef struct _ENetHost ENetHost;
+typedef struct _ENetPeer ENetPeer;
+typedef struct _ENetPacket ENetPacket;
 
 namespace ox {
 class ClientEventHandler {

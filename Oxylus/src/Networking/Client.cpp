@@ -1,5 +1,6 @@
 #include "Networking/Client.hpp"
 
+#include <enet.h>
 #include <thread>
 
 namespace ox {
@@ -284,7 +285,7 @@ auto Client::handle_receive_event(ENetPacket* enet_packet) -> void {
     return; // Ignore packets if not connected
   }
 
-  auto packet = Packet::parse_packet(enet_packet);
+  auto packet = Packet::parse_packet(enet_packet->dataLength, enet_packet->data);
   if (packet.has_value() && event_handler) {
     event_handler->on_packet_received(*packet);
   }

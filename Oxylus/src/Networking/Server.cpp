@@ -1,5 +1,7 @@
 #include "Networking/Server.hpp"
 
+#include <enet.h>
+
 #include "Utils/Log.hpp"
 
 namespace ox {
@@ -258,7 +260,7 @@ auto Server::handle_peer_disconnect_timeout(this Server& self, ENetPeer* peer) -
 auto Server::handle_peer_packet(this Server& self, ENetPeer* enet_peer, ENetPacket* enet_packet) -> void {
   ZoneScoped;
 
-  auto packet = Packet::parse_packet(enet_packet);
+  auto packet = Packet::parse_packet(enet_packet->dataLength, enet_packet->data);
   usize peer_id = reinterpret_cast<usize>(enet_peer->data);
 
   // Drop invalid packet
