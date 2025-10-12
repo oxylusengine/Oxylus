@@ -1,6 +1,5 @@
 #pragma once
 
-#include <SDL3/SDL_keycode.h>
 #include <filesystem>
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
@@ -53,8 +52,7 @@ struct WindowCallbacks {
   void (*on_mouse_button)(void* user_data, u8 button, bool down) = nullptr;
   void (*on_mouse_scroll)(void* user_data, glm::vec2 offset) = nullptr;
   void (*on_text_input)(void* user_data, const c8* text) = nullptr;
-  void (*on_key)(void* user_data, SDL_Keycode key_code, SDL_Scancode scan_code, u16 mods, bool down, bool repeat) =
-    nullptr;
+  void (*on_key)(void* user_data, u32 key_code, u32 scan_code, u16 mods, bool down, bool repeat) = nullptr;
   void (*on_close)(void* user_data) = nullptr;
 };
 

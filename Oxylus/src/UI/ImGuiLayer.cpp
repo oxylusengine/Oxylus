@@ -1,6 +1,7 @@
 #include "UI/ImGuiLayer.hpp"
 
 #include <ImGuizmo.h>
+#include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
 #include <imgui.h>
 #include <vuk/RenderGraph.hpp>
@@ -81,7 +82,9 @@ void ImGuiLayer::on_attach() {
   slang.create_session({.root_directory = shaders_dir, .definitions = {}});
 
   slang.create_pipeline(
-    ctx, "imgui", {.path = shaders_dir + "/passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}}
+    ctx,
+    "imgui",
+    {.path = shaders_dir + "/passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 }
 
@@ -271,12 +274,16 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
     [draw_data](vuk::CommandBuffer& command_buffer, const vuk::Buffer& vertex, const vuk::Buffer& index) {
       if (index.size > 0) {
         command_buffer.bind_index_buffer(
-          index, sizeof(ImDrawIdx) == 2 ? vuk::IndexType::eUint16 : vuk::IndexType::eUint32
+          index,
+          sizeof(ImDrawIdx) == 2 ? vuk::IndexType::eUint16 : vuk::IndexType::eUint32
         );
       }
       command_buffer
         .bind_vertex_buffer(
-          0, vertex, 0, vuk::Packed{vuk::Format::eR32G32Sfloat, vuk::Format::eR32G32Sfloat, vuk::Format::eR8G8B8A8Unorm}
+          0,
+          vertex,
+          0,
+          vuk::Packed{vuk::Format::eR32G32Sfloat, vuk::Format::eR32G32Sfloat, vuk::Format::eR8G8B8A8Unorm}
         )
         .bind_graphics_pipeline("imgui")
         .set_viewport(0, vuk::Rect2D::framebuffer());
@@ -434,9 +441,8 @@ void ImGuiLayer::on_key(u32 key_code, u32 scan_code, u16 mods, bool down) {
 
   const auto key = to_imgui_key(static_cast<SDL_Keycode>(key_code), static_cast<SDL_Scancode>(scan_code));
   imgui.AddKeyEvent(key, down);
-  imgui.SetKeyEventNativeData(
-    key, static_cast<i32>(key_code), static_cast<i32>(scan_code), static_cast<i32>(scan_code)
-  );
+  imgui
+    .SetKeyEventNativeData(key, static_cast<i32>(key_code), static_cast<i32>(scan_code), static_cast<i32>(scan_code));
 }
 
 void ImGuiLayer::on_text_input(const c8* text) {

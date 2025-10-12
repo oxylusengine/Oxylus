@@ -1,7 +1,5 @@
 #pragma once
 
-#include <SDL3/SDL_keycode.h>
-#include <SDL3/SDL_mouse.h>
 #include <expected>
 #include <glm/ext/vector_float2.hpp>
 #include <string>
@@ -23,8 +21,8 @@ public:
   void reset_pressed();
   void reset();
 
-  static KeyCode to_keycode(SDL_Keycode keycode, SDL_Scancode scancode);
-  static MouseCode to_mouse_code(SDL_MouseButtonFlags key);
+  static KeyCode to_keycode(u32 keycode_, u32 scancode_);
+  static MouseCode to_mouse_code(u32 key);
 
   /// Keyboard
   bool get_key_pressed(const KeyCode key) { return input_data.key_pressed[int(key)]; }

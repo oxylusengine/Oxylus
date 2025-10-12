@@ -177,8 +177,8 @@ void App::run(this App& self) {
   };
   window_callbacks.on_key = [](
                               void* user_data,
-                              const SDL_Keycode key_code,
-                              const SDL_Scancode scan_code,
+                              const u32 key_code,
+                              const u32 scan_code,
                               const u16 mods,
                               const bool down,
                               const bool repeat

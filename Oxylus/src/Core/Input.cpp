@@ -1,6 +1,10 @@
 #include "Core/Input.hpp"
 
-#include "Core/App.hpp"
+#include <SDL3/SDL_keycode.h>
+#include <SDL3/SDL_mouse.h>
+
+#include "Render/Window.hpp"
+
 
 namespace ox {
 auto Input::init() -> std::expected<void, std::string> { return {}; }
@@ -64,7 +68,8 @@ float Input::get_mouse_scroll_offset_y() { return input_data.scroll_offset_y; }
 
 bool Input::get_mouse_moved() { return input_data.mouse_moved; }
 
-KeyCode Input::to_keycode(SDL_Keycode keycode, SDL_Scancode scancode) {
+KeyCode Input::to_keycode(u32 keycode_, u32 scancode_) {
+  SDL_Scancode scancode = static_cast<SDL_Scancode>(scancode_);
   switch (scancode) {
     case SDL_SCANCODE_KP_0       : return KeyCode::KP0;
     case SDL_SCANCODE_KP_1       : return KeyCode::KP1;
@@ -86,6 +91,7 @@ KeyCode Input::to_keycode(SDL_Keycode keycode, SDL_Scancode scancode) {
     default                      : break;
   }
 
+  SDL_Keycode keycode = static_cast<SDL_Keycode>(keycode_);
   switch (keycode) {
     case SDLK_TAB         : return KeyCode::Tab;
     case SDLK_LEFT        : return KeyCode::Left;

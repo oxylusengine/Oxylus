@@ -3,7 +3,6 @@
 
 #include "Audio/AudioEngine.hpp"
 #include "Core/UUID.hpp"
-#include "Render/Utils/RectPacker.hpp"
 #include "Utils/OxMath.hpp"
 
 #ifndef ECS_COMPONENT_BEGIN

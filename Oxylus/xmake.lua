@@ -78,28 +78,31 @@ target("Oxylus")
     add_packages(
         "stb",
         "miniaudio",
-        "imgui",
-        "imguizmo",
-        "glm",
-        "flecs-ox",
         "fastgltf-ox",
         "meshoptimizer",
-        "fmt",
-        "loguru",
-        "vk-bootstrap",
-        "vuk",
         "libsdl3",
-        "toml++",
-        "joltphysics-ox",
-        "tracy",
-        "sol2",
-        "unordered_dense",
-        "dylib",
         "ktx-ox",
-        "simdutf",
-        "plf_colony",
         "shader-slang",
         "enet-ox",
-        { public = true })
+        { public = false })
+
+    add_packages(
+        "flecs-ox",
+        "imguizmo",
+        "imgui",
+        "vk-bootstrap",
+        "vuk",
+        "unordered_dense",
+        "tracy",
+        "fmt",
+        "plf_colony",
+        "simdutf",
+        "joltphysics-ox",
+        "glm",
+        "sol2",
+        "toml++",
+        "loguru",
+        "simdjson-ox",
+        {public = true})
 
 target_end()
