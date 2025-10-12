@@ -27,7 +27,7 @@ void ProjectPanel::load_project_for_editor(const std::string& filepath) {
       editor_layer->new_scene();
     }
     EditorConfig::get()->add_recent_project(active_project.get());
-    editor_layer->get_panel<ContentPanel>()->invalidate();
+    editor_layer->get_panel<ContentPanel>()->init();
     visible = false;
   }
 }

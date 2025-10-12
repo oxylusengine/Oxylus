@@ -1,5 +1,6 @@
 #pragma once
 
+#include <FileWatch.hpp>
 #include <ankerl/unordered_dense.h>
 #include <filesystem>
 #include <imgui.h>
@@ -9,7 +10,6 @@
 #include <vuk/Types.hpp>
 #include <vuk/Value.hpp>
 
-#include "Core/Base.hpp"
 #include "EditorPanel.hpp"
 #include "ThumbnailRenderer.hpp"
 
@@ -33,13 +33,10 @@ public:
   void on_update() override;
   void on_render(vuk::Extent3D extent, vuk::Format format) override;
 
-  void invalidate();
-
 private:
-  std::pair<bool, uint32_t> directory_tree_view_recursive(const std::filesystem::path& path,
-                                                          uint32_t* count,
-                                                          int* selectionMask,
-                                                          ImGuiTreeNodeFlags flags);
+  std::pair<bool, uint32_t> directory_tree_view_recursive(
+    const std::filesystem::path& path, uint32_t* count, int* selectionMask, ImGuiTreeNodeFlags flags
+  );
   void render_header();
   void render_side_view();
   void render_body(bool grid);
@@ -81,5 +78,7 @@ private:
 
   std::shared_ptr<Texture> _white_texture;
   std::filesystem::path _directory_to_delete;
+
+  std::unique_ptr<filewatch::FileWatch<std::string>> filewatch = nullptr;
 };
 } // namespace ox

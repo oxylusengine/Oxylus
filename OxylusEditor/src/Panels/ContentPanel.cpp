@@ -278,6 +278,11 @@ void ContentPanel::init() {
   _assets_directory = assets_dir;
   _current_directory = _assets_directory;
   refresh();
+
+  this->filewatch = std::make_unique<filewatch::FileWatch<std::string>>(
+    _assets_directory.string(),
+    [this](const auto&, const filewatch::Event e) { refresh(); }
+  );
 }
 
 void ContentPanel::on_update() { _elapsed_time += static_cast<float>(App::get_timestep()); }
@@ -308,17 +313,6 @@ void ContentPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
     }
   }
   on_end();
-}
-
-void ContentPanel::invalidate() {
-  auto vfs = App::get_vfs();
-  if (!vfs.is_mounted_dir(VFS::PROJECT_DIR))
-    return;
-
-  auto assets_dir = vfs.resolve_physical_dir(VFS::PROJECT_DIR, "");
-  _assets_directory = assets_dir;
-  _current_directory = _assets_directory;
-  refresh();
 }
 
 void ContentPanel::render_header() {
@@ -568,16 +562,16 @@ void ContentPanel::render_body(bool grid) {
             texture_name = file.file_path;
           } else {
             auto& job_man = App::mod<JobManager>();
-            job_man.submit(Job::create([this, file_path = file.file_path](){
-                auto thumbnail_texture = std::make_shared<Texture>();
-                auto file_extension = fs::get_file_extension(file_path);
-                TextureLoadInfo::MimeType mime_type = TextureLoadInfo::MimeType::Generic;
-                if (file_extension == "ktx" || file_extension == "ktx2") {
-                  mime_type = TextureLoadInfo::MimeType::KTX;
-                }
-                thumbnail_texture->create(file_path, {.preset = Preset::eRTT2DUnmipped, .mime = mime_type});
-                auto write_lock = std::unique_lock(thumbnail_mutex);
-                thumbnail_cache_textures.emplace(file_path, thumbnail_texture);
+            job_man.submit(Job::create([this, file_path = file.file_path]() {
+              auto thumbnail_texture = std::make_shared<Texture>();
+              auto file_extension = fs::get_file_extension(file_path);
+              TextureLoadInfo::MimeType mime_type = TextureLoadInfo::MimeType::Generic;
+              if (file_extension == "ktx" || file_extension == "ktx2") {
+                mime_type = TextureLoadInfo::MimeType::KTX;
+              }
+              thumbnail_texture->create(file_path, {.preset = Preset::eRTT2DUnmipped, .mime = mime_type});
+              auto write_lock = std::unique_lock(thumbnail_mutex);
+              thumbnail_cache_textures.emplace(file_path, thumbnail_texture);
             }));
 
             texture_name = file.file_path;
