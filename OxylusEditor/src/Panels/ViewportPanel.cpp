@@ -1094,14 +1094,10 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
         };
 
         auto& renderer = App::mod<Renderer>();
-
+        const auto grid_distance = EditorCVar::cvar_draw_grid_distance.get();
         const auto position = glm::vec3(0.f, 0.f, 0.f);
         const auto rotation = glm::vec3(glm::radians(90.f), 0.f, 0.f);
-        const auto scale = glm::vec3(
-          EditorCVar::cvar_draw_grid_distance.get(),
-          EditorCVar::cvar_draw_grid_distance.get(),
-          EditorCVar::cvar_draw_grid_distance.get()
-        );
+        const auto scale = glm::floor(glm::vec3(grid_distance / 2.0f)) * 2.0f;
         auto grid_transform = glm::translate(glm::mat4(1.0f), position) * glm::toMat4(glm::quat(rotation)) *
                               glm::scale(glm::mat4(1.0f), scale);
 
@@ -1115,11 +1111,7 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
           .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
           .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
           .bind_vertex_buffer(0, *renderer.quad_vertex_buffer, 0, vertex_pack)
-          .push_constants(
-            vuk::ShaderStageFlagBits::eVertex,
-            0,
-            PushConstants(grid_transform, EditorCVar::cvar_draw_grid_distance.get())
-          )
+          .push_constants(vuk::ShaderStageFlagBits::eVertex, 0, PushConstants(grid_transform, scale.x))
           .bind_buffer(0, 0, camera)
           .bind_index_buffer(*renderer.quad_index_buffer, vuk::IndexType::eUint32)
           .draw_indexed(6, 1, 0, 0, 0);
