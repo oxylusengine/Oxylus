@@ -35,7 +35,6 @@
 #include "Utils/Random.hpp"
 #include "Utils/Timestep.hpp"
 
-
 namespace ox {
 auto Scene::safe_entity_name(this const Scene& self, std::string prefix) -> std::string {
   ZoneScoped;
@@ -1291,22 +1290,25 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
     return nullptr;
   }
 
-  std::vector<UUID> requested_assets = {};
+  auto requested_assets = std::vector<UUID>();
 
+  // TODO: Merge this with Scene::load_from_file
   auto scripts_array = doc["scripts"];
-
-  for (auto script_json : scripts_array.get_array()) {
-    auto uuid_json = script_json.value_unsafe();
-    auto script_uuid = UUID::from_string(uuid_json["uuid"].get_string().value_unsafe()).value();
-    requested_assets.emplace_back(script_uuid);
-    new_scene->add_lua_system(script_uuid);
+  if (!scripts_array.error()) {
+    for (auto script_json : scripts_array.get_array()) {
+      auto uuid_json = script_json.value_unsafe();
+      auto script_uuid = UUID::from_string(uuid_json["uuid"].get_string().value_unsafe()).value();
+      requested_assets.emplace_back(script_uuid);
+      new_scene->add_lua_system(script_uuid);
+    }
   }
 
   auto entities_array = doc["entities"];
-
-  for (auto entity_json : entities_array.get_array()) {
-    if (!json_to_entity(*new_scene, flecs::entity::null(), entity_json.value_unsafe(), requested_assets).second) {
-      return nullptr;
+  if (!entities_array.error()) {
+    for (auto entity_json : entities_array.get_array()) {
+      if (!json_to_entity(*new_scene, flecs::entity::null(), entity_json.value_unsafe(), requested_assets).second) {
+        return nullptr;
+      }
     }
   }
 
@@ -1766,21 +1768,25 @@ auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
   std::vector<UUID> requested_assets = {};
 
   auto scripts_array = doc["scripts"];
-
-  for (auto script_json : scripts_array.get_array()) {
-    auto uuid_json = script_json.value_unsafe();
-    auto uuid_str = uuid_json["uuid"].get_string();
-    if (!uuid_str.error()) {
-      auto script_uuid = UUID::from_string(uuid_str.value_unsafe()).value();
-      requested_assets.emplace_back(script_uuid);
+  if (!scripts_array.error()) {
+    // TODO: Error handling
+    for (auto script_json : scripts_array.get_array()) {
+      auto uuid_json = script_json.value_unsafe();
+      auto uuid_str = uuid_json["uuid"].get_string();
+      if (!uuid_str.error()) {
+        auto script_uuid = UUID::from_string(uuid_str.value_unsafe()).value();
+        requested_assets.emplace_back(script_uuid);
+      }
     }
   }
 
   auto entities_array = doc["entities"];
-
-  for (auto entity_json : entities_array.get_array()) {
-    if (!json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets).second) {
-      return false;
+  if (!entities_array.error()) {
+    // TODO: Error handling
+    for (auto entity_json : entities_array.get_array()) {
+      if (!json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets).second) {
+        return false;
+      }
     }
   }
 
