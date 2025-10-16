@@ -944,6 +944,8 @@ auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> void {
   self.lua_systems.emplace(lua_script, script_system);
 
   script_system->on_add(&self);
+
+  OX_LOG_TRACE("Added lua system to the scene {}", script_system->get_path());
 }
 
 auto Scene::remove_lua_system(this Scene& self, const UUID& lua_script) -> void {
@@ -953,6 +955,9 @@ auto Scene::remove_lua_system(this Scene& self, const UUID& lua_script) -> void 
   auto* script_system = asset_man.get_script(lua_script);
 
   script_system->on_remove(&self);
+
+  OX_LOG_TRACE("Removed lua system from the scene {}", script_system->get_path());
+
   self.lua_systems.erase(lua_script);
 }
 
@@ -1682,6 +1687,8 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
   new_scene->from_json(writer.stream.str());
   new_scene->meshes_dirty = true;
 
+  OX_LOG_TRACE("Copied scene {} to {}", src_scene->scene_name, new_scene->scene_name);
+
   return new_scene;
 }
 
@@ -1760,7 +1767,7 @@ auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
   std::ofstream filestream(path);
   filestream << writer.stream.rdbuf();
 
-  OX_LOG_INFO("Saved scene {0}.", self.scene_name);
+  OX_LOG_INFO("Saved scene: {} to {}.", self.scene_name, path);
 
   return true;
 }

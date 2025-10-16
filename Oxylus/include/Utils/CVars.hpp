@@ -97,6 +97,7 @@ struct AutoCVar_Float : AutoCVar<float> {
 struct AutoCVar_Int : AutoCVar<int32_t> {
   AutoCVar_Int(const char* name, const char* description, int32_t default_value, CVarFlags flags = CVarFlags::None);
   int32_t get() const;
+  bool as_bool() const;
   int32_t* get_ptr() const;
   void set(int32_t val) const;
 

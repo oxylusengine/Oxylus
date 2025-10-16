@@ -135,6 +135,7 @@ AutoCVar_Int::AutoCVar_Int(const char* name,
 }
 
 int32_t AutoCVar_Int::get() const { return CVarSystem::get()->int_cvars.at(index).current; }
+bool AutoCVar_Int::as_bool() const { return static_cast<bool>(get());}
 
 int32_t* AutoCVar_Int::get_ptr() const { return &CVarSystem::get()->int_cvars.at(index).current; }
 
