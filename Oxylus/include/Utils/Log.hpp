@@ -8,14 +8,18 @@ public:
   static void init(int argc, char** argv);
   static void shutdown();
 
-  static void add_callback(const char* id,
-                           loguru::log_handler_t callback,
-                           void* user_data,
-                           loguru::Verbosity verbosity,
-                           loguru::close_handler_t on_close = nullptr,
-                           loguru::flush_handler_t on_flush = nullptr);
+  static void add_callback(
+    const char* id,
+    loguru::log_handler_t callback,
+    void* user_data,
+    loguru::Verbosity verbosity,
+    loguru::close_handler_t on_close = nullptr,
+    loguru::flush_handler_t on_flush = nullptr
+  );
 
   static void remove_callback(const char* id);
+
+  static void set_verbose();
 };
 } // namespace ox
 
