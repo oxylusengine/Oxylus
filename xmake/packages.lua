@@ -10,7 +10,7 @@ add_requires("meshoptimizer v0.22")
 add_requires("libsdl3") -- handled by system package (also nix)
 add_requires("ktx-ox v4.4.0", { system = false, debug = false })
 add_requires("zstd v1.5.7", { system = false })
-add_requires("shader-slang v2025.12.1", { system = false })
+add_requires("shader-slang v2025.15.1", { system = false })
 add_requires("enet-ox v2.6.5", {
     configs = {
         test = false,

@@ -469,9 +469,9 @@ auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachme
       self.num_inflight_frames
     );
   }
+
   auto acquired_swapchain = vuk::acquire_swapchain(*self.swapchain);
   auto acquired_image = vuk::acquire_next_image("present_image", std::move(acquired_swapchain));
-
   return acquired_image;
 }
 
@@ -823,9 +823,9 @@ auto VkContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, vuk
   return vuk::acquire_buf("image buffer", buffer_handle, vuk::eNone, LOC);
 }
 
-auto
-VkContext::alloc_transient_buffer_raw(vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC)
-  -> vuk::Buffer {
+auto VkContext::alloc_transient_buffer_raw(
+  vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC
+) -> vuk::Buffer {
   ZoneScoped;
 
   std::shared_lock _(mutex);
@@ -867,9 +867,9 @@ auto VkContext::upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Bu
   return upload_pass(std::move(src), std::move(dst));
 }
 
-auto
-VkContext::upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC)
-  -> vuk::Value<vuk::Buffer> {
+auto VkContext::upload_staging(
+  vuk::Value<vuk::Buffer>&& src, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC
+) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
   auto dst_buffer = vuk::discard_buf("dst", dst.subrange(dst_offset, src->size), LOC);

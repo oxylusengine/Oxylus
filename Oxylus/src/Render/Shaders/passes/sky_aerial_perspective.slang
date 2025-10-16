@@ -71,16 +71,11 @@ func cs_main(
     info.eye_dir = world_dir;
     info.sun_dir = normalize(params.directional_light.direction);
     info.sun_intensity = params.directional_light.intensity;
-    info.max_integration_length = t_max_max;
     info.eval_planet_luminance = false;
-
-    info.sampling.variable_sample_count = false;
-    info.sampling.initial_sample_count = max(1.0, (f32(thread_id.z) + 1.0) * 2.0);
-
-    info.transmittance_image = params.sky_transmittance_lut;
-    info.multiscattering_image = params.sky_multiscattering_lut;
-
-    const let result = integrate_single_scattered_luminance(params.atmosphere, params.sampler, info);
-    const let transmittance = dot(result.transmittance, f32x3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f));
-    params.sky_aerial_perspective_lut.store(thread_id, f32x4(result.luminance, transmittance));
+    info.step_count = max(1.0, (f32(thread_id.z) + 1.0) * 2.0);
+    let result = integrate_single_scattered_luminance(
+            info, params.atmosphere, params.sampler, params.sky_transmittance_lut, params.sky_multiscattering_lut);
+    let inv_luminance = 1.0 / max(result.luminance, float3(1.0 / 1048576.0));
+    let inv_mult = min(1048576.0, max(inv_luminance.x, max(inv_luminance.y, inv_luminance.z)));
+    params.sky_aerial_perspective_lut.store(thread_id, f32x4(result.luminance, inv_mult));
 }

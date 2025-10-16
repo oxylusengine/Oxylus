@@ -41,17 +41,11 @@ func cs_main(
     info.eye_dir = eye_dir;
     info.sun_dir = sun_dir;
     info.sun_intensity = params.directional_light.intensity;
+    info.step_count = 48;
 
-    let sample_count = 48;
-    info.sampling.variable_sample_count = true;
-    info.sampling.min_sample_count = sample_count;
-    info.sampling.max_sample_count = sample_count;
+    let result = integrate_single_scattered_luminance(info, params.atmosphere, params.sampler, params.sky_transmittance_lut, params.sky_multiscattering_lut);
+    let inv_luminance = 1.0 / max(result.luminance, float3(1.0 / 1048576.0));
+    let inv_mult = min(1048576.0, max(inv_luminance.x, max(inv_luminance.y, inv_luminance.z)));
 
-    info.transmittance_image = params.sky_transmittance_lut;
-    info.multiscattering_image = params.sky_multiscattering_lut;
-
-    let result = integrate_single_scattered_luminance(params.atmosphere, params.sampler, info);
-    let transmittance = dot(result.transmittance, 1.0 / 3.0);
-
-    params.sky_view_lut.store(thread_id.xy, f32x4(result.luminance, transmittance));
+    params.sky_view_lut.store(thread_id.xy, f32x4(result.luminance, inv_mult));
 }

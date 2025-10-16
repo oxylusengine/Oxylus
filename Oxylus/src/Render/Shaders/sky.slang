@@ -152,36 +152,24 @@ public struct MediumScattering {
 public struct AtmosphereLuminance {
     public f32x3 luminance = 0.0;
     public f32x3 multiscattering_as_1 = 0.0;
-    public f32x3 transmittance = 1.0;
-};
-
-public struct AtmosphereSampling {
-    public bool variable_sample_count = false;
-    public f32  initial_sample_count = 0.0;
-    public f32  min_sample_count = 0.0;
-    public f32  max_sample_count = 0.0;
-    public f32  inv_distance_to_sample_count_max = 0.01;
 };
 
 public struct AtmosphereIntegrateInfo {
     public f32x3 eye_pos = {};
     public f32x3 eye_dir = {};
     public f32x3 sun_dir = {};
-    public f32   sun_intensity = 1.0;
-    public f32   max_integration_length = 9000000.0;
-    public AtmosphereSampling sampling = {};
-    public constexpr bool eval_mie_phase = true;
-    public constexpr bool eval_rayleigh_phase = true;
+    public f32 sun_intensity = 10.0;
+    public f32 step_count = 32.0;
     public constexpr bool eval_planet_luminance = false;
-
-    public Image2D<f32x4> transmittance_image = {};
-    public Optional<Image2D<f32x4>> multiscattering_image = none;
+    public constexpr bool eval_multiscattering = false;
 };
 
 public func integrate_single_scattered_luminance(
+    in AtmosphereIntegrateInfo info,
     in Atmosphere atmosphere,
     in Sampler lut_sampler,
-    in AtmosphereIntegrateInfo info
+    in Image2D<f32x4> transmittance_image = {},
+    in Image2D<f32x4> multiscattering_image = {}
 ) -> AtmosphereLuminance {
     AtmosphereLuminance result = {};
 
@@ -202,77 +190,47 @@ public func integrate_single_scattered_luminance(
         integration_length = max(0.0, planet_intersection.value);
     }
 
-    integration_length = min(integration_length, info.max_integration_length);
-    f32 sample_count = info.sampling.initial_sample_count;
-    f32 sample_count_floor = info.sampling.initial_sample_count;
-    f32 max_integration_length_floor = integration_length;
-    if (info.sampling.variable_sample_count) {
-        sample_count = lerp(info.sampling.min_sample_count, info.sampling.max_sample_count,
-                            saturate(integration_length * info.sampling.inv_distance_to_sample_count_max));
-        sample_count_floor = floor(sample_count);
-        max_integration_length_floor = integration_length * sample_count_floor / sample_count;
-    }
-
     f32 cos_theta = dot(info.sun_dir, info.eye_dir);
     f32 rayleigh_phase = com::rayleigh_phase(cos_theta);
     f32 mie_phase = com::henyey_greenstein_draine_phase(atmosphere.mie_asymmetry, cos_theta);
 
-    f32 step = 0.0;
-    f32 delta_step = integration_length / sample_count;
-    for (f32 i = 0; i < sample_count; i += 1.0) {
-        if (info.sampling.variable_sample_count) {
-            f32 cur_step  = (i + 0.0) / sample_count_floor;
-            f32 next_step = (i + 1.0) / sample_count_floor;
-            cur_step *= cur_step;
-            next_step *= next_step;
+    var transmittance_sum = f32x3(1.0);
+    var step_length = integration_length / info.step_count;
+    var old_ray_shift = 0.0;
+    for (f32 step = 0.0; step < info.step_count; step += 1.0) {
+        var new_ray_shift = integration_length * (step + 0.3) / info.step_count;
+        step_length = new_ray_shift - old_ray_shift;
+        old_ray_shift = new_ray_shift;
 
-            cur_step *= max_integration_length_floor;
-            next_step = next_step > 1.0 ? integration_length : next_step * max_integration_length_floor;
-            delta_step = next_step - cur_step;
-            step = cur_step + delta_step * 0.3;
-        } else {
-            step = integration_length * (i + 0.3) / sample_count;
-        }
-
-        f32x3 step_pos = info.eye_pos + step * info.eye_dir;
+        let step_pos = info.eye_pos + new_ray_shift * info.eye_dir;
         f32 h = length(step_pos);
         f32 altitude = h - atmosphere.planet_radius;
         let medium_info = MediumScattering(atmosphere, altitude);
 
         f32x3 up_vec = normalize(step_pos);
         f32x3 up_vec_scaled = PLANET_RADIUS_OFFSET * up_vec;
-        f32 earth_shadow = com::ray_sphere_intersect_nearest(step_pos - up_vec_scaled, info.sun_dir, atmosphere.planet_radius).hasValue ? 0.0 : 1.0;
         f32 sun_theta = dot(info.sun_dir, up_vec);
 
         f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
-        f32x3 sun_transmittance = info.transmittance_image.sample_mip(lut_sampler, transmittance_uv, 0.0).rgb;
+        f32x3 sun_transmittance = transmittance_image.sample_mip(lut_sampler, transmittance_uv, 0.0).rgb;
 
         f32x3 MS = 0.0;
-        if (info.multiscattering_image.hasValue) {
+        if (info.eval_multiscattering) {
             f32x2 multiscatter_uv = multiscattering_params_to_lut_uv(atmosphere, altitude, sun_theta);
-            MS = info.multiscattering_image.value.sample_mip(lut_sampler, multiscatter_uv, 0.0).rgb;
+            MS = multiscattering_image.sample_mip(lut_sampler, multiscatter_uv, 0.0).rgb;
         }
 
-        f32x3 scattering_phase = 0.0;
-        if (info.eval_mie_phase && info.eval_rayleigh_phase) {
-            scattering_phase = medium_info.mie_scattering * mie_phase + medium_info.rayleigh_scattering * rayleigh_phase;
-        } else if (info.eval_mie_phase) {
-            scattering_phase = medium_info.mie_scattering * mie_phase + medium_info.rayleigh_scattering * com::uniform_phase();
-        } else if (info.eval_rayleigh_phase) {
-            scattering_phase = medium_info.mie_scattering * com::uniform_phase() + medium_info.rayleigh_scattering * rayleigh_phase;
-        } else {
-            scattering_phase = medium_info.scattering_sum * com::uniform_phase();
-        }
-
+        f32x3 scattering_phase = medium_info.mie_scattering * mie_phase + medium_info.rayleigh_scattering * rayleigh_phase;;
+        f32 earth_shadow = com::ray_sphere_intersect_nearest(step_pos - up_vec_scaled, info.sun_dir, atmosphere.planet_radius).hasValue ? 0.0 : 1.0;
         f32x3 sun_luminance = earth_shadow * sun_transmittance * scattering_phase + (MS * medium_info.scattering_sum);
-        f32x3 step_transmittance = exp(-delta_step * medium_info.extinction_sum);
+        f32x3 step_transmittance = exp(-step_length * medium_info.extinction_sum);
 
         f32x3 integral = (sun_luminance - sun_luminance * step_transmittance) / medium_info.extinction_sum;
         f32x3 ms_integral = (medium_info.scattering_sum - medium_info.scattering_sum * step_transmittance) / medium_info.extinction_sum;
 
-        result.luminance += info.sun_intensity * (integral * result.transmittance);
-        result.multiscattering_as_1 += ms_integral * result.transmittance;
-        result.transmittance *= step_transmittance;
+        result.luminance += info.sun_intensity * (integral * transmittance_sum);
+        result.multiscattering_as_1 += ms_integral * transmittance_sum;
+        transmittance_sum *= step_transmittance;
     }
 
     // Accumulate light bouncing off planet's ground
@@ -284,9 +242,9 @@ public func integrate_single_scattered_luminance(
         f32 NoL = saturate(dot(normalize(info.sun_dir), normalize(up_vec)));
 
         f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
-        f32x3 sun_transmittance = info.transmittance_image.sample_mip(lut_sampler, transmittance_uv, 0.0).rgb;
+        f32x3 sun_transmittance = transmittance_image.sample_mip(lut_sampler, transmittance_uv, 0.0).rgb;
 
-        result.luminance += info.sun_intensity * (sun_transmittance * result.transmittance * NoL * atmosphere.terrain_albedo / PI);
+        result.luminance += info.sun_intensity * (sun_transmittance * transmittance_sum * NoL * atmosphere.terrain_albedo / PI);
     }
 
     return result;
