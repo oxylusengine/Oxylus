@@ -141,8 +141,8 @@ public:
 
   auto merge(std::unique_ptr<Command> other) -> std::unique_ptr<Command> override {
     if (auto other_cmd = dynamic_cast<ComponentChangeCommand<T>*>(other.get())) {
-      auto merged = std::make_unique<ComponentChangeCommand<T>>(
-          entity_, target_, old_value_, other_cmd->new_value_, id_);
+      auto
+        merged = std::make_unique<ComponentChangeCommand<T>>(entity_, target_, old_value_, other_cmd->new_value_, id_);
       other.release();
       return merged;
     }
@@ -187,11 +187,12 @@ public:
     auto entities_array = doc["entities"];
     std::vector<UUID> requested_assets = {};
     for (auto entity_json : entities_array.get_array()) {
-      entity_ = Scene::json_to_entity(*scene_, //
-                                      flecs::entity::null(),
-                                      entity_json.value_unsafe(),
-                                      requested_assets)
-                    .first;
+      entity_ = Scene::json_to_entity(
+        *scene_, //
+        flecs::entity::null(),
+        entity_json.value_unsafe(),
+        requested_assets
+      );
     }
   }
 
@@ -212,9 +213,11 @@ private:
 
 class UndoRedoSystem {
 public:
-  explicit UndoRedoSystem(size_t max_history = 100,
-                          bool merge_enabled = true,
-                          std::chrono::milliseconds merge_timeout = std::chrono::milliseconds(500))
+  explicit UndoRedoSystem(
+    size_t max_history = 100,
+    bool merge_enabled = true,
+    std::chrono::milliseconds merge_timeout = std::chrono::milliseconds(500)
+  )
       : max_history_size_(max_history),
         merge_enabled_(merge_enabled),
         merge_timeout_(merge_timeout),
@@ -258,7 +261,7 @@ public:
 
   auto
   execute_lambda(this UndoRedoSystem& self, std::function<void()> execute, std::function<void()> undo, std::string id)
-      -> UndoRedoSystem& {
+    -> UndoRedoSystem& {
     self.execute_command(std::make_unique<LambdaCommand>(std::move(execute), std::move(undo), std::move(id)));
     return self;
   }

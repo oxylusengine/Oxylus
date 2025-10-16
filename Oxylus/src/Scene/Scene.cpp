@@ -48,161 +48,6 @@ auto Scene::safe_entity_name(this const Scene& self, std::string prefix) -> std:
   return new_entity_name;
 }
 
-auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
-  ZoneScoped;
-
-  writer.begin_obj();
-  writer["name"] = e.name();
-
-  std::vector<ECS::ComponentWrapper> components = {};
-  writer["tags"].begin_array();
-  e.each([&](flecs::id component_id) {
-    if (!component_id.is_entity()) {
-      return;
-    }
-
-    ECS::ComponentWrapper component(e, component_id);
-    if (!component.is_component()) {
-      writer << component.path;
-    } else {
-      components.emplace_back(e, component_id);
-    }
-  });
-  writer.end_array();
-
-  writer["components"].begin_array();
-  for (auto& component : components) {
-    writer.begin_obj();
-    writer["name"] = component.path;
-    component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
-      auto& member_json = writer[member_name];
-      std::visit(
-        ox::match{
-          [](const auto&) {},
-          [&](bool* v) { member_json = *v; },
-          [&](u16* v) { member_json = *v; },
-          [&](f32* v) { member_json = *v; },
-          [&](i32* v) { member_json = *v; },
-          [&](u32* v) { member_json = *v; },
-          [&](i64* v) { member_json = *v; },
-          [&](u64* v) { member_json = *v; },
-          [&](glm::vec2* v) { member_json = *v; },
-          [&](glm::vec3* v) { member_json = *v; },
-          [&](glm::vec4* v) { member_json = *v; },
-          [&](glm::quat* v) { member_json = *v; },
-          [&](glm::mat4* v) { member_json = std::span(glm::value_ptr(*v), 16); },
-          [&](std::string* v) { member_json = *v; },
-          [&](UUID* v) { member_json = v->str().c_str(); },
-        },
-        member
-      );
-    });
-    writer.end_obj();
-  }
-  writer.end_array();
-
-  writer["children"].begin_array();
-  e.children([&writer](flecs::entity c) { entity_to_json(writer, c); });
-  writer.end_array();
-
-  writer.end_obj();
-}
-
-auto Scene::json_to_entity(
-  Scene& self, flecs::entity root, simdjson::ondemand::value& json, std::vector<UUID>& requested_assets
-) -> std::pair<flecs::entity, bool> {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  const auto& world = self.world;
-
-  auto entity_name_json = json["name"];
-  if (entity_name_json.error()) {
-    OX_LOG_ERROR("Entities must have names!");
-    return {{}, false};
-  }
-
-  auto e = self.create_entity(std::string(entity_name_json.get_string().value_unsafe()));
-  if (root != flecs::entity::null())
-    e.child_of(root);
-
-  auto entity_tags_json = json["tags"];
-  for (auto entity_tag : entity_tags_json.get_array()) {
-    auto tag = world.component(stack.null_terminate(entity_tag.get_string().value_unsafe()).data());
-    e.add(tag);
-  }
-
-  auto components_json = json["components"];
-  for (auto component_json : components_json.get_array()) {
-    auto component_name_json = component_json["name"];
-    if (component_name_json.error()) {
-      OX_LOG_ERROR("Entity '{}' has corrupt components JSON array.", e.name().c_str());
-      return {{}, false};
-    }
-
-    const auto* component_name = stack.null_terminate_cstr(component_name_json.get_string().value_unsafe());
-    auto component_id = world.lookup(component_name);
-    if (!component_id) {
-      OX_LOG_ERROR("Entity '{}' has invalid component named '{}'!", e.name().c_str(), component_name);
-      return {{}, false};
-    }
-
-    if (!self.component_db.is_component_known(component_id)) {
-      OX_LOG_WARN("Skipping unkown component {}:{}", component_name, (u64)component_id);
-      continue;
-    }
-
-    e.add(component_id);
-    ECS::ComponentWrapper component(e, component_id);
-    component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
-      auto member_json = component_json[member_name];
-      if (member_json.error()) {
-        // Default construct
-        return;
-      }
-
-      std::visit(
-        ox::match{
-          [](const auto&) {},
-          [&](bool* v) { *v = static_cast<bool>(member_json.get_bool().value_unsafe()); },
-          [&](u16* v) { *v = static_cast<u16>(member_json.get_uint64().value_unsafe()); },
-          [&](f32* v) { *v = static_cast<f32>(member_json.get_double().value_unsafe()); },
-          [&](i32* v) { *v = static_cast<i32>(member_json.get_int64().value_unsafe()); },
-          [&](u32* v) { *v = static_cast<u32>(member_json.get_uint64().value_unsafe()); },
-          [&](i64* v) { *v = member_json.get_int64().value_unsafe(); },
-          [&](u64* v) { *v = member_json.get_uint64().value_unsafe(); },
-          [&](glm::vec2* v) { json_to_vec(member_json.value_unsafe(), *v); },
-          [&](glm::vec3* v) { json_to_vec(member_json.value_unsafe(), *v); },
-          [&](glm::vec4* v) { json_to_vec(member_json.value_unsafe(), *v); },
-          [&](glm::quat* v) { json_to_quat(member_json.value_unsafe(), *v); },
-          // [&](glm::mat4 *v) {json_to_mat(member_json.value(), *v); },
-          [&](std::string* v) { *v = member_json.get_string().value_unsafe(); },
-          [&](UUID* v) {
-            *v = UUID::from_string(member_json.get_string().value_unsafe()).value();
-            requested_assets.push_back(*v);
-          },
-        },
-        member
-      );
-    });
-
-    e.modified(component_id);
-  }
-
-  auto children_json = json["children"];
-  for (auto children : children_json.get_array()) {
-    if (children.error()) {
-      continue;
-    }
-
-    if (!json_to_entity(self, e, children.value_unsafe(), requested_assets).second) {
-      return {{}, false};
-    }
-  }
-
-  return {e, true};
-}
-
 auto ComponentDB::import_module(this ComponentDB& self, flecs::entity module) -> void {
   ZoneScoped;
 
@@ -302,8 +147,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.observer<SpriteComponent>().event(flecs::OnAdd).each([](flecs::iter& it, usize i, SpriteComponent& c) {
     auto& asset_man = App::mod<AssetManager>();
     if (it.event() == flecs::OnAdd) {
-      c.material = asset_man.create_asset(AssetType::Material, {});
-      asset_man.load_material(c.material, Material{});
+      if (!c.material) {
+        c.material = asset_man.create_asset(AssetType::Material, {});
+        asset_man.load_material(c.material, Material{});
+      }
     }
   });
 
@@ -1253,70 +1100,6 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   return root_entity;
 }
 
-auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Scene> {
-  ZoneScoped;
-
-  // Copies the world but not the renderer instance.
-  // NOTE: Assumes the assets in src_scene are already loaded.
-
-  std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(src_scene->scene_name);
-
-  new_scene->scene_name = "Scene_Copy";
-
-  JsonWriter writer{};
-  writer.begin_obj();
-  writer["scripts"].begin_array();
-  for (auto& [uuid, system] : src_scene->lua_systems) {
-    writer.begin_obj();
-    writer["uuid"] = uuid.str();
-    writer.end_obj();
-  }
-  writer.end_array();
-
-  writer["entities"].begin_array();
-  src_scene->world.query_builder().with<TransformComponent>().build().each([&writer](flecs::entity e) {
-    if (e.parent() == flecs::entity::null() && !e.has<Hidden>()) {
-      entity_to_json(writer, e);
-    }
-  });
-  writer.end_array();
-  writer.end_obj();
-
-  auto content = simdjson::padded_string(writer.stream.str());
-  simdjson::ondemand::parser parser;
-  auto doc = parser.iterate(content);
-  if (doc.error()) {
-    OX_LOG_ERROR("Failed to parse scene file! {}", simdjson::error_message(doc.error()));
-    return nullptr;
-  }
-
-  auto requested_assets = std::vector<UUID>();
-
-  // TODO: Merge this with Scene::load_from_file
-  auto scripts_array = doc["scripts"];
-  if (!scripts_array.error()) {
-    for (auto script_json : scripts_array.get_array()) {
-      auto uuid_json = script_json.value_unsafe();
-      auto script_uuid = UUID::from_string(uuid_json["uuid"].get_string().value_unsafe()).value();
-      requested_assets.emplace_back(script_uuid);
-      new_scene->add_lua_system(script_uuid);
-    }
-  }
-
-  auto entities_array = doc["entities"];
-  if (!entities_array.error()) {
-    for (auto entity_json : entities_array.get_array()) {
-      if (!json_to_entity(*new_scene, flecs::entity::null(), entity_json.value_unsafe(), requested_assets).second) {
-        return nullptr;
-      }
-    }
-  }
-
-  new_scene->meshes_dirty = true;
-
-  return new_scene;
-}
-
 auto Scene::get_world_position(const flecs::entity entity) -> glm::vec3 {
   const auto& tc = entity.get<TransformComponent>();
   const auto parent = entity.parent();
@@ -1703,9 +1486,162 @@ void Scene::create_character_controller(
   ch_body->SetUserData(static_cast<u64>(entity.id()));
 }
 
-auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
+auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   ZoneScoped;
 
+  writer.begin_obj();
+  writer["name"] = e.name();
+
+  std::vector<ECS::ComponentWrapper> components = {};
+  writer["tags"].begin_array();
+  e.each([&](flecs::id component_id) {
+    if (!component_id.is_entity()) {
+      return;
+    }
+
+    ECS::ComponentWrapper component(e, component_id);
+    if (!component.is_component()) {
+      writer << component.path;
+    } else {
+      components.emplace_back(e, component_id);
+    }
+  });
+  writer.end_array();
+
+  writer["components"].begin_array();
+  for (auto& component : components) {
+    writer.begin_obj();
+    writer["name"] = component.path;
+    component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
+      auto& member_json = writer[member_name];
+      std::visit(
+        ox::match{
+          [](const auto&) {},
+          [&](bool* v) { member_json = *v; },
+          [&](u16* v) { member_json = *v; },
+          [&](f32* v) { member_json = *v; },
+          [&](i32* v) { member_json = *v; },
+          [&](u32* v) { member_json = *v; },
+          [&](i64* v) { member_json = *v; },
+          [&](u64* v) { member_json = *v; },
+          [&](glm::vec2* v) { member_json = *v; },
+          [&](glm::vec3* v) { member_json = *v; },
+          [&](glm::vec4* v) { member_json = *v; },
+          [&](glm::quat* v) { member_json = *v; },
+          [&](glm::mat4* v) { member_json = std::span(glm::value_ptr(*v), 16); },
+          [&](std::string* v) { member_json = *v; },
+          [&](UUID* v) { member_json = v->str().c_str(); },
+        },
+        member
+      );
+    });
+    writer.end_obj();
+  }
+  writer.end_array();
+
+  writer["children"].begin_array();
+  e.children([&writer](flecs::entity c) { entity_to_json(writer, c); });
+  writer.end_array();
+
+  writer.end_obj();
+}
+
+auto Scene::json_to_entity(
+  Scene& self, flecs::entity root, simdjson::ondemand::value& json, std::vector<UUID>& requested_assets
+) -> flecs::entity {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  const auto& world = self.world;
+
+  auto entity_name_json = json["name"];
+  if (entity_name_json.error()) {
+    OX_LOG_ERROR("Entities must have names!");
+    return flecs::entity::null();
+  }
+
+  auto e = self.create_entity(std::string(entity_name_json.get_string().value_unsafe()));
+  if (root != flecs::entity::null())
+    e.child_of(root);
+
+  auto entity_tags_json = json["tags"];
+  for (auto entity_tag : entity_tags_json.get_array()) {
+    auto tag = world.component(stack.null_terminate(entity_tag.get_string().value_unsafe()).data());
+    e.add(tag);
+  }
+
+  auto components_json = json["components"];
+  for (auto component_json : components_json.get_array()) {
+    auto component_name_json = component_json["name"];
+    if (component_name_json.error()) {
+      OX_LOG_ERROR("Entity '{}' has corrupt components JSON array.", e.name().c_str());
+      return flecs::entity::null();
+    }
+
+    const auto* component_name = stack.null_terminate_cstr(component_name_json.get_string().value_unsafe());
+    auto component_id = world.lookup(component_name);
+    if (!component_id) {
+      OX_LOG_ERROR("Entity '{}' has invalid component named '{}'!", e.name().c_str(), component_name);
+      return flecs::entity::null();
+    }
+
+    if (!self.component_db.is_component_known(component_id)) {
+      OX_LOG_WARN("Skipping unkown component {}:{}", component_name, (u64)component_id);
+      continue;
+    }
+
+    e.add(component_id);
+    ECS::ComponentWrapper component(e, component_id);
+    component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
+      auto member_json = component_json[member_name];
+      if (member_json.error()) {
+        // Default construct
+        return;
+      }
+
+      std::visit(
+        ox::match{
+          [](const auto&) {},
+          [&](bool* v) { *v = static_cast<bool>(member_json.get_bool().value_unsafe()); },
+          [&](u16* v) { *v = static_cast<u16>(member_json.get_uint64().value_unsafe()); },
+          [&](f32* v) { *v = static_cast<f32>(member_json.get_double().value_unsafe()); },
+          [&](i32* v) { *v = static_cast<i32>(member_json.get_int64().value_unsafe()); },
+          [&](u32* v) { *v = static_cast<u32>(member_json.get_uint64().value_unsafe()); },
+          [&](i64* v) { *v = member_json.get_int64().value_unsafe(); },
+          [&](u64* v) { *v = member_json.get_uint64().value_unsafe(); },
+          [&](glm::vec2* v) { json_to_vec(member_json.value_unsafe(), *v); },
+          [&](glm::vec3* v) { json_to_vec(member_json.value_unsafe(), *v); },
+          [&](glm::vec4* v) { json_to_vec(member_json.value_unsafe(), *v); },
+          [&](glm::quat* v) { json_to_quat(member_json.value_unsafe(), *v); },
+          // [&](glm::mat4 *v) {json_to_mat(member_json.value(), *v); },
+          [&](std::string* v) { *v = member_json.get_string().value_unsafe(); },
+          [&](UUID* v) {
+            *v = UUID::from_string(member_json.get_string().value_unsafe()).value();
+            requested_assets.push_back(*v);
+          },
+        },
+        member
+      );
+    });
+
+    e.modified(component_id);
+  }
+
+  auto children_json = json["children"];
+  for (auto children : children_json.get_array()) {
+    if (children.error()) {
+      continue;
+    }
+
+    if (json_to_entity(self, e, children.value_unsafe(), requested_assets) == flecs::entity::null()) {
+      return flecs::entity::null();
+    }
+  }
+
+  return e;
+}
+
+auto Scene::to_json(this const Scene& self) -> JsonWriter {
   JsonWriter writer{};
 
   writer.begin_obj();
@@ -1731,6 +1667,96 @@ auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
 
   writer.end_obj();
 
+  return writer;
+}
+
+auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Scene> {
+  ZoneScoped;
+
+  // Copies the world but not the renderer instance.
+
+  auto new_name = fmt::format("{}_copy", src_scene->scene_name);
+  std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(new_name);
+
+  auto writer = src_scene->to_json();
+  new_scene->from_json(writer.stream.str());
+  new_scene->meshes_dirty = true;
+
+  return new_scene;
+}
+
+auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
+  auto content = simdjson::padded_string(json);
+  simdjson::ondemand::parser parser;
+  auto doc = parser.iterate(content);
+  if (doc.error()) {
+    OX_LOG_ERROR("Failed to parse scene! {}", simdjson::error_message(doc.error()));
+    return false;
+  }
+
+  auto name_json = doc["name"];
+  if (name_json.error()) {
+    OX_LOG_ERROR("Scenes must have names!");
+    return false;
+  }
+
+  self.scene_name = name_json.get_string().value_unsafe();
+
+  std::vector<UUID> requested_assets = {};
+
+  auto scripts_array = doc["scripts"];
+  if (!scripts_array.error()) {
+    for (auto script_json : scripts_array.get_array()) {
+      auto uuid_json = script_json.value_unsafe();
+      auto uuid_str = uuid_json["uuid"].get_string();
+      if (!uuid_str.error()) {
+        auto script_uuid = UUID::from_string(uuid_str.value_unsafe()).value();
+        requested_assets.emplace_back(script_uuid);
+      }
+    }
+  } else {
+    OX_LOG_ERROR("No scripts field found in scene!");
+  }
+
+  auto entities_array = doc["entities"];
+  if (!entities_array.error()) {
+    for (auto entity_json : entities_array.get_array()) {
+      if (Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
+          flecs::entity::null()) {
+        return false;
+      }
+    }
+  } else {
+    OX_LOG_ERROR("No entities field found in scene!");
+    return false;
+  }
+
+  OX_LOG_INFO("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
+
+  for (const auto& uuid : requested_assets) {
+    auto& asset_man = App::mod<AssetManager>();
+    if (auto asset = asset_man.get_asset(uuid); asset) {
+      if (asset->type == AssetType::Script) {
+        self.add_lua_system(uuid);
+      } else {
+        asset_man.load_asset(uuid);
+      }
+    } else {
+      // Not an imported/physical asset
+      // Most likely was created on runtime and never written to a file, these should never exist.
+      // Otherwise component will be left with an unloaded asset.
+      OX_LOG_WARN("Ghost asset found! {}", uuid.str());
+    }
+  }
+
+  return true;
+}
+
+auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
+  ZoneScoped;
+
+  auto writer = self.to_json();
+
   std::ofstream filestream(path);
   filestream << writer.stream.rdbuf();
 
@@ -1741,7 +1767,6 @@ auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
 
 auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
   ZoneScoped;
-  namespace sj = simdjson;
 
   std::string content = fs::read_file(path);
   if (content.empty()) {
@@ -1749,59 +1774,6 @@ auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
     return false;
   }
 
-  content = sj::padded_string(content);
-  sj::ondemand::parser parser;
-  auto doc = parser.iterate(content);
-  if (doc.error()) {
-    OX_LOG_ERROR("Failed to parse scene file! {}", sj::error_message(doc.error()));
-    return false;
-  }
-
-  auto name_json = doc["name"];
-  if (name_json.error()) {
-    OX_LOG_ERROR("Scene files must have names!");
-    return false;
-  }
-
-  self.scene_name = name_json.get_string().value_unsafe();
-
-  std::vector<UUID> requested_assets = {};
-
-  auto scripts_array = doc["scripts"];
-  if (!scripts_array.error()) {
-    // TODO: Error handling
-    for (auto script_json : scripts_array.get_array()) {
-      auto uuid_json = script_json.value_unsafe();
-      auto uuid_str = uuid_json["uuid"].get_string();
-      if (!uuid_str.error()) {
-        auto script_uuid = UUID::from_string(uuid_str.value_unsafe()).value();
-        requested_assets.emplace_back(script_uuid);
-      }
-    }
-  }
-
-  auto entities_array = doc["entities"];
-  if (!entities_array.error()) {
-    // TODO: Error handling
-    for (auto entity_json : entities_array.get_array()) {
-      if (!json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets).second) {
-        return false;
-      }
-    }
-  }
-
-  OX_LOG_TRACE("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
-  for (const auto& uuid : requested_assets) {
-    auto& asset_man = App::mod<AssetManager>();
-    if (auto asset = asset_man.get_asset(uuid); asset) {
-      if (asset->type == AssetType::Script) {
-        self.add_lua_system(uuid);
-      } else {
-        asset_man.load_asset(uuid);
-      }
-    }
-  }
-
-  return true;
+  return self.from_json(content);
 }
 } // namespace ox
