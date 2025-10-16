@@ -70,6 +70,9 @@ private:
   ImGuiTextFilter m_filter;
   f32 _elapsed_time = 0.0f;
 
+  std::string new_asset_name_ = {};
+  bool should_open_new_asset_popup = false;
+
   std::shared_mutex thumbnail_mutex = {};
   bool mesh_thumbnails_enabled = false;
   ankerl::unordered_dense::map<std::string, std::shared_ptr<Texture>> thumbnail_cache_textures;

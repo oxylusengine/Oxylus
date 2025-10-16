@@ -1,9 +1,9 @@
 #pragma once
 
+#include <glm/gtc/type_ptr.hpp>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <vuk/Value.hpp>
-#include <glm/gtc/type_ptr.hpp>
 
 #include "Asset/Texture.hpp"
 #include "Core/UUID.hpp"
@@ -91,13 +91,15 @@ public:
 
   // Drag
   template <std::floating_point T>
-  static bool property(const char* label,
-                       T* value,
-                       T min = 0,
-                       T max = 0,
-                       const char* tooltip = nullptr,
-                       float delta = 0.1f,
-                       const char* fmt = "%.3f") {
+  static bool property(
+    const char* label,
+    T* value,
+    T min = 0,
+    T max = 0,
+    const char* tooltip = nullptr,
+    float delta = 0.1f,
+    const char* fmt = "%.3f"
+  ) {
     begin_property_grid(label, tooltip);
     bool modified;
 
@@ -116,14 +118,16 @@ public:
 
   // Vec2/3/4
   template <typename T>
-  static bool property_vector(const char* label,
-                              T& value,
-                              bool color = false,
-                              const bool show_alpha = true,
-                              const char* tooltip = nullptr,
-                              float delta = 0.1f,
-                              f32 min = 0.f,
-                              f32 max = 1.f) {
+  static bool property_vector(
+    const char* label,
+    T& value,
+    bool color = false,
+    const bool show_alpha = true,
+    const char* tooltip = nullptr,
+    float delta = 0.1f,
+    f32 min = 0.f,
+    f32 max = 1.f
+  ) {
     begin_property_grid(label, tooltip);
     bool modified;
     const int component_count = value.length();
@@ -133,8 +137,8 @@ public:
       else
         modified = ImGui::ColorEdit3(id_buffer, glm::value_ptr(value));
     } else {
-      modified = ImGui::DragScalarN(
-          id_buffer, ImGuiDataType_Float, glm::value_ptr(value), component_count, delta, &min, &max);
+      modified =
+        ImGui::DragScalarN(id_buffer, ImGuiDataType_Float, glm::value_ptr(value), component_count, delta, &min, &max);
     }
     end_property_grid();
     return modified;
@@ -145,71 +149,84 @@ public:
 
   static bool button(const char* label, const ImVec2& size = ImVec2(0, 0), const char* tooltip = nullptr);
 
-  static bool toggle_button(const char* label,
-                            bool state,
-                            ImVec2 size = {0, 0},
-                            float alpha = 1.0f,
-                            float pressed_alpha = 1.0f,
-                            ImGuiButtonFlags button_flags = ImGuiButtonFlags_None);
+  static bool toggle_button(
+    const char* label,
+    bool state,
+    ImVec2 size = {0, 0},
+    float alpha = 1.0f,
+    float pressed_alpha = 1.0f,
+    ImGuiButtonFlags button_flags = ImGuiButtonFlags_None
+  );
 
-  static bool input_text(const char* label,
-                         std::string* str,
-                         ImGuiInputTextFlags flags = 0,
-                         ImGuiInputTextCallback callback = NULL,
-                         void* user_data = NULL,
-                         const char* tooltip = nullptr);
+  static bool input_text(
+    const char* label,
+    std::string* str,
+    ImGuiInputTextFlags flags = 0,
+    ImGuiInputTextCallback callback = NULL,
+    void* user_data = NULL,
+    const char* tooltip = nullptr
+  );
 
   // Vec3 with reset button
   static bool
   draw_vec3_control(const char* label, glm::vec3& values, const char* tooltip = nullptr, float reset_value = 0.0f);
 
-  static bool draw_vec2_control(const char* label,
-                                glm::vec2& values,
-                                const char* tooltip = nullptr,
-                                const float reset_value = 0.0f);
+  static bool draw_vec2_control(
+    const char* label, glm::vec2& values, const char* tooltip = nullptr, const float reset_value = 0.0f
+  );
 
-  static void image(vuk::Value<vuk::ImageAttachment>&& attch,
-                    ImVec2 size,
-                    const ImVec2& uv0 = ImVec2(0, 0),
-                    const ImVec2& uv1 = ImVec2(1, 1),
-                    const ImVec4& tint_col = ImVec4(1, 1, 1, 1),
-                    const ImVec4& border_col = ImVec4(0, 0, 0, 0));
+  static void image(
+    vuk::Value<vuk::ImageAttachment>&& attch,
+    ImVec2 size,
+    const ImVec2& uv0 = ImVec2(0, 0),
+    const ImVec2& uv1 = ImVec2(1, 1),
+    const ImVec4& tint_col = ImVec4(1, 1, 1, 1),
+    const ImVec4& border_col = ImVec4(0, 0, 0, 0)
+  );
 
   // images
-  static void image(const Texture& texture,
-                    ImVec2 size,
-                    const ImVec2& uv0 = ImVec2(0, 0),
-                    const ImVec2& uv1 = ImVec2(1, 1),
-                    const ImVec4& tint_col = ImVec4(1, 1, 1, 1),
-                    const ImVec4& border_col = ImVec4(0, 0, 0, 0));
+  static void image(
+    const Texture& texture,
+    ImVec2 size,
+    const ImVec2& uv0 = ImVec2(0, 0),
+    const ImVec2& uv1 = ImVec2(1, 1),
+    const ImVec4& tint_col = ImVec4(1, 1, 1, 1),
+    const ImVec4& border_col = ImVec4(0, 0, 0, 0)
+  );
 
-  static bool image_button(const char* id,
-                           const Texture& view,
-                           ImVec2 size,
-                           const ImVec2& uv0 = ImVec2(0, 0),
-                           const ImVec2& uv1 = ImVec2(1, 1),
-                           const ImVec4& tint_col = ImVec4(1, 1, 1, 1),
-                           const ImVec4& bg_col = ImVec4(0, 0, 0, 0));
+  static bool image_button(
+    const char* id,
+    const Texture& view,
+    ImVec2 size,
+    const ImVec2& uv0 = ImVec2(0, 0),
+    const ImVec2& uv1 = ImVec2(1, 1),
+    const ImVec4& tint_col = ImVec4(1, 1, 1, 1),
+    const ImVec4& bg_col = ImVec4(0, 0, 0, 0)
+  );
 
   static bool icon_button(const char* icon, const char* label, ImVec4 icon_color = {0.537f, 0.753f, 0.286f, 1.0f});
 
-  static void clipped_text(const ImVec2& pos_min,
-                           const ImVec2& pos_max,
-                           const char* text,
-                           const char* text_end,
-                           const ImVec2* text_size_if_known,
-                           const ImVec2& align,
-                           const ImRect* clip_rect,
-                           float wrap_width);
-  static void clipped_text(ImDrawList* draw_list,
-                           const ImVec2& pos_min,
-                           const ImVec2& pos_max,
-                           const char* text,
-                           const char* text_display_end,
-                           const ImVec2* text_size_if_known,
-                           const ImVec2& align,
-                           const ImRect* clip_rect,
-                           float wrap_width);
+  static void clipped_text(
+    const ImVec2& pos_min,
+    const ImVec2& pos_max,
+    const char* text,
+    const char* text_end,
+    const ImVec2* text_size_if_known,
+    const ImVec2& align,
+    const ImRect* clip_rect,
+    float wrap_width
+  );
+  static void clipped_text(
+    ImDrawList* draw_list,
+    const ImVec2& pos_min,
+    const ImVec2& pos_max,
+    const char* text,
+    const char* text_display_end,
+    const ImVec2* text_size_if_known,
+    const ImVec2& align,
+    const ImRect* clip_rect,
+    float wrap_width
+  );
 
   static void
   draw_framerate_overlay(ImVec2 work_pos = {}, ImVec2 work_size = {}, ImVec2 padding = {}, bool* visible = nullptr);

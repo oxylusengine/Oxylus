@@ -58,38 +58,75 @@ auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Mater
   return true;
 }
 
-auto read_material_data(Material* mat, simdjson::ondemand::value& material_obj) -> void {
-  auto albedo_color = material_obj["albedo_color"];
-  json_to_vec(albedo_color.value_unsafe(), mat->albedo_color);
-  auto emissive_color = material_obj["emissive_color"];
-  json_to_vec(emissive_color.value_unsafe(), mat->emissive_color);
-  mat->roughness_factor = static_cast<f32>(material_obj["roughness_factor"].get_double().value_unsafe());
-  mat->metallic_factor = static_cast<f32>(material_obj["metallic_factor"].get_double().value_unsafe());
-  mat->alpha_mode = static_cast<AlphaMode>(material_obj["alpha_mode"].get_uint64().value_unsafe());
-  mat->alpha_cutoff = static_cast<f32>(material_obj["alpha_cutoff"].get_double().value_unsafe());
-  mat->albedo_texture = UUID::from_string(material_obj["albedo_texture"].get_string().value_unsafe())
-                          .value_or(UUID(nullptr));
-  mat->normal_texture = UUID::from_string(material_obj["normal_texture"].get_string().value_unsafe())
-                          .value_or(UUID(nullptr));
-  mat->emissive_texture = UUID::from_string(material_obj["emissive_texture"].get_string().value_unsafe())
-                            .value_or(UUID(nullptr));
-  mat->metallic_roughness_texture = UUID::from_string(
-                                      material_obj["metallic_roughness_texture"].get_string().value_unsafe()
-  )
-                                      .value_or(UUID(nullptr));
-  mat->occlusion_texture = UUID::from_string(material_obj["occlusion_texture"].get_string().value_unsafe())
-                             .value_or(UUID(nullptr));
-}
-
-auto read_material_asset_meta(simdjson::ondemand::value& doc, Material* mat) -> bool {
+auto read_material_data(Material* mat, simdjson::ondemand::value& material_obj) -> bool {
   ZoneScoped;
 
-  if (!mat)
+  auto albedo_color = material_obj["albedo_color"];
+  if (albedo_color.error()) {
     return false;
+  }
+  json_to_vec(albedo_color.value_unsafe(), mat->albedo_color);
 
-  auto material_obj = doc["material"].value_unsafe();
+  auto emissive_color = material_obj["emissive_color"];
+  if (emissive_color.error()) {
+    return false;
+  }
+  json_to_vec(emissive_color.value_unsafe(), mat->emissive_color);
 
-  read_material_data(mat, material_obj);
+  auto roughness_factor = material_obj["roughness_factor"];
+  if (roughness_factor.error()) {
+    return false;
+  }
+  mat->roughness_factor = static_cast<f32>(roughness_factor.get_double().value_unsafe());
+
+  auto metallic_factor = material_obj["metallic_factor"];
+  if (metallic_factor.error()) {
+    return false;
+  }
+  mat->metallic_factor = static_cast<f32>(metallic_factor.get_double().value_unsafe());
+
+  auto alpha_mode = material_obj["alpha_mode"];
+  if (alpha_mode.error()) {
+    return false;
+  }
+  mat->alpha_mode = static_cast<AlphaMode>(alpha_mode.get_uint64().value_unsafe());
+
+  auto alpha_cutoff = material_obj["alpha_cutoff"];
+  if (alpha_cutoff.error()) {
+    return false;
+  }
+  mat->alpha_cutoff = static_cast<f32>(alpha_cutoff.get_double().value_unsafe());
+
+  auto albedo_texture = material_obj["albedo_texture"];
+  if (albedo_texture.error()) {
+    return false;
+  }
+  mat->albedo_texture = UUID::from_string(albedo_texture.get_string().value_unsafe()).value_or(UUID(nullptr));
+
+  auto normal_texture = material_obj["normal_texture"];
+  if (normal_texture.error()) {
+    return false;
+  }
+  mat->normal_texture = UUID::from_string(normal_texture.get_string().value_unsafe()).value_or(UUID(nullptr));
+
+  auto emissive_texture = material_obj["emissive_texture"];
+  if (emissive_texture.error()) {
+    return false;
+  }
+  mat->emissive_texture = UUID::from_string(emissive_texture.get_string().value_unsafe()).value_or(UUID(nullptr));
+
+  auto metallic_roughness_texture = material_obj["metallic_roughness_texture"];
+  if (metallic_roughness_texture.error()) {
+    return false;
+  }
+  mat->metallic_roughness_texture = UUID::from_string(metallic_roughness_texture.get_string().value_unsafe())
+                                      .value_or(UUID(nullptr));
+
+  auto occlusion_texture = material_obj["occlusion_texture"];
+  if (occlusion_texture.error()) {
+    return false;
+  }
+  mat->occlusion_texture = UUID::from_string(occlusion_texture.get_string().value_unsafe()).value_or(UUID(nullptr));
 
   return true;
 }
@@ -448,8 +485,8 @@ auto AssetManager::register_asset(const std::string& path) -> UUID {
   switch (type) {
     case AssetType::Material: {
       Material mat = {};
-      auto obj = meta_json->doc["material"].value_unsafe();
-      if (read_material_asset_meta(obj, &mat)) {
+      auto obj = meta_json->doc["material"];
+      if (!obj.error() && read_material_data(&mat, obj.value())) {
         /* Since materials could contain textures that may be not yet registered
            we defer them to be loaded at the end of frame */
         deferred_load_queue.emplace_back([this, uuid, mat]() { load_material(uuid, mat); });
@@ -564,7 +601,11 @@ auto AssetManager::export_material(const UUID& uuid, JsonWriter& writer, const s
 
   auto* material = this->get_material(uuid);
   OX_CHECK_NULL(material);
-  return write_material_asset_meta(writer, uuid, *material);
+
+  writer.key("material");
+  auto result = write_material_asset_meta(writer, uuid, *material);
+
+  return result;
 }
 
 auto AssetManager::export_script(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {

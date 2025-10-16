@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h>
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 
 #include "Asset/AssetManager.hpp"
@@ -562,6 +563,7 @@ void ContentPanel::render_body(bool grid) {
             texture_name = file.file_path;
           } else {
             auto& job_man = App::mod<JobManager>();
+            job_man.push_job_name("ContentPanelThumbnail");
             job_man.submit(Job::create([this, file_path = file.file_path]() {
               auto thumbnail_texture = std::make_shared<Texture>();
               auto file_extension = fs::get_file_extension(file_path);
@@ -573,6 +575,7 @@ void ContentPanel::render_body(bool grid) {
               auto write_lock = std::unique_lock(thumbnail_mutex);
               thumbnail_cache_textures.emplace(file_path, thumbnail_texture);
             }));
+            job_man.pop_job_name();
 
             texture_name = file.file_path;
           }
@@ -831,6 +834,41 @@ void ContentPanel::render_body(bool grid) {
     ImGui::EndPopup();
   }
 
+  if (should_open_new_asset_popup)
+    ImGui::OpenPopup("New Asset");
+
+  if (ImGui::BeginPopupModal("New Asset", nullptr, ImGuiWindowFlags_NoResize)) {
+    UI::begin_properties();
+    UI::input_text("Name", &new_asset_name_);
+    UI::end_properties();
+
+    if (ImGui::Button("Create", ImVec2(120, 0))) {
+      if (!new_asset_name_.empty()) {
+        auto& asset_man = App::mod<AssetManager>();
+        auto asset = asset_man.create_asset(AssetType::Material, _current_directory.string());
+        asset_man.load_asset(asset);
+        if (asset_man.export_asset(asset, (_current_directory / new_asset_name_).string())) {
+          OX_LOG_INFO("Created new material asset {}", new_asset_name_);
+          refresh();
+        } else {
+          OX_LOG_ERROR("Couldn't create material asset {}", new_asset_name_);
+        }
+        new_asset_name_.clear();
+        should_open_new_asset_popup = false;
+        ImGui::CloseCurrentPopup();
+      }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+      new_asset_name_.clear();
+      should_open_new_asset_popup = false;
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+
   if (!directory_to_open.empty())
     update_directory_entries(directory_to_open);
 }
@@ -901,7 +939,6 @@ std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesyste
     } else {
       fs::open_file_externally(context.string().c_str());
     }
-    ImGui::CloseCurrentPopup();
   }
   if (is_dir) {
     if (ImGui::BeginMenu("Create")) {
@@ -919,24 +956,24 @@ std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesyste
         editor_context.reset();
         editor_context.str = new_folder_path;
         editor_context.type = EditorContext::Type::File;
-        ImGui::CloseCurrentPopup();
+      }
+      if (ImGui::MenuItem("Material")) {
+        new_asset_name_.clear();
+        should_open_new_asset_popup = true;
       }
       ImGui::EndMenu();
     }
   }
   if (ImGui::MenuItem("Show in Explorer")) {
     fs::open_folder_select_file(context.string().c_str());
-    ImGui::CloseCurrentPopup();
   }
   if (ImGui::MenuItem("Copy Path")) {
     ImGui::SetClipboardText(context.string().c_str());
-    ImGui::CloseCurrentPopup();
   }
 
   if (is_dir) {
     if (ImGui::MenuItem("Refresh")) {
       refresh();
-      ImGui::CloseCurrentPopup();
     }
   }
 
