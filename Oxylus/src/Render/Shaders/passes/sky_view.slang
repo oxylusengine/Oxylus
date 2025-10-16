@@ -11,7 +11,7 @@ struct ShaderParameters {
     Image2D<f32x4> sky_multiscattering_lut;
     StorageImage2D<f32x4, ImageFormat::RGBA16F> sky_view_lut;
     ConstantBuffer<Atmosphere> atmosphere;
-    ConstantBuffer<Lights> lights;
+    ConstantBuffer<DirectionalLight> directional_light;
     ConstantBuffer<Camera> camera;
 };
 
@@ -32,18 +32,17 @@ func cs_main(
         return;
     }
 
-    let directional_light = params.lights.directional_light;
     f32x3 up_vec = eye_pos / h;
-    f32 sun_zenith_cos_angle = dot(normalize(directional_light.direction), up_vec);
+    f32 sun_zenith_cos_angle = dot(normalize(params.directional_light.direction), up_vec);
     f32x3 sun_dir = normalize(f32x3(com::safe_sqrt(1.0 - sun_zenith_cos_angle * sun_zenith_cos_angle), sun_zenith_cos_angle, 0.0));
 
     AtmosphereIntegrateInfo info = {};
     info.eye_pos = eye_pos;
     info.eye_dir = eye_dir;
     info.sun_dir = sun_dir;
-    info.sun_intensity = directional_light.intensity;
+    info.sun_intensity = params.directional_light.intensity;
 
-    const int sample_count = 48;
+    let sample_count = 48;
     info.sampling.variable_sample_count = true;
     info.sampling.min_sample_count = sample_count;
     info.sampling.max_sample_count = sample_count;
@@ -51,8 +50,8 @@ func cs_main(
     info.transmittance_image = params.sky_transmittance_lut;
     info.multiscattering_image = params.sky_multiscattering_lut;
 
-    const let result = integrate_single_scattered_luminance(params.atmosphere, params.sampler, info);
-    const let transmittance = dot(result.transmittance, 1.0 / 3.0);
+    let result = integrate_single_scattered_luminance(params.atmosphere, params.sampler, info);
+    let transmittance = dot(result.transmittance, 1.0 / 3.0);
 
     params.sky_view_lut.store(thread_id.xy, f32x4(result.luminance, transmittance));
 }

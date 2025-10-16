@@ -12,15 +12,15 @@ public func from_unit_to_sub_uvs(f32x2 uv, f32x2 res) -> f32x2 {
     return (uv + 0.5 / res) * (res / (res + 1.0));
 }
 
-public func transmittance_params_to_lut_uv(in Atmosphere atmosphere, f32x2 p) -> f32x2 {
+public func transmittance_params_to_lut_uv(f32 atmos_radius, f32 planet_radius, f32x2 p) -> f32x2 {
     f32 h = com::safe_sqrt(
-        atmosphere.atmos_radius * atmosphere.atmos_radius -
-        atmosphere.planet_radius * atmosphere.planet_radius);
-    f32 rho = com::safe_sqrt(p.x * p.x - atmosphere.planet_radius * atmosphere.planet_radius);
+        atmos_radius * atmos_radius -
+        planet_radius * planet_radius);
+    f32 rho = com::safe_sqrt(p.x * p.x - planet_radius * planet_radius);
     f32 discriminant = p.x * p.x * (p.y * p.y - 1.0) +
-        atmosphere.atmos_radius * atmosphere.atmos_radius;
+        atmos_radius * atmos_radius;
     f32 d = max(0.0, -p.x *  p.y + com::safe_sqrt(discriminant));
-    f32 d_min = atmosphere.atmos_radius - p.x;
+    f32 d_min = atmos_radius - p.x;
     f32 d_max = rho + h;
     f32 mu = (d - d_min) / (d_max - d_min);
     f32 r = rho / h;
@@ -244,7 +244,7 @@ public func integrate_single_scattered_luminance(
         f32 earth_shadow = com::ray_sphere_intersect_nearest(step_pos - up_vec_scaled, info.sun_dir, atmosphere.planet_radius).hasValue ? 0.0 : 1.0;
         f32 sun_theta = dot(info.sun_dir, up_vec);
 
-        f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere, f32x2(h, sun_theta));
+        f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
         f32x3 sun_transmittance = info.transmittance_image.sample_mip(lut_sampler, transmittance_uv, 0.0).rgb;
 
         f32x3 MS = 0.0;
@@ -283,7 +283,7 @@ public func integrate_single_scattered_luminance(
         f32 sun_theta = dot(info.sun_dir, up_vec);
         f32 NoL = saturate(dot(normalize(info.sun_dir), normalize(up_vec)));
 
-        f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere, f32x2(h, sun_theta));
+        f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
         f32x3 sun_transmittance = info.transmittance_image.sample_mip(lut_sampler, transmittance_uv, 0.0).rgb;
 
         result.luminance += info.sun_intensity * (sun_transmittance * result.transmittance * NoL * atmosphere.terrain_albedo / PI);

@@ -206,9 +206,8 @@ struct DirectionalLightCascade {
 };
 
 struct DirectionalLight {
-  alignas(4) DirectionalLightCascade cascades[MAX_DIRECTIONAL_SHADOW_CASCADES] = {};
-  alignas(4) glm::vec3 color = {1.0, 1.0, 1.0};
-  alignas(4) f32 intensity = 1.0f;
+  alignas(4) glm::vec3 color = {0.02, 0.02, 0.02};
+  alignas(4) f32 intensity = 10.0f;
   alignas(4) glm::vec3 direction = {};
   alignas(4) u32 cascade_count = {};
   alignas(4) u32 cascade_size = {};
@@ -235,12 +234,13 @@ struct SpotLight {
 };
 
 struct Lights {
-  alignas(4) DirectionalLight direction_light = {};
-  alignas(4) u32 directional_light_has_shadows = 1;
   alignas(4) u32 point_light_count = 0;
   alignas(4) u32 spot_light_count = 0;
+  alignas(8) u64 direction_light = 0;
+  alignas(8) u64 direction_light_cascades = 0;
   alignas(8) u64 point_lights = 0;
   alignas(8) u64 spot_lights = 0;
+  alignas(8) u64 atmosphere = 0;
 };
 
 enum class SceneFlags : u32 {
@@ -257,12 +257,6 @@ enum class SceneFlags : u32 {
   HasContactShadows = 1 << 9,
 };
 consteval void enable_bitmask(SceneFlags);
-
-struct Scene {
-  alignas(4) SceneFlags scene_flags;
-  alignas(4) Atmosphere atmosphere;
-  alignas(8) u64 lights;
-};
 
 constexpr static u32 HISTOGRAM_THREADS_X = 16;
 constexpr static u32 HISTOGRAM_THREADS_Y = 16;

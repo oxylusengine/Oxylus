@@ -188,13 +188,6 @@ public enum SceneFlags : u32 {
   HasContactShadows = 1 << 9,
 };
 
-#define MAX_POINT_LIGHTS 1024
-#define MAX_SPOT_LIGHTS 1024
-
-#ifndef MAX_DIRECTIONAL_SHADOW_CASCADES
-#define MAX_DIRECTIONAL_SHADOW_CASCADES 4
-#endif
-
 public struct DirectionalLightCascade {
   public f32x4x4 projection_view;
   public f32 far_bound;
@@ -202,7 +195,6 @@ public struct DirectionalLightCascade {
 };
 
 public struct DirectionalLight {
-  public DirectionalLightCascade cascades[MAX_DIRECTIONAL_SHADOW_CASCADES];
   public f32x3 color;
   public f32 intensity;
   public f32x3 direction;
@@ -231,18 +223,13 @@ public struct SpotLight {
 };
 
 public struct Lights {
-  public DirectionalLight directional_light;
-  public u32 directional_light_has_shadows = 0;
-  public u32 point_light_count = 0;
-  public u32 spot_light_count = 0;
+  public u32 point_light_count;
+  public u32 spot_light_count;
+  public DirectionalLight *directional_light;
+  public DirectionalLightCascade *directional_light_cascades;
   public PointLight *point_lights;
   public SpotLight *spot_lights;
-};
-
-public struct Scene {
-  public SceneFlags scene_flags;
-  public Atmosphere atmosphere;
-  public Lights* lights;
+  public Atmosphere *atmosphere;
 };
 
 public struct Transform {

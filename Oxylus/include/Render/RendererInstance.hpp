@@ -96,9 +96,9 @@ struct RenderStageContext {
     return self;
   }
 
-  auto
-  set_image_resource(this RenderStageContext& self, const std::string& name, vuk::Value<vuk::ImageAttachment> value)
-    -> RenderStageContext& {
+  auto set_image_resource(
+    this RenderStageContext& self, const std::string& name, vuk::Value<vuk::ImageAttachment> value
+  ) -> RenderStageContext& {
     self.image_resources[name] = value;
     return self;
   }
@@ -139,10 +139,10 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
   vuk::Value<vuk::Buffer> meshlet_instance_visibility_mask_buffer = {};
   vuk::Value<vuk::Buffer> materials_buffer = {};
-  vuk::Value<vuk::Buffer> lights_buffer{};
-  // We still need them to ensure correct sync after we update lights
-  // even if we are not explicitly using just them as descriptors
-  // (they are BDA in lights_buffer struct)
+  vuk::Value<vuk::Buffer> atmosphere_buffer = {};
+  vuk::Value<vuk::Buffer> lights_buffer = {};
+  vuk::Value<vuk::Buffer> directional_light_buffer{};
+  vuk::Value<vuk::Buffer> directional_light_cascades_buffer{};
   vuk::Value<vuk::Buffer> point_lights_buffer{};
   vuk::Value<vuk::Buffer> spot_lights_buffer{};
 
@@ -191,9 +191,9 @@ public:
 
 private:
   SharedResources shared_resources = {};
-  std::vector<RenderStageCallback> stage_callbacks_;
-  std::vector<std::vector<usize>> before_callbacks_;
-  std::vector<std::vector<usize>> after_callbacks_;
+  std::vector<RenderStageCallback> stage_callbacks;
+  std::vector<std::vector<usize>> before_callbacks;
+  std::vector<std::vector<usize>> after_callbacks;
 
   auto rebuild_execution_order(this RendererInstance& self) -> void;
   auto execute_stages_before(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx) -> void;
@@ -207,14 +207,18 @@ private:
   glm::uvec2 viewport_size = {};
   glm::uvec2 viewport_offset = {};
 
+  vuk::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
+  vuk::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
+
   PreparedFrame prepared_frame = {};
   GPU::CameraData camera_data = {};
   GPU::CameraData previous_camera_data = {};
 
-  GPU::Scene gpu_scene = {};
+  GPU::SceneFlags gpu_scene_flags = {};
 
   bool directional_light_cast_shadows = true;
   option<GPU::DirectionalLight> directional_light = nullopt;
+  std::array<GPU::DirectionalLightCascade, MAX_DIRECTIONAL_SHADOW_CASCADES> directional_light_cascades = {};
   option<GPU::Atmosphere> atmosphere = nullopt;
   option<GPU::HistogramInfo> histogram_info = nullopt;
   option<GPU::VBGTAOSettings> vbgtao_info = nullopt;

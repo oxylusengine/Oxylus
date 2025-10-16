@@ -116,14 +116,14 @@ public func cascade_debug_visualization(
     );
 }
 
-public func get_cascade_index(in DirectionalLight light, f32 view_z) -> u32 {
-    for (var i = 0u; i < light.cascade_count; i++) {
-        if (view_z < light.cascades[i].far_bound) {
+public func get_cascade_index(u32 cascade_count, DirectionalLightCascade *cascades, f32 view_z) -> u32 {
+    for (var i = 0u; i < cascade_count; i++) {
+        if (view_z < cascades[i].far_bound) {
             return i;
         }
     }
 
-    return light.cascade_count - 1;
+    return cascade_count - 1;
 }
 
 // Converts from world space to the uv position in the light's shadow map.
@@ -154,7 +154,8 @@ func world_to_directional_light_local(
 }
 
 f32 sample_cascade(
-    in DirectionalLight light,
+    DirectionalLight *light,
+    in DirectionalLightCascade cascade,
     Texture2DArray<f32> shadow_map,
     Sampler shadow_sampler,
     f32x3 world_position,
@@ -162,7 +163,6 @@ f32 sample_cascade(
     f32x3 light_direction,
     u32 cascade_index
 ) {
-    let cascade = light.cascades[cascade_index];
     let normal_offset = light.normal_bias * cascade.texel_size * normal;
     let depth_offset = light.depth_bias * light_direction;
     let offset_position = f32x3(world_position.xyz + normal_offset + depth_offset);
@@ -180,7 +180,8 @@ f32 sample_cascade(
 }
 
 public f32 sample_shadow_map(
-    in DirectionalLight light,
+    DirectionalLight *light,
+    DirectionalLightCascade *cascades,
     Texture2DArray<f32> shadow_map,
     Sampler shadow_sampler,
     f32 view_z,
@@ -188,10 +189,12 @@ public f32 sample_shadow_map(
     f32x3 normal,
     f32x3 light_direction
 ) {
-    let cascade_index = get_cascade_index(light, view_z);
+    let cascade_index = get_cascade_index(light.cascade_count, cascades, view_z);
+    let this_cascade = cascades[cascade_index];
 
     var shadow = sample_cascade(
         light,
+        this_cascade,
         shadow_map,
         shadow_sampler,
         world_position,
@@ -201,11 +204,13 @@ public f32 sample_shadow_map(
 
     let next_cascade_index = cascade_index + 1u;
     if (next_cascade_index < light.cascade_count) {
-        let this_far_bound = light.cascades[cascade_index].far_bound;
+        let this_far_bound = this_cascade.far_bound;
         let next_near_bound = (1.0 - light.cascades_overlap_proportion) * this_far_bound;
         if (view_z >= next_near_bound) {
+            let next_cascade = cascades[next_cascade_index];
             var next_shadow = sample_cascade(
                 light,
+                next_cascade,
                 shadow_map,
                 shadow_sampler,
                 world_position,

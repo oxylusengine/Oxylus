@@ -11,7 +11,7 @@ struct ShaderParameters {
     Image2D<f32x4> sky_multiscattering_lut;
     StorageImage3D<f32x4, ImageFormat::RGBA16F> sky_aerial_perspective_lut;
     ConstantBuffer<Atmosphere> atmosphere;
-    ConstantBuffer<Lights> lights;
+    ConstantBuffer<DirectionalLight> directional_light;
     ConstantBuffer<Camera> camera;
 };
 
@@ -66,13 +66,11 @@ func cs_main(
         t_max_max = max(0.0, t_max_max - length_to_atmosphere);
      }
 
-    let directional_light = params.lights.directional_light;
-
     AtmosphereIntegrateInfo info = {};
     info.eye_pos = eye_pos;
     info.eye_dir = world_dir;
-    info.sun_dir = directional_light.direction;
-    info.sun_intensity = directional_light.intensity;
+    info.sun_dir = normalize(params.directional_light.direction);
+    info.sun_intensity = params.directional_light.intensity;
     info.max_integration_length = t_max_max;
     info.eval_planet_luminance = false;
 

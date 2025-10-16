@@ -12,7 +12,7 @@ struct ShaderParameters {
     Image2D<f32x4> sky_view_lut;
     Image2D<f32> depth_image;
     ConstantBuffer<Atmosphere> atmosphere;
-    ConstantBuffer<Lights> lights;
+    ConstantBuffer<DirectionalLight> directional_light;
     ConstantBuffer<Camera> camera;
 };
 
@@ -33,16 +33,16 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput{
 }
 
 func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
-    const let min_cos_theta = cos(radius * PI / 180.0);
+    let min_cos_theta = cos(radius * PI / 180.0);
 
-    const let cosTheta = dot(world_dir, sun_dir);
+    let cosTheta = dot(world_dir, sun_dir);
     if (cosTheta >= min_cos_theta) {
         return 1.0;
     }
 
-    const let offset = min_cos_theta - cosTheta;
-    const let gaussianBloom = exp(-offset * 50000.0) * 0.5;
-    const let invBloom = 1.0/(0.02 + offset * 300.0) * 0.01;
+    let offset = min_cos_theta - cosTheta;
+    let gaussianBloom = exp(-offset * 50000.0) * 0.5;
+    let invBloom = 1.0/(0.02 + offset * 300.0) * 0.01;
     return f32x3(gaussianBloom + invBloom);
 }
 
@@ -60,31 +60,29 @@ f32x4 fs_main(VertexOutput input) : SV_TARGET {
             params.atmosphere, params.sky_aerial_perspective_lut, params.sampler, input.tex_coord, camera_relative_pos);
     }
 
-    let directional_light = params.lights.directional_light;
-
     f32x3 eye_dir = normalize(clip_pos - params.camera.position.xyz);
     f32x3 eye_pos = params.atmosphere.eye_pos;
     f32 h = length(eye_pos);
     f32x3 up = f32x3(0.0, 1.0, 0.0);
     f32x3 right = normalize(cross(up, eye_dir));
     f32x3 forward = normalize(cross(right, up));
-    const f32x3 sun_dir = normalize(directional_light.direction);
+    let sun_dir = normalize(params.directional_light.direction);
     f32x2 light_on_plane = normalize(f32x2(dot(sun_dir, forward), dot(sun_dir, right)));
 
     f32 view_zenith_cos_angle = dot(eye_dir, up);
 
-    const let planet_intersection = com::ray_sphere_intersect_nearest(eye_pos, eye_dir, params.atmosphere->planet_radius);
+    let planet_intersection = com::ray_sphere_intersect_nearest(eye_pos, eye_dir, params.atmosphere->planet_radius);
     f32x2 uv = sky_view_params_to_lut_uv(params.atmosphere, planet_intersection.hasValue, h, view_zenith_cos_angle, light_on_plane);
     f32x4 result = params.sky_view_lut.sample_mip(params.sampler, uv, 0.0);
     f32x3 luminance = result.rgb;
     f32 transmittance = result.a;
 
     f32 sun_cos_theta = dot(sun_dir, up);
-    f32x2 transmittance_uv = transmittance_params_to_lut_uv(params.atmosphere, f32x2(h, sun_cos_theta));
+    f32x2 transmittance_uv = transmittance_params_to_lut_uv(params.atmosphere.atmos_radius, params.atmosphere.planet_radius, f32x2(h, sun_cos_theta));
     f32x3 sun_transmittance = params.sky_transmittance_lut.sample_mip(params.sampler, transmittance_uv, 0.0).rgb;
 
     if (!planet_intersection.hasValue) {
-        luminance += draw_sun(eye_dir, directional_light.direction, 1.0) * directional_light.intensity * sun_transmittance;
+        luminance += draw_sun(eye_dir, params.directional_light.direction, 1.0) * params.directional_light.intensity * sun_transmittance;
     }
 
     return f32x4(luminance, 1.0 - transmittance);

@@ -12,7 +12,6 @@
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
-
 namespace ox {
 static constexpr auto sampler_min_clamp_reduction_mode = VkSamplerReductionModeCreateInfo{
   .sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO,
@@ -157,7 +156,10 @@ auto calculate_cascade_bounds(usize cascade_count, f32 nearest_bound, f32 maximu
 }
 
 auto calculate_cascaded_shadow_matrices(
-  GPU::DirectionalLight& light, const LightComponent& light_comp, const CameraComponent& camera
+  GPU::DirectionalLight& light,
+  std::span<GPU::DirectionalLightCascade> cascades,
+  const LightComponent& light_comp,
+  const CameraComponent& camera
 ) -> void {
   ZoneScoped;
 
@@ -188,7 +190,7 @@ auto calculate_cascaded_shadow_matrices(
   auto camera_to_world = camera.get_inv_view_matrix();
 
   for (u32 cascade_index = 0; cascade_index < light.cascade_count; ++cascade_index) {
-    auto& cascade = light.cascades[cascade_index];
+    auto& cascade = cascades[cascade_index];
     auto split_near = near_bounds[cascade_index];
     auto split_far = far_bounds[cascade_index];
     auto corners = get_frustum_corners(camera.fov, camera.aspect, -split_near, -split_far);
@@ -254,8 +256,8 @@ RendererInstance::RendererInstance(Scene* owner_scene, Renderer& parent_renderer
   );
 
   constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
-  before_callbacks_.resize(stage_count);
-  after_callbacks_.resize(stage_count);
+  before_callbacks.resize(stage_count);
+  after_callbacks.resize(stage_count);
 
   rebuild_execution_order();
 }
@@ -264,13 +266,13 @@ RendererInstance::~RendererInstance() {}
 
 auto RendererInstance::add_stage_callback(this RendererInstance& self, RenderStageCallback callback) -> void {
   ZoneScoped;
-  self.stage_callbacks_.emplace_back(std::move(callback));
+  self.stage_callbacks.emplace_back(std::move(callback));
   self.rebuild_execution_order();
 }
 
 auto RendererInstance::clear_stages(this RendererInstance& self) -> void {
   ZoneScoped;
-  self.stage_callbacks_.clear();
+  self.stage_callbacks.clear();
 }
 
 auto RendererInstance::rebuild_execution_order(this RendererInstance& self) -> void {
@@ -278,23 +280,23 @@ auto RendererInstance::rebuild_execution_order(this RendererInstance& self) -> v
 
   constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
 
-  for (auto& vec : self.before_callbacks_) {
+  for (auto& vec : self.before_callbacks) {
     vec.clear();
   }
-  for (auto& vec : self.after_callbacks_) {
+  for (auto& vec : self.after_callbacks) {
     vec.clear();
   }
 
   std::sort(
-    self.stage_callbacks_.begin(),
-    self.stage_callbacks_.end(),
+    self.stage_callbacks.begin(),
+    self.stage_callbacks.end(),
     [](const RenderStageCallback& a, const RenderStageCallback& b) noexcept {
       return a.dependency.order < b.dependency.order;
     }
   );
 
-  for (usize i = 0; i < self.stage_callbacks_.size(); ++i) {
-    const auto& callback = self.stage_callbacks_[i];
+  for (usize i = 0; i < self.stage_callbacks.size(); ++i) {
+    const auto& callback = self.stage_callbacks[i];
     const usize stage_index = static_cast<usize>(callback.dependency.target_stage);
 
     if (stage_index >= stage_count) [[unlikely]] {
@@ -306,23 +308,23 @@ auto RendererInstance::rebuild_execution_order(this RendererInstance& self) -> v
     }
 
     if (callback.dependency.position == StagePosition::Before) {
-      self.before_callbacks_[stage_index].emplace_back(i);
+      self.before_callbacks[stage_index].emplace_back(i);
     } else if (callback.dependency.position == StagePosition::After) {
-      self.after_callbacks_[stage_index].emplace_back(i);
+      self.after_callbacks[stage_index].emplace_back(i);
     }
   }
 
-  for (auto& vec : self.before_callbacks_) {
+  for (auto& vec : self.before_callbacks) {
     vec.shrink_to_fit();
   }
-  for (auto& vec : self.after_callbacks_) {
+  for (auto& vec : self.after_callbacks) {
     vec.shrink_to_fit();
   }
 }
 
-auto
-RendererInstance::execute_stages_before(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx)
-  -> void {
+auto RendererInstance::execute_stages_before(
+  this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx
+) -> void {
   ZoneScoped;
 
   const usize stage_index = static_cast<usize>(stage);
@@ -332,18 +334,18 @@ RendererInstance::execute_stages_before(this const RendererInstance& self, Rende
     return;
   }
 
-  if (stage_index >= self.before_callbacks_.size()) [[unlikely]] {
+  if (stage_index >= self.before_callbacks.size()) [[unlikely]] {
     return;
   }
 
-  const auto& callbacks = self.before_callbacks_[stage_index];
+  const auto& callbacks = self.before_callbacks[stage_index];
 
   for (const usize callback_idx : callbacks) {
-    if (callback_idx >= self.stage_callbacks_.size()) [[unlikely]] {
+    if (callback_idx >= self.stage_callbacks.size()) [[unlikely]] {
       continue;
     }
 
-    const auto& callback = self.stage_callbacks_[callback_idx];
+    const auto& callback = self.stage_callbacks[callback_idx];
 
     if (callback.callback) [[likely]] {
       callback.callback(ctx);
@@ -351,9 +353,9 @@ RendererInstance::execute_stages_before(this const RendererInstance& self, Rende
   }
 }
 
-auto
-RendererInstance::execute_stages_after(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx)
-  -> void {
+auto RendererInstance::execute_stages_after(
+  this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx
+) -> void {
   ZoneScoped;
 
   const usize stage_index = static_cast<usize>(stage);
@@ -363,18 +365,18 @@ RendererInstance::execute_stages_after(this const RendererInstance& self, Render
     return;
   }
 
-  if (stage_index >= self.after_callbacks_.size()) [[unlikely]] {
+  if (stage_index >= self.after_callbacks.size()) [[unlikely]] {
     return;
   }
 
-  const auto& callbacks = self.after_callbacks_[stage_index];
+  const auto& callbacks = self.after_callbacks[stage_index];
 
   for (const usize callback_idx : callbacks) {
-    if (callback_idx >= self.stage_callbacks_.size()) [[unlikely]] {
+    if (callback_idx >= self.stage_callbacks.size()) [[unlikely]] {
       continue;
     }
 
-    const auto& callback = self.stage_callbacks_[callback_idx];
+    const auto& callback = self.stage_callbacks[callback_idx];
 
     if (callback.callback) [[likely]] {
       callback.callback(ctx);
@@ -419,36 +421,60 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   self.render_queue_2d.sort();
   auto vertex_buffer_2d = self.renderer.vk_context->scratch_buffer(std::span(self.render_queue_2d.sprite_data));
 
-  const vuk::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
-  const vuk::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
-
+  auto atmosphere_buffer = std::move(self.prepared_frame.atmosphere_buffer);
   auto lights_buffer = std::move(self.prepared_frame.lights_buffer);
+  auto directional_light_buffer = std::move(self.prepared_frame.directional_light_buffer);
+  auto directional_light_cascades_buffer = std::move(self.prepared_frame.directional_light_cascades_buffer);
   auto point_lights_buffer = std::move(self.prepared_frame.point_lights_buffer);
   auto spot_lights_buffer = std::move(self.prepared_frame.spot_lights_buffer);
-  self.gpu_scene.lights = lights_buffer->device_address;
 
-  auto atmosphere_buffer = vuk::Value<vuk::Buffer>{};
-  if (self.atmosphere.has_value()) {
-    self.atmosphere->sky_view_lut_size = sky_view_lut_extent;
-    self.atmosphere->aerial_perspective_lut_size = sky_aerial_perspective_lut_extent;
-    self.atmosphere->transmittance_lut_size = self.renderer.sky_transmittance_lut_view.get_extent();
-    self.atmosphere->multiscattering_lut_size = self.renderer.sky_multiscatter_lut_view.get_extent();
-    atmosphere_buffer = self.renderer.vk_context->scratch_buffer(self.atmosphere);
+  auto prepare_lights_pass = vuk::make_pass(
+    "prepare lights",
+    [](
+      vuk::CommandBuffer&,
+      VUK_BA(vuk::eMemoryRead) lights_,
+      VUK_BA(vuk::eMemoryRead) atmos,
+      VUK_BA(vuk::eMemoryRead) directional_light_,
+      VUK_BA(vuk::eMemoryRead) directional_light_cascades_,
+      VUK_BA(vuk::eMemoryRead) point_lights,
+      VUK_BA(vuk::eMemoryRead) spot_lights
+    ) {
+      return std::make_tuple(
+        lights_,
+        atmos,
+        directional_light_,
+        directional_light_cascades_,
+        point_lights,
+        spot_lights
+      );
+    }
+  );
 
-    self.gpu_scene.atmosphere = *self.atmosphere;
-    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasAtmosphere;
-  }
+  std::tie(
+    lights_buffer,
+    atmosphere_buffer,
+    directional_light_buffer,
+    directional_light_cascades_buffer,
+    point_lights_buffer,
+    spot_lights_buffer
+  ) =
+    prepare_lights_pass(
+      std::move(lights_buffer),
+      std::move(atmosphere_buffer),
+      std::move(directional_light_buffer),
+      std::move(directional_light_cascades_buffer),
+      std::move(point_lights_buffer),
+      std::move(spot_lights_buffer)
+    );
 
   if (static_cast<bool>(RendererCVar::cvar_bloom_enable.get()))
-    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasBloom;
+    self.gpu_scene_flags |= GPU::SceneFlags::HasBloom;
   if (static_cast<bool>(RendererCVar::cvar_fxaa_enable.get()))
-    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasFXAA;
+    self.gpu_scene_flags |= GPU::SceneFlags::HasFXAA;
   if (static_cast<bool>(RendererCVar::cvar_vbgtao_enable.get()))
-    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasGTAO;
+    self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
   if (static_cast<bool>(RendererCVar::cvar_contact_shadows.get()))
-    self.gpu_scene.scene_flags |= GPU::SceneFlags::HasContactShadows;
-
-  auto scene_buffer = self.renderer.vk_context->scratch_buffer(std::span(&self.gpu_scene, 1));
+    self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
 
   const auto final_attachment_ia = vuk::ImageAttachment{
     .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
@@ -470,6 +496,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   result_attachment = vuk::clear_image(std::move(result_attachment), vuk::Black<f32>);
 
   const auto depth_ia = vuk::ImageAttachment{
+    .usage = vuk::ImageUsageFlagBits::eDepthStencilAttachment,
     .extent = render_info.extent,
     .format = vuk::Format::eD32Sfloat,
     .sample_count = vuk::SampleCountFlagBits::e1,
@@ -564,7 +591,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       auto directional_light_resolution = glm::vec2(directional_light_shadowmap_size, directional_light_shadowmap_size);
       for (u32 cascade_index = 0; cascade_index < directional_light_cascade_count; cascade_index++) {
         auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
-        auto& current_cascade_projection_view = directional_light_info.cascades[cascade_index].projection_view;
+        auto& current_cascade_projection_view = self.directional_light_cascades[cascade_index].projection_view;
 
         auto all_visible_meshlet_instances_count_buffer = self.renderer.vk_context->scratch_buffer<u32>({});
         auto cull_meshlets_cmd_buffer = cull_meshes(
@@ -816,7 +843,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     vbgtao_noisy_occlusion_attachment.same_shape_as(final_attachment);
     vbgtao_noisy_occlusion_attachment = vuk::clear_image(std::move(vbgtao_noisy_occlusion_attachment), vuk::White<f32>);
 
-    if (self.vbgtao_info.has_value() && (self.gpu_scene.scene_flags & GPU::SceneFlags::HasGTAO)) {
+    if (self.vbgtao_info.has_value() && (self.gpu_scene_flags & GPU::SceneFlags::HasGTAO)) {
       auto hilbert_noise_lut_attachment = self.renderer.hilbert_noise_lut.acquire(
         "hilbert noise",
         vuk::eComputeSampled
@@ -880,7 +907,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       // --- BRDF ---
       auto brdf_pass = vuk::make_pass(
         "brdf",
-        [](
+        [scene_flags = self.gpu_scene_flags](
           vuk::CommandBuffer& cmd_list,
           VUK_IA(vuk::eColorWrite) dst,
           VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
@@ -893,11 +920,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           VUK_IA(vuk::eFragmentSampled) gtao,
           VUK_IA(vuk::eFragmentSampled) contact_shadows,
           VUK_IA(vuk::eFragmentSampled) shadows,
-          VUK_BA(vuk::eFragmentRead) scene_,
-          VUK_BA(vuk::eFragmentRead) camera,
-          VUK_BA(vuk::eMemoryRead) lights,
-          VUK_BA(vuk::eMemoryRead) point_lights,
-          VUK_BA(vuk::eMemoryRead) spot_lights
+          VUK_BA(vuk::eFragmentUniformRead) lights,
+          VUK_BA(vuk::eFragmentUniformRead) camera
         ) {
           cmd_list.bind_graphics_pipeline("brdf")
             .set_rasterization({})
@@ -917,10 +941,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
             .bind_image(0, 9, gtao)
             .bind_image(0, 10, contact_shadows)
             .bind_image(0, 11, shadows)
-            .bind_buffer(0, 12, scene_)
+            .bind_buffer(0, 12, lights)
             .bind_buffer(0, 13, camera)
+            .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, scene_flags)
             .draw(3, 1, 0, 0);
-          return std::make_tuple(dst, sky_transmittance_lut, sky_multiscatter_lut, depth, scene_, camera, lights);
+          return std::make_tuple(dst, sky_transmittance_lut, sky_multiscatter_lut, depth, lights, camera);
         }
       );
 
@@ -929,9 +954,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         sky_transmittance_lut_attachment,
         sky_multiscatter_lut_attachment,
         depth_attachment,
-        scene_buffer,
-        camera_buffer,
-        lights_buffer
+        lights_buffer,
+        camera_buffer
       ) =
         brdf_pass(
           std::move(final_attachment),
@@ -945,13 +969,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
           std::move(vbgtao_occlusion_attachment),
           std::move(contact_shadows_attachment),
           std::move(directional_light_shadowmap_attachment),
-          std::move(scene_buffer),
-          std::move(camera_buffer),
           std::move(lights_buffer),
-          // This is the first pass that uses lights, if we have
-          // any passes above using lights, make sure to move them up
-          std::move(point_lights_buffer),
-          std::move(spot_lights_buffer)
+          std::move(camera_buffer)
         );
     } else {
       const auto debug_attachment_ia = vuk::ImageAttachment{
@@ -1013,7 +1032,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       "sky_view_lut",
       {.image_type = vuk::ImageType::e2D,
        .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-       .extent = sky_view_lut_extent,
+       .extent = self.sky_view_lut_extent,
        .format = vuk::Format::eR16G16B16A16Sfloat,
        .sample_count = vuk::Samples::e1,
        .view_type = vuk::ImageViewType::e2D,
@@ -1025,7 +1044,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       "sky aerial perspective",
       {.image_type = vuk::ImageType::e3D,
        .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-       .extent = sky_aerial_perspective_lut_extent,
+       .extent = self.sky_aerial_perspective_lut_extent,
        .sample_count = vuk::Samples::e1,
        .view_type = vuk::ImageViewType::e3D,
        .level_count = 1,
@@ -1035,7 +1054,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
     atmosphere_pass(
       atmosphere_buffer,
-      lights_buffer,
+      directional_light_buffer,
       camera_buffer,
       sky_transmittance_lut_attachment,
       sky_multiscatter_lut_attachment,
@@ -1049,7 +1068,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   // --- Post Processing ---
   if (!debugging) {
     // --- FXAA Pass ---
-    if (self.gpu_scene.scene_flags & GPU::SceneFlags::HasFXAA) {
+    if (self.gpu_scene_flags & GPU::SceneFlags::HasFXAA) {
       auto fxaa_attachment = vuk::declare_ia(
         "fxaa_attachment",
         {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
@@ -1121,7 +1140,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     auto bloom_up_image = vuk::clear_image(vuk::declare_ia("bloom_up_image", bloom_ia), vuk::Black<float>);
     bloom_up_image.same_extent_as(final_attachment);
 
-    if (self.gpu_scene.scene_flags & GPU::SceneFlags::HasBloom) {
+    if (self.gpu_scene_flags & GPU::SceneFlags::HasBloom) {
       bloom_pass(bloom_threshold, bloom_clamp, final_attachment, bloom_down_image, bloom_up_image);
     }
 
@@ -1132,16 +1151,17 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
       vuk::MemoryUsage::eGPUonly,
       GPU::HISTOGRAM_BIN_COUNT * sizeof(u32)
     );
-    vuk::fill(histogram_buffer, 0);
 
     auto histogram_generate_pass = vuk::make_pass(
       "histogram generate",
       [histogram_inf](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eComputeSampled) src,
-        VUK_BA(vuk::eComputeRW) histogram
+        VUK_BA(vuk::eComputeRW | vuk::eTransferWrite) histogram
       ) {
-        cmd_list.bind_compute_pipeline("histogram_generate_pipeline")
+        cmd_list
+          .fill_buffer(histogram, 0_u32)
+          .bind_compute_pipeline("histogram_generate_pipeline")
           .bind_image(0, 0, src)
           .push_constants(vuk::ShaderStageFlagBits::eCompute,
             0,
@@ -1206,7 +1226,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     // --- Tonemap Pass ---
     auto tonemap_pass = vuk::make_pass(
       "tonemap",
-      [scene_flags = self.gpu_scene.scene_flags, pp = self.post_proces_settings](
+      [scene_flags = self.gpu_scene_flags, pp = self.post_proces_settings](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) dst,
         VUK_IA(vuk::eFragmentSampled) src,
@@ -1265,8 +1285,8 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) dst,
         VUK_IA(vuk::eFragmentSampled) depth_img,
-        VUK_BA(vuk::eMemoryRead) dbg_vtx,
-        VUK_BA(vuk::eFragmentRead) camera
+        VUK_BA(vuk::eAttributeRead) dbg_vtx,
+        VUK_BA(vuk::eFragmentUniformRead) camera
       ) {
         auto& dbg_index_buffer = *DebugRenderer::get_instance()->get_global_index_buffer();
 
@@ -1314,7 +1334,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   auto& asset_man = App::mod<AssetManager>();
   auto& vk_context = *self.renderer.vk_context;
 
-  self.gpu_scene.scene_flags = {};
+  self.gpu_scene_flags = {};
 
   CameraComponent current_camera = {};
   CameraComponent frozen_camera = {};
@@ -1380,7 +1400,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
            &spot_lights,
            current_camera](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
       if (lc.type == LightComponent::LightType::Directional) {
-        self.gpu_scene.scene_flags |= GPU::SceneFlags::HasDirectionalLight;
+        self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
 
         auto& dir_light = self.directional_light.emplace();
         dir_light.color = lc.color;
@@ -1397,7 +1417,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.directional_light_cast_shadows = lc.cast_shadows;
 
         if (lc.cast_shadows) {
-          calculate_cascaded_shadow_matrices(dir_light, lc, current_camera);
+          calculate_cascaded_shadow_matrices(dir_light, self.directional_light_cascades, lc, current_camera);
         }
       } else if (lc.type == LightComponent::LightType::Point) {
         const glm::vec3 world_pos = Scene::get_world_position(e);
@@ -1431,6 +1451,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       }
 
       if (const auto* atmos_info = e.try_get<AtmosphereComponent>()) {
+        self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
+
         auto& atmos = self.atmosphere.emplace();
         atmos.rayleigh_scatter = atmos_info->rayleigh_scattering * 1e-3f;
         atmos.rayleigh_density = atmos_info->rayleigh_density;
@@ -1448,15 +1470,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         atmos.eye_position = glm::vec3(0.0f, eye_altitude, 0.0f);
       }
     });
-
-  auto lights = GPU::Lights{
-    .direction_light = self.directional_light.value_or(GPU::DirectionalLight{}),
-    .directional_light_has_shadows = static_cast<u32>(self.directional_light_cast_shadows),
-    .point_light_count = static_cast<u32>(point_lights.size()),
-    .spot_light_count = static_cast<u32>(spot_lights.size()),
-    .point_lights = self.point_lights_buffer->device_address,
-    .spot_lights = self.spot_lights_buffer->device_address,
-  };
 
   // TODO: Keep track of updated lights and only update them.
   if (!point_lights.empty()) {
@@ -1503,7 +1516,49 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       .spot_lights_buffer = vuk::acquire_buf("spot lights", *self.spot_lights_buffer, vuk::eMemoryRead);
   }
 
-  self.prepared_frame.lights_buffer = vk_context.scratch_buffer(lights);
+  auto lights_info = GPU::Lights{
+    .point_light_count = static_cast<u32>(point_lights.size()),
+    .spot_light_count = static_cast<u32>(spot_lights.size()),
+    .point_lights = self.point_lights_buffer->device_address,
+    .spot_lights = self.spot_lights_buffer->device_address,
+  };
+
+  if (self.atmosphere.has_value()) {
+    self.atmosphere->sky_view_lut_size = self.sky_view_lut_extent;
+    self.atmosphere->aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
+    self.atmosphere->transmittance_lut_size = self.renderer.sky_transmittance_lut_view.get_extent();
+    self.atmosphere->multiscattering_lut_size = self.renderer.sky_multiscatter_lut_view.get_extent();
+    auto atmosphere_buffer = self.renderer.vk_context->scratch_buffer(self.atmosphere);
+
+    lights_info.atmosphere = atmosphere_buffer->device_address;
+    self.prepared_frame.atmosphere_buffer = std::move(atmosphere_buffer);
+  }
+
+  if (self.directional_light.has_value()) {
+    auto& directional_light = self.directional_light.value();
+    auto directional_light_cascade_count = ox::max(1_u32, directional_light.cascade_count);
+
+    auto directional_light_buffer = vk_context.scratch_buffer(directional_light);
+    auto directional_light_cascades_buffer = vk_context.alloc_transient_buffer(
+      vuk::MemoryUsage::eGPUtoCPU,
+      directional_light_cascade_count * sizeof(GPU::DirectionalLightCascade)
+    );
+
+    lights_info.direction_light = directional_light_buffer->device_address;
+    lights_info.direction_light_cascades = directional_light_cascades_buffer->device_address;
+    if (directional_light.cascade_count > 0) {
+      std::memcpy(
+        directional_light_cascades_buffer->mapped_ptr,
+        self.directional_light_cascades.data(),
+        ox::size_bytes(self.directional_light_cascades)
+      );
+    }
+
+    self.prepared_frame.directional_light_buffer = std::move(directional_light_buffer);
+    self.prepared_frame.directional_light_cascades_buffer = std::move(directional_light_cascades_buffer);
+  }
+
+  self.prepared_frame.lights_buffer = vk_context.scratch_buffer(lights_info);
 
   self.render_queue_2d.init();
 
@@ -1583,7 +1638,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     .each([&](flecs::entity e, const TransformComponent& tc, const VignetteComponent& c) {
       self.post_proces_settings.vignette_amount = c.amount;
 
-      self.gpu_scene.scene_flags |= GPU::SceneFlags::HasVignette;
+      self.gpu_scene_flags |= GPU::SceneFlags::HasVignette;
     });
 
   self.scene->world
@@ -1592,7 +1647,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     .each([&](flecs::entity e, const TransformComponent& tc, const ChromaticAberrationComponent& c) {
       self.post_proces_settings.chromatic_aberration_amount = c.amount;
 
-      self.gpu_scene.scene_flags |= GPU::SceneFlags::HasChromaticAberration;
+      self.gpu_scene_flags |= GPU::SceneFlags::HasChromaticAberration;
     });
 
   self.scene->world
@@ -1603,7 +1658,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.post_proces_settings.film_grain_scale = c.scale;
       self.post_proces_settings.film_grain_seed = vk_context.num_frames % 16;
 
-      self.gpu_scene.scene_flags |= GPU::SceneFlags::HasFilmGrain;
+      self.gpu_scene_flags |= GPU::SceneFlags::HasFilmGrain;
     });
 
   update_buffer_if_dirty<GPU::Transforms>(self, vk_context, info.gpu_transforms, info.dirty_transform_ids);

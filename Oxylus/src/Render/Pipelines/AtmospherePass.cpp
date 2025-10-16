@@ -1,10 +1,11 @@
+#include <vuk/runtime/CommandBuffer.hpp>
+
 #include "Render/RendererPipeline.hpp"
-#include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
 auto atmosphere_pass(
   vuk::Value<vuk::Buffer>& atmosphere_buffer,
-  vuk::Value<vuk::Buffer>& lights_buffer,
+  vuk::Value<vuk::Buffer>& directional_light_buffer,
   vuk::Value<vuk::Buffer>& camera_buffer,
   vuk::Value<vuk::ImageAttachment>& sky_transmittance_lut_attachment,
   vuk::Value<vuk::ImageAttachment>& sky_multiscatter_lut_attachment,
@@ -17,9 +18,9 @@ auto atmosphere_pass(
     "sky view",
     [](
       vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeRead) atmosphere_,
-      VUK_BA(vuk::eComputeRead) lights,
-      VUK_BA(vuk::eComputeRead) camera,
+      VUK_BA(vuk::eComputeUniformRead) atmosphere,
+      VUK_BA(vuk::eComputeUniformRead) directional_light,
+      VUK_BA(vuk::eComputeUniformRead) camera,
       VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
       VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
       VUK_IA(vuk::eComputeRW) sky_view_lut
@@ -37,12 +38,19 @@ auto atmosphere_pass(
         .bind_image(0, 1, sky_transmittance_lut)
         .bind_image(0, 2, sky_multiscatter_lut)
         .bind_image(0, 3, sky_view_lut)
-        .bind_buffer(0, 4, atmosphere_)
-        .bind_buffer(0, 5, lights)
+        .bind_buffer(0, 4, atmosphere)
+        .bind_buffer(0, 5, directional_light)
         .bind_buffer(0, 6, camera)
         .dispatch_invocations_per_pixel(sky_view_lut);
 
-      return std::make_tuple(sky_view_lut, sky_transmittance_lut, sky_multiscatter_lut, atmosphere_, lights, camera);
+      return std::make_tuple(
+        sky_view_lut,
+        sky_transmittance_lut,
+        sky_multiscatter_lut,
+        atmosphere,
+        directional_light,
+        camera
+      );
     }
   );
 
@@ -51,12 +59,12 @@ auto atmosphere_pass(
     sky_transmittance_lut_attachment,
     sky_multiscatter_lut_attachment,
     atmosphere_buffer,
-    lights_buffer,
+    directional_light_buffer,
     camera_buffer
   ) =
     sky_view_pass(
       std::move(atmosphere_buffer),
-      std::move(lights_buffer),
+      std::move(directional_light_buffer),
       std::move(camera_buffer),
       std::move(sky_transmittance_lut_attachment),
       std::move(sky_multiscatter_lut_attachment),
@@ -67,9 +75,9 @@ auto atmosphere_pass(
     "sky aerial perspective",
     [](
       vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeRead) atmosphere_,
-      VUK_BA(vuk::eComputeRead) lights,
-      VUK_BA(vuk::eComputeRead) camera,
+      VUK_BA(vuk::eComputeUniformRead) atmosphere,
+      VUK_BA(vuk::eComputeUniformRead) directional_light,
+      VUK_BA(vuk::eComputeUniformRead) camera,
       VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
       VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
       VUK_IA(vuk::eComputeRW) sky_aerial_perspective_lut
@@ -87,12 +95,12 @@ auto atmosphere_pass(
         .bind_image(0, 1, sky_transmittance_lut)
         .bind_image(0, 2, sky_multiscatter_lut)
         .bind_image(0, 3, sky_aerial_perspective_lut)
-        .bind_buffer(0, 4, atmosphere_)
-        .bind_buffer(0, 5, lights)
+        .bind_buffer(0, 4, atmosphere)
+        .bind_buffer(0, 5, directional_light)
         .bind_buffer(0, 6, camera)
         .dispatch_invocations_per_pixel(sky_aerial_perspective_lut);
 
-      return std::make_tuple(sky_aerial_perspective_lut, sky_transmittance_lut, atmosphere_, lights, camera);
+      return std::make_tuple(sky_aerial_perspective_lut, sky_transmittance_lut, atmosphere, directional_light, camera);
     }
   );
 
@@ -100,12 +108,12 @@ auto atmosphere_pass(
     sky_aerial_perspective_attachment,
     sky_transmittance_lut_attachment,
     atmosphere_buffer,
-    lights_buffer,
+    directional_light_buffer,
     camera_buffer
   ) =
     sky_aerial_perspective_pass(
       std::move(atmosphere_buffer),
-      std::move(lights_buffer),
+      std::move(directional_light_buffer),
       std::move(camera_buffer),
       std::move(sky_transmittance_lut_attachment),
       std::move(sky_multiscatter_lut_attachment),
@@ -117,9 +125,9 @@ auto atmosphere_pass(
     [](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eColorWrite) dst,
-      VUK_BA(vuk::eFragmentRead) atmosphere_,
-      VUK_BA(vuk::eFragmentRead) sun_,
-      VUK_BA(vuk::eFragmentRead) camera,
+      VUK_BA(vuk::eComputeUniformRead) atmosphere,
+      VUK_BA(vuk::eComputeUniformRead) directional_light,
+      VUK_BA(vuk::eComputeUniformRead) camera,
       VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
       VUK_IA(vuk::eFragmentSampled) sky_aerial_perspective_lut,
       VUK_IA(vuk::eFragmentSampled) sky_view_lut,
@@ -143,7 +151,8 @@ auto atmosphere_pass(
         .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
       };
 
-      cmd_list.bind_graphics_pipeline("sky_final_pipeline")
+      cmd_list //
+        .bind_graphics_pipeline("sky_final_pipeline")
         .set_rasterization({})
         .set_depth_stencil({})
         .set_color_blend(dst, blend_info)
@@ -155,8 +164,8 @@ auto atmosphere_pass(
         .bind_image(0, 2, sky_aerial_perspective_lut)
         .bind_image(0, 3, sky_view_lut)
         .bind_image(0, 4, depth)
-        .bind_buffer(0, 5, atmosphere_)
-        .bind_buffer(0, 6, sun_)
+        .bind_buffer(0, 5, atmosphere)
+        .bind_buffer(0, 6, directional_light)
         .bind_buffer(0, 7, camera)
         .draw(3, 1, 0, 0);
 
@@ -167,7 +176,7 @@ auto atmosphere_pass(
   std::tie(final_attachment, depth_attachment, camera_buffer) = sky_final_pass(
     std::move(final_attachment),
     std::move(atmosphere_buffer),
-    std::move(lights_buffer),
+    std::move(directional_light_buffer),
     std::move(camera_buffer),
     std::move(sky_transmittance_lut_attachment),
     std::move(sky_aerial_perspective_attachment),

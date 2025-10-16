@@ -18,7 +18,7 @@ auto forward_2d_pass(
       vuk::CommandBuffer& command_buffer,
       VUK_IA(vuk::eColorWrite) target,
       VUK_IA(vuk::eDepthStencilRW) depth,
-      VUK_BA(vuk::eVertexRead) vertex_buffer,
+      VUK_BA(vuk::eAttributeRead) vertex_buffer,
       VUK_BA(vuk::eVertexRead) materials,
       VUK_BA(vuk::eVertexRead) camera,
       VUK_BA(vuk::eVertexRead) transforms_
