@@ -5,7 +5,6 @@
 
 #include "Render/Window.hpp"
 
-
 namespace ox {
 auto Input::init() -> std::expected<void, std::string> { return {}; }
 

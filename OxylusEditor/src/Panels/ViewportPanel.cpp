@@ -127,7 +127,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       if (ImGui::MenuItem(ICON_MDI_INFORMATION, nullptr, draw_scene_stats)) {
         draw_scene_stats = !draw_scene_stats;
       }
-      if (ImGui::MenuItem(ICON_MDI_SPHERE, nullptr, draw_scene_stats)) {
+      if (ImGui::MenuItem(ICON_MDI_SPHERE, nullptr, gizmo_settings_popup)) {
         gizmo_settings_popup = true;
       }
       auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
@@ -411,6 +411,8 @@ void ViewportPanel::on_update() {
     return;
   }
 
+  const float dt = static_cast<float>(App::get_timestep().get_seconds());
+
   auto& cam = editor_camera.get_mut<CameraComponent>();
   auto& tc = editor_camera.get_mut<TransformComponent>();
   const glm::vec3& position = cam.position;
@@ -429,27 +431,34 @@ void ViewportPanel::on_update() {
   auto& input_sys = App::mod<Input>();
   if (input_sys.get_key_pressed(KeyCode::F)) {
     auto& editor_context = EditorLayer::get()->get_context();
-    editor_context.entity.and_then([&cam](flecs::entity& e) {
-      const auto entity_tc = e.get<TransformComponent>();
+    if (editor_context.entity.has_value()) {
+      const auto entity_tc = editor_context.entity->get<TransformComponent>();
       auto final_pos = entity_tc.position + cam.forward;
       final_pos += -5.0f * cam.forward * glm::vec3(1.0f);
       cam.position = final_pos;
-      return std::optional<std::monostate>{};
-    });
+    }
   }
+
+  const auto actual_sens = EditorCVar::cvar_camera_sens.get() / 10.f;
+  const auto smoothed_sens = actual_sens * 100.f;
+  const auto camera_sens = EditorCVar::cvar_camera_smooth.get() ? smoothed_sens : actual_sens;
+
+  const auto actual_speed = EditorCVar::cvar_camera_speed.get();
+  const auto smoothed_speed = actual_speed * 100.f;
+  const auto camera_speed = EditorCVar::cvar_camera_smooth.get() ? smoothed_speed : actual_speed;
 
   if (input_sys.get_mouse_held(MouseCode::ButtonRight) && !is_ortho) {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
     window.set_cursor(WindowCursor::Crosshair);
 
     if (input_sys.get_mouse_moved()) {
-      const glm::vec2 change = new_mouse_position * EditorCVar::cvar_camera_sens.get();
+      const glm::vec2 change = new_mouse_position * camera_sens;
       final_yaw_pitch.x += change.x;
       final_yaw_pitch.y = glm::clamp(final_yaw_pitch.y - change.y, glm::radians(-89.9f), glm::radians(89.9f));
     }
 
-    const float max_move_speed = EditorCVar::cvar_camera_speed.get() *
-                                 (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f);
+    const float max_move_speed = camera_speed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f) * dt;
+
     if (input_sys.get_key_held(KeyCode::W))
       final_position += cam.forward * max_move_speed;
     else if (input_sys.get_key_held(KeyCode::S))
@@ -470,11 +479,10 @@ void ViewportPanel::on_update() {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
     window.set_cursor(WindowCursor::ResizeAll);
 
-    const glm::vec2 change = (new_mouse_position - _locked_mouse_position) * EditorCVar::cvar_camera_sens.get();
+    const glm::vec2 change = (new_mouse_position - _locked_mouse_position) * camera_sens;
 
     if (input_sys.get_mouse_moved()) {
-      const float max_move_speed = EditorCVar::cvar_camera_speed.get() *
-                                   (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f);
+      const float max_move_speed = camera_speed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f) * dt;
       final_position += cam.forward * change.y * max_move_speed;
       final_position += cam.right * change.x * max_move_speed;
     }
@@ -482,22 +490,10 @@ void ViewportPanel::on_update() {
     window.set_cursor(WindowCursor::Arrow);
   }
 
-  const glm::vec3 damped_position = math::smooth_damp(
-    position,
-    final_position,
-    _translation_velocity,
-    _translation_dampening,
-    10000.0f,
-    static_cast<float>(App::get_timestep().get_seconds())
-  );
-  const glm::vec2 damped_yaw_pitch = math::smooth_damp(
-    yaw_pitch,
-    final_yaw_pitch,
-    _rotation_velocity,
-    _rotation_dampening,
-    1000.0f,
-    static_cast<float>(App::get_timestep().get_seconds())
-  );
+  const glm::vec3 damped_position =
+    math::smooth_damp(position, final_position, _translation_velocity, _translation_dampening, 1000.0f, dt);
+  const glm::vec2 damped_yaw_pitch =
+    math::smooth_damp(yaw_pitch, final_yaw_pitch, _rotation_velocity, _rotation_dampening, 1000.0f, dt);
 
   tc.position = EditorCVar::cvar_camera_smooth.get() ? damped_position : final_position;
   tc.rotation.x = EditorCVar::cvar_camera_smooth.get() ? damped_yaw_pitch.y : final_yaw_pitch.y;

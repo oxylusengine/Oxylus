@@ -4,7 +4,6 @@
 #include <ankerl/unordered_dense.h>
 #include <filesystem>
 #include <imgui.h>
-#include <mutex>
 #include <stack>
 #include <vector>
 #include <vuk/Types.hpp>

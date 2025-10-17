@@ -333,7 +333,7 @@ void ContentPanel::render_header() {
       thumbnail_max_limit
     );
     UI::property("Show file thumbnails", reinterpret_cast<bool*>(EditorCVar::cvar_file_thumbnails.get_ptr()));
-    UI::property("Hide meta files", reinterpret_cast<bool*>(EditorCVar::cvar_show_meta_files.get_ptr()));
+    UI::property("Show meta files", reinterpret_cast<bool*>(EditorCVar::cvar_show_meta_files.get_ptr()));
     UI::end_properties();
     ImGui::EndPopup();
   }
