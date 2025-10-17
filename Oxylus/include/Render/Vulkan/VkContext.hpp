@@ -53,7 +53,6 @@ public:
   plf::colony<std::pair<u64, vuk::Buffer>> tracked_buffers = {};
   std::shared_mutex pending_image_buffers_mutex = {};
 
-  bool suspend = false;
   vuk::PresentModeKHR present_mode = vuk::PresentModeKHR::eFifo;
   std::optional<vuk::Swapchain> swapchain;
   VkSurfaceKHR surface;
