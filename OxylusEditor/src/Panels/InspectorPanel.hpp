@@ -1,7 +1,5 @@
 #pragma once
 
-#include <flecs.h>
-
 #include "Asset/AssetManager.hpp"
 #include "Core/UUID.hpp"
 #include "EditorPanel.hpp"
@@ -20,15 +18,13 @@ public:
     std::string path = {};
   };
 
-  flecs::world world;
-
   AssetManagerViewer viewer = {};
 
   InspectorPanel();
 
   void on_render(vuk::Extent3D extent, vuk::Format format) override;
 
-  static void draw_material_properties(Material* material, const UUID& material_uuid, flecs::entity load_event);
+  static void draw_material_properties(Material* material, const UUID& material_uuid, std::string_view default_path);
 
 private:
   Scene* _scene;

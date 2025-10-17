@@ -541,6 +541,7 @@ void ContentPanel::render_body(bool grid) {
 
     int i = 0;
 
+    auto read_lock = std::shared_lock(_directory_mutex);
     for (auto& file : _directory_entries) {
       if (!m_filter.PassFilter(file.name.c_str()))
         continue;
@@ -558,7 +559,7 @@ void ContentPanel::render_body(bool grid) {
       std::string texture_name = {};
       if (!is_dir && EditorCVar::cvar_file_thumbnails.get()) {
         if (file.type == FileType::Texture) {
-          auto read_lock = std::shared_lock(thumbnail_mutex);
+          auto thumbnail_read_lock = std::shared_lock(thumbnail_mutex);
           if (thumbnail_cache_textures.contains(file.file_path)) {
             texture_name = file.file_path;
           } else {
@@ -685,7 +686,7 @@ void ContentPanel::render_body(bool grid) {
         ImGui::SetCursorPos({cursor_pos.x + thumbnail_padding * 0.75f, cursor_pos.y + thumbnail_padding});
         ImGui::SetItemAllowOverlap();
 
-        auto read_lock = std::shared_lock(thumbnail_mutex);
+        auto thumbnail_read_lock = std::shared_lock(thumbnail_mutex);
         auto thumbnail_exists = thumbnail_cache_textures.contains(texture_name);
 
         if (thumbnail_exists) {
@@ -761,7 +762,7 @@ void ContentPanel::render_body(bool grid) {
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() - line_height);
 
-        auto read_lock = std::shared_lock(thumbnail_mutex);
+        auto thumbnail_read_lock = std::shared_lock(thumbnail_mutex);
         auto thumbnail_exists = thumbnail_cache_textures.contains(texture_name);
 
         if (thumbnail_exists) {
@@ -835,9 +836,9 @@ void ContentPanel::render_body(bool grid) {
   }
 
   if (should_open_new_asset_popup)
-    ImGui::OpenPopup("New Asset");
+    ImGui::OpenPopup("New Material");
 
-  if (ImGui::BeginPopupModal("New Asset", nullptr, ImGuiWindowFlags_NoResize)) {
+  if (ImGui::BeginPopupModal("New Material", nullptr, ImGuiWindowFlags_NoResize)) {
     UI::begin_properties();
     UI::input_text("Name", &new_asset_name_);
     UI::end_properties();
@@ -875,7 +876,7 @@ void ContentPanel::render_body(bool grid) {
 
 void ContentPanel::update_directory_entries(const std::filesystem::path& directory) {
   ZoneScoped;
-  std::lock_guard lock(_directory_mutex);
+  std::unique_lock lock(_directory_mutex);
   _current_directory = directory;
   _directory_entries.clear();
 
