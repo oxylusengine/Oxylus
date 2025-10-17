@@ -554,11 +554,37 @@ void ViewportPanel::draw_settings_panel() {
 
   i32 open_action = -1;
 
-  if (UI::button("Expand All"))
+  if (UI::button("Expand All")) {
     open_action = 1;
+  }
   ImGui::SameLine();
-  if (UI::button("Collapse All"))
+  if (UI::button("Collapse All")) {
     open_action = 0;
+  }
+  ImGui::SameLine();
+  if (UI::button("Reset to defaults")) {
+    RendererCVar::cvar_enable_debug_renderer.set_default();
+    RendererCVar::cvar_enable_physics_debug_renderer.set_default();
+    RendererCVar::cvar_draw_bounding_boxes.set_default();
+    RendererCVar::cvar_draw_camera_frustum.get_default();
+    RendererCVar::cvar_bloom_enable.set_default();
+    RendererCVar::cvar_bloom_threshold.set_default();
+    RendererCVar::cvar_bloom_clamp.set_default();
+    RendererCVar::cvar_bloom_quality_level.set_default();
+    RendererCVar::cvar_fxaa_enable.set_default();
+    RendererCVar::cvar_vbgtao_quality_level.set_default();
+    RendererCVar::cvar_vbgtao_radius.set_default();
+    RendererCVar::cvar_vbgtao_thickness.set_default();
+    RendererCVar::cvar_vbgtao_final_power.set_default();
+    RendererCVar::cvar_contact_shadows.set_default();
+    RendererCVar::cvar_contact_shadows_steps.set_default();
+    RendererCVar::cvar_contact_shadows_thickness.set_default();
+    RendererCVar::cvar_contact_shadows_length.set_default();
+    EditorCVar::cvar_camera_sens.set_default();
+    EditorCVar::cvar_camera_speed.set_default();
+    EditorCVar::cvar_camera_smooth.set_default();
+    EditorCVar::cvar_camera_zoom.set_default();
+  }
 
   constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap |
                                             ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_FramePadding;
@@ -671,8 +697,8 @@ void ViewportPanel::draw_settings_panel() {
       ImGui::SetNextItemOpen(open_action != 0);
     if (ImGui::TreeNodeEx("Camera", TREE_FLAGS, "%s", "Camera")) {
       if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-        UI::property<float>("Camera sensitivity", EditorCVar::cvar_camera_sens.get_ptr(), 0.1f, 20.0f);
-        UI::property<float>("Movement speed", EditorCVar::cvar_camera_speed.get_ptr(), 5, 100.0f);
+        UI::property<float>("Camera sensitivity", EditorCVar::cvar_camera_sens.get_ptr(), 0.01f, 20.0f);
+        UI::property<float>("Movement speed", EditorCVar::cvar_camera_speed.get_ptr(), 0.1f, 100.0f);
         UI::property("Smooth camera", (bool*)EditorCVar::cvar_camera_smooth.get_ptr());
         UI::property("Camera zoom", EditorCVar::cvar_camera_zoom.get_ptr(), 1, 100);
         UI::end_properties();
