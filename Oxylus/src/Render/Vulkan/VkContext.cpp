@@ -430,6 +430,14 @@ auto VkContext::is_vsync() const -> bool { return present_mode == vuk::PresentMo
 auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
+  auto vsync_cvar_enabled = static_cast<bool>(RendererCVar::cvar_vsync.get());
+  auto wanted_vsync = vsync_cvar_enabled ? vuk::PresentModeKHR::eFifo : vuk::PresentModeKHR::eImmediate;
+  auto present_mode_changed = wanted_vsync != self.present_mode;
+  if (present_mode_changed) {
+    self.present_mode = wanted_vsync;
+    self.handle_resize(1, 1);
+  }
+
   if (self.frame_allocator) {
     self.frame_allocator.reset();
   }
