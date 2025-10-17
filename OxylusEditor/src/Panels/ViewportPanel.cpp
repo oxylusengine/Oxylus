@@ -479,7 +479,7 @@ void ViewportPanel::on_update() {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
     window.set_cursor(WindowCursor::ResizeAll);
 
-    const glm::vec2 change = (new_mouse_position - _locked_mouse_position) * camera_sens;
+    const glm::vec2 change = (new_mouse_position - _locked_mouse_position) * 1.f;
 
     if (input_sys.get_mouse_moved()) {
       const float max_move_speed = camera_speed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f) * dt;
