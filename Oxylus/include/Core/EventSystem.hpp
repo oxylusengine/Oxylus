@@ -16,17 +16,22 @@
 namespace ox {
 using HandlerId = u64;
 
-enum class EventError { HandlerNotFound, EventSystemShutdown, InvalidHandler };
+struct EventError {
+  enum Error { HandlerNotFound, EventSystemShutdown, InvalidHandler, NoHandlers };
 
-inline auto event_error_to_sv(EventError error) -> std::string_view {
-  ZoneScoped;
+  EventError(Error e) : error(e) {}
 
-  switch (error) {
-    case EventError::HandlerNotFound    : return "HandlerNotFound";
-    case EventError::EventSystemShutdown: return "EventSystemShutdown";
-    case EventError::InvalidHandler     : return "InvalidHandler";
+  auto message() -> std::string_view {
+    switch (error) {
+      case Error::HandlerNotFound    : return "HandlerNotFound";
+      case Error::EventSystemShutdown: return "EventSystemShutdown";
+      case Error::InvalidHandler     : return "InvalidHandler";
+      case Error::NoHandlers         : return "NoHandlers";
+    }
   }
-}
+
+  Error error;
+};
 
 template <typename T>
 concept Event = std::is_object_v<T> && std::copyable<T>;
@@ -66,9 +71,13 @@ public:
     return false;
   }
 
-  void emit(const EventType& event) {
+  std::expected<void, EventError> emit(const EventType& event) {
     ZoneScoped;
     std::shared_lock lock(mutex_);
+
+    if (handlers_.empty()) {
+      return std::unexpected(EventError::NoHandlers);
+    }
 
     std::vector<std::shared_ptr<Handler>> active_handlers;
     active_handlers.reserve(handlers_.size());
@@ -86,6 +95,8 @@ public:
     }
 
     cleanup_inactive_handlers();
+
+    return {};
   }
 
   void clear() {
@@ -187,19 +198,19 @@ public:
   }
 
   template <Event EventType>
-  void emit(const EventType& event) {
+  std::expected<void, EventError> emit(const EventType& event) {
     ZoneScoped;
     if (shutdown_.load()) {
-      return;
+      return std::unexpected(EventError::EventSystemShutdown);
     }
 
     auto* registry = get_registry<EventType>();
-    registry->emit(event);
+    return registry->emit(event);
   }
 
   template <Event EventType>
-  void emit(EventType&& event) {
-    emit<EventType>(static_cast<const EventType&>(event));
+  std::expected<void, EventError> emit(EventType&& event) {
+    return emit<EventType>(static_cast<const EventType&>(event));
   }
 
   template <Event EventType>
