@@ -33,15 +33,32 @@ static f32 degree_helper(const char* id, f32 value) {
   return in_radians;
 }
 
-InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION, true), _scene(nullptr) {
+InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION, true), scene_(nullptr) {
   viewer.search_icon = ICON_MDI_MAGNIFY;
   viewer.filter_icon = ICON_MDI_FILTER;
+
+  auto& event_system = App::mod<EventSystem>();
+  auto& asset_man = App::mod<AssetManager>();
+
+  auto r1 = event_system.subscribe<DialogLoadEvent>([&asset_man](const DialogLoadEvent& e) {
+    if (auto imported = asset_man.import_asset(e.path)) {
+      if (e.asset_uuid) {
+        if (*e.asset_uuid)
+          asset_man.unload_asset(*e.asset_uuid);
+        *e.asset_uuid = imported;
+      }
+    }
+  });
+
+  auto r2 = event_system.subscribe<DialogSaveEvent>([&asset_man](const DialogSaveEvent& e) {
+    asset_man.export_asset(e.asset_uuid, e.path);
+  });
 }
 
 void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
   auto* editor_layer = EditorLayer::get();
   auto& editor_context = editor_layer->get_context();
-  _scene = editor_layer->get_selected_scene();
+  scene_ = editor_layer->get_selected_scene();
 
   on_begin();
 
@@ -78,8 +95,9 @@ void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
   on_end();
 }
 
-void
-InspectorPanel::draw_material_properties(Material* material, const UUID& material_uuid, std::string_view default_path) {
+void InspectorPanel::draw_material_properties(
+  Material* material, const UUID& material_uuid, std::string_view default_path
+) {
   if (material_uuid) {
     const auto& window = App::get()->get_window();
     static auto uuid_copy = material_uuid;
@@ -107,7 +125,7 @@ InspectorPanel::draw_material_properties(Material* material, const UUID& materia
             auto path = std::string(first_path_cstr, first_path_len);
 
             auto& event_system = App::mod<EventSystem>();
-            event_system.emit(DialogLoadEvent{path});
+            auto r = event_system.emit(DialogLoadEvent{&uuid_copy, path});
           },
         .title = "Open material asset file...",
         .default_path = default_path,
@@ -120,7 +138,7 @@ InspectorPanel::draw_material_properties(Material* material, const UUID& materia
         const auto* payload = PayloadData::from_payload(imgui_payload);
         if (const std::string ext = fs::get_file_extension(payload->str); ext == "oxasset") {
           auto& event_system = App::mod<EventSystem>();
-          event_system.emit(DialogLoadEvent{payload->str});
+          auto r = event_system.emit(DialogLoadEvent{&uuid_copy, payload->str});
         }
       }
       ImGui::EndDragDropTarget();
@@ -151,7 +169,10 @@ InspectorPanel::draw_material_properties(Material* material, const UUID& materia
             auto path = std::string(first_path_cstr, first_path_len);
 
             auto& event_system = App::mod<EventSystem>();
-            event_system.emit(DialogSaveEvent{path});
+            auto r = event_system.emit(DialogSaveEvent{uuid_copy, path});
+            if (!r.has_value()) {
+              OX_LOG_ERROR("{}", r.error().message());
+            }
           },
         .title = "Open material asset file...",
         .default_path = default_path,
@@ -196,17 +217,36 @@ InspectorPanel::draw_material_properties(Material* material, const UUID& materia
 
   dirty |= UI::property_vector("Color", material->albedo_color, true, true);
 
-  // NOTE: These properties leak when the old textures are discared.
-  // Since in editor you can manually free the old loaded textures
-  // for fast iterations I'll leave this behaviour.
-  dirty |= UI::texture_property("Albedo", material->albedo_texture);
-  dirty |= UI::texture_property("Normal", material->normal_texture);
-  dirty |= UI::texture_property("Emissive", material->emissive_texture);
+  const auto load_callback = [](const char* label, const UUID& uuid, bool& active) -> UUID {
+    Asset selected = {};
+    AssetType filter = AssetType::Texture;
+    auto name = fmt::format("Asset Picker: {}", label);
+    static AssetManagerViewer am;
+    am.render(name.c_str(), &active, filter, &selected);
+
+    if (selected.type == AssetType::Texture) {
+      auto& asset_man = App::mod<AssetManager>();
+      auto* existing_asset = asset_man.get_asset(uuid);
+      const bool is_loaded = asset_man.load_asset(selected.uuid);
+      if (is_loaded) {
+        if (existing_asset) {
+          asset_man.unload_asset(uuid);
+        }
+        return selected.uuid;
+      }
+    }
+
+    return UUID(nullptr);
+  };
+
+  dirty |= UI::texture_property("Albedo", material->albedo_texture, load_callback);
+  dirty |= UI::texture_property("Normal", material->normal_texture, load_callback);
+  dirty |= UI::texture_property("Emissive", material->emissive_texture, load_callback);
   dirty |= UI::property_vector("Emissive Color", material->emissive_color, true, false);
-  dirty |= UI::texture_property("Metallic Roughness", material->metallic_roughness_texture);
+  dirty |= UI::texture_property("Metallic Roughness", material->metallic_roughness_texture, load_callback);
   dirty |= UI::property("Roughness Factor", &material->roughness_factor, 0.0f, 1.0f);
   dirty |= UI::property("Metallic Factor", &material->metallic_factor, 0.0f, 1.0f);
-  dirty |= UI::texture_property("Occlusion", material->occlusion_texture);
+  dirty |= UI::texture_property("Occlusion", material->occlusion_texture, load_callback);
 
   UI::end_properties();
 
@@ -227,7 +267,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
 
   ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + 20.0f));
   std::string new_name = entity.name().c_str();
-  if (_rename_entity)
+  if (rename_entity_)
     ImGui::SetKeyboardFocusHere();
   UI::push_frame_style();
   if (ImGui::InputText("##Tag", &new_name, ImGuiInputTextFlags_EnterReturnsTrue)) {
@@ -241,7 +281,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     ImGui::OpenPopup("add_component");
   }
 
-  const auto components = _scene->component_db.get_components();
+  const auto components = scene_->component_db.get_components();
 
   if (ImGui::BeginPopup("add_component")) {
     static ImGuiTextFilter add_component_filter = {};
@@ -601,19 +641,7 @@ void InspectorPanel::draw_material_asset(UUID* uuid, Asset* asset) {
 
   ImGui::SeparatorText("Material");
 
-  auto& event_system = App::mod<EventSystem>();
   auto& asset_man = App::mod<AssetManager>();
-
-  auto r1 = event_system.subscribe<DialogLoadEvent>([uuid, &asset_man](const DialogLoadEvent& e) {
-    if (auto imported = asset_man.import_asset(e.path)) {
-      *uuid = imported;
-      asset_man.unload_asset(*uuid);
-    }
-  });
-
-  auto r2 = event_system.subscribe<DialogSaveEvent>([uuid, &asset_man](const DialogSaveEvent& e) {
-    asset_man.export_asset(*uuid, e.path);
-  });
 
   if (auto* material = asset_man.get_material(*uuid)) {
     draw_material_properties(material, *uuid, asset->path);

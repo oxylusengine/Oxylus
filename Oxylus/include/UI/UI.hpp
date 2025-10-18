@@ -145,7 +145,12 @@ public:
   }
 
   // Texture
-  static bool texture_property(const char* label, UUID& texture_uuid, const char* tooltip = nullptr);
+  static bool texture_property(
+    const char* label,
+    UUID& texture_uuid,
+    const std::function<UUID(const char*, const UUID&, bool&)>& load_callback,
+    const char* tooltip = nullptr
+  );
 
   static bool button(const char* label, const ImVec2& size = ImVec2(0, 0), const char* tooltip = nullptr);
 
