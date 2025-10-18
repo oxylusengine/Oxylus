@@ -14,7 +14,7 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-using HandlerId = std::uint64_t;
+using HandlerId = u64;
 
 enum class EventError { HandlerNotFound, EventSystemShutdown, InvalidHandler };
 
@@ -56,8 +56,13 @@ public:
 
     if (it != handlers_.end()) {
       (*it)->active.store(false);
+      lock.unlock();
+
+      cleanup_inactive_handlers();
+
       return true;
     }
+
     return false;
   }
 
@@ -65,7 +70,6 @@ public:
     ZoneScoped;
     std::shared_lock lock(mutex_);
 
-    // Copy active handlers to avoid holding lock during callback execution
     std::vector<std::shared_ptr<Handler>> active_handlers;
     active_handlers.reserve(handlers_.size());
 
@@ -75,7 +79,6 @@ public:
 
     lock.unlock();
 
-    // Execute callbacks without holding the lock
     for (const auto& handler : active_handlers) {
       if (handler->active.load()) {
         handler->callback(event);
@@ -103,14 +106,16 @@ public:
 private:
   void cleanup_inactive_handlers() {
     ZoneScoped;
-    static thread_local std::chrono::steady_clock::time_point last_cleanup{};
     auto now = std::chrono::steady_clock::now();
+    auto last_cleanup = last_cleanup_time_.load(std::memory_order_relaxed);
 
-    // Only cleanup every 100ms to avoid excessive locking
     if (now - last_cleanup < std::chrono::milliseconds(100)) {
       return;
     }
-    last_cleanup = now;
+
+    if (!last_cleanup_time_.compare_exchange_strong(last_cleanup, now, std::memory_order_relaxed)) {
+      return;
+    }
 
     std::unique_lock lock(mutex_);
     std::erase_if(handlers_, [](const auto& h) { return !h->active.load(); });
@@ -127,6 +132,7 @@ private:
   mutable std::shared_mutex mutex_;
   std::vector<std::shared_ptr<Handler>> handlers_;
   std::atomic<HandlerId> next_id_ = {1};
+  std::atomic<std::chrono::steady_clock::time_point> last_cleanup_time_{};
 };
 
 class EventSystem {
