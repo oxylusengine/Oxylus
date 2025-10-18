@@ -1,7 +1,7 @@
-﻿module material;
-
-import common;
+﻿import common;
 import gpu;
+
+#include <defines.slang>
 
 public const static f32 CAMERA_SCALE_UNIT     = 0.01;
 public const static f32 INV_CAMERA_SCALE_UNIT = 1.0 / CAMERA_SCALE_UNIT;
@@ -20,15 +20,6 @@ public enum DebugView : i32 {
   Occlusion,
   HiZ,
   GTAO,
-};
-
-[[Flags]]
-public enum CullFlags : u32 {
-  MeshFrustum,
-  MeshletFrustum,
-  MeshletOcclusion,
-  TriangleBackFace,
-  MicroTriangles,
 };
 
 public struct UVGradient {
@@ -354,10 +345,6 @@ public struct MeshLOD {
     public f32 error = 0.0;
 };
 
-#ifndef MESH_MAX_LODS
-#define MESH_MAX_LODS 8
-#endif
-
 public struct Mesh {
     public f32x3 *vertex_positions = nullptr;
     public f32x3 *vertex_normals = nullptr;
@@ -366,6 +353,12 @@ public struct Mesh {
     public u32 lod_count = 0;
     public MeshLOD lods[MESH_MAX_LODS] = {};
     public Bounds bounds = {};
+};
+
+public struct MeshletInstanceVisibility {
+    public u32 total_visible_meshlet_instances;
+    public u32 early_visible_meshlet_instances;
+    public u32 late_visible_meshlet_instances;
 };
 
 public struct VBGTAOSettings {

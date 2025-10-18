@@ -30,17 +30,6 @@ enum class DebugView : i32 {
   Count,
 };
 
-enum class CullFlags : u32 {
-  MeshFrustum = 1 << 0,
-  MeshletFrustum = 1 << 1,
-  MeshletOcclusion = 1 << 2,
-  TriangleBackFace = 1 << 3,
-  MicroTriangles = 1 << 4,
-
-  All = ~0_u32,
-};
-consteval void enable_bitmask(CullFlags);
-
 enum class MaterialFlag : u32 {
   None = 0,
   // Image flags
@@ -81,6 +70,15 @@ struct Bounds {
   alignas(4) glm::vec3 aabb_extent = {};
   alignas(4) glm::vec3 sphere_center = {};
   alignas(4) f32 sphere_radius = 0.0f;
+};
+
+struct MeshletInstanceVisibility {
+  // This is incremented __ONLY__ during cull MESHES pass.
+  alignas(4) u32 total_visible_meshlet_instances = 0;
+  // Number of meshlets that were visible on first cull MESHLETS pass.
+  alignas(4) u32 early_visible_meshlet_instances = 0;
+  // Same as above, but if requested (used for two pass occlusion tests)
+  alignas(4) u32 late_visible_meshlet_instances = 0;
 };
 
 struct MeshletInstance {

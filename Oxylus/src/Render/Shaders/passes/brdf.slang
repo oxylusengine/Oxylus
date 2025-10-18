@@ -13,7 +13,6 @@ struct ShaderParameters {
     Sampler linear_clamp_sampler;
     Sampler linear_repeat_sampler;
     Texture2D<f32x4> sky_transmittance_lut;
-    Texture2D<f32x4> sky_multiscattering_lut;
     Texture2D<f32> depth_image;
     Texture2D<f32x4> albedo_image;
     Texture2D<f32x4> normal_image;

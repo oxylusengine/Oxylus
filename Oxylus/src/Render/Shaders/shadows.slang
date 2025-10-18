@@ -4,10 +4,7 @@ import common;
 import gpu;
 import scene;
 
-// SYBAU lsp 💔
-#ifndef MAX_DIRECTIONAL_SHADOW_CASCADES
-#define MAX_DIRECTIONAL_SHADOW_CASCADES 4
-#endif
+#include <defines.slang>
 
 static const f32x2 POISSON_DISK[16] = {
     f32x2(-0.94201624, -0.39906216),

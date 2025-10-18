@@ -101,25 +101,25 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   // --- VISBUFFER ---
   slang.create_pipeline(
     runtime,
-    "cull_meshes",
+    "vis_cull_meshes",
     {.path = shaders_dir + "/passes/cull_meshes.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "generate_cull_commands",
-    {.path = shaders_dir + "/passes/generate_cull_commands.slang", .entry_points = {"cs_main"}}
+    "vis_generate_cull_commands",
+    {.path = shaders_dir + "/passes/cull_meshes.slang", .entry_points = {"generate_commands_cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "cull_meshlets",
+    "vis_cull_meshlets",
     {.path = shaders_dir + "/passes/cull_meshlets.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "cull_triangles",
+    "vis_cull_triangles",
     {.path = shaders_dir + "/passes/cull_triangles.slang", .entry_points = {"cs_main"}}
   );
 
@@ -143,16 +143,35 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     &bindless_set
   );
 
+  // --- SHADOWMAP ---
   slang.create_pipeline(
     runtime,
-    "shadowmap_draw",
-    {.path = shaders_dir + "/passes/shadowmap_draw.slang", .entry_points = {"vs_main", "fs_main"}}
+    "shadowmap_cull_meshes",
+    {.path = shaders_dir + "/passes/shadowmap_cull_meshes.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "shadowmap_generate_cull_commands",
+    {.path = shaders_dir + "/passes/shadowmap_cull_meshes.slang", .entry_points = {"generate_commands_cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
     "shadowmap_cull_meshlets",
     {.path = shaders_dir + "/passes/shadowmap_cull_meshlets.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "shadowmap_cull_trianges",
+    {.path = shaders_dir + "/passes/shadowmap_cull_triangles.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "shadowmap_draw",
+    {.path = shaders_dir + "/passes/shadowmap_draw.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   slang.create_pipeline(

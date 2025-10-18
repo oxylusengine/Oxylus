@@ -3,27 +3,24 @@ import gpu;
 import scene;
 import cull;
 
-[[vk::binding(0)]] StructuredBuffer<MeshletInstance> meshlet_instances;
+#include <defines.slang>
+
+[[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(1)]] StructuredBuffer<MeshInstance> mesh_instances;
-[[vk::binding(2)]] StructuredBuffer<Mesh> meshes;
+[[vk::binding(2)]] StructuredBuffer<MeshletInstance> meshlet_instances;
 [[vk::binding(3)]] StructuredBuffer<Transform> transforms;
-[[vk::binding(4)]] StructuredBuffer<u32> all_visible_meshlet_instances_count;
+[[vk::binding(4)]] StructuredBuffer<u32> visibility;
 [[vk::binding(5)]] RWStructuredBuffer<u32> visible_meshlet_instances_count;
 [[vk::binding(6)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
 [[vk::binding(7)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
 
-#ifndef CULLING_MESHLET_COUNT
-#define CULLING_MESHLET_COUNT 64
-#endif
-
 [[shader("compute")]]
 [[numthreads(CULLING_MESHLET_COUNT, 1, 1)]]
 func cs_main(
-    uint group_thread_id : SV_GroupThreadID,
     uint global_thread_id : SV_DispatchThreadID,
     uniform f32x4x4 projection_view,
 ) -> void {
-    let meshlet_instance_count = all_visible_meshlet_instances_count[0];
+    let meshlet_instance_count = visibility[0];
     let meshlet_instance_index = global_thread_id;
     if (meshlet_instance_index >= meshlet_instance_count) {
         return;

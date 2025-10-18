@@ -137,8 +137,12 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> transforms_buffer = {};
   vuk::Value<vuk::Buffer> meshes_buffer = {};
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
+  vuk::Value<vuk::Buffer> meshlet_instances_buffer = {};
+  vuk::Value<vuk::Buffer> visible_meshlet_instances_indices_buffer = {};
   vuk::Value<vuk::Buffer> meshlet_instance_visibility_mask_buffer = {};
+  vuk::Value<vuk::Buffer> reordered_indices_buffer = {};
   vuk::Value<vuk::Buffer> materials_buffer = {};
+  vuk::Value<vuk::Buffer> camera_buffer = {};
   vuk::Value<vuk::Buffer> atmosphere_buffer = {};
   vuk::Value<vuk::Buffer> lights_buffer = {};
   vuk::Value<vuk::Buffer> directional_light_buffer{};
@@ -149,6 +153,63 @@ struct PreparedFrame {
   u32 line_index_count = 0;
   u32 triangle_index_count = 0;
   vuk::Value<vuk::Buffer> debug_renderer_verticies_buffer = {};
+};
+
+struct MainGeometryContext {
+  u32 mesh_instance_count = 0;
+  u32 max_meshlet_instance_count = 0;
+  bool late = false;
+
+  vuk::PersistentDescriptorSet* bindless_set = nullptr;
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> hiz_attachment = {};
+  vuk::Value<vuk::ImageAttachment> visbuffer_attachment = {};
+  vuk::Value<vuk::ImageAttachment> overdraw_attachment = {};
+  vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
+  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
+  vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
+  vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
+
+  vuk::Value<vuk::Buffer> visibility_buffer = {};
+  vuk::Value<vuk::Buffer> cull_meshlets_cmd_buffer = {};
+  vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
+};
+
+struct ShadowGeometryContext {
+  u32 mesh_instance_count = 0;
+  u32 max_meshlet_instance_count = 0;
+
+  vuk::Value<vuk::ImageAttachment> shadowmap_attachment = {};
+
+  vuk::Value<vuk::Buffer> visibility_buffer = {};
+  vuk::Value<vuk::Buffer> cull_meshlets_cmd_buffer = {};
+  vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
+};
+
+struct AmbientOcclusionContext {
+  GPU::VBGTAOSettings settings = {};
+
+  vuk::Value<vuk::ImageAttachment> noise_attachment = {};
+  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> depth_differences_attachment = {};
+  vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
+};
+
+struct PBRContext {
+  GPU::SceneFlags scene_flags = {};
+  vuk::PersistentDescriptorSet* bindless_set = nullptr;
+
+  vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
+  // vuk::Value<vuk::ImageAttachment> sky_cubemap_attachment = {};
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
+  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
+  vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
+  vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> contact_shadows_attachment = {};
+  vuk::Value<vuk::ImageAttachment> directional_shadowmap_attachment = {};
 };
 
 class RendererInstance {
@@ -189,6 +250,18 @@ public:
 
   auto get_viewport_offset(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_offset; }
 
+  auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
+  auto cull_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
+  auto draw_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
+  auto decode_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
+  auto cull_for_shadowmap(this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view) -> void;
+  auto draw_for_shadowmap(
+    this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, u32 cascade_index
+  ) -> void;
+  auto generate_ambient_occlusion(this RendererInstance&, AmbientOcclusionContext& context) -> void;
+  auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
+    -> vuk::Value<vuk::ImageAttachment>;
+
 private:
   SharedResources shared_resources = {};
   std::vector<RenderStageCallback> stage_callbacks;
@@ -215,6 +288,7 @@ private:
   GPU::CameraData previous_camera_data = {};
 
   GPU::SceneFlags gpu_scene_flags = {};
+  bool occlusion_cull = true;
 
   bool directional_light_cast_shadows = true;
   option<GPU::DirectionalLight> directional_light = nullopt;
