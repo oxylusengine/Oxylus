@@ -145,10 +145,11 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> camera_buffer = {};
   vuk::Value<vuk::Buffer> atmosphere_buffer = {};
   vuk::Value<vuk::Buffer> lights_buffer = {};
-  vuk::Value<vuk::Buffer> directional_light_buffer{};
-  vuk::Value<vuk::Buffer> directional_light_cascades_buffer{};
-  vuk::Value<vuk::Buffer> point_lights_buffer{};
-  vuk::Value<vuk::Buffer> spot_lights_buffer{};
+  vuk::Value<vuk::Buffer> directional_light_buffer = {};
+  vuk::Value<vuk::Buffer> directional_light_cascades_buffer = {};
+  vuk::Value<vuk::Buffer> point_lights_buffer = {};
+  vuk::Value<vuk::Buffer> spot_lights_buffer = {};
+  vuk::Value<vuk::Buffer> exposure_buffer = {};
 
   u32 line_index_count = 0;
   u32 triangle_index_count = 0;
@@ -156,8 +157,6 @@ struct PreparedFrame {
 };
 
 struct MainGeometryContext {
-  u32 mesh_instance_count = 0;
-  u32 max_meshlet_instance_count = 0;
   bool late = false;
 
   vuk::PersistentDescriptorSet* bindless_set = nullptr;
@@ -176,9 +175,6 @@ struct MainGeometryContext {
 };
 
 struct ShadowGeometryContext {
-  u32 mesh_instance_count = 0;
-  u32 max_meshlet_instance_count = 0;
-
   vuk::Value<vuk::ImageAttachment> shadowmap_attachment = {};
 
   vuk::Value<vuk::Buffer> visibility_buffer = {};
@@ -186,9 +182,14 @@ struct ShadowGeometryContext {
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
 };
 
-struct AmbientOcclusionContext {
-  GPU::VBGTAOSettings settings = {};
+struct AtmosphereContext {
+  vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
+  vuk::Value<vuk::ImageAttachment> sky_multiscatter_lut_attachment = {};
+  vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
+  vuk::Value<vuk::ImageAttachment> sky_aerial_perspective_lut_attachment = {};
+};
 
+struct AmbientOcclusionContext {
   vuk::Value<vuk::ImageAttachment> noise_attachment = {};
   vuk::Value<vuk::ImageAttachment> normal_attachment = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
@@ -197,10 +198,11 @@ struct AmbientOcclusionContext {
 };
 
 struct PBRContext {
-  GPU::SceneFlags scene_flags = {};
   vuk::PersistentDescriptorSet* bindless_set = nullptr;
 
   vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
+  vuk::Value<vuk::ImageAttachment> sky_aerial_perspective_lut_attachment = {};
+  vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
   // vuk::Value<vuk::ImageAttachment> sky_cubemap_attachment = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
   vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
@@ -210,6 +212,13 @@ struct PBRContext {
   vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> contact_shadows_attachment = {};
   vuk::Value<vuk::ImageAttachment> directional_shadowmap_attachment = {};
+};
+
+struct PostProcessContext {
+  f32 delta_time = 0.0f;
+
+  vuk::Value<vuk::ImageAttachment> final_attachment = {};
+  vuk::Value<vuk::ImageAttachment> bloom_upsampled_attachment = {};
 };
 
 class RendererInstance {
@@ -258,8 +267,14 @@ public:
   auto draw_for_shadowmap(
     this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, u32 cascade_index
   ) -> void;
+  auto draw_atmosphere(this RendererInstance&, AtmosphereContext& context) -> void;
   auto generate_ambient_occlusion(this RendererInstance&, AmbientOcclusionContext& context) -> void;
   auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
+    -> vuk::Value<vuk::ImageAttachment>;
+  auto apply_eye_adaptation(this RendererInstance&, PostProcessContext& context) -> void;
+  auto apply_bloom(this RendererInstance&, PostProcessContext& context, f32 threshold, f32 clamp, u32 mip_count)
+    -> void;
+  auto apply_tonemap(this RendererInstance&, PostProcessContext& context, vuk::Format format)
     -> vuk::Value<vuk::ImageAttachment>;
 
 private:
@@ -291,11 +306,11 @@ private:
   bool occlusion_cull = true;
 
   bool directional_light_cast_shadows = true;
-  option<GPU::DirectionalLight> directional_light = nullopt;
+  GPU::DirectionalLight directional_light = {};
   std::array<GPU::DirectionalLightCascade, MAX_DIRECTIONAL_SHADOW_CASCADES> directional_light_cascades = {};
-  option<GPU::Atmosphere> atmosphere = nullopt;
-  option<GPU::HistogramInfo> histogram_info = nullopt;
-  option<GPU::VBGTAOSettings> vbgtao_info = nullopt;
+  GPU::Atmosphere atmosphere = {};
+  GPU::EyeAdaptationSettings eye_adaptation = {};
+  GPU::VBGTAOSettings vbgtao_info = {};
   GPU::PostProcessSettings post_proces_settings = {};
 
   vuk::Unique<vuk::Buffer> transforms_buffer{};
@@ -306,5 +321,6 @@ private:
   vuk::Unique<vuk::Buffer> point_lights_buffer{};
   vuk::Unique<vuk::Buffer> spot_lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
+  vuk::Unique<vuk::Buffer> exposure_buffer{};
 };
 } // namespace ox

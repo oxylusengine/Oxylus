@@ -4,6 +4,103 @@
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
+auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereContext& context) -> void {
+  ZoneScoped;
+  auto sky_view_pass = vuk::make_pass(
+    "sky view",
+    [](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
+      VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
+      VUK_BA(vuk::eComputeUniformRead) atmosphere_,
+      VUK_BA(vuk::eComputeUniformRead) directional_light_,
+      VUK_IA(vuk::eComputeRW) sky_view_lut
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("sky_view")
+        .bind_sampler(0, 0, vuk::LinearSamplerClamped)
+        .bind_image(0, 1, sky_transmittance_lut)
+        .bind_image(0, 2, sky_multiscatter_lut)
+        .bind_buffer(0, 3, atmosphere_)
+        .bind_buffer(0, 4, directional_light_)
+        .bind_image(0, 5, sky_view_lut)
+        .dispatch_invocations_per_pixel(sky_view_lut);
+      return std::make_tuple(
+        sky_transmittance_lut,
+        sky_multiscatter_lut,
+        atmosphere_,
+        directional_light_,
+        sky_view_lut
+      );
+    }
+  );
+
+  std::tie(
+    context.sky_transmittance_lut_attachment,
+    context.sky_multiscatter_lut_attachment,
+    self.prepared_frame.atmosphere_buffer,
+    self.prepared_frame.directional_light_buffer,
+    context.sky_view_lut_attachment
+  ) =
+    sky_view_pass(
+      std::move(context.sky_transmittance_lut_attachment),
+      std::move(context.sky_multiscatter_lut_attachment),
+      std::move(self.prepared_frame.atmosphere_buffer),
+      std::move(self.prepared_frame.directional_light_buffer),
+      std::move(context.sky_view_lut_attachment)
+    );
+
+  auto sky_aerial_perspective_pass = vuk::make_pass(
+    "sky aerial perspective",
+    [](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
+      VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
+      VUK_BA(vuk::eComputeUniformRead) atmosphere_,
+      VUK_BA(vuk::eComputeUniformRead) directional_light_,
+      VUK_BA(vuk::eComputeUniformRead) camera,
+      VUK_IA(vuk::eComputeRW) sky_aerial_perspective_lut
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("sky_aerial_perspective")
+        .bind_sampler(0, 0, vuk::LinearSamplerClamped)
+        .bind_image(0, 1, sky_transmittance_lut)
+        .bind_image(0, 2, sky_multiscatter_lut)
+        .bind_buffer(0, 3, atmosphere_)
+        .bind_buffer(0, 4, directional_light_)
+        .bind_buffer(0, 5, camera)
+        .bind_image(0, 6, sky_aerial_perspective_lut)
+        .dispatch_invocations_per_pixel(sky_aerial_perspective_lut);
+
+      return std::make_tuple(
+        sky_transmittance_lut,
+        sky_multiscatter_lut,
+        atmosphere_,
+        directional_light_,
+        camera,
+        sky_aerial_perspective_lut
+      );
+    }
+  );
+
+  std::tie(
+    context.sky_transmittance_lut_attachment,
+    context.sky_multiscatter_lut_attachment,
+    self.prepared_frame.atmosphere_buffer,
+    self.prepared_frame.directional_light_buffer,
+    self.prepared_frame.camera_buffer,
+    context.sky_aerial_perspective_lut_attachment
+  ) =
+    sky_aerial_perspective_pass(
+      std::move(context.sky_transmittance_lut_attachment),
+      std::move(context.sky_multiscatter_lut_attachment),
+      std::move(self.prepared_frame.atmosphere_buffer),
+      std::move(self.prepared_frame.directional_light_buffer),
+      std::move(self.prepared_frame.camera_buffer),
+      std::move(context.sky_aerial_perspective_lut_attachment)
+    );
+}
+
 auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, AmbientOcclusionContext& context)
   -> void {
   ZoneScoped;
@@ -16,7 +113,7 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
       VUK_IA(vuk::eComputeRW) dst_image
     ) {
       command_buffer //
-        .bind_compute_pipeline("vbgtao_prefilter_pipeline")
+        .bind_compute_pipeline("vbgtao_prefilter")
         .bind_image(0, 0, depth_input)
         .bind_image(0, 1, dst_image->mip(0))
         .bind_image(0, 2, dst_image->mip(1))
@@ -49,7 +146,7 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
 
   auto vbgtao_generate_pass = vuk::make_pass(
     "vbgtao generate",
-    [settings = context.settings](
+    [settings = self.vbgtao_info](
       vuk::CommandBuffer& command_buffer,
       VUK_BA(vuk::eComputeUniformRead) camera,
       VUK_IA(vuk::eComputeSampled) prefiltered_depth,
@@ -59,7 +156,7 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
       VUK_IA(vuk::eComputeRW) depth_differences
     ) {
       command_buffer //
-        .bind_compute_pipeline("vbgtao_main_pipeline")
+        .bind_compute_pipeline("vbgtao_main")
         .bind_buffer(0, 0, camera)
         .bind_image(0, 1, prefiltered_depth)
         .bind_image(0, 2, normals)
@@ -102,7 +199,7 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
 
   auto vbgtao_denoise_pass = vuk::make_pass(
     "vbgtao denoise",
-    [gtao_settings = self.vbgtao_info.value()](
+    [gtao_settings = self.vbgtao_info](
       vuk::CommandBuffer& command_buffer,
       VUK_IA(vuk::eComputeSampled) noisy_occlusion,
       VUK_IA(vuk::eComputeSampled) depth_differences,
@@ -110,7 +207,7 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
     ) {
       glm::ivec2 occlusion_noisy_extent = {noisy_occlusion->extent.width, noisy_occlusion->extent.height};
       command_buffer //
-        .bind_compute_pipeline("vbgtao_denoise_pipeline")
+        .bind_compute_pipeline("vbgtao_denoise")
         .bind_image(0, 0, noisy_occlusion)
         .bind_image(0, 1, depth_differences)
         .bind_image(0, 2, ambient_occlusion)
@@ -134,10 +231,12 @@ auto RendererInstance::apply_pbr(
 ) -> vuk::Value<vuk::ImageAttachment> {
   auto brdf_pass = vuk::make_pass(
     "brdf",
-    [scene_flags = context.scene_flags](
+    [scene_flags = self.gpu_scene_flags](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eColorWrite) dst,
       VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
+      VUK_IA(vuk::eFragmentSampled) sky_aerial_perspective_lut_attachment,
+      VUK_IA(vuk::eFragmentSampled) sky_view_lut,
       VUK_IA(vuk::eFragmentSampled) depth,
       VUK_IA(vuk::eFragmentSampled) albedo,
       VUK_IA(vuk::eFragmentSampled) normal,
@@ -159,22 +258,26 @@ auto RendererInstance::apply_pbr(
         .bind_sampler(0, 0, vuk::LinearSamplerClamped)
         .bind_sampler(0, 1, vuk::LinearSamplerRepeated)
         .bind_image(0, 2, sky_transmittance_lut)
-        .bind_image(0, 3, depth)
-        .bind_image(0, 4, albedo)
-        .bind_image(0, 5, normal)
-        .bind_image(0, 6, emissive)
-        .bind_image(0, 7, metallic_roughness_occlusion)
-        .bind_image(0, 8, gtao)
-        .bind_image(0, 9, contact_shadows)
-        .bind_image(0, 10, shadows)
-        .bind_buffer(0, 11, lights)
-        .bind_buffer(0, 12, camera)
+        .bind_image(0, 3, sky_aerial_perspective_lut_attachment)
+        .bind_image(0, 4, sky_view_lut)
+        .bind_image(0, 5, depth)
+        .bind_image(0, 6, albedo)
+        .bind_image(0, 7, normal)
+        .bind_image(0, 8, emissive)
+        .bind_image(0, 9, metallic_roughness_occlusion)
+        .bind_image(0, 10, gtao)
+        .bind_image(0, 11, contact_shadows)
+        .bind_image(0, 12, shadows)
+        .bind_buffer(0, 13, lights)
+        .bind_buffer(0, 14, camera)
         .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, scene_flags)
         .draw(3, 1, 0, 0);
 
       return std::make_tuple(
         dst,
         sky_transmittance_lut,
+        sky_aerial_perspective_lut_attachment,
+        sky_view_lut,
         depth,
         albedo,
         normal,
@@ -192,6 +295,8 @@ auto RendererInstance::apply_pbr(
   std::tie(
     dst_attachment,
     context.sky_transmittance_lut_attachment,
+    context.sky_aerial_perspective_lut_attachment,
+    context.sky_view_lut_attachment,
     context.depth_attachment,
     context.albedo_attachment,
     context.normal_attachment,
@@ -206,6 +311,8 @@ auto RendererInstance::apply_pbr(
     brdf_pass(
       std::move(dst_attachment),
       std::move(context.sky_transmittance_lut_attachment),
+      std::move(context.sky_aerial_perspective_lut_attachment),
+      std::move(context.sky_view_lut_attachment),
       std::move(context.depth_attachment),
       std::move(context.albedo_attachment),
       std::move(context.normal_attachment),

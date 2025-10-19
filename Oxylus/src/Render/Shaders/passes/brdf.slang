@@ -13,6 +13,8 @@ struct ShaderParameters {
     Sampler linear_clamp_sampler;
     Sampler linear_repeat_sampler;
     Texture2D<f32x4> sky_transmittance_lut;
+    Texture3D<f32x4> sky_aerial_perspective_lut;
+    Texture2D<f32x4> sky_view_lut;
     Texture2D<f32> depth_image;
     Texture2D<f32x4> albedo_image;
     Texture2D<f32x4> normal_image;
@@ -24,6 +26,20 @@ struct ShaderParameters {
     ConstantBuffer<Lights> lights;
     ConstantBuffer<Camera> camera;
 };
+
+func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
+    let min_cos_theta = cos(radius * PI / 180.0);
+
+    let cosTheta = dot(world_dir, sun_dir);
+    if (cosTheta >= min_cos_theta) {
+        return 1.0;
+    }
+
+    let offset = min_cos_theta - cosTheta;
+    let gaussianBloom = exp(-offset * 50000.0) * 0.5;
+    let invBloom = 1.0/(0.02 + offset * 300.0) * 0.01;
+    return f32x3(gaussianBloom + invBloom);
+}
 
 func lights_attenuate_point(f32 to_light_dist, f32 cutoff) -> f32 {
     // infinite cutoff
@@ -54,19 +70,16 @@ f32x3 point_light_contribution(
     f32x3 L = light_vector / light_distance;
 
     f32 attenuation = lights_attenuate_point(light_distance, light.cutoff);
-
     if (attenuation <= 0.0 || light.intensity <= 0.0) {
         return f32x3(0.0, 0.0, 0.0);
     }
 
     f32 NdotL = saturate(dot(N, L));
-
     if (NdotL <= 0.0) {
         return f32x3(0.0, 0.0, 0.0);
     }
 
     f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic, ambient_light);
-
     f32x3 radiance = light.color * attenuation * light.intensity;
 
     return brdf * radiance * NdotL;
@@ -98,9 +111,7 @@ f32x3 calculate_spot_light_contribution(
     f32x3 L = light_vector / light_distance;
 
     f32 distance_attenuation = lights_attenuate_point(light_distance, light.cutoff);
-
     f32 spot_attenuation = calculate_spot_light_attenuation(L, light.direction, light.inner_cone_angle, light.outer_cone_angle);
-
     f32 total_attenuation = distance_attenuation * spot_attenuation;
 
     if (total_attenuation <= 0.0 || light.intensity <= 0.0) {
@@ -108,13 +119,11 @@ f32x3 calculate_spot_light_contribution(
     }
 
     f32 NdotL = saturate(dot(N, L));
-
     if (NdotL <= 0.0) {
         return f32x3(0.0, 0.0, 0.0);
     }
 
     f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic, ambient_light);
-
     f32x3 radiance = light.color * total_attenuation * light.intensity;
 
     return brdf * radiance * NdotL;
@@ -128,9 +137,6 @@ func fs_main(
 ) -> f32x4 {
     let pixel_pos = u32x3(u32x2(input.position.xy), 0);
     let depth = params.depth_image.Load(pixel_pos);
-    if (depth == 0.0) {
-        discard;
-    }
 
     let albedo_color = params.albedo_image.SampleLevel(params.linear_repeat_sampler, input.tex_coord, 0).rgb;
 
@@ -171,7 +177,8 @@ func fs_main(
         var eye_altitude = max(world_position.y, 0.0) * CAMERA_SCALE_UNIT;
         eye_altitude += planet_radius + PLANET_RADIUS_OFFSET;
 
-        let sun_cos_theta = dot(L, f32x3(0.0, 1.0, 0.0));
+        let up = f32x3(0.0, 1.0, 0.0);
+        let sun_cos_theta = dot(L, up);
         let horizon_darkening = smoothstep(-0.1, 0.3, sun_cos_theta);
 
         let transmittance_uv = transmittance_params_to_lut_uv(
@@ -180,6 +187,31 @@ func fs_main(
             f32x2(eye_altitude, sun_cos_theta));
         let sun_transmittance = params.sky_transmittance_lut.SampleLevel(params.linear_clamp_sampler, transmittance_uv, 0.0).rgb;
         sun_illuminance = sun_transmittance * Li * horizon_darkening;
+
+        let aerial_perspective = sample_aerial_perspective(
+            *params.lights.atmosphere,
+            params.sky_aerial_perspective_lut,
+            params.linear_clamp_sampler,
+            input.tex_coord,
+            (world_position - params.camera.position.xyz) * CAMERA_SCALE_UNIT);
+
+        if (depth == 0.0) {
+            let eye_pos = params.lights.atmosphere.eye_pos;
+            let h = eye_pos.y;
+            let right = normalize(cross(up, -V));
+            let forward = normalize(cross(right, up));
+            let light_on_plane = normalize(f32x2(dot(L, forward), dot(L, right)));
+            let view_zenith_cos_angle = dot(-V, up);
+            let planet_intersection = com::ray_sphere_intersect_nearest(eye_pos, -V, planet_radius);
+            let sky_view_uv = sky_view_params_to_lut_uv(
+                *params.lights.atmosphere, planet_intersection.hasValue, h, view_zenith_cos_angle, light_on_plane);
+            var sky_view = params.sky_view_lut.SampleLevel(params.linear_clamp_sampler, sky_view_uv, 0.0);
+            if (!planet_intersection.hasValue) {
+                sky_view.rgb += draw_sun(-V, L, 1.0) * Li * sun_transmittance;
+            }
+
+            return f32x4(sky_view.rgb, 1.0);
+        }
     }
 
     let base_ambient_color = has_directional_light ? params.lights.directional_light.color : f32x3(0.02);

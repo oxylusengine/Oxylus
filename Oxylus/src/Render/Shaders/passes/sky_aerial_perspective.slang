@@ -9,10 +9,10 @@ struct ShaderParameters {
     Sampler sampler;
     Image2D<f32x4> sky_transmittance_lut;
     Image2D<f32x4> sky_multiscattering_lut;
-    StorageImage3D<f32x4, ImageFormat::RGBA16F> sky_aerial_perspective_lut;
     ConstantBuffer<Atmosphere> atmosphere;
     ConstantBuffer<DirectionalLight> directional_light;
     ConstantBuffer<Camera> camera;
+    StorageImage3D<f32x4, ImageFormat::RGBA16F> sky_aerial_perspective_lut;
 };
 
 [[shader("compute")]]
@@ -47,7 +47,6 @@ func cs_main(
     //     world_dir = normalize(ray_pos - eye_pos);
     //     t_max = length(ray_pos - eye_pos);
     // }
-
 
     f32 t_max_max = t_max;
     view_height = length(eye_pos);

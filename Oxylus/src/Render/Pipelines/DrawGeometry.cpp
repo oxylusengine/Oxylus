@@ -118,7 +118,7 @@ auto RendererInstance::draw_for_shadowmap(
         .bind_buffer(0, 2, meshlet_instances)
         .bind_buffer(0, 3, transforms)
         .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, projection_view)
+        .push_constants(vuk::ShaderStageFlagBits::eVertex, 0, projection_view)
         .draw_indexed_indirect(1, triangle_indirect);
 
       return std::make_tuple(
@@ -131,7 +131,6 @@ auto RendererInstance::draw_for_shadowmap(
     }
   );
 
-  auto cascade_attachment = context.shadowmap_attachment.layer(cascade_index);
   std::tie(
     self.prepared_frame.reordered_indices_buffer,
     self.prepared_frame.meshes_buffer,
@@ -146,7 +145,7 @@ auto RendererInstance::draw_for_shadowmap(
       std::move(self.prepared_frame.mesh_instances_buffer),
       std::move(self.prepared_frame.meshlet_instances_buffer),
       std::move(self.prepared_frame.transforms_buffer),
-      std::move(cascade_attachment)
+      std::move(context.shadowmap_attachment)
     );
 }
 

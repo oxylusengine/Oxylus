@@ -10,9 +10,8 @@ import cull;
 [[vk::binding(2)]] StructuredBuffer<MeshletInstance> meshlet_instances;
 [[vk::binding(3)]] StructuredBuffer<Transform> transforms;
 [[vk::binding(4)]] StructuredBuffer<u32> visibility;
-[[vk::binding(5)]] RWStructuredBuffer<u32> visible_meshlet_instances_count;
-[[vk::binding(6)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
-[[vk::binding(7)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
+[[vk::binding(5)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
+[[vk::binding(6)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
 
 [[shader("compute")]]
 [[numthreads(CULLING_MESHLET_COUNT, 1, 1)]]
@@ -36,9 +35,7 @@ func cs_main(
     let bounds = mesh_lod.meshlet_bounds[meshlet_instance.meshlet_index];
 
     if (test_frustum(mvp, bounds.aabb_center, bounds.aabb_extent)) {
-        let index = __atomic_add(visible_meshlet_instances_count[0], 1, MemoryOrder::Relaxed);
+        let index = __atomic_add(cull_triangles_cmd[0].x, 1, MemoryOrder::Relaxed);
         visible_meshlet_instances_indices[index] = meshlet_instance_index;
-
-        __atomic_add(cull_triangles_cmd[0].x, 1, MemoryOrder::Relaxed);
     }
 }

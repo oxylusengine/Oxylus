@@ -265,7 +265,7 @@ struct HistogramLuminance {
   alignas(4) f32 exposure;
 };
 
-struct HistogramInfo {
+struct EyeAdaptationSettings {
   alignas(4) f32 min_exposure = -6.0f;
   alignas(4) f32 max_exposure = 18.0f;
   alignas(4) f32 adaptation_speed = 1.1f;

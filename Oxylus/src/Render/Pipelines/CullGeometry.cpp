@@ -72,15 +72,13 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
   ZoneScoped;
   memory::ScopedStack stack;
 
-  auto& vk_context = App::mod<VkContext>();
-
   if (!context.late) {
     // TODO: Slang is fucking up as usual when using this as push constants BDA
     // auto debug_drawer_buffer_ptr = context.debug_drawer_buffer.node ? context.debug_drawer_buffer->device_address :
     // 0;
     auto cull_meshes_pass = vuk::make_pass(
       "vis cull meshes",
-      [mesh_instance_count = context.mesh_instance_count](
+      [mesh_instance_count = self.prepared_frame.mesh_instance_count](
         vuk::CommandBuffer& cmd_list,
         VUK_BA(vuk::eComputeUniformRead) camera,
         VUK_BA(vuk::eComputeRead) meshes,
@@ -104,7 +102,7 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
       }
     );
 
-    context.visibility_buffer = vk_context.scratch_buffer<GPU::MeshletInstanceVisibility>({});
+    context.visibility_buffer = self.renderer.vk_context->scratch_buffer<GPU::MeshletInstanceVisibility>({});
     std::tie(
       self.prepared_frame.camera_buffer,
       self.prepared_frame.meshes_buffer,
@@ -139,7 +137,7 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
       }
     );
 
-    context.cull_meshlets_cmd_buffer = vk_context.scratch_buffer<vuk::DispatchIndirectCommand>(
+    context.cull_meshlets_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DispatchIndirectCommand>(
       {.x = 0, .y = 1, .z = 1}
     );
     std::tie(context.visibility_buffer, context.cull_meshlets_cmd_buffer) = generate_cull_commands_pass(
@@ -197,7 +195,7 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
     }
   );
 
-  auto cull_triangles_cmd_buffer = vk_context.scratch_buffer<vuk::DispatchIndirectCommand>({.x = 0, .y = 1, .z = 1});
+  auto cull_triangles_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DispatchIndirectCommand>({.x = 0, .y = 1, .z = 1});
 
   std::tie(
     context.cull_meshlets_cmd_buffer,
@@ -269,7 +267,7 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
     }
   );
 
-  context.draw_geometry_cmd_buffer = vk_context.scratch_buffer<vuk::DrawIndexedIndirectCommand>({.instanceCount = 1});
+  context.draw_geometry_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DrawIndexedIndirectCommand>({.instanceCount = 1});
   std::tie(
     self.prepared_frame.camera_buffer,
     self.prepared_frame.meshes_buffer,
@@ -300,11 +298,9 @@ auto RendererInstance::cull_for_shadowmap(
 ) -> void {
   ZoneScoped;
 
-  auto& vk_context = App::mod<VkContext>();
-
   auto cull_meshes_pass = vuk::make_pass(
     "sm cull meshes",
-    [mesh_instance_count = context.mesh_instance_count, projection_view](
+    [mesh_instance_count = self.prepared_frame.mesh_instance_count, projection_view](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eComputeRead) meshes,
       VUK_BA(vuk::eComputeRead) transforms,
@@ -326,7 +322,7 @@ auto RendererInstance::cull_for_shadowmap(
     }
   );
 
-  context.visibility_buffer = vk_context.scratch_buffer<u32>({});
+  context.visibility_buffer = self.renderer.vk_context->scratch_buffer<u32>({});
   std::tie(
     self.prepared_frame.meshes_buffer,
     self.prepared_frame.transforms_buffer,
@@ -359,7 +355,7 @@ auto RendererInstance::cull_for_shadowmap(
     }
   );
 
-  context.cull_meshlets_cmd_buffer = vk_context.scratch_buffer<vuk::DispatchIndirectCommand>({.x = 0, .y = 1, .z = 1});
+  context.cull_meshlets_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DispatchIndirectCommand>({.x = 0, .y = 1, .z = 1});
 
   std::tie(context.visibility_buffer, context.cull_meshlets_cmd_buffer) = generate_cull_commands_pass(
     std::move(context.visibility_buffer),
@@ -387,7 +383,7 @@ auto RendererInstance::cull_for_shadowmap(
         .bind_buffer(0, 3, transforms)
         .bind_buffer(0, 4, visibility)
         .bind_buffer(0, 5, visible_meshlet_instances_indices)
-        .bind_buffer(0, 7, cull_triangles_cmd)
+        .bind_buffer(0, 6, cull_triangles_cmd)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, projection_view)
         .dispatch_indirect(dispatch_cmd);
 
@@ -404,7 +400,7 @@ auto RendererInstance::cull_for_shadowmap(
     }
   );
 
-  auto cull_triangles_cmd_buffer = vk_context.scratch_buffer<vuk::DispatchIndirectCommand>({.x = 0, .y = 1, .z = 1});
+  auto cull_triangles_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DispatchIndirectCommand>({.x = 0, .y = 1, .z = 1});
 
   std::tie(
     context.cull_meshlets_cmd_buffer,
@@ -464,7 +460,7 @@ auto RendererInstance::cull_for_shadowmap(
     }
   );
 
-  context.draw_geometry_cmd_buffer = vk_context.scratch_buffer<vuk::DrawIndexedIndirectCommand>({.instanceCount = 1});
+  context.draw_geometry_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DrawIndexedIndirectCommand>({.instanceCount = 1});
   std::tie(
     self.prepared_frame.meshes_buffer,
     self.prepared_frame.mesh_instances_buffer,

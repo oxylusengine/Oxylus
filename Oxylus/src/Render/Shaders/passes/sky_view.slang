@@ -9,10 +9,9 @@ struct ShaderParameters {
     Sampler sampler;
     Image2D<f32x4> sky_transmittance_lut;
     Image2D<f32x4> sky_multiscattering_lut;
-    StorageImage2D<f32x4, ImageFormat::RGBA16F> sky_view_lut;
     ConstantBuffer<Atmosphere> atmosphere;
     ConstantBuffer<DirectionalLight> directional_light;
-    ConstantBuffer<Camera> camera;
+    StorageImage2D<f32x4, ImageFormat::RGBA16F> sky_view_lut;
 };
 
 [[shader("compute")]]

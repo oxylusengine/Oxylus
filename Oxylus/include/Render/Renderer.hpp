@@ -97,8 +97,7 @@ public:
     // TODO: this will take a list of materials
     // TODO: sort pipelines
     void update() {
-      const vuk::Name
-        pipeline_name = "2d_forward_pipeline"; // TODO: hardcoded until we have a modular material shader system
+      const vuk::Name pipeline_name = "2d_forward"; // TODO: hardcoded until we have a modular material shader system
       if (current_pipeline_name != pipeline_name) {
         batches.emplace_back(
           DrawBatch2D{.pipeline_name = pipeline_name, .offset = previous_offset, .count = num_sprites - previous_offset}
@@ -159,8 +158,6 @@ private:
 
   VkContext* vk_context = nullptr;
   bool initalized = false;
-
-  vuk::Unique<vuk::Buffer> exposure_buffer = vuk::Unique<vuk::Buffer>();
 
   Texture sky_transmittance_lut_view;
   Texture sky_multiscatter_lut_view;

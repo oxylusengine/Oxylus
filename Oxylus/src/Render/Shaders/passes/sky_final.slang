@@ -32,19 +32,6 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput{
     return output;
 }
 
-func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
-    let min_cos_theta = cos(radius * PI / 180.0);
-
-    let cosTheta = dot(world_dir, sun_dir);
-    if (cosTheta >= min_cos_theta) {
-        return 1.0;
-    }
-
-    let offset = min_cos_theta - cosTheta;
-    let gaussianBloom = exp(-offset * 50000.0) * 0.5;
-    let invBloom = 1.0/(0.02 + offset * 300.0) * 0.01;
-    return f32x3(gaussianBloom + invBloom);
-}
 
 [[shader("fragment")]]
 f32x4 fs_main(VertexOutput input) : SV_TARGET {
@@ -56,8 +43,6 @@ f32x4 fs_main(VertexOutput input) : SV_TARGET {
 
     if (depth != 0.0) {
         f32x3 camera_relative_pos = (clip_pos - camera_pos) * CAMERA_SCALE_UNIT;
-        return sample_aerial_perspective(
-            params.atmosphere, params.sky_aerial_perspective_lut, params.sampler, input.tex_coord, camera_relative_pos);
     }
 
     f32x3 eye_dir = normalize(clip_pos - params.camera.position.xyz);

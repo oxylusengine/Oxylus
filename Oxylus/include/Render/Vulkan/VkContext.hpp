@@ -155,17 +155,18 @@ public:
 
   template <typename T>
   [[nodiscard]]
-  auto scratch_buffer(const T& val = {}, usize alignment = 8, OX_THISCALL) -> vuk::Value<vuk::Buffer> {
-    return scratch_buffer(&val, sizeof(T), alignment, LOC);
-  }
-
-  template <typename T>
-  [[nodiscard]]
-  auto scratch_buffer(const std::span<T>& val = {}, usize alignment = 8, OX_THISCALL) -> vuk::Value<vuk::Buffer> {
+  auto scratch_buffer_span(const std::span<T>& val = {}, usize alignment = 8, OX_THISCALL) -> vuk::Value<vuk::Buffer> {
     if (val.empty())
       return vuk::Value<vuk::Buffer>{};
 
     return scratch_buffer(val.data(), sizeof(T) * val.size(), alignment, LOC);
+  }
+
+  template <typename T>
+    requires(!Container<T>)
+  [[nodiscard]]
+  auto scratch_buffer(const T& val = {}, usize alignment = 8, OX_THISCALL) -> vuk::Value<vuk::Buffer> {
+    return scratch_buffer(&val, sizeof(T), alignment, LOC);
   }
 
 private:
