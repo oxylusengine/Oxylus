@@ -93,6 +93,10 @@ func cs_main(
       return;
 
   let texel = params.visbuffer.load(pixel_coords);
+  if (texel == ~0u) {
+    return;
+  }
+
   let vis = VisBufferData(texel);
   let meshlet_instance = params.meshlet_instances[vis.meshlet_instance_index];
   let mesh_instance = params.mesh_instances[meshlet_instance.mesh_instance_index];

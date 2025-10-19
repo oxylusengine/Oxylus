@@ -734,6 +734,22 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     self.cull_for_visbuffer(main_geometry_context);
     self.draw_for_visbuffer(main_geometry_context);
 
+    {
+      RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, *self.renderer.vk_context);
+      ctx.set_viewport_size(self.viewport_size)
+        .set_image_resource("visbuffer_attachment", std::move(main_geometry_context.visbuffer_attachment))
+        .set_image_resource("depth_attachment", std::move(main_geometry_context.depth_attachment))
+        .set_buffer_resource("meshlet_instances_buffer", std::move(self.prepared_frame.meshlet_instances_buffer))
+        .set_buffer_resource("mesh_instances_buffer", std::move(self.prepared_frame.mesh_instances_buffer));
+
+      self.execute_stages_after(RenderStage::VisBufferEncode, ctx);
+
+      main_geometry_context.visbuffer_attachment = ctx.get_image_resource("visbuffer_attachment");
+      main_geometry_context.depth_attachment = ctx.get_image_resource("depth_attachment");
+      self.prepared_frame.meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
+      self.prepared_frame.mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
+    }
+
     self.decode_visbuffer(main_geometry_context);
 
     visbuffer_attachment = std::move(main_geometry_context.visbuffer_attachment);
@@ -744,7 +760,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     emissive_attachment = std::move(main_geometry_context.emissive_attachment);
     metallic_roughness_occlusion_attachment = std::move(main_geometry_context.metallic_roughness_occlusion_attachment);
 
-    if (directional_shadows_enabled) {
+    if (false) {
       auto directional_light_resolution = glm::vec2(directional_light_shadowmap_size, directional_light_shadowmap_size);
       for (u32 cascade_index = 0; cascade_index < self.directional_light.cascade_count; cascade_index++) {
         auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
@@ -788,22 +804,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         depth_attachment,
         self.prepared_frame.camera_buffer
       );
-    }
-
-    {
-      RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, *self.renderer.vk_context);
-      ctx.set_viewport_size(self.viewport_size)
-        .set_image_resource("depth_attachment", std::move(depth_attachment))
-        .set_image_resource("visbuffer_attachment", std::move(visbuffer_attachment))
-        .set_buffer_resource("meshlet_instances_buffer", std::move(self.prepared_frame.meshlet_instances_buffer))
-        .set_buffer_resource("mesh_instances_buffer", std::move(self.prepared_frame.mesh_instances_buffer));
-
-      self.execute_stages_after(RenderStage::VisBufferEncode, ctx);
-
-      depth_attachment = ctx.get_image_resource("depth_attachment");
-      visbuffer_attachment = ctx.get_image_resource("visbuffer_attachment");
-      self.prepared_frame.meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
-      self.prepared_frame.mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
     }
   }
 
