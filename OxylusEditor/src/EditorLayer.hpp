@@ -55,11 +55,11 @@ public:
 
   EditorLayer();
   ~EditorLayer() override = default;
-  void on_attach() override;
-  void on_detach() override;
+  auto on_attach() -> void override;
+  auto on_detach() -> void override;
 
-  void on_update(const Timestep& delta_time) override;
-  void on_render(vuk::Extent3D extent, vuk::Format format) override;
+  auto on_update(const Timestep& delta_time) -> void override;
+  auto on_render(vuk::Extent3D extent, vuk::Format format) -> void override;
 
   void new_scene();
   void open_scene_file_dialog();

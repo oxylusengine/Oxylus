@@ -30,7 +30,7 @@ EditorLayer* EditorLayer::instance = nullptr;
 
 EditorLayer::EditorLayer() : Layer("Editor Layer") { instance = this; }
 
-void EditorLayer::on_attach() {
+auto EditorLayer::on_attach() -> void {
   ZoneScoped;
 
   auto& job_man = App::mod<JobManager>();
@@ -88,14 +88,14 @@ void EditorLayer::on_attach() {
   }
 }
 
-void EditorLayer::on_detach() {
+auto EditorLayer::on_detach() -> void {
   editor_config.save_config();
 
   auto& job_man = App::mod<JobManager>();
   job_man.get_tracker().stop_tracking();
 }
 
-void EditorLayer::on_update(const Timestep& delta_time) {
+auto EditorLayer::on_update(const Timestep& delta_time) -> void {
   for (const auto& panel : editor_panels | std::views::values) {
     if (!panel->visible)
       continue;
@@ -125,7 +125,7 @@ void EditorLayer::on_update(const Timestep& delta_time) {
   }
 }
 
-void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format) {
+auto EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format) -> void {
   if (const auto scene = get_active_scene())
     scene->on_render(extent, format);
 

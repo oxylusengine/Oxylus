@@ -10,12 +10,12 @@ public:
   Layer(const std::string& name = "Layer");
   virtual ~Layer() = default;
 
-  virtual void on_attach() {}
-  virtual void on_detach() {}
-  virtual void on_update(const Timestep& delta_time) {}
-  virtual void on_render(vuk::Extent3D extent, vuk::Format format) {}
+  virtual auto on_attach() -> void {}
+  virtual auto on_detach() -> void {}
+  virtual auto on_update(const Timestep& delta_time) -> void {}
+  virtual auto on_render(vuk::Extent3D extent, vuk::Format format) -> void {}
 
-  const std::string& get_name() const { return debug_name; }
+  auto get_name() const -> const std::string& { return debug_name; }
 
 protected:
   std::string debug_name;
