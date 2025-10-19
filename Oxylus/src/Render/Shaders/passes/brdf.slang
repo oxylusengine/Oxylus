@@ -210,7 +210,9 @@ func fs_main(
                 sky_view.rgb += draw_sun(-V, L, 1.0) * Li * sun_transmittance;
             }
 
-            return f32x4(sky_view.rgb, 1.0);
+            return f32x4(sky_view.rgb * sky_view.a, 1.0);
+        } else {
+            // return f32x4(aerial_perspective.rgb * aerial_perspective.a, 1.0);
         }
     }
 

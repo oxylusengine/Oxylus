@@ -76,5 +76,5 @@ func cs_main(
             info, params.atmosphere, params.sampler, params.sky_transmittance_lut, params.sky_multiscattering_lut);
     let inv_luminance = 1.0 / max(result.luminance, float3(1.0 / 1048576.0));
     let inv_mult = min(1048576.0, max(inv_luminance.x, max(inv_luminance.y, inv_luminance.z)));
-    params.sky_aerial_perspective_lut.store(thread_id, f32x4(result.luminance, inv_mult));
+    params.sky_aerial_perspective_lut.store(thread_id, f32x4(result.luminance * inv_mult, 1.0 / inv_mult));
 }
