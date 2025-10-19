@@ -180,29 +180,23 @@ void App::run(this App& self) {
     auto& input_system = app->mod<Input>();
     input_system.input_data.scroll_offset_y = offset.y;
   };
-  window_callbacks.on_key = [](
-                              void* user_data,
-                              const u32 key_code,
-                              const u32 scan_code,
-                              const u16 mods,
-                              const bool down,
-                              const bool repeat
-                            ) {
-    const auto* app = static_cast<App*>(user_data);
-    app->imgui_layer->on_key(key_code, scan_code, mods, down);
+  window_callbacks.on_key =
+    [](void* user_data, const u32 key_code, const u32 scan_code, const u16 mods, const bool down, const bool repeat) {
+      const auto* app = static_cast<App*>(user_data);
+      app->imgui_layer->on_key(key_code, scan_code, mods, down);
 
-    auto& input_system = app->mod<Input>();
-    const auto ox_key_code = Input::to_keycode(key_code, scan_code);
-    if (down) {
-      input_system.set_key_pressed(ox_key_code, !repeat);
-      input_system.set_key_released(ox_key_code, false);
-      input_system.set_key_held(ox_key_code, true);
-    } else {
-      input_system.set_key_pressed(ox_key_code, false);
-      input_system.set_key_released(ox_key_code, true);
-      input_system.set_key_held(ox_key_code, false);
-    }
-  };
+      auto& input_system = app->mod<Input>();
+      const auto ox_key_code = Input::to_keycode(key_code, scan_code);
+      if (down) {
+        input_system.set_key_pressed(ox_key_code, !repeat);
+        input_system.set_key_released(ox_key_code, false);
+        input_system.set_key_held(ox_key_code, true);
+      } else {
+        input_system.set_key_pressed(ox_key_code, false);
+        input_system.set_key_released(ox_key_code, true);
+        input_system.set_key_held(ox_key_code, false);
+      }
+    };
   window_callbacks.on_text_input = [](void* user_data, const c8* text) {
     const auto* app = static_cast<App*>(user_data);
     app->imgui_layer->on_text_input(text);
@@ -253,7 +247,9 @@ void App::run(this App& self) {
       App::mod<Input>().reset_pressed();
     }
 
-    self.mod<AssetManager>().load_deferred_assets();
+    // AssetManager can be optional.
+    if (self.registry.has<AssetManager>())
+      self.mod<AssetManager>().load_deferred_assets();
 
     FrameMark;
   }
