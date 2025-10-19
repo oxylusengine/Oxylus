@@ -152,6 +152,7 @@ public struct MediumScattering {
 public struct AtmosphereLuminance {
     public f32x3 luminance = 0.0;
     public f32x3 multiscattering_as_1 = 0.0;
+    public f32x3 transmittance = 1.0;
 };
 
 public struct AtmosphereIntegrateInfo {
@@ -160,6 +161,7 @@ public struct AtmosphereIntegrateInfo {
     public f32x3 sun_dir = {};
     public f32 sun_intensity = 10.0;
     public f32 step_count = 32.0;
+    public f32 t_max = -1.0;
     public constexpr bool eval_planet_luminance = false;
     public constexpr bool eval_multiscattering = false;
 };
@@ -177,24 +179,27 @@ public func integrate_single_scattered_luminance(
         return result;
     }
 
-    const let atmos_intersection = com::ray_sphere_intersect_nearest(info.eye_pos, info.eye_dir, atmosphere.atmos_radius);
-    const let planet_intersection = com::ray_sphere_intersect_nearest(info.eye_pos, info.eye_dir, atmosphere.planet_radius);
-    f32 integration_length = 0.0;
-    if (!atmos_intersection.hasValue) {
-        // No intersection
-        return result;
-    } else if (!planet_intersection.hasValue) {
-        // Atmosphere only intersection
-        integration_length = atmos_intersection.value;
+    let planet_intersection = com::ray_sphere_intersect_nearest(info.eye_pos, info.eye_dir, atmosphere.planet_radius);
+    var integration_length = 0.0;
+    if (info.t_max == -1.0) {
+        let atmos_intersection = com::ray_sphere_intersect_nearest(info.eye_pos, info.eye_dir, atmosphere.atmos_radius);
+        if (!atmos_intersection.hasValue) {
+            // No intersection
+            return result;
+        } else if (!planet_intersection.hasValue) {
+            // Atmosphere only intersection
+            integration_length = atmos_intersection.value;
+        } else {
+            integration_length = max(0.0, planet_intersection.value);
+        }
     } else {
-        integration_length = max(0.0, planet_intersection.value);
+        integration_length = info.t_max;
     }
 
     f32 cos_theta = dot(info.sun_dir, info.eye_dir);
     f32 rayleigh_phase = com::rayleigh_phase(cos_theta);
     f32 mie_phase = com::henyey_greenstein_draine_phase(atmosphere.mie_asymmetry, cos_theta);
 
-    var transmittance_sum = f32x3(1.0);
     var step_length = integration_length / info.step_count;
     var old_ray_shift = 0.0;
     for (f32 step = 0.0; step < info.step_count; step += 1.0) {
@@ -228,9 +233,9 @@ public func integrate_single_scattered_luminance(
         f32x3 integral = (sun_luminance - sun_luminance * step_transmittance) / medium_info.extinction_sum;
         f32x3 ms_integral = (medium_info.scattering_sum - medium_info.scattering_sum * step_transmittance) / medium_info.extinction_sum;
 
-        result.luminance += info.sun_intensity * (integral * transmittance_sum);
-        result.multiscattering_as_1 += ms_integral * transmittance_sum;
-        transmittance_sum *= step_transmittance;
+        result.luminance += info.sun_intensity * (integral * result.transmittance);
+        result.multiscattering_as_1 += ms_integral * result.transmittance;
+        result.transmittance *= step_transmittance;
     }
 
     // Accumulate light bouncing off planet's ground
@@ -244,7 +249,7 @@ public func integrate_single_scattered_luminance(
         f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
         f32x3 sun_transmittance = transmittance_image.sample_mip(lut_sampler, transmittance_uv, 0.0).rgb;
 
-        result.luminance += info.sun_intensity * (sun_transmittance * transmittance_sum * NoL * atmosphere.terrain_albedo / PI);
+        result.luminance += info.sun_intensity * (sun_transmittance * result.transmittance * NoL * atmosphere.terrain_albedo / PI);
     }
 
     return result;
@@ -273,7 +278,7 @@ public func sample_aerial_perspective(
         weight = saturate(non_linear_slice * non_linear_slice * 2.0);
     }
 
-    let near_depth_fade_out = 1.0 / 0.00001;
+    let near_depth_fade_out = 1.0 / 0.001;
     weight *= saturate(relative_depth * near_depth_fade_out);
 
 #if 0
@@ -282,6 +287,7 @@ public func sample_aerial_perspective(
     var aerial_perspective = aerial_perspective_lut.sample_mip(sampler, f32x3(uv, non_linear_w), 0.0);
     aerial_perspective.xyz *= weight;
     aerial_perspective.w = 1.0 - (weight * (1.0 - aerial_perspective.w));
+    aerial_perspective.xyz *= atmosphere.aerial_perspective_exposure;
 
     return aerial_perspective;
 }

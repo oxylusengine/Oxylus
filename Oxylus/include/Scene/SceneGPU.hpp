@@ -152,6 +152,7 @@ struct Atmosphere {
   alignas(4) f32 planet_radius = 6360.0f;
   alignas(4) f32 atmos_radius = 6460.0f;
   alignas(4) f32 aerial_perspective_start_km = 8.0f;
+  alignas(4) f32 aerial_perspective_exposure = 1.0f;
 
   alignas(4) vuk::Extent3D transmittance_lut_size = {};
   alignas(4) vuk::Extent3D sky_view_lut_size = {};

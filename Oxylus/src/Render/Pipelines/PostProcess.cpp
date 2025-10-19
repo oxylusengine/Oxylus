@@ -60,7 +60,7 @@ auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostPro
             pixel_count,
             settings.min_exposure,
             settings.max_exposure - settings.min_exposure,
-            delta_time,
+            1.0f - glm::exp(-settings.adaptation_speed * delta_time),
             settings.ev100_bias
           )
         )

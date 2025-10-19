@@ -158,6 +158,7 @@ public struct Atmosphere {
     public f32   planet_radius;
     public f32   atmos_radius;
     public f32   aerial_perspective_start_km;
+    public f32   aerial_perspective_exposure;
 
     public i32x3 transmittance_lut_size;
     public i32x3 sky_view_lut_size;
@@ -386,4 +387,3 @@ public SamplerState global_samplers[];
 public Image2D<f32x4> global_images[];
 [[vk::binding(2, 1)]]
 public StorageImage2D<f32x4> global_storage_images[];
-

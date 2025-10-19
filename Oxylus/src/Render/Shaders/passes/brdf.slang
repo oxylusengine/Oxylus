@@ -188,13 +188,6 @@ func fs_main(
         let sun_transmittance = params.sky_transmittance_lut.SampleLevel(params.linear_clamp_sampler, transmittance_uv, 0.0).rgb;
         sun_illuminance = sun_transmittance * Li * horizon_darkening;
 
-        let aerial_perspective = sample_aerial_perspective(
-            *params.lights.atmosphere,
-            params.sky_aerial_perspective_lut,
-            params.linear_clamp_sampler,
-            input.tex_coord,
-            (world_position - params.camera.position.xyz) * CAMERA_SCALE_UNIT);
-
         if (depth == 0.0) {
             let eye_pos = params.lights.atmosphere.eye_pos;
             let h = eye_pos.y;
@@ -211,9 +204,16 @@ func fs_main(
             }
 
             return f32x4(sky_view.rgb * sky_view.a, 1.0);
-        } else {
-            // return f32x4(aerial_perspective.rgb * aerial_perspective.a, 1.0);
         }
+
+        let aerial_perspective = sample_aerial_perspective(
+            *params.lights.atmosphere,
+            params.sky_aerial_perspective_lut,
+            params.linear_clamp_sampler,
+            input.tex_coord,
+            (world_position - params.camera.position.xyz) * CAMERA_SCALE_UNIT);
+
+        indirect_illuminance = aerial_perspective.rgb * aerial_perspective.a;
     }
 
     let base_ambient_color = has_directional_light ? params.lights.directional_light.color : f32x3(0.02);

@@ -281,6 +281,7 @@ ECS_COMPONENT_BEGIN(AtmosphereComponent)
   ECS_COMPONENT_MEMBER(ozone_height, f32, 25.0f)
   ECS_COMPONENT_MEMBER(ozone_thickness, f32, 15.0f)
   ECS_COMPONENT_MEMBER(aerial_perspective_start_km, f32, 8.0f)
+  ECS_COMPONENT_MEMBER(aerial_perspective_exposure, f32, 1.0f)
 ECS_COMPONENT_END();
 
 ECS_COMPONENT_BEGIN(AutoExposureComponent)

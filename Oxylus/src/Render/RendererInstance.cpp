@@ -960,7 +960,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
   /// POST PROCESSING
   auto post_process_context = PostProcessContext{
-    .delta_time = static_cast<f32>(App::get_timestep().get_millis()),
+    .delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f,
     .final_attachment = std::move(final_attachment),
     .bloom_upsampled_attachment = std::move(bloom_upsampled_attachment),
   };
@@ -1133,6 +1133,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.atmosphere.ozone_height = atmos_info->ozone_height;
         self.atmosphere.ozone_thickness = atmos_info->ozone_thickness;
         self.atmosphere.aerial_perspective_start_km = atmos_info->aerial_perspective_start_km;
+        self.atmosphere.aerial_perspective_exposure = atmos_info->aerial_perspective_exposure;
         self.atmosphere.sky_view_lut_size = self.sky_view_lut_extent;
         self.atmosphere.aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
         self.atmosphere.transmittance_lut_size = self.renderer.sky_transmittance_lut_view.get_extent();
