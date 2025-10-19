@@ -39,11 +39,8 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
 
     ImGui::SameLine();
 
-    if (ImGui::Button("Unload")) {
-      if (asset.ref_count < 1)
-        asset_man.unload_asset(asset.uuid);
-      else
-        OX_LOG_ERROR("Can't unload asset with {} references!", asset.ref_count);
+    if (ImGui::Button("Force Unload")) {
+      asset_man.unload_asset(asset.uuid);
     }
 
     if (!asset.is_loaded())
@@ -64,13 +61,15 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
   return is_selected;
 }
 
-auto AssetManagerViewer::draw_asset_table(const char* tree_name,
-                                          const char* table_name,
-                                          const std::vector<Asset>& assets,
-                                          ImGuiTreeNodeFlags tree_flags,
-                                          i32 table_columns_count,
-                                          ImGuiTableFlags table_flags,
-                                          Asset* selected) -> void {
+auto AssetManagerViewer::draw_asset_table(
+  const char* tree_name,
+  const char* table_name,
+  const std::vector<Asset>& assets,
+  ImGuiTreeNodeFlags tree_flags,
+  i32 table_columns_count,
+  ImGuiTableFlags table_flags,
+  Asset* selected
+) -> void {
   ZoneScoped;
 
   if (ImGui::TreeNodeEx(tree_name, tree_flags, "%s", tree_name)) {
@@ -148,8 +147,10 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
     }
   }
 
-  ImGui::SetNextWindowSize(ImVec2(ImGui::GetMainViewport()->Size.x / 2, ImGui::GetMainViewport()->Size.y / 2),
-                           ImGuiCond_Appearing);
+  ImGui::SetNextWindowSize(
+    ImVec2(ImGui::GetMainViewport()->Size.x / 2, ImGui::GetMainViewport()->Size.y / 2),
+    ImGuiCond_Appearing
+  );
   UI::center_next_window(ImGuiCond_Appearing);
   if (ImGui::Begin(id, visible, ImGuiWindowFlags_NoCollapse)) {
     constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap |
@@ -220,61 +221,112 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
       draw_asset_table(
-          "Texture Assets", "textures_table", texture_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS, selected);
+        "Texture Assets",
+        "textures_table",
+        texture_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
     }
 
     if (asset_type_filter_flags[AssetType::Model]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
       draw_asset_table(
-          "Model Assets", "meshes_table", mesh_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS, selected);
+        "Model Assets",
+        "meshes_table",
+        mesh_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
     }
 
     if (asset_type_filter_flags[AssetType::Material]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
-      draw_asset_table("Material Assets",
-                       "materials_table",
-                       material_assets,
-                       TREE_FLAGS,
-                       TABLE_COLUMNS_COUNT,
-                       TABLE_FLAGS,
-                       selected);
+      draw_asset_table(
+        "Material Assets",
+        "materials_table",
+        material_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
     }
 
     if (asset_type_filter_flags[AssetType::Scene]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
       draw_asset_table(
-          "Scene Assets", "scenes_table", scene_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS, selected);
+        "Scene Assets",
+        "scenes_table",
+        scene_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
     }
 
     if (asset_type_filter_flags[AssetType::Audio]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
       draw_asset_table(
-          "Audio Assets", "audio_table", audio_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS, selected);
+        "Audio Assets",
+        "audio_table",
+        audio_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
     }
 
     if (asset_type_filter_flags[AssetType::Script]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
       draw_asset_table(
-          "Script Assets", "script_table", script_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS, selected);
+        "Script Assets",
+        "script_table",
+        script_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
     }
 
     if (asset_type_filter_flags[AssetType::Shader]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
       draw_asset_table(
-          "Shader Assets", "shader_table", shader_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS, selected);
+        "Shader Assets",
+        "shader_table",
+        shader_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
     }
 
     if (asset_type_filter_flags[AssetType::Font]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
       draw_asset_table(
-          "Font Assets", "font_table", font_assets, TREE_FLAGS, TABLE_COLUMNS_COUNT, TABLE_FLAGS, selected);
+        "Font Assets",
+        "font_table",
+        font_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
     }
   }
   ImGui::End();

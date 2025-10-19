@@ -48,8 +48,8 @@ public:
   constexpr static int MAX_FLOAT_CVARS = 1000;
   constexpr static int MAX_STRING_CVARS = 200;
 
-  std::vector<CVarStorage<int32_t>> int_cvars = {};
-  std::vector<CVarStorage<float>> float_cvars = {};
+  std::vector<CVarStorage<i32>> int_cvars = {};
+  std::vector<CVarStorage<f32>> float_cvars = {};
   std::vector<CVarStorage<std::string>> string_cvars = {};
 
   CVarSystem() = default;
@@ -57,18 +57,17 @@ public:
   static CVarSystem* get();
   CVarParameter* get_cvar(usize hash);
 
-  CVarParameter* create_float_cvar(const char* name, const char* description, float default_value, float current_value);
-  CVarParameter*
-  create_int_cvar(const char* name, const char* description, int32_t default_value, int32_t current_value);
+  CVarParameter* create_float_cvar(const char* name, const char* description, f32 default_value, f32 current_value);
+  CVarParameter* create_int_cvar(const char* name, const char* description, i32 default_value, i32 current_value);
   CVarParameter*
   create_string_cvar(const char* name, const char* description, const char* default_value, const char* current_value);
 
-  float* get_float_cvar(usize hash);
-  int32_t* get_int_cvar(usize hash);
+  f32* get_float_cvar(usize hash);
+  i32* get_int_cvar(usize hash);
   std::string* get_string_cvar(usize hash);
 
-  void set_float_cvar(usize hash, float value);
-  void set_int_cvar(usize hash, int32_t value);
+  void set_float_cvar(usize hash, f32 value);
+  void set_int_cvar(usize hash, i32 value);
   void set_string_cvar(usize hash, const char* value);
 
 private:
@@ -82,25 +81,34 @@ private:
 template <typename T>
 struct AutoCVar {
 protected:
-  uint32_t index;
+  u32 index;
   using CVarType = T;
 };
 
-struct AutoCVar_Float : AutoCVar<float> {
-  AutoCVar_Float(const char* name, const char* description, float default_value, CVarFlags flags = CVarFlags::None);
+struct AutoCVar_Float : AutoCVar<f32> {
+  AutoCVar_Float(const char* name, const char* description, f32 default_value, CVarFlags flags = CVarFlags::None);
 
-  float get() const;
-  float* get_ptr() const;
-  void set(float val) const;
+  auto get() const -> f32;
+  auto get_default() const -> f32;
+  auto get_ptr() const -> f32*;
+
+  auto set(f32 val) const -> void;
+  auto set_default() const -> void;
 };
 
-struct AutoCVar_Int : AutoCVar<int32_t> {
-  AutoCVar_Int(const char* name, const char* description, int32_t default_value, CVarFlags flags = CVarFlags::None);
-  int32_t get() const;
-  int32_t* get_ptr() const;
-  void set(int32_t val) const;
+struct AutoCVar_Int : AutoCVar<i32> {
+  AutoCVar_Int(const char* name, const char* description, i32 default_value, CVarFlags flags = CVarFlags::None);
 
-  void toggle() const;
+  auto get() const -> i32;
+  auto get_default() const -> i32;
+  auto get_ptr() const -> i32*;
+
+  auto as_bool() const -> bool;
+
+  auto set(i32 val) const -> void;
+  auto set_default() const -> void;
+
+  auto toggle() const -> void;
 };
 
 struct AutoCVar_String : AutoCVar<std::string> {
@@ -108,7 +116,7 @@ struct AutoCVar_String : AutoCVar<std::string> {
     const char* name, const char* description, const char* default_value, CVarFlags flags = CVarFlags::None
   );
 
-  std::string get() const;
-  void set(std::string&& val) const;
+  auto get() const -> std::string;
+  auto set(std::string&& val) const -> void;
 };
 } // namespace ox

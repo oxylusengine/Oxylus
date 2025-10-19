@@ -99,6 +99,11 @@ auto App::get_vfs() -> VFS& {
 void App::run(this App& self) {
   ZoneScoped;
 
+  if (self.command_line_args.contains("--verbose") || self.command_line_args.contains("-v")) {
+    Log::set_verbose();
+    OX_LOG_TRACE("Enabled verbose logging.");
+  }
+
   if (self.working_directory.empty())
     self.working_directory = std::filesystem::current_path().string();
   else

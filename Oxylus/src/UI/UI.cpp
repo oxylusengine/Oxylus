@@ -162,9 +162,16 @@ bool UI::property(const char* label, int* value, const char** dropdown_strings, 
   return modified;
 }
 
-bool UI::texture_property(const char* label, UUID& texture_uuid, const char* tooltip) {
+bool UI::texture_property(
+  const char* label,
+  UUID& texture_uuid,
+  const std::function<UUID(const char*, const UUID&, bool&)>& load_callback,
+  const char* tooltip
+) {
   begin_property_grid(label, tooltip);
   bool changed = false;
+
+  ImGui::PushID(label);
 
   const float frame_height = ImGui::GetFrameHeight();
   const float button_size = frame_height * 3.0f;
@@ -180,52 +187,19 @@ bool UI::texture_property(const char* label, UUID& texture_uuid, const char* too
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
   ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.25f, 0.25f, 0.25f, 1.0f});
 
-  static auto texture_load_func = [](UUID* asset, const std::string& path) {
-    if (!path.empty()) {
-      auto& asset_man = App::mod<AssetManager>();
-      if (auto new_texture = asset_man.import_asset(path)) {
-        if (asset_man.load_texture(new_texture))
-          *asset = new_texture;
-      }
-    }
-  };
-
-  auto dialog_load_func = [](UUID* asset) {
-    const auto& window = App::get()->get_window();
-    FileDialogFilter dialog_filters[] = {{.name = "Texture file", .pattern = "png"}};
-    window.show_dialog({
-      .kind = DialogKind::OpenFile,
-      .user_data = &asset,
-      .callback =
-        [](void* user_data, const c8* const* files, i32) {
-          auto* usr_d = static_cast<UUID*>(user_data);
-          if (!files || !*files) {
-            return;
-          }
-
-          const auto first_path_cstr = *files;
-          const auto first_path_len = std::strlen(first_path_cstr);
-          const auto path = std::string(first_path_cstr, first_path_len);
-
-          texture_load_func(usr_d, path);
-        },
-      .title = "Texture file",
-      .default_path = std::filesystem::current_path(),
-      .filters = dialog_filters,
-      .multi_select = false,
-    });
-  };
-
   auto& asset_man = App::mod<AssetManager>();
 
   auto* texture_asset = texture_uuid ? asset_man.get_asset(texture_uuid) : nullptr;
+
+  ImGuiID picker_state_id = ImGui::GetID("picker_open");
+  auto* state_storage = ImGui::GetStateStorage();
 
   // rect button with the texture
   if (texture_asset) {
     auto texture = asset_man.get_texture(texture_uuid);
     if (texture) {
       if (ImGui::ImageButton(label, App::get()->get_imgui_layer()->add_image(*texture), {button_size, button_size})) {
-        dialog_load_func(&texture_uuid);
+        state_storage->SetBool(picker_state_id, true);
         changed = true;
       }
       // tooltip
@@ -245,7 +219,7 @@ bool UI::texture_property(const char* label, UUID& texture_uuid, const char* too
     }
   } else {
     if (ImGui::Button("NO\nTEXTURE", {button_size, button_size})) {
-      dialog_load_func(&texture_uuid);
+      state_storage->SetBool(picker_state_id, true);
       changed = true;
     }
   }
@@ -253,7 +227,10 @@ bool UI::texture_property(const char* label, UUID& texture_uuid, const char* too
     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
       const auto* p = PayloadData::from_payload(payload);
       const auto path = p->get_str();
-      texture_load_func(&texture_uuid, path);
+      if (auto new_texture = asset_man.import_asset(path)) {
+        if (asset_man.load_texture(new_texture))
+          texture_uuid = new_texture;
+      }
       changed = true;
     }
     ImGui::EndDragDropTarget();
@@ -270,6 +247,19 @@ bool UI::texture_property(const char* label, UUID& texture_uuid, const char* too
   }
   ImGui::PopStyleColor(3);
   ImGui::PopStyleVar();
+
+  bool should_call_callback = state_storage->GetBool(picker_state_id, false);
+
+  if (should_call_callback && load_callback) {
+    auto new_uuid = load_callback(label, texture_uuid, should_call_callback);
+    if (new_uuid) {
+      texture_uuid = new_uuid;
+    }
+
+    state_storage->SetBool(picker_state_id, should_call_callback);
+  }
+
+  ImGui::PopID();
 
   end_property_grid();
   return changed;

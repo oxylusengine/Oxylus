@@ -152,6 +152,12 @@ void Window::poll(const WindowCallbacks& callbacks) const {
           callbacks.on_resize(callbacks.user_data, {e.window.data1, e.window.data2});
         }
       } break;
+      case SDL_EVENT_WINDOW_RESTORED: {
+        if (callbacks.on_resize) {
+          callbacks.on_resize(callbacks.user_data, {e.window.data1, e.window.data2});
+        }
+        break;
+      }
       case SDL_EVENT_MOUSE_MOTION: {
         if (callbacks.on_mouse_pos) {
           callbacks.on_mouse_pos(callbacks.user_data, {e.motion.x, e.motion.y}, {e.motion.xrel, e.motion.yrel});

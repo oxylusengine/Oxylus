@@ -37,7 +37,7 @@ inline AutoCVar_Float cvar_vbgtao_final_power("pp.vbgtao_final_power", "vbgtao f
 inline AutoCVar_Int cvar_bloom_enable("pp.bloom", "use bloom", 1);
 inline AutoCVar_Int cvar_bloom_quality_level("pp.bloom_quality_level", "0: Low, 1: Medium, 2: High, 3: Ultra", 3);
 inline AutoCVar_Float cvar_bloom_threshold("pp.bloom_threshold", "bloom threshold", 2.5f);
-inline AutoCVar_Float cvar_bloom_clamp("pp.bloom_clamp", "bloom clmap", 3);
+inline AutoCVar_Float cvar_bloom_clamp("pp.bloom_clamp", "bloom clamp", 3);
 
 inline AutoCVar_Int cvar_fxaa_enable("pp.fxaa", "use fxaa", 1);
 

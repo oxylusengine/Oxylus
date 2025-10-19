@@ -405,19 +405,15 @@ auto VkContext::destroy_context(this VkContext& self) -> void {
 auto VkContext::handle_resize(u32 width, u32 height) -> void {
   wait();
 
-  if (width == 0 && height == 0) {
-    suspend = true;
-  } else {
-    swapchain = make_swapchain(
-      *runtime,
-      *superframe_allocator,
-      vkb_device,
-      surface,
-      std::move(swapchain),
-      present_mode,
-      num_inflight_frames
-    );
-  }
+  swapchain = make_swapchain(
+    *runtime,
+    *superframe_allocator,
+    vkb_device,
+    surface,
+    std::move(swapchain),
+    present_mode,
+    num_inflight_frames
+  );
 }
 
 auto VkContext::set_vsync(bool enable) -> void {
@@ -482,8 +478,12 @@ auto VkContext::end_frame(this VkContext& self, vuk::Value<vuk::ImageAttachment>
   vuk::ProfilingCallbacks cbs = self.tracy_profiler->setup_vuk_callback();
   try {
     entire_thing.submit(*self.frame_allocator, self.compiler, {.graph_label = {}, .callbacks = cbs});
-  } catch (vuk::Exception& exception) {
-    OX_LOG_FATAL("Queue submit exception thrown: {}", exception.error_message);
+  } catch (vuk::VkException& exception) {
+    // Actions such as minimizing the window will report a VK_ERROR_OUT_OF_DATE_KHR error,
+    // so we don't wanna fatal error out on those.
+    if (exception.code() != VK_ERROR_OUT_OF_DATE_KHR) {
+      OX_LOG_FATAL("{}", exception.what());
+    }
   }
 
   self.current_frame = (self.current_frame + 1) % self.num_inflight_frames;

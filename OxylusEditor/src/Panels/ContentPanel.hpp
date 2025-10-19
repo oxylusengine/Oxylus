@@ -4,7 +4,6 @@
 #include <ankerl/unordered_dense.h>
 #include <filesystem>
 #include <imgui.h>
-#include <mutex>
 #include <stack>
 #include <vector>
 #include <vuk/Types.hpp>
@@ -63,12 +62,15 @@ private:
   std::filesystem::path _current_directory;
   std::stack<std::filesystem::path> _back_stack;
   std::vector<File> _directory_entries;
-  std::mutex _directory_mutex;
+  std::shared_mutex _directory_mutex;
   u32 _currently_visible_items_tree_view = 0;
   f32 thumbnail_max_limit = 256.0f;
   f32 thumbnail_size_grid_limit = 96.0f; // lower values than this will switch to grid view
   ImGuiTextFilter m_filter;
   f32 _elapsed_time = 0.0f;
+
+  std::string new_asset_name_ = {};
+  bool should_open_new_asset_popup = false;
 
   std::shared_mutex thumbnail_mutex = {};
   bool mesh_thumbnails_enabled = false;

@@ -52,7 +52,7 @@ private:
   std::vector<vuk::Unique<vuk::Buffer>> id_buffers = {};
 
   // Camera
-  float _translation_dampening = 0.6f;
+  float _translation_dampening = 0.3f;
   float _rotation_dampening = 0.3f;
   glm::vec2 _locked_mouse_position = glm::vec2(0.0f);
   glm::vec3 _translation_velocity = glm::vec3(0);
