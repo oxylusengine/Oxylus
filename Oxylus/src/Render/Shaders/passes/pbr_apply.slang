@@ -259,6 +259,11 @@ func fs_main(
     var horizon = saturate(1.0 + horizon_fade * dot(R, smooth_normal));
     horizon *= horizon;
 
+    var contact_shadow = 1.0f;
+    if ((scene_flags & SceneFlags::HasContactShadows) != 0) {
+        contact_shadow = 1.0f - params.contact_shadows.Load(pixel_pos).r;
+    }
+
     var material_surface_color = f32x3(0.0);
     let NoL = max(dot(N, L), 0.0);
     if (NoL > 0.0) {
@@ -274,12 +279,6 @@ func fs_main(
                 world_position,
                 N,
                 L);
-        }
-
-        var contact_shadow = 1.0f;
-        let contact_shadows_enabled = (scene_flags & SceneFlags::HasContactShadows) != 0;
-        if (contact_shadows_enabled) {
-            contact_shadow = 1.0f - params.contact_shadows.Load(pixel_pos).r;
         }
 
         let brdf = BRDF(V, N, L, albedo_color, roughness, metallic, base_ambient_color);

@@ -724,38 +724,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
         self.cull_for_shadowmap(shadow_geometry_context, current_cascade.projection_view);
         self.draw_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index);
       }
-
-      auto contact_shadows_pass = vuk::make_pass(
-        "contact_shadows",
-        [sun_dir = self.directional_light.direction](
-          vuk::CommandBuffer& cmd_list,
-          VUK_IA(vuk::eComputeRW) result,
-          VUK_IA(vuk::eComputeSampled) src_depth,
-          VUK_BA(vuk::eComputeRead) camera
-        ) {
-          const u32 steps = static_cast<u32>(RendererCVar::cvar_contact_shadows_steps.get());
-          const f32 thickness = RendererCVar::cvar_contact_shadows_thickness.get();
-          const f32 length = RendererCVar::cvar_contact_shadows_length.get();
-
-          cmd_list //
-            .bind_compute_pipeline("contact_shadows")
-            .bind_image(0, 0, src_depth)
-            .bind_image(0, 1, result)
-            .bind_buffer(0, 2, camera)
-            .bind_sampler(0, 3, vuk::NearestSamplerClamped)
-            .bind_sampler(0, 4, vuk::LinearSamplerClamped)
-            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sun_dir, steps, thickness, length))
-            .dispatch_invocations_per_pixel(result);
-
-          return std::make_tuple(result, src_depth, camera);
-        }
-      );
-
-      std::tie(contact_shadows_attachment, depth_attachment, self.prepared_frame.camera_buffer) = contact_shadows_pass(
-        contact_shadows_attachment,
-        depth_attachment,
-        self.prepared_frame.camera_buffer
-      );
     }
 
     auto main_geometry_context = MainGeometryContext{
@@ -805,6 +773,38 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     normal_attachment = std::move(main_geometry_context.normal_attachment);
     emissive_attachment = std::move(main_geometry_context.emissive_attachment);
     metallic_roughness_occlusion_attachment = std::move(main_geometry_context.metallic_roughness_occlusion_attachment);
+
+    auto contact_shadows_pass = vuk::make_pass(
+      "contact_shadows",
+      [sun_dir = self.directional_light.direction](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eComputeRW) result,
+        VUK_IA(vuk::eComputeSampled) src_depth,
+        VUK_BA(vuk::eComputeRead) camera
+      ) {
+        const u32 steps = static_cast<u32>(RendererCVar::cvar_contact_shadows_steps.get());
+        const f32 thickness = RendererCVar::cvar_contact_shadows_thickness.get();
+        const f32 length = RendererCVar::cvar_contact_shadows_length.get();
+
+        cmd_list //
+          .bind_compute_pipeline("contact_shadows")
+          .bind_image(0, 0, src_depth)
+          .bind_image(0, 1, result)
+          .bind_buffer(0, 2, camera)
+          .bind_sampler(0, 3, vuk::NearestSamplerClamped)
+          .bind_sampler(0, 4, vuk::LinearSamplerClamped)
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sun_dir, steps, thickness, length))
+          .dispatch_invocations_per_pixel(result);
+
+        return std::make_tuple(result, src_depth, camera);
+      }
+    );
+
+    std::tie(contact_shadows_attachment, depth_attachment, self.prepared_frame.camera_buffer) = contact_shadows_pass(
+      contact_shadows_attachment,
+      depth_attachment,
+      self.prepared_frame.camera_buffer
+    );
   }
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere &&

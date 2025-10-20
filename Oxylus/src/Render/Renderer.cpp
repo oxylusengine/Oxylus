@@ -170,15 +170,15 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   slang.create_pipeline(
     runtime,
-    "debug",
-    {.path = shaders_dir + "/passes/debug.slang", .entry_points = {"vs_main", "fs_main"}}
+    "debug_view",
+    {.path = shaders_dir + "/passes/debug_view.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   // --- PBR ---
   slang.create_pipeline(
     runtime,
-    "brdf",
-    {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}}
+    "pbr_apply",
+    {.path = shaders_dir + "/passes/pbr_apply.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   //  --- FFX ---
@@ -250,8 +250,8 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   slang.create_pipeline(
     runtime,
-    "debug_renderer",
-    {.path = shaders_dir + "/passes/debug_renderer.slang", .entry_points = {"vs_main", "fs_main"}}
+    "debug_mesh",
+    {.path = shaders_dir + "/passes/debug_mesh.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   slang.create_pipeline(

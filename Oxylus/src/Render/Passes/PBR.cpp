@@ -229,8 +229,10 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
 auto RendererInstance::apply_pbr(
   this RendererInstance& self, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
 ) -> vuk::Value<vuk::ImageAttachment> {
-  auto brdf_pass = vuk::make_pass(
-    "brdf",
+  ZoneScoped;
+
+  auto pbr_apply_pass = vuk::make_pass(
+    "pbr apply",
     [scene_flags = self.gpu_scene_flags](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eColorWrite) dst,
@@ -249,7 +251,7 @@ auto RendererInstance::apply_pbr(
       VUK_BA(vuk::eFragmentUniformRead) camera
     ) {
       cmd_list //
-        .bind_graphics_pipeline("brdf")
+        .bind_graphics_pipeline("pbr_apply")
         .set_rasterization({})
         .set_color_blend(dst, vuk::BlendPreset::eOff)
         .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
@@ -308,7 +310,7 @@ auto RendererInstance::apply_pbr(
     self.prepared_frame.lights_buffer,
     self.prepared_frame.camera_buffer
   ) =
-    brdf_pass(
+    pbr_apply_pass(
       std::move(dst_attachment),
       std::move(context.sky_transmittance_lut_attachment),
       std::move(context.sky_aerial_perspective_lut_attachment),

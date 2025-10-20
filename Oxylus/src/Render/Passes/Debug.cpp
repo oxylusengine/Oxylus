@@ -34,8 +34,8 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
     }
   }
 
-  auto debug_pass = vuk::make_pass(
-    "debug pass",
+  auto debug_view_pass = vuk::make_pass(
+    "debug view pass",
     [debug_view = context.debug_view, overdraw_heatmap_scale = context.overdraw_heatmap_scale](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eColorWrite) dst,
@@ -53,7 +53,7 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
       VUK_BA(vuk::eFragmentRead) meshes
     ) {
       cmd_list //
-        .bind_graphics_pipeline("debug")
+        .bind_graphics_pipeline("debug_view")
         .set_rasterization({})
         .set_color_blend(dst, vuk::BlendPreset::eOff)
         .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
@@ -83,7 +83,7 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
     }
   );
 
-  return debug_pass(
+  return debug_view_pass(
     std::move(debug_attachment),
     std::move(context.visbuffer_attachment),
     std::move(context.depth_attachment),
