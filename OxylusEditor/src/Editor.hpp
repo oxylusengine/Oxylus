@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Core/Layer.hpp"
 #include "Core/Project.hpp"
 #include "EditorContext.hpp"
 #include "EditorTheme.hpp"
@@ -13,8 +12,10 @@
 #include "Utils/EditorConfig.hpp"
 
 namespace ox {
-class EditorLayer : public Layer {
+class Editor {
 public:
+  constexpr static auto MODULE_NAME = "Editor";
+
   enum class SceneState { Edit = 0, Play = 1, Simulate = 2 };
 
   enum class EditorLayout { Classic = 0, BigViewport };
@@ -53,13 +54,11 @@ public:
 
   NotificationSystem notification_system = {};
 
-  EditorLayer();
-  ~EditorLayer() override = default;
-  void on_attach() override;
-  void on_detach() override;
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
-  void on_update(const Timestep& delta_time) override;
-  void on_render(vuk::Extent3D extent, vuk::Format format) override;
+  auto update(const Timestep& timestep) -> void;
+  auto render(vuk::Extent3D extent, vuk::Format format) -> void;
 
   void new_scene();
   void open_scene_file_dialog();
@@ -68,8 +67,6 @@ public:
   void on_scene_play();
   void on_scene_stop();
   void on_scene_simulate();
-
-  static EditorLayer* get() { return instance; }
 
   EditorContext& get_context() { return editor_context; }
 
@@ -85,8 +82,6 @@ public:
   void set_docking_layout(EditorLayout layout);
 
 private:
-  static EditorLayer* instance;
-
   // Scene
   std::string last_save_scene_path{};
 

@@ -130,8 +130,6 @@ inline thread_local ThreadWorker this_thread_worker;
 
 class JobManager {
 public:
-  constexpr static auto MODULE_NAME = "JobManager";
-
   static constexpr u32 auto_thread_count = 0;
   JobManager(u32 threads = auto_thread_count);
   ~JobManager() = default;

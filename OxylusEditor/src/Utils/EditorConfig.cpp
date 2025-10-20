@@ -2,12 +2,11 @@
 
 #include <Render/RendererConfig.hpp>
 #include <fstream>
+#include <toml++/toml.hpp>
+#include <tracy/Tracy.hpp>
 
 #include "Core/FileSystem.hpp"
 #include "Core/Project.hpp"
-#include "EditorLayer.hpp"
-#include "Utils/Log.hpp"
-#include "Utils/Toml.hpp"
 
 namespace ox {
 EditorConfig* EditorConfig::instance = nullptr;
@@ -55,18 +54,20 @@ void EditorConfig::save_config() const {
   for (auto& project : recent_projects)
     recent_projects_array.emplace_back(project);
 
-  const auto root = toml::table{{"editor_config",
-                                 toml::table{
-                                     {"recent_projects", recent_projects_array},
-                                     {"grid", (bool)EditorCVar::cvar_draw_grid.get()},
-                                     {"grid_distance", EditorCVar::cvar_draw_grid_distance.get()},
-                                     {"camera_speed", EditorCVar::cvar_camera_speed.get()},
-                                     {"camera_sens", EditorCVar::cvar_camera_sens.get()},
-                                     {"camera_smooth", (bool)EditorCVar::cvar_camera_smooth.get()},
-                                     {"file_thumbnails", (bool)EditorCVar::cvar_file_thumbnails.get()},
-                                     {"file_thumbnail_size", EditorCVar::cvar_file_thumbnail_size.get()},
-                                     {"show_meta_files", EditorCVar::cvar_show_meta_files.get()},
-                                 }}};
+  const auto root = toml::table{
+    {"editor_config",
+     toml::table{
+       {"recent_projects", recent_projects_array},
+       {"grid", (bool)EditorCVar::cvar_draw_grid.get()},
+       {"grid_distance", EditorCVar::cvar_draw_grid_distance.get()},
+       {"camera_speed", EditorCVar::cvar_camera_speed.get()},
+       {"camera_sens", EditorCVar::cvar_camera_sens.get()},
+       {"camera_smooth", (bool)EditorCVar::cvar_camera_smooth.get()},
+       {"file_thumbnails", (bool)EditorCVar::cvar_file_thumbnails.get()},
+       {"file_thumbnail_size", EditorCVar::cvar_file_thumbnail_size.get()},
+       {"show_meta_files", EditorCVar::cvar_show_meta_files.get()},
+     }}
+  };
 
   std::stringstream ss;
   ss << "# Oxylus Editor config file \n";

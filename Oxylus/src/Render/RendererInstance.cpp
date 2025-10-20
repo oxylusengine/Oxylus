@@ -394,7 +394,10 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
-  OX_DEFER(&) { self.clear_stages(); };
+  OX_DEFER(&) {
+    self.clear_stages();
+    self.shared_resources.clear();
+  };
 
   self.viewport_size = {render_info.extent.width, render_info.extent.height};
   self.viewport_offset = render_info.viewport_offset;
@@ -1033,7 +1036,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       if (static_cast<bool>(RendererCVar::cvar_freeze_culling_frustum.get()) &&
           static_cast<bool>(RendererCVar::cvar_draw_camera_frustum.get())) {
         const auto proj = frozen_camera.get_projection_matrix() * frozen_camera.get_view_matrix();
-        DebugRenderer::draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
+        auto& debug_renderer = App::mod<ox::DebugRenderer>();
+        debug_renderer.draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
       }
 
       current_camera = c;
@@ -1422,11 +1426,13 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   auto debug_renderer_enabled = (bool)RendererCVar::cvar_enable_debug_renderer.get();
 
   if (debug_renderer_enabled) {
-    const auto& lines = DebugRenderer::get_instance()->get_lines(false);
-    auto [line_vertices, line_index_count] = DebugRenderer::get_vertices_from_lines(lines);
+    auto& debug_renderer = App::mod<ox::DebugRenderer>();
 
-    const auto& triangles = DebugRenderer::get_instance()->get_triangles(false);
-    auto [triangle_vertices, triangle_index_count] = DebugRenderer::get_vertices_from_triangles(triangles);
+    const auto& lines = debug_renderer.get_lines(false);
+    auto [line_vertices, line_index_count] = debug_renderer.get_vertices_from_lines(lines);
+
+    const auto& triangles = debug_renderer.get_triangles(false);
+    auto [triangle_vertices, triangle_index_count] = debug_renderer.get_vertices_from_triangles(triangles);
 
     const u32 index_count = line_index_count + triangle_index_count;
     OX_CHECK_LT(index_count, DebugRenderer::MAX_LINE_INDICES, "Increase DebugRenderer::MAX_LINE_INDICES");
@@ -1456,7 +1462,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       );
     }
 
-    DebugRenderer::reset();
+    debug_renderer.reset();
   }
 
   auto gtao_enabled = (bool)RendererCVar::cvar_vbgtao_enable.get();

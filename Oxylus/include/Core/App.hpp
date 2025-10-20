@@ -1,7 +1,8 @@
 #pragma once
 
 #include "Core/AppCommandLineArgs.hpp"
-#include "Core/Layer.hpp"
+#include "Core/EventSystem.hpp"
+#include "Core/JobManager.hpp"
 #include "Core/ModuleRegistry.hpp"
 #include "Core/VFS.hpp"
 #include "Render/Vulkan/VkContext.hpp"
@@ -11,7 +12,6 @@
 int main(int argc, char** argv);
 
 namespace ox {
-class Layer;
 class ImGuiLayer;
 class VkContext;
 
@@ -25,9 +25,6 @@ public:
 
   auto run(this App& self) -> void;
   auto close(this App& self) -> void;
-
-  auto push_imgui_layer(this App& self) -> App&;
-  auto push_layer(this App& self, std::unique_ptr<Layer>&& layer) -> App&;
 
   auto with_name(this App& self, std::string name) -> App&;
   auto with_args(this App& self, AppCommandLineArgs args) -> App&;
@@ -49,13 +46,14 @@ public:
   }
 
   auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
-  auto get_imgui_layer(this const App& self) -> ImGuiLayer*;
   auto get_window(this const App& self) -> const Window&;
   auto get_swapchain_extent(this const App& self) -> glm::vec2;
 
   static auto get_vkcontext() -> VkContext&;
   static auto get_timestep() -> const Timestep&;
   static auto get_vfs() -> VFS&;
+  static auto get_job_manager() -> JobManager&;
+  static auto get_event_system() -> EventSystem&;
 
 private:
   static App* instance_;
@@ -70,10 +68,9 @@ private:
   option<Window> window = nullopt;
   glm::vec2 swapchain_extent = {};
 
-  std::vector<std::unique_ptr<Layer>> layer_stack = {};
-  ImGuiLayer* imgui_layer = nullptr;
-
   VFS vfs = {};
+  JobManager job_manager = {};
+  EventSystem event_system = {};
   ModuleRegistry registry = {};
 
   Timestep timestep = {};

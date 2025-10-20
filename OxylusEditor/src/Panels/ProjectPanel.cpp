@@ -8,7 +8,7 @@
 #include "Core/FileSystem.hpp"
 #include "Core/Project.hpp"
 #include "Core/VFS.hpp"
-#include "EditorLayer.hpp"
+#include "Editor.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EditorConfig.hpp"
 
@@ -18,16 +18,16 @@ ProjectPanel::ProjectPanel() : EditorPanel("Projects", ICON_MDI_ACCOUNT_BADGE, t
 void ProjectPanel::on_update() {}
 
 void ProjectPanel::load_project_for_editor(const std::string& filepath) {
-  auto* editor_layer = EditorLayer::get();
-  const auto& active_project = editor_layer->active_project;
+  auto& editor = App::mod<Editor>();
+  const auto& active_project = editor.active_project;
   if (active_project->load(filepath)) {
     auto& vfs = App::get_vfs();
     const auto start_scene = vfs.resolve_physical_dir(VFS::PROJECT_DIR, active_project->get_config().start_scene);
-    if (!editor_layer->open_scene(start_scene)) {
-      editor_layer->new_scene();
+    if (!editor.open_scene(start_scene)) {
+      editor.new_scene();
     }
     EditorConfig::get()->add_recent_project(active_project.get());
-    editor_layer->get_panel<ContentPanel>()->init();
+    editor.get_panel<ContentPanel>()->init();
     visible = false;
   }
 }
@@ -35,7 +35,7 @@ void ProjectPanel::load_project_for_editor(const std::string& filepath) {
 void ProjectPanel::new_project(
   const std::string& project_dir, const std::string& project_name, const std::string& project_asset_dir
 ) {
-  const auto& active_project = EditorLayer::get()->active_project;
+  const auto& active_project = App::mod<Editor>().active_project;
   if (active_project->new_project(project_dir, project_name, project_asset_dir))
     EditorConfig::get()->add_recent_project(active_project.get());
 }
@@ -51,7 +51,7 @@ void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
   UI::center_next_window();
   ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0, 0.0, 0.0, 0.7));
   if (ImGui::BeginPopupModal("ProjectSelector", nullptr, flags)) {
-    auto banner_image = EditorLayer::get()->engine_banner;
+    auto banner_image = App::mod<Editor>().engine_banner;
     const auto banner_size = banner_image->get_extent();
     const float x = static_cast<float>(banner_size.width);
     const float y = static_cast<float>(ImGui::GetFrameHeight()) * 1.3f;

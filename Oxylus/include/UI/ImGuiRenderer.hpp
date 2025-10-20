@@ -1,26 +1,25 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
+#include <expected>
+#include <glm/vec2.hpp>
 #include <imgui.h>
 #include <vuk/Value.hpp>
-#include <ankerl/unordered_dense.h>
-#include <glm/vec2.hpp>
 
 #include "Asset/Texture.hpp"
-#include "Core/Layer.hpp"
 
 namespace ox {
 class VkContext;
-class ImGuiLayer : public Layer {
+class ImGuiRenderer {
 public:
+  constexpr static auto MODULE_NAME = "ImGuiRenderer";
+
   std::shared_ptr<Texture> font_texture = nullptr;
   std::vector<vuk::Value<vuk::ImageAttachment>> rendering_images;
   ankerl::unordered_dense::map<ImageViewID, ImTextureID> acquired_images;
 
-  ImGuiLayer();
-  ~ImGuiLayer() override = default;
-
-  void on_attach() override;
-  void on_detach() override;
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
   void begin_frame(f64 delta_time, vuk::Extent3D extent);
   [[nodiscard]]

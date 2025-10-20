@@ -6,7 +6,8 @@
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 
-#include "EditorLayer.hpp"
+#include "Core/App.hpp"
+#include "Editor.hpp"
 #include "Render/DebugRenderer.hpp"
 
 namespace ox {
@@ -22,7 +23,7 @@ SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON
   viewer.asset_manager_viewer.search_icon = ICON_MDI_MAGNIFY;
 
   viewer.on_selected_entity_callback([](flecs::entity e) {
-    auto& context = EditorLayer::get()->get_context();
+    auto& context = App::mod<Editor>().get_context();
 
     context.reset();
     context.type = EditorContext::Type::Entity;
@@ -30,15 +31,15 @@ SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON
   });
 
   viewer.on_selected_entity_reset_callback([]() {
-    auto& context = EditorLayer::get()->get_context();
+    auto& context = App::mod<Editor>().get_context();
     context.reset();
   });
 }
 
 auto SceneHierarchyPanel::on_update() -> void {
-  auto* editor_layer = EditorLayer::get();
-  auto& editor_context = editor_layer->get_context();
-  auto& undo_redo_system = editor_layer->undo_redo_system;
+  auto& editor = App::mod<Editor>();
+  auto& editor_context = editor.get_context();
+  auto& undo_redo_system = editor.undo_redo_system;
 
   if (editor_context.type == EditorContext::Type::Entity) {
     if (editor_context.entity.has_value())
@@ -50,12 +51,14 @@ auto SceneHierarchyPanel::on_update() -> void {
   if (viewer.selected_entity_.get() != flecs::entity::null()) {
     if (auto* cam = viewer.selected_entity_.get().try_get<CameraComponent>()) {
       const auto proj = cam->get_projection_matrix() * cam->get_view_matrix();
-      DebugRenderer::draw_frustum(proj, glm::vec4(0, 1, 0, 1), cam->near_clip, cam->far_clip);
+      auto& debug_renderer = App::mod<DebugRenderer>();
+      debug_renderer.draw_frustum(proj, glm::vec4(0, 1, 0, 1), cam->near_clip, cam->far_clip);
     }
     if (auto* light = viewer.selected_entity_.get().try_get<LightComponent>()) {
       const glm::vec3 world_pos = Scene::get_world_position(viewer.selected_entity_.get());
       if (light->type == LightComponent::Point) {
-        DebugRenderer::draw_sphere(light->radius, world_pos, glm::vec4(0, 1.f, 0.f, 1.f));
+        auto& debug_renderer = App::mod<DebugRenderer>();
+        debug_renderer.draw_sphere(light->radius, world_pos, glm::vec4(0, 1.f, 0.f, 1.f));
       } else if (light->type == LightComponent::Spot) {
       }
     }
@@ -73,7 +76,7 @@ auto SceneHierarchyPanel::on_update() -> void {
       viewer.selected_entity_.set(clone_entity(viewer.selected_entity_.get()));
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Delete) &&
-        (viewer.table_hovered_ || editor_layer->viewport_panels[0]->is_viewport_hovered)) {
+        (viewer.table_hovered_ || editor.viewport_panels[0]->is_viewport_hovered)) {
       viewer.deleted_entity_ = viewer.selected_entity_.get();
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F2)) {

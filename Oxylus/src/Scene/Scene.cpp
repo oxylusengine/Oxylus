@@ -603,7 +603,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .kind(flecs::PostUpdate)
     .each([](const flecs::entity entity, SpriteComponent& sprite) {
       if (RendererCVar::cvar_draw_bounding_boxes.get()) {
-        DebugRenderer::draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
+        auto& debug_renderer = App::mod<DebugRenderer>();
+        debug_renderer.draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
       }
     });
 

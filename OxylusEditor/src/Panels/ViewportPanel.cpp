@@ -7,14 +7,14 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
-#include "EditorLayer.hpp"
+#include "Editor.hpp"
 #include "Render/Camera.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Slang/Slang.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/ECSModule/Core.hpp"
-#include "UI/ImGuiLayer.hpp"
+#include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EditorConfig.hpp"
@@ -33,8 +33,8 @@ void show_component_gizmo(
   const Frustum& frustum,
   Scene* scene
 ) {
-  auto* editor_layer = EditorLayer::get();
-  auto& editor_theme = editor_layer->editor_theme;
+  auto& editor = App::mod<Editor>();
+  auto& editor_theme = editor.editor_theme;
 
   const char* icon = editor_theme.component_icon_map.at(typeid(T).hash_code());
   scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T&) {
@@ -51,7 +51,7 @@ void show_component_gizmo(
     ImGui::PushFont(nullptr, icon_size);
     ImGui::PushID(entity.id());
     if (ImGui::Button(icon, {icon_size, icon_size})) {
-      auto& editor_context = EditorLayer::get()->get_context();
+      auto& editor_context = editor.get_context();
       editor_context.reset();
       editor_context.entity = entity;
       editor_context.type = EditorContext::Type::Entity;
@@ -118,7 +118,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
 
     auto& style = ImGui::GetStyle();
 
-    auto* editor_layer = EditorLayer::get();
+    auto& editor = App::mod<Editor>();
 
     if (ImGui::BeginMenuBar()) {
       if (ImGui::MenuItem(ICON_MDI_COG)) {
@@ -230,7 +230,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       auto scene_view_image = renderer_instance->render(render_info);
       _scene->on_viewport_render(extent, format);
       ImGui::Image(
-        app->get_imgui_layer()->add_image(std::move(scene_view_image)),
+        App::mod<ImGuiRenderer>().add_image(std::move(scene_view_image)),
         ImVec2{fixed_width, _viewport_panel_size.y}
       );
     } else {
@@ -246,7 +246,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
         const auto* payload = PayloadData::from_payload(imgui_payload);
         const auto path = std::filesystem::path(payload->get_str());
         if (path.extension() == ".oxscene") {
-          editor_layer->open_scene(path);
+          editor.open_scene(path);
         }
         if (path.extension() == ".gltf" || path.extension() == ".glb") {
           auto& asset_man = App::mod<AssetManager>();
@@ -259,7 +259,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
     }
 
     if (editor_camera.has<CameraComponent>() && !_scene->is_running()) {
-      if (editor_layer->scene_state == EditorLayer::SceneState::Edit)
+      if (editor.scene_state == Editor::SceneState::Edit)
         editor_camera.enable();
 
       draw_gizmos();
@@ -364,25 +364,25 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 1.0f);
 
-        const bool highlight = editor_layer->scene_state == EditorLayer::SceneState::Play;
-        const char* icon = editor_layer->scene_state == EditorLayer::SceneState::Edit ? ICON_MDI_PLAY : ICON_MDI_STOP;
+        const bool highlight = editor.scene_state == Editor::SceneState::Play;
+        const char* icon = editor.scene_state == Editor::SceneState::Edit ? ICON_MDI_PLAY : ICON_MDI_STOP;
         if (UI::toggle_button(icon, highlight, button_size)) {
-          if (editor_layer->scene_state == EditorLayer::SceneState::Edit) {
-            editor_layer->on_scene_play();
+          if (editor.scene_state == Editor::SceneState::Edit) {
+            editor.on_scene_play();
             editor_camera.disable();
-          } else if (editor_layer->scene_state == EditorLayer::SceneState::Play) {
-            editor_layer->on_scene_stop();
+          } else if (editor.scene_state == Editor::SceneState::Play) {
+            editor.on_scene_stop();
           }
         }
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.4f));
         if (ImGui::Button(ICON_MDI_PAUSE, button_size)) {
-          if (editor_layer->scene_state == EditorLayer::SceneState::Play)
-            editor_layer->on_scene_stop();
+          if (editor.scene_state == Editor::SceneState::Play)
+            editor.on_scene_stop();
         }
         ImGui::SameLine();
         if (ImGui::Button(ICON_MDI_STEP_FORWARD, button_size)) {
-          editor_layer->on_scene_simulate();
+          editor.on_scene_simulate();
         }
         ImGui::PopStyleColor();
 
@@ -430,7 +430,7 @@ void ViewportPanel::on_update() {
 
   auto& input_sys = App::mod<Input>();
   if (input_sys.get_key_pressed(KeyCode::F)) {
-    auto& editor_context = EditorLayer::get()->get_context();
+    auto& editor_context = App::mod<Editor>().get_context();
     if (editor_context.entity.has_value()) {
       const auto entity_tc = editor_context.entity->get<TransformComponent>();
       auto final_pos = entity_tc.position + cam.forward;
@@ -726,9 +726,9 @@ void ViewportPanel::draw_gizmo_settings_panel() {
 }
 
 void ViewportPanel::draw_gizmos() {
-  auto* editor_layer = EditorLayer::get();
-  auto& editor_context = editor_layer->get_context();
-  auto& undo_redo_system = editor_layer->undo_redo_system;
+  auto& editor = App::mod<Editor>();
+  auto& editor_context = editor.get_context();
+  auto& undo_redo_system = editor.undo_redo_system;
 
   const auto& cam = editor_camera.get<CameraComponent>();
   auto projection = cam.get_projection_matrix();
@@ -925,10 +925,12 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
         ) {
           u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
 
+          auto& editor = App::mod<Editor>();
+
           if (!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewport_hovered) {
             if (transform_index != ~0_u32) {
               if (s->transform_index_entities_map.contains(transform_index)) {
-                auto& editor_context = EditorLayer::get()->get_context();
+                auto& editor_context = editor.get_context();
 
                 // first pick the parent if parent is already picked then pick the actual entity
                 auto entity = s->transform_index_entities_map.at(transform_index);
@@ -947,7 +949,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
                 editor_context.type = EditorContext::Type::Entity;
               }
             } else {
-              auto& editor_context = EditorLayer::get()->get_context();
+              auto& editor_context = editor.get_context();
               editor_context.reset();
             }
           }
@@ -978,7 +980,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
           VUK_BA(vuk::eComputeRead) meshlet_instances_,
           VUK_BA(vuk::eComputeRead) mesh_instances_
         ) {
-          auto& editor_context = EditorLayer::get()->get_context();
+          auto& editor_context = App::mod<Editor>().get_context();
 
           std::vector<u32> transform_indices = {};
 

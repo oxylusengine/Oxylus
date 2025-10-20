@@ -2,6 +2,7 @@
 
 #include <Jolt/Jolt.h>
 #include <Jolt/Renderer/DebugRenderer.h>
+#include <expected>
 #include <glm/ext/quaternion_float.hpp>
 #include <vuk/runtime/CommandBuffer.hpp>
 
@@ -14,6 +15,8 @@ class PhysicsDebugRenderer;
 
 class DebugRenderer {
 public:
+  constexpr static auto MODULE_NAME = "DebugRenderer";
+
   struct Vertex {
     glm::vec3 position;
     u32 color;
@@ -47,12 +50,13 @@ public:
   DebugRenderer() = default;
   ~DebugRenderer() = default;
 
-  static void init();
-  static void release();
-  static void reset(bool clear_depth_tested = true);
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
+
+  void reset(bool clear_depth_tested = true);
 
   /// Draw Point (circle)
-  static void draw_point(
+  void draw_point(
     const glm::vec3& pos,
     float point_radius,
     const glm::vec4& color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f),
@@ -60,18 +64,18 @@ public:
   );
 
   /// Draw Line with a given thickness
-  static void draw_line(
+  void draw_line(
     const glm::vec3& start,
     const glm::vec3& end,
     float line_width,
     const glm::vec4& color = glm::vec4(1),
     bool depth_tested = false
   );
-  static void draw_triangle(
+  void draw_triangle(
     const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec4& color, bool depth_tested = false
   );
 
-  static void draw_circle(
+  void draw_circle(
     int num_verts,
     float radius,
     const glm::vec3& position,
@@ -79,8 +83,8 @@ public:
     const glm::vec4& color,
     bool depth_tested = false
   );
-  static void draw_sphere(float radius, const glm::vec3& position, const glm::vec4& color, bool depth_tested = false);
-  static void draw_capsule(
+  void draw_sphere(float radius, const glm::vec3& position, const glm::vec4& color, bool depth_tested = false);
+  void draw_capsule(
     const glm::vec3& position,
     const glm::quat& rotation,
     float height,
@@ -88,7 +92,7 @@ public:
     const glm::vec4& color,
     bool depth_tested = false
   );
-  static void draw_cone(
+  void draw_cone(
     int num_circle_verts,
     int num_lines_to_circle,
     float angle,
@@ -98,18 +102,16 @@ public:
     const glm::vec4& color,
     bool depth_tested = false
   );
-  static void draw_aabb(
+  void draw_aabb(
     const AABB& aabb,
     const glm::vec4& color = glm::vec4(1.0f),
     bool corners_only = false,
     float width = 1.0f,
     bool depth_tested = false
   );
-  static void draw_frustum(const glm::mat4& frustum, const glm::vec4& color, float near, float far);
-  static void
-  draw_ray(const RayCast& ray, const glm::vec4& color, const float distance, const bool depth_tested = false);
+  void draw_frustum(const glm::mat4& frustum, const glm::vec4& color, float near, float far);
+  void draw_ray(const RayCast& ray, const glm::vec4& color, const float distance, const bool depth_tested = false);
 
-  static DebugRenderer* get_instance() { return instance; }
   const std::vector<Line>& get_lines(bool depth_tested = true) const {
     return !depth_tested ? draw_list.debug_lines : draw_list_depth_tested.debug_lines;
   }
@@ -122,12 +124,10 @@ public:
 
   const vuk::Unique<vuk::Buffer>& get_global_index_buffer() const { return debug_renderer_context.index_buffer; }
 
-  static std::pair<std::vector<Vertex>, uint32_t> get_vertices_from_lines(const std::vector<Line>& lines);
-  static std::pair<std::vector<Vertex>, uint32_t> get_vertices_from_triangles(const std::vector<Triangle>& triangles);
+  std::pair<std::vector<Vertex>, uint32_t> get_vertices_from_lines(const std::vector<Line>& lines);
+  std::pair<std::vector<Vertex>, uint32_t> get_vertices_from_triangles(const std::vector<Triangle>& triangles);
 
 private:
-  static DebugRenderer* instance;
-
   friend PhysicsDebugRenderer;
 
   struct DebugDrawList {

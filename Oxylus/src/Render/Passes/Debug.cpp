@@ -1,5 +1,6 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
+#include "Core/App.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/VukCommon.hpp"
@@ -119,7 +120,7 @@ auto RendererInstance::draw_for_debug(
       VUK_BA(vuk::eMemoryRead) dbg_vtx,
       VUK_BA(vuk::eFragmentRead) camera
     ) {
-      auto& dbg_index_buffer = *DebugRenderer::get_instance()->get_global_index_buffer();
+      auto& dbg_index_buffer = *App::mod<DebugRenderer>().get_global_index_buffer();
 
       cmd_list.bind_graphics_pipeline("debug_mesh")
         .set_depth_stencil(

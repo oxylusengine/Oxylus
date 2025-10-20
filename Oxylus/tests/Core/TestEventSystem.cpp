@@ -1,10 +1,11 @@
+#include <array>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <latch>
 #include <thread>
-#include <array>
 
 #include "Core/EventSystem.hpp"
+
 
 class EventSystemTest : public ::testing::Test {
 protected:
@@ -52,7 +53,7 @@ TEST_F(EventSystemTest, SubscribeAndEmitEvent) {
     EXPECT_EQ(e.y, y_value);
   });
 
-  event_system->emit(TestEvent{x_value, y_value});
+  auto _ = event_system->emit(TestEvent{x_value, y_value});
 
   EXPECT_TRUE(event_called);
 }
@@ -96,7 +97,7 @@ TEST_F(EventSystemTest, SubscribeAndEmitEventThreads) {
     emit_latch.wait(); // Wait for subscriber to be ready
 
     for (int i = 0; i < emit_count; ++i) {
-      es->emit(TestEvent{i, i * x_value, i * y_value});
+      auto _ = es->emit(TestEvent{i, i * x_value, i * y_value});
     }
   });
 
@@ -128,7 +129,7 @@ TEST_F(EventSystemTest, ConcurrentSubscribeEmitUnsubscribe) {
 
   auto emitter_fn = [&, es = this->event_system.get()] {
     for (int i = 0; i < 100 && !stop.load(); ++i) {
-      es->emit(TestEvent{i});
+      auto _ = es->emit(TestEvent{i});
       std::this_thread::yield();
     }
   };

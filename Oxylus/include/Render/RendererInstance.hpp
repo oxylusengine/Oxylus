@@ -31,6 +31,11 @@ struct StageDependency {
 struct SharedResources {
   ankerl::unordered_dense::map<std::string, vuk::Value<vuk::Buffer>> buffer_resources = {};
   ankerl::unordered_dense::map<std::string, vuk::Value<vuk::ImageAttachment>> image_resources = {};
+
+  auto clear() -> void {
+    buffer_resources.clear();
+    image_resources.clear();
+  }
 };
 
 struct RenderStageContext {

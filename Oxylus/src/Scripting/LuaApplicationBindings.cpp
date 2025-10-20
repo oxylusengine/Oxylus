@@ -4,9 +4,7 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
-#include "Core/EventSystem.hpp"
 #include "Core/Input.hpp"
-#include "Core/JobManager.hpp"
 #include "Networking/NetworkManager.hpp"
 #include "Physics/Physics.hpp"
 #include "Render/RendererConfig.hpp"
@@ -20,8 +18,6 @@ auto AppBinding::bind(sol::state* state) -> void {
   auto app = state->create_table("App");
 
   auto mod_table = state->create_table("Mod");
-  APP_MOD(EventSystem);
-  APP_MOD(JobManager);
   APP_MOD(AssetManager);
   APP_MOD(AudioEngine);
   APP_MOD(LuaManager);
@@ -30,6 +26,7 @@ auto AppBinding::bind(sol::state* state) -> void {
   APP_MOD(Physics);
   APP_MOD(Input);
   APP_MOD(NetworkManager);
+  APP_MOD(DebugRenderer);
   app.set("mod", mod_table);
 
   SET_TYPE_FUNCTION(app, App, get_vfs);

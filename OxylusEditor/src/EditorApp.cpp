@@ -2,13 +2,14 @@
 #include "Core/EmbeddedLogo.hpp"
 #include "Core/EntryPoint.hpp"
 #include "Core/Enum.hpp"
-#include "Core/EventSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
-#include "EditorLayer.hpp"
+#include "Editor.hpp"
 #include "Networking/NetworkManager.hpp"
 #include "Physics/Physics.hpp"
+#include "Render/RendererConfig.hpp"
 #include "Scripting/LuaManager.hpp"
+#include "UI/ImGuiRenderer.hpp"
 
 namespace ox {
 class OxylusEditor : public App {
@@ -55,8 +56,11 @@ App* create_application(const AppCommandLineArgs& args) {
     .with<Input>()
     .with<NetworkManager>()
     .with<LuaManager>()
-    .push_imgui_layer()
-    .push_layer(std::make_unique<EditorLayer>());
+    .with<DebugRenderer>()
+    .with<ImGuiRenderer>()
+    .with<RendererConfig>()
+    .with<Renderer>()
+    .with<Editor>();
 
   return app;
 }

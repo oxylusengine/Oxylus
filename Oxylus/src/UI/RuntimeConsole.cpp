@@ -3,7 +3,6 @@
 #include <misc/cpp/imgui_stdlib.h>
 
 #include "Core/App.hpp"
-#include "UI/ImGuiLayer.hpp"
 #include "Utils/CVars.hpp"
 #include "Utils/StringUtils.hpp"
 

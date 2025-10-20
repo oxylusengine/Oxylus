@@ -7,13 +7,12 @@
 #include "Core/FileSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
-#include "Core/Layer.hpp"
 #include "Core/VFS.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Render/Window.hpp"
-#include "UI/ImGuiLayer.hpp"
+#include "UI/ImGuiRenderer.hpp"
 #include "Utils/Profiler.hpp"
 
 namespace ox {
@@ -32,19 +31,6 @@ App::App() {
 App::~App() { is_running = false; }
 
 void App::set_instance(App* instance) { instance_ = instance; }
-
-auto App::push_imgui_layer(this App& self) -> App& {
-  auto imgui = std::make_unique<ImGuiLayer>();
-  self.imgui_layer = imgui.get();
-  self.push_layer(std::move(imgui));
-
-  return self;
-}
-
-App& App::push_layer(this App& self, std::unique_ptr<Layer>&& layer) {
-  self.layer_stack.emplace_back(std::move(layer));
-  return self;
-}
 
 auto App::with_name(this App& self, std::string name) -> App& {
   self.name = name;
@@ -70,11 +56,6 @@ auto App::get_command_line_args(this const App& self) -> const AppCommandLineArg
   return self.command_line_args; //
 }
 
-auto App::get_imgui_layer(this const App& self) -> ImGuiLayer* {
-  OX_CHECK_NULL(self.imgui_layer);
-  return self.imgui_layer;
-}
-
 auto App::get_window(this const App& self) -> const Window& {
   OX_ASSERT(self.window.has_value());
   return self.window.value();
@@ -94,6 +75,14 @@ auto App::get_timestep() -> const Timestep& {
 
 auto App::get_vfs() -> VFS& {
   return instance_->vfs; //
+}
+
+auto App::get_job_manager() -> JobManager& {
+  return instance_->job_manager; //
+}
+
+auto App::get_event_system() -> EventSystem& {
+  return instance_->event_system; //
 }
 
 void App::run(this App& self) {
@@ -119,22 +108,21 @@ void App::run(this App& self) {
     self.vk_context->create_context(*self.window, enable_validation);
   }
 
-  // Internal modules
-  self.with<EventSystem>().with<JobManager>();
-  if (self.window.has_value()) {
-    self.with<RendererConfig>().with<Renderer>(self.vk_context.get());
-  }
+  auto job_manager_init_result = self.job_manager.init();
+  if (job_manager_init_result.has_value())
+    OX_LOG_INFO("Initalized JobManager.");
+  else
+    OX_LOG_ERROR("Failed to initalize JobManager: {}", job_manager_init_result.error());
 
-  self.mod<JobManager>().wait();
+  auto event_system_init_result = self.event_system.init();
+  if (event_system_init_result.has_value())
+    OX_LOG_INFO("Initalized EventSystem.");
+  else
+    OX_LOG_ERROR("Failed to initalize EventSystem: {}", event_system_init_result.error());
 
-  // Optional modules
   self.registry.init();
 
-  self.mod<JobManager>().wait();
-
-  for (auto& layer : self.layer_stack) {
-    layer->on_attach();
-  }
+  self.job_manager.wait();
 
   WindowCallbacks window_callbacks = {};
   window_callbacks.user_data = &self;
@@ -147,8 +135,8 @@ void App::run(this App& self) {
     app->is_running = false;
   };
   window_callbacks.on_mouse_pos = [](void* user_data, const glm::vec2 position, glm::vec2 relative) {
-    const auto* app = static_cast<App*>(user_data);
-    app->imgui_layer->on_mouse_pos(position);
+    auto* app = static_cast<App*>(user_data);
+    app->mod<ImGuiRenderer>().on_mouse_pos(position);
 
     auto& input_system = app->mod<Input>();
     input_system.input_data.mouse_offset_x = input_system.input_data.mouse_pos.x - position.x;
@@ -158,8 +146,9 @@ void App::run(this App& self) {
     input_system.input_data.mouse_moved = true;
   };
   window_callbacks.on_mouse_button = [](void* user_data, const u8 button, const bool down) {
-    const auto* app = static_cast<App*>(user_data);
-    app->imgui_layer->on_mouse_button(button, down);
+    auto* app = static_cast<App*>(user_data);
+    auto& imgui_renderer = app->mod<ImGuiRenderer>();
+    imgui_renderer.on_mouse_button(button, down);
 
     auto& input_system = app->mod<Input>();
     const auto ox_button = Input::to_mouse_code(button);
@@ -175,38 +164,37 @@ void App::run(this App& self) {
   };
   window_callbacks.on_mouse_scroll = [](void* user_data, const glm::vec2 offset) {
     const auto* app = static_cast<App*>(user_data);
-    app->imgui_layer->on_mouse_scroll(offset);
+    auto& imgui_renderer = app->mod<ImGuiRenderer>();
+    imgui_renderer.on_mouse_scroll(offset);
 
     auto& input_system = app->mod<Input>();
     input_system.input_data.scroll_offset_y = offset.y;
   };
-  window_callbacks.on_key = [](
-                              void* user_data,
-                              const u32 key_code,
-                              const u32 scan_code,
-                              const u16 mods,
-                              const bool down,
-                              const bool repeat
-                            ) {
-    const auto* app = static_cast<App*>(user_data);
-    app->imgui_layer->on_key(key_code, scan_code, mods, down);
+  window_callbacks.on_key =
+    [](void* user_data, const u32 key_code, const u32 scan_code, const u16 mods, const bool down, const bool repeat) {
+      const auto* app = static_cast<App*>(user_data);
+      auto& imgui_renderer = app->mod<ImGuiRenderer>();
+      imgui_renderer.on_key(key_code, scan_code, mods, down);
 
-    auto& input_system = app->mod<Input>();
-    const auto ox_key_code = Input::to_keycode(key_code, scan_code);
-    if (down) {
-      input_system.set_key_pressed(ox_key_code, !repeat);
-      input_system.set_key_released(ox_key_code, false);
-      input_system.set_key_held(ox_key_code, true);
-    } else {
-      input_system.set_key_pressed(ox_key_code, false);
-      input_system.set_key_released(ox_key_code, true);
-      input_system.set_key_held(ox_key_code, false);
-    }
-  };
+      auto& input_system = app->mod<Input>();
+      const auto ox_key_code = Input::to_keycode(key_code, scan_code);
+      if (down) {
+        input_system.set_key_pressed(ox_key_code, !repeat);
+        input_system.set_key_released(ox_key_code, false);
+        input_system.set_key_held(ox_key_code, true);
+      } else {
+        input_system.set_key_pressed(ox_key_code, false);
+        input_system.set_key_released(ox_key_code, true);
+        input_system.set_key_held(ox_key_code, false);
+      }
+    };
   window_callbacks.on_text_input = [](void* user_data, const c8* text) {
     const auto* app = static_cast<App*>(user_data);
-    app->imgui_layer->on_text_input(text);
+    auto& imgui_renderer = app->mod<ImGuiRenderer>();
+    imgui_renderer.on_text_input(text);
   };
+
+  auto& imgui_renderer = self.mod<ImGuiRenderer>();
 
   while (self.is_running) {
     const i32 frame_limit = RendererCVar::cvar_frame_limit.get();
@@ -231,22 +219,14 @@ void App::run(this App& self) {
       extent = swapchain_attachment->extent;
       self.swapchain_extent = glm::vec2{extent.width, extent.height};
 
-      self.imgui_layer->begin_frame(self.timestep.get_seconds(), extent);
+      imgui_renderer.begin_frame(self.timestep.get_seconds(), extent);
     }
 
-    {
-      ZoneNamedN(z, "LayerStackUpdate", true);
-      for (const auto& layer : self.layer_stack) {
-        layer->on_update(self.timestep);
-        layer->on_render(extent, format);
-      }
-    }
-
-    self.registry.update(self.timestep.get_millis());
+    self.registry.update(self.timestep);
     self.registry.render(extent, format);
 
     if (self.window_info.has_value()) {
-      swapchain_attachment = self.imgui_layer->end_frame(*self.vk_context, std::move(swapchain_attachment));
+      swapchain_attachment = imgui_renderer.end_frame(*self.vk_context, std::move(swapchain_attachment));
 
       self.vk_context->end_frame(swapchain_attachment);
 
@@ -265,16 +245,8 @@ void App::close(this App& self) {
   ZoneScoped;
 
   self.is_running = false;
-  {
-    ZoneNamedN(z, "LayerStackOnDetach", true);
-    for (const auto& layer : self.layer_stack) {
-      layer->on_detach();
-    }
 
-    self.layer_stack.clear();
-  }
-
-  auto& job_man = self.mod<JobManager>();
+  auto& job_man = self.job_manager;
   job_man.wait();
 
   self.registry.deinit();

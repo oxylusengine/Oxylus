@@ -1,4 +1,4 @@
-#include "EditorLayer.hpp"
+#include "Editor.hpp"
 
 #include <filesystem>
 #include <flecs.h>
@@ -26,14 +26,10 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-EditorLayer* EditorLayer::instance = nullptr;
-
-EditorLayer::EditorLayer() : Layer("Editor Layer") { instance = this; }
-
-void EditorLayer::on_attach() {
+auto Editor::init() -> std::expected<void, std::string> {
   ZoneScoped;
 
-  auto& job_man = App::mod<JobManager>();
+  auto& job_man = App::get_job_manager();
   job_man.get_tracker().start_tracking();
 
   undo_redo_system = std::make_unique<UndoRedoSystem>();
@@ -86,16 +82,22 @@ void EditorLayer::on_attach() {
       OX_LOG_ERROR("Project argument missing a path!");
     }
   }
+
+  return {};
 }
 
-void EditorLayer::on_detach() {
+auto Editor::deinit() -> std::expected<void, std::string> {
   editor_config.save_config();
 
-  auto& job_man = App::mod<JobManager>();
+  auto& job_man = App::get_job_manager();
   job_man.get_tracker().stop_tracking();
+
+  return {};
 }
 
-void EditorLayer::on_update(const Timestep& delta_time) {
+auto Editor::update(const Timestep& timestep) -> void {
+  ZoneScoped;
+
   for (const auto& panel : editor_panels | std::views::values) {
     if (!panel->visible)
       continue;
@@ -110,12 +112,12 @@ void EditorLayer::on_update(const Timestep& delta_time) {
   switch (scene_state) {
     case SceneState::Edit: {
       editor_scene->disable_phases({flecs::PreUpdate, flecs::OnUpdate});
-      editor_scene->runtime_update(delta_time);
+      editor_scene->runtime_update(timestep);
       break;
     }
     case SceneState::Play: {
       editor_scene->enable_all_phases();
-      active_scene->runtime_update(delta_time);
+      active_scene->runtime_update(timestep);
       break;
     }
     case SceneState::Simulate: {
@@ -125,11 +127,11 @@ void EditorLayer::on_update(const Timestep& delta_time) {
   }
 }
 
-void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format) {
+auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> void {
   if (const auto scene = get_active_scene())
     scene->on_render(extent, format);
 
-  auto& job_man = App::mod<JobManager>();
+  auto& job_man = App::get_job_manager();
 
   auto status = job_man.get_tracker().get_status();
   for (const auto& [name, is_working] : status) {
@@ -311,7 +313,7 @@ void EditorLayer::on_render(const vuk::Extent3D extent, const vuk::Format format
   }
 }
 
-void EditorLayer::editor_shortcuts() {
+void Editor::editor_shortcuts() {
   auto& input_sys = App::mod<Input>();
   if (input_sys.get_key_held(KeyCode::LeftControl)) {
     if (input_sys.get_key_pressed(KeyCode::Z)) {
@@ -335,7 +337,7 @@ void EditorLayer::editor_shortcuts() {
   }
 }
 
-void EditorLayer::new_scene() {
+void Editor::new_scene() {
   const std::shared_ptr<Scene> new_scene = std::make_shared<Scene>(editor_scene->scene_name);
   editor_scene = new_scene;
   set_editor_context(new_scene);
@@ -343,7 +345,7 @@ void EditorLayer::new_scene() {
   last_save_scene_path.clear();
 }
 
-void EditorLayer::open_scene_file_dialog() {
+void Editor::open_scene_file_dialog() {
   const auto& window = App::get()->get_window();
   FileDialogFilter dialog_filters[] = {{.name = "Oxylus scene file(.oxscene)", .pattern = "oxscene"}};
   window.show_dialog({
@@ -351,7 +353,7 @@ void EditorLayer::open_scene_file_dialog() {
     .user_data = this,
     .callback =
       [](void* user_data, const c8* const* files, i32) {
-        auto* layer = static_cast<EditorLayer*>(user_data);
+        auto* layer = static_cast<Editor*>(user_data);
         if (!files || !*files) {
           return;
         }
@@ -369,7 +371,7 @@ void EditorLayer::open_scene_file_dialog() {
   });
 }
 
-bool EditorLayer::open_scene(const std::filesystem::path& path) {
+bool Editor::open_scene(const std::filesystem::path& path) {
   if (!std::filesystem::exists(path)) {
     OX_LOG_WARN("Could not find scene: {0}", path.filename().string());
     return false;
@@ -380,7 +382,7 @@ bool EditorLayer::open_scene(const std::filesystem::path& path) {
     return false;
   }
 
-  auto& job_man = App::mod<JobManager>();
+  auto& job_man = App::get_job_manager();
   job_man.wait();
 
   const auto new_scene = std::make_shared<Scene>(editor_scene->scene_name);
@@ -392,7 +394,7 @@ bool EditorLayer::open_scene(const std::filesystem::path& path) {
   return true;
 }
 
-void EditorLayer::load_default_scene(const std::shared_ptr<Scene>& scene) {
+void Editor::load_default_scene(const std::shared_ptr<Scene>& scene) {
   ZoneScoped;
   const auto sun = scene->create_entity("sun", true);
   sun.get_mut<TransformComponent>().rotation.x = glm::radians(90.f);
@@ -403,9 +405,9 @@ void EditorLayer::load_default_scene(const std::shared_ptr<Scene>& scene) {
   camera.add<CameraComponent>();
 }
 
-void EditorLayer::save_scene() {
+void Editor::save_scene() {
   if (!last_save_scene_path.empty()) {
-    auto& job_man = App::mod<JobManager>();
+    auto& job_man = App::get_job_manager();
     job_man.push_job_name("Saving scene");
     job_man.submit(Job::create([s = editor_scene.get(), p = last_save_scene_path]() { s->save_to_file(p); }));
     job_man.pop_job_name();
@@ -414,7 +416,7 @@ void EditorLayer::save_scene() {
   }
 }
 
-void EditorLayer::save_scene_as() {
+void Editor::save_scene_as() {
   const auto& window = App::get()->get_window();
   FileDialogFilter dialog_filters[] = {{.name = "Oxylus Scene(.oxscene)", .pattern = "oxscene"}};
   window.show_dialog({
@@ -422,7 +424,7 @@ void EditorLayer::save_scene_as() {
     .user_data = this,
     .callback =
       [](void* user_data, const c8* const* files, i32) {
-        const auto layer = static_cast<EditorLayer*>(user_data);
+        const auto layer = static_cast<Editor*>(user_data);
         if (!files || !*files) {
           return;
         }
@@ -432,7 +434,7 @@ void EditorLayer::save_scene_as() {
         const auto path = std::string(first_path_cstr, first_path_len);
 
         if (!path.empty()) {
-          auto& job_man = App::mod<JobManager>();
+          auto& job_man = App::get_job_manager();
           job_man.push_job_name("Saving scene");
           job_man.submit(Job::create([s = layer->editor_scene.get(), path]() { s->save_to_file(path); }));
           job_man.pop_job_name();
@@ -447,7 +449,7 @@ void EditorLayer::save_scene_as() {
   });
 }
 
-void EditorLayer::on_scene_play() {
+void Editor::on_scene_play() {
   editor_context.reset();
   set_scene_state(SceneState::Play);
   active_scene = Scene::copy(editor_scene);
@@ -455,7 +457,7 @@ void EditorLayer::on_scene_play() {
   active_scene->runtime_start();
 }
 
-void EditorLayer::on_scene_stop() {
+void Editor::on_scene_stop() {
   editor_context.reset();
   set_scene_state(SceneState::Edit);
   active_scene.reset();
@@ -468,16 +470,16 @@ void EditorLayer::on_scene_stop() {
     .each([](flecs::entity e) { e.modified<TransformComponent>(); });
 }
 
-void EditorLayer::on_scene_simulate() {
+void Editor::on_scene_simulate() {
   editor_context.reset();
   set_scene_state(SceneState::Simulate);
   active_scene = Scene::copy(editor_scene);
   set_editor_context(active_scene);
 }
 
-Scene* EditorLayer::get_active_scene() { return active_scene.get(); }
+Scene* Editor::get_active_scene() { return active_scene.get(); }
 
-void EditorLayer::set_editor_context(const std::shared_ptr<Scene>& scene) {
+void Editor::set_editor_context(const std::shared_ptr<Scene>& scene) {
   scene->meshes_dirty = true;
   auto* shpanel = get_panel<SceneHierarchyPanel>();
   shpanel->set_scene(scene.get());
@@ -486,9 +488,9 @@ void EditorLayer::set_editor_context(const std::shared_ptr<Scene>& scene) {
   }
 }
 
-void EditorLayer::set_scene_state(const SceneState state) { scene_state = state; }
+void Editor::set_scene_state(const SceneState state) { scene_state = state; }
 
-void EditorLayer::set_docking_layout(EditorLayout layout) {
+void Editor::set_docking_layout(EditorLayout layout) {
   current_layout = layout;
   ImGui::DockBuilderRemoveNode(dockspace_id);
   ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_PassthruCentralNode);
@@ -509,9 +511,8 @@ void EditorLayer::set_docking_layout(EditorLayout layout) {
     const ImGuiID right_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Right, 0.2f, nullptr, &dockspace_id);
     ImGuiID left_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.85f, nullptr, &dockspace_id);
     const ImGuiID left_bottom_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Down, 0.3f, nullptr, &left_dock);
-    const ImGuiID left_vertical_split_dock = ImGui::DockBuilderSplitNode(
-      left_dock, ImGuiDir_Left, 0.2f, nullptr, &left_dock
-    );
+    const ImGuiID
+      left_vertical_split_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Left, 0.2f, nullptr, &left_dock);
 
     ImGui::DockBuilderDockWindow(get_panel<InspectorPanel>()->get_id(), right_dock);
     ImGui::DockBuilderDockWindow(viewport_panels[0]->get_id(), left_dock);
@@ -522,12 +523,12 @@ void EditorLayer::set_docking_layout(EditorLayout layout) {
   ImGui::DockBuilderFinish(dockspace_id);
 }
 
-void EditorLayer::undo() {
+void Editor::undo() {
   ZoneScoped;
   undo_redo_system->undo();
 }
 
-void EditorLayer::redo() {
+void Editor::redo() {
   ZoneScoped;
   undo_redo_system->redo();
 }
