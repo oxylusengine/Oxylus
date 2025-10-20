@@ -1,7 +1,7 @@
 let
   pkgs = import <nixpkgs> { };
 in pkgs.mkShell.override {
-  stdenv = pkgs.llvmPackages_20.libcxxStdenv;
+  stdenv = pkgs.llvmPackages_21.libcxxStdenv;
 } {
   nativeBuildInputs = [
     pkgs.cmake
@@ -9,11 +9,11 @@ in pkgs.mkShell.override {
     pkgs.gnumake
     pkgs.xmake
 
-    pkgs.llvmPackages_20.bintools-unwrapped
-    pkgs.llvmPackages_20.libcxx
-    pkgs.llvmPackages_20.libcxx.dev
-    pkgs.llvmPackages_20.compiler-rt
-    (pkgs.llvmPackages_20.clang-tools.override {
+    pkgs.llvmPackages_21.bintools-unwrapped
+    pkgs.llvmPackages_21.libcxx
+    pkgs.llvmPackages_21.libcxx.dev
+    pkgs.llvmPackages_21.compiler-rt
+    (pkgs.llvmPackages_21.clang-tools.override {
       enableLibcxx = true;
     })
     pkgs.mold
@@ -34,7 +34,7 @@ in pkgs.mkShell.override {
   ];
 
   shellHook = ''
-    export LD_LIBRARY_PATH=${pkgs.llvmPackages_20.libcxx}/lib:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=${pkgs.llvmPackages_21.libcxx}/lib:$LD_LIBRARY_PATH
     # slang needs libstdc++
     export LD_LIBRARY_PATH=${pkgs.gcc14.cc.lib}/lib:$LD_LIBRARY_PATH
   '';

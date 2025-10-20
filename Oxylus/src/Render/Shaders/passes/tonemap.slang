@@ -8,6 +8,7 @@ import lens;
 
 #include <passes/histogram.slang>
 
+[[vk::constant_id(0)]] const u32 scene_flags = 0;
 [[vk::binding(0, 0)]]
 Sampler sampler;
 [[vk::binding(1, 0)]]
@@ -17,7 +18,6 @@ Image2D<f32x4> bloom_image;
 
 struct PushConstants {
     HistogramLuminance *luminance;
-    SceneFlags scene_flags;
     PostProcessSettings post_process_settings;
     i32x2 screen_size;
 };
@@ -175,30 +175,32 @@ float3 agx_tonemapping(float3 color) {
 f32x4 fs_main(VertexOutput input) {
     f32x3 color = input_image.sample_mip(sampler, input.tex_coord, 0.0).rgb;
 
-    if (C.scene_flags & SceneFlags::HasChromaticAberration) {
+    if ((scene_flags & SceneFlags::HasChromaticAberration) != 0) {
         f32x2 rgmag = FfxLensGetRGMag(C.post_process_settings.chromatic_aberration_amount);
         color = FfxLensSampleWithChromaticAberration(input_image, sampler, i32x2(input.position.xy), C.screen_size / 2, rgmag.x, rgmag.y);
     }
 
-    if (C.scene_flags & SceneFlags::HasBloom) {
+    if ((scene_flags & SceneFlags::HasBloom) != 0) {
         f32x3 bloom = bloom_image.sample_mip(sampler, input.tex_coord, 0.0).rgb;
         color += bloom;
     }
 
-    const f32 exposure = C.luminance->exposure;
-    color = color * (exposure + 1.0);
+    if ((scene_flags & SceneFlags::HasEyeAdaptation) != 0) {
+        let exposure = C.luminance->exposure;
+        color = color * (exposure + 1.0);
+    }
 
     //color = ACES_Film(color);
     //color = ACES_Fitted(color);
     //color = PBRNeutralToneMapping(color);  // this looks like shit, figure out why
     color = agx_tonemapping(color);
 
-    if (C.scene_flags & SceneFlags::HasVignette) {
+    if ((scene_flags & SceneFlags::HasVignette) != 0) {
         FfxLensApplyVignette(i32x2(input.position.xy), C.screen_size / 2, color, C.post_process_settings.vignette_amount);
     }
 
-    if (C.scene_flags & SceneFlags::HasFilmGrain) {
-        FfxLensApplyFilmGrain(i32x2(input.position.xy), 
+    if ((scene_flags & SceneFlags::HasFilmGrain) != 0) {
+        FfxLensApplyFilmGrain(i32x2(input.position.xy),
         color, 
         C.post_process_settings.film_grain_scale,
         C.post_process_settings.film_grain_amount, 

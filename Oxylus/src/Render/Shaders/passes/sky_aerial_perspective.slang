@@ -9,10 +9,10 @@ struct ShaderParameters {
     Sampler sampler;
     Image2D<f32x4> sky_transmittance_lut;
     Image2D<f32x4> sky_multiscattering_lut;
-    StorageImage3D<f32x4, ImageFormat::RGBA16F> sky_aerial_perspective_lut;
     ConstantBuffer<Atmosphere> atmosphere;
-    ConstantBuffer<Lights> lights;
+    ConstantBuffer<DirectionalLight> directional_light;
     ConstantBuffer<Camera> camera;
+    StorageImage3D<f32x4, ImageFormat::RGBA16F> sky_aerial_perspective_lut;
 };
 
 [[shader("compute")]]
@@ -48,7 +48,6 @@ func cs_main(
     //     t_max = length(ray_pos - eye_pos);
     // }
 
-
     f32 t_max_max = t_max;
     view_height = length(eye_pos);
     if (view_height >= params.atmosphere.atmos_radius) {
@@ -66,23 +65,15 @@ func cs_main(
         t_max_max = max(0.0, t_max_max - length_to_atmosphere);
      }
 
-    let directional_light = params.lights.directional_light;
-
     AtmosphereIntegrateInfo info = {};
     info.eye_pos = eye_pos;
     info.eye_dir = world_dir;
-    info.sun_dir = directional_light.direction;
-    info.sun_intensity = directional_light.intensity;
-    info.max_integration_length = t_max_max;
+    info.sun_dir = normalize(params.directional_light.direction);
+    info.sun_intensity = params.directional_light.intensity;
     info.eval_planet_luminance = false;
-
-    info.sampling.variable_sample_count = false;
-    info.sampling.initial_sample_count = max(1.0, (f32(thread_id.z) + 1.0) * 2.0);
-
-    info.transmittance_image = params.sky_transmittance_lut;
-    info.multiscattering_image = params.sky_multiscattering_lut;
-
-    const let result = integrate_single_scattered_luminance(params.atmosphere, params.sampler, info);
-    const let transmittance = dot(result.transmittance, f32x3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f));
-    params.sky_aerial_perspective_lut.store(thread_id, f32x4(result.luminance, transmittance));
+    info.step_count = max(1.0, (f32(thread_id.z) + 1.0) * 2.0);
+    info.t_max = t_max_max;
+    let result = integrate_single_scattered_luminance(
+            info, params.atmosphere, params.sampler, params.sky_transmittance_lut, params.sky_multiscattering_lut);
+    params.sky_aerial_perspective_lut.store(thread_id, f32x4(result.luminance, dot(result.transmittance, f32x3(1.0 / 3.0))));
 }

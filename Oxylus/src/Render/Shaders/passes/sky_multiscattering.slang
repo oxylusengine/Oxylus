@@ -34,19 +34,15 @@ func cs_main(
     AtmosphereIntegrateInfo info = {};
     info.eye_pos = ray_pos;
     info.sun_dir = sun_dir;
-    info.eval_mie_phase = false;
-    info.eval_rayleigh_phase = false;
+    info.eval_multiscattering = false;
     info.eval_planet_luminance = true;
-    info.sampling.variable_sample_count = false;
-    info.sampling.initial_sample_count = 32;
-
-    info.transmittance_image = params.sky_transmittance_lut;
+    info.step_count = 32;
 
     f32x3 luminance = 0.0;
     f32x3 multi_scattering_as_1 = 0.0;
     for (int i = 0; i < SAMPLE_COUNT; i++) {
         info.eye_dir = HEMISPHERE_64[i];
-        const let result = integrate_single_scattered_luminance(params.atmosphere, params.sampler, info);
+        const let result = integrate_single_scattered_luminance(info, params.atmosphere, params.sampler, params.sky_transmittance_lut, params.sky_transmittance_lut);
         multi_scattering_as_1 += result.multiscattering_as_1;
         luminance += result.luminance;
     }
@@ -61,4 +57,3 @@ func cs_main(
 
     params.sky_multiscattering_lut.store(thread_id.xy, f32x4(scattered_luminance * f_ms, 1.0));
 }
-

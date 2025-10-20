@@ -612,21 +612,23 @@ void ViewportPanel::draw_settings_panel() {
         UI::property("Draw bounding boxes", (bool*)RendererCVar::cvar_draw_bounding_boxes.get_ptr());
         UI::property("Freeze culling frustum", (bool*)RendererCVar::cvar_freeze_culling_frustum.get_ptr());
         UI::property("Draw camera frustum", (bool*)RendererCVar::cvar_draw_camera_frustum.get_ptr());
-        const char* debug_views[12] = {
+        const char* debug_views[] = {
           "None",
           "Triangles",
           "Meshlets",
           "Overdraw",
+          "Materials",
+          "Mesh Instances",
+          "Mesh Lods",
           "Albdeo",
           "Normal",
           "Emissive",
           "Metallic",
           "Roughness",
-          "Occlusion",
-          "HiZ",
+          "Baked Occlusion",
           "GTAO"
         };
-        UI::property("Debug View", RendererCVar::cvar_debug_view.get_ptr(), debug_views, 12);
+        UI::property("Debug View", RendererCVar::cvar_debug_view.get_ptr(), debug_views, ox::count_of(debug_views));
         UI::property("Enable frustum culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
         UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
         UI::property("Enable triangle culling", (bool*)RendererCVar::cvar_culling_triangle.get_ptr());
@@ -1108,6 +1110,8 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) out,
         VUK_IA(vuk::eDepthStencilRead) depth,
+        VUK_BA(vuk::eAttributeRead) vertex_buffer,
+        VUK_BA(vuk::eIndexRead) index_buffer,
         VUK_BA(vuk::eVertexRead) camera
       ) {
         const auto vertex_pack = vuk::Packed{
@@ -1115,7 +1119,6 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
           vuk::Format::eR32G32Sfloat,
         };
 
-        auto& renderer = App::mod<Renderer>();
         const auto grid_distance = EditorCVar::cvar_draw_grid_distance.get();
         const auto position = glm::vec3(0.f, 0.f, 0.f);
         const auto rotation = glm::vec3(glm::radians(90.f), 0.f, 0.f);
@@ -1132,10 +1135,14 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
           )
           .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
           .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
-          .bind_vertex_buffer(0, *renderer.quad_vertex_buffer, 0, vertex_pack)
-          .push_constants(vuk::ShaderStageFlagBits::eVertex, 0, PushConstants(grid_transform, scale.x))
           .bind_buffer(0, 0, camera)
-          .bind_index_buffer(*renderer.quad_index_buffer, vuk::IndexType::eUint32)
+          .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack)
+          .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
+          .push_constants(
+            vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
+            0,
+            PushConstants(grid_transform, scale.x)
+          )
           .draw_indexed(6, 1, 0, 0, 0);
 
         return std::make_tuple(out, depth, camera);
@@ -1151,11 +1158,15 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
     grid_attachment.same_shape_as(result_attachment);
     grid_attachment = vuk::clear_image(grid_attachment, vuk::Black<f32>);
 
-    std::tie(grid_attachment, depth_attachment, camera_buffer) = grid_pass(
+    auto& renderer = App::mod<Renderer>();
+    auto grid_vertex_buffer = vuk::acquire_buf("grid vertex buffer", *renderer.quad_vertex_buffer, vuk::eMemoryRead);
+    auto grid_index_buffer = vuk::acquire_buf("grid index buffer", *renderer.quad_index_buffer, vuk::eMemoryRead);
+
+    std::tie(
       grid_attachment,
       depth_attachment,
       camera_buffer
-    );
+    ) = grid_pass(grid_attachment, depth_attachment, grid_vertex_buffer, grid_index_buffer, camera_buffer);
 
     auto apply_grid_pass = vuk::make_pass(
       "apply_grid_pass",

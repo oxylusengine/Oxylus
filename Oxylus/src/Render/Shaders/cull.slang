@@ -110,3 +110,8 @@ public func test_occlusion(
     constexpr static let EPSILON = 1e-7;
     return screen_aabb.max.z <= d - EPSILON;
 }
+
+// https://zeux.io/2023/04/28/triangle-backface-culling/#fnref:3
+public func test_triangle_backface(f32x4x3 clip_pos) -> bool {
+    return determinant(f32x3x3(clip_pos[0].xyw, clip_pos[1].xyw, clip_pos[2].xyw)) >= 0.0001;
+}

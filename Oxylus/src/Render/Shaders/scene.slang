@@ -1,7 +1,7 @@
-﻿module material;
-
-import common;
+﻿import common;
 import gpu;
+
+#include <defines.slang>
 
 public const static f32 CAMERA_SCALE_UNIT     = 0.01;
 public const static f32 INV_CAMERA_SCALE_UNIT = 1.0 / CAMERA_SCALE_UNIT;
@@ -12,23 +12,16 @@ public enum DebugView : i32 {
   Triangles,
   Meshlets,
   Overdraw,
+  Materials,
+  MeshInstances,
+  MeshLods,
   Albedo,
   Normal,
   Emissive,
   Metallic,
   Roughness,
-  Occlusion,
-  HiZ,
+  BakedOcclusion,
   GTAO,
-};
-
-[[Flags]]
-public enum CullFlags : u32 {
-  MeshFrustum,
-  MeshletFrustum,
-  MeshletOcclusion,
-  TriangleBackFace,
-  MicroTriangles,
 };
 
 public struct UVGradient {
@@ -167,6 +160,7 @@ public struct Atmosphere {
     public f32   planet_radius;
     public f32   atmos_radius;
     public f32   aerial_perspective_start_km;
+    public f32   aerial_perspective_exposure;
 
     public i32x3 transmittance_lut_size;
     public i32x3 sky_view_lut_size;
@@ -188,13 +182,6 @@ public enum SceneFlags : u32 {
   HasContactShadows = 1 << 9,
 };
 
-#define MAX_POINT_LIGHTS 1024
-#define MAX_SPOT_LIGHTS 1024
-
-#ifndef MAX_DIRECTIONAL_SHADOW_CASCADES
-#define MAX_DIRECTIONAL_SHADOW_CASCADES 4
-#endif
-
 public struct DirectionalLightCascade {
   public f32x4x4 projection_view;
   public f32 far_bound;
@@ -202,7 +189,6 @@ public struct DirectionalLightCascade {
 };
 
 public struct DirectionalLight {
-  public DirectionalLightCascade cascades[MAX_DIRECTIONAL_SHADOW_CASCADES];
   public f32x3 color;
   public f32 intensity;
   public f32x3 direction;
@@ -231,18 +217,13 @@ public struct SpotLight {
 };
 
 public struct Lights {
-  public DirectionalLight directional_light;
-  public u32 directional_light_has_shadows = 0;
-  public u32 point_light_count = 0;
-  public u32 spot_light_count = 0;
+  public u32 point_light_count;
+  public u32 spot_light_count;
+  public DirectionalLight *directional_light;
+  public DirectionalLightCascade *directional_light_cascades;
   public PointLight *point_lights;
   public SpotLight *spot_lights;
-};
-
-public struct Scene {
-  public SceneFlags scene_flags;
-  public Atmosphere atmosphere;
-  public Lights* lights;
+  public Atmosphere *atmosphere;
 };
 
 public struct Transform {
@@ -367,10 +348,6 @@ public struct MeshLOD {
     public f32 error = 0.0;
 };
 
-#ifndef MESH_MAX_LODS
-#define MESH_MAX_LODS 8
-#endif
-
 public struct Mesh {
     public f32x3 *vertex_positions = nullptr;
     public f32x3 *vertex_normals = nullptr;
@@ -379,6 +356,12 @@ public struct Mesh {
     public u32 lod_count = 0;
     public MeshLOD lods[MESH_MAX_LODS] = {};
     public Bounds bounds = {};
+};
+
+public struct MeshletInstanceVisibility {
+    public u32 total_visible_meshlet_instances;
+    public u32 early_visible_meshlet_instances;
+    public u32 late_visible_meshlet_instances;
 };
 
 public struct VBGTAOSettings {
@@ -406,4 +389,3 @@ public SamplerState global_samplers[];
 public Image2D<f32x4> global_images[];
 [[vk::binding(2, 1)]]
 public StorageImage2D<f32x4> global_storage_images[];
-

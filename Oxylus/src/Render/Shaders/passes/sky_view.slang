@@ -9,10 +9,9 @@ struct ShaderParameters {
     Sampler sampler;
     Image2D<f32x4> sky_transmittance_lut;
     Image2D<f32x4> sky_multiscattering_lut;
-    StorageImage2D<f32x4, ImageFormat::RGBA16F> sky_view_lut;
     ConstantBuffer<Atmosphere> atmosphere;
-    ConstantBuffer<Lights> lights;
-    ConstantBuffer<Camera> camera;
+    ConstantBuffer<DirectionalLight> directional_light;
+    StorageImage2D<f32x4, ImageFormat::RGBA16F> sky_view_lut;
 };
 
 [[shader("compute")]]
@@ -32,27 +31,20 @@ func cs_main(
         return;
     }
 
-    let directional_light = params.lights.directional_light;
     f32x3 up_vec = eye_pos / h;
-    f32 sun_zenith_cos_angle = dot(normalize(directional_light.direction), up_vec);
+    f32 sun_zenith_cos_angle = dot(normalize(params.directional_light.direction), up_vec);
     f32x3 sun_dir = normalize(f32x3(com::safe_sqrt(1.0 - sun_zenith_cos_angle * sun_zenith_cos_angle), sun_zenith_cos_angle, 0.0));
 
     AtmosphereIntegrateInfo info = {};
     info.eye_pos = eye_pos;
     info.eye_dir = eye_dir;
     info.sun_dir = sun_dir;
-    info.sun_intensity = directional_light.intensity;
+    info.sun_intensity = params.directional_light.intensity;
+    info.step_count = 48;
 
-    const int sample_count = 48;
-    info.sampling.variable_sample_count = true;
-    info.sampling.min_sample_count = sample_count;
-    info.sampling.max_sample_count = sample_count;
+    let result = integrate_single_scattered_luminance(info, params.atmosphere, params.sampler, params.sky_transmittance_lut, params.sky_multiscattering_lut);
+    let inv_luminance = 1.0 / max(result.luminance, float3(1.0 / 1048576.0));
+    let inv_mult = min(1048576.0, max(inv_luminance.x, max(inv_luminance.y, inv_luminance.z)));
 
-    info.transmittance_image = params.sky_transmittance_lut;
-    info.multiscattering_image = params.sky_multiscattering_lut;
-
-    const let result = integrate_single_scattered_luminance(params.atmosphere, params.sampler, info);
-    const let transmittance = dot(result.transmittance, 1.0 / 3.0);
-
-    params.sky_view_lut.store(thread_id.xy, f32x4(result.luminance, transmittance));
+    params.sky_view_lut.store(thread_id.xy, f32x4(result.luminance * inv_mult, 1.0 / inv_mult));
 }

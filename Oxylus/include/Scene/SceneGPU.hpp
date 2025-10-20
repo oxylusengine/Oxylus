@@ -18,28 +18,19 @@ enum class DebugView : i32 {
   Triangles,
   Meshlets,
   Overdraw,
+  Materials,
+  MeshInstances,
+  MeshLods,
   Albedo,
   Normal,
   Emissive,
   Metallic,
   Roughness,
-  Occlusion,
-  HiZ,
+  BakedOcclusion,
   GTAO,
 
   Count,
 };
-
-enum class CullFlags : u32 {
-  MeshFrustum = 1 << 0,
-  MeshletFrustum = 1 << 1,
-  MeshletOcclusion = 1 << 2,
-  TriangleBackFace = 1 << 3,
-  MicroTriangles = 1 << 4,
-
-  All = ~0_u32,
-};
-consteval void enable_bitmask(CullFlags);
 
 enum class MaterialFlag : u32 {
   None = 0,
@@ -81,6 +72,15 @@ struct Bounds {
   alignas(4) glm::vec3 aabb_extent = {};
   alignas(4) glm::vec3 sphere_center = {};
   alignas(4) f32 sphere_radius = 0.0f;
+};
+
+struct MeshletInstanceVisibility {
+  // This is incremented __ONLY__ during cull MESHES pass.
+  alignas(4) u32 total_visible_meshlet_instances = 0;
+  // Number of meshlets that were visible on first cull MESHLETS pass.
+  alignas(4) u32 early_visible_meshlet_instances = 0;
+  // Same as above, but if requested (used for two pass occlusion tests)
+  alignas(4) u32 late_visible_meshlet_instances = 0;
 };
 
 struct MeshletInstance {
@@ -154,6 +154,7 @@ struct Atmosphere {
   alignas(4) f32 planet_radius = 6360.0f;
   alignas(4) f32 atmos_radius = 6460.0f;
   alignas(4) f32 aerial_perspective_start_km = 8.0f;
+  alignas(4) f32 aerial_perspective_exposure = 1.0f;
 
   alignas(4) vuk::Extent3D transmittance_lut_size = {};
   alignas(4) vuk::Extent3D sky_view_lut_size = {};
@@ -206,9 +207,8 @@ struct DirectionalLightCascade {
 };
 
 struct DirectionalLight {
-  alignas(4) DirectionalLightCascade cascades[MAX_DIRECTIONAL_SHADOW_CASCADES] = {};
-  alignas(4) glm::vec3 color = {1.0, 1.0, 1.0};
-  alignas(4) f32 intensity = 1.0f;
+  alignas(4) glm::vec3 color = {0.02, 0.02, 0.02};
+  alignas(4) f32 intensity = 10.0f;
   alignas(4) glm::vec3 direction = {};
   alignas(4) u32 cascade_count = {};
   alignas(4) u32 cascade_size = {};
@@ -235,12 +235,13 @@ struct SpotLight {
 };
 
 struct Lights {
-  alignas(4) DirectionalLight direction_light = {};
-  alignas(4) u32 directional_light_has_shadows = 1;
   alignas(4) u32 point_light_count = 0;
   alignas(4) u32 spot_light_count = 0;
+  alignas(8) u64 direction_light = 0;
+  alignas(8) u64 direction_light_cascades = 0;
   alignas(8) u64 point_lights = 0;
   alignas(8) u64 spot_lights = 0;
+  alignas(8) u64 atmosphere = 0;
 };
 
 enum class SceneFlags : u32 {
@@ -258,12 +259,6 @@ enum class SceneFlags : u32 {
 };
 consteval void enable_bitmask(SceneFlags);
 
-struct Scene {
-  alignas(4) SceneFlags scene_flags;
-  alignas(4) Atmosphere atmosphere;
-  alignas(8) u64 lights;
-};
-
 constexpr static u32 HISTOGRAM_THREADS_X = 16;
 constexpr static u32 HISTOGRAM_THREADS_Y = 16;
 constexpr static u32 HISTOGRAM_BIN_COUNT = HISTOGRAM_THREADS_X * HISTOGRAM_THREADS_Y;
@@ -273,7 +268,7 @@ struct HistogramLuminance {
   alignas(4) f32 exposure;
 };
 
-struct HistogramInfo {
+struct EyeAdaptationSettings {
   alignas(4) f32 min_exposure = -6.0f;
   alignas(4) f32 max_exposure = 18.0f;
   alignas(4) f32 adaptation_speed = 1.1f;
