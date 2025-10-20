@@ -521,6 +521,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
      .level_count = 1,
      .layer_count = 1}
   );
+  sky_view_lut_attachment = vuk::clear_image(std::move(sky_view_lut_attachment), vuk::Black<f32>);
 
   auto sky_aerial_perspective_attachment = vuk::declare_ia(
     "sky aerial perspective",
@@ -533,6 +534,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
      .layer_count = 1}
   );
   sky_aerial_perspective_attachment.same_format_as(sky_view_lut_attachment);
+  sky_aerial_perspective_attachment = vuk::clear_image(std::move(sky_aerial_perspective_attachment), vuk::Black<f32>);
 
   auto hilbert_noise_lut_attachment = self.renderer.hilbert_noise_lut.acquire("hilbert noise", vuk::eComputeSampled);
 
@@ -701,7 +703,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0) {
-    if (self.directional_light_cast_shadows) {
+    if (directional_shadows_enabled) {
       auto directional_light_resolution = glm::vec2(directional_light_shadowmap_size, directional_light_shadowmap_size);
       for (u32 cascade_index = 0; cascade_index < self.directional_light.cascade_count; cascade_index++) {
         auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
@@ -1014,6 +1016,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   auto& vk_context = *self.renderer.vk_context;
 
   self.gpu_scene_flags = {};
+  self.prepared_frame = {};
 
   CameraComponent current_camera = {};
   CameraComponent frozen_camera = {};
