@@ -11,11 +11,6 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
-Renderer::Renderer(VkContext* vk_ctx) {
-  ZoneScoped;
-  this->vk_context = vk_ctx;
-}
-
 auto Renderer::new_instance(Scene* scene) -> std::unique_ptr<RendererInstance> {
   ZoneScoped;
 
@@ -33,6 +28,8 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     return std::unexpected("Renderer already initialized!");
 
   self.initalized = true;
+
+  self.vk_context = &App::get_vkcontext();
 
   auto& runtime = *self.vk_context->runtime;
   auto& bindless_set = self.vk_context->get_descriptor_set();

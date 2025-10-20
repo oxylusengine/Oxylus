@@ -1,4 +1,4 @@
-#include "UI/ImGuiLayer.hpp"
+#include "UI/ImGuiRenderer.hpp"
 
 #include <ImGuizmo.h>
 #include <SDL3/SDL_keycode.h>
@@ -19,14 +19,12 @@
 #include "Utils/Profiler.hpp"
 
 namespace ox {
-ImGuiLayer::ImGuiLayer() : Layer("ImGuiLayer") {}
-
-ImFont* ImGuiLayer::load_default_font() {
+ImFont* ImGuiRenderer::load_default_font() {
   ImGuiIO& io = ImGui::GetIO();
   return io.Fonts->AddFontDefault();
 }
 
-ImFont* ImGuiLayer::load_font(const std::string& path, f32 font_size, option<ImFontConfig> font_config) {
+ImFont* ImGuiRenderer::load_font(const std::string& path, f32 font_size, option<ImFontConfig> font_config) {
   ZoneScoped;
 
   ImGuiIO& io = ImGui::GetIO();
@@ -36,7 +34,7 @@ ImFont* ImGuiLayer::load_font(const std::string& path, f32 font_size, option<ImF
   return io.Fonts->AddFontFromFileTTF(path.c_str(), font_size);
 }
 
-void ImGuiLayer::build_fonts() {
+void ImGuiRenderer::build_fonts() {
   ZoneScoped;
 
   ImGuiIO& io = ImGui::GetIO();
@@ -57,7 +55,7 @@ void ImGuiLayer::build_fonts() {
   );
 }
 
-void ImGuiLayer::on_attach() {
+auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   ZoneScoped;
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -86,11 +84,16 @@ void ImGuiLayer::on_attach() {
     "imgui",
     {.path = shaders_dir + "/passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}}
   );
+
+  return {};
 }
 
-void ImGuiLayer::on_detach() { ImGui::DestroyContext(); }
+auto ImGuiRenderer::deinit() -> std::expected<void, std::string> {
+  ImGui::DestroyContext();
+  return {};
+}
 
-void ImGuiLayer::begin_frame(const f64 delta_time, const vuk::Extent3D extent) {
+void ImGuiRenderer::begin_frame(const f64 delta_time, const vuk::Extent3D extent) {
   ZoneScoped;
 
   const App* app = App::get();
@@ -133,7 +136,7 @@ void ImGuiLayer::begin_frame(const f64 delta_time, const vuk::Extent3D extent) {
   }
 }
 
-vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::Value<vuk::ImageAttachment> target) {
+vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vuk::Value<vuk::ImageAttachment> target) {
   ZoneScoped;
 
   ImGui::Render();
@@ -380,12 +383,12 @@ vuk::Value<vuk::ImageAttachment> ImGuiLayer::end_frame(VkContext& context, vuk::
          std::move(sampled_images_array));
 }
 
-ImTextureID ImGuiLayer::add_image(vuk::Value<vuk::ImageAttachment>&& attachment) {
+ImTextureID ImGuiRenderer::add_image(vuk::Value<vuk::ImageAttachment>&& attachment) {
   rendering_images.emplace_back(std::move(attachment));
   return rendering_images.size() - 1;
 }
 
-ImTextureID ImGuiLayer::add_image(const Texture& texture) {
+ImTextureID ImGuiRenderer::add_image(const Texture& texture) {
   if (this->acquired_images.contains(texture.get_view_id())) {
     return this->acquired_images[texture.get_view_id()];
   }
@@ -397,14 +400,14 @@ ImTextureID ImGuiLayer::add_image(const Texture& texture) {
   return texture_id;
 }
 
-void ImGuiLayer::on_mouse_pos(glm::vec2 pos) {
+void ImGuiRenderer::on_mouse_pos(glm::vec2 pos) {
   ZoneScoped;
 
   auto& imgui = ImGui::GetIO();
   imgui.AddMousePosEvent(pos.x, pos.y);
 }
 
-void ImGuiLayer::on_mouse_button(u8 button, bool down) {
+void ImGuiRenderer::on_mouse_button(u8 button, bool down) {
   ZoneScoped;
 
   i32 imgui_button = 0;
@@ -422,7 +425,7 @@ void ImGuiLayer::on_mouse_button(u8 button, bool down) {
   imgui.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
 }
 
-void ImGuiLayer::on_mouse_scroll(glm::vec2 offset) {
+void ImGuiRenderer::on_mouse_scroll(glm::vec2 offset) {
   ZoneScoped;
 
   auto& imgui = ImGui::GetIO();
@@ -430,7 +433,7 @@ void ImGuiLayer::on_mouse_scroll(glm::vec2 offset) {
 }
 
 ImGuiKey to_imgui_key(SDL_Keycode keycode, SDL_Scancode scancode);
-void ImGuiLayer::on_key(u32 key_code, u32 scan_code, u16 mods, bool down) {
+void ImGuiRenderer::on_key(u32 key_code, u32 scan_code, u16 mods, bool down) {
   ZoneScoped;
 
   auto& imgui = ImGui::GetIO();
@@ -445,7 +448,7 @@ void ImGuiLayer::on_key(u32 key_code, u32 scan_code, u16 mods, bool down) {
     .SetKeyEventNativeData(key, static_cast<i32>(key_code), static_cast<i32>(scan_code), static_cast<i32>(scan_code));
 }
 
-void ImGuiLayer::on_text_input(const c8* text) {
+void ImGuiRenderer::on_text_input(const c8* text) {
   ZoneScoped;
 
   auto& imgui = ImGui::GetIO();

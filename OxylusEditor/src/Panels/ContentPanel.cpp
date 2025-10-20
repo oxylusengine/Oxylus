@@ -11,8 +11,8 @@
 #include "Core/FileSystem.hpp"
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
+#include "Editor.hpp"
 #include "EditorContext.hpp"
-#include "EditorLayer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 #include "Utils/Profiler.hpp"
@@ -131,7 +131,7 @@ static void open_file(const std::filesystem::path& path) {
     const FileType file_type = file_type_it->second;
     switch (file_type) {
       case FileType::Scene: {
-        EditorLayer::get()->open_scene(filepath);
+        App::mod<Editor>().open_scene(filepath);
         break;
       }
       case FileType::Unknown: break;
@@ -155,7 +155,7 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(
 ) {
   ZoneScoped;
 
-  auto& editor_theme = EditorLayer::get()->editor_theme;
+  auto& editor_theme = App::mod<Editor>().editor_theme;
 
   bool any_node_clicked = false;
   uint32_t node_clicked = 0;
@@ -440,7 +440,7 @@ void ContentPanel::render_side_view() {
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
 
-    const auto& editor_theme = EditorLayer::get()->editor_theme;
+    const auto& editor_theme = App::mod<Editor>().editor_theme;
 
     ImGuiTreeNodeFlags node_flags = tree_node_flags;
     const bool selected = _current_directory == _assets_directory && selection_mask == 0;
@@ -488,15 +488,15 @@ void ContentPanel::render_side_view() {
     }
     ImGui::EndTable();
     if (ImGui::IsItemClicked())
-      EditorLayer::get()->get_context().reset();
+      App::mod<Editor>().get_context().reset();
   }
 
   ImGui::PopStyleVar();
 }
 
 void ContentPanel::render_body(bool grid) {
-  const auto& editor_theme = EditorLayer::get()->editor_theme;
-  auto& editor_context = EditorLayer::get()->get_context();
+  const auto& editor_theme = App::mod<Editor>().editor_theme;
+  auto& editor_context = App::mod<Editor>().get_context();
   auto& vk_context = App::get_vkcontext();
 
   std::filesystem::path directory_to_open;
@@ -679,7 +679,7 @@ void ContentPanel::render_body(bool grid) {
           {background_thumbnail_size.x - padding * 2.f, background_thumbnail_size.y - padding * 2.f},
           {},
           {},
-          EditorLayer::get()->editor_theme.window_bg_alternative_color
+          App::mod<Editor>().editor_theme.window_bg_alternative_color
         );
 
         // Thumbnail Image
@@ -953,7 +953,7 @@ std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesyste
           created = std::filesystem::create_directory(new_folder_path);
           ++i;
         }
-        auto& editor_context = EditorLayer::get()->get_context();
+        auto& editor_context = App::mod<Editor>().get_context();
         editor_context.reset();
         editor_context.str = new_folder_path;
         editor_context.type = EditorContext::Type::File;

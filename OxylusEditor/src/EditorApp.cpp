@@ -5,10 +5,12 @@
 #include "Core/EventSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
-#include "EditorLayer.hpp"
+#include "Editor.hpp"
 #include "Networking/NetworkManager.hpp"
 #include "Physics/Physics.hpp"
+#include "Render/RendererConfig.hpp"
 #include "Scripting/LuaManager.hpp"
+#include "UI/ImGuiRenderer.hpp"
 
 namespace ox {
 class OxylusEditor : public App {
@@ -56,8 +58,10 @@ App* create_application(const AppCommandLineArgs& args) {
     .with<NetworkManager>()
     .with<LuaManager>()
     .with<DebugRenderer>()
-    .push_imgui_layer()
-    .push_layer(std::make_unique<EditorLayer>());
+    .with<ImGuiRenderer>()
+    .with<RendererConfig>()
+    .with<Renderer>()
+    .with<Editor>();
 
   return app;
 }

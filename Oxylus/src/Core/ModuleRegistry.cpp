@@ -41,12 +41,12 @@ auto ModuleRegistry::deinit(this ModuleRegistry& self) -> bool {
   return true;
 }
 
-auto ModuleRegistry::update(this ModuleRegistry& self, f64 delta_time) -> void {
+auto ModuleRegistry::update(this ModuleRegistry& self, const Timestep& timestep) -> void {
   ZoneScoped;
 
   for (const auto& cb : self.update_callbacks) {
     if (cb.has_value()) {
-      cb.value()(delta_time);
+      cb.value()(timestep);
     }
   }
 }

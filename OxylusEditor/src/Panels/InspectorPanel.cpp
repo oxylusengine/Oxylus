@@ -10,7 +10,7 @@
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
 #include "Core/FileSystem.hpp"
-#include "EditorLayer.hpp"
+#include "Editor.hpp"
 #include "EditorTheme.hpp"
 #include "Scene/ECSModule/ComponentWrapper.hpp"
 #include "UI/PayloadData.hpp"
@@ -56,9 +56,9 @@ InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION
 }
 
 void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
-  auto* editor_layer = EditorLayer::get();
-  auto& editor_context = editor_layer->get_context();
-  scene_ = editor_layer->get_selected_scene();
+  auto& editor = App::mod<Editor>();
+  auto& editor_context = editor.get_context();
+  scene_ = editor.get_selected_scene();
 
   on_begin();
 
@@ -95,9 +95,8 @@ void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
   on_end();
 }
 
-void InspectorPanel::draw_material_properties(
-  Material* material, const UUID& material_uuid, std::string_view default_path
-) {
+void
+InspectorPanel::draw_material_properties(Material* material, const UUID& material_uuid, std::string_view default_path) {
   if (material_uuid) {
     const auto& window = App::get()->get_window();
     static auto uuid_copy = material_uuid;
@@ -263,7 +262,9 @@ void InspectorPanel::draw_components(flecs::entity entity) {
   if (!entity)
     return;
 
-  auto& undo_redo_system = EditorLayer::get()->undo_redo_system;
+  auto& editor = App::mod<Editor>();
+
+  auto& undo_redo_system = editor.undo_redo_system;
 
   ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + 20.0f));
   std::string new_name = entity.name().c_str();
@@ -327,7 +328,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                                                      ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_Framed |
                                                      ImGuiTreeNodeFlags_FramePadding;
 
-    auto& editor_theme = EditorLayer::get()->editor_theme;
+    auto& editor_theme = editor.editor_theme;
 
     const float line_height = editor_theme.regular_font_size + GImGui->Style.FramePadding.y * 2.0f;
 

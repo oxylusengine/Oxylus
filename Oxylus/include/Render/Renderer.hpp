@@ -147,8 +147,6 @@ public:
     }
   };
 
-  Renderer(VkContext* vk_ctx);
-
   auto init(this Renderer& self) -> std::expected<void, std::string>;
   auto deinit(this Renderer& self) -> std::expected<void, std::string>;
 

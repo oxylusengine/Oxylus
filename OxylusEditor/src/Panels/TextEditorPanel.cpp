@@ -1,15 +1,15 @@
 #include "TextEditorPanel.hpp"
 
-#include <tracy/Tracy.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
+#include <tracy/Tracy.hpp>
 
-#include "EditorLayer.hpp"
+#include "Core/App.hpp"
+#include "Editor.hpp"
 
 namespace ox {
 TextEditorPanel::TextEditorPanel() : EditorPanel("TextEditor", ICON_MDI_TEXT_BOX_EDIT, false) {
-  auto* editor_layer = EditorLayer::get();
-  text_editor.body_font = editor_layer->editor_theme.mono_font;
+  text_editor.body_font = App::mod<Editor>().editor_theme.mono_font;
 }
 
 void TextEditorPanel::on_update() {}

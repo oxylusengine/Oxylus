@@ -7,7 +7,7 @@
 #include <misc/cpp/imgui_stdlib.h>
 
 #include "Core/App.hpp"
-#include "EditorLayer.hpp"
+#include "Editor.hpp"
 #include "Render/DebugRenderer.hpp"
 
 namespace ox {
@@ -23,7 +23,7 @@ SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON
   viewer.asset_manager_viewer.search_icon = ICON_MDI_MAGNIFY;
 
   viewer.on_selected_entity_callback([](flecs::entity e) {
-    auto& context = EditorLayer::get()->get_context();
+    auto& context = App::mod<Editor>().get_context();
 
     context.reset();
     context.type = EditorContext::Type::Entity;
@@ -31,15 +31,15 @@ SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON
   });
 
   viewer.on_selected_entity_reset_callback([]() {
-    auto& context = EditorLayer::get()->get_context();
+    auto& context = App::mod<Editor>().get_context();
     context.reset();
   });
 }
 
 auto SceneHierarchyPanel::on_update() -> void {
-  auto* editor_layer = EditorLayer::get();
-  auto& editor_context = editor_layer->get_context();
-  auto& undo_redo_system = editor_layer->undo_redo_system;
+  auto& editor = App::mod<Editor>();
+  auto& editor_context = editor.get_context();
+  auto& undo_redo_system = editor.undo_redo_system;
 
   if (editor_context.type == EditorContext::Type::Entity) {
     if (editor_context.entity.has_value())
@@ -76,7 +76,7 @@ auto SceneHierarchyPanel::on_update() -> void {
       viewer.selected_entity_.set(clone_entity(viewer.selected_entity_.get()));
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Delete) &&
-        (viewer.table_hovered_ || editor_layer->viewport_panels[0]->is_viewport_hovered)) {
+        (viewer.table_hovered_ || editor.viewport_panels[0]->is_viewport_hovered)) {
       viewer.deleted_entity_ = viewer.selected_entity_.get();
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F2)) {

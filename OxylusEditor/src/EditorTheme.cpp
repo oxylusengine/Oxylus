@@ -6,7 +6,7 @@
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Scene/ECSModule/Core.hpp"
-#include "UI/ImGuiLayer.hpp"
+#include "UI/ImGuiRenderer.hpp"
 
 namespace ox {
 static ImVec4 lighten(ImVec4 c, float p) {
@@ -14,37 +14,35 @@ static ImVec4 lighten(ImVec4 c, float p) {
 }
 
 void EditorTheme::init(this EditorTheme& self) {
-  const auto* app = App::get();
-
   auto& vfs = App::get_vfs();
   auto regular_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraSans-Regular.ttf");
   auto bold_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraSans-Bold.ttf");
   auto icon_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/materialdesignicons-webfont.ttf");
   auto mono_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraMono-Regular.ttf");
 
-  auto* imguilayer = app->get_imgui_layer();
+  auto& imgui_renderer = App::mod<ImGuiRenderer>();
 
   ImFontConfig fonts_config;
   fonts_config.SizePixels = self.regular_font_size;
 
   fonts_config.MergeMode = false;
-  self.regular_font = imguilayer->load_font(regular_font_path, self.regular_font_size, fonts_config);
+  self.regular_font = imgui_renderer.load_font(regular_font_path, self.regular_font_size, fonts_config);
   fonts_config.MergeMode = true;
   fonts_config.GlyphMinAdvanceX = self.regular_font_size;
-  imguilayer->load_font(icon_font_path,
+  imgui_renderer.load_font(icon_font_path,
                         self.regular_font_size,
                         fonts_config); // NOTE: Ignoring return values of these since they are merged in
 
   fonts_config.MergeMode = false;
   fonts_config.GlyphMinAdvanceX = {};
-  self.bold_font = imguilayer->load_font(bold_font_path, self.regular_font_size, fonts_config);
+  self.bold_font = imgui_renderer.load_font(bold_font_path, self.regular_font_size, fonts_config);
   fonts_config.MergeMode = true;
   fonts_config.GlyphMinAdvanceX = self.regular_font_size;
-  imguilayer->load_font(icon_font_path, self.regular_font_size, fonts_config);
+  imgui_renderer.load_font(icon_font_path, self.regular_font_size, fonts_config);
 
   fonts_config = {};
   fonts_config.MergeMode = false;
-  self.mono_font = imguilayer->load_font(mono_font_path, self.regular_font_size, fonts_config);
+  self.mono_font = imgui_renderer.load_font(mono_font_path, self.regular_font_size, fonts_config);
 
   self.component_icon_map[typeid(LightComponent).hash_code()] = ICON_MDI_LIGHTBULB;
   self.component_icon_map[typeid(CameraComponent).hash_code()] = ICON_MDI_CAMERA;

@@ -4,7 +4,7 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
-#include "UI/ImGuiLayer.hpp"
+#include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 
 namespace ox {
@@ -198,7 +198,7 @@ bool UI::texture_property(
   if (texture_asset) {
     auto texture = asset_man.get_texture(texture_uuid);
     if (texture) {
-      if (ImGui::ImageButton(label, App::get()->get_imgui_layer()->add_image(*texture), {button_size, button_size})) {
+      if (ImGui::ImageButton(label, App::mod<ImGuiRenderer>().add_image(*texture), {button_size, button_size})) {
         state_storage->SetBool(picker_state_id, true);
         changed = true;
       }
@@ -213,7 +213,7 @@ bool UI::texture_property(
         );
         ImGui::TextUnformatted(txt_name.c_str());
         ImGui::Spacing();
-        ImGui::Image(App::get()->get_imgui_layer()->add_image(*texture), {tooltip_size, tooltip_size});
+        ImGui::Image(App::mod<ImGuiRenderer>().add_image(*texture), {tooltip_size, tooltip_size});
         ImGui::EndTooltip();
       }
     }
@@ -478,7 +478,7 @@ void UI::image(
   const ImVec4& tint_col,
   const ImVec4& border_col
 ) {
-  ImGui::Image(App::get()->get_imgui_layer()->add_image(texture), size, uv0, uv1, tint_col, border_col);
+  ImGui::Image(App::mod<ImGuiRenderer>().add_image(texture), size, uv0, uv1, tint_col, border_col);
 }
 
 void UI::image(
@@ -489,7 +489,7 @@ void UI::image(
   const ImVec4& tint_col,
   const ImVec4& border_col
 ) {
-  ImGui::Image(App::get()->get_imgui_layer()->add_image(std::move(attch)), size, uv0, uv1, tint_col, border_col);
+  ImGui::Image(App::mod<ImGuiRenderer>().add_image(std::move(attch)), size, uv0, uv1, tint_col, border_col);
 }
 
 bool UI::image_button(
@@ -501,7 +501,7 @@ bool UI::image_button(
   const ImVec4& tint_col,
   const ImVec4& bg_col
 ) {
-  return ImGui::ImageButton(id, App::get()->get_imgui_layer()->add_image(texture), size, uv0, uv1, bg_col, tint_col);
+  return ImGui::ImageButton(id, App::mod<ImGuiRenderer>().add_image(texture), size, uv0, uv1, bg_col, tint_col);
 }
 
 bool UI::icon_button(const char* icon, const char* label, const ImVec4 icon_color) {
