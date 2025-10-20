@@ -394,7 +394,10 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
-  OX_DEFER(&) { self.clear_stages(); };
+  OX_DEFER(&) {
+    self.clear_stages();
+    self.shared_resources.clear();
+  };
 
   self.viewport_size = {render_info.extent.width, render_info.extent.height};
   self.viewport_offset = render_info.viewport_offset;
