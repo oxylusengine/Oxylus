@@ -79,7 +79,11 @@ add_requireconfs("fmt", "vuk.fmt", {
     system = false
 })
 
-add_requires("toml++ v3.4.0")
+add_requires("toml++ v3.4.0", {
+    configs = {
+        header_only = false
+    }
+})
 
 add_requires("simdjson-ox v3.12.2")
 

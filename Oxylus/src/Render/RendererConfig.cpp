@@ -1,7 +1,8 @@
 #include "Render/RendererConfig.hpp"
 
+#include <toml++/toml.hpp>
+
 #include "Core/FileSystem.hpp"
-#include "Utils/Toml.hpp"
 
 namespace ox {
 
@@ -24,45 +25,47 @@ bool RendererConfig::save_config(const char* path) const {
   ZoneScoped;
 
   const auto root = toml::table{
-      {
-          "display",
-          toml::table{
-              {"vsync", (bool)RendererCVar::cvar_vsync.get()},
-          },
+    {
+      "display",
+      toml::table{
+        {"vsync", (bool)RendererCVar::cvar_vsync.get()},
       },
-      {
-          "debug",
-          toml::table{
-              {"debug_renderer", (bool)RendererCVar::cvar_enable_debug_renderer.get()},
-              {"bounding_boxes", (bool)RendererCVar::cvar_draw_bounding_boxes.get()},
-              {"physics_debug_renderer", (bool)RendererCVar::cvar_enable_physics_debug_renderer.get()},
-          },
+    },
+    {
+      "debug",
+      toml::table{
+        {"debug_renderer", (bool)RendererCVar::cvar_enable_debug_renderer.get()},
+        {"bounding_boxes", (bool)RendererCVar::cvar_draw_bounding_boxes.get()},
+        {"physics_debug_renderer", (bool)RendererCVar::cvar_enable_physics_debug_renderer.get()},
       },
-      {"color",
-       toml::table{{"tonemapper", RendererCVar::cvar_tonemapper.get()},
-                   {"exposure", RendererCVar::cvar_exposure.get()},
-                   {"gamma", RendererCVar::cvar_gamma.get()}}},
-      {
-          "gtao",
-          toml::table{
-              {"enabled", (bool)RendererCVar::cvar_vbgtao_enable.get()},
-              {"radius", RendererCVar::cvar_vbgtao_radius.get()},
-              {"quality_level", RendererCVar::cvar_vbgtao_quality_level.get()},
-          },
+    },
+    {"color",
+     toml::table{
+       {"tonemapper", RendererCVar::cvar_tonemapper.get()},
+       {"exposure", RendererCVar::cvar_exposure.get()},
+       {"gamma", RendererCVar::cvar_gamma.get()}
+     }},
+    {
+      "gtao",
+      toml::table{
+        {"enabled", (bool)RendererCVar::cvar_vbgtao_enable.get()},
+        {"radius", RendererCVar::cvar_vbgtao_radius.get()},
+        {"quality_level", RendererCVar::cvar_vbgtao_quality_level.get()},
       },
-      {
-          "bloom",
-          toml::table{
-              {"enabled", (bool)RendererCVar::cvar_bloom_enable.get()},
-              {"threshold", RendererCVar::cvar_bloom_threshold.get()},
-          },
+    },
+    {
+      "bloom",
+      toml::table{
+        {"enabled", (bool)RendererCVar::cvar_bloom_enable.get()},
+        {"threshold", RendererCVar::cvar_bloom_threshold.get()},
       },
-      {
-          "fxaa",
-          toml::table{
-              {"enabled", (bool)RendererCVar::cvar_fxaa_enable.get()},
-          },
+    },
+    {
+      "fxaa",
+      toml::table{
+        {"enabled", (bool)RendererCVar::cvar_fxaa_enable.get()},
       },
+    },
   };
 
   return fs::write_file(path, root, "# Oxylus renderer config file");
