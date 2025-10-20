@@ -254,8 +254,8 @@ ECS_COMPONENT_BEGIN(LightComponent)
   enum LightType : u32 { Directional = 0, Point, Spot };
 #endif
   ECS_COMPONENT_MEMBER(type, u32, LightType::Point)
-  ECS_COMPONENT_MEMBER(color, glm::vec3, {1.0f, 1.0f, 1.0f})
-  ECS_COMPONENT_MEMBER(intensity, f32, 1.0f)
+  ECS_COMPONENT_MEMBER(color, glm::vec3, {0.02f, 0.02f, 0.02f})
+  ECS_COMPONENT_MEMBER(intensity, f32, 10.0f)
   ECS_COMPONENT_MEMBER(radius, f32, 1.0f)
   ECS_COMPONENT_MEMBER(outer_cone_angle, f32, 70)
   ECS_COMPONENT_MEMBER(inner_cone_angle, f32, 0.0f)
@@ -281,6 +281,7 @@ ECS_COMPONENT_BEGIN(AtmosphereComponent)
   ECS_COMPONENT_MEMBER(ozone_height, f32, 25.0f)
   ECS_COMPONENT_MEMBER(ozone_thickness, f32, 15.0f)
   ECS_COMPONENT_MEMBER(aerial_perspective_start_km, f32, 8.0f)
+  ECS_COMPONENT_MEMBER(aerial_perspective_exposure, f32, 1.0f)
 ECS_COMPONENT_END();
 
 ECS_COMPONENT_BEGIN(AutoExposureComponent)

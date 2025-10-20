@@ -57,7 +57,7 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   slang.create_pipeline(
     runtime,
-    "2d_forward_pipeline",
+    "2d_forward",
     {.path = shaders_dir + "/passes/2d_forward.slang", .entry_points = {"vs_main", "fs_main"}},
     &bindless_set
   );
@@ -65,56 +65,50 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   // --- Sky ---
   slang.create_pipeline(
     runtime,
-    "sky_transmittance_pipeline",
+    "sky_transmittance",
     {.path = shaders_dir + "/passes/sky_transmittance.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "sky_multiscatter_lut_pipeline",
+    "sky_multiscatter",
     {.path = shaders_dir + "/passes/sky_multiscattering.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "sky_view_pipeline",
+    "sky_view",
     {.path = shaders_dir + "/passes/sky_view.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "sky_aerial_perspective_pipeline",
+    "sky_aerial_perspective",
     {.path = shaders_dir + "/passes/sky_aerial_perspective.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "sky_final_pipeline",
-    {.path = shaders_dir + "/passes/sky_final.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   // --- VISBUFFER ---
   slang.create_pipeline(
     runtime,
-    "cull_meshes",
+    "vis_cull_meshes",
     {.path = shaders_dir + "/passes/cull_meshes.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "generate_cull_commands",
-    {.path = shaders_dir + "/passes/generate_cull_commands.slang", .entry_points = {"cs_main"}}
+    "vis_generate_cull_commands",
+    {.path = shaders_dir + "/passes/cull_meshes.slang", .entry_points = {"generate_commands_cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "cull_meshlets",
+    "vis_cull_meshlets",
     {.path = shaders_dir + "/passes/cull_meshlets.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "cull_triangles",
+    "vis_cull_triangles",
     {.path = shaders_dir + "/passes/cull_triangles.slang", .entry_points = {"cs_main"}}
   );
 
@@ -138,10 +132,17 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     &bindless_set
   );
 
+  // --- SHADOWMAP ---
   slang.create_pipeline(
     runtime,
-    "shadowmap_draw",
-    {.path = shaders_dir + "/passes/shadowmap_draw.slang", .entry_points = {"vs_main", "fs_main"}}
+    "shadowmap_cull_meshes",
+    {.path = shaders_dir + "/passes/shadowmap_cull_meshes.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "shadowmap_generate_cull_commands",
+    {.path = shaders_dir + "/passes/shadowmap_cull_meshes.slang", .entry_points = {"generate_commands_cs_main"}}
   );
 
   slang.create_pipeline(
@@ -152,15 +153,27 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   slang.create_pipeline(
     runtime,
-    "debug",
-    {.path = shaders_dir + "/passes/debug.slang", .entry_points = {"vs_main", "fs_main"}}
+    "shadowmap_cull_triangles",
+    {.path = shaders_dir + "/passes/shadowmap_cull_triangles.slang", .entry_points = {"cs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "shadowmap_draw",
+    {.path = shaders_dir + "/passes/shadowmap_draw.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
+
+  slang.create_pipeline(
+    runtime,
+    "debug_view",
+    {.path = shaders_dir + "/passes/debug_view.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   // --- PBR ---
   slang.create_pipeline(
     runtime,
-    "brdf",
-    {.path = shaders_dir + "/passes/brdf.slang", .entry_points = {"vs_main", "fs_main"}}
+    "pbr_apply",
+    {.path = shaders_dir + "/passes/pbr_apply.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   //  --- FFX ---
@@ -169,76 +182,76 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   // --- PostProcess ---
   slang.create_pipeline(
     runtime,
-    "histogram_generate_pipeline",
+    "histogram_generate",
     {.path = shaders_dir + "/passes/histogram_generate.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "histogram_average_pipeline",
+    "histogram_average",
     {.path = shaders_dir + "/passes/histogram_average.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "tonemap_pipeline",
+    "tonemap",
     {.path = shaders_dir + "/passes/tonemap.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   // --- Bloom ---
   slang.create_pipeline(
     runtime,
-    "bloom_prefilter_pipeline",
+    "bloom_prefilter",
     {.path = shaders_dir + "/passes/bloom/bloom_prefilter.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "bloom_downsample_pipeline",
+    "bloom_downsample",
     {.path = shaders_dir + "/passes/bloom/bloom_downsample.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "bloom_upsample_pipeline",
+    "bloom_upsample",
     {.path = shaders_dir + "/passes/bloom/bloom_upsample.slang", .entry_points = {"cs_main"}}
   );
 
   // --- VBGTAO ---
   slang.create_pipeline(
     runtime,
-    "vbgtao_prefilter_pipeline",
+    "vbgtao_prefilter",
     {.path = shaders_dir + "/passes/gtao/vbgtao_prefilter.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "vbgtao_main_pipeline",
+    "vbgtao_main",
     {.path = shaders_dir + "/passes/gtao/vbgtao_main.slang", .entry_points = {"cs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "vbgtao_denoise_pipeline",
+    "vbgtao_denoise",
     {.path = shaders_dir + "/passes/gtao/vbgtao_denoise.slang", .entry_points = {"cs_main"}}
   );
 
   // --- FXAA ---
   slang.create_pipeline(
     runtime,
-    "fxaa_pipeline",
+    "fxaa",
     {.path = shaders_dir + "/passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "debug_renderer_pipeline",
-    {.path = shaders_dir + "/passes/debug_renderer.slang", .entry_points = {"vs_main", "fs_main"}}
+    "debug_mesh",
+    {.path = shaders_dir + "/passes/debug_mesh.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   slang.create_pipeline(
     runtime,
-    "contact_shadows_pipeline",
+    "contact_shadows",
     {.path = shaders_dir + "/passes/contact_shadows.slang", .entry_points = {"cs_main"}}
   );
 
@@ -299,14 +312,14 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   auto temp_atmos_info = GPU::Atmosphere{};
   temp_atmos_info.transmittance_lut_size = self.sky_transmittance_lut_view.get_extent();
   temp_atmos_info.multiscattering_lut_size = self.sky_multiscatter_lut_view.get_extent();
-  auto temp_atmos_buffer = self.vk_context->scratch_buffer(std::span(&temp_atmos_info, 1));
+  auto temp_atmos_buffer = self.vk_context->scratch_buffer(temp_atmos_info);
 
   auto transmittance_lut_attachment = self.sky_transmittance_lut_view.discard("sky_transmittance_lut");
 
   auto transmittance_lut_pass = vuk::make_pass(
     "transmittance_lut_pass",
     [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) dst, VUK_BA(vuk::eComputeRead) atmos) {
-      cmd_list.bind_compute_pipeline("sky_transmittance_pipeline")
+      cmd_list.bind_compute_pipeline("sky_transmittance")
         .bind_image(0, 0, dst)
         .bind_buffer(0, 1, atmos)
         .dispatch_invocations_per_pixel(dst);
@@ -329,7 +342,7 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
       VUK_IA(vuk::eComputeRW) sky_multiscatter_lut,
       VUK_BA(vuk::eComputeRead) atmos
     ) {
-      cmd_list.bind_compute_pipeline("sky_multiscatter_lut_pipeline")
+      cmd_list.bind_compute_pipeline("sky_multiscatter")
         .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
         .bind_image(0, 1, sky_transmittance_lut)
         .bind_image(0, 2, sky_multiscatter_lut)
@@ -357,14 +370,6 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   self.vk_context->wait_on(std::move(transmittance_lut_attachment));
   self.vk_context->wait_on(std::move(multiscatter_lut_attachment));
-
-  if (self.exposure_buffer) {
-    self.exposure_buffer.reset();
-  }
-  self.exposure_buffer = self.vk_context->allocate_buffer_super(
-    vuk::MemoryUsage::eGPUonly,
-    sizeof(GPU::HistogramLuminance)
-  );
 
   struct Vertex {
     alignas(4) glm::vec3 position = {};

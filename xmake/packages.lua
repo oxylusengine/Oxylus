@@ -10,7 +10,7 @@ add_requires("meshoptimizer v0.22")
 add_requires("libsdl3") -- handled by system package (also nix)
 add_requires("ktx-ox v4.4.0", { system = false, debug = false })
 add_requires("zstd v1.5.7", { system = false })
-add_requires("shader-slang v2025.12.1", { system = false })
+add_requires("shader-slang v2025.15.1", { system = false })
 add_requires("enet-ox v2.6.5", {
     configs = {
         test = false,
@@ -46,7 +46,7 @@ add_requires("glm 1.0.1", {
 add_requires("flecs-ox v4.1.0")
 
 
-local fmt_version = "11.2.0"
+local fmt_version = "12.0.0"
 local fmt_configs = { header_only = false, shared = false }
 add_requires("fmt " .. fmt_version, { configs = fmt_configs, system = false })
 
@@ -83,7 +83,7 @@ add_requires("toml++ v3.4.0")
 
 add_requires("simdjson-ox v3.12.2")
 
-add_requires("joltphysics-ox v5.4.0", {
+add_requires("joltphysics-ox v5.4.0.1", {
     configs = {
         debug_renderer = true,
         rtti = true,

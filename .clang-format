@@ -18,6 +18,7 @@ AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
 AlignOperands: true
 AlignEscapedNewlines: false
+AlwaysBreakAfterReturnType: None
 PackConstructorInitializers: CurrentLine
 BreakArrays: true
 AlignTrailingComments:
@@ -34,6 +35,8 @@ BinPackParameters: OnePerLine
 BinPackArguments: false
 AllowAllArgumentsOnNextLine: false
 BreakBeforeBraces: Attach
+BraceWrapping:
+  AfterFunction: true
 BreakBeforeBinaryOperators: None
 BreakAfterReturnType: Automatic
 BreakTemplateDeclarations: Yes 
@@ -56,5 +59,6 @@ SpacesInAngles: false
 TabWidth: 2
 UseTab: Never
 PenaltyBreakAssignment: 300
+PenaltyReturnTypeOnItsOwnLine: 300
 IndentWidth: 2
 ContinuationIndentWidth: 2

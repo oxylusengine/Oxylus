@@ -4,9 +4,9 @@ import scene;
 import visbuffer;
 
 struct ShaderParameters {
-    StructuredBuffer<MeshletInstance> meshlet_instances;
-    StructuredBuffer<MeshInstance> mesh_instances;
     StructuredBuffer<Mesh> meshes;
+    StructuredBuffer<MeshInstance> mesh_instances;
+    StructuredBuffer<MeshletInstance> meshlet_instances;
     StructuredBuffer<Transform> transforms;
 };
 ParameterBlock<ShaderParameters> params;
