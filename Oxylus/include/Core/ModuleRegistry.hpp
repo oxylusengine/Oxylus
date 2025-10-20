@@ -34,6 +34,7 @@ struct ModuleRegistry {
   using Registry = ankerl::unordered_dense::map<std::type_index, ModulePtr, TypeIndexHash>;
 
   Registry registry = {};
+  std::vector<std::type_index> module_types = {};
   std::vector<std::function<std::expected<void, std::string>()>> init_callbacks = {};
   std::vector<ox::option<std::function<void(const Timestep&)>>> update_callbacks = {};
   std::vector<ox::option<std::function<void(vuk::Extent3D, vuk::Format)>>> render_callbacks = {};
@@ -45,28 +46,31 @@ struct ModuleRegistry {
     ZoneScoped;
 
     auto type_index = std::type_index(typeid(T));
+    module_types.emplace_back(type_index);
     auto deleter = [](void* self) {
       delete static_cast<T*>(self);
     };
     auto& module = registry.try_emplace(type_index, ModulePtr(new T(std::forward<Args>(args)...), deleter))
                      .first->second;
 
-    init_callbacks.push_back([m = static_cast<T*>(module.get())]() { return m->init(); });
-    deinit_callbacks.push_back([m = static_cast<T*>(module.get())]() { return m->deinit(); });
+    init_callbacks.emplace_back([m = static_cast<T*>(module.get())]() { return m->init(); });
+    deinit_callbacks.emplace_back([m = static_cast<T*>(module.get())]() { return m->deinit(); });
     if constexpr (ModuleHasUpdate<T>) {
-      update_callbacks.push_back([m = static_cast<T*>(module.get())](const Timestep& timestep) { m->update(timestep); });
+      update_callbacks.emplace_back([m = static_cast<T*>(module.get())](const Timestep& timestep) {
+        m->update(timestep);
+      });
     } else {
       update_callbacks.emplace_back(ox::nullopt);
     }
     if constexpr (ModuleHasRender<T>) {
-      render_callbacks.push_back([m = static_cast<T*>(module.get())](vuk::Extent3D extent, vuk::Format format) {
+      render_callbacks.emplace_back([m = static_cast<T*>(module.get())](vuk::Extent3D extent, vuk::Format format) {
         m->render(extent, format);
       });
     } else {
       render_callbacks.emplace_back(ox::nullopt);
     }
 
-    module_names.push_back(T::MODULE_NAME);
+    module_names.emplace_back(T::MODULE_NAME);
   }
 
   template <typename T>

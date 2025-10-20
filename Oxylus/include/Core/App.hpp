@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Core/AppCommandLineArgs.hpp"
+#include "Core/EventSystem.hpp"
+#include "Core/JobManager.hpp"
 #include "Core/ModuleRegistry.hpp"
 #include "Core/VFS.hpp"
 #include "Render/Vulkan/VkContext.hpp"
@@ -50,6 +52,8 @@ public:
   static auto get_vkcontext() -> VkContext&;
   static auto get_timestep() -> const Timestep&;
   static auto get_vfs() -> VFS&;
+  static auto get_job_manager() -> JobManager&;
+  static auto get_event_system() -> EventSystem&;
 
 private:
   static App* instance_;
@@ -65,6 +69,8 @@ private:
   glm::vec2 swapchain_extent = {};
 
   VFS vfs = {};
+  JobManager job_manager = {};
+  EventSystem event_system = {};
   ModuleRegistry registry = {};
 
   Timestep timestep = {};

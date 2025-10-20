@@ -563,7 +563,7 @@ void ContentPanel::render_body(bool grid) {
           if (thumbnail_cache_textures.contains(file.file_path)) {
             texture_name = file.file_path;
           } else {
-            auto& job_man = App::mod<JobManager>();
+            auto& job_man = App::get_job_manager();
             job_man.push_job_name("ContentPanelThumbnail");
             job_man.submit(Job::create([this, file_path = file.file_path]() {
               auto thumbnail_texture = std::make_shared<Texture>();

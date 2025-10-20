@@ -77,6 +77,14 @@ auto App::get_vfs() -> VFS& {
   return instance_->vfs; //
 }
 
+auto App::get_job_manager() -> JobManager& {
+  return instance_->job_manager; //
+}
+
+auto App::get_event_system() -> EventSystem& {
+  return instance_->event_system; //
+}
+
 void App::run(this App& self) {
   ZoneScoped;
 
@@ -100,15 +108,21 @@ void App::run(this App& self) {
     self.vk_context->create_context(*self.window, enable_validation);
   }
 
-  // Internal modules
-  self.with<EventSystem>().with<JobManager>();
+  auto job_manager_init_result = self.job_manager.init();
+  if (job_manager_init_result.has_value())
+    OX_LOG_INFO("Initalized JobManager.");
+  else
+    OX_LOG_ERROR("Failed to initalize JobManager: {}", job_manager_init_result.error());
 
-  self.mod<JobManager>().wait();
+  auto event_system_init_result = self.event_system.init();
+  if (event_system_init_result.has_value())
+    OX_LOG_INFO("Initalized EventSystem.");
+  else
+    OX_LOG_ERROR("Failed to initalize EventSystem: {}", event_system_init_result.error());
 
-  // Optional modules
   self.registry.init();
 
-  self.mod<JobManager>().wait();
+  self.job_manager.wait();
 
   WindowCallbacks window_callbacks = {};
   window_callbacks.user_data = &self;
@@ -232,7 +246,7 @@ void App::close(this App& self) {
 
   self.is_running = false;
 
-  auto& job_man = self.mod<JobManager>();
+  auto& job_man = self.job_manager;
   job_man.wait();
 
   self.registry.deinit();

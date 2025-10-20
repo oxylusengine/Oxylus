@@ -29,7 +29,7 @@ namespace ox {
 auto Editor::init() -> std::expected<void, std::string> {
   ZoneScoped;
 
-  auto& job_man = App::mod<JobManager>();
+  auto& job_man = App::get_job_manager();
   job_man.get_tracker().start_tracking();
 
   undo_redo_system = std::make_unique<UndoRedoSystem>();
@@ -89,7 +89,7 @@ auto Editor::init() -> std::expected<void, std::string> {
 auto Editor::deinit() -> std::expected<void, std::string> {
   editor_config.save_config();
 
-  auto& job_man = App::mod<JobManager>();
+  auto& job_man = App::get_job_manager();
   job_man.get_tracker().stop_tracking();
 
   return {};
@@ -131,7 +131,7 @@ auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> voi
   if (const auto scene = get_active_scene())
     scene->on_render(extent, format);
 
-  auto& job_man = App::mod<JobManager>();
+  auto& job_man = App::get_job_manager();
 
   auto status = job_man.get_tracker().get_status();
   for (const auto& [name, is_working] : status) {
@@ -382,7 +382,7 @@ bool Editor::open_scene(const std::filesystem::path& path) {
     return false;
   }
 
-  auto& job_man = App::mod<JobManager>();
+  auto& job_man = App::get_job_manager();
   job_man.wait();
 
   const auto new_scene = std::make_shared<Scene>(editor_scene->scene_name);
@@ -407,7 +407,7 @@ void Editor::load_default_scene(const std::shared_ptr<Scene>& scene) {
 
 void Editor::save_scene() {
   if (!last_save_scene_path.empty()) {
-    auto& job_man = App::mod<JobManager>();
+    auto& job_man = App::get_job_manager();
     job_man.push_job_name("Saving scene");
     job_man.submit(Job::create([s = editor_scene.get(), p = last_save_scene_path]() { s->save_to_file(p); }));
     job_man.pop_job_name();
@@ -434,7 +434,7 @@ void Editor::save_scene_as() {
         const auto path = std::string(first_path_cstr, first_path_len);
 
         if (!path.empty()) {
-          auto& job_man = App::mod<JobManager>();
+          auto& job_man = App::get_job_manager();
           job_man.push_job_name("Saving scene");
           job_man.submit(Job::create([s = layer->editor_scene.get(), path]() { s->save_to_file(path); }));
           job_man.pop_job_name();

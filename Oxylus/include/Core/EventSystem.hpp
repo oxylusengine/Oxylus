@@ -148,8 +148,6 @@ private:
 
 class EventSystem {
 public:
-  constexpr static auto MODULE_NAME = "EventSystem";
-
   auto init() -> std::expected<void, std::string> { return {}; }
   auto deinit() -> std::expected<void, std::string> {
     shutdown();

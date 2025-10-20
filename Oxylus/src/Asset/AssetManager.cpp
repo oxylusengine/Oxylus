@@ -1375,7 +1375,7 @@ auto AssetManager::load_material(
     return info;
   };
 
-  auto& job_man = App::mod<JobManager>();
+  auto& job_man = App::get_job_manager();
 
   if (material->albedo_texture) {
     auto info = get_info(material->albedo_texture, vuk::Format::eR8G8B8A8Srgb);

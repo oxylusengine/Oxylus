@@ -37,7 +37,7 @@ InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION
   viewer.search_icon = ICON_MDI_MAGNIFY;
   viewer.filter_icon = ICON_MDI_FILTER;
 
-  auto& event_system = App::mod<EventSystem>();
+  auto& event_system = App::get_event_system();
   auto& asset_man = App::mod<AssetManager>();
 
   auto r1 = event_system.subscribe<DialogLoadEvent>([&asset_man](const DialogLoadEvent& e) {
@@ -123,7 +123,7 @@ InspectorPanel::draw_material_properties(Material* material, const UUID& materia
             const auto first_path_len = std::strlen(first_path_cstr);
             auto path = std::string(first_path_cstr, first_path_len);
 
-            auto& event_system = App::mod<EventSystem>();
+            auto& event_system = App::get_event_system();
             auto r = event_system.emit(DialogLoadEvent{&uuid_copy, path});
           },
         .title = "Open material asset file...",
@@ -136,7 +136,7 @@ InspectorPanel::draw_material_properties(Material* material, const UUID& materia
       if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
         const auto* payload = PayloadData::from_payload(imgui_payload);
         if (const std::string ext = fs::get_file_extension(payload->str); ext == "oxasset") {
-          auto& event_system = App::mod<EventSystem>();
+          auto& event_system = App::get_event_system();
           auto r = event_system.emit(DialogLoadEvent{&uuid_copy, payload->str});
         }
       }
@@ -167,7 +167,7 @@ InspectorPanel::draw_material_properties(Material* material, const UUID& materia
             const auto first_path_len = std::strlen(first_path_cstr);
             auto path = std::string(first_path_cstr, first_path_len);
 
-            auto& event_system = App::mod<EventSystem>();
+            auto& event_system = App::get_event_system();
             auto r = event_system.emit(DialogSaveEvent{uuid_copy, path});
             if (!r.has_value()) {
               OX_LOG_ERROR("{}", r.error().message());

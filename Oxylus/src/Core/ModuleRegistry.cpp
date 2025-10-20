@@ -26,7 +26,7 @@ auto ModuleRegistry::init(this ModuleRegistry& self) -> bool {
 auto ModuleRegistry::deinit(this ModuleRegistry& self) -> bool {
   ZoneScoped;
 
-  for (const auto& [name, cb] : std::views::zip(self.module_names, self.deinit_callbacks)) {
+  for (const auto& [name, cb, type] : std::views::reverse(std::views::zip(self.module_names, self.deinit_callbacks, self.module_types))) {
     Timer timer{};
 
     auto result = cb();
@@ -34,6 +34,8 @@ auto ModuleRegistry::deinit(this ModuleRegistry& self) -> bool {
       OX_LOG_ERROR("Module {} failed to deinitialize! Error: {}", name, result.error());
       return false;
     }
+
+    self.registry.erase(type);
 
     OX_LOG_INFO("Deinitialized module {} in {} ms.", name, timer.get_elapsed_ms());
   }

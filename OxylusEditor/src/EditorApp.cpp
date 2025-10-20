@@ -2,7 +2,6 @@
 #include "Core/EmbeddedLogo.hpp"
 #include "Core/EntryPoint.hpp"
 #include "Core/Enum.hpp"
-#include "Core/EventSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Editor.hpp"
