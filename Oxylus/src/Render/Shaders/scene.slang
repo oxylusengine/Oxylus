@@ -12,13 +12,15 @@ public enum DebugView : i32 {
   Triangles,
   Meshlets,
   Overdraw,
+  Materials,
+  MeshInstances,
+  MeshLods,
   Albedo,
   Normal,
   Emissive,
   Metallic,
   Roughness,
-  Occlusion,
-  HiZ,
+  BakedOcclusion,
   GTAO,
 };
 

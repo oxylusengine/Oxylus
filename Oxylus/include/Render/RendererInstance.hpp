@@ -214,6 +214,20 @@ struct PBRContext {
   vuk::Value<vuk::ImageAttachment> directional_shadowmap_attachment = {};
 };
 
+struct DebugContext {
+  f32 overdraw_heatmap_scale = 0.0f;
+  GPU::DebugView debug_view = GPU::DebugView::None;
+
+  vuk::Value<vuk::ImageAttachment> visbuffer_attachment = {};
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> overdraw_attachment = {};
+  vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
+  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
+  vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
+  vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
+};
+
 struct PostProcessContext {
   f32 delta_time = 0.0f;
 
@@ -275,6 +289,8 @@ public:
   auto apply_bloom(this RendererInstance&, PostProcessContext& context, f32 threshold, f32 clamp, u32 mip_count)
     -> void;
   auto apply_tonemap(this RendererInstance&, PostProcessContext& context, vuk::Format format)
+    -> vuk::Value<vuk::ImageAttachment>;
+  auto apply_debug_view(this RendererInstance&, DebugContext& context, vuk::Extent3D extent)
     -> vuk::Value<vuk::ImageAttachment>;
 
 private:

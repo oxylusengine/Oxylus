@@ -712,6 +712,52 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
 
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0) {
+    if (self.directional_light_cast_shadows) {
+      auto directional_light_resolution = glm::vec2(directional_light_shadowmap_size, directional_light_shadowmap_size);
+      for (u32 cascade_index = 0; cascade_index < self.directional_light.cascade_count; cascade_index++) {
+        auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
+        auto& current_cascade = self.directional_light_cascades[cascade_index];
+
+        auto shadow_geometry_context = ShadowGeometryContext{
+          .shadowmap_attachment = std::move(current_cascade_attachment),
+        };
+        self.cull_for_shadowmap(shadow_geometry_context, current_cascade.projection_view);
+        self.draw_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index);
+      }
+
+      auto contact_shadows_pass = vuk::make_pass(
+        "contact_shadows",
+        [sun_dir = self.directional_light.direction](
+          vuk::CommandBuffer& cmd_list,
+          VUK_IA(vuk::eComputeRW) result,
+          VUK_IA(vuk::eComputeSampled) src_depth,
+          VUK_BA(vuk::eComputeRead) camera
+        ) {
+          const u32 steps = static_cast<u32>(RendererCVar::cvar_contact_shadows_steps.get());
+          const f32 thickness = RendererCVar::cvar_contact_shadows_thickness.get();
+          const f32 length = RendererCVar::cvar_contact_shadows_length.get();
+
+          cmd_list //
+            .bind_compute_pipeline("contact_shadows")
+            .bind_image(0, 0, src_depth)
+            .bind_image(0, 1, result)
+            .bind_buffer(0, 2, camera)
+            .bind_sampler(0, 3, vuk::NearestSamplerClamped)
+            .bind_sampler(0, 4, vuk::LinearSamplerClamped)
+            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sun_dir, steps, thickness, length))
+            .dispatch_invocations_per_pixel(result);
+
+          return std::make_tuple(result, src_depth, camera);
+        }
+      );
+
+      std::tie(contact_shadows_attachment, depth_attachment, self.prepared_frame.camera_buffer) = contact_shadows_pass(
+        contact_shadows_attachment,
+        depth_attachment,
+        self.prepared_frame.camera_buffer
+      );
+    }
+
     auto main_geometry_context = MainGeometryContext{
       .bindless_set = &bindless_set,
       .depth_attachment = std::move(depth_attachment),
@@ -759,52 +805,6 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     normal_attachment = std::move(main_geometry_context.normal_attachment);
     emissive_attachment = std::move(main_geometry_context.emissive_attachment);
     metallic_roughness_occlusion_attachment = std::move(main_geometry_context.metallic_roughness_occlusion_attachment);
-
-    if (false) {
-      auto directional_light_resolution = glm::vec2(directional_light_shadowmap_size, directional_light_shadowmap_size);
-      for (u32 cascade_index = 0; cascade_index < self.directional_light.cascade_count; cascade_index++) {
-        auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
-        auto& current_cascade = self.directional_light_cascades[cascade_index];
-
-        auto shadow_geometry_context = ShadowGeometryContext{
-          .shadowmap_attachment = std::move(current_cascade_attachment),
-        };
-        self.cull_for_shadowmap(shadow_geometry_context, current_cascade.projection_view);
-        self.draw_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index);
-      }
-
-      auto contact_shadows_pass = vuk::make_pass(
-        "contact_shadows",
-        [sun_dir = self.directional_light.direction](
-          vuk::CommandBuffer& cmd_list,
-          VUK_IA(vuk::eComputeRW) result,
-          VUK_IA(vuk::eComputeSampled) src_depth,
-          VUK_BA(vuk::eComputeRead) camera
-        ) {
-          const u32 steps = static_cast<u32>(RendererCVar::cvar_contact_shadows_steps.get());
-          const f32 thickness = RendererCVar::cvar_contact_shadows_thickness.get();
-          const f32 length = RendererCVar::cvar_contact_shadows_length.get();
-
-          cmd_list //
-            .bind_compute_pipeline("contact_shadows")
-            .bind_image(0, 0, src_depth)
-            .bind_image(0, 1, result)
-            .bind_buffer(0, 2, camera)
-            .bind_sampler(0, 3, vuk::NearestSamplerClamped)
-            .bind_sampler(0, 4, vuk::LinearSamplerClamped)
-            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sun_dir, steps, thickness, length))
-            .dispatch_invocations_per_pixel(result);
-
-          return std::make_tuple(result, src_depth, camera);
-        }
-      );
-
-      std::tie(contact_shadows_attachment, depth_attachment, self.prepared_frame.camera_buffer) = contact_shadows_pass(
-        contact_shadows_attachment,
-        depth_attachment,
-        self.prepared_frame.camera_buffer
-      );
-    }
   }
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere &&
@@ -856,6 +856,11 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   };
   final_attachment = self.apply_pbr(pbr_context, std::move(final_attachment));
   depth_attachment = std::move(pbr_context.depth_attachment);
+  albedo_attachment = std::move(pbr_context.albedo_attachment);
+  normal_attachment = std::move(pbr_context.normal_attachment);
+  emissive_attachment = std::move(pbr_context.emissive_attachment);
+  metallic_roughness_occlusion_attachment = std::move(pbr_context.metallic_roughness_occlusion_attachment);
+  vbgtao_occlusion_attachment = std::move(pbr_context.ambient_occlusion_attachment);
 
   // --- 2D Pass ---
   if (!self.render_queue_2d.sprite_data.empty()) {
@@ -989,6 +994,22 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     result_attachment = ctx.get_image_resource("result_attachment");
   }
 
+  if (debugging) {
+    auto debug_context = DebugContext{
+      .overdraw_heatmap_scale = debug_heatmap_scale,
+      .debug_view = debug_view,
+      .visbuffer_attachment = std::move(visbuffer_attachment),
+      .depth_attachment = std::move(depth_attachment),
+      .overdraw_attachment = std::move(overdraw_attachment),
+      .albedo_attachment = std::move(albedo_attachment),
+      .normal_attachment = std::move(normal_attachment),
+      .emissive_attachment = std::move(emissive_attachment),
+      .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
+      .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
+    };
+    return self.apply_debug_view(debug_context, render_info.extent);
+  }
+
   return result_attachment;
 }
 
@@ -1046,6 +1067,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     .far_clip = cam.far_clip,
     .fov = cam.fov,
     .output_index = 0,
+    .acceptable_lod_error = 2.0f,
   };
 
   self.previous_camera_data = self.camera_data;

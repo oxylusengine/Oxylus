@@ -590,21 +590,23 @@ void ViewportPanel::draw_settings_panel() {
         UI::property("Draw bounding boxes", (bool*)RendererCVar::cvar_draw_bounding_boxes.get_ptr());
         UI::property("Freeze culling frustum", (bool*)RendererCVar::cvar_freeze_culling_frustum.get_ptr());
         UI::property("Draw camera frustum", (bool*)RendererCVar::cvar_draw_camera_frustum.get_ptr());
-        const char* debug_views[12] = {
+        const char* debug_views[] = {
           "None",
           "Triangles",
           "Meshlets",
           "Overdraw",
+          "Materials",
+          "Mesh Instances",
+          "Mesh Lods",
           "Albdeo",
           "Normal",
           "Emissive",
           "Metallic",
           "Roughness",
-          "Occlusion",
-          "HiZ",
+          "Baked Occlusion",
           "GTAO"
         };
-        UI::property("Debug View", RendererCVar::cvar_debug_view.get_ptr(), debug_views, 12);
+        UI::property("Debug View", RendererCVar::cvar_debug_view.get_ptr(), debug_views, ox::count_of(debug_views));
         UI::property("Enable frustum culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
         UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
         UI::property("Enable triangle culling", (bool*)RendererCVar::cvar_culling_triangle.get_ptr());
