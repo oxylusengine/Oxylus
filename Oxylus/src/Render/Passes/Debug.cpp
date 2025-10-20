@@ -1,5 +1,6 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
+#include "Render/DebugRenderer.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/VukCommon.hpp"
 
@@ -98,5 +99,61 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
     std::move(self.prepared_frame.mesh_instances_buffer),
     std::move(self.prepared_frame.meshes_buffer)
   );
+}
+
+auto RendererInstance::draw_for_debug(
+  this RendererInstance& self, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
+) -> vuk::Value<vuk::ImageAttachment> {
+  ZoneScoped;
+
+  if (self.prepared_frame.line_index_count == 0 && self.prepared_frame.triangle_index_count == 0) {
+    return std::move(dst_attachment);
+  }
+
+  auto debug_mesh_pass = vuk::make_pass(
+    "debug mesh",
+    [line_index_count = self.prepared_frame.line_index_count](
+      vuk::CommandBuffer& cmd_list,
+      VUK_IA(vuk::eColorWrite) dst,
+      VUK_IA(vuk::eFragmentSampled) depth_img,
+      VUK_BA(vuk::eMemoryRead) dbg_vtx,
+      VUK_BA(vuk::eFragmentRead) camera
+    ) {
+      auto& dbg_index_buffer = *DebugRenderer::get_instance()->get_global_index_buffer();
+
+      cmd_list.bind_graphics_pipeline("debug_mesh")
+        .set_depth_stencil(
+          vuk::PipelineDepthStencilStateCreateInfo{
+            .depthTestEnable = false,
+            .depthWriteEnable = false,
+            .depthCompareOp = vuk::CompareOp::eGreaterOrEqual,
+          }
+        )
+        .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
+        .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
+        .set_rasterization(
+          {.polygonMode = vuk::PolygonMode::eLine, .cullMode = vuk::CullModeFlagBits::eNone, .lineWidth = 3.f}
+        )
+        .set_primitive_topology(vuk::PrimitiveTopology::eLineList)
+        .set_viewport(0, vuk::Rect2D::framebuffer())
+        .set_scissor(0, vuk::Rect2D::framebuffer())
+        .bind_vertex_buffer(0, dbg_vtx, 0, DebugRenderer::vertex_pack)
+        .bind_index_buffer(dbg_index_buffer, vuk::IndexType::eUint32)
+        .bind_buffer(0, 0, camera)
+        .bind_image(0, 1, depth_img)
+        .draw_indexed(line_index_count, 1, 0, 0, 0);
+
+      return std::make_tuple(dst, camera, depth_img);
+    }
+  );
+
+  std::tie(dst_attachment, self.prepared_frame.camera_buffer, context.depth_attachment) = debug_mesh_pass(
+    dst_attachment,
+    context.depth_attachment,
+    self.prepared_frame.debug_renderer_verticies_buffer,
+    self.prepared_frame.camera_buffer
+  );
+
+  return dst_attachment;
 }
 } // namespace ox

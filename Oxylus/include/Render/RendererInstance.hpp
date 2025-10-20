@@ -292,6 +292,8 @@ public:
     -> vuk::Value<vuk::ImageAttachment>;
   auto apply_debug_view(this RendererInstance&, DebugContext& context, vuk::Extent3D extent)
     -> vuk::Value<vuk::ImageAttachment>;
+  auto draw_for_debug(this RendererInstance&, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
+    -> vuk::Value<vuk::ImageAttachment>;
 
 private:
   SharedResources shared_resources = {};

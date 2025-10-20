@@ -12,20 +12,6 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
-static constexpr auto sampler_min_clamp_reduction_mode = VkSamplerReductionModeCreateInfo{
-  .sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO,
-  .pNext = nullptr,
-  .reductionMode = VK_SAMPLER_REDUCTION_MODE_MIN,
-};
-static constexpr auto hiz_sampler_info = vuk::SamplerCreateInfo{
-  .pNext = &sampler_min_clamp_reduction_mode,
-  .magFilter = vuk::Filter::eLinear,
-  .minFilter = vuk::Filter::eLinear,
-  .mipmapMode = vuk::SamplerMipmapMode::eNearest,
-  .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-  .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-};
-
 template <>
 struct RendererInstance::BufferTraits<GPU::Transforms> {
   using offset_type = u64;
@@ -994,19 +980,24 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     result_attachment = ctx.get_image_resource("result_attachment");
   }
 
+  auto debug_context = DebugContext{
+    .overdraw_heatmap_scale = debug_heatmap_scale,
+    .debug_view = debug_view,
+    .visbuffer_attachment = std::move(visbuffer_attachment),
+    .depth_attachment = std::move(depth_attachment),
+    .overdraw_attachment = std::move(overdraw_attachment),
+    .albedo_attachment = std::move(albedo_attachment),
+    .normal_attachment = std::move(normal_attachment),
+    .emissive_attachment = std::move(emissive_attachment),
+    .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
+    .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
+  };
+  auto debug_renderer_enabled = (bool)RendererCVar::cvar_enable_debug_renderer.get();
+  if (debug_renderer_enabled) {
+    return self.draw_for_debug(debug_context, std::move(result_attachment));
+  }
+
   if (debugging) {
-    auto debug_context = DebugContext{
-      .overdraw_heatmap_scale = debug_heatmap_scale,
-      .debug_view = debug_view,
-      .visbuffer_attachment = std::move(visbuffer_attachment),
-      .depth_attachment = std::move(depth_attachment),
-      .overdraw_attachment = std::move(overdraw_attachment),
-      .albedo_attachment = std::move(albedo_attachment),
-      .normal_attachment = std::move(normal_attachment),
-      .emissive_attachment = std::move(emissive_attachment),
-      .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
-      .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
-    };
     return self.apply_debug_view(debug_context, render_info.extent);
   }
 
