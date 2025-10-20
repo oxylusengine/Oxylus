@@ -7,19 +7,13 @@
 #include "Utils/OxMath.hpp"
 
 namespace ox {
-DebugRenderer* DebugRenderer::instance = nullptr;
-
 const vuk::Packed DebugRenderer::vertex_pack = vuk::Packed{
-    vuk::Format::eR32G32B32Sfloat, // 12 vec
-    vuk::Format::eR32Uint,         // 4 color
+  vuk::Format::eR32G32B32Sfloat, // 12 vec
+  vuk::Format::eR32Uint,         // 4 color
 };
 
-void DebugRenderer::init() {
+auto DebugRenderer::init() -> std::expected<void, std::string> {
   ZoneScoped;
-  if (instance)
-    return;
-
-  instance = new DebugRenderer();
 
   std::vector<uint32_t> indices = {};
   indices.resize(MAX_LINE_INDICES);
@@ -28,65 +22,70 @@ void DebugRenderer::init() {
     indices[i] = i;
   }
 
-  auto [i_buff, i_buff_fut] = create_buffer(*App::get_vkcontext().superframe_allocator,
-                                            vuk::MemoryUsage::eCPUtoGPU,
-                                            vuk::DomainFlagBits::eTransferOnGraphics,
-                                            std::span(indices));
+  auto [i_buff, i_buff_fut] = create_buffer(
+    *App::get_vkcontext().superframe_allocator,
+    vuk::MemoryUsage::eCPUtoGPU,
+    vuk::DomainFlagBits::eTransferOnGraphics,
+    std::span(indices)
+  );
 
   auto compiler = vuk::Compiler{};
   i_buff_fut.wait(*App::get_vkcontext().superframe_allocator, compiler);
 
-  instance->debug_renderer_context.index_buffer = std::move(i_buff);
+  debug_renderer_context.index_buffer = std::move(i_buff);
+
+  return {};
 }
 
-void DebugRenderer::release() {
-  delete instance;
-  instance = nullptr;
-}
+auto DebugRenderer::deinit() -> std::expected<void, std::string> { return {}; }
 
 void DebugRenderer::reset(bool clear_depth_tested) {
   ZoneScoped;
-  instance->draw_list.debug_lines.clear();
-  instance->draw_list.debug_points.clear();
+  draw_list.debug_lines.clear();
+  draw_list.debug_points.clear();
 
   if (clear_depth_tested) {
-    instance->draw_list_depth_tested.debug_lines.clear();
-    instance->draw_list_depth_tested.debug_points.clear();
+    draw_list_depth_tested.debug_lines.clear();
+    draw_list_depth_tested.debug_points.clear();
   }
 }
 
 void DebugRenderer::draw_point(const glm::vec3& pos, float point_radius, const glm::vec4& color, bool depth_tested) {
   ZoneScoped;
   if (depth_tested)
-    instance->draw_list_depth_tested.debug_points.emplace_back(Point{pos, color, point_radius});
+    draw_list_depth_tested.debug_points.emplace_back(Point{pos, color, point_radius});
   else
-    instance->draw_list.debug_points.emplace_back(Point{pos, color, point_radius});
+    draw_list.debug_points.emplace_back(Point{pos, color, point_radius});
 }
 
 void DebugRenderer::draw_line(
-    const glm::vec3& start, const glm::vec3& end, float line_width, const glm::vec4& color, bool depth_tested) {
+  const glm::vec3& start, const glm::vec3& end, float line_width, const glm::vec4& color, bool depth_tested
+) {
   ZoneScoped;
   if (depth_tested)
-    instance->draw_list_depth_tested.debug_lines.emplace_back(Line{start, end, color});
+    draw_list_depth_tested.debug_lines.emplace_back(Line{start, end, color});
   else
-    instance->draw_list.debug_lines.emplace_back(Line{start, end, color});
+    draw_list.debug_lines.emplace_back(Line{start, end, color});
 }
 
 void DebugRenderer::draw_triangle(
-    const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec4& color, bool depth_tested) {
+  const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec4& color, bool depth_tested
+) {
   ZoneScoped;
   if (depth_tested)
-    instance->draw_list_depth_tested.debug_triangles.emplace_back(Triangle{v0, v1, v2, color});
+    draw_list_depth_tested.debug_triangles.emplace_back(Triangle{v0, v1, v2, color});
   else
-    instance->draw_list.debug_triangles.emplace_back(Triangle{v0, v1, v2, color});
+    draw_list.debug_triangles.emplace_back(Triangle{v0, v1, v2, color});
 }
 
-void DebugRenderer::draw_circle(int num_verts,
-                                float radius,
-                                const glm::vec3& position,
-                                const glm::quat& rotation,
-                                const glm::vec4& color,
-                                bool depth_tested) {
+void DebugRenderer::draw_circle(
+  int num_verts,
+  float radius,
+  const glm::vec3& position,
+  const glm::quat& rotation,
+  const glm::vec4& color,
+  bool depth_tested
+) {
   float step = (2.0f * glm::pi<f32>()) / float(num_verts); // Use radians
 
   for (int i = 0; i < num_verts; i++) {
@@ -106,40 +105,50 @@ void DebugRenderer::draw_sphere(float radius, const glm::vec3& position, const g
   int num_verts = 16;
 
   draw_circle(num_verts, radius, position, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), color, depth_tested);
-  draw_circle(num_verts,
-              radius,
-              position,
-              glm::angleAxis(glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
-              color,
-              depth_tested);
-  draw_circle(num_verts,
-              radius,
-              position,
-              glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-              color,
-              depth_tested);
+  draw_circle(
+    num_verts,
+    radius,
+    position,
+    glm::angleAxis(glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+    color,
+    depth_tested
+  );
+  draw_circle(
+    num_verts,
+    radius,
+    position,
+    glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+    color,
+    depth_tested
+  );
 
-  draw_circle(num_verts,
-              radius,
-              position,
-              glm::angleAxis(glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-              color,
-              depth_tested);
- draw_circle(num_verts,
-             radius,
-             position,
-             glm::angleAxis(glm::radians(135.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-             color,
-             depth_tested);
+  draw_circle(
+    num_verts,
+    radius,
+    position,
+    glm::angleAxis(glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+    color,
+    depth_tested
+  );
+  draw_circle(
+    num_verts,
+    radius,
+    position,
+    glm::angleAxis(glm::radians(135.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+    color,
+    depth_tested
+  );
 }
 
-void draw_arc(int num_verts,
-              float radius,
-              const glm::vec3& start,
-              const glm::vec3& end,
-              const glm::quat& rotation,
-              const glm::vec4& color,
-              bool depth_tested) {
+void draw_arc(
+  int num_verts,
+  float radius,
+  const glm::vec3& start,
+  const glm::vec3& end,
+  const glm::quat& rotation,
+  const glm::vec4& color,
+  bool depth_tested
+) {
   float step = 180.0f / num_verts;
   glm::quat rot = glm::lookAt(rotation * start, rotation * end, glm::vec3(0.0f, 1.0f, 0.0f));
   rot = rotation * rot;
@@ -154,33 +163,40 @@ void draw_arc(int num_verts,
     float ny = glm::sin(step * (i + 1)) * radius;
     glm::vec3 next = glm::vec3(nx, ny, 0.0f);
 
-    DebugRenderer::draw_line(arcCentre + (rot * current), arcCentre + (rot * next), 1.0f, color, depth_tested);
+    auto& debug_renderer = App::mod<ox::DebugRenderer>();
+    debug_renderer.draw_line(arcCentre + (rot * current), arcCentre + (rot * next), 1.0f, color, depth_tested);
   }
 }
 
-void DebugRenderer::draw_capsule(const glm::vec3& position,
-                                 const glm::quat& rotation,
-                                 float height,
-                                 float radius,
-                                 const glm::vec4& color,
-                                 bool depth_tested) {
+void DebugRenderer::draw_capsule(
+  const glm::vec3& position,
+  const glm::quat& rotation,
+  float height,
+  float radius,
+  const glm::vec4& color,
+  bool depth_tested
+) {
   glm::vec3 up = (rotation * glm::vec3(0.0f, 1.0f, 0.0f));
 
   glm::vec3 top_sphere_Centre = position + up * (height * 0.5f);
   glm::vec3 bottom_sphere_centre = position - up * (height * 0.5f);
 
-  draw_circle(20,
-              radius,
-              top_sphere_Centre,
-              rotation * glm::quat(glm::vec3(glm::radians(90.0f), 0.0f, 0.0f)),
-              color,
-              depth_tested);
-  draw_circle(20,
-              radius,
-              bottom_sphere_centre,
-              rotation * glm::quat(glm::vec3(glm::radians(90.0f), 0.0f, 0.0f)),
-              color,
-              depth_tested);
+  draw_circle(
+    20,
+    radius,
+    top_sphere_Centre,
+    rotation * glm::quat(glm::vec3(glm::radians(90.0f), 0.0f, 0.0f)),
+    color,
+    depth_tested
+  );
+  draw_circle(
+    20,
+    radius,
+    bottom_sphere_centre,
+    rotation * glm::quat(glm::vec3(glm::radians(90.0f), 0.0f, 0.0f)),
+    color,
+    depth_tested
+  );
 
   // Draw 10 arcs
   // Sides
@@ -200,25 +216,29 @@ void DebugRenderer::draw_capsule(const glm::vec3& position,
       // Top Hemishpere
       draw_arc(20, radius, top_sphere_Centre + offset, top_sphere_Centre + offset2, rotation, color, depth_tested);
       // Bottom Hemisphere
-      draw_arc(20,
-               radius,
-               bottom_sphere_centre + offset,
-               bottom_sphere_centre + offset2,
-               rotation * glm::quat(glm::vec3(glm::radians(180.0f), 0.0f, 0.0f)),
-               color,
-               depth_tested);
+      draw_arc(
+        20,
+        radius,
+        bottom_sphere_centre + offset,
+        bottom_sphere_centre + offset2,
+        rotation * glm::quat(glm::vec3(glm::radians(180.0f), 0.0f, 0.0f)),
+        color,
+        depth_tested
+      );
     }
   }
 }
 
-void DebugRenderer::draw_cone(int num_circle_verts,
-                              int num_lines_to_circle,
-                              float angle,
-                              float length,
-                              const glm::vec3& position,
-                              const glm::quat& rotation,
-                              const glm::vec4& color,
-                              bool depth_tested) {
+void DebugRenderer::draw_cone(
+  int num_circle_verts,
+  int num_lines_to_circle,
+  float angle,
+  float length,
+  const glm::vec3& position,
+  const glm::quat& rotation,
+  const glm::vec4& color,
+  bool depth_tested
+) {
   float endAngle = glm::tan(angle * 0.5f) * length;
   glm::vec3 forward = -(rotation * glm::vec3(0.0f, 0.0f, -1.0f));
   glm::vec3 endPosition = position + forward * length;
@@ -305,17 +325,17 @@ void DebugRenderer::draw_frustum(const glm::mat4& frustum, const glm::vec4& colo
 
   // For reversed-Z: near plane is at z = 1, far plane is at z = 0 in clip space
   std::vector<glm::vec4> clip_corners = {
-      // Near plane corners (z = 1 for reversed-Z)
-      glm::vec4(-1.0f, -1.0f, 1.0f, 1.0f), // bottom-left-near
-      glm::vec4(1.0f, -1.0f, 1.0f, 1.0f),  // bottom-right-near
-      glm::vec4(-1.0f, 1.0f, 1.0f, 1.0f),  // top-left-near
-      glm::vec4(1.0f, 1.0f, 1.0f, 1.0f),   // top-right-near
+    // Near plane corners (z = 1 for reversed-Z)
+    glm::vec4(-1.0f, -1.0f, 1.0f, 1.0f), // bottom-left-near
+    glm::vec4(1.0f, -1.0f, 1.0f, 1.0f),  // bottom-right-near
+    glm::vec4(-1.0f, 1.0f, 1.0f, 1.0f),  // top-left-near
+    glm::vec4(1.0f, 1.0f, 1.0f, 1.0f),   // top-right-near
 
-      // Far plane corners (z = 0 for reversed-Z)
-      glm::vec4(-1.0f, -1.0f, 0.0f, 1.0f), // bottom-left-far
-      glm::vec4(1.0f, -1.0f, 0.0f, 1.0f),  // bottom-right-far
-      glm::vec4(-1.0f, 1.0f, 0.0f, 1.0f),  // top-left-far
-      glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)    // top-right-far
+    // Far plane corners (z = 0 for reversed-Z)
+    glm::vec4(-1.0f, -1.0f, 0.0f, 1.0f), // bottom-left-far
+    glm::vec4(1.0f, -1.0f, 0.0f, 1.0f),  // bottom-right-far
+    glm::vec4(-1.0f, 1.0f, 0.0f, 1.0f),  // top-left-far
+    glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)    // top-right-far
   };
 
   // Transform corners to world space and apply perspective division
@@ -398,17 +418,27 @@ DebugRenderer::get_vertices_from_triangles(const std::vector<Triangle>& triangle
 PhysicsDebugRenderer::PhysicsDebugRenderer() { DebugRenderer::Initialize(); }
 
 void PhysicsDebugRenderer::DrawLine(JPH::RVec3Arg inFrom, JPH::RVec3Arg inTo, JPH::ColorArg inColor) {
-  ox::DebugRenderer::draw_line(
-      math::from_jolt(inFrom), math::from_jolt(inTo), 1.0f, math::from_jolt(inColor.ToVec4()), draw_depth_tested);
+  auto& debug_renderer = App::mod<ox::DebugRenderer>();
+  debug_renderer.draw_line(
+    math::from_jolt(inFrom),
+    math::from_jolt(inTo),
+    1.0f,
+    math::from_jolt(inColor.ToVec4()),
+    draw_depth_tested
+  );
 }
 
 void PhysicsDebugRenderer::DrawTriangle(
-    JPH::RVec3Arg inV1, JPH::RVec3Arg inV2, JPH::RVec3Arg inV3, JPH::ColorArg inColor, ECastShadow inCastShadow) {
-  ox::DebugRenderer::draw_triangle(math::from_jolt(inV1),
-                                   math::from_jolt(inV2),
-                                   math::from_jolt(inV3),
-                                   math::from_jolt(inColor.ToVec4()),
-                                   draw_depth_tested);
+  JPH::RVec3Arg inV1, JPH::RVec3Arg inV2, JPH::RVec3Arg inV3, JPH::ColorArg inColor, ECastShadow inCastShadow
+) {
+  auto& debug_renderer = App::mod<ox::DebugRenderer>();
+  debug_renderer.draw_triangle(
+    math::from_jolt(inV1),
+    math::from_jolt(inV2),
+    math::from_jolt(inV3),
+    math::from_jolt(inColor.ToVec4()),
+    draw_depth_tested
+  );
 }
 
 JPH::DebugRenderer::Batch PhysicsDebugRenderer::CreateTriangleBatch(const Triangle* inTriangles, int inTriangleCount) {
@@ -426,10 +456,9 @@ JPH::DebugRenderer::Batch PhysicsDebugRenderer::CreateTriangleBatch(const Triang
   return pBatch;
 }
 
-JPH::DebugRenderer::Batch PhysicsDebugRenderer::CreateTriangleBatch(const Vertex* inVertices,
-                                                                    int inVertexCount,
-                                                                    const u32* inIndices,
-                                                                    int inIndexCount) {
+JPH::DebugRenderer::Batch PhysicsDebugRenderer::CreateTriangleBatch(
+  const Vertex* inVertices, int inVertexCount, const u32* inIndices, int inIndexCount
+) {
   const u32 numTris = inIndexCount / 3;
 
   TriangleBatch* pBatch = new TriangleBatch;
@@ -450,14 +479,16 @@ JPH::DebugRenderer::Batch PhysicsDebugRenderer::CreateTriangleBatch(const Vertex
   return pBatch;
 }
 
-void PhysicsDebugRenderer::DrawGeometry(JPH::RMat44Arg inModelMatrix,
-                                        const JPH::AABox& inWorldSpaceBounds,
-                                        float inLODScaleSq,
-                                        JPH::ColorArg inModelColor,
-                                        const GeometryRef& geometry,
-                                        ECullMode inCullMode,
-                                        ECastShadow inCastShadow,
-                                        EDrawMode inDrawMode) {
+void PhysicsDebugRenderer::DrawGeometry(
+  JPH::RMat44Arg inModelMatrix,
+  const JPH::AABox& inWorldSpaceBounds,
+  float inLODScaleSq,
+  JPH::ColorArg inModelColor,
+  const GeometryRef& geometry,
+  ECullMode inCullMode,
+  ECastShadow inCastShadow,
+  EDrawMode inDrawMode
+) {
   if (geometry == nullptr)
     return;
 
@@ -473,12 +504,12 @@ void PhysicsDebugRenderer::DrawGeometry(JPH::RMat44Arg inModelMatrix,
   const glm::vec4 color = math::from_jolt(inModelColor.ToVec4());
 
   // TODO: currently only renders into not depth tested list...
-  auto debug_renderer = ox::DebugRenderer::get_instance();
+  auto& debug_renderer = App::mod<ox::DebugRenderer>();
 
   if (inDrawMode == JPH::DebugRenderer::EDrawMode::Solid) {
     if (inCullMode == JPH::DebugRenderer::ECullMode::CullBackFace || inCullMode == JPH::DebugRenderer::ECullMode::Off) {
       for (u32 t = 0; t < pBatch->triangles.size(); ++t) {
-        auto& tri = debug_renderer->draw_list.debug_triangles.emplace_back();
+        auto& tri = debug_renderer.draw_list.debug_triangles.emplace_back();
         tri.col = pBatch->triangles[t].col * color;
         tri.p1 = trans * glm::vec4(pBatch->triangles[t].p1, 1.f);
         tri.p2 = trans * glm::vec4(pBatch->triangles[t].p2, 1.f);
@@ -489,7 +520,7 @@ void PhysicsDebugRenderer::DrawGeometry(JPH::RMat44Arg inModelMatrix,
     if (inCullMode == JPH::DebugRenderer::ECullMode::CullFrontFace ||
         inCullMode == JPH::DebugRenderer::ECullMode::Off) {
       for (u32 t = 0; t < pBatch->triangles.size(); ++t) {
-        auto& tri = debug_renderer->draw_list.debug_triangles.emplace_back();
+        auto& tri = debug_renderer.draw_list.debug_triangles.emplace_back();
         tri.col = pBatch->triangles[t].col * color;
         tri.p1 = trans * glm::vec4(pBatch->triangles[t].p1, 1.f);
         tri.p2 = trans * glm::vec4(pBatch->triangles[t].p3, 1.f);
@@ -505,15 +536,14 @@ void PhysicsDebugRenderer::DrawGeometry(JPH::RMat44Arg inModelMatrix,
       const glm::vec3 v1 = trans * glm::vec4(tri.p2, 1.0f);
       const glm::vec3 v2 = trans * glm::vec4(tri.p3, 1.0f);
 
-      debug_renderer->draw_list.debug_lines.emplace_back(ox::DebugRenderer::Line{v0, v1, col});
-      debug_renderer->draw_list.debug_lines.emplace_back(ox::DebugRenderer::Line{v1, v2, col});
-      debug_renderer->draw_list.debug_lines.emplace_back(ox::DebugRenderer::Line{v2, v0, col});
+      debug_renderer.draw_list.debug_lines.emplace_back(ox::DebugRenderer::Line{v0, v1, col});
+      debug_renderer.draw_list.debug_lines.emplace_back(ox::DebugRenderer::Line{v1, v2, col});
+      debug_renderer.draw_list.debug_lines.emplace_back(ox::DebugRenderer::Line{v2, v0, col});
     }
   }
 }
 
-void PhysicsDebugRenderer::DrawText3D(JPH::RVec3Arg inPosition,
-                                      const std::string_view& inString,
-                                      JPH::ColorArg inColor,
-                                      float inHeight) {}
+void PhysicsDebugRenderer::DrawText3D(
+  JPH::RVec3Arg inPosition, const std::string_view& inString, JPH::ColorArg inColor, float inHeight
+) {}
 } // namespace ox

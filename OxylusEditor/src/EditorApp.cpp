@@ -55,6 +55,7 @@ App* create_application(const AppCommandLineArgs& args) {
     .with<Input>()
     .with<NetworkManager>()
     .with<LuaManager>()
+    .with<DebugRenderer>()
     .push_imgui_layer()
     .push_layer(std::make_unique<EditorLayer>());
 

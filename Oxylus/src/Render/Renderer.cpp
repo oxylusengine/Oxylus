@@ -34,8 +34,6 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   self.initalized = true;
 
-  DebugRenderer::init();
-
   auto& runtime = *self.vk_context->runtime;
   auto& bindless_set = self.vk_context->get_descriptor_set();
 
@@ -412,8 +410,6 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
 auto Renderer::deinit(this Renderer& self) -> std::expected<void, std::string> {
   ZoneScoped;
-
-  DebugRenderer::release();
 
   return {};
 }
