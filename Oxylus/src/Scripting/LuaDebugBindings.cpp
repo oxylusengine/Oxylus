@@ -2,11 +2,12 @@
 
 #include <sol/state.hpp>
 
-#include "Physics/RayCast.hpp"
-#include "Render/DebugRenderer.hpp"
+// #include "Physics/RayCast.hpp"
+// #include "Render/DebugRenderer.hpp"
 
 namespace ox {
 auto DebugBinding::bind(sol::state* state) -> void {
+#if 0
   auto debug_table = state->new_usertype<DebugRenderer>("DebugRenderer");
   debug_table.set_function("draw_point", [](DebugRenderer& dr, const glm::vec3& point, glm::vec3 color) -> void {
     dr.draw_point(point, 1.0f, glm::vec4(color, 1.0f));
@@ -29,5 +30,6 @@ auto DebugBinding::bind(sol::state* state) -> void {
       dr.draw_aabb(aabb, glm::vec4(color, 1.0f), false, 1.0f, depth_tested);
     }
   );
+#endif
 }
 } // namespace ox
