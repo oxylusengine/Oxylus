@@ -81,7 +81,7 @@ add_requireconfs("fmt", "vuk.fmt", {
 
 add_requires("toml++ v3.4.0", {
     configs = {
-        header_only = false
+        header_only = true
     }
 })
 
