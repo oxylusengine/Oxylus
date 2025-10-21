@@ -84,9 +84,6 @@ target("Oxylus")
         "ktx-ox",
         "shader-slang",
         "enet-ox",
-        { public = false })
-
-    add_packages(
         "flecs-ox",
         "imguizmo",
         "imgui",
