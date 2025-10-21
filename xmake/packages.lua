@@ -13,19 +13,7 @@ add_requires("enet-ox v2.6.5", {
     }
 })
 
-local imgui_version = "v1.92.0-docking"
-local imgui_configs = { wchar32 = true }
-add_requires("imgui " .. imgui_version, { configs = imgui_configs })
-
-add_requires("implot 3da8bd34299965d3b0ab124df743fe3e076fa222")
-add_requireconfs("imgui", "implot.imgui", {
-    override = true, version = imgui_version, configs = imgui_configs
-})
-
-add_requires("imguizmo 1.91.3+wip")
-add_requireconfs("imgui", "imguizmo.imgui", {
-    override = true, version = imgui_version, configs = imgui_configs
-})
+add_requires("imgui v1.92.0-docking", { configs = { wchar32 = true } })
 
 add_requires("glm 1.0.1", {
     configs = {

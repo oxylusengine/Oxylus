@@ -1,5 +1,6 @@
 #include "Editor.hpp"
 
+#include <ImGuizmo.h>
 #include <filesystem>
 #include <flecs.h>
 #include <imgui_internal.h>
@@ -128,6 +129,8 @@ auto Editor::update(const Timestep& timestep) -> void {
 }
 
 auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> void {
+  ImGuizmo::BeginFrame();
+
   if (const auto scene = get_active_scene())
     scene->on_render(extent, format);
 

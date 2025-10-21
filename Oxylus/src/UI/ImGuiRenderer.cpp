@@ -1,6 +1,5 @@
 #include "UI/ImGuiRenderer.hpp"
 
-#include <ImGuizmo.h>
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
 #include <imgui.h>
@@ -13,7 +12,6 @@
 
 #include "Core/App.hpp"
 #include "Render/Slang/Slang.hpp"
-#include "Render/Utils/VukCommon.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Render/Window.hpp"
 #include "Utils/Profiler.hpp"
@@ -105,7 +103,6 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, const vuk::Extent3D extent
   acquired_images.clear();
 
   ImGui::NewFrame();
-  ImGuizmo::BeginFrame();
 
   if (imgui.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange) {
     return;
