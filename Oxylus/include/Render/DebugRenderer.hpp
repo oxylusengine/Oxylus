@@ -4,7 +4,9 @@
 #include <Jolt/Renderer/DebugRenderer.h>
 #include <expected>
 #include <glm/ext/quaternion_float.hpp>
+
 #include <vuk/runtime/CommandBuffer.hpp>
+#include <vuk/Types.hpp>
 
 #include "Core/Types.hpp"
 #include "Physics/RayCast.hpp"
