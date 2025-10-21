@@ -50,7 +50,6 @@ add_requires("vuk 2025.09.14.2", {
         debug_allocations = false,
     },
     debug = is_mode("debug"),
-    private = false
 })
 add_requireconfs("fmt", "vuk.fmt", {
     override = true,

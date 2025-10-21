@@ -13,6 +13,11 @@ option("tests")
     set_showmenu(true)
     set_description("Enable tests")
 
+option("editor")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Enable Oxylus Editor project")
+
 option("llvmpipe")
     set_default(false)
     set_showmenu(true)

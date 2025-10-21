@@ -4,7 +4,6 @@
 
 #include "Physics/RayCast.hpp"
 #include "Render/DebugRenderer.hpp"
-#include "Scripting/LuaHelpers.hpp"
 
 namespace ox {
 auto DebugBinding::bind(sol::state* state) -> void {
