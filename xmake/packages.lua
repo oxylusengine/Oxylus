@@ -1,8 +1,3 @@
-add_repositories("local repo", { rootdir = os.scriptdir() })
-
---
--- private packages
---
 add_requires("stb 2024.06.01")
 add_requires("miniaudio 0.11.22")
 add_requires("fastgltf-ox v0.8.0", { system = false, debug = is_mode("debug") })
@@ -18,9 +13,6 @@ add_requires("enet-ox v2.6.5", {
     }
 })
 
---
--- public packages
---
 local imgui_version = "v1.92.0-docking"
 local imgui_configs = { wchar32 = true }
 add_requires("imgui " .. imgui_version, { configs = imgui_configs })
@@ -87,7 +79,7 @@ add_requires("toml++ v3.4.0", {
 
 add_requires("simdjson-ox v3.12.2")
 
-add_requires("joltphysics-ox v5.4.0.1", {
+add_requires("joltphysics-ox v5.4.0+fix", {
     configs = {
         debug_renderer = true,
         rtti = true,
