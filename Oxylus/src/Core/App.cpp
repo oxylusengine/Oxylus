@@ -233,7 +233,8 @@ void App::run(this App& self) {
       App::mod<Input>().reset_pressed();
     }
 
-    self.mod<AssetManager>().load_deferred_assets();
+    if (self.registry.has<AssetManager>())
+      self.mod<AssetManager>().load_deferred_assets();
 
     FrameMark;
   }
