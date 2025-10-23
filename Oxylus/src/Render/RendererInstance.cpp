@@ -1165,6 +1165,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       }
     });
 
+  self.render_queue_2d.init();
+
   self.scene->world
     .query_builder<const TransformComponent, const SpriteComponent>() //
     .build()
@@ -1353,8 +1355,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   }
 
   self.prepared_frame.lights_buffer = vk_context.scratch_buffer(lights_info);
-
-  self.render_queue_2d.init();
 
   if (!info.gpu_meshes.empty()) {
     self.meshes_buffer = vk_context.resize_buffer(
