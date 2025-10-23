@@ -45,12 +45,12 @@ App* create_application(const AppCommandLineArgs& args) {
         .flags = WindowFlag::Centered | WindowFlag::Resizable,
       }
     )
+    .with<LuaManager>()
     .with<AssetManager>()
     .with<AudioEngine>()
     .with<Physics>()
     .with<Input>()
     .with<NetworkManager>()
-    .with<LuaManager>()
     .with<DebugRenderer>()
     .with<ImGuiRenderer>()
     .with<RendererConfig>()
