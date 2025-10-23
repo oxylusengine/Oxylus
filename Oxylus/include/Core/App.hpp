@@ -30,6 +30,7 @@ public:
   auto with_args(this App& self, AppCommandLineArgs args) -> App&;
   auto with_window(this App& self, WindowInfo window_info) -> App&;
   auto with_working_directory(this App& self, std::string dir) -> App&;
+  auto with_assets_directory(this App& self, std::string dir) -> App&;
 
   template <typename T, typename... Args>
   auto with(this App& self, Args&&... args) -> App& {

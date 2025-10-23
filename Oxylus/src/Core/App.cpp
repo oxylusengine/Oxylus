@@ -52,6 +52,11 @@ auto App::with_working_directory(this App& self, std::string dir) -> App& {
   return self;
 }
 
+auto App::with_assets_directory(this App& self, std::string dir) -> App& {
+  self.assets_path = dir;
+  return self;
+}
+
 auto App::get_command_line_args(this const App& self) -> const AppCommandLineArgs& {
   return self.command_line_args; //
 }
