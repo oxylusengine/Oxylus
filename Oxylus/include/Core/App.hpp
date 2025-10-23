@@ -18,7 +18,7 @@ class VkContext;
 class App {
 public:
   App();
-  virtual ~App();
+  ~App();
 
   static App* get() { return instance_; }
   static void set_instance(App* instance);
