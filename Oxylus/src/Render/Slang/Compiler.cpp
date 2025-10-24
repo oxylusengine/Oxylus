@@ -42,11 +42,6 @@ struct SlangBlob : ISlangBlob {
   SLANG_NO_THROW size_t SLANG_MCALL getBufferSize() final { return m_data.size(); };
 };
 
-// PERF: When we are at Editor environment, shaders obviously needs to be loaded
-// through file system. But when we are at runtime environment, we don't need
-// file system because we probably would have proper asset manager with all
-// shaders are preloaded into virtual environment, so ::loadFile would just
-// return already existing shader file.
 struct SlangVirtualFS : ISlangFileSystem {
   std::string _root_dir;
   std::atomic_uint32_t m_refCount;
