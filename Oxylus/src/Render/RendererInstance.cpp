@@ -414,41 +414,47 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   const auto scene_has_directional_light = self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight;
   const auto scene_has_atmosphere = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
 
+  if (scene_has_atmosphere) {
+    auto prepare_atmosphere_pass = vuk::make_pass(
+      "prepare_atmosphere",
+      [](vuk::CommandBuffer& cmd, VUK_BA(vuk::eMemoryRead) atmosphere_) { return atmosphere_; }
+    );
+
+    self.prepared_frame.atmosphere_buffer = prepare_atmosphere_pass(self.prepared_frame.atmosphere_buffer);
+  }
+
+  if (scene_has_directional_light) {
+    auto prepare_directional_light = vuk::make_pass(
+      "prepare_directional_light",
+      [](vuk::CommandBuffer& cmd, VUK_BA(vuk::eMemoryRead) buffer1, VUK_BA(vuk::eMemoryRead) buffer2) {
+        return std::make_tuple(buffer1, buffer2);
+      }
+    );
+
+    std::tie(self.prepared_frame.directional_light_buffer, self.prepared_frame.directional_light_cascades_buffer) =
+      prepare_directional_light(
+        self.prepared_frame.directional_light_buffer,
+        self.prepared_frame.directional_light_cascades_buffer
+      );
+  }
+
   auto prepare_lights_pass = vuk::make_pass(
     "prepare lights",
     [](
       vuk::CommandBuffer&,
       VUK_BA(vuk::eMemoryRead) lights_,
-      VUK_BA(vuk::eMemoryRead) atmos,
-      VUK_BA(vuk::eMemoryRead) directional_light_,
-      VUK_BA(vuk::eMemoryRead) directional_light_cascades_,
       VUK_BA(vuk::eMemoryRead) point_lights,
       VUK_BA(vuk::eMemoryRead) spot_lights
-    ) {
-      return std::make_tuple(
-        lights_,
-        atmos,
-        directional_light_,
-        directional_light_cascades_,
-        point_lights,
-        spot_lights
-      );
-    }
+    ) { return std::make_tuple(lights_, point_lights, spot_lights); }
   );
 
   std::tie(
     self.prepared_frame.lights_buffer,
-    self.prepared_frame.atmosphere_buffer,
-    self.prepared_frame.directional_light_buffer,
-    self.prepared_frame.directional_light_cascades_buffer,
     self.prepared_frame.point_lights_buffer,
     self.prepared_frame.spot_lights_buffer
   ) =
     prepare_lights_pass(
       std::move(self.prepared_frame.lights_buffer),
-      std::move(self.prepared_frame.atmosphere_buffer),
-      std::move(self.prepared_frame.directional_light_buffer),
-      std::move(self.prepared_frame.directional_light_cascades_buffer),
       std::move(self.prepared_frame.point_lights_buffer),
       std::move(self.prepared_frame.spot_lights_buffer)
     );
