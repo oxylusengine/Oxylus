@@ -24,7 +24,8 @@ public:
   static void set_instance(App* instance);
 
   auto run(this App& self) -> void;
-  auto close(this App& self) -> void;
+  auto stop(this App& self) -> void;
+  auto should_stop(this App& self) -> void;
 
   auto with_name(this App& self, std::string name) -> App&;
   auto with_args(this App& self, AppCommandLineArgs args) -> App&;

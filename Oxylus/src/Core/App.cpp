@@ -244,10 +244,10 @@ void App::run(this App& self) {
     FrameMark;
   }
 
-  self.close();
+  self.stop();
 }
 
-void App::close(this App& self) {
+void App::stop(this App& self) {
   ZoneScoped;
 
   self.is_running = false;
@@ -272,5 +272,9 @@ void App::close(this App& self) {
     self.window->destroy();
     self.vk_context->destroy_context();
   }
+}
+
+auto App::should_stop(this App& self) -> void { //
+  self.is_running = false;
 }
 } // namespace ox

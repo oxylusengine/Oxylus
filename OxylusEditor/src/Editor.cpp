@@ -180,6 +180,29 @@ auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> voi
       ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
     }
 
+    ViewportPanel* fullscreen_viewport_panel = nullptr;
+    for (const auto& panel : viewport_panels) {
+      if (panel->fullscreen_viewport) {
+        fullscreen_viewport_panel = panel.get();
+        break;
+      }
+      fullscreen_viewport_panel = nullptr;
+    }
+
+    if (fullscreen_viewport_panel != nullptr) {
+      fullscreen_viewport_panel->on_render(extent, format);
+    } else {
+      for (const auto& panel : viewport_panels)
+        panel->on_render(extent, format);
+
+      for (const auto& panel : editor_panels | std::views::values) {
+        if (panel->visible)
+          panel->on_render(extent, format);
+      }
+    }
+
+    runtime_console.on_imgui_render();
+
     const float frame_height = ImGui::GetFrameHeight();
 
     constexpr ImGuiWindowFlags menu_flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
@@ -209,7 +232,7 @@ auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> voi
           }
           ImGui::Separator();
           if (ImGui::MenuItem("Exit")) {
-            App::get()->close();
+            App::get()->should_stop();
           }
           ImGui::EndMenu();
         }
@@ -282,29 +305,6 @@ auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> voi
       ImGui::End();
     }
     ImGui::PopStyleVar();
-
-    ViewportPanel* fullscreen_viewport_panel = nullptr;
-    for (const auto& panel : viewport_panels) {
-      if (panel->fullscreen_viewport) {
-        fullscreen_viewport_panel = panel.get();
-        break;
-      }
-      fullscreen_viewport_panel = nullptr;
-    }
-
-    if (fullscreen_viewport_panel != nullptr) {
-      fullscreen_viewport_panel->on_render(extent, format);
-    } else {
-      for (const auto& panel : viewport_panels)
-        panel->on_render(extent, format);
-
-      for (const auto& panel : editor_panels | std::views::values) {
-        if (panel->visible)
-          panel->on_render(extent, format);
-      }
-    }
-
-    runtime_console.on_imgui_render();
 
     static bool dock_layout_initalized = false;
     if (!dock_layout_initalized) {

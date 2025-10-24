@@ -411,6 +411,9 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   self.render_queue_2d.sort();
   auto vertex_buffer_2d = self.renderer.vk_context->scratch_buffer_span(std::span(self.render_queue_2d.sprite_data));
 
+  const auto scene_has_directional_light = self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight;
+  const auto scene_has_atmosphere = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
+
   auto prepare_lights_pass = vuk::make_pass(
     "prepare lights",
     [](
@@ -798,8 +801,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     );
   }
 
-  if (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere &&
-      self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) {
+  if (scene_has_atmosphere && scene_has_directional_light) {
     auto atmos_context = AtmosphereContext{
       .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
       .sky_multiscatter_lut_attachment = std::move(sky_multiscatter_lut_attachment),
