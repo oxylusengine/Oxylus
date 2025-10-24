@@ -149,7 +149,7 @@ public:
   auto init(this Renderer& self) -> std::expected<void, std::string>;
   auto deinit(this Renderer& self) -> std::expected<void, std::string>;
 
-  auto new_instance(Scene* scene) -> std::unique_ptr<RendererInstance>;
+  auto new_instance(Scene& scene) -> std::unique_ptr<RendererInstance>;
 
 private:
   friend RendererInstance;

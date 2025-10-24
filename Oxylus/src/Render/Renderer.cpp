@@ -11,7 +11,7 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
-auto Renderer::new_instance(Scene* scene) -> std::unique_ptr<RendererInstance> {
+auto Renderer::new_instance(Scene& scene) -> std::unique_ptr<RendererInstance> {
   ZoneScoped;
 
   if (!initalized) {

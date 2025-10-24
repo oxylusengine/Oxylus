@@ -245,7 +245,7 @@ public:
   template <typename T>
   struct BufferTraits;
 
-  explicit RendererInstance(Scene* owner_scene, Renderer& parent_renderer);
+  explicit RendererInstance(Scene& owner_scene, Renderer& parent_renderer);
   ~RendererInstance();
 
   RendererInstance(const RendererInstance&) = delete;
@@ -300,6 +300,8 @@ public:
   auto draw_for_debug(this RendererInstance&, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
     -> vuk::Value<vuk::ImageAttachment>;
 
+  auto update_vbgtao_info(this RendererInstance&) -> void;
+
 private:
   SharedResources shared_resources = {};
   std::vector<RenderStageCallback> stage_callbacks;
@@ -310,7 +312,7 @@ private:
   auto execute_stages_before(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx) -> void;
   auto execute_stages_after(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx) -> void;
 
-  Scene* scene = nullptr;
+  Scene& scene;
   Renderer& renderer;
   Renderer::RenderQueue2D render_queue_2d = {};
   bool saved_camera = false;

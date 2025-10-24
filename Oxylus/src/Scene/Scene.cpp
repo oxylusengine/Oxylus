@@ -87,7 +87,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.component_db.import_module(self.world.import <Core>());
 
   auto& renderer = App::mod<Renderer>();
-  self.renderer_instance = renderer.new_instance(&self);
+  self.renderer_instance = renderer.new_instance(self);
 
   self.world.observer<TransformComponent>()
     .event(flecs::OnSet)

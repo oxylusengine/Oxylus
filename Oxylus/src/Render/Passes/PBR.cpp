@@ -1,5 +1,6 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
+#include "Render/RendererConfig.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/VukCommon.hpp"
 
@@ -99,6 +100,42 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
       std::move(self.prepared_frame.camera_buffer),
       std::move(context.sky_aerial_perspective_lut_attachment)
     );
+}
+
+auto RendererInstance::update_vbgtao_info(this RendererInstance& self) -> void {
+  auto gtao_enabled = (bool)RendererCVar::cvar_vbgtao_enable.get();
+  if (gtao_enabled && self.viewport_size.x > 0) {
+    self.vbgtao_info.thickness = RendererCVar::cvar_vbgtao_thickness.get();
+    self.vbgtao_info.effect_radius = RendererCVar::cvar_vbgtao_radius.get();
+
+    switch (RendererCVar::cvar_vbgtao_quality_level.get()) {
+      case 0: { // low
+        self.vbgtao_info.slice_count = 1;
+        self.vbgtao_info.samples_per_slice_side = 2;
+        break;
+      }
+      case 1: { // medium
+        self.vbgtao_info.slice_count = 2;
+        self.vbgtao_info.samples_per_slice_side = 2;
+        break;
+      }
+      case 2: { // high
+        self.vbgtao_info.slice_count = 3;
+        self.vbgtao_info.samples_per_slice_side = 3;
+        break;
+      }
+      case 3: { // ultra
+        self.vbgtao_info.slice_count = 9;
+        self.vbgtao_info.samples_per_slice_side = 3;
+        break;
+      }
+    }
+
+    // vbgtao_info.noise_index = (RendererCVar::cvar_gtao_denoise_passes.get() > 0) ? (frameCounter % 64) : (0); //
+    // TODO: If we have TAA
+    self.vbgtao_info.noise_index = 0;
+    self.vbgtao_info.final_power = RendererCVar::cvar_vbgtao_final_power.get();
+  }
 }
 
 auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, AmbientOcclusionContext& context)
