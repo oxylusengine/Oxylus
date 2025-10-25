@@ -381,8 +381,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             editor.on_scene_stop();
         }
         ImGui::SameLine();
+        // Just here for aesthetic purposes for now...
         if (ImGui::Button(ICON_MDI_STEP_FORWARD, button_size)) {
-          editor.on_scene_simulate();
         }
         ImGui::PopStyleColor();
 

@@ -16,7 +16,7 @@ class Editor {
 public:
   constexpr static auto MODULE_NAME = "Editor";
 
-  enum class SceneState { Edit = 0, Play = 1, Simulate = 2 };
+  enum class SceneState { Edit = 0, Play = 1 };
 
   enum class EditorLayout { Classic = 0, BigViewport };
 
@@ -66,7 +66,6 @@ public:
   void save_scene_as();
   void on_scene_play();
   void on_scene_stop();
-  void on_scene_simulate();
 
   EditorContext& get_context() { return editor_context; }
 

@@ -117,12 +117,8 @@ auto Editor::update(const Timestep& timestep) -> void {
       break;
     }
     case SceneState::Play: {
-      editor_scene->enable_all_phases();
+      active_scene->enable_all_phases();
       active_scene->runtime_update(timestep);
-      break;
-    }
-    case SceneState::Simulate: {
-      // TODO:
       break;
     }
   }
@@ -131,8 +127,8 @@ auto Editor::update(const Timestep& timestep) -> void {
 auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> void {
   ImGuizmo::BeginFrame();
 
-  if (const auto scene = get_active_scene())
-    scene->on_render(extent, format);
+  if (active_scene)
+    active_scene->on_render(extent, format);
 
   auto& job_man = App::get_job_manager();
 
@@ -453,17 +449,22 @@ void Editor::save_scene_as() {
 }
 
 void Editor::on_scene_play() {
+  ZoneScoped;
+
   editor_context.reset();
   set_scene_state(SceneState::Play);
   active_scene = Scene::copy(editor_scene);
   set_editor_context(active_scene);
   active_scene->runtime_start();
+
+  editor_scene->reset_renderer_instance();
 }
 
 void Editor::on_scene_stop() {
   editor_context.reset();
   set_scene_state(SceneState::Edit);
   active_scene.reset();
+
   set_editor_context(editor_scene);
 
   editor_scene->world
@@ -471,13 +472,6 @@ void Editor::on_scene_stop() {
     .with<TransformComponent>()
     .build()
     .each([](flecs::entity e) { e.modified<TransformComponent>(); });
-}
-
-void Editor::on_scene_simulate() {
-  editor_context.reset();
-  set_scene_state(SceneState::Simulate);
-  active_scene = Scene::copy(editor_scene);
-  set_editor_context(active_scene);
 }
 
 Scene* Editor::get_active_scene() { return active_scene.get(); }

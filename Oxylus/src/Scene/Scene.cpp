@@ -1686,6 +1686,7 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
 
   auto writer = src_scene->to_json();
   new_scene->from_json(writer.stream.str());
+  new_scene->scene_name = new_name;
   new_scene->meshes_dirty = true;
 
   OX_LOG_TRACE("Copied scene {} to {}", src_scene->scene_name, new_scene->scene_name);
@@ -1783,5 +1784,10 @@ auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
   }
 
   return self.from_json(content);
+}
+
+auto Scene::reset_renderer_instance() -> void {
+  auto& renderer = App::mod<Renderer>();
+  renderer_instance = renderer.new_instance(*this);
 }
 } // namespace ox
