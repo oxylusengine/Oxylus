@@ -57,6 +57,21 @@ auto App::with_assets_directory(this App& self, std::string dir) -> App& {
   return self;
 }
 
+auto App::run_deferred_tasks(this App& self) -> void {
+  {
+    auto lock = std::unique_lock(self.mutex);
+    std::swap(self.pending_tasks, self.processing_tasks);
+  }
+
+  for (auto& task : self.processing_tasks) {
+    if (task) {
+      task();
+    }
+  }
+
+  self.processing_tasks.clear();
+}
+
 auto App::get_command_line_args(this const App& self) -> const AppCommandLineArgs& {
   return self.command_line_args; //
 }
@@ -226,6 +241,8 @@ void App::run(this App& self) {
 
       imgui_renderer.begin_frame(self.timestep.get_seconds(), extent);
     }
+
+    self.run_deferred_tasks();
 
     self.registry.update(self.timestep);
     self.registry.render(extent, format);

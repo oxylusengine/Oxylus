@@ -33,6 +33,14 @@ public:
   auto with_working_directory(this App& self, std::string dir) -> App&;
   auto with_assets_directory(this App& self, std::string dir) -> App&;
 
+  template <typename F>
+  void defer_to_next_frame(this App& self, F&& func) {
+    std::function<void()> task = std::forward<F>(func);
+
+    auto lock = std::unique_lock(self.mutex);
+    self.pending_tasks.push_back(std::move(task));
+  }
+
   template <typename T, typename... Args>
   auto with(this App& self, Args&&... args) -> App& {
     ZoneScoped;
@@ -60,6 +68,10 @@ public:
 private:
   static App* instance_;
 
+  std::shared_mutex mutex;
+  std::vector<std::function<void()>> pending_tasks;
+  std::vector<std::function<void()>> processing_tasks;
+
   std::string name = "Oxylus App";
   std::string assets_path = "Resources";
   std::string working_directory = {};
@@ -79,6 +91,8 @@ private:
 
   bool is_running = true;
   float last_frame_time = 0.0f;
+
+  auto run_deferred_tasks(this App& self) -> void;
 
   friend int ::main(int argc, char** argv);
 };
