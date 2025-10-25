@@ -1173,7 +1173,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
            &cam,
            &rq2d = self.render_queue_2d](flecs::entity e, const TransformComponent& tc, const SpriteComponent& comp) {
       const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
-      if (auto* material = asset_man.get_asset(comp.material)) {
+      if (auto material = asset_man.get_asset(comp.material)) {
         if (auto transform_id = s->get_entity_transform_id(e)) {
           rq2d.add(
             comp,
@@ -1202,7 +1202,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
       auto particle_system_component = e.parent().try_get<ParticleSystemComponent>();
       if (particle_system_component) {
-        if (auto* material = asset_man.get_asset(particle_system_component->material)) {
+        if (auto material = asset_man.get_asset(particle_system_component->material)) {
           if (auto transform_id = s->get_entity_transform_id(e)) {
             SpriteComponent sprite_comp = {.sort_y = true};
 

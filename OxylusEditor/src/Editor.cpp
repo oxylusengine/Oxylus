@@ -62,7 +62,7 @@ auto Editor::init() -> std::expected<void, std::string> {
 
   scene_hierarchy_panel->viewer.opened_script_callback = [text_editor_panel](const UUID& uuid) {
     auto& asset_man = App::mod<AssetManager>();
-    auto* asset = asset_man.get_asset(uuid);
+    auto asset = asset_man.get_asset(uuid);
     if (asset) {
       text_editor_panel->visible = true;
       text_editor_panel->text_editor.open_file(asset->path);

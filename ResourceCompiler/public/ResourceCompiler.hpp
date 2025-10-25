@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <vector>
 
+#include "Asset/AssetFile.hpp"
 #include "Core/Types.hpp"
 
 #if OX_PLATFORM_WINDOWS
@@ -83,8 +84,12 @@ protected:
 public:
   static auto create() -> std::expected<Session, Error>;
 
+  Session() = default;
   Session(Impl* impl_) : impl(impl_) {}
   auto create_shader_session(const ShaderSessionInfo& info) -> std::expected<ShaderSession, Error>;
+
+  auto create_asset(AssetType type) -> AssetID;
+  auto set_asset_info(AssetID asset_id, ShaderAsset shader_asset) -> void;
 };
 
 } // namespace ox::rc

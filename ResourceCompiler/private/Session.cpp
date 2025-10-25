@@ -9,6 +9,7 @@
 namespace ox::rc {
 auto Session::create() -> std::expected<Session, Error> {
   auto* self = new Session::Impl;
+  auto write_lock = std::unique_lock(self->session_mutex);
   slang::createGlobalSession(self->slang_global_session.writeRef());
 
   return Session(self);
@@ -83,18 +84,41 @@ auto Session::create_shader_session(const ShaderSessionInfo& info) -> std::expec
   };
 
   auto shader_session_handle = std::make_unique<ShaderSession::Impl>();
+  shader_session_handle->rc_session = impl;
   shader_session_handle->virtual_fs = std::move(slang_fs);
 
-  if (SLANG_FAILED(
-        impl->slang_global_session->createSession(session_desc, shader_session_handle->slang_session.writeRef())
-      )) {
-    return std::unexpected(Error::ShaderSession);
+  {
+    auto write_lock = std::unique_lock(impl->session_mutex);
+    if (SLANG_FAILED(
+          impl->slang_global_session->createSession(session_desc, shader_session_handle->slang_session.writeRef())
+        )) {
+      return std::unexpected(Error::ShaderSession);
+    }
+
+    auto shader_session = ShaderSession(shader_session_handle.get());
+    impl->shader_sessions.emplace_back(std::move(shader_session_handle));
+
+    return shader_session;
   }
+}
 
-  auto shader_session = ShaderSession(shader_session_handle.get());
-  impl->shader_sessions.emplace_back(std::move(shader_session_handle));
+auto Session::create_asset(AssetType type) -> AssetID {
+  // auto asset_id = impl->assets.create_slot(CompiledAsset{.type = type, .none = 0});
+  //
+  // {
+  //   auto write_lock = std::unique_lock(impl->asset_datas_mutex);
+  //   auto asset_data_index = SlotMap_decode_id(asset_id).index;
+  //   if (asset_data_index >= impl->asset_datas.size()) {
+  //     impl->asset_datas.resize(asset_data_index + 1);
+  //   }
+  // }
+  //
+  // return asset_id;
+}
 
-  return shader_session;
+auto Session ::set_asset_info(AssetID asset_id, ShaderAsset shader_asset) -> void {
+  auto *asset = impl->assets.slot(asset_id);
+
 }
 
 } // namespace ox::rc

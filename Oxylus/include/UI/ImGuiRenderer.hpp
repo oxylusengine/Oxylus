@@ -7,6 +7,7 @@
 #include <vuk/Value.hpp>
 
 #include "Asset/Texture.hpp"
+#include "Memory/Borrowed.hpp"
 
 namespace ox {
 class VkContext;
@@ -27,6 +28,7 @@ public:
 
   ImTextureID add_image(vuk::Value<vuk::ImageAttachment>&& attachment);
   ImTextureID add_image(const Texture& texture);
+  ImTextureID add_image(Borrowed<Texture> texture);
 
   ImFont* load_default_font();
   ImFont* load_font(const std::string& path, f32 font_size = 0.f, option<ImFontConfig> font_config = nullopt);

@@ -1,7 +1,6 @@
 #pragma once
 
 // Keep this file as clean as possible, only include this and nothing more:
-#include <span>
 #include <string_view>
 
 #include "Core/Types.hpp"
@@ -33,23 +32,18 @@ enum class AssetType : u32 {
 };
 
 struct ShaderAsset {
-  enum EntryPoint : u32 {
+  enum EntryPointKind : u32 {
     Vertex = 0,
     Fragment,
     Compute,
     Count,
   };
 
-  // Offsets in `spirv_blob`, each element is u32
-  u32 entry_point_offsets[EntryPoint::Count] = {};
-  u32 entry_point_lengths[EntryPoint::Count] = {};
-  AssetString entry_point_names[EntryPoint::Count] = {};
-  u32 spirv_blob = 0;
+  // <Offset, Length> in `spirv_blob`, each element is u32
+  std::pair<u32, u32> entry_point_ranges[EntryPointKind::Count] = {};
+  AssetString entry_point_names[EntryPointKind::Count] = {};
 
-  auto has_entry_point(EntryPoint entry_point) -> bool { return entry_point_lengths[entry_point] != 0; }
-  auto get_entry_point_code(EntryPoint entry_point) -> std::span<u32> {
-    return std::span(&spirv_blob + entry_point_offsets[entry_point], entry_point_lengths[entry_point]);
-  }
+  auto has_entry_point(EntryPointKind entry_point) -> bool { return entry_point_ranges[entry_point].second != 0; }
 };
 
 // List of file extensions supported by Engine.
@@ -81,5 +75,6 @@ struct AssetFileHeader {
     u32 placeholder = 0;
     ShaderAsset shader;
   };
+  u8 data = 0;
 };
 } // namespace ox
