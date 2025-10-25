@@ -37,6 +37,7 @@ in pkgs.mkShell.override {
     export LD_LIBRARY_PATH=${pkgs.llvmPackages_21.libcxx}/lib:$LD_LIBRARY_PATH
     # slang needs libstdc++
     export LD_LIBRARY_PATH=${pkgs.gcc14.cc.lib}/lib:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=${pkgs.lua5_3_compat}/lib:$LD_LIBRARY_PATH
   '';
 
   hardeningDisable = [ "all" ];

@@ -188,24 +188,28 @@ bool UI::texture_property(
   ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.25f, 0.25f, 0.25f, 1.0f});
 
   auto& asset_man = App::mod<AssetManager>();
+  auto& imgui_renderer = App::mod<ImGuiRenderer>();
 
-  auto* texture_asset = texture_uuid ? asset_man.get_asset(texture_uuid) : nullptr;
-
+  auto texture_asset = asset_man.get_asset(texture_uuid);
   ImGuiID picker_state_id = ImGui::GetID("picker_open");
   auto* state_storage = ImGui::GetStateStorage();
 
   // rect button with the texture
   if (texture_asset) {
-    auto texture = asset_man.get_texture(texture_uuid);
-    if (texture) {
-      if (ImGui::ImageButton(label, App::mod<ImGuiRenderer>().add_image(*texture), {button_size, button_size})) {
+    if (texture_asset->is_loaded()) {
+      if (ImGui::ImageButton(
+            label,
+            imgui_renderer.add_image(asset_man.get_texture(texture_asset->texture_id)),
+            {button_size, button_size}
+          )) {
         state_storage->SetBool(picker_state_id, true);
         changed = true;
       }
       // tooltip
       if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
+        auto texture_underlying = asset_man.get_texture(texture_asset->texture_id);
+
         ImGui::BeginTooltip();
-        const auto* texture_underlying = asset_man.get_texture(texture_asset->texture_id);
         const auto txt_name = fmt::format(
           "{}:{}",
           texture_asset->path,
@@ -213,7 +217,7 @@ bool UI::texture_property(
         );
         ImGui::TextUnformatted(txt_name.c_str());
         ImGui::Spacing();
-        ImGui::Image(App::mod<ImGuiRenderer>().add_image(*texture), {tooltip_size, tooltip_size});
+        ImGui::Image(imgui_renderer.add_image(std::move(texture_underlying)), {tooltip_size, tooltip_size});
         ImGui::EndTooltip();
       }
     }

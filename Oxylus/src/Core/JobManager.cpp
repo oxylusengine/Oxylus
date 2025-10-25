@@ -81,13 +81,15 @@ auto JobManager::shutdown(this JobManager& self) -> void {
 
 auto JobManager::worker(this JobManager& self, u32 id) -> void {
   ZoneScoped;
-  memory::ScopedStack stack;
 
   this_thread_worker.id = id;
-  os::set_thread_name(stack.format("Worker {}", id));
-  loguru::set_thread_name(stack.format_char("Worker {}", id));
-
   OX_DEFER() { this_thread_worker.id = ~0_u32; };
+
+  {
+    memory::ScopedStack stack;
+    os::set_thread_name(stack.format("Ox-Worker {}", id));
+    loguru::set_thread_name(stack.format_char("Ox-Worker {}", id));
+  }
 
   while (true) {
     std::unique_lock lock(self.mutex);
