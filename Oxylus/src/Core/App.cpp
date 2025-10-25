@@ -52,6 +52,11 @@ auto App::with_working_directory(this App& self, std::string dir) -> App& {
   return self;
 }
 
+auto App::with_assets_directory(this App& self, std::string dir) -> App& {
+  self.assets_path = dir;
+  return self;
+}
+
 auto App::get_command_line_args(this const App& self) -> const AppCommandLineArgs& {
   return self.command_line_args; //
 }
@@ -239,22 +244,37 @@ void App::run(this App& self) {
     FrameMark;
   }
 
-  self.close();
+  self.stop();
 }
 
-void App::close(this App& self) {
+void App::stop(this App& self) {
   ZoneScoped;
 
   self.is_running = false;
 
-  auto& job_man = self.job_manager;
-  job_man.wait();
-
+  self.job_manager.wait();
   self.registry.deinit();
+  self.job_manager.wait();
+
+  auto job_manager_deinit_result = self.job_manager.deinit();
+  if (job_manager_deinit_result.has_value())
+    OX_LOG_INFO("Deinitalized JobManager.");
+  else
+    OX_LOG_ERROR("Failed to deinitalize JobManager: {}", job_manager_deinit_result.error());
+
+  auto event_system_deinit_result = self.event_system.deinit();
+  if (event_system_deinit_result.has_value())
+    OX_LOG_INFO("Deinitalized EventSystem.");
+  else
+    OX_LOG_ERROR("Failed to deinitalize EventSystem: {}", event_system_deinit_result.error());
 
   if (self.window.has_value()) {
     self.window->destroy();
     self.vk_context->destroy_context();
   }
+}
+
+auto App::should_stop(this App& self) -> void { //
+  self.is_running = false;
 }
 } // namespace ox

@@ -12,11 +12,6 @@
 #include "UI/ImGuiRenderer.hpp"
 
 namespace ox {
-class OxylusEditor : public App {
-public:
-  OxylusEditor() : App() {}
-};
-
 App* create_application(const AppCommandLineArgs& args) {
   std::string name = "Oxylus Engine - Editor";
 #ifdef OX_RELEASE
@@ -29,7 +24,7 @@ App* create_application(const AppCommandLineArgs& args) {
   name = "Oxylus Engine - Editor - Dist";
 #endif
 
-  const auto app = new OxylusEditor();
+  const auto app = new App();
   app->with_name(name)
     .with_args(args)
     .with_working_directory(std::filesystem::current_path().string())
@@ -50,12 +45,12 @@ App* create_application(const AppCommandLineArgs& args) {
         .flags = WindowFlag::Centered | WindowFlag::Resizable,
       }
     )
+    .with<LuaManager>()
     .with<AssetManager>()
     .with<AudioEngine>()
     .with<Physics>()
     .with<Input>()
     .with<NetworkManager>()
-    .with<LuaManager>()
     .with<DebugRenderer>()
     .with<ImGuiRenderer>()
     .with<RendererConfig>()

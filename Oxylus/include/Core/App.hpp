@@ -18,18 +18,20 @@ class VkContext;
 class App {
 public:
   App();
-  virtual ~App();
+  ~App();
 
   static App* get() { return instance_; }
   static void set_instance(App* instance);
 
   auto run(this App& self) -> void;
-  auto close(this App& self) -> void;
+  auto stop(this App& self) -> void;
+  auto should_stop(this App& self) -> void;
 
   auto with_name(this App& self, std::string name) -> App&;
   auto with_args(this App& self, AppCommandLineArgs args) -> App&;
   auto with_window(this App& self, WindowInfo window_info) -> App&;
   auto with_working_directory(this App& self, std::string dir) -> App&;
+  auto with_assets_directory(this App& self, std::string dir) -> App&;
 
   template <typename T, typename... Args>
   auto with(this App& self, Args&&... args) -> App& {

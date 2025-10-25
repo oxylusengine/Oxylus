@@ -224,7 +224,7 @@ auto calculate_cascaded_shadow_matrices(
   }
 }
 
-RendererInstance::RendererInstance(Scene* owner_scene, Renderer& parent_renderer)
+RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer)
     : scene(owner_scene),
       renderer(parent_renderer) {
 
@@ -411,41 +411,50 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   self.render_queue_2d.sort();
   auto vertex_buffer_2d = self.renderer.vk_context->scratch_buffer_span(std::span(self.render_queue_2d.sprite_data));
 
+  const auto scene_has_directional_light = self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight;
+  const auto scene_has_atmosphere = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
+
+  if (scene_has_atmosphere) {
+    auto prepare_atmosphere_pass = vuk::make_pass(
+      "prepare_atmosphere",
+      [](vuk::CommandBuffer& cmd, VUK_BA(vuk::eMemoryRead) atmosphere_) { return atmosphere_; }
+    );
+
+    self.prepared_frame.atmosphere_buffer = prepare_atmosphere_pass(self.prepared_frame.atmosphere_buffer);
+  }
+
+  if (scene_has_directional_light) {
+    auto prepare_directional_light = vuk::make_pass(
+      "prepare_directional_light",
+      [](vuk::CommandBuffer& cmd, VUK_BA(vuk::eMemoryRead) buffer1, VUK_BA(vuk::eMemoryRead) buffer2) {
+        return std::make_tuple(buffer1, buffer2);
+      }
+    );
+
+    std::tie(self.prepared_frame.directional_light_buffer, self.prepared_frame.directional_light_cascades_buffer) =
+      prepare_directional_light(
+        self.prepared_frame.directional_light_buffer,
+        self.prepared_frame.directional_light_cascades_buffer
+      );
+  }
+
   auto prepare_lights_pass = vuk::make_pass(
     "prepare lights",
     [](
       vuk::CommandBuffer&,
       VUK_BA(vuk::eMemoryRead) lights_,
-      VUK_BA(vuk::eMemoryRead) atmos,
-      VUK_BA(vuk::eMemoryRead) directional_light_,
-      VUK_BA(vuk::eMemoryRead) directional_light_cascades_,
       VUK_BA(vuk::eMemoryRead) point_lights,
       VUK_BA(vuk::eMemoryRead) spot_lights
-    ) {
-      return std::make_tuple(
-        lights_,
-        atmos,
-        directional_light_,
-        directional_light_cascades_,
-        point_lights,
-        spot_lights
-      );
-    }
+    ) { return std::make_tuple(lights_, point_lights, spot_lights); }
   );
 
   std::tie(
     self.prepared_frame.lights_buffer,
-    self.prepared_frame.atmosphere_buffer,
-    self.prepared_frame.directional_light_buffer,
-    self.prepared_frame.directional_light_cascades_buffer,
     self.prepared_frame.point_lights_buffer,
     self.prepared_frame.spot_lights_buffer
   ) =
     prepare_lights_pass(
       std::move(self.prepared_frame.lights_buffer),
-      std::move(self.prepared_frame.atmosphere_buffer),
-      std::move(self.prepared_frame.directional_light_buffer),
-      std::move(self.prepared_frame.directional_light_cascades_buffer),
       std::move(self.prepared_frame.point_lights_buffer),
       std::move(self.prepared_frame.spot_lights_buffer)
     );
@@ -798,8 +807,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     );
   }
 
-  if (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere &&
-      self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) {
+  if (scene_has_atmosphere && scene_has_directional_light) {
     auto atmos_context = AtmosphereContext{
       .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
       .sky_multiscatter_lut_attachment = std::move(sky_multiscatter_lut_attachment),
@@ -1022,7 +1030,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   CameraComponent frozen_camera = {};
   const auto freeze_culling = static_cast<bool>(RendererCVar::cvar_freeze_culling_frustum.get());
 
-  self.scene->world
+  self.scene.world
     .query_builder<const TransformComponent, const CameraComponent>() //
     .build()
     .each([&](flecs::entity e, const TransformComponent& tc, const CameraComponent& c) {
@@ -1075,7 +1083,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   std::vector<GPU::PointLight> point_lights = {};
   std::vector<GPU::SpotLight> spot_lights = {};
 
-  self.scene->world
+  self.scene.world
     .query_builder<const TransformComponent, const LightComponent>() //
     .build()
     .each([&self,
@@ -1165,7 +1173,9 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       }
     });
 
-  self.scene->world
+  self.render_queue_2d.init();
+
+  self.scene.world
     .query_builder<const TransformComponent, const SpriteComponent>() //
     .build()
     .each([&asset_man,
@@ -1174,7 +1184,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
            &rq2d = self.render_queue_2d](flecs::entity e, const TransformComponent& tc, const SpriteComponent& comp) {
       const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
       if (auto material = asset_man.get_asset(comp.material)) {
-        if (auto transform_id = s->get_entity_transform_id(e)) {
+        if (auto transform_id = s.get_entity_transform_id(e)) {
           rq2d.add(
             comp,
             tc.position.y,
@@ -1188,7 +1198,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       }
     });
 
-  self.scene->world
+  self.scene.world
     .query_builder<const TransformComponent, const ParticleComponent>() //
     .build()
     .each([&asset_man,
@@ -1203,7 +1213,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       auto particle_system_component = e.parent().try_get<ParticleSystemComponent>();
       if (particle_system_component) {
         if (auto material = asset_man.get_asset(particle_system_component->material)) {
-          if (auto transform_id = s->get_entity_transform_id(e)) {
+          if (auto transform_id = s.get_entity_transform_id(e)) {
             SpriteComponent sprite_comp = {.sort_y = true};
 
             rq2d.add(
@@ -1220,7 +1230,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       }
     });
 
-  self.scene->world
+  self.scene.world
     .query_builder<const AutoExposureComponent>() //
     .build()
     .each([&self](flecs::entity e, const AutoExposureComponent& c) {
@@ -1231,7 +1241,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.eye_adaptation.ev100_bias = c.ev100_bias;
     });
 
-  self.scene->world
+  self.scene.world
     .query_builder<const TransformComponent, const VignetteComponent>() //
     .build()
     .each([&](flecs::entity e, const TransformComponent& tc, const VignetteComponent& c) {
@@ -1240,7 +1250,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.gpu_scene_flags |= GPU::SceneFlags::HasVignette;
     });
 
-  self.scene->world
+  self.scene.world
     .query_builder<const TransformComponent, const ChromaticAberrationComponent>() //
     .build()
     .each([&](flecs::entity e, const TransformComponent& tc, const ChromaticAberrationComponent& c) {
@@ -1249,7 +1259,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.gpu_scene_flags |= GPU::SceneFlags::HasChromaticAberration;
     });
 
-  self.scene->world
+  self.scene.world
     .query_builder<const TransformComponent, const FilmGrainComponent>() //
     .build()
     .each([&](flecs::entity e, const TransformComponent& tc, const FilmGrainComponent& c) {
@@ -1353,8 +1363,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   }
 
   self.prepared_frame.lights_buffer = vk_context.scratch_buffer(lights_info);
-
-  self.render_queue_2d.init();
 
   if (!info.gpu_meshes.empty()) {
     self.meshes_buffer = vk_context.resize_buffer(
@@ -1465,39 +1473,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     debug_renderer.reset();
   }
 
-  auto gtao_enabled = (bool)RendererCVar::cvar_vbgtao_enable.get();
-  if (gtao_enabled && self.viewport_size.x > 0) {
-    self.vbgtao_info.thickness = RendererCVar::cvar_vbgtao_thickness.get();
-    self.vbgtao_info.effect_radius = RendererCVar::cvar_vbgtao_radius.get();
-
-    switch (RendererCVar::cvar_vbgtao_quality_level.get()) {
-      case 0: {
-        self.vbgtao_info.slice_count = 1;
-        self.vbgtao_info.samples_per_slice_side = 2;
-        break;
-      }
-      case 1: {
-        self.vbgtao_info.slice_count = 2;
-        self.vbgtao_info.samples_per_slice_side = 2;
-        break;
-      }
-      case 2: {
-        self.vbgtao_info.slice_count = 3;
-        self.vbgtao_info.samples_per_slice_side = 3;
-        break;
-      }
-      case 3: {
-        self.vbgtao_info.slice_count = 9;
-        self.vbgtao_info.samples_per_slice_side = 3;
-        break;
-      }
-    }
-
-    // vbgtao_info.noise_index = (RendererCVar::cvar_gtao_denoise_passes.get() > 0) ? (frameCounter % 64) : (0); //
-    // TODO: If we have TAA
-    self.vbgtao_info.noise_index = 0;
-    self.vbgtao_info.final_power = RendererCVar::cvar_vbgtao_final_power.get();
-  }
+  self.update_vbgtao_info();
 
   if (!self.exposure_buffer) {
     self.exposure_buffer = vk_context.allocate_buffer_super(

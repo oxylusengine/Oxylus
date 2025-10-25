@@ -38,7 +38,7 @@ RuntimeConsole::RuntimeConsole() {
       loguru::Verbosity_INFO);
 
   // Default commands
-  register_command("quit", "", [](const ParsedCommandValue&) { App::get()->close(); });
+  register_command("quit", "", [](const ParsedCommandValue&) { App::get()->stop(); });
   register_command("clear", "", [this](const ParsedCommandValue&) { clear_log(); });
   register_command("help", "", [this](const ParsedCommandValue& value) { help_command(value); });
 
