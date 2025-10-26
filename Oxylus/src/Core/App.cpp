@@ -149,6 +149,8 @@ void App::run(this App& self) {
   window_callbacks.on_resize = [](void* user_data, const glm::uvec2 size) {
     const auto app = static_cast<App*>(user_data);
     app->vk_context->handle_resize(size.x, size.y);
+
+    auto emit_result = app->event_system.emit<WindowResizeEvent>(WindowResizeEvent{.width = size.x, .height = size.y});
   };
   window_callbacks.on_close = [](void* user_data) {
     const auto app = static_cast<App*>(user_data);

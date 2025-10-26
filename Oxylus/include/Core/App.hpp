@@ -15,6 +15,11 @@ namespace ox {
 class ImGuiLayer;
 class VkContext;
 
+struct WindowResizeEvent {
+  u32 width = 0;
+  u32 height = 0;
+};
+
 class App {
 public:
   App();

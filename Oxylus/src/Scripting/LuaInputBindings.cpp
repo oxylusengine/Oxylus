@@ -10,7 +10,7 @@
 namespace ox {
 auto InputBinding::bind(sol::state* state) -> void {
   ZoneScoped;
-  auto input = state->create_table("Input");
+  auto input = state->new_usertype<Input>("Input");
 
   SET_TYPE_FUNCTION(input, Input, get_key_pressed);
   SET_TYPE_FUNCTION(input, Input, get_key_held);

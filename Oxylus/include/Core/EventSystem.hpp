@@ -57,6 +57,7 @@ public:
   bool unsubscribe(HandlerId id) {
     ZoneScoped;
     std::shared_lock lock(mutex_);
+
     auto it = std::ranges::find_if(handlers_, [id](const auto& h) { return h->id == id; });
 
     if (it != handlers_.end()) {
@@ -298,7 +299,7 @@ public:
     if (active_ && system_) {
       auto unsubscribe_result = system_->unsubscribe<EventType>(handler_id_);
       if (!unsubscribe_result) {
-        OX_LOG_ERROR("{}", event_error_to_sv(unsubscribe_result.error()));
+        OX_LOG_ERROR("{}", unsubscribe_result.error().message());
       }
       active_ = false;
     }
