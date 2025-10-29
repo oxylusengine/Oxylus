@@ -40,7 +40,7 @@ struct SlangBlob : ISlangBlob {
 };
 
 struct SlangVirtualFS : ISlangFileSystem {
-  std::string m_root_dir;
+  std::filesystem::path m_root_dir;
   std::atomic_uint32_t m_ref_count;
 
   SLANG_NO_THROW SlangResult SLANG_MCALL queryInterface(const SlangUUID& uuid, void** outObject) SLANG_OVERRIDE {

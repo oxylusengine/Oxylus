@@ -40,8 +40,8 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> std::expected<Asse
     }
   };
 
-  auto entry_point_data = std::vector<u8>();
-  auto entry_point_ranges = std::array<std::pair<u32, u32>, ShaderAsset::EntryPointKind::Count>();
+  auto shader_asset = ShaderAsset{};
+  auto asset_data = std::vector<u8>();
   for (const auto& entry_point_name : info.entry_points) {
     auto entry_point = Slang::ComPtr<slang::IEntryPoint>();
     if (SLANG_FAILED(slang_module->findEntryPointByName(entry_point_name.c_str(), entry_point.writeRef()))) {
@@ -108,11 +108,24 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> std::expected<Asse
       return std::unexpected(Error::ShaderEntryPointCodegen);
     }
 
+    auto& [name_offset, name_length] = shader_asset.entry_point_names[entry_point_kind];
+    name_offset = asset_data.size();
+    name_length = entry_point_name.length();
+    asset_data.insert(asset_data.end(), entry_point_name.begin(), entry_point_name.end());
+    asset_data.insert(asset_data.end(), '0'); // just to be safe
+
     auto spirv = std::span(reinterpret_cast<const u8*>(spirv_code->getBufferPointer()), spirv_code->getBufferSize());
-    entry_point_ranges[entry_point_kind] = {entry_point_data.size() / sizeof(u32), spirv.size() * sizeof(u32)};
-    entry_point_data.insert(entry_point_data.end(), spirv.begin(), spirv.end());
+    auto& [code_offset, code_length] = shader_asset.entry_point_ranges[entry_point_kind];
+    code_offset = asset_data.size();
+    code_length = spirv.size();
+
+    asset_data.insert(asset_data.end(), spirv.begin(), spirv.end());
   }
 
   auto asset_id = impl->rc_session.create_asset(AssetType::Shader);
+  impl->rc_session.set_asset_info(asset_id, shader_asset);
+  impl->rc_session.set_asset_data(asset_id, std::move(asset_data));
+
+  return asset_id;
 }
 } // namespace ox::rc

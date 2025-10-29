@@ -6,6 +6,7 @@
 
 #include "Asset/AssetFile.hpp"
 #include "Core/Types.hpp"
+#include "Memory/Borrowed.hpp"
 
 #if OX_PLATFORM_WINDOWS
   #ifdef OXRC_EXPORTS
@@ -75,6 +76,7 @@ public:
   auto compile_shader(const ShaderInfo& info) -> std::expected<AssetID, Error>;
 };
 
+struct CompiledAsset;
 struct OXRC_API Session {
   struct Impl;
 
@@ -89,7 +91,15 @@ public:
   auto create_shader_session(const ShaderSessionInfo& info) -> std::expected<ShaderSession, Error>;
 
   auto create_asset(AssetType type) -> AssetID;
+  auto get_asset_data(AssetID asset_id) -> std::span<u8>;
+  auto get_shader_asset(AssetID asset_id) -> ShaderAsset;
+
+protected:
+  auto get_asset(AssetID asset_id) -> Borrowed<CompiledAsset>;
+  auto set_asset_data(AssetID asset_id, std::vector<u8> asset_data) -> void;
   auto set_asset_info(AssetID asset_id, ShaderAsset shader_asset) -> void;
+
+  friend ShaderSession;
 };
 
 } // namespace ox::rc

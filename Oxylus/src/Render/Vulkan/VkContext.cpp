@@ -145,7 +145,8 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
     );
   }
 
-  builder.enable_extension(VK_KHR_SURFACE_EXTENSION_NAME)
+  builder //
+    .enable_extension(VK_KHR_SURFACE_EXTENSION_NAME)
     .enable_extension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 
   auto inst_ret = builder.build();

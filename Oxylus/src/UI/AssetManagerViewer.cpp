@@ -43,12 +43,14 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
       asset_man.unload_asset(asset.uuid);
     }
 
-    if (!asset.is_loaded())
+    if (!asset.is_loaded()) {
       ImGui::Text("ID: Invalid ID");
-    else
-      ImGui::Text("ID: %llu", static_cast<u64>(asset.texture_id));
+    } else {
+      auto id = SlotMap_decode_id(asset.texture_id);
+      ImGui::Text("ID: %u, Generation: %u", id.index, id.version);
+    }
 
-    ImGui::Text("RefCount: %llu", static_cast<u64>(asset.ref_count));
+    ImGui::Text("RefCount: %lu", static_cast<u64>(asset.ref_count));
 
     ImGui::EndPopup();
   }

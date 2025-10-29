@@ -1,6 +1,7 @@
 #pragma once
 
 // Keep this file as clean as possible, only include this and nothing more:
+#include <span>
 #include <string_view>
 
 #include "Core/Types.hpp"
@@ -8,15 +9,13 @@
 namespace ox {
 // Specialized string only for Asset Files
 struct AssetString {
+  u32 offset = 0;
   u32 length = 0;
 
-  // This should always be null terminated
-  union {
-    u32 _padding = 0;
-    c8 data;
-  };
-
-  auto as_sv() -> std::string_view { return std::string_view(&data, length); }
+  auto as_sv(std::span<c8> asset_data) -> std::string_view {
+    auto* ptr = asset_data.data() + offset;
+    return std::string_view(ptr, ptr + length);
+  }
 };
 
 enum class AssetType : u32 {
@@ -39,11 +38,15 @@ struct ShaderAsset {
     Count,
   };
 
-  // <Offset, Length> in `spirv_blob`, each element is u32
-  std::pair<u32, u32> entry_point_ranges[EntryPointKind::Count] = {};
+  struct Range {
+    u32 offset = 0;
+    u32 length = 0;
+  };
+
+  Range entry_point_ranges[EntryPointKind::Count] = {};
   AssetString entry_point_names[EntryPointKind::Count] = {};
 
-  auto has_entry_point(EntryPointKind entry_point) -> bool { return entry_point_ranges[entry_point].second != 0; }
+  auto has_entry_point(EntryPointKind entry_point) -> bool { return entry_point_ranges[entry_point].length != 0; }
 };
 
 // List of file extensions supported by Engine.

@@ -69,7 +69,7 @@ auto Session::create_shader_session(const ShaderSessionInfo& info) -> std::expec
   };
 
   auto slang_fs = std::make_unique<SlangVirtualFS>(info.root_directory);
-  const auto search_path = info.root_directory;
+  const auto search_path = info.root_directory.string();
   const auto* search_path_cstr = search_path.c_str();
   const c8* search_paths[] = {search_path_cstr};
   auto session_desc = slang::SessionDesc{
@@ -103,22 +103,46 @@ auto Session::create_shader_session(const ShaderSessionInfo& info) -> std::expec
 }
 
 auto Session::create_asset(AssetType type) -> AssetID {
-  // auto asset_id = impl->assets.create_slot(CompiledAsset{.type = type, .none = 0});
-  //
-  // {
-  //   auto write_lock = std::unique_lock(impl->asset_datas_mutex);
-  //   auto asset_data_index = SlotMap_decode_id(asset_id).index;
-  //   if (asset_data_index >= impl->asset_datas.size()) {
-  //     impl->asset_datas.resize(asset_data_index + 1);
-  //   }
-  // }
-  //
-  // return asset_id;
+  auto write_lock = std::unique_lock(impl->assets_mutex);
+
+  auto asset_id = impl->assets.create_slot(CompiledAsset{.type = type, .none = 0});
+  auto asset_data_index = SlotMap_decode_id(asset_id).index;
+  if (asset_data_index >= impl->asset_datas.size()) {
+    impl->asset_datas.resize(asset_data_index + 1);
+  }
+
+  return asset_id;
 }
 
-auto Session ::set_asset_info(AssetID asset_id, ShaderAsset shader_asset) -> void {
-  auto *asset = impl->assets.slot(asset_id);
+auto Session::get_asset_data(AssetID asset_id) -> std::span<u8> {
+  auto read_lock = std::shared_lock(impl->assets_mutex);
+  auto asset_index = SlotMap_decode_id(asset_id).index;
 
+  return impl->asset_datas[asset_index];
+}
+
+auto Session::get_shader_asset(AssetID asset_id) -> ShaderAsset {
+  auto asset = get_asset(asset_id);
+
+  return asset->shader;
+}
+
+auto Session::get_asset(AssetID asset_id) -> Borrowed<CompiledAsset> {
+  auto read_lock = std::shared_lock(impl->assets_mutex);
+  auto* asset = impl->assets.slot(asset_id);
+
+  return Borrowed(impl->assets_mutex, asset);
+}
+
+auto Session::set_asset_data(AssetID asset_id, std::vector<u8> asset_data) -> void {
+  auto read_lock = std::shared_lock(impl->assets_mutex);
+  auto asset_index = SlotMap_decode_id(asset_id).index;
+  impl->asset_datas[asset_index] = std::move(asset_data);
+}
+
+auto Session::set_asset_info(AssetID asset_id, ShaderAsset shader_asset) -> void {
+  auto asset = get_asset(asset_id);
+  asset->shader = shader_asset;
 }
 
 } // namespace ox::rc

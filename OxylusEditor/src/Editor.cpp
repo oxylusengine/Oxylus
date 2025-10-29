@@ -1,6 +1,7 @@
 #include "Editor.hpp"
 
 #include <ImGuizmo.h>
+#include <ResourceCompiler.hpp>
 #include <filesystem>
 #include <flecs.h>
 #include <imgui_internal.h>
