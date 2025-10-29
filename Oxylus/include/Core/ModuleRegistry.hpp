@@ -37,7 +37,6 @@ struct ModuleRegistry {
   std::vector<std::type_index> module_types = {};
   std::vector<std::function<std::expected<void, std::string>()>> init_callbacks = {};
   std::vector<ox::option<std::function<void(const Timestep&)>>> update_callbacks = {};
-  std::vector<ox::option<std::function<void(vuk::Extent3D, vuk::Format)>>> render_callbacks = {};
   std::vector<std::function<std::expected<void, std::string>()>> deinit_callbacks = {};
   std::vector<std::string_view> module_names = {};
 
@@ -61,13 +60,6 @@ struct ModuleRegistry {
       });
     } else {
       update_callbacks.emplace_back(ox::nullopt);
-    }
-    if constexpr (ModuleHasRender<T>) {
-      render_callbacks.emplace_back([m = static_cast<T*>(module.get())](vuk::Extent3D extent, vuk::Format format) {
-        m->render(extent, format);
-      });
-    } else {
-      render_callbacks.emplace_back(ox::nullopt);
     }
 
     module_names.emplace_back(T::MODULE_NAME);
@@ -93,6 +85,5 @@ struct ModuleRegistry {
   auto init(this ModuleRegistry& self) -> bool;
   auto deinit(this ModuleRegistry& self) -> bool;
   auto update(this ModuleRegistry& self, const Timestep& timestep) -> void;
-  auto render(this ModuleRegistry& self, vuk::Extent3D extent, vuk::Format format) -> void;
 };
 } // namespace ox

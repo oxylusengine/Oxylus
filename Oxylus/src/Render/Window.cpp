@@ -6,10 +6,13 @@
 #include <ranges>
 #include <stb_image.h>
 
+#include "Core/App.hpp"
 #include "Core/Base.hpp"
 #include "Core/Enum.hpp"
 #include "Core/Handle.hpp"
+#include "Core/Input.hpp"
 #include "Memory/Stack.hpp"
+#include "UI/ImGuiRenderer.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
@@ -139,6 +142,81 @@ void Window::destroy() const {
 
   SDL_StopTextInput(impl->handle);
   SDL_DestroyWindow(impl->handle);
+}
+
+void Window::update(const Timestep& timestep) {
+  WindowCallbacks window_callbacks = {};
+  window_callbacks.user_data = nullptr;
+  window_callbacks.on_resize = [](void* user_data, const glm::uvec2 size) {
+    App::get_vkcontext().handle_resize(size.x, size.y);
+
+    auto& event_system = App::get_event_system();
+    auto emit_result = event_system.emit<WindowResizeEvent>(WindowResizeEvent{.width = size.x, .height = size.y});
+  };
+  window_callbacks.on_close = [](void* user_data) {
+    App::get()->should_stop();
+  };
+  window_callbacks.on_mouse_pos = [](void* user_data, const glm::vec2 position, glm::vec2 relative) {
+    auto& imgui_renderer = App::mod<ImGuiRenderer>();
+    imgui_renderer.on_mouse_pos(position);
+
+    auto& input_system = App::mod<Input>();
+    input_system.input_data.mouse_offset_x = input_system.input_data.mouse_pos.x - position.x;
+    input_system.input_data.mouse_offset_y = input_system.input_data.mouse_pos.y - position.y;
+    input_system.input_data.mouse_pos = position;
+    input_system.input_data.mouse_pos_rel = relative;
+    input_system.input_data.mouse_moved = true;
+  };
+  window_callbacks.on_mouse_button = [](void* user_data, const u8 button, const bool down) {
+    auto* app = static_cast<App*>(user_data);
+    auto& imgui_renderer = app->mod<ImGuiRenderer>();
+    imgui_renderer.on_mouse_button(button, down);
+
+    auto& input_system = app->mod<Input>();
+    const auto ox_button = Input::to_mouse_code(button);
+    if (down) {
+      input_system.set_mouse_clicked(ox_button, true);
+      input_system.set_mouse_released(ox_button, false);
+      input_system.set_mouse_held(ox_button, true);
+    } else {
+      input_system.set_mouse_clicked(ox_button, false);
+      input_system.set_mouse_released(ox_button, true);
+      input_system.set_mouse_held(ox_button, false);
+    }
+  };
+  window_callbacks.on_mouse_scroll = [](void* user_data, const glm::vec2 offset) {
+    const auto* app = static_cast<App*>(user_data);
+    auto& imgui_renderer = app->mod<ImGuiRenderer>();
+    imgui_renderer.on_mouse_scroll(offset);
+
+    auto& input_system = app->mod<Input>();
+    input_system.input_data.scroll_offset_y = offset.y;
+  };
+  window_callbacks.on_key =
+    [](void* user_data, const u32 key_code, const u32 scan_code, const u16 mods, const bool down, const bool repeat) {
+      const auto* app = static_cast<App*>(user_data);
+      auto& imgui_renderer = app->mod<ImGuiRenderer>();
+      imgui_renderer.on_key(key_code, scan_code, mods, down);
+
+      auto& input_system = app->mod<Input>();
+      const auto ox_key_code = Input::to_keycode(key_code, scan_code);
+      if (down) {
+        input_system.set_key_pressed(ox_key_code, !repeat);
+        input_system.set_key_released(ox_key_code, false);
+        input_system.set_key_held(ox_key_code, true);
+      } else {
+        input_system.set_key_pressed(ox_key_code, false);
+        input_system.set_key_released(ox_key_code, true);
+        input_system.set_key_held(ox_key_code, false);
+      }
+    };
+  window_callbacks.on_text_input = [](void* user_data, const c8* text) {
+    const auto* app = static_cast<App*>(user_data);
+    auto& imgui_renderer = app->mod<ImGuiRenderer>();
+    imgui_renderer.on_text_input(text);
+  };
+
+  poll(window_callbacks);
 }
 
 void Window::poll(const WindowCallbacks& callbacks) const {

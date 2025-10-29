@@ -62,7 +62,6 @@ public:
 
   auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
   auto get_window(this const App& self) -> const Window&;
-  auto get_swapchain_extent(this const App& self) -> glm::vec2;
 
   static auto get_vkcontext() -> VkContext&;
   static auto get_timestep() -> const Timestep&;
@@ -85,7 +84,6 @@ private:
 
   std::unique_ptr<VkContext> vk_context = nullptr;
   option<Window> window = nullopt;
-  glm::vec2 swapchain_extent = {};
 
   VFS vfs = {};
   JobManager job_manager = {};

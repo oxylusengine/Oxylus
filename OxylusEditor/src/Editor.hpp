@@ -97,6 +97,8 @@ private:
 
   void save_project(const std::string& path);
 
+  void draw_menubar(ImGuiViewport* viewport, f32 frame_height);
+
   void undo();
   void redo();
 };

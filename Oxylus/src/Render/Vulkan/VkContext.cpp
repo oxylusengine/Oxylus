@@ -476,6 +476,9 @@ auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachme
 
   auto acquired_swapchain = vuk::acquire_swapchain(*self.swapchain);
   auto acquired_image = vuk::acquire_next_image("present_image", std::move(acquired_swapchain));
+
+  self.swapchain_extent = glm::vec2(acquired_image->extent.width, acquired_image->extent.height);
+
   return acquired_image;
 }
 

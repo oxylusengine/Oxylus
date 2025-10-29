@@ -8,6 +8,7 @@
 
 #include "Core/Handle.hpp"
 #include "Core/Option.hpp"
+#include "Utils/Timestep.hpp"
 
 namespace ox {
 enum class WindowCursor {
@@ -103,6 +104,7 @@ struct Window : Handle<Window> {
   static Window create(const WindowInfo& info);
   void destroy() const;
 
+  auto update(const Timestep& timestep) -> void;
   void poll(const WindowCallbacks& callbacks) const;
 
   static option<SystemDisplay> display_at(u32 monitor_id = WindowInfo::USE_PRIMARY_MONITOR);

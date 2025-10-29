@@ -18,6 +18,7 @@
 #include "Panels/StatisticsPanel.hpp"
 #include "Panels/TextEditorPanel.hpp"
 #include "Render/Window.hpp"
+#include "UI/ImGuiRenderer.hpp"
 #include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
 #include "Utils/Command.hpp"
@@ -25,6 +26,7 @@
 #include "Utils/EmbeddedBanner.hpp"
 #include "Utils/ImGuiScoped.hpp"
 #include "Utils/Log.hpp"
+#include "vuk/vsl/Core.hpp"
 
 namespace ox {
 auto Editor::init() -> std::expected<void, std::string> {
@@ -122,6 +124,23 @@ auto Editor::update(const Timestep& timestep) -> void {
       break;
     }
   }
+
+  auto& vk_context = App::get_vkcontext();
+  auto& imgui_renderer = App::mod<ImGuiRenderer>();
+
+  auto swapchain_attachment = vk_context.new_frame();
+  swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
+
+  vuk::Format format = swapchain_attachment->format;
+  vuk::Extent3D extent = swapchain_attachment->extent;
+
+  imgui_renderer.begin_frame(timestep.get_seconds(), extent);
+
+  render(extent, format);
+
+  swapchain_attachment = imgui_renderer.end_frame(vk_context, std::move(swapchain_attachment));
+
+  vk_context.end_frame(swapchain_attachment);
 }
 
 auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> void {
@@ -201,105 +220,9 @@ auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> voi
 
     const float frame_height = ImGui::GetFrameHeight();
 
-    constexpr ImGuiWindowFlags menu_flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
-                                            ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoNavFocus;
-
     ImVec2 frame_padding = ImGui::GetStyle().FramePadding;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {frame_padding.x, 4.0f});
-
-    if (ImGui::BeginViewportSideBar("##PrimaryMenuBar", viewport, ImGuiDir_Up, frame_height, menu_flags)) {
-      if (ImGui::BeginMenuBar()) {
-        if (ImGui::BeginMenu("File")) {
-          if (ImGui::MenuItem("New Scene", "Ctrl + N")) {
-            new_scene();
-          }
-          if (ImGui::MenuItem("Open Scene", "Ctrl + O")) {
-            open_scene_file_dialog();
-          }
-          if (ImGui::MenuItem("Save Scene", "Ctrl + S")) {
-            save_scene();
-          }
-          if (ImGui::MenuItem("Save Scene As...", "Ctrl + Shift + S")) {
-            save_scene_as();
-          }
-          ImGui::Separator();
-          if (ImGui::MenuItem("Launcher...")) {
-            get_panel<ProjectPanel>()->visible = true;
-          }
-          ImGui::Separator();
-          if (ImGui::MenuItem("Exit")) {
-            App::get()->should_stop();
-          }
-          ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Edit")) {
-          ImGui::BeginDisabled(undo_redo_system->get_undo_count() < 1);
-          if (ImGui::MenuItem("Undo", "Ctrl + Z")) {
-            undo();
-          }
-          ImGui::EndDisabled();
-          ImGui::BeginDisabled(undo_redo_system->get_redo_count() < 1);
-          if (ImGui::MenuItem("Redo", "Ctrl + Y")) {
-            redo();
-          }
-          ImGui::EndDisabled();
-          if (ImGui::MenuItem("Settings")) {
-            get_panel<EditorSettingsPanel>()->visible = true;
-          }
-          ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Window")) {
-          if (ImGui::MenuItem("Add viewport", nullptr)) {
-            viewport_panels.emplace_back(std::make_unique<ViewportPanel>())
-              ->set_context(editor_scene.get(), *get_panel<SceneHierarchyPanel>());
-          }
-          ImGui::MenuItem("Inspector", nullptr, &get_panel<InspectorPanel>()->visible);
-          ImGui::MenuItem("Scene hierarchy", nullptr, &get_panel<SceneHierarchyPanel>()->visible);
-          ImGui::MenuItem("Console window", nullptr, &runtime_console.visible);
-          ImGui::MenuItem("Performance Overlay", nullptr, &viewport_panels[0]->performance_overlay_visible);
-          ImGui::MenuItem("Statistics", nullptr, &get_panel<StatisticsPanel>()->visible);
-          if (ImGui::BeginMenu("Layout")) {
-            if (ImGui::MenuItem("Classic")) {
-              set_docking_layout(EditorLayout::Classic);
-            }
-            if (ImGui::MenuItem("Big Viewport")) {
-              set_docking_layout(EditorLayout::BigViewport);
-            }
-            ImGui::EndMenu();
-          }
-          ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Assets")) {
-          if (ImGui::MenuItem("Asset Manager")) {
-            get_panel<AssetManagerPanel>()->visible = true;
-          }
-          UI::tooltip_hover("WIP");
-          ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Help")) {
-          if (ImGui::MenuItem("About")) {
-          }
-          UI::tooltip_hover("WIP");
-          ImGui::EndMenu();
-        }
-        ImGui::SameLine();
-
-        {
-          // Project name text
-          const std::string& project_name = active_project->get_config().name;
-          ImGui::SetCursorPos(
-            ImVec2(ImGui::GetMainViewport()->Size.x - 10 - ImGui::CalcTextSize(project_name.c_str()).x, 0)
-          );
-          ImGuiScoped::StyleColor b_color1(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
-          ImGuiScoped::StyleColor b_color2(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
-          ImGui::Button(project_name.c_str());
-        }
-
-        ImGui::EndMenuBar();
-      }
-      ImGui::End();
-    }
+    draw_menubar(viewport, frame_height);
     ImGui::PopStyleVar();
 
     static bool dock_layout_initalized = false;
@@ -308,6 +231,105 @@ auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> voi
       dock_layout_initalized = true;
     }
 
+    ImGui::End();
+  }
+}
+
+void Editor::draw_menubar(ImGuiViewport* viewport, f32 frame_height) {
+  constexpr ImGuiWindowFlags menu_flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
+                                          ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoNavFocus;
+
+  if (ImGui::BeginViewportSideBar("##PrimaryMenuBar", viewport, ImGuiDir_Up, frame_height, menu_flags)) {
+    if (ImGui::BeginMenuBar()) {
+      if (ImGui::BeginMenu("File")) {
+        if (ImGui::MenuItem("New Scene", "Ctrl + N")) {
+          new_scene();
+        }
+        if (ImGui::MenuItem("Open Scene", "Ctrl + O")) {
+          open_scene_file_dialog();
+        }
+        if (ImGui::MenuItem("Save Scene", "Ctrl + S")) {
+          save_scene();
+        }
+        if (ImGui::MenuItem("Save Scene As...", "Ctrl + Shift + S")) {
+          save_scene_as();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Launcher...")) {
+          get_panel<ProjectPanel>()->visible = true;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Exit")) {
+          App::get()->should_stop();
+        }
+        ImGui::EndMenu();
+      }
+      if (ImGui::BeginMenu("Edit")) {
+        ImGui::BeginDisabled(undo_redo_system->get_undo_count() < 1);
+        if (ImGui::MenuItem("Undo", "Ctrl + Z")) {
+          undo();
+        }
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(undo_redo_system->get_redo_count() < 1);
+        if (ImGui::MenuItem("Redo", "Ctrl + Y")) {
+          redo();
+        }
+        ImGui::EndDisabled();
+        if (ImGui::MenuItem("Settings")) {
+          get_panel<EditorSettingsPanel>()->visible = true;
+        }
+        ImGui::EndMenu();
+      }
+      if (ImGui::BeginMenu("Window")) {
+        if (ImGui::MenuItem("Add viewport", nullptr)) {
+          viewport_panels.emplace_back(std::make_unique<ViewportPanel>())
+            ->set_context(editor_scene.get(), *get_panel<SceneHierarchyPanel>());
+        }
+        ImGui::MenuItem("Inspector", nullptr, &get_panel<InspectorPanel>()->visible);
+        ImGui::MenuItem("Scene hierarchy", nullptr, &get_panel<SceneHierarchyPanel>()->visible);
+        ImGui::MenuItem("Console window", nullptr, &runtime_console.visible);
+        ImGui::MenuItem("Performance Overlay", nullptr, &viewport_panels[0]->performance_overlay_visible);
+        ImGui::MenuItem("Statistics", nullptr, &get_panel<StatisticsPanel>()->visible);
+        if (ImGui::BeginMenu("Layout")) {
+          if (ImGui::MenuItem("Classic")) {
+            set_docking_layout(EditorLayout::Classic);
+          }
+          if (ImGui::MenuItem("Big Viewport")) {
+            set_docking_layout(EditorLayout::BigViewport);
+          }
+          ImGui::EndMenu();
+        }
+        ImGui::EndMenu();
+      }
+
+      if (ImGui::BeginMenu("Assets")) {
+        if (ImGui::MenuItem("Asset Manager")) {
+          get_panel<AssetManagerPanel>()->visible = true;
+        }
+        UI::tooltip_hover("WIP");
+        ImGui::EndMenu();
+      }
+      if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("About")) {
+        }
+        UI::tooltip_hover("WIP");
+        ImGui::EndMenu();
+      }
+      ImGui::SameLine();
+
+      {
+        // Project name text
+        const std::string& project_name = active_project->get_config().name;
+        ImGui::SetCursorPos(
+          ImVec2(ImGui::GetMainViewport()->Size.x - 10 - ImGui::CalcTextSize(project_name.c_str()).x, 0)
+        );
+        ImGuiScoped::StyleColor b_color1(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
+        ImGuiScoped::StyleColor b_color2(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
+        ImGui::Button(project_name.c_str());
+      }
+
+      ImGui::EndMenuBar();
+    }
     ImGui::End();
   }
 }

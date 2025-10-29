@@ -588,7 +588,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<const TransformComponent, CameraComponent>("camera_update")
     .kind(flecs::PostUpdate)
     .each([](const TransformComponent& tc, CameraComponent& cc) {
-      const auto screen_extent = App::get()->get_swapchain_extent();
+      const auto screen_extent = App::get_vkcontext().swapchain_extent;
       cc.position = tc.position;
       cc.pitch = tc.rotation.x;
       cc.yaw = tc.rotation.y;
