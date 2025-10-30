@@ -60,6 +60,11 @@ public:
     return get()->registry.get<T>();
   }
 
+  template <typename T>
+  static auto has_mod() -> bool {
+    return get()->registry.has<T>();
+  }
+
   auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
   auto get_window(this const App& self) -> const Window&;
 

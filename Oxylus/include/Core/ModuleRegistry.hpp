@@ -66,7 +66,7 @@ struct ModuleRegistry {
   }
 
   template <typename T>
-  auto has() -> bool {
+  auto has() const -> bool {
     ZoneScoped;
 
     return registry.contains(std::type_index(typeid(T)));
