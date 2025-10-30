@@ -128,4 +128,9 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> std::expected<Asse
 
   return asset_id;
 }
+
+auto ShaderSession::get_messages() -> std::vector<std::string> { //
+  return std::move(impl->diagnostic_messages);
+}
+
 } // namespace ox::rc

@@ -15,6 +15,18 @@ auto Session::create() -> std::expected<Session, Error> {
   return Session(self);
 }
 
+auto Session::create(std::span<std::filesystem::path> meta_paths) -> std::expected<Session, Error> {
+  auto self = Session::create();
+  if (!self.has_value()) {
+    return self;
+  }
+
+  for (const auto& path : meta_paths) {
+  }
+
+  return self;
+}
+
 auto Session::create_shader_session(const ShaderSessionInfo& info) -> std::expected<ShaderSession, Error> {
   auto debug_level = static_cast<i32>(
     info.debug_symbols ? SLANG_DEBUG_INFO_LEVEL_MAXIMAL : SLANG_DEBUG_INFO_LEVEL_NONE

@@ -74,6 +74,7 @@ public:
   ShaderSession(Impl* impl_) : impl(impl_) {}
 
   auto compile_shader(const ShaderInfo& info) -> std::expected<AssetID, Error>;
+  auto get_messages() -> std::vector<std::string>;
 };
 
 struct CompiledAsset;
@@ -85,6 +86,7 @@ protected:
 
 public:
   static auto create() -> std::expected<Session, Error>;
+  static auto create(std::span<std::filesystem::path> meta_paths) -> std::expected<Session, Error>;
 
   Session() = default;
   Session(Impl* impl_) : impl(impl_) {}

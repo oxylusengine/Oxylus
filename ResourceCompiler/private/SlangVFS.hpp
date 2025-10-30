@@ -64,7 +64,7 @@ struct SlangVirtualFS : ISlangFileSystem {
     return m_ref_count;
   }
 
-  SlangVirtualFS(std::string root_dir) : m_root_dir(std::move(root_dir)), m_ref_count(1) {}
+  SlangVirtualFS(std::filesystem::path root_dir) : m_root_dir(std::move(root_dir)), m_ref_count(1) {}
   virtual ~SlangVirtualFS() = default;
 
   ISlangUnknown* getInterface(const SlangUUID&) { return nullptr; }
