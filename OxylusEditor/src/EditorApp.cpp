@@ -1,14 +1,8 @@
-#include "Audio/AudioEngine.hpp"
+#include "Core/DefaultModules.hpp"
 #include "Core/EmbeddedLogo.hpp"
 #include "Core/EntryPoint.hpp"
 #include "Core/Enum.hpp"
-#include "Core/Input.hpp"
 #include "Editor.hpp"
-#include "Networking/NetworkManager.hpp"
-#include "Physics/Physics.hpp"
-#include "Render/RendererConfig.hpp"
-#include "Scripting/LuaManager.hpp"
-#include "UI/ImGuiRenderer.hpp"
 
 namespace ox {
 App* create_application(const AppCommandLineArgs& args) {
@@ -44,16 +38,7 @@ App* create_application(const AppCommandLineArgs& args) {
         .flags = WindowFlag::Centered | WindowFlag::Resizable | WindowFlag::HighPixelDensity,
       }
     )
-    .with<LuaManager>()
-    .with<AssetManager>()
-    .with<AudioEngine>()
-    .with<Physics>()
-    .with<Input>()
-    .with<NetworkManager>()
-    .with<RendererConfig>()
-    .with<Renderer>()
-    .with<DebugRenderer>()
-    .with<ImGuiRenderer>()
+    .with(DefaultModules{})
     .with<Editor>();
 
   return app;

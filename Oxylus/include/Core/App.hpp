@@ -55,6 +55,15 @@ public:
     return self;
   }
 
+  template <typename... Modules>
+  auto with(this App& self, std::tuple<Modules...>) -> App& {
+    (..., [&] {
+      self.with<Modules>();
+    }());
+
+    return self;
+  }
+
   template <typename T>
   static auto mod() -> T& {
     return get()->registry.get<T>();
