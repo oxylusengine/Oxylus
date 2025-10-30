@@ -39,6 +39,7 @@ App* create_application(const AppCommandLineArgs& args) {
       }
     )
     .with(DefaultModules{})
+    .with<EditorConfig>()
     .with<Editor>();
 
   return app;

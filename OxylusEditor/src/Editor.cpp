@@ -22,7 +22,6 @@
 #include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
 #include "Utils/Command.hpp"
-#include "Utils/EditorConfig.hpp"
 #include "Utils/EmbeddedBanner.hpp"
 #include "Utils/ImGuiScoped.hpp"
 #include "Utils/Log.hpp"
@@ -40,8 +39,6 @@ auto Editor::init() -> std::expected<void, std::string> {
   editor_theme.init();
 
   active_project = std::make_unique<Project>();
-
-  editor_config.load_config();
 
   engine_banner = std::make_shared<Texture>();
   engine_banner->create(
@@ -90,8 +87,6 @@ auto Editor::init() -> std::expected<void, std::string> {
 }
 
 auto Editor::deinit() -> std::expected<void, std::string> {
-  editor_config.save_config();
-
   auto& job_man = App::get_job_manager();
   job_man.get_tracker().stop_tracking();
 

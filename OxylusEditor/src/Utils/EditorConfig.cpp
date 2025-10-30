@@ -1,6 +1,7 @@
 #include "EditorConfig.hpp"
 
 #include <Render/RendererConfig.hpp>
+#include <fmt/format.h>
 #include <fstream>
 #include <toml++/toml.hpp>
 #include <tracy/Tracy.hpp>
@@ -13,16 +14,11 @@ EditorConfig* EditorConfig::instance = nullptr;
 
 constexpr const char* EDITOR_CONFIG_FILE_NAME = "editor_config.toml";
 
-EditorConfig::EditorConfig() {
-  if (!instance)
-    instance = this;
-}
-
-void EditorConfig::load_config() {
+std::expected<void, std::string> EditorConfig::init() {
   ZoneScoped;
   const auto& content = fs::read_file(EDITOR_CONFIG_FILE_NAME);
   if (content.empty())
-    return;
+    return std::unexpected(fmt::format("Couldn't read {}", EDITOR_CONFIG_FILE_NAME));
 
   toml::table toml = toml::parse(content);
   const auto config = toml["editor_config"];
@@ -46,9 +42,11 @@ void EditorConfig::load_config() {
     EditorCVar::cvar_file_thumbnail_size.set(v->get());
   if (auto v = config["show_meta_files"].as_boolean())
     EditorCVar::cvar_show_meta_files.set(v->get());
+
+  return {};
 }
 
-void EditorConfig::save_config() const {
+std::expected<void, std::string> EditorConfig::deinit() {
   toml::array recent_projects_array;
 
   for (auto& project : recent_projects)
@@ -74,6 +72,8 @@ void EditorConfig::save_config() const {
   ss << root;
   std::ofstream filestream(EDITOR_CONFIG_FILE_NAME);
   filestream << ss.str();
+
+  return {};
 }
 
 void EditorConfig::add_recent_project(const Project* path) {
@@ -83,5 +83,9 @@ void EditorConfig::add_recent_project(const Project* path) {
     }
   }
   recent_projects.emplace_back(path->get_project_file_path());
+}
+
+auto EditorConfig::remove_recent_project(const std::string& path) -> void {
+  std::erase_if(recent_projects, [path](const std::string& e) { return e == path; });
 }
 } // namespace ox

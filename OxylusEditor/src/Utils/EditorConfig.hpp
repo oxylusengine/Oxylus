@@ -1,5 +1,6 @@
 #pragma once
 
+#include <expected>
 #include <string>
 #include <vector>
 
@@ -18,8 +19,9 @@ inline AutoCVar_Int cvar_camera_smooth("editor.camera_smooth", "editor camera sm
 inline AutoCVar_Int cvar_camera_zoom("editor.camera_zoom", "editor camera zoom for ortho projection", 1);
 
 inline AutoCVar_Int cvar_file_thumbnails("editor.file_thumbnails", "show file thumbnails in content panel", 0);
-inline AutoCVar_Float
-  cvar_file_thumbnail_size("editor.file_thumbnail_size", "file thumbnail size in content panel", 120.0f);
+inline AutoCVar_Float cvar_file_thumbnail_size(
+  "editor.file_thumbnail_size", "file thumbnail size in content panel", 120.0f
+);
 inline AutoCVar_Int cvar_show_meta_files("editor.show_meta_files", "show oxasset files in conten panel", 1);
 
 inline AutoCVar_Int cvar_show_style_editor("ui.imgui_style_editor", "show imgui style editor", 0);
@@ -29,17 +31,14 @@ inline AutoCVar_Int cvar_show_imgui_demo("ui.imgui_demo", "show imgui demo windo
 
 class EditorConfig {
 public:
-  EditorConfig();
-  ~EditorConfig() = default;
+  constexpr static auto MODULE_NAME = "EditorConfig";
 
-  static EditorConfig* get() { return instance; }
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
-  void load_config();
-  void save_config() const;
-
-  void add_recent_project(const Project* path);
-
-  const std::vector<std::string>& get_recent_projects() const { return recent_projects; }
+  auto add_recent_project(const Project* path) -> void;
+  auto remove_recent_project(const std::string& path) -> void;
+  auto get_recent_projects() const -> const std::vector<std::string>& { return recent_projects; }
 
 private:
   std::vector<std::string> recent_projects{};

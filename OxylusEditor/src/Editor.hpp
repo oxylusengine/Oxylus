@@ -86,9 +86,6 @@ private:
 
   RuntimeConsole runtime_console = {};
 
-  // Config
-  EditorConfig editor_config;
-
   // Context
   EditorContext editor_context = {};
 
