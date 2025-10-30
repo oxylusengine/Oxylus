@@ -34,12 +34,16 @@ auto VFS::resolve_physical_dir(const std::filesystem::path& virtual_dir, const s
 auto VFS::resolve_virtual_dir(const std::filesystem::path& file_path) -> std::filesystem::path {
   ZoneScoped;
 
-  // for (const auto& [virtual_dir, physical_dir] : mapped_dirs) {
-  //   if (file_path.starts_with(physical_dir)) {
-  //     const std::string relative_path = file_path.substr(physical_dir.length() + 1);
-  //     return physical_dir.filename() / relative_path;
-  //   }
-  // }
+  auto file_path_str = file_path.string();
+
+  for (const auto& [virtual_dir, physical_dir] : mapped_dirs) {
+    auto physical_dir_str = physical_dir.string();
+
+    if (file_path_str.starts_with(physical_dir_str)) {
+      const std::string relative_path = file_path_str.substr(physical_dir_str.length() + 1);
+      return physical_dir.filename() / relative_path;
+    }
+  }
 
   OX_LOG_ERROR("Could not resolve virtual dir for: {}", file_path);
   return {};

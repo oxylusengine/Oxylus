@@ -125,11 +125,12 @@ void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
       } else {
         const auto projects = EditorConfig::get()->get_recent_projects();
         for (auto& project : projects) {
-          auto project_name = project.filename().string();
+          auto project_name = project.stem().string();
           auto cursor_pos_y = ImGui::GetCursorPosY();
           if (ImGui::Button(project_name.c_str(), {-1.f, y})) {
             load_project_for_editor(project);
           }
+          UI:: tooltip_hover(project.string().c_str());
 
           ImGui::SameLine();
 
