@@ -4,7 +4,6 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/EventSystem.hpp"
-#include "Core/FileSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
@@ -47,12 +46,12 @@ auto App::with_window(this App& self, WindowInfo window_info) -> App& {
   return self;
 }
 
-auto App::with_working_directory(this App& self, std::string dir) -> App& {
+auto App::with_working_directory(this App& self, const std::filesystem::path& dir) -> App& {
   self.working_directory = dir;
   return self;
 }
 
-auto App::with_assets_directory(this App& self, std::string dir) -> App& {
+auto App::with_assets_directory(this App& self, const std::filesystem::path& dir) -> App& {
   self.assets_path = dir;
   return self;
 }
@@ -114,11 +113,11 @@ void App::run(this App& self) {
   }
 
   if (self.working_directory.empty())
-    self.working_directory = std::filesystem::current_path().string();
+    self.working_directory = std::filesystem::current_path();
   else
     std::filesystem::current_path(self.working_directory);
 
-  self.vfs.mount_dir(VFS::APP_DIR, fs::absolute(self.assets_path));
+  self.vfs.mount_dir(VFS::APP_DIR, std::filesystem::absolute(self.assets_path));
 
   if (self.window_info.has_value()) {
     self.window = Window::create(*self.window_info);

@@ -5,7 +5,6 @@
 #include <misc/cpp/imgui_stdlib.h>
 
 #include "Core/App.hpp"
-#include "Core/FileSystem.hpp"
 #include "Core/Project.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
@@ -17,7 +16,7 @@ ProjectPanel::ProjectPanel() : EditorPanel("Projects", ICON_MDI_ACCOUNT_BADGE, t
 
 void ProjectPanel::on_update() {}
 
-void ProjectPanel::load_project_for_editor(const std::string& filepath) {
+void ProjectPanel::load_project_for_editor(const std::filesystem::path& filepath) {
   auto& editor = App::mod<Editor>();
   const auto& active_project = editor.active_project;
   if (active_project->load(filepath)) {
@@ -33,7 +32,9 @@ void ProjectPanel::load_project_for_editor(const std::string& filepath) {
 }
 
 void ProjectPanel::new_project(
-  const std::string& project_dir, const std::string& project_name, const std::string& project_asset_dir
+  const std::filesystem::path& project_dir,
+  const std::string& project_name,
+  const std::filesystem::path& project_asset_dir
 ) {
   const auto& active_project = App::mod<Editor>().active_project;
   if (active_project->new_project(project_dir, project_name, project_asset_dir))
@@ -73,7 +74,9 @@ void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
         UI::begin_property_grid("Directory", nullptr, false);
 
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.8f);
-        ImGui::InputText("##Directory", &new_project_dir, flags);
+        auto new_project_dir_str = std::string();
+        ImGui::InputText("##Directory", &new_project_dir_str, flags);
+        new_project_dir = std::filesystem::path(new_project_dir_str).make_preferred();
         ImGui::SameLine();
         if (ImGui::Button(ICON_MDI_FOLDER, {ImGui::GetContentRegionAvail().x, 0})) {
           FileDialogFilter dialog_filters[] = {{.name = "Project dir", .pattern = "oxproj"}};
@@ -90,10 +93,10 @@ void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
                 const auto first_path_cstr = *files;
                 const auto first_path_len = std::strlen(first_path_cstr);
                 panel->new_project_dir = std::string(first_path_cstr, first_path_len);
-                panel->new_project_dir = fs::append_paths(panel->new_project_dir, panel->new_project_name);
+                panel->new_project_dir = panel->new_project_dir / panel->new_project_name;
               },
             .title = "Project dir...",
-            .default_path = fs::current_path(),
+            .default_path = std::filesystem::current_path(),
             .filters = dialog_filters,
             .multi_select = false,
           });
@@ -101,7 +104,9 @@ void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
 
         UI::end_property_grid();
 
-        UI::input_text("Asset Directory", &new_project_asset_dir);
+        auto new_project_asset_dir_str = std::string();
+        UI::input_text("Asset Directory", &new_project_asset_dir_str);
+        new_project_asset_dir = std::filesystem::path(new_project_asset_dir_str).make_preferred();
         UI::end_properties();
 
         ImGui::Separator();
@@ -120,7 +125,7 @@ void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
       } else {
         const auto projects = EditorConfig::get()->get_recent_projects();
         for (auto& project : projects) {
-          auto project_name = fs::get_file_name(project);
+          auto project_name = project;
           auto cursor_pos_y = ImGui::GetCursorPosY();
           if (ImGui::Button(project_name.c_str(), {-1.f, y})) {
             load_project_for_editor(project);
@@ -164,7 +169,7 @@ void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
                 }
               },
             .title = "Open project...",
-            .default_path = fs::current_path(),
+            .default_path = std::filesystem::current_path(),
             .filters = dialog_filters,
             .multi_select = false,
           });

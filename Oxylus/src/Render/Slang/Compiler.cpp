@@ -5,8 +5,8 @@
 #include <slang-com-ptr.h>
 #include <slang.h>
 
-#include "Core/FileSystem.hpp"
 #include "Memory/Stack.hpp"
+#include "OS/File.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
@@ -48,7 +48,7 @@ struct SlangBlob : ISlangBlob {
 // shaders are preloaded into virtual environment, so ::loadFile would just
 // return already existing shader file.
 struct SlangVirtualFS : ISlangFileSystem {
-  std::string _root_dir;
+  std::filesystem::path _root_dir;
   std::atomic_uint32_t m_refCount;
 
   SLANG_NO_THROW SlangResult SLANG_MCALL queryInterface(const SlangUUID& uuid, void** outObject) SLANG_OVERRIDE {
@@ -72,7 +72,7 @@ struct SlangVirtualFS : ISlangFileSystem {
     return m_refCount;
   }
 
-  SlangVirtualFS(std::string root_dir) : _root_dir(std::move(root_dir)), m_refCount(1) {}
+  SlangVirtualFS(std::filesystem::path root_dir) : _root_dir(std::move(root_dir)), m_refCount(1) {}
   virtual ~SlangVirtualFS() = default;
 
   ISlangUnknown* getInterface(const SlangUUID&) { return nullptr; }
@@ -84,9 +84,9 @@ struct SlangVirtualFS : ISlangFileSystem {
     const auto root_path = std::filesystem::relative(_root_dir);
     const auto module_path = root_path / path;
 
-    const auto result = fs::read_file(module_path.string());
+    const auto result = File::to_bytes(module_path);
     if (!result.empty()) {
-      *outBlob = new SlangBlob(std::vector<u8>{result.data(), (result.data() + result.size())});
+      *outBlob = new SlangBlob(result);
 
       return SLANG_OK;
     }
@@ -240,13 +240,13 @@ auto SlangSession::load_module(const SlangModuleInfo& info) -> option<SlangModul
   memory::ScopedStack stack;
 
   slang::IModule* slang_module = {};
-  const auto& path_str = info.path;
-  const auto source_data = fs::read_file(info.path);
+  const auto source_data = File::to_string(info.path);
   if (source_data.empty()) {
-    OX_LOG_ERROR("Failed to read shader file '{}'!", path_str.c_str());
+    OX_LOG_ERROR("Failed to read shader file '{}'!", info.path);
     return nullopt;
   }
 
+  auto path_str = info.path.string();
   Slang::ComPtr<slang::IBlob> diagnostics_blob;
   slang_module = impl->session->loadModuleFromSourceString(
     info.module_name.c_str(),
@@ -334,7 +334,7 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
     .compilerOptionEntryCount = static_cast<u32>(count_of(entries)),
   };
 
-  const auto search_path = info.root_directory;
+  const auto search_path = info.root_directory.string();
   const auto* search_path_cstr = search_path.c_str();
   const c8* search_paths[] = {search_path_cstr};
   const slang::SessionDesc session_desc = {

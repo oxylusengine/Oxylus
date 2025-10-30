@@ -65,4 +65,23 @@ auto os::set_thread_name(std::thread::native_handle_type thread, std::string_vie
     OX_LOG_WARN("Setting another thread's name is not implemented on this platform!");
   }
 }
+
+auto os::open_folder_select_file(const std::filesystem::path& path) -> void {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  auto* command = stack.format_char("open -R \"{}\"", path);
+  int result = system(command);
+
+  if (result != 0) {
+    OX_LOG_WARN("Failed to open folder and select file: {}", path);
+  }
+}
+
+auto os::open_file_externally(const std::filesystem::path& path) -> void {
+  ZoneScoped;
+
+  OX_LOG_WARN("Not implemented on this platform.");
+}
+
 } // namespace ox

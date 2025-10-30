@@ -3,21 +3,21 @@
 #include <sol/sol.hpp>
 
 #include "Core/App.hpp"
-#include "Core/FileSystem.hpp"
+#include "OS/File.hpp"
 
 #ifdef OX_LUA_BINDINGS
-  #include "Scripting/LuaApplicationBindings.hpp"
-  #include "Scripting/LuaAssetManagerBindings.hpp"
-  #include "Scripting/LuaAudioBindings.hpp"
-  #include "Scripting/LuaDebugBindings.hpp"
-  #include "Scripting/LuaFlecsBindings.hpp"
-  #include "Scripting/LuaInputBindings.hpp"
-  #include "Scripting/LuaMathBindings.hpp"
-  #include "Scripting/LuaPhysicsBindings.hpp"
-  #include "Scripting/LuaRendererBindings.hpp"
-  #include "Scripting/LuaSceneBindings.hpp"
-  #include "Scripting/LuaUIBindings.hpp"
-  #include "Scripting/LuaVFSBindings.hpp"
+  #include "Scripting/LuaApplicationBindings.hpp"  // IWYU pragma: export
+  #include "Scripting/LuaAssetManagerBindings.hpp" // IWYU pragma: export
+  #include "Scripting/LuaAudioBindings.hpp"        // IWYU pragma: export
+  #include "Scripting/LuaDebugBindings.hpp"        // IWYU pragma: export
+  #include "Scripting/LuaFlecsBindings.hpp"        // IWYU pragma: export
+  #include "Scripting/LuaInputBindings.hpp"        // IWYU pragma: export
+  #include "Scripting/LuaMathBindings.hpp"         // IWYU pragma: export
+  #include "Scripting/LuaPhysicsBindings.hpp"      // IWYU pragma: export
+  #include "Scripting/LuaRendererBindings.hpp"     // IWYU pragma: export
+  #include "Scripting/LuaSceneBindings.hpp"        // IWYU pragma: export
+  #include "Scripting/LuaUIBindings.hpp"           // IWYU pragma: export
+  #include "Scripting/LuaVFSBindings.hpp"          // IWYU pragma: export
 #endif
 
 namespace ox {
@@ -25,7 +25,13 @@ auto LuaManager::init() -> std::expected<void, std::string> {
   ZoneScoped;
   _state = std::make_unique<sol::state>();
   _state->open_libraries(
-      sol::lib::base, sol::lib::package, sol::lib::math, sol::lib::table, sol::lib::os, sol::lib::string);
+    sol::lib::base,
+    sol::lib::package,
+    sol::lib::math,
+    sol::lib::table,
+    sol::lib::os,
+    sol::lib::string
+  );
 
   _state->set_function( //
       "require_script",
@@ -33,7 +39,7 @@ auto LuaManager::init() -> std::expected<void, std::string> {
         ZoneScopedN("LuaRequire");
         auto& vfs = App::get_vfs();
         auto physical_path = vfs.resolve_physical_dir(virtual_dir, path);
-        auto script = fs::read_file(physical_path);
+        auto script = File::to_string(physical_path);
         return s->require_script(path, script);
       });
 
@@ -66,15 +72,17 @@ auto LuaManager::deinit() -> std::expected<void, std::string> {
   return {};
 }
 
-#define SET_LOG_FUNCTIONS(table, name, log_func)                                                              \
-  table.set_function(                                                                                         \
-      name,                                                                                                   \
-      sol::overload(                                                                                          \
-          [](const std::string_view message) { log_func("{}", message); },                                    \
-          [](const glm::vec4& vec4) { log_func("x: {} y: {} z: {} w: {}", vec4.x, vec4.y, vec4.z, vec4.w); }, \
-          [](const glm::vec3& vec3) { log_func("x: {} y: {} z: {}", vec3.x, vec3.y, vec3.z); },               \
-          [](const glm::vec2& vec2) { log_func("x: {} y: {}", vec2.x, vec2.y); },                             \
-          [](const glm::uvec2& vec2) { log_func("x: {} y: {}", vec2.x, vec2.y); }));
+#define SET_LOG_FUNCTIONS(table, name, log_func)                                                                       \
+  table.set_function(                                                                                                  \
+    name,                                                                                                              \
+    sol::overload(                                                                                                     \
+      [](const std::string_view message) { log_func("{}", message); },                                                 \
+      [](const glm::vec4& vec4) { log_func("x: {} y: {} z: {} w: {}", vec4.x, vec4.y, vec4.z, vec4.w); },              \
+      [](const glm::vec3& vec3) { log_func("x: {} y: {} z: {}", vec3.x, vec3.y, vec3.z); },                            \
+      [](const glm::vec2& vec2) { log_func("x: {} y: {}", vec2.x, vec2.y); },                                          \
+      [](const glm::uvec2& vec2) { log_func("x: {} y: {}", vec2.x, vec2.y); }                                          \
+    )                                                                                                                  \
+  );
 
 void LuaManager::bind_log() const {
   ZoneScoped;

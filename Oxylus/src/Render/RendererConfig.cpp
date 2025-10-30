@@ -2,7 +2,7 @@
 
 #include <toml++/toml.hpp>
 
-#include "Core/FileSystem.hpp"
+#include "OS/File.hpp"
 
 namespace ox {
 
@@ -21,10 +21,10 @@ auto RendererConfig::deinit() -> std::expected<void, std::string> {
   return {};
 }
 
-bool RendererConfig::save_config(const char* path) const {
+bool RendererConfig::save_config(const std::filesystem::path& path) const {
   ZoneScoped;
 
-  const auto root = toml::table{
+  auto root = toml::table{
     {
       "display",
       toml::table{
@@ -68,12 +68,15 @@ bool RendererConfig::save_config(const char* path) const {
     },
   };
 
-  return fs::write_file(path, root, "# Oxylus renderer config file");
+  std::ofstream file(path);
+  file << root;
+
+  return true;
 }
 
-bool RendererConfig::load_config(const char* path) {
+bool RendererConfig::load_config(const std::filesystem::path& path) {
   ZoneScoped;
-  const auto& content = fs::read_file(path);
+  auto content = File::to_string(path);
   if (content.empty())
     return false;
 

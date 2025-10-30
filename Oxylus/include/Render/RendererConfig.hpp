@@ -1,6 +1,7 @@
 #pragma once
 
 #include <expected>
+#include <filesystem>
 
 #include "Utils/CVars.hpp"
 
@@ -64,7 +65,7 @@ public:
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
 
-  bool save_config(const char* path) const;
-  bool load_config(const char* path);
+  bool save_config(const std::filesystem::path& path) const;
+  bool load_config(const std::filesystem::path& path);
 };
 } // namespace ox

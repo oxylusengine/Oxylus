@@ -5,8 +5,8 @@
 #include <toml++/toml.hpp>
 #include <tracy/Tracy.hpp>
 
-#include "Core/FileSystem.hpp"
 #include "Core/Project.hpp"
+#include "OS/File.hpp"
 
 namespace ox {
 EditorConfig* EditorConfig::instance = nullptr;
@@ -20,14 +20,14 @@ EditorConfig::EditorConfig() {
 
 void EditorConfig::load_config() {
   ZoneScoped;
-  const auto& content = fs::read_file(EDITOR_CONFIG_FILE_NAME);
+  const auto& content = File::to_string(EDITOR_CONFIG_FILE_NAME);
   if (content.empty())
     return;
 
   toml::table toml = toml::parse(content);
   const auto config = toml["editor_config"];
   for (auto& project : *config["recent_projects"].as_array()) {
-    recent_projects.emplace_back(*project.as_string());
+    recent_projects.emplace_back(std::filesystem::path(**project.as_string()));
   }
 
   if (auto v = config["grid"].as_boolean())
@@ -52,7 +52,7 @@ void EditorConfig::save_config() const {
   toml::array recent_projects_array;
 
   for (auto& project : recent_projects)
-    recent_projects_array.emplace_back(project);
+    recent_projects_array.emplace_back(project.string());
 
   const auto root = toml::table{
     {"editor_config",
@@ -76,12 +76,12 @@ void EditorConfig::save_config() const {
   filestream << ss.str();
 }
 
-void EditorConfig::add_recent_project(const Project* path) {
-  for (auto& project : recent_projects) {
-    if (fs::get_file_name(project) == fs::get_file_name(path->get_project_file_path())) {
+void EditorConfig::add_recent_project(const Project* project) {
+  for (auto& recent_project_path : recent_projects) {
+    if (recent_project_path.filename() == project->get_project_file_path().filename()) {
       return;
     }
   }
-  recent_projects.emplace_back(path->get_project_file_path());
+  recent_projects.emplace_back(project->get_project_file_path());
 }
 } // namespace ox

@@ -3,15 +3,17 @@
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 
-#include "Core/FileSystem.hpp"
+#include "OS/File.hpp"
 #include "UI/UI.hpp"
 
 namespace ox {
 auto TextEditor::render(this TextEditor& self, const char* id, bool* visible) -> void {
   ZoneScoped;
 
-  ImGui::SetNextWindowSize(ImVec2(ImGui::GetMainViewport()->Size.x / 2, ImGui::GetMainViewport()->Size.y / 2),
-                           ImGuiCond_Appearing);
+  ImGui::SetNextWindowSize(
+    ImVec2(ImGui::GetMainViewport()->Size.x / 2, ImGui::GetMainViewport()->Size.y / 2),
+    ImGuiCond_Appearing
+  );
   UI::center_next_window(ImGuiCond_Appearing);
   if (ImGui::Begin(id, visible)) {
     ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_FittingPolicyDefault_ | ImGuiTabBarFlags_Reorderable;
@@ -99,18 +101,17 @@ auto TextEditor::render(this TextEditor& self, const char* id, bool* visible) ->
   ImGui::End();
 }
 
-auto TextEditor::open_file(this TextEditor& self, const std::string& file_path) -> void {
+auto TextEditor::open_file(this TextEditor& self, const std::filesystem::path& file_path) -> void {
   ZoneScoped;
 
-  auto name = fs::get_name_with_extension(file_path);
-
-  auto file_contents = fs::read_file(file_path);
+  auto name = file_path.filename().string();
+  auto file_contents = File::to_string(file_path);
   if (!file_contents.empty()) {
     auto document = Document{
-        .open = true,
-        .name = name,
-        .content = file_contents,
-        .path = file_path,
+      .open = true,
+      .name = name,
+      .content = file_contents,
+      .path = file_path,
     };
     self.documents.insert_or_assign(name, document);
   }
@@ -128,7 +129,9 @@ auto TextEditor::Document::save(this TextEditor::Document& self) -> void {
     return;
   }
 
-  fs::write_file(self.path, self.content);
+  auto file = File(self.path, FileAccess::Write);
+  file.write(self.content);
+  file.close();
 
   self.dirty = false;
 }
@@ -138,10 +141,12 @@ auto TextEditor::Document::draw_body(this TextEditor::Document& self) -> void {
 
   ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1, 0.1, 0.1, 1.0));
 
-  if (ImGui::InputTextMultiline("##source", //
-                                &self.content,
-                                ImGui::GetContentRegionAvail(),
-                                ImGuiInputTextFlags_AllowTabInput)) {
+  if (ImGui::InputTextMultiline(
+        "##source", //
+        &self.content,
+        ImGui::GetContentRegionAvail(),
+        ImGuiInputTextFlags_AllowTabInput
+      )) {
     self.dirty = true;
   }
 
@@ -149,7 +154,7 @@ auto TextEditor::Document::draw_body(this TextEditor::Document& self) -> void {
 }
 
 auto TextEditor::Document::draw_context_menu(this TextEditor::Document& self, std::vector<Document*>& close_queue)
-    -> void {
+  -> void {
   ZoneScoped;
 
   if (!ImGui::BeginPopupContextItem())

@@ -52,7 +52,7 @@ public:
   ~Texture() = default;
 
   auto create(
-    const std::string& path,
+    const std::filesystem::path& path,
     const TextureLoadInfo& load_info,
     const std::source_location& loc = std::source_location::current()
   ) -> void;
@@ -89,7 +89,7 @@ public:
   operator bool() const { return image_id != ImageID::Invalid; }
 
   static auto load_stb_image(
-    const std::string& filename,
+    const std::filesystem::path& path,
     uint32_t* width = nullptr,
     uint32_t* height = nullptr,
     uint32_t* bits = nullptr,

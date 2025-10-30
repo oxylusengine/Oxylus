@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ankerl/unordered_dense.h>
+#include <filesystem>
 #include <functional>
 #include <imgui.h>
 
@@ -18,7 +19,7 @@ public:
 
   auto render(this TextEditor& self, const char* id, bool* visible) -> void;
 
-  auto open_file(this TextEditor& self, const std::string& file_path) -> void;
+  auto open_file(this TextEditor& self, const std::filesystem::path& file_path) -> void;
 
 private:
   struct Document {
@@ -26,7 +27,7 @@ private:
     std::string name = {};
     bool dirty = false;
     std::string content = {};
-    std::string path = {};
+    std::filesystem::path path = {};
 
     auto force_close(this Document& self) -> void;
     auto save(this Document& self) -> void;
