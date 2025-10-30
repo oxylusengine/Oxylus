@@ -74,11 +74,12 @@ auto os::file_open(const std::filesystem::path& path, FileAccess access) -> std:
 
   errno = 0;
 
-  i32 flags = O_CREAT | O_WRONLY | O_RDONLY | O_TRUNC;
-  if (access & FileAccess::Write)
-    flags &= ~O_RDONLY;
-  if (access & FileAccess::Read)
-    flags &= ~(O_WRONLY | O_CREAT | O_TRUNC);
+  i32 flags = 0;
+  switch (access) {
+    case FileAccess::Read     : flags = O_RDONLY; break;
+    case FileAccess::Write    : flags = O_WRONLY | O_CREAT | O_TRUNC; break;
+    case FileAccess::ReadWrite: flags = O_RDWR | O_CREAT | O_TRUNC; break;
+  }
 
   i32 file = open64(path.c_str(), flags, S_IRUSR | S_IWUSR);
   if (file < 0) {

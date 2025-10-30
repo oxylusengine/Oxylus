@@ -86,22 +86,46 @@ auto os::file_open(const std::filesystem::path& path, FileAccess access) -> std:
 
   DWORD flags = 0;
   DWORD creation_flags = 0;
-  DWORD share_flags = 0;
-  if (access & FileAccess::Read) {
-    flags |= GENERIC_READ;
-    creation_flags |= OPEN_EXISTING;
-    share_flags |= FILE_SHARE_READ;
-  }
-  if (access & FileAccess::Write) {
-    flags |= GENERIC_WRITE;
-    creation_flags |= CREATE_ALWAYS;
-    share_flags |= FILE_SHARE_WRITE;
+  DWORD share_flags = FILE_SHARE_READ;
+
+  switch (access) {
+    case FileAccess::Read:
+      flags = GENERIC_READ;
+      creation_flags = OPEN_EXISTING;
+      break;
+
+    case FileAccess::Write:
+      flags = GENERIC_WRITE;
+      creation_flags = CREATE_ALWAYS;
+      share_flags = 0;
+      break;
+
+    case FileAccess::ReadWrite:
+      flags = GENERIC_READ | GENERIC_WRITE;
+      creation_flags = CREATE_ALWAYS;
+      break;
   }
 
-  HANDLE file_handle =
-    CreateFileW(path.c_str(), flags, share_flags, nullptr, creation_flags, FILE_ATTRIBUTE_NORMAL, nullptr);
+  HANDLE file_handle = CreateFileW(
+    path.c_str(),          // File path (wide string)
+    flags,                 // Desired access (R, W, or RW)
+    share_flags,           // Share mode
+    nullptr,               // Security attributes
+    creation_flags,        // Creation disposition
+    FILE_ATTRIBUTE_NORMAL, // Flags and attributes
+    nullptr
+  );                       // Template file
+
   if (file_handle == INVALID_HANDLE_VALUE) {
-    return std::unexpected(FileError::NoAccess);
+    DWORD error = GetLastError();
+    switch (error) {
+      case ERROR_FILE_NOT_FOUND   : return std::unexpected(FileError::Exists);
+      case ERROR_PATH_NOT_FOUND   : return std::unexpected(FileError::Exists);
+      case ERROR_ACCESS_DENIED    : return std::unexpected(FileError::NoAccess);
+      case ERROR_SHARING_VIOLATION: return std::unexpected(FileError::InUse);
+      case ERROR_DIRECTORY        : return std::unexpected(FileError::IsDir);
+      default                     : return std::unexpected(FileError::Unknown);
+    }
   }
 
   return static_cast<FileDescriptor>(reinterpret_cast<iptr>(file_handle));

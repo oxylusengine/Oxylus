@@ -21,11 +21,11 @@ enum class FileError : i32 {
 };
 constexpr bool operator!(FileError v) { return v != FileError::None; }
 
-enum class FileAccess : u32 {
-  Write = 1 << 0,
-  Read = 1 << 1,
+enum class FileAccess {
+  Read,
+  Write,
+  ReadWrite
 };
-consteval void enable_bitmask(FileAccess);
 
 // Can we add stdout and other pipes here?
 enum class FileDescriptor : uptr { Invalid = 0 };

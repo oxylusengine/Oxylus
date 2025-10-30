@@ -5,7 +5,6 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
-#include <sys/sysinfo.h>
 #include <unistd.h>
 
 #include "Memory/Stack.hpp"
@@ -87,36 +86,28 @@ auto os::open_file_externally(const std::filesystem::path& path) -> void {
   OX_LOG_WARN("Not implemented on this platform.");
 }
 
-auto os::open_folder_select_file(const std::filesystem::path& path) -> void {
-  ZoneScoped;
-
-  OX_LOG_WARN("Not implemented on this platform.");
-}
-
-auto os::open_file_externally(const std::filesystem::path& path) -> void {
-  ZoneScoped;
-
-  OX_LOG_WARN("Not implemented on this platform.");
-}
-
 auto os::file_open(const std::filesystem::path& path, FileAccess access) -> std::expected<FileDescriptor, FileError> {
   ZoneScoped;
 
   errno = 0;
+  i32 flags = 0;
 
-  i32 flags = O_CREAT | O_WRONLY | O_RDONLY | O_TRUNC;
-  if (access & FileAccess::Write)
-    flags &= ~O_RDONLY;
-  if (access & FileAccess::Read)
-    flags &= ~(O_WRONLY | O_CREAT | O_TRUNC);
+  switch (access) {
+    case FileAccess::Read     : flags = O_RDONLY; break;
+    case FileAccess::Write    : flags = O_WRONLY | O_CREAT | O_TRUNC; break;
+    case FileAccess::ReadWrite: flags = O_RDWR | O_CREAT | O_TRUNC; break;
+  }
 
-  i32 file = open64(path.c_str(), flags, S_IRUSR | S_IWUSR);
+  i32 file = open(path.c_str(), flags, S_IRUSR | S_IWUSR);
+
   if (file < 0) {
     switch (errno) {
       case EACCES: return std::unexpected(FileError::NoAccess);
+      case EPERM : return std::unexpected(FileError::NoAccess);
       case EEXIST: return std::unexpected(FileError::Exists);
       case EISDIR: return std::unexpected(FileError::IsDir);
       case EBUSY : return std::unexpected(FileError::InUse);
+      case ENOENT: return std::unexpected(FileError::Exists);
       default    : return std::unexpected(FileError::Unknown);
     }
   }
@@ -190,7 +181,7 @@ auto os::file_write(FileDescriptor file, const void* data, usize size) -> usize 
 auto os::file_seek(FileDescriptor file, i64 offset) -> void {
   ZoneScoped;
 
-  lseek64(static_cast<i32>(file), offset, SEEK_SET);
+  lseek(static_cast<i32>(file), offset, SEEK_SET);
 }
 
 void os::file_stdout(std::string_view str) {
