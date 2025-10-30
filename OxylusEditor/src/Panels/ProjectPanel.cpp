@@ -47,7 +47,7 @@ void ProjectPanel::new_project(
     App::mod<EditorConfig>().add_recent_project(active_project.get());
 }
 
-void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
+void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   if (visible && !ImGui::IsPopupOpen("ProjectSelector"))
     ImGui::OpenPopup("ProjectSelector");
 

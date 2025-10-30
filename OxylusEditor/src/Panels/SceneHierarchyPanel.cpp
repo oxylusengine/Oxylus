@@ -96,7 +96,7 @@ auto SceneHierarchyPanel::on_update() -> void {
   }
 }
 
-auto SceneHierarchyPanel::on_render(vuk::Extent3D extent, vuk::Format format) -> void {
+auto SceneHierarchyPanel::on_render(vuk::ImageAttachment swapchain_attachment) -> void {
   ZoneScoped;
 
   viewer.render(_id.c_str(), &visible);

@@ -12,7 +12,7 @@ AssetManagerPanel::AssetManagerPanel() : EditorPanel("Asset Manager", ICON_MDI_F
 
 void AssetManagerPanel::on_update() {}
 
-void AssetManagerPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
+void AssetManagerPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   ZoneScoped;
 
   viewer.render(_id.c_str(), &visible);

@@ -55,7 +55,7 @@ InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION
   });
 }
 
-void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
+void InspectorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   auto& editor = App::mod<Editor>();
   auto& editor_context = editor.get_context();
   scene_ = editor.get_selected_scene();

@@ -283,7 +283,7 @@ void ContentPanel::init() {
 
 void ContentPanel::on_update() { _elapsed_time += static_cast<float>(App::get_timestep()); }
 
-void ContentPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
+void ContentPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   constexpr ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar;
 
   constexpr ImGuiTableFlags tableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_ContextMenuInBody;

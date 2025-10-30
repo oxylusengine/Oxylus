@@ -58,7 +58,7 @@ public:
   auto deinit() -> std::expected<void, std::string>;
 
   auto update(const Timestep& timestep) -> void;
-  auto render(vuk::Extent3D extent, vuk::Format format) -> void;
+  auto render(vuk::ImageAttachment swapchain_attachment) -> void;
 
   void new_scene();
   void open_scene_file_dialog();

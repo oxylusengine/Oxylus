@@ -24,11 +24,9 @@ public:
 
   InspectorPanel();
 
-  void on_render(vuk::Extent3D extent, vuk::Format format) override;
+  void on_render(vuk::ImageAttachment swapchain_attachment) override;
 
-  static void draw_material_properties(
-    Material* material, const UUID& material_uuid, std::string_view default_path
-  );
+  static void draw_material_properties(Material* material, const UUID& material_uuid, std::string_view default_path);
 
 private:
   Scene* scene_;

@@ -19,7 +19,7 @@ public:
 
   virtual void on_update() {}
 
-  virtual void on_render(vuk::Extent3D extent, vuk::Format format) = 0;
+  virtual void on_render(vuk::ImageAttachment swapchain_attachment) = 0;
 
   const char* get_name() const { return _name.c_str(); }
   const char* get_id() const { return _id.c_str(); }

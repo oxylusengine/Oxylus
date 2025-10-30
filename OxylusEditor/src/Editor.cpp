@@ -16,7 +16,6 @@
 #include "Panels/InspectorPanel.hpp"
 #include "Panels/ProjectPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
-#include "Panels/StatisticsPanel.hpp"
 #include "Panels/TextEditorPanel.hpp"
 #include "Render/Window.hpp"
 #include "UI/ImGuiRenderer.hpp"
@@ -55,7 +54,6 @@ auto Editor::init() -> std::expected<void, std::string> {
   add_panel<InspectorPanel>();
   add_panel<EditorSettingsPanel>();
   add_panel<ProjectPanel>();
-  add_panel<StatisticsPanel>();
   add_panel<AssetManagerPanel>();
   auto text_editor_panel = add_panel<TextEditorPanel>();
 
@@ -132,18 +130,29 @@ auto Editor::update(const Timestep& timestep) -> void {
 
   imgui_renderer.begin_frame(timestep.get_seconds(), {window.get_logical_width(), window.get_logical_height()});
 
-  render(extent, format);
+  auto sc_info = vuk::ImageAttachment{
+    .image_type = swapchain_attachment->image_type,
+    .extent = swapchain_attachment->extent,
+    .format = swapchain_attachment->format,
+    .sample_count = swapchain_attachment->sample_count,
+    .base_level = swapchain_attachment->base_level,
+    .level_count = swapchain_attachment->level_count,
+    .base_layer = swapchain_attachment->base_layer,
+    .layer_count = swapchain_attachment->layer_count,
+  };
+
+  render(sc_info);
 
   swapchain_attachment = imgui_renderer.end_frame(vk_context, std::move(swapchain_attachment));
 
   vk_context.end_frame(swapchain_attachment);
 }
 
-auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> void {
+auto Editor::render(vuk::ImageAttachment swapchain_attachment) -> void {
   ImGuizmo::BeginFrame();
 
   if (active_scene)
-    active_scene->on_render(extent, format);
+    active_scene->on_render(swapchain_attachment.extent, swapchain_attachment.format);
 
   auto& job_man = App::get_job_manager();
 
@@ -201,14 +210,14 @@ auto Editor::render(const vuk::Extent3D extent, const vuk::Format format) -> voi
     }
 
     if (fullscreen_viewport_panel != nullptr) {
-      fullscreen_viewport_panel->on_render(extent, format);
+      fullscreen_viewport_panel->on_render(swapchain_attachment);
     } else {
       for (const auto& panel : viewport_panels)
-        panel->on_render(extent, format);
+        panel->on_render(swapchain_attachment);
 
       for (const auto& panel : editor_panels | std::views::values) {
         if (panel->visible)
-          panel->on_render(extent, format);
+          panel->on_render(swapchain_attachment);
       }
     }
 
@@ -285,7 +294,6 @@ void Editor::draw_menubar(ImGuiViewport* viewport, f32 frame_height) {
         ImGui::MenuItem("Scene hierarchy", nullptr, &get_panel<SceneHierarchyPanel>()->visible);
         ImGui::MenuItem("Console window", nullptr, &runtime_console.visible);
         ImGui::MenuItem("Performance Overlay", nullptr, &viewport_panels[0]->performance_overlay_visible);
-        ImGui::MenuItem("Statistics", nullptr, &get_panel<StatisticsPanel>()->visible);
         if (ImGui::BeginMenu("Layout")) {
           if (ImGui::MenuItem("Classic")) {
             set_docking_layout(EditorLayout::Classic);
