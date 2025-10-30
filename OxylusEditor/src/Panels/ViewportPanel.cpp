@@ -426,7 +426,7 @@ void ViewportPanel::on_update() {
     final_yaw_pitch = {glm::radians(-90.f), 0.f};
   }
 
-  const auto& window = App::get()->get_window();
+  const auto& window = App::get_window();
 
   auto& input_sys = App::mod<Input>();
   if (input_sys.get_key_pressed(KeyCode::F)) {
@@ -592,7 +592,21 @@ void ViewportPanel::draw_settings_panel() {
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
   if (ImGui::TreeNodeEx("Renderer", TREE_FLAGS, "%s", "Renderer")) {
-    ImGui::Text("GPU: %s", App::get_vkcontext().device_name.c_str());
+    auto& vk_context = App::get_vkcontext();
+    ImGui::Text("GPU: %s", vk_context.device_name.c_str());
+    ImGui::Text(
+      "Swapchain: %dx%d",
+      static_cast<u32>(vk_context.swapchain_extent.x),
+      static_cast<u32>(vk_context.swapchain_extent.y)
+    );
+    auto& window = App::get_window();
+    ImGui::Text(
+      "Window: %dx%d@%.1fhz x%.1f",
+      window.get_logical_width(),
+      window.get_logical_height(),
+      window.get_refresh_rate(),
+      window.get_window_content_scale()
+    );
     if (UI::icon_button(ICON_MDI_RELOAD, "Reload renderer"))
       RendererCVar::cvar_reload_renderer.toggle();
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {

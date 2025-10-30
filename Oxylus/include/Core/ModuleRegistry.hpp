@@ -42,6 +42,8 @@ struct ModuleRegistry {
 
   template <typename ModuleT, typename... DepTypes>
   void check_dependencies(std::tuple<DepTypes...>) {
+    ZoneScoped;
+
     bool all_met = true;
     std::string missing_deps_msg;
 
@@ -55,7 +57,11 @@ struct ModuleRegistry {
     }());
 
     if (!all_met) {
-      OX_LOG_FATAL("Missing module dependencies: '{}' for module '{}'", missing_deps_msg, std::string(ModuleT::MODULE_NAME));
+      OX_LOG_FATAL(
+        "Missing module dependencies: '{}' for module '{}'",
+        missing_deps_msg,
+        std::string(ModuleT::MODULE_NAME)
+      );
     }
   }
 

@@ -24,7 +24,7 @@ public:
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
 
-  void begin_frame(f64 delta_time, vuk::Extent3D extent);
+  void begin_frame(f64 delta_time, glm::vec2 logical_size);
   [[nodiscard]]
   vuk::Value<vuk::ImageAttachment> end_frame(VkContext& context, vuk::Value<vuk::ImageAttachment> target);
 

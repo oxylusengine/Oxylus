@@ -66,8 +66,8 @@ public:
   }
 
   auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
-  auto get_window(this const App& self) -> const Window&;
 
+  static auto get_window() -> const Window&;
   static auto get_vkcontext() -> VkContext&;
   static auto get_timestep() -> const Timestep&;
   static auto get_vfs() -> VFS&;

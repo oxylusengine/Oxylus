@@ -76,9 +76,9 @@ auto App::get_command_line_args(this const App& self) -> const AppCommandLineArg
   return self.command_line_args; //
 }
 
-auto App::get_window(this const App& self) -> const Window& {
-  OX_ASSERT(self.window.has_value());
-  return self.window.value();
+auto App::get_window() -> const Window& {
+  OX_ASSERT(instance_->window.has_value());
+  return instance_->window.value();
 }
 
 auto App::get_vkcontext() -> VkContext& {

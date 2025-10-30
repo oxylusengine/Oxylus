@@ -249,11 +249,6 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(
 }
 
 ContentPanel::ContentPanel() : EditorPanel("Contents", ICON_MDI_FOLDER_STAR, true) {
-  const auto& window = App::get()->get_window();
-  const f32 scale = window.get_content_scale();
-  thumbnail_max_limit *= scale;
-  thumbnail_size_grid_limit *= scale;
-
   _white_texture = std::make_shared<Texture>();
   char white_texture_data[16 * 16 * 4];
   memset(white_texture_data, 0xff, 16 * 16 * 4);

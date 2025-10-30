@@ -127,6 +127,7 @@ auto Editor::update(const Timestep& timestep) -> void {
 
   auto& vk_context = App::get_vkcontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
+  auto& window = App::get_window();
 
   auto swapchain_attachment = vk_context.new_frame();
   swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
@@ -134,7 +135,7 @@ auto Editor::update(const Timestep& timestep) -> void {
   vuk::Format format = swapchain_attachment->format;
   vuk::Extent3D extent = swapchain_attachment->extent;
 
-  imgui_renderer.begin_frame(timestep.get_seconds(), extent);
+  imgui_renderer.begin_frame(timestep.get_seconds(), {window.get_logical_width(), window.get_logical_height()});
 
   render(extent, format);
 
@@ -367,7 +368,7 @@ void Editor::new_scene() {
 }
 
 void Editor::open_scene_file_dialog() {
-  const auto& window = App::get()->get_window();
+  const auto& window = App::get_window();
   FileDialogFilter dialog_filters[] = {{.name = "Oxylus scene file(.oxscene)", .pattern = "oxscene"}};
   window.show_dialog({
     .kind = DialogKind::OpenFile,

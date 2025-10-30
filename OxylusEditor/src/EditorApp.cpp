@@ -41,7 +41,7 @@ App* create_application(const AppCommandLineArgs& args) {
           },
         .width = 1720,
         .height = 900,
-        .flags = WindowFlag::Centered | WindowFlag::Resizable,
+        .flags = WindowFlag::Centered | WindowFlag::Resizable | WindowFlag::HighPixelDensity,
       }
     )
     .with<LuaManager>()

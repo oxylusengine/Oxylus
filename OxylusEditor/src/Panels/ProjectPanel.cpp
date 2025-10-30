@@ -56,7 +56,7 @@ void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
     const float x = static_cast<float>(banner_size.width);
     const float y = static_cast<float>(ImGui::GetFrameHeight()) * 1.3f;
 
-    const auto& window = App::get()->get_window();
+    const auto& window = App::get_window();
 
     UI::image(*banner_image, {x, static_cast<float>(banner_size.height)});
     UI::spacing(2);
