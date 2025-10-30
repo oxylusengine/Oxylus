@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <string>
+#include <filesystem>
 #include <vector>
 
 #include "Utils/CVars.hpp"
@@ -37,11 +38,11 @@ public:
   auto deinit() -> std::expected<void, std::string>;
 
   auto add_recent_project(const Project* path) -> void;
-  auto remove_recent_project(const std::string& path) -> void;
-  auto get_recent_projects() const -> const std::vector<std::string>& { return recent_projects; }
+  auto remove_recent_project(const std::filesystem::path& path) -> void;
+  auto get_recent_projects() const -> const std::vector<std::filesystem::path>& { return recent_projects; }
 
 private:
-  std::vector<std::string> recent_projects{};
+  std::vector<std::filesystem::path> recent_projects{};
   static EditorConfig* instance;
 };
 } // namespace ox

@@ -1,6 +1,5 @@
 #include "Scene/Scene.hpp"
 
-#include <Core/FileSystem.hpp>
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/AllowedDOFs.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -21,6 +20,7 @@
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Memory/Stack.hpp"
+#include "OS/File.hpp"
 #include "Physics/Physics.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Physics/PhysicsMaterial.hpp"
@@ -1761,7 +1761,7 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   return true;
 }
 
-auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
+auto Scene::save_to_file(this const Scene& self, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
   auto writer = self.to_json();
@@ -1774,10 +1774,10 @@ auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
   return true;
 }
 
-auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
+auto Scene::load_from_file(this Scene& self, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
-  std::string content = fs::read_file(path);
+  auto content = File::to_string(path);
   if (content.empty()) {
     OX_LOG_ERROR("Failed to read/open file {}!", path);
     return false;

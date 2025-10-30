@@ -7,7 +7,6 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Core/App.hpp"
-#include "Core/FileSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Panels/AssetManagerPanel.hpp"
@@ -390,7 +389,7 @@ void Editor::open_scene_file_dialog() {
           layer->open_scene(path);
       },
     .title = "Oxylus scene file...",
-    .default_path = fs::current_path(),
+    .default_path = std::filesystem::current_path(),
     .filters = dialog_filters,
     .multi_select = false,
   });
@@ -398,12 +397,12 @@ void Editor::open_scene_file_dialog() {
 
 bool Editor::open_scene(const std::filesystem::path& path) {
   if (!std::filesystem::exists(path)) {
-    OX_LOG_WARN("Could not find scene: {0}", path.filename().string());
+    OX_LOG_WARN("Could not find scene: {0}", path.filename());
     return false;
   }
-  if (path.extension().string() != ".oxscene") {
+  if (path.extension() != ".oxscene") {
     if (!std::filesystem::is_directory(path))
-      OX_LOG_WARN("Could not load {0} - not a scene file", path.filename().string());
+      OX_LOG_WARN("Could not load {0} - not a scene file", path.filename());
     return false;
   }
 
@@ -411,11 +410,11 @@ bool Editor::open_scene(const std::filesystem::path& path) {
   job_man.wait();
 
   const auto new_scene = std::make_shared<Scene>(editor_scene->scene_name);
-  if (new_scene->load_from_file(path.string())) {
+  if (new_scene->load_from_file(path)) {
     editor_scene = new_scene;
     set_editor_context(new_scene);
   }
-  last_save_scene_path = path.string();
+  last_save_scene_path = path;
   return true;
 }
 

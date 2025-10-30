@@ -32,7 +32,7 @@ public:
   ImTextureID add_image(const Texture& texture);
 
   ImFont* load_default_font();
-  ImFont* load_font(const std::string& path, f32 font_size = 0.f, option<ImFontConfig> font_config = nullopt);
+  ImFont* load_font(const std::filesystem::path& path, f32 font_size = 0.f, option<ImFontConfig> font_config = nullopt);
   void build_fonts(); // Legacy API
 
   void on_mouse_pos(glm::vec2 pos);

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <vector>
 #include <glm/gtx/compatibility.hpp>
+#include <vector>
 
 #include "Core/Handle.hpp"
 #include "Core/Option.hpp"
@@ -10,11 +10,11 @@ namespace ox {
 struct SlangSessionInfo {
   i32 optimizaton_level;
   std::vector<std::pair<std::string, std::string>> definitions = {};
-  std::string root_directory = {};
+  std::filesystem::path root_directory = {};
 };
 
 struct SlangModuleInfo {
-  std::string path = {};
+  std::filesystem::path path = {};
   std::string module_name = {};
 };
 

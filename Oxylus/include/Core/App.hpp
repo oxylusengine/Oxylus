@@ -32,8 +32,8 @@ public:
 
   auto with_name(this App& self, std::string name) -> App&;
   auto with_window(this App& self, WindowInfo window_info) -> App&;
-  auto with_working_directory(this App& self, std::string dir) -> App&;
-  auto with_assets_directory(this App& self, std::string dir) -> App&;
+  auto with_working_directory(this App& self, const std::filesystem::path& dir) -> App&;
+  auto with_assets_directory(this App& self, const std::filesystem::path& dir) -> App&;
 
   template <typename F>
   void defer_to_next_frame(this App& self, F&& func) {
@@ -88,8 +88,8 @@ private:
   std::vector<std::function<void()>> processing_tasks;
 
   std::string name = "Oxylus App";
-  std::string assets_path = "Resources";
-  std::string working_directory = {};
+  std::filesystem::path assets_path = "Resources";
+  std::filesystem::path working_directory = {};
   AppCommandLineArgs command_line_args = {};
   option<WindowInfo> window_info = nullopt;
 

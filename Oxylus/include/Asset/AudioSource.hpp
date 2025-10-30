@@ -1,6 +1,6 @@
 #pragma once
 
-#include <string>
+#include <filesystem>
 
 #include "Core/Types.hpp"
 
@@ -13,7 +13,7 @@ public:
   AudioSource() = default;
   ~AudioSource();
 
-  auto load(const std::string& path) -> bool;
+  auto load(const std::filesystem::path& path) -> bool;
   auto unload() -> void;
   auto get_source() -> ma_sound*;
 

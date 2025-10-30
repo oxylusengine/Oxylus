@@ -10,7 +10,7 @@ struct ProjectConfig {
   std::string name = "Untitled";
 
   std::string start_scene = {};
-  std::string asset_directory = {};
+  std::filesystem::path asset_directory = {};
 };
 
 struct AssetDirectory {
@@ -39,27 +39,27 @@ public:
 
   auto new_project(
     this Project& self,
-    const std::string& project_dir,
-    const std::string& project_name,
-    const std::string& project_asset_dir
+    const std::filesystem::path& project_dir,
+    std::string_view project_name,
+    const std::filesystem::path& project_asset_dir
   ) -> bool;
-  auto load(this Project& self, const std::string& path) -> bool;
-  auto save(this Project& self, const std::string& path) -> bool;
+  auto load(this Project& self, const std::filesystem::path& path) -> bool;
+  auto save(this Project& self, const std::filesystem::path& path) -> bool;
 
   auto get_config() -> ProjectConfig& { return project_config; }
 
-  auto get_project_directory() -> std::string& { return project_directory; }
-  auto set_project_dir(const std::string& dir) -> void { project_directory = dir; }
-  auto get_project_file_path() const -> const std::string& { return project_file_path; }
+  auto get_project_directory() -> const std::filesystem::path& { return project_directory; }
+  auto set_project_dir(const std::filesystem::path& dir) -> void { project_directory = dir; }
+  auto get_project_file_path() const -> const std::filesystem::path& { return project_file_path; }
 
   auto get_asset_directory() -> const std::unique_ptr<AssetDirectory>& { return asset_directory; }
 
-  auto register_assets(const std::string& path) -> void;
+  auto register_assets(const std::filesystem::path& path) -> void;
 
 private:
   ProjectConfig project_config = {};
-  std::string project_directory = {};
-  std::string project_file_path = {};
+  std::filesystem::path project_directory = {};
+  std::filesystem::path project_file_path = {};
   std::filesystem::file_time_type last_module_write_time = {};
   std::unique_ptr<AssetDirectory> asset_directory = nullptr;
 };

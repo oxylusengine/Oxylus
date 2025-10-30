@@ -12,12 +12,12 @@ class InspectorPanel : public EditorPanel {
 public:
   struct DialogLoadEvent {
     UUID* asset_uuid = {};
-    std::string path = {};
+    std::filesystem::path path = {};
   };
 
   struct DialogSaveEvent {
     UUID asset_uuid = {};
-    std::string path = {};
+    std::filesystem::path path = {};
   };
 
   AssetManagerViewer viewer = {};
@@ -26,7 +26,9 @@ public:
 
   void on_render(vuk::ImageAttachment swapchain_attachment) override;
 
-  static void draw_material_properties(Material* material, const UUID& material_uuid, std::string_view default_path);
+  static void draw_material_properties(
+    Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
+  );
 
 private:
   Scene* scene_;

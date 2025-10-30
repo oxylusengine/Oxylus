@@ -46,8 +46,7 @@ private:
 
   struct File {
     std::string name;
-    std::string file_path;
-    std::string extension;
+    std::filesystem::path file_path;
     std::filesystem::directory_entry directory_entry;
     std::shared_ptr<Texture> thumbnail = nullptr;
     std::string icon;
@@ -74,9 +73,8 @@ private:
 
   std::shared_mutex thumbnail_mutex = {};
   bool mesh_thumbnails_enabled = false;
-  ankerl::unordered_dense::map<std::string, std::shared_ptr<Texture>> thumbnail_cache_textures;
-  ankerl::unordered_dense::map<std::string, vuk::ImageAttachment> thumbnail_cache_meshes;
-  ankerl::unordered_dense::map<std::string, std::unique_ptr<ThumbnailRenderer>> thumbnail_render_pipeline_cache;
+  ankerl::unordered_dense::map<std::filesystem::path, std::shared_ptr<Texture>> thumbnail_cache_textures;
+  ankerl::unordered_dense::map<std::filesystem::path, vuk::ImageAttachment> thumbnail_cache_meshes;
 
   std::shared_ptr<Texture> _white_texture;
   std::filesystem::path _directory_to_delete;

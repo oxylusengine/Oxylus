@@ -8,18 +8,16 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
-#include "Core/FileSystem.hpp"
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "EditorContext.hpp"
+#include "OS/OS.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 #include "Utils/Profiler.hpp"
 
 namespace ox {
-static const std::array<std::string, 1> IGNORE_LIST = {".DS_Store"};
-
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_STRING = {
   {FileType::Unknown, "Unknown"},
   {FileType::Directory, "Directory"},
@@ -79,12 +77,6 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Material, ICON_MDI_PALETTE_SWATCH},
 };
 
-static auto is_ignored_file(const std::string& filename) -> bool {
-  ZoneScoped;
-  auto ignored_file_found = std::ranges::contains(IGNORE_LIST, filename);
-  return ignored_file_found;
-}
-
 static bool drag_drop_target(const std::filesystem::path& drop_path) {
   if (ImGui::BeginDragDropTarget()) {
     const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_TARGET);
@@ -101,7 +93,7 @@ static bool drag_drop_target(const std::filesystem::path& drop_path) {
         counter++;
       } while (std::filesystem::exists(file_path / ".oxasset"));
 
-      if (!asset_man.export_asset(asset->uuid, file_path.string()))
+      if (!asset_man.export_asset(asset->uuid, file_path))
         OX_LOG_ERROR("Couldn't export asset!");
       return true;
     }
@@ -117,21 +109,19 @@ static void drag_drop_from(const std::filesystem::path& filepath) {
     const std::string path_str = filepath.string();
     const auto payload_data = PayloadData(path_str, UUID(nullptr));
     ImGui::SetDragDropPayload(PayloadData::DRAG_DROP_SOURCE, &payload_data, payload_data.size());
-    ImGui::TextUnformatted(filepath.filename().string().c_str());
+    ImGui::TextUnformatted(path_str.c_str());
     ImGui::EndDragDropSource();
   }
 }
 
 static void open_file(const std::filesystem::path& path) {
-  const std::string filepath_string = path.string();
-  const char* filepath = filepath_string.c_str();
-  const std::string ext = path.extension().string();
+  const auto ext = path.extension().string();
   const auto& file_type_it = FILE_TYPES.find(ext);
   if (file_type_it != FILE_TYPES.end()) {
     const FileType file_type = file_type_it->second;
     switch (file_type) {
       case FileType::Scene: {
-        App::mod<Editor>().open_scene(filepath);
+        App::mod<Editor>().open_scene(path);
         break;
       }
       case FileType::Unknown: break;
@@ -139,14 +129,14 @@ static void open_file(const std::filesystem::path& path) {
       case FileType::Texture: break;
       case FileType::Shader : [[fallthrough]];
       case FileType::Script : {
-        fs::open_file_externally(filepath);
+        os::open_file_externally(path);
         break;
       }
       case ox::FileType::Material: break;
       default                    : break;
     }
   } else {
-    fs::open_file_externally(filepath);
+    os::open_file_externally(path);
   }
 }
 
@@ -167,9 +157,10 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(
     ImGuiTreeNodeFlags nodeFlags = flags;
 
     auto& entry_path = entry.path();
-
-    if (is_ignored_file(entry.path().filename().string()))
+    auto file_name_str = entry_path.filename().string();
+    if (file_name_str.starts_with('.')) {
       continue;
+    }
 
     const bool entry_is_file = !std::filesystem::is_directory(entry_path);
     if (entry_is_file)
@@ -199,13 +190,9 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(
       any_node_clicked = true;
     }
 
-    const std::string filepath = entry_path.string();
-
     if (!entry_is_file)
       drag_drop_target(entry_path);
     drag_drop_from(entry_path);
-
-    auto name = fs::get_name_with_extension(filepath);
 
     const char* folder_icon = ICON_MDI_FILE;
     if (entry_is_file) {
@@ -226,7 +213,8 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(
     ImGui::TextUnformatted(folder_icon);
     ImGui::PopStyleColor();
     ImGui::SameLine();
-    ImGui::TextUnformatted(name.data());
+    auto name = entry_path.filename().string();
+    ImGui::TextUnformatted(name.c_str());
     _currently_visible_items_tree_view++;
 
     (*count)--;
@@ -551,18 +539,16 @@ void ContentPanel::render_body(bool grid) {
       const bool is_dir = file.is_directory;
       const char* filename = file.name.c_str();
 
-      std::string texture_name = {};
+      auto file_path_str = file.file_path.string();
       if (!is_dir && EditorCVar::cvar_file_thumbnails.get()) {
         if (file.type == FileType::Texture) {
           auto thumbnail_read_lock = std::shared_lock(thumbnail_mutex);
-          if (thumbnail_cache_textures.contains(file.file_path)) {
-            texture_name = file.file_path;
-          } else {
+          if (!thumbnail_cache_textures.contains(file.file_path)) {
             auto& job_man = App::get_job_manager();
             job_man.push_job_name("ContentPanelThumbnail");
             job_man.submit(Job::create([this, file_path = file.file_path]() {
               auto thumbnail_texture = std::make_shared<Texture>();
-              auto file_extension = fs::get_file_extension(file_path);
+              auto file_extension = file_path.extension();
               TextureLoadInfo::MimeType mime_type = TextureLoadInfo::MimeType::Generic;
               if (file_extension == "ktx" || file_extension == "ktx2") {
                 mime_type = TextureLoadInfo::MimeType::KTX;
@@ -572,14 +558,10 @@ void ContentPanel::render_body(bool grid) {
               thumbnail_cache_textures.emplace(file_path, thumbnail_texture);
             }));
             job_man.pop_job_name();
-
-            texture_name = file.file_path;
           }
         } else if (file.type == FileType::Model) {
-          if (thumbnail_cache_meshes.contains(file.file_path)) {
-            texture_name = file.file_path;
-          } else if (mesh_thumbnails_enabled) {
-            const auto name = fs::get_file_name(file.file_path);
+          if (!thumbnail_cache_meshes.contains(file.file_path) && mesh_thumbnails_enabled) {
+            const auto name = file.file_path.filename().string();
             auto rp = std::make_unique<ThumbnailRenderer>();
             rp->set_name(name);
 
@@ -600,9 +582,7 @@ void ContentPanel::render_body(bool grid) {
 
             auto ia = vk_context.wait_on_rg(std::move(thumb), false);
 
-            thumbnail_render_pipeline_cache.emplace(file.file_path, std::move(rp));
             thumbnail_cache_meshes.emplace(file.file_path, std::move(ia));
-            texture_name = file.file_path;
           }
         }
       }
@@ -617,7 +597,7 @@ void ContentPanel::render_body(bool grid) {
 
         bool highlight = false;
         if (editor_context.type == EditorContext::Type::File) {
-          highlight = file.file_path == editor_context.str.value_or(std::string{});
+          highlight = file_path_str == editor_context.str.value_or(std::string{});
         }
 
         // Background button
@@ -682,10 +662,10 @@ void ContentPanel::render_body(bool grid) {
         ImGui::SetItemAllowOverlap();
 
         auto thumbnail_read_lock = std::shared_lock(thumbnail_mutex);
-        auto thumbnail_exists = thumbnail_cache_textures.contains(texture_name);
+        auto thumbnail_exists = thumbnail_cache_textures.contains(file.file_path);
 
         if (thumbnail_exists) {
-          UI::image(*thumbnail_cache_textures[texture_name], {thumb_image_size, thumb_image_size});
+          UI::image(*thumbnail_cache_textures[file.file_path], {thumb_image_size, thumb_image_size});
         } else if (false /*thumbnail_cache_meshes.contains(texture_name)*/) {
           // auto texture = Texture::from_attachment(*vk_context.frame_allocator, thumbnail_cache_meshes[texture_name]);
           // texture->set_name(fs::get_file_name(texture_name));
@@ -758,13 +738,14 @@ void ContentPanel::render_body(bool grid) {
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() - line_height);
 
         auto thumbnail_read_lock = std::shared_lock(thumbnail_mutex);
-        auto thumbnail_exists = thumbnail_cache_textures.contains(texture_name);
+        auto thumbnail_exists = thumbnail_cache_textures.contains(file.file_path);
 
         if (thumbnail_exists) {
-          UI::image(*thumbnail_cache_textures[texture_name], {thumb_image_size, thumb_image_size});
+          UI::image(*thumbnail_cache_textures[file.file_path], {thumb_image_size, thumb_image_size});
         } else {
           auto file_type = FileType::Unknown;
-          const auto& file_type_it = FILE_TYPES.find(file.extension.empty() ? "" : file.extension);
+          auto ext_str = file.file_path.has_extension() ? "" : file.file_path.extension().string();
+          const auto& file_type_it = FILE_TYPES.find(ext_str);
           if (file_type_it != FILE_TYPES.end()) {
             file_type = file_type_it->second;
           }
@@ -881,15 +862,15 @@ void ContentPanel::update_directory_entries(const std::filesystem::path& directo
   const auto directory_it = std::filesystem::directory_iterator(directory);
   for (auto& directory_entry : directory_it) {
     const auto& path = directory_entry.path();
-    const auto relative_path = relative(path, _assets_directory);
-    const std::string filename = relative_path.filename().string();
-    const std::string extension = relative_path.extension().string();
+    auto file_name_str = path.filename().string();
+    const auto relative_path = std::filesystem::relative(path, _assets_directory);
+    auto extension_str = path.extension().string();
 
-    if (is_ignored_file(filename))
+    if (file_name_str.starts_with('.'))
       continue;
 
     auto file_type = FileType::Unknown;
-    const auto& file_type_it = FILE_TYPES.find(extension);
+    const auto& file_type_it = FILE_TYPES.find(extension_str);
     if (file_type_it != FILE_TYPES.end())
       file_type = file_type_it->second;
 
@@ -906,9 +887,8 @@ void ContentPanel::update_directory_entries(const std::filesystem::path& directo
     const auto file_icon = directory_entry.is_directory() ? ICON_MDI_FOLDER : FILE_TYPES_TO_ICON.at(file_type);
 
     File entry = {
-      filename,
-      path.string(),
-      extension,
+      path.filename().string(),
+      path,
       directory_entry,
       nullptr,
       file_icon,
@@ -933,7 +913,7 @@ std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesyste
     if (is_dir) {
       dir_to_open = context.string();
     } else {
-      fs::open_file_externally(context.string().c_str());
+      os::open_file_externally(context);
     }
   }
   if (is_dir) {
@@ -961,10 +941,11 @@ std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesyste
     }
   }
   if (ImGui::MenuItem("Show in Explorer")) {
-    fs::open_folder_select_file(context.string().c_str());
+    os::open_folder_select_file(context);
   }
   if (ImGui::MenuItem("Copy Path")) {
-    ImGui::SetClipboardText(context.string().c_str());
+    auto str = context.string();
+    ImGui::SetClipboardText(str.c_str());
   }
 
   if (is_dir) {

@@ -157,8 +157,8 @@ public:
 
   auto to_json(this const Scene& self) -> JsonWriter;
   auto from_json(this Scene& self, const std::string& json) -> bool;
-  auto save_to_file(this const Scene& self, std::string path) -> bool;
-  auto load_from_file(this Scene& self, const std::string& path) -> bool;
+  auto save_to_file(this const Scene& self, const std::filesystem::path& path) -> bool;
+  auto load_from_file(this Scene& self, const std::filesystem::path& path) -> bool;
 
 private:
   bool running = false;

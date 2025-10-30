@@ -3,6 +3,7 @@
 #include <imgui.h>
 
 #include "Core/UUID.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 struct PayloadData {
