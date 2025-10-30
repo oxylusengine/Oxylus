@@ -85,7 +85,7 @@ void EditorConfig::add_recent_project(const Project* project) {
   recent_projects.emplace_back(project->get_project_file_path());
 }
 
-auto EditorConfig::remove_recent_project(const std::string& path) -> void {
-  std::erase_if(recent_projects, [path](const std::string& e) { return e == path; });
+auto EditorConfig::remove_recent_project(const std::filesystem::path& path) -> void {
+  std::erase_if(recent_projects, [path](const std::filesystem::path& e) { return e == path; });
 }
 } // namespace ox
