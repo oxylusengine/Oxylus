@@ -5,7 +5,6 @@
 #include "Core/App.hpp"
 #include "Render/Camera.hpp"
 #include "Render/Slang/Slang.hpp"
-#include "Render/Utils/VukCommon.hpp"
 #include "Scene/ECSModule/Core.hpp"
 #include "Scene/SceneGPU.hpp"
 
@@ -20,9 +19,11 @@ auto ThumbnailRenderer::init(VkContext& vk_context) -> void {
   Slang slang = {};
   slang.create_session({.root_directory = shaders_dir, .definitions = {}});
 
-  slang.create_pipeline(runtime,
-                        "simple_forward_pipeline",
-                        {.path = shaders_dir + "/editor/simple_forward.slang", .entry_points = {"vs_main", "fs_main"}});
+  slang.create_pipeline(
+    runtime,
+    "simple_forward_pipeline",
+    {.path = shaders_dir / "editor/simple_forward.slang", .entry_points = {"vs_main", "fs_main"}}
+  );
 }
 
 auto ThumbnailRenderer::deinit() -> void {}
@@ -30,7 +31,7 @@ auto ThumbnailRenderer::deinit() -> void {}
 auto ThumbnailRenderer::reset() -> void {}
 
 auto ThumbnailRenderer::render(VkContext& vk_context, vuk::Extent3D extent, vuk::Format format)
-    -> vuk::Value<vuk::ImageAttachment> {
+  -> vuk::Value<vuk::ImageAttachment> {
 
   if (_final_image == nullptr) {
     _final_image = std::make_unique<Texture>();
@@ -39,7 +40,10 @@ auto ThumbnailRenderer::render(VkContext& vk_context, vuk::Extent3D extent, vuk:
   }
 
   auto final_attachment = vuk::acquire_ia(
-      _final_image->get_name().c_str(), _final_image->attachment(), vuk::Access::eNone);
+    _final_image->get_name().c_str(),
+    _final_image->attachment(),
+    vuk::Access::eNone
+  );
 
   final_attachment = vuk::clear_image(final_attachment, vuk::Black<f32>);
 
@@ -50,25 +54,25 @@ auto ThumbnailRenderer::render(VkContext& vk_context, vuk::Extent3D extent, vuk:
   Camera::update(cam, {extent.width, extent.height});
 
   const auto camera_data = GPU::CameraData{
-      .position = glm::vec4(cam.position, 0.0f),
-      .projection = cam.get_projection_matrix(),
-      .inv_projection = cam.get_inv_projection_matrix(),
-      .view = cam.get_view_matrix(),
-      .inv_view = cam.get_inv_view_matrix(),
-      .projection_view = cam.get_projection_matrix() * cam.get_view_matrix(),
-      .inv_projection_view = cam.get_inverse_projection_view(),
-      .previous_projection = cam.get_projection_matrix(),
-      .previous_inv_projection = cam.get_inv_projection_matrix(),
-      .previous_view = cam.get_view_matrix(),
-      .previous_inv_view = cam.get_inv_view_matrix(),
-      .previous_projection_view = cam.get_projection_matrix() * cam.get_view_matrix(),
-      .previous_inv_projection_view = cam.get_inverse_projection_view(),
-      .temporalaa_jitter = cam.jitter,
-      .temporalaa_jitter_prev = cam.jitter_prev,
-      .near_clip = cam.near_clip,
-      .far_clip = cam.far_clip,
-      .fov = cam.fov,
-      .output_index = 0,
+    .position = glm::vec4(cam.position, 0.0f),
+    .projection = cam.get_projection_matrix(),
+    .inv_projection = cam.get_inv_projection_matrix(),
+    .view = cam.get_view_matrix(),
+    .inv_view = cam.get_inv_view_matrix(),
+    .projection_view = cam.get_projection_matrix() * cam.get_view_matrix(),
+    .inv_projection_view = cam.get_inverse_projection_view(),
+    .previous_projection = cam.get_projection_matrix(),
+    .previous_inv_projection = cam.get_inv_projection_matrix(),
+    .previous_view = cam.get_view_matrix(),
+    .previous_inv_view = cam.get_inv_view_matrix(),
+    .previous_projection_view = cam.get_projection_matrix() * cam.get_view_matrix(),
+    .previous_inv_projection_view = cam.get_inverse_projection_view(),
+    .temporalaa_jitter = cam.jitter,
+    .temporalaa_jitter_prev = cam.jitter_prev,
+    .near_clip = cam.near_clip,
+    .far_clip = cam.far_clip,
+    .fov = cam.fov,
+    .output_index = 0,
   };
 
   auto camera_buffer = vk_context.scratch_buffer(camera_data);

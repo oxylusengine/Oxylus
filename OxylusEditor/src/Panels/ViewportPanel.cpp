@@ -79,31 +79,31 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
     slang.create_pipeline(
       runtime,
       "mouse_picking_pipeline",
-      {.path = shaders_dir + "/editor/mouse_picking.slang", .entry_points = {"cs_main"}}
+      {.path = shaders_dir / "editor/mouse_picking.slang", .entry_points = {"cs_main"}}
     );
 
     slang.create_pipeline(
       runtime,
       "highlighting_pipeline",
-      {.path = shaders_dir + "/editor/highlighting.slang", .entry_points = {"cs_main"}}
+      {.path = shaders_dir / "editor/highlighting.slang", .entry_points = {"cs_main"}}
     );
 
     slang.create_pipeline(
       runtime,
       "apply_highlighting_pipeline",
-      {.path = shaders_dir + "/editor/apply_highlighting.slang", .entry_points = {"vs_main", "fs_main"}}
+      {.path = shaders_dir / "editor/apply_highlighting.slang", .entry_points = {"vs_main", "fs_main"}}
     );
 
     slang.create_pipeline(
       runtime,
       "grid_pipeline",
-      {.path = shaders_dir + "/editor/grid.slang", .entry_points = {"vs_main", "fs_main"}}
+      {.path = shaders_dir / "editor/grid.slang", .entry_points = {"vs_main", "fs_main"}}
     );
 
     slang.create_pipeline(
       runtime,
       "apply_grid_pipeline",
-      {.path = shaders_dir + "/editor/apply_grid.slang", .entry_points = {"vs_main", "fs_main"}}
+      {.path = shaders_dir / "editor/apply_grid.slang", .entry_points = {"vs_main", "fs_main"}}
     );
   }
 }
@@ -250,7 +250,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
         }
         if (path.extension() == ".gltf" || path.extension() == ".glb") {
           auto& asset_man = App::mod<AssetManager>();
-          if (auto asset = asset_man.import_asset(path.string()))
+          if (auto asset = asset_man.import_asset(path))
             _scene->create_model_entity(asset);
         }
       }
@@ -381,8 +381,8 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
             editor.on_scene_stop();
         }
         ImGui::SameLine();
+        // Just here for aesthetic purposes for now...
         if (ImGui::Button(ICON_MDI_STEP_FORWARD, button_size)) {
-          editor.on_scene_simulate();
         }
         ImGui::PopStyleColor();
 

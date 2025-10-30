@@ -12,12 +12,12 @@ class InspectorPanel : public EditorPanel {
 public:
   struct DialogLoadEvent {
     UUID* asset_uuid = {};
-    std::string path = {};
+    std::filesystem::path path = {};
   };
 
   struct DialogSaveEvent {
     UUID asset_uuid = {};
-    std::string path = {};
+    std::filesystem::path path = {};
   };
 
   AssetManagerViewer viewer = {};
@@ -27,7 +27,7 @@ public:
   void on_render(vuk::Extent3D extent, vuk::Format format) override;
 
   static void draw_material_properties(
-    Borrowed<Material> material, const UUID& material_uuid, std::string_view default_path
+    Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
   );
 
 private:

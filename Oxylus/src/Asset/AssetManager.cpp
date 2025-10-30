@@ -7,9 +7,9 @@
 
 #include "Asset/ParserGLTF.hpp"
 #include "Core/App.hpp"
-#include "Core/FileSystem.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
+#include "OS/File.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Scripting/LuaSystem.hpp"
@@ -186,19 +186,19 @@ auto write_script_asset_meta(JsonWriter&, LuaSystem*) -> bool {
   return true;
 }
 
-auto end_asset_meta(JsonWriter& writer, const std::string& path) -> bool {
+auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
   writer.end_obj();
 
   auto meta_path = path;
-  if (fs::get_file_extension(path) != "oxasset") {
+  if (path.has_extension() && path.extension() != "oxasset") {
     meta_path += ".oxasset";
   }
 
-  std::ofstream filestream(meta_path);
-  filestream << writer.stream.rdbuf();
-
+  auto file = File(meta_path, FileAccess::Write);
+  file.write(writer.stream.view());
+  file.close();
   return true;
 }
 
@@ -234,8 +234,8 @@ auto AssetManager::deinit() -> std::expected<void, std::string> {
 
 auto AssetManager::registry() const -> const AssetRegistry& { return asset_registry; }
 
-auto AssetManager::read_meta_file(const std::string& path) -> std::unique_ptr<AssetMetaFile> {
-  auto content = fs::read_file(path);
+auto AssetManager::read_meta_file(const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile> {
+  auto content = File::to_string(path);
   if (content.empty()) {
     OX_LOG_ERROR("Failed to read/open file {}!", path);
     return nullptr;
@@ -262,28 +262,26 @@ auto AssetManager::load_deferred_assets() -> void {
   deferred_load_queue.clear();
 }
 
-auto AssetManager::to_asset_file_type(const std::string& path) -> AssetFileType {
+auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {
   ZoneScoped;
   memory::ScopedStack stack;
 
-  auto extension = fs::get_file_extension(path);
-
-  if (extension.empty()) {
+  if (!path.has_extension()) {
     return AssetFileType::None;
   }
 
-  extension = stack.to_upper(extension);
+  auto extension = stack.to_upper(path.extension().string());
   switch (fnv64_str(extension)) {
-    case fnv64_c("GLB")    : return AssetFileType::GLB;
-    case fnv64_c("GLTF")   : return AssetFileType::GLTF;
-    case fnv64_c("PNG")    : return AssetFileType::PNG;
-    case fnv64_c("JPG")    :
-    case fnv64_c("JPEG")   : return AssetFileType::JPEG;
-    case fnv64_c("DDS")    : return AssetFileType::DDS;
-    case fnv64_c("JSON")   : return AssetFileType::JSON;
-    case fnv64_c("OXASSET"): return AssetFileType::Meta;
-    case fnv64_c("KTX2")   : return AssetFileType::KTX2;
-    case fnv64_c("LUA")    : return AssetFileType::LUA;
+    case fnv64_c(".GLB")    : return AssetFileType::GLB;
+    case fnv64_c(".GLTF")   : return AssetFileType::GLTF;
+    case fnv64_c(".PNG")    : return AssetFileType::PNG;
+    case fnv64_c(".JPG")    :
+    case fnv64_c(".JPEG")   : return AssetFileType::JPEG;
+    case fnv64_c(".DDS")    : return AssetFileType::DDS;
+    case fnv64_c(".JSON")   : return AssetFileType::JSON;
+    case fnv64_c(".OXASSET"): return AssetFileType::Meta;
+    case fnv64_c(".KTX2")   : return AssetFileType::KTX2;
+    case fnv64_c(".LUA")    : return AssetFileType::LUA;
     default                : return AssetFileType::None;
   }
 }
@@ -305,7 +303,7 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
   }
 }
 
-auto AssetManager::create_asset(const AssetType type, const std::string& path) -> UUID {
+auto AssetManager::create_asset(const AssetType type, const std::filesystem::path& path) -> UUID {
   const auto uuid = UUID::generate_random();
   auto [asset_it, inserted] = asset_registry.try_emplace(uuid);
   if (!inserted) {
@@ -321,11 +319,11 @@ auto AssetManager::create_asset(const AssetType type, const std::string& path) -
   return asset.uuid;
 }
 
-auto AssetManager::import_asset(const std::string& path) -> UUID {
+auto AssetManager::import_asset(const std::filesystem::path& path) -> UUID {
   ZoneScoped;
   memory::ScopedStack stack;
 
-  if (!fs::exists(path)) {
+  if (!std::filesystem::exists(path)) {
     OX_LOG_ERROR("Trying to import an asset '{}' that doesn't exist.", path);
     return UUID(nullptr);
   }
@@ -358,8 +356,8 @@ auto AssetManager::import_asset(const std::string& path) -> UUID {
 
   // Check for meta file before creating new asset
   auto meta_path = stack.format("{}.oxasset", path);
-  if (fs::exists(meta_path)) {
-    return this->register_asset(std::string(meta_path));
+  if (std::filesystem::exists(meta_path)) {
+    return this->register_asset(meta_path);
   }
 
   auto uuid = this->create_asset(asset_type, path);
@@ -390,7 +388,7 @@ auto AssetManager::import_asset(const std::string& path) -> UUID {
               embedded_textures.push_back(texture_uuid);
             },
             [&](const std::filesystem::path& image_path) { //
-              texture_uuid = this->import_asset(image_path.string());
+              texture_uuid = this->import_asset(image_path);
             },
           },
           image.image_data
@@ -470,13 +468,7 @@ auto AssetManager::delete_asset(const UUID& uuid) -> void {
   OX_LOG_TRACE("Deleted asset {}.", uuid.str());
 }
 
-auto AssetManager::is_valid(const UUID& uuid) -> bool {
-  ZoneScoped;
-
-  return uuid && get_asset(uuid);
-}
-
-auto AssetManager::register_asset(const std::string& path) -> UUID {
+auto AssetManager::register_asset(const std::filesystem::path& path) -> UUID {
   ZoneScoped;
 
   memory::ScopedStack stack;
@@ -498,12 +490,12 @@ auto AssetManager::register_asset(const std::string& path) -> UUID {
     return UUID(nullptr);
   }
 
-  auto asset_path = std::filesystem::path(path);
+  auto asset_path = path;
   asset_path.replace_extension("");
   auto uuid = UUID::from_string(uuid_json.value_unsafe()).value();
   auto type = static_cast<AssetType>(type_json.value_unsafe().get_uint64());
 
-  if (!this->register_asset(uuid, type, asset_path.string())) {
+  if (!this->register_asset(uuid, type, asset_path)) {
     return UUID(nullptr);
   }
 
@@ -526,7 +518,7 @@ auto AssetManager::register_asset(const std::string& path) -> UUID {
   return uuid;
 }
 
-auto AssetManager::register_asset(const UUID& uuid, AssetType type, const std::string& path) -> bool {
+auto AssetManager::register_asset(const UUID& uuid, AssetType type, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
   auto write_lock = std::unique_lock(registry_mutex);
@@ -550,8 +542,8 @@ auto AssetManager::register_asset(const UUID& uuid, AssetType type, const std::s
   return true;
 }
 
-auto AssetManager::export_asset(const UUID& uuid, const std::string& path) -> bool {
-  auto asset = this->get_asset(uuid);
+auto AssetManager::export_asset(const UUID& uuid, const std::filesystem::path& path) -> bool {
+  auto* asset = this->get_asset(uuid);
 
   JsonWriter writer{};
   begin_asset_meta(writer, uuid, asset->type);
@@ -588,14 +580,14 @@ auto AssetManager::export_asset(const UUID& uuid, const std::string& path) -> bo
   return end_asset_meta(writer, path);
 }
 
-auto AssetManager::export_texture(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
+auto AssetManager::export_texture(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
   auto texture = this->get_texture(uuid);
   return write_texture_asset_meta(writer, std::move(texture));
 }
 
-auto AssetManager::export_model(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
+auto AssetManager::export_model(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
   auto* model = this->get_model(uuid);
@@ -609,7 +601,7 @@ auto AssetManager::export_model(const UUID& uuid, JsonWriter& writer, const std:
   return write_mesh_asset_meta(writer, model->embedded_textures, model->materials, std::move(materials));
 }
 
-auto AssetManager::export_scene(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
+auto AssetManager::export_scene(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
   auto* scene = this->get_scene(uuid);
@@ -619,7 +611,7 @@ auto AssetManager::export_scene(const UUID& uuid, JsonWriter& writer, const std:
   return scene->save_to_file(path);
 }
 
-auto AssetManager::export_material(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
+auto AssetManager::export_material(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
   auto material = this->get_material(uuid);
@@ -630,7 +622,7 @@ auto AssetManager::export_material(const UUID& uuid, JsonWriter& writer, const s
   return result;
 }
 
-auto AssetManager::export_script(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool {
+auto AssetManager::export_script(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
   return true;
@@ -711,7 +703,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
   asset->model_id = model_map.create_slot();
   auto* model = model_map.slot(asset->model_id);
 
-  std::string meta_path = asset->path + ".oxasset";
+  auto meta_path = std::filesystem::path(asset->path.string() + ".oxasset");
   auto meta_json = read_meta_file(meta_path);
   if (!meta_json) {
     return false;

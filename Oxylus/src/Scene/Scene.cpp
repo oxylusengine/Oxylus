@@ -1,6 +1,5 @@
 #include "Scene/Scene.hpp"
 
-#include <Core/FileSystem.hpp>
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/AllowedDOFs.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -21,6 +20,7 @@
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Memory/Stack.hpp"
+#include "OS/File.hpp"
 #include "Physics/Physics.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Physics/PhysicsMaterial.hpp"
@@ -1685,6 +1685,7 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
 
   auto writer = src_scene->to_json();
   new_scene->from_json(writer.stream.str());
+  new_scene->scene_name = new_name;
   new_scene->meshes_dirty = true;
 
   OX_LOG_TRACE("Copied scene {} to {}", src_scene->scene_name, new_scene->scene_name);
@@ -1759,7 +1760,7 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   return true;
 }
 
-auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
+auto Scene::save_to_file(this const Scene& self, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
   auto writer = self.to_json();
@@ -1772,15 +1773,20 @@ auto Scene::save_to_file(this const Scene& self, std::string path) -> bool {
   return true;
 }
 
-auto Scene::load_from_file(this Scene& self, const std::string& path) -> bool {
+auto Scene::load_from_file(this Scene& self, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
-  std::string content = fs::read_file(path);
+  auto content = File::to_string(path);
   if (content.empty()) {
     OX_LOG_ERROR("Failed to read/open file {}!", path);
     return false;
   }
 
   return self.from_json(content);
+}
+
+auto Scene::reset_renderer_instance() -> void {
+  auto& renderer = App::mod<Renderer>();
+  renderer_instance = renderer.new_instance(*this);
 }
 } // namespace ox

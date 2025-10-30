@@ -140,6 +140,13 @@ public:
 
   auto get_renderer_instance() -> RendererInstance* { return renderer_instance.get(); }
 
+  // This will reset RendererInstance's reference to acquired vuk resources.
+  // If I don't do this vuk complains about resources not being unique when there is another RendererInstance being
+  // rendered even when this is not.
+  // This should never be called and is a hack because we should support multiple scenes being rendered into multiple
+  // viewport at the same time anyways.
+  auto reset_renderer_instance() -> void;
+
   static auto entity_to_json(JsonWriter& writer, flecs::entity e) -> void;
   static auto json_to_entity(
     Scene& self, //
@@ -150,8 +157,8 @@ public:
 
   auto to_json(this const Scene& self) -> JsonWriter;
   auto from_json(this Scene& self, const std::string& json) -> bool;
-  auto save_to_file(this const Scene& self, std::string path) -> bool;
-  auto load_from_file(this Scene& self, const std::string& path) -> bool;
+  auto save_to_file(this const Scene& self, const std::filesystem::path& path) -> bool;
+  auto load_from_file(this Scene& self, const std::filesystem::path& path) -> bool;
 
 private:
   bool running = false;

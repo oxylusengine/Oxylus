@@ -9,9 +9,9 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
-#include "Core/FileSystem.hpp"
 #include "Editor.hpp"
 #include "EditorTheme.hpp"
+#include "Memory/Stack.hpp"
 #include "Scene/ECSModule/ComponentWrapper.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
@@ -71,8 +71,8 @@ void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
       if (editor_context.type != EditorContext::Type::File)
         return option<std::monostate>{};
 
-      return editor_context.str.and_then([this](const std::string& path) {
-        if (fs::get_file_extension(path) != "oxasset")
+      return editor_context.str.and_then([this](const std::filesystem::path& path) {
+        if (path.extension() != "oxasset")
           return option<std::monostate>{};
 
         auto& asset_man = App::mod<AssetManager>();
@@ -96,7 +96,7 @@ void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
 }
 
 void InspectorPanel::draw_material_properties(
-  Borrowed<Material> material, const UUID& material_uuid, std::string_view default_path
+  Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
 ) {
   if (material_uuid) {
     const auto& window = App::get()->get_window();
@@ -136,7 +136,8 @@ void InspectorPanel::draw_material_properties(
     if (ImGui::BeginDragDropTarget()) {
       if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
         const auto* payload = PayloadData::from_payload(imgui_payload);
-        if (const std::string ext = fs::get_file_extension(payload->str); ext == "oxasset") {
+        auto payload_path = std::filesystem::path(payload->str);
+        if (payload_path.extension() == "oxasset") {
           auto& event_system = App::get_event_system();
           auto r = event_system.emit(DialogLoadEvent{&uuid_copy, payload->str});
         }
@@ -593,7 +594,8 @@ void InspectorPanel::draw_asset_info(Borrowed<Asset> asset) {
   auto& asset_man = App::mod<AssetManager>();
   auto type_str = asset_man.to_asset_type_sv(asset->type);
   auto uuid_str = asset->uuid.str();
-  auto name = fs::get_name_with_extension(asset->path);
+  auto name = asset->path.filename().string();
+  auto path_str = asset->path.string();
 
   ImGui::SeparatorText("Asset");
   ImGui::Indent();
@@ -601,7 +603,7 @@ void InspectorPanel::draw_asset_info(Borrowed<Asset> asset) {
   UI::text("Type", type_str);
   UI::input_text("UUID", &uuid_str, ImGuiInputTextFlags_ReadOnly);
   UI::input_text("File", &name, ImGuiInputTextFlags_ReadOnly);
-  UI::input_text("Path", &asset->path, ImGuiInputTextFlags_ReadOnly);
+  UI::input_text("Path", &path_str, ImGuiInputTextFlags_ReadOnly);
   UI::end_properties();
 
   if (asset->type == AssetType::Material) {
@@ -679,6 +681,7 @@ void InspectorPanel::draw_audio_asset(UUID* uuid, Borrowed<Asset> asset) {
 
 bool InspectorPanel::draw_script_asset(UUID* uuid, Borrowed<Asset> asset) {
   ZoneScoped;
+  memory::ScopedStack stack;
 
   auto& asset_man = App::mod<AssetManager>();
 
@@ -687,18 +690,20 @@ bool InspectorPanel::draw_script_asset(UUID* uuid, Borrowed<Asset> asset) {
     return false;
 
   auto script_path = script_asset->get_path();
+  auto script_path_filename = stack.format("{}", script_path.filename());
+  auto script_path_str = script_path.string();
   UI::begin_properties(ImGuiTableFlags_SizingFixedFit);
-  UI::text("File Name:", fs::get_file_name(script_path));
-  UI::input_text("Path:", &script_path, ImGuiInputTextFlags_ReadOnly);
+  UI::text("File Name:", script_path_filename);
+  UI::input_text("Path:", &script_path_str, ImGuiInputTextFlags_ReadOnly);
   UI::end_properties();
-  auto rld_str = fmt::format("{} Reload", ICON_MDI_REFRESH);
-  if (UI::button(rld_str.c_str())) {
+  auto* rld_str = stack.format_char("{} Reload", ICON_MDI_REFRESH);
+  if (UI::button(rld_str)) {
     script_asset->reload();
     return true;
   }
   ImGui::SameLine();
-  auto rmv_str = fmt::format("{} Remove", ICON_MDI_TRASH_CAN);
-  if (UI::button(rmv_str.c_str())) {
+  auto* rmv_str = stack.format_char("{} Remove", ICON_MDI_TRASH_CAN);
+  if (UI::button(rmv_str)) {
     if (uuid)
       asset_man.unload_asset(*uuid);
     *uuid = UUID(nullptr);

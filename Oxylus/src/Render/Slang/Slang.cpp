@@ -1,10 +1,9 @@
 #include "Render/Slang/Slang.hpp"
 
-#include <vuk/runtime/vk/Pipeline.hpp>
 #include <ranges>
+#include <vuk/runtime/vk/Pipeline.hpp>
 
 #include "Core/App.hpp"
-#include "Core/FileSystem.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 
 namespace ox {
@@ -27,9 +26,7 @@ void Slang::add_shader(this Slang& self, vuk::PipelineBaseCreateInfo& pipeline_c
     return;
   }
 
-  const auto root_directory = fs::get_directory(compile_info.path);
-  const auto module_name = fs::get_file_name(compile_info.path);
-
+  const auto module_name = compile_info.path.stem().string();
   auto slang_module = self.slang_session->load_module({
     .path = compile_info.path,
     .module_name = module_name,
@@ -70,7 +67,7 @@ void Slang::create_pipeline(
 
   self.add_shader(pipeline_ci, compile_info);
 
-  OX_LOG_INFO("Loaded shader:{}:{}", fs::get_name_with_extension(compile_info.path), name.c_str());
+  OX_LOG_INFO("Loaded shader:{}:{}", compile_info.path, name.c_str());
 
   TRY(runtime.create_named_pipeline(name, pipeline_ci))
 }

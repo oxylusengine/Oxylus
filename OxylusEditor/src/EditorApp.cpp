@@ -3,7 +3,6 @@
 #include "Core/EntryPoint.hpp"
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
-#include "Core/JobManager.hpp"
 #include "Editor.hpp"
 #include "Networking/NetworkManager.hpp"
 #include "Physics/Physics.hpp"
@@ -27,7 +26,7 @@ App* create_application(const AppCommandLineArgs& args) {
   const auto app = new App();
   app->with_name(name)
     .with_args(args)
-    .with_working_directory(std::filesystem::current_path().string())
+    .with_working_directory(std::filesystem::current_path())
     .with_window(
       WindowInfo{
         .title = name,

@@ -3,12 +3,13 @@
 #include <imgui.h>
 
 #include "Core/App.hpp"
-#include "Core/FileSystem.hpp"
+#include "Memory/Stack.hpp"
 #include "UI/UI.hpp"
 
 namespace ox {
 auto draw_asset_table_columns(const Asset& asset) -> bool {
   ZoneScoped;
+  memory::ScopedStack stack;
 
   bool is_selected = false;
 
@@ -24,8 +25,7 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
                                                       ImGuiSelectableFlags_AllowOverlap |
                                                       ImGuiSelectableFlags_AllowDoubleClick;
 
-    auto name = fs::get_name_with_extension(asset.path);
-
+    auto name = asset.path.filename().string();
     if (ImGui::Selectable(name.c_str(), false, selectable_flags, ImVec2(0.f, 20.f))) {
       is_selected = true;
     }
@@ -50,7 +50,8 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
       ImGui::Text("ID: %u, Generation: %u", id.index, id.version);
     }
 
-    ImGui::Text("RefCount: %lu", static_cast<u64>(asset.ref_count));
+    // explicit format here because MSVC %lu != clang %lu (its %llu instead)
+    ImGui::TextUnformatted(stack.format_char("RefCount: {}", asset.ref_count));
 
     ImGui::EndPopup();
   }
@@ -80,7 +81,7 @@ auto AssetManagerViewer::draw_asset_table(
       ImGui::TableSetupColumn("UUID");
 
       for (const auto& asset : assets) {
-        auto name = fs::get_name_with_extension(asset.path);
+        auto name = asset.path.filename().string();
         if (!text_filter.PassFilter(name.c_str())) {
           continue;
         }

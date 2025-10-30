@@ -15,6 +15,11 @@ namespace ox {
 class ImGuiLayer;
 class VkContext;
 
+struct WindowResizeEvent {
+  u32 width = 0;
+  u32 height = 0;
+};
+
 class App {
 public:
   App();
@@ -30,8 +35,16 @@ public:
   auto with_name(this App& self, std::string name) -> App&;
   auto with_args(this App& self, AppCommandLineArgs args) -> App&;
   auto with_window(this App& self, WindowInfo window_info) -> App&;
-  auto with_working_directory(this App& self, std::string dir) -> App&;
-  auto with_assets_directory(this App& self, std::string dir) -> App&;
+  auto with_working_directory(this App& self, const std::filesystem::path& dir) -> App&;
+  auto with_assets_directory(this App& self, const std::filesystem::path& dir) -> App&;
+
+  template <typename F>
+  void defer_to_next_frame(this App& self, F&& func) {
+    std::function<void()> task = std::forward<F>(func);
+
+    auto lock = std::unique_lock(self.mutex);
+    self.pending_tasks.push_back(std::move(task));
+  }
 
   template <typename T, typename... Args>
   auto with(this App& self, Args&&... args) -> App& {
@@ -60,9 +73,13 @@ public:
 private:
   static App* instance_;
 
+  std::shared_mutex mutex;
+  std::vector<std::function<void()>> pending_tasks;
+  std::vector<std::function<void()>> processing_tasks;
+
   std::string name = "Oxylus App";
-  std::string assets_path = "Resources";
-  std::string working_directory = {};
+  std::filesystem::path assets_path = "Resources";
+  std::filesystem::path working_directory = {};
   AppCommandLineArgs command_line_args = {};
   option<WindowInfo> window_info = nullopt;
 
@@ -79,6 +96,8 @@ private:
 
   bool is_running = true;
   float last_frame_time = 0.0f;
+
+  auto run_deferred_tasks(this App& self) -> void;
 
   friend int ::main(int argc, char** argv);
 };

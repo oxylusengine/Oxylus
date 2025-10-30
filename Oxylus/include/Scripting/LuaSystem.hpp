@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <ankerl/unordered_dense.h>
+#include <filesystem>
 #include <flecs.h>
 #include <sol/environment.hpp>
 #include <vuk/Types.hpp>
@@ -27,7 +28,8 @@ public:
   ~LuaSystem() = default;
 
   // Either use a path to load it from a lua file or pass in the lua
-  auto load(this LuaSystem& self, const std::string& path, const ox::option<std::string> script = nullopt) -> void;
+  auto load(this LuaSystem& self, const std::filesystem::path& path, const ox::option<std::string> script = nullopt)
+    -> void;
   auto reload(this LuaSystem& self) -> void;
 
   auto reset_functions(this LuaSystem& self) -> void;
@@ -42,28 +44,32 @@ public:
   auto on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent, vuk::Format format) -> void;
   auto on_viewport_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent, vuk::Format format) -> void;
 
-  auto on_contact_added(this const LuaSystem& self,
-                        Scene* scene,
-                        const JPH::Body& body1,
-                        const JPH::Body& body2,
-                        const JPH::ContactManifold& manifold,
-                        const JPH::ContactSettings& settings) -> void;
-  auto on_contact_persisted(this const LuaSystem& self,
-                            Scene* scene,
-                            const JPH::Body& body1,
-                            const JPH::Body& body2,
-                            const JPH::ContactManifold& manifold,
-                            const JPH::ContactSettings& settings) -> void;
+  auto on_contact_added(
+    this const LuaSystem& self,
+    Scene* scene,
+    const JPH::Body& body1,
+    const JPH::Body& body2,
+    const JPH::ContactManifold& manifold,
+    const JPH::ContactSettings& settings
+  ) -> void;
+  auto on_contact_persisted(
+    this const LuaSystem& self,
+    Scene* scene,
+    const JPH::Body& body1,
+    const JPH::Body& body2,
+    const JPH::ContactManifold& manifold,
+    const JPH::ContactSettings& settings
+  ) -> void;
   auto on_contact_removed(this const LuaSystem& self, Scene* scene, const JPH::SubShapeIDPair& sub_shape_pair) -> void;
   auto on_body_activated(this const LuaSystem& self, Scene* scene, const JPH::BodyID& body_id, u64 body_user_data)
-      -> void;
+    -> void;
   auto on_body_deactivated(this const LuaSystem& self, Scene* scene, const JPH::BodyID& body_id, u64 body_user_data)
-      -> void;
+    -> void;
 
-  auto get_path() const -> const std::string& { return file_path; }
+  auto get_path() const -> const std::filesystem::path& { return file_path; }
 
 private:
-  std::string file_path = {};
+  std::filesystem::path file_path = {};
   ox::option<std::string> script_ = {};
   ankerl::unordered_dense::map<int, std::string> errors = {};
 
@@ -85,7 +91,9 @@ private:
   std::unique_ptr<sol::protected_function> on_body_activated_func = nullptr;
   std::unique_ptr<sol::protected_function> on_body_deactivated_func = nullptr;
 
-  void init_script(this LuaSystem& self, const std::string& path, const ox::option<std::string> script = nullopt);
+  void init_script(
+    this LuaSystem& self, const std::filesystem::path& path, const ox::option<std::string> script = nullopt
+  );
   static void check_result(const sol::protected_function_result& result, const char* func_name);
 };
 } // namespace ox

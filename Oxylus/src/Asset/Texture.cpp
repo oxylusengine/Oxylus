@@ -1,6 +1,5 @@
-﻿#define STB_IMAGE_IMPLEMENTATION
-
-#include "Asset/Texture.hpp"
+﻿#include "Memory/Stack.hpp"
+#define STB_IMAGE_IMPLEMENTATION
 
 #include <ktx.h>
 #include <stb_image.h>
@@ -8,14 +7,17 @@
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 #include <vuk/vsl/Core.hpp>
 
+#include "Asset/Texture.hpp"
 #include "Core/App.hpp"
-#include "Core/FileSystem.hpp"
 #include "Render/Utils/DDS.hpp"
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
-void Texture::create(const std::string& path, const TextureLoadInfo& load_info, const std::source_location& loc) {
+void Texture::create(
+  const std::filesystem::path& path, const TextureLoadInfo& load_info, const std::source_location& loc
+) {
   ZoneScoped;
+  memory::ScopedStack stack;
 
   auto& vk_context = App::get_vkcontext();
   auto& allocator = vk_context.superframe_allocator;
@@ -33,7 +35,7 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
 
   if (is_generic) {
     if (!path.empty()) {
-      stb_data = load_stb_image(path, &extent.width, &extent.height, &chans);
+      stb_data = load_stb_image(stack.format_char("{}", path), &extent.width, &extent.height, &chans);
     } else if (load_info.bytes.has_value()) {
       stb_data = load_stb_image_from_memory(
         (void*)load_info.bytes->data(), //
@@ -45,7 +47,8 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
     }
   } else if (is_dds) {
     if (!path.empty()) {
-      auto result = dds::readFile(path, &dds_image);
+      auto path_str = path.string();
+      auto result = dds::readFile(path_str, &dds_image);
       if (result != dds::ReadResult::Success) {
         OX_LOG_INFO("Error while loading dds. {}", path);
       }
@@ -73,8 +76,9 @@ void Texture::create(const std::string& path, const TextureLoadInfo& load_info, 
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     } else {
+      auto path_str = path.string();
       if (const auto
-            result = ktxTexture2_CreateFromNamedFile(path.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
+            result = ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
           result != KTX_SUCCESS) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
@@ -253,8 +257,9 @@ auto Texture::destroy() -> void {
   sampler_id = {};
 }
 
-vuk::Value<vuk::ImageAttachment>
-Texture::acquire(const vuk::Name name, const vuk::Access last_access, vuk::source_location LOC) const {
+vuk::Value<vuk::ImageAttachment> Texture::acquire(
+  const vuk::Name name, const vuk::Access last_access, vuk::source_location LOC
+) const {
   ZoneScoped;
   return vuk::acquire_ia(name.is_invalid() ? get_name() : name, attachment(), last_access, LOC);
 }
@@ -285,7 +290,7 @@ void Texture::set_name(const vuk::Name& name, const std::source_location& loc) {
   auto& vk_context = App::get_vkcontext();
   vuk::Name new_name = name;
   if (new_name.is_invalid()) {
-    auto file = fs::get_file_name(loc.file_name());
+    auto file = loc.file_name();
     const auto n = fmt::format("{0}:{1}", file, loc.line());
     new_name = vuk::Name(n);
   }
@@ -296,19 +301,19 @@ void Texture::set_name(const vuk::Name& name, const std::source_location& loc) {
   name_ = new_name;
 }
 
-std::unique_ptr<u8[]>
-Texture::load_stb_image(const std::string& filename, uint32_t* width, uint32_t* height, uint32_t* bits, bool srgb) {
+std::unique_ptr<u8[]> Texture::load_stb_image(
+  const std::filesystem::path& path, uint32_t* width, uint32_t* height, uint32_t* bits, bool srgb
+) {
   ZoneScoped;
+  memory::ScopedStack stack;
 
-  const auto filePath = std::filesystem::path(filename);
-
-  if (!exists(filePath))
-    OX_LOG_ERROR("Couldn't load image, file doesn't exists. {}", filename);
+  if (!exists(path))
+    OX_LOG_ERROR("Couldn't load image, file doesn't exists. {}", path);
 
   int tex_width = 0, tex_height = 0, tex_channels = 0;
   constexpr int size_of_channel = 8;
 
-  const auto pixels = stbi_load(filename.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
+  const auto pixels = stbi_load(stack.format_char("{}", path), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
 
   if (tex_channels != 4)
     tex_channels = 4;

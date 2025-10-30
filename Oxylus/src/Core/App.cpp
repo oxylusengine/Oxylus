@@ -4,7 +4,6 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/EventSystem.hpp"
-#include "Core/FileSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
@@ -47,14 +46,29 @@ auto App::with_window(this App& self, WindowInfo window_info) -> App& {
   return self;
 }
 
-auto App::with_working_directory(this App& self, std::string dir) -> App& {
+auto App::with_working_directory(this App& self, const std::filesystem::path& dir) -> App& {
   self.working_directory = dir;
   return self;
 }
 
-auto App::with_assets_directory(this App& self, std::string dir) -> App& {
+auto App::with_assets_directory(this App& self, const std::filesystem::path& dir) -> App& {
   self.assets_path = dir;
   return self;
+}
+
+auto App::run_deferred_tasks(this App& self) -> void {
+  {
+    auto lock = std::unique_lock(self.mutex);
+    std::swap(self.pending_tasks, self.processing_tasks);
+  }
+
+  for (auto& task : self.processing_tasks) {
+    if (task) {
+      task();
+    }
+  }
+
+  self.processing_tasks.clear();
 }
 
 auto App::get_command_line_args(this const App& self) -> const AppCommandLineArgs& {
@@ -99,11 +113,11 @@ void App::run(this App& self) {
   }
 
   if (self.working_directory.empty())
-    self.working_directory = std::filesystem::current_path().string();
+    self.working_directory = std::filesystem::current_path();
   else
     std::filesystem::current_path(self.working_directory);
 
-  self.vfs.mount_dir(VFS::APP_DIR, fs::absolute(self.assets_path));
+  self.vfs.mount_dir(VFS::APP_DIR, std::filesystem::absolute(self.assets_path));
 
   if (self.window_info.has_value()) {
     self.window = Window::create(*self.window_info);
@@ -134,6 +148,8 @@ void App::run(this App& self) {
   window_callbacks.on_resize = [](void* user_data, const glm::uvec2 size) {
     const auto app = static_cast<App*>(user_data);
     app->vk_context->handle_resize(size.x, size.y);
+
+    auto emit_result = app->event_system.emit<WindowResizeEvent>(WindowResizeEvent{.width = size.x, .height = size.y});
   };
   window_callbacks.on_close = [](void* user_data) {
     const auto app = static_cast<App*>(user_data);
@@ -226,6 +242,8 @@ void App::run(this App& self) {
 
       imgui_renderer.begin_frame(self.timestep.get_seconds(), extent);
     }
+
+    self.run_deferred_tasks();
 
     self.registry.update(self.timestep);
     self.registry.render(extent, format);
