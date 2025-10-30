@@ -24,8 +24,6 @@ struct File {
   template <std::contiguous_iterator Iter>
     requires std::is_trivially_copyable_v<std::iter_value_t<Iter>>
   auto write(Iter first, Iter last) -> u64 {
-    ZoneScoped;
-
     using value_type = std::iter_value_t<Iter>;
     auto element_count = std::distance(first, last);
     auto data_size = element_count * sizeof(value_type);
@@ -36,8 +34,6 @@ struct File {
   template <std::ranges::contiguous_range Range>
     requires std::is_trivially_copyable_v<std::ranges::range_value_t<Range>>
   auto write(Range&& range) -> u64 {
-    ZoneScoped;
-
     using value_type = std::ranges::range_value_t<Range>;
     auto data_size = std::ranges::size(range) * sizeof(value_type);
 
