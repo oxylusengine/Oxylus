@@ -1,7 +1,6 @@
 #include <libproc.h>
 #include <pthread.h>
 #include <sys/file.h>
-#include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
