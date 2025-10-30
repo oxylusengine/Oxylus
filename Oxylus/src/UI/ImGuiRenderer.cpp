@@ -22,14 +22,15 @@ ImFont* ImGuiRenderer::load_default_font() {
   return io.Fonts->AddFontDefault();
 }
 
-ImFont* ImGuiRenderer::load_font(const std::string& path, f32 font_size, option<ImFontConfig> font_config) {
+ImFont* ImGuiRenderer::load_font(const std::filesystem::path& path, f32 font_size, option<ImFontConfig> font_config) {
   ZoneScoped;
 
+  auto path_str = path.string();
   ImGuiIO& io = ImGui::GetIO();
   if (font_config.has_value())
-    return io.Fonts->AddFontFromFileTTF(path.c_str(), font_size, &*font_config);
+    return io.Fonts->AddFontFromFileTTF(path_str.c_str(), font_size, &*font_config);
 
-  return io.Fonts->AddFontFromFileTTF(path.c_str(), font_size);
+  return io.Fonts->AddFontFromFileTTF(path_str.c_str(), font_size);
 }
 
 void ImGuiRenderer::build_fonts() {
@@ -80,7 +81,7 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   slang.create_pipeline(
     ctx,
     "imgui",
-    {.path = shaders_dir + "/passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}}
+    {.path = shaders_dir / "passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}}
   );
 
   return {};

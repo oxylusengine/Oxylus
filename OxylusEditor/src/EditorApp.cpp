@@ -26,7 +26,7 @@ App* create_application(const AppCommandLineArgs& args) {
   const auto app = new App();
   app->with_name(name)
     .with_args(args)
-    .with_working_directory(std::filesystem::current_path().string())
+    .with_working_directory(std::filesystem::current_path())
     .with_window(
       WindowInfo{
         .title = name,

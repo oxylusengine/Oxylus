@@ -82,7 +82,7 @@ public:
 
 private:
   // Scene
-  std::string last_save_scene_path{};
+  std::filesystem::path last_save_scene_path{};
 
   RuntimeConsole runtime_console = {};
 

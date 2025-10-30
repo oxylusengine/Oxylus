@@ -5,7 +5,6 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
-#include "Core/FileSystem.hpp"
 #include "UI/AssetManagerViewer.hpp"
 #include "Utils/ImGuiScoped.hpp"
 
@@ -48,7 +47,7 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_NoClip);
 
         for (auto& [uuid, system] : scene_->get_lua_systems()) {
-          auto system_name = fs::get_file_name(system->get_path());
+          auto system_name = system->get_path().filename().string();
           if (scripts_filter_.IsActive() && !scripts_filter_.PassFilter(system_name.c_str())) {
             continue;
           }

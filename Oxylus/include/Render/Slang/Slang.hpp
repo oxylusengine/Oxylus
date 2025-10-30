@@ -16,12 +16,12 @@ public:
 
   struct SessionInfo {
     OptimizationLevel optimization_level = OptimizationLevel::Maximal;
-    std::string root_directory = {};
+    std::filesystem::path root_directory = {};
     std::vector<std::pair<std::string, std::string>> definitions = {};
   };
 
   struct CompileInfo {
-    std::string path = {};
+    std::filesystem::path path = {};
     std::vector<std::string> entry_points = {};
   };
 

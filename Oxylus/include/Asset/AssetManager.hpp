@@ -16,7 +16,7 @@
 namespace ox {
 struct Asset {
   UUID uuid = {};
-  std::string path = {};
+  std::filesystem::path path = {};
   AssetType type = AssetType::None;
   union {
     ModelID model_id = ModelID::Invalid;
@@ -53,16 +53,16 @@ public:
 
   auto registry() const -> const AssetRegistry&;
 
-  auto read_meta_file(const std::string& path) -> std::unique_ptr<AssetMetaFile>;
+  auto read_meta_file(const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
 
   auto load_deferred_assets() -> void;
 
-  auto create_asset(AssetType type, const std::string& path = {}) -> UUID;
+  auto create_asset(AssetType type, const std::filesystem::path& path = {}) -> UUID;
 
-  static auto to_asset_file_type(const std::string& path) -> AssetFileType;
+  static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
 
-  auto import_asset(const std::string& path) -> UUID;
+  auto import_asset(const std::filesystem::path& path) -> UUID;
 
   auto delete_asset(const UUID& uuid) -> void;
 
@@ -72,15 +72,15 @@ public:
   //
   // Add already existing asset into the registry.
   // File must end with `.oxasset` extension.
-  auto register_asset(const std::string& path) -> UUID;
-  auto register_asset(const UUID& uuid, AssetType type, const std::string& path) -> bool;
+  auto register_asset(const std::filesystem::path& path) -> UUID;
+  auto register_asset(const UUID& uuid, AssetType type, const std::filesystem::path& path) -> bool;
 
-  auto export_asset(const UUID& uuid, const std::string& path) -> bool;
-  auto export_texture(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
-  auto export_model(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
-  auto export_scene(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
-  auto export_material(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
-  auto export_script(const UUID& uuid, JsonWriter& writer, const std::string& path) -> bool;
+  auto export_asset(const UUID& uuid, const std::filesystem::path& path) -> bool;
+  auto export_texture(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
+  auto export_model(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
+  auto export_scene(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
+  auto export_material(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
+  auto export_script(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
 
   auto load_asset(const UUID& uuid) -> bool;
   auto unload_asset(const UUID& uuid) -> bool;
