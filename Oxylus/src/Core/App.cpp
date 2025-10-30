@@ -18,14 +18,19 @@
 namespace ox {
 App* App::instance_ = nullptr;
 
-App::App() {
+App::App(int argc, char** argv) {
   ZoneScoped;
+
   if (instance_) {
     OX_LOG_ERROR("Application already exists!");
     return;
   }
 
   instance_ = this;
+
+  Log::init(argc, argv);
+
+  instance_->command_line_args = AppCommandLineArgs{argc, argv};
 }
 
 App::~App() { is_running = false; }
@@ -34,11 +39,6 @@ void App::set_instance(App* instance) { instance_ = instance; }
 
 auto App::with_name(this App& self, std::string name) -> App& {
   self.name = name;
-  return self;
-}
-
-auto App::with_args(this App& self, AppCommandLineArgs args) -> App& {
-  self.command_line_args = args;
   return self;
 }
 

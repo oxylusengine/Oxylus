@@ -9,8 +9,6 @@
 #include "Render/Window.hpp"
 #include "Utils/Timestep.hpp"
 
-int main(int argc, char** argv);
-
 namespace ox {
 class ImGuiLayer;
 class VkContext;
@@ -22,7 +20,7 @@ struct WindowResizeEvent {
 
 class App {
 public:
-  App();
+  App(int argc, char** argv);
   ~App();
 
   static App* get() { return instance_; }
@@ -33,7 +31,6 @@ public:
   auto should_stop(this App& self) -> void;
 
   auto with_name(this App& self, std::string name) -> App&;
-  auto with_args(this App& self, AppCommandLineArgs args) -> App&;
   auto with_window(this App& self, WindowInfo window_info) -> App&;
   auto with_working_directory(this App& self, std::string dir) -> App&;
   auto with_assets_directory(this App& self, std::string dir) -> App&;
@@ -110,8 +107,6 @@ private:
   float last_frame_time = 0.0f;
 
   auto run_deferred_tasks(this App& self) -> void;
-
-  friend int ::main(int argc, char** argv);
 };
 
 App* create_application(const AppCommandLineArgs& args);
