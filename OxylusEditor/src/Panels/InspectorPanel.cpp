@@ -96,7 +96,7 @@ void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
 }
 
 void InspectorPanel::draw_material_properties(
-  Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
+  Borrowed<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
 ) {
   if (material_uuid) {
     const auto& window = App::get()->get_window();

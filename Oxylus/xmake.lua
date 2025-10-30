@@ -60,8 +60,10 @@ target("Oxylus")
             target:add("cxflags", "/permissive- /EHsc /bigobj -wd4100", { public = true })
         elseif(target:has_tool("cxx", "clang", "clangxx")) then
             target:add("defines", "OX_COMPILER_CLANG=1", { force = true, public = true })
+            target:add("cxflags", "-fPIC", { public = false })
         elseif target:has_tool("cxx", "gcc", "gxx") then
             target:add("defines", "OX_COMPILER_GCC=1", { force = true, public = true })
+            target:add("cxflags", "-fPIC", { public = false })
         end
     end)
 

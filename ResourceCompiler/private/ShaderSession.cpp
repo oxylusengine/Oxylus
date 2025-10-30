@@ -1,18 +1,18 @@
 #include "ShaderSession.hpp"
 
+#include <OS/File.hpp>
 #include <fmt/format.h>
 #include <slang-com-ptr.h>
 #include <slang.h>
 #include <span>
 
-#include "Core/FileSystem.hpp"
 #include "ResourceCompiler.hpp"
 
 namespace ox::rc {
 auto ShaderSession::compile_shader(const ShaderInfo& info) -> std::expected<AssetID, Error> {
   auto diagnostics_blob = Slang::ComPtr<slang::IBlob>();
   const auto& path_str = info.path.string();
-  const auto source_data = fs::read_file(path_str); // why is this not taking a fs::path???
+  const auto source_data = File::to_string(path_str);
   if (source_data.empty()) {
     return std::unexpected(Error::ShaderModuleCompilation);
   }

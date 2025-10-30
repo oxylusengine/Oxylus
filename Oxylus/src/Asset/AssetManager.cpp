@@ -468,6 +468,12 @@ auto AssetManager::delete_asset(const UUID& uuid) -> void {
   OX_LOG_TRACE("Deleted asset {}.", uuid.str());
 }
 
+auto AssetManager::is_valid(const UUID& uuid) -> bool {
+  ZoneScoped;
+
+  return uuid && get_asset(uuid);
+}
+
 auto AssetManager::register_asset(const std::filesystem::path& path) -> UUID {
   ZoneScoped;
 
@@ -543,7 +549,7 @@ auto AssetManager::register_asset(const UUID& uuid, AssetType type, const std::f
 }
 
 auto AssetManager::export_asset(const UUID& uuid, const std::filesystem::path& path) -> bool {
-  auto* asset = this->get_asset(uuid);
+  auto asset = this->get_asset(uuid);
 
   JsonWriter writer{};
   begin_asset_meta(writer, uuid, asset->type);

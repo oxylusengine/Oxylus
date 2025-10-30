@@ -69,7 +69,8 @@ auto os::open_file_externally(const std::filesystem::path& path) -> void {
   OX_LOG_WARN("Not implemented on this platform.");
 }
 
-auto os::file_open(const std::filesystem::path& path, FileAccess access) -> std::expected<FileDescriptor, FileError> {
+auto os::file_open(const std::filesystem::path& path, FileAccess access) noexcept
+  -> std::expected<FileDescriptor, FileError> {
   ZoneScoped;
 
   errno = 0;
@@ -101,7 +102,7 @@ auto os::file_close(FileDescriptor file) -> void {
   close(static_cast<i32>(file));
 }
 
-auto os::file_size(FileDescriptor file) -> std::expected<usize, FileError> {
+auto os::file_size(FileDescriptor file) noexcept -> std::expected<usize, FileError> {
   ZoneScoped;
 
   errno = 0;

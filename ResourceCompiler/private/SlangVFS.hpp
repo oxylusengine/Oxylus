@@ -1,7 +1,7 @@
 #pragma once
 
-#include <Core/FileSystem.hpp>
 #include <Core/Types.hpp>
+#include <OS/File.hpp>
 #include <atomic>
 #include <slang.h>
 #include <vector>
@@ -76,7 +76,7 @@ struct SlangVirtualFS : ISlangFileSystem {
     const auto root_path = std::filesystem::relative(m_root_dir);
     const auto module_path = root_path / path;
 
-    const auto result = fs::read_file(module_path.string());
+    const auto result = File::to_string(module_path);
     if (!result.empty()) {
       *outBlob = new SlangBlob(std::vector<u8>{result.data(), (result.data() + result.size())});
 

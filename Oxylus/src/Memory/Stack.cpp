@@ -3,6 +3,11 @@
 #include "OS/OS.hpp"
 
 namespace ox::memory {
+auto get_thread_stack() -> ThreadStack& {
+  thread_local ThreadStack stack;
+  return stack;
+}
+
 ThreadStack::ThreadStack() {
   ZoneScoped;
 
