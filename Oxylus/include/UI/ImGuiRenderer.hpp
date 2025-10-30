@@ -10,9 +10,12 @@
 
 namespace ox {
 class VkContext;
+class Renderer;
+class Input;
 class ImGuiRenderer {
 public:
   constexpr static auto MODULE_NAME = "ImGuiRenderer";
+  using module_dependencies = std::tuple<Input, Renderer>;
 
   std::shared_ptr<Texture> font_texture = nullptr;
   std::vector<vuk::Value<vuk::ImageAttachment>> rendering_images;

@@ -369,8 +369,8 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
                                     .create_persistent_descriptor_set(1, bindless_set_info, bindless_set_binding_flags);
 
   auto& event_system = App::get_event_system();
-  auto sub_result = event_system.subscribe<WindowResizeEvent>([](const WindowResizeEvent& e){
-    App::get_vkcontext().handle_resize(e.width, e.height);
+  auto sub_result = event_system.subscribe<WindowResizeEvent>([&self](const WindowResizeEvent& e){
+    self.handle_resize(e.width, e.height);
   });
   if (!sub_result.has_value()) {
     OX_LOG_ERROR("Failed to subscribe for WindowResizeEvent!");

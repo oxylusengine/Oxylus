@@ -40,9 +40,42 @@ struct ModuleRegistry {
   std::vector<std::function<std::expected<void, std::string>()>> deinit_callbacks = {};
   std::vector<std::string_view> module_names = {};
 
+  template <typename ModuleT, typename... DepTypes>
+  void check_dependencies(std::tuple<DepTypes...>) {
+    bool all_met = true;
+    std::string missing_deps_msg;
+
+    (..., [&] {
+      if (!has<DepTypes>()) {
+        all_met = false;
+        if (!missing_deps_msg.empty())
+          missing_deps_msg += ", ";
+        missing_deps_msg += std::string(DepTypes::MODULE_NAME);
+      }
+    }());
+
+    if (!all_met) {
+      OX_LOG_FATAL("Missing module dependencies: '{}' for module '{}'", missing_deps_msg, std::string(ModuleT::MODULE_NAME));
+    }
+  }
+
+  template <typename T>
+  struct get_module_dependencies {
+    using type = std::tuple<>;
+  };
+
+  template <typename T>
+    requires requires { typename T::module_dependencies; }
+  struct get_module_dependencies<T> {
+    using type = typename T::module_dependencies;
+  };
+
   template <Module T, typename... Args>
   auto add(Args&&... args) -> void {
     ZoneScoped;
+
+    using DependenciesTuple = typename get_module_dependencies<T>::type;
+    check_dependencies<T>(DependenciesTuple{});
 
     auto type_index = std::type_index(typeid(T));
     module_types.emplace_back(type_index);

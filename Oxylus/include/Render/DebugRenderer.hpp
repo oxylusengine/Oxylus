@@ -4,9 +4,8 @@
 #include <Jolt/Renderer/DebugRenderer.h>
 #include <expected>
 #include <glm/ext/quaternion_float.hpp>
-
-#include <vuk/runtime/CommandBuffer.hpp>
 #include <vuk/Types.hpp>
+#include <vuk/runtime/CommandBuffer.hpp>
 
 #include "Core/Types.hpp"
 #include "Physics/RayCast.hpp"
@@ -15,9 +14,12 @@
 namespace ox {
 class PhysicsDebugRenderer;
 
+class Renderer;
+
 class DebugRenderer {
 public:
   constexpr static auto MODULE_NAME = "DebugRenderer";
+  using module_dependencies = std::tuple<Renderer>;
 
   struct Vertex {
     glm::vec3 position;
@@ -178,8 +180,9 @@ public:
     ECastShadow inCastShadow = ECastShadow::Off
   ) override;
   virtual Batch CreateTriangleBatch(const Triangle* inTriangles, int inTriangleCount) override;
-  virtual Batch
-  CreateTriangleBatch(const Vertex* inVertices, int inVertexCount, const u32* inIndices, int inIndexCount) override;
+  virtual Batch CreateTriangleBatch(
+    const Vertex* inVertices, int inVertexCount, const u32* inIndices, int inIndexCount
+  ) override;
   virtual void DrawGeometry(
     JPH::RMat44Arg inModelMatrix,
     const JPH::AABox& inWorldSpaceBounds,

@@ -50,10 +50,10 @@ App* create_application(const AppCommandLineArgs& args) {
     .with<Physics>()
     .with<Input>()
     .with<NetworkManager>()
-    .with<DebugRenderer>()
-    .with<ImGuiRenderer>()
     .with<RendererConfig>()
     .with<Renderer>()
+    .with<DebugRenderer>()
+    .with<ImGuiRenderer>()
     .with<Editor>();
 
   return app;
