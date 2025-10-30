@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <flecs.h>
 #include <imgui_internal.h>
+#include <vuk/vsl/Core.hpp>
 
 #include "Core/App.hpp"
 #include "Core/FileSystem.hpp"
@@ -25,7 +26,6 @@
 #include "Utils/EmbeddedBanner.hpp"
 #include "Utils/ImGuiScoped.hpp"
 #include "Utils/Log.hpp"
-#include "vuk/vsl/Core.hpp"
 
 namespace ox {
 auto Editor::init() -> std::expected<void, std::string> {

@@ -6,6 +6,7 @@
 #include <span>
 #include <vulkan/vulkan_core.h>
 
+#include "Core/Enum.hpp"
 #include "Core/Handle.hpp"
 #include "Core/Option.hpp"
 #include "Utils/Timestep.hpp"

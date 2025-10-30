@@ -1,7 +1,6 @@
 #include "Core/App.hpp"
 #include "Core/DefaultModules.hpp"
 #include "Core/EmbeddedLogo.hpp"
-#include "Core/Enum.hpp"
 #include "Editor.hpp"
 
 int main(int argc, char** argv) {
