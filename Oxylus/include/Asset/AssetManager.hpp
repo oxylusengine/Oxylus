@@ -8,6 +8,7 @@
 #include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/UUID.hpp"
+#include "Memory/Borrowed.hpp"
 #include "Memory/SlotMap.hpp"
 #include "Scene/Scene.hpp"
 #include "Scripting/LuaSystem.hpp"
@@ -65,6 +66,7 @@ public:
   auto import_asset(const std::filesystem::path& path) -> UUID;
 
   auto delete_asset(const UUID& uuid) -> void;
+  auto is_valid(const UUID &uuid) -> bool;
 
   //  ── Registered Assets ─────────────────────────────────────────────────
   // Assets that already exist in project root and have meta file with
@@ -108,16 +110,16 @@ public:
   auto load_script(const UUID& uuid) -> bool;
   auto unload_script(const UUID& uuid) -> bool;
 
-  auto get_asset(const UUID& uuid) -> Asset*;
+  auto get_asset(const UUID& uuid) -> Borrowed<Asset>;
 
   auto get_model(const UUID& uuid) -> Model*;
   auto get_model(ModelID mesh_id) -> Model*;
 
-  auto get_texture(const UUID& uuid) -> Texture*;
-  auto get_texture(TextureID texture_id) -> Texture*;
+  auto get_texture(const UUID& uuid) -> Borrowed<Texture>;
+  auto get_texture(TextureID texture_id) -> Borrowed<Texture>;
 
-  auto get_material(const UUID& uuid) -> Material*;
-  auto get_material(MaterialID material_id) -> Material*;
+  auto get_material(const UUID& uuid) -> Borrowed<Material>;
+  auto get_material(MaterialID material_id) -> Borrowed<Material>;
   auto set_material_dirty(MaterialID material_id) -> void;
   auto set_material_dirty(const UUID& uuid) -> void;
   auto set_all_materials_dirty(this AssetManager& self) -> void;

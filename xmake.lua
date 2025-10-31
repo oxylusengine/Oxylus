@@ -31,6 +31,7 @@ includes("xmake/packages.lua")
 includes("xmake/toolchains.lua")
 
 includes("Oxylus")
+includes("ResourceCompiler")
 if has_config("editor") then
     includes("OxylusEditor")
 end

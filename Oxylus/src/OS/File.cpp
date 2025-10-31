@@ -1,7 +1,7 @@
 #include "OS/File.hpp"
 
 namespace ox {
-File::File(const std::filesystem::path& path, FileAccess access) {
+File::File(const std::filesystem::path& path, FileAccess access) noexcept {
   auto file_handle = os::file_open(path, access);
   if (!file_handle.has_value()) {
     this->error = file_handle.error();
