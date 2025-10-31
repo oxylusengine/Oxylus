@@ -17,7 +17,7 @@ public:
   ViewportPanel();
   ~ViewportPanel() override = default;
 
-  void on_render(vuk::Extent3D extent, vuk::Format format) override;
+  void on_render(vuk::ImageAttachment swapchain_attachment) override;
 
   void set_context(Scene* scene, SceneHierarchyPanel& scene_hierarchy_panel);
 

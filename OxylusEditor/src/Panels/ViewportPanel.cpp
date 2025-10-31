@@ -108,7 +108,7 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
   }
 }
 
-void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
+void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar;
 
   if (on_begin(flags)) {
@@ -138,7 +138,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       ImGui::EndMenuBar();
     }
 
-    draw_stats_overlay(extent, draw_scene_stats);
+    draw_stats_overlay(swapchain_attachment.extent, draw_scene_stats);
 
     if (viewport_settings_popup)
       ImGui::OpenPopup("viewport_settings");
@@ -207,7 +207,7 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
 
       auto mouse_pos = ImGui::GetMousePos();
       glm::uvec2 picking_texel = get_mouse_texel_coords(
-        {extent.width, extent.height},
+        {swapchain_attachment.extent.width, swapchain_attachment.extent.height},
         _viewport_position,
         viewport_min_region,
         viewport_max_region,
@@ -223,12 +223,14 @@ void ViewportPanel::on_render(const vuk::Extent3D extent, vuk::Format format) {
       }
 
       const Renderer::RenderInfo render_info = {
-        .extent = extent,
-        .format = format,
         .viewport_offset = {_viewport_position.x, _viewport_position.y},
       };
-      auto scene_view_image = renderer_instance->render(render_info);
-      _scene->on_viewport_render(extent, format);
+
+      auto viewport_attachment = vuk::declare_ia("viewport", swapchain_attachment);
+      viewport_attachment = vuk::clear_image(std::move(viewport_attachment), vuk::Black<f32>);
+
+      auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
+      _scene->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
       ImGui::Image(
         App::mod<ImGuiRenderer>().add_image(std::move(scene_view_image)),
         ImVec2{fixed_width, _viewport_panel_size.y}
@@ -426,7 +428,7 @@ void ViewportPanel::on_update() {
     final_yaw_pitch = {glm::radians(-90.f), 0.f};
   }
 
-  const auto& window = App::get()->get_window();
+  const auto& window = App::get_window();
 
   auto& input_sys = App::mod<Input>();
   if (input_sys.get_key_pressed(KeyCode::F)) {
@@ -592,7 +594,21 @@ void ViewportPanel::draw_settings_panel() {
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
   if (ImGui::TreeNodeEx("Renderer", TREE_FLAGS, "%s", "Renderer")) {
-    ImGui::Text("GPU: %s", App::get_vkcontext().device_name.c_str());
+    auto& vk_context = App::get_vkcontext();
+    ImGui::Text("GPU: %s", vk_context.device_name.c_str());
+    ImGui::Text(
+      "Swapchain: %dx%d",
+      static_cast<u32>(vk_context.swapchain_extent.x),
+      static_cast<u32>(vk_context.swapchain_extent.y)
+    );
+    auto& window = App::get_window();
+    ImGui::Text(
+      "Window: %dx%d@%.1fhz x%.1f",
+      window.get_logical_width(),
+      window.get_logical_height(),
+      window.get_refresh_rate(),
+      window.get_window_content_scale()
+    );
     if (UI::icon_button(ICON_MDI_RELOAD, "Reload renderer"))
       RendererCVar::cvar_reload_renderer.toggle();
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {

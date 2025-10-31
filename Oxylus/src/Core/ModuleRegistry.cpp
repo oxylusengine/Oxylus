@@ -52,14 +52,4 @@ auto ModuleRegistry::update(this ModuleRegistry& self, const Timestep& timestep)
     }
   }
 }
-
-auto ModuleRegistry::render(this ModuleRegistry& self, vuk::Extent3D extent, vuk::Format format) -> void {
-  ZoneScoped;
-
-  for (const auto& cb : self.render_callbacks) {
-    if (cb.has_value()) {
-      cb.value()(extent, format);
-    }
-  }
-}
 } // namespace ox

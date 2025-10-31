@@ -6,8 +6,10 @@
 #include <span>
 #include <vulkan/vulkan_core.h>
 
+#include "Core/Enum.hpp"
 #include "Core/Handle.hpp"
 #include "Core/Option.hpp"
+#include "Utils/Timestep.hpp"
 
 namespace ox {
 enum class WindowCursor {
@@ -32,6 +34,7 @@ enum class WindowFlag : u32 {
   Borderless = 1 << 2,
   Maximized = 1 << 3,
   WorkAreaRelative = 1 << 4, // Width and height of the window will be relative to available work area size
+  HighPixelDensity = 1 << 5,
 };
 consteval void enable_bitmask(WindowFlag);
 
@@ -103,6 +106,7 @@ struct Window : Handle<Window> {
   static Window create(const WindowInfo& info);
   void destroy() const;
 
+  auto update(const Timestep& timestep) -> void;
   void poll(const WindowCallbacks& callbacks) const;
 
   static option<SystemDisplay> display_at(u32 monitor_id = WindowInfo::USE_PRIMARY_MONITOR);
@@ -118,10 +122,14 @@ struct Window : Handle<Window> {
   u32 get_width() const;
   u32 get_height() const;
 
+  u32 get_logical_width() const;
+  u32 get_logical_height() const;
+
   void* get_handle() const;
 
-  float get_content_scale() const;
+  f32 get_display_content_scale() const;
+  f32 get_window_content_scale() const;
 
-  float get_refresh_rate() const;
+  f32 get_refresh_rate() const;
 };
 } // namespace ox

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <expected>
+#include <string>
 #include <filesystem>
 #include <vector>
 
@@ -30,17 +32,14 @@ inline AutoCVar_Int cvar_show_imgui_demo("ui.imgui_demo", "show imgui demo windo
 
 class EditorConfig {
 public:
-  EditorConfig();
-  ~EditorConfig() = default;
+  constexpr static auto MODULE_NAME = "EditorConfig";
 
-  static EditorConfig* get() { return instance; }
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
-  void load_config();
-  void save_config() const;
-
-  void add_recent_project(const Project* path);
-
-  const std::vector<std::filesystem::path>& get_recent_projects() const { return recent_projects; }
+  auto add_recent_project(const Project* path) -> void;
+  auto remove_recent_project(const std::filesystem::path& path) -> void;
+  auto get_recent_projects() const -> const std::vector<std::filesystem::path>& { return recent_projects; }
 
 private:
   std::vector<std::filesystem::path> recent_projects{};

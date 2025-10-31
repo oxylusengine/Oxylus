@@ -6,10 +6,13 @@
 #include <ranges>
 #include <stb_image.h>
 
+#include "Core/App.hpp"
 #include "Core/Base.hpp"
 #include "Core/Enum.hpp"
 #include "Core/Handle.hpp"
+#include "Core/Input.hpp"
 #include "Memory/Stack.hpp"
+#include "UI/ImGuiRenderer.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
@@ -18,13 +21,17 @@ struct Handle<Window>::Impl {
   u32 width = {};
   u32 height = {};
 
+  u32 logical_width = {};
+  u32 logical_height = {};
+
   WindowCursor current_cursor = WindowCursor::Arrow;
   glm::uvec2 cursor_position = {};
 
   SDL_Window* handle = nullptr;
   u32 monitor_id = {};
   std::array<SDL_Cursor*, static_cast<usize>(WindowCursor::Count)> cursors = {};
-  f32 content_scale = {};
+  f32 display_content_scale = {};
+  f32 window_content_scale = {};
   f32 refresh_rate = {};
 };
 
@@ -74,7 +81,7 @@ Window Window::create(const WindowInfo& info) {
   impl->width = static_cast<u32>(new_width);
   impl->height = static_cast<u32>(new_height);
   impl->monitor_id = info.monitor;
-  impl->content_scale = display->content_scale;
+  impl->display_content_scale = display->content_scale;
   impl->refresh_rate = display->refresh_rate;
 
   const auto window_properties = SDL_CreateProperties();
@@ -84,6 +91,9 @@ Window Window::create(const WindowInfo& info) {
   SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, new_width);
   SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, new_height);
   SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, window_flags);
+  if (info.flags & WindowFlag::HighPixelDensity) {
+    SDL_SetBooleanProperty(window_properties, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
+  }
   impl->handle = SDL_CreateWindowWithProperties(window_properties);
   SDL_DestroyProperties(window_properties);
 
@@ -124,10 +134,22 @@ Window Window::create(const WindowInfo& info) {
   i32 real_width;
   i32 real_height;
   SDL_GetWindowSizeInPixels(impl->handle, &real_width, &real_height);
+  i32 logical_width;
+  i32 logical_height;
+  SDL_GetWindowSize(impl->handle, &logical_width, &logical_height);
   SDL_StartTextInput(impl->handle);
+
+  f32 window_content_scale = SDL_GetWindowDisplayScale(impl->handle);
+  if (window_content_scale == 0) {
+    OX_LOG_ERROR("{}", SDL_GetError());
+  }
+  impl->window_content_scale = window_content_scale;
 
   impl->width = real_width;
   impl->height = real_height;
+
+  impl->logical_width = logical_width;
+  impl->logical_height = logical_height;
 
   const auto self = Window(impl);
   self.set_cursor(WindowCursor::Arrow);
@@ -139,6 +161,85 @@ void Window::destroy() const {
 
   SDL_StopTextInput(impl->handle);
   SDL_DestroyWindow(impl->handle);
+}
+
+void Window::update(const Timestep& timestep) {
+  WindowCallbacks window_callbacks = {};
+  window_callbacks.user_data = nullptr;
+  window_callbacks.on_resize = [](void* user_data, const glm::uvec2 size) {
+    auto& event_system = App::get_event_system();
+    auto emit_result = event_system.emit<WindowResizeEvent>(WindowResizeEvent{.width = size.x, .height = size.y});
+  };
+  window_callbacks.on_close = [](void* user_data) {
+    App::get()->should_stop();
+  };
+  window_callbacks.on_mouse_pos = [](void* user_data, const glm::vec2 position, glm::vec2 relative) {
+    if (App::has_mod<ImGuiRenderer>()) {
+      auto& imgui_renderer = App::mod<ImGuiRenderer>();
+      imgui_renderer.on_mouse_pos(position);
+    }
+
+    auto& input_system = App::mod<Input>();
+    input_system.input_data.mouse_offset_x = input_system.input_data.mouse_pos.x - position.x;
+    input_system.input_data.mouse_offset_y = input_system.input_data.mouse_pos.y - position.y;
+    input_system.input_data.mouse_pos = position;
+    input_system.input_data.mouse_pos_rel = relative;
+    input_system.input_data.mouse_moved = true;
+  };
+  window_callbacks.on_mouse_button = [](void* user_data, const u8 button, const bool down) {
+    if (App::has_mod<ImGuiRenderer>()) {
+      auto& imgui_renderer = App::mod<ImGuiRenderer>();
+      imgui_renderer.on_mouse_button(button, down);
+    }
+
+    auto& input_system = App::mod<Input>();
+    const auto ox_button = Input::to_mouse_code(button);
+    if (down) {
+      input_system.set_mouse_clicked(ox_button, true);
+      input_system.set_mouse_released(ox_button, false);
+      input_system.set_mouse_held(ox_button, true);
+    } else {
+      input_system.set_mouse_clicked(ox_button, false);
+      input_system.set_mouse_released(ox_button, true);
+      input_system.set_mouse_held(ox_button, false);
+    }
+  };
+  window_callbacks.on_mouse_scroll = [](void* user_data, const glm::vec2 offset) {
+    if (App::has_mod<ImGuiRenderer>()) {
+      auto& imgui_renderer = App::mod<ImGuiRenderer>();
+      imgui_renderer.on_mouse_scroll(offset);
+    }
+
+    auto& input_system = App::mod<Input>();
+    input_system.input_data.scroll_offset_y = offset.y;
+  };
+  window_callbacks.on_key =
+    [](void* user_data, const u32 key_code, const u32 scan_code, const u16 mods, const bool down, const bool repeat) {
+      if (App::has_mod<ImGuiRenderer>()) {
+        auto& imgui_renderer = App::mod<ImGuiRenderer>();
+        imgui_renderer.on_key(key_code, scan_code, mods, down);
+      }
+
+      auto& input_system = App::mod<Input>();
+      const auto ox_key_code = Input::to_keycode(key_code, scan_code);
+      if (down) {
+        input_system.set_key_pressed(ox_key_code, !repeat);
+        input_system.set_key_released(ox_key_code, false);
+        input_system.set_key_held(ox_key_code, true);
+      } else {
+        input_system.set_key_pressed(ox_key_code, false);
+        input_system.set_key_released(ox_key_code, true);
+        input_system.set_key_held(ox_key_code, false);
+      }
+    };
+  window_callbacks.on_text_input = [](void* user_data, const c8* text) {
+    if (App::has_mod<ImGuiRenderer>()) {
+      auto& imgui_renderer = App::mod<ImGuiRenderer>();
+      imgui_renderer.on_text_input(text);
+    }
+  };
+
+  poll(window_callbacks);
 }
 
 void Window::poll(const WindowCallbacks& callbacks) const {
@@ -294,12 +395,15 @@ VkSurfaceKHR Window::get_surface(VkInstance instance) const {
 }
 
 u32 Window::get_width() const { return impl->width; }
-
 u32 Window::get_height() const { return impl->height; }
+
+u32 Window::get_logical_width() const { return impl->logical_width; }
+u32 Window::get_logical_height() const { return impl->logical_height; }
 
 void* Window::get_handle() const { return impl->handle; }
 
-float Window::get_content_scale() const { return impl->content_scale; }
+f32 Window::get_display_content_scale() const { return impl->display_content_scale; }
+f32 Window::get_window_content_scale() const { return impl->window_content_scale; }
 
 float Window::get_refresh_rate() const { return impl->refresh_rate; }
 } // namespace ox

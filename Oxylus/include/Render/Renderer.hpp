@@ -22,8 +22,6 @@ public:
   vuk::Unique<vuk::Buffer> quad_index_buffer = vuk::Unique<vuk::Buffer>();
 
   struct RenderInfo {
-    vuk::Extent3D extent;
-    vuk::Format format;
     glm::uvec2 viewport_offset = {};
   };
 

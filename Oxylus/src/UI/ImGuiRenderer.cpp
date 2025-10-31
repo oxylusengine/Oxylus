@@ -69,8 +69,12 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   io.BackendRendererName = "oxylus";
   io.Fonts->TexDesiredFormat = ImTextureFormat_RGBA32;
 
-  auto& allocator = *App::get_vkcontext().superframe_allocator;
-  auto& ctx = allocator.get_context();
+  auto& window = App::get_window();
+  io.ConfigDpiScaleFonts = true;
+  io.ConfigDpiScaleViewports = true;
+  io.DisplayFramebufferScale = ImVec2(window.get_window_content_scale(), window.get_window_content_scale());
+
+  auto& runtime = *App::get_vkcontext().runtime;
 
   auto& vfs = App::get_vfs();
   auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
@@ -79,7 +83,7 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   slang.create_session({.root_directory = shaders_dir, .definitions = {}});
 
   slang.create_pipeline(
-    ctx,
+    runtime,
     "imgui",
     {.path = shaders_dir / "passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}}
   );
@@ -92,13 +96,12 @@ auto ImGuiRenderer::deinit() -> std::expected<void, std::string> {
   return {};
 }
 
-void ImGuiRenderer::begin_frame(const f64 delta_time, const vuk::Extent3D extent) {
+void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size) {
   ZoneScoped;
 
-  const App* app = App::get();
   auto& imgui = ImGui::GetIO();
   imgui.DeltaTime = static_cast<f32>(delta_time);
-  imgui.DisplaySize = ImVec2(static_cast<f32>(extent.width), static_cast<f32>(extent.height));
+  imgui.DisplaySize = ImVec2(logical_size.x, logical_size.y);
 
   rendering_images.clear();
   acquired_images.clear();
@@ -109,9 +112,10 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, const vuk::Extent3D extent
     return;
   }
 
+  auto& window = App::get_window();
   const auto imgui_cursor = ImGui::GetMouseCursor();
   if (imgui.MouseDrawCursor || imgui_cursor == ImGuiMouseCursor_None) {
-    app->get_window().show_cursor(false);
+    window.show_cursor(false);
   } else {
     auto next_cursor = WindowCursor::Arrow;
     switch (imgui_cursor) {
@@ -126,10 +130,10 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, const vuk::Extent3D extent
       case ImGuiMouseCursor_NotAllowed: next_cursor = WindowCursor::NotAllowed; break;
       default                         : break;
     }
-    app->get_window().show_cursor(true);
+    window.show_cursor(true);
 
-    if (app->get_window().get_cursor() != next_cursor) {
-      app->get_window().set_cursor(next_cursor);
+    if (window.get_cursor() != next_cursor) {
+      window.set_cursor(next_cursor);
     }
   }
 }

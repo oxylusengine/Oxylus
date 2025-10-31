@@ -14,7 +14,7 @@ public:
   SceneHierarchyPanel();
 
   auto on_update() -> void override;
-  auto on_render(vuk::Extent3D extent, vuk::Format format) -> void override;
+  auto on_render(vuk::ImageAttachment swapchain_attachment) -> void override;
 
   auto set_scene(Scene* scene) -> void { viewer.set_scene(scene); }
   auto get_scene() -> Scene* { return viewer.get_scene(); }

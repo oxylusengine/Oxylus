@@ -183,18 +183,9 @@ auto RendererInstance::apply_bloom(
   );
 }
 
-auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessContext& context, vuk::Format format)
+auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessContext& context)
   -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
-
-  auto result_attachment = vuk::declare_ia(
-    "result",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-     .format = format,
-     .sample_count = vuk::Samples::e1}
-  );
-  result_attachment.same_shape_as(context.final_attachment);
-  result_attachment = vuk::clear_image(std::move(result_attachment), vuk::Black<f32>);
 
   auto tonemap_pass = vuk::make_pass(
     "tonemap",
@@ -224,7 +215,7 @@ auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessCon
   );
 
   return tonemap_pass(
-    std::move(result_attachment),
+    std::move(context.dst_attachment),
     std::move(context.final_attachment),
     std::move(context.bloom_upsampled_attachment),
     std::move(self.prepared_frame.exposure_buffer)

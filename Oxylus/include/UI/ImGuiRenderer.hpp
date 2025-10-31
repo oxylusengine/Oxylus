@@ -10,9 +10,12 @@
 
 namespace ox {
 class VkContext;
+class Renderer;
+class Input;
 class ImGuiRenderer {
 public:
   constexpr static auto MODULE_NAME = "ImGuiRenderer";
+  using module_dependencies = std::tuple<Input, Renderer>;
 
   std::shared_ptr<Texture> font_texture = nullptr;
   std::vector<vuk::Value<vuk::ImageAttachment>> rendering_images;
@@ -21,7 +24,7 @@ public:
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
 
-  void begin_frame(f64 delta_time, vuk::Extent3D extent);
+  void begin_frame(f64 delta_time, glm::vec2 logical_size);
   [[nodiscard]]
   vuk::Value<vuk::ImageAttachment> end_frame(VkContext& context, vuk::Value<vuk::ImageAttachment> target);
 

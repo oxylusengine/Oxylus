@@ -55,7 +55,7 @@ InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION
   });
 }
 
-void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
+void InspectorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   auto& editor = App::mod<Editor>();
   auto& editor_context = editor.get_context();
   scene_ = editor.get_selected_scene();
@@ -99,7 +99,7 @@ void InspectorPanel::draw_material_properties(
   Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
 ) {
   if (material_uuid) {
-    const auto& window = App::get()->get_window();
+    const auto& window = App::get_window();
     static auto uuid_copy = material_uuid;
 
     auto uuid_str = fmt::format("UUID: {}", material_uuid.str());
