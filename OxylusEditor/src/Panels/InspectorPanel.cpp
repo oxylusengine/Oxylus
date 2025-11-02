@@ -62,35 +62,34 @@ void InspectorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
 
   on_begin();
 
-  editor_context.entity
-    .and_then([this](flecs::entity e) {
-      this->draw_components(e);
-      return option<std::monostate>{};
-    })
-    .or_else([this, &editor_context]() {
-      if (editor_context.type != EditorContext::Type::File)
-        return option<std::monostate>{};
-
-      return editor_context.str.and_then([this](const std::filesystem::path& path) {
-        if (path.extension() != "oxasset")
-          return option<std::monostate>{};
-
-        auto& asset_man = App::mod<AssetManager>();
-        auto meta_file = asset_man.read_meta_file(path);
-        if (!meta_file)
-          return option<std::monostate>{};
-
-        auto uuid_str_json = meta_file->doc["uuid"].get_string();
-        if (uuid_str_json.error())
-          return option<std::monostate>{};
-
-        return UUID::from_string(uuid_str_json.value_unsafe()).and_then([this, &asset_man](UUID&& uuid) {
-          if (auto asset = asset_man.get_asset(uuid))
-            this->draw_asset_info(std::move(asset));
-          return option<std::monostate>{};
-        });
-      });
-    });
+  editor_context.entity.and_then([this](flecs::entity e) {
+    this->draw_components(e);
+    return option<std::monostate>{};
+  });
+  // .or_else([this, &editor_context]() {
+  //   if (editor_context.type != EditorContext::Type::File)
+  //     return option<std::monostate>{};
+  //
+  //   return editor_context.str.and_then([this](const std::filesystem::path& path) {
+  //     if (path.extension() != "oxasset")
+  //       return option<std::monostate>{};
+  //
+  //     auto& asset_man = App::mod<AssetManager>();
+  //     auto meta_file = asset_man.read_meta_file(path);
+  //     if (!meta_file)
+  //       return option<std::monostate>{};
+  //
+  //     auto uuid_str_json = meta_file->doc["uuid"].get_string();
+  //     if (uuid_str_json.error())
+  //       return option<std::monostate>{};
+  //
+  //     return UUID::from_string(uuid_str_json.value_unsafe()).and_then([this, &asset_man](UUID&& uuid) {
+  //       if (auto asset = asset_man.get_asset(uuid))
+  //         this->draw_asset_info(std::move(asset));
+  //       return option<std::monostate>{};
+  //     });
+  //   });
+  // });
 
   on_end();
 }

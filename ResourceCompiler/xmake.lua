@@ -10,6 +10,9 @@ target("ResourceCompiler")
 
   add_defines("OXRC_EXPORTS=1", { public = false })
 
-  add_packages("shader-slang", { public = false })
+  add_packages(
+    "shader-slang",
+    "simdjson",
+    { public = false })
 
 target_end()

@@ -73,8 +73,6 @@ Scene::~Scene() {
     system->on_remove(this);
   }
 
-  world.release();
-
   lua_systems.clear();
   auto& lua_manager = App::mod<LuaManager>();
   lua_manager.get_state()->collect_gc();

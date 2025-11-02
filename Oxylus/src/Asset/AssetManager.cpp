@@ -2,6 +2,7 @@
 
 #include <glm/gtc/type_ptr.hpp>
 #include <meshoptimizer.h>
+#include <simdjson.h>
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
 
@@ -18,6 +19,12 @@
 #include "Utils/Profiler.hpp"
 
 namespace ox {
+struct AssetMetaFile {
+  simdjson::padded_string contents;
+  simdjson::ondemand::parser parser;
+  simdjson::simdjson_result<simdjson::ondemand::document> doc;
+};
+
 auto begin_asset_meta(JsonWriter& writer, const UUID& uuid, AssetType type) -> void {
   ZoneScoped;
 
@@ -282,7 +289,7 @@ auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> Asse
     case fnv64_c(".OXASSET"): return AssetFileType::Meta;
     case fnv64_c(".KTX2")   : return AssetFileType::KTX2;
     case fnv64_c(".LUA")    : return AssetFileType::LUA;
-    default                : return AssetFileType::None;
+    default                 : return AssetFileType::None;
   }
 }
 

@@ -1,7 +1,5 @@
 #pragma once
 
-#include <simdjson.h>
-
 #include "Asset/AssetFile.hpp"
 #include "Asset/AudioSource.hpp"
 #include "Asset/Material.hpp"
@@ -38,16 +36,11 @@ struct Asset {
   auto release_ref() -> bool { return --std::atomic_ref(ref_count) == 0; }
 };
 
+struct AssetMetaFile;
 using AssetRegistry = ankerl::unordered_dense::map<UUID, Asset>;
 class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
-
-  struct AssetMetaFile {
-    simdjson::padded_string contents;
-    simdjson::ondemand::parser parser;
-    simdjson::simdjson_result<simdjson::ondemand::document> doc;
-  };
 
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
@@ -66,7 +59,7 @@ public:
   auto import_asset(const std::filesystem::path& path) -> UUID;
 
   auto delete_asset(const UUID& uuid) -> void;
-  auto is_valid(const UUID &uuid) -> bool;
+  auto is_valid(const UUID& uuid) -> bool;
 
   //  ── Registered Assets ─────────────────────────────────────────────────
   // Assets that already exist in project root and have meta file with

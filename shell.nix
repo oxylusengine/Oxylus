@@ -33,6 +33,7 @@ in pkgs.mkShell.override {
     pkgs.sdl3
   ];
 
+  NIX_ENFORCE_NO_NATIVE = "0";
   shellHook = ''
     export LD_LIBRARY_PATH=${pkgs.llvmPackages_21.libcxx}/lib:$LD_LIBRARY_PATH
     # slang needs libstdc++

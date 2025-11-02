@@ -1,7 +1,7 @@
 #pragma once
 
-#include <expected>
 #include <filesystem>
+#include <source_location>
 #include <vector>
 
 #include "Asset/AssetFile.hpp"
@@ -31,17 +31,6 @@
 #endif
 
 namespace ox::rc {
-// TODO: Find better error names
-enum class Error {
-  Unknown = 0,
-  ShaderSession,
-  ShaderModuleCompilation,
-  ShaderEntryPointCompilation,
-  ShaderEntryPointComposer,
-  ShaderEntryPointLinker,
-  ShaderEntryPointCodegen,
-};
-
 enum class AssetID : u64 { Invalid = ~0_u64 };
 
 enum class ShaderOptimization : i32 {
@@ -52,9 +41,10 @@ enum class ShaderOptimization : i32 {
 };
 
 struct ShaderSessionInfo {
+  std::string name = {};
+  std::filesystem::path root_directory = {};
   ShaderOptimization optimization = ShaderOptimization::Default;
   bool debug_symbols = false;
-  std::filesystem::path root_directory = {};
   std::vector<std::pair<std::string, std::string>> definitions = {};
 };
 
@@ -72,9 +62,9 @@ protected:
 
 public:
   ShaderSession(Impl* impl_) : impl(impl_) {}
+  explicit operator bool() const { return impl; }
 
-  auto compile_shader(const ShaderInfo& info) -> std::expected<AssetID, Error>;
-  auto get_messages() -> std::vector<std::string>;
+  auto compile_shader(const ShaderInfo& info) -> AssetID;
 };
 
 struct CompiledAsset;
@@ -85,16 +75,25 @@ protected:
   Impl* impl;
 
 public:
-  static auto create() -> std::expected<Session, Error>;
-  static auto create(std::span<std::filesystem::path> meta_paths) -> std::expected<Session, Error>;
+  static auto create() -> Session;
+  static auto create(std::span<std::filesystem::path> meta_paths) -> Session;
+  auto destroy() -> void;
 
   Session() = default;
   Session(Impl* impl_) : impl(impl_) {}
-  auto create_shader_session(const ShaderSessionInfo& info) -> std::expected<ShaderSession, Error>;
+  explicit operator bool() const { return impl; }
+
+  auto import_meta(const std::filesystem::path& path) -> bool;
+
+  auto create_shader_session(const ShaderSessionInfo& info) -> ShaderSession;
 
   auto create_asset(AssetType type) -> AssetID;
   auto get_asset_data(AssetID asset_id) -> std::span<u8>;
   auto get_shader_asset(AssetID asset_id) -> ShaderAsset;
+
+  auto push_error(std::string str, std::source_location LOC = std::source_location::current()) -> void;
+  auto push_message(std::string str, std::source_location LOC = std::source_location::current()) -> void;
+  auto get_messages() -> std::vector<std::string>;
 
 protected:
   auto get_asset(AssetID asset_id) -> Borrowed<CompiledAsset>;

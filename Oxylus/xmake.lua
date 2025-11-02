@@ -54,16 +54,18 @@ target("Oxylus")
     on_config(function (target)
         if (target:has_tool("cxx", "msvc", "cl")) then
             target:add("defines", "OX_COMPILER_MSVC=1", { force = true, public = true })
-            target:add("cxflags", "/permissive- /EHsc /bigobj -wd4100 /Zc:preprocessor", { public = true })
+            target:add("cxflags", "/arch:AVX2 /permissive- /EHsc /bigobj -wd4100 /Zc:preprocessor", { public = true })
         elseif (target:has_tool("cxx", "clang_cl", "clang-cl")) then
             target:add("defines", "OX_COMPILER_CLANGCL=1", { force = true, public = true })
-            target:add("cxflags", "/permissive- /EHsc /bigobj -wd4100", { public = true })
+            target:add("cxflags", "/arch:AVX2 /permissive- /EHsc /bigobj -wd4100", { public = true })
         elseif(target:has_tool("cxx", "clang", "clangxx")) then
             target:add("defines", "OX_COMPILER_CLANG=1", { force = true, public = true })
             target:add("cxflags", "-fPIC", { public = false })
+            target:add("cxflags", "-march=native", { public = true })
         elseif target:has_tool("cxx", "gcc", "gxx") then
             target:add("defines", "OX_COMPILER_GCC=1", { force = true, public = true })
             target:add("cxflags", "-fPIC", { public = false })
+            target:add("cxflags", "-march=native", { public = true })
         end
     end)
 

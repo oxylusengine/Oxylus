@@ -9,6 +9,11 @@
 #include "ResourceCompiler.hpp"
 
 namespace ox::rc {
+struct ShaderCompileRequest {
+  ShaderSessionInfo session_info = {};
+  std::vector<ShaderInfo> shader_infos = {};
+};
+
 struct CompiledAsset {
   AssetType type = AssetType::None;
   union {
@@ -18,6 +23,9 @@ struct CompiledAsset {
 };
 
 struct Session::Impl {
+  std::shared_mutex messages_mutex = {};
+  std::vector<std::string> messages = {};
+
   std::shared_mutex session_mutex = {};
   Slang::ComPtr<slang::IGlobalSession> slang_global_session = {};
   std::vector<std::unique_ptr<ShaderSession::Impl>> shader_sessions = {};
@@ -26,6 +34,8 @@ struct Session::Impl {
   std::shared_mutex assets_mutex = {};
   SlotMap<CompiledAsset, AssetID> assets = {};
   std::vector<std::vector<u8>> asset_datas = {};
+
+  std::vector<ShaderCompileRequest> shader_compile_requests = {};
 };
 
 } // namespace ox::rc

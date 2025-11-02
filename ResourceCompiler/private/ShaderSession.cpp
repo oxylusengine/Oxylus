@@ -9,12 +9,15 @@
 #include "ResourceCompiler.hpp"
 
 namespace ox::rc {
-auto ShaderSession::compile_shader(const ShaderInfo& info) -> std::expected<AssetID, Error> {
+auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
   auto diagnostics_blob = Slang::ComPtr<slang::IBlob>();
   const auto& path_str = info.path.string();
   const auto source_data = File::to_string(path_str);
   if (source_data.empty()) {
-    return std::unexpected(Error::ShaderModuleCompilation);
+    impl->rc_session.push_error(
+      fmt::format("An error occured during compiling '{}::{}', the file is empty.", impl->name, info.module_name)
+    );
+    return AssetID::Invalid;
   }
 
   auto* slang_module = impl->slang_session->loadModuleFromSourceString(
@@ -25,9 +28,11 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> std::expected<Asse
   );
 
   if (diagnostics_blob) {
-    impl->diagnostic_messages.push_back(
-      std::string(static_cast<const c8*>(diagnostics_blob->getBufferPointer()), diagnostics_blob->getBufferSize())
+    auto sv = std::string_view(
+      static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
+      diagnostics_blob->getBufferSize()
     );
+    impl->rc_session.push_message(fmt::format("{}::{} {}", impl->name, info.module_name, sv));
   }
 
   auto slang_stage_to_entry_kind = [](SlangStage slang_stage) {
@@ -45,9 +50,20 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> std::expected<Asse
   for (const auto& entry_point_name : info.entry_points) {
     auto entry_point = Slang::ComPtr<slang::IEntryPoint>();
     if (SLANG_FAILED(slang_module->findEntryPointByName(entry_point_name.c_str(), entry_point.writeRef()))) {
-      auto msg = fmt::format("Shader entry point '{}:{}' is not found.", info.module_name, entry_point_name);
-      impl->diagnostic_messages.emplace_back(std::move(msg));
-      return std::unexpected(Error::ShaderEntryPointCompilation);
+      auto sv = std::string_view(
+        static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
+        diagnostics_blob->getBufferSize()
+      );
+      impl->rc_session.push_error(
+        fmt::format(
+          "An error occured while compiling entry point {}::{}::{} {}",
+          impl->name,
+          info.module_name,
+          entry_point_name,
+          sv
+        )
+      );
+      return AssetID::Invalid;
     }
 
     // Composition
@@ -62,30 +78,32 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> std::expected<Asse
       diagnostics_blob.writeRef()
     );
     if (diagnostics_blob) {
-      auto diag_msg = std::string_view(
+      auto sv = std::string_view(
         static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
         diagnostics_blob->getBufferSize()
       );
-      auto msg = fmt::format("Slang Composer: [{}] {}", info.module_name, diag_msg);
-      impl->diagnostic_messages.push_back(std::move(msg));
+      impl->rc_session.push_message(
+        fmt::format("[Slang Composer] {}::{}::{} {}", impl->name, info.module_name, entry_point_name, sv)
+      );
     }
     if (SLANG_FAILED(compose_result)) {
-      return std::unexpected(Error::ShaderEntryPointComposer);
+      return AssetID::Invalid;
     }
 
     // Linking
     auto linked_program = Slang::ComPtr<slang::IComponentType>();
     auto link_result = composed_program->link(linked_program.writeRef(), diagnostics_blob.writeRef());
     if (diagnostics_blob) {
-      auto diag_msg = std::string_view(
+      auto sv = std::string_view(
         static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
         diagnostics_blob->getBufferSize()
       );
-      auto msg = fmt::format("Slang Linker: [{}] {}", info.module_name, diag_msg);
-      impl->diagnostic_messages.push_back(std::move(msg));
+      impl->rc_session.push_message(
+        fmt::format("[Slang Linker] {}::{}::{} {}", impl->name, info.module_name, entry_point_name, sv)
+      );
     }
     if (SLANG_FAILED(link_result)) {
-      return std::unexpected(Error::ShaderEntryPointLinker);
+      return AssetID::Invalid;
     }
 
     // Reflection
@@ -97,15 +115,16 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> std::expected<Asse
     auto spirv_code = Slang::ComPtr<slang::IBlob>();
     auto codegen_result = linked_program->getEntryPointCode(0, 0, spirv_code.writeRef(), diagnostics_blob.writeRef());
     if (diagnostics_blob) {
-      auto diag_msg = std::string_view(
+      auto sv = std::string_view(
         static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
         diagnostics_blob->getBufferSize()
       );
-      auto msg = fmt::format("Slang Codegen: [{}] {}", info.module_name, diag_msg);
-      impl->diagnostic_messages.push_back(std::move(msg));
+      impl->rc_session.push_message(
+        fmt::format("[Slang Codegen] {}::{}::{} {}", impl->name, info.module_name, entry_point_name, sv)
+      );
     }
     if (SLANG_FAILED(codegen_result)) {
-      return std::unexpected(Error::ShaderEntryPointCodegen);
+      return AssetID::Invalid;
     }
 
     auto& [name_offset, name_length] = shader_asset.entry_point_names[entry_point_kind];
@@ -127,10 +146,6 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> std::expected<Asse
   impl->rc_session.set_asset_data(asset_id, std::move(asset_data));
 
   return asset_id;
-}
-
-auto ShaderSession::get_messages() -> std::vector<std::string> { //
-  return std::move(impl->diagnostic_messages);
 }
 
 } // namespace ox::rc
