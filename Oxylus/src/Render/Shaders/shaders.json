@@ -1,0 +1,257 @@
+{
+    "type": "shader",
+    "shader_sessions": [
+        {
+            "root_directory": "Resources/Shaders",
+            "session_name": "main",
+            "debug_symbols": false,
+            "optimization": "default",
+            "programs": [
+                {
+                    "name": "imgui",
+                    "path": "passes/imgui.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ]
+                },
+                {
+                    "name": "2d_forward",
+                    "path": "passes/2d_forward.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ],
+                    "bindless": true
+                },
+                {
+                    "name": "sky_transmittance",
+                    "path": "passes/sky_transmittance.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "sky_multiscatter",
+                    "path": "passes/sky_multiscattering.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "sky_view",
+                    "path": "passes/sky_view.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "sky_aerial_perspective",
+                    "path": "passes/sky_aerial_perspective.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "vis_cull_meshes",
+                    "path": "passes/cull_meshes.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "vis_generate_cull_commands",
+                    "path": "passes/cull_meshes.slang",
+                    "entry_points": [
+                        "generate_commands_cs_main"
+                    ]
+                },
+                {
+                    "name": "vis_cull_meshlets",
+                    "path": "passes/cull_meshlets.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "vis_cull_triangles",
+                    "path": "passes/cull_triangles.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "visbuffer_encode",
+                    "path": "passes/visbuffer_encode.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ],
+                    "bindless": true
+                },
+                {
+                    "name": "visbuffer_clear",
+                    "path": "passes/visbuffer_clear.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "visbuffer_decode",
+                    "path": "passes/visbuffer_decode.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ],
+                    "bindless": true
+                },
+                {
+                    "name": "shadowmap_cull_meshes",
+                    "path": "passes/shadowmap_cull_meshes.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "shadowmap_generate_cull_commands",
+                    "path": "passes/shadowmap_cull_meshes.slang",
+                    "entry_points": [
+                        "generate_commands_cs_main"
+                    ]
+                },
+                {
+                    "name": "shadowmap_cull_meshlets",
+                    "path": "passes/shadowmap_cull_meshlets.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "shadowmap_cull_triangles",
+                    "path": "passes/shadowmap_cull_triangles.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "shadowmap_draw",
+                    "path": "passes/shadowmap_draw.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ]
+                },
+                {
+                    "name": "debug_view",
+                    "path": "passes/debug_view.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ]
+                },
+                {
+                    "name": "pbr_apply",
+                    "path": "passes/pbr_apply.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ]
+                },
+                {
+                    "name": "hiz",
+                    "path": "passes/hiz.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "histogram_generate",
+                    "path": "passes/histogram_generate.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "histogram_average",
+                    "path": "passes/histogram_average.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "tonemap",
+                    "path": "passes/tonemap.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ]
+                },
+                {
+                    "name": "bloom_prefilter",
+                    "path": "passes/bloom/bloom_prefilter.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "bloom_downsample",
+                    "path": "passes/bloom/bloom_downsample.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "bloom_upsample",
+                    "path": "passes/bloom/bloom_upsample.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "vbgtao_prefilter",
+                    "path": "passes/gtao/vbgtao_prefilter.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "vbgtao_main",
+                    "path": "passes/gtao/vbgtao_main.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "vbgtao_denoise",
+                    "path": "passes/gtao/vbgtao_denoise.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                },
+                {
+                    "name": "fxaa",
+                    "path": "passes/fxaa/fxaa.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ]
+                },
+                {
+                    "name": "debug_mesh",
+                    "path": "passes/debug_mesh.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ]
+                },
+                {
+                    "name": "contact_shadows",
+                    "path": "passes/contact_shadows.slang",
+                    "entry_points": [
+                        "cs_main"
+                    ]
+                }
+            ]
+        }
+    ]
+}
