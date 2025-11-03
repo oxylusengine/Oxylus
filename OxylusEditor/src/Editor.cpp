@@ -78,7 +78,7 @@ auto Editor::init() -> std::expected<void, std::string> {
 
   if (auto project_arg = App::get()->get_command_line_args().get_index("project=")) {
     if (auto next_arg = App::get()->get_command_line_args().get(project_arg.value() + 1)) {
-      get_panel<ProjectPanel>()->load_project_for_editor(next_arg->arg_str);
+      get_panel<ProjectPanel>()->load_project_for_editor(next_arg.value());
     } else {
       OX_LOG_ERROR("Project argument missing a path!");
     }

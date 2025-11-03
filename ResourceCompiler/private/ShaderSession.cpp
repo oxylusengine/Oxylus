@@ -2,6 +2,7 @@
 
 #include <OS/File.hpp>
 #include <fmt/format.h>
+#include <fmt/std.h>
 #include <slang-com-ptr.h>
 #include <slang.h>
 #include <span>
@@ -11,18 +12,24 @@
 namespace ox::rc {
 auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
   auto diagnostics_blob = Slang::ComPtr<slang::IBlob>();
-  const auto& path_str = info.path.string();
-  const auto source_data = File::to_string(path_str);
+  auto shader_path = impl->virtual_fs->m_root_dir / info.path;
+  auto shader_path_str = shader_path.string();
+  const auto source_data = File::to_string(shader_path);
   if (source_data.empty()) {
     impl->rc_session.push_error(
-      fmt::format("An error occured during compiling '{}::{}', the file is empty.", impl->name, info.module_name)
+      fmt::format(
+        "An error occured during compiling '{}::{}', the file '{}' is empty.",
+        impl->name,
+        info.module_name,
+        shader_path
+      )
     );
     return AssetID::Invalid;
   }
 
   auto* slang_module = impl->slang_session->loadModuleFromSourceString(
     info.module_name.c_str(),
-    path_str.c_str(),
+    shader_path_str.c_str(),
     source_data.c_str(),
     diagnostics_blob.writeRef()
   );
@@ -144,6 +151,8 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
   auto asset_id = impl->rc_session.create_asset(AssetType::Shader);
   impl->rc_session.set_asset_info(asset_id, shader_asset);
   impl->rc_session.set_asset_data(asset_id, std::move(asset_data));
+
+  impl->rc_session.push_message(fmt::format("Compiled shader {}", info.module_name));
 
   return asset_id;
 }

@@ -22,6 +22,7 @@ auto read_shader_session_meta(Session::Impl* impl, simdjson::ondemand::value& js
     return false;
   }
   auto session_name_str = session_name_json.get_string().value_unsafe();
+  shader_session_info.name = session_name_str;
 
   auto root_directory_json = json["root_directory"];
   if (root_directory_json.error() || !root_directory_json.is_string()) {
@@ -258,7 +259,7 @@ auto Session::create_shader_session(const ShaderSessionInfo& info) -> ShaderSess
     .compilerOptionEntryCount = static_cast<u32>(count_of(entries)),
   };
 
-  auto slang_fs = std::make_unique<SlangVirtualFS>(info.root_directory);
+  auto slang_fs = std::make_unique<SlangVirtualFS>(std::filesystem::absolute(info.root_directory));
   const auto search_path = info.root_directory.string();
   const auto* search_path_cstr = search_path.c_str();
   const c8* search_paths[] = {search_path_cstr};
@@ -292,6 +293,17 @@ auto Session::create_shader_session(const ShaderSessionInfo& info) -> ShaderSess
 
     return shader_session;
   }
+}
+
+auto Session::compile_requests() -> bool {
+  for (auto& request : impl->shader_compile_requests) {
+    auto shader_session = create_shader_session(request.session_info);
+    for (auto& shader_info : request.shader_infos) {
+      shader_session.compile_shader(shader_info);
+    }
+  }
+
+  return true;
 }
 
 auto Session::create_asset(AssetType type) -> AssetID {

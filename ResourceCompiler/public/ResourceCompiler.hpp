@@ -86,6 +86,7 @@ public:
   auto import_meta(const std::filesystem::path& path) -> bool;
 
   auto create_shader_session(const ShaderSessionInfo& info) -> ShaderSession;
+  auto compile_requests() -> bool;
 
   auto create_asset(AssetType type) -> AssetID;
   auto get_asset_data(AssetID asset_id) -> std::span<u8>;

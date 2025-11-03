@@ -2,6 +2,8 @@
 
 #include <Core/Types.hpp>
 #include <OS/File.hpp>
+#include <algorithm>
+#include <ankerl/unordered_dense.h>
 #include <atomic>
 #include <slang.h>
 #include <vector>
@@ -42,6 +44,7 @@ struct SlangBlob : ISlangBlob {
 struct SlangVirtualFS : ISlangFileSystem {
   std::filesystem::path m_root_dir;
   std::atomic_uint32_t m_ref_count;
+  ankerl::unordered_dense::map<std::string, std::vector<u8>> m_loaded_modules;
 
   SLANG_NO_THROW SlangResult SLANG_MCALL queryInterface(const SlangUUID& uuid, void** outObject) SLANG_OVERRIDE {
     ISlangUnknown* intf = getInterface(uuid);
@@ -71,15 +74,24 @@ struct SlangVirtualFS : ISlangFileSystem {
   SLANG_NO_THROW void* SLANG_MCALL castAs(const SlangUUID&) final { return nullptr; }
 
   SLANG_NO_THROW SlangResult SLANG_MCALL loadFile(const char* path_cstr, ISlangBlob** outBlob) final {
-    const auto path = std::string_view(path_cstr);
+    auto path = std::filesystem::path(path_cstr);
 
-    const auto root_path = std::filesystem::relative(m_root_dir);
-    const auto module_path = root_path / path;
+    // /resources/shaders/path/to/xx.slang -> path.to.xx
+    auto module_name = std::filesystem::relative(path, m_root_dir).replace_extension("").string();
+    std::ranges::replace(module_name, static_cast<c8>(std::filesystem::path::preferred_separator), '.');
 
-    const auto result = File::to_string(module_path);
-    if (!result.empty()) {
-      *outBlob = new SlangBlob(std::vector<u8>{result.data(), (result.data() + result.size())});
-
+    auto it = m_loaded_modules.find(module_name);
+    if (it == m_loaded_modules.end()) {
+      auto file_bytes = File::to_bytes(path);
+      if (!file_bytes.empty()) {
+        auto new_it = m_loaded_modules.emplace(module_name, std::move(file_bytes));
+        *outBlob = new SlangBlob(new_it.first->second);
+        return SLANG_OK;
+      } else {
+        return SLANG_E_NOT_FOUND;
+      }
+    } else {
+      *outBlob = new SlangBlob(it->second);
       return SLANG_OK;
     }
 
