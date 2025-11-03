@@ -27,12 +27,20 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
     return AssetID::Invalid;
   }
 
-  auto* slang_module = impl->slang_session->loadModuleFromSourceString(
-    info.module_name.c_str(),
-    shader_path_str.c_str(),
-    source_data.c_str(),
-    diagnostics_blob.writeRef()
-  );
+  slang::IModule* slang_module = nullptr;
+  auto slang_module_it = impl->cached_modules.find(shader_path);
+  if (slang_module_it == impl->cached_modules.end()) {
+    slang_module = impl->slang_session->loadModuleFromSourceString(
+      info.module_name.c_str(),
+      shader_path_str.c_str(),
+      source_data.c_str(),
+      diagnostics_blob.writeRef()
+    );
+
+    impl->cached_modules.emplace(shader_path, slang_module);
+  } else {
+    slang_module = slang_module_it->second;
+  }
 
   if (diagnostics_blob) {
     auto sv = std::string_view(

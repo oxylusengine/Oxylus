@@ -18,7 +18,7 @@ auto print_help() -> void {
 
 i32 main(i32 argc, c8** argv) {
   auto args = AppCommandLineArgs(argc, argv);
-  if (argc == 1) {
+  if (argc <= 1) {
     print_help();
   }
 
@@ -31,7 +31,7 @@ i32 main(i32 argc, c8** argv) {
   if (meta_argi.has_value()) {
     auto meta_path = args.get(meta_argi.value() + 1);
     if (!meta_path.has_value()) {
-      fmt::println("Specify a meta path!");
+      fmt::println("Specify a meta path.");
       return 1;
     }
 
