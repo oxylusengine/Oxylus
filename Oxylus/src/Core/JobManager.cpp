@@ -122,7 +122,7 @@ auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) ->
   ZoneScoped;
 
   {
-    std::unique_lock lock(self.mutex);
+    auto lock = std::shared_lock(self.mutex);
     if (!self.job_name_stack.empty())
       job->name = self.job_name_stack.top();
   }
@@ -135,7 +135,7 @@ auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) ->
   };
 
   {
-    std::unique_lock lock(self.mutex);
+    auto lock = std::unique_lock(self.mutex);
     if (prioritize) {
       self.jobs.push_front(std::move(job));
     } else {

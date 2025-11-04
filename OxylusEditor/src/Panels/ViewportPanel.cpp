@@ -451,7 +451,7 @@ void ViewportPanel::on_update() {
 
   if (input_sys.get_mouse_held(MouseCode::ButtonRight) && !is_ortho) {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
-    window.set_cursor(WindowCursor::Crosshair);
+    window.set_cursor_override(WindowCursor::Crosshair);
 
     if (input_sys.get_mouse_moved()) {
       const glm::vec2 change = new_mouse_position * camera_sens;
@@ -479,7 +479,7 @@ void ViewportPanel::on_update() {
   // Panning
   else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
-    window.set_cursor(WindowCursor::ResizeAll);
+    window.set_cursor_override(WindowCursor::ResizeAll);
 
     const glm::vec2 change = (new_mouse_position - _locked_mouse_position) * 1.f;
 
@@ -488,8 +488,6 @@ void ViewportPanel::on_update() {
       final_position += cam.forward * change.y * max_move_speed;
       final_position += cam.right * change.x * max_move_speed;
     }
-  } else {
-    window.set_cursor(WindowCursor::Arrow);
   }
 
   const glm::vec3 damped_position =

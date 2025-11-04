@@ -15,6 +15,8 @@
 #include "UI/ImGuiRenderer.hpp"
 #include "Utils/Log.hpp"
 
+#define LOG_SDL_ERROR(call) OX_LOG_ERROR("{}: {}", #call, SDL_GetError())
+
 namespace ox {
 template <>
 struct Handle<Window>::Impl {
@@ -33,9 +35,11 @@ struct Handle<Window>::Impl {
   f32 display_content_scale = {};
   f32 window_content_scale = {};
   f32 refresh_rate = {};
+
+  bool cursor_overridden = false;
 };
 
-Window Window::create(const WindowInfo& info) {
+auto Window::create(const WindowInfo& info) -> Window {
   ZoneScoped;
 
   if (!SDL_Init(SDL_INIT_EVENTS | SDL_INIT_VIDEO)) {
@@ -98,6 +102,7 @@ Window Window::create(const WindowInfo& info) {
   SDL_DestroyProperties(window_properties);
 
   impl->cursors = {
+    nullptr,
     SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT),
     SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT),
     SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_MOVE),
@@ -108,6 +113,8 @@ Window Window::create(const WindowInfo& info) {
     SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER),
     SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NOT_ALLOWED),
     SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_PROGRESS),
+    SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_WAIT),
   };
 
   void* image_data = nullptr;
@@ -156,14 +163,15 @@ Window Window::create(const WindowInfo& info) {
   return self;
 }
 
-void Window::destroy() const {
+auto Window::destroy() const -> void {
   ZoneScoped;
 
-  SDL_StopTextInput(impl->handle);
+  if (!SDL_StopTextInput(impl->handle))
+    LOG_SDL_ERROR(SDL_StopTextInput);
   SDL_DestroyWindow(impl->handle);
 }
 
-void Window::update(const Timestep& timestep) {
+auto Window::update(const Timestep& timestep) -> void {
   WindowCallbacks window_callbacks = {};
   window_callbacks.user_data = nullptr;
   window_callbacks.on_resize = [](void* user_data, const glm::uvec2 size) {
@@ -239,16 +247,21 @@ void Window::update(const Timestep& timestep) {
     }
   };
 
+  impl->cursor_overridden = false;
+
   poll(window_callbacks);
 }
 
-void Window::poll(const WindowCallbacks& callbacks) const {
+auto Window::poll(const WindowCallbacks& callbacks) const -> void {
   ZoneScoped;
 
   SDL_Event e = {};
   while (SDL_PollEvent(&e) != 0) {
     switch (e.type) {
       case SDL_EVENT_WINDOW_RESIZED: {
+        impl->logical_width = e.window.data1;
+        impl->logical_height = e.window.data2;
+
         if (callbacks.on_resize) {
           callbacks.on_resize(callbacks.user_data, {e.window.data1, e.window.data2});
         }
@@ -298,7 +311,7 @@ void Window::poll(const WindowCallbacks& callbacks) const {
   }
 }
 
-option<SystemDisplay> Window::display_at(const u32 monitor_id) {
+auto Window::display_at(const u32 monitor_id) -> option<SystemDisplay> {
   i32 display_count = 0;
   auto* display_ids = SDL_GetDisplays(&display_count);
   OX_DEFER(&) { SDL_free(display_ids); };
@@ -316,17 +329,19 @@ option<SystemDisplay> Window::display_at(const u32 monitor_id) {
 
   SDL_Rect position_bounds = {};
   if (!SDL_GetDisplayBounds(checking_display, &position_bounds)) {
+    LOG_SDL_ERROR(SDL_GetDisplayBounds);
     return nullopt;
   }
 
   SDL_Rect work_bounds = {};
   if (!SDL_GetDisplayUsableBounds(checking_display, &work_bounds)) {
+    LOG_SDL_ERROR(SDL_GetDisplayUsableBounds);
     return nullopt;
   }
 
   const auto scale = SDL_GetDisplayContentScale(display_ids[monitor_id]);
   if (scale == 0) {
-    OX_LOG_ERROR("{}", SDL_GetError());
+    LOG_SDL_ERROR(SDL_GetError);
   }
 
   return SystemDisplay{
@@ -339,7 +354,7 @@ option<SystemDisplay> Window::display_at(const u32 monitor_id) {
   };
 }
 
-void Window::show_dialog(const ShowDialogInfo& info) const {
+auto Window::show_dialog(const ShowDialogInfo& info) const -> void {
   memory::ScopedStack stack;
 
   auto sdl_filters = stack.alloc<SDL_DialogFileFilter>(info.filters.size());
@@ -371,39 +386,66 @@ void Window::show_dialog(const ShowDialogInfo& info) const {
   }
 }
 
-void Window::set_cursor(WindowCursor cursor) const {
+auto Window::set_cursor(WindowCursor cursor) const -> void {
   ZoneScoped;
 
+  if (impl->cursor_overridden)
+    return;
+
   impl->current_cursor = cursor;
-  SDL_SetCursor(impl->cursors[static_cast<usize>(cursor)]);
+  if (!SDL_SetCursor(impl->cursors[static_cast<usize>(cursor)])) {
+    LOG_SDL_ERROR(SDL_SetCursor);
+  }
+}
+
+auto Window::set_cursor_override(WindowCursor cursor) const -> void {
+  ZoneScoped;
+
+  set_cursor(cursor);
+
+  impl->cursor_overridden = true;
 }
 
 WindowCursor Window::get_cursor() const { return impl->current_cursor; }
 
 void Window::show_cursor(bool show) const {
   ZoneScoped;
-  show ? SDL_ShowCursor() : SDL_HideCursor();
+
+  if (show) {
+    if (!SDL_ShowCursor()) {
+      LOG_SDL_ERROR(SDL_ShowCursor);
+    }
+  } else {
+    if (!SDL_HideCursor()) {
+      LOG_SDL_ERROR(SDL_HideCursor);
+    }
+  }
 }
 
-VkSurfaceKHR Window::get_surface(VkInstance instance) const {
+auto Window::get_surface(VkInstance instance) const -> VkSurfaceKHR {
   VkSurfaceKHR surface = {};
   if (!SDL_Vulkan_CreateSurface(impl->handle, instance, nullptr, &surface)) {
-    OX_LOG_ERROR("{}", SDL_GetError());
+    LOG_SDL_ERROR(SDL_Vulkan_CreateSurface);
     return nullptr;
   }
   return surface;
 }
 
-u32 Window::get_width() const { return impl->width; }
-u32 Window::get_height() const { return impl->height; }
+auto Window::get_size_in_pixels() const -> glm::ivec2 {
+  i32 real_width;
+  i32 real_height;
+  SDL_GetWindowSizeInPixels(impl->handle, &real_width, &real_height);
 
-u32 Window::get_logical_width() const { return impl->logical_width; }
-u32 Window::get_logical_height() const { return impl->logical_height; }
+  return {real_width, real_height};
+}
 
-void* Window::get_handle() const { return impl->handle; }
+auto Window::get_logical_width() const -> u32 { return impl->logical_width; }
+auto Window::get_logical_height() const -> u32 { return impl->logical_height; }
 
-f32 Window::get_display_content_scale() const { return impl->display_content_scale; }
-f32 Window::get_window_content_scale() const { return impl->window_content_scale; }
+auto Window::get_handle() const -> void* { return impl->handle; }
 
-float Window::get_refresh_rate() const { return impl->refresh_rate; }
+auto Window::get_display_content_scale() const -> f32 { return impl->display_content_scale; }
+auto Window::get_window_content_scale() const -> f32 { return impl->window_content_scale; }
+
+auto Window::get_refresh_rate() const -> f32 { return impl->refresh_rate; }
 } // namespace ox

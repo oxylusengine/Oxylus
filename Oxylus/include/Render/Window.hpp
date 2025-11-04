@@ -13,6 +13,7 @@
 
 namespace ox {
 enum class WindowCursor {
+  ForceRedraw, // Force cursor to be redrawn
   Arrow,
   TextInput,
   ResizeAll,
@@ -23,6 +24,8 @@ enum class WindowCursor {
   Hand,
   NotAllowed,
   Crosshair,
+  Progress,
+  Wait,
 
   Count,
 };
@@ -103,33 +106,32 @@ struct WindowInfo {
 };
 
 struct Window : Handle<Window> {
-  static Window create(const WindowInfo& info);
-  void destroy() const;
+  static auto create(const WindowInfo& info) -> Window;
+  auto destroy() const -> void;
 
   auto update(const Timestep& timestep) -> void;
-  void poll(const WindowCallbacks& callbacks) const;
+  auto poll(const WindowCallbacks& callbacks) const -> void;
 
-  static option<SystemDisplay> display_at(u32 monitor_id = WindowInfo::USE_PRIMARY_MONITOR);
+  static auto display_at(u32 monitor_id = WindowInfo::USE_PRIMARY_MONITOR) -> option<SystemDisplay>;
 
-  void show_dialog(const ShowDialogInfo& info) const;
+  auto show_dialog(const ShowDialogInfo& info) const -> void;
 
-  void set_cursor(WindowCursor cursor) const;
-  WindowCursor get_cursor() const;
-  void show_cursor(bool show) const;
+  auto set_cursor(WindowCursor cursor) const -> void;
+  auto set_cursor_override(WindowCursor cursor) const -> void;
+  auto get_cursor() const -> WindowCursor;
+  auto show_cursor(bool show) const -> void;
 
-  VkSurfaceKHR get_surface(VkInstance instance) const;
+  auto get_surface(VkInstance instance) const -> VkSurfaceKHR;
 
-  u32 get_width() const;
-  u32 get_height() const;
+  auto get_size_in_pixels() const -> glm::ivec2;
+  auto get_logical_width() const -> u32;
+  auto get_logical_height() const -> u32;
 
-  u32 get_logical_width() const;
-  u32 get_logical_height() const;
+  auto get_handle() const -> void*;
 
-  void* get_handle() const;
+  auto get_display_content_scale() const -> f32;
+  auto get_window_content_scale() const -> f32;
 
-  f32 get_display_content_scale() const;
-  f32 get_window_content_scale() const;
-
-  f32 get_refresh_rate() const;
+  auto get_refresh_rate() const -> f32;
 };
 } // namespace ox

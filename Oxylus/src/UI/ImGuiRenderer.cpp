@@ -128,6 +128,8 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size) {
       case ImGuiMouseCursor_ResizeNWSE: next_cursor = WindowCursor::ResizeNWSE; break;
       case ImGuiMouseCursor_Hand      : next_cursor = WindowCursor::Hand; break;
       case ImGuiMouseCursor_NotAllowed: next_cursor = WindowCursor::NotAllowed; break;
+      case ImGuiMouseCursor_Progress  : next_cursor = WindowCursor::Progress; break;
+      case ImGuiMouseCursor_Wait      : next_cursor = WindowCursor::Wait; break;
       default                         : break;
     }
     window.show_cursor(true);
