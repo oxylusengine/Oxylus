@@ -121,8 +121,11 @@ auto JobManager::worker(this JobManager& self, u32 id) -> void {
 auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) -> void {
   ZoneScoped;
 
-  if (!self.job_name_stack.empty())
-    job->name = self.job_name_stack.top();
+  {
+    std::unique_lock lock(self.mutex);
+    if (!self.job_name_stack.empty())
+      job->name = self.job_name_stack.top();
+  }
 
   self.tracker.register_job(job);
 

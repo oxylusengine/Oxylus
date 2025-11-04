@@ -148,8 +148,6 @@ auto Editor::update(const Timestep& timestep) -> void {
 }
 
 auto Editor::render(vuk::ImageAttachment swapchain_attachment) -> void {
-  ImGuizmo::BeginFrame();
-
   if (active_scene)
     active_scene->on_render(swapchain_attachment.extent, swapchain_attachment.format);
 

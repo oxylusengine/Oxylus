@@ -131,7 +131,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         gizmo_settings_popup = true;
       }
       auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
-      ImGui::SetCursorPosX(_viewport_panel_size.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
+      ImGui::SetCursorPosX(viewport_panel_size_.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
       if (ImGui::MenuItem(ICON_MDI_ARROW_EXPAND_ALL)) {
         fullscreen_viewport = !fullscreen_viewport;
       }
@@ -162,28 +162,28 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
     const ImVec2 viewport_min_region = ImGui::GetWindowContentRegionMin();
     const ImVec2 viewport_max_region = ImGui::GetWindowContentRegionMax();
-    _viewport_position = glm::vec2(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y);
-    _viewport_bounds[0] = {viewport_min_region.x + _viewport_position.x, viewport_min_region.y + _viewport_position.y};
-    _viewport_bounds[1] = {viewport_max_region.x + _viewport_position.x, viewport_max_region.y + _viewport_position.y};
+    viewport_position_ = glm::vec2(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y);
+    viewport_bounds_[0] = {viewport_min_region.x + viewport_position_.x, viewport_min_region.y + viewport_position_.y};
+    viewport_bounds_[1] = {viewport_max_region.x + viewport_position_.x, viewport_max_region.y + viewport_position_.y};
 
     is_viewport_focused = ImGui::IsWindowFocused();
     is_viewport_hovered = ImGui::IsWindowHovered();
 
-    _viewport_panel_size = glm::vec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y);
-    if ((int)_viewport_size.x != (int)_viewport_panel_size.x || (int)_viewport_size.y != (int)_viewport_panel_size.y) {
-      _viewport_size = {_viewport_panel_size.x, _viewport_panel_size.y};
+    viewport_panel_size_ = glm::vec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y);
+    if ((int)viewport_size_.x != (int)viewport_panel_size_.x || (int)viewport_size_.y != (int)viewport_panel_size_.y) {
+      viewport_size_ = {viewport_panel_size_.x, viewport_panel_size_.y};
     }
 
     constexpr auto sixteen_nine_ar = 1.7777777f;
-    const auto fixed_width = _viewport_size.y * sixteen_nine_ar;
-    ImGui::SetCursorPosX((_viewport_panel_size.x - fixed_width) * 0.5f);
+    const auto fixed_width = viewport_size_.y * sixteen_nine_ar;
+    ImGui::SetCursorPosX((viewport_panel_size_.x - fixed_width) * 0.5f);
 
-    const auto off = (_viewport_panel_size.x - fixed_width) *
+    const auto off = (viewport_panel_size_.x - fixed_width) *
                      0.5f; // add offset since we render image with fixed aspect ratio
-    _viewport_offset = {_viewport_bounds[0].x + off * 0.5f, _viewport_bounds[0].y};
+    viewport_offset_ = {viewport_bounds_[0].x + off * 0.5f, viewport_bounds_[0].y};
 
     const auto* app = App::get();
-    auto renderer_instance = _scene->get_renderer_instance();
+    auto renderer_instance = scene_->get_renderer_instance();
     if (renderer_instance != nullptr) {
       constexpr auto get_mouse_texel_coords =
         [](glm::uvec2 render_size, glm::vec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos)
@@ -208,7 +208,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       auto mouse_pos = ImGui::GetMousePos();
       glm::uvec2 picking_texel = get_mouse_texel_coords(
         {swapchain_attachment.extent.width, swapchain_attachment.extent.height},
-        _viewport_position,
+        viewport_position_,
         viewport_min_region,
         viewport_max_region,
         mouse_pos
@@ -223,23 +223,23 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       }
 
       const Renderer::RenderInfo render_info = {
-        .viewport_offset = {_viewport_position.x, _viewport_position.y},
+        .viewport_offset = {viewport_position_.x, viewport_position_.y},
       };
 
       auto viewport_attachment = vuk::declare_ia("viewport", swapchain_attachment);
       viewport_attachment = vuk::clear_image(std::move(viewport_attachment), vuk::Black<f32>);
 
       auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
-      _scene->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
+      scene_->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
       ImGui::Image(
         App::mod<ImGuiRenderer>().add_image(std::move(scene_view_image)),
-        ImVec2{fixed_width, _viewport_panel_size.y}
+        ImVec2{fixed_width, viewport_panel_size_.y}
       );
     } else {
       const auto warning_text = "No scene render output!";
       const auto text_width = ImGui::CalcTextSize(warning_text).x;
-      ImGui::SetCursorPosX((_viewport_size.x - text_width) * 0.5f);
-      ImGui::SetCursorPosY(_viewport_size.y * 0.5f);
+      ImGui::SetCursorPosX((viewport_size_.x - text_width) * 0.5f);
+      ImGui::SetCursorPosY(viewport_size_.y * 0.5f);
       ImGui::Text(warning_text);
     }
 
@@ -253,14 +253,14 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         if (path.extension() == ".gltf" || path.extension() == ".glb") {
           auto& asset_man = App::mod<AssetManager>();
           if (auto asset = asset_man.import_asset(path))
-            _scene->create_model_entity(asset);
+            scene_->create_model_entity(asset);
         }
       }
 
       ImGui::EndDragDropTarget();
     }
 
-    if (editor_camera.has<CameraComponent>() && !_scene->is_running()) {
+    if (editor_camera.has<CameraComponent>() && !scene_->is_running()) {
       if (editor.scene_state == Editor::SceneState::Edit)
         editor_camera.enable();
 
@@ -273,8 +273,8 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       const ImVec2 button_size = {frame_height, frame_height};
       constexpr float button_count = 8.0f;
       const ImVec2 gizmo_position = {
-        _viewport_bounds[0].x + _gizmo_position.x,
-        _viewport_bounds[0].y + _gizmo_position.y
+        viewport_bounds_[0].x + gizmo_position_.x,
+        viewport_bounds_[0].y + gizmo_position_.y
       };
       const ImRect bb(
         gizmo_position.x,
@@ -285,7 +285,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       ImVec4 frame_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
       frame_color.w = 0.5f;
       ImGui::RenderFrame(bb.Min, bb.Max, ImGui::GetColorU32(frame_color), false, ImGui::GetStyle().FrameRounding);
-      const glm::vec2 temp_gizmo_position = _gizmo_position;
+      const glm::vec2 temp_gizmo_position = gizmo_position_;
 
       ImGui::SetCursorPos(
         {start_cursor_pos.x + temp_gizmo_position.x + frame_padding.x, start_cursor_pos.y + temp_gizmo_position.y}
@@ -305,30 +305,30 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         static ImVec2 last_mouse_position = ImGui::GetMousePos();
         const ImVec2 mouse_pos = ImGui::GetMousePos();
         if (ImGui::IsItemActive()) {
-          _gizmo_position.x += mouse_pos.x - last_mouse_position.x;
-          _gizmo_position.y += mouse_pos.y - last_mouse_position.y;
+          gizmo_position_.x += mouse_pos.x - last_mouse_position.x;
+          gizmo_position_.y += mouse_pos.y - last_mouse_position.y;
         }
         last_mouse_position = mouse_pos;
 
         constexpr float alpha = 0.6f;
-        if (UI::toggle_button(ICON_MDI_AXIS_ARROW, _gizmo_type == ImGuizmo::TRANSLATE, button_size, alpha, alpha))
-          _gizmo_type = ImGuizmo::TRANSLATE;
-        if (UI::toggle_button(ICON_MDI_ROTATE_3D, _gizmo_type == ImGuizmo::ROTATE, button_size, alpha, alpha))
-          _gizmo_type = ImGuizmo::ROTATE;
-        if (UI::toggle_button(ICON_MDI_ARROW_EXPAND, _gizmo_type == ImGuizmo::SCALE, button_size, alpha, alpha))
-          _gizmo_type = ImGuizmo::SCALE;
-        if (UI::toggle_button(ICON_MDI_VECTOR_SQUARE, _gizmo_type == ImGuizmo::BOUNDS, button_size, alpha, alpha))
-          _gizmo_type = ImGuizmo::BOUNDS;
-        if (UI::toggle_button(ICON_MDI_ARROW_EXPAND_ALL, _gizmo_type == ImGuizmo::UNIVERSAL, button_size, alpha, alpha))
-          _gizmo_type = ImGuizmo::UNIVERSAL;
+        if (UI::toggle_button(ICON_MDI_AXIS_ARROW, gizmo_type_ == ImGuizmo::TRANSLATE, button_size, alpha, alpha))
+          gizmo_type_ = ImGuizmo::TRANSLATE;
+        if (UI::toggle_button(ICON_MDI_ROTATE_3D, gizmo_type_ == ImGuizmo::ROTATE, button_size, alpha, alpha))
+          gizmo_type_ = ImGuizmo::ROTATE;
+        if (UI::toggle_button(ICON_MDI_ARROW_EXPAND, gizmo_type_ == ImGuizmo::SCALE, button_size, alpha, alpha))
+          gizmo_type_ = ImGuizmo::SCALE;
+        if (UI::toggle_button(ICON_MDI_VECTOR_SQUARE, gizmo_type_ == ImGuizmo::BOUNDS, button_size, alpha, alpha))
+          gizmo_type_ = ImGuizmo::BOUNDS;
+        if (UI::toggle_button(ICON_MDI_ARROW_EXPAND_ALL, gizmo_type_ == ImGuizmo::UNIVERSAL, button_size, alpha, alpha))
+          gizmo_type_ = ImGuizmo::UNIVERSAL;
         if (UI::toggle_button(
-              _gizmo_mode == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
-              _gizmo_mode == ImGuizmo::WORLD,
+              gizmo_mode_ == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
+              gizmo_mode_ == ImGuizmo::WORLD,
               button_size,
               alpha,
               alpha
             ))
-          _gizmo_mode = _gizmo_mode == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
+          gizmo_mode_ = gizmo_mode_ == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
         if (UI::toggle_button(ICON_MDI_GRID, EditorCVar::cvar_draw_grid.get(), button_size, alpha, alpha))
           EditorCVar::cvar_draw_grid.toggle();
 
@@ -359,7 +359,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       const ImVec2 button_size = {35.f, 25.f};
       const ImVec2 group_size = {button_size.x * button_count, button_size.y + y_pad};
 
-      ImGui::SetCursorPos({_viewport_size.x * 0.5f - (group_size.x * 0.5f), start_cursor_pos.y + y_pad});
+      ImGui::SetCursorPos({viewport_size_.x * 0.5f - (group_size.x * 0.5f), start_cursor_pos.y + y_pad});
       ImGui::BeginGroup();
       {
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
@@ -397,19 +397,19 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 }
 
 void ViewportPanel::set_context(Scene* scene, SceneHierarchyPanel& scene_hierarchy_panel) {
-  _scene_hierarchy_panel = &scene_hierarchy_panel;
+  scene_hierarchy_panel_ = &scene_hierarchy_panel;
 
   if (!scene)
     return;
 
-  this->_scene = scene;
+  this->scene_ = scene;
 
-  editor_camera = _scene->create_entity("editor_camera", false);
+  editor_camera = scene_->create_entity("editor_camera", false);
   editor_camera.add<CameraComponent>().add<Hidden>();
 }
 
 void ViewportPanel::on_update() {
-  if (!is_viewport_hovered || _scene->is_running() || !editor_camera.has<CameraComponent>()) {
+  if (!is_viewport_hovered || scene_->is_running() || !editor_camera.has<CameraComponent>()) {
     return;
   }
 
@@ -507,8 +507,8 @@ void ViewportPanel::on_update() {
 void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw) {
   if (!performance_overlay_visible)
     return;
-  auto work_pos = ImVec2(_viewport_position.x, _viewport_position.y);
-  auto work_size = ImVec2(_viewport_panel_size.x, _viewport_panel_size.y);
+  auto work_pos = ImVec2(viewport_position_.x, viewport_position_.y);
+  auto work_size = ImVec2(viewport_panel_size_.x, viewport_panel_size_.y);
   auto padding = glm::vec2{15, 55};
 
   ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
@@ -530,20 +530,20 @@ void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw) {
     ImGui::Text("%.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
     if (draw) {
       ImGui::Text("Render resolution: %dx%d", extent.width, extent.height);
-      ImGui::Text("Scripts in scene: %zu", _scene->get_lua_systems().size());
-      const auto transform_entities_count = _scene->world.count<TransformComponent>();
+      ImGui::Text("Scripts in scene: %zu", scene_->get_lua_systems().size());
+      const auto transform_entities_count = scene_->world.count<TransformComponent>();
       ImGui::Text("Entities with transforms: %d", transform_entities_count);
-      const auto mesh_entities_count = _scene->world.count<MeshComponent>();
+      const auto mesh_entities_count = scene_->world.count<MeshComponent>();
       ImGui::Text("Entities with mesh: %d", mesh_entities_count);
-      const auto light_entities_count = _scene->world.count<LightComponent>();
+      const auto light_entities_count = scene_->world.count<LightComponent>();
       ImGui::Text("Entities with light: %d", light_entities_count);
-      const auto sprite_entities_count = _scene->world.count<SpriteComponent>();
+      const auto sprite_entities_count = scene_->world.count<SpriteComponent>();
       ImGui::Text("Entities with sprite: %d", sprite_entities_count);
-      const auto particle_entities_count = _scene->world.count<ParticleSystemComponent>();
+      const auto particle_entities_count = scene_->world.count<ParticleSystemComponent>();
       ImGui::Text("Entities with particle: %d", particle_entities_count);
-      const auto rigidbody_entities_count = _scene->world.count<RigidBodyComponent>();
+      const auto rigidbody_entities_count = scene_->world.count<RigidBodyComponent>();
       ImGui::Text("Entities with rigidbody: %d", rigidbody_entities_count);
-      const auto audio_entities_count = _scene->world.count<AudioSourceComponent>();
+      const auto audio_entities_count = scene_->world.count<AudioSourceComponent>();
       ImGui::Text("Entities with audio: %d", audio_entities_count);
     }
   }
@@ -756,82 +756,84 @@ void ViewportPanel::draw_gizmos() {
     show_component_gizmo<LightComponent>(
       gizmo_icon_size_,
       "LightComponent",
-      _viewport_panel_size.x,
-      _viewport_panel_size.y,
+      viewport_panel_size_.x,
+      viewport_panel_size_.y,
       0,
       0,
       view_proj,
       frustum,
-      _scene
+      scene_
     );
     show_component_gizmo<AudioSourceComponent>(
       gizmo_icon_size_,
       "AudioSourceComponent",
-      _viewport_panel_size.x,
-      _viewport_panel_size.y,
+      viewport_panel_size_.x,
+      viewport_panel_size_.y,
       0,
       0,
       view_proj,
       frustum,
-      _scene
+      scene_
     );
     show_component_gizmo<AudioListenerComponent>(
       gizmo_icon_size_,
       "AudioListenerComponent",
-      _viewport_panel_size.x,
-      _viewport_panel_size.y,
+      viewport_panel_size_.x,
+      viewport_panel_size_.y,
       0,
       0,
       view_proj,
       frustum,
-      _scene
+      scene_
     );
     show_component_gizmo<CameraComponent>(
       gizmo_icon_size_,
       "CameraComponent",
-      _viewport_panel_size.x,
-      _viewport_panel_size.y,
+      viewport_panel_size_.x,
+      viewport_panel_size_.y,
       0,
       0,
       view_proj,
       frustum,
-      _scene
+      scene_
     );
   }
 
   const flecs::entity selected_entity = editor_context.entity.value_or(flecs::entity::null());
 
+  ImGuizmo::BeginFrame();
+
   auto& input_sys = App::mod<Input>();
   if (input_sys.get_key_held(KeyCode::LeftControl)) {
     if (input_sys.get_key_pressed(KeyCode::Q)) {
       if (!ImGuizmo::IsUsing())
-        _gizmo_type = -1;
+        gizmo_type_ = -1;
     }
     if (input_sys.get_key_pressed(KeyCode::W)) {
       if (!ImGuizmo::IsUsing())
-        _gizmo_type = ImGuizmo::OPERATION::TRANSLATE;
+        gizmo_type_ = ImGuizmo::OPERATION::TRANSLATE;
     }
     if (input_sys.get_key_pressed(KeyCode::E)) {
       if (!ImGuizmo::IsUsing())
-        _gizmo_type = ImGuizmo::OPERATION::ROTATE;
+        gizmo_type_ = ImGuizmo::OPERATION::ROTATE;
     }
     if (input_sys.get_key_pressed(KeyCode::R)) {
       if (!ImGuizmo::IsUsing())
-        _gizmo_type = ImGuizmo::OPERATION::SCALE;
+        gizmo_type_ = ImGuizmo::OPERATION::SCALE;
     }
   }
 
-  if (selected_entity == flecs::entity::null() || !editor_camera.has<CameraComponent>() || _gizmo_type == -1)
+  if (selected_entity == flecs::entity::null() || !editor_camera.has<CameraComponent>() || gizmo_type_ == -1)
     return;
 
   if (auto* tc = selected_entity.try_get_mut<TransformComponent>()) {
     ImGuizmo::SetOrthographic(false);
     ImGuizmo::SetDrawlist();
     ImGuizmo::SetRect(
-      _viewport_bounds[0].x,
-      _viewport_bounds[0].y,
-      _viewport_bounds[1].x - _viewport_bounds[0].x,
-      _viewport_bounds[1].y - _viewport_bounds[0].y
+      viewport_bounds_[0].x,
+      viewport_bounds_[0].y,
+      viewport_bounds_[1].x - viewport_bounds_[0].x,
+      viewport_bounds_[1].y - viewport_bounds_[0].y
     );
 
     auto camera_projection = cam.get_projection_matrix();
@@ -839,27 +841,27 @@ void ViewportPanel::draw_gizmos() {
 
     const glm::mat4& camera_view = cam.get_view_matrix();
 
-    glm::mat4 transform = _scene->get_world_transform(selected_entity);
+    glm::mat4 transform = scene_->get_world_transform(selected_entity);
 
     // Snapping
     const bool snap = input_sys.get_key_held(KeyCode::LeftControl);
     float snap_value = 0.5f; // Snap to 0.5m for translation/scale
     // Snap to 45 degrees for rotation
-    if (_gizmo_type == ImGuizmo::OPERATION::ROTATE)
+    if (gizmo_type_ == ImGuizmo::OPERATION::ROTATE)
       snap_value = 45.0f;
 
     const float snap_values[3] = {snap_value, snap_value, snap_value};
 
     const auto is_ortho = cam.projection == CameraComponent::Projection::Orthographic;
     ImGuizmo::SetOrthographic(is_ortho);
-    if (_gizmo_mode == ImGuizmo::OPERATION::TRANSLATE && is_ortho)
-      _gizmo_mode = ImGuizmo::OPERATION::TRANSLATE_X | ImGuizmo::OPERATION::TRANSLATE_Y;
+    if (gizmo_mode_ == ImGuizmo::OPERATION::TRANSLATE && is_ortho)
+      gizmo_mode_ = ImGuizmo::OPERATION::TRANSLATE_X | ImGuizmo::OPERATION::TRANSLATE_Y;
 
     ImGuizmo::Manipulate(
       value_ptr(camera_view),
       value_ptr(camera_projection),
-      static_cast<ImGuizmo::OPERATION>(_gizmo_type),
-      static_cast<ImGuizmo::MODE>(_gizmo_mode),
+      static_cast<ImGuizmo::OPERATION>(gizmo_type_),
+      static_cast<ImGuizmo::MODE>(gizmo_mode_),
       value_ptr(transform),
       nullptr,
       snap ? snap_values : nullptr
@@ -867,7 +869,7 @@ void ViewportPanel::draw_gizmos() {
 
     if (ImGuizmo::IsUsing()) {
       const flecs::entity parent = selected_entity.parent();
-      const glm::mat4& parent_world_transform = parent != flecs::entity::null() ? _scene->get_world_transform(parent)
+      const glm::mat4& parent_world_transform = parent != flecs::entity::null() ? scene_->get_world_transform(parent)
                                                                                 : glm::mat4(1.0f);
       glm::vec3 translation, rotation, scale;
       if (math::decompose_transform(inverse(parent_world_transform) * transform, translation, rotation, scale)) {
@@ -895,7 +897,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
   renderer_instance->add_stage_after(
     RenderStage::VisBufferEncode,
     "mouse_picking",
-    [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = _scene](
+    [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = scene_](
       RenderStageContext& ctx
     ) {
       auto depth_attachment = ctx.get_image_resource("depth_attachment");

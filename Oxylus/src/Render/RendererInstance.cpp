@@ -402,12 +402,17 @@ auto RendererInstance::render(
     self.shared_resources.clear();
   };
 
-  self.viewport_size = {dst_attachment->extent.width, dst_attachment->extent.height};
+  auto dst_extent = dst_attachment->extent;
+
+  OX_CHECK_GT(dst_extent.width, 0u);
+  OX_CHECK_GT(dst_extent.height, 0u);
+
+  self.viewport_size = {dst_extent.width, dst_extent.height};
   self.viewport_offset = render_info.viewport_offset;
 
   auto& bindless_set = self.renderer.vk_context->get_descriptor_set();
 
-  self.camera_data.resolution = {dst_attachment->extent.width, dst_attachment->extent.height};
+  self.camera_data.resolution = {dst_extent.width, dst_extent.height};
   self.prepared_frame.camera_buffer = self.renderer.vk_context->scratch_buffer(self.camera_data);
 
   self.render_queue_2d.update();
@@ -478,23 +483,23 @@ auto RendererInstance::render(
   auto final_attachment = vuk::declare_ia(
     "final_attachment",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+     .extent = dst_extent,
      .format = vuk::Format::eB10G11R11UfloatPack32,
      .sample_count = vuk::Samples::e1,
      .level_count = 1,
      .layer_count = 1}
   );
-  final_attachment.same_extent_as(dst_attachment);
   final_attachment = vuk::clear_image(std::move(final_attachment), vuk::Black<float>);
 
   auto depth_attachment = vuk::declare_ia(
     "depth_image",
     {.usage = vuk::ImageUsageFlagBits::eDepthStencilAttachment | vuk::ImageUsageFlagBits::eSampled,
+     .extent = dst_extent,
      .format = vuk::Format::eD32Sfloat,
      .sample_count = vuk::SampleCountFlagBits::e1,
      .level_count = 1,
      .layer_count = 1}
   );
-  depth_attachment.same_extent_as(dst_attachment);
   depth_attachment = vuk::clear_image(std::move(depth_attachment), vuk::DepthZero);
 
   auto hiz_extent = vuk::Extent3D{
