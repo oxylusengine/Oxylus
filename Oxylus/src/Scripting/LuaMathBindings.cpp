@@ -65,7 +65,7 @@ auto MathBinding::bind(sol::state* state) -> void {
 
   auto vec3 = state->new_usertype<glm::vec3>(
     "vec3",
-    sol::constructors<sol::types<>, sol::types<float, float, float>, glm::vec3(float)>()
+    sol::constructors<sol::types<float, float, float>, glm::vec3(float)>()
   );
   SET_TYPE_FIELD(vec3, glm::vec3, x);
   SET_TYPE_FIELD(vec3, glm::vec3, y);
