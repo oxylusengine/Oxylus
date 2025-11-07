@@ -53,7 +53,7 @@ public:
   flecs::world world;
   ComponentDB component_db = {};
 
-  f32 physics_interval = 1.f / 60.f; // used only on initalization
+  f32 physics_interval = 1.f / 60.f; // used only on initialization
 
   std::vector<GPU::TransformID> dirty_transforms = {};
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};

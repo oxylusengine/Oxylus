@@ -411,4 +411,16 @@ auto Renderer::deinit(this Renderer& self) -> std::expected<void, std::string> {
 
   return {};
 }
+
+auto Renderer::new_frame(this Renderer& self) -> void {
+  self.acquired_sky_transmittance_lut_view = self.sky_transmittance_lut_view.acquire(
+    "sky_transmittance_lut",
+    vuk::Access::eComputeSampled
+  );
+  self.acquired_sky_multiscatter_lut_view = self.sky_multiscatter_lut_view.acquire(
+    "sky_multiscatter_lut",
+    vuk::Access::eComputeSampled
+  );
+  self.acquired_hilbert_noise_lut = self.hilbert_noise_lut.acquire("hilbert noise", vuk::eComputeSampled);
+}
 } // namespace ox

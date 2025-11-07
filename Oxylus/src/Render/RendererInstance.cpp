@@ -519,14 +519,6 @@ auto RendererInstance::render(
   );
   hiz_attachment = vuk::clear_image(std::move(hiz_attachment), vuk::DepthZero);
 
-  auto sky_transmittance_lut_attachment = self.renderer.sky_transmittance_lut_view.acquire(
-    "sky_transmittance_lut",
-    vuk::Access::eComputeSampled
-  );
-  auto sky_multiscatter_lut_attachment = self.renderer.sky_multiscatter_lut_view.acquire(
-    "sky_multiscatter_lut",
-    vuk::Access::eComputeSampled
-  );
   auto sky_view_lut_attachment = vuk::declare_ia(
     "sky_view_lut",
     {.image_type = vuk::ImageType::e2D,
@@ -553,7 +545,7 @@ auto RendererInstance::render(
   sky_aerial_perspective_attachment.same_format_as(sky_view_lut_attachment);
   sky_aerial_perspective_attachment = vuk::clear_image(std::move(sky_aerial_perspective_attachment), vuk::Black<f32>);
 
-  auto hilbert_noise_lut_attachment = self.renderer.hilbert_noise_lut.acquire("hilbert noise", vuk::eComputeSampled);
+  auto hilbert_noise_lut_attachment = self.renderer.acquired_hilbert_noise_lut;
 
   auto visbuffer_attachment = vuk::declare_ia(
     "visbuffer",
@@ -815,10 +807,13 @@ auto RendererInstance::render(
     );
   }
 
+  auto sky_transmittance_lut_attachment = self.renderer.acquired_sky_transmittance_lut_view;
+  auto sky_multiscatter_lut_attachment = self.renderer.acquired_sky_multiscatter_lut_view;
+
   if (scene_has_atmosphere && scene_has_directional_light) {
     auto atmos_context = AtmosphereContext{
-      .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
-      .sky_multiscatter_lut_attachment = std::move(sky_multiscatter_lut_attachment),
+      .sky_transmittance_lut_attachment = sky_transmittance_lut_attachment,
+      .sky_multiscatter_lut_attachment = sky_multiscatter_lut_attachment,
       .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
       .sky_aerial_perspective_lut_attachment = std::move(sky_aerial_perspective_attachment),
     };

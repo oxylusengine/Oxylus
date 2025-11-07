@@ -21,6 +21,7 @@ public:
 
   virtual void on_render(vuk::ImageAttachment swapchain_attachment) = 0;
 
+  auto set_name(const std::string& name) -> void;
   const char* get_name() const { return _name.c_str(); }
   const char* get_id() const { return _id.c_str(); }
   const char* get_icon() const { return _icon; }
@@ -28,6 +29,8 @@ public:
 protected:
   bool on_begin(int32_t window_flags = 0);
   void on_end() const;
+
+  void update_id();
 
   std::string _name;
   const char* _icon;

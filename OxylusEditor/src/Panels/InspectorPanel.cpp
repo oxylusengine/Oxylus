@@ -10,11 +10,11 @@
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
 #include "Editor.hpp"
-#include "EditorTheme.hpp"
 #include "Memory/Stack.hpp"
 #include "Scene/ECSModule/ComponentWrapper.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
+#include "Utils/EditorTheme.hpp"
 
 namespace ox {
 static f32 degree_helper(const char* id, f32 value) {

@@ -3,6 +3,7 @@
 #include "EditorPanel.hpp"
 #include "Scene/Scene.hpp"
 #include "SceneHierarchyPanel.hpp"
+#include "Utils/SceneManager.hpp"
 
 namespace ox {
 class ViewportPanel : public EditorPanel {
@@ -14,24 +15,20 @@ public:
   bool is_viewport_focused = {};
   bool is_viewport_hovered = {};
 
+  std::string last_save_scene_path = {};
+
   ViewportPanel();
   ~ViewportPanel() override = default;
 
-  void on_render(vuk::ImageAttachment swapchain_attachment) override;
+  auto on_render(vuk::ImageAttachment swapchain_attachment) -> void override;
 
-  void set_context(Scene* scene, SceneHierarchyPanel& scene_hierarchy_panel);
+  auto set_context(const std::shared_ptr<EditorScene>& scene, SceneHierarchyPanel* scene_hierarchy_panel) -> void;
+  auto get_scene() const -> EditorScene* { return editor_scene_.get(); }
 
-  void on_update() override;
+  auto on_update() -> void override;
 
 private:
-  void draw_settings_panel();
-  void draw_gizmo_settings_panel();
-  void draw_stats_overlay(vuk::Extent3D extent, bool draw_scene_stats);
-  void draw_gizmos();
-  auto mouse_picking_stages(RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void;
-  auto grid_stage(RendererInstance* renderer_instance) -> void;
-
-  Scene* scene_ = nullptr;
+  std::shared_ptr<EditorScene> editor_scene_ = nullptr;
   SceneHierarchyPanel* scene_hierarchy_panel_ = nullptr;
   bool draw_scene_stats = false;
 
@@ -57,5 +54,12 @@ private:
   glm::vec2 _locked_mouse_position = glm::vec2(0.0f);
   glm::vec3 _translation_velocity = glm::vec3(0);
   glm::vec2 _rotation_velocity = glm::vec2(0);
+
+  void draw_settings_panel();
+  void draw_gizmo_settings_panel();
+  void draw_stats_overlay(bool draw_scene_stats) const;
+  void draw_gizmos();
+  auto mouse_picking_stages(RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void;
+  auto grid_stage(RendererInstance* renderer_instance) -> void;
 };
 } // namespace ox

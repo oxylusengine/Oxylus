@@ -41,9 +41,11 @@ void ProjectPanel::load_project_for_editor(const std::filesystem::path& filepath
   if (active_project->load(filepath)) {
     auto& vfs = App::get_vfs();
     const auto start_scene = vfs.resolve_physical_dir(VFS::PROJECT_DIR, active_project->get_config().start_scene);
+    editor.reset();
     if (!editor.open_scene(start_scene)) {
-      editor.new_scene();
+      editor.new_scene(editor.viewport_panels.front());
     }
+    editor.reset_current_docking_layout();
     App::mod<EditorConfig>().add_recent_project(active_project.get());
     editor.get_panel<ContentPanel>()->init();
     visible = false;

@@ -10,8 +10,13 @@ EditorPanel::EditorPanel(const char* name, const char* icon, bool default_show)
     : visible(default_show),
       _name(name),
       _icon(icon) {
-  _id = fmt::format(" {} {}\t\t###{}{}", icon, name, _count, name);
+  update_id();
   _count++;
+}
+
+auto EditorPanel::set_name(const std::string& name) -> void {
+  _name = name;
+  update_id();
 }
 
 bool EditorPanel::on_begin(int32_t window_flags) {
@@ -31,4 +36,7 @@ void EditorPanel::on_end() const {
   ImGui::PopStyleVar();
   ImGui::End();
 }
+
+void EditorPanel::update_id() { _id = fmt::format(" {} {}\t\t###{}{}", _icon, _name, _count, _name); }
+
 } // namespace ox

@@ -138,7 +138,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       ImGui::EndMenuBar();
     }
 
-    draw_stats_overlay(swapchain_attachment.extent, draw_scene_stats);
+    draw_stats_overlay(draw_scene_stats);
 
     if (viewport_settings_popup)
       ImGui::OpenPopup("viewport_settings");
@@ -182,9 +182,26 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
                      0.5f; // add offset since we render image with fixed aspect ratio
     viewport_offset_ = {viewport_bounds_[0].x + off * 0.5f, viewport_bounds_[0].y};
 
-    const auto* app = App::get();
-    auto renderer_instance = scene_->get_renderer_instance();
-    if (renderer_instance != nullptr) {
+    if (!editor_scene_) {
+      const auto warning_text = "No scene!";
+      const auto text_width = ImGui::CalcTextSize(warning_text).x;
+      ImGui::SetCursorPosX((viewport_size_.x - text_width) * 0.5f);
+      ImGui::SetCursorPosY(viewport_size_.y * 0.5f);
+      ImGui::Text(warning_text);
+
+      on_end();
+
+      return;
+    }
+
+    auto renderer_instance = editor_scene_->get_scene()->get_renderer_instance();
+    if (!renderer_instance) {
+      const auto warning_text = "No scene render output!";
+      const auto text_width = ImGui::CalcTextSize(warning_text).x;
+      ImGui::SetCursorPosX((viewport_size_.x - text_width) * 0.5f);
+      ImGui::SetCursorPosY(viewport_size_.y * 0.5f);
+      ImGui::Text(warning_text);
+    } else {
       constexpr auto get_mouse_texel_coords =
         [](glm::uvec2 render_size, glm::vec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos)
         -> glm::uvec2 {
@@ -230,17 +247,11 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       viewport_attachment = vuk::clear_image(std::move(viewport_attachment), vuk::Black<f32>);
 
       auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
-      scene_->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
+      editor_scene_->get_scene()->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
       ImGui::Image(
         App::mod<ImGuiRenderer>().add_image(std::move(scene_view_image)),
         ImVec2{fixed_width, viewport_panel_size_.y}
       );
-    } else {
-      const auto warning_text = "No scene render output!";
-      const auto text_width = ImGui::CalcTextSize(warning_text).x;
-      ImGui::SetCursorPosX((viewport_size_.x - text_width) * 0.5f);
-      ImGui::SetCursorPosY(viewport_size_.y * 0.5f);
-      ImGui::Text(warning_text);
     }
 
     if (ImGui::BeginDragDropTarget()) {
@@ -248,20 +259,23 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         const auto* payload = PayloadData::from_payload(imgui_payload);
         const auto path = std::filesystem::path(payload->get_str());
         if (path.extension() == ".oxscene") {
-          editor.open_scene(path);
+          auto scene_id = editor.scene_manager.load_scene(path);
+          if (scene_id.has_value()) {
+            editor_scene_ = editor.scene_manager.get_scene(scene_id.value());
+          }
         }
         if (path.extension() == ".gltf" || path.extension() == ".glb") {
           auto& asset_man = App::mod<AssetManager>();
           if (auto asset = asset_man.import_asset(path))
-            scene_->create_model_entity(asset);
+            editor_scene_->get_scene()->create_model_entity(asset);
         }
       }
 
       ImGui::EndDragDropTarget();
     }
 
-    if (editor_camera.has<CameraComponent>() && !scene_->is_running()) {
-      if (editor.scene_state == Editor::SceneState::Edit)
+    if (editor_camera.has<CameraComponent>() && !editor_scene_->get_scene()->is_running()) {
+      if (editor_scene_->scene_state == EditorScene::SceneState::Edit)
         editor_camera.enable();
 
       draw_gizmos();
@@ -366,21 +380,21 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 1.0f);
 
-        const bool highlight = editor.scene_state == Editor::SceneState::Play;
-        const char* icon = editor.scene_state == Editor::SceneState::Edit ? ICON_MDI_PLAY : ICON_MDI_STOP;
+        const bool highlight = editor_scene_->scene_state == EditorScene::SceneState::Play;
+        const char* icon = editor_scene_->scene_state == EditorScene::SceneState::Edit ? ICON_MDI_PLAY : ICON_MDI_STOP;
         if (UI::toggle_button(icon, highlight, button_size)) {
-          if (editor.scene_state == Editor::SceneState::Edit) {
-            editor.on_scene_play();
+          if (editor_scene_->scene_state == EditorScene::SceneState::Edit) {
+            editor_scene_->play();
             editor_camera.disable();
-          } else if (editor.scene_state == Editor::SceneState::Play) {
-            editor.on_scene_stop();
+          } else if (editor_scene_->scene_state == EditorScene::SceneState::Play) {
+            editor_scene_->stop();
           }
         }
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.4f));
         if (ImGui::Button(ICON_MDI_PAUSE, button_size)) {
-          if (editor.scene_state == Editor::SceneState::Play)
-            editor.on_scene_stop();
+          if (editor_scene_->scene_state == EditorScene::SceneState::Play)
+            editor_scene_->stop();
         }
         ImGui::SameLine();
         // Just here for aesthetic purposes for now...
@@ -396,20 +410,25 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   on_end();
 }
 
-void ViewportPanel::set_context(Scene* scene, SceneHierarchyPanel& scene_hierarchy_panel) {
-  scene_hierarchy_panel_ = &scene_hierarchy_panel;
+void ViewportPanel::set_context(const std::shared_ptr<EditorScene>& scene, SceneHierarchyPanel* scene_hierarchy_panel) {
+  OX_CHECK_NULL(scene_hierarchy_panel);
+  OX_CHECK_NULL(scene);
 
-  if (!scene)
-    return;
+  last_save_scene_path = {};
 
-  this->scene_ = scene;
+  scene_hierarchy_panel_ = scene_hierarchy_panel;
 
-  editor_camera = scene_->create_entity("editor_camera", false);
+  this->editor_scene_ = scene;
+
+  set_name(fmt::format("Viewport:{}", scene->get_scene()->scene_name));
+
+  editor_camera = editor_scene_->get_scene()->create_entity("editor_camera", false);
   editor_camera.add<CameraComponent>().add<Hidden>();
 }
 
 void ViewportPanel::on_update() {
-  if (!is_viewport_hovered || scene_->is_running() || !editor_camera.has<CameraComponent>()) {
+  if (!editor_scene_ || !is_viewport_hovered || editor_scene_->get_scene()->is_running() ||
+      !editor_camera.has<CameraComponent>()) {
     return;
   }
 
@@ -502,7 +521,7 @@ void ViewportPanel::on_update() {
   cam.zoom = static_cast<float>(EditorCVar::cvar_camera_zoom.get());
 }
 
-void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw) {
+void ViewportPanel::draw_stats_overlay(bool draw) const {
   if (!performance_overlay_visible)
     return;
   auto work_pos = ImVec2(viewport_position_.x, viewport_position_.y);
@@ -512,36 +531,34 @@ void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw) {
   ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
-  const ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImVec2 window_pos, window_pos_pivot;
   window_pos.x = work_pos.x + work_size.x - padding.x;
   window_pos.y = work_pos.y + padding.y;
   window_pos_pivot.x = 1.0f;
   window_pos_pivot.y = 0.0f;
   ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
-  ImGui::SetNextWindowViewport(viewport->ID);
   ImGui::SetNextWindowBgAlpha(0.35f);
   ImGui::SetNextWindowSize(draw ? ImVec2({220.f, 0.f}) : ImVec2(0.f, 0.f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-  if (ImGui::Begin("##Performance Overlay", nullptr, window_flags)) {
+  auto overlay_id = fmt::format("{}_overlay", get_id());
+  if (ImGui::Begin(overlay_id.c_str(), nullptr, window_flags)) {
     ImGui::Text("%.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
     if (draw) {
-      ImGui::Text("Render resolution: %dx%d", extent.width, extent.height);
-      ImGui::Text("Scripts in scene: %zu", scene_->get_lua_systems().size());
-      const auto transform_entities_count = scene_->world.count<TransformComponent>();
+      ImGui::Text("Scripts in scene: %zu", editor_scene_->get_scene()->get_lua_systems().size());
+      const auto transform_entities_count = editor_scene_->get_scene()->world.count<TransformComponent>();
       ImGui::Text("Entities with transforms: %d", transform_entities_count);
-      const auto mesh_entities_count = scene_->world.count<MeshComponent>();
+      const auto mesh_entities_count = editor_scene_->get_scene()->world.count<MeshComponent>();
       ImGui::Text("Entities with mesh: %d", mesh_entities_count);
-      const auto light_entities_count = scene_->world.count<LightComponent>();
+      const auto light_entities_count = editor_scene_->get_scene()->world.count<LightComponent>();
       ImGui::Text("Entities with light: %d", light_entities_count);
-      const auto sprite_entities_count = scene_->world.count<SpriteComponent>();
+      const auto sprite_entities_count = editor_scene_->get_scene()->world.count<SpriteComponent>();
       ImGui::Text("Entities with sprite: %d", sprite_entities_count);
-      const auto particle_entities_count = scene_->world.count<ParticleSystemComponent>();
+      const auto particle_entities_count = editor_scene_->get_scene()->world.count<ParticleSystemComponent>();
       ImGui::Text("Entities with particle: %d", particle_entities_count);
-      const auto rigidbody_entities_count = scene_->world.count<RigidBodyComponent>();
+      const auto rigidbody_entities_count = editor_scene_->get_scene()->world.count<RigidBodyComponent>();
       ImGui::Text("Entities with rigidbody: %d", rigidbody_entities_count);
-      const auto audio_entities_count = scene_->world.count<AudioSourceComponent>();
+      const auto audio_entities_count = editor_scene_->get_scene()->world.count<AudioSourceComponent>();
       ImGui::Text("Entities with audio: %d", audio_entities_count);
     }
   }
@@ -760,7 +777,7 @@ void ViewportPanel::draw_gizmos() {
       0,
       view_proj,
       frustum,
-      scene_
+      editor_scene_->get_scene().get()
     );
     show_component_gizmo<AudioSourceComponent>(
       gizmo_icon_size_,
@@ -771,7 +788,7 @@ void ViewportPanel::draw_gizmos() {
       0,
       view_proj,
       frustum,
-      scene_
+      editor_scene_->get_scene().get()
     );
     show_component_gizmo<AudioListenerComponent>(
       gizmo_icon_size_,
@@ -782,7 +799,7 @@ void ViewportPanel::draw_gizmos() {
       0,
       view_proj,
       frustum,
-      scene_
+      editor_scene_->get_scene().get()
     );
     show_component_gizmo<CameraComponent>(
       gizmo_icon_size_,
@@ -793,7 +810,7 @@ void ViewportPanel::draw_gizmos() {
       0,
       view_proj,
       frustum,
-      scene_
+      editor_scene_->get_scene().get()
     );
   }
 
@@ -839,7 +856,7 @@ void ViewportPanel::draw_gizmos() {
 
     const glm::mat4& camera_view = cam.get_view_matrix();
 
-    glm::mat4 transform = scene_->get_world_transform(selected_entity);
+    glm::mat4 transform = Scene::get_world_transform(selected_entity);
 
     // Snapping
     const bool snap = input_sys.get_key_held(KeyCode::LeftControl);
@@ -867,7 +884,7 @@ void ViewportPanel::draw_gizmos() {
 
     if (ImGuizmo::IsUsing()) {
       const flecs::entity parent = selected_entity.parent();
-      const glm::mat4& parent_world_transform = parent != flecs::entity::null() ? scene_->get_world_transform(parent)
+      const glm::mat4& parent_world_transform = parent != flecs::entity::null() ? Scene::get_world_transform(parent)
                                                                                 : glm::mat4(1.0f);
       glm::vec3 translation, rotation, scale;
       if (math::decompose_transform(inverse(parent_world_transform) * transform, translation, rotation, scale)) {
@@ -895,7 +912,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
   renderer_instance->add_stage_after(
     RenderStage::VisBufferEncode,
     "mouse_picking",
-    [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = scene_](
+    [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = editor_scene_](
       RenderStageContext& ctx
     ) {
       auto depth_attachment = ctx.get_image_resource("depth_attachment");
@@ -945,11 +962,11 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
 
           if (!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewport_hovered) {
             if (transform_index != ~0_u32) {
-              if (s->transform_index_entities_map.contains(transform_index)) {
+              if (s->get_scene()->transform_index_entities_map.contains(transform_index)) {
                 auto& editor_context = editor.get_context();
 
                 // first pick the parent if parent is already picked then pick the actual entity
-                auto entity = s->transform_index_entities_map.at(transform_index);
+                auto entity = s->get_scene()->transform_index_entities_map.at(transform_index);
                 auto top_parent = entity;
                 while (top_parent.parent() != flecs::entity::null()) {
                   top_parent = top_parent.parent();
@@ -1005,7 +1022,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
             if (!editor_context.entity->has<MeshComponent>()) {
               editor_context.entity->children([s, &transform_indices](flecs::entity e) {
                 if (e.has<MeshComponent>()) {
-                  auto transform_id = s->get_entity_transform_id(e);
+                  auto transform_id = s->get_scene()->get_entity_transform_id(e);
                   if (transform_id.has_value()) {
                     auto transform_index = SlotMap_decode_id(*transform_id).index;
                     transform_indices.emplace_back(transform_index);
@@ -1013,7 +1030,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
                 }
               });
             } else {
-              auto transform_id = s->get_entity_transform_id(*editor_context.entity);
+              auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
               if (transform_id.has_value()) {
                 auto transform_index = SlotMap_decode_id(*transform_id).index;
                 transform_indices.emplace_back(transform_index);
