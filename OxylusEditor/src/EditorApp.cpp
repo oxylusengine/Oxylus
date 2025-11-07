@@ -2,6 +2,7 @@
 #include "Core/DefaultModules.hpp"
 #include "Core/EmbeddedLogo.hpp"
 #include "Editor.hpp"
+#include "Utils/EditorConfig.hpp"
 
 int main(int argc, char** argv) {
   std::string name = "Oxylus Engine - Editor";

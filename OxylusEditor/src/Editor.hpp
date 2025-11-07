@@ -4,12 +4,10 @@
 #include "EditorContext.hpp"
 #include "EditorTheme.hpp"
 #include "Notification.hpp"
-#include "Panels/ContentPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Panels/ViewportPanel.hpp"
 #include "UI/RuntimeConsole.hpp"
 #include "Utils/Command.hpp"
-#include "Utils/EditorConfig.hpp"
 
 namespace ox {
 class Editor {
@@ -42,9 +40,6 @@ public:
   std::unique_ptr<Project> active_project = nullptr;
 
   EditorTheme editor_theme;
-
-  // Logo
-  std::shared_ptr<Texture> engine_banner = nullptr;
 
   // Layout
   ImGuiID dockspace_id;

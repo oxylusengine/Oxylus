@@ -21,7 +21,7 @@
 #include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
 #include "Utils/Command.hpp"
-#include "Utils/EmbeddedBanner.hpp"
+#include "Utils/EditorConfig.hpp"
 #include "Utils/ImGuiScoped.hpp"
 #include "Utils/Log.hpp"
 
@@ -37,16 +37,6 @@ auto Editor::init() -> std::expected<void, std::string> {
   editor_theme.init();
 
   active_project = std::make_unique<Project>();
-
-  engine_banner = std::make_shared<Texture>();
-  engine_banner->create(
-    {},
-    {.preset = Preset::eRTT2DUnmipped,
-     .format = vuk::Format::eR8G8B8A8Srgb,
-     .mime = {},
-     .loaded_data = editor_banner,
-     .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u}}
-  );
 
   auto scene_hierarchy_panel = add_panel<SceneHierarchyPanel>();
   add_panel<ContentPanel>();
@@ -71,14 +61,6 @@ auto Editor::init() -> std::expected<void, std::string> {
   editor_scene = std::make_shared<Scene>();
   load_default_scene(editor_scene);
   set_editor_context(editor_scene);
-
-  if (auto project_arg = App::get()->get_command_line_args().get_index("project=")) {
-    if (auto next_arg = App::get()->get_command_line_args().get(project_arg.value() + 1)) {
-      get_panel<ProjectPanel>()->load_project_for_editor(next_arg->arg_str);
-    } else {
-      OX_LOG_ERROR("Project argument missing a path!");
-    }
-  }
 
   return {};
 }
