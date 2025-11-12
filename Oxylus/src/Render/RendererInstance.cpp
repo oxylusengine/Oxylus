@@ -397,6 +397,9 @@ auto RendererInstance::render(
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
+  OX_ASSERT(self.update_ran_this_frame);
+  self.update_ran_this_frame = false;
+
   OX_DEFER(&) {
     self.clear_stages();
     self.shared_resources.clear();
@@ -467,13 +470,13 @@ auto RendererInstance::render(
       std::move(self.prepared_frame.spot_lights_buffer)
     );
 
-  if (static_cast<bool>(RendererCVar::cvar_bloom_enable.get()))
+  if (RendererCVar::cvar_bloom_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasBloom;
-  if (static_cast<bool>(RendererCVar::cvar_fxaa_enable.get()))
+  if (RendererCVar::cvar_fxaa_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasFXAA;
-  if (static_cast<bool>(RendererCVar::cvar_vbgtao_enable.get()))
+  if (RendererCVar::cvar_vbgtao_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
-  if (static_cast<bool>(RendererCVar::cvar_contact_shadows.get()))
+  if (RendererCVar::cvar_contact_shadows.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
 
   const auto debug_view = static_cast<GPU::DebugView>(RendererCVar::cvar_debug_view.get());
@@ -1023,6 +1026,8 @@ auto RendererInstance::render(
 
 auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void {
   ZoneScoped;
+
+  self.update_ran_this_frame = true;
 
   auto& asset_man = App::mod<AssetManager>();
   auto& vk_context = *self.renderer.vk_context;

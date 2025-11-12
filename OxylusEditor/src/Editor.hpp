@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Project.hpp"
+#include "Panels/MainViewportPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Panels/ViewportPanel.hpp"
 #include "UI/RuntimeConsole.hpp"
@@ -15,23 +16,25 @@ class Editor {
 public:
   constexpr static auto MODULE_NAME = "Editor";
 
-  struct ScenePlayEvent {
-    Scene* scene;
+  struct ViewportSceneLoadEvent {};
 
-    ScenePlayEvent(Scene* s) : scene(s) {}
+  struct ScenePlayEvent {
+    SceneID scene_id;
+
+    ScenePlayEvent(SceneID s) : scene_id(s) {}
   };
 
   struct SceneStopEvent {
-    Scene* scene;
+    SceneID scene_id;
 
-    SceneStopEvent(Scene* s) : scene(s) {}
+    SceneStopEvent(SceneID s) : scene_id(s) {}
   };
 
   enum class EditorLayout { Classic = 0, BigViewport };
 
   // Panels
+  MainViewportPanel main_viewport_panel = {};
   ankerl::unordered_dense::map<size_t, std::unique_ptr<EditorPanel>> editor_panels;
-  std::vector<std::unique_ptr<ViewportPanel>> viewport_panels;
 
   template <typename T>
   auto add_panel() -> T* {
@@ -69,14 +72,14 @@ public:
   // Removes all viewports then adds one and resets the SceneManager
   auto reset(this Editor& self) -> void;
 
-  auto new_scene(const std::unique_ptr<ViewportPanel>& viewport) -> void;
+  auto new_scene() -> void;
 
   // Loads the scene from the path and appends the scene to the first viewport panel
   auto open_scene(const std::filesystem::path& path) -> bool;
 
   auto open_scene_file_dialog() -> void;
   auto save_scene() -> void;
-  auto save_scene_as(std::string* last_save_path, Scene* scene) -> void;
+  auto save_scene_as() -> void;
 
   auto get_context() -> EditorContext& { return editor_context; }
 

@@ -327,7 +327,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     }
     static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
                                                      ImGuiTreeNodeFlags_SpanAvailWidth |
-                                                     ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_Framed |
+                                                     ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
                                                      ImGuiTreeNodeFlags_FramePadding;
 
     auto& editor_theme = editor.editor_theme;
@@ -624,7 +624,7 @@ void InspectorPanel::draw_model_asset(UUID* uuid, Asset* asset) {
     for (auto& mat_uuid : model->materials) {
       static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
                                                        ImGuiTreeNodeFlags_SpanAvailWidth |
-                                                       ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_Framed |
+                                                       ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
                                                        ImGuiTreeNodeFlags_FramePadding;
 
       if (auto* material = asset_man.get_material(mat_uuid)) {

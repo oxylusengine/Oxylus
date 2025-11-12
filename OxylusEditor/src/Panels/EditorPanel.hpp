@@ -9,7 +9,9 @@ class EditorPanel {
 public:
   bool visible;
 
-  EditorPanel(const char* name = "Unnamed Panel", const char* icon = "", bool default_show = false);
+  EditorPanel(
+    const char* name = "Unnamed Panel", const char* icon = "", bool default_show = false, bool closable = true
+  );
   virtual ~EditorPanel() = default;
 
   EditorPanel(const EditorPanel& other) = delete;
@@ -17,24 +19,25 @@ public:
   EditorPanel& operator=(const EditorPanel& other) = delete;
   EditorPanel& operator=(EditorPanel&& other) = delete;
 
-  virtual void on_update() {}
+  virtual auto on_update() -> void {}
 
-  virtual void on_render(vuk::ImageAttachment swapchain_attachment) = 0;
+  virtual auto on_render(vuk::ImageAttachment swapchain_attachment) -> void = 0;
 
   auto set_name(const std::string& name) -> void;
-  const char* get_name() const { return _name.c_str(); }
-  const char* get_id() const { return _id.c_str(); }
-  const char* get_icon() const { return _icon; }
+  auto get_name() const -> const char* { return name_.c_str(); }
+  auto get_id() const -> const char* { return id_.c_str(); }
+  auto get_icon() const -> const char* { return icon_; }
 
 protected:
-  bool on_begin(int32_t window_flags = 0);
-  void on_end() const;
+  auto on_begin(int32_t window_flags = 0) -> bool;
+  auto on_end() const -> void;
 
-  void update_id();
+  auto update_id() -> void;
 
-  std::string _name;
-  const char* _icon;
-  std::string _id;
+  std::string name_;
+  const char* icon_;
+  std::string id_;
+  bool closable_;
 
 private:
   static uint32_t _count;

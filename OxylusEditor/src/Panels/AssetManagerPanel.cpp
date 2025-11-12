@@ -15,6 +15,6 @@ void AssetManagerPanel::on_update() {}
 void AssetManagerPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   ZoneScoped;
 
-  viewer.render(_id.c_str(), &visible);
+  viewer.render(id_.c_str(), &visible);
 }
 } // namespace ox

@@ -61,5 +61,8 @@ private:
   void draw_gizmos();
   auto mouse_picking_stages(RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void;
   auto grid_stage(RendererInstance* renderer_instance) -> void;
+  void drag_drop_with_button();
+  void transform_gizmos_button_group(ImVec2 start_cursor_pos);
+  void scene_button_group(ImVec2 start_cursor_pos);
 };
 } // namespace ox

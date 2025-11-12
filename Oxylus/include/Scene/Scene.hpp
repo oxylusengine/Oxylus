@@ -64,6 +64,7 @@ public:
   std::vector<GPU::Material> gpu_materials = {};
 
   bool meshes_dirty = false;
+  bool force_material_update = true;
   u32 mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
 

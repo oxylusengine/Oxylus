@@ -4,45 +4,55 @@
 #include "Editor.hpp"
 
 namespace ox {
+auto EditorScene::is_valid(this const EditorScene& self) -> bool {
+  ZoneScoped;
+
+  return self.scene != nullptr;
+}
+
+auto EditorScene::is_playing(this const EditorScene& self) -> bool {
+  ZoneScoped;
+
+  return self.scene_state == EditorScene::SceneState::Play;
+}
+
 auto EditorScene::get_scene(this const EditorScene& self) -> std::shared_ptr<Scene> {
   ZoneScoped;
 
-  if (self.scene_state == SceneState::Edit) {
-    return self.scene;
-  }
-
-  OX_CHECK_NULL(self.active_scene);
-
-  return self.active_scene;
+  OX_ASSERT(self.is_valid());
+  return self.scene;
 }
 
-auto EditorScene::play(this EditorScene& self) -> void {
+auto EditorScene::get_id(this const EditorScene& self) -> SceneID {
   ZoneScoped;
 
-  self.scene_state = SceneState::Play;
+  return self.id;
+}
 
-  self.active_scene = Scene::copy(self.scene);
+auto EditorScene::play(this const EditorScene& self) -> std::shared_ptr<EditorScene> {
+  ZoneScoped;
 
-  auto& event_system = App::get_event_system();
-  event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(self.active_scene.get()));
-
-  self.active_scene->runtime_start();
+  auto new_scene = std::make_shared<EditorScene>(Scene::copy(self.scene));
+  new_scene->get_scene()->meshes_dirty = true;
+  new_scene->get_scene()->runtime_start();
+  new_scene->scene_state = SceneState::Play;
 
   self.scene->reset_renderer_instance();
+
+  return new_scene;
 }
 
 auto EditorScene::stop(this EditorScene& self) -> void {
   ZoneScoped;
 
-  auto& event_system = App::get_event_system();
-  event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(self.scene.get()));
-
   self.scene_state = SceneState::Edit;
 
-  self.active_scene.reset();
+  auto& event_system = App::get_event_system();
+  event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(self.id));
 
-  self.scene->world
-    .query_builder() //
+  self.get_scene()
+    ->world //
+    .query_builder()
     .with<TransformComponent>()
     .build()
     .each([](flecs::entity e) { e.modified<TransformComponent>(); });
@@ -58,11 +68,16 @@ auto SceneManager::new_scene() -> SceneID {
   ZoneScoped;
 
   auto scene_id = scenes.create_slot(std::make_shared<EditorScene>());
+  scenes.slot(scene_id)->get()->id = scene_id;
   return scene_id;
 }
 
 auto SceneManager::load_scene(const std::filesystem::path& path) -> std::optional<SceneID> {
   ZoneScoped;
+
+  // if (loaded_scenes.contains(path)) {
+  // return loaded_scenes.at(path);
+  // }
 
   if (!std::filesystem::exists(path)) {
     OX_LOG_WARN("Could not find scene: {0}", path.filename());
@@ -81,6 +96,7 @@ auto SceneManager::load_scene(const std::filesystem::path& path) -> std::optiona
   auto editor_scene = *scenes.slot(scene_id);
 
   if (editor_scene->scene->load_from_file(path)) {
+    loaded_scenes.emplace(path, scene_id);
     return scene_id;
   }
 
@@ -108,6 +124,7 @@ auto SceneManager::load_default_scene(SceneID scene_id) -> void {
 auto SceneManager::get_scene(SceneID scene_id) -> std::shared_ptr<EditorScene> {
   ZoneScoped;
 
+  OX_ASSERT(scene_id != SceneID::Invalid);
   auto scene_ptr = scenes.slot(scene_id);
   OX_CHECK_NULL(scene_ptr);
   return *scene_ptr;

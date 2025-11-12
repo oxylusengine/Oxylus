@@ -656,9 +656,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       };
       material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
     });
-
-  auto& asset_man = App::mod<AssetManager>();
-  asset_man.set_all_materials_dirty();
 }
 
 auto Scene::physics_init(this Scene& self) -> void {
@@ -824,6 +821,11 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     auto* texture = asset_man.get_texture(uuid);
     return texture->get_view_index();
   };
+
+  if (self.force_material_update) {
+    asset_man.set_all_materials_dirty();
+    self.force_material_update = false;
+  }
 
   auto dirty_material_ids = asset_man.get_dirty_material_ids();
   auto dirty_material_indices = std::vector<u32>();

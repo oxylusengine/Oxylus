@@ -24,6 +24,7 @@ struct PayloadData {
   auto size() const -> usize { return sizeof(PayloadData); }
 
   auto get_str() const -> std::string { return std::string(str); }
+  auto get_path() const -> std::filesystem::path { return std::filesystem::path(str); }
 
   static auto from_payload(const ImGuiPayload* payload) -> const PayloadData* {
     return reinterpret_cast<const PayloadData*>(payload->Data);

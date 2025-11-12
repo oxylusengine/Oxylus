@@ -85,7 +85,7 @@ target("Oxylus")
         "shader-slang",
         "enet-ox",
         "flecs-ox",
-        "imgui",
+        "imgui-ox",
         "vk-bootstrap",
         "vuk",
         "unordered_dense",

@@ -54,8 +54,7 @@ auto Editor::init() -> std::expected<void, std::string> {
     }
   };
 
-  viewport_panels.emplace_back(std::make_unique<ViewportPanel>());
-  new_scene(viewport_panels.front());
+  main_viewport_panel.init();
 
   auto& event_system = App::get_event_system();
   event_system.subscribe<ScenePlayEvent>([this](const ScenePlayEvent& e) {
@@ -82,42 +81,13 @@ auto Editor::deinit() -> std::expected<void, std::string> {
 auto Editor::update(const Timestep& timestep) -> void {
   ZoneScoped;
 
-  for (auto& viewport : viewport_panels) {
-    if (viewport->is_viewport_focused) {
-      auto* sh = get_panel<SceneHierarchyPanel>();
-      auto viewport_scene = viewport->get_scene();
-      if (viewport_scene) {
-        if (viewport_scene->get_scene()) {
-          sh->set_scene(viewport_scene->get_scene().get());
-        }
-      }
-    }
-  }
-
   for (const auto& panel : editor_panels | std::views::values) {
     if (!panel->visible)
       continue;
     panel->on_update();
   }
-  for (const auto& panel : viewport_panels) {
-    if (!panel->visible)
-      continue;
-    panel->on_update();
-  }
 
-  auto scenes = scene_manager.get_all_scenes();
-  for (auto& editor_scene : scenes) {
-    const auto scene_state = editor_scene->scene_state;
-    const auto& scene = editor_scene->scene;
-    const auto& active_scene = editor_scene->active_scene;
-    if (scene_state == EditorScene::SceneState::Edit) {
-      scene->disable_phases({flecs::PreUpdate, flecs::OnUpdate});
-      scene->runtime_update(timestep);
-    } else if (scene_state == EditorScene::SceneState::Play) {
-      active_scene->enable_all_phases();
-      active_scene->runtime_update(timestep);
-    }
-  }
+  main_viewport_panel.update(timestep, get_panel<SceneHierarchyPanel>());
 
   auto& vk_context = App::get_vkcontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
@@ -147,13 +117,6 @@ auto Editor::update(const Timestep& timestep) -> void {
 }
 
 auto Editor::render(const vuk::ImageAttachment& swapchain_attachment) -> void {
-  const auto scenes = scene_manager.get_all_scenes();
-  for (const auto& s : scenes) {
-    if (s->scene_state == EditorScene::SceneState::Play && s->active_scene) {
-      s->active_scene->on_render(swapchain_attachment.extent, swapchain_attachment.format);
-    }
-  }
-
   auto& job_man = App::get_job_manager();
 
   auto status = job_man.get_tracker().get_status();
@@ -199,25 +162,11 @@ auto Editor::render(const vuk::ImageAttachment& swapchain_attachment) -> void {
       ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
     }
 
-    ViewportPanel* fullscreen_viewport_panel = nullptr;
-    for (const auto& panel : viewport_panels) {
-      if (panel->fullscreen_viewport) {
-        fullscreen_viewport_panel = panel.get();
-        break;
-      }
-      fullscreen_viewport_panel = nullptr;
-    }
+    main_viewport_panel.on_render(swapchain_attachment);
 
-    if (fullscreen_viewport_panel != nullptr) {
-      fullscreen_viewport_panel->on_render(swapchain_attachment);
-    } else {
-      for (const auto& panel : viewport_panels)
+    for (const auto& panel : editor_panels | std::views::values) {
+      if (panel->visible)
         panel->on_render(swapchain_attachment);
-
-      for (const auto& panel : editor_panels | std::views::values) {
-        if (panel->visible)
-          panel->on_render(swapchain_attachment);
-      }
     }
 
     runtime_console.on_imgui_render();
@@ -240,20 +189,20 @@ auto Editor::render(const vuk::ImageAttachment& swapchain_attachment) -> void {
 }
 
 void Editor::reset(this Editor& self) {
-  self.scene_manager.reset();
+  self.main_viewport_panel.reset();
 
   auto* sh = self.get_panel<SceneHierarchyPanel>();
   sh->set_scene(nullptr);
 
-  self.viewport_panels.clear();
-  self.viewport_panels.emplace_back(std::make_unique<ViewportPanel>());
+  self.scene_manager.reset();
 }
 
-void Editor::new_scene(const std::unique_ptr<ViewportPanel>& viewport) {
+void Editor::new_scene() {
   auto new_scene_id = scene_manager.new_scene();
   scene_manager.load_default_scene(new_scene_id);
   auto scene = scene_manager.get_scene(new_scene_id);
-  viewport->set_context(scene, get_panel<SceneHierarchyPanel>());
+
+  main_viewport_panel.add_new_scene(scene);
 }
 
 bool Editor::open_scene(const std::filesystem::path& path) {
@@ -261,7 +210,7 @@ bool Editor::open_scene(const std::filesystem::path& path) {
 
   if (loaded_scene.has_value()) {
     auto scene = scene_manager.get_scene(loaded_scene.value());
-    viewport_panels.front()->set_context(scene, get_panel<SceneHierarchyPanel>());
+    main_viewport_panel.add_new_scene(scene);
   }
 
   return loaded_scene.has_value();
@@ -294,23 +243,34 @@ void Editor::open_scene_file_dialog() {
 }
 
 void Editor::save_scene() {
-  for (auto& viewport : viewport_panels) {
-    if (viewport->is_viewport_focused) {
-      auto* scene = viewport->get_scene();
+  auto* focused_viewport = main_viewport_panel.get_focused_viewport();
+  auto* scene = focused_viewport->get_scene();
 
-      if (viewport->last_save_scene_path.empty()) {
-        auto& job_man = App::get_job_manager();
-        job_man.push_job_name("Saving scene");
-        job_man.submit(Job::create([s = scene, p = viewport->last_save_scene_path] { s->scene->save_to_file(p); }));
-        job_man.pop_job_name();
-      } else {
-        save_scene_as(&viewport->last_save_scene_path, scene->scene.get());
-      }
-    }
+  if (scene->is_playing()) {
+    return;
+  }
+
+  if (focused_viewport->last_save_scene_path.empty()) {
+    auto& job_man = App::get_job_manager();
+    job_man.push_job_name("Saving scene");
+    job_man.submit(Job::create([s = scene, p = focused_viewport->last_save_scene_path] {
+      s->get_scene()->save_to_file(p);
+    }));
+    job_man.pop_job_name();
+  } else {
+    save_scene_as();
   }
 }
 
-void Editor::save_scene_as(std::string* last_save_path, Scene* scene) {
+void Editor::save_scene_as() {
+  auto* focused_viewport = main_viewport_panel.get_focused_viewport();
+  if (focused_viewport->get_scene()->is_playing()) {
+    return;
+  }
+
+  const auto last_save_scene_path = &focused_viewport->last_save_scene_path;
+  const auto scene = focused_viewport->get_scene()->get_scene().get();
+
   const auto& window = App::get_window();
   FileDialogFilter dialog_filters[] = {{.name = "Oxylus Scene(.oxscene)", .pattern = "oxscene"}};
   struct UData {
@@ -318,7 +278,7 @@ void Editor::save_scene_as(std::string* last_save_path, Scene* scene) {
     Scene* scene = {};
   };
 
-  auto u_data = new UData(last_save_path, scene);
+  const auto u_data = new UData{.last_save_path = last_save_scene_path, .scene = scene};
 
   window.show_dialog({
     .kind = DialogKind::SaveFile,
@@ -362,7 +322,7 @@ void Editor::editor_shortcuts() {
       redo();
     }
     if (input_sys.get_key_pressed(KeyCode::N)) {
-      new_scene(viewport_panels.front());
+      new_scene();
     }
     if (input_sys.get_key_pressed(KeyCode::S)) {
       save_scene();
@@ -371,12 +331,7 @@ void Editor::editor_shortcuts() {
       open_scene_file_dialog();
     }
     if (input_sys.get_key_held(KeyCode::LeftShift) && input_sys.get_key_pressed(KeyCode::S)) {
-      for (auto& viewport : viewport_panels) {
-        if (viewport->is_viewport_focused) {
-          auto* scene = viewport->get_scene();
-          save_scene_as(&viewport->last_save_scene_path, scene->scene.get());
-        }
-      }
+      save_scene_as();
     }
   }
 }
@@ -394,7 +349,7 @@ void Editor::set_docking_layout(EditorLayout layout) {
     ImGuiID left_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.2f, nullptr, &dockspace_id);
     const ImGuiID left_split_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Down, 0.4f, nullptr, &left_dock);
 
-    ImGui::DockBuilderDockWindow(viewport_panels[0]->get_id(), right_dock);
+    ImGui::DockBuilderDockWindow(main_viewport_panel.get_id(), right_dock);
     ImGui::DockBuilderDockWindow(get_panel<SceneHierarchyPanel>()->get_id(), left_dock);
     ImGui::DockBuilderDockWindow(get_panel<ContentPanel>()->get_id(), left_split_dock);
     ImGui::DockBuilderDockWindow(get_panel<InspectorPanel>()->get_id(), left_dock);
@@ -406,7 +361,7 @@ void Editor::set_docking_layout(EditorLayout layout) {
       left_vertical_split_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Left, 0.2f, nullptr, &left_dock);
 
     ImGui::DockBuilderDockWindow(get_panel<InspectorPanel>()->get_id(), right_dock);
-    ImGui::DockBuilderDockWindow(viewport_panels[0]->get_id(), left_dock);
+    ImGui::DockBuilderDockWindow(main_viewport_panel.get_id(), left_dock);
     ImGui::DockBuilderDockWindow(get_panel<ContentPanel>()->get_id(), left_bottom_dock);
     ImGui::DockBuilderDockWindow(get_panel<SceneHierarchyPanel>()->get_id(), left_vertical_split_dock);
   }
@@ -416,6 +371,8 @@ void Editor::set_docking_layout(EditorLayout layout) {
 
 void Editor::reset_current_docking_layout() {
   set_docking_layout(current_layout);
+
+  main_viewport_panel.update_dockspace();
 }
 
 void Editor::draw_menubar(ImGuiViewport* viewport, f32 frame_height) {
@@ -426,7 +383,7 @@ void Editor::draw_menubar(ImGuiViewport* viewport, f32 frame_height) {
     if (ImGui::BeginMenuBar()) {
       if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Scene", "Ctrl + N")) {
-          new_scene(viewport_panels.front());
+          new_scene();
         }
         if (ImGui::MenuItem("Open Scene", "Ctrl + O")) {
           open_scene_file_dialog();
@@ -435,12 +392,7 @@ void Editor::draw_menubar(ImGuiViewport* viewport, f32 frame_height) {
           save_scene();
         }
         if (ImGui::MenuItem("Save Scene As...", "Ctrl + Shift + S")) {
-          for (auto& viewport_panel : viewport_panels) {
-            if (viewport_panel->is_viewport_focused) {
-              auto* scene = viewport_panel->get_scene();
-              save_scene_as(&viewport_panel->last_save_scene_path, scene->scene.get());
-            }
-          }
+          save_scene_as();
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Launcher...")) {
@@ -470,13 +422,11 @@ void Editor::draw_menubar(ImGuiViewport* viewport, f32 frame_height) {
       }
       if (ImGui::BeginMenu("Window")) {
         if (ImGui::MenuItem("Add viewport", nullptr)) {
-          const auto& v = viewport_panels.emplace_back(std::make_unique<ViewportPanel>());
-          new_scene(v);
+          main_viewport_panel.add_viewport();
         }
         ImGui::MenuItem("Inspector", nullptr, &get_panel<InspectorPanel>()->visible);
         ImGui::MenuItem("Scene hierarchy", nullptr, &get_panel<SceneHierarchyPanel>()->visible);
         ImGui::MenuItem("Console window", nullptr, &runtime_console.visible);
-        ImGui::MenuItem("Performance Overlay", nullptr, &viewport_panels[0]->performance_overlay_visible);
         if (ImGui::BeginMenu("Layout")) {
           if (ImGui::MenuItem("Classic")) {
             set_docking_layout(EditorLayout::Classic);

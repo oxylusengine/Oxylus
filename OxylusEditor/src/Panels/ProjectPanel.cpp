@@ -43,7 +43,7 @@ void ProjectPanel::load_project_for_editor(const std::filesystem::path& filepath
     const auto start_scene = vfs.resolve_physical_dir(VFS::PROJECT_DIR, active_project->get_config().start_scene);
     editor.reset();
     if (!editor.open_scene(start_scene)) {
-      editor.new_scene(editor.viewport_panels.front());
+      editor.new_scene();
     }
     editor.reset_current_docking_layout();
     App::mod<EditorConfig>().add_recent_project(active_project.get());
@@ -159,7 +159,7 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
           // Arrow icons for buttons
           ImGui::SetCursorPosX(x - 30.f);
           const auto font_size = y * 0.6f;
-          ImGui::SetCursorPosY(cursor_pos_y + 4.f); // 4 is just a random number i picked that looked centered enough...
+          ImGui::SetCursorPosY(cursor_pos_y + 4.f); // 4 is just a random number I picked that looked centered enough...
           ImGui::PushFont(nullptr, font_size);
           ImGui::TextUnformatted(ICON_MDI_PLAY_OUTLINE);
           ImGui::PopFont();
@@ -204,6 +204,9 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         ImGui::SetCursorPosX((x / 2.f) - (cnt_button_size / 2.f));
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
         if (ImGui::Button("Continue without project", ImVec2(cnt_button_size, 0))) {
+          auto& editor = App::mod<Editor>();
+          editor.reset();
+          editor.new_scene();
           visible = false;
           ImGui::CloseCurrentPopup();
         }
