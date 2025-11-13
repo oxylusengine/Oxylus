@@ -22,7 +22,6 @@
 #include "Utils/CVars.hpp"
 #include "Utils/Command.hpp"
 #include "Utils/EditorConfig.hpp"
-#include "Utils/Log.hpp"
 
 namespace ox {
 auto Editor::init() -> std::expected<void, std::string> {
@@ -68,12 +67,25 @@ auto Editor::init() -> std::expected<void, std::string> {
     sh->set_scene(nullptr);
   });
 
+  Log::add_callback(
+    "editor_notifications",
+    [](void* user_data, const loguru::Message& message) {
+      auto* e = reinterpret_cast<Editor*>(user_data);
+      auto notification = Notification(message.message, true);
+      e->notification_system.add(std::move(notification));
+    },
+    this,
+    loguru::Verbosity_INFO
+  );
+
   return {};
 }
 
 auto Editor::deinit() -> std::expected<void, std::string> {
   auto& job_man = App::get_job_manager();
   job_man.get_tracker().stop_tracking();
+
+  Log::remove_callback("editor_notifications");
 
   return {};
 }

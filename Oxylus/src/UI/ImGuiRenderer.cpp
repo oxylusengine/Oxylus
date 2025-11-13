@@ -171,8 +171,6 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vu
         texture->SetStatus(ImTextureStatus_OK);
       }
 
-      OX_ASSERT(texture->Status == ImTextureStatus_OK);
-
       auto texture_id = this->add_image(*font_texture);
       OX_ASSERT(texture_id > 0);
       texture->SetTexID(texture_id);

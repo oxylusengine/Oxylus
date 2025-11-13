@@ -26,7 +26,9 @@ public:
   auto set_name(const std::string& name) -> void;
   auto get_name() const -> const char* { return name_.c_str(); }
   auto get_id() const -> const char* { return id_.c_str(); }
+
   auto get_icon() const -> const char* { return icon_; }
+  auto set_icon(const char* icon) -> void { icon_ = icon; }
 
 protected:
   auto on_begin(int32_t window_flags = 0) -> bool;

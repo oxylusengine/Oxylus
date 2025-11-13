@@ -64,6 +64,7 @@ auto MainViewportPanel::add_new_scene(const std::shared_ptr<EditorScene>& scene)
 auto MainViewportPanel::add_new_play_scene(const std::shared_ptr<EditorScene>& scene) -> void {
   auto* viewport = add_viewport();
   viewport->set_context(scene, nullptr);
+  viewport->set_icon(ICON_MDI_CONTROLLER);
   viewport->set_name(fmt::format("Game:{}", scene->get_scene()->scene_name));
 
   dock_should_update = true;
