@@ -46,14 +46,13 @@ rule("ox.install_resources")
     end)
 
 rule("ox.install_shaders")
-    set_extensions(".slang", ".hlsl", ".hlsli", ".frag", ".vert", ".comp", ".h")
+    set_extensions(".slang", ".hlsl", ".hlsli", ".frag", ".vert", ".comp", ".h", ".json")
     before_buildcmd_files(function (target, batchcmds, sourcebatch, opt)
         local output_dir = target:extraconf("rules", "ox.install_shaders", "output_dir") or ""
 
         for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
             local abs_source = path.absolute(sourcefile)
             local source_dir = path.directory(abs_source)
-            -- print("aaaa: " .. source_dir)
 
             -- Find the "Shaders" directory in the path and extract everything after it
             local shaders_pattern = "[/\\]Shaders[/\\]"

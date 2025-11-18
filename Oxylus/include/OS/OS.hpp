@@ -49,6 +49,7 @@ auto file_size(FileDescriptor file) noexcept -> std::expected<usize, FileError>;
 auto file_read(FileDescriptor file, void* data, usize size) -> usize;
 auto file_write(FileDescriptor file, const void* data, usize size) -> usize;
 auto file_seek(FileDescriptor file, i64 offset) -> void;
+auto file_last_modified(FileDescriptor file) -> std::expected<u64, FileError>;
 auto file_stdout(std::string_view str) -> void;
 auto file_stderr(std::string_view str) -> void;
 } // namespace os
