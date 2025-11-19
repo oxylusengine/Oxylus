@@ -127,7 +127,7 @@ void EditorTheme::apply_theme(bool dark) {
     colors[ImGuiCol_TabActive] = ImVec4(0.14f, 0.14f, 0.14f, 1.00f);
     colors[ImGuiCol_TabUnfocused] = ImVec4(0.12f, 0.12f, 0.12f, 1.00f);
     colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.14f, 0.14f, 0.14f, 1.00f);
-    colors[ImGuiCol_TabSelectedOverline] = ImVec4(0.34f, 0.34f, 0.34f, 1.00f);
+    colors[ImGuiCol_TabSelectedOverline] = ImVec4(1.00f, 0.56f, 0.00f, 1.00f);
 
     colors[ImGuiCol_DockingPreview] = ImVec4(1.00f, 0.56f, 0.00f, 0.22f);
     colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);

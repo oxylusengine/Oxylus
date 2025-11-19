@@ -6,12 +6,17 @@
 namespace ox {
 uint32_t EditorPanel::_count = 0;
 
-EditorPanel::EditorPanel(const char* name, const char* icon, bool default_show)
+EditorPanel::EditorPanel(const char* name, const char* icon, bool default_show, bool closable)
     : visible(default_show),
-      _name(name),
-      _icon(icon) {
-  _id = fmt::format(" {} {}\t\t###{}{}", icon, name, _count, name);
-  _count++;
+      name_(name),
+      icon_(icon),
+      closable_(closable) {
+  update_id();
+}
+
+auto EditorPanel::set_name(const std::string& name) -> void {
+  name_ = name;
+  update_id();
 }
 
 bool EditorPanel::on_begin(int32_t window_flags) {
@@ -22,13 +27,19 @@ bool EditorPanel::on_begin(int32_t window_flags) {
 
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
 
-  ImGui::Begin(_id.c_str(), &visible, window_flags | ImGuiWindowFlags_NoCollapse);
-
-  return true;
+  return ImGui::Begin(id_.c_str(), closable_ ? &visible : nullptr, window_flags | ImGuiWindowFlags_NoCollapse);
 }
 
 void EditorPanel::on_end() const {
-  ImGui::PopStyleVar();
-  ImGui::End();
+  if (visible) {
+    ImGui::PopStyleVar();
+    ImGui::End();
+  }
 }
+
+void EditorPanel::update_id() {
+  id_ = fmt::format(" {} {}\t\t###{}{}", icon_, name_, _count, name_);
+  _count++;
+}
+
 } // namespace ox

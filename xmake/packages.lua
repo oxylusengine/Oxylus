@@ -13,7 +13,7 @@ add_requires("enet-ox v2.6.5", {
     }
 })
 
-add_requires("imgui v1.92.0-docking", { configs = { wchar32 = true } })
+add_requires("imgui-ox v1.92.4-docking", { configs = { wchar32 = true } })
 
 add_requires("glm 1.0.1", {
     configs = {

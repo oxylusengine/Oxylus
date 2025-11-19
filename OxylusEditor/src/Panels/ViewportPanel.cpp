@@ -38,7 +38,10 @@ void show_component_gizmo(
 
   const char* icon = editor_theme.component_icon_map.at(typeid(T).hash_code());
   scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T&) {
-    const glm::vec3 pos = scene->get_world_transform(entity)[3];
+    const glm::vec3 pos = Scene::get_world_transform(entity)[3];
+
+    if (entity.has<Hidden>())
+      return;
 
     if (frustum.is_inside(pos) == (uint32_t)Intersection::Outside)
       return;
@@ -52,9 +55,7 @@ void show_component_gizmo(
     ImGui::PushID(entity.id());
     if (ImGui::Button(icon, {icon_size, icon_size})) {
       auto& editor_context = editor.get_context();
-      editor_context.reset();
-      editor_context.entity = entity;
-      editor_context.type = EditorContext::Type::Entity;
+      editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
     }
     ImGui::PopID();
     ImGui::PopFont();
@@ -108,17 +109,47 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
   }
 }
 
+ViewportPanel::~ViewportPanel() {
+  auto& event_system = App::get_event_system();
+  if (editor_scene_ && editor_scene_->is_playing())
+    event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene_->get_id()));
+}
+
+void ViewportPanel::drag_drop() const {
+  if (ImGui::BeginDragDropTarget()) {
+    if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+      const auto* payload = PayloadData::from_payload(imgui_payload);
+      const auto path = payload->get_path();
+      if (path.extension() == ".gltf" || path.extension() == ".glb") {
+        if (auto asset = App::mod<AssetManager>().import_asset(path))
+          editor_scene_->get_scene()->create_model_entity(asset);
+      }
+    }
+
+    ImGui::EndDragDropTarget();
+  }
+}
+
 void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar;
 
+  auto& editor = App::mod<Editor>();
+
   if (on_begin(flags)) {
+    if (ImGui::BeginPopupContextItem("viewport context")) {
+      if (ImGui::MenuItem("Unload Scene")) {
+        editor_scene_ = nullptr;
+        set_name("Viewport");
+        editor.reset_current_docking_layout();
+      }
+      ImGui::EndPopup();
+    }
+
     bool viewport_settings_popup = false;
     bool gizmo_settings_popup = false;
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
     auto& style = ImGui::GetStyle();
-
-    auto& editor = App::mod<Editor>();
 
     if (ImGui::BeginMenuBar()) {
       if (ImGui::MenuItem(ICON_MDI_COG)) {
@@ -138,7 +169,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       ImGui::EndMenuBar();
     }
 
-    draw_stats_overlay(swapchain_attachment.extent, draw_scene_stats);
+    draw_stats_overlay(draw_scene_stats);
 
     if (viewport_settings_popup)
       ImGui::OpenPopup("viewport_settings");
@@ -170,9 +201,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
     is_viewport_hovered = ImGui::IsWindowHovered();
 
     viewport_panel_size_ = glm::vec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y);
-    if ((int)viewport_size_.x != (int)viewport_panel_size_.x || (int)viewport_size_.y != (int)viewport_panel_size_.y) {
-      viewport_size_ = {viewport_panel_size_.x, viewport_panel_size_.y};
-    }
+    viewport_size_ = {viewport_panel_size_.x, viewport_panel_size_.y};
 
     constexpr auto sixteen_nine_ar = 1.7777777f;
     const auto fixed_width = viewport_size_.y * sixteen_nine_ar;
@@ -182,9 +211,26 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
                      0.5f; // add offset since we render image with fixed aspect ratio
     viewport_offset_ = {viewport_bounds_[0].x + off * 0.5f, viewport_bounds_[0].y};
 
-    const auto* app = App::get();
-    auto renderer_instance = scene_->get_renderer_instance();
-    if (renderer_instance != nullptr) {
+    if (!editor_scene_) {
+      const auto warning_text = "No scene!";
+      const auto text_width = ImGui::CalcTextSize(warning_text).x;
+      ImGui::SetCursorPosX((viewport_size_.x - text_width) * 0.5f);
+      ImGui::SetCursorPosY(viewport_size_.y * 0.5f);
+      ImGui::Text(warning_text);
+
+      on_end();
+
+      return;
+    }
+
+    auto renderer_instance = editor_scene_->get_scene()->get_renderer_instance();
+    if (!renderer_instance) {
+      const auto warning_text = "No scene render output!";
+      const auto text_width = ImGui::CalcTextSize(warning_text).x;
+      ImGui::SetCursorPosX((viewport_size_.x - text_width) * 0.5f);
+      ImGui::SetCursorPosY(viewport_size_.y * 0.5f);
+      ImGui::Text(warning_text);
+    } else {
       constexpr auto get_mouse_texel_coords =
         [](glm::uvec2 render_size, glm::vec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos)
         -> glm::uvec2 {
@@ -218,7 +264,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         mouse_picking_stages(renderer_instance, picking_texel);
       }
 
-      if (static_cast<bool>(EditorCVar::cvar_draw_grid.get())) {
+      if (EditorCVar::cvar_draw_grid.as_bool()) {
         grid_stage(renderer_instance);
       }
 
@@ -230,190 +276,52 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       viewport_attachment = vuk::clear_image(std::move(viewport_attachment), vuk::Black<f32>);
 
       auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
-      scene_->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
-      ImGui::Image(
-        App::mod<ImGuiRenderer>().add_image(std::move(scene_view_image)),
-        ImVec2{fixed_width, viewport_panel_size_.y}
-      );
-    } else {
-      const auto warning_text = "No scene render output!";
-      const auto text_width = ImGui::CalcTextSize(warning_text).x;
-      ImGui::SetCursorPosX((viewport_size_.x - text_width) * 0.5f);
-      ImGui::SetCursorPosY(viewport_size_.y * 0.5f);
-      ImGui::Text(warning_text);
+      editor_scene_->get_scene()->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
+      UI::image(std::move(scene_view_image), ImVec2{fixed_width, viewport_panel_size_.y});
+
+      drag_drop();
     }
 
-    if (ImGui::BeginDragDropTarget()) {
-      if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
-        const auto* payload = PayloadData::from_payload(imgui_payload);
-        const auto path = std::filesystem::path(payload->get_str());
-        if (path.extension() == ".oxscene") {
-          editor.open_scene(path);
-        }
-        if (path.extension() == ".gltf" || path.extension() == ".glb") {
-          auto& asset_man = App::mod<AssetManager>();
-          if (auto asset = asset_man.import_asset(path))
-            scene_->create_model_entity(asset);
-        }
-      }
-
-      ImGui::EndDragDropTarget();
-    }
-
-    if (editor_camera.has<CameraComponent>() && !scene_->is_running()) {
-      if (editor.scene_state == Editor::SceneState::Edit)
+    if (!editor_scene_->is_playing()) {
+      if (editor_camera.has<CameraComponent>()) {
         editor_camera.enable();
 
-      draw_gizmos();
-    }
-    {
-      // Transform Gizmos Button Group
-      const float frame_height = 1.3f * ImGui::GetFrameHeight();
-      const ImVec2 frame_padding = ImGui::GetStyle().FramePadding;
-      const ImVec2 button_size = {frame_height, frame_height};
-      constexpr float button_count = 8.0f;
-      const ImVec2 gizmo_position = {
-        viewport_bounds_[0].x + gizmo_position_.x,
-        viewport_bounds_[0].y + gizmo_position_.y
-      };
-      const ImRect bb(
-        gizmo_position.x,
-        gizmo_position.y,
-        gizmo_position.x + button_size.x + 8,
-        gizmo_position.y + (button_size.y + 2) * (button_count + 0.5f)
-      );
-      ImVec4 frame_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
-      frame_color.w = 0.5f;
-      ImGui::RenderFrame(bb.Min, bb.Max, ImGui::GetColorU32(frame_color), false, ImGui::GetStyle().FrameRounding);
-      const glm::vec2 temp_gizmo_position = gizmo_position_;
-
-      ImGui::SetCursorPos(
-        {start_cursor_pos.x + temp_gizmo_position.x + frame_padding.x, start_cursor_pos.y + temp_gizmo_position.y}
-      );
-      ImGui::BeginGroup();
-      {
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
-
-        const ImVec2 dragger_cursor_pos = ImGui::GetCursorPos();
-        ImGui::SetCursorPosX(dragger_cursor_pos.x + frame_padding.x);
-        ImGui::TextUnformatted(ICON_MDI_DOTS_HORIZONTAL);
-        ImVec2 dragger_size = ImGui::CalcTextSize(ICON_MDI_DOTS_HORIZONTAL);
-        dragger_size.x *= 2.0f;
-        ImGui::SetCursorPos(dragger_cursor_pos);
-        ImGui::InvisibleButton("GizmoDragger", dragger_size);
-        static ImVec2 last_mouse_position = ImGui::GetMousePos();
-        const ImVec2 mouse_pos = ImGui::GetMousePos();
-        if (ImGui::IsItemActive()) {
-          gizmo_position_.x += mouse_pos.x - last_mouse_position.x;
-          gizmo_position_.y += mouse_pos.y - last_mouse_position.y;
-        }
-        last_mouse_position = mouse_pos;
-
-        constexpr float alpha = 0.6f;
-        if (UI::toggle_button(ICON_MDI_AXIS_ARROW, gizmo_type_ == ImGuizmo::TRANSLATE, button_size, alpha, alpha))
-          gizmo_type_ = ImGuizmo::TRANSLATE;
-        if (UI::toggle_button(ICON_MDI_ROTATE_3D, gizmo_type_ == ImGuizmo::ROTATE, button_size, alpha, alpha))
-          gizmo_type_ = ImGuizmo::ROTATE;
-        if (UI::toggle_button(ICON_MDI_ARROW_EXPAND, gizmo_type_ == ImGuizmo::SCALE, button_size, alpha, alpha))
-          gizmo_type_ = ImGuizmo::SCALE;
-        if (UI::toggle_button(ICON_MDI_VECTOR_SQUARE, gizmo_type_ == ImGuizmo::BOUNDS, button_size, alpha, alpha))
-          gizmo_type_ = ImGuizmo::BOUNDS;
-        if (UI::toggle_button(ICON_MDI_ARROW_EXPAND_ALL, gizmo_type_ == ImGuizmo::UNIVERSAL, button_size, alpha, alpha))
-          gizmo_type_ = ImGuizmo::UNIVERSAL;
-        if (UI::toggle_button(
-              gizmo_mode_ == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
-              gizmo_mode_ == ImGuizmo::WORLD,
-              button_size,
-              alpha,
-              alpha
-            ))
-          gizmo_mode_ = gizmo_mode_ == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
-        if (UI::toggle_button(ICON_MDI_GRID, EditorCVar::cvar_draw_grid.get(), button_size, alpha, alpha))
-          EditorCVar::cvar_draw_grid.toggle();
-
-        if (editor_camera.has<CameraComponent>()) {
-          auto& cam = editor_camera.get_mut<CameraComponent>();
-          UI::push_id();
-          if (UI::toggle_button(
-                ICON_MDI_CAMERA,
-                cam.projection == CameraComponent::Projection::Orthographic,
-                button_size,
-                alpha,
-                alpha
-              ))
-            cam.projection = cam.projection == CameraComponent::Projection::Orthographic
-                               ? CameraComponent::Projection::Perspective
-                               : CameraComponent::Projection::Orthographic;
-        }
-        UI::pop_id();
-
-        ImGui::PopStyleVar(2);
+        draw_gizmos();
       }
-      ImGui::EndGroup();
+      transform_gizmos_button_group(start_cursor_pos);
     }
-    {
-      // Scene Button Group
-      constexpr float button_count = 3.0f;
-      constexpr float y_pad = 3.0f;
-      const ImVec2 button_size = {35.f, 25.f};
-      const ImVec2 group_size = {button_size.x * button_count, button_size.y + y_pad};
 
-      ImGui::SetCursorPos({viewport_size_.x * 0.5f - (group_size.x * 0.5f), start_cursor_pos.y + y_pad});
-      ImGui::BeginGroup();
-      {
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 1.0f);
-
-        const bool highlight = editor.scene_state == Editor::SceneState::Play;
-        const char* icon = editor.scene_state == Editor::SceneState::Edit ? ICON_MDI_PLAY : ICON_MDI_STOP;
-        if (UI::toggle_button(icon, highlight, button_size)) {
-          if (editor.scene_state == Editor::SceneState::Edit) {
-            editor.on_scene_play();
-            editor_camera.disable();
-          } else if (editor.scene_state == Editor::SceneState::Play) {
-            editor.on_scene_stop();
-          }
-        }
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.4f));
-        if (ImGui::Button(ICON_MDI_PAUSE, button_size)) {
-          if (editor.scene_state == Editor::SceneState::Play)
-            editor.on_scene_stop();
-        }
-        ImGui::SameLine();
-        // Just here for aesthetic purposes for now...
-        if (ImGui::Button(ICON_MDI_STEP_FORWARD, button_size)) {
-        }
-        ImGui::PopStyleColor();
-
-        ImGui::PopStyleVar(3);
-      }
-      ImGui::EndGroup();
-    }
+    scene_button_group(start_cursor_pos);
   }
+
   on_end();
 }
 
-void ViewportPanel::set_context(Scene* scene, SceneHierarchyPanel& scene_hierarchy_panel) {
-  scene_hierarchy_panel_ = &scene_hierarchy_panel;
+void ViewportPanel::set_context(const std::shared_ptr<EditorScene>& scene) {
+  OX_CHECK_NULL(scene);
 
-  if (!scene)
-    return;
+  last_save_scene_path = {};
 
-  this->scene_ = scene;
+  this->editor_scene_ = scene;
 
-  editor_camera = scene_->create_entity("editor_camera", false);
-  editor_camera.add<CameraComponent>().add<Hidden>();
+  set_name(fmt::format("Viewport:{}", scene->get_scene()->scene_name));
+
+  if (!scene->is_playing()) {
+    editor_camera = editor_scene_->get_scene()->create_entity("editor_camera", false);
+    editor_camera.add<CameraComponent>().add<Hidden>();
+  }
+
+  auto& event_system = App::get_event_system();
+  event_system.emit<Editor::ViewportSceneLoadEvent>(Editor::ViewportSceneLoadEvent{});
 }
 
 void ViewportPanel::on_update() {
-  if (!is_viewport_hovered || scene_->is_running() || !editor_camera.has<CameraComponent>()) {
+  if (!editor_scene_ || !is_viewport_hovered || editor_scene_->get_scene()->is_running() ||
+      !editor_camera.has<CameraComponent>()) {
     return;
   }
 
-  const float dt = static_cast<float>(App::get_timestep().get_seconds());
+  const f32 dt = static_cast<f32>(App::get_timestep().get_seconds());
 
   auto& cam = editor_camera.get_mut<CameraComponent>();
   auto& tc = editor_camera.get_mut<TransformComponent>();
@@ -502,8 +410,8 @@ void ViewportPanel::on_update() {
   cam.zoom = static_cast<float>(EditorCVar::cvar_camera_zoom.get());
 }
 
-void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw) {
-  if (!performance_overlay_visible)
+void ViewportPanel::draw_stats_overlay(bool draw) const {
+  if (!performance_overlay_visible || !editor_scene_)
     return;
   auto work_pos = ImVec2(viewport_position_.x, viewport_position_.y);
   auto work_size = ImVec2(viewport_panel_size_.x, viewport_panel_size_.y);
@@ -512,36 +420,34 @@ void ViewportPanel::draw_stats_overlay(vuk::Extent3D extent, bool draw) {
   ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
-  const ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImVec2 window_pos, window_pos_pivot;
   window_pos.x = work_pos.x + work_size.x - padding.x;
   window_pos.y = work_pos.y + padding.y;
   window_pos_pivot.x = 1.0f;
   window_pos_pivot.y = 0.0f;
   ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
-  ImGui::SetNextWindowViewport(viewport->ID);
   ImGui::SetNextWindowBgAlpha(0.35f);
   ImGui::SetNextWindowSize(draw ? ImVec2({220.f, 0.f}) : ImVec2(0.f, 0.f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-  if (ImGui::Begin("##Performance Overlay", nullptr, window_flags)) {
+  auto overlay_id = fmt::format("{}_overlay", get_id());
+  if (ImGui::Begin(overlay_id.c_str(), nullptr, window_flags)) {
     ImGui::Text("%.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
     if (draw) {
-      ImGui::Text("Render resolution: %dx%d", extent.width, extent.height);
-      ImGui::Text("Scripts in scene: %zu", scene_->get_lua_systems().size());
-      const auto transform_entities_count = scene_->world.count<TransformComponent>();
+      ImGui::Text("Scripts in scene: %zu", editor_scene_->get_scene()->get_lua_systems().size());
+      const auto transform_entities_count = editor_scene_->get_scene()->world.count<TransformComponent>();
       ImGui::Text("Entities with transforms: %d", transform_entities_count);
-      const auto mesh_entities_count = scene_->world.count<MeshComponent>();
+      const auto mesh_entities_count = editor_scene_->get_scene()->world.count<MeshComponent>();
       ImGui::Text("Entities with mesh: %d", mesh_entities_count);
-      const auto light_entities_count = scene_->world.count<LightComponent>();
+      const auto light_entities_count = editor_scene_->get_scene()->world.count<LightComponent>();
       ImGui::Text("Entities with light: %d", light_entities_count);
-      const auto sprite_entities_count = scene_->world.count<SpriteComponent>();
+      const auto sprite_entities_count = editor_scene_->get_scene()->world.count<SpriteComponent>();
       ImGui::Text("Entities with sprite: %d", sprite_entities_count);
-      const auto particle_entities_count = scene_->world.count<ParticleSystemComponent>();
+      const auto particle_entities_count = editor_scene_->get_scene()->world.count<ParticleSystemComponent>();
       ImGui::Text("Entities with particle: %d", particle_entities_count);
-      const auto rigidbody_entities_count = scene_->world.count<RigidBodyComponent>();
+      const auto rigidbody_entities_count = editor_scene_->get_scene()->world.count<RigidBodyComponent>();
       ImGui::Text("Entities with rigidbody: %d", rigidbody_entities_count);
-      const auto audio_entities_count = scene_->world.count<AudioSourceComponent>();
+      const auto audio_entities_count = editor_scene_->get_scene()->world.count<AudioSourceComponent>();
       ImGui::Text("Entities with audio: %d", audio_entities_count);
     }
   }
@@ -586,7 +492,7 @@ void ViewportPanel::draw_settings_panel() {
     EditorCVar::cvar_camera_zoom.set_default();
   }
 
-  constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap |
+  constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap |
                                             ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_FramePadding;
 
   if (open_action != -1)
@@ -760,7 +666,7 @@ void ViewportPanel::draw_gizmos() {
       0,
       view_proj,
       frustum,
-      scene_
+      editor_scene_->get_scene().get()
     );
     show_component_gizmo<AudioSourceComponent>(
       gizmo_icon_size_,
@@ -771,7 +677,7 @@ void ViewportPanel::draw_gizmos() {
       0,
       view_proj,
       frustum,
-      scene_
+      editor_scene_->get_scene().get()
     );
     show_component_gizmo<AudioListenerComponent>(
       gizmo_icon_size_,
@@ -782,7 +688,7 @@ void ViewportPanel::draw_gizmos() {
       0,
       view_proj,
       frustum,
-      scene_
+      editor_scene_->get_scene().get()
     );
     show_component_gizmo<CameraComponent>(
       gizmo_icon_size_,
@@ -793,7 +699,7 @@ void ViewportPanel::draw_gizmos() {
       0,
       view_proj,
       frustum,
-      scene_
+      editor_scene_->get_scene().get()
     );
   }
 
@@ -839,7 +745,7 @@ void ViewportPanel::draw_gizmos() {
 
     const glm::mat4& camera_view = cam.get_view_matrix();
 
-    glm::mat4 transform = scene_->get_world_transform(selected_entity);
+    glm::mat4 transform = Scene::get_world_transform(selected_entity);
 
     // Snapping
     const bool snap = input_sys.get_key_held(KeyCode::LeftControl);
@@ -867,7 +773,7 @@ void ViewportPanel::draw_gizmos() {
 
     if (ImGuizmo::IsUsing()) {
       const flecs::entity parent = selected_entity.parent();
-      const glm::mat4& parent_world_transform = parent != flecs::entity::null() ? scene_->get_world_transform(parent)
+      const glm::mat4& parent_world_transform = parent != flecs::entity::null() ? Scene::get_world_transform(parent)
                                                                                 : glm::mat4(1.0f);
       glm::vec3 translation, rotation, scale;
       if (math::decompose_transform(inverse(parent_world_transform) * transform, translation, rotation, scale)) {
@@ -895,7 +801,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
   renderer_instance->add_stage_after(
     RenderStage::VisBufferEncode,
     "mouse_picking",
-    [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = scene_](
+    [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = editor_scene_](
       RenderStageContext& ctx
     ) {
       auto depth_attachment = ctx.get_image_resource("depth_attachment");
@@ -945,11 +851,11 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
 
           if (!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewport_hovered) {
             if (transform_index != ~0_u32) {
-              if (s->transform_index_entities_map.contains(transform_index)) {
+              if (s->get_scene()->transform_index_entities_map.contains(transform_index)) {
                 auto& editor_context = editor.get_context();
 
                 // first pick the parent if parent is already picked then pick the actual entity
-                auto entity = s->transform_index_entities_map.at(transform_index);
+                auto entity = s->get_scene()->transform_index_entities_map.at(transform_index);
                 auto top_parent = entity;
                 while (top_parent.parent() != flecs::entity::null()) {
                   top_parent = top_parent.parent();
@@ -960,9 +866,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
                   }
                 }
 
-                editor_context.reset();
-                editor_context.entity = top_parent;
-                editor_context.type = EditorContext::Type::Entity;
+                editor_context.reset(EditorContext::Type::Entity, nullopt, top_parent);
               }
             } else {
               auto& editor_context = editor.get_context();
@@ -1005,7 +909,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
             if (!editor_context.entity->has<MeshComponent>()) {
               editor_context.entity->children([s, &transform_indices](flecs::entity e) {
                 if (e.has<MeshComponent>()) {
-                  auto transform_id = s->get_entity_transform_id(e);
+                  auto transform_id = s->get_scene()->get_entity_transform_id(e);
                   if (transform_id.has_value()) {
                     auto transform_index = SlotMap_decode_id(*transform_id).index;
                     transform_indices.emplace_back(transform_index);
@@ -1013,7 +917,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
                 }
               });
             } else {
-              auto transform_id = s->get_entity_transform_id(*editor_context.entity);
+              auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
               if (transform_id.has_value()) {
                 auto transform_index = SlotMap_decode_id(*transform_id).index;
                 transform_indices.emplace_back(transform_index);
@@ -1228,6 +1132,125 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
       .set_image_resource("depth_attachment", std::move(depth_attachment))
       .set_buffer_resource("camera_buffer", std::move(camera_buffer));
   });
+}
+
+void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
+  const float frame_height = 1.3f * ImGui::GetFrameHeight();
+  const ImVec2 frame_padding = ImGui::GetStyle().FramePadding;
+  const ImVec2 button_size = {frame_height, frame_height};
+  constexpr float button_count = 8.0f;
+  const ImVec2 gizmo_position = {viewport_bounds_[0].x + gizmo_position_.x, viewport_bounds_[0].y + gizmo_position_.y};
+  const ImRect bb(
+    gizmo_position.x,
+    gizmo_position.y,
+    gizmo_position.x + button_size.x + 8,
+    gizmo_position.y + (button_size.y + 2) * (button_count + 0.5f)
+  );
+  ImVec4 frame_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
+  frame_color.w = 0.5f;
+  ImGui::RenderFrame(bb.Min, bb.Max, ImGui::GetColorU32(frame_color), false, ImGui::GetStyle().FrameRounding);
+  const glm::vec2 temp_gizmo_position = gizmo_position_;
+
+  ImGui::SetCursorPos(
+    {start_cursor_pos.x + temp_gizmo_position.x + frame_padding.x, start_cursor_pos.y + temp_gizmo_position.y}
+  );
+  ImGui::BeginGroup();
+  {
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
+
+    const ImVec2 dragger_cursor_pos = ImGui::GetCursorPos();
+    ImGui::SetCursorPosX(dragger_cursor_pos.x + frame_padding.x);
+    ImGui::TextUnformatted(ICON_MDI_DOTS_HORIZONTAL);
+    ImVec2 dragger_size = ImGui::CalcTextSize(ICON_MDI_DOTS_HORIZONTAL);
+    dragger_size.x *= 2.0f;
+    ImGui::SetCursorPos(dragger_cursor_pos);
+    ImGui::InvisibleButton("GizmoDragger", dragger_size);
+    static ImVec2 last_mouse_position = ImGui::GetMousePos();
+    const ImVec2 mouse_pos = ImGui::GetMousePos();
+    if (ImGui::IsItemActive()) {
+      gizmo_position_.x += mouse_pos.x - last_mouse_position.x;
+      gizmo_position_.y += mouse_pos.y - last_mouse_position.y;
+    }
+    last_mouse_position = mouse_pos;
+
+    constexpr float alpha = 0.6f;
+    if (UI::toggle_button(ICON_MDI_AXIS_ARROW, gizmo_type_ == ImGuizmo::TRANSLATE, button_size, alpha, alpha))
+      gizmo_type_ = ImGuizmo::TRANSLATE;
+    if (UI::toggle_button(ICON_MDI_ROTATE_3D, gizmo_type_ == ImGuizmo::ROTATE, button_size, alpha, alpha))
+      gizmo_type_ = ImGuizmo::ROTATE;
+    if (UI::toggle_button(ICON_MDI_ARROW_EXPAND, gizmo_type_ == ImGuizmo::SCALE, button_size, alpha, alpha))
+      gizmo_type_ = ImGuizmo::SCALE;
+    if (UI::toggle_button(ICON_MDI_VECTOR_SQUARE, gizmo_type_ == ImGuizmo::BOUNDS, button_size, alpha, alpha))
+      gizmo_type_ = ImGuizmo::BOUNDS;
+    if (UI::toggle_button(ICON_MDI_ARROW_EXPAND_ALL, gizmo_type_ == ImGuizmo::UNIVERSAL, button_size, alpha, alpha))
+      gizmo_type_ = ImGuizmo::UNIVERSAL;
+    if (UI::toggle_button(
+          gizmo_mode_ == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
+          gizmo_mode_ == ImGuizmo::WORLD,
+          button_size,
+          alpha,
+          alpha
+        ))
+      gizmo_mode_ = gizmo_mode_ == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
+    if (UI::toggle_button(ICON_MDI_GRID, EditorCVar::cvar_draw_grid.get(), button_size, alpha, alpha))
+      EditorCVar::cvar_draw_grid.toggle();
+
+    if (editor_camera.has<CameraComponent>()) {
+      auto& cam = editor_camera.get_mut<CameraComponent>();
+      UI::push_id();
+      if (UI::toggle_button(
+            ICON_MDI_CAMERA,
+            cam.projection == CameraComponent::Projection::Orthographic,
+            button_size,
+            alpha,
+            alpha
+          ))
+        cam.projection = cam.projection == CameraComponent::Projection::Orthographic
+                           ? CameraComponent::Projection::Perspective
+                           : CameraComponent::Projection::Orthographic;
+    }
+    UI::pop_id();
+
+    ImGui::PopStyleVar(2);
+  }
+  ImGui::EndGroup();
+}
+
+void ViewportPanel::scene_button_group(ImVec2 start_cursor_pos) {
+  constexpr float button_count = 2.0f;
+  constexpr float y_pad = 3.0f;
+  const ImVec2 button_size = {35.f, 25.f};
+  const ImVec2 group_size = {button_size.x * button_count, button_size.y + y_pad};
+
+  ImGui::SetCursorPos({viewport_size_.x * 0.5f - (group_size.x * 0.5f), start_cursor_pos.y + y_pad});
+  ImGui::BeginGroup();
+  {
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 1.0f);
+
+    auto& event_system = App::get_event_system();
+
+    auto is_scene_playing = editor_scene_->is_playing();
+
+    ImGui::BeginDisabled(is_scene_playing);
+    if (ImGui::Button(ICON_MDI_PLAY, button_size)) {
+      event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(editor_scene_->get_id()));
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+
+    ImGui::BeginDisabled(!is_scene_playing);
+    if (ImGui::Button(ICON_MDI_STOP, button_size)) {
+      event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene_->get_id()));
+    }
+    ImGui::EndDisabled();
+
+    ImGui::PopStyleVar(3);
+  }
+  ImGui::EndGroup();
 }
 
 } // namespace ox

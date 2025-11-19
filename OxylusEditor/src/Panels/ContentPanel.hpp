@@ -10,7 +10,7 @@
 #include <vuk/Value.hpp>
 
 #include "EditorPanel.hpp"
-#include "ThumbnailRenderer.hpp"
+#include "Utils/ThumbnailRenderer.hpp"
 
 namespace ox {
 class Texture;

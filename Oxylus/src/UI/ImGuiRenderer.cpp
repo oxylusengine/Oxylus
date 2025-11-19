@@ -172,6 +172,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vu
       }
 
       auto texture_id = this->add_image(*font_texture);
+      OX_ASSERT(texture_id > 0);
       texture->SetTexID(texture_id);
 #else
       auto acquired = false;
@@ -362,13 +363,14 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vu
                 scissor.extent.height = static_cast<uint32_t>(clip_rect.w - clip_rect.y);
                 command_buffer.set_scissor(0, scissor);
 
-                command_buffer.bind_sampler(
-                    0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear});
+                // NOTE: Dear ImGui assumes id 0 for textures means they are invalid textures.
+                // So we use indices for textures starting from 1 thus this -1 is required.
                 const auto index = im_cmd->GetTexID();
-                const auto& image = sis[index];
-                command_buffer.bind_image(0, 1, image);
+                const auto& image = sis[index - 1];
 
-                command_buffer.draw_indexed(im_cmd->ElemCount,
+                command_buffer.bind_image(0, 1, image)
+                              .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
+                              .draw_indexed(im_cmd->ElemCount,
                                             1,
                                             im_cmd->IdxOffset + global_idx_offset,
                                             im_cmd->VtxOffset + global_vtx_offset,
@@ -389,7 +391,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vu
 
 ImTextureID ImGuiRenderer::add_image(vuk::Value<vuk::ImageAttachment>&& attachment) {
   rendering_images.emplace_back(std::move(attachment));
-  return rendering_images.size() - 1;
+  return rendering_images.size();
 }
 
 ImTextureID ImGuiRenderer::add_image(const Texture& texture) {

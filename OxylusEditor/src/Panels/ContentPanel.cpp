@@ -11,10 +11,10 @@
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
-#include "EditorContext.hpp"
 #include "OS/OS.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
+#include "Utils/EditorConfig.hpp"
 #include "Utils/Profiler.hpp"
 
 namespace ox {

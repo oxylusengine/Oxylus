@@ -2506,8 +2506,6 @@ inline void init_enums(sol::state* lua) {
                 ImGuiTreeNodeFlags_Selected,
                 "Framed",
                 ImGuiTreeNodeFlags_Framed,
-                "AllowItemOverlap",
-                ImGuiTreeNodeFlags_AllowItemOverlap,
                 "NoTreePushOnOpen",
                 ImGuiTreeNodeFlags_NoTreePushOnOpen,
                 "NoAutoOpenOnLog",
@@ -2545,9 +2543,7 @@ inline void init_enums(sol::state* lua) {
                 "AllowDoubleClick",
                 ImGuiSelectableFlags_AllowDoubleClick,
                 "Disabled",
-                ImGuiSelectableFlags_Disabled,
-                "AllowItemOverlap",
-                ImGuiSelectableFlags_AllowItemOverlap);
+                ImGuiSelectableFlags_Disabled);
 #pragma endregion Selectable Flags
 
 #pragma region Popup Flags

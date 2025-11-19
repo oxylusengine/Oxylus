@@ -17,6 +17,6 @@ void TextEditorPanel::on_update() {}
 void TextEditorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   ZoneScoped;
 
-  text_editor.render(_id.c_str(), &visible);
+  text_editor.render(id_.c_str(), &visible);
 }
 } // namespace ox

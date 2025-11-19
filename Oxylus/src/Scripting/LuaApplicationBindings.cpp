@@ -92,8 +92,6 @@ sol::object lua_subscribe_helper(EventSystem& system, sol::function callback) {
       sub_ptr->unsubscribe();
     };
 
-    OX_LOG_INFO("Subscribed to event from lua");
-
     return sol::make_object(lua, LuaScopedSubscription(std::move(unsub_func)));
   }
 

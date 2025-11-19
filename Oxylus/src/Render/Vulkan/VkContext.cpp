@@ -11,6 +11,7 @@
 #include <vuk/runtime/vk/Query.hpp>
 
 #include "Core/App.hpp"
+#include "Render/Renderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Window.hpp"
 #include "Utils/Profiler.hpp"
@@ -369,7 +370,7 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
                                     .create_persistent_descriptor_set(1, bindless_set_info, bindless_set_binding_flags);
 
   auto& event_system = App::get_event_system();
-  auto sub_result = event_system.subscribe<WindowResizeEvent>([&self](const WindowResizeEvent& e){
+  auto sub_result = event_system.subscribe<WindowResizeEvent>([&self](const WindowResizeEvent& e) {
     self.handle_resize(e.width, e.height);
   });
   if (!sub_result.has_value()) {
@@ -487,6 +488,9 @@ auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachme
   auto acquired_image = vuk::acquire_next_image("present_image", std::move(acquired_swapchain));
 
   self.swapchain_extent = glm::vec2(acquired_image->extent.width, acquired_image->extent.height);
+
+  if (App::has_mod<Renderer>())
+    App::mod<Renderer>().new_frame();
 
   return acquired_image;
 }
