@@ -57,7 +57,7 @@ auto MainViewportPanel::get_focused_viewport(this const MainViewportPanel& self)
 
 auto MainViewportPanel::add_new_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void {
   auto* viewport = self.add_viewport();
-  viewport->set_context(scene, nullptr);
+  viewport->set_context(scene);
 
   self.dock_should_update = true;
 }
@@ -65,7 +65,7 @@ auto MainViewportPanel::add_new_scene(this MainViewportPanel& self, const std::s
 auto MainViewportPanel::add_new_play_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene)
   -> void {
   auto* viewport = self.add_viewport();
-  viewport->set_context(scene, nullptr);
+  viewport->set_context(scene);
   viewport->set_icon(ICON_MDI_CONTROLLER);
   viewport->set_name(fmt::format("Game:{}", scene->get_scene()->scene_name));
 
@@ -114,17 +114,27 @@ void MainViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   on_end();
 }
 
-void MainViewportPanel::update(const Timestep& timestep, SceneHierarchyPanel* sh) const {
-  for (const auto& panel : viewport_panels) {
+void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& timestep, SceneHierarchyPanel* sh) {
+  ZoneScoped;
+
+  std::erase_if(self.viewport_panels, [](const std::unique_ptr<ViewportPanel>& ptr) {
+    return ptr == nullptr || !ptr->visible;
+  });
+
+  for (const auto& panel : self.viewport_panels) {
     auto* editor_scene = panel->get_scene();
 
-    if (editor_scene) {
-      if (panel->is_viewport_focused) {
-        if (editor_scene->get_scene()) {
-          sh->set_scene(editor_scene->get_scene().get());
-        }
-      }
+    if (panel->is_viewport_focused) {
+      auto sh_scene = sh->get_scene();
+      // Did scene change?
+      if (sh_scene && editor_scene && sh_scene->get_id() != editor_scene->get_id())
+        sh->set_scene(editor_scene);
 
+      if (!sh_scene || !editor_scene)
+        sh->set_scene(editor_scene);
+    }
+
+    if (editor_scene) {
       if (editor_scene->is_playing()) {
         editor_scene->get_scene()->enable_all_phases();
         editor_scene->get_scene()->runtime_update(timestep);

@@ -85,7 +85,14 @@ public:
 
   auto editor_shortcuts() -> void;
 
-  auto get_selected_scene() -> Scene* { return get_panel<SceneHierarchyPanel>()->get_scene(); }
+  auto get_selected_scene() -> Scene* {
+    auto* sh_scene = get_panel<SceneHierarchyPanel>()->get_scene();
+    if (sh_scene) {
+      return sh_scene->get_scene().get();
+    }
+
+    return nullptr;
+  }
 
   auto set_docking_layout(EditorLayout layout) -> void;
   auto reset_current_docking_layout() -> void;

@@ -24,15 +24,12 @@ SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON
 
   viewer.on_selected_entity_callback([](flecs::entity e) {
     auto& context = App::mod<Editor>().get_context();
-
-    context.reset();
-    context.type = EditorContext::Type::Entity;
-    context.entity = e;
+    context.reset(EditorContext::Type::Entity, nullopt, e);
   });
 
   viewer.on_selected_entity_reset_callback([]() {
     auto& context = App::mod<Editor>().get_context();
-    //context.reset();
+    context.reset();
   });
 }
 
@@ -100,5 +97,25 @@ auto SceneHierarchyPanel::on_render(vuk::ImageAttachment swapchain_attachment) -
   ZoneScoped;
 
   viewer.render(id_.c_str(), &visible);
+}
+
+auto SceneHierarchyPanel::set_scene(EditorScene* scene) -> void {
+  ZoneScoped;
+
+  if (scene == nullptr) {
+    current_scene = nullptr;
+    viewer.set_scene(nullptr);
+
+    return;
+  }
+
+  current_scene = scene;
+  viewer.set_scene(scene->get_scene().get());
+}
+
+auto SceneHierarchyPanel::get_scene() const -> EditorScene* {
+  ZoneScoped;
+
+  return current_scene;
 }
 } // namespace ox

@@ -109,6 +109,12 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
   }
 }
 
+ViewportPanel::~ViewportPanel() {
+  auto& event_system = App::get_event_system();
+  if (editor_scene_ && editor_scene_->is_playing())
+    event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene_->get_id()));
+}
+
 void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar;
 
@@ -274,12 +280,10 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   on_end();
 }
 
-void ViewportPanel::set_context(const std::shared_ptr<EditorScene>& scene, SceneHierarchyPanel* scene_hierarchy_panel) {
+void ViewportPanel::set_context(const std::shared_ptr<EditorScene>& scene) {
   OX_CHECK_NULL(scene);
 
   last_save_scene_path = {};
-
-  scene_hierarchy_panel_ = scene_hierarchy_panel;
 
   this->editor_scene_ = scene;
 

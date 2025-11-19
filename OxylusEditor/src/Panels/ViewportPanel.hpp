@@ -18,18 +18,17 @@ public:
   std::string last_save_scene_path = {};
 
   ViewportPanel();
-  ~ViewportPanel() override = default;
+  ~ViewportPanel();
 
   auto on_render(vuk::ImageAttachment swapchain_attachment) -> void override;
 
-  auto set_context(const std::shared_ptr<EditorScene>& scene, SceneHierarchyPanel* scene_hierarchy_panel) -> void;
+  auto set_context(const std::shared_ptr<EditorScene>& scene) -> void;
   auto get_scene() const -> EditorScene* { return editor_scene_.get(); }
 
   auto on_update() -> void override;
 
 private:
   std::shared_ptr<EditorScene> editor_scene_ = nullptr;
-  SceneHierarchyPanel* scene_hierarchy_panel_ = nullptr;
   bool draw_scene_stats = false;
 
   glm::vec2 viewport_size_ = {};

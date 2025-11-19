@@ -18,7 +18,7 @@ public:
   auto add_viewport(this MainViewportPanel& self) -> ViewportPanel*;
 
   void on_render(vuk::ImageAttachment swapchain_attachment) override;
-  void update(const Timestep & timestep, SceneHierarchyPanel * sh) const;
+  void update(this MainViewportPanel& self, const Timestep& timestep, SceneHierarchyPanel* sh);
 
   auto update_dockspace(this MainViewportPanel& self) -> void;
   auto set_dockspace(this const MainViewportPanel& self) -> void;
