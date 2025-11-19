@@ -115,6 +115,21 @@ ViewportPanel::~ViewportPanel() {
     event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene_->get_id()));
 }
 
+void ViewportPanel::drag_drop() const {
+  if (ImGui::BeginDragDropTarget()) {
+    if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+      const auto* payload = PayloadData::from_payload(imgui_payload);
+      const auto path = payload->get_path();
+      if (path.extension() == ".gltf" || path.extension() == ".glb") {
+        if (auto asset = App::mod<AssetManager>().import_asset(path))
+          editor_scene_->get_scene()->create_model_entity(asset);
+      }
+    }
+
+    ImGui::EndDragDropTarget();
+  }
+}
+
 void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar;
 
@@ -263,6 +278,8 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
       editor_scene_->get_scene()->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
       UI::image(std::move(scene_view_image), ImVec2{fixed_width, viewport_panel_size_.y});
+
+      drag_drop();
     }
 
     if (!editor_scene_->is_playing()) {
@@ -304,7 +321,7 @@ void ViewportPanel::on_update() {
     return;
   }
 
-  const float dt = static_cast<float>(App::get_timestep().get_seconds());
+  const f32 dt = static_cast<f32>(App::get_timestep().get_seconds());
 
   auto& cam = editor_camera.get_mut<CameraComponent>();
   auto& tc = editor_camera.get_mut<TransformComponent>();

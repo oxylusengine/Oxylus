@@ -12,7 +12,6 @@ EditorPanel::EditorPanel(const char* name, const char* icon, bool default_show, 
       icon_(icon),
       closable_(closable) {
   update_id();
-  _count++;
 }
 
 auto EditorPanel::set_name(const std::string& name) -> void {
@@ -38,6 +37,9 @@ void EditorPanel::on_end() const {
   }
 }
 
-void EditorPanel::update_id() { id_ = fmt::format(" {} {}\t\t###{}{}", icon_, name_, _count, name_); }
+void EditorPanel::update_id() {
+  id_ = fmt::format(" {} {}\t\t###{}{}", icon_, name_, _count, name_);
+  _count++;
+}
 
 } // namespace ox

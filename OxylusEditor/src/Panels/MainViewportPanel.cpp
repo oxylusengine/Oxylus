@@ -177,13 +177,6 @@ void MainViewportPanel::drag_drop(this MainViewportPanel& self) {
           });
         }
       }
-
-      // if (editor_scene_ && editor_scene_->is_valid()) {
-      //   if (path.extension() == ".gltf" || path.extension() == ".glb") {
-      //     if (auto asset = App::mod<AssetManager>().import_asset(path))
-      //       editor_scene_->get_scene()->create_model_entity(asset);
-      //   }
-      // }
     }
 
     ImGui::EndDragDropTarget();

@@ -18,7 +18,8 @@ public:
   std::string last_save_scene_path = {};
 
   ViewportPanel();
-  ~ViewportPanel();
+  ~ViewportPanel() override;
+  void drag_drop() const;
 
   auto on_render(vuk::ImageAttachment swapchain_attachment) -> void override;
 
