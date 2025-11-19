@@ -38,7 +38,7 @@ void show_component_gizmo(
 
   const char* icon = editor_theme.component_icon_map.at(typeid(T).hash_code());
   scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T&) {
-    const glm::vec3 pos = scene->get_world_transform(entity)[3];
+    const glm::vec3 pos = Scene::get_world_transform(entity)[3];
 
     if (entity.has<Hidden>())
       return;
@@ -169,11 +169,6 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       draw_gizmo_settings_panel();
       ImGui::EndPopup();
     }
-
-    // ImGui::SetNextItemAllowOverlap();
-    // drag_drop_with_button();
-    // ImGui::SetNextItemAllowOverlap();
-    // ImGui::SameLine();
 
     const ImVec2 viewport_min_region = ImGui::GetWindowContentRegionMin();
     const ImVec2 viewport_max_region = ImGui::GetWindowContentRegionMax();
@@ -1116,41 +1111,6 @@ auto ViewportPanel::grid_stage(RendererInstance* renderer_instance) -> void {
       .set_image_resource("depth_attachment", std::move(depth_attachment))
       .set_buffer_resource("camera_buffer", std::move(camera_buffer));
   });
-}
-
-void ViewportPanel::drag_drop_with_button() {
-  if (editor_scene_ && editor_scene_->is_playing()) {
-    return;
-  }
-
-  auto& editor = App::mod<Editor>();
-
-  auto* window_viewport = ImGui::GetWindowViewport();
-  ImGui::SetCursorPos(window_viewport->WorkPos);
-  ImGui::Button("##ViewportDragDrop", ImGui::GetContentRegionAvail());
-
-  if (ImGui::BeginDragDropTarget()) {
-    if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
-      const auto* payload = PayloadData::from_payload(imgui_payload);
-      const auto path = payload->get_path();
-      if (path.extension() == ".oxscene") {
-        auto scene_id = editor.scene_manager.load_scene(path);
-        if (scene_id.has_value()) {
-          editor_scene_ = editor.scene_manager.get_scene(scene_id.value());
-          set_context(editor_scene_, nullptr);
-        }
-      }
-
-      if (editor_scene_ && editor_scene_->is_valid()) {
-        if (path.extension() == ".gltf" || path.extension() == ".glb") {
-          if (auto asset = App::mod<AssetManager>().import_asset(path))
-            editor_scene_->get_scene()->create_model_entity(asset);
-        }
-      }
-    }
-
-    ImGui::EndDragDropTarget();
-  }
 }
 
 void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {

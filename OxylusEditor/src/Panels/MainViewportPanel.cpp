@@ -5,6 +5,7 @@
 
 #include "Core/App.hpp"
 #include "Editor.hpp"
+#include "UI/PayloadData.hpp"
 
 namespace ox {
 MainViewportPanel::MainViewportPanel() : EditorPanel("Viewports", ICON_MDI_VIDEO_3D, true, false) {}
@@ -54,25 +55,26 @@ auto MainViewportPanel::get_focused_viewport(this const MainViewportPanel& self)
   return nullptr;
 }
 
-auto MainViewportPanel::add_new_scene(const std::shared_ptr<EditorScene>& scene) -> void {
-  auto* viewport = add_viewport();
+auto MainViewportPanel::add_new_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void {
+  auto* viewport = self.add_viewport();
   viewport->set_context(scene, nullptr);
 
-  dock_should_update = true;
+  self.dock_should_update = true;
 }
 
-auto MainViewportPanel::add_new_play_scene(const std::shared_ptr<EditorScene>& scene) -> void {
-  auto* viewport = add_viewport();
+auto MainViewportPanel::add_new_play_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene)
+  -> void {
+  auto* viewport = self.add_viewport();
   viewport->set_context(scene, nullptr);
   viewport->set_icon(ICON_MDI_CONTROLLER);
   viewport->set_name(fmt::format("Game:{}", scene->get_scene()->scene_name));
 
-  dock_should_update = true;
+  self.dock_should_update = true;
 }
 
-auto MainViewportPanel::add_viewport() -> ViewportPanel* {
-  auto& viewport = viewport_panels.emplace_back(std::make_unique<ViewportPanel>());
-  dock_should_update = true;
+auto MainViewportPanel::add_viewport(this MainViewportPanel& self) -> ViewportPanel* {
+  auto& viewport = self.viewport_panels.emplace_back(std::make_unique<ViewportPanel>());
+  self.dock_should_update = true;
 
   return viewport.get();
 }
@@ -80,7 +82,10 @@ auto MainViewportPanel::add_viewport() -> ViewportPanel* {
 void MainViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   if (on_begin()) {
     auto dockspace_id = ImGui::GetID("ViewportDockspace");
+
     ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+
+    drag_drop();
 
     if (dock_should_update) {
       set_dockspace();
@@ -135,15 +140,44 @@ void MainViewportPanel::update(const Timestep& timestep, SceneHierarchyPanel* sh
   }
 }
 
-auto MainViewportPanel::update_dockspace() -> void { dock_should_update = true; }
+auto MainViewportPanel::update_dockspace(this MainViewportPanel& self) -> void { self.dock_should_update = true; }
 
-auto MainViewportPanel::set_dockspace() -> void {
+auto MainViewportPanel::set_dockspace(this const MainViewportPanel& self) -> void {
   auto dock_id = ImGui::GetID("ViewportDockspace");
 
-  for (auto& panel : viewport_panels) {
+  for (auto& panel : self.viewport_panels) {
     ImGui::DockBuilderDockWindow(panel->get_id(), dock_id);
   }
 
   ImGui::DockBuilderFinish(dock_id);
 }
+
+void MainViewportPanel::drag_drop(this MainViewportPanel& self) {
+  auto& editor = App::mod<Editor>();
+
+  if (ImGui::BeginDragDropTarget()) {
+    if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+      const auto* payload = PayloadData::from_payload(imgui_payload);
+      const auto path = payload->get_path();
+      if (path.extension() == ".oxscene") {
+        auto scene_id = editor.scene_manager.load_scene(path);
+        if (scene_id.has_value()) {
+          App::get()->defer_to_next_frame([&self, id = scene_id.value()] {
+            self.add_new_scene(App::mod<Editor>().scene_manager.get_scene(id));
+          });
+        }
+      }
+
+      // if (editor_scene_ && editor_scene_->is_valid()) {
+      //   if (path.extension() == ".gltf" || path.extension() == ".glb") {
+      //     if (auto asset = App::mod<AssetManager>().import_asset(path))
+      //       editor_scene_->get_scene()->create_model_entity(asset);
+      //   }
+      // }
+    }
+
+    ImGui::EndDragDropTarget();
+  }
+}
+
 } // namespace ox

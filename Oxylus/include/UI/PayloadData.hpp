@@ -7,8 +7,8 @@
 
 namespace ox {
 struct PayloadData {
-  static constexpr auto DRAG_DROP_TARGET = "CONTENT_BROWSER_ITEM_TARGET";
-  static constexpr auto DRAG_DROP_SOURCE = "CONTENT_BROWSER_ITEM_SOURCE";
+  static constexpr auto DRAG_DROP_TARGET = "DRAG_DROP_TARGET";
+  static constexpr auto DRAG_DROP_SOURCE = "DRAG_DROP_SOURCE";
 
   char str[256] = {};
   UUID uuid = {};
