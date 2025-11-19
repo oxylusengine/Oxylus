@@ -40,6 +40,9 @@ void show_component_gizmo(
   scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T&) {
     const glm::vec3 pos = scene->get_world_transform(entity)[3];
 
+    if (entity.has<Hidden>())
+      return;
+
     if (frustum.is_inside(pos) == (uint32_t)Intersection::Outside)
       return;
 
