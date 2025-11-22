@@ -17,13 +17,13 @@ add_cxxflags(
     "-Wno-missing-braces",
     "-Wno-unused-parameter",
     "-Wno-unused-variable",
-    { tools = { "clang", "clangxx", "gcc", "cl", "clang_cl", "clang-cl" } })
+    { tools = { "clang", "clangxx", "gcc", "clang_cl", "clang-cl" } })
 add_cxxflags(
     "-Wshadow-all",
     "-Wno-gnu-line-marker",
     "-Wno-gnu-anonymous-struct",
     "-Wno-gnu-zero-variadic-macro-arguments",
-    { tools = { "clang", "clangxx", "cl", "clang_cl", "clang-cl" } })
+    { tools = { "clang", "clangxx", "clang_cl", "clang-cl" } })
 
 includes("xmake/options.lua")
 includes("xmake/rules.lua")

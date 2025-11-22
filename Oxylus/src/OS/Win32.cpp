@@ -213,7 +213,7 @@ auto os::file_last_modified(FileDescriptor file) -> std::expected<u64, FileError
   auto file_handle = reinterpret_cast<HANDLE>(file);
   auto file_time = FILETIME{};
   if (!GetFileTime(file_handle, nullptr, nullptr, &file_time)) {
-    return FileError::Unknown;
+    return std::unexpected(FileError::Unknown);
   }
 
   return ((u64(file_time.dwHighDateTime) << 32) | u64(file_time.dwLowDateTime)) / 10;
