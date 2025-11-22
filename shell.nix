@@ -1,7 +1,7 @@
 let
   pkgs = import <nixpkgs> { };
 in pkgs.mkShell.override {
-  stdenv = pkgs.llvmPackages_21.libcxxStdenv;
+  stdenv = pkgs.llvmPackages_latest.libcxxStdenv;
 } {
   nativeBuildInputs = [
     pkgs.cmake
@@ -9,11 +9,11 @@ in pkgs.mkShell.override {
     pkgs.gnumake
     pkgs.xmake
 
-    pkgs.llvmPackages_21.bintools-unwrapped
-    pkgs.llvmPackages_21.libcxx
-    pkgs.llvmPackages_21.libcxx.dev
-    pkgs.llvmPackages_21.compiler-rt
-    (pkgs.llvmPackages_21.clang-tools.override {
+    pkgs.llvmPackages_latest.bintools-unwrapped
+    pkgs.llvmPackages_latest.libcxx
+    pkgs.llvmPackages_latest.libcxx.dev
+    pkgs.llvmPackages_latest.compiler-rt
+    (pkgs.llvmPackages_latest.clang-tools.override {
       enableLibcxx = true;
     })
     pkgs.mold
@@ -30,14 +30,17 @@ in pkgs.mkShell.override {
     pkgs.meshoptimizer
 
     # for SDL3
-    pkgs.sdl3
+    (pkgs.sdl3.override {
+      waylandSupport = false;
+    })
   ];
 
+  NIX_ENFORCE_NO_NATIVE = "0";
   shellHook = ''
-    export LD_LIBRARY_PATH=${pkgs.llvmPackages_21.libcxx}/lib:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=${pkgs.llvmPackages_latest.libcxx}/lib:$LD_LIBRARY_PATH
     # slang needs libstdc++
     export LD_LIBRARY_PATH=${pkgs.gcc14.cc.lib}/lib:$LD_LIBRARY_PATH
-    export LD_LIBRARY_PATH=${pkgs.lua5_3_compat}/lib:$LD_LIBRARY_PATH
+    export LIBCXX_PATH=${pkgs.llvmPackages_latest.libcxx.dev}
   '';
 
   hardeningDisable = [ "all" ];

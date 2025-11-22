@@ -1,7 +1,7 @@
 add_repositories("oxylus https://github.com/oxylusengine/xmake-repo.git")
 set_policy("package.precompiled", false)
 add_rules("mode.debug", "mode.release", "mode.dist")
-add_rules("plugin.compile_commands.autoupdate", { outputdir = ".", lsp = "clangd" })
+add_rules("plugin.compile_commands.autoupdate", { outputdir = "build", lsp = "clangd" })
 
 set_project("Oxylus")
 set_version("1.0.0")
@@ -17,13 +17,13 @@ add_cxxflags(
     "-Wno-missing-braces",
     "-Wno-unused-parameter",
     "-Wno-unused-variable",
-    { tools = { "clang", "clangxx", "gcc", "cl", "clang_cl", "clang-cl" } })
+    { tools = { "clang", "clangxx", "gcc", "clang_cl", "clang-cl" } })
 add_cxxflags(
     "-Wshadow-all",
     "-Wno-gnu-line-marker",
     "-Wno-gnu-anonymous-struct",
     "-Wno-gnu-zero-variadic-macro-arguments",
-    { tools = { "clang", "clangxx", "cl", "clang_cl", "clang-cl" } })
+    { tools = { "clang", "clangxx", "clang_cl", "clang-cl" } })
 
 includes("xmake/options.lua")
 includes("xmake/rules.lua")
@@ -31,6 +31,7 @@ includes("xmake/packages.lua")
 includes("xmake/toolchains.lua")
 
 includes("Oxylus")
+includes("ResourceCompiler")
 if has_config("editor") then
     includes("OxylusEditor")
 end

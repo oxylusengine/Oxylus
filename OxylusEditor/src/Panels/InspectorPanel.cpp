@@ -62,41 +62,40 @@ void InspectorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
   on_begin();
 
-  editor_context.entity
-    .and_then([this](flecs::entity e) {
-      this->draw_components(e);
-      return option<std::monostate>{};
-    })
-    .or_else([this, &editor_context]() {
-      if (editor_context.type != EditorContext::Type::File)
-        return option<std::monostate>{};
-
-      return editor_context.str.and_then([this](const std::filesystem::path& path) {
-        if (path.extension() != "oxasset")
-          return option<std::monostate>{};
-
-        auto& asset_man = App::mod<AssetManager>();
-        auto meta_file = asset_man.read_meta_file(path);
-        if (!meta_file)
-          return option<std::monostate>{};
-
-        auto uuid_str_json = meta_file->doc["uuid"].get_string();
-        if (uuid_str_json.error())
-          return option<std::monostate>{};
-
-        return UUID::from_string(uuid_str_json.value_unsafe()).and_then([this, &asset_man](UUID&& uuid) {
-          if (auto* asset = asset_man.get_asset(uuid))
-            this->draw_asset_info(asset);
-          return option<std::monostate>{};
-        });
-      });
-    });
+  editor_context.entity.and_then([this](flecs::entity e) {
+    this->draw_components(e);
+    return option<std::monostate>{};
+  });
+  // .or_else([this, &editor_context]() {
+  //   if (editor_context.type != EditorContext::Type::File)
+  //     return option<std::monostate>{};
+  //
+  //   return editor_context.str.and_then([this](const std::filesystem::path& path) {
+  //     if (path.extension() != "oxasset")
+  //       return option<std::monostate>{};
+  //
+  //     auto& asset_man = App::mod<AssetManager>();
+  //     auto meta_file = asset_man.read_meta_file(path);
+  //     if (!meta_file)
+  //       return option<std::monostate>{};
+  //
+  //     auto uuid_str_json = meta_file->doc["uuid"].get_string();
+  //     if (uuid_str_json.error())
+  //       return option<std::monostate>{};
+  //
+  //     return UUID::from_string(uuid_str_json.value_unsafe()).and_then([this, &asset_man](UUID&& uuid) {
+  //       if (auto asset = asset_man.get_asset(uuid))
+  //         this->draw_asset_info(std::move(asset));
+  //       return option<std::monostate>{};
+  //     });
+  //   });
+  // });
 
   on_end();
 }
 
 void InspectorPanel::draw_material_properties(
-  Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
+  Borrowed<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
 ) {
   if (material_uuid) {
     const auto& window = App::get_window();
@@ -227,7 +226,7 @@ void InspectorPanel::draw_material_properties(
 
     if (selected.type == AssetType::Texture) {
       auto& asset_man = App::mod<AssetManager>();
-      auto* existing_asset = asset_man.get_asset(uuid);
+      auto existing_asset = asset_man.get_asset(uuid);
       const bool is_loaded = asset_man.load_asset(selected.uuid);
       if (is_loaded) {
         if (existing_asset) {
@@ -253,7 +252,7 @@ void InspectorPanel::draw_material_properties(
 
   if (dirty) {
     auto& asset_man = App::mod<AssetManager>();
-    if (const auto* asset = asset_man.get_asset(material_uuid))
+    if (auto asset = asset_man.get_asset(material_uuid))
       asset_man.set_material_dirty(asset->material_id);
   }
 }
@@ -491,7 +490,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                 // NOTE: We don't allow model assets to be loaded this way yet(or ever).
                 if (selected.type != AssetType::None && selected.type != AssetType::Model) {
                   // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
-                  auto* existing_asset = asset_man.get_asset(*uuid);
+                  auto existing_asset = asset_man.get_asset(*uuid);
                   const bool is_same_asset = selected.uuid == *uuid;
                   const bool is_same_type = existing_asset->type == selected.type;
                   const bool is_loaded = asset_man.load_asset(selected.uuid);
@@ -518,7 +517,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                   if (payload->get_str().empty())
                     return;
                   if (auto imported_asset = asset_man.import_asset(payload->str)) {
-                    if (auto* existing_asset = asset_man.get_asset(*uuid)) {
+                    if (auto existing_asset = asset_man.get_asset(*uuid)) {
                       asset_man.unload_asset(existing_asset->uuid);
                     }
                     if (asset_man.load_asset(imported_asset)) {
@@ -532,41 +531,41 @@ void InspectorPanel::draw_components(flecs::entity entity) {
               ImGui::Spacing();
               ImGui::Separator();
 
-              if (auto* asset = asset_man.get_asset(*uuid)) {
+              if (auto asset = asset_man.get_asset(*uuid)) {
                 switch (asset->type) {
                   case ox::AssetType::None: {
                     break;
                   }
                   case AssetType::Shader: {
-                    draw_shader_asset(uuid, asset);
+                    draw_shader_asset(uuid, std::move(asset));
                     break;
                   }
                   case AssetType::Model: {
-                    draw_model_asset(uuid, asset);
+                    draw_model_asset(uuid, std::move(asset));
                     break;
                   }
                   case AssetType::Texture: {
-                    draw_texture_asset(uuid, asset);
+                    draw_texture_asset(uuid, std::move(asset));
                     break;
                   }
                   case AssetType::Material: {
-                    draw_material_asset(uuid, asset);
+                    draw_material_asset(uuid, std::move(asset));
                     break;
                   }
                   case AssetType::Font: {
-                    draw_font_asset(uuid, asset);
+                    draw_font_asset(uuid, std::move(asset));
                     break;
                   }
                   case AssetType::Scene: {
-                    draw_scene_asset(uuid, asset);
+                    draw_scene_asset(uuid, std::move(asset));
                     break;
                   }
                   case AssetType::Audio: {
-                    draw_audio_asset(uuid, asset);
+                    draw_audio_asset(uuid, std::move(asset));
                     break;
                   }
                   case AssetType::Script: {
-                    if (draw_script_asset(uuid, asset))
+                    if (draw_script_asset(uuid, std::move(asset)))
                       entity.modified(component);
                     break;
                   }
@@ -589,7 +588,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
   }
 }
 
-void InspectorPanel::draw_asset_info(Asset* asset) {
+void InspectorPanel::draw_asset_info(Borrowed<Asset> asset) {
   ZoneScoped;
   auto& asset_man = App::mod<AssetManager>();
   auto type_str = asset_man.to_asset_type_sv(asset->type);
@@ -607,16 +606,16 @@ void InspectorPanel::draw_asset_info(Asset* asset) {
   UI::end_properties();
 
   if (asset->type == AssetType::Material) {
-    if (auto* mat = asset_man.get_material(asset->uuid)) {
+    if (auto mat = asset_man.get_material(asset->uuid)) {
       ImGui::SeparatorText("Material");
-      draw_material_properties(mat, asset->uuid, asset->path);
+      draw_material_properties(std::move(mat), asset->uuid, asset->path);
     }
   }
 }
 
-void InspectorPanel::draw_shader_asset(UUID* uuid, Asset* asset) {}
+void InspectorPanel::draw_shader_asset(UUID* uuid, Borrowed<Asset> asset) {}
 
-void InspectorPanel::draw_model_asset(UUID* uuid, Asset* asset) {
+void InspectorPanel::draw_model_asset(UUID* uuid, Borrowed<Asset> asset) {
   ZoneScoped;
 
   auto& asset_man = App::mod<AssetManager>();
@@ -627,10 +626,10 @@ void InspectorPanel::draw_model_asset(UUID* uuid, Asset* asset) {
                                                        ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_Framed |
                                                        ImGuiTreeNodeFlags_FramePadding;
 
-      if (auto* material = asset_man.get_material(mat_uuid)) {
+      if (auto material = asset_man.get_material(mat_uuid)) {
         const auto mat_uuid_str = mat_uuid.str();
         if (ImGui::TreeNodeEx(mat_uuid_str.c_str(), TREE_FLAGS, "%s", mat_uuid_str.c_str())) {
-          draw_material_properties(material, mat_uuid, asset->path);
+          draw_material_properties(std::move(material), mat_uuid, asset->path);
           ImGui::TreePop();
         }
       }
@@ -638,25 +637,25 @@ void InspectorPanel::draw_model_asset(UUID* uuid, Asset* asset) {
   }
 }
 
-void InspectorPanel::draw_texture_asset(UUID* uuid, Asset* asset) {}
+void InspectorPanel::draw_texture_asset(UUID* uuid, Borrowed<Asset> asset) {}
 
-void InspectorPanel::draw_material_asset(UUID* uuid, Asset* asset) {
+void InspectorPanel::draw_material_asset(UUID* uuid, Borrowed<Asset> asset) {
   ZoneScoped;
 
   ImGui::SeparatorText("Material");
 
   auto& asset_man = App::mod<AssetManager>();
 
-  if (auto* material = asset_man.get_material(*uuid)) {
-    draw_material_properties(material, *uuid, asset->path);
+  if (auto material = asset_man.get_material(*uuid)) {
+    draw_material_properties(std::move(material), *uuid, asset->path);
   }
 }
 
-void InspectorPanel::draw_font_asset(UUID* uuid, Asset* asset) {}
+void InspectorPanel::draw_font_asset(UUID* uuid, Borrowed<Asset> asset) {}
 
-void InspectorPanel::draw_scene_asset(UUID* uuid, Asset* asset) {}
+void InspectorPanel::draw_scene_asset(UUID* uuid, Borrowed<Asset> asset) {}
 
-void InspectorPanel::draw_audio_asset(UUID* uuid, Asset* asset) {
+void InspectorPanel::draw_audio_asset(UUID* uuid, Borrowed<Asset> asset) {
   ZoneScoped;
 
   auto& asset_man = App::mod<AssetManager>();
@@ -679,7 +678,7 @@ void InspectorPanel::draw_audio_asset(UUID* uuid, Asset* asset) {
   ImGui::Spacing();
 }
 
-bool InspectorPanel::draw_script_asset(UUID* uuid, Asset* asset) {
+bool InspectorPanel::draw_script_asset(UUID* uuid, Borrowed<Asset> asset) {
   ZoneScoped;
   memory::ScopedStack stack;
 

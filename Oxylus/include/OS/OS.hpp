@@ -21,11 +21,7 @@ enum class FileError : i32 {
 };
 constexpr bool operator!(FileError v) { return v != FileError::None; }
 
-enum class FileAccess {
-  Read,
-  Write,
-  ReadWrite
-};
+enum class FileAccess { Read, Write, ReadWrite };
 
 // Can we add stdout and other pipes here?
 enum class FileDescriptor : uptr { Invalid = 0 };
@@ -46,12 +42,14 @@ auto set_thread_name(std::thread::native_handle_type thread, std::string_view na
 // IO
 auto open_folder_select_file(const std::filesystem::path& path) -> void;
 auto open_file_externally(const std::filesystem::path& path) -> void;
-auto file_open(const std::filesystem::path& path, FileAccess access) -> std::expected<FileDescriptor, FileError>;
+auto file_open(const std::filesystem::path& path, FileAccess access) noexcept
+  -> std::expected<FileDescriptor, FileError>;
 auto file_close(FileDescriptor file) -> void;
-auto file_size(FileDescriptor file) -> std::expected<usize, FileError>;
+auto file_size(FileDescriptor file) noexcept -> std::expected<usize, FileError>;
 auto file_read(FileDescriptor file, void* data, usize size) -> usize;
 auto file_write(FileDescriptor file, const void* data, usize size) -> usize;
 auto file_seek(FileDescriptor file, i64 offset) -> void;
+auto file_last_modified(FileDescriptor file) -> std::expected<u64, FileError>;
 auto file_stdout(std::string_view str) -> void;
 auto file_stderr(std::string_view str) -> void;
 } // namespace os

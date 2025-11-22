@@ -92,7 +92,12 @@ add_requires("tracy v0.12.2", {
     }
 })
 
-add_requires("sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444")
+add_requires("sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444", { system = false })
+add_requireconfs("lua", "sol2.lua", {
+    shared = false,
+    version = "v5.4.7",
+    system = false
+})
 
 add_requires("unordered_dense v4.5.0")
 

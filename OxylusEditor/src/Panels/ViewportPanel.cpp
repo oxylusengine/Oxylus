@@ -371,7 +371,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         if (UI::toggle_button(icon, highlight, button_size)) {
           if (editor.scene_state == Editor::SceneState::Edit) {
             editor.on_scene_play();
-            editor_camera.disable();
+            editor_camera.disable(flecs::Cascade);
           } else if (editor.scene_state == Editor::SceneState::Play) {
             editor.on_scene_stop();
           }

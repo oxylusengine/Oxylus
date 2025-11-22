@@ -1,0 +1,27 @@
+{
+    "type": "shader",
+    "shader_sessions": [
+        {
+            "root_directory": "/path/to/root/dir",
+            "session_name": "main",
+            "debug_symbols": false,
+            "optimization": "default",
+            "definitions": [
+                {
+                    "name": "EXAMPLE",
+                    "value": 1
+                }
+            ],
+            "programs": [
+                {
+                    "name": "2d_forward",
+                    "path": "passes/2d_forward.slang",
+                    "entry_points": [
+                        "vs_main",
+                        "fs_main"
+                    ]
+                }
+            ]
+        }
+    ]
+}

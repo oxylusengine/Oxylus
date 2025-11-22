@@ -73,8 +73,6 @@ Scene::~Scene() {
     system->on_remove(this);
   }
 
-  world.release();
-
   lua_systems.clear();
   auto& lua_manager = App::mod<LuaManager>();
   lua_manager.get_state()->collect_gc();
@@ -160,8 +158,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([](flecs::iter& it, usize i, SpriteComponent& c) {
       auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {
-        if (auto* material_asset = asset_man.get_asset(c.material)) {
-          asset_man.unload_asset(material_asset->uuid);
+        if (asset_man.get_asset(c.material)) {
+          asset_man.unload_asset(c.material);
         }
       }
     });
@@ -300,7 +298,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           e.destruct();
         }
       } else if (it.event() == flecs::OnSet) {
-        if (auto* asset = asset_man.get_asset(c.material)) {
+        if (auto asset = asset_man.get_asset(c.material)) {
           if (!asset->is_loaded()) {
             asset_man.load_material(c.material, Material{});
           }
@@ -316,8 +314,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
       auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {
-        if (auto* material_asset = asset_man.get_asset(c.material)) {
-          asset_man.unload_asset(material_asset->uuid);
+        if (asset_man.get_asset(c.material)) {
+          asset_man.unload_asset(c.material);
         }
       }
     });
@@ -612,7 +610,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .kind(flecs::PostUpdate)
     .each([](flecs::iter& it, size_t, SpriteComponent& sprite, SpriteAnimationComponent& sprite_animation) {
       auto& asset_manager = App::mod<AssetManager>();
-      auto* material = asset_manager.get_material(sprite.material);
+      auto material = asset_manager.get_material(sprite.material);
 
       if (sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
           !material->albedo_texture)
@@ -646,7 +644,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       const u32 frame_x = frame % sprite_animation.columns;
       const u32 frame_y = frame / sprite_animation.columns;
 
-      const auto* albedo_texture = asset_manager.get_texture(material->albedo_texture);
+      auto albedo_texture = asset_manager.get_texture(material->albedo_texture);
       auto& uv_size = material->uv_size;
 
       auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
@@ -821,14 +819,14 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       return nullopt;
     }
 
-    auto* texture = asset_man.get_texture(uuid);
+    auto texture = asset_man.get_texture(uuid);
     return texture->get_view_index();
   };
 
   auto dirty_material_ids = asset_man.get_dirty_material_ids();
   auto dirty_material_indices = std::vector<u32>();
   for (const auto dirty_id : dirty_material_ids) {
-    const auto* material = asset_man.get_material(dirty_id);
+    auto material = asset_man.get_material(dirty_id);
     if (!material)
       continue;
 
@@ -853,7 +851,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       // we should prefer material's sampler over texture's default sampler.
       auto& vk_context = App::get_vkcontext();
 
-      auto* texture = asset_man.get_texture(material->albedo_texture);
+      auto texture = asset_man.get_texture(material->albedo_texture);
       sampler_index = texture->get_sampler_index();
 
       auto texture_sampler = vk_context.resources.samplers.slot(texture->get_sampler_id());
@@ -1030,9 +1028,8 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   ZoneScoped;
 
   auto& asset_man = App::mod<AssetManager>();
-
   // sanity check
-  if (!asset_man.get_asset(asset_uuid)) {
+  if (!asset_man.is_valid(asset_uuid)) {
     OX_LOG_ERROR("Cannot import an invalid model '{}' into the scene!", asset_uuid.str());
     return {};
   }
@@ -1179,7 +1176,7 @@ auto Scene::get_entity_transform_id(flecs::entity entity) const -> option<GPU::T
 }
 
 auto Scene::get_entity_transform(GPU::TransformID transform_id) const -> const GPU::Transforms* {
-  return transforms.slotc(transform_id);
+  return transforms.slot(transform_id);
 }
 
 auto Scene::add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID {

@@ -79,7 +79,8 @@ auto os::open_file_externally(const std::filesystem::path& path) -> void {
   ShellExecute(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_RESTORE);
 }
 
-auto os::file_open(const std::filesystem::path& path, FileAccess access) -> std::expected<FileDescriptor, FileError> {
+auto os::file_open(const std::filesystem::path& path, FileAccess access) noexcept
+  -> std::expected<FileDescriptor, FileError> {
   ZoneScoped;
 
   SetLastError(0);
@@ -138,7 +139,7 @@ auto os::file_close(FileDescriptor file) -> void {
   CloseHandle(file_handle);
 }
 
-auto os::file_size(FileDescriptor file) -> std::expected<usize, FileError> {
+auto os::file_size(FileDescriptor file) noexcept -> std::expected<usize, FileError> {
   ZoneScoped;
 
   LARGE_INTEGER li = {};
@@ -204,6 +205,18 @@ auto os::file_seek(FileDescriptor file, i64 offset) -> void {
   LARGE_INTEGER li = {};
   li.QuadPart = offset;
   SetFilePointerEx(reinterpret_cast<HANDLE>(file), li, nullptr, FILE_BEGIN);
+}
+
+auto os::file_last_modified(FileDescriptor file) -> std::expected<u64, FileError> {
+  ZoneScoped;
+
+  auto file_handle = reinterpret_cast<HANDLE>(file);
+  auto file_time = FILETIME{};
+  if (!GetFileTime(file_handle, nullptr, nullptr, &file_time)) {
+    return std::unexpected(FileError::Unknown);
+  }
+
+  return ((u64(file_time.dwHighDateTime) << 32) | u64(file_time.dwLowDateTime)) / 10;
 }
 
 auto os::file_stdout(std::string_view str) -> void {

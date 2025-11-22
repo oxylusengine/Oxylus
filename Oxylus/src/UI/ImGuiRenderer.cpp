@@ -393,6 +393,8 @@ ImTextureID ImGuiRenderer::add_image(vuk::Value<vuk::ImageAttachment>&& attachme
 }
 
 ImTextureID ImGuiRenderer::add_image(const Texture& texture) {
+  ZoneScoped;
+
   if (this->acquired_images.contains(texture.get_view_id())) {
     return this->acquired_images[texture.get_view_id()];
   }
@@ -400,6 +402,20 @@ ImTextureID ImGuiRenderer::add_image(const Texture& texture) {
   auto attachment = texture.acquire();
   const auto texture_id = this->add_image(std::move(attachment));
   this->acquired_images.emplace(texture.get_view_id(), texture_id);
+
+  return texture_id;
+}
+
+ImTextureID ImGuiRenderer::add_image(Borrowed<Texture> texture) {
+  ZoneScoped;
+
+  if (this->acquired_images.contains(texture->get_view_id())) {
+    return this->acquired_images[texture->get_view_id()];
+  }
+
+  auto attachment = texture->acquire();
+  const auto texture_id = this->add_image(std::move(attachment));
+  this->acquired_images.emplace(texture->get_view_id(), texture_id);
 
   return texture_id;
 }

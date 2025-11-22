@@ -8,6 +8,7 @@ target("OxylusEditor")
     set_languages("cxx23")
 
     add_deps("Oxylus")
+    add_deps("ResourceCompiler")
     add_packages("imguizmo")
 
     add_includedirs("./src")

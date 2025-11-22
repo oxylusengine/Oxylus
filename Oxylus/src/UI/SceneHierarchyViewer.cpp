@@ -23,15 +23,19 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
 
     float filter_cursor_pos_x = ImGui::GetCursorPosX();
     if (ImGui::TreeNodeEx("Scripts", ImGuiTreeNodeFlags_Framed)) {
-      scripts_filter_.Draw("###HierarchyFilter",
-                           ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_icon).x + 20.0f));
+      scripts_filter_.Draw(
+        "###HierarchyFilter",
+        ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_icon).x + 20.0f)
+      );
       ImGui::SameLine();
 
       if (ImGui::Button(add_icon))
         ImGui::OpenPopup("scene_h_scripts_context_window");
 
-      if (ImGui::BeginPopupContextWindow("scene_h_scripts_context_window",
-                                         ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+      if (ImGui::BeginPopupContextWindow(
+            "scene_h_scripts_context_window",
+            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+          )) {
         draw_scripts_context_menu();
         ImGui::EndPopup();
       }
@@ -87,8 +91,10 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
           }
         }
 
-        if (ImGui::BeginPopupContextWindow("scene_h_scripts_context_window",
-                                           ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        if (ImGui::BeginPopupContextWindow(
+              "scene_h_scripts_context_window",
+              ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+            )) {
           selected_entity_.reset();
           selected_script_ = nullptr;
           draw_scripts_context_menu();
@@ -127,15 +133,19 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
     filter_cursor_pos_x = ImGui::GetCursorPosX();
 
     if (ImGui::TreeNodeEx("Entities", ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen)) {
-      entities_filter_.Draw("###HierarchyFilter",
-                            ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_icon).x + 20.0f));
+      entities_filter_.Draw(
+        "###HierarchyFilter",
+        ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_icon).x + 20.0f)
+      );
       ImGui::SameLine();
 
       if (ImGui::Button(add_icon))
         ImGui::OpenPopup("scene_h_entities_context_window");
 
-      if (ImGui::BeginPopupContextWindow("scene_h_entities_context_window",
-                                         ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+      if (ImGui::BeginPopupContextWindow(
+            "scene_h_entities_context_window",
+            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+          )) {
         draw_entities_context_menu();
         ImGui::EndPopup();
       }
@@ -162,17 +172,19 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
 
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
         scene_->world.query_builder<TransformComponent>()
-            .with(flecs::Disabled)
-            .optional()
-            .build()
-            .each([this](const flecs::entity e, TransformComponent) {
-              if (e.parent() == flecs::entity::null())
-                draw_entity_node(e);
-            });
+          .with(flecs::Disabled)
+          .optional()
+          .build()
+          .each([this](const flecs::entity e, TransformComponent) {
+            if (e.parent() == flecs::entity::null())
+              draw_entity_node(e);
+          });
         ImGui::PopStyleVar();
 
-        if (ImGui::BeginPopupContextWindow("scene_h_entities_context_window",
-                                           ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        if (ImGui::BeginPopupContextWindow(
+              "scene_h_entities_context_window",
+              ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+            )) {
           selected_entity_.reset();
           selected_script_ = nullptr;
           draw_entities_context_menu();
@@ -209,10 +221,9 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
   ImGui::End();
 }
 
-auto SceneHierarchyViewer::draw_entity_node(flecs::entity entity,
-                                            uint32_t depth,
-                                            bool force_expand_tree,
-                                            bool is_part_of_prefab) -> ImRect {
+auto SceneHierarchyViewer::draw_entity_node(
+  flecs::entity entity, uint32_t depth, bool force_expand_tree, bool is_part_of_prefab
+) -> ImRect {
   ZoneScoped;
 
   if (entity.has<Hidden>())
@@ -254,7 +265,12 @@ auto SceneHierarchyViewer::draw_entity_node(flecs::entity entity,
     ImGui::PushStyleColor(ImGuiCol_Text, header_selected_color);
 
   const bool opened = ImGui::TreeNodeEx(
-      reinterpret_cast<void*>(entity.raw_id()), flags, "%s %s", entity_icon, entity.name().c_str());
+    reinterpret_cast<void*>(entity.raw_id()),
+    flags,
+    "%s %s",
+    entity_icon,
+    entity.name().c_str()
+  );
 
   if (highlight)
     ImGui::PopStyleColor(2);
@@ -389,7 +405,8 @@ auto SceneHierarchyViewer::draw_entity_node(flecs::entity entity,
       }
 
       entity.children([this, depth, force_expand_tree, is_part_of_prefab, vertical_line_start, tree_line_color](
-                          const flecs::entity child) {
+                        const flecs::entity child
+                      ) {
         const float horizontal_tree_line_size = scene_->world.count(flecs::ChildOf, child) > 0 ? 9.f : 18.f;
         // chosen arbitrarily
         const ImRect child_rect = draw_entity_node(child, depth + 1, force_expand_tree, is_part_of_prefab);
@@ -398,10 +415,12 @@ auto SceneHierarchyViewer::draw_entity_node(flecs::entity entity,
         ImVec2 vertical_line_end = vertical_line_start;
         constexpr float line_thickness = 1.5f;
         const float midpoint = (child_rect.Min.y + child_rect.Max.y) / 2.0f;
-        draw_list->AddLine(ImVec2(vertical_line_start.x, midpoint),
-                           ImVec2(vertical_line_start.x + horizontal_tree_line_size, midpoint),
-                           tree_line_color,
-                           line_thickness);
+        draw_list->AddLine(
+          ImVec2(vertical_line_start.x, midpoint),
+          ImVec2(vertical_line_start.x + horizontal_tree_line_size, midpoint),
+          tree_line_color,
+          line_thickness
+        );
         vertical_line_end.y = midpoint;
         draw_list->AddLine(vertical_line_start, vertical_line_end, tree_line_color, line_thickness);
       });
@@ -447,8 +466,8 @@ auto SceneHierarchyViewer::draw_entities_context_menu() -> void {
       }
       if (ImGui::MenuItem("Sun")) {
         to_select = scene_->create_entity("sun", true)
-                        .set<LightComponent>(LightComponent{.type = LightComponent::Directional, .intensity = 10.f})
-                        .add<AtmosphereComponent>();
+                      .set<LightComponent>(LightComponent{.type = LightComponent::Directional, .intensity = 10.f})
+                      .add<AtmosphereComponent>();
       }
       ImGui::EndMenu();
     }
@@ -493,7 +512,7 @@ auto SceneHierarchyViewer::draw_scripts_context_menu() -> void {
   if (selected.type == AssetType::Script) {
     auto& asset_man = App::mod<AssetManager>();
     if (!selected.is_loaded())
-    asset_man.load_asset(selected.uuid);
+      asset_man.load_asset(selected.uuid);
 
     scene_->add_lua_system(selected.uuid);
     ImGui::CloseCurrentPopup();
