@@ -207,6 +207,18 @@ auto os::file_seek(FileDescriptor file, i64 offset) -> void {
   SetFilePointerEx(reinterpret_cast<HANDLE>(file), li, nullptr, FILE_BEGIN);
 }
 
+auto os::file_last_modified(FileDescriptor file) -> std::expected<u64, FileError> {
+  ZoneScoped;
+
+  auto file_handle = reinterpret_cast<HANDLE>(file);
+  auto file_time = FILETIME{};
+  if (!GetFileTime(file_handle, nullptr, nullptr, &file_time)) {
+    return FileError::Unknown;
+  }
+
+  return ((u64(file_time.dwHighDateTime) << 32) | u64(file_time.dwLowDateTime)) / 10;
+}
+
 auto os::file_stdout(std::string_view str) -> void {
   ZoneScoped;
 

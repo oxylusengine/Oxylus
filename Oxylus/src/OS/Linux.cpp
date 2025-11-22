@@ -167,7 +167,7 @@ auto os::file_seek(FileDescriptor file, i64 offset) -> void {
 
 auto os::file_last_modified(FileDescriptor file) -> std::expected<u64, FileError> {
   ZoneScoped;
-  
+
   errno = 0;
 
   struct stat st = {};
@@ -176,8 +176,7 @@ auto os::file_last_modified(FileDescriptor file) -> std::expected<u64, FileError
     return std::unexpected(FileError::Unknown);
   }
 
-  //return st.st_mtim;
-  return 0;
+  return st.st_mtim.tv_sec * 1000000UL + st.st_mtim.tv_nsec / 1000;
 }
 
 void os::file_stdout(std::string_view str) {

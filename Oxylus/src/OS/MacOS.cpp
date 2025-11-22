@@ -185,6 +185,20 @@ auto os::file_seek(FileDescriptor file, i64 offset) -> void {
   lseek(static_cast<i32>(file), offset, SEEK_SET);
 }
 
+auto os::file_last_modified(FileDescriptor file) -> std::expected<u64, FileError> {
+  ZoneScoped;
+
+  errno = 0;
+
+  struct stat st = {};
+  fstat(static_cast<i32>(file), &st);
+  if (errno != 0) {
+    return std::unexpected(FileError::Unknown);
+  }
+
+  return st.st_mtimespec.tv_sec * 1000000UL + st.st_mtimespec.tv_nsec / 1000;
+}
+
 void os::file_stdout(std::string_view str) {
   ZoneScoped;
 
