@@ -30,7 +30,9 @@ in pkgs.mkShell.override {
     pkgs.meshoptimizer
 
     # for SDL3
-    pkgs.sdl3
+    (pkgs.sdl3.override {
+      waylandSupport = false;
+    })
   ];
 
   NIX_ENFORCE_NO_NATIVE = "0";
@@ -38,7 +40,7 @@ in pkgs.mkShell.override {
     export LD_LIBRARY_PATH=${pkgs.llvmPackages_latest.libcxx}/lib:$LD_LIBRARY_PATH
     # slang needs libstdc++
     export LD_LIBRARY_PATH=${pkgs.gcc14.cc.lib}/lib:$LD_LIBRARY_PATH
-    export LD_LIBRARY_PATH=${pkgs.lua5_3_compat}/lib:$LD_LIBRARY_PATH
+    export LIBCXX_PATH=${pkgs.llvmPackages_latest.libcxx.dev}
   '';
 
   hardeningDisable = [ "all" ];

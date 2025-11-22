@@ -1,7 +1,7 @@
 add_repositories("oxylus https://github.com/oxylusengine/xmake-repo.git")
 set_policy("package.precompiled", false)
 add_rules("mode.debug", "mode.release", "mode.dist")
-add_rules("plugin.compile_commands.autoupdate", { outputdir = ".", lsp = "clangd" })
+add_rules("plugin.compile_commands.autoupdate", { outputdir = "build", lsp = "clangd" })
 
 set_project("Oxylus")
 set_version("1.0.0")
