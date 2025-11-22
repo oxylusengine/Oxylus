@@ -9,8 +9,6 @@
 #include "Render/Window.hpp"
 #include "Utils/Timestep.hpp"
 
-int main(int argc, char** argv);
-
 namespace ox {
 class ImGuiLayer;
 class VkContext;
@@ -22,7 +20,7 @@ struct WindowResizeEvent {
 
 class App {
 public:
-  App();
+  App(int argc, char** argv);
   ~App();
 
   static App* get() { return instance_; }
@@ -33,7 +31,6 @@ public:
   auto should_stop(this App& self) -> void;
 
   auto with_name(this App& self, std::string name) -> App&;
-  auto with_args(this App& self, AppCommandLineArgs args) -> App&;
   auto with_window(this App& self, WindowInfo window_info) -> App&;
   auto with_working_directory(this App& self, const std::filesystem::path& dir) -> App&;
   auto with_assets_directory(this App& self, const std::filesystem::path& dir) -> App&;
@@ -55,15 +52,28 @@ public:
     return self;
   }
 
+  template <typename... Modules>
+  auto with(this App& self, std::tuple<Modules...>) -> App& {
+    (..., [&] {
+      self.with<Modules>();
+    }());
+
+    return self;
+  }
+
   template <typename T>
   static auto mod() -> T& {
     return get()->registry.get<T>();
   }
 
-  auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
-  auto get_window(this const App& self) -> const Window&;
-  auto get_swapchain_extent(this const App& self) -> glm::vec2;
+  template <typename T>
+  static auto has_mod() -> bool {
+    return get()->registry.has<T>();
+  }
 
+  auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
+
+  static auto get_window() -> const Window&;
   static auto get_vkcontext() -> VkContext&;
   static auto get_timestep() -> const Timestep&;
   static auto get_vfs() -> VFS&;
@@ -85,7 +95,6 @@ private:
 
   std::unique_ptr<VkContext> vk_context = nullptr;
   option<Window> window = nullopt;
-  glm::vec2 swapchain_extent = {};
 
   VFS vfs = {};
   JobManager job_manager = {};
@@ -98,8 +107,6 @@ private:
   float last_frame_time = 0.0f;
 
   auto run_deferred_tasks(this App& self) -> void;
-
-  friend int ::main(int argc, char** argv);
 };
 
 App* create_application(const AppCommandLineArgs& args);

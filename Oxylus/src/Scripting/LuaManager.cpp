@@ -33,15 +33,16 @@ auto LuaManager::init() -> std::expected<void, std::string> {
     sol::lib::string
   );
 
-  _state->set_function( //
-      "require_script",
-      [s = _state.get()](const std::string& virtual_dir, const std::string& path) -> sol::object {
-        ZoneScopedN("LuaRequire");
-        auto& vfs = App::get_vfs();
-        auto physical_path = vfs.resolve_physical_dir(virtual_dir, path);
-        auto script = File::to_string(physical_path);
-        return s->require_script(path, script);
-      });
+  _state->set_function(
+    "require_script",
+    [s = _state.get()](const std::string& virtual_dir, const std::string& path) -> sol::object {
+      ZoneScopedN("LuaRequire");
+      auto& vfs = App::get_vfs();
+      auto physical_path = vfs.resolve_physical_dir(virtual_dir, path);
+      auto script = File::to_string(physical_path);
+      return s->require_script(path, script);
+    }
+  );
 
 #define BIND(type) bind<type>(#type, _state.get());
 

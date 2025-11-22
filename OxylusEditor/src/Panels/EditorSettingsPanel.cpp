@@ -10,7 +10,7 @@
 namespace ox {
 EditorSettingsPanel::EditorSettingsPanel() : EditorPanel("Editor Settings", ICON_MDI_COGS, false) {}
 
-void EditorSettingsPanel::on_render(vuk::Extent3D, vuk::Format) {
+void EditorSettingsPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   auto& editor = App::mod<Editor>();
   auto& undo_redo_system = editor.undo_redo_system;
 

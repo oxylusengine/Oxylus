@@ -390,8 +390,11 @@ auto RendererInstance::add_stage_after(
   self.add_stage_callback(RenderStageCallback{.callback = std::move(callback), .dependency = dep, .name = name});
 }
 
-auto RendererInstance::render(this RendererInstance& self, const Renderer::RenderInfo& render_info)
-  -> vuk::Value<vuk::ImageAttachment> {
+auto RendererInstance::render(
+  this RendererInstance& self,
+  vuk::Value<vuk::ImageAttachment>&& dst_attachment,
+  const Renderer::RenderInfo& render_info
+) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
   OX_DEFER(&) {
@@ -399,12 +402,17 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     self.shared_resources.clear();
   };
 
-  self.viewport_size = {render_info.extent.width, render_info.extent.height};
+  auto dst_extent = dst_attachment->extent;
+
+  OX_CHECK_GT(dst_extent.width, 0u);
+  OX_CHECK_GT(dst_extent.height, 0u);
+
+  self.viewport_size = {dst_extent.width, dst_extent.height};
   self.viewport_offset = render_info.viewport_offset;
 
   auto& bindless_set = self.renderer.vk_context->get_descriptor_set();
 
-  self.camera_data.resolution = {render_info.extent.width, render_info.extent.height};
+  self.camera_data.resolution = {dst_extent.width, dst_extent.height};
   self.prepared_frame.camera_buffer = self.renderer.vk_context->scratch_buffer(self.camera_data);
 
   self.render_queue_2d.update();
@@ -475,7 +483,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   auto final_attachment = vuk::declare_ia(
     "final_attachment",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-     .extent = render_info.extent,
+     .extent = dst_extent,
      .format = vuk::Format::eB10G11R11UfloatPack32,
      .sample_count = vuk::Samples::e1,
      .level_count = 1,
@@ -486,7 +494,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   auto depth_attachment = vuk::declare_ia(
     "depth_image",
     {.usage = vuk::ImageUsageFlagBits::eDepthStencilAttachment | vuk::ImageUsageFlagBits::eSampled,
-     .extent = render_info.extent,
+     .extent = dst_extent,
      .format = vuk::Format::eD32Sfloat,
      .sample_count = vuk::SampleCountFlagBits::e1,
      .level_count = 1,
@@ -965,6 +973,7 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
   /// POST PROCESSING
   auto post_process_context = PostProcessContext{
     .delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f,
+    .dst_attachment = std::move(dst_attachment),
     .final_attachment = std::move(final_attachment),
     .bloom_upsampled_attachment = std::move(bloom_upsampled_attachment),
   };
@@ -977,20 +986,20 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     self.apply_bloom(post_process_context, bloom_threshold, bloom_clamp, bloom_mip_count);
   }
 
-  auto result_attachment = self.apply_tonemap(post_process_context, render_info.format);
+  dst_attachment = self.apply_tonemap(post_process_context);
 
   {
     RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, *self.renderer.vk_context);
     ctx.set_viewport_size(self.viewport_size)
       .set_buffer_resource("camera_buffer", std::move(self.prepared_frame.camera_buffer))
       .set_image_resource("depth_attachment", std::move(depth_attachment))
-      .set_image_resource("result_attachment", std::move(result_attachment));
+      .set_image_resource("result_attachment", std::move(dst_attachment));
 
     self.execute_stages_after(RenderStage::PostProcessing, ctx);
 
     self.prepared_frame.camera_buffer = ctx.get_buffer_resource("camera_buffer");
     depth_attachment = ctx.get_image_resource("depth_attachment");
-    result_attachment = ctx.get_image_resource("result_attachment");
+    dst_attachment = ctx.get_image_resource("result_attachment");
   }
 
   auto debug_context = DebugContext{
@@ -1005,16 +1014,16 @@ auto RendererInstance::render(this RendererInstance& self, const Renderer::Rende
     .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
     .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
   };
-  auto debug_renderer_enabled = (bool)RendererCVar::cvar_enable_debug_renderer.get();
+  auto debug_renderer_enabled = RendererCVar::cvar_enable_debug_renderer.as_bool();
   if (debug_renderer_enabled) {
-    return self.draw_for_debug(debug_context, std::move(result_attachment));
+    return self.draw_for_debug(debug_context, std::move(dst_attachment));
   }
 
   if (debugging) {
-    return self.apply_debug_view(debug_context, render_info.extent);
+    return self.apply_debug_view(debug_context, dst_attachment->extent);
   }
 
-  return result_attachment;
+  return dst_attachment;
 }
 
 auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void {

@@ -12,7 +12,7 @@
 #include "Scripting/LuaManager.hpp"
 
 namespace ox {
-#define APP_MOD(m) mod_table.set(#m, std::ref(App::mod<m>()))
+#define APP_MOD(m) if (App::has_mod<m>()) mod_table.set(#m, std::ref(App::mod<m>()))
 
 class LuaScopedSubscription {
 public:

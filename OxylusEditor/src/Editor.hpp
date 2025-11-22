@@ -58,7 +58,7 @@ public:
   auto deinit() -> std::expected<void, std::string>;
 
   auto update(const Timestep& timestep) -> void;
-  auto render(vuk::Extent3D extent, vuk::Format format) -> void;
+  auto render(vuk::ImageAttachment swapchain_attachment) -> void;
 
   void new_scene();
   void open_scene_file_dialog();
@@ -86,9 +86,6 @@ private:
 
   RuntimeConsole runtime_console = {};
 
-  // Config
-  EditorConfig editor_config;
-
   // Context
   EditorContext editor_context = {};
 
@@ -96,6 +93,8 @@ private:
   std::shared_ptr<Scene> active_scene;
 
   void save_project(const std::string& path);
+
+  void draw_menubar(ImGuiViewport* viewport, f32 frame_height);
 
   void undo();
   void redo();

@@ -51,7 +51,7 @@ private:
 #define MAX_KEYS 512
 #define MAX_BUTTONS 32
 
-  friend class App;
+  friend struct Window;
 
   struct InputData {
     bool key_pressed[MAX_KEYS] = {};

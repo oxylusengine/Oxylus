@@ -17,7 +17,7 @@ public:
   ViewportPanel();
   ~ViewportPanel() override = default;
 
-  void on_render(vuk::Extent3D extent, vuk::Format format) override;
+  void on_render(vuk::ImageAttachment swapchain_attachment) override;
 
   void set_context(Scene* scene, SceneHierarchyPanel& scene_hierarchy_panel);
 
@@ -31,18 +31,18 @@ private:
   auto mouse_picking_stages(RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void;
   auto grid_stage(RendererInstance* renderer_instance) -> void;
 
-  Scene* _scene = nullptr;
-  SceneHierarchyPanel* _scene_hierarchy_panel = nullptr;
+  Scene* scene_ = nullptr;
+  SceneHierarchyPanel* scene_hierarchy_panel_ = nullptr;
   bool draw_scene_stats = false;
 
-  glm::vec2 _viewport_size = {};
-  glm::vec2 _viewport_bounds[2] = {};
-  glm::vec2 _viewport_panel_size = {};
-  glm::vec2 _viewport_position = {};
-  glm::vec2 _viewport_offset = {};
-  glm::vec2 _gizmo_position = glm::vec2(1.0f, 1.0f);
-  int _gizmo_type = -1;
-  int _gizmo_mode = 0;
+  glm::vec2 viewport_size_ = {};
+  glm::vec2 viewport_bounds_[2] = {};
+  glm::vec2 viewport_panel_size_ = {};
+  glm::vec2 viewport_position_ = {};
+  glm::vec2 viewport_offset_ = {};
+  glm::vec2 gizmo_position_ = glm::vec2(1.0f, 1.0f);
+  i32 gizmo_type_ = -1;
+  i32 gizmo_mode_ = 0;
 
   bool draw_component_gizmos_ = true;
   f32 gizmo_icon_size_ = 32.f;
@@ -52,8 +52,8 @@ private:
   std::vector<vuk::Unique<vuk::Buffer>> id_buffers = {};
 
   // Camera
-  float _translation_dampening = 0.3f;
-  float _rotation_dampening = 0.3f;
+  f32 _translation_dampening = 0.3f;
+  f32 _rotation_dampening = 0.3f;
   glm::vec2 _locked_mouse_position = glm::vec2(0.0f);
   glm::vec3 _translation_velocity = glm::vec3(0);
   glm::vec2 _rotation_velocity = glm::vec2(0);

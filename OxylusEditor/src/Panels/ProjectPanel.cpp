@@ -19,13 +19,20 @@ void ProjectPanel::on_update() {}
 void ProjectPanel::load_project_for_editor(const std::filesystem::path& filepath) {
   auto& editor = App::mod<Editor>();
   const auto& active_project = editor.active_project;
+
+  if (!std::filesystem::exists(filepath)) {
+    OX_LOG_WARN("Couldn't find project. Removing from recent projects: {}", filepath);
+    App::mod<EditorConfig>().remove_recent_project(filepath);
+    return;
+  }
+
   if (active_project->load(filepath)) {
     auto& vfs = App::get_vfs();
     const auto start_scene = vfs.resolve_physical_dir(VFS::PROJECT_DIR, active_project->get_config().start_scene);
     if (!editor.open_scene(start_scene)) {
       editor.new_scene();
     }
-    EditorConfig::get()->add_recent_project(active_project.get());
+    App::mod<EditorConfig>().add_recent_project(active_project.get());
     editor.get_panel<ContentPanel>()->init();
     visible = false;
   }
@@ -38,26 +45,28 @@ void ProjectPanel::new_project(
 ) {
   const auto& active_project = App::mod<Editor>().active_project;
   if (active_project->new_project(project_dir, project_name, project_asset_dir))
-    EditorConfig::get()->add_recent_project(active_project.get());
+    App::mod<EditorConfig>().add_recent_project(active_project.get());
 }
 
-void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
+void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   if (visible && !ImGui::IsPopupOpen("ProjectSelector"))
     ImGui::OpenPopup("ProjectSelector");
 
-  constexpr auto flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
-                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
+  constexpr auto flags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
+                         ImGuiWindowFlags_NoBackground;
   static bool draw_new_project_panel = false;
+
+  auto banner_image = App::mod<Editor>().engine_banner;
+  const auto banner_size = banner_image->get_extent();
 
   UI::center_next_window();
   ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0, 0.0, 0.0, 0.7));
+  ImGui::SetNextWindowSize(ImVec2(banner_size.width, 400.f));
   if (ImGui::BeginPopupModal("ProjectSelector", nullptr, flags)) {
-    auto banner_image = App::mod<Editor>().engine_banner;
-    const auto banner_size = banner_image->get_extent();
     const float x = static_cast<float>(banner_size.width);
     const float y = static_cast<float>(ImGui::GetFrameHeight()) * 1.3f;
 
-    const auto& window = App::get()->get_window();
+    const auto& window = App::get_window();
 
     UI::image(*banner_image, {x, static_cast<float>(banner_size.height)});
     UI::spacing(2);
@@ -123,7 +132,7 @@ void ProjectPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
           draw_new_project_panel = false;
         }
       } else {
-        const auto projects = EditorConfig::get()->get_recent_projects();
+        const auto projects = App::mod<EditorConfig>().get_recent_projects();
         for (auto& project : projects) {
           auto project_name = project.stem().string();
           auto cursor_pos_y = ImGui::GetCursorPosY();

@@ -64,6 +64,7 @@ public:
   std::shared_ptr<TracyProfiler> tracy_profiler = {};
   vuk::Compiler compiler = {};
   SlangCompiler shader_compiler = {};
+  glm::vec2 swapchain_extent = {};
 
   std::string device_name = {};
 

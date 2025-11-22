@@ -1,17 +1,9 @@
-#include "Audio/AudioEngine.hpp"
+#include "Core/App.hpp"
+#include "Core/DefaultModules.hpp"
 #include "Core/EmbeddedLogo.hpp"
-#include "Core/EntryPoint.hpp"
-#include "Core/Enum.hpp"
-#include "Core/Input.hpp"
 #include "Editor.hpp"
-#include "Networking/NetworkManager.hpp"
-#include "Physics/Physics.hpp"
-#include "Render/RendererConfig.hpp"
-#include "Scripting/LuaManager.hpp"
-#include "UI/ImGuiRenderer.hpp"
 
-namespace ox {
-App* create_application(const AppCommandLineArgs& args) {
+int main(int argc, char** argv) {
   std::string name = "Oxylus Engine - Editor";
 #ifdef OX_RELEASE
   name = "Oxylus Engine - Editor - Release";
@@ -23,17 +15,15 @@ App* create_application(const AppCommandLineArgs& args) {
   name = "Oxylus Engine - Editor - Dist";
 #endif
 
-  const auto app = new App();
-  app->with_name(name)
-    .with_args(args)
-    .with_working_directory(std::filesystem::current_path())
+  auto app = ox::App(argc, argv);
+  app.with_name(name)
     .with_window(
-      WindowInfo{
+      ox::WindowInfo{
         .title = name,
         .icon =
-          WindowInfo::Icon{
+          ox::WindowInfo::Icon{
             .loaded =
-              WindowInfo::Icon::Loaded{
+              ox::WindowInfo::Icon::Loaded{
                 .data = engine_logo,
                 .width = engine_logoWidth,
                 .height = engine_logoHeight,
@@ -41,21 +31,13 @@ App* create_application(const AppCommandLineArgs& args) {
           },
         .width = 1720,
         .height = 900,
-        .flags = WindowFlag::Centered | WindowFlag::Resizable,
+        .flags = ox::WindowFlag::Centered | ox::WindowFlag::Resizable | ox::WindowFlag::HighPixelDensity,
       }
     )
-    .with<LuaManager>()
-    .with<AssetManager>()
-    .with<AudioEngine>()
-    .with<Physics>()
-    .with<Input>()
-    .with<NetworkManager>()
-    .with<DebugRenderer>()
-    .with<ImGuiRenderer>()
-    .with<RendererConfig>()
-    .with<Renderer>()
-    .with<Editor>();
+    .with(ox::DefaultModules{})
+    .with<ox::EditorConfig>()
+    .with<ox::Editor>()
+    .run();
 
-  return app;
+  return 0;
 }
-} // namespace ox

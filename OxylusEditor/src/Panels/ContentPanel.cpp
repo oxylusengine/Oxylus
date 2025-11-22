@@ -237,11 +237,6 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(
 }
 
 ContentPanel::ContentPanel() : EditorPanel("Contents", ICON_MDI_FOLDER_STAR, true) {
-  const auto& window = App::get()->get_window();
-  const f32 scale = window.get_content_scale();
-  thumbnail_max_limit *= scale;
-  thumbnail_size_grid_limit *= scale;
-
   _white_texture = std::make_shared<Texture>();
   char white_texture_data[16 * 16 * 4];
   memset(white_texture_data, 0xff, 16 * 16 * 4);
@@ -276,7 +271,7 @@ void ContentPanel::init() {
 
 void ContentPanel::on_update() { _elapsed_time += static_cast<float>(App::get_timestep()); }
 
-void ContentPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
+void ContentPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   constexpr ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar;
 
   constexpr ImGuiTableFlags tableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_ContextMenuInBody;

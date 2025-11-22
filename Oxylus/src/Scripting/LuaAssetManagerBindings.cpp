@@ -13,7 +13,9 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
 
   auto asset_manager = state->new_usertype<AssetManager>("AssetManager");
 
-  SET_TYPE_FUNCTION(asset_manager, AssetManager, import_asset);
+  asset_manager.set_function("import_asset", [](AssetManager* am, const std::string& path) {
+    return am->import_asset(path);
+  });
   SET_TYPE_FUNCTION(asset_manager, AssetManager, load_asset);
   SET_TYPE_FUNCTION(asset_manager, AssetManager, unload_asset);
 

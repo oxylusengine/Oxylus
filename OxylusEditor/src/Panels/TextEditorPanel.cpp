@@ -14,7 +14,7 @@ TextEditorPanel::TextEditorPanel() : EditorPanel("TextEditor", ICON_MDI_TEXT_BOX
 
 void TextEditorPanel::on_update() {}
 
-void TextEditorPanel::on_render(vuk::Extent3D extent, vuk::Format format) {
+void TextEditorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   ZoneScoped;
 
   text_editor.render(_id.c_str(), &visible);
