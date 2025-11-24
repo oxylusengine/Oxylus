@@ -12,6 +12,7 @@ public:
   auto reset(this MainViewportPanel& self) -> void;
 
   auto get_focused_viewport(this const MainViewportPanel& self) -> ViewportPanel*;
+  auto get_visible_viwports(this const MainViewportPanel& self) -> std::vector<ViewportPanel*>;
 
   auto add_new_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void;
   auto add_new_play_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void;
@@ -25,6 +26,7 @@ public:
 
 private:
   std::vector<std::unique_ptr<ViewportPanel>> viewport_panels = {};
+  std::vector<std::unique_ptr<ViewportPanel>> pending_viewports = {};
   bool dock_should_update = false;
 
   void drag_drop(this MainViewportPanel& self);

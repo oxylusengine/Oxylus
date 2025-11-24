@@ -72,7 +72,7 @@ public:
   // Removes all viewports then adds one and resets the SceneManager
   auto reset(this Editor& self) -> void;
 
-  auto new_scene() -> void;
+  auto new_scene(this Editor& self) -> void;
 
   // Loads the scene from the path and appends the scene to the first viewport panel
   auto open_scene(const std::filesystem::path& path) -> bool;
@@ -105,7 +105,7 @@ private:
 
   auto save_project(const std::string& path) -> void;
 
-  auto draw_menubar(ImGuiViewport* viewport, f32 frame_height) -> void;
+  auto draw_menubar() -> void;
 
   auto undo() const -> void;
   auto redo() const -> void;

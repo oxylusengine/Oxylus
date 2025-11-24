@@ -1100,6 +1100,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
            &point_lights,
            &spot_lights,
            current_camera](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
+      if (!e.enabled()) {
+        return;
+      }
+
       if (lc.type == LightComponent::LightType::Directional) {
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
         self.directional_light.color = lc.color;

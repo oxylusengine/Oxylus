@@ -152,6 +152,14 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
     auto& style = ImGui::GetStyle();
 
     if (ImGui::BeginMenuBar()) {
+      if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE)) {
+        App::mod<Editor>().save_scene();
+      }
+      UI::tooltip_hover("Save scene");
+      if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE_MOVE)) {
+        App::mod<Editor>().save_scene_as();
+      }
+      UI::tooltip_hover("Save scene as");
       if (ImGui::MenuItem(ICON_MDI_COG)) {
         viewport_settings_popup = true;
       }
@@ -300,8 +308,6 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 void ViewportPanel::set_context(const std::shared_ptr<EditorScene>& scene) {
   OX_CHECK_NULL(scene);
 
-  last_save_scene_path = {};
-
   this->editor_scene_ = scene;
 
   set_name(fmt::format("Viewport:{}", scene->get_scene()->scene_name));
@@ -403,9 +409,9 @@ void ViewportPanel::on_update() {
   const glm::vec2 damped_yaw_pitch =
     math::smooth_damp(yaw_pitch, final_yaw_pitch, _rotation_velocity, _rotation_dampening, 1000.0f, dt);
 
-  tc.position = EditorCVar::cvar_camera_smooth.get() ? damped_position : final_position;
-  tc.rotation.x = EditorCVar::cvar_camera_smooth.get() ? damped_yaw_pitch.y : final_yaw_pitch.y;
-  tc.rotation.y = EditorCVar::cvar_camera_smooth.get() ? damped_yaw_pitch.x : final_yaw_pitch.x;
+  tc.position = EditorCVar::cvar_camera_smooth.as_bool() ? damped_position : final_position;
+  tc.rotation.x = EditorCVar::cvar_camera_smooth.as_bool() ? damped_yaw_pitch.y : final_yaw_pitch.y;
+  tc.rotation.y = EditorCVar::cvar_camera_smooth.as_bool() ? damped_yaw_pitch.x : final_yaw_pitch.x;
 
   cam.zoom = static_cast<float>(EditorCVar::cvar_camera_zoom.get());
 }

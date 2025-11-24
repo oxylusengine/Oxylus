@@ -15,8 +15,6 @@ public:
   bool is_viewport_focused = {};
   bool is_viewport_hovered = {};
 
-  std::string last_save_scene_path = {};
-
   ViewportPanel();
   ~ViewportPanel() override;
   void drag_drop() const;

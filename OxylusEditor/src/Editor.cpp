@@ -183,12 +183,7 @@ auto Editor::render(const vuk::ImageAttachment& swapchain_attachment) -> void {
 
     runtime_console.on_imgui_render();
 
-    const float frame_height = ImGui::GetFrameHeight();
-
-    ImVec2 frame_padding = ImGui::GetStyle().FramePadding;
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {frame_padding.x, 4.0f});
-    draw_menubar(viewport, frame_height);
-    ImGui::PopStyleVar();
+    draw_menubar();
 
     static bool dock_layout_initalized = false;
     if (!dock_layout_initalized) {
@@ -209,12 +204,14 @@ void Editor::reset(this Editor& self) {
   self.scene_manager.reset();
 }
 
-void Editor::new_scene() {
-  auto new_scene_id = scene_manager.new_scene();
-  scene_manager.load_default_scene(new_scene_id);
-  auto scene = scene_manager.get_scene(new_scene_id);
+void Editor::new_scene(this Editor& self) {
+  App::get_vkcontext().wait();
 
-  main_viewport_panel.add_new_scene(scene);
+  auto new_scene_id = self.scene_manager.new_scene();
+  self.scene_manager.load_default_scene(new_scene_id);
+  auto scene = self.scene_manager.get_scene(new_scene_id);
+
+  self.main_viewport_panel.add_new_scene(scene);
 }
 
 bool Editor::open_scene(const std::filesystem::path& path) {
@@ -256,17 +253,21 @@ void Editor::open_scene_file_dialog() {
 
 void Editor::save_scene() {
   auto* focused_viewport = main_viewport_panel.get_focused_viewport();
+  if (!focused_viewport)
+    return;
+
   auto* scene = focused_viewport->get_scene();
 
-  if (scene->is_playing()) {
+  if (!scene || scene->is_playing()) {
     return;
   }
 
-  if (focused_viewport->last_save_scene_path.empty()) {
+  if (!scene->get_path().empty()) {
     auto& job_man = App::get_job_manager();
     job_man.push_job_name("Saving scene");
-    job_man.submit(Job::create([s = scene, p = focused_viewport->last_save_scene_path] {
-      s->get_scene()->save_to_file(p);
+    job_man.submit(Job::create([scene] {
+      auto last_saved_path = scene->get_path();
+      scene->get_scene()->save_to_file(last_saved_path);
     }));
     job_man.pop_job_name();
   } else {
@@ -276,21 +277,20 @@ void Editor::save_scene() {
 
 void Editor::save_scene_as() {
   auto* focused_viewport = main_viewport_panel.get_focused_viewport();
-  if (focused_viewport->get_scene()->is_playing()) {
+  if (!focused_viewport)
     return;
-  }
 
-  const auto last_save_scene_path = &focused_viewport->last_save_scene_path;
-  const auto scene = focused_viewport->get_scene()->get_scene().get();
+  auto* focused_viewport_scene = focused_viewport->get_scene();
+  if (!focused_viewport_scene || focused_viewport_scene->is_playing())
+    return;
 
   const auto& window = App::get_window();
   FileDialogFilter dialog_filters[] = {{.name = "Oxylus Scene(.oxscene)", .pattern = "oxscene"}};
   struct UData {
-    std::string* last_save_path = {};
-    Scene* scene = {};
+    EditorScene* scene = {};
   };
 
-  const auto u_data = new UData{.last_save_path = last_save_scene_path, .scene = scene};
+  const auto u_data = new UData{.scene = focused_viewport_scene};
 
   window.show_dialog({
     .kind = DialogKind::SaveFile,
@@ -298,7 +298,7 @@ void Editor::save_scene_as() {
     .callback =
       [](void* user_data, const c8* const* files, i32) {
         const auto udata = static_cast<UData*>(user_data);
-        if (!files || !*files) {
+        if (!udata && !files || !*files) {
           return;
         }
 
@@ -309,10 +309,11 @@ void Editor::save_scene_as() {
         if (!path.empty()) {
           auto& job_man = App::get_job_manager();
           job_man.push_job_name("Saving scene");
-          job_man.submit(Job::create([s = udata->scene, path] { s->save_to_file(path); }));
+          job_man.submit(Job::create([s = udata->scene, path] {
+            s->get_scene()->save_to_file(path);
+            s->set_path(path);
+          }));
           job_man.pop_job_name();
-
-          *udata->last_save_path = path;
         }
 
         delete udata;
@@ -387,100 +388,82 @@ void Editor::reset_current_docking_layout() {
   main_viewport_panel.update_dockspace();
 }
 
-void Editor::draw_menubar(ImGuiViewport* viewport, f32 frame_height) {
-  constexpr ImGuiWindowFlags menu_flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
-                                          ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoNavFocus;
-
-  if (ImGui::BeginViewportSideBar("##PrimaryMenuBar", viewport, ImGuiDir_Up, frame_height, menu_flags)) {
-    if (ImGui::BeginMenuBar()) {
-      if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New Scene", "Ctrl + N")) {
-          new_scene();
-        }
-        if (ImGui::MenuItem("Open Scene", "Ctrl + O")) {
-          open_scene_file_dialog();
-        }
-        if (ImGui::MenuItem("Save Scene", "Ctrl + S")) {
-          save_scene();
-        }
-        if (ImGui::MenuItem("Save Scene As...", "Ctrl + Shift + S")) {
-          save_scene_as();
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Launcher...")) {
-          get_panel<ProjectPanel>()->visible = true;
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Exit")) {
-          App::get()->should_stop();
-        }
-        ImGui::EndMenu();
+void Editor::draw_menubar() {
+  if (ImGui::BeginMenuBar()) {
+    if (ImGui::BeginMenu("File")) {
+      ImGui::Separator();
+      if (ImGui::MenuItem("Launcher...")) {
+        get_panel<ProjectPanel>()->visible = true;
       }
-      if (ImGui::BeginMenu("Edit")) {
-        ImGui::BeginDisabled(undo_redo_system->get_undo_count() < 1);
-        if (ImGui::MenuItem("Undo", "Ctrl + Z")) {
-          undo();
-        }
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(undo_redo_system->get_redo_count() < 1);
-        if (ImGui::MenuItem("Redo", "Ctrl + Y")) {
-          redo();
-        }
-        ImGui::EndDisabled();
-        if (ImGui::MenuItem("Settings")) {
-          get_panel<EditorSettingsPanel>()->visible = true;
-        }
-        ImGui::EndMenu();
+      ImGui::Separator();
+      if (ImGui::MenuItem("Exit")) {
+        App::get()->should_stop();
       }
-      if (ImGui::BeginMenu("Window")) {
-        if (ImGui::MenuItem("Add viewport", nullptr)) {
-          main_viewport_panel.add_viewport();
-        }
-        ImGui::MenuItem("Inspector", nullptr, &get_panel<InspectorPanel>()->visible);
-        ImGui::MenuItem("Scene hierarchy", nullptr, &get_panel<SceneHierarchyPanel>()->visible);
-        ImGui::MenuItem("Console window", nullptr, &runtime_console.visible);
-        if (ImGui::BeginMenu("Layout")) {
-          if (ImGui::MenuItem("Classic")) {
-            set_docking_layout(EditorLayout::Classic);
-          }
-          if (ImGui::MenuItem("Big Viewport")) {
-            set_docking_layout(EditorLayout::BigViewport);
-          }
-          ImGui::EndMenu();
-        }
-        ImGui::EndMenu();
-      }
-
-      if (ImGui::BeginMenu("Assets")) {
-        if (ImGui::MenuItem("Asset Manager")) {
-          get_panel<AssetManagerPanel>()->visible = true;
-        }
-        UI::tooltip_hover("WIP");
-        ImGui::EndMenu();
-      }
-      if (ImGui::BeginMenu("Help")) {
-        if (ImGui::MenuItem("About")) {
-        }
-        UI::tooltip_hover("WIP");
-        ImGui::EndMenu();
-      }
-      ImGui::SameLine();
-
-      {
-        // Project name text
-        const std::string& project_name = active_project->get_config().name;
-        ImGui::SetCursorPos(
-          ImVec2(ImGui::GetMainViewport()->Size.x - 10 - ImGui::CalcTextSize(project_name.c_str()).x, 0)
-        );
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
-        ImGui::Button(project_name.c_str());
-        ImGui::PopStyleColor(2);
-      }
-
-      ImGui::EndMenuBar();
+      ImGui::EndMenu();
     }
-    ImGui::End();
+    if (ImGui::BeginMenu("Edit")) {
+      ImGui::BeginDisabled(undo_redo_system->get_undo_count() < 1);
+      if (ImGui::MenuItem("Undo", "Ctrl + Z")) {
+        undo();
+      }
+      ImGui::EndDisabled();
+      ImGui::BeginDisabled(undo_redo_system->get_redo_count() < 1);
+      if (ImGui::MenuItem("Redo", "Ctrl + Y")) {
+        redo();
+      }
+      ImGui::EndDisabled();
+      if (ImGui::MenuItem("Settings")) {
+        get_panel<EditorSettingsPanel>()->visible = true;
+      }
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Window")) {
+      if (ImGui::MenuItem("Add viewport", nullptr)) {
+        main_viewport_panel.add_viewport();
+      }
+      ImGui::MenuItem("Inspector", nullptr, &get_panel<InspectorPanel>()->visible);
+      ImGui::MenuItem("Scene hierarchy", nullptr, &get_panel<SceneHierarchyPanel>()->visible);
+      ImGui::MenuItem("Console window", nullptr, &runtime_console.visible);
+      if (ImGui::BeginMenu("Layout")) {
+        if (ImGui::MenuItem("Classic")) {
+          set_docking_layout(EditorLayout::Classic);
+        }
+        if (ImGui::MenuItem("Big Viewport")) {
+          set_docking_layout(EditorLayout::BigViewport);
+        }
+        ImGui::EndMenu();
+      }
+      ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Assets")) {
+      if (ImGui::MenuItem("Asset Manager")) {
+        get_panel<AssetManagerPanel>()->visible = true;
+      }
+      UI::tooltip_hover("WIP");
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Help")) {
+      if (ImGui::MenuItem("About")) {
+      }
+      UI::tooltip_hover("WIP");
+      ImGui::EndMenu();
+    }
+    ImGui::SameLine();
+
+    {
+      // Project name text
+      const std::string& project_name = active_project->get_config().name;
+      ImGui::SetCursorPos(
+        ImVec2(ImGui::GetMainViewport()->Size.x - 10 - ImGui::CalcTextSize(project_name.c_str()).x, 0)
+      );
+      ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
+      ImGui::Button(project_name.c_str());
+      ImGui::PopStyleColor(2);
+    }
+
+    ImGui::EndMenuBar();
   }
 }
 

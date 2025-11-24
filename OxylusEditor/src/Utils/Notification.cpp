@@ -1,10 +1,12 @@
 #include "Notification.hpp"
 
-#include <tracy/Tracy.hpp>
 #include <fmt/format.h>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui_internal.h>
 #include <imspinner.h>
+#include <tracy/Tracy.hpp>
+
+#include "Core/App.hpp"
 
 namespace ox {
 static constexpr auto notification_window_size = ImVec2(400.f, 50.f);
@@ -41,6 +43,8 @@ auto NotificationSystem::draw() -> void {
   if (active_notifications.empty())
     return;
 
+  App::get_window().set_cursor_override(WindowCursor::Progress);
+
   ImGui::SetNextWindowPos({root_screen_pos.x, root_screen_pos.y}, ImGuiCond_Always);
   ImGui::SetNextWindowSize(root_window_size, ImGuiCond_Always);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.f, 0.f, 0.f, 0.f));
@@ -56,23 +60,26 @@ auto NotificationSystem::draw() -> void {
 
   // Cleanup
   const auto delay = std::chrono::seconds(2); // so that really fast notifications don't flash
-  std::erase_if(active_notifications,
-                [&](const auto& n) { return n.second.completed && (now - n.second.created_at) > delay; });
+  std::erase_if(active_notifications, [&](const auto& n) {
+    return n.second.completed && (now - n.second.created_at) > delay;
+  });
 }
 
 auto NotificationSystem::draw_single(Notification& notif, auto current_time, const ImVec2& screen_pos, f32 y_offset)
-    -> void {
+  -> void {
   ZoneScoped;
 
   ImGui::SetNextWindowBgAlpha(0.8f);
   ImGui::SetNextWindowSize(notification_window_size, ImGuiCond_Always);
 
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 3.0f);
-  if (ImGui::BeginChild(notif.title.c_str(),
-                        {},
-                        ImGuiChildFlags_Borders | ImGuiChildFlags_FrameStyle,
-                        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing)) {
+  if (ImGui::BeginChild(
+        notif.title.c_str(),
+        {},
+        ImGuiChildFlags_Borders | ImGuiChildFlags_FrameStyle,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+          ImGuiWindowFlags_NoFocusOnAppearing
+      )) {
     ImSpinner::detail::SpinnerConfig config{};
     config.setSpinnerType(ImSpinner::e_st_ang);
     config.setSpeed(6.f);

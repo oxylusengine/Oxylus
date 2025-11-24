@@ -18,6 +18,9 @@ public:
   auto get_scene(this const EditorScene& self) -> std::shared_ptr<Scene>;
   auto get_id(this const EditorScene& self) -> SceneID;
 
+  auto set_path(this EditorScene& self, const std::filesystem::path& path) -> void;
+  auto get_path(this const EditorScene& self) -> const std::filesystem::path&;
+
   auto play(this const EditorScene& self) -> std::shared_ptr<EditorScene>;
   auto stop(this EditorScene& self) -> void;
 
@@ -26,6 +29,7 @@ private:
 
   SceneID id = SceneID::Invalid;
   std::shared_ptr<Scene> scene = nullptr;
+  std::filesystem::path path = {};
 };
 
 class SceneManager {

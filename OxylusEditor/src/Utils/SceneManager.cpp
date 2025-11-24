@@ -29,10 +29,23 @@ auto EditorScene::get_id(this const EditorScene& self) -> SceneID {
   return self.id;
 }
 
+auto EditorScene::set_path(this EditorScene& self, const std::filesystem::path& path) -> void {
+  ZoneScoped;
+
+  self.path = path;
+}
+
+auto EditorScene::get_path(this const EditorScene& self) -> const std::filesystem::path& {
+  ZoneScoped;
+
+  return self.path;
+}
+
 auto EditorScene::play(this const EditorScene& self) -> std::shared_ptr<EditorScene> {
   ZoneScoped;
 
   auto new_scene = std::make_shared<EditorScene>(Scene::copy(self.scene));
+  new_scene->id = self.id;
   new_scene->get_scene()->meshes_dirty = true;
   new_scene->get_scene()->runtime_start();
   new_scene->scene_state = SceneState::Play;
@@ -94,6 +107,7 @@ auto SceneManager::load_scene(const std::filesystem::path& path) -> std::optiona
 
   auto scene_id = new_scene();
   auto editor_scene = *scenes.slot(scene_id);
+  editor_scene->path = path;
 
   if (editor_scene->scene->load_from_file(path)) {
     loaded_scenes.emplace(path, scene_id);
