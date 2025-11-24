@@ -10,7 +10,6 @@
 #include "Utils/Log.hpp"
 #include "Utils/OxMath.hpp"
 
-
 namespace ox {
 static void TraceImpl(const char* inFMT, ...) {
   va_list list;
@@ -30,6 +29,8 @@ static bool AssertFailedImpl(const char* inExpression, const char* inMessage, co
 #endif
 
 auto Physics::init() -> std::expected<void, std::string> {
+  ZoneScoped;
+
   // TODO: Override default allocators with Oxylus allocators.
   JPH::RegisterDefaultAllocator();
 
@@ -42,14 +43,29 @@ auto Physics::init() -> std::expected<void, std::string> {
   JPH::Factory::sInstance = new JPH::Factory();
   JPH::RegisterTypes();
 
-  debug_renderer = new PhysicsDebugRenderer();
+  temp_allocator = std::make_unique<JPH::TempAllocatorImpl>(10 * 1024 * 1024);
 
-  temp_allocator = new JPH::TempAllocatorImpl(10 * 1024 * 1024);
-
-  job_system = new JPH::JobSystemThreadPool();
+  job_system = std::make_unique<JPH::JobSystemThreadPool>();
   job_system->Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, (int)std::thread::hardware_concurrency() - 1);
-  physics_system = new JPH::PhysicsSystem();
-  physics_system->Init(
+
+  return {};
+}
+
+auto Physics::deinit() -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  JPH::UnregisterTypes();
+  delete JPH::Factory::sInstance;
+  JPH::Factory::sInstance = nullptr;
+
+  return {};
+}
+
+auto Physics::new_system() const -> std::unique_ptr<JPH::PhysicsSystem> {
+  ZoneScoped;
+
+  auto sys = std::make_unique<JPH::PhysicsSystem>();
+  sys->Init(
     MAX_BODIES,
     0,
     MAX_BODY_PAIRS,
@@ -59,42 +75,12 @@ auto Physics::init() -> std::expected<void, std::string> {
     object_layer_pair_filter_interface
   );
 
-  return {};
+  return sys;
 }
 
-auto Physics::deinit() -> std::expected<void, std::string> {
-  JPH::UnregisterTypes();
-  delete JPH::Factory::sInstance;
-  JPH::Factory::sInstance = nullptr;
-  delete temp_allocator;
-  delete physics_system;
-  delete job_system;
-  delete debug_renderer;
-
-  return {};
-}
-
-void Physics::step(float physicsTs) {
+auto Physics::new_debug_renderer() const -> std::unique_ptr<PhysicsDebugRenderer> {
   ZoneScoped;
 
-  OX_CHECK_NULL(physics_system, "Physics system not initialized");
-
-  physics_system->Update(physicsTs, 1, temp_allocator, job_system);
-}
-
-void Physics::debug_draw() {
-  JPH::BodyManager::DrawSettings settings{};
-  settings.mDrawShape = true;
-  settings.mDrawShapeWireframe = true;
-
-  physics_system->DrawBodies(settings, debug_renderer);
-}
-
-JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> Physics::cast_ray(const RayCast& ray_cast) {
-  JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> collector;
-  const JPH::RayCast ray{math::to_jolt(ray_cast.get_origin()), math::to_jolt(ray_cast.get_direction())};
-  get_broad_phase_query().CastRay(ray, collector);
-
-  return collector;
+  return std::make_unique<PhysicsDebugRenderer>();
 }
 } // namespace ox

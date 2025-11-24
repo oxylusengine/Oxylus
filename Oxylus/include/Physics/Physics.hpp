@@ -7,7 +7,6 @@
 #include "Render/DebugRenderer.hpp"
 
 #include <Jolt/Core/JobSystemThreadPool.h>
-#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 // clang-format on
 
@@ -27,21 +26,15 @@ public:
 
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
-  void step(float physicsTs);
-  void debug_draw();
 
-  JPH::PhysicsSystem* get_physics_system() { return physics_system; };
-  JPH::BodyInterface& get_body_interface() { return physics_system->GetBodyInterface(); }
-  const JPH::BroadPhaseQuery& get_broad_phase_query() { return physics_system->GetBroadPhaseQuery(); }
-  const JPH::BodyLockInterface& get_body_interface_lock() { return physics_system->GetBodyLockInterface(); }
-  PhysicsDebugRenderer* get_debug_renderer() { return debug_renderer; }
+  auto new_system() const -> std::unique_ptr<JPH::PhysicsSystem>;
+  auto new_debug_renderer() const -> std::unique_ptr<PhysicsDebugRenderer>;
 
-  JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> cast_ray(const RayCast& ray_cast);
+  auto get_temp_allocator() const -> JPH::TempAllocatorImpl* { return temp_allocator.get(); }
+  auto get_job_system() const -> JPH::JobSystemThreadPool* { return job_system.get(); }
 
 private:
-  JPH::PhysicsSystem* physics_system = nullptr;
-  JPH::TempAllocatorImpl* temp_allocator = nullptr;
-  JPH::JobSystemThreadPool* job_system = nullptr;
-  PhysicsDebugRenderer* debug_renderer = nullptr;
+  std::unique_ptr<JPH::TempAllocatorImpl> temp_allocator = nullptr;
+  std::unique_ptr<JPH::JobSystemThreadPool> job_system = nullptr;
 };
 } // namespace ox
