@@ -61,7 +61,8 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = nullptr;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard /*| ImGuiConfigFlags_ViewportsEnable*/ |
-                    ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_DpiEnableScaleFonts | ImGuiConfigFlags_IsSRGB;
+                    ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_DockingEnable |
+                    ImGuiConfigFlags_DpiEnableScaleFonts | ImGuiConfigFlags_IsSRGB;
   io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_HasMouseCursors;
   /*io.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;*/
   io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
@@ -107,14 +108,16 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size) {
   acquired_images.clear();
 
   ImGui::NewFrame();
+}
 
-  if (imgui.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange) {
-    return;
-  }
+vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vuk::Value<vuk::ImageAttachment> target) {
+  ZoneScoped;
+
+  ImGui::Render();
 
   auto& window = App::get_window();
   const auto imgui_cursor = ImGui::GetMouseCursor();
-  if (imgui.MouseDrawCursor || imgui_cursor == ImGuiMouseCursor_None) {
+  if (ImGui::GetIO().MouseDrawCursor || imgui_cursor == ImGuiMouseCursor_None) {
     window.show_cursor(false);
   } else {
     auto next_cursor = WindowCursor::Arrow;
@@ -138,12 +141,6 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size) {
       window.set_cursor(next_cursor);
     }
   }
-}
-
-vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vuk::Value<vuk::ImageAttachment> target) {
-  ZoneScoped;
-
-  ImGui::Render();
 
   ImDrawData* draw_data = ImGui::GetDrawData();
 
