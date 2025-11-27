@@ -104,7 +104,6 @@ private:
   Timestep timestep = {};
 
   bool is_running = true;
-  float last_frame_time = 0.0f;
 
   auto run_deferred_tasks(this App& self) -> void;
 };

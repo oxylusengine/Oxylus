@@ -385,8 +385,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .tick_source(physics_tick_source)
     .run([&self](flecs::iter& it) {
       OX_CHECK_NULL(self.physics_system);
-      auto& physics = App::mod<Physics>();
-      self.physics_system->Update(it.delta_time(), 1, physics.get_temp_allocator(), physics.get_job_system());
+      auto& p = App::mod<Physics>();
+      self.physics_system->Update(it.delta_time(), 1, p.get_temp_allocator(), p.get_job_system());
     });
 
   self.world.system<TransformComponent, RigidBodyComponent>("rigidbody_update")

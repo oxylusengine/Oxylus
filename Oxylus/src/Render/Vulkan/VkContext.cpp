@@ -251,7 +251,9 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
     .add_pNext(&vk13_features)
     .add_pNext(&vk12_features)
     .add_pNext(&vk11_features)
+#ifndef OX_PLATFORM_MACOSX
     .add_pNext(&image_atomic_int64_features)
+#endif
     .add_pNext(&vk10_features);
 
   auto dev_ret = device_builder.build();

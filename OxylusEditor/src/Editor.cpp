@@ -24,25 +24,25 @@
 #include "Utils/EditorConfig.hpp"
 
 namespace ox {
-auto Editor::init() -> std::expected<void, std::string> {
+auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   auto& job_man = App::get_job_manager();
   job_man.get_tracker().start_tracking();
 
-  undo_redo_system = std::make_unique<UndoRedoSystem>();
+  self.undo_redo_system = std::make_unique<UndoRedoSystem>();
 
-  editor_theme.init();
+  self.editor_theme.init();
 
-  active_project = std::make_unique<Project>();
+  self.active_project = std::make_unique<Project>();
 
-  auto scene_hierarchy_panel = add_panel<SceneHierarchyPanel>();
-  add_panel<ContentPanel>();
-  add_panel<InspectorPanel>();
-  add_panel<EditorSettingsPanel>();
-  add_panel<ProjectPanel>();
-  add_panel<AssetManagerPanel>();
-  auto text_editor_panel = add_panel<TextEditorPanel>();
+  auto scene_hierarchy_panel = self.add_panel<SceneHierarchyPanel>();
+  self.add_panel<ContentPanel>();
+  self.add_panel<InspectorPanel>();
+  self.add_panel<EditorSettingsPanel>();
+  self.add_panel<ProjectPanel>();
+  self.add_panel<AssetManagerPanel>();
+  auto text_editor_panel = self.add_panel<TextEditorPanel>();
 
   scene_hierarchy_panel->viewer.opened_script_callback = [text_editor_panel](const UUID& uuid) {
     auto& asset_man = App::mod<AssetManager>();
@@ -53,17 +53,17 @@ auto Editor::init() -> std::expected<void, std::string> {
     }
   };
 
-  main_viewport_panel.init();
+  self.main_viewport_panel.init();
 
   auto& event_system = App::get_event_system();
-  event_system.subscribe<ScenePlayEvent>([this](const ScenePlayEvent& e) {
-    editor_context.reset();
-    auto* sh = get_panel<SceneHierarchyPanel>();
+  std::ignore = event_system.subscribe<ScenePlayEvent>([&self](const ScenePlayEvent& e) {
+    self.editor_context.reset();
+    auto* sh = self.get_panel<SceneHierarchyPanel>();
     sh->set_scene(nullptr);
   });
-  event_system.subscribe<SceneStopEvent>([this](const SceneStopEvent& e) {
-    editor_context.reset();
-    auto* sh = get_panel<SceneHierarchyPanel>();
+  std::ignore = event_system.subscribe<SceneStopEvent>([&self](const SceneStopEvent& e) {
+    self.editor_context.reset();
+    auto* sh = self.get_panel<SceneHierarchyPanel>();
     sh->set_scene(nullptr);
   });
 
@@ -74,14 +74,14 @@ auto Editor::init() -> std::expected<void, std::string> {
       auto notification = Notification(message.message, true);
       e->notification_system.add(std::move(notification));
     },
-    this,
+    &self,
     loguru::Verbosity_INFO
   );
 
   return {};
 }
 
-auto Editor::deinit() -> std::expected<void, std::string> {
+auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   auto& job_man = App::get_job_manager();
   job_man.get_tracker().stop_tracking();
 
@@ -90,16 +90,16 @@ auto Editor::deinit() -> std::expected<void, std::string> {
   return {};
 }
 
-auto Editor::update(const Timestep& timestep) -> void {
+auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   ZoneScoped;
 
-  for (const auto& panel : editor_panels | std::views::values) {
+  for (const auto& panel : self.editor_panels | std::views::values) {
     if (!panel->visible)
       continue;
     panel->on_update();
   }
 
-  main_viewport_panel.update(timestep, get_panel<SceneHierarchyPanel>());
+  self.main_viewport_panel.update(timestep, self.get_panel<SceneHierarchyPanel>());
 
   auto& vk_context = App::get_vkcontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
@@ -121,14 +121,14 @@ auto Editor::update(const Timestep& timestep) -> void {
     .layer_count = swapchain_attachment->layer_count,
   };
 
-  render(sc_info);
+  self.render(sc_info);
 
   swapchain_attachment = imgui_renderer.end_frame(vk_context, std::move(swapchain_attachment));
 
   vk_context.end_frame(swapchain_attachment);
 }
 
-auto Editor::render(const vuk::ImageAttachment& swapchain_attachment) -> void {
+auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_attachment) -> void {
   auto& job_man = App::get_job_manager();
 
   auto status = job_man.get_tracker().get_status();
@@ -137,18 +137,18 @@ auto Editor::render(const vuk::ImageAttachment& swapchain_attachment) -> void {
       continue;
 
     Notification notification(name, !is_working);
-    notification_system.add(std::move(notification));
+    self.notification_system.add(std::move(notification));
   }
 
   job_man.get_tracker().cleanup_old();
-  notification_system.draw();
+  self.notification_system.draw();
 
   if (EditorCVar::cvar_show_style_editor.get())
     ImGui::ShowStyleEditor();
   if (EditorCVar::cvar_show_imgui_demo.get())
     ImGui::ShowDemoWindow();
 
-  editor_shortcuts();
+  self.editor_shortcuts();
 
   constexpr ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
 
@@ -170,24 +170,24 @@ auto Editor::render(const vuk::ImageAttachment& swapchain_attachment) -> void {
 
     const ImGuiIO& io = ImGui::GetIO();
     if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
-      dockspace_id = ImGui::GetID("MainDockspace");
-      ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+      self.dockspace_id = ImGui::GetID("MainDockspace");
+      ImGui::DockSpace(self.dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
     }
 
-    main_viewport_panel.on_render(swapchain_attachment);
+    self.main_viewport_panel.on_render(swapchain_attachment);
 
-    for (const auto& panel : editor_panels | std::views::values) {
+    for (const auto& panel : self.editor_panels | std::views::values) {
       if (panel->visible)
         panel->on_render(swapchain_attachment);
     }
 
-    runtime_console.on_imgui_render();
+    self.runtime_console.on_imgui_render();
 
-    draw_menubar();
+    self.draw_menubar();
 
     static bool dock_layout_initalized = false;
     if (!dock_layout_initalized) {
-      set_docking_layout(current_layout);
+      self.set_docking_layout(self.current_layout);
       dock_layout_initalized = true;
     }
   }
@@ -298,7 +298,7 @@ void Editor::save_scene_as() {
     .callback =
       [](void* user_data, const c8* const* files, i32) {
         const auto udata = static_cast<UData*>(user_data);
-        if (!udata && !files || !*files) {
+        if (!udata && (!files || !*files)) {
           return;
         }
 

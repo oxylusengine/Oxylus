@@ -131,7 +131,7 @@ auto Window::create(const WindowInfo& info) -> Window {
   if (image_data != nullptr) {
     const auto surface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_ABGR8888, image_data, width * 4);
     if (!SDL_SetWindowIcon(impl->handle, surface)) {
-      OX_LOG_ERROR("Couldn't set window icon!");
+      LOG_SDL_ERROR(SDL_SetWindowIcon);
     }
     SDL_DestroySurface(surface);
     if (!info.icon.loaded.has_value())
@@ -148,7 +148,7 @@ auto Window::create(const WindowInfo& info) -> Window {
 
   f32 window_content_scale = SDL_GetWindowDisplayScale(impl->handle);
   if (window_content_scale == 0) {
-    OX_LOG_ERROR("{}", SDL_GetError());
+    LOG_SDL_ERROR(SDL_GetWindowDisplayScale);
   }
   impl->window_content_scale = window_content_scale;
 

@@ -63,11 +63,11 @@ public:
 
   NotificationSystem notification_system = {};
 
-  auto init() -> std::expected<void, std::string>;
-  auto deinit() -> std::expected<void, std::string>;
+  auto init(this Editor& self) -> std::expected<void, std::string>;
+  auto deinit(this Editor& self) -> std::expected<void, std::string>;
 
-  auto update(const Timestep& timestep) -> void;
-  auto render(const vuk::ImageAttachment& swapchain_attachment) -> void;
+  auto update(this Editor& self, const Timestep& timestep) -> void;
+  auto render(this Editor& self, const vuk::ImageAttachment& swapchain_attachment) -> void;
 
   // Removes all viewports then adds one and resets the SceneManager
   auto reset(this Editor& self) -> void;
