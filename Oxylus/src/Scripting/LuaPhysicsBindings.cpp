@@ -217,7 +217,7 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     [](JPH::Body& body, glm::vec3 v) { body.SetLinearVelocity(math::to_jolt(v)); },
 
     "add_linear_velocity",
-    [](Scene* scene, JPH::Body& body, glm::vec3 v) {
+    [](JPH::Body& body, Scene* scene, glm::vec3 v) {
       JPH::BodyInterface& body_interface = scene->get_physics_system()->GetBodyInterface();
       body_interface.AddLinearVelocity(body.GetID(), math::to_jolt(v));
     },
@@ -273,7 +273,7 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     &JPH::Body::AddAngularImpulse,
 
     "move_kinematic",
-    [](Scene* scene, JPH::Body& body, glm::vec3 target_position, const glm::quat& target_rotation, f32 delta_time) {
+    [](JPH::Body& body, Scene* scene, glm::vec3 target_position, const glm::quat& target_rotation, f32 delta_time) {
       JPH::BodyInterface& body_interface = scene->get_physics_system()->GetBodyInterface();
       body_interface
         .MoveKinematic(body.GetID(), math::to_jolt(target_position), math::to_jolt(target_rotation), delta_time);
@@ -288,15 +288,26 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     "get_rotation",
     &JPH::Body::GetRotation,
 
+    "set_position",
+    [](
+      JPH::Body& body,
+      Scene* scene,
+      const glm::vec3& position,
+      sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate
+    ) {
+      JPH::BodyInterface& body_interface = scene->get_physics_system()->GetBodyInterface();
+      body_interface.SetPosition(body.GetID(), math::to_jolt(position), *activation_mode);
+    },
+
     "set_rotation",
     [](
+      JPH::Body& body,
       Scene* scene,
-      JPH::Body* body,
       const glm::quat& rotation,
       sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate
     ) {
       JPH::BodyInterface& body_interface = scene->get_physics_system()->GetBodyInterface();
-      body_interface.SetRotation(body->GetID(), math::to_jolt(rotation), *activation_mode);
+      body_interface.SetRotation(body.GetID(), math::to_jolt(rotation), *activation_mode);
     },
 
     "get_world_transform",
