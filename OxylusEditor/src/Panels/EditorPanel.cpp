@@ -20,9 +20,6 @@ auto EditorPanel::set_name(const std::string& name) -> void {
 }
 
 bool EditorPanel::on_begin(int32_t window_flags) {
-  if (!visible)
-    return false;
-
   ImGui::SetNextWindowSize(ImVec2(480, 640), ImGuiCond_Once);
 
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
@@ -31,10 +28,8 @@ bool EditorPanel::on_begin(int32_t window_flags) {
 }
 
 void EditorPanel::on_end() const {
-  if (visible) {
-    ImGui::PopStyleVar();
-    ImGui::End();
-  }
+  ImGui::PopStyleVar();
+  ImGui::End();
 }
 
 void EditorPanel::update_id() {

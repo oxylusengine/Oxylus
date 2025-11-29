@@ -157,10 +157,6 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
     self.pending_viewports.clear();
   }
 
-  std::erase_if(self.viewport_panels, [](const std::unique_ptr<ViewportPanel>& ptr) {
-    return ptr == nullptr || !ptr->visible;
-  });
-
   for (const auto& panel : self.viewport_panels) {
     auto* editor_scene = panel->get_scene();
 
@@ -188,6 +184,10 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
       panel->on_update();
     }
   }
+
+  std::erase_if(self.viewport_panels, [](const std::unique_ptr<ViewportPanel>& ptr) {
+    return ptr == nullptr || !ptr->visible;
+  });
 }
 
 auto MainViewportPanel::update_dockspace(this MainViewportPanel& self) -> void { self.dock_should_update = true; }
