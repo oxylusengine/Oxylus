@@ -158,25 +158,30 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
   }
 
   for (const auto& panel : self.viewport_panels) {
-    auto* editor_scene = panel->get_scene();
+    auto* panel_scene = panel->get_scene();
 
     if (panel->is_viewport_focused) {
       auto sh_scene = sh->get_scene();
-      // Did scene change?
-      if (sh_scene && editor_scene && sh_scene->get_id() != editor_scene->get_id())
-        sh->set_scene(editor_scene);
 
-      if (!sh_scene || !editor_scene)
-        sh->set_scene(editor_scene);
+      if (sh_scene && panel_scene) {
+        // Did scene change?
+        // Check if IDs are different OR if the playing states don't match
+        if (sh_scene->get_id() != panel_scene->get_id() || sh_scene->is_playing() != panel_scene->is_playing()) {
+          sh->set_scene(panel_scene);
+        }
+      }
+
+      if (!sh_scene || !panel_scene)
+        sh->set_scene(panel_scene);
     }
 
-    if (editor_scene) {
-      if (editor_scene->is_playing()) {
-        editor_scene->get_scene()->enable_all_phases();
-        editor_scene->get_scene()->runtime_update(timestep);
+    if (panel_scene) {
+      if (panel_scene->is_playing()) {
+        panel_scene->get_scene()->enable_all_phases();
+        panel_scene->get_scene()->runtime_update(timestep);
       } else {
-        editor_scene->get_scene()->disable_phases({flecs::PreUpdate, flecs::OnUpdate});
-        editor_scene->get_scene()->runtime_update(timestep);
+        panel_scene->get_scene()->disable_phases({flecs::PreUpdate, flecs::OnUpdate});
+        panel_scene->get_scene()->runtime_update(timestep);
       }
     }
 
