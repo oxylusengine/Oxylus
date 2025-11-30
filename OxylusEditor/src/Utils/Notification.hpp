@@ -11,11 +11,18 @@ struct Notification {
   std::string title;
   bool completed = false;
   std::chrono::steady_clock::time_point created_at;
+  enum Type {
+    Info,
+    Warn,
+    Error,
+    Loading,
+  } type;
 
-  explicit Notification(std::string_view title_, bool completed_)
+  explicit Notification(std::string_view title_, bool completed_, Type type)
       : title(title_),
         completed(completed_),
-        created_at(std::chrono::steady_clock::now()) {}
+        created_at(std::chrono::steady_clock::now()),
+        type(type) {}
 };
 
 struct NotificationSystem {
@@ -23,7 +30,7 @@ struct NotificationSystem {
 
   auto add(Notification&& notif) -> void;
   auto draw() -> void;
-  auto draw_single(Notification& notif, auto current_time, const ImVec2& screen_pos, f32 y_offset) -> void;
+  auto draw_single(Notification& notif) -> void;
 };
 
 } // namespace ox

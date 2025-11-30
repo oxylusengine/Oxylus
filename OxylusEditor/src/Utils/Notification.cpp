@@ -52,7 +52,7 @@ auto NotificationSystem::draw() -> void {
   ImGui::PopStyleColor();
 
   for (auto& [name, notif] : active_notifications) {
-    draw_single(notif, now, notification_screen_pos, y_offset);
+    draw_single(notif);
     y_offset -= notification_window_size.y + 10.f;
   }
 
@@ -65,8 +65,7 @@ auto NotificationSystem::draw() -> void {
   });
 }
 
-auto NotificationSystem::draw_single(Notification& notif, auto current_time, const ImVec2& screen_pos, f32 y_offset)
-  -> void {
+auto NotificationSystem::draw_single(Notification& notif) -> void {
   ZoneScoped;
 
   ImGui::SetNextWindowBgAlpha(0.8f);
@@ -90,7 +89,12 @@ auto NotificationSystem::draw_single(Notification& notif, auto current_time, con
     ImSpinner::Spinner("SpinnerAng270NoBg", config);
     ImGui::SameLine();
     ImGui::BeginChild("##load_text");
-    ImGui::Text("Loading...");
+    switch (notif.type) {
+      case Notification::Info   : ImGui::Text("Info: "); break;
+      case Notification::Warn   : ImGui::Text("Warning: "); break;
+      case Notification::Error  : ImGui::Text("Error:"); break;
+      case Notification::Loading: ImGui::Text("Loading..."); break;
+    }
     ImGui::TextUnformatted(fmt::format("{}", notif.title).c_str());
     ImGui::EndChild();
   }

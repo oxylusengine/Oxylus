@@ -71,7 +71,15 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
     "editor_notifications",
     [](void* user_data, const loguru::Message& message) {
       auto* e = reinterpret_cast<Editor*>(user_data);
-      auto notification = Notification(message.message, true);
+      auto type = Notification::Type::Info;
+      if (message.verbosity == loguru::NamedVerbosity::Verbosity_ERROR) {
+        type = Notification::Type::Error;
+      } else if (message.verbosity == loguru::NamedVerbosity::Verbosity_WARNING) {
+        type = Notification::Type::Warn;
+      } else if (message.verbosity == loguru::NamedVerbosity::Verbosity_INFO || message.verbosity > 0) {
+        type = Notification::Type::Info;
+      }
+      auto notification = Notification(message.message, true, type);
       e->notification_system.add(std::move(notification));
     },
     &self,
@@ -136,7 +144,7 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
     if (name == "Completion callback")
       continue;
 
-    Notification notification(name, !is_working);
+    Notification notification(name, !is_working, Notification::Type::Loading);
     self.notification_system.add(std::move(notification));
   }
 
