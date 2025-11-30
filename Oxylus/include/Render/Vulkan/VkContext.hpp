@@ -44,7 +44,6 @@ public:
   VkPhysicalDevice physical_device = nullptr;
   vkb::PhysicalDevice vkbphysical_device;
   VkQueue graphics_queue = nullptr;
-  VkQueue transfer_queue = nullptr;
   option<vuk::Runtime> runtime;
 
   option<vuk::DeviceSuperFrameResource> superframe_resource;

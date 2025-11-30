@@ -285,28 +285,6 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
     graphics_queue_family_index,
     vuk::DomainFlagBits::eGraphicsQueue
   ));
-#if !defined(OX_USE_LLVMPIPE) && !defined(OX_PLATFORM_MACOSX)
-  auto transfer_queue_result = self.vkb_device.get_queue(vkb::QueueType::transfer);
-  if (!transfer_queue_result) {
-    OX_LOG_ERROR("Failed creating transfer queue. Error: {}", transfer_queue_result.error().message());
-  }
-  self.transfer_queue = transfer_queue_result.value();
-  auto transfer_queue_family_index_result = self.vkb_device.get_queue_index(vkb::QueueType::transfer);
-  if (!transfer_queue_family_index_result) {
-    OX_LOG_FATAL(
-      "Failed getting transfer queue family index. Error: {}",
-      transfer_queue_family_index_result.error().message()
-    );
-  }
-  auto transfer_queue_family_index = transfer_queue_family_index_result.value();
-  executors.push_back(create_vkqueue_executor(
-    fps,
-    self.device,
-    self.transfer_queue,
-    transfer_queue_family_index,
-    vuk::DomainFlagBits::eTransferQueue
-  ));
-#endif
   executors.push_back(std::make_unique<vuk::ThisThreadExecutor>());
 
   self.runtime.emplace(
