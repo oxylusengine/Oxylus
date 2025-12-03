@@ -1,6 +1,8 @@
 #include <Core/AppCommandLineArgs.hpp>
+#include <OS/OS.hpp>
 #include <ResourceCompiler.hpp>
 #include <fmt/base.h>
+#include <fmt/chrono.h>
 
 using namespace ox;
 
@@ -27,6 +29,8 @@ i32 main(i32 argc, c8** argv) {
     return 0;
   }
 
+  auto silent = args.contains("--silent");
+
   auto meta_argi = args.get_index("--meta");
   if (meta_argi.has_value()) {
     auto meta_path = args.get(meta_argi.value() + 1);
@@ -35,14 +39,40 @@ i32 main(i32 argc, c8** argv) {
       return 1;
     }
 
-    fmt::println("Using meta file \"{}\"...", meta_path.value());
+    if (!silent) {
+      fmt::println("Using meta file \"{}\"...", meta_path.value());
+    }
+
     auto session = rc::Session::create();
     session.import_meta(meta_path.value());
+
+    auto cache_path = option<std::filesystem::path>();
+    auto cache_argi = args.get_index("--cache");
+    if (cache_argi.has_value()) {
+      cache_path = args.get(cache_argi.value() + 1);
+      if (!cache_path.has_value()) {
+        if (!silent) {
+          fmt::println("Specify a cache path.");
+        }
+        return 1;
+      }
+    }
+
+    if (cache_path.has_value()) {
+      session.import_cache(cache_path.value());
+    }
+
     session.compile_requests();
 
-    auto messages = session.get_messages();
-    for (const auto& message : messages) {
-      fmt::println("{}", message);
+    if (cache_path.has_value()) {
+      session.save_cache(cache_path.value());
+    }
+
+    if (!silent) {
+      auto messages = session.get_messages();
+      for (const auto& message : messages) {
+        fmt::println("{}", message);
+      }
     }
   }
 

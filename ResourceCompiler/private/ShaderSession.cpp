@@ -170,4 +170,6 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
   return asset_id;
 }
 
+auto ShaderSession::get_root_dir() -> std::filesystem::path { return impl->root_dir; }
+
 } // namespace ox::rc

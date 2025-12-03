@@ -1,4 +1,5 @@
 {
+    "version": 10,
     "type": "shader",
     "shader_sessions": [
         {

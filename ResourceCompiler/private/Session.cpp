@@ -9,9 +9,12 @@
 #include "Memory/Hasher.hpp"
 #include "ShaderSession.hpp"
 #include "SlangVFS.hpp"
+#include "Utils/JsonWriter.hpp"
 
 namespace ox::rc {
-auto read_shader_session_meta(Session::Impl* impl, simdjson::ondemand::value& json) -> bool {
+auto read_shader_session_meta(
+  Session::Impl* impl, simdjson::ondemand::value& json, const std::filesystem::path& meta_file_path
+) -> bool {
   auto self = Session(impl);
   auto compile_request = ShaderCompileRequest{};
   auto& shader_session_info = compile_request.session_info;
@@ -29,7 +32,7 @@ auto read_shader_session_meta(Session::Impl* impl, simdjson::ondemand::value& js
     self.push_error("Shader session meta is missing `root_director`.");
   }
   auto root_directory_str = root_directory_json.get_string().value_unsafe();
-  shader_session_info.root_directory = std::filesystem::path(root_directory_str).make_preferred();
+  shader_session_info.root_directory = (meta_file_path / root_directory_str).make_preferred();
 
   auto optimization_json = json["optimization"];
   if (auto optimization_str = optimization_json.get_string(); optimization_str.has_value()) {
@@ -172,6 +175,14 @@ auto Session::import_meta(const std::filesystem::path& path) -> bool {
     return false;
   }
 
+  auto version_json = json["version"];
+  if (version_json.error() || !version_json.is_integer()) {
+    push_error(fmt::format("An error occured while reading meta file {}. Missing/wrong `version` field!", path));
+    return false;
+  }
+
+  auto version = version_json.get_uint64();
+
   auto asset_type_json = json["type"];
   if (asset_type_json.error() || !asset_type_json.is_string()) {
     push_error(fmt::format("An error occured while reading meta file {}. Missing/wrong `type` field!", path));
@@ -190,7 +201,7 @@ auto Session::import_meta(const std::filesystem::path& path) -> bool {
       }
 
       for (auto v : shader_sessions_json.get_array()) {
-        if (!read_shader_session_meta(impl, v.value_unsafe())) {
+        if (!read_shader_session_meta(impl, v.value_unsafe(), path.parent_path())) {
           return false;
         }
       }
@@ -204,6 +215,73 @@ auto Session::import_meta(const std::filesystem::path& path) -> bool {
   }
 
   return true;
+}
+
+auto Session::import_cache(const std::filesystem::path& path) -> void {
+  auto cache_str = File::to_string(path);
+  if (cache_str.empty()) {
+    push_error(fmt::format("An error occured while reading cache file {}.", path));
+    return;
+  }
+
+  auto parser = simdjson::ondemand::parser();
+  auto json_str = simdjson::padded_string(cache_str);
+  auto json = parser.iterate(json_str);
+  if (json.error()) {
+    push_message(
+      fmt::format("Cache file does not exist, recreating one {}. {}", path, simdjson::error_message(json.error()))
+    );
+  }
+
+  auto files_json = json["files"];
+  if (files_json.error()) {
+    push_error(
+      fmt::format("An error occured while reading cache file. {}", simdjson::error_message(files_json.error()))
+    );
+    return;
+  }
+
+  for (auto file_json : files_json.get_array()) {
+    auto path_json = file_json["path"].get_string();
+    auto last_modified_json = file_json["last_modified"].get_uint64();
+    if (path_json.error()) {
+      push_error(
+        fmt::format("An error occured while reading cache file. {}", simdjson::error_message(path_json.error()))
+      );
+      return;
+    }
+    if (last_modified_json.error()) {
+      push_error(
+        fmt::format(
+          "An error occured while reading cache file. {}",
+          simdjson::error_message(last_modified_json.error())
+        )
+      );
+      return;
+    }
+
+    this->set_file_access_time(std::filesystem::path(path_json.value_unsafe()), last_modified_json.value_unsafe());
+  }
+}
+
+auto Session::save_cache(const std::filesystem::path& path) -> void {
+  auto read_lock = std::shared_lock(impl->assets_mutex);
+
+  auto json = JsonWriter{};
+  json.begin_obj();
+  json["files"].begin_array();
+  for (auto& [file, last_modified] : impl->asset_file_times) {
+    json.begin_obj();
+    json["path"] = file;
+    json["last_modified"] = last_modified;
+    json.end_obj();
+  }
+  json.end_array();
+  json.end_obj();
+
+  auto file = File(path, FileAccess::Write);
+  file.write(json.stream.view());
+  file.close();
 }
 
 auto Session::create_shader_session(const ShaderSessionInfo& info) -> ShaderSession {
@@ -278,6 +356,7 @@ auto Session::create_shader_session(const ShaderSessionInfo& info) -> ShaderSess
   shader_session_handle->name = info.name;
   shader_session_handle->rc_session = impl;
   shader_session_handle->virtual_fs = std::move(slang_fs);
+  shader_session_handle->root_dir = info.root_directory;
 
   {
     auto write_lock = std::unique_lock(impl->session_mutex);
@@ -296,10 +375,23 @@ auto Session::create_shader_session(const ShaderSessionInfo& info) -> ShaderSess
 }
 
 auto Session::compile_requests() -> bool {
-  for (auto& request : impl->shader_compile_requests) {
+  for (const auto& request : impl->shader_compile_requests) {
     auto shader_session = create_shader_session(request.session_info);
-    for (auto& shader_info : request.shader_infos) {
+    for (const auto& shader_info : request.shader_infos) {
+      const auto full_path = shader_session.get_root_dir() / shader_info.path;
+      const auto last_modified = this->get_file_access_time(full_path).value_or(0_u64);
+      auto current_modified = 0_u64;
+      if (auto file = os::file_open(full_path, FileAccess::Read); file.has_value()) {
+        current_modified = os::file_last_modified(file.value()).value_or(0_u64);
+        os::file_close(file.value());
+      }
+
+      if (current_modified <= last_modified) {
+        continue;
+      }
+
       shader_session.compile_shader(shader_info);
+      this->set_file_access_time(full_path, current_modified);
     }
   }
 
@@ -362,6 +454,21 @@ auto Session::set_asset_data(AssetID asset_id, std::vector<u8> asset_data) -> vo
 auto Session::set_asset_info(AssetID asset_id, ShaderAsset shader_asset) -> void {
   auto asset = get_asset(asset_id);
   asset->shader = shader_asset;
+}
+
+auto Session::get_file_access_time(const std::filesystem::path& path) -> option<u64> {
+  auto read_lock = std::shared_lock(impl->assets_mutex);
+  auto file_time_it = impl->asset_file_times.find(path);
+  if (file_time_it == impl->asset_file_times.end()) {
+    return nullopt;
+  }
+
+  return file_time_it->second;
+}
+
+auto Session::set_file_access_time(const std::filesystem::path& path, u64 time) -> void {
+  auto write_lock = std::unique_lock(impl->assets_mutex);
+  impl->asset_file_times[path] = time;
 }
 
 } // namespace ox::rc

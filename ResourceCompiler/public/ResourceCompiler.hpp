@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Asset/AssetFile.hpp"
+#include "Core/Option.hpp"
 #include "Core/Types.hpp"
 #include "Memory/Borrowed.hpp"
 
@@ -41,6 +42,7 @@ enum class ShaderOptimization : i32 {
 };
 
 struct ShaderSessionInfo {
+  u32 version = 10;
   std::string name = {};
   std::filesystem::path root_directory = {};
   ShaderOptimization optimization = ShaderOptimization::Default;
@@ -65,6 +67,7 @@ public:
   explicit operator bool() const { return impl; }
 
   auto compile_shader(const ShaderInfo& info) -> AssetID;
+  auto get_root_dir() -> std::filesystem::path;
 };
 
 struct CompiledAsset;
@@ -84,6 +87,8 @@ public:
   explicit operator bool() const { return impl; }
 
   auto import_meta(const std::filesystem::path& path) -> bool;
+  auto import_cache(const std::filesystem::path& path) -> void;
+  auto save_cache(const std::filesystem::path& path) -> void;
 
   auto create_shader_session(const ShaderSessionInfo& info) -> ShaderSession;
   auto compile_requests() -> bool;
@@ -100,6 +105,8 @@ protected:
   auto get_asset(AssetID asset_id) -> Borrowed<CompiledAsset>;
   auto set_asset_data(AssetID asset_id, std::vector<u8> asset_data) -> void;
   auto set_asset_info(AssetID asset_id, ShaderAsset shader_asset) -> void;
+  auto get_file_access_time(const std::filesystem::path& path) -> option<u64>;
+  auto set_file_access_time(const std::filesystem::path& path, u64 time) -> void;
 
   friend ShaderSession;
 };

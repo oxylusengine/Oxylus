@@ -30,10 +30,10 @@ struct Session::Impl {
   Slang::ComPtr<slang::IGlobalSession> slang_global_session = {};
   std::vector<std::unique_ptr<ShaderSession::Impl>> shader_sessions = {};
 
-  // TODO: Replace this with a proper allocator
   std::shared_mutex assets_mutex = {};
   SlotMap<CompiledAsset, AssetID> assets = {};
   std::vector<std::vector<u8>> asset_datas = {};
+  ankerl::unordered_dense::map<std::filesystem::path, u64> asset_file_times = {};
 
   std::vector<ShaderCompileRequest> shader_compile_requests = {};
 };

@@ -12,6 +12,7 @@ struct ShaderSession::Impl {
   std::string name = {};
   std::unique_ptr<SlangVirtualFS> virtual_fs = {};
   Slang::ComPtr<slang::ISession> slang_session = {};
+  std::filesystem::path root_dir = {};
 
   std::shared_mutex cached_modules_mutex = {};
   ankerl::unordered_dense::map<std::filesystem::path, slang::IModule*> cached_modules = {};
