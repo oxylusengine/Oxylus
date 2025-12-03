@@ -135,6 +135,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
   auto& editor = App::mod<Editor>();
 
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 1.f));
   if (on_begin(flags)) {
     if (ImGui::BeginPopupContextItem("viewport context")) {
       if (ImGui::MenuItem("Unload Scene")) {
@@ -301,6 +302,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
     scene_button_group(start_cursor_pos);
   }
+  ImGui::PopStyleColor();
 
   on_end();
 }
@@ -710,8 +712,6 @@ void ViewportPanel::draw_gizmos() {
   }
 
   const flecs::entity selected_entity = editor_context.entity.value_or(flecs::entity::null());
-
-  ImGuizmo::BeginFrame();
 
   auto& input_sys = App::mod<Input>();
   if (input_sys.get_key_held(KeyCode::LeftControl)) {

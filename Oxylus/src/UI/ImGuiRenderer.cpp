@@ -2,7 +2,6 @@
 
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
-#include <imgui.h>
 #include <vuk/RenderGraph.hpp>
 #include <vuk/Types.hpp>
 #include <vuk/runtime/CommandBuffer.hpp>

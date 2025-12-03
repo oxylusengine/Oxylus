@@ -117,6 +117,8 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
 
   imgui_renderer.begin_frame(timestep.get_seconds(), {window.get_logical_width(), window.get_logical_height()});
+  ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
+  ImGuizmo::BeginFrame();
 
   const auto sc_info = vuk::ImageAttachment{
     .image_type = swapchain_attachment->image_type,

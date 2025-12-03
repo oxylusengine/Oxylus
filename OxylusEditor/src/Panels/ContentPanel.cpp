@@ -516,7 +516,7 @@ void ContentPanel::render_body(bool grid) {
   const ImVec2 region = ImGui::GetContentRegionAvail();
   ImGui::InvisibleButton("##DragDropTargetAssetPanelBody", region);
 
-  ImGui::SetItemAllowOverlap();
+  ImGui::SetNextItemAllowOverlap();
   ImGui::SetCursorPos(cursor_pos);
 
   if (ImGui::BeginTable("BodyTable", column_count, flags)) {
@@ -648,7 +648,7 @@ void ContentPanel::render_body(bool grid) {
 
         // Foreground Image
         ImGui::SetCursorPos({cursor_pos.x + padding, cursor_pos.y + padding});
-        ImGui::SetItemAllowOverlap();
+        ImGui::SetNextItemAllowOverlap();
         UI::image(
           *_white_texture,
           {background_thumbnail_size.x - padding * 2.f, background_thumbnail_size.y - padding * 2.f},
@@ -659,7 +659,7 @@ void ContentPanel::render_body(bool grid) {
 
         // Thumbnail Image
         ImGui::SetCursorPos({cursor_pos.x + thumbnail_padding * 0.75f, cursor_pos.y + thumbnail_padding});
-        ImGui::SetItemAllowOverlap();
+        ImGui::SetNextItemAllowOverlap();
 
         auto thumbnail_read_lock = std::shared_lock(thumbnail_mutex);
         auto thumbnail_exists = thumbnail_cache_textures.contains(file.file_path);

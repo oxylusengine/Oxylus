@@ -1932,8 +1932,6 @@ inline std::tuple<float, float> GetItemRectSize() {
   return std::make_tuple(vec2.x, vec2.y);
 }
 
-inline void SetItemAllowOverlap() { ImGui::SetItemAllowOverlap(); }
-
 // Miscellaneous Utilities
 inline bool IsRectVisible(float sizeX, float sizeY) { return ImGui::IsRectVisible({sizeX, sizeY}); }
 inline bool IsRectVisible(float minX, float minY, float maxX, float maxY) {
@@ -2119,8 +2117,6 @@ inline void init_enums(sol::state* lua) {
                 ImGuiWindowFlags_AlwaysVerticalScrollbar,
                 "AlwaysHorizontalScrollbar",
                 ImGuiWindowFlags_AlwaysHorizontalScrollbar,
-                "AlwaysUseWindowPadding",
-                ImGuiWindowFlags_AlwaysUseWindowPadding,
                 "NoNavInputs",
                 ImGuiWindowFlags_NoNavInputs,
                 "NoNavFocus",
@@ -2137,8 +2133,6 @@ inline void init_enums(sol::state* lua) {
                 "NoInputs",
                 ImGuiWindowFlags_NoInputs,
 
-                "NavFlattened",
-                ImGuiWindowFlags_NavFlattened,
                 "ChildWindow",
                 ImGuiWindowFlags_ChildWindow,
                 "Tooltip",
@@ -3465,7 +3459,6 @@ inline void init(sol::state* lua) {
   ImGui.set_function("GetItemRectMin", GetItemRectMin);
   ImGui.set_function("GetItemRectMax", GetItemRectMax);
   ImGui.set_function("GetItemRectSize", GetItemRectSize);
-  ImGui.set_function("SetItemAllowOverlap", SetItemAllowOverlap);
 #pragma endregion Item / Widgets Utilities
 
 #pragma region Miscellaneous Utilities

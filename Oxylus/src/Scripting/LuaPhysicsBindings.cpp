@@ -283,10 +283,10 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     &JPH::Body::GetShape,
 
     "get_position",
-    &JPH::Body::GetPosition,
+    [](const JPH::Body& body) -> glm::vec3 { return math::from_jolt(body.GetPosition()); },
 
     "get_rotation",
-    &JPH::Body::GetRotation,
+    [](const JPH::Body& body) -> glm::quat { return math::from_jolt(body.GetRotation()); },
 
     "set_position",
     [](
