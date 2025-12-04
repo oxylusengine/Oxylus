@@ -308,7 +308,7 @@ void Editor::save_scene_as() {
     .callback =
       [](void* user_data, const c8* const* files, i32) {
         const auto udata = static_cast<UData*>(user_data);
-        if (!udata && (!files || !*files)) {
+        if (!udata || !files || !*files) {
           return;
         }
 
