@@ -612,9 +612,7 @@ void ContentPanel::render_body(bool grid) {
         id[2] = static_cast<char>(i);
         const bool clicked = UI::toggle_button(id.c_str(), highlight, background_thumbnail_size, 0.1f);
         if (clicked) {
-          editor_context.reset();
-          editor_context.type = EditorContext::Type::File;
-          editor_context.str.emplace(str_path);
+          editor_context.reset(EditorContext::Type::File, str_path);
         }
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, editor_theme.popup_item_spacing);
         if (ImGui::BeginPopupContextItem()) {
@@ -936,9 +934,7 @@ std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesyste
           ++i;
         }
         auto& editor_context = App::mod<Editor>().get_context();
-        editor_context.reset();
-        editor_context.str = new_folder_path;
-        editor_context.type = EditorContext::Type::File;
+        editor_context.reset(EditorContext::Type::File, new_folder_path);
       }
       if (ImGui::MenuItem("Material")) {
         new_asset_name_.clear();

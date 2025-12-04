@@ -72,7 +72,7 @@ void InspectorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         return option<std::monostate>{};
 
       return editor_context.str.and_then([this](const std::filesystem::path& path) {
-        if (path.extension() != "oxasset")
+        if (path.extension() != ".oxasset")
           return option<std::monostate>{};
 
         auto& asset_man = App::mod<AssetManager>();
