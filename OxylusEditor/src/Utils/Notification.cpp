@@ -38,8 +38,6 @@ auto NotificationSystem::draw() -> void {
   root_screen_pos.x -= root_window_size.x + padding;
   root_screen_pos.y -= root_window_size.y + padding;
 
-  float y_offset = 0.0f;
-
   if (active_notifications.empty())
     return;
 
@@ -53,7 +51,6 @@ auto NotificationSystem::draw() -> void {
 
   for (auto& [name, notif] : active_notifications) {
     draw_single(notif);
-    y_offset -= notification_window_size.y + 10.f;
   }
 
   ImGui::End();

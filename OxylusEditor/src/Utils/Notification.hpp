@@ -4,8 +4,6 @@
 #include <string>
 #include <unordered_map>
 
-#include "Core/Types.hpp"
-
 namespace ox {
 struct Notification {
   std::string title;
@@ -18,11 +16,11 @@ struct Notification {
     Loading,
   } type;
 
-  explicit Notification(std::string_view title_, bool completed_, Type type)
+  explicit Notification(std::string_view title_, bool completed_, Type type_)
       : title(title_),
         completed(completed_),
         created_at(std::chrono::steady_clock::now()),
-        type(type) {}
+        type(type_) {}
 };
 
 struct NotificationSystem {
