@@ -18,6 +18,8 @@ struct WindowResizeEvent {
   u32 height = 0;
 };
 
+struct AppCloseEvent {};
+
 class App {
 public:
   App(int argc, char** argv);

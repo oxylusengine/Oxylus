@@ -13,6 +13,13 @@ MainViewportPanel::MainViewportPanel() : EditorPanel("Scenes", ICON_MDI_VIDEO_3D
 
 auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
   auto& event_system = App::get_event_system();
+  std::ignore = event_system.subscribe<AppCloseEvent>([&self](const AppCloseEvent& e) {
+    for (auto& v : self.viewport_panels) {
+      if (v->get_scene()->is_playing()) {
+        v->get_scene()->stop();
+      }
+    }
+  });
   std::ignore = event_system.subscribe<Editor::ViewportSceneLoadEvent>(
     [&self](const Editor::ViewportSceneLoadEvent& e) { self.dock_should_update = true; }
   );

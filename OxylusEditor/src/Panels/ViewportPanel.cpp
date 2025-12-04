@@ -292,7 +292,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
     }
 
     if (!editor_scene_->is_playing()) {
-      if (editor_camera.has<CameraComponent>()) {
+      if (editor_camera.is_alive() && editor_camera.has<CameraComponent>()) {
         editor_camera.enable();
 
         draw_gizmos();
@@ -1202,7 +1202,7 @@ void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
     if (UI::toggle_button(ICON_MDI_GRID, EditorCVar::cvar_draw_grid.get(), button_size, alpha, alpha))
       EditorCVar::cvar_draw_grid.toggle();
 
-    if (editor_camera.has<CameraComponent>()) {
+    if (editor_camera.is_alive() && editor_camera.has<CameraComponent>()) {
       auto& cam = editor_camera.get_mut<CameraComponent>();
       UI::push_id();
       if (UI::toggle_button(

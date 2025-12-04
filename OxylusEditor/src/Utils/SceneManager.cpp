@@ -60,9 +60,6 @@ auto EditorScene::stop(this EditorScene& self) -> void {
 
   self.scene_state = SceneState::Edit;
 
-  auto& event_system = App::get_event_system();
-  event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(self.id));
-
   self.get_scene()
     ->world //
     .query_builder()
