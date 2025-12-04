@@ -6,6 +6,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "UI/AssetManagerViewer.hpp"
+#include "UI/UI.hpp"
 #include "Utils/ImGuiScoped.hpp"
 
 namespace ox {
@@ -40,7 +41,7 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
       );
       ImGui::SameLine();
 
-      if (ImGui::Button(add_icon))
+      if (UI::button(add_icon))
         ImGui::OpenPopup("scene_h_scripts_context_window");
 
       if (ImGui::BeginPopupContextWindow(
@@ -150,7 +151,7 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
       );
       ImGui::SameLine();
 
-      if (ImGui::Button(add_icon))
+      if (UI::button(add_icon))
         ImGui::OpenPopup("scene_h_entities_context_window");
 
       if (ImGui::BeginPopupContextWindow(

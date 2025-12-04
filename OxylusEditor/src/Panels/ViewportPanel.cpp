@@ -1242,7 +1242,7 @@ void ViewportPanel::scene_button_group(ImVec2 start_cursor_pos) {
 
     ImGui::BeginDisabled(is_scene_playing);
     if (ImGui::Button(ICON_MDI_PLAY, button_size)) {
-      event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(editor_scene_->get_id()));
+      std::ignore = event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(editor_scene_->get_id()));
     }
     ImGui::EndDisabled();
 
@@ -1250,7 +1250,7 @@ void ViewportPanel::scene_button_group(ImVec2 start_cursor_pos) {
 
     ImGui::BeginDisabled(!is_scene_playing);
     if (ImGui::Button(ICON_MDI_STOP, button_size)) {
-      event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene_->get_id()));
+      std::ignore = event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene_->get_id()));
     }
     ImGui::EndDisabled();
 
