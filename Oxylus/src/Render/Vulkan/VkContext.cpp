@@ -223,6 +223,7 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   vk12_features.timelineSemaphore = true;
   vk12_features.bufferDeviceAddress = true;
   vk12_features.hostQueryReset = true;
+  vk12_features.uniformAndStorageBuffer8BitAccess = true;
   // Shader features
   vk12_features.vulkanMemoryModel = true;
   vk12_features.storageBuffer8BitAccess = true;
