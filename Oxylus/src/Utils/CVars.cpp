@@ -116,7 +116,7 @@ AutoCVar_Float::AutoCVar_Float(
 }
 
 auto AutoCVar_Float::get() const -> f32 { return CVarSystem::get()->float_cvars.at(index).current; }
-auto AutoCVar_Float::get_default() const -> f32 { return CVarSystem::get()->int_cvars.at(index).initial; }
+auto AutoCVar_Float::get_default() const -> f32 { return CVarSystem::get()->float_cvars.at(index).initial; }
 auto AutoCVar_Float::get_ptr() const -> f32* { return &CVarSystem::get()->float_cvars[index].current; }
 
 auto AutoCVar_Float::set(const f32 val) const -> void { CVarSystem::get()->float_cvars.at(index).current = val; }

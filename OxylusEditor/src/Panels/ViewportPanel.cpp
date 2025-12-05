@@ -52,7 +52,7 @@ void show_component_gizmo(
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.1f));
 
     ImGui::PushFont(nullptr, icon_size);
-    ImGui::PushID(entity.id());
+    ImGui::PushID(static_cast<i32>(entity.id()));
     if (ImGui::Button(icon, {icon_size, icon_size})) {
       auto& editor_context = editor.get_context();
       editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
@@ -112,7 +112,7 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
 ViewportPanel::~ViewportPanel() {
   auto& event_system = App::get_event_system();
   if (editor_scene_ && editor_scene_->is_playing())
-    event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene_->get_id()));
+    std::ignore = event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene_->get_id()));
 }
 
 void ViewportPanel::drag_drop() const {
@@ -320,7 +320,7 @@ void ViewportPanel::set_context(const std::shared_ptr<EditorScene>& scene) {
   }
 
   auto& event_system = App::get_event_system();
-  event_system.emit<Editor::ViewportSceneLoadEvent>(Editor::ViewportSceneLoadEvent{});
+  std::ignore = event_system.emit<Editor::ViewportSceneLoadEvent>(Editor::ViewportSceneLoadEvent{});
 }
 
 void ViewportPanel::on_update() {
@@ -556,7 +556,7 @@ void ViewportPanel::draw_settings_panel() {
           "Baked Occlusion",
           "GTAO"
         };
-        UI::property("Debug View", RendererCVar::cvar_debug_view.get_ptr(), debug_views, ox::count_of(debug_views));
+        UI::property("Debug View", RendererCVar::cvar_debug_view.get_ptr(), debug_views, static_cast<i32>(ox::count_of(debug_views)));
         UI::property("Enable frustum culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
         UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
         UI::property("Enable triangle culling", (bool*)RendererCVar::cvar_culling_triangle.get_ptr());
@@ -596,9 +596,9 @@ void ViewportPanel::draw_settings_panel() {
         UI::property("Enabled", (bool*)RendererCVar::cvar_vbgtao_enable.get_ptr());
         const char* quality_levels[4] = {"Low", "Medium", "High", "Ultra"};
         UI::property("Quality Level", RendererCVar::cvar_vbgtao_quality_level.get_ptr(), quality_levels, 4);
-        UI::property<float>("Radius", RendererCVar::cvar_vbgtao_radius.get_ptr(), 0.1, 5);
+        UI::property<float>("Radius", RendererCVar::cvar_vbgtao_radius.get_ptr(), 0.1f, 5.f);
         UI::property<float>("Thickness", RendererCVar::cvar_vbgtao_thickness.get_ptr(), 0.0f, 5.f);
-        UI::property<float>("Final Power", RendererCVar::cvar_vbgtao_final_power.get_ptr(), 0, 10);
+        UI::property<float>("Final Power", RendererCVar::cvar_vbgtao_final_power.get_ptr(), 0.f, 10.f);
         UI::end_properties();
       }
       ImGui::TreePop();

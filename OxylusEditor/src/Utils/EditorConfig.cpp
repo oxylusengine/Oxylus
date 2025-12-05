@@ -39,7 +39,7 @@ std::expected<void, std::string> EditorConfig::init() {
   if (auto v = config["file_thumbnails"].as_boolean())
     EditorCVar::cvar_file_thumbnails.set(v->get());
   if (auto v = config["file_thumbnail_size"].as_floating_point())
-    EditorCVar::cvar_file_thumbnail_size.set(v->get());
+    EditorCVar::cvar_file_thumbnail_size.set(static_cast<f32>(v->get()));
   if (auto v = config["show_meta_files"].as_boolean())
     EditorCVar::cvar_show_meta_files.set(v->get());
 

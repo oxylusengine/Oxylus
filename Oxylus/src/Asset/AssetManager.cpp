@@ -1079,7 +1079,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
           simplified_indices.resize(result_index_count);
         }
 
-        gpu_mesh.vertex_count = mesh_vertices.size();
+        gpu_mesh.vertex_count = static_cast<u32>(mesh_vertices.size());
         gpu_mesh.lod_count += 1;
         last_lod_indices = simplified_indices;
 
@@ -1195,11 +1195,11 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
         );
         upload_offset += ox::size_bytes(indirect_vertex_indices);
 
-        cur_lod.indices_count = simplified_indices.size();
-        cur_lod.meshlet_count = meshlet_count;
-        cur_lod.meshlet_bounds_count = meshlet_bounds.size();
-        cur_lod.local_triangle_indices_count = local_triangle_indices.size();
-        cur_lod.indirect_vertex_indices_count = indirect_vertex_indices.size();
+        cur_lod.indices_count = static_cast<u32>(simplified_indices.size());
+        cur_lod.meshlet_count = static_cast<u32>(meshlet_count);
+        cur_lod.meshlet_bounds_count = static_cast<u32>(meshlet_bounds.size());
+        cur_lod.local_triangle_indices_count = static_cast<u32>(local_triangle_indices.size());
+        cur_lod.indirect_vertex_indices_count = static_cast<u32>(indirect_vertex_indices.size());
 
         lod_cpu_buffers[lod_index] = std::pair(cpu_lod_buffer, lod_upload_size);
         upload_size += lod_upload_size;

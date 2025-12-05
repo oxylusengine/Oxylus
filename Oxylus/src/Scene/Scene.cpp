@@ -762,7 +762,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   auto on_update_phase_enabled = !self.world.entity(flecs::OnUpdate).has(flecs::Disabled);
   if (pre_update_phase_enabled && on_update_phase_enabled) {
     for (auto& [uuid, system] : self.lua_systems) {
-      system->on_scene_update(&self, delta_time.get_seconds());
+      system->on_scene_update(&self, static_cast<f32>(delta_time.get_seconds()));
     }
   }
 
@@ -814,7 +814,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       }
     }
 
-    self.mesh_instance_count = gpu_mesh_instances.size();
+    self.mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
     self.max_meshlet_instance_count = max_meshlet_instance_count;
   }
 
@@ -1430,7 +1430,7 @@ auto Scene::create_rigidbody(
   // Body
   auto rotation = glm::quat(transform.rotation);
 
-  u8 layer_index = 1; // Default Layer
+  u16 layer_index = 1; // Default Layer
   if (const auto* layer_component = entity.try_get<LayerComponent>()) {
     layer_index = layer_component->layer;
   }

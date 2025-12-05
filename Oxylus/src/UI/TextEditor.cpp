@@ -34,7 +34,7 @@ auto TextEditor::render(this TextEditor& self, const char* id, bool* visible) ->
           if (ImGui::BeginChild("##body_window", {}, 0, ImGuiWindowFlags_MenuBar)) {
             self.draw_menu_bar(document);
 
-            ImGui::PushFont(self.body_font, self.font_size);
+            ImGui::PushFont(self.body_font, static_cast<f32>(self.font_size));
             document.draw_body();
             ImGui::PopFont();
           }
@@ -139,7 +139,7 @@ auto TextEditor::Document::save(this TextEditor::Document& self) -> void {
 auto TextEditor::Document::draw_body(this TextEditor::Document& self) -> void {
   ZoneScoped;
 
-  ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1, 0.1, 0.1, 1.0));
+  ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0));
 
   if (ImGui::InputTextMultiline(
         "##source", //

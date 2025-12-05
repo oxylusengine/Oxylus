@@ -73,8 +73,8 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   const auto banner_size = engine_banner->get_extent();
 
   UI::center_next_window();
-  ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0, 0.0, 0.0, 0.7));
-  ImGui::SetNextWindowSize(ImVec2(banner_size.width, 400.f));
+  ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.7f));
+  ImGui::SetNextWindowSize(ImVec2(static_cast<f32>(banner_size.width), 400.f));
   if (ImGui::BeginPopupModal("ProjectSelector", nullptr, flags)) {
     const float x = static_cast<float>(banner_size.width);
     const float y = static_cast<float>(ImGui::GetFrameHeight()) * 1.3f;

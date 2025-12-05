@@ -615,7 +615,7 @@ auto VkContext::create_persistent_descriptor_set(
 auto VkContext::commit_descriptor_set(this VkContext& self, std::span<VkWriteDescriptorSet> writes) -> void {
   ZoneScoped;
 
-  vkUpdateDescriptorSets(self.device, writes.size(), writes.data(), 0, nullptr);
+  vkUpdateDescriptorSets(self.device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
 }
 
 auto VkContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {

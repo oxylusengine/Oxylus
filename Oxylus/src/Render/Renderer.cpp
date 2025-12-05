@@ -286,7 +286,7 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
       }
     }
 
-    return index;
+    return static_cast<u16>(index);
   };
 
   u16 hilbert_noise[HILBERT_NOISE_LUT_WIDTH * HILBERT_NOISE_LUT_WIDTH] = {};
@@ -325,8 +325,8 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   );
 
   std::tie(transmittance_lut_attachment, temp_atmos_buffer) = transmittance_lut_pass(
-    std::move(transmittance_lut_attachment),
-    std::move(temp_atmos_buffer)
+    transmittance_lut_attachment,
+    temp_atmos_buffer
   );
 
   auto multiscatter_lut_attachment = self.sky_multiscatter_lut_view.discard("sky_multiscatter_lut");
@@ -350,9 +350,9 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   );
 
   std::tie(transmittance_lut_attachment, multiscatter_lut_attachment, temp_atmos_buffer) = sky_multiscatter_lut_pass(
-    std::move(transmittance_lut_attachment),
-    std::move(multiscatter_lut_attachment),
-    std::move(temp_atmos_buffer)
+    transmittance_lut_attachment,
+    multiscatter_lut_attachment,
+    temp_atmos_buffer
   );
 
   transmittance_lut_attachment = transmittance_lut_attachment.as_released(

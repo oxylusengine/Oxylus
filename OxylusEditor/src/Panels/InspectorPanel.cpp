@@ -400,7 +400,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
               f64 old_v = *v;
               if (UI::property(member_name.data(), v))
                 undo_redo_system->execute_command<PropertyChangeCommand<f64>>(v, old_v, *v, member_name.data());
-              *v = degree_helper(member_name.data(), *v);
+              *v = degree_helper(member_name.data(), static_cast<f32>(*v));
             },
             [&](i32* v) {
               i32 old_v = *v;
