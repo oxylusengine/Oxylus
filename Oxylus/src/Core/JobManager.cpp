@@ -146,7 +146,8 @@ auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) ->
   }
 
   self.job_count.fetch_add(1);
-  self.condition_var.notify_all();
+  // since we push single job, just notify single worker
+  self.condition_var.notify_one();
 }
 
 auto JobManager::wait(this JobManager& self) -> void {

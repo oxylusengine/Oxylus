@@ -8,7 +8,7 @@ target("OxylusEditor")
     set_languages("cxx23")
 
     add_deps("Oxylus")
-    add_deps("ResourceCompiler")
+    add_deps("rcli")
     add_packages("imguizmo")
 
     add_includedirs("./src")
@@ -16,13 +16,10 @@ target("OxylusEditor")
     add_files("./src/**.cpp")
 
     add_files("./Resources/**")
-    add_rules("ox.install_resources", {
+    add_rules("ox.copy_resources", {
         root_dir = os.scriptdir() .. "/Resources",
-        output_dir = "Resources",
+        output_dir = "res",
     })
-    add_files("../Oxylus/src/Render/Shaders/**")
-    add_rules("ox.install_shaders", {
-        output_dir = "Resources/Shaders",
-    })
+    add_rules("ox.compile_resources")
 
 target_end()

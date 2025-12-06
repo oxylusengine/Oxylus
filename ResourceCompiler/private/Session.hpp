@@ -36,6 +36,8 @@ struct Session::Impl {
   ankerl::unordered_dense::map<std::filesystem::path, u64> asset_file_times = {};
 
   std::vector<ShaderCompileRequest> shader_compile_requests = {};
+
+  bool pack = false;
 };
 
 } // namespace ox::rc

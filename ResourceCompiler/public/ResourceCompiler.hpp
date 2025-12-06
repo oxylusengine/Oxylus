@@ -86,9 +86,12 @@ public:
   Session(Impl* impl_) : impl(impl_) {}
   explicit operator bool() const { return impl; }
 
+  auto set_pack_together(bool pack) -> void;
+
   auto import_meta(const std::filesystem::path& path) -> bool;
   auto import_cache(const std::filesystem::path& path) -> void;
   auto save_cache(const std::filesystem::path& path) -> void;
+  auto output_to(const std::filesystem::path& path) -> void;
 
   auto create_shader_session(const ShaderSessionInfo& info) -> ShaderSession;
   auto compile_requests() -> bool;

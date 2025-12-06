@@ -3,7 +3,7 @@
     "type": "shader",
     "shader_sessions": [
         {
-            "root_directory": ".",
+            "root_directory": "../../Oxylus/src/Render/Shaders",
             "session_name": "main",
             "debug_symbols": false,
             "optimization": "default",

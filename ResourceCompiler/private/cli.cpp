@@ -12,10 +12,14 @@ constexpr auto print_command(std::string_view command, fmt::format_string<Args..
   fmt::print("  --{:{}}", command, indentation);
   fmt::println(desc, std::forward<Args>(args)...);
 }
+
 auto print_help() -> void {
   fmt::println("### Oxylus Resource Compiler CLI ###");
   print_command("help", "Show list of command line arguments.");
+  print_command("silent", "Do not output anything to the console.");
   print_command("meta \"path\"", "Add a meta file to compile.");
+  print_command("output \"path\"", "Define a path of compiled resources. This is optional.");
+  print_command("cache \"path\"", "Add a cache file to avoid recompiling unmodified resources.");
 }
 
 i32 main(i32 argc, c8** argv) {
@@ -31,6 +35,7 @@ i32 main(i32 argc, c8** argv) {
 
   auto silent = args.contains("--silent");
 
+  auto session = rc::Session{};
   auto meta_argi = args.get_index("--meta");
   if (meta_argi.has_value()) {
     auto meta_path = args.get(meta_argi.value() + 1);
@@ -43,36 +48,36 @@ i32 main(i32 argc, c8** argv) {
       fmt::println("Using meta file \"{}\"...", meta_path.value());
     }
 
-    auto session = rc::Session::create();
+    session = rc::Session::create();
     session.import_meta(meta_path.value());
+  }
 
-    auto cache_path = option<std::filesystem::path>();
-    auto cache_argi = args.get_index("--cache");
-    if (cache_argi.has_value()) {
-      cache_path = args.get(cache_argi.value() + 1);
-      if (!cache_path.has_value()) {
-        if (!silent) {
-          fmt::println("Specify a cache path.");
-        }
-        return 1;
+  auto cache_path = option<std::filesystem::path>();
+  auto cache_argi = args.get_index("--cache");
+  if (cache_argi.has_value()) {
+    cache_path = args.get(cache_argi.value() + 1);
+    if (!cache_path.has_value()) {
+      if (!silent) {
+        fmt::println("Specify a cache path.");
       }
+      return 1;
     }
+  }
 
-    if (cache_path.has_value()) {
-      session.import_cache(cache_path.value());
-    }
+  if (cache_path.has_value()) {
+    session.import_cache(cache_path.value());
+  }
 
-    session.compile_requests();
+  session.compile_requests();
 
-    if (cache_path.has_value()) {
-      session.save_cache(cache_path.value());
-    }
+  if (cache_path.has_value()) {
+    session.save_cache(cache_path.value());
+  }
 
-    if (!silent) {
-      auto messages = session.get_messages();
-      for (const auto& message : messages) {
-        fmt::println("{}", message);
-      }
+  if (!silent) {
+    auto messages = session.get_messages();
+    for (const auto& message : messages) {
+      fmt::println("{}", message);
     }
   }
 

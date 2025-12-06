@@ -88,7 +88,7 @@ private:
   std::vector<std::function<void()>> processing_tasks;
 
   std::string name = "Oxylus App";
-  std::filesystem::path assets_path = "Resources";
+  std::filesystem::path assets_path = "res";
   std::filesystem::path working_directory = {};
   AppCommandLineArgs command_line_args = {};
   option<WindowInfo> window_info = nullopt;

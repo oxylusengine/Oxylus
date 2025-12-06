@@ -33,6 +33,7 @@ auto read_shader_session_meta(
   }
   auto root_directory_str = root_directory_json.get_string().value_unsafe();
   shader_session_info.root_directory = (meta_file_path / root_directory_str).make_preferred();
+  self.push_message(shader_session_info.root_directory.string());
 
   auto optimization_json = json["optimization"];
   if (auto optimization_str = optimization_json.get_string(); optimization_str.has_value()) {
@@ -157,6 +158,8 @@ auto Session::create(std::span<std::filesystem::path> meta_paths) -> Session {
 }
 
 auto Session::destroy() -> void { delete impl; }
+
+auto Session::set_pack_together(bool pack) -> void { impl->pack = pack; }
 
 auto Session::import_meta(const std::filesystem::path& path) -> bool {
   auto meta_str = File::to_string(path);
@@ -284,6 +287,17 @@ auto Session::save_cache(const std::filesystem::path& path) -> void {
   file.close();
 }
 
+auto Session::output_to(const std::filesystem::path& path) -> void {
+  if (!path.has_root_directory()) {
+    return;
+  }
+
+  const auto& output_dir = path.root_directory();
+  // at this point we dont care about concurrency, so lock the entire function
+  auto read_lock = std::shared_lock(impl->assets_mutex);
+  auto assets = impl->assets.slots_unsafe();
+}
+
 auto Session::create_shader_session(const ShaderSessionInfo& info) -> ShaderSession {
   auto debug_level = static_cast<i32>(
     info.debug_symbols ? SLANG_DEBUG_INFO_LEVEL_MAXIMAL : SLANG_DEBUG_INFO_LEVEL_NONE
@@ -394,6 +408,8 @@ auto Session::compile_requests() -> bool {
       this->set_file_access_time(full_path, current_modified);
     }
   }
+
+  impl->shader_compile_requests.clear();
 
   return true;
 }

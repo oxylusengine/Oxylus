@@ -22,12 +22,12 @@ rule("mode.dist")
         end
     end)
 
-rule("ox.install_resources")
+rule("ox.copy_resources")
     set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".mp3", ".wav", ".ogg",
     ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene")
     before_buildcmd_file(function (target, batchcmds, sourcefile, opt)
-        local output_dir = target:extraconf("rules", "ox.install_resources", "output_dir") or ""
-        local root_dir = target:extraconf("rules", "ox.install_resources", "root_dir") or os.scriptdir()
+        local output_dir = target:extraconf("rules", "ox.copy_resources", "output_dir") or ""
+        local root_dir = target:extraconf("rules", "ox.copy_resources", "root_dir") or os.scriptdir()
 
         local abs_source = path.absolute(sourcefile)
         local rel_output = path.join(target:targetdir(), output_dir)
@@ -45,38 +45,30 @@ rule("ox.install_resources")
         batchcmds:set_depcache(target:dependfile(abs_output))
     end)
 
-rule("ox.install_shaders")
-    set_extensions(".slang", ".hlsl", ".hlsli", ".frag", ".vert", ".comp", ".h", ".json")
-    before_buildcmd_files(function (target, batchcmds, sourcebatch, opt)
-        local output_dir = target:extraconf("rules", "ox.install_shaders", "output_dir") or ""
+rule("ox.compile_resources")
+    set_extensions(".rcm")
+    before_build_file(function(target, sourcefile, opt)
+        import("core.base.task")
+        import("utils.progress")
 
-        for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-            local abs_source = path.absolute(sourcefile)
-            local source_dir = path.directory(abs_source)
+        local sourcebasename = path.basename(sourcefile)
+        local source_rel = path.relative(sourcefile, target:scriptdir())
+        local outdir = path.join(target:autogendir(), path.directory(source_rel))
+        local outfile = path.join(outdir, sourcebasename .. ".bin")
+        local cachefile = path.join(outdir, sourcebasename .. ".cache.json")
 
-            -- Find the "Shaders" directory in the path and extract everything after it
-            local shaders_pattern = "[/\\]Shaders[/\\]"
-            local shaders_start, shaders_end = source_dir:find(shaders_pattern)
+        progress.show(opt.progress, "${color.build.object}compiling.resources %s", source_rel)
+        os.mkdir(outdir)
+        local meta_abs = path.absolute(sourcefile)
+        local cache_abs = path.absolute(cachefile)
 
-            local rel_output = path.join(target:targetdir(), output_dir)
+        os.vrunv(target:dep("rcli"):targetfile(), {
+            "--meta", meta_abs,
+            "--cache", cache_abs
+        })
 
-            if shaders_start then
-                -- Get the part after "/Shaders/"
-                local subpath = source_dir:sub(shaders_end + 1)
-                if subpath and subpath ~= "" then
-                    rel_output = path.join(rel_output, subpath)
-                end
-            end
-
-            local abs_output = path.join(rel_output, path.filename(sourcefile))
-            batchcmds:show_progress(opt.progress, "${color.build.object}copying shader file %s", sourcefile)
-            batchcmds:mkdir(path.directory(abs_output))
-            batchcmds:cp(abs_source, abs_output)
-
-            batchcmds:add_depfiles(sourcefile)
-            batchcmds:set_depmtime(os.mtime(abs_output))
-            batchcmds:set_depcache(target:dependfile(abs_output))
-        end
+        local generated_bin = path.join(path.directory(sourcefile), sourcebasename .. ".bin")
+        -- if os.exists(generated_bin) then
+        --     os.cp(generated_bin, outfile)
+        -- end
     end)
-
-
