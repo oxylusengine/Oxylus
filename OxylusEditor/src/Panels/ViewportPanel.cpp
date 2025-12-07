@@ -931,18 +931,12 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
         std::move(mesh_instances)
       );
 
-      auto read_pass = vuk::make_pass(
-        "mouse_picking_read_pass",
-        [s](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eHostRead) buffer, VUK_IA(vuk::eComputeSampled) visbuffer_) {
-          u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
+      auto temp_compiler = vuk::Compiler{};
+      readback_buffer.wait(*ctx.vk_context.superframe_allocator, temp_compiler);
 
-          pick_entity(s.get(), transform_index);
-
-          return std::make_tuple(buffer, visbuffer_);
-        }
-      );
-
-      std::tie(readback_buffer, visbuffer) = read_pass(std::move(readback_buffer), std::move(visbuffer));
+      u32 texel_data = ~0_u32;
+      std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
+      pick_entity(s.get(), texel_data);
 
       auto highlight_attachment = vuk::declare_ia(
         "highlight",
