@@ -562,7 +562,12 @@ void ViewportPanel::draw_settings_panel() {
           "Baked Occlusion",
           "GTAO"
         };
-        UI::property("Debug View", RendererCVar::cvar_debug_view.get_ptr(), debug_views, static_cast<i32>(ox::count_of(debug_views)));
+        UI::property(
+          "Debug View",
+          RendererCVar::cvar_debug_view.get_ptr(),
+          debug_views,
+          static_cast<i32>(ox::count_of(debug_views))
+        );
         UI::property("Enable frustum culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
         UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
         UI::property("Enable triangle culling", (bool*)RendererCVar::cvar_culling_triangle.get_ptr());
@@ -809,45 +814,46 @@ void ViewportPanel::draw_gizmos() {
   }
 }
 
-static auto pick_entity(EditorScene* s, u32 transform_index, bool viewport_hovered) -> void {
+static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
   ZoneScoped;
 
-  auto using_gizmo = ImGuizmo::IsOver();
-
   auto& editor = App::mod<Editor>();
-  if (!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewport_hovered) {
-    if (transform_index != ~0_u32) {
-      if (s->get_scene()->transform_index_entities_map.contains(transform_index)) {
-        auto& editor_context = editor.get_context();
-
-        // first pick the parent if parent is already picked then pick the actual entity
-        auto entity = s->get_scene()->transform_index_entities_map.at(transform_index);
-        auto top_parent = entity;
-        while (top_parent.parent() != flecs::entity::null()) {
-          top_parent = top_parent.parent();
-        }
-        if (editor_context.entity.has_value()) {
-          if (editor_context.entity.value() == top_parent) {
-            top_parent = entity;
-          }
-        }
-
-        editor_context.reset(EditorContext::Type::Entity, nullopt, top_parent);
-      }
-    } else {
+  if (transform_index != ~0_u32) {
+    if (s->get_scene()->transform_index_entities_map.contains(transform_index)) {
       auto& editor_context = editor.get_context();
-      editor_context.reset();
+
+      // first pick the parent if parent is already picked then pick the actual entity
+      auto entity = s->get_scene()->transform_index_entities_map.at(transform_index);
+      auto top_parent = entity;
+      while (top_parent.parent() != flecs::entity::null()) {
+        top_parent = top_parent.parent();
+      }
+      if (editor_context.entity.has_value()) {
+        if (editor_context.entity.value() == top_parent) {
+          top_parent = entity;
+        }
+      }
+
+      editor_context.reset(EditorContext::Type::Entity, nullopt, top_parent);
     }
+  } else {
+    auto& editor_context = editor.get_context();
+    editor_context.reset();
   }
 }
 
 auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void {
+  auto using_gizmo = ImGuizmo::IsOver();
+  if (!(!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && is_viewport_hovered)) {
+    return;
+  }
+
   renderer_instance->add_stage_after(
     RenderStage::Forward2D,
     "mouse_picking_2d",
-    [s = editor_scene_, picking_texel, viewport_hovered = is_viewport_hovered](RenderStageContext& ctx) {
-      auto visbuffer = ctx.get_image_resource("visbuffer_attachment_2d");
-      auto final = ctx.get_image_resource("final_attachment");
+    [s = editor_scene_, picking_texel](RenderStageContext& ctx) {
+      auto visbuffer_attach = ctx.get_image_resource("visbuffer_attachment_2d");
+      auto final_attach = ctx.get_image_resource("final_attachment");
 
       auto readback_buffer = ctx.vk_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
 
@@ -856,7 +862,8 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
         [picking_texel](
           vuk::CommandBuffer& cmd_list,
           VUK_BA(vuk::eComputeWrite) buffer,
-          VUK_IA(vuk::eComputeSampled) visbuffer_
+          VUK_IA(vuk::eComputeSampled) visbuffer_,
+          VUK_IA(vuk::eComputeSampled) final_
         ) {
           cmd_list
             .bind_compute_pipeline("mouse_picking_pipeline_2d") //
@@ -864,43 +871,32 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
             .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(picking_texel, buffer->device_address))
             .dispatch(1, 1, 1);
 
-          return std::make_tuple(buffer, visbuffer_);
-        }
-      );
-
-      std::tie(readback_buffer, visbuffer) = pick_pass(std::move(readback_buffer), std::move(visbuffer));
-
-      auto read_pass = vuk::make_pass(
-        "mouse_picking_2d_read_pass",
-        [s, viewport_hovered](
-          vuk::CommandBuffer& cmd_list,
-          VUK_BA(vuk::eHostRead) buffer,
-          VUK_IA(vuk::eComputeSampled) visbuffer_,
-          VUK_IA(vuk::eComputeSampled) final_
-        ) {
-          u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
-
-          pick_entity(s.get(), transform_index, viewport_hovered);
-
           return std::make_tuple(buffer, visbuffer_, final_);
         }
       );
 
-      std::tie(readback_buffer, visbuffer, final) = read_pass(
+      std::tie(readback_buffer, visbuffer_attach, final_attach) = pick_pass(
         std::move(readback_buffer),
-        std::move(visbuffer),
-        std::move(final)
+        std::move(visbuffer_attach),
+        std::move(final_attach)
       );
 
-      ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer))
-        .set_image_resource("final_attachment", std::move(final));
+      auto temp_compiler = vuk::Compiler{};
+      readback_buffer.wait(*ctx.vk_context.superframe_allocator, temp_compiler);
+
+      u32 texel_data = ~0_u32;
+      std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
+      pick_entity(s.get(), texel_data);
+
+      ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attach))
+        .set_image_resource("final_attachment", std::move(final_attach));
     }
   );
 
   renderer_instance->add_stage_after(
     RenderStage::VisBufferEncode,
     "mouse_picking",
-    [picking_texel, viewport_hovered = is_viewport_hovered, s = editor_scene_](RenderStageContext& ctx) {
+    [picking_texel, s = editor_scene_](RenderStageContext& ctx) {
       auto depth_attachment = ctx.get_image_resource("depth_attachment");
       auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
       auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
@@ -937,14 +933,10 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
 
       auto read_pass = vuk::make_pass(
         "mouse_picking_read_pass",
-        [s, viewport_hovered](
-          vuk::CommandBuffer& cmd_list,
-          VUK_BA(vuk::eHostRead) buffer,
-          VUK_IA(vuk::eComputeSampled) visbuffer_
-        ) {
+        [s](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eHostRead) buffer, VUK_IA(vuk::eComputeSampled) visbuffer_) {
           u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
 
-          pick_entity(s.get(), transform_index, viewport_hovered);
+          pick_entity(s.get(), transform_index);
 
           return std::make_tuple(buffer, visbuffer_);
         }
