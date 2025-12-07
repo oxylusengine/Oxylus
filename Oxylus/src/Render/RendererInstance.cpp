@@ -558,6 +558,18 @@ auto RendererInstance::render(
   );
   visbuffer_attachment.same_shape_as(final_attachment);
 
+  auto visbuffer_attachment_2d = vuk::declare_ia(
+    "visbuffer_2d",
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+     .format = vuk::Format::eR32Uint,
+     .sample_count = vuk::SampleCountFlagBits::e1}
+  );
+  visbuffer_attachment_2d.same_shape_as(final_attachment);
+  visbuffer_attachment_2d = vuk::clear_image(
+    visbuffer_attachment_2d,
+    vuk::ClearColor{~0_u32, ~0_u32, ~0_u32, ~0_u32}
+  ); // Clear to invalid transform id
+
   auto overdraw_attachment = vuk::declare_ia(
     "overdraw",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
@@ -870,10 +882,72 @@ auto RendererInstance::render(
   // --- 2D Pass ---
   if (!self.render_queue_2d.sprite_data.empty()) {
     // WARN: rq2d is copied each frame (it needs to be copied)
+
+    auto forward_2d_vis_pass = vuk::make_pass(
+      "2d_forward_vis_pass",
+      [rq2d = self.render_queue_2d](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eColorWrite) target,
+        VUK_IA(vuk::eDepthStencilRW) depth,
+        VUK_BA(vuk::eAttributeRead) vertex_buffer,
+        VUK_BA(vuk::eVertexRead) camera,
+        VUK_BA(vuk::eVertexRead) transforms_
+      ) {
+        const auto vertex_pack_2d = vuk::Packed{
+          vuk::Format::eR32Uint, // 4 material_id
+          vuk::Format::eR32Uint, // 4 flags
+          vuk::Format::eR32Uint, // 4 transforms_id
+        };
+
+        for (const auto& batch : rq2d.batches) {
+          if (batch.count < 1)
+            continue;
+
+          cmd_list.bind_graphics_pipeline("2d_forward_vis")
+            .set_depth_stencil(
+              vuk::PipelineDepthStencilStateCreateInfo{
+                .depthTestEnable = true,
+                .depthWriteEnable = true,
+                .depthCompareOp = vuk::CompareOp::eGreaterOrEqual,
+              }
+            )
+            .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
+            .set_viewport(0, vuk::Rect2D::framebuffer())
+            .set_scissor(0, vuk::Rect2D::framebuffer())
+            .broadcast_color_blend(vuk::BlendPreset::eOff)
+            .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
+            .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack_2d, vuk::VertexInputRate::eInstance)
+            .push_constants(
+              vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
+              0,
+              PushConstants(camera->device_address, transforms_->device_address)
+            )
+            .draw(6, batch.count, 0, batch.offset);
+        }
+
+        return std::make_tuple(target, depth, camera, vertex_buffer, transforms_);
+      }
+    );
+
+    std::tie(
+      visbuffer_attachment_2d,
+      depth_attachment,
+      self.prepared_frame.camera_buffer,
+      vertex_buffer_2d,
+      self.prepared_frame.transforms_buffer
+    ) =
+      forward_2d_vis_pass(
+        std::move(visbuffer_attachment_2d),
+        std::move(depth_attachment),
+        std::move(vertex_buffer_2d),
+        std::move(self.prepared_frame.camera_buffer),
+        std::move(self.prepared_frame.transforms_buffer)
+      );
+
     auto forward_2d_pass = vuk::make_pass(
       "2d_forward_pass",
       [rq2d = self.render_queue_2d, &descriptor_set = bindless_set](
-        vuk::CommandBuffer& command_buffer,
+        vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) target,
         VUK_IA(vuk::eDepthStencilRW) depth,
         VUK_BA(vuk::eAttributeRead) vertex_buffer,
@@ -891,7 +965,7 @@ auto RendererInstance::render(
           if (batch.count < 1)
             continue;
 
-          command_buffer.bind_graphics_pipeline(batch.pipeline_name)
+          cmd_list.bind_graphics_pipeline(batch.pipeline_name)
             .set_depth_stencil(
               vuk::PipelineDepthStencilStateCreateInfo{
                 .depthTestEnable = true,
@@ -934,6 +1008,16 @@ auto RendererInstance::render(
         std::move(self.prepared_frame.camera_buffer),
         std::move(self.prepared_frame.transforms_buffer)
       );
+
+    RenderStageContext ctx(self, self.shared_resources, RenderStage::Forward2D, *self.renderer.vk_context);
+    ctx.set_viewport_size(self.viewport_size)
+      .set_image_resource("final_attachment", final_attachment)
+      .set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attachment_2d));
+
+    self.execute_stages_after(RenderStage::Forward2D, ctx);
+
+    visbuffer_attachment_2d = ctx.get_image_resource("visbuffer_attachment_2d");
+    final_attachment = ctx.get_image_resource("final_attachment");
   }
 
   // --- FXAA Pass ---

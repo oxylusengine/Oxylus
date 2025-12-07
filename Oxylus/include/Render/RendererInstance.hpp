@@ -9,6 +9,7 @@ enum class RenderStage {
   Culling,
   VisBufferEncode,
   VisBufferDecode,
+  Forward2D,
   Lighting,
   PostProcessing,
   Atmosphere,

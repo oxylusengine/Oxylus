@@ -79,6 +79,12 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
 
     slang.create_pipeline(
       runtime,
+      "mouse_picking_pipeline_2d",
+      {.path = shaders_dir / "editor/mouse_picking_2d.slang", .entry_points = {"cs_main"}}
+    );
+
+    slang.create_pipeline(
+      runtime,
       "mouse_picking_pipeline",
       {.path = shaders_dir / "editor/mouse_picking.slang", .entry_points = {"cs_main"}}
     );
@@ -803,13 +809,98 @@ void ViewportPanel::draw_gizmos() {
   }
 }
 
+static auto pick_entity(EditorScene* s, u32 transform_index, bool viewport_hovered) -> void {
+  ZoneScoped;
+
+  auto using_gizmo = ImGuizmo::IsOver();
+
+  auto& editor = App::mod<Editor>();
+  if (!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewport_hovered) {
+    if (transform_index != ~0_u32) {
+      if (s->get_scene()->transform_index_entities_map.contains(transform_index)) {
+        auto& editor_context = editor.get_context();
+
+        // first pick the parent if parent is already picked then pick the actual entity
+        auto entity = s->get_scene()->transform_index_entities_map.at(transform_index);
+        auto top_parent = entity;
+        while (top_parent.parent() != flecs::entity::null()) {
+          top_parent = top_parent.parent();
+        }
+        if (editor_context.entity.has_value()) {
+          if (editor_context.entity.value() == top_parent) {
+            top_parent = entity;
+          }
+        }
+
+        editor_context.reset(EditorContext::Type::Entity, nullopt, top_parent);
+      }
+    } else {
+      auto& editor_context = editor.get_context();
+      editor_context.reset();
+    }
+  }
+}
+
 auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void {
+  renderer_instance->add_stage_after(
+    RenderStage::Forward2D,
+    "mouse_picking_2d",
+    [s = editor_scene_, picking_texel, viewport_hovered = is_viewport_hovered](RenderStageContext& ctx) {
+      auto visbuffer = ctx.get_image_resource("visbuffer_attachment_2d");
+      auto final = ctx.get_image_resource("final_attachment");
+
+      auto readback_buffer = ctx.vk_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+
+      auto pick_pass = vuk::make_pass(
+        "mouse_picking_2d_pass",
+        [picking_texel](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eComputeWrite) buffer,
+          VUK_IA(vuk::eComputeSampled) visbuffer_
+        ) {
+          cmd_list
+            .bind_compute_pipeline("mouse_picking_pipeline_2d") //
+            .bind_image(0, 0, visbuffer_)
+            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(picking_texel, buffer->device_address))
+            .dispatch(1, 1, 1);
+
+          return std::make_tuple(buffer, visbuffer_);
+        }
+      );
+
+      std::tie(readback_buffer, visbuffer) = pick_pass(std::move(readback_buffer), std::move(visbuffer));
+
+      auto read_pass = vuk::make_pass(
+        "mouse_picking_2d_read_pass",
+        [s, viewport_hovered](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eHostRead) buffer,
+          VUK_IA(vuk::eComputeSampled) visbuffer_,
+          VUK_IA(vuk::eComputeSampled) final_
+        ) {
+          u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
+
+          pick_entity(s.get(), transform_index, viewport_hovered);
+
+          return std::make_tuple(buffer, visbuffer_, final_);
+        }
+      );
+
+      std::tie(readback_buffer, visbuffer, final) = read_pass(
+        std::move(readback_buffer),
+        std::move(visbuffer),
+        std::move(final)
+      );
+
+      ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer))
+        .set_image_resource("final_attachment", std::move(final));
+    }
+  );
+
   renderer_instance->add_stage_after(
     RenderStage::VisBufferEncode,
     "mouse_picking",
-    [picking_texel, viewport_hovered = is_viewport_hovered, using_gizmo = ImGuizmo::IsOver(), s = editor_scene_](
-      RenderStageContext& ctx
-    ) {
+    [picking_texel, viewport_hovered = is_viewport_hovered, s = editor_scene_](RenderStageContext& ctx) {
       auto depth_attachment = ctx.get_image_resource("depth_attachment");
       auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
       auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
@@ -846,39 +937,14 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
 
       auto read_pass = vuk::make_pass(
         "mouse_picking_read_pass",
-        [s, viewport_hovered, using_gizmo](
+        [s, viewport_hovered](
           vuk::CommandBuffer& cmd_list,
           VUK_BA(vuk::eHostRead) buffer,
           VUK_IA(vuk::eComputeSampled) visbuffer_
         ) {
           u32 transform_index = *reinterpret_cast<u32*>(buffer.ptr->mapped_ptr);
 
-          auto& editor = App::mod<Editor>();
-
-          if (!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewport_hovered) {
-            if (transform_index != ~0_u32) {
-              if (s->get_scene()->transform_index_entities_map.contains(transform_index)) {
-                auto& editor_context = editor.get_context();
-
-                // first pick the parent if parent is already picked then pick the actual entity
-                auto entity = s->get_scene()->transform_index_entities_map.at(transform_index);
-                auto top_parent = entity;
-                while (top_parent.parent() != flecs::entity::null()) {
-                  top_parent = top_parent.parent();
-                }
-                if (editor_context.entity.has_value()) {
-                  if (editor_context.entity.value() == top_parent) {
-                    top_parent = entity;
-                  }
-                }
-
-                editor_context.reset(EditorContext::Type::Entity, nullopt, top_parent);
-              }
-            } else {
-              auto& editor_context = editor.get_context();
-              editor_context.reset();
-            }
-          }
+          pick_entity(s.get(), transform_index, viewport_hovered);
 
           return std::make_tuple(buffer, visbuffer_);
         }
