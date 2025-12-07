@@ -223,6 +223,7 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   vk12_features.timelineSemaphore = true;
   vk12_features.bufferDeviceAddress = true;
   vk12_features.hostQueryReset = true;
+  vk12_features.uniformAndStorageBuffer8BitAccess = true;
   // Shader features
   vk12_features.vulkanMemoryModel = true;
   vk12_features.storageBuffer8BitAccess = true;
@@ -615,7 +616,7 @@ auto VkContext::create_persistent_descriptor_set(
 auto VkContext::commit_descriptor_set(this VkContext& self, std::span<VkWriteDescriptorSet> writes) -> void {
   ZoneScoped;
 
-  vkUpdateDescriptorSets(self.device, writes.size(), writes.data(), 0, nullptr);
+  vkUpdateDescriptorSets(self.device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
 }
 
 auto VkContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {

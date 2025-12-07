@@ -66,7 +66,7 @@ add_requires("toml++ v3.4.0", {
 
 add_requires("simdjson-ox v3.12.2")
 
-add_requires("joltphysics-ox v5.4.0+fix", {
+add_requires("joltphysics-ox a1ce83ec7f7e014b116a4855dfc9cb2f2d4ef40a", {
     configs = {
         debug_renderer = true,
         rtti = true,
@@ -76,7 +76,7 @@ add_requires("joltphysics-ox v5.4.0+fix", {
         sse4_1 = true,
         sse4_2 = true,
         tzcnt = true,
-        enable_floating_point_exceptions = false,
+        enable_floating_point_exceptions = true,
     }
 })
 

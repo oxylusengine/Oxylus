@@ -130,7 +130,7 @@ auto calculate_cascade_bounds(usize cascade_count, f32 nearest_bound, f32 maximu
   if (cascade_count == 1) {
     return {maximum_shadow_distance};
   }
-  auto base = glm::pow(maximum_shadow_distance / nearest_bound, 1.0 / static_cast<f32>(cascade_count - 1));
+  auto base = glm::pow(maximum_shadow_distance / nearest_bound, 1.0f / static_cast<f32>(cascade_count - 1));
 
   auto result = std::array<f32, MAX_DIRECTIONAL_SHADOW_CASCADES>();
   for (u32 i = 0; i < cascade_count; i++) {
@@ -148,7 +148,7 @@ auto calculate_cascaded_shadow_matrices(
 ) -> void {
   ZoneScoped;
 
-  auto overlap_factor = 1.0 - light_comp.cascade_overlap_propotion;
+  auto overlap_factor = 1.0f - light_comp.cascade_overlap_propotion;
   auto far_bounds = calculate_cascade_bounds(
     light.cascade_count,
     light_comp.first_cascade_far_bound,

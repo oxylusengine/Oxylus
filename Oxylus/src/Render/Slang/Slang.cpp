@@ -58,7 +58,7 @@ void Slang::create_pipeline(
     for (const auto& [binding, binding_flags] :
          std::views::zip(pds->set_layout_create_info.bindings, pds->set_layout_create_info.flags)) {
       pipeline_ci.set_binding_flags(
-        pds->set_layout_create_info.index,
+        static_cast<u32>(pds->set_layout_create_info.index),
         binding.binding,
         static_cast<vuk::DescriptorBindingFlagBits>(binding_flags)
       );
