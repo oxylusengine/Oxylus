@@ -161,7 +161,7 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
     asset_data.insert(asset_data.end(), spirv.begin(), spirv.end());
   }
 
-  auto asset_id = impl->rc_session.create_asset(AssetType::Shader);
+  auto asset_id = impl->rc_session.create_asset(UUID::generate_random(), AssetType::Shader);
   impl->rc_session.set_asset_info(asset_id, shader_asset);
   impl->rc_session.set_asset_data(asset_id, std::move(asset_data));
 

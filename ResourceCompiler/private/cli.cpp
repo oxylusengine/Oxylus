@@ -20,6 +20,10 @@ auto print_help() -> void {
   print_command("meta \"path\"", "Add a meta file to compile.");
   print_command("output \"path\"", "Define a path of compiled resources. This is optional.");
   print_command("cache \"path\"", "Add a cache file to avoid recompiling unmodified resources.");
+  std::println(
+    "\n Note: You can still run rcli without specifying any output or cache path to validate integrity of your "
+    "resources. Just make sure you don't have --silent flag set."
+  );
 }
 
 i32 main(i32 argc, c8** argv) {
@@ -48,8 +52,11 @@ i32 main(i32 argc, c8** argv) {
       fmt::println("Using meta file \"{}\"...", meta_path.value());
     }
 
-    session = rc::Session::create();
+    session = rc::Session::create(0);
     session.import_meta(meta_path.value());
+  } else {
+    fmt::println("Specify `--meta` flag to use this CLI. Example: `rcli --meta shaders.rcm --output shaders.bin`");
+    return 1;
   }
 
   auto cache_path = option<std::filesystem::path>();
@@ -69,6 +76,17 @@ i32 main(i32 argc, c8** argv) {
   }
 
   session.compile_requests();
+
+  auto output_argi = args.get_index("--output");
+  if (output_argi.has_value()) {
+    auto output_path = args.get(output_argi.value() + 1);
+    if (!output_path.has_value()) {
+      fmt::println("Specify an output path.");
+      return 1;
+    }
+
+    session.output_to(output_path.value());
+  }
 
   if (cache_path.has_value()) {
     session.save_cache(cache_path.value());

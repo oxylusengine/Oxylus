@@ -7,6 +7,7 @@
 #include "Asset/AssetFile.hpp"
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
+#include "Core/UUID.hpp"
 #include "Memory/Borrowed.hpp"
 
 #if OX_PLATFORM_WINDOWS
@@ -42,7 +43,6 @@ enum class ShaderOptimization : i32 {
 };
 
 struct ShaderSessionInfo {
-  u32 version = 10;
   std::string name = {};
   std::filesystem::path root_directory = {};
   ShaderOptimization optimization = ShaderOptimization::Default;
@@ -78,7 +78,7 @@ protected:
   Impl* impl;
 
 public:
-  static auto create() -> Session;
+  static auto create(u16 version) -> Session;
   static auto create(std::span<std::filesystem::path> meta_paths) -> Session;
   auto destroy() -> void;
 
@@ -96,7 +96,7 @@ public:
   auto create_shader_session(const ShaderSessionInfo& info) -> ShaderSession;
   auto compile_requests() -> bool;
 
-  auto create_asset(AssetType type) -> AssetID;
+  auto create_asset(const UUID &uuid, AssetType type) -> AssetID;
   auto get_asset_data(AssetID asset_id) -> std::span<u8>;
   auto get_shader_asset(AssetID asset_id) -> ShaderAsset;
 

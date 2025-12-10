@@ -33,7 +33,6 @@ auto read_shader_session_meta(
   }
   auto root_directory_str = root_directory_json.get_string().value_unsafe();
   shader_session_info.root_directory = (meta_file_path / root_directory_str).make_preferred();
-  self.push_message(shader_session_info.root_directory.string());
 
   auto optimization_json = json["optimization"];
   if (auto optimization_str = optimization_json.get_string(); optimization_str.has_value()) {
@@ -122,6 +121,9 @@ auto read_shader_session_meta(
           );
           return false;
         }
+
+        auto entry_point = entry_point_json.get_string().value_unsafe();
+        shader_info.entry_points.push_back(std::string(entry_point));
       }
 
       compile_request.shader_infos.emplace_back(std::move(shader_info));
@@ -133,8 +135,9 @@ auto read_shader_session_meta(
   return true;
 }
 
-auto Session::create() -> Session {
+auto Session::create(u16 version) -> Session {
   auto* self = new Session::Impl;
+  self->version = version;
   auto write_lock = std::unique_lock(self->session_mutex);
   slang::createGlobalSession(self->slang_global_session.writeRef());
 
@@ -142,7 +145,7 @@ auto Session::create() -> Session {
 }
 
 auto Session::create(std::span<std::filesystem::path> meta_paths) -> Session {
-  auto self = Session::create();
+  auto self = Session::create(0);
   if (!self) {
     return nullptr;
   }
@@ -184,7 +187,8 @@ auto Session::import_meta(const std::filesystem::path& path) -> bool {
     return false;
   }
 
-  auto version = version_json.get_uint64();
+  auto version = version_json.get_uint64().value_unsafe();
+  impl->version = static_cast<u16>(version);
 
   auto asset_type_json = json["type"];
   if (asset_type_json.error() || !asset_type_json.is_string()) {
@@ -288,14 +292,47 @@ auto Session::save_cache(const std::filesystem::path& path) -> void {
 }
 
 auto Session::output_to(const std::filesystem::path& path) -> void {
-  if (!path.has_root_directory()) {
+  if (!path.has_parent_path()) {
     return;
   }
 
-  const auto& output_dir = path.root_directory();
+  auto ec = std::error_code{};
+  if (std::filesystem::create_directories(path.parent_path(), ec); ec) {
+    push_error(
+      fmt::format("Failed to output resources, could not create directory for {}: {}", path.parent_path(), ec.message())
+    );
+    return;
+  }
+
+  auto writer = File(path, FileAccess::Write);
+  writer.write_data("OXRC", 4);
+  writer.write_trivial(impl->version);
+
   // at this point we dont care about concurrency, so lock the entire function
   auto read_lock = std::shared_lock(impl->assets_mutex);
   auto assets = impl->assets.slots_unsafe();
+  writer.write_trivial(static_cast<u32>(assets.size()));
+
+  auto header_data_offset = 0_u32;
+  for (const auto& [asset, asset_data] : std::views::zip(assets, impl->asset_datas)) {
+    writer.write(asset.uuid.bytes());
+    writer.write_trivial(asset.type);
+    writer.write_trivial(static_cast<u32>(asset_data.size()));
+    writer.write_trivial(static_cast<u32>(header_data_offset));
+    switch (asset.type) {
+      case AssetType::Shader: {
+        writer.write(asset.shader.entry_point_ranges);
+        writer.write(asset.shader.entry_point_names);
+      } break;
+      default:;
+    }
+
+    header_data_offset += asset_data.size();
+  }
+
+  for (const auto& asset_data : impl->asset_datas) {
+    writer.write(asset_data);
+  }
 }
 
 auto Session::create_shader_session(const ShaderSessionInfo& info) -> ShaderSession {
@@ -392,7 +429,7 @@ auto Session::compile_requests() -> bool {
   for (const auto& request : impl->shader_compile_requests) {
     auto shader_session = create_shader_session(request.session_info);
     for (const auto& shader_info : request.shader_infos) {
-      const auto full_path = shader_session.get_root_dir() / shader_info.path;
+      const auto full_path = std::filesystem::absolute(shader_session.get_root_dir() / shader_info.path);
       const auto last_modified = this->get_file_access_time(full_path).value_or(0_u64);
       auto current_modified = 0_u64;
       if (auto file = os::file_open(full_path, FileAccess::Read); file.has_value()) {
@@ -414,10 +451,10 @@ auto Session::compile_requests() -> bool {
   return true;
 }
 
-auto Session::create_asset(AssetType type) -> AssetID {
+auto Session::create_asset(const UUID& uuid, AssetType type) -> AssetID {
   auto write_lock = std::unique_lock(impl->assets_mutex);
 
-  auto asset_id = impl->assets.create_slot(CompiledAsset{.type = type, .none = 0});
+  auto asset_id = impl->assets.create_slot(CompiledAsset{.uuid = uuid, .type = type, .none = 0});
   auto asset_data_index = SlotMap_decode_id(asset_id).index;
   if (asset_data_index >= impl->asset_datas.size()) {
     impl->asset_datas.resize(asset_data_index + 1);

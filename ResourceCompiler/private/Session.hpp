@@ -5,6 +5,7 @@
 #include <slang-com-ptr.h>
 
 #include "Asset/AssetFile.hpp"
+#include "Core/UUID.hpp"
 #include "Memory/SlotMap.hpp"
 #include "ResourceCompiler.hpp"
 
@@ -15,6 +16,7 @@ struct ShaderCompileRequest {
 };
 
 struct CompiledAsset {
+  UUID uuid = {};
   AssetType type = AssetType::None;
   union {
     u32 none = 0;
@@ -23,6 +25,7 @@ struct CompiledAsset {
 };
 
 struct Session::Impl {
+  u16 version = 10;
   std::shared_mutex messages_mutex = {};
   std::vector<std::string> messages = {};
 
