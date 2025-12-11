@@ -25,9 +25,9 @@ auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
   );
   std::ignore = event_system.subscribe<Editor::ScenePlayEvent>([&self](const Editor::ScenePlayEvent& e) {
     auto& editor = App::mod<Editor>();
-    auto scene = editor.scene_manager.get_scene(e.scene_id);
-    auto scene_copy = scene->play();
-    self.add_new_play_scene(scene_copy);
+    auto play_scene_id = editor.scene_manager.new_play_scene(e.scene_id);
+    auto copy_scene = editor.scene_manager.get_scene(play_scene_id);
+    self.add_new_play_scene(copy_scene);
   });
   std::ignore = event_system.subscribe<Editor::SceneStopEvent>([&self](const Editor::SceneStopEvent& e) {
     auto should_stop_and_remove = [e, &self](const std::unique_ptr<ViewportPanel>& panel) {
@@ -35,16 +35,17 @@ auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
 
       if (editor_scene && editor_scene->get_id() == e.scene_id && editor_scene->is_playing()) {
         editor_scene->stop();
+        auto& editor = App::mod<Editor>();
+        editor.scene_manager.remove_scene(e.scene_id);
         self.dock_should_update = true;
         return true;
       }
+
       return false;
     };
 
-    App::defer_to_next_frame([&self, should_stop_and_remove] {
-      std::erase_if(self.viewport_panels, should_stop_and_remove);
-      std::erase_if(self.pending_viewports, should_stop_and_remove);
-    });
+    std::erase_if(self.viewport_panels, should_stop_and_remove);
+    std::erase_if(self.pending_viewports, should_stop_and_remove);
   });
 }
 
@@ -172,14 +173,12 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
 
       if (sh_scene && panel_scene) {
         // Did scene change?
-        // Check if IDs are different OR if the playing states don't match
-        if (sh_scene->get_id() != panel_scene->get_id() || sh_scene->is_playing() != panel_scene->is_playing()) {
+        if (sh_scene->get_id() != panel_scene->get_id()) {
           sh->set_scene(panel_scene);
         }
-      }
-
-      if (!sh_scene || !panel_scene)
+      } else {
         sh->set_scene(panel_scene);
+      }
     }
 
     if (panel_scene) {

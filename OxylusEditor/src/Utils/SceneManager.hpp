@@ -21,7 +21,7 @@ public:
   auto set_path(this EditorScene& self, const std::filesystem::path& path) -> void;
   auto get_path(this const EditorScene& self) -> const std::filesystem::path&;
 
-  auto play(this const EditorScene& self) -> std::shared_ptr<EditorScene>;
+  auto play(this EditorScene& self) -> void;
   auto stop(this EditorScene& self) -> void;
 
 private:
@@ -36,15 +36,15 @@ class SceneManager {
 public:
   SceneManager() = default;
 
-  auto reset() -> void;
+  auto reset(this SceneManager& self) -> void;
 
-  auto new_scene() -> SceneID;
-  auto load_scene(const std::filesystem::path& path) -> std::optional<SceneID>;
-  auto load_default_scene(SceneID scene_id) -> void;
+  auto new_scene(this SceneManager& self) -> SceneID;
+  auto new_play_scene(this SceneManager& self, SceneID from) -> SceneID;
+  auto remove_scene(this SceneManager& self, SceneID id) -> void;
+  auto load_scene(this SceneManager& self, const std::filesystem::path& path) -> std::optional<SceneID>;
+  auto load_default_scene(this SceneManager& self, SceneID scene_id) -> void;
 
-  auto get_scene(SceneID scene_id) -> std::shared_ptr<EditorScene>;
-
-  auto get_all_scenes(this SceneManager& self) -> std::span<std::shared_ptr<EditorScene>>;
+  auto get_scene(this const SceneManager& self, SceneID scene_id) -> std::shared_ptr<EditorScene>;
 
 private:
   SlotMap<std::shared_ptr<EditorScene>, SceneID> scenes = {};

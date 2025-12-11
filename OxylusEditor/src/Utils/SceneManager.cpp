@@ -41,18 +41,14 @@ auto EditorScene::get_path(this const EditorScene& self) -> const std::filesyste
   return self.path;
 }
 
-auto EditorScene::play(this const EditorScene& self) -> std::shared_ptr<EditorScene> {
+auto EditorScene::play(this EditorScene& self) -> void {
   ZoneScoped;
 
-  auto new_scene = std::make_shared<EditorScene>(Scene::copy(self.scene));
-  new_scene->id = self.id;
-  new_scene->get_scene()->meshes_dirty = true;
-  new_scene->get_scene()->runtime_start();
-  new_scene->scene_state = SceneState::Play;
+  self.get_scene()->meshes_dirty = true;
+  self.get_scene()->runtime_start();
+  self.scene_state = SceneState::Play;
 
-  self.scene->reset_renderer_instance();
-
-  return new_scene;
+  self.get_scene()->reset_renderer_instance();
 }
 
 auto EditorScene::stop(this EditorScene& self) -> void {
@@ -60,29 +56,44 @@ auto EditorScene::stop(this EditorScene& self) -> void {
 
   self.scene_state = SceneState::Edit;
 
-  self.get_scene()
-    ->world //
-    .query_builder()
-    .with<TransformComponent>()
-    .build()
-    .each([](flecs::entity e) { e.modified<TransformComponent>(); });
+  self.get_scene()->reset_renderer_instance();
 }
 
-auto SceneManager::reset() -> void {
+auto SceneManager::reset(this SceneManager& self) -> void {
   ZoneScoped;
 
-  scenes.reset();
+  self.scenes.reset();
 }
 
-auto SceneManager::new_scene() -> SceneID {
+auto SceneManager::new_scene(this SceneManager& self) -> SceneID {
   ZoneScoped;
 
-  auto scene_id = scenes.create_slot(std::make_shared<EditorScene>());
-  scenes.slot(scene_id)->get()->id = scene_id;
+  auto scene_id = self.scenes.create_slot(std::make_shared<EditorScene>());
+  self.scenes.slot(scene_id)->get()->id = scene_id;
   return scene_id;
 }
 
-auto SceneManager::load_scene(const std::filesystem::path& path) -> std::optional<SceneID> {
+auto SceneManager::new_play_scene(this SceneManager& self, SceneID from) -> SceneID {
+  ZoneScoped;
+
+  auto src_scene = self.get_scene(from);
+  auto copy_scene = Scene::copy(src_scene->get_scene());
+
+  auto copy_scene_id = self.scenes.create_slot(std::make_shared<EditorScene>(copy_scene));
+  self.scenes.slot(copy_scene_id)->get()->id = copy_scene_id;
+
+  self.get_scene(copy_scene_id)->play();
+
+  return copy_scene_id;
+}
+
+auto SceneManager::remove_scene(this SceneManager& self, SceneID id) -> void {
+  ZoneScoped;
+
+  self.scenes.destroy_slot(id);
+}
+
+auto SceneManager::load_scene(this SceneManager& self, const std::filesystem::path& path) -> std::optional<SceneID> {
   ZoneScoped;
 
   // if (loaded_scenes.contains(path)) {
@@ -102,24 +113,24 @@ auto SceneManager::load_scene(const std::filesystem::path& path) -> std::optiona
   auto& job_man = App::get_job_manager();
   job_man.wait();
 
-  auto scene_id = new_scene();
-  auto editor_scene = *scenes.slot(scene_id);
+  auto scene_id = self.new_scene();
+  auto editor_scene = *self.scenes.slot(scene_id);
   editor_scene->path = path;
 
   if (editor_scene->scene->load_from_file(path)) {
-    loaded_scenes.emplace(path, scene_id);
+    self.loaded_scenes.emplace(path, scene_id);
     return scene_id;
   }
 
-  scenes.destroy_slot(scene_id);
+  self.scenes.destroy_slot(scene_id);
 
   return nullopt;
 }
 
-auto SceneManager::load_default_scene(SceneID scene_id) -> void {
+auto SceneManager::load_default_scene(this SceneManager& self, SceneID scene_id) -> void {
   ZoneScoped;
 
-  auto editor_scene_p = scenes.slot(scene_id);
+  auto editor_scene_p = self.scenes.slot(scene_id);
   OX_CHECK_NULL(editor_scene_p);
   auto editor_scene = *editor_scene_p;
 
@@ -132,18 +143,12 @@ auto SceneManager::load_default_scene(SceneID scene_id) -> void {
   camera.add<CameraComponent>();
 }
 
-auto SceneManager::get_scene(SceneID scene_id) -> std::shared_ptr<EditorScene> {
+auto SceneManager::get_scene(this const SceneManager& self, SceneID scene_id) -> std::shared_ptr<EditorScene> {
   ZoneScoped;
 
   OX_ASSERT(scene_id != SceneID::Invalid);
-  auto scene_ptr = scenes.slot(scene_id);
+  auto scene_ptr = self.scenes.slotc(scene_id);
   OX_CHECK_NULL(scene_ptr);
   return *scene_ptr;
-}
-
-auto SceneManager::get_all_scenes(this SceneManager& self) -> std::span<std::shared_ptr<EditorScene>> {
-  ZoneScoped;
-
-  return self.scenes.slots_unsafe();
 }
 } // namespace ox
