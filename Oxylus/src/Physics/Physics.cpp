@@ -28,7 +28,7 @@ static bool AssertFailedImpl(const char* inExpression, const char* inMessage, co
 };
 #endif
 
-auto Physics::init() -> std::expected<void, std::string> {
+auto Physics::init(this Physics& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   // TODO: Override default allocators with Oxylus allocators.
@@ -43,15 +43,15 @@ auto Physics::init() -> std::expected<void, std::string> {
   JPH::Factory::sInstance = new JPH::Factory();
   JPH::RegisterTypes();
 
-  temp_allocator = std::make_unique<JPH::TempAllocatorImpl>(10 * 1024 * 1024);
+  self.temp_allocator = std::make_unique<JPH::TempAllocatorImpl>(10 * 1024 * 1024);
 
-  job_system = std::make_unique<JPH::JobSystemThreadPool>();
-  job_system->Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, (int)std::thread::hardware_concurrency() - 1);
+  self.job_system = std::make_unique<JPH::JobSystemThreadPool>();
+  self.job_system->Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, (int)std::thread::hardware_concurrency() - 1);
 
   return {};
 }
 
-auto Physics::deinit() -> std::expected<void, std::string> {
+auto Physics::deinit(this Physics& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   JPH::UnregisterTypes();
@@ -61,7 +61,7 @@ auto Physics::deinit() -> std::expected<void, std::string> {
   return {};
 }
 
-auto Physics::new_system() const -> std::unique_ptr<JPH::PhysicsSystem> {
+auto Physics::new_system(this const Physics& self) -> std::unique_ptr<JPH::PhysicsSystem> {
   ZoneScoped;
 
   auto sys = std::make_unique<JPH::PhysicsSystem>();
@@ -70,15 +70,15 @@ auto Physics::new_system() const -> std::unique_ptr<JPH::PhysicsSystem> {
     0,
     MAX_BODY_PAIRS,
     MAX_CONTACT_CONSTRAINS,
-    layer_interface,
-    object_vs_broad_phase_layer_filter_interface,
-    object_layer_pair_filter_interface
+    self.layer_interface,
+    self.object_vs_broad_phase_layer_filter_interface,
+    self.object_layer_pair_filter_interface
   );
 
   return sys;
 }
 
-auto Physics::new_debug_renderer() const -> std::unique_ptr<PhysicsDebugRenderer> {
+auto Physics::new_debug_renderer(this const Physics& self) -> std::unique_ptr<PhysicsDebugRenderer> {
   ZoneScoped;
 
   return std::make_unique<PhysicsDebugRenderer>();

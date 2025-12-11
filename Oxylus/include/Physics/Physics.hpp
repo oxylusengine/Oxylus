@@ -24,14 +24,14 @@ public:
   ObjectVsBroadPhaseLayerFilterImpl object_vs_broad_phase_layer_filter_interface;
   ObjectLayerPairFilterImpl object_layer_pair_filter_interface;
 
-  auto init() -> std::expected<void, std::string>;
-  auto deinit() -> std::expected<void, std::string>;
+  auto init(this Physics& self) -> std::expected<void, std::string>;
+  auto deinit(this Physics& self) -> std::expected<void, std::string>;
 
-  auto new_system() const -> std::unique_ptr<JPH::PhysicsSystem>;
-  auto new_debug_renderer() const -> std::unique_ptr<PhysicsDebugRenderer>;
+  auto new_system(this const Physics& self) -> std::unique_ptr<JPH::PhysicsSystem>;
+  auto new_debug_renderer(this const Physics& self) -> std::unique_ptr<PhysicsDebugRenderer>;
 
-  auto get_temp_allocator() const -> JPH::TempAllocatorImpl* { return temp_allocator.get(); }
-  auto get_job_system() const -> JPH::JobSystemThreadPool* { return job_system.get(); }
+  auto get_temp_allocator(this const Physics& self) -> JPH::TempAllocatorImpl* { return self.temp_allocator.get(); }
+  auto get_job_system(this const Physics& self) -> JPH::JobSystemThreadPool* { return self.job_system.get(); }
 
 private:
   std::unique_ptr<JPH::TempAllocatorImpl> temp_allocator = nullptr;
