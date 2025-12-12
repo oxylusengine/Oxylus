@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Asset/AssetFile.hpp"
+#include "Asset/AssetMetadata.hpp"
 #include "Asset/AudioSource.hpp"
 #include "Asset/Material.hpp"
 #include "Asset/Model.hpp"
@@ -53,7 +53,7 @@ public:
 
   auto create_asset(AssetType type, const std::filesystem::path& path = {}) -> UUID;
 
-  static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
+  static auto to_asset_file_type(const std::filesystem::path& path) -> FileFormat;
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
 
   auto import_asset(const std::filesystem::path& path) -> UUID;

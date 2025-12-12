@@ -4,30 +4,28 @@
 #include <span>
 #include <string_view>
 
+#include "Asset/AssetMetadata.hpp"
 #include "Core/Types.hpp"
 
 namespace ox {
-// Specialized string only for Asset Files
-struct AssetString {
-  u32 offset = 0;
-  u32 length = 0;
+struct AssetDataView {
+  u32 begin = 0;
+  u32 end = 0;
 
-  auto as_sv(std::span<c8> asset_data) -> std::string_view {
-    auto* ptr = asset_data.data() + offset;
-    return std::string_view(ptr, ptr + length);
+  auto as_str(std::span<u8> asset_data) -> std::string_view {
+    auto* ptr_begin = reinterpret_cast<c8*>(asset_data.data() + begin);
+    auto* ptr_end = reinterpret_cast<c8*>(asset_data.data() + end);
+    return std::string_view(ptr_begin, ptr_end);
   }
-};
 
-enum class AssetType : u32 {
-  None = 0,
-  Shader,
-  Model,
-  Texture,
-  Material,
-  Font,
-  Scene,
-  Audio,
-  Script,
+  template <typename T>
+  auto as_span(std::span<u8> asset_data) -> std::span<T> {
+    auto* ptr_begin = reinterpret_cast<T*>(asset_data.data() + begin);
+    auto* ptr_end = reinterpret_cast<T*>(asset_data.data() + end);
+    return std::span(ptr_begin, ptr_end);
+  }
+
+  auto empty() const -> bool { return begin == 0 && end == 0; }
 };
 
 struct ShaderAsset {
@@ -38,46 +36,36 @@ struct ShaderAsset {
     Count,
   };
 
-  struct Range {
-    u32 offset = 0;
-    u32 length = 0;
-  };
+  AssetDataView entry_points[EntryPointKind::Count] = {};
+  AssetDataView entry_point_names[EntryPointKind::Count] = {};
 
-  Range entry_point_ranges[EntryPointKind::Count] = {};
-  AssetString entry_point_names[EntryPointKind::Count] = {};
-
-  auto has_entry_point(EntryPointKind entry_point) -> bool { return entry_point_ranges[entry_point].length != 0; }
+  auto has_entry_point(EntryPointKind entry_point) -> bool { return !entry_points[entry_point].empty(); }
 };
 
-// List of file extensions supported by Engine.
-enum class AssetFileType : u32 {
-  None = 0,
-  Binary,
-  Meta,
-  GLB,
-  GLTF,
-  PNG,
-  JPEG,
-  DDS,
-  JSON,
-  KTX2,
-  LUA,
+union AssetData {
+  u32 placeholder = 0;
+  ShaderAsset shader;
+};
+
+struct AssetFileEntry {
+  UUID uuid = {};
+  u32 data_size = 0;
+  u32 data_offset = 0;
+  AssetType type = AssetType::None;
+  AssetData asset = {};
 };
 
 enum class AssetFileFlags : u32 {
   None = 0,
+  Packed = 1 << 0,
 };
 consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
-  c8 magic[2] = {'O', 'X'};
-  u16 version = 1;
+  u32 magic = 1129470031; // OXRC
+  u16 version = 10;
   AssetFileFlags flags = AssetFileFlags::None;
-  AssetType type = AssetType::None;
-  union {
-    u32 placeholder = 0;
-    ShaderAsset shader;
-  };
-  u8 data = 0;
+  u32 asset_count = 0;
 };
+
 } // namespace ox

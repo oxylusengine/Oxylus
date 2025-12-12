@@ -304,13 +304,19 @@ auto Session::output_to(const std::filesystem::path& path) -> void {
     return;
   }
 
-  auto writer = File(path, FileAccess::Write);
-  writer.write_data("OXRC", 4);
-  writer.write_trivial(impl->version);
-
   // at this point we dont care about concurrency, so lock the entire function
   auto read_lock = std::shared_lock(impl->assets_mutex);
   auto assets = impl->assets.slots_unsafe();
+
+  auto flags = AssetFileFlags::None;
+  if (impl->pack) {
+    flags |= AssetFileFlags::Packed;
+  }
+
+  auto writer = File(path, FileAccess::Write);
+  writer.write_data("OXRC", 4);
+  writer.write_trivial(impl->version);
+  writer.write_trivial(flags);
   writer.write_trivial(static_cast<u32>(assets.size()));
 
   auto header_data_offset = 0_u32;
@@ -321,7 +327,7 @@ auto Session::output_to(const std::filesystem::path& path) -> void {
     writer.write_trivial(static_cast<u32>(header_data_offset));
     switch (asset.type) {
       case AssetType::Shader: {
-        writer.write(asset.shader.entry_point_ranges);
+        writer.write(asset.shader.entry_points);
         writer.write(asset.shader.entry_point_names);
       } break;
       default:;

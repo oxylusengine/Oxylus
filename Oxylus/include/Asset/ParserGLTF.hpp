@@ -7,7 +7,7 @@
 #include <variant>
 #include <vuk/runtime/vk/Image.hpp>
 
-#include "Asset/AssetFile.hpp"
+#include "Asset/AssetMetadata.hpp"
 #include "Core/Option.hpp"
 
 namespace ox {
@@ -26,7 +26,7 @@ struct GLTFSamplerInfo {
 
 struct GLTFImageInfo {
   std::string name = {};
-  AssetFileType file_type = {};
+  FileFormat file_type = {};
   std::variant<std::filesystem::path, std::vector<u8>> image_data = {};
 };
 

@@ -61,13 +61,13 @@ static auto to_vuk_sampler_address_mode(fastgltf::Wrap w) -> vuk::SamplerAddress
   }
 }
 
-static auto to_asset_file_type(fastgltf::MimeType mime) -> AssetFileType {
+static auto to_asset_file_type(fastgltf::MimeType mime) -> FileFormat {
   switch (mime) {
-    case fastgltf::MimeType::JPEG: return AssetFileType::JPEG;
-    case fastgltf::MimeType::PNG : return AssetFileType::PNG;
-    case fastgltf::MimeType::KTX2: return AssetFileType::KTX2;
-    case fastgltf::MimeType::DDS : return AssetFileType::DDS;
-    default                      : return AssetFileType::None;
+    case fastgltf::MimeType::JPEG: return FileFormat::JPEG;
+    case fastgltf::MimeType::PNG : return FileFormat::PNG;
+    case fastgltf::MimeType::KTX2: return FileFormat::KTX2;
+    case fastgltf::MimeType::DDS : return FileFormat::DDS;
+    default                      : return FileFormat::Unknown;
   }
 }
 

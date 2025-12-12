@@ -269,27 +269,27 @@ auto AssetManager::load_deferred_assets() -> void {
   deferred_load_queue.clear();
 }
 
-auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {
+auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> FileFormat {
   ZoneScoped;
   memory::ScopedStack stack;
 
   if (!path.has_extension()) {
-    return AssetFileType::None;
+    return FileFormat::Unknown;
   }
 
   auto extension = stack.to_upper(path.extension().string());
   switch (fnv64_str(extension)) {
-    case fnv64_c(".GLB")    : return AssetFileType::GLB;
-    case fnv64_c(".GLTF")   : return AssetFileType::GLTF;
-    case fnv64_c(".PNG")    : return AssetFileType::PNG;
+    case fnv64_c(".GLB")    : return FileFormat::GLB;
+    case fnv64_c(".GLTF")   : return FileFormat::GLTF;
+    case fnv64_c(".PNG")    : return FileFormat::PNG;
     case fnv64_c(".JPG")    :
-    case fnv64_c(".JPEG")   : return AssetFileType::JPEG;
-    case fnv64_c(".DDS")    : return AssetFileType::DDS;
-    case fnv64_c(".JSON")   : return AssetFileType::JSON;
-    case fnv64_c(".OXASSET"): return AssetFileType::Meta;
-    case fnv64_c(".KTX2")   : return AssetFileType::KTX2;
-    case fnv64_c(".LUA")    : return AssetFileType::LUA;
-    default                 : return AssetFileType::None;
+    case fnv64_c(".JPEG")   : return FileFormat::JPEG;
+    case fnv64_c(".DDS")    : return FileFormat::DDS;
+    case fnv64_c(".JSON")   : return FileFormat::JSON;
+    case fnv64_c(".OXASSET"): return FileFormat::Meta;
+    case fnv64_c(".KTX2")   : return FileFormat::KTX2;
+    case fnv64_c(".LUA")    : return FileFormat::Lua;
+    default                 : return FileFormat::Unknown;
   }
 }
 
@@ -337,22 +337,22 @@ auto AssetManager::import_asset(const std::filesystem::path& path) -> UUID {
 
   auto asset_type = AssetType::None;
   switch (this->to_asset_file_type(path)) {
-    case AssetFileType::Meta: {
+    case FileFormat::Meta: {
       return this->register_asset(path);
     }
-    case AssetFileType::GLB:
-    case AssetFileType::GLTF: {
+    case FileFormat::GLB:
+    case FileFormat::GLTF: {
       asset_type = AssetType::Model;
       break;
     }
-    case AssetFileType::PNG:
-    case AssetFileType::JPEG:
-    case AssetFileType::DDS:
-    case AssetFileType::KTX2: {
+    case FileFormat::PNG:
+    case FileFormat::JPEG:
+    case FileFormat::DDS:
+    case FileFormat::KTX2: {
       asset_type = AssetType::Texture;
       break;
     }
-    case ox::AssetFileType::LUA: {
+    case ox::FileFormat::Lua: {
       asset_type = AssetType::Script;
       break;
     }
@@ -838,8 +838,8 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
         auto& image = images[image_index.value()];
 
         switch (image.file_type) {
-          case AssetFileType::KTX2: inf.mime = TextureLoadInfo::MimeType::KTX; break;
-          case AssetFileType::DDS : inf.mime = TextureLoadInfo::MimeType::DDS; break;
+          case FileFormat::KTX2: inf.mime = TextureLoadInfo::MimeType::KTX; break;
+          case FileFormat::DDS : inf.mime = TextureLoadInfo::MimeType::DDS; break;
           default                 : inf.mime = TextureLoadInfo::MimeType::Generic; break;
         }
 
