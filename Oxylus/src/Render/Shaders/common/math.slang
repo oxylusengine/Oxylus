@@ -6,14 +6,33 @@ public static constexpr f32 TAU = 6.283185307179586476925286766559;
 
 public namespace com {
 /// PHASE FUNCTIONS
+// Refer to https://eugenedeon.com/hitchhikers (v0.3.2)
+
+// 4.1
+//  (Howell et al., 2016, p.754) state that “In nature, however, no object scatters light isotropically”.
+//  However, in 3D, spherical particles with perfect mirror surfaces produce isotropic scattering (Hauge,
+//  1970) (in a far-eld (parallel) sense, assuming geometrical optics). This interesting property is not
+//  true in other dimensions.
+
 public constexpr func uniform_phase() -> f32 {
     return 1.0 / (4.0 * PI);
 }
+
+// 4.3
+//  Rayleigh scattering is the primary scattering process that makes the sky blue. This is due to light
+//  scattering with the air molecules. Sky models for visible light also include Mie scattering for dust
+//  particles (Preetham et al., 1999; Bruneton and Neyret, 2008; Bruneton, 2016; Hillaire, 2020). Ko-
+//  rkin et al. (2020) provides benchmark solutions for Rayleigh scattering in spherical atmospheres.
+//  Rayleigh scattering can also approximate the scattering from cigarette smoke (Rushmeier, 1995).
 
 public func rayleigh_phase(f32 altitude) -> f32 {
     const f32 k = 3.0 / (16.0 * PI);
     return k * (1.0 + altitude * altitude);
 }
+
+// 4.19
+//  Cornette and Shanks (1992) proposed an analytic parametric phase function has been used to ap-
+//  proximate Mie scattering in physically-based sky models.
 
 public func cornette_shanks_phase(f32 g, f32 altitude) -> f32 {
     const f32 g2 = g * g;
@@ -29,6 +48,12 @@ public func henyey_greenstein_phase(f32 g, f32 cos_theta) -> f32 {
     const f32 denom = 1.0 + g2 - 2.0 * g * cos_theta;
     return (1.0 - g2) / (4.0 * PI * denom * sqrt(denom));
 }
+
+// 4.20
+//  Draine (2003) generalized the Cornette-Shanks phase function with asymmetry parameter −1 < a <
+//  1 (which acts much like the mean cosine control д in Henyey-Greenstein), and an additional shape
+//  control α ≥ −1. Cornette-Shanks is recovered with α = 1 and Henyey-Greenstein with α = 0. For
+//  α = 1 and a = 0, Rayleigh scattering results.
 
 public func draine_phase(f32 alpha, f32 g, f32 cos_theta) -> f32 {
     return (1.0 / (4.0 * PI)) *
