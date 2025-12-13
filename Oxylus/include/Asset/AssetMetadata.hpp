@@ -64,21 +64,22 @@ struct AudioMetadata {};
 
 struct ScriptMetadata {};
 
+using AssetVariant = std::variant<
+  ShaderMetadata,
+  ModelMetadata,
+  TextureMetadata,
+  MaterialMetadata,
+  FontMetadata,
+  AudioMetadata,
+  ScriptMetadata>;
+
 struct AssetMetadata {
   UUID uuid = {};
   AssetType type = AssetType::None;
-  std::variant<
-    ShaderMetadata,
-    ModelMetadata,
-    TextureMetadata,
-    MaterialMetadata,
-    FontMetadata,
-    AudioMetadata,
-    ScriptMetadata>
-    kind;
+  AssetVariant variant = {};
 
   static auto from_file(std::filesystem::path& path) -> option<AssetMetadata>;
-  static auto from_string(std::string_view str) -> option<AssetMetadata>;
+  static auto from_string(std::string_view str, usize padded_capacity) -> option<AssetMetadata>;
 };
 
 } // namespace ox
