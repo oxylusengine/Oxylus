@@ -93,8 +93,10 @@ static bool drag_drop_target(const std::filesystem::path& drop_path) {
         counter++;
       } while (std::filesystem::exists(file_path / ".oxasset"));
 
-      if (!asset_man.export_asset(asset->uuid, file_path))
-        OX_LOG_ERROR("Couldn't export asset!");
+      OX_DEBUGBREAK(); // TODO: Exporting is removed with RC
+
+      // if (!asset_man.export_asset(asset->uuid, file_path))
+      //   OX_LOG_ERROR("Couldn't export asset!");
       return true;
     }
 
@@ -566,12 +568,14 @@ void ContentPanel::render_body(bool grid) {
             rp->set_name(name);
 
             auto& asset_man = App::mod<AssetManager>();
-            if (auto asset_uuid = asset_man.import_asset(file.file_path); asset_uuid) {
-              if (asset_man.load_model(asset_uuid)) {
-                auto* mesh_asset = asset_man.get_model(asset_uuid);
-                rp->set_model(mesh_asset);
-              }
-            }
+            OX_DEBUGBREAK(); // TODO: Exporting is removed with RC
+
+            // if (auto asset_uuid = asset_man.import_asset(file.file_path); asset_uuid) {
+            //   if (asset_man.load_model(asset_uuid)) {
+            //     auto* mesh_asset = asset_man.get_model(asset_uuid);
+            //     rp->set_model(mesh_asset);
+            //   }
+            // }
 
             auto thumb = rp->render(
                              vk_context,
@@ -824,12 +828,14 @@ void ContentPanel::render_body(bool grid) {
         auto& asset_man = App::mod<AssetManager>();
         auto asset = asset_man.create_asset(AssetType::Material, _current_directory.string());
         asset_man.load_asset(asset);
-        if (asset_man.export_asset(asset, (_current_directory / new_asset_name_).string())) {
-          OX_LOG_INFO("Created new material asset {}", new_asset_name_);
-          refresh();
-        } else {
-          OX_LOG_ERROR("Couldn't create material asset {}", new_asset_name_);
-        }
+        OX_DEBUGBREAK(); // TODO(RC): Exporting is removed with TC
+
+        // if (asset_man.export_asset(asset, (_current_directory / new_asset_name_).string())) {
+        //   OX_LOG_INFO("Created new material asset {}", new_asset_name_);
+        //   refresh();
+        // } else {
+        //   OX_LOG_ERROR("Couldn't create material asset {}", new_asset_name_);
+        // }
         new_asset_name_.clear();
         should_open_new_asset_popup = false;
         ImGui::CloseCurrentPopup();

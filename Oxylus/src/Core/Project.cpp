@@ -68,15 +68,18 @@ auto AssetDirectory::add_subdir(this AssetDirectory& self, std::unique_ptr<Asset
 }
 
 auto AssetDirectory::add_asset(this AssetDirectory& self, const std::filesystem::path& dir_path) -> UUID {
-  auto& asset_man = App::mod<AssetManager>();
-  auto asset_uuid = asset_man.import_asset(dir_path);
-  if (!asset_uuid) {
-    return UUID(nullptr);
-  }
+  // auto& asset_man = App::mod<AssetManager>();
+  // auto asset_uuid = asset_man.import_asset(dir_path);
+  // if (!asset_uuid) {
+  //   return UUID(nullptr);
+  // }
+  //
+  // self.asset_uuids.emplace(asset_uuid);
+  //
+  // return asset_uuid;
 
-  self.asset_uuids.emplace(asset_uuid);
-
-  return asset_uuid;
+  OX_DEBUGBREAK(); // TODO(RC): Removed with RC
+  return UUID(nullptr);
 }
 
 auto AssetDirectory::refresh(this AssetDirectory& self) -> void { populate_directory(&self, {}); }

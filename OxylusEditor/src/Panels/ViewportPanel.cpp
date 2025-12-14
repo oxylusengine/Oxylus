@@ -252,8 +252,10 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         }
         if (path.extension() == ".gltf" || path.extension() == ".glb") {
           auto& asset_man = App::mod<AssetManager>();
-          if (auto asset = asset_man.import_asset(path))
-            scene_->create_model_entity(asset);
+          OX_DEBUGBREAK(); // TODO(RC): Importing is removed with RC
+
+          // if (auto asset = asset_man.import_asset(path))
+          //   scene_->create_model_entity(asset);
         }
       }
 

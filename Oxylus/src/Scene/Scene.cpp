@@ -147,7 +147,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     if (it.event() == flecs::OnAdd) {
       if (!c.material) {
         c.material = asset_man.create_asset(AssetType::Material, {});
-        asset_man.load_material(c.material, Material{});
+        asset_man.load_asset(c.material);
       }
     }
   });
@@ -283,7 +283,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         }
         if (!c.material)
           c.material = asset_man.create_asset(AssetType::Material, {});
-        asset_man.load_material(c.material, Material{});
+        asset_man.load_asset(c.material);
 
         auto parent = it.entity(i);
         for (u32 k = 0; k < c.max_particles; k++) {
@@ -300,7 +300,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       } else if (it.event() == flecs::OnSet) {
         if (auto asset = asset_man.get_asset(c.material)) {
           if (!asset->is_loaded()) {
-            asset_man.load_material(c.material, Material{});
+            asset_man.load_asset(c.material);
           }
         }
 
@@ -654,9 +654,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       };
       material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
     });
-
-  auto& asset_man = App::mod<AssetManager>();
-  asset_man.set_all_materials_dirty();
 }
 
 auto Scene::physics_init(this Scene& self) -> void {
@@ -815,7 +812,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   }
 
   auto uuid_to_image_index = [&](const UUID& uuid) -> option<u32> {
-    if (!uuid || !asset_man.is_texture_loaded(uuid)) {
+    if (!uuid || !asset_man.is_loaded(uuid)) {
       return nullopt;
     }
 
@@ -1035,7 +1032,7 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   }
 
   // acquire model
-  if (!asset_man.load_model(asset_uuid)) {
+  if (!asset_man.load_asset(asset_uuid)) {
     return {};
   }
 

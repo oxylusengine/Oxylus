@@ -1,12 +1,16 @@
+// This file(including its header) is shared across multiple targets!
+// Do not use profiler markers because tracy might not be used for some of them.
+
 #include "Asset/AssetMetadata.hpp"
 
 #include <simdjson.h>
 
 #include "OS/File.hpp"
+#include "Utils/JsonWriter.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
-auto AssetMetadata::from_file(std::filesystem::path& path) -> option<AssetMetadata> {
+auto AssetMetadata::from_file(const std::filesystem::path& path) -> option<AssetMetadata> {
   auto file = File(path, FileAccess::Read);
   if (!file) {
     return nullopt;
@@ -20,7 +24,7 @@ auto AssetMetadata::from_file(std::filesystem::path& path) -> option<AssetMetada
 }
 
 auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> option<AssetMetadata> {
-  auto print_error = [](auto v) {
+  auto log_error = [](auto v) {
     OX_LOG_ERROR("Failed to parse meta file! {}", simdjson::error_message(v));
   };
 
@@ -29,13 +33,13 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
   auto parser = simdjson::ondemand::parser{};
   auto doc = parser.iterate(contents);
   if (doc.error()) {
-    print_error(doc.error());
+    log_error(doc.error());
     return nullopt;
   }
 
   auto uuid_json = doc["uuid"].get_string();
   if (uuid_json.error()) {
-    print_error(uuid_json.error());
+    log_error(uuid_json.error());
     return nullopt;
   }
 
@@ -47,7 +51,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
 
   auto type_json = doc["type"].get_uint64();
   if (type_json.error()) {
-    print_error(type_json.error());
+    log_error(type_json.error());
     return nullopt;
   }
 
@@ -58,7 +62,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
     case AssetType::Model: {
       auto embedded_textures_json = doc["embedded_textures"].get_array();
       if (embedded_textures_json.error()) {
-        print_error(embedded_textures_json.error());
+        log_error(embedded_textures_json.error());
         return nullopt;
       }
 
@@ -66,7 +70,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
       for (auto embedded_texture_json : embedded_textures_json) {
         auto embedded_texture_uuid_str = embedded_texture_json.get_string();
         if (embedded_texture_uuid_str.error()) {
-          print_error(embedded_texture_uuid_str.error());
+          log_error(embedded_texture_uuid_str.error());
           return nullopt;
         }
 
@@ -81,7 +85,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
 
       auto embedded_materials_json = doc["embedded_materials"].get_array();
       if (embedded_materials_json.error()) {
-        print_error(embedded_materials_json.error());
+        log_error(embedded_materials_json.error());
         return nullopt;
       }
 
@@ -89,7 +93,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
       for (auto embedded_material_json : embedded_materials_json) {
         auto embedded_material_uuid_str = embedded_material_json.get_string();
         if (embedded_material_uuid_str.error()) {
-          print_error(embedded_material_uuid_str.error());
+          log_error(embedded_material_uuid_str.error());
           return nullopt;
         }
 
@@ -110,13 +114,13 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
     case AssetType::Material: {
       auto sampling_mode_json = doc["sampling_mode"].get_uint64();
       if (sampling_mode_json.error()) {
-        print_error(sampling_mode_json.error());
+        log_error(sampling_mode_json.error());
         return nullopt;
       }
 
       auto albedo_color_json = doc["albedo_color"].get_array();
       if (albedo_color_json.error()) {
-        print_error(albedo_color_json.error());
+        log_error(albedo_color_json.error());
         return nullopt;
       }
 
@@ -124,7 +128,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
       for (usize i = 0; i < 4 && i < albedo_color_json.count_elements(); ++i) {
         auto color_value = albedo_color_json.at(i).get_double();
         if (color_value.error()) {
-          print_error(color_value.error());
+          log_error(color_value.error());
           return nullopt;
         }
         albedo_color[i] = static_cast<f32>(color_value.value());
@@ -132,7 +136,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
 
       auto emissive_color_json = doc["emissive_color"].get_array();
       if (emissive_color_json.error()) {
-        print_error(emissive_color_json.error());
+        log_error(emissive_color_json.error());
         return nullopt;
       }
 
@@ -140,7 +144,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
       for (usize i = 0; i < 3 && i < emissive_color_json.count_elements(); ++i) {
         auto color_value = emissive_color_json.at(i).get_double();
         if (color_value.error()) {
-          print_error(color_value.error());
+          log_error(color_value.error());
           return nullopt;
         }
         emissive_color[i] = static_cast<f32>(color_value.value());
@@ -148,31 +152,31 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
 
       auto roughness_factor_json = doc["roughness_factor"].get_double();
       if (roughness_factor_json.error()) {
-        print_error(roughness_factor_json.error());
+        log_error(roughness_factor_json.error());
         return nullopt;
       }
 
       auto metallic_factor_json = doc["metallic_factor"].get_double();
       if (metallic_factor_json.error()) {
-        print_error(metallic_factor_json.error());
+        log_error(metallic_factor_json.error());
         return nullopt;
       }
 
       auto alpha_mode_json = doc["alpha_mode"].get_uint64();
       if (alpha_mode_json.error()) {
-        print_error(alpha_mode_json.error());
+        log_error(alpha_mode_json.error());
         return nullopt;
       }
 
       auto alpha_cutoff_json = doc["alpha_cutoff"].get_double();
       if (alpha_cutoff_json.error()) {
-        print_error(alpha_cutoff_json.error());
+        log_error(alpha_cutoff_json.error());
         return nullopt;
       }
 
       auto albedo_texture_uuid_str = doc["albedo_texture"].get_string();
       if (albedo_texture_uuid_str.error()) {
-        print_error(albedo_texture_uuid_str.error());
+        log_error(albedo_texture_uuid_str.error());
         return nullopt;
       }
       auto albedo_texture = UUID::from_string(doc["albedo_texture"]);
@@ -183,7 +187,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
 
       auto normal_texture_uuid_str = doc["normal_texture"].get_string();
       if (normal_texture_uuid_str.error()) {
-        print_error(normal_texture_uuid_str.error());
+        log_error(normal_texture_uuid_str.error());
         return nullopt;
       }
       auto normal_texture = UUID::from_string(doc["normal_texture"]);
@@ -194,7 +198,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
 
       auto emissive_texture_uuid_str = doc["emissive_texture"].get_string();
       if (emissive_texture_uuid_str.error()) {
-        print_error(emissive_texture_uuid_str.error());
+        log_error(emissive_texture_uuid_str.error());
         return nullopt;
       }
       auto emissive_texture = UUID::from_string(doc["emissive_texture"]);
@@ -205,7 +209,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
 
       auto metallic_roughness_texture_uuid_str = doc["metallic_roughness_texture"].get_string();
       if (metallic_roughness_texture_uuid_str.error()) {
-        print_error(metallic_roughness_texture_uuid_str.error());
+        log_error(metallic_roughness_texture_uuid_str.error());
         return nullopt;
       }
       auto metallic_roughness_texture = UUID::from_string(doc["metallic_roughness_texture"]);
@@ -216,7 +220,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
 
       auto occlusion_texture_uuid_str = doc["occlusion_texture"].get_string();
       if (occlusion_texture_uuid_str.error()) {
-        print_error(occlusion_texture_uuid_str.error());
+        log_error(occlusion_texture_uuid_str.error());
         return nullopt;
       }
       auto occlusion_texture = UUID::from_string(doc["occlusion_texture"]);
@@ -240,13 +244,18 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
         .occlusion_texture = occlusion_texture.value()
       };
     } break;
-    case AssetType::Texture:
-    case AssetType::Font:
-    case AssetType::Scene:
-    case AssetType::Audio:
-    case AssetType::Script:
-    case AssetType::Shader:
-    case AssetType::None   :;
+    case AssetType::Scene: {
+      auto name_json = doc["name"].get_string();
+      if (name_json.error()) {
+        log_error(name_json.error());
+        return nullopt;
+      }
+
+      variant = SceneMetadata{
+        .name = std::string(name_json.value_unsafe()),
+      };
+    } break;
+    default:;
   }
 
   return AssetMetadata{
@@ -255,4 +264,62 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
     .variant = variant,
   };
 }
+
+auto AssetMetadata::to_string(this AssetMetadata& self) -> std::string {
+  auto writer = JsonWriter{};
+
+  writer.begin_obj();
+  writer["uuid"] = self.uuid.str();
+  writer["type"] = std::to_underlying(self.type);
+  std::visit(
+    ox::match{
+      [](const auto&) {},
+      [&](const MaterialMetadata& v) {
+        writer["sampling_mode"] = v.sampling_mode;
+        writer["albedo_color"] = v.albedo_color;
+        writer["emissive_color"] = v.emissive_color;
+        writer["roughness_factor"] = v.roughness_factor;
+        writer["metallic_factor"] = v.metallic_factor;
+        writer["alpha_mode"] = v.alpha_mode;
+        writer["alpha_cutoff"] = v.alpha_cutoff;
+        writer["albedo_texture"] = v.albedo_texture.str();
+        writer["normal_texture"] = v.normal_texture.str();
+        writer["emissive_texture"] = v.emissive_texture.str();
+        writer["metallic_roughness_texture"] = v.metallic_roughness_texture.str();
+        writer["occlusion_texture"] = v.occlusion_texture.str();
+      },
+      [&](const ModelMetadata& v) {
+        writer["embedded_textures"].begin_array();
+        for (const auto& embedded_texture_uuid : v.embedded_texture_uuids) {
+          writer << embedded_texture_uuid.str();
+        }
+        writer.end_array();
+
+        writer["embedded_materials"].begin_array();
+        for (const auto& material_uuid : v.material_uuids) {
+          writer << material_uuid.str();
+        }
+        writer.end_array();
+      },
+      [&](const SceneMetadata& v) { //
+        writer["name"] = v.name;
+      }
+    },
+    self.variant
+  );
+  writer.end_obj();
+
+  return writer.stream.str();
+}
+
+auto AssetMetadata::to_file(this AssetMetadata& self, const std::filesystem::path& path) -> void {
+  auto file = File(path, FileAccess::Write);
+  if (!file) {
+    return;
+  }
+
+  auto str = self.to_string();
+  file.write(str);
+}
+
 } // namespace ox

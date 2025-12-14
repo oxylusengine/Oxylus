@@ -40,18 +40,22 @@ InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION
   auto& event_system = App::get_event_system();
   auto& asset_man = App::mod<AssetManager>();
 
-  auto r1 = event_system.subscribe<DialogLoadEvent>([&asset_man](const DialogLoadEvent& e) {
-    if (auto imported = asset_man.import_asset(e.path)) {
-      if (e.asset_uuid) {
-        if (*e.asset_uuid)
-          asset_man.unload_asset(*e.asset_uuid);
-        *e.asset_uuid = imported;
-      }
-    }
+  auto r1 = event_system.subscribe<DialogLoadEvent>([](const DialogLoadEvent& e) {
+    OX_DEBUGBREAK(); // TODO(RC): Importing is removed with RC
+
+    // if (auto imported = asset_man.import_asset(e.path)) {
+    //   if (e.asset_uuid) {
+    //     if (*e.asset_uuid)
+    //       asset_man.unload_asset(*e.asset_uuid);
+    //     *e.asset_uuid = imported;
+    //   }
+    // }
   });
 
-  auto r2 = event_system.subscribe<DialogSaveEvent>([&asset_man](const DialogSaveEvent& e) {
-    asset_man.export_asset(e.asset_uuid, e.path);
+  auto r2 = event_system.subscribe<DialogSaveEvent>([](const DialogSaveEvent& e) {
+    OX_DEBUGBREAK(); // TODO(RC): Exporting is removed with RC
+
+    // asset_man.export_asset(e.asset_uuid, e.path);
   });
 }
 
@@ -516,15 +520,17 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                   const auto payload = PayloadData::from_payload(imgui_payload);
                   if (payload->get_str().empty())
                     return;
-                  if (auto imported_asset = asset_man.import_asset(payload->str)) {
-                    if (auto existing_asset = asset_man.get_asset(*uuid)) {
-                      asset_man.unload_asset(existing_asset->uuid);
-                    }
-                    if (asset_man.load_asset(imported_asset)) {
-                      *uuid = imported_asset;
-                      entity.modified(component);
-                    }
-                  }
+                  OX_DEBUGBREAK(); // TODO(RC): Importing is removed with RC
+
+                  // if (auto imported_asset = asset_man.import_asset(payload->str)) {
+                  //   if (auto existing_asset = asset_man.get_asset(*uuid)) {
+                  //     asset_man.unload_asset(existing_asset->uuid);
+                  //   }
+                  //   if (asset_man.load_asset(imported_asset)) {
+                  //     *uuid = imported_asset;
+                  //     entity.modified(component);
+                  //   }
+                  // }
                 }
                 ImGui::EndDragDropTarget();
               }
@@ -533,6 +539,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
 
               if (auto asset = asset_man.get_asset(*uuid)) {
                 switch (asset->type) {
+                  case ox::AssetType::Meta:
                   case ox::AssetType::None: {
                     break;
                   }

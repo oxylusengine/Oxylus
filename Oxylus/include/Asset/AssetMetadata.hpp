@@ -24,6 +24,7 @@ enum class FileFormat : u32 {
 
 enum class AssetType : u32 {
   None = 0,
+  Meta,
   Shader,
   Model,
   Texture,
@@ -36,6 +37,7 @@ enum class AssetType : u32 {
 
 struct ShaderMetadata {};
 
+struct MaterialMetadata;
 struct ModelMetadata {
   std::vector<UUID> embedded_texture_uuids = {};
   std::vector<UUID> material_uuids = {};
@@ -60,6 +62,10 @@ struct MaterialMetadata {
 
 struct FontMetadata {};
 
+struct SceneMetadata {
+  std::string name = {};
+};
+
 struct AudioMetadata {};
 
 struct ScriptMetadata {};
@@ -70,6 +76,7 @@ using AssetVariant = std::variant<
   TextureMetadata,
   MaterialMetadata,
   FontMetadata,
+  SceneMetadata,
   AudioMetadata,
   ScriptMetadata>;
 
@@ -78,8 +85,10 @@ struct AssetMetadata {
   AssetType type = AssetType::None;
   AssetVariant variant = {};
 
-  static auto from_file(std::filesystem::path& path) -> option<AssetMetadata>;
+  static auto from_file(const std::filesystem::path& path) -> option<AssetMetadata>;
   static auto from_string(std::string_view str, usize padded_capacity) -> option<AssetMetadata>;
+  auto to_string(this AssetMetadata&) -> std::string;
+  auto to_file(this AssetMetadata&, const std::filesystem::path& path) -> void;
 };
 
 } // namespace ox

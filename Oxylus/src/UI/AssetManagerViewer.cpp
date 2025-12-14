@@ -105,7 +105,7 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
 
   auto& asset_man = App::mod<AssetManager>();
 
-  const auto& registry = asset_man.registry();
+  const auto& registry = asset_man.get_registry();
 
   for (const auto& [uuid, asset] : registry) {
     if (uuid) {
@@ -113,6 +113,7 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
         continue;
       }
       switch (asset.type) {
+        case AssetType::Meta:
         case AssetType::None  : break;
         case AssetType::Shader: {
           shader_assets.emplace_back(asset);

@@ -13,6 +13,21 @@
 using Preset = vuk::ImageAttachment::Preset;
 
 namespace ox {
+struct SamplerInfo {
+  vuk::Filter min_filter = vuk::Filter::eLinear;
+  vuk::Filter mag_filter = vuk::Filter::eLinear;
+  vuk::SamplerMipmapMode mipmap_mode = vuk::SamplerMipmapMode::eLinear;
+  vuk::SamplerAddressMode addr_u = vuk::SamplerAddressMode::eRepeat;
+  vuk::SamplerAddressMode addr_v = vuk::SamplerAddressMode::eRepeat;
+  vuk::SamplerAddressMode addr_w = vuk::SamplerAddressMode::eRepeat;
+  vuk::CompareOp compare_op = vuk::CompareOp::eNever;
+  f32 max_anisotropy = 1.0f;
+  f32 mip_lod_bias = 0.0f;
+  f32 min_lod = 0.0f;
+  f32 max_lod = 1000.0f;
+  bool use_anisotropy = false;
+};
+
 struct TextureLoadInfo {
   Preset preset = Preset::eMap2D;
   vuk::Format format = vuk::Format::eR8G8B8A8Srgb;

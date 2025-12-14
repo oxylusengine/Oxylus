@@ -2,7 +2,6 @@
 
 #include <vuk/vsl/Core.hpp>
 
-#include "Asset/AssetManager.hpp"
 #include "Core/EventSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
@@ -143,7 +142,6 @@ void App::run(this App& self) {
   self.job_manager.wait();
 
   auto has_input_mod = self.registry.has<Input>();
-  auto has_asset_manager_mod = self.registry.has<AssetManager>();
 
   while (self.is_running) {
     const i32 frame_limit = RendererCVar::cvar_frame_limit.get();
@@ -164,9 +162,6 @@ void App::run(this App& self) {
 
     if (has_input_mod)
       self.mod<Input>().reset_pressed();
-
-    if (has_asset_manager_mod)
-      self.mod<AssetManager>().load_deferred_assets();
 
     FrameMark;
   }

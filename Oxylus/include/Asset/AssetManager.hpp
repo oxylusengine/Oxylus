@@ -10,7 +10,6 @@
 #include "Memory/SlotMap.hpp"
 #include "Scene/Scene.hpp"
 #include "Scripting/LuaSystem.hpp"
-#include "Utils/JsonWriter.hpp"
 
 namespace ox {
 struct Asset {
@@ -36,30 +35,25 @@ struct Asset {
   auto release_ref() -> bool { return --std::atomic_ref(ref_count) == 0; }
 };
 
-struct AssetMetaFile;
 using AssetRegistry = ankerl::unordered_dense::map<UUID, Asset>;
 class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
-  auto init() -> std::expected<void, std::string>;
-  auto deinit() -> std::expected<void, std::string>;
-
-  auto registry() const -> const AssetRegistry&;
-
-  auto read_meta_file(const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
-
-  auto load_deferred_assets() -> void;
-
-  auto create_asset(AssetType type, const std::filesystem::path& path = {}) -> UUID;
-
-  static auto to_asset_file_type(const std::filesystem::path& path) -> FileFormat;
+  static auto to_file_format(const std::filesystem::path& path) -> FileFormat;
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
 
-  auto import_asset(const std::filesystem::path& path) -> UUID;
+  auto init(this AssetManager&) -> std::expected<void, std::string>;
+  auto deinit(this AssetManager&) -> std::expected<void, std::string>;
 
-  auto delete_asset(const UUID& uuid) -> void;
-  auto is_valid(const UUID& uuid) -> bool;
+  auto asset_root_path(this AssetManager&, AssetType type) -> std::filesystem::path;
+  auto get_registry(this AssetManager&) -> const AssetRegistry&;
+
+  //  ── Created Assets ──────────────────────────────────────────────────
+  // Assets that will be created and asinged new UUID.
+  // All created assets will be automatically registered into the registry.
+  //
+  auto create_asset(this AssetManager&, AssetType type, const std::filesystem::path& path = {}) -> UUID;
 
   //  ── Registered Assets ─────────────────────────────────────────────────
   // Assets that already exist in project root and have meta file with
@@ -67,65 +61,41 @@ public:
   //
   // Add already existing asset into the registry.
   // File must end with `.oxasset` extension.
-  auto register_asset(const std::filesystem::path& path) -> UUID;
-  auto register_asset(const UUID& uuid, AssetType type, const std::filesystem::path& path) -> bool;
+  auto register_asset(this AssetManager&, const std::filesystem::path& path) -> UUID;
+  auto register_asset(this AssetManager&, const UUID& uuid, AssetType type, const std::filesystem::path& path) -> bool;
 
-  auto export_asset(const UUID& uuid, const std::filesystem::path& path) -> bool;
-  auto export_texture(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
-  auto export_model(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
-  auto export_scene(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
-  auto export_material(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
-  auto export_script(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
+  //  ── Load Assets ─────────────────────────────────────────────────────
+  // Load contents of __registered__ assets.
+  //
+  auto load_asset(this AssetManager&, const UUID& uuid) -> bool;
+  auto unload_asset(this AssetManager&, const UUID& uuid) -> bool;
 
-  auto load_asset(const UUID& uuid) -> bool;
-  auto unload_asset(const UUID& uuid) -> bool;
+  auto delete_asset(this AssetManager&, const UUID& uuid) -> void;
+  auto is_valid(this AssetManager&, const UUID& uuid) -> bool;
+  auto is_loaded(this AssetManager&, const UUID& uuid) -> bool;
 
-  auto load_model(const UUID& uuid) -> bool;
-  auto unload_model(const UUID& uuid) -> bool;
+  auto get_asset(this AssetManager&, const UUID& uuid) -> Borrowed<Asset>;
 
-  auto load_texture(const UUID& uuid, const TextureLoadInfo& info = {}) -> bool;
-  auto unload_texture(const UUID& uuid) -> bool;
-  auto is_texture_loaded(const UUID& uuid) -> bool;
+  auto get_model(this AssetManager&, const UUID& uuid) -> Model*;
+  auto get_model(this AssetManager&, ModelID mesh_id) -> Model*;
 
-  auto load_material(
-    const UUID& uuid,
-    const Material& material_info,
-    option<ankerl::unordered_dense::map<UUID, TextureLoadInfo>> texture_info_map = nullopt
-  ) -> bool;
-  auto unload_material(const UUID& uuid) -> bool;
+  auto get_texture(this AssetManager&, const UUID& uuid) -> Borrowed<Texture>;
+  auto get_texture(this AssetManager&, TextureID texture_id) -> Borrowed<Texture>;
 
-  auto load_scene(const UUID& uuid) -> bool;
-  auto unload_scene(const UUID& uuid) -> bool;
+  auto get_material(this AssetManager&, const UUID& uuid) -> Borrowed<Material>;
+  auto get_material(this AssetManager&, MaterialID material_id) -> Borrowed<Material>;
+  auto set_material_dirty(this AssetManager&, MaterialID material_id) -> void;
+  auto set_material_dirty(this AssetManager&, const UUID& uuid) -> void;
+  auto get_dirty_material_ids(this AssetManager&) -> std::vector<MaterialID>;
 
-  auto load_audio(const UUID& uuid) -> bool;
-  auto unload_audio(const UUID& uuid) -> bool;
+  auto get_scene(this AssetManager&, const UUID& uuid) -> Scene*;
+  auto get_scene(this AssetManager&, SceneID scene_id) -> Scene*;
 
-  auto load_script(const UUID& uuid) -> bool;
-  auto unload_script(const UUID& uuid) -> bool;
+  auto get_audio(this AssetManager&, const UUID& uuid) -> AudioSource*;
+  auto get_audio(this AssetManager&, AudioID audio_id) -> AudioSource*;
 
-  auto get_asset(const UUID& uuid) -> Borrowed<Asset>;
-
-  auto get_model(const UUID& uuid) -> Model*;
-  auto get_model(ModelID mesh_id) -> Model*;
-
-  auto get_texture(const UUID& uuid) -> Borrowed<Texture>;
-  auto get_texture(TextureID texture_id) -> Borrowed<Texture>;
-
-  auto get_material(const UUID& uuid) -> Borrowed<Material>;
-  auto get_material(MaterialID material_id) -> Borrowed<Material>;
-  auto set_material_dirty(MaterialID material_id) -> void;
-  auto set_material_dirty(const UUID& uuid) -> void;
-  auto set_all_materials_dirty(this AssetManager& self) -> void;
-  auto get_dirty_material_ids(this AssetManager& self) -> std::vector<MaterialID>;
-
-  auto get_scene(const UUID& uuid) -> Scene*;
-  auto get_scene(SceneID scene_id) -> Scene*;
-
-  auto get_audio(const UUID& uuid) -> AudioSource*;
-  auto get_audio(AudioID audio_id) -> AudioSource*;
-
-  auto get_script(const UUID& uuid) -> LuaSystem*;
-  auto get_script(ScriptID script_id) -> LuaSystem*;
+  auto get_script(this AssetManager&, const UUID& uuid) -> LuaSystem*;
+  auto get_script(this AssetManager&, ScriptID script_id) -> LuaSystem*;
 
 private:
   AssetRegistry asset_registry = {};
@@ -142,7 +112,5 @@ private:
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};
   SlotMap<AudioSource, AudioID> audio_map = {};
   SlotMap<std::unique_ptr<LuaSystem>, ScriptID> script_map = {};
-
-  std::vector<std::function<void()>> deferred_load_queue = {};
 };
 } // namespace ox

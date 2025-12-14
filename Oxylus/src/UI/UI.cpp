@@ -229,12 +229,13 @@ bool UI::texture_property(
   }
   if (ImGui::BeginDragDropTarget()) {
     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
-      const auto* p = PayloadData::from_payload(payload);
-      const auto path = p->get_str();
-      if (auto new_texture = asset_man.import_asset(path)) {
-        if (asset_man.load_texture(new_texture))
-          texture_uuid = new_texture;
-      }
+      OX_DEBUGBREAK(); // TODO(RC): removed with RC
+      // const auto* p = PayloadData::from_payload(payload);
+      // const auto path = p->get_str();
+      // if (auto new_texture = asset_man.import_asset(path)) {
+      //   if (asset_man.load_texture(new_texture))
+      //     texture_uuid = new_texture;
+      // }
       changed = true;
     }
     ImGui::EndDragDropTarget();
