@@ -21,7 +21,7 @@ auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
     }
   });
   std::ignore = event_system.subscribe<Editor::ViewportSceneLoadEvent>(
-    [&self](const Editor::ViewportSceneLoadEvent& e) { self.dock_should_update = true; }
+    [&self](const Editor::ViewportSceneLoadEvent& e) { self.update_dockspace(); }
   );
   std::ignore = event_system.subscribe<Editor::ScenePlayEvent>([&self](const Editor::ScenePlayEvent& e) {
     auto& editor = App::mod<Editor>();
@@ -31,13 +31,17 @@ auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
   });
   std::ignore = event_system.subscribe<Editor::SceneStopEvent>([&self](const Editor::SceneStopEvent& e) {
     auto should_stop_and_remove = [e, &self](const std::unique_ptr<ViewportPanel>& panel) {
+      if (!panel) {
+        return true;
+      }
+
       auto* editor_scene = panel->get_scene();
 
       if (editor_scene && editor_scene->get_id() == e.scene_id && editor_scene->is_playing()) {
         editor_scene->stop();
         auto& editor = App::mod<Editor>();
         editor.scene_manager.remove_scene(e.scene_id);
-        self.dock_should_update = true;
+        self.update_dockspace();
         return true;
       }
 
@@ -82,7 +86,7 @@ auto MainViewportPanel::add_new_scene(this MainViewportPanel& self, const std::s
   auto* viewport = self.add_viewport();
   viewport->set_context(scene);
 
-  self.dock_should_update = true;
+  self.update_dockspace();
 }
 
 auto MainViewportPanel::add_new_play_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene)
@@ -92,7 +96,7 @@ auto MainViewportPanel::add_new_play_scene(this MainViewportPanel& self, const s
   viewport->set_icon(ICON_MDI_CONTROLLER);
   viewport->set_name(fmt::format("Game:{}", scene->get_scene()->scene_name));
 
-  self.dock_should_update = true;
+  self.update_dockspace();
 }
 
 auto MainViewportPanel::add_viewport(this MainViewportPanel& self) -> ViewportPanel* {
@@ -100,7 +104,7 @@ auto MainViewportPanel::add_viewport(this MainViewportPanel& self) -> ViewportPa
   // this prevents on_render() from seeing it until on_update() has flushed the queue
   auto& viewport = self.pending_viewports.emplace_back(std::make_unique<ViewportPanel>());
 
-  self.dock_should_update = true;
+  self.update_dockspace();
 
   return viewport.get();
 }
@@ -163,6 +167,7 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
       std::make_move_iterator(self.pending_viewports.end())
     );
     self.pending_viewports.clear();
+    self.update_dockspace();
   }
 
   for (const auto& panel : self.viewport_panels) {
@@ -201,7 +206,10 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
   });
 }
 
-auto MainViewportPanel::update_dockspace(this MainViewportPanel& self) -> void { self.dock_should_update = true; }
+auto MainViewportPanel::update_dockspace(this MainViewportPanel& self) -> void {
+  ZoneScoped;
+  self.dock_should_update = true;
+}
 
 auto MainViewportPanel::set_dockspace(this const MainViewportPanel& self) -> void {
   auto dock_id = ImGui::GetID("ViewportDockspace");

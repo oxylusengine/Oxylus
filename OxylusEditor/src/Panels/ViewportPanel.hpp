@@ -17,25 +17,23 @@ public:
 
   ViewportPanel();
   ~ViewportPanel() override;
-  void drag_drop() const;
 
   auto on_render(vuk::ImageAttachment swapchain_attachment) -> void override;
-
-  auto set_context(const std::shared_ptr<EditorScene>& scene) -> void;
-  auto get_scene() const -> EditorScene* { return editor_scene_.get(); }
-
   auto on_update() -> void override;
+
+  auto set_context(this ViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void;
+  auto get_scene(this const ViewportPanel& self) -> EditorScene* { return self.editor_scene_.get(); }
+
+  void drag_drop(this const ViewportPanel& self);
 
 private:
   std::shared_ptr<EditorScene> editor_scene_ = nullptr;
   bool draw_scene_stats = false;
 
-  glm::vec2 viewport_size_ = {};
-  glm::vec2 viewport_bounds_[2] = {};
-  glm::vec2 viewport_panel_size_ = {};
-  glm::vec2 viewport_position_ = {};
-  glm::vec2 viewport_offset_ = {};
-  glm::vec2 gizmo_position_ = glm::vec2(1.0f, 1.0f);
+  ImVec2 viewport_bounds_[2] = {};
+  ImVec2 viewport_size = {};
+  ImVec2 viewport_position_ = {};
+  ImVec2 gizmo_position_ = ImVec2(1.0f, 1.0f);
   i32 gizmo_type_ = -1;
   i32 gizmo_mode_ = 0;
 

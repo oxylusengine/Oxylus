@@ -121,21 +121,6 @@ ViewportPanel::~ViewportPanel() {
     std::ignore = event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene_->get_id()));
 }
 
-void ViewportPanel::drag_drop() const {
-  if (ImGui::BeginDragDropTarget()) {
-    if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
-      const auto* payload = PayloadData::from_payload(imgui_payload);
-      const auto path = payload->get_path();
-      if (path.extension() == ".gltf" || path.extension() == ".glb") {
-        if (auto asset = App::mod<AssetManager>().import_asset(path))
-          editor_scene_->get_scene()->create_model_entity(asset);
-      }
-    }
-
-    ImGui::EndDragDropTarget();
-  }
-}
-
 void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar;
 
@@ -177,7 +162,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         gizmo_settings_popup = true;
       }
       auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
-      ImGui::SetCursorPosX(viewport_panel_size_.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
+      ImGui::SetCursorPosX(viewport_size.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
       if (ImGui::MenuItem(ICON_MDI_ARROW_EXPAND_ALL)) {
         fullscreen_viewport = !fullscreen_viewport;
       }
@@ -208,29 +193,28 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
     const ImVec2 viewport_min_region = ImGui::GetWindowContentRegionMin();
     const ImVec2 viewport_max_region = ImGui::GetWindowContentRegionMax();
-    viewport_position_ = glm::vec2(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y);
+    viewport_position_ = ImGui::GetWindowPos();
     viewport_bounds_[0] = {viewport_min_region.x + viewport_position_.x, viewport_min_region.y + viewport_position_.y};
     viewport_bounds_[1] = {viewport_max_region.x + viewport_position_.x, viewport_max_region.y + viewport_position_.y};
 
     is_viewport_focused = ImGui::IsWindowFocused();
     is_viewport_hovered = ImGui::IsWindowHovered();
 
-    viewport_panel_size_ = glm::vec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y);
-    viewport_size_ = {viewport_panel_size_.x, viewport_panel_size_.y};
+    viewport_size = ImGui::GetContentRegionAvail();
 
     constexpr auto sixteen_nine_ar = 1.7777777f;
-    const auto fixed_width = viewport_size_.y * sixteen_nine_ar;
-    ImGui::SetCursorPosX((viewport_panel_size_.x - fixed_width) * 0.5f);
+    const auto fixed_width = viewport_size.y * sixteen_nine_ar;
+    ImGui::SetCursorPosX((viewport_size.x - fixed_width) * 0.5f);
 
-    const auto off = (viewport_panel_size_.x - fixed_width) *
-                     0.5f; // add offset since we render image with fixed aspect ratio
-    viewport_offset_ = {viewport_bounds_[0].x + off * 0.5f, viewport_bounds_[0].y};
+    // add offset since we render image with fixed aspect ratio
+    // const auto off = (viewport_size.x - fixed_width) * 0.5f;
+    // const auto viewport_offset_ = {viewport_bounds_[0].x + off * 0.5f, viewport_bounds_[0].y};
 
     if (!editor_scene_) {
       const auto warning_text = "No scene!";
       const auto text_width = ImGui::CalcTextSize(warning_text).x;
-      ImGui::SetCursorPosX((viewport_size_.x - text_width) * 0.5f);
-      ImGui::SetCursorPosY(viewport_size_.y * 0.5f);
+      ImGui::SetCursorPosX((viewport_size.x - text_width) * 0.5f);
+      ImGui::SetCursorPosY(viewport_size.y * 0.5f);
       ImGui::Text(warning_text);
 
       on_end();
@@ -242,12 +226,12 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
     if (!renderer_instance) {
       const auto warning_text = "No scene render output!";
       const auto text_width = ImGui::CalcTextSize(warning_text).x;
-      ImGui::SetCursorPosX((viewport_size_.x - text_width) * 0.5f);
-      ImGui::SetCursorPosY(viewport_size_.y * 0.5f);
+      ImGui::SetCursorPosX((viewport_size.x - text_width) * 0.5f);
+      ImGui::SetCursorPosY(viewport_size.y * 0.5f);
       ImGui::Text(warning_text);
     } else {
       constexpr auto get_mouse_texel_coords =
-        [](glm::uvec2 render_size, glm::vec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos)
+        [](glm::uvec2 render_size, ImVec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos)
         -> glm::uvec2 {
         ImVec2 rendered_min = {window_pos.x + content_min.x, window_pos.y + content_min.y};
         ImVec2 rendered_max = {window_pos.x + content_max.x, window_pos.y + content_max.y};
@@ -292,7 +276,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
       auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
       editor_scene_->get_scene()->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
-      UI::image(std::move(scene_view_image), ImVec2{fixed_width, viewport_panel_size_.y});
+      UI::image(std::move(scene_view_image), ImVec2{fixed_width, viewport_size.y});
 
       drag_drop();
     }
@@ -311,22 +295,6 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   ImGui::PopStyleColor();
 
   on_end();
-}
-
-void ViewportPanel::set_context(const std::shared_ptr<EditorScene>& scene) {
-  OX_CHECK_NULL(scene);
-
-  this->editor_scene_ = scene;
-
-  set_name(fmt::format("Viewport:{}", scene->get_scene()->scene_name));
-
-  if (!scene->is_playing()) {
-    editor_camera = editor_scene_->get_scene()->create_entity("editor_camera", false);
-    editor_camera.add<CameraComponent>().add<Hidden>();
-  }
-
-  auto& event_system = App::get_event_system();
-  std::ignore = event_system.emit<Editor::ViewportSceneLoadEvent>(Editor::ViewportSceneLoadEvent{});
 }
 
 void ViewportPanel::on_update() {
@@ -424,11 +392,42 @@ void ViewportPanel::on_update() {
   cam.zoom = static_cast<float>(EditorCVar::cvar_camera_zoom.get());
 }
 
+void ViewportPanel::set_context(this ViewportPanel& self, const std::shared_ptr<EditorScene>& scene) {
+  OX_CHECK_NULL(scene);
+
+  self.editor_scene_ = scene;
+
+  self.set_name(fmt::format("Viewport:{}", scene->get_scene()->scene_name));
+
+  if (!scene->is_playing()) {
+    self.editor_camera = self.editor_scene_->get_scene()->create_entity("editor_camera", false);
+    self.editor_camera.add<CameraComponent>().add<Hidden>();
+  }
+
+  auto& event_system = App::get_event_system();
+  std::ignore = event_system.emit<Editor::ViewportSceneLoadEvent>(Editor::ViewportSceneLoadEvent{});
+}
+
+void ViewportPanel::drag_drop(this const ViewportPanel& self) {
+  if (ImGui::BeginDragDropTarget()) {
+    if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+      const auto* payload = PayloadData::from_payload(imgui_payload);
+      const auto path = payload->get_path();
+      if (path.extension() == ".gltf" || path.extension() == ".glb") {
+        if (auto asset = App::mod<AssetManager>().import_asset(path))
+          self.editor_scene_->get_scene()->create_model_entity(asset);
+      }
+    }
+
+    ImGui::EndDragDropTarget();
+  }
+}
+
 void ViewportPanel::draw_stats_overlay(bool draw) const {
   if (!performance_overlay_visible || !editor_scene_)
     return;
   auto work_pos = ImVec2(viewport_position_.x, viewport_position_.y);
-  auto work_size = ImVec2(viewport_panel_size_.x, viewport_panel_size_.y);
+  auto work_size = ImVec2(viewport_size.x, viewport_size.y);
   auto padding = glm::vec2{15, 55};
 
   ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
@@ -679,8 +678,8 @@ void ViewportPanel::draw_gizmos() {
     show_component_gizmo<LightComponent>(
       gizmo_icon_size_,
       "LightComponent",
-      viewport_panel_size_.x,
-      viewport_panel_size_.y,
+      viewport_size.x,
+      viewport_size.y,
       0,
       0,
       view_proj,
@@ -690,8 +689,8 @@ void ViewportPanel::draw_gizmos() {
     show_component_gizmo<AudioSourceComponent>(
       gizmo_icon_size_,
       "AudioSourceComponent",
-      viewport_panel_size_.x,
-      viewport_panel_size_.y,
+      viewport_size.x,
+      viewport_size.y,
       0,
       0,
       view_proj,
@@ -701,8 +700,8 @@ void ViewportPanel::draw_gizmos() {
     show_component_gizmo<AudioListenerComponent>(
       gizmo_icon_size_,
       "AudioListenerComponent",
-      viewport_panel_size_.x,
-      viewport_panel_size_.y,
+      viewport_size.x,
+      viewport_size.y,
       0,
       0,
       view_proj,
@@ -712,8 +711,8 @@ void ViewportPanel::draw_gizmos() {
     show_component_gizmo<CameraComponent>(
       gizmo_icon_size_,
       "CameraComponent",
-      viewport_panel_size_.x,
-      viewport_panel_size_.y,
+      viewport_size.x,
+      viewport_size.y,
       0,
       0,
       view_proj,
@@ -1207,7 +1206,7 @@ void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
   ImVec4 frame_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
   frame_color.w = 0.5f;
   ImGui::RenderFrame(bb.Min, bb.Max, ImGui::GetColorU32(frame_color), false, ImGui::GetStyle().FrameRounding);
-  const glm::vec2 temp_gizmo_position = gizmo_position_;
+  const auto temp_gizmo_position = gizmo_position_;
 
   ImGui::SetCursorPos(
     {start_cursor_pos.x + temp_gizmo_position.x + frame_padding.x, start_cursor_pos.y + temp_gizmo_position.y}
@@ -1281,7 +1280,7 @@ void ViewportPanel::scene_button_group(ImVec2 start_cursor_pos) {
   const ImVec2 button_size = {35.f, 25.f};
   const ImVec2 group_size = {button_size.x * button_count, button_size.y + y_pad};
 
-  ImGui::SetCursorPos({viewport_size_.x * 0.5f - (group_size.x * 0.5f), start_cursor_pos.y + y_pad});
+  ImGui::SetCursorPos({viewport_size.x * 0.5f - (group_size.x * 0.5f), start_cursor_pos.y + y_pad});
   ImGui::BeginGroup();
   {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
