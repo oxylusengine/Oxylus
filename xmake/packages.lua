@@ -55,7 +55,7 @@ packages = {
       sse4_1 = true,
       sse4_2 = true,
       tzcnt = true,
-      enable_floating_point_exceptions = true,
+      enable_floating_point_exceptions = false,
     },
   },
   ["tracy v0.12.2"] = {

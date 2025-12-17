@@ -10,20 +10,20 @@
 #include "OS/File.hpp"
 
 namespace ox {
-EditorConfig* EditorConfig::instance = nullptr;
-
 constexpr const char* EDITOR_CONFIG_FILE_NAME = "editor_config.toml";
 
-std::expected<void, std::string> EditorConfig::init() {
+std::expected<void, std::string> EditorConfig::init(this EditorConfig& self) {
   ZoneScoped;
   const auto& content = File::to_string(EDITOR_CONFIG_FILE_NAME);
-  if (content.empty())
-    return std::unexpected(fmt::format("Couldn't read {}", EDITOR_CONFIG_FILE_NAME));
+  if (content.empty()) {
+    self.write_file();
+    return {};
+  }
 
   toml::table toml = toml::parse(content);
   const auto config = toml["editor_config"];
   for (auto& project : *config["recent_projects"].as_array()) {
-    recent_projects.emplace_back(std::filesystem::path(**project.as_string()));
+    self.recent_projects.emplace_back(std::filesystem::path(**project.as_string()));
   }
 
   if (auto v = config["grid"].as_boolean())
@@ -46,10 +46,20 @@ std::expected<void, std::string> EditorConfig::init() {
   return {};
 }
 
-std::expected<void, std::string> EditorConfig::deinit() {
+std::expected<void, std::string> EditorConfig::deinit(this const EditorConfig& self) {
+  ZoneScoped;
+
+  self.write_file();
+
+  return {};
+}
+
+void EditorConfig::write_file(this const EditorConfig& self) {
+  ZoneScoped;
+
   toml::array recent_projects_array;
 
-  for (auto& project : recent_projects)
+  for (auto& project : self.recent_projects)
     recent_projects_array.emplace_back(project.string());
 
   const auto root = toml::table{
@@ -70,22 +80,22 @@ std::expected<void, std::string> EditorConfig::deinit() {
   std::stringstream ss;
   ss << "# Oxylus Editor config file \n";
   ss << root;
-  std::ofstream filestream(EDITOR_CONFIG_FILE_NAME);
-  filestream << ss.str();
-
-  return {};
+  auto file = File(EDITOR_CONFIG_FILE_NAME, FileAccess::Write);
+  file.write(ss.str());
+  file.close();
 }
 
-void EditorConfig::add_recent_project(const Project* project) {
-  for (auto& recent_project_path : recent_projects) {
+void EditorConfig::add_recent_project(this EditorConfig& self, const Project* project) {
+  for (auto& recent_project_path : self.recent_projects) {
     if (recent_project_path.filename() == project->get_project_file_path().filename()) {
       return;
     }
   }
-  recent_projects.emplace_back(project->get_project_file_path());
+
+  self.recent_projects.emplace_back(project->get_project_file_path());
 }
 
-auto EditorConfig::remove_recent_project(const std::filesystem::path& path) -> void {
-  std::erase_if(recent_projects, [path](const std::filesystem::path& e) { return e == path; });
+auto EditorConfig::remove_recent_project(this EditorConfig& self, const std::filesystem::path& path) -> void {
+  std::erase_if(self.recent_projects, [path](const std::filesystem::path& e) { return e == path; });
 }
 } // namespace ox

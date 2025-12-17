@@ -1,8 +1,8 @@
 #pragma once
 
 #include <expected>
-#include <string>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include "Utils/CVars.hpp"
@@ -34,15 +34,17 @@ class EditorConfig {
 public:
   constexpr static auto MODULE_NAME = "EditorConfig";
 
-  auto init() -> std::expected<void, std::string>;
-  auto deinit() -> std::expected<void, std::string>;
+  auto init(this EditorConfig& self) -> std::expected<void, std::string>;
+  auto deinit(this const EditorConfig& self) -> std::expected<void, std::string>;
 
-  auto add_recent_project(const Project* path) -> void;
-  auto remove_recent_project(const std::filesystem::path& path) -> void;
-  auto get_recent_projects() const -> const std::vector<std::filesystem::path>& { return recent_projects; }
+  auto add_recent_project(this EditorConfig& self, const Project* project) -> void;
+  auto remove_recent_project(this EditorConfig& self, const std::filesystem::path& path) -> void;
+  auto get_recent_projects(this EditorConfig& self) -> const std::vector<std::filesystem::path>& {
+    return self.recent_projects;
+  }
 
 private:
+  void write_file(this const EditorConfig& self);
   std::vector<std::filesystem::path> recent_projects{};
-  static EditorConfig* instance;
 };
 } // namespace ox

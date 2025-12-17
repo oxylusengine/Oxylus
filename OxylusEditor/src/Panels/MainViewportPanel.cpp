@@ -48,8 +48,11 @@ auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
       return false;
     };
 
-    std::erase_if(self.viewport_panels, should_stop_and_remove);
-    std::erase_if(self.pending_viewports, should_stop_and_remove);
+    // We need this since we can't erase while iterating in on_render
+    App::defer_to_next_frame([&self, should_stop_and_remove] {
+      std::erase_if(self.viewport_panels, should_stop_and_remove);
+      std::erase_if(self.pending_viewports, should_stop_and_remove);
+    });
   });
 }
 
