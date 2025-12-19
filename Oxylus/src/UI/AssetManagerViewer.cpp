@@ -186,7 +186,7 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
       UI::begin_properties();
 
       for (auto&& [type, flag] : asset_type_filter_flags) {
-        UI::property(AssetManager::to_asset_type_sv(type).data(), &flag);
+        UI::property(AssetMetadata::to_asset_type_sv(type).data(), &flag);
       }
 
       UI::end_properties();

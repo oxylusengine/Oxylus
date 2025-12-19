@@ -15,7 +15,7 @@ target("OxylusEditor")
     add_sysincludedirs("./vendor", { public = true })
     add_files("./src/**.cpp")
 
-    add_files("./Resources/**")
+    add_files("./Resources/*.rcm")
     add_rules("ox.copy_resources", {
         root_dir = os.scriptdir() .. "/Resources",
         output_dir = "res",

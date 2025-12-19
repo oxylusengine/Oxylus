@@ -22,7 +22,7 @@ struct File {
   auto write_data(const void* data, usize data_size) -> u64;
 
   template <typename T>
-    requires std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T> && (not std::is_class_v<T>)
+    requires std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>
   auto write_trivial(const T& t) -> u64 {
     return write_data(&t, sizeof(T));
   }

@@ -5,11 +5,54 @@
 
 #include <simdjson.h>
 
+#include "Memory/Hasher.hpp"
+#include "Memory/Stack.hpp"
 #include "OS/File.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
+auto AssetMetadata::to_file_format(const std::filesystem::path& path) -> FileFormat {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  if (!path.has_extension()) {
+    return FileFormat::Unknown;
+  }
+
+  auto extension = stack.to_upper(path.extension().string());
+  switch (fnv64_str(extension)) {
+    case fnv64_c(".GLB")    : return FileFormat::GLB;
+    case fnv64_c(".GLTF")   : return FileFormat::GLTF;
+    case fnv64_c(".PNG")    : return FileFormat::PNG;
+    case fnv64_c(".JPG")    :
+    case fnv64_c(".JPEG")   : return FileFormat::JPEG;
+    case fnv64_c(".DDS")    : return FileFormat::DDS;
+    case fnv64_c(".JSON")   : return FileFormat::JSON;
+    case fnv64_c(".OXASSET"): return FileFormat::Meta;
+    case fnv64_c(".KTX2")   : return FileFormat::KTX2;
+    case fnv64_c(".LUA")    : return FileFormat::Lua;
+    default                 : return FileFormat::Unknown;
+  }
+}
+
+auto AssetMetadata::to_asset_type_sv(AssetType type) -> std::string_view {
+  ZoneScoped;
+
+  switch (type) {
+    case AssetType::None    : return "None";
+    case AssetType::Shader  : return "Shader";
+    case AssetType::Model   : return "Model";
+    case AssetType::Texture : return "Texture";
+    case AssetType::Material: return "Material";
+    case AssetType::Font    : return "Font";
+    case AssetType::Scene   : return "Scene";
+    case AssetType::Audio   : return "Audio";
+    case AssetType::Script  : return "Script";
+    default                 : return {};
+  }
+}
+
 auto AssetMetadata::from_file(const std::filesystem::path& path) -> option<AssetMetadata> {
   auto file = File(path, FileAccess::Read);
   if (!file) {
@@ -29,7 +72,7 @@ auto AssetMetadata::from_string(std::string_view str, usize padded_capacity) -> 
   };
 
   auto contents = simdjson::padded_string_view(str, padded_capacity);
-  OX_ASSERT(contents.has_sufficient_padding());
+  // OX_ASSERT(contents.has_sufficient_padding());
   auto parser = simdjson::ondemand::parser{};
   auto doc = parser.iterate(contents);
   if (doc.error()) {

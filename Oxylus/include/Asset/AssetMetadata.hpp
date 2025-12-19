@@ -85,6 +85,9 @@ struct AssetMetadata {
   AssetType type = AssetType::None;
   AssetVariant variant = {};
 
+  static auto to_file_format(const std::filesystem::path& path) -> FileFormat;
+  static auto to_asset_type_sv(AssetType type) -> std::string_view;
+
   static auto from_file(const std::filesystem::path& path) -> option<AssetMetadata>;
   static auto from_string(std::string_view str, usize padded_capacity) -> option<AssetMetadata>;
   auto to_string(this AssetMetadata&) -> std::string;

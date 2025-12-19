@@ -1,6 +1,5 @@
 {
     "version": 10,
-    "type": "shader",
     "shader_sessions": [
         {
             "root_directory": "/path/to/root/dir",
@@ -23,6 +22,12 @@
                     ]
                 }
             ]
+        }
+    ],
+    "models": [
+        {
+            "path": "/path/to/model.gltf",
+            "is_foliage": false, // optional
         }
     ]
 }

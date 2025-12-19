@@ -15,14 +15,23 @@ struct ShaderCompileRequest {
   std::vector<ShaderInfo> shader_infos = {};
 };
 
+struct ModelProcessRequest {
+  std::filesystem::path path = {};
+  bool is_foliage = false;
+};
+
 struct CompiledAsset {
   UUID uuid = {};
   AssetType type = AssetType::None;
   union {
     u32 none = 0;
     ShaderAsset shader;
+    ModelAsset model;
   };
 };
+
+// Defined in ModelProcessor.cpp
+auto process_model(Session self, const ModelProcessRequest &request) -> AssetID;
 
 struct Session::Impl {
   u16 version = 10;
@@ -39,6 +48,7 @@ struct Session::Impl {
   ankerl::unordered_dense::map<std::filesystem::path, u64> asset_file_times = {};
 
   std::vector<ShaderCompileRequest> shader_compile_requests = {};
+  std::vector<ModelProcessRequest> model_process_requests = {};
 
   bool pack = false;
 };

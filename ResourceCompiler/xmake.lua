@@ -13,7 +13,9 @@ target("ResourceCompiler")
 
   add_packages(
     "shader-slang",
-    "simdjson",
+    "simdjson-ox",
+    "fastgltf-ox",
+    "meshoptimizer",
     { public = false })
 
 target_end()

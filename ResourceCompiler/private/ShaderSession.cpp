@@ -7,6 +7,7 @@
 #include <slang.h>
 #include <span>
 
+#include "AssetData.hpp"
 #include "ResourceCompiler.hpp"
 
 namespace ox::rc {
@@ -147,17 +148,12 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
       return AssetID::Invalid;
     }
 
-    auto& name_view = shader_asset.entry_point_names[entry_point_kind];
-    name_view.begin = asset_data.size();
-    asset_data.insert(asset_data.end(), entry_point_name.begin(), entry_point_name.end());
-    name_view.end = asset_data.size();
-    asset_data.insert(asset_data.end(), '0'); // just to be safe
-
-    auto spirv = std::span(reinterpret_cast<const u8*>(spirv_code->getBufferPointer()), spirv_code->getBufferSize());
-    auto& code_view = shader_asset.entry_points[entry_point_kind];
-    code_view.begin = asset_data.size();
-    asset_data.insert(asset_data.end(), spirv.begin(), spirv.end());
-    code_view.end = asset_data.size();
+    auto spirv = std::span(
+      reinterpret_cast<const u32*>(spirv_code->getBufferPointer()),
+      spirv_code->getBufferSize() / sizeof(u32)
+    );
+    shader_asset.entry_point_names[entry_point_kind] = push_str(asset_data, entry_point_name);
+    shader_asset.entry_points[entry_point_kind] = push_span(asset_data, spirv);
   }
 
   auto asset_id = impl->rc_session.create_asset(UUID::generate_random(), AssetType::Shader);

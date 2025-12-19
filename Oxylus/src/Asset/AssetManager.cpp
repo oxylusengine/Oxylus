@@ -1,155 +1,14 @@
 #include "Asset/AssetManager.hpp"
 
-#include <fastgltf/core.hpp>
-#include <fastgltf/tools.hpp>
-#include <fastgltf/types.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <meshoptimizer.h>
-#include <simdjson.h>
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
 
-#include "Asset/ParserGLTF.hpp"
-#include "Core/App.hpp"
-#include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
-#include "OS/File.hpp"
-#include "Render/Vulkan/VkContext.hpp"
-#include "Scene/SceneGPU.hpp"
 #include "Scripting/LuaSystem.hpp"
-#include "Utils/JsonHelpers.hpp"
 #include "Utils/Log.hpp"
-#include "Utils/Profiler.hpp"
-
-template <>
-struct fastgltf::ElementTraits<glm::vec4> : fastgltf::ElementTraitsBase<glm::vec4, AccessorType::Vec4, float> {};
-template <>
-struct fastgltf::ElementTraits<glm::vec3> : fastgltf::ElementTraitsBase<glm::vec3, AccessorType::Vec3, float> {};
-template <>
-struct fastgltf::ElementTraits<glm::vec2> : fastgltf::ElementTraitsBase<glm::vec2, AccessorType::Vec2, float> {};
 
 namespace ox {
-auto get_default_gltf_extensions() -> fastgltf::Extensions {
-  auto extensions = fastgltf::Extensions::None;
-  extensions |= fastgltf::Extensions::KHR_mesh_quantization;
-  extensions |= fastgltf::Extensions::KHR_texture_transform;
-  extensions |= fastgltf::Extensions::KHR_texture_basisu;
-  extensions |= fastgltf::Extensions::KHR_lights_punctual;
-  extensions |= fastgltf::Extensions::KHR_materials_specular;
-  extensions |= fastgltf::Extensions::KHR_materials_ior;
-  extensions |= fastgltf::Extensions::KHR_materials_iridescence;
-  extensions |= fastgltf::Extensions::KHR_materials_volume;
-  extensions |= fastgltf::Extensions::KHR_materials_transmission;
-  extensions |= fastgltf::Extensions::KHR_materials_clearcoat;
-  extensions |= fastgltf::Extensions::KHR_materials_emissive_strength;
-  extensions |= fastgltf::Extensions::KHR_materials_sheen;
-  extensions |= fastgltf::Extensions::KHR_materials_unlit;
-  extensions |= fastgltf::Extensions::KHR_materials_anisotropy;
-  extensions |= fastgltf::Extensions::EXT_meshopt_compression;
-  extensions |= fastgltf::Extensions::EXT_texture_webp;
-  extensions |= fastgltf::Extensions::MSFT_texture_dds;
-
-  return extensions;
-}
-
-auto get_default_gltf_options() -> fastgltf::Options {
-  auto options = fastgltf::Options::None;
-  options |= fastgltf::Options::LoadExternalBuffers;
-  // options |= fastgltf::Options::DontRequireValidAssetMember;
-
-  return options;
-}
-
-auto gltf_mime_type_to_file_format(fastgltf::MimeType mime) -> FileFormat {
-  switch (mime) {
-    case fastgltf::MimeType::JPEG: return FileFormat::JPEG;
-    case fastgltf::MimeType::PNG : return FileFormat::PNG;
-    case fastgltf::MimeType::KTX2: return FileFormat::KTX2;
-    default                      : return FileFormat::Unknown;
-  }
-}
-
-auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> SamplerInfo {
-  auto get_address_mode = [](fastgltf::Wrap v) -> vuk::SamplerAddressMode {
-    switch (v) {
-      case fastgltf::Wrap::ClampToEdge   : return vuk::SamplerAddressMode::eClampToEdge;
-      case fastgltf::Wrap::MirroredRepeat: return vuk::SamplerAddressMode::eMirroredRepeat;
-      case fastgltf::Wrap::Repeat        : return vuk::SamplerAddressMode::eRepeat;
-    }
-  };
-
-  auto get_filter_mode = [](fastgltf::Filter v) -> vuk::Filter {
-    switch (v) {
-      case fastgltf::Filter::Nearest:
-      case fastgltf::Filter::NearestMipMapNearest:
-      case fastgltf::Filter::NearestMipMapLinear : return vuk::Filter::eNearest;
-      case fastgltf::Filter::Linear              :
-      case fastgltf::Filter::LinearMipMapNearest :
-      case fastgltf::Filter::LinearMipMapLinear  : return vuk::Filter::eLinear;
-    }
-  };
-
-  auto get_mip_filter_mode = [](fastgltf::Filter v) -> vuk::SamplerMipmapMode {
-    switch (v) {
-      case fastgltf::Filter::Nearest:
-      case fastgltf::Filter::NearestMipMapNearest:
-      case fastgltf::Filter::NearestMipMapLinear : return vuk::SamplerMipmapMode::eNearest;
-      case fastgltf::Filter::Linear              :
-      case fastgltf::Filter::LinearMipMapNearest :
-      case fastgltf::Filter::LinearMipMapLinear  : return vuk::SamplerMipmapMode::eLinear;
-    }
-  };
-
-  return SamplerInfo{
-    .min_filter = get_filter_mode(gltf_sampler.minFilter.value_or(fastgltf::Filter::Linear)),
-    .mag_filter = get_filter_mode(gltf_sampler.magFilter.value_or(fastgltf::Filter::Linear)),
-    .mipmap_mode = get_mip_filter_mode(gltf_sampler.minFilter.value_or(fastgltf::Filter::Linear)),
-    .addr_u = get_address_mode(gltf_sampler.wrapS),
-    .addr_v = get_address_mode(gltf_sampler.wrapT),
-  };
-}
-
-auto AssetManager::to_file_format(const std::filesystem::path& path) -> FileFormat {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  if (!path.has_extension()) {
-    return FileFormat::Unknown;
-  }
-
-  auto extension = stack.to_upper(path.extension().string());
-  switch (fnv64_str(extension)) {
-    case fnv64_c(".GLB")    : return FileFormat::GLB;
-    case fnv64_c(".GLTF")   : return FileFormat::GLTF;
-    case fnv64_c(".PNG")    : return FileFormat::PNG;
-    case fnv64_c(".JPG")    :
-    case fnv64_c(".JPEG")   : return FileFormat::JPEG;
-    case fnv64_c(".DDS")    : return FileFormat::DDS;
-    case fnv64_c(".JSON")   : return FileFormat::JSON;
-    case fnv64_c(".OXASSET"): return FileFormat::Meta;
-    case fnv64_c(".KTX2")   : return FileFormat::KTX2;
-    case fnv64_c(".LUA")    : return FileFormat::Lua;
-    default                 : return FileFormat::Unknown;
-  }
-}
-
-auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
-  ZoneScoped;
-
-  switch (type) {
-    case AssetType::None    : return "None";
-    case AssetType::Shader  : return "Shader";
-    case AssetType::Model   : return "Model";
-    case AssetType::Texture : return "Texture";
-    case AssetType::Material: return "Material";
-    case AssetType::Font    : return "Font";
-    case AssetType::Scene   : return "Scene";
-    case AssetType::Audio   : return "Audio";
-    case AssetType::Script  : return "Script";
-    default                 : return {};
-  }
-}
-
 auto AssetManager::init(this AssetManager&) -> std::expected<void, std::string> { return {}; }
 
 auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::string> {
@@ -160,7 +19,7 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
     if (asset.is_loaded() && asset.ref_count != 0) {
       OX_LOG_WARN(
         "A {} asset ({}, {}) with refcount of {} is still alive!",
-        to_asset_type_sv(asset.type),
+        AssetMetadata::to_asset_type_sv(asset.type),
         uuid.str(),
         asset.path,
         asset.ref_count
@@ -345,7 +204,7 @@ auto AssetManager::register_asset(
   asset.path = path;
   asset.type = type;
 
-  OX_LOG_INFO("Registered new asset: {}:{}", to_asset_type_sv(asset.type), uuid.str());
+  OX_LOG_INFO("Registered new asset: {}:{}", AssetMetadata::to_asset_type_sv(asset.type), uuid.str());
 
   return true;
 }

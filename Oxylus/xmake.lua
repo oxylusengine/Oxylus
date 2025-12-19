@@ -78,8 +78,6 @@ target("Oxylus")
     add_packages(
         "stb",
         "miniaudio",
-        "fastgltf-ox",
-        "meshoptimizer",
         "libsdl3",
         "ktx-ox",
         "shader-slang",

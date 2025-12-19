@@ -104,14 +104,12 @@ public:
   auto push_message(std::string str, std::source_location LOC = std::source_location::current()) -> void;
   auto get_messages() -> std::vector<std::string>;
 
-protected:
   auto get_asset(AssetID asset_id) -> Borrowed<CompiledAsset>;
   auto set_asset_data(AssetID asset_id, std::vector<u8> asset_data) -> void;
-  auto set_asset_info(AssetID asset_id, ShaderAsset shader_asset) -> void;
+  auto set_asset_info(AssetID asset_id, const ShaderAsset &shader_asset) -> void;
+  auto set_asset_info(AssetID asset_id, const ModelAsset &model_asset) -> void;
   auto get_file_access_time(const std::filesystem::path& path) -> option<u64>;
   auto set_file_access_time(const std::filesystem::path& path, u64 time) -> void;
-
-  friend ShaderSession;
 };
 
 } // namespace ox::rc

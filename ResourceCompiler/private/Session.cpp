@@ -190,34 +190,39 @@ auto Session::import_meta(const std::filesystem::path& path) -> bool {
   auto version = version_json.get_uint64().value_unsafe();
   impl->version = static_cast<u16>(version);
 
-  auto asset_type_json = json["type"];
-  if (asset_type_json.error() || !asset_type_json.is_string()) {
-    push_error(fmt::format("An error occured while reading meta file {}. Missing/wrong `type` field!", path));
-    return false;
+  auto shader_sessions_json = json["shader_sessions"];
+  if (!shader_sessions_json.error()) {
+    for (auto v : shader_sessions_json.get_array()) {
+      if (!read_shader_session_meta(impl, v.value_unsafe(), path.parent_path())) {
+        return false;
+      }
+    }
   }
 
-  auto asset_type_str = asset_type_json.get_string().value_unsafe();
-  switch (fnv64_str(asset_type_str)) {
-    case fnv64_c("shader"): {
-      auto shader_sessions_json = json["shader_sessions"];
-      if (shader_sessions_json.error()) {
+  auto models_json = json["models"];
+  if (!models_json.error()) {
+    for (auto v : models_json.get_array()) {
+      auto path_json = v["path"].get_string();
+      if (path_json.error()) {
         push_error(
-          fmt::format("An error occured while reading meta file {}. Missing/wrong `shader_sessions` field!", path)
+          fmt::format(
+            "An error occured while reading meta file {}. {}",
+            path,
+            simdjson::error_message(path_json.error())
+          )
         );
         return false;
       }
 
-      for (auto v : shader_sessions_json.get_array()) {
-        if (!read_shader_session_meta(impl, v.value_unsafe(), path.parent_path())) {
-          return false;
-        }
+      auto is_foliage = false;
+      auto is_foliage_json = v["is_foliage"].get_bool();
+      if (!is_foliage_json.error()) {
+        is_foliage = is_foliage_json.value_unsafe();
       }
-    } break;
-    default: {
-      push_error(
-        fmt::format("An error occured while reading meta file {}. Undefined asset type {}.", path, asset_type_str)
-      );
-      return false;
+
+      auto model_path = std::filesystem::path(path_json.value_unsafe());
+      model_path = (path.parent_path() / model_path).make_preferred();
+      impl->model_process_requests.emplace_back(model_path, is_foliage);
     }
   }
 
@@ -322,13 +327,17 @@ auto Session::output_to(const std::filesystem::path& path) -> void {
   auto header_data_offset = 0_u32;
   for (const auto& [asset, asset_data] : std::views::zip(assets, impl->asset_datas)) {
     writer.write(asset.uuid.bytes());
-    writer.write_trivial(asset.type);
     writer.write_trivial(static_cast<u32>(asset_data.size()));
     writer.write_trivial(static_cast<u32>(header_data_offset));
+    writer.write_trivial(asset.type);
     switch (asset.type) {
       case AssetType::Shader: {
         writer.write(asset.shader.entry_points);
         writer.write(asset.shader.entry_point_names);
+      } break;
+      case AssetType::Model: {
+        writer.write_trivial(asset.model.nodes);
+        writer.write_trivial(asset.model.meshes);
       } break;
       default:;
     }
@@ -452,7 +461,12 @@ auto Session::compile_requests() -> bool {
     }
   }
 
+  for (const auto& request : impl->model_process_requests) {
+    process_model(impl, request);
+  }
+
   impl->shader_compile_requests.clear();
+  impl->model_process_requests.clear();
 
   return true;
 }
@@ -510,9 +524,14 @@ auto Session::set_asset_data(AssetID asset_id, std::vector<u8> asset_data) -> vo
   impl->asset_datas[asset_index] = std::move(asset_data);
 }
 
-auto Session::set_asset_info(AssetID asset_id, ShaderAsset shader_asset) -> void {
+auto Session::set_asset_info(AssetID asset_id, const ShaderAsset& shader_asset) -> void {
   auto asset = get_asset(asset_id);
   asset->shader = shader_asset;
+}
+
+auto Session::set_asset_info(AssetID asset_id, const ModelAsset& model_asset) -> void {
+  auto asset = get_asset(asset_id);
+  asset->model = model_asset;
 }
 
 auto Session::get_file_access_time(const std::filesystem::path& path) -> option<u64> {

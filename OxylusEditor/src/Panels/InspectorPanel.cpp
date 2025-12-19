@@ -5,8 +5,7 @@
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 
-#include "Asset/AssetFile.hpp"
-#include "Asset/AssetManager.hpp"
+#include "Asset/AssetMetadata.hpp"
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
 #include "Editor.hpp"
@@ -598,7 +597,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
 void InspectorPanel::draw_asset_info(Borrowed<Asset> asset) {
   ZoneScoped;
   auto& asset_man = App::mod<AssetManager>();
-  auto type_str = asset_man.to_asset_type_sv(asset->type);
+  auto type_str = AssetMetadata::to_asset_type_sv(asset->type);
   auto uuid_str = asset->uuid.str();
   auto name = asset->path.filename().string();
   auto path_str = asset->path.string();

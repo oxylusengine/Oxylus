@@ -1,6 +1,5 @@
 {
     "version": 10,
-    "type": "shader",
     "shader_sessions": [
         {
             "root_directory": "../../Oxylus/src/Render/Shaders",
@@ -253,6 +252,11 @@
                     ]
                 }
             ]
+        }
+    ],
+    "models": [
+        {
+            "path": "./Models/DamagedHelmet.gltf",
         }
     ]
 }

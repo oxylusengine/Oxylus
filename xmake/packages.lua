@@ -1,7 +1,7 @@
 add_requires("stb 2024.06.01")
 add_requires("miniaudio 0.11.22")
 add_requires("fastgltf-ox v0.8.0", { system = false, debug = is_mode("debug") })
-add_requires("meshoptimizer v0.22")
+add_requires("meshoptimizer v1.0", {system = false})
 add_requires("libsdl3") -- handled by system package (also nix)
 add_requires("ktx-ox v4.4.0", { system = false, debug = false })
 add_requires("zstd v1.5.7", { system = false })

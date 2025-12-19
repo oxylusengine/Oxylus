@@ -40,9 +40,6 @@ class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
-  static auto to_file_format(const std::filesystem::path& path) -> FileFormat;
-  static auto to_asset_type_sv(AssetType type) -> std::string_view;
-
   auto init(this AssetManager&) -> std::expected<void, std::string>;
   auto deinit(this AssetManager&) -> std::expected<void, std::string>;
 
