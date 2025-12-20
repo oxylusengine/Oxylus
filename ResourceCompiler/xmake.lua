@@ -21,6 +21,10 @@ target("ResourceCompiler")
 target_end()
 
 target("rcli")
+  -- prevent any target depends on rcli
+  -- trying to compile before this one builds first
+  set_policy("build.fence", true)
+
   set_kind("binary")
   set_languages("cxx23")
   add_files("./private/cli.cpp")

@@ -47,6 +47,11 @@ rule("ox.copy_resources")
 
 rule("ox.compile_resources")
     set_extensions(".rcm")
+
+    on_load(function (target)
+        target:add("deps", "rcli")
+    end)
+
     before_build_file(function(target, sourcefile, opt)
         import("core.base.task")
         import("utils.progress")

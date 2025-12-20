@@ -26,6 +26,8 @@ in pkgs.mkShell.override {
 
     pkgs.zlib.dev
 
+    pkgs.vulkan-loader
+
     # for gltfpack
     pkgs.meshoptimizer
 
@@ -35,13 +37,9 @@ in pkgs.mkShell.override {
     })
   ];
 
+  LIBCXX_PATH="${pkgs.llvmPackages_latest.libcxx.dev}";
+  LD_LIBRARY_PATH="${pkgs.llvmPackages_latest.libcxx}/lib:${pkgs.gcc14.cc.lib}/lib:${pkgs.vulkan-loader}/lib";
   NIX_ENFORCE_NO_NATIVE = "0";
-  shellHook = ''
-    export LD_LIBRARY_PATH=${pkgs.llvmPackages_latest.libcxx}/lib:$LD_LIBRARY_PATH
-    # slang needs libstdc++
-    export LD_LIBRARY_PATH=${pkgs.gcc14.cc.lib}/lib:$LD_LIBRARY_PATH
-    export LIBCXX_PATH=${pkgs.llvmPackages_latest.libcxx.dev}
-  '';
 
   hardeningDisable = [ "all" ];
 }

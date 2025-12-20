@@ -108,6 +108,8 @@ auto AssetManager::import(this AssetManager& self, const std::filesystem::path& 
       }
     }
 
+#undef READ_OR_FAIL
+
     auto write_lock = std::unique_lock(self.registry_mutex);
     auto [asset_it, inserted] = self.asset_registry.try_emplace(file_entry.uuid);
     if (!inserted) {
