@@ -98,27 +98,27 @@ bool RendererConfig::load_config(const std::filesystem::path& path) {
 
   if (const auto color_config = toml["color"]) {
     if (auto v = color_config["tonemapper"].as_integer())
-      RendererCVar::cvar_tonemapper.set(v->get());
+      RendererCVar::cvar_tonemapper.set(static_cast<i32>(v->get()));
     if (auto v = color_config["exposure"].as_floating_point())
-      RendererCVar::cvar_exposure.set(v->get());
+      RendererCVar::cvar_exposure.set(static_cast<f32>(v->get()));
     if (auto v = color_config["gamma"].as_floating_point())
-      RendererCVar::cvar_gamma.set(v->get());
+      RendererCVar::cvar_gamma.set(static_cast<f32>(v->get()));
   }
 
   if (const auto gtao_config = toml["gtao"]) {
     if (auto v = gtao_config["enabled"].as_boolean())
       RendererCVar::cvar_vbgtao_enable.set(v->get());
     if (auto v = gtao_config["radius"].as_floating_point())
-      RendererCVar::cvar_vbgtao_radius.set(v->get());
+      RendererCVar::cvar_vbgtao_radius.set(static_cast<f32>(v->get()));
     if (auto v = gtao_config["quality_level"].as_integer())
-      RendererCVar::cvar_vbgtao_quality_level.set(v->get());
+      RendererCVar::cvar_vbgtao_quality_level.set(static_cast<i32>(v->get()));
   }
 
   if (const auto bloom_config = toml["bloom"]) {
     if (auto v = bloom_config["enabled"].as_boolean())
       RendererCVar::cvar_bloom_enable.set(v->get());
     if (auto v = bloom_config["threshold"].as_floating_point())
-      RendererCVar::cvar_bloom_threshold.set(v->get());
+      RendererCVar::cvar_bloom_threshold.set(static_cast<f32>(v->get()));
   }
 
   if (const auto fxaa_config = toml["fxaa"]) {

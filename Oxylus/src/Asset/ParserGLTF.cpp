@@ -59,6 +59,8 @@ static auto to_vuk_sampler_address_mode(fastgltf::Wrap w) -> vuk::SamplerAddress
     case fastgltf::Wrap::MirroredRepeat: return vuk::SamplerAddressMode::eMirroredRepeat;
     case fastgltf::Wrap::Repeat        : return vuk::SamplerAddressMode::eRepeat;
   }
+
+  OX_ASSERT(false, "Invalid fastgltf::Wrap");
 }
 
 static auto to_asset_file_type(fastgltf::MimeType mime) -> AssetFileType {
@@ -77,6 +79,8 @@ static auto to_gltf_light_type(fastgltf::LightType type) -> GLTFLightType {
     case fastgltf::LightType::Point      : return GLTFLightType::Point;
     case fastgltf::LightType::Spot       : return GLTFLightType::Spot;
   }
+
+  OX_ASSERT(false, "Invalid fastgltf::Wrap");
 }
 
 auto GLTFMeshInfo::parse(const std::filesystem::path& path, GLTFMeshCallbacks callbacks) -> ox::option<GLTFMeshInfo> {

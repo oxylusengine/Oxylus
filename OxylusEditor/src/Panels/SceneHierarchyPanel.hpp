@@ -1,10 +1,9 @@
 #pragma once
 
-#include <imgui_internal.h>
-
 #include "EditorPanel.hpp"
 #include "Scene/Scene.hpp"
 #include "UI/SceneHierarchyViewer.hpp"
+#include "Utils/SceneManager.hpp"
 
 namespace ox {
 class SceneHierarchyPanel : public EditorPanel {
@@ -16,7 +15,10 @@ public:
   auto on_update() -> void override;
   auto on_render(vuk::ImageAttachment swapchain_attachment) -> void override;
 
-  auto set_scene(Scene* scene) -> void { viewer.set_scene(scene); }
-  auto get_scene() -> Scene* { return viewer.get_scene(); }
+  auto set_scene(EditorScene* scene) -> void;
+  auto get_scene() const -> EditorScene*;
+
+private:
+  EditorScene* current_scene = nullptr;
 };
 } // namespace ox

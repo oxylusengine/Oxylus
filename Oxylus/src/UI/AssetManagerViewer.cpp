@@ -156,7 +156,7 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
   );
   UI::center_next_window(ImGuiCond_Appearing);
   if (ImGui::Begin(id, visible, ImGuiWindowFlags_NoCollapse)) {
-    constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap |
+    constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap |
                                               ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_FramePadding |
                                               ImGuiTreeNodeFlags_DefaultOpen;
     constexpr i32 TABLE_COLUMNS_COUNT = 5;

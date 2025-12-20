@@ -37,10 +37,10 @@ func cs_main(u32 group_index : SV_GroupIndex, u32x3 thread_id : SV_DispatchThrea
         const f32x3 color = src_image.load(thread_id.xy).rgb;
         const f32 luminance = com::rec2020_to_xyz(color).y;
         const u32 bin_index = bin_lum(luminance);
-        com::atomic_add(histogram_shared[bin_index], 1, com::memory_order_acq_rel);
+        __atomic_add(histogram_shared[bin_index], 1, MemoryOrder::AcquireRelease);
     }
 
-    com::control_barrier(com::memory_order_acq_rel);
-    com::atomic_add(C.histogram[group_index], histogram_shared[group_index], com::memory_order_relaxed);
+    GroupMemoryBarrierWithGroupSync();
+    __atomic_add(C.histogram[group_index], histogram_shared[group_index], MemoryOrder::Relaxed);
 }
 

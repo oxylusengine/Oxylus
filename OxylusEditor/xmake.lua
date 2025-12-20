@@ -1,6 +1,6 @@
-add_requires("imguizmo 1.91.3+wip")
+add_requires("imguizmo df1c30142e7c3fb13c171aaeb328bb338fa7aaa6")
 add_requireconfs("imgui", "imguizmo.imgui", {
-    override = true, version = "v1.92.0-docking", configs = { wchar32 = true }
+    override = true, version = "42e91c315534a15133fb08fb8108cfdd515e0912", configs = { wchar32 = true }
 })
 
 target("OxylusEditor")

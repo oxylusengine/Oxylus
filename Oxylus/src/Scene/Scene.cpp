@@ -1,9 +1,12 @@
 #include "Scene/Scene.hpp"
 
+// clang-format off
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/AllowedDOFs.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Character/Character.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
@@ -12,6 +15,7 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
+// clang-format on
 #include <glm/gtx/matrix_decompose.hpp>
 #include <simdjson.h>
 #include <sol/state.hpp>
@@ -88,6 +92,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   auto& renderer = App::mod<Renderer>();
   self.renderer_instance = renderer.new_instance(self);
+
+  auto& physics = App::mod<Physics>();
+  self.physics_system = physics.new_system();
+  self.physics_debug_renderer = physics.new_debug_renderer();
 
   self.world.observer<TransformComponent>()
     .event(flecs::OnSet)
@@ -237,8 +245,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         auto& tc = entity.get<TransformComponent>();
         self.create_rigidbody(it.entity(i), tc, rb);
       } else if (it.event() == flecs::OnRemove) {
-        auto& physics = App::mod<Physics>();
-        auto& body_interface = physics.get_body_interface();
+        auto& body_interface = self.physics_system->GetBodyInterface();
         if (rb.runtime_body) {
           auto body_id = static_cast<JPH::Body*>(rb.runtime_body)->GetID();
           body_interface.RemoveBody(body_id);
@@ -262,8 +269,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         auto& tc = entity.get<TransformComponent>();
         self.create_character_controller(entity, tc, ch);
       } else if (it.event() == flecs::OnRemove) {
-        auto& physics = App::mod<Physics>();
-        JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
+        JPH::BodyInterface& body_interface = self.physics_system->GetBodyInterface();
         if (ch.character) {
           auto* character = reinterpret_cast<JPH::Character*>(ch.character);
           body_interface.RemoveBody(character->GetBodyID());
@@ -377,21 +383,21 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .system("physics_step") //
     .kind(flecs::OnUpdate)
     .tick_source(physics_tick_source)
-    .run([](flecs::iter& it) {
-      auto& physics = App::mod<Physics>();
-      physics.step(it.delta_time());
+    .run([&self](flecs::iter& it) {
+      OX_CHECK_NULL(self.physics_system);
+      auto& p = App::mod<Physics>();
+      self.physics_system->Update(it.delta_time(), 1, p.get_temp_allocator(), p.get_job_system());
     });
 
   self.world.system<TransformComponent, RigidBodyComponent>("rigidbody_update")
     .kind(flecs::OnUpdate)
     .tick_source(physics_tick_source)
-    .each([](const flecs::entity& e, TransformComponent& tc, RigidBodyComponent& rb) {
+    .each([&self](const flecs::entity& e, TransformComponent& tc, RigidBodyComponent& rb) {
       if (!rb.runtime_body)
         return;
 
-      auto& physics = App::mod<Physics>();
       const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
-      const auto& body_interface = physics.get_physics_system()->GetBodyInterface();
+      const auto& body_interface = self.physics_system->GetBodyInterface();
 
       if (!body_interface.IsActive(body->GetID()))
         return;
@@ -656,9 +662,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       };
       material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
     });
-
-  auto& asset_man = App::mod<AssetManager>();
-  asset_man.set_all_materials_dirty();
 }
 
 auto Scene::physics_init(this Scene& self) -> void {
@@ -669,9 +672,8 @@ auto Scene::physics_init(this Scene& self) -> void {
 
   self.body_activation_listener_3d = std::make_unique<Physics3DBodyActivationListener>();
   self.contact_listener_3d = std::make_unique<Physics3DContactListener>(&self);
-  const auto physics_system = App::mod<Physics>().get_physics_system();
-  physics_system->SetBodyActivationListener(self.body_activation_listener_3d.get());
-  physics_system->SetContactListener(self.contact_listener_3d.get());
+  self.physics_system->SetBodyActivationListener(self.body_activation_listener_3d.get());
+  self.physics_system->SetContactListener(self.contact_listener_3d.get());
 
   // Rigidbodies
   self.world.query_builder<const TransformComponent, RigidBodyComponent>().build().each(
@@ -693,28 +695,25 @@ auto Scene::physics_init(this Scene& self) -> void {
     }
   );
 
-  physics_system->OptimizeBroadPhase();
+  self.physics_system->OptimizeBroadPhase();
 }
 
 auto Scene::physics_deinit(this Scene& self) -> void {
   ZoneScoped;
 
-  auto& physics = App::mod<Physics>();
-  self.world.query_builder<RigidBodyComponent>().build().each(
-    [&physics](const flecs::entity& e, RigidBodyComponent& rb) {
-      if (rb.runtime_body) {
-        JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
-        const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
-        body_interface.RemoveBody(body->GetID());
-        body_interface.DestroyBody(body->GetID());
-        rb.runtime_body = nullptr;
-      }
+  self.world.query_builder<RigidBodyComponent>().build().each([&self](const flecs::entity& e, RigidBodyComponent& rb) {
+    if (rb.runtime_body) {
+      JPH::BodyInterface& body_interface = self.physics_system->GetBodyInterface();
+      const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
+      body_interface.RemoveBody(body->GetID());
+      body_interface.DestroyBody(body->GetID());
+      rb.runtime_body = nullptr;
     }
-  );
+  });
   self.world.query_builder<CharacterControllerComponent>().build().each(
-    [&physics](const flecs::entity& e, CharacterControllerComponent& ch) {
+    [&self](const flecs::entity& e, CharacterControllerComponent& ch) {
       if (ch.character) {
-        JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
+        JPH::BodyInterface& body_interface = self.physics_system->GetBodyInterface();
         auto* character = reinterpret_cast<JPH::Character*>(ch.character);
         body_interface.RemoveBody(character->GetBodyID());
         ch.character = nullptr;
@@ -763,7 +762,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   auto on_update_phase_enabled = !self.world.entity(flecs::OnUpdate).has(flecs::Disabled);
   if (pre_update_phase_enabled && on_update_phase_enabled) {
     for (auto& [uuid, system] : self.lua_systems) {
-      system->on_scene_update(&self, delta_time.get_seconds());
+      system->on_scene_update(&self, static_cast<f32>(delta_time.get_seconds()));
     }
   }
 
@@ -771,8 +770,11 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   self.world.progress();
 
   if (RendererCVar::cvar_enable_physics_debug_renderer.get()) {
-    auto& physics = App::mod<Physics>();
-    physics.debug_draw();
+    JPH::BodyManager::DrawSettings settings{};
+    settings.mDrawShape = true;
+    settings.mDrawShapeWireframe = true;
+
+    self.physics_system->DrawBodies(settings, self.physics_debug_renderer.get());
   }
 
   auto& asset_man = App::mod<AssetManager>();
@@ -812,7 +814,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       }
     }
 
-    self.mesh_instance_count = gpu_mesh_instances.size();
+    self.mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
     self.max_meshlet_instance_count = max_meshlet_instance_count;
   }
 
@@ -824,6 +826,11 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     auto* texture = asset_man.get_texture(uuid);
     return texture->get_view_index();
   };
+
+  if (self.force_material_update) {
+    asset_man.set_all_materials_dirty();
+    self.force_material_update = false;
+  }
 
   auto dirty_material_ids = asset_man.get_dirty_material_ids();
   auto dirty_material_indices = std::vector<u32>();
@@ -960,6 +967,23 @@ auto Scene::remove_lua_system(this Scene& self, const UUID& lua_script) -> void 
   OX_LOG_TRACE("Removed lua system from the scene {}", script_system->get_path());
 
   self.lua_systems.erase(lua_script);
+}
+
+auto Scene::get_physics_system(this const Scene& self) -> JPH::PhysicsSystem* {
+  ZoneScoped;
+
+  return self.physics_system.get();
+}
+
+auto Scene::cast_ray(this const Scene& self, const RayCast& ray_cast)
+  -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> {
+  ZoneScoped;
+
+  JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> collector;
+  const JPH::RayCast ray{math::to_jolt(ray_cast.get_origin()), math::to_jolt(ray_cast.get_direction())};
+  self.physics_system->GetBroadPhaseQuery().CastRay(ray, collector);
+
+  return collector;
 }
 
 auto Scene::defer_function(this Scene& self, const std::function<void(Scene* scene)>& func) -> void {
@@ -1318,12 +1342,12 @@ auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_use
   }
 }
 
-auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component)
-  -> void {
+auto Scene::create_rigidbody(
+  this Scene& self, flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component
+) -> void {
   ZoneScoped;
-  auto& physics = App::mod<Physics>();
 
-  auto& body_interface = physics.get_body_interface();
+  auto& body_interface = self.physics_system->GetBodyInterface();
   if (component.runtime_body) {
     auto body_id = static_cast<JPH::Body*>(component.runtime_body)->GetID();
     body_interface.RemoveBody(body_id);
@@ -1406,7 +1430,7 @@ auto Scene::create_rigidbody(flecs::entity entity, const TransformComponent& tra
   // Body
   auto rotation = glm::quat(transform.rotation);
 
-  u8 layer_index = 1; // Default Layer
+  u16 layer_index = 1; // Default Layer
   if (const auto* layer_component = entity.try_get<LayerComponent>()) {
     layer_index = layer_component->layer;
   }
@@ -1458,8 +1482,6 @@ void Scene::create_character_controller(
 ) const {
   ZoneScoped;
 
-  auto& physics = App::mod<Physics>();
-
   const auto position = JPH::Vec3(transform.position.x, transform.position.y, transform.position.z);
   const auto capsule_shape =
     JPH::RotatedTranslatedShapeSettings(
@@ -1482,13 +1504,12 @@ void Scene::create_character_controller(
   ); // Accept contacts that touch the
      // lower sphere of the capsule
 
-  component
-    .character = new JPH::Character(settings.get(), position, JPH::Quat::sIdentity(), 0, physics.get_physics_system());
+  component.character = new JPH::Character(settings.get(), position, JPH::Quat::sIdentity(), 0, physics_system.get());
 
   auto* ch = reinterpret_cast<JPH::Character*>(component.character);
   ch->AddToPhysicsSystem(JPH::EActivation::Activate);
 
-  auto ch_body = physics.get_body_interface_lock().TryGetBody(ch->GetBodyID());
+  auto ch_body = physics_system->GetBodyLockInterface().TryGetBody(ch->GetBodyID());
   ch_body->SetUserData(static_cast<u64>(entity.id()));
 }
 

@@ -13,27 +13,32 @@ add_cxxflags("clang::-fexperimental-library")
 -- WARNINGS --
 set_warnings("allextra", "pedantic")
 add_cxxflags(
-    "-Wshadow",
-    "-Wno-missing-braces",
-    "-Wno-unused-parameter",
-    "-Wno-unused-variable",
-    { tools = { "clang", "clangxx", "gcc", "cl", "clang_cl", "clang-cl" } })
+  "-Wshadow",
+  "-Wno-missing-braces",
+  "-Wno-unused-parameter",
+  "-Wno-unused-variable",
+  { tools = { "clang", "clangxx", "gcc", "cl", "clang_cl", "clang-cl" } }
+)
 add_cxxflags(
-    "-Wshadow-all",
-    "-Wno-gnu-line-marker",
-    "-Wno-gnu-anonymous-struct",
-    "-Wno-gnu-zero-variadic-macro-arguments",
-    { tools = { "clang", "clangxx", "cl", "clang_cl", "clang-cl" } })
+  "-Wshadow-all",
+  "-Wno-gnu-line-marker",
+  "-Wno-gnu-anonymous-struct",
+  "-Wno-gnu-zero-variadic-macro-arguments",
+  { tools = { "clang", "clangxx", "cl", "clang_cl", "clang-cl" } }
+)
 
 includes("xmake/options.lua")
 includes("xmake/rules.lua")
-includes("xmake/packages.lua")
 includes("xmake/toolchains.lua")
+
+includes("xmake/packages.lua")
+require_packages()
+require_confs()
 
 includes("Oxylus")
 if has_config("editor") then
-    includes("OxylusEditor")
+  includes("OxylusEditor")
 end
 if has_config("tests") then
-    includes("Oxylus/tests")
+  includes("Oxylus/tests")
 end

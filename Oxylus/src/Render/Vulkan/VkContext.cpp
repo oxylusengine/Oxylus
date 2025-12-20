@@ -11,6 +11,7 @@
 #include <vuk/runtime/vk/Query.hpp>
 
 #include "Core/App.hpp"
+#include "Render/Renderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Window.hpp"
 #include "Utils/Profiler.hpp"
@@ -222,6 +223,7 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   vk12_features.timelineSemaphore = true;
   vk12_features.bufferDeviceAddress = true;
   vk12_features.hostQueryReset = true;
+  vk12_features.uniformAndStorageBuffer8BitAccess = true;
   // Shader features
   vk12_features.vulkanMemoryModel = true;
   vk12_features.storageBuffer8BitAccess = true;
@@ -250,7 +252,9 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
     .add_pNext(&vk13_features)
     .add_pNext(&vk12_features)
     .add_pNext(&vk11_features)
+#ifndef OX_PLATFORM_MACOSX
     .add_pNext(&image_atomic_int64_features)
+#endif
     .add_pNext(&vk10_features);
 
   auto dev_ret = device_builder.build();
@@ -369,7 +373,7 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
                                     .create_persistent_descriptor_set(1, bindless_set_info, bindless_set_binding_flags);
 
   auto& event_system = App::get_event_system();
-  auto sub_result = event_system.subscribe<WindowResizeEvent>([&self](const WindowResizeEvent& e){
+  auto sub_result = event_system.subscribe<WindowResizeEvent>([&self](const WindowResizeEvent& e) {
     self.handle_resize(e.width, e.height);
   });
   if (!sub_result.has_value()) {
@@ -487,6 +491,9 @@ auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachme
   auto acquired_image = vuk::acquire_next_image("present_image", std::move(acquired_swapchain));
 
   self.swapchain_extent = glm::vec2(acquired_image->extent.width, acquired_image->extent.height);
+
+  if (App::has_mod<Renderer>())
+    App::mod<Renderer>().new_frame();
 
   return acquired_image;
 }
@@ -609,7 +616,7 @@ auto VkContext::create_persistent_descriptor_set(
 auto VkContext::commit_descriptor_set(this VkContext& self, std::span<VkWriteDescriptorSet> writes) -> void {
   ZoneScoped;
 
-  vkUpdateDescriptorSets(self.device, writes.size(), writes.data(), 0, nullptr);
+  vkUpdateDescriptorSets(self.device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
 }
 
 auto VkContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {

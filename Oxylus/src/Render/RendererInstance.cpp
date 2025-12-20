@@ -130,7 +130,7 @@ auto calculate_cascade_bounds(usize cascade_count, f32 nearest_bound, f32 maximu
   if (cascade_count == 1) {
     return {maximum_shadow_distance};
   }
-  auto base = glm::pow(maximum_shadow_distance / nearest_bound, 1.0 / static_cast<f32>(cascade_count - 1));
+  auto base = glm::pow(maximum_shadow_distance / nearest_bound, 1.0f / static_cast<f32>(cascade_count - 1));
 
   auto result = std::array<f32, MAX_DIRECTIONAL_SHADOW_CASCADES>();
   for (u32 i = 0; i < cascade_count; i++) {
@@ -148,7 +148,7 @@ auto calculate_cascaded_shadow_matrices(
 ) -> void {
   ZoneScoped;
 
-  auto overlap_factor = 1.0 - light_comp.cascade_overlap_propotion;
+  auto overlap_factor = 1.0f - light_comp.cascade_overlap_propotion;
   auto far_bounds = calculate_cascade_bounds(
     light.cascade_count,
     light_comp.first_cascade_far_bound,
@@ -397,6 +397,9 @@ auto RendererInstance::render(
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
+  OX_ASSERT(self.update_ran_this_frame);
+  self.update_ran_this_frame = false;
+
   OX_DEFER(&) {
     self.clear_stages();
     self.shared_resources.clear();
@@ -467,13 +470,13 @@ auto RendererInstance::render(
       std::move(self.prepared_frame.spot_lights_buffer)
     );
 
-  if (static_cast<bool>(RendererCVar::cvar_bloom_enable.get()))
+  if (RendererCVar::cvar_bloom_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasBloom;
-  if (static_cast<bool>(RendererCVar::cvar_fxaa_enable.get()))
+  if (RendererCVar::cvar_fxaa_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasFXAA;
-  if (static_cast<bool>(RendererCVar::cvar_vbgtao_enable.get()))
+  if (RendererCVar::cvar_vbgtao_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
-  if (static_cast<bool>(RendererCVar::cvar_contact_shadows.get()))
+  if (RendererCVar::cvar_contact_shadows.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
 
   const auto debug_view = static_cast<GPU::DebugView>(RendererCVar::cvar_debug_view.get());
@@ -519,14 +522,6 @@ auto RendererInstance::render(
   );
   hiz_attachment = vuk::clear_image(std::move(hiz_attachment), vuk::DepthZero);
 
-  auto sky_transmittance_lut_attachment = self.renderer.sky_transmittance_lut_view.acquire(
-    "sky_transmittance_lut",
-    vuk::Access::eComputeSampled
-  );
-  auto sky_multiscatter_lut_attachment = self.renderer.sky_multiscatter_lut_view.acquire(
-    "sky_multiscatter_lut",
-    vuk::Access::eComputeSampled
-  );
   auto sky_view_lut_attachment = vuk::declare_ia(
     "sky_view_lut",
     {.image_type = vuk::ImageType::e2D,
@@ -553,7 +548,7 @@ auto RendererInstance::render(
   sky_aerial_perspective_attachment.same_format_as(sky_view_lut_attachment);
   sky_aerial_perspective_attachment = vuk::clear_image(std::move(sky_aerial_perspective_attachment), vuk::Black<f32>);
 
-  auto hilbert_noise_lut_attachment = self.renderer.hilbert_noise_lut.acquire("hilbert noise", vuk::eComputeSampled);
+  auto hilbert_noise_lut_attachment = self.renderer.acquired_hilbert_noise_lut;
 
   auto visbuffer_attachment = vuk::declare_ia(
     "visbuffer",
@@ -562,6 +557,18 @@ auto RendererInstance::render(
      .sample_count = vuk::SampleCountFlagBits::e1}
   );
   visbuffer_attachment.same_shape_as(final_attachment);
+
+  auto visbuffer_attachment_2d = vuk::declare_ia(
+    "visbuffer_2d",
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+     .format = vuk::Format::eR32Uint,
+     .sample_count = vuk::SampleCountFlagBits::e1}
+  );
+  visbuffer_attachment_2d.same_shape_as(final_attachment);
+  visbuffer_attachment_2d = vuk::clear_image(
+    visbuffer_attachment_2d,
+    vuk::ClearColor{~0_u32, ~0_u32, ~0_u32, ~0_u32}
+  ); // Clear to invalid transform id
 
   auto overdraw_attachment = vuk::declare_ia(
     "overdraw",
@@ -815,10 +822,13 @@ auto RendererInstance::render(
     );
   }
 
+  auto sky_transmittance_lut_attachment = self.renderer.acquired_sky_transmittance_lut_view;
+  auto sky_multiscatter_lut_attachment = self.renderer.acquired_sky_multiscatter_lut_view;
+
   if (scene_has_atmosphere && scene_has_directional_light) {
     auto atmos_context = AtmosphereContext{
-      .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
-      .sky_multiscatter_lut_attachment = std::move(sky_multiscatter_lut_attachment),
+      .sky_transmittance_lut_attachment = sky_transmittance_lut_attachment,
+      .sky_multiscatter_lut_attachment = sky_multiscatter_lut_attachment,
       .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
       .sky_aerial_perspective_lut_attachment = std::move(sky_aerial_perspective_attachment),
     };
@@ -872,10 +882,72 @@ auto RendererInstance::render(
   // --- 2D Pass ---
   if (!self.render_queue_2d.sprite_data.empty()) {
     // WARN: rq2d is copied each frame (it needs to be copied)
+
+    auto forward_2d_vis_pass = vuk::make_pass(
+      "2d_forward_vis_pass",
+      [rq2d = self.render_queue_2d](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eColorWrite) target,
+        VUK_IA(vuk::eDepthStencilRW) depth,
+        VUK_BA(vuk::eAttributeRead) vertex_buffer,
+        VUK_BA(vuk::eVertexRead) camera,
+        VUK_BA(vuk::eVertexRead) transforms_
+      ) {
+        const auto vertex_pack_2d = vuk::Packed{
+          vuk::Format::eR32Uint, // 4 material_id
+          vuk::Format::eR32Uint, // 4 flags
+          vuk::Format::eR32Uint, // 4 transforms_id
+        };
+
+        for (const auto& batch : rq2d.batches) {
+          if (batch.count < 1)
+            continue;
+
+          cmd_list.bind_graphics_pipeline("2d_forward_vis")
+            .set_depth_stencil(
+              vuk::PipelineDepthStencilStateCreateInfo{
+                .depthTestEnable = true,
+                .depthWriteEnable = true,
+                .depthCompareOp = vuk::CompareOp::eGreaterOrEqual,
+              }
+            )
+            .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
+            .set_viewport(0, vuk::Rect2D::framebuffer())
+            .set_scissor(0, vuk::Rect2D::framebuffer())
+            .broadcast_color_blend(vuk::BlendPreset::eOff)
+            .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
+            .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack_2d, vuk::VertexInputRate::eInstance)
+            .push_constants(
+              vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
+              0,
+              PushConstants(camera->device_address, transforms_->device_address)
+            )
+            .draw(6, batch.count, 0, batch.offset);
+        }
+
+        return std::make_tuple(target, depth, camera, vertex_buffer, transforms_);
+      }
+    );
+
+    std::tie(
+      visbuffer_attachment_2d,
+      depth_attachment,
+      self.prepared_frame.camera_buffer,
+      vertex_buffer_2d,
+      self.prepared_frame.transforms_buffer
+    ) =
+      forward_2d_vis_pass(
+        std::move(visbuffer_attachment_2d),
+        std::move(depth_attachment),
+        std::move(vertex_buffer_2d),
+        std::move(self.prepared_frame.camera_buffer),
+        std::move(self.prepared_frame.transforms_buffer)
+      );
+
     auto forward_2d_pass = vuk::make_pass(
       "2d_forward_pass",
       [rq2d = self.render_queue_2d, &descriptor_set = bindless_set](
-        vuk::CommandBuffer& command_buffer,
+        vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) target,
         VUK_IA(vuk::eDepthStencilRW) depth,
         VUK_BA(vuk::eAttributeRead) vertex_buffer,
@@ -893,7 +965,7 @@ auto RendererInstance::render(
           if (batch.count < 1)
             continue;
 
-          command_buffer.bind_graphics_pipeline(batch.pipeline_name)
+          cmd_list.bind_graphics_pipeline(batch.pipeline_name)
             .set_depth_stencil(
               vuk::PipelineDepthStencilStateCreateInfo{
                 .depthTestEnable = true,
@@ -936,6 +1008,16 @@ auto RendererInstance::render(
         std::move(self.prepared_frame.camera_buffer),
         std::move(self.prepared_frame.transforms_buffer)
       );
+
+    RenderStageContext ctx(self, self.shared_resources, RenderStage::Forward2D, *self.renderer.vk_context);
+    ctx.set_viewport_size(self.viewport_size)
+      .set_image_resource("final_attachment", final_attachment)
+      .set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attachment_2d));
+
+    self.execute_stages_after(RenderStage::Forward2D, ctx);
+
+    visbuffer_attachment_2d = ctx.get_image_resource("visbuffer_attachment_2d");
+    final_attachment = ctx.get_image_resource("final_attachment");
   }
 
   // --- FXAA Pass ---
@@ -1029,6 +1111,8 @@ auto RendererInstance::render(
 auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void {
   ZoneScoped;
 
+  self.update_ran_this_frame = true;
+
   auto& asset_man = App::mod<AssetManager>();
   auto& vk_context = *self.renderer.vk_context;
 
@@ -1100,6 +1184,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
            &point_lights,
            &spot_lights,
            current_camera](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
+      if (!e.enabled()) {
+        return;
+      }
+
       if (lc.type == LightComponent::LightType::Directional) {
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
         self.directional_light.color = lc.color;

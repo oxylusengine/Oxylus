@@ -2,7 +2,6 @@
 
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
-#include <imgui.h>
 #include <vuk/RenderGraph.hpp>
 #include <vuk/Types.hpp>
 #include <vuk/runtime/CommandBuffer.hpp>
@@ -61,7 +60,8 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = nullptr;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard /*| ImGuiConfigFlags_ViewportsEnable*/ |
-                    ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_DpiEnableScaleFonts | ImGuiConfigFlags_IsSRGB;
+                    ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_DockingEnable |
+                    ImGuiConfigFlags_DpiEnableScaleFonts | ImGuiConfigFlags_IsSRGB;
   io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_HasMouseCursors;
   /*io.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;*/
   io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
@@ -107,14 +107,16 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size) {
   acquired_images.clear();
 
   ImGui::NewFrame();
+}
 
-  if (imgui.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange) {
-    return;
-  }
+vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vuk::Value<vuk::ImageAttachment> target) {
+  ZoneScoped;
+
+  ImGui::Render();
 
   auto& window = App::get_window();
   const auto imgui_cursor = ImGui::GetMouseCursor();
-  if (imgui.MouseDrawCursor || imgui_cursor == ImGuiMouseCursor_None) {
+  if (ImGui::GetIO().MouseDrawCursor || imgui_cursor == ImGuiMouseCursor_None) {
     window.show_cursor(false);
   } else {
     auto next_cursor = WindowCursor::Arrow;
@@ -138,12 +140,6 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size) {
       window.set_cursor(next_cursor);
     }
   }
-}
-
-vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vuk::Value<vuk::ImageAttachment> target) {
-  ZoneScoped;
-
-  ImGui::Render();
 
   ImDrawData* draw_data = ImGui::GetDrawData();
 
@@ -172,6 +168,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vu
       }
 
       auto texture_id = this->add_image(*font_texture);
+      OX_ASSERT(texture_id > 0);
       texture->SetTexID(texture_id);
 #else
       auto acquired = false;
@@ -362,13 +359,14 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vu
                 scissor.extent.height = static_cast<uint32_t>(clip_rect.w - clip_rect.y);
                 command_buffer.set_scissor(0, scissor);
 
-                command_buffer.bind_sampler(
-                    0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear});
+                // NOTE: Dear ImGui assumes id 0 for textures means they are invalid textures.
+                // So we use indices for textures starting from 1 thus this -1 is required.
                 const auto index = im_cmd->GetTexID();
-                const auto& image = sis[index];
-                command_buffer.bind_image(0, 1, image);
+                const auto& image = sis[index - 1];
 
-                command_buffer.draw_indexed(im_cmd->ElemCount,
+                command_buffer.bind_image(0, 1, image)
+                              .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
+                              .draw_indexed(im_cmd->ElemCount,
                                             1,
                                             im_cmd->IdxOffset + global_idx_offset,
                                             im_cmd->VtxOffset + global_vtx_offset,
@@ -389,7 +387,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vu
 
 ImTextureID ImGuiRenderer::add_image(vuk::Value<vuk::ImageAttachment>&& attachment) {
   rendering_images.emplace_back(std::move(attachment));
-  return rendering_images.size() - 1;
+  return rendering_images.size();
 }
 
 ImTextureID ImGuiRenderer::add_image(const Texture& texture) {

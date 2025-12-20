@@ -61,6 +61,13 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     &bindless_set
   );
 
+  slang.create_pipeline(
+    runtime,
+    "2d_forward_vis",
+    {.path = shaders_dir / "passes/2d_forward_vis.slang", .entry_points = {"vs_main", "fs_main"}},
+    &bindless_set
+  );
+
   // --- Sky ---
   slang.create_pipeline(
     runtime,
@@ -286,7 +293,7 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
       }
     }
 
-    return index;
+    return static_cast<u16>(index);
   };
 
   u16 hilbert_noise[HILBERT_NOISE_LUT_WIDTH * HILBERT_NOISE_LUT_WIDTH] = {};
@@ -325,8 +332,8 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   );
 
   std::tie(transmittance_lut_attachment, temp_atmos_buffer) = transmittance_lut_pass(
-    std::move(transmittance_lut_attachment),
-    std::move(temp_atmos_buffer)
+    transmittance_lut_attachment,
+    temp_atmos_buffer
   );
 
   auto multiscatter_lut_attachment = self.sky_multiscatter_lut_view.discard("sky_multiscatter_lut");
@@ -350,9 +357,9 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   );
 
   std::tie(transmittance_lut_attachment, multiscatter_lut_attachment, temp_atmos_buffer) = sky_multiscatter_lut_pass(
-    std::move(transmittance_lut_attachment),
-    std::move(multiscatter_lut_attachment),
-    std::move(temp_atmos_buffer)
+    transmittance_lut_attachment,
+    multiscatter_lut_attachment,
+    temp_atmos_buffer
   );
 
   transmittance_lut_attachment = transmittance_lut_attachment.as_released(
@@ -410,5 +417,17 @@ auto Renderer::deinit(this Renderer& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   return {};
+}
+
+auto Renderer::new_frame(this Renderer& self) -> void {
+  self.acquired_sky_transmittance_lut_view = self.sky_transmittance_lut_view.acquire(
+    "sky_transmittance_lut",
+    vuk::Access::eComputeSampled
+  );
+  self.acquired_sky_multiscatter_lut_view = self.sky_multiscatter_lut_view.acquire(
+    "sky_multiscatter_lut",
+    vuk::Access::eComputeSampled
+  );
+  self.acquired_hilbert_noise_lut = self.hilbert_noise_lut.acquire("hilbert noise", vuk::eComputeSampled);
 }
 } // namespace ox
