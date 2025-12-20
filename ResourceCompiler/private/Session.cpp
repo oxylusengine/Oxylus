@@ -332,8 +332,7 @@ auto Session::output_to(const std::filesystem::path& path) -> void {
     writer.write_trivial(asset.type);
     switch (asset.type) {
       case AssetType::Shader: {
-        writer.write(asset.shader.entry_points);
-        writer.write(asset.shader.entry_point_names);
+        writer.write_trivial(asset.shader.entry_points);
       } break;
       case AssetType::Model: {
         writer.write_trivial(asset.model.nodes);
@@ -490,7 +489,7 @@ auto Session::get_asset_data(AssetID asset_id) -> std::span<u8> {
   return impl->asset_datas[asset_index];
 }
 
-auto Session::get_shader_asset(AssetID asset_id) -> ShaderAsset {
+auto Session::get_shader_asset(AssetID asset_id) -> ShaderAssetEntry {
   auto asset = get_asset(asset_id);
 
   return asset->shader;
@@ -524,12 +523,12 @@ auto Session::set_asset_data(AssetID asset_id, std::vector<u8> asset_data) -> vo
   impl->asset_datas[asset_index] = std::move(asset_data);
 }
 
-auto Session::set_asset_info(AssetID asset_id, const ShaderAsset& shader_asset) -> void {
+auto Session::set_asset_info(AssetID asset_id, const ShaderAssetEntry& shader_asset) -> void {
   auto asset = get_asset(asset_id);
   asset->shader = shader_asset;
 }
 
-auto Session::set_asset_info(AssetID asset_id, const ModelAsset& model_asset) -> void {
+auto Session::set_asset_info(AssetID asset_id, const ModelAssetEntry& model_asset) -> void {
   auto asset = get_asset(asset_id);
   asset->model = model_asset;
 }

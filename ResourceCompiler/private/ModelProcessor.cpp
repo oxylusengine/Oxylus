@@ -158,8 +158,8 @@ auto process_model(Session self, const ModelProcessRequest& request) -> AssetID 
     processing_gltf_nodes.push({node_index, 0});
   }
 
-  auto asset_nodes = std::vector<ModelAsset::Node>{};
-  auto asset_meshes = std::vector<ModelAsset::Mesh>{};
+  auto asset_nodes = std::vector<ModelAssetEntry::Node>{};
+  auto asset_meshes = std::vector<ModelAssetEntry::Mesh>{};
   while (!processing_gltf_nodes.empty()) {
     auto [gltf_node_index, parent_node_index] = processing_gltf_nodes.front();
     const auto& gltf_node = gltf_asset.nodes[gltf_node_index];
@@ -202,7 +202,7 @@ auto process_model(Session self, const ModelProcessRequest& request) -> AssetID 
           continue;
         }
 
-        auto mesh = ModelAsset::Mesh{};
+        auto mesh = ModelAssetEntry::Mesh{};
         auto& index_accessor = gltf_asset.accessors[gltf_primitive.indicesAccessor.value()];
         auto raw_indices = std::vector<u32>(index_accessor.count);
         fastgltf::iterateAccessorWithIndex<u32>(gltf_asset, index_accessor, [&](u32 index, usize i) { //
@@ -280,7 +280,7 @@ auto process_model(Session self, const ModelProcessRequest& request) -> AssetID 
         auto mesh_bb_min = glm::vec3(std::numeric_limits<f32>::max());
         auto mesh_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
         auto last_lod_indices = std::vector<u32>();
-        auto lods = std::array<ModelAsset::Lod, MAX_LODS>{};
+        auto lods = std::array<ModelAssetEntry::Lod, MAX_LODS>{};
         auto lod_index = 0_sz;
         for (; lod_index < MAX_LODS; lod_index++) {
           auto& cur_lod = lods[lod_index];
@@ -356,14 +356,14 @@ auto process_model(Session self, const ModelProcessRequest& request) -> AssetID 
 
           // Trim meshlets from worst case to current case
           raw_meshlets.resize(meshlet_count);
-          auto meshlets = std::vector<ModelAsset::Meshlet>(meshlet_count);
+          auto meshlets = std::vector<ModelAssetEntry::Meshlet>(meshlet_count);
           const auto& last_meshlet = raw_meshlets[meshlet_count - 1];
           indirect_vertex_indices.resize(last_meshlet.vertex_offset + last_meshlet.vertex_count);
           local_triangle_indices.resize(
             last_meshlet.triangle_offset + ((last_meshlet.triangle_count * 3 + 3) & ~3_u32)
           );
 
-          auto meshlet_bounds = std::vector<ModelAsset::Bounds>(meshlet_count);
+          auto meshlet_bounds = std::vector<ModelAssetEntry::Bounds>(meshlet_count);
           for (const auto& [raw_meshlet, meshlet, bounds] : std::views::zip(raw_meshlets, meshlets, meshlet_bounds)) {
             // AABB computation
             auto meshlet_bb_min = glm::vec3(std::numeric_limits<f32>::max());
@@ -408,8 +408,8 @@ auto process_model(Session self, const ModelProcessRequest& request) -> AssetID 
           }
 
           cur_lod.indices = push_span(asset_data, std::span<const u32>(simplified_indices));
-          cur_lod.meshlets = push_span(asset_data, std::span<const ModelAsset::Meshlet>(meshlets));
-          cur_lod.meshlet_bounds = push_span(asset_data, std::span<const ModelAsset::Bounds>(meshlet_bounds));
+          cur_lod.meshlets = push_span(asset_data, std::span<const ModelAssetEntry::Meshlet>(meshlets));
+          cur_lod.meshlet_bounds = push_span(asset_data, std::span<const ModelAssetEntry::Bounds>(meshlet_bounds));
           cur_lod.local_triangle_indices = push_span(asset_data, std::span<const u8>(local_triangle_indices));
           cur_lod.indirect_vertex_indices = push_span(asset_data, std::span<const u32>(indirect_vertex_indices));
 
@@ -419,7 +419,7 @@ auto process_model(Session self, const ModelProcessRequest& request) -> AssetID 
         mesh.vertex_positions = push_span(asset_data, std::span<const glm::vec3>(positions));
         mesh.vertex_normals = push_span(asset_data, std::span<const glm::vec3>(normals));
         mesh.vertex_texcoords = push_span(asset_data, std::span<const glm::vec2>(texcoords));
-        mesh.lods = push_span(asset_data, std::span<const ModelAsset::Lod>{lods.data(), lod_index});
+        mesh.lods = push_span(asset_data, std::span<const ModelAssetEntry::Lod>{lods.data(), lod_index});
         mesh.bounds.aabb_center = (mesh_bb_max + mesh_bb_min) * 0.5f;
         mesh.bounds.aabb_extent = mesh_bb_max - mesh_bb_min;
 
@@ -438,9 +438,9 @@ auto process_model(Session self, const ModelProcessRequest& request) -> AssetID 
   }
 
   auto asset_id = self.create_asset(UUID::generate_random(), AssetType::Model);
-  auto asset = ModelAsset{
-    .nodes = push_span(asset_data, std::span<const ModelAsset::Node>(asset_nodes)),
-    .meshes = push_span(asset_data, std::span<const ModelAsset::Mesh>(asset_meshes)),
+  auto asset = ModelAssetEntry{
+    .nodes = push_span(asset_data, std::span<const ModelAssetEntry::Node>(asset_nodes)),
+    .meshes = push_span(asset_data, std::span<const ModelAssetEntry::Mesh>(asset_meshes)),
   };
   self.set_asset_info(asset_id, asset);
   self.set_asset_data(asset_id, asset_data);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Asset/AssetFile.hpp"
 #include "Asset/AssetMetadata.hpp"
 #include "Asset/AudioSource.hpp"
 #include "Asset/Material.hpp"
@@ -12,9 +13,15 @@
 #include "Scripting/LuaSystem.hpp"
 
 namespace ox {
-struct Asset {
-  UUID uuid = {};
+struct ExtendedAsset {
   std::filesystem::path path = {};
+  std::vector<u8> embedded_data = {}; // Optional
+  u32 data_size = 0;
+  u32 data_offset = 0;
+  AssetEntry entry = {};
+};
+
+struct Asset {
   AssetType type = AssetType::None;
   union {
     ModelID model_id = ModelID::Invalid;
@@ -46,32 +53,20 @@ public:
   auto asset_root_path(this AssetManager&, AssetType type) -> std::filesystem::path;
   auto get_registry(this AssetManager&) -> const AssetRegistry&;
 
-  //  ── Created Assets ──────────────────────────────────────────────────
-  // Assets that will be created and asinged new UUID.
-  // All created assets will be automatically registered into the registry.
-  //
-  auto create_asset(this AssetManager&, AssetType type, const std::filesystem::path& path = {}) -> UUID;
+  auto create(this AssetManager&, AssetType type, const ExtendedAsset &extended_asset) -> UUID;
+  auto import(this AssetManager&, const std::filesystem::path& path) -> bool;
 
-  //  ── Registered Assets ─────────────────────────────────────────────────
-  // Assets that already exist in project root and have meta file with
-  // valid UUID's.
-  //
-  // Add already existing asset into the registry.
-  // File must end with `.oxasset` extension.
-  auto register_asset(this AssetManager&, const std::filesystem::path& path) -> UUID;
-  auto register_asset(this AssetManager&, const UUID& uuid, AssetType type, const std::filesystem::path& path) -> bool;
+  // TODO: Rename #_asset to just #
+  auto delete_asset(this AssetManager&, const UUID& uuid) -> void;
 
-  //  ── Load Assets ─────────────────────────────────────────────────────
-  // Load contents of __registered__ assets.
-  //
   auto load_asset(this AssetManager&, const UUID& uuid) -> bool;
   auto unload_asset(this AssetManager&, const UUID& uuid) -> bool;
 
-  auto delete_asset(this AssetManager&, const UUID& uuid) -> void;
   auto is_valid(this AssetManager&, const UUID& uuid) -> bool;
   auto is_loaded(this AssetManager&, const UUID& uuid) -> bool;
 
   auto get_asset(this AssetManager&, const UUID& uuid) -> Borrowed<Asset>;
+  auto get_asset_info(this AssetManager&, const UUID& uuid) -> Borrowed<ExtendedAsset>;
 
   auto get_model(this AssetManager&, const UUID& uuid) -> Model*;
   auto get_model(this AssetManager&, ModelID mesh_id) -> Model*;
@@ -95,17 +90,20 @@ public:
   auto get_script(this AssetManager&, ScriptID script_id) -> LuaSystem*;
 
 private:
-  AssetRegistry asset_registry = {};
-
   std::shared_mutex registry_mutex = {};
-  std::shared_mutex textures_mutex = {};
-  std::shared_mutex materials_mutex = {};
+  AssetRegistry asset_registry = {};
+  ankerl::unordered_dense::map<UUID, ExtendedAsset> extended_registry = {};
 
   std::vector<MaterialID> dirty_materials = {};
 
   SlotMap<Model, ModelID> model_map = {};
+
+  std::shared_mutex textures_mutex = {};
   SlotMap<Texture, TextureID> texture_map = {};
+
+  std::shared_mutex materials_mutex = {};
   SlotMap<Material, MaterialID> material_map = {};
+
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};
   SlotMap<AudioSource, AudioID> audio_map = {};
   SlotMap<std::unique_ptr<LuaSystem>, ScriptID> script_map = {};

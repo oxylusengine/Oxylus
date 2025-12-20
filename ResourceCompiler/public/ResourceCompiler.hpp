@@ -98,7 +98,7 @@ public:
 
   auto create_asset(const UUID &uuid, AssetType type) -> AssetID;
   auto get_asset_data(AssetID asset_id) -> std::span<u8>;
-  auto get_shader_asset(AssetID asset_id) -> ShaderAsset;
+  auto get_shader_asset(AssetID asset_id) -> ShaderAssetEntry;
 
   auto push_error(std::string str, std::source_location LOC = std::source_location::current()) -> void;
   auto push_message(std::string str, std::source_location LOC = std::source_location::current()) -> void;
@@ -106,8 +106,8 @@ public:
 
   auto get_asset(AssetID asset_id) -> Borrowed<CompiledAsset>;
   auto set_asset_data(AssetID asset_id, std::vector<u8> asset_data) -> void;
-  auto set_asset_info(AssetID asset_id, const ShaderAsset &shader_asset) -> void;
-  auto set_asset_info(AssetID asset_id, const ModelAsset &model_asset) -> void;
+  auto set_asset_info(AssetID asset_id, const ShaderAssetEntry &shader_asset) -> void;
+  auto set_asset_info(AssetID asset_id, const ModelAssetEntry &model_asset) -> void;
   auto get_file_access_time(const std::filesystem::path& path) -> option<u64>;
   auto set_file_access_time(const std::filesystem::path& path, u64 time) -> void;
 };

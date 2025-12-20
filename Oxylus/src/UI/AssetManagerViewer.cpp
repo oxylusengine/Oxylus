@@ -9,59 +9,60 @@
 namespace ox {
 auto draw_asset_table_columns(const Asset& asset) -> bool {
   ZoneScoped;
-  memory::ScopedStack stack;
-
-  bool is_selected = false;
-
-  auto& asset_man = App::mod<AssetManager>();
-
-  const auto uuid_str = asset.uuid.str();
-
-  {
-    ImGui::TableSetColumnIndex(0);
-    ImGui::PushID(uuid_str.c_str());
-
-    constexpr ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_SpanAllColumns |
-                                                      ImGuiSelectableFlags_AllowOverlap |
-                                                      ImGuiSelectableFlags_AllowDoubleClick;
-
-    auto name = asset.path.filename().string();
-    if (ImGui::Selectable(name.c_str(), false, selectable_flags, ImVec2(0.f, 20.f))) {
-      is_selected = true;
-    }
-    ImGui::PopID();
-  }
-
-  if (ImGui::BeginPopupContextItem(uuid_str.c_str(), ImGuiPopupFlags_MouseButtonRight)) {
-    if (ImGui::Button("Load")) {
-      asset_man.load_asset(asset.uuid);
-    }
-
-    ImGui::SameLine();
-
-    if (ImGui::Button("Force Unload")) {
-      asset_man.unload_asset(asset.uuid);
-    }
-
-    if (!asset.is_loaded()) {
-      ImGui::Text("ID: Invalid ID");
-    } else {
-      auto id = SlotMap_decode_id(asset.texture_id);
-      ImGui::Text("ID: %u, Generation: %u", id.index, id.version);
-    }
-
-    // explicit format here because MSVC %lu != clang %lu (its %llu instead)
-    ImGui::TextUnformatted(stack.format_char("RefCount: {}", asset.ref_count));
-
-    ImGui::EndPopup();
-  }
-
-  {
-    ImGui::TableSetColumnIndex(1);
-    ImGui::TextUnformatted(uuid_str.c_str());
-  }
-
-  return is_selected;
+  // memory::ScopedStack stack;
+  //
+  // bool is_selected = false;
+  //
+  // auto& asset_man = App::mod<AssetManager>();
+  //
+  // const auto uuid_str = asset.uuid.str();
+  //
+  // {
+  //   ImGui::TableSetColumnIndex(0);
+  //   ImGui::PushID(uuid_str.c_str());
+  //
+  //   constexpr ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_SpanAllColumns |
+  //                                                     ImGuiSelectableFlags_AllowOverlap |
+  //                                                     ImGuiSelectableFlags_AllowDoubleClick;
+  //
+  //   auto name = asset.path.filename().string();
+  //   if (ImGui::Selectable(name.c_str(), false, selectable_flags, ImVec2(0.f, 20.f))) {
+  //     is_selected = true;
+  //   }
+  //   ImGui::PopID();
+  // }
+  //
+  // if (ImGui::BeginPopupContextItem(uuid_str.c_str(), ImGuiPopupFlags_MouseButtonRight)) {
+  //   if (ImGui::Button("Load")) {
+  //     asset_man.load_asset(asset.uuid);
+  //   }
+  //
+  //   ImGui::SameLine();
+  //
+  //   if (ImGui::Button("Force Unload")) {
+  //     asset_man.unload_asset(asset.uuid);
+  //   }
+  //
+  //   if (!asset.is_loaded()) {
+  //     ImGui::Text("ID: Invalid ID");
+  //   } else {
+  //     auto id = SlotMap_decode_id(asset.texture_id);
+  //     ImGui::Text("ID: %u, Generation: %u", id.index, id.version);
+  //   }
+  //
+  //   // explicit format here because MSVC %lu != clang %lu (its %llu instead)
+  //   ImGui::TextUnformatted(stack.format_char("RefCount: {}", asset.ref_count));
+  //
+  //   ImGui::EndPopup();
+  // }
+  //
+  // {
+  //   ImGui::TableSetColumnIndex(1);
+  //   ImGui::TextUnformatted(uuid_str.c_str());
+  // }
+  //
+  // return is_selected;
+  return false;
 }
 
 auto AssetManagerViewer::draw_asset_table(
@@ -80,18 +81,18 @@ auto AssetManagerViewer::draw_asset_table(
       ImGui::TableSetupColumn("Name");
       ImGui::TableSetupColumn("UUID");
 
-      for (const auto& asset : assets) {
-        auto name = asset.path.filename().string();
-        if (!text_filter.PassFilter(name.c_str())) {
-          continue;
-        }
-
-        ImGui::TableNextRow();
-        if (draw_asset_table_columns(asset)) {
-          if (selected)
-            *selected = asset;
-        }
-      }
+      // for (const auto& asset : assets) {
+      //   auto name = asset.path.filename().string();
+      //   if (!text_filter.PassFilter(name.c_str())) {
+      //     continue;
+      //   }
+      //
+      //   ImGui::TableNextRow();
+      //   if (draw_asset_table_columns(asset)) {
+      //     if (selected)
+      //       *selected = asset;
+      //   }
+      // }
 
       ImGui::EndTable();
     }

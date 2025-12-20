@@ -58,16 +58,16 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
 
   auto slang_stage_to_entry_kind = [](SlangStage slang_stage) {
     switch (slang_stage) {
-      case SLANG_STAGE_VERTEX  : return ShaderAsset::EntryPointKind::Vertex;
-      case SLANG_STAGE_FRAGMENT: return ShaderAsset::EntryPointKind::Fragment;
-      case SLANG_STAGE_COMPUTE : return ShaderAsset::EntryPointKind::Compute;
+      case SLANG_STAGE_VERTEX  : return ShaderAssetEntry::EntryPointKind::Vertex;
+      case SLANG_STAGE_FRAGMENT: return ShaderAssetEntry::EntryPointKind::Fragment;
+      case SLANG_STAGE_COMPUTE : return ShaderAssetEntry::EntryPointKind::Compute;
       case SLANG_STAGE_COUNT   :
-      default                  : return ShaderAsset::EntryPointKind::Count;
+      default                  : return ShaderAssetEntry::EntryPointKind::Count;
     }
   };
 
-  auto shader_asset = ShaderAsset{};
-  auto asset_data = std::vector<u8>();
+  auto asset_data = std::vector<u8>{};
+  auto entry_points = std::vector<ShaderAssetEntry::EntryPoint>{};
   for (const auto& entry_point_name : info.entry_points) {
     auto entry_point = Slang::ComPtr<slang::IEntryPoint>();
     if (SLANG_FAILED(slang_module->findEntryPointByName(entry_point_name.c_str(), entry_point.writeRef()))) {
@@ -152,11 +152,13 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
       reinterpret_cast<const u32*>(spirv_code->getBufferPointer()),
       spirv_code->getBufferSize() / sizeof(u32)
     );
-    shader_asset.entry_point_names[entry_point_kind] = push_str(asset_data, entry_point_name);
-    shader_asset.entry_points[entry_point_kind] = push_span(asset_data, spirv);
+    entry_points.emplace_back(entry_point_kind, push_str(asset_data, entry_point_name), push_span(asset_data, spirv));
   }
 
   auto asset_id = impl->rc_session.create_asset(UUID::generate_random(), AssetType::Shader);
+  auto shader_asset = ShaderAssetEntry{
+    .entry_points = push_span(asset_data, std::span<const ShaderAssetEntry::EntryPoint>(entry_points))
+  };
   impl->rc_session.set_asset_info(asset_id, shader_asset);
   impl->rc_session.set_asset_data(asset_id, std::move(asset_data));
 

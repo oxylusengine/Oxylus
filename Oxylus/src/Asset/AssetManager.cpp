@@ -4,7 +4,8 @@
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
 
-#include "Memory/Stack.hpp"
+#include "Asset/AssetFile.hpp"
+#include "OS/File.hpp"
 #include "Scripting/LuaSystem.hpp"
 #include "Utils/Log.hpp"
 
@@ -17,11 +18,13 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   for (auto& [uuid, asset] : self.asset_registry) {
     // leak check
     if (asset.is_loaded() && asset.ref_count != 0) {
+      const auto& extended_asset_it = self.extended_registry.find(uuid);
+      const auto& extended_asset = extended_asset_it->second;
       OX_LOG_WARN(
         "A {} asset ({}, {}) with refcount of {} is still alive!",
         AssetMetadata::to_asset_type_sv(asset.type),
         uuid.str(),
-        asset.path,
+        extended_asset.path,
         asset.ref_count
       );
     }
@@ -41,23 +44,117 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
 
 auto AssetManager::get_registry(this AssetManager& self) -> const AssetRegistry& { return self.asset_registry; }
 
-auto AssetManager::create_asset(this AssetManager& self, const AssetType type, const std::filesystem::path& path)
-  -> UUID {
+auto AssetManager::create(this AssetManager& self, AssetType type, const ExtendedAsset& extended_asset) -> UUID {
   ZoneScoped;
+
+  auto uuid = UUID::generate_random();
+
   auto write_lock = std::unique_lock(self.registry_mutex);
-  const auto uuid = UUID::generate_random();
   auto [asset_it, inserted] = self.asset_registry.try_emplace(uuid);
   if (!inserted) {
-    OX_LOG_ERROR("Can't create asset {}!", uuid.str());
+    OX_LOG_ERROR("Can't create a duplicate asset {}!", uuid.str());
     return UUID(nullptr);
   }
 
-  auto& asset = asset_it->second;
-  asset.uuid = uuid;
-  asset.type = type;
-  asset.path = path;
+  self.extended_registry.emplace(uuid, extended_asset);
 
-  return asset.uuid;
+  auto& asset = asset_it->second;
+  asset.type = type;
+
+  return uuid;
+}
+
+auto AssetManager::import(this AssetManager& self, const std::filesystem::path& path) -> bool {
+  ZoneScoped;
+
+  auto file = File(path, FileAccess::Read);
+  if (!file || file.size < sizeof(AssetFileHeader)) {
+    OX_LOG_ERROR("Tried to import an invalid asset file. {}", path);
+    return false;
+  }
+
+  auto header = AssetFileHeader{};
+  file.read(&header, sizeof(AssetManager));
+  if (header.magic != AssetFileHeader::MAGIC) {
+    OX_LOG_ERROR("Tried to import an asset file that does not match our file header. {}", path);
+    return false;
+  }
+
+#define READ_OR_FAIL(ptr, size, name)                                                                                  \
+  if (file.read(ptr, size) < size) {                                                                                   \
+    OX_LOG_ERROR("Could not read entry index {}, {} has a corrupt " name " section.", file_entry_index, path);         \
+    return false;                                                                                                      \
+  }
+
+  for (auto file_entry_index = 0_sz; file_entry_index < header.file_entry_count; file_entry_index++) {
+    auto file_entry = AssetFileEntryInfo{};
+    auto uuid_bytes = std::array<u8, 16>{};
+    READ_OR_FAIL(uuid_bytes.data(), ox::size_bytes(uuid_bytes), "UUID");
+    file_entry.uuid = UUID::from_bytes(std::span(uuid_bytes)).value_or(UUID(nullptr));
+    READ_OR_FAIL(&file_entry.data_size, sizeof(u32), "data_size");
+    READ_OR_FAIL(&file_entry.data_offset, sizeof(u32), "data_offset");
+    READ_OR_FAIL(&file_entry.type, sizeof(AssetType), "type");
+    switch (file_entry.type) {
+      case AssetType::Model: {
+        READ_OR_FAIL(&file_entry.entry.model.nodes, sizeof(AssetDataView<>), "model entry nodes");
+        READ_OR_FAIL(&file_entry.entry.model.meshes, sizeof(AssetDataView<>), "model entry meshes");
+      } break;
+      case AssetType::Shader: {
+        READ_OR_FAIL(&file_entry.entry.shader.entry_points, sizeof(AssetDataView<>), "shader entry points");
+      } break;
+      default: {
+        OX_LOG_ERROR("Unhandled meta type {} for {}", std::to_underlying(file_entry.type), path);
+        return false;
+      }
+    }
+
+    auto write_lock = std::unique_lock(self.registry_mutex);
+    auto [asset_it, inserted] = self.asset_registry.try_emplace(file_entry.uuid);
+    if (!inserted) {
+      OX_LOG_ERROR("Can't create a duplicate asset {}, {}!", file_entry.uuid.str(), path);
+      // return UUID(nullptr);
+      continue; // it's probably better if we just continue
+    }
+
+    auto& asset = asset_it->second;
+    asset.type = file_entry.type;
+
+    self.extended_registry.emplace(
+      file_entry.uuid,
+      ExtendedAsset{
+        .path = path,
+        .data_size = file_entry.data_size,
+        .data_offset = file_entry.data_offset,
+        .entry = file_entry.entry
+      }
+    );
+  }
+
+  OX_LOG_TRACE("Imported {} asset(s) from {}", header.file_entry_count, path);
+
+  return true;
+}
+
+auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> void {
+  ZoneScoped;
+
+  auto asset = self.get_asset(uuid);
+  if (asset->ref_count > 0) {
+    OX_LOG_WARN("Deleting alive asset {} with {} references!", uuid.str(), asset->ref_count);
+  }
+
+  if (asset->is_loaded()) {
+    asset->ref_count = ox::min(asset->ref_count, 1_u64);
+    self.unload_asset(uuid);
+
+    {
+      asset.reset();
+      auto write_lock = std::unique_lock(self.registry_mutex);
+      self.asset_registry.erase(uuid);
+    }
+  }
+
+  OX_LOG_TRACE("Deleted asset {}.", uuid.str());
 }
 
 // auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID {
@@ -163,51 +260,6 @@ auto AssetManager::create_asset(this AssetManager& self, const AssetType type, c
 //
 //   return uuid;
 // }
-
-auto AssetManager::register_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID {
-  ZoneScoped;
-
-  memory::ScopedStack stack;
-
-  auto meta = AssetMetadata::from_file(path);
-  if (!meta.has_value()) {
-    return UUID(nullptr);
-  }
-
-  auto asset_path = path;
-  asset_path.replace_extension("");
-  if (!self.register_asset(meta->uuid, meta->type, asset_path)) {
-    return UUID(nullptr);
-  }
-
-  return meta->uuid;
-}
-
-auto AssetManager::register_asset(
-  this AssetManager& self, const UUID& uuid, AssetType type, const std::filesystem::path& path
-) -> bool {
-  ZoneScoped;
-
-  auto write_lock = std::unique_lock(self.registry_mutex);
-  auto [asset_it, inserted] = self.asset_registry.try_emplace(uuid);
-  if (!inserted) {
-    if (asset_it != self.asset_registry.end()) {
-      // Tried a reinsert, asset already exists
-      return true;
-    }
-
-    return false;
-  }
-
-  auto& asset = asset_it->second;
-  asset.uuid = uuid;
-  asset.path = path;
-  asset.type = type;
-
-  OX_LOG_INFO("Registered new asset: {}:{}", AssetMetadata::to_asset_type_sv(asset.type), uuid.str());
-
-  return true;
-}
 
 auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid) -> bool {
   auto asset = self.get_asset(uuid);
@@ -1073,28 +1125,6 @@ auto AssetManager::unload_asset(this AssetManager& self, const UUID& uuid) -> bo
 //   return true;
 // }
 
-auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> void {
-  ZoneScoped;
-
-  auto asset = self.get_asset(uuid);
-  if (asset->ref_count > 0) {
-    OX_LOG_WARN("Deleting alive asset {} with {} references!", asset->uuid.str(), asset->ref_count);
-  }
-
-  if (asset->is_loaded()) {
-    asset->ref_count = ox::min(asset->ref_count, 1_u64);
-    self.unload_asset(uuid);
-
-    {
-      asset.reset();
-      auto write_lock = std::unique_lock(self.registry_mutex);
-      self.asset_registry.erase(uuid);
-    }
-  }
-
-  OX_LOG_TRACE("Deleted asset {}.", uuid.str());
-}
-
 auto AssetManager::is_valid(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
@@ -1115,6 +1145,18 @@ auto AssetManager::get_asset(this AssetManager& self, const UUID& uuid) -> Borro
   auto read_lock = std::shared_lock(self.registry_mutex);
   const auto it = self.asset_registry.find(uuid);
   if (it == self.asset_registry.end()) {
+    return {};
+  }
+
+  return Borrowed(self.registry_mutex, &it->second);
+}
+
+auto AssetManager::get_asset_info(this AssetManager& self, const UUID& uuid) -> Borrowed<ExtendedAsset> {
+  ZoneScoped;
+
+  auto read_lock = std::shared_lock(self.registry_mutex);
+  const auto it = self.extended_registry.find(uuid);
+  if (it == self.extended_registry.end()) {
     return {};
   }
 

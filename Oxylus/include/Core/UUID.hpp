@@ -1,9 +1,10 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
+#include <span>
+
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
-
-#include <ankerl/unordered_dense.h>
 
 namespace ox {
 struct UUID {
@@ -12,7 +13,7 @@ private:
     u64 u64x2[2] = {};
     u8 u8x16[16];
     std::array<u8, 16> arr;
-  } m_data = {};
+  } data = {};
 
 #ifdef OX_DEBUG
   std::string debug = {};
@@ -21,8 +22,9 @@ private:
 public:
   constexpr static size_t LENGTH = 36;
 
-  static UUID generate_random();
-  static option<UUID> from_string(std::string_view str);
+  static auto generate_random() -> UUID;
+  static auto from_string(std::string_view str) -> option<UUID>;
+  static auto from_bytes(std::span<u8> bytes) -> option<UUID>;
 
   UUID() = default;
   explicit UUID(nullptr_t) {}
@@ -32,12 +34,11 @@ public:
   UUID& operator=(UUID&& other) = default;
 
   std::string str() const;
-  const std::array<u8, 16> bytes() const { return m_data.arr; }
-  std::array<u8, 16> bytes() { return m_data.arr; }
+  std::span<const u8, 16> bytes() const { return data.arr; }
   constexpr bool operator==(const UUID& other) const {
-    return m_data.u64x2[0] == other.m_data.u64x2[0] && m_data.u64x2[1] == other.m_data.u64x2[1];
+    return data.u64x2[0] == other.data.u64x2[0] && data.u64x2[1] == other.data.u64x2[1];
   }
-  explicit operator bool() const { return m_data.u64x2[0] != 0 && m_data.u64x2[1] != 0; }
+  explicit operator bool() const { return data.u64x2[0] != 0 && data.u64x2[1] != 0; }
 };
 } // namespace ox
 

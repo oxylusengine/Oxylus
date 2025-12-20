@@ -21,20 +21,20 @@ constexpr u8 hex_to_u8(char c) {
   return (c >= 'A' && c <= 'F') ? static_cast<u8>(c - 'A' + 10) : static_cast<u8>(c - 'a' + 10);
 }
 
-UUID UUID::generate_random() {
+auto UUID::generate_random() -> UUID {
   ZoneScoped;
 
-  UUID uuid;
-  std::ranges::generate(uuid.m_data.arr, std::ref(uuid_random_device));
-  uuid.m_data.u64x2[0] &= 0xffffffffffff0fff_u64;
-  uuid.m_data.u64x2[0] |= 0x0000000000004000_u64;
-  uuid.m_data.u64x2[1] &= 0x3fffffffffffffff_u64;
-  uuid.m_data.u64x2[1] |= 0x8000000000000000_u64;
+  auto uuid = UUID{};
+  std::ranges::generate(uuid.data.arr, std::ref(uuid_random_device));
+  uuid.data.u64x2[0] &= 0xffffffffffff0fff_u64;
+  uuid.data.u64x2[0] |= 0x0000000000004000_u64;
+  uuid.data.u64x2[1] &= 0x3fffffffffffffff_u64;
+  uuid.data.u64x2[1] |= 0x8000000000000000_u64;
 
   return uuid;
 }
 
-option<UUID> UUID::from_string(std::string_view str) {
+auto UUID::from_string(std::string_view str) -> option<UUID> {
   ZoneScoped;
 
   if (str.size() != UUID::LENGTH || str[8] != '-' || str[13] != '-' || str[18] != '-' || str[23] != '-') {
@@ -55,12 +55,27 @@ option<UUID> UUID::from_string(std::string_view str) {
     return val;
   };
 
-  UUID uuid = {};
-  uuid.m_data.u64x2[0] = (convert_segment(str, 0, 8).value() << 32) |  //
-                         (convert_segment(str, 9, 4).value() << 16) |  //
-                         convert_segment(str, 14, 4).value();
-  uuid.m_data.u64x2[1] = (convert_segment(str, 19, 4).value() << 48) | //
-                         convert_segment(str, 24, 12).value();
+  auto uuid = UUID{};
+  uuid.data.u64x2[0] = (convert_segment(str, 0, 8).value() << 32) |  //
+                       (convert_segment(str, 9, 4).value() << 16) |  //
+                       convert_segment(str, 14, 4).value();
+  uuid.data.u64x2[1] = (convert_segment(str, 19, 4).value() << 48) | //
+                       convert_segment(str, 24, 12).value();
+
+#ifdef OX_DEBUG
+  uuid.debug = uuid.str();
+#endif
+
+  return uuid;
+}
+
+auto UUID::from_bytes(std::span<u8> bytes) -> option<UUID> {
+  if (bytes.size_bytes() < 16) {
+    return nullopt;
+  }
+
+  auto uuid = UUID{};
+  std::memcpy(uuid.data.arr.data(), bytes.data(), 16);
 
 #ifdef OX_DEBUG
   uuid.debug = uuid.str();
@@ -74,11 +89,11 @@ std::string UUID::str() const {
 
   return fmt::format(
     "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-    static_cast<u32>(this->m_data.u64x2[0] >> 32_u64),
-    static_cast<u32>((this->m_data.u64x2[0] >> 16_u64) & 0x0000ffff_u64),
-    static_cast<u32>(this->m_data.u64x2[0] & 0x0000ffff_u64),
-    static_cast<u32>(this->m_data.u64x2[1] >> 48_u64),
-    this->m_data.u64x2[1] & 0x0000ffffffffffff_u64
+    static_cast<u32>(this->data.u64x2[0] >> 32_u64),
+    static_cast<u32>((this->data.u64x2[0] >> 16_u64) & 0x0000ffff_u64),
+    static_cast<u32>(this->data.u64x2[0] & 0x0000ffff_u64),
+    static_cast<u32>(this->data.u64x2[1] >> 48_u64),
+    this->data.u64x2[1] & 0x0000ffffffffffff_u64
   );
 }
 

@@ -227,17 +227,17 @@ void InspectorPanel::draw_material_properties(
     static AssetManagerViewer am;
     am.render(name.c_str(), &active, filter, &selected);
 
-    if (selected.type == AssetType::Texture) {
-      auto& asset_man = App::mod<AssetManager>();
-      auto existing_asset = asset_man.get_asset(uuid);
-      const bool is_loaded = asset_man.load_asset(selected.uuid);
-      if (is_loaded) {
-        if (existing_asset) {
-          asset_man.unload_asset(uuid);
-        }
-        return selected.uuid;
-      }
-    }
+    // if (selected.type == AssetType::Texture) {
+    //   auto& asset_man = App::mod<AssetManager>();
+    //   auto existing_asset = asset_man.get_asset(uuid);
+    //   const bool is_loaded = asset_man.load_asset(selected.uuid);
+    //   if (is_loaded) {
+    //     if (existing_asset) {
+    //       asset_man.unload_asset(uuid);
+    //     }
+    //     return selected.uuid;
+    //   }
+    // }
 
     return UUID(nullptr);
   };
@@ -491,20 +491,20 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                 viewer.render("Asset Picker", &draw_asset_picker, filter, &selected);
 
                 // NOTE: We don't allow model assets to be loaded this way yet(or ever).
-                if (selected.type != AssetType::None && selected.type != AssetType::Model) {
-                  // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
-                  auto existing_asset = asset_man.get_asset(*uuid);
-                  const bool is_same_asset = selected.uuid == *uuid;
-                  const bool is_same_type = existing_asset->type == selected.type;
-                  const bool is_loaded = asset_man.load_asset(selected.uuid);
-                  if (!is_same_asset && is_same_type && is_loaded) {
-                    if (*uuid) {
-                      asset_man.unload_asset(*uuid);
-                    }
-                    *uuid = selected.uuid;
-                    entity.modified(component);
-                  }
-                }
+                // if (selected.type != AssetType::None && selected.type != AssetType::Model) {
+                //   // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
+                //   auto existing_asset = asset_man.get_asset(*uuid);
+                //   const bool is_same_asset = selected.uuid == *uuid;
+                //   const bool is_same_type = existing_asset->type == selected.type;
+                //   const bool is_loaded = asset_man.load_asset(selected.uuid);
+                //   if (!is_same_asset && is_same_type && is_loaded) {
+                //     if (*uuid) {
+                //       asset_man.unload_asset(*uuid);
+                //     }
+                //     *uuid = selected.uuid;
+                //     entity.modified(component);
+                //   }
+                // }
               }
 
               ImGui::SameLine();
@@ -598,25 +598,25 @@ void InspectorPanel::draw_asset_info(Borrowed<Asset> asset) {
   ZoneScoped;
   auto& asset_man = App::mod<AssetManager>();
   auto type_str = AssetMetadata::to_asset_type_sv(asset->type);
-  auto uuid_str = asset->uuid.str();
-  auto name = asset->path.filename().string();
-  auto path_str = asset->path.string();
-
-  ImGui::SeparatorText("Asset");
-  ImGui::Indent();
-  UI::begin_properties(ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit);
-  UI::text("Type", type_str);
-  UI::input_text("UUID", &uuid_str, ImGuiInputTextFlags_ReadOnly);
-  UI::input_text("File", &name, ImGuiInputTextFlags_ReadOnly);
-  UI::input_text("Path", &path_str, ImGuiInputTextFlags_ReadOnly);
-  UI::end_properties();
-
-  if (asset->type == AssetType::Material) {
-    if (auto mat = asset_man.get_material(asset->uuid)) {
-      ImGui::SeparatorText("Material");
-      draw_material_properties(std::move(mat), asset->uuid, asset->path);
-    }
-  }
+  // auto uuid_str = asset->uuid.str();
+  // auto name = asset->path.filename().string();
+  // auto path_str = asset->path.string();
+  //
+  // ImGui::SeparatorText("Asset");
+  // ImGui::Indent();
+  // UI::begin_properties(ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit);
+  // UI::text("Type", type_str);
+  // UI::input_text("UUID", &uuid_str, ImGuiInputTextFlags_ReadOnly);
+  // UI::input_text("File", &name, ImGuiInputTextFlags_ReadOnly);
+  // UI::input_text("Path", &path_str, ImGuiInputTextFlags_ReadOnly);
+  // UI::end_properties();
+  //
+  // if (asset->type == AssetType::Material) {
+  //   if (auto mat = asset_man.get_material(asset->uuid)) {
+  //     ImGui::SeparatorText("Material");
+  //     draw_material_properties(std::move(mat), asset->uuid, asset->path);
+  //   }
+  // }
 }
 
 void InspectorPanel::draw_shader_asset(UUID* uuid, Borrowed<Asset> asset) {}
@@ -635,7 +635,7 @@ void InspectorPanel::draw_model_asset(UUID* uuid, Borrowed<Asset> asset) {
       if (auto material = asset_man.get_material(mat_uuid)) {
         const auto mat_uuid_str = mat_uuid.str();
         if (ImGui::TreeNodeEx(mat_uuid_str.c_str(), TREE_FLAGS, "%s", mat_uuid_str.c_str())) {
-          draw_material_properties(std::move(material), mat_uuid, asset->path);
+          // draw_material_properties(std::move(material), mat_uuid, asset->path);
           ImGui::TreePop();
         }
       }
@@ -653,7 +653,7 @@ void InspectorPanel::draw_material_asset(UUID* uuid, Borrowed<Asset> asset) {
   auto& asset_man = App::mod<AssetManager>();
 
   if (auto material = asset_man.get_material(*uuid)) {
-    draw_material_properties(std::move(material), *uuid, asset->path);
+    // draw_material_properties(std::move(material), *uuid, asset->path);
   }
 }
 

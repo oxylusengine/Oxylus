@@ -9,7 +9,7 @@
 #include "Core/Types.hpp"
 
 namespace ox {
-template <typename T>
+template <typename T = u8>
 struct AssetDataView {
   u32 begin = 0;
   u32 end = 0;
@@ -40,7 +40,7 @@ struct AssetDataView {
   auto size_bytes() const -> usize { return end - begin; }
 };
 
-struct ShaderAsset {
+struct ShaderAssetEntry {
   enum EntryPointKind : u32 {
     Vertex = 0,
     Fragment,
@@ -48,13 +48,16 @@ struct ShaderAsset {
     Count,
   };
 
-  AssetDataView<u32> entry_points[EntryPointKind::Count] = {};
-  AssetDataView<c8> entry_point_names[EntryPointKind::Count] = {};
+  struct EntryPoint {
+    EntryPointKind kind = EntryPointKind::Count;
+    AssetDataView<c8> name = {};
+    AssetDataView<u32> code = {};
+  };
 
-  auto has_entry_point(EntryPointKind entry_point) -> bool { return !entry_points[entry_point].empty(); }
+  AssetDataView<EntryPoint> entry_points = {};
 };
 
-struct ModelAsset {
+struct ModelAssetEntry {
   struct Meshlet {
     u32 indirect_vertex_index_offset = 0;
     u32 local_triangle_index_offset = 0;
@@ -99,18 +102,18 @@ struct ModelAsset {
   AssetDataView<Mesh> meshes = {};
 };
 
-union AssetData {
-  u32 placeholder = 0;
-  ShaderAsset shader;
-  ModelAsset model;
+union AssetEntry {
+  u8 bytes = 0;
+  ShaderAssetEntry shader;
+  ModelAssetEntry model;
 };
 
-struct AssetFileEntry {
+struct AssetFileEntryInfo {
   UUID uuid = {};
   u32 data_size = 0;
   u32 data_offset = 0;
   AssetType type = AssetType::None;
-  AssetData asset = {};
+  AssetEntry entry = {};
 };
 
 enum class AssetFileFlags : u32 {
@@ -120,10 +123,11 @@ enum class AssetFileFlags : u32 {
 consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
-  u32 magic = 1129470031; // OXRC
+  constexpr static u32 MAGIC = 1129470031; // OXRC
+  u32 magic = 0;
   u16 version = 10;
   AssetFileFlags flags = AssetFileFlags::None;
-  u32 asset_count = 0;
+  u32 file_entry_count = 0;
 };
 
 } // namespace ox

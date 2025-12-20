@@ -506,17 +506,17 @@ auto SceneHierarchyViewer::draw_entities_context_menu() -> void {
 auto SceneHierarchyViewer::draw_scripts_context_menu() -> void {
   ZoneScoped;
 
-  Asset selected = {};
-  asset_manager_viewer.render("AssetManagerViewer", nullptr, AssetType::Script, &selected);
-
-  if (selected.type == AssetType::Script) {
-    auto& asset_man = App::mod<AssetManager>();
-    if (!selected.is_loaded())
-      asset_man.load_asset(selected.uuid);
-
-    scene_->add_lua_system(selected.uuid);
-    ImGui::CloseCurrentPopup();
-  }
+  // Asset selected = {};
+  // asset_manager_viewer.render("AssetManagerViewer", nullptr, AssetType::Script, &selected);
+  //
+  // if (selected.type == AssetType::Script) {
+  //   auto& asset_man = App::mod<AssetManager>();
+  //   if (!selected.is_loaded())
+  //     asset_man.load_asset(selected.uuid);
+  //
+  //   scene_->add_lua_system(selected.uuid);
+  //   ImGui::CloseCurrentPopup();
+  // }
 }
 
 auto SceneHierarchyViewer::on_selected_entity_callback(const std::function<void(flecs::entity)> callback) -> void {

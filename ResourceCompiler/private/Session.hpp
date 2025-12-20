@@ -25,8 +25,8 @@ struct CompiledAsset {
   AssetType type = AssetType::None;
   union {
     u32 none = 0;
-    ShaderAsset shader;
-    ModelAsset model;
+    ShaderAssetEntry shader;
+    ModelAssetEntry model;
   };
 };
 

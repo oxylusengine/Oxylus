@@ -146,7 +146,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     auto& asset_man = App::mod<AssetManager>();
     if (it.event() == flecs::OnAdd) {
       if (!c.material) {
-        c.material = asset_man.create_asset(AssetType::Material, {});
+        c.material = asset_man.create(AssetType::Material, {});
         asset_man.load_asset(c.material);
       }
     }
@@ -282,7 +282,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           c.playing = true;
         }
         if (!c.material)
-          c.material = asset_man.create_asset(AssetType::Material, {});
+          c.material = asset_man.create(AssetType::Material, {});
         asset_man.load_asset(c.material);
 
         auto parent = it.entity(i);

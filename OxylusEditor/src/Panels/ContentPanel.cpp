@@ -826,8 +826,8 @@ void ContentPanel::render_body(bool grid) {
     if (ImGui::Button("Create", ImVec2(120, 0))) {
       if (!new_asset_name_.empty()) {
         auto& asset_man = App::mod<AssetManager>();
-        auto asset = asset_man.create_asset(AssetType::Material, _current_directory.string());
-        asset_man.load_asset(asset);
+        // auto asset = asset_man.create_asset(AssetType::Material, _current_directory.string());
+        // asset_man.load_asset(asset);
         OX_DEBUGBREAK(); // TODO(RC): Exporting is removed with TC
 
         // if (asset_man.export_asset(asset, (_current_directory / new_asset_name_).string())) {
