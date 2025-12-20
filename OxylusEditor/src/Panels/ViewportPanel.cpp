@@ -144,16 +144,18 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
     auto& style = ImGui::GetStyle();
 
     if (ImGui::BeginMenuBar()) {
-      if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE)) {
-        App::mod<Editor>().save_scene();
-      }
-      UI::tooltip_hover("Save scene");
-      if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE_MOVE)) {
-        App::mod<Editor>().save_scene_as();
-      }
-      UI::tooltip_hover("Save scene as");
-      if (ImGui::MenuItem(ICON_MDI_COG)) {
-        viewport_settings_popup = true;
+      if (!editor_scene_->is_playing()) {
+        if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE)) {
+          App::mod<Editor>().save_scene();
+        }
+        UI::tooltip_hover("Save scene");
+        if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE_MOVE)) {
+          App::mod<Editor>().save_scene_as();
+        }
+        UI::tooltip_hover("Save scene as");
+        if (ImGui::MenuItem(ICON_MDI_COG)) {
+          viewport_settings_popup = true;
+        }
       }
       if (ImGui::MenuItem(ICON_MDI_INFORMATION, nullptr, draw_scene_stats)) {
         draw_scene_stats = !draw_scene_stats;
