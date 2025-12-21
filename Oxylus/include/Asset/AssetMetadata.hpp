@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
+#include <variant>
 
 #include "Core/UUID.hpp"
 

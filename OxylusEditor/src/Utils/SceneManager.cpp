@@ -147,7 +147,7 @@ auto SceneManager::get_scene(this const SceneManager& self, SceneID scene_id) ->
   ZoneScoped;
 
   OX_ASSERT(scene_id != SceneID::Invalid);
-  auto scene_ptr = self.scenes.slotc(scene_id);
+  auto scene_ptr = self.scenes.slot(scene_id);
   OX_CHECK_NULL(scene_ptr);
   return *scene_ptr;
 }

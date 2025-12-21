@@ -826,8 +826,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   };
 
   if (self.force_material_update) {
-    asset_man.set_all_materials_dirty();
-    self.force_material_update = false;
+    // TODO(RC): should figure something out
+    // asset_man.set_all_materials_dirty();
+    // self.force_material_update = false;
   }
 
   auto dirty_material_ids = asset_man.get_dirty_material_ids();

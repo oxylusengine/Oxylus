@@ -415,10 +415,11 @@ void ViewportPanel::drag_drop(this const ViewportPanel& self) {
     if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
       const auto* payload = PayloadData::from_payload(imgui_payload);
       const auto path = payload->get_path();
-      if (path.extension() == ".gltf" || path.extension() == ".glb") {
-        if (auto asset = App::mod<AssetManager>().import_asset(path))
-          self.editor_scene_->get_scene()->create_model_entity(asset);
-      }
+      // TODO(RC): use RCAPI to handle this instead
+      // if (path.extension() == ".gltf" || path.extension() == ".glb") {
+      //   if (auto asset = App::mod<AssetManager>().import_asset(path))
+      //     self.editor_scene_->get_scene()->create_model_entity(asset);
+      // }
     }
 
     ImGui::EndDragDropTarget();

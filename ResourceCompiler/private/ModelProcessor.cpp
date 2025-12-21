@@ -13,6 +13,7 @@
 #include <glm/vec4.hpp>
 #include <meshoptimizer.h>
 #include <queue>
+#include <ranges>
 
 #include "AssetData.hpp"
 #include "ResourceCompiler.hpp"

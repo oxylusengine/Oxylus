@@ -20,7 +20,7 @@ auto print_help() -> void {
   print_command("meta \"path\"", "Add a meta file to compile.");
   print_command("output \"path\"", "Define a path of compiled resources. This is optional.");
   print_command("cache \"path\"", "Add a cache file to avoid recompiling unmodified resources.");
-  std::println(
+  fmt::println(
     "\n Note: You can still run rcli without specifying any output or cache path to validate integrity of your "
     "resources. Just make sure you don't have --silent flag set."
   );
