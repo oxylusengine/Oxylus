@@ -35,6 +35,12 @@
 namespace ox::rc {
 enum class AssetID : u64 { Invalid = ~0_u64 };
 
+struct CacheEntry {
+  std::filesystem::path source_path = {};
+  u64 source_hash = 0;
+  std::vector<UUID> dependencies = {};
+};
+
 enum class ShaderOptimization : i32 {
   None = 0,
   Default,
@@ -54,6 +60,11 @@ struct ShaderInfo {
   std::filesystem::path path = {};
   std::string module_name = {};
   std::vector<std::string> entry_points = {};
+};
+
+struct ModelInfo {
+  std::filesystem::path path = {};
+  bool is_foliage = false;
 };
 
 struct OXRC_API ShaderSession {
@@ -94,9 +105,10 @@ public:
   auto output_to(const std::filesystem::path& path) -> void;
 
   auto create_shader_session(const ShaderSessionInfo& info) -> ShaderSession;
+  auto add_model(const ModelInfo &model_info) -> void;
   auto compile_requests() -> bool;
 
-  auto create_asset(const UUID &uuid, AssetType type) -> AssetID;
+  auto create_asset(const UUID& uuid, AssetType type) -> AssetID;
   auto get_asset_data(AssetID asset_id) -> std::span<u8>;
   auto get_shader_asset(AssetID asset_id) -> ShaderAssetEntry;
 
@@ -106,8 +118,8 @@ public:
 
   auto get_asset(AssetID asset_id) -> Borrowed<CompiledAsset>;
   auto set_asset_data(AssetID asset_id, std::vector<u8> asset_data) -> void;
-  auto set_asset_info(AssetID asset_id, const ShaderAssetEntry &shader_asset) -> void;
-  auto set_asset_info(AssetID asset_id, const ModelAssetEntry &model_asset) -> void;
+  auto set_asset_info(AssetID asset_id, const ShaderAssetEntry& shader_asset) -> void;
+  auto set_asset_info(AssetID asset_id, const ModelAssetEntry& model_asset) -> void;
   auto get_file_access_time(const std::filesystem::path& path) -> option<u64>;
   auto set_file_access_time(const std::filesystem::path& path, u64 time) -> void;
 };

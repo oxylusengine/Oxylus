@@ -222,7 +222,7 @@ auto Session::import_meta(const std::filesystem::path& path) -> bool {
 
       auto model_path = std::filesystem::path(path_json.value_unsafe());
       model_path = (path.parent_path() / model_path).make_preferred();
-      impl->model_process_requests.emplace_back(model_path, is_foliage);
+      this->add_model({.path = model_path, .is_foliage = is_foliage});
     }
   }
 
@@ -439,28 +439,45 @@ auto Session::create_shader_session(const ShaderSessionInfo& info) -> ShaderSess
   }
 }
 
+auto Session::add_model(const ModelInfo& model_info) -> void {
+  impl->model_process_requests.emplace_back(model_info.path, model_info.is_foliage);
+}
+
 auto Session::compile_requests() -> bool {
+  auto check_last_modified = [&](const std::filesystem::path& path) -> bool {
+    const auto last_modified = this->get_file_access_time(path).value_or(0_u64);
+    auto current_modified = 0_u64;
+    if (auto file = os::file_open(path, FileAccess::Read); file.has_value()) {
+      current_modified = os::file_last_modified(file.value()).value_or(0_u64);
+      os::file_close(file.value());
+    }
+
+    auto needs_compiling = current_modified > last_modified;
+    if (needs_compiling) {
+      this->set_file_access_time(path, current_modified);
+    }
+
+    return needs_compiling;
+  };
+
   for (const auto& request : impl->shader_compile_requests) {
     auto shader_session = create_shader_session(request.session_info);
     for (const auto& shader_info : request.shader_infos) {
       const auto full_path = std::filesystem::path(shader_session.get_root_dir() / shader_info.path).lexically_normal();
-      const auto last_modified = this->get_file_access_time(full_path).value_or(0_u64);
-      auto current_modified = 0_u64;
-      if (auto file = os::file_open(full_path, FileAccess::Read); file.has_value()) {
-        current_modified = os::file_last_modified(file.value()).value_or(0_u64);
-        os::file_close(file.value());
-      }
-
-      if (current_modified <= last_modified) {
+      if (!check_last_modified(full_path)) {
         continue;
       }
 
       shader_session.compile_shader(shader_info);
-      this->set_file_access_time(full_path, current_modified);
     }
   }
 
   for (const auto& request : impl->model_process_requests) {
+    const auto path = request.path.lexically_normal();
+    if (!check_last_modified(path)) {
+      continue;
+    }
+
     process_model(impl, request);
   }
 
