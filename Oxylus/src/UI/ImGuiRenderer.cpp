@@ -10,7 +10,8 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Core/App.hpp"
-#include "Render/Slang/Slang.hpp"
+#include "ImGuiSPV_FS.hpp"
+#include "ImGuiSPV_VS.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Render/Window.hpp"
 #include "Utils/Profiler.hpp"
@@ -76,17 +77,24 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
 
   auto& runtime = *App::get_vkcontext().runtime;
 
-  auto& vfs = App::get_vfs();
-  auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
-
-  Slang slang = {};
-  slang.create_session({.root_directory = shaders_dir, .definitions = {}});
-
-  slang.create_pipeline(
-    runtime,
-    "imgui",
-    {.path = shaders_dir / "passes/imgui.slang", .entry_points = {"vs_main", "fs_main"}}
+  auto pipelie_ci = vuk::PipelineBaseCreateInfo{};
+  pipelie_ci.add_spirv(
+    std::vector<uint32_t>(
+      embedded::imgui_vs_main_spirv,
+      embedded::imgui_vs_main_spirv + embedded::imgui_vs_main_word_count
+    ),
+    {},
+    "vs_main"
   );
+  pipelie_ci.add_spirv(
+    std::vector<uint32_t>(
+      embedded::imgui_fs_main_spirv,
+      embedded::imgui_fs_main_spirv + embedded::imgui_fs_main_word_count
+    ),
+    {},
+    "fs_main"
+  );
+  runtime.create_named_pipeline("imgui", pipelie_ci);
 
   return {};
 }
