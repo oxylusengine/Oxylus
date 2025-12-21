@@ -13,20 +13,17 @@ namespace ox {
 auto AssetManager::read_asset_file(const std::filesystem::path& path) -> std::vector<AssetFileEntryInfo> {
   auto file = File(path, FileAccess::Read);
   if (!file || file.size < sizeof(AssetFileHeader)) {
-    OX_LOG_ERROR("Tried to import an invalid asset file. {}", path);
     return {};
   }
 
   auto header = AssetFileHeader{};
   file.read(&header, sizeof(AssetManager));
   if (header.magic != AssetFileHeader::MAGIC) {
-    OX_LOG_ERROR("Tried to import an asset file that does not match our file header. {}", path);
     return {};
   }
 
 #define READ_OR_FAIL(ptr, size, name)                                                                                  \
   if (file.read(ptr, size) < size) {                                                                                   \
-    OX_LOG_ERROR("Could not read entry index {}, {} has a corrupt " name " section.", file_entry_index, path);         \
     return {};                                                                                                         \
   }
 
@@ -48,7 +45,7 @@ auto AssetManager::read_asset_file(const std::filesystem::path& path) -> std::ve
         READ_OR_FAIL(&file_entry.entry.shader.entry_points, sizeof(AssetDataView<>), "shader entry points");
       } break;
       default: {
-        OX_LOG_ERROR("Unhandled meta type {} for {}", std::to_underlying(file_entry.type), path);
+        OX_DEBUGBREAK(); // Unhandled meta type
         return {};
       }
     }
