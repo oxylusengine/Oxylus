@@ -64,7 +64,6 @@ CMakeSettings.json
 /cmake-build-debug-visual-studio
 /cmake-build-release-visual-studio
 CMakeLists.txt
-.clangd
 
 # xmake
 .xmake
