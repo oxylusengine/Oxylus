@@ -14,12 +14,15 @@
 #include "Core/App.hpp"
 #include "Physics/RayCast.hpp"
 #include "Scene/ECSModule/Core.hpp"
+#include "Scene/Scene.hpp"
 #include "Scripting/LuaHelpers.hpp"
 #include "Utils/OxMath.hpp"
 #include "Render/Camera.hpp"
 // clang-format on
 
 namespace ox {
+// TODO(hatrickek): Move the functions that require Scene as an argument to the SceneBindings.
+
 auto PhysicsBinding::bind(sol::state* state) -> void {
   state->new_enum(
     "AllowedDOFs",
@@ -58,8 +61,8 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
   auto physics_table = state->create_table("Physics");
   physics_table.set_function(
     "cast_ray",
-    [](const RayCast& ray) -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> {
-      return App::mod<Physics>().cast_ray(ray);
+    [](Scene* scene, const RayCast& ray) -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> {
+      return scene->cast_ray(ray);
     }
   );
   physics_table.set_function(
@@ -214,9 +217,8 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     [](JPH::Body& body, glm::vec3 v) { body.SetLinearVelocity(math::to_jolt(v)); },
 
     "add_linear_velocity",
-    [](JPH::Body& body, glm::vec3 v) {
-      auto& physics = App::mod<Physics>();
-      JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
+    [](JPH::Body& body, Scene* scene, glm::vec3 v) {
+      JPH::BodyInterface& body_interface = scene->get_physics_system()->GetBodyInterface();
       body_interface.AddLinearVelocity(body.GetID(), math::to_jolt(v));
     },
 
@@ -271,9 +273,8 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     &JPH::Body::AddAngularImpulse,
 
     "move_kinematic",
-    [](JPH::Body& body, glm::vec3 target_position, const glm::quat& target_rotation, f32 delta_time) {
-      auto& physics = App::mod<Physics>();
-      JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
+    [](JPH::Body& body, Scene* scene, glm::vec3 target_position, const glm::quat& target_rotation, f32 delta_time) {
+      JPH::BodyInterface& body_interface = scene->get_physics_system()->GetBodyInterface();
       body_interface
         .MoveKinematic(body.GetID(), math::to_jolt(target_position), math::to_jolt(target_rotation), delta_time);
     },
@@ -282,20 +283,31 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     &JPH::Body::GetShape,
 
     "get_position",
-    &JPH::Body::GetPosition,
+    [](const JPH::Body& body) -> glm::vec3 { return math::from_jolt(body.GetPosition()); },
 
     "get_rotation",
-    &JPH::Body::GetRotation,
+    [](const JPH::Body& body) -> glm::quat { return math::from_jolt(body.GetRotation()); },
+
+    "set_position",
+    [](
+      JPH::Body& body,
+      Scene* scene,
+      const glm::vec3& position,
+      sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate
+    ) {
+      JPH::BodyInterface& body_interface = scene->get_physics_system()->GetBodyInterface();
+      body_interface.SetPosition(body.GetID(), math::to_jolt(position), *activation_mode);
+    },
 
     "set_rotation",
     [](
-      JPH::Body* body,
+      JPH::Body& body,
+      Scene* scene,
       const glm::quat& rotation,
       sol::optional<JPH::EActivation> activation_mode = JPH::EActivation::Activate
     ) {
-      auto& physics = App::mod<Physics>();
-      JPH::BodyInterface& body_interface = physics.get_physics_system()->GetBodyInterface();
-      body_interface.SetRotation(body->GetID(), math::to_jolt(rotation), *activation_mode);
+      JPH::BodyInterface& body_interface = scene->get_physics_system()->GetBodyInterface();
+      body_interface.SetRotation(body.GetID(), math::to_jolt(rotation), *activation_mode);
     },
 
     "get_world_transform",

@@ -10,7 +10,7 @@
 #include <vuk/Value.hpp>
 
 #include "EditorPanel.hpp"
-#include "ThumbnailRenderer.hpp"
+#include "Utils/ThumbnailRenderer.hpp"
 
 namespace ox {
 class Texture;
@@ -57,16 +57,16 @@ private:
     ImVec4 file_type_indicator_color;
   };
 
-  std::filesystem::path _assets_directory;
-  std::filesystem::path _current_directory;
-  std::stack<std::filesystem::path> _back_stack;
-  std::vector<File> _directory_entries;
-  std::shared_mutex _directory_mutex;
-  u32 _currently_visible_items_tree_view = 0;
+  std::filesystem::path assets_directory_;
+  std::filesystem::path current_directory_;
+  std::stack<std::filesystem::path> back_stack_;
+  std::vector<File> directory_entries_;
+  std::shared_mutex directory_mutex_;
+  u32 currently_visible_items_tree_view_ = 0;
   f32 thumbnail_max_limit = 256.0f;
   f32 thumbnail_size_grid_limit = 96.0f; // lower values than this will switch to grid view
-  ImGuiTextFilter m_filter;
-  f32 _elapsed_time = 0.0f;
+  ImGuiTextFilter filter_;
+  f32 elapsed_time_ = 0.0f;
 
   std::string new_asset_name_ = {};
   bool should_open_new_asset_popup = false;

@@ -24,10 +24,7 @@ SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON
 
   viewer.on_selected_entity_callback([](flecs::entity e) {
     auto& context = App::mod<Editor>().get_context();
-
-    context.reset();
-    context.type = EditorContext::Type::Entity;
-    context.entity = e;
+    context.reset(EditorContext::Type::Entity, nullopt, e);
   });
 
   viewer.on_selected_entity_reset_callback([]() {
@@ -76,7 +73,7 @@ auto SceneHierarchyPanel::on_update() -> void {
       viewer.selected_entity_.set(clone_entity(viewer.selected_entity_.get()));
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Delete) &&
-        (viewer.table_hovered_ || editor.viewport_panels[0]->is_viewport_hovered)) {
+        (viewer.table_hovered_ || editor.main_viewport_panel.get_focused_viewport())) {
       viewer.deleted_entity_ = viewer.selected_entity_.get();
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F2)) {
@@ -99,6 +96,26 @@ auto SceneHierarchyPanel::on_update() -> void {
 auto SceneHierarchyPanel::on_render(vuk::ImageAttachment swapchain_attachment) -> void {
   ZoneScoped;
 
-  viewer.render(_id.c_str(), &visible);
+  viewer.render(id_.c_str(), &visible);
+}
+
+auto SceneHierarchyPanel::set_scene(EditorScene* scene) -> void {
+  ZoneScoped;
+
+  if (scene == nullptr) {
+    current_scene = nullptr;
+    viewer.set_scene(nullptr);
+
+    return;
+  }
+
+  current_scene = scene;
+  viewer.set_scene(scene->get_scene().get());
+}
+
+auto SceneHierarchyPanel::get_scene() const -> EditorScene* {
+  ZoneScoped;
+
+  return current_scene;
 }
 } // namespace ox

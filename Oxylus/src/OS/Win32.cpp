@@ -225,7 +225,7 @@ auto os::file_stdout(std::string_view str) -> void {
   static auto stdout_hnd = GetStdHandle(STD_OUTPUT_HANDLE);
 
   DWORD written = 0;
-  WriteFile(stdout_hnd, str.data(), str.length(), &written, nullptr);
+  WriteFile(stdout_hnd, str.data(), static_cast<u32>(str.length()), &written, nullptr);
 }
 
 auto os::file_stderr(std::string_view str) -> void {
@@ -234,7 +234,7 @@ auto os::file_stderr(std::string_view str) -> void {
   static auto stdout_hnd = GetStdHandle(STD_ERROR_HANDLE);
 
   DWORD written = 0;
-  WriteFile(stdout_hnd, str.data(), str.length(), &written, nullptr);
+  WriteFile(stdout_hnd, str.data(), static_cast<u32>(str.length()), &written, nullptr);
 }
 
 } // namespace ox

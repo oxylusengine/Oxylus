@@ -363,8 +363,8 @@ DDS_NO_DISCARD inline ReadResult readImage(std::uint8_t* ptr, std::size_t fileSi
   }
 
   // Determine format information
-  auto getFormatInfo = [](const dds::FileHeader* header) -> DXGI_FORMAT {
-    auto& pf = header->pixelFormat;
+  auto getFormatInfo = [](const dds::FileHeader* h) -> DXGI_FORMAT {
+    auto& pf = h->pixelFormat;
     if (hasBit(pf.flags, PixelFormatFlags::FourCC)) {
       switch (pf.fourCC) {
           // clang-format off

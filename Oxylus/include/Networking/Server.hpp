@@ -42,10 +42,10 @@ public:
   auto send_packet_to_all(this Server& self, const Packet& packet) -> std::expected<void, std::string>;
 
 private:
-  static constexpr auto INVALID_PORT = ~0_u16;
+  static constexpr u16 INVALID_PORT = ~0_u16;
 
   ENetHost* host = nullptr;
-  uint16_t port = INVALID_PORT;
+  u16 port = INVALID_PORT;
   ankerl::unordered_dense::map<usize, Peer> peers = {};
   u32 max_clients = 0;
   bool running = false;

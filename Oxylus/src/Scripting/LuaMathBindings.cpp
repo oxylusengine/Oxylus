@@ -141,7 +141,7 @@ auto MathBinding::bind(sol::state* state) -> void {
     [](const glm::mat4& a, const glm::mat4& b) { return a - b; }
   );
 
-  auto quat = state->new_usertype<glm::quat>("quat", sol::constructors<glm::quat(glm::vec3)>());
+  auto quat = state->new_usertype<glm::quat>("quat", sol::constructors<glm::quat(glm::vec4)>());
   SET_TYPE_FIELD(quat, glm::quat, x);
   SET_TYPE_FIELD(quat, glm::quat, y);
   SET_TYPE_FIELD(quat, glm::quat, z);

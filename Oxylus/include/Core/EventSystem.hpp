@@ -28,6 +28,8 @@ struct EventError {
       case Error::InvalidHandler     : return "InvalidHandler";
       case Error::NoHandlers         : return "NoHandlers";
     }
+
+    OX_ASSERT(false, "Invalid EventError");
   }
 
   Error error;

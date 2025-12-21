@@ -198,7 +198,8 @@ void App::stop(this App& self) {
   }
 }
 
-auto App::should_stop(this App& self) -> void { //
+auto App::should_stop(this App& self) -> void {
+  std::ignore = self.event_system.emit<AppCloseEvent>(AppCloseEvent{});
   self.is_running = false;
 }
 } // namespace ox

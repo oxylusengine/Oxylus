@@ -6,6 +6,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "UI/AssetManagerViewer.hpp"
+#include "UI/UI.hpp"
 #include "Utils/ImGuiScoped.hpp"
 
 namespace ox {
@@ -17,6 +18,17 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
   ImGuiScoped::StyleVar cellpad(ImGuiStyleVar_CellPadding, {0, 0});
 
   if (ImGui::Begin(id, visible, ImGuiWindowFlags_NoCollapse)) {
+    if (!scene_) {
+      const auto warning_text = "No scene!";
+      const auto text_width = ImGui::CalcTextSize(warning_text).x;
+      ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - text_width) * 0.5f);
+      ImGui::SetCursorPosY(ImGui::GetContentRegionAvail().y * 0.5f);
+      ImGui::Text(warning_text);
+
+      ImGui::End();
+      return;
+    }
+
     constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_ContextMenuInBody | ImGuiTableFlags_BordersInner |
                                             ImGuiTableFlags_ScrollY;
     const float line_height = ImGui::GetTextLineHeight();
@@ -29,7 +41,7 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
       );
       ImGui::SameLine();
 
-      if (ImGui::Button(add_icon))
+      if (UI::button(add_icon))
         ImGui::OpenPopup("scene_h_scripts_context_window");
 
       if (ImGui::BeginPopupContextWindow(
@@ -139,7 +151,7 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
       );
       ImGui::SameLine();
 
-      if (ImGui::Button(add_icon))
+      if (UI::button(add_icon))
         ImGui::OpenPopup("scene_h_entities_context_window");
 
       if (ImGui::BeginPopupContextWindow(

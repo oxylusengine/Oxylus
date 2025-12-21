@@ -5,15 +5,20 @@
 #include <Jolt/Core/Core.h>
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/PhysicsSystem.h>
+// clang-format on
+
 #include <simdjson.h>
 
 #include "Core/UUID.hpp"
+#include "Physics/PhysicsInterfaces.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Scene/ECSModule/Core.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Scripting/LuaSystem.hpp"
 #include "Utils/Timestep.hpp"
-// clang-format on
 
 template <>
 struct ankerl::unordered_dense::hash<flecs::id> {
@@ -33,8 +38,6 @@ struct ankerl::unordered_dense::hash<flecs::entity> {
 
 namespace ox {
 struct JsonWriter;
-class Physics3DContactListener;
-class Physics3DBodyActivationListener;
 
 struct ComponentDB {
   std::vector<flecs::id> components = {};
@@ -53,7 +56,7 @@ public:
   flecs::world world;
   ComponentDB component_db = {};
 
-  f32 physics_interval = 1.f / 60.f; // used only on initalization
+  f32 physics_interval = 1.f / 60.f; // used only on initialization
 
   std::vector<GPU::TransformID> dirty_transforms = {};
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
@@ -64,6 +67,7 @@ public:
   std::vector<GPU::Material> gpu_materials = {};
 
   bool meshes_dirty = false;
+  bool force_material_update = true;
   u32 mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
 
@@ -114,7 +118,10 @@ public:
   auto add_lua_system(this Scene& self, const UUID& lua_script) -> void;
   auto remove_lua_system(this Scene& self, const UUID& lua_script) -> void;
 
-  // Physics interfaces
+  // Physics
+  auto get_physics_system(this const Scene& self) -> JPH::PhysicsSystem*;
+  auto cast_ray(this const Scene& self, const RayCast& ray_cast)
+    -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>;
   auto on_contact_added(
     const JPH::Body& body1,
     const JPH::Body& body2,
@@ -132,13 +139,14 @@ public:
   auto on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
   auto on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
 
-  auto create_rigidbody(flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component)
-    -> void;
+  auto create_rigidbody(
+    this Scene& self, flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component
+  ) -> void;
   auto create_character_controller(
     flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
   ) const -> void;
 
-  auto get_renderer_instance() -> RendererInstance* { return renderer_instance.get(); }
+  auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
 
   // This will reset RendererInstance's reference to acquired vuk resources.
   // If I don't do this vuk complains about resources not being unique when there is another RendererInstance being
@@ -163,13 +171,7 @@ public:
 private:
   bool running = false;
 
-  std::shared_mutex physics_mutex = {};
-
-  auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
-  auto remove_transform(this Scene& self, flecs::entity entity) -> void;
-
   std::vector<std::function<void(Scene* scene)>> deferred_functions_ = {};
-  auto run_deferred_functions(this Scene& self) -> void;
 
   // Lua
   ankerl::unordered_dense::map<UUID, LuaSystem*> lua_systems = {};
@@ -178,7 +180,15 @@ private:
   std::unique_ptr<RendererInstance> renderer_instance = nullptr;
 
   // Physics
-  std::unique_ptr<Physics3DContactListener> contact_listener_3d;
-  std::unique_ptr<Physics3DBodyActivationListener> body_activation_listener_3d;
+  std::shared_mutex physics_mutex = {};
+  std::unique_ptr<JPH::PhysicsSystem> physics_system = nullptr;
+  std::unique_ptr<PhysicsDebugRenderer> physics_debug_renderer = nullptr;
+  std::unique_ptr<Physics3DContactListener> contact_listener_3d = nullptr;
+  std::unique_ptr<Physics3DBodyActivationListener> body_activation_listener_3d = nullptr;
+
+  auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
+  auto remove_transform(this Scene& self, flecs::entity entity) -> void;
+
+  auto run_deferred_functions(this Scene& self) -> void;
 };
 } // namespace ox

@@ -9,11 +9,11 @@
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
 #include "Editor.hpp"
-#include "EditorTheme.hpp"
 #include "Memory/Stack.hpp"
 #include "Scene/ECSModule/ComponentWrapper.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
+#include "Utils/EditorTheme.hpp"
 
 namespace ox {
 static f32 degree_helper(const char* id, f32 value) {
@@ -329,7 +329,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     }
     static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
                                                      ImGuiTreeNodeFlags_SpanAvailWidth |
-                                                     ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_Framed |
+                                                     ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
                                                      ImGuiTreeNodeFlags_FramePadding;
 
     auto& editor_theme = editor.editor_theme;
@@ -402,7 +402,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
               f64 old_v = *v;
               if (UI::property(member_name.data(), v))
                 undo_redo_system->execute_command<PropertyChangeCommand<f64>>(v, old_v, *v, member_name.data());
-              *v = degree_helper(member_name.data(), *v);
+              *v = degree_helper(member_name.data(), static_cast<f32>(*v));
             },
             [&](i32* v) {
               i32 old_v = *v;
@@ -629,7 +629,7 @@ void InspectorPanel::draw_model_asset(UUID* uuid, Borrowed<Asset> asset) {
     for (auto& mat_uuid : model->materials) {
       static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
                                                        ImGuiTreeNodeFlags_SpanAvailWidth |
-                                                       ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_Framed |
+                                                       ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
                                                        ImGuiTreeNodeFlags_FramePadding;
 
       if (auto material = asset_man.get_material(mat_uuid)) {

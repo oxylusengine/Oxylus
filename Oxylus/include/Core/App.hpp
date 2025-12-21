@@ -18,6 +18,8 @@ struct WindowResizeEvent {
   u32 height = 0;
 };
 
+struct AppCloseEvent {};
+
 class App {
 public:
   App(int argc, char** argv);
@@ -36,11 +38,11 @@ public:
   auto with_assets_directory(this App& self, const std::filesystem::path& dir) -> App&;
 
   template <typename F>
-  void defer_to_next_frame(this App& self, F&& func) {
+  static void defer_to_next_frame(F&& func) {
     std::function<void()> task = std::forward<F>(func);
 
-    auto lock = std::unique_lock(self.mutex);
-    self.pending_tasks.push_back(std::move(task));
+    auto lock = std::unique_lock(get()->mutex);
+    get()->pending_tasks.push_back(std::move(task));
   }
 
   template <typename T, typename... Args>
@@ -104,7 +106,6 @@ private:
   Timestep timestep = {};
 
   bool is_running = true;
-  float last_frame_time = 0.0f;
 
   auto run_deferred_tasks(this App& self) -> void;
 };

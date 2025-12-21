@@ -9,6 +9,7 @@ enum class RenderStage {
   Culling,
   VisBufferEncode,
   VisBufferDecode,
+  Forward2D,
   Lighting,
   PostProcessing,
   Atmosphere,
@@ -307,6 +308,8 @@ public:
   auto update_vbgtao_info(this RendererInstance&) -> void;
 
 private:
+  bool update_ran_this_frame = false; // Sanity Check
+
   SharedResources shared_resources = {};
   std::vector<RenderStageCallback> stage_callbacks;
   std::vector<std::vector<usize>> before_callbacks;

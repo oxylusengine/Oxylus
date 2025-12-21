@@ -1,116 +1,123 @@
-add_requires("stb 2024.06.01")
-add_requires("miniaudio 0.11.22")
-add_requires("fastgltf-ox v0.8.0", { system = false, debug = is_mode("debug") })
-add_requires("meshoptimizer v1.0", {system = false})
-add_requires("libsdl3") -- handled by system package (also nix)
-add_requires("ktx-ox v4.4.0", { system = false, debug = false })
-add_requires("zstd v1.5.7", { system = false })
-add_requires("shader-slang v2025.15.1", { system = false })
-add_requires("enet-ox v2.6.5", {
-    configs = {
-        test = false,
-        use_more_peers = false,
-    }
-})
-
-add_requires("imgui v1.92.0-docking", { configs = { wchar32 = true } })
-
-add_requires("glm 1.0.1", {
-    configs = {
-        header_only = true,
-        cxx_standard = "20",
-    },
-    system = false
-})
-
-add_requires("flecs-ox v4.1.0")
-
-
 local fmt_version = "12.0.0"
 local fmt_configs = { header_only = false, shared = false }
-add_requires("fmt " .. fmt_version, { configs = fmt_configs, system = false })
 
-add_requires("loguru v2.1.0", {
+packages = {
+  ["stb 2024.06.01"] = {},
+  ["miniaudio 0.11.22"] = {},
+  ["fastgltf-ox v0.8.0"] = { system = false, debug = is_mode("debug") },
+  ["meshoptimizer v0.22"] = {},
+  ["libsdl3"] = {}, -- handled by system package (also nix)
+  ["ktx-ox v4.4.0"] = { system = false, debug = false },
+  ["zstd v1.5.7"] = { system = false },
+  ["shader-slang v2025.15.1"] = { system = false },
+  ["enet-ox v2.6.5"] = {
     configs = {
-        fmt = true,
+      test = false,
+      use_more_peers = false,
     },
-    system = false
-})
-add_requireconfs("fmt", "loguru.fmt", {
-    override = true,
-    version = fmt_version,
-    configs = fmt_configs,
-    system = false
-})
-
-add_requires("vk-bootstrap v1.4.307", { system = false, debug = is_mode("debug") })
-
-add_requires("vuk 2025.09.14.2", {
+  },
+  ["imgui 42e91c315534a15133fb08fb8108cfdd515e0912"] = { configs = { wchar32 = true } },
+  ["glm 1.0.1"] = {
     configs = {
-        debug_allocations = false,
+      header_only = true,
+      cxx_standard = "20",
+    },
+    system = false,
+  },
+  ["flecs-ox v4.1.0"] = {},
+  ["fmt " .. fmt_version] = { configs = fmt_configs, system = false },
+  ["loguru v2.1.0"] = {
+    configs = {
+      fmt = true,
+    },
+    system = false,
+  },
+  ["vk-bootstrap v1.4.307"] = { system = false, debug = is_mode("debug") },
+  ["vuk 2025.09.14.2"] = {
+    configs = {
+      debug_allocations = false,
     },
     debug = is_mode("debug"),
-})
-add_requireconfs("fmt", "vuk.fmt", {
-    override = true,
-    version = fmt_version,
-    configs = fmt_configs,
-    system = false
-})
-
-add_requires("toml++ v3.4.0", {
+  },
+  ["toml++ v3.4.0"] = {
     configs = {
-        header_only = true
-    }
-})
-
-add_requires("simdjson-ox v3.12.2")
-
-add_requires("joltphysics-ox v5.4.0+fix", {
+      header_only = true,
+    },
+  },
+  ["simdjson-ox v3.12.2"] = {},
+  ["joltphysics-ox a1ce83ec7f7e014b116a4855dfc9cb2f2d4ef40a"] = {
     configs = {
-        debug_renderer = true,
-        rtti = true,
-        avx = true,
-        avx2 = true,
-        lzcnt = true,
-        sse4_1 = true,
-        sse4_2 = true,
-        tzcnt = true,
-        enable_floating_point_exceptions = false,
-    }
-})
-
-add_requires("tracy v0.12.2", {
+      debug_renderer = true,
+      rtti = true,
+      avx = true,
+      avx2 = true,
+      lzcnt = true,
+      sse4_1 = true,
+      sse4_2 = true,
+      tzcnt = true,
+      enable_floating_point_exceptions = false,
+    },
+  },
+  ["tracy v0.12.2"] = {
     configs = {
-        tracy_enable = has_config("profile"),
-        on_demand = true,
-        callstack = true,
-        callstack_inlines = false,
-        code_transfer = true,
-        exit = true,
-        system_tracing = true,
-    }
-})
-
-add_requires("sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444", { system = false })
-add_requireconfs("lua", "sol2.lua", {
-    shared = false,
-    version = "v5.4.7",
-    system = false
-})
-
-add_requires("unordered_dense v4.5.0")
-
-add_requires("plf_colony v7.41")
-
-add_requires("simdutf v6.2.0")
+      tracy_enable = has_config("profile"),
+      on_demand = true,
+      callstack = true,
+      callstack_inlines = false,
+      code_transfer = true,
+      exit = true,
+      system_tracing = true,
+    },
+  },
+  ["sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444"] = {},
+  ["unordered_dense v4.5.0"] = {},
+  ["plf_colony v7.41"] = {},
+  ["simdutf v6.2.0"] = {},
+}
 
 if has_config("tests") then
-    add_requires("gtest", {
-        debug = is_mode("debug"),
-        configs = {
-            main = true,
-            gmock = true,
-        }
-    })
+  packages["gtest"] = {
+    debug = is_mode("debug"),
+    configs = {
+      main = true,
+      gmock = true,
+    },
+  }
+end
+
+confs = {
+  {
+    package = "fmt",
+    override = "loguru.fmt",
+    configs = {
+
+      override = true,
+      version = fmt_version,
+      configs = fmt_configs,
+      system = false,
+    },
+  },
+
+  {
+    package = "fmt",
+    override = "vuk.fmt",
+    configs = {
+      override = true,
+      version = fmt_version,
+      configs = fmt_configs,
+      system = false,
+    },
+  },
+}
+
+function require_packages()
+  for name, settings in pairs(packages) do
+    add_requires(name, settings)
+  end
+end
+
+function require_confs()
+  for _, conf in ipairs(confs) do
+    add_requireconfs(conf.package, conf.override, conf.configs)
+  end
 end
