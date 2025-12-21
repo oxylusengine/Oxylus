@@ -402,7 +402,7 @@ auto Session::create_shader_session(const ShaderSessionInfo& info) -> ShaderSess
     .compilerOptionEntryCount = static_cast<u32>(count_of(entries)),
   };
 
-  auto slang_fs = std::make_unique<SlangVirtualFS>(std::filesystem::absolute(info.root_directory));
+  auto slang_fs = std::make_unique<SlangVirtualFS>(info.root_directory.lexically_normal());
   const auto search_path = info.root_directory.string();
   const auto* search_path_cstr = search_path.c_str();
   const c8* search_paths[] = {search_path_cstr};
@@ -443,7 +443,7 @@ auto Session::compile_requests() -> bool {
   for (const auto& request : impl->shader_compile_requests) {
     auto shader_session = create_shader_session(request.session_info);
     for (const auto& shader_info : request.shader_infos) {
-      const auto full_path = std::filesystem::absolute(shader_session.get_root_dir() / shader_info.path);
+      const auto full_path = std::filesystem::path(shader_session.get_root_dir() / shader_info.path).lexically_normal();
       const auto last_modified = this->get_file_access_time(full_path).value_or(0_u64);
       auto current_modified = 0_u64;
       if (auto file = os::file_open(full_path, FileAccess::Read); file.has_value()) {
