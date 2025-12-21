@@ -47,6 +47,8 @@ class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
+  static auto read_asset_file(const std::filesystem::path& path) -> std::vector<AssetFileEntryInfo>;
+
   auto init(this AssetManager&) -> std::expected<void, std::string>;
   auto deinit(this AssetManager&) -> std::expected<void, std::string>;
 

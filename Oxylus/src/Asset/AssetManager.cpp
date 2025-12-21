@@ -10,6 +10,57 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
+auto AssetManager::read_asset_file(const std::filesystem::path& path) -> std::vector<AssetFileEntryInfo> {
+  auto file = File(path, FileAccess::Read);
+  if (!file || file.size < sizeof(AssetFileHeader)) {
+    OX_LOG_ERROR("Tried to import an invalid asset file. {}", path);
+    return {};
+  }
+
+  auto header = AssetFileHeader{};
+  file.read(&header, sizeof(AssetManager));
+  if (header.magic != AssetFileHeader::MAGIC) {
+    OX_LOG_ERROR("Tried to import an asset file that does not match our file header. {}", path);
+    return {};
+  }
+
+#define READ_OR_FAIL(ptr, size, name)                                                                                  \
+  if (file.read(ptr, size) < size) {                                                                                   \
+    OX_LOG_ERROR("Could not read entry index {}, {} has a corrupt " name " section.", file_entry_index, path);         \
+    return {};                                                                                                         \
+  }
+
+  auto file_entries = std::vector<AssetFileEntryInfo>{};
+  for (auto file_entry_index = 0_sz; file_entry_index < header.file_entry_count; file_entry_index++) {
+    auto file_entry = AssetFileEntryInfo{};
+    auto uuid_bytes = std::array<u8, 16>{};
+    READ_OR_FAIL(uuid_bytes.data(), ox::size_bytes(uuid_bytes), "UUID");
+    file_entry.uuid = UUID::from_bytes(std::span(uuid_bytes)).value_or(UUID(nullptr));
+    READ_OR_FAIL(&file_entry.data_size, sizeof(u32), "data_size");
+    READ_OR_FAIL(&file_entry.data_offset, sizeof(u32), "data_offset");
+    READ_OR_FAIL(&file_entry.type, sizeof(AssetType), "type");
+    switch (file_entry.type) {
+      case AssetType::Model: {
+        READ_OR_FAIL(&file_entry.entry.model.nodes, sizeof(AssetDataView<>), "model entry nodes");
+        READ_OR_FAIL(&file_entry.entry.model.meshes, sizeof(AssetDataView<>), "model entry meshes");
+      } break;
+      case AssetType::Shader: {
+        READ_OR_FAIL(&file_entry.entry.shader.entry_points, sizeof(AssetDataView<>), "shader entry points");
+      } break;
+      default: {
+        OX_LOG_ERROR("Unhandled meta type {} for {}", std::to_underlying(file_entry.type), path);
+        return {};
+      }
+    }
+
+#undef READ_OR_FAIL
+
+    file_entries.push_back(file_entry);
+  }
+
+  return file_entries;
+}
+
 auto AssetManager::init(this AssetManager&) -> std::expected<void, std::string> { return {}; }
 
 auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::string> {
@@ -67,49 +118,8 @@ auto AssetManager::create(this AssetManager& self, AssetType type, const Extende
 auto AssetManager::import(this AssetManager& self, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
-  auto file = File(path, FileAccess::Read);
-  if (!file || file.size < sizeof(AssetFileHeader)) {
-    OX_LOG_ERROR("Tried to import an invalid asset file. {}", path);
-    return false;
-  }
-
-  auto header = AssetFileHeader{};
-  file.read(&header, sizeof(AssetManager));
-  if (header.magic != AssetFileHeader::MAGIC) {
-    OX_LOG_ERROR("Tried to import an asset file that does not match our file header. {}", path);
-    return false;
-  }
-
-#define READ_OR_FAIL(ptr, size, name)                                                                                  \
-  if (file.read(ptr, size) < size) {                                                                                   \
-    OX_LOG_ERROR("Could not read entry index {}, {} has a corrupt " name " section.", file_entry_index, path);         \
-    return false;                                                                                                      \
-  }
-
-  for (auto file_entry_index = 0_sz; file_entry_index < header.file_entry_count; file_entry_index++) {
-    auto file_entry = AssetFileEntryInfo{};
-    auto uuid_bytes = std::array<u8, 16>{};
-    READ_OR_FAIL(uuid_bytes.data(), ox::size_bytes(uuid_bytes), "UUID");
-    file_entry.uuid = UUID::from_bytes(std::span(uuid_bytes)).value_or(UUID(nullptr));
-    READ_OR_FAIL(&file_entry.data_size, sizeof(u32), "data_size");
-    READ_OR_FAIL(&file_entry.data_offset, sizeof(u32), "data_offset");
-    READ_OR_FAIL(&file_entry.type, sizeof(AssetType), "type");
-    switch (file_entry.type) {
-      case AssetType::Model: {
-        READ_OR_FAIL(&file_entry.entry.model.nodes, sizeof(AssetDataView<>), "model entry nodes");
-        READ_OR_FAIL(&file_entry.entry.model.meshes, sizeof(AssetDataView<>), "model entry meshes");
-      } break;
-      case AssetType::Shader: {
-        READ_OR_FAIL(&file_entry.entry.shader.entry_points, sizeof(AssetDataView<>), "shader entry points");
-      } break;
-      default: {
-        OX_LOG_ERROR("Unhandled meta type {} for {}", std::to_underlying(file_entry.type), path);
-        return false;
-      }
-    }
-
-#undef READ_OR_FAIL
-
+  auto file_entries = read_asset_file(path);
+  for (const auto& file_entry : file_entries) {
     auto write_lock = std::unique_lock(self.registry_mutex);
     auto [asset_it, inserted] = self.asset_registry.try_emplace(file_entry.uuid);
     if (!inserted) {
@@ -132,7 +142,7 @@ auto AssetManager::import(this AssetManager& self, const std::filesystem::path& 
     );
   }
 
-  OX_LOG_TRACE("Imported {} asset(s) from {}", header.file_entry_count, path);
+  OX_LOG_TRACE("Imported {} asset(s) from {}", file_entries.size(), path);
 
   return true;
 }
