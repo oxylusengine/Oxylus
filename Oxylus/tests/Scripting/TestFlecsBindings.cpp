@@ -1,7 +1,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "../OxHelpers.hpp"
+#include "Core/App.hpp"
+#include "Scene/Scene.hpp"
 #include "Scripting/LuaSystem.hpp"
 
 class FlecsBindingsTest : public ::testing::Test {
@@ -9,16 +10,16 @@ protected:
   void SetUp() override {
     loguru::g_stderr_verbosity = loguru::Verbosity_WARNING; // only stdout errors from oxylus
 
-    //app = create_test_app();
-    //scene = create_test_scene();
+    // app = create_test_app();
+    // scene = create_test_scene();
   }
 
   void TearDown() override {
-    //scene.reset();
-    //app.reset();
+    // scene.reset();
+    // app.reset();
   }
 
-  std::unique_ptr<TestApp> app = nullptr;
+  std::unique_ptr<ox::App> app = nullptr;
   std::unique_ptr<ox::Scene> scene = nullptr;
 };
 
@@ -44,3 +45,4 @@ end
   app.reset();
 }
 #endif
+
