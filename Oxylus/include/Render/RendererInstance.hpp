@@ -354,5 +354,9 @@ private:
   vuk::Unique<vuk::Buffer> spot_lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
   vuk::Unique<vuk::Buffer> exposure_buffer{};
+
+  vuk::Value<vuk::ImageAttachment> acquired_sky_transmittance_lut_view;
+  vuk::Value<vuk::ImageAttachment> acquired_sky_multiscatter_lut_view;
+  vuk::Value<vuk::ImageAttachment> acquired_hilbert_noise_lut;
 };
 } // namespace ox
