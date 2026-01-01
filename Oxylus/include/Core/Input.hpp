@@ -18,34 +18,34 @@ public:
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
 
-  void reset_pressed();
-  void reset();
+  auto reset_pressed() -> void;
+  auto reset() -> void;
 
-  static KeyCode to_keycode(u32 keycode_, u32 scancode_);
-  static MouseCode to_mouse_code(u32 key);
+  static auto to_keycode(u32 keycode_, u32 scancode_) -> KeyCode;
+  static auto to_mouse_code(u32 key) -> MouseCode;
 
   /// Keyboard
-  bool get_key_pressed(const KeyCode key) { return input_data.key_pressed[int(key)]; }
-  bool get_key_released(const KeyCode key) { return input_data.key_released[int(key)]; }
-  bool get_key_held(const KeyCode key) { return input_data.key_held[int(key)]; }
+  auto get_key_pressed(const KeyCode key) -> bool { return input_data.key_pressed[int(key)]; }
+  auto get_key_released(const KeyCode key) -> bool { return input_data.key_released[int(key)]; }
+  auto get_key_held(const KeyCode key) -> bool { return input_data.key_held[int(key)]; }
 
   /// Mouse
-  bool get_mouse_clicked(const MouseCode key) { return input_data.mouse_clicked[int(key)]; }
-  bool get_mouse_released(const MouseCode key) { return input_data.mouse_released[int(key)]; }
-  bool get_mouse_held(const MouseCode key) { return input_data.mouse_held[int(key)]; }
-  glm::vec2 get_mouse_position();
-  glm::vec2 get_mouse_position_rel();
+  auto get_mouse_clicked(const MouseCode key) -> bool { return input_data.mouse_clicked[int(key)]; }
+  auto get_mouse_released(const MouseCode key) -> bool { return input_data.mouse_released[int(key)]; }
+  auto get_mouse_held(const MouseCode key) -> bool { return input_data.mouse_held[int(key)]; }
+  auto get_mouse_position() -> glm::vec2;
+  auto get_mouse_position_rel() -> glm::vec2;
 
-  void set_mouse_position_global(float x, float y);
-  void set_mouse_position_window(const Window& window, glm::vec2 position);
+  auto set_mouse_position_global(float x, float y) -> void;
+  auto set_mouse_position_window(const Window& window, glm::vec2 position) -> void;
 
-  bool get_relative_mouse_mode_window(const Window& window);
-  void set_relative_mouse_mode_window(const Window& window, bool enabled);
+  auto get_relative_mouse_mode_window(const Window& window) -> bool;
+  auto set_relative_mouse_mode_window(const Window& window, bool enabled) -> void;
 
-  float get_mouse_offset_x();
-  float get_mouse_offset_y();
-  float get_mouse_scroll_offset_y();
-  bool get_mouse_moved();
+  auto get_mouse_offset_x() -> f32;
+  auto get_mouse_offset_y() -> f32;
+  auto get_mouse_scroll_offset_y() -> f32;
+  auto get_mouse_moved() -> bool;
 
 private:
 #define MAX_KEYS 512
@@ -67,7 +67,9 @@ private:
     glm::vec2 mouse_pos = {};
     glm::vec2 mouse_pos_rel = {};
     bool mouse_moved = false;
-  } input_data = {};
+  };
+
+  InputData input_data = {};
 
   CursorState cursor_state = CursorState::Normal;
 

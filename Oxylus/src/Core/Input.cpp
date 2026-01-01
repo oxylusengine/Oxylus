@@ -10,64 +10,68 @@ auto Input::init() -> std::expected<void, std::string> { return {}; }
 
 auto Input::deinit() -> std::expected<void, std::string> { return {}; }
 
-void Input::reset_pressed() {
+auto Input::reset_pressed() -> void {
   ZoneScoped;
 
-  memset(input_data.key_pressed, 0, MAX_KEYS);
-  memset(input_data.mouse_clicked, 0, MAX_BUTTONS);
+  std::memset(input_data.key_pressed, 0, MAX_KEYS);
+  std::memset(input_data.mouse_clicked, 0, MAX_BUTTONS);
   input_data.scroll_offset_y = 0;
   input_data.mouse_moved = false;
 }
 
-void Input::reset() {
-  memset(input_data.key_pressed, 0, MAX_KEYS);
-  memset(input_data.key_held, 0, MAX_KEYS);
-  memset(input_data.key_released, 0, MAX_KEYS);
-  memset(input_data.mouse_clicked, 0, MAX_BUTTONS);
-  memset(input_data.mouse_held, 0, MAX_BUTTONS);
-  memset(input_data.mouse_released, 0, MAX_BUTTONS);
+auto Input::reset() -> void {
+  ZoneScoped;
+
+  std::memset(input_data.key_pressed, 0, MAX_KEYS);
+  std::memset(input_data.key_held, 0, MAX_KEYS);
+  std::memset(input_data.key_released, 0, MAX_KEYS);
+  std::memset(input_data.mouse_clicked, 0, MAX_BUTTONS);
+  std::memset(input_data.mouse_held, 0, MAX_BUTTONS);
+  std::memset(input_data.mouse_released, 0, MAX_BUTTONS);
 
   input_data.scroll_offset_y = 0;
   input_data.mouse_moved = false;
 }
 
-glm::vec2 Input::get_mouse_position() { return input_data.mouse_pos; }
+auto Input::get_mouse_position() -> glm::vec2 { return input_data.mouse_pos; }
 
-glm::vec2 Input::get_mouse_position_rel() { return input_data.mouse_pos_rel; }
+auto Input::get_mouse_position_rel() -> glm::vec2 { return input_data.mouse_pos_rel; }
 
-void Input::set_mouse_position_global(const float x, const float y) {
+auto Input::set_mouse_position_global(const float x, const float y) -> void {
   ZoneScoped;
 
   SDL_WarpMouseGlobal(x, y);
 }
 
-bool Input::get_relative_mouse_mode_window(const Window& window) {
+auto Input::get_relative_mouse_mode_window(const Window& window) -> bool {
   ZoneScoped;
 
   return SDL_GetWindowRelativeMouseMode(static_cast<SDL_Window*>(window.get_handle()));
 }
 
-void Input::set_relative_mouse_mode_window(const Window& window, bool enabled) {
+auto Input::set_relative_mouse_mode_window(const Window& window, bool enabled) -> void {
   ZoneScoped;
 
   SDL_SetWindowRelativeMouseMode(static_cast<SDL_Window*>(window.get_handle()), enabled);
 }
 
-void Input::set_mouse_position_window(const Window& window, glm::vec2 position) {
+auto Input::set_mouse_position_window(const Window& window, glm::vec2 position) -> void {
   ZoneScoped;
 
   SDL_WarpMouseInWindow(static_cast<SDL_Window*>(window.get_handle()), position.x, position.y);
 }
 
-float Input::get_mouse_offset_x() { return input_data.mouse_offset_x; }
+auto Input::get_mouse_offset_x() -> f32 { return input_data.mouse_offset_x; }
 
-float Input::get_mouse_offset_y() { return input_data.mouse_offset_y; }
+auto Input::get_mouse_offset_y() -> f32 { return input_data.mouse_offset_y; }
 
-float Input::get_mouse_scroll_offset_y() { return input_data.scroll_offset_y; }
+auto Input::get_mouse_scroll_offset_y() -> f32 { return input_data.scroll_offset_y; }
 
-bool Input::get_mouse_moved() { return input_data.mouse_moved; }
+auto Input::get_mouse_moved() -> bool { return input_data.mouse_moved; }
 
-KeyCode Input::to_keycode(u32 keycode_, u32 scancode_) {
+auto Input::to_keycode(u32 keycode_, u32 scancode_) -> KeyCode {
+  ZoneScoped;
+
   SDL_Scancode scancode = static_cast<SDL_Scancode>(scancode_);
   switch (scancode) {
     case SDL_SCANCODE_KP_0       : return KeyCode::KP0;
@@ -202,7 +206,9 @@ KeyCode Input::to_keycode(u32 keycode_, u32 scancode_) {
   return KeyCode::None;
 }
 
-MouseCode Input::to_mouse_code(SDL_MouseButtonFlags key) {
+auto Input::to_mouse_code(SDL_MouseButtonFlags key) -> MouseCode {
+  ZoneScoped;
+
   switch (key) {
     case SDL_BUTTON_LEFT  : return MouseCode::ButtonLeft;
     case SDL_BUTTON_RIGHT : return MouseCode::ButtonRight;
