@@ -12,6 +12,13 @@
 #include "Render/Slang/Compiler.hpp"
 
 namespace ox {
+struct PipelineCompileInfo {
+  std::filesystem::path path = {};
+  std::string module_name = {};
+  std::vector<std::string> entry_points = {};
+  vuk::PersistentDescriptorSet* persistent_set = nullptr;
+};
+
 struct Window;
 class TracyProfiler;
 
@@ -92,6 +99,10 @@ public:
     std::span<VkDescriptorBindingFlags> binding_flags
   ) -> vuk::PersistentDescriptorSet;
   auto commit_descriptor_set(this VkContext&, std::span<VkWriteDescriptorSet> writes) -> void;
+
+  auto create_pipelines(
+    this VkContext& self, const SlangSessionInfo& session_info, const std::vector<PipelineCompileInfo>& pipeline_infos
+  ) -> bool;
 
   auto allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID;
   auto destroy_image(const ImageID id) -> void;
