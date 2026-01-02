@@ -1,5 +1,6 @@
 #include "Render/Vulkan/VkContext.hpp"
 
+#include <ranges>
 #include <sstream>
 #include <vuk/ImageAttachment.hpp>
 #include <vuk/RenderGraph.hpp>
