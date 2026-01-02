@@ -29,7 +29,7 @@ func ev100_from_luminance(f32 luminance) -> f32 {
 func cs_main(u32 gid : SV_GroupIndex) -> void {
     const let count_for_this_bin = gid == 0 ? 0.0 : f32(C.histogram[gid]);
     histogram_shared[gid] = count_for_this_bin * f32(gid);
-    com::control_barrier(com::memory_order_acq_rel);
+    GroupMemoryBarrierWithGroupSync();
 
     [[unroll]]
     for (u32 cutoff = (HISTOGRAM_BIN_COUNT >> 1); cutoff > 0; cutoff >>= 1) {
@@ -37,7 +37,7 @@ func cs_main(u32 gid : SV_GroupIndex) -> void {
             histogram_shared[gid] += histogram_shared[gid + cutoff];
         }
 
-        com::control_barrier(com::memory_order_acq_rel);
+        GroupMemoryBarrierWithGroupSync();
     }
 
     if (gid == 0) {

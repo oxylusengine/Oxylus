@@ -27,7 +27,7 @@ func cs_main(
     const f32x3 eye_dir = uv_to_sky_view_lut_params(params.atmosphere, uv, h);
 
     if (!move_to_top_atmosphere(eye_pos, eye_dir, params.atmosphere.atmos_radius)) {
-        params.sky_view_lut.store(thread_id.xy, 0.0);
+        params.sky_view_lut.Store(thread_id.xy, 0.0);
         return;
     }
 
@@ -46,5 +46,5 @@ func cs_main(
     let inv_luminance = 1.0 / max(result.luminance, float3(1.0 / 1048576.0));
     let inv_mult = min(1048576.0, max(inv_luminance.x, max(inv_luminance.y, inv_luminance.z)));
 
-    params.sky_view_lut.store(thread_id.xy, f32x4(result.luminance * inv_mult, 1.0 / inv_mult));
+    params.sky_view_lut.Store(thread_id.xy, f32x4(result.luminance * inv_mult, 1.0 / inv_mult));
 }

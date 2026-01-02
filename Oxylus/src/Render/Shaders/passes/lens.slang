@@ -80,9 +80,9 @@ public func FfxLensSampleWithChromaticAberration(Image2D<f32x4> input_image, Sam
     f32x2 greenShift = (coord - centerCoord) * greenMag + centerCoord + 0.5;
     greenShift *= rcp(2 * centerCoord);
 
-    f32 red   = input_image.sample_mip(sampler, redShift, 0.0).r;
-    f32 green = input_image.sample_mip(sampler, greenShift, 0.0).g;
-    f32 blue  = input_image.sample_mip(sampler, coord * rcp(2 * centerCoord), 0.0).b;
+    f32 red   = input_image.SampleLevel(sampler, redShift, 0.0).r;
+    f32 green = input_image.SampleLevel(sampler, greenShift, 0.0).g;
+    f32 blue  = input_image.SampleLevel(sampler, coord * rcp(2 * centerCoord), 0.0).b;
 
     return f32x3(red, green, blue);
 }

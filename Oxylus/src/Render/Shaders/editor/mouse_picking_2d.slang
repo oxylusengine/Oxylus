@@ -15,7 +15,7 @@ func cs_main(
   uniform u32x2 texel,
   uniform u32 *transform_id
 ) -> void {
-    let texel = params.visbuffer.load(texel);
+    let texel = params.visbuffer.Load(u32x3(texel, 0));
     if (texel == ~0u) {
         *transform_id = ~0u;
         return;
