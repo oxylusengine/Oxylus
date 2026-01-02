@@ -88,7 +88,7 @@ auto EmbedAsset::embed_shader(
     return;
   }
 
-  slang.add_shader(pipeline_ci, {.path = full_shader_path, .entry_points = {entry_point}});
+  // slang.add_shader(pipeline_ci, {.path = full_shader_path, .entry_points = {entry_point}});
 
   if (pipeline_ci.shaders.empty()) {
     OX_LOG_ERROR("Failed to compile shader: {}", shader_path);

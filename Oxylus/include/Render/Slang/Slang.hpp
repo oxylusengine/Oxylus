@@ -1,5 +1,4 @@
 #pragma once
-#include <vuk/vsl/Core.hpp>
 
 #include "Compiler.hpp"
 #include "Core/Option.hpp"
@@ -18,23 +17,16 @@ public:
     OptimizationLevel optimization_level = OptimizationLevel::Maximal;
     std::filesystem::path root_directory = {};
     std::vector<std::pair<std::string, std::string>> definitions = {};
+    bool debug_symbols = false;
   };
 
   struct CompileInfo {
+    std::string module_name = {};
     std::filesystem::path path = {};
     std::vector<std::string> entry_points = {};
   };
 
   void create_session(this Slang& self, const SessionInfo& session_info);
-  void add_shader(this Slang& self, vuk::PipelineBaseCreateInfo& pipeline_ci, const CompileInfo& compile_info);
-
-  void create_pipeline(
-    this Slang& self,
-    vuk::Runtime& runtime,
-    const vuk::Name& name,
-    const CompileInfo& compile_info,
-    vuk::PersistentDescriptorSet* pds = nullptr
-  );
 
 private:
   option<SlangSession> slang_session = nullopt;

@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "Asset/AssetFile.hpp"
-#include "Core/Option.hpp"
 #include "Core/Types.hpp"
 #include "Core/UUID.hpp"
 #include "Memory/Borrowed.hpp"
@@ -36,9 +35,9 @@ namespace ox::rc {
 enum class AssetID : u64 { Invalid = ~0_u64 };
 
 struct CacheEntry {
-  std::filesystem::path source_path = {};
+  UUID source_uuid = UUID(nullptr);
   u64 source_hash = 0;
-  std::vector<UUID> dependencies = {};
+  std::vector<std::filesystem::path> dependencies = {};
 };
 
 enum class ShaderOptimization : i32 {
@@ -62,24 +61,17 @@ struct ShaderInfo {
   std::vector<std::string> entry_points = {};
 };
 
-struct ModelInfo {
+struct ShaderCompileRequest {
+  ShaderSessionInfo session_info = {};
+  std::vector<ShaderInfo> shader_infos = {};
+};
+
+struct ModelCompileRequest {
   std::filesystem::path path = {};
   bool is_foliage = false;
 };
 
-struct OXRC_API ShaderSession {
-  struct Impl;
-
-protected:
-  Impl* impl;
-
-public:
-  ShaderSession(Impl* impl_) : impl(impl_) {}
-  explicit operator bool() const { return impl; }
-
-  auto compile_shader(const ShaderInfo& info) -> AssetID;
-  auto get_root_dir() -> std::filesystem::path;
-};
+using CompileRequest = std::variant<ShaderCompileRequest, ModelCompileRequest>;
 
 struct CompiledAsset;
 struct OXRC_API Session {
@@ -87,6 +79,8 @@ struct OXRC_API Session {
 
 protected:
   Impl* impl;
+
+  constexpr auto& operator->() { return *impl; }
 
 public:
   static auto create(u16 version) -> Session;
@@ -97,15 +91,12 @@ public:
   Session(Impl* impl_) : impl(impl_) {}
   explicit operator bool() const { return impl; }
 
-  auto set_pack_together(bool pack) -> void;
-
   auto import_meta(const std::filesystem::path& path) -> bool;
   auto import_cache(const std::filesystem::path& path) -> void;
   auto save_cache(const std::filesystem::path& path) -> void;
   auto output_to(const std::filesystem::path& path) -> void;
 
-  auto create_shader_session(const ShaderSessionInfo& info) -> ShaderSession;
-  auto add_model(const ModelInfo &model_info) -> void;
+  auto add_request(const CompileRequest& request) -> void;
   auto compile_requests() -> bool;
 
   auto create_asset(const UUID& uuid, AssetType type) -> AssetID;
@@ -120,8 +111,10 @@ public:
   auto set_asset_data(AssetID asset_id, std::vector<u8> asset_data) -> void;
   auto set_asset_info(AssetID asset_id, const ShaderAssetEntry& shader_asset) -> void;
   auto set_asset_info(AssetID asset_id, const ModelAssetEntry& model_asset) -> void;
-  auto get_file_access_time(const std::filesystem::path& path) -> option<u64>;
-  auto set_file_access_time(const std::filesystem::path& path, u64 time) -> void;
+
+  auto hash_file(const std::filesystem::path& path) -> u64;
+  auto hash_data(void* data, usize size_bytes) -> u64;
+  auto cache_asset(const std::filesystem::path& path, const CacheEntry& entry) -> void;
 };
 
 } // namespace ox::rc

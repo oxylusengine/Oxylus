@@ -16,6 +16,7 @@ target("ResourceCompiler")
     "simdjson-ox",
     "fastgltf-ox",
     "meshoptimizer",
+    "xxhash",
     { public = false })
 
 target_end()

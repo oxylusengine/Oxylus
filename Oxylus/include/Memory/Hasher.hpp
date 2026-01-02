@@ -1,25 +1,10 @@
 #pragma once
 
+#include <string_view>
+
+#include "Core/Types.hpp"
+
 namespace ox {
-struct HasherI {
-  virtual ~HasherI() = default;
-
-  virtual bool hash(const void* data, usize data_size) = 0;
-  virtual u64 value() = 0;
-  virtual void reset() = 0;
-};
-
-struct HasherXXH64 : HasherI {
-  HasherXXH64();
-  ~HasherXXH64() override;
-
-  bool hash(const void* data, usize data_size) override;
-  u64 value() override;
-  void reset() override;
-
-  void* handle = nullptr;
-};
-
 namespace detail {
 constexpr u32 fnv32_val = 2166136261_u32;
 constexpr u32 fnv32_prime = 16777619_u32;
@@ -60,8 +45,7 @@ constexpr u64 fnv64(const T& val) {
 constexpr u64 fnv64_str(std::string_view str) { return fnv64(str.data(), str.length()); }
 
 // COMPILE TIME
-consteval u32 fnv32_c(std::string_view str) { return fnv32(str.data(), static_cast<u32>(str.length()));
-}
+consteval u32 fnv32_c(std::string_view str) { return fnv32(str.data(), static_cast<u32>(str.length())); }
 
 // COMPILE TIME
 consteval u64 fnv64_c(std::string_view str) { return fnv64(str.data(), str.length()); }

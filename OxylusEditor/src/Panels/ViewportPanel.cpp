@@ -77,41 +77,41 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
     Slang slang = {};
     slang.create_session({.root_directory = shaders_dir, .definitions = {}});
 
-    slang.create_pipeline(
-      runtime,
-      "mouse_picking_pipeline_2d",
-      {.path = shaders_dir / "editor/mouse_picking_2d.slang", .entry_points = {"cs_main"}}
-    );
-
-    slang.create_pipeline(
-      runtime,
-      "mouse_picking_pipeline",
-      {.path = shaders_dir / "editor/mouse_picking.slang", .entry_points = {"cs_main"}}
-    );
-
-    slang.create_pipeline(
-      runtime,
-      "highlighting_pipeline",
-      {.path = shaders_dir / "editor/highlighting.slang", .entry_points = {"cs_main"}}
-    );
-
-    slang.create_pipeline(
-      runtime,
-      "apply_highlighting_pipeline",
-      {.path = shaders_dir / "editor/apply_highlighting.slang", .entry_points = {"vs_main", "fs_main"}}
-    );
-
-    slang.create_pipeline(
-      runtime,
-      "grid_pipeline",
-      {.path = shaders_dir / "editor/grid.slang", .entry_points = {"vs_main", "fs_main"}}
-    );
-
-    slang.create_pipeline(
-      runtime,
-      "apply_grid_pipeline",
-      {.path = shaders_dir / "editor/apply_grid.slang", .entry_points = {"vs_main", "fs_main"}}
-    );
+    // slang.create_pipeline(
+    //   runtime,
+    //   "mouse_picking_pipeline_2d",
+    //   {.path = shaders_dir / "editor/mouse_picking_2d.slang", .entry_points = {"cs_main"}}
+    // );
+    //
+    // slang.create_pipeline(
+    //   runtime,
+    //   "mouse_picking_pipeline",
+    //   {.path = shaders_dir / "editor/mouse_picking.slang", .entry_points = {"cs_main"}}
+    // );
+    //
+    // slang.create_pipeline(
+    //   runtime,
+    //   "highlighting_pipeline",
+    //   {.path = shaders_dir / "editor/highlighting.slang", .entry_points = {"cs_main"}}
+    // );
+    //
+    // slang.create_pipeline(
+    //   runtime,
+    //   "apply_highlighting_pipeline",
+    //   {.path = shaders_dir / "editor/apply_highlighting.slang", .entry_points = {"vs_main", "fs_main"}}
+    // );
+    //
+    // slang.create_pipeline(
+    //   runtime,
+    //   "grid_pipeline",
+    //   {.path = shaders_dir / "editor/grid.slang", .entry_points = {"vs_main", "fs_main"}}
+    // );
+    //
+    // slang.create_pipeline(
+    //   runtime,
+    //   "apply_grid_pipeline",
+    //   {.path = shaders_dir / "editor/apply_grid.slang", .entry_points = {"vs_main", "fs_main"}}
+    // );
   }
 }
 

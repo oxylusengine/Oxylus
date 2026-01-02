@@ -1,3 +1,5 @@
+#include "ModelProcessor.hpp"
+
 #include <Asset/AssetFile.hpp>
 #include <Asset/AssetMetadata.hpp>
 #include <Asset/Texture.hpp>
@@ -14,10 +16,6 @@
 #include <meshoptimizer.h>
 #include <queue>
 #include <ranges>
-
-#include "AssetData.hpp"
-#include "ResourceCompiler.hpp"
-#include "Session.hpp"
 
 template <>
 struct fastgltf::ElementTraits<glm::vec4> : fastgltf::ElementTraitsBase<glm::vec4, AccessorType::Vec4, float> {};
@@ -125,26 +123,26 @@ constexpr static auto MAX_LODS = 8_sz;
 constexpr static auto MAX_MESHLET_INDICES = 64_sz;
 constexpr static auto MAX_MESHLET_PRIMITIVES = 64_sz;
 
-auto process_model(Session self, const ModelProcessRequest& request) -> AssetID {
+auto ModelProcessor::process(const ModelCompileRequest& request) -> option<CompileResult<ModelAssetEntry>> {
   auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(request.path);
   if (!gltf_buffer) {
-    self.push_error(fmt::format("GLTF model does not exist in path {}!", request.path));
-    return AssetID::Invalid;
+    // self.push_error(fmt::format("GLTF model does not exist in path {}!", request.path));
+    return nullopt;
   }
 
   auto gltf_type = fastgltf::determineGltfFileType(gltf_buffer.get());
   if (gltf_type == fastgltf::GltfType::Invalid) {
-    self.push_error(fmt::format("GLTF model {} type is invalid!", request.path));
-    return AssetID::Invalid;
+    // self.push_error(fmt::format("GLTF model {} type is invalid!", request.path));
+    return nullopt;
   }
 
   auto gltf_parser = fastgltf::Parser(get_default_gltf_extensions());
   auto gltf_result = gltf_parser.loadGltf(gltf_buffer.get(), request.path.parent_path(), get_default_gltf_options());
   if (!gltf_result) {
-    self.push_error(
-      fmt::format("Failed to load GLTF! {} {}", request.path, fastgltf::getErrorMessage(gltf_result.error()))
-    );
-    return AssetID::Invalid;
+    // self.push_error(
+    //   fmt::format("Failed to load GLTF! {} {}", request.path, fastgltf::getErrorMessage(gltf_result.error()))
+    // );
+    return nullopt;
   }
 
   auto gltf_asset = std::move(gltf_result.get());
@@ -438,17 +436,12 @@ auto process_model(Session self, const ModelProcessRequest& request) -> AssetID 
     asset_nodes.emplace_back(name, child_indices, mesh_indices, node.translation, node.rotation, node.scale);
   }
 
-  auto asset_id = self.create_asset(UUID::generate_random(), AssetType::Model);
   auto asset = ModelAssetEntry{
     .nodes = push_span(asset_data, std::span<const ModelAssetEntry::Node>(asset_nodes)),
     .meshes = push_span(asset_data, std::span<const ModelAssetEntry::Mesh>(asset_meshes)),
   };
-  self.set_asset_info(asset_id, asset);
-  self.set_asset_data(asset_id, asset_data);
 
-  self.push_message(fmt::format("Processed model {}", request.path));
-
-  return asset_id;
+  return CompileResult{.entry = asset, .data = std::move(asset_data)};
 }
 
 } // namespace ox::rc

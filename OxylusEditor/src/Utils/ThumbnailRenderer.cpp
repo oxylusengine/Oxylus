@@ -1,6 +1,7 @@
 #include "ThumbnailRenderer.hpp"
 
 #include <tracy/Tracy.hpp>
+#include <vuk/vsl/Core.hpp>
 
 #include "Core/App.hpp"
 #include "Render/Camera.hpp"
@@ -19,11 +20,11 @@ auto ThumbnailRenderer::init(VkContext& vk_context) -> void {
   Slang slang = {};
   slang.create_session({.root_directory = shaders_dir, .definitions = {}});
 
-  slang.create_pipeline(
-    runtime,
-    "simple_forward_pipeline",
-    {.path = shaders_dir / "editor/simple_forward.slang", .entry_points = {"vs_main", "fs_main"}}
-  );
+  // slang.create_pipeline(
+  //   runtime,
+  //   "simple_forward_pipeline",
+  //   {.path = shaders_dir / "editor/simple_forward.slang", .entry_points = {"vs_main", "fs_main"}}
+  // );
 }
 
 auto ThumbnailRenderer::deinit() -> void {}

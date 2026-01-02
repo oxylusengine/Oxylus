@@ -8,14 +8,6 @@
             "optimization": "default",
             "programs": [
                 {
-                    "name": "imgui",
-                    "path": "passes/imgui.slang",
-                    "entry_points": [
-                        "vs_main",
-                        "fs_main"
-                    ]
-                },
-                {
                     "name": "2d_forward",
                     "path": "passes/2d_forward.slang",
                     "entry_points": [

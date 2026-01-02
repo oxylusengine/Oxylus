@@ -1,10 +1,6 @@
 #include "Render/Slang/Slang.hpp"
 
-#include <ranges>
-#include <vuk/runtime/vk/Pipeline.hpp>
-
 #include "Core/App.hpp"
-#include "Render/Vulkan/VkContext.hpp"
 
 namespace ox {
 void Slang::create_session(this Slang& self, const SessionInfo& session_info) {
@@ -16,60 +12,6 @@ void Slang::create_session(this Slang& self, const SessionInfo& session_info) {
      .definitions = session_info.definitions,
      .root_directory = session_info.root_directory}
   );
-}
-
-void Slang::add_shader(this Slang& self, vuk::PipelineBaseCreateInfo& pipeline_ci, const CompileInfo& compile_info) {
-  ZoneScoped;
-
-  if (!self.slang_session.has_value()) {
-    OX_LOG_ERROR("A valid Slang session is needed!");
-    return;
-  }
-
-  const auto module_name = compile_info.path.stem().string();
-  auto slang_module = self.slang_session->load_module({
-    .path = compile_info.path,
-    .module_name = module_name,
-  });
-
-  for (auto& v : compile_info.entry_points) {
-    auto entry_point = slang_module->get_entry_point(v);
-    if (!entry_point.has_value()) {
-      OX_LOG_FATAL("Shader stage '{}' is not found for shader module '{}'", v, module_name);
-      return;
-    }
-
-    pipeline_ci.add_spirv(entry_point->ir, module_name, v);
-  }
-}
-
-void Slang::create_pipeline(
-  this Slang& self,
-  vuk::Runtime& runtime,
-  const vuk::Name& name,
-  const CompileInfo& compile_info,
-  vuk::PersistentDescriptorSet* pds
-) {
-  OX_CHECK_GT(compile_info.entry_points.size(), 0ul);
-
-  vuk::PipelineBaseCreateInfo pipeline_ci = {};
-  if (pds) {
-    pipeline_ci.explicit_set_layouts.emplace_back(pds->set_layout_create_info);
-    for (const auto& [binding, binding_flags] :
-         std::views::zip(pds->set_layout_create_info.bindings, pds->set_layout_create_info.flags)) {
-      pipeline_ci.set_binding_flags(
-        static_cast<u32>(pds->set_layout_create_info.index),
-        binding.binding,
-        static_cast<vuk::DescriptorBindingFlagBits>(binding_flags)
-      );
-    }
-  }
-
-  self.add_shader(pipeline_ci, compile_info);
-
-  OX_LOG_INFO("Loaded shader:{}:{}", compile_info.path, name.c_str());
-
-  TRY(runtime.create_named_pipeline(name, pipeline_ci))
 }
 
 } // namespace ox

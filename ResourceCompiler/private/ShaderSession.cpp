@@ -7,44 +7,47 @@
 #include <slang.h>
 #include <span>
 
-#include "AssetData.hpp"
+#include "Common.hpp"
 #include "ResourceCompiler.hpp"
 
 namespace ox::rc {
-auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
+auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderInfo& info)
+  -> option<CompileResult<ShaderAssetEntry>> {
   auto diagnostics_blob = Slang::ComPtr<slang::IBlob>();
-  auto shader_path = impl->virtual_fs->m_root_dir / info.path;
+  auto shader_path = (self.root_dir / info.path).lexically_normal();
   auto shader_path_str = shader_path.string();
-  const auto source_data = File::to_string(shader_path);
-  if (source_data.empty()) {
-    impl->rc_session.push_error(
-      fmt::format(
-        "An error occured during compiling '{}::{}', the file '{}' is empty.",
-        impl->name,
-        info.module_name,
-        shader_path
-      )
-    );
-    return AssetID::Invalid;
-  }
 
-  slang::IModule* slang_module = nullptr;
+  slang::IModule* main_module = nullptr;
   {
-    auto read_lock = std::shared_lock(impl->cached_modules_mutex);
-    auto slang_module_it = impl->cached_modules.find(shader_path);
-    if (slang_module_it == impl->cached_modules.end()) {
-      slang_module = impl->slang_session->loadModuleFromSourceString(
+    auto read_lock = std::shared_lock(self.cached_modules_mutex);
+    auto slang_module_it = self.cached_modules.find(shader_path);
+    if (slang_module_it == self.cached_modules.end()) {
+      read_lock.unlock();
+
+      const auto source_data = File::to_string(shader_path);
+      if (source_data.empty()) {
+        self.rc_session.push_error(
+          fmt::format(
+            "An error occured during compiling '{}::{}', the file '{}' is empty.",
+            self.name,
+            info.module_name,
+            shader_path
+          )
+        );
+        return nullopt;
+      }
+
+      main_module = self.slang_session->loadModuleFromSourceString(
         info.module_name.c_str(),
         shader_path_str.c_str(),
         source_data.c_str(),
         diagnostics_blob.writeRef()
       );
 
-      read_lock.unlock();
-      auto write_lock = std::unique_lock(impl->cached_modules_mutex);
-      impl->cached_modules.emplace(shader_path, slang_module);
+      auto write_lock = std::unique_lock(self.cached_modules_mutex);
+      self.cached_modules.emplace(shader_path, main_module);
     } else {
-      slang_module = slang_module_it->second;
+      main_module = slang_module_it->second;
     }
   }
 
@@ -53,7 +56,7 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
       static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
       diagnostics_blob->getBufferSize()
     );
-    impl->rc_session.push_message(fmt::format("{}::{} {}", impl->name, info.module_name, sv));
+    self.rc_session.push_message(fmt::format("{}::{} {}", self.name, info.module_name, sv));
   }
 
   auto slang_stage_to_entry_kind = [](SlangStage slang_stage) {
@@ -70,29 +73,29 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
   auto entry_points = std::vector<ShaderAssetEntry::EntryPoint>{};
   for (const auto& entry_point_name : info.entry_points) {
     auto entry_point = Slang::ComPtr<slang::IEntryPoint>();
-    if (SLANG_FAILED(slang_module->findEntryPointByName(entry_point_name.c_str(), entry_point.writeRef()))) {
+    if (SLANG_FAILED(main_module->findEntryPointByName(entry_point_name.c_str(), entry_point.writeRef()))) {
       auto sv = std::string_view(
         static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
         diagnostics_blob->getBufferSize()
       );
-      impl->rc_session.push_error(
+      self.rc_session.push_error(
         fmt::format(
           "An error occured while compiling entry point {}::{}::{} {}",
-          impl->name,
+          self.name,
           info.module_name,
           entry_point_name,
           sv
         )
       );
-      return AssetID::Invalid;
+      return nullopt;
     }
 
     // Composition
     auto component_types = std::vector<slang::IComponentType*>();
-    component_types.push_back(slang_module);
+    component_types.push_back(main_module);
     component_types.push_back(entry_point);
     auto composed_program = Slang::ComPtr<slang::IComponentType>();
-    auto compose_result = impl->slang_session->createCompositeComponentType(
+    auto compose_result = self.slang_session->createCompositeComponentType(
       component_types.data(),
       component_types.size(),
       composed_program.writeRef(),
@@ -103,12 +106,12 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
         static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
         diagnostics_blob->getBufferSize()
       );
-      impl->rc_session.push_message(
-        fmt::format("[Slang Composer] {}::{}::{} {}", impl->name, info.module_name, entry_point_name, sv)
+      self.rc_session.push_message(
+        fmt::format("[Slang Composer] {}::{}::{} {}", self.name, info.module_name, entry_point_name, sv)
       );
     }
     if (SLANG_FAILED(compose_result)) {
-      return AssetID::Invalid;
+      return nullopt;
     }
 
     // Linking
@@ -119,12 +122,12 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
         static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
         diagnostics_blob->getBufferSize()
       );
-      impl->rc_session.push_message(
-        fmt::format("[Slang Linker] {}::{}::{} {}", impl->name, info.module_name, entry_point_name, sv)
+      self.rc_session.push_message(
+        fmt::format("[Slang Linker] {}::{}::{} {}", self.name, info.module_name, entry_point_name, sv)
       );
     }
     if (SLANG_FAILED(link_result)) {
-      return AssetID::Invalid;
+      return nullopt;
     }
 
     // Reflection
@@ -140,12 +143,12 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
         static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
         diagnostics_blob->getBufferSize()
       );
-      impl->rc_session.push_message(
-        fmt::format("[Slang Codegen] {}::{}::{} {}", impl->name, info.module_name, entry_point_name, sv)
+      self.rc_session.push_message(
+        fmt::format("[Slang Codegen] {}::{}::{} {}", self.name, info.module_name, entry_point_name, sv)
       );
     }
     if (SLANG_FAILED(codegen_result)) {
-      return AssetID::Invalid;
+      return nullopt;
     }
 
     auto spirv = std::span(
@@ -155,18 +158,14 @@ auto ShaderSession::compile_shader(const ShaderInfo& info) -> AssetID {
     entry_points.emplace_back(entry_point_kind, push_str(asset_data, entry_point_name), push_span(asset_data, spirv));
   }
 
-  auto asset_id = impl->rc_session.create_asset(UUID::generate_random(), AssetType::Shader);
+  auto uuid = UUID::generate_random();
+  auto hash = self.rc_session.hash_file(shader_path);
+  auto asset_id = self.rc_session.create_asset(uuid, AssetType::Shader);
   auto shader_asset = ShaderAssetEntry{
     .entry_points = push_span(asset_data, std::span<const ShaderAssetEntry::EntryPoint>(entry_points))
   };
-  impl->rc_session.set_asset_info(asset_id, shader_asset);
-  impl->rc_session.set_asset_data(asset_id, std::move(asset_data));
 
-  impl->rc_session.push_message(fmt::format("Compiled shader {}", info.module_name));
-
-  return asset_id;
+  return CompileResult{shader_asset, asset_data};
 }
-
-auto ShaderSession::get_root_dir() -> std::filesystem::path { return impl->root_dir; }
 
 } // namespace ox::rc

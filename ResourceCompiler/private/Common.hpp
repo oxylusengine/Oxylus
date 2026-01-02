@@ -5,6 +5,12 @@
 #include <vector>
 
 namespace ox::rc {
+template <typename T>
+struct CompileResult {
+  T entry = {};
+  std::vector<u8> data = {};
+};
+
 constexpr auto push_str(std::vector<u8>& asset_data, std::string_view str) -> AssetDataView<c8> {
   auto begin = asset_data.size();
   asset_data.insert(asset_data.end(), str.begin(), str.end());

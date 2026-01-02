@@ -18,6 +18,7 @@ enum class FileError : i32 {
   Interrupted,
   BadFileDescriptor,
   Unknown,
+  MapFailed,
 };
 constexpr bool operator!(FileError v) { return v != FileError::None; }
 
@@ -52,5 +53,7 @@ auto file_seek(FileDescriptor file, i64 offset) -> void;
 auto file_last_modified(FileDescriptor file) -> std::expected<u64, FileError>;
 auto file_stdout(std::string_view str) -> void;
 auto file_stderr(std::string_view str) -> void;
+auto file_map(FileDescriptor file, usize size) -> std::expected<void *, FileError>;
+auto file_unmap(FileDescriptor file, void *data, usize size) -> void;
 } // namespace os
 } // namespace ox

@@ -14,21 +14,25 @@
 namespace ox {
 auto os::mem_page_size() -> u64 {
   ZoneScoped;
+
   return sysconf(_SC_PAGESIZE);
 }
 
 auto os::mem_reserve(u64 size) -> void* {
   ZoneScoped;
+
   return mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
 }
 
 auto os::mem_release(void* data, u64 size) -> void {
   ZoneScoped;
+
   munmap(data, size);
 }
 
 auto os::mem_commit(void* data, u64 size) -> bool {
   ZoneScoped;
+
   return mprotect(data, size, PROT_READ | PROT_WRITE) == 0;
 }
 
@@ -209,6 +213,26 @@ void os::file_stderr(std::string_view str) {
   ZoneScoped;
 
   write(STDERR_FILENO, str.data(), str.length());
+}
+
+auto os::file_map(FileDescriptor file, usize size) -> std::expected<void*, FileError> {
+  ZoneScoped;
+
+  auto* data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, static_cast<i32>(file), 0);
+  if (data == MAP_FAILED) {
+    return std::unexpected(FileError::MapFailed);
+  }
+
+  madvise(data, size, MADV_SEQUENTIAL);
+  madvise(data, size, MADV_WILLNEED);
+
+  return data;
+}
+
+auto os::file_unmap(FileDescriptor, void* data, usize size) -> void {
+  ZoneScoped;
+
+  os::mem_release(data, size);
 }
 
 } // namespace ox

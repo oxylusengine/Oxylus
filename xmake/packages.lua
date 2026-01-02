@@ -6,10 +6,10 @@ packages = {
   ["miniaudio 0.11.22"] = {},
   ["fastgltf-ox v0.8.0"] = { system = false, debug = is_mode("debug") },
   ["meshoptimizer v0.22"] = {},
-  ["libsdl3"] = {}, -- handled by system package (also nix)
+  ["libsdl3 3.2.28"] = { configs = { x11 = true, wayland = false } },
   ["ktx-ox v4.4.0"] = { system = false, debug = false },
   ["zstd v1.5.7"] = { system = false },
-  ["shader-slang v2025.15.1"] = { system = false },
+  ["shader-slang v2025.15.1"] = { configs = { shared = true }, system = false },
   ["enet-ox v2.6.5"] = {
     configs = {
       test = false,
@@ -73,6 +73,7 @@ packages = {
   ["unordered_dense v4.5.0"] = {},
   ["plf_colony v7.41"] = {},
   ["simdutf v6.2.0"] = {},
+  ["xxhash v0.8.3"] = {},
 }
 
 if has_config("tests") then
