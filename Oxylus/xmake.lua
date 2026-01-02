@@ -84,6 +84,7 @@ target("Oxylus")
         "libsdl3",
         "ktx-ox",
         "shader-slang",
+        "spirv-tools",
         "enet-ox",
         "flecs-ox",
         "imgui",

@@ -10,6 +10,7 @@ packages = {
   ["ktx-ox v4.4.0"] = { system = false, debug = false },
   ["zstd v1.5.7"] = { system = false },
   ["shader-slang v2025.15.1"] = { configs = { shared = true }, system = false },
+  ["spirv-tools 1.4.309+0"] = { system = false },
   ["enet-ox v2.6.5"] = {
     configs = {
       test = false,
@@ -58,7 +59,7 @@ packages = {
       enable_floating_point_exceptions = false,
     },
   },
-  ["tracy v0.12.2"] = {
+  ["tracy v0.11.1"] = {
     configs = {
       tracy_enable = has_config("profile"),
       on_demand = true,

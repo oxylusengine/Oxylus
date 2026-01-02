@@ -6,6 +6,7 @@
 #include <shared_mutex>
 #include <slang-com-ptr.h>
 #include <slang.h>
+#include <spirv-tools/optimizer.hpp>
 
 #include "OS/File.hpp"
 #include "Utils/Log.hpp"
@@ -148,8 +149,97 @@ auto SlangSession::compile_shader(const SlangShaderInfo& info) -> option<std::ve
       return nullopt;
     }
 
-    auto spirv = std::vector<u32>(spirv_code->getBufferSize() / sizeof(u32));
-    std::memcpy(spirv.data(), spirv_code->getBufferPointer(), spirv_code->getBufferSize());
+    auto spv_message_cb =
+      [&](spv_message_level_t level, const char* source, const spv_position_t& position, const char* message) {
+        switch (level) {
+          case SPV_MSG_FATAL:
+          case SPV_MSG_INTERNAL_ERROR:
+          case SPV_MSG_ERROR         : {
+            OX_LOG_ERROR("[SPVOPT]: {}: {}", source, message);
+          } break;
+          case SPV_MSG_WARNING: {
+            OX_LOG_WARN("[SPVOPT]: {}: {}", source, message);
+          } break;
+          case SPV_MSG_INFO: {
+            OX_LOG_INFO("[SPVOPT]: {}: {}", source, message);
+          } break;
+          case SPV_MSG_DEBUG: {
+            OX_LOG_TRACE("[SPVOPT]: {}: {}", source, message);
+          } break;
+        }
+      };
+
+    auto optimizer = spvtools::Optimizer(SPV_ENV_UNIVERSAL_1_5);
+    optimizer.SetMessageConsumer(spv_message_cb);
+
+    // Order of these passes matter, also there is a reason some of them are duplicate
+
+    optimizer.RegisterPass(spvtools::CreateStripDebugInfoPass());
+    optimizer.RegisterPass(spvtools::CreateStripNonSemanticInfoPass());
+
+    optimizer.RegisterPass(spvtools::CreatePropagateLineInfoPass());
+    optimizer.RegisterPass(spvtools::CreateWrapOpKillPass());
+    optimizer.RegisterPass(spvtools::CreateDeadBranchElimPass());
+    optimizer.RegisterPass(spvtools::CreateMergeReturnPass());
+    optimizer.RegisterPass(spvtools::CreateInlineExhaustivePass());
+    optimizer.RegisterPass(spvtools::CreateEliminateDeadFunctionsPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreatePrivateToLocalPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleBlockLoadStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateScalarReplacementPass());
+    optimizer.RegisterPass(spvtools::CreateLocalAccessChainConvertPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleBlockLoadStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateCompactIdsPass());
+    optimizer.RegisterPass(spvtools::CreateLocalMultiStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateCCPPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateLoopUnrollPass(true));
+    optimizer.RegisterPass(spvtools::CreateDeadBranchElimPass());
+    optimizer.RegisterPass(spvtools::CreateRedundancyEliminationPass());
+    optimizer.RegisterPass(spvtools::CreateCombineAccessChainsPass());
+    optimizer.RegisterPass(spvtools::CreateSimplificationPass());
+    optimizer.RegisterPass(spvtools::CreateScalarReplacementPass());
+    optimizer.RegisterPass(spvtools::CreateLocalAccessChainConvertPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleBlockLoadStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateSSARewritePass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateVectorDCEPass());
+    optimizer.RegisterPass(spvtools::CreateDeadInsertElimPass());
+    optimizer.RegisterPass(spvtools::CreateDeadBranchElimPass());
+    optimizer.RegisterPass(spvtools::CreateSimplificationPass());
+    optimizer.RegisterPass(spvtools::CreateIfConversionPass());
+    optimizer.RegisterPass(spvtools::CreateCopyPropagateArraysPass());
+    optimizer.RegisterPass(spvtools::CreateReduceLoadSizePass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateBlockMergePass());
+    optimizer.RegisterPass(spvtools::CreateRedundancyEliminationPass());
+    optimizer.RegisterPass(spvtools::CreateDeadBranchElimPass());
+    optimizer.RegisterPass(spvtools::CreateBlockMergePass());
+    optimizer.RegisterPass(spvtools::CreateSimplificationPass());
+    optimizer.RegisterPass(spvtools::CreateCompactIdsPass());
+    optimizer.RegisterPass(spvtools::CreateRedundancyEliminationPass());
+    optimizer.RegisterPass(spvtools::CreateCFGCleanupPass());
+
+    optimizer.RegisterPass(spvtools::CreateRedundantLineInfoElimPass());
+
+    auto optimizer_options = spvtools::OptimizerOptions{};
+    optimizer_options.set_run_validator(false);
+
+    auto spirv = std::vector<u32>{};
+    OX_ASSERT(optimizer.Run(
+      reinterpret_cast<const u32*>(spirv_code->getBufferPointer()),
+      spirv_code->getBufferSize() / sizeof(u32),
+      &spirv,
+      optimizer_options
+    ));
+
     entry_points.push_back({.code = std::move(spirv)});
   }
 
@@ -174,8 +264,8 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
 
   slang::CompilerOptionEntry entries[] = {
     {.name = slang::CompilerOptionName::Optimization,
-     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = info.optimizaton_level}},
-#if OX_DEBUG
+     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_OPTIMIZATION_LEVEL_MAXIMAL}},
+#if 0
     {.name = slang::CompilerOptionName::DebugInformationFormat,
      .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_FORMAT_DEFAULT}},
     {.name = slang::CompilerOptionName::DebugInformation,
@@ -247,5 +337,4 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
 
   return SlangSession(session_impl);
 }
-
 } // namespace ox

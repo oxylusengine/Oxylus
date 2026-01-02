@@ -96,9 +96,8 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         UI::begin_property_grid("Directory", nullptr, false);
 
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.8f);
-        auto new_project_dir_str = std::string();
-        ImGui::InputText("##Directory", &new_project_dir_str, flags);
-        new_project_dir = std::filesystem::path(new_project_dir_str).make_preferred();
+        static auto new_project_dir_str = std::string();
+        ImGui::InputText("##Directory", &new_project_dir_str);
         ImGui::SameLine();
         if (ImGui::Button(ICON_MDI_FOLDER, {ImGui::GetContentRegionAvail().x, 0})) {
           FileDialogFilter dialog_filters[] = {{.name = "Project dir", .pattern = "oxproj"}};
@@ -126,15 +125,16 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
         UI::end_property_grid();
 
-        auto new_project_asset_dir_str = std::string();
+        static auto new_project_asset_dir_str = std::string();
         UI::input_text("Asset Directory", &new_project_asset_dir_str);
-        new_project_asset_dir = std::filesystem::path(new_project_asset_dir_str).make_preferred();
         UI::end_properties();
 
         ImGui::Separator();
 
         ImGui::SetNextItemWidth(-1);
         if (ImGui::Button("Create", ImVec2(120, 0))) {
+          new_project_dir = std::filesystem::path(new_project_dir_str).make_preferred();
+          new_project_asset_dir = std::filesystem::path(new_project_asset_dir_str).make_preferred();
           new_project(new_project_dir, new_project_name, new_project_asset_dir);
           visible = false;
           ImGui::CloseCurrentPopup();
