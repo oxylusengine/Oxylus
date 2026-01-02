@@ -34,6 +34,51 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
 
   self.editor_theme.init();
 
+  auto& input = App::mod<Input>();
+  input.set_context("editor");
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "new_scene",
+      .primary_inputs = {InputCode(KeyCode::N, ModCode::AnyControl)},
+      .context = "editor",
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "undo",
+      .primary_inputs = {InputCode(KeyCode::Z, ModCode::AnyControl)},
+      .context = "editor",
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "redo",
+      .primary_inputs = {InputCode(KeyCode::Y, ModCode::AnyControl)},
+      .context = "editor",
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "save_scene",
+      .primary_inputs = {InputCode(KeyCode::S, ModCode::AnyControl)},
+      .context = "editor",
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "open_scene_file_dialog",
+      .primary_inputs = {InputCode(KeyCode::O, ModCode::AnyControl)},
+      .context = "editor",
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "save_scene_as",
+      .primary_inputs = {InputCode(KeyCode::S, ModCode::AnyControl | ModCode::AnyShift)},
+      .context = "editor",
+    }
+  );
+
   self.active_project = std::make_unique<Project>();
 
   auto scene_hierarchy_panel = self.add_panel<SceneHierarchyPanel>();
@@ -340,25 +385,23 @@ void Editor::save_scene_as() {
 
 void Editor::editor_shortcuts() {
   auto& input_sys = App::mod<Input>();
-  if (input_sys.get_key_held(KeyCode::LeftControl)) {
-    if (input_sys.get_key_pressed(KeyCode::Z)) {
-      undo();
-    }
-    if (input_sys.get_key_pressed(KeyCode::Y)) {
-      redo();
-    }
-    if (input_sys.get_key_pressed(KeyCode::N)) {
-      new_scene();
-    }
-    if (input_sys.get_key_pressed(KeyCode::S)) {
-      save_scene();
-    }
-    if (input_sys.get_key_pressed(KeyCode::O)) {
-      open_scene_file_dialog();
-    }
-    if (input_sys.get_key_held(KeyCode::LeftShift) && input_sys.get_key_pressed(KeyCode::S)) {
-      save_scene_as();
-    }
+  if (input_sys.get_action_pressed("new_scene")) {
+    new_scene();
+  }
+  if (input_sys.get_action_pressed("undo")) {
+    undo();
+  }
+  if (input_sys.get_action_pressed("redo")) {
+    redo();
+  }
+  if (input_sys.get_action_pressed("save_scene")) {
+    save_scene();
+  }
+  if (input_sys.get_action_pressed("open_scene_file_dialog")) {
+    open_scene_file_dialog();
+  }
+  if (input_sys.get_action_pressed("save_scene_as")) {
+    save_scene_as();
   }
 }
 

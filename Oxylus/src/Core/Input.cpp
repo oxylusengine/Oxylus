@@ -1,5 +1,6 @@
 #include "Core/Input.hpp"
 
+#include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
 
@@ -13,8 +14,8 @@ auto Input::deinit() -> std::expected<void, std::string> { return {}; }
 auto Input::reset_pressed() -> void {
   ZoneScoped;
 
-  std::memset(input_data.key_pressed, 0, MAX_KEYS);
-  std::memset(input_data.mouse_clicked, 0, MAX_BUTTONS);
+  input_data.key_pressed.clear();
+  input_data.mouse_pressed.clear();
   input_data.scroll_offset_y = 0;
   input_data.mouse_moved = false;
 }
@@ -22,20 +23,357 @@ auto Input::reset_pressed() -> void {
 auto Input::reset() -> void {
   ZoneScoped;
 
-  std::memset(input_data.key_pressed, 0, MAX_KEYS);
-  std::memset(input_data.key_held, 0, MAX_KEYS);
-  std::memset(input_data.key_released, 0, MAX_KEYS);
-  std::memset(input_data.mouse_clicked, 0, MAX_BUTTONS);
-  std::memset(input_data.mouse_held, 0, MAX_BUTTONS);
-  std::memset(input_data.mouse_released, 0, MAX_BUTTONS);
+  input_data.key_pressed.clear();
+  input_data.key_held.clear();
+  input_data.key_released.clear();
+  input_data.mouse_pressed.clear();
+  input_data.mouse_held.clear();
+  input_data.mouse_released.clear();
 
   input_data.scroll_offset_y = 0;
   input_data.mouse_moved = false;
 }
 
-auto Input::get_mouse_position() -> glm::vec2 { return input_data.mouse_pos; }
+auto Input::get_binding(this const Input& self, std::string_view action_id) -> const ActionBinding* {
+  ZoneScoped;
 
-auto Input::get_mouse_position_rel() -> glm::vec2 { return input_data.mouse_pos_rel; }
+  auto it = self.action_bindings.find(std::string(action_id));
+  return it != self.action_bindings.end() ? &it->second : nullptr;
+}
+
+auto Input::get_active_binding(this const Input& self, std::string_view action_id) -> const ActionBinding* {
+  ZoneScoped;
+
+  auto binding = self.get_binding(action_id);
+  if (binding && binding->context == self.active_context) {
+    return binding;
+  }
+  return nullptr;
+}
+
+auto Input::bind_action(this Input& self, ActionBinding binding) -> std::expected<void, BindingError> {
+  ZoneScoped;
+
+  if (binding.action_id.empty()) {
+    return std::unexpected(BindingError::InvalidInput);
+  }
+
+  // NOTE: Not sure if this should be an error
+  if (auto conflicts = self.find_conflicts(binding); !conflicts.empty()) {
+    // For now we'll allow it.
+    OX_LOG_WARN("Conflicts found for action: {}", binding.action_id);
+  }
+
+  if (auto it = self.action_bindings.find(binding.action_id); it != self.action_bindings.end()) {
+    self.remove_from_reverse_map(it->second);
+  }
+
+  self.add_to_reverse_map(binding);
+
+  self.action_bindings.emplace(binding.action_id, binding);
+
+  return {};
+}
+
+auto Input::unbind_action(this Input& self, std::string action_id) -> std::expected<void, BindingError> {
+  ZoneScoped;
+
+  auto it = self.action_bindings.find(std::string(action_id));
+  if (it == self.action_bindings.end()) {
+    return std::unexpected(BindingError::ActionNotFound);
+  }
+
+  self.remove_from_reverse_map(it->second);
+  self.action_bindings.erase(it);
+
+  return {};
+}
+
+auto Input::rebind_action(
+  this Input& self, std::string_view action_id, std::vector<InputCode> new_primary, std::vector<InputCode> new_secondary
+) -> std::expected<void, BindingError> {
+  auto it = self.action_bindings.find(std::string(action_id));
+  if (it == self.action_bindings.end()) {
+    return std::unexpected(BindingError::ActionNotFound);
+  }
+
+  self.remove_from_reverse_map(it->second);
+
+  it->second.primary_inputs = std::move(new_primary);
+  it->second.secondary_inputs = std::move(new_secondary);
+
+  self.add_to_reverse_map(it->second);
+
+  return {};
+}
+
+auto Input::set_context(this Input& self, std::string_view context) -> void {
+  ZoneScoped;
+
+  self.active_context = context;
+}
+
+auto Input::push_context(this Input& self, std::string_view context) -> void {
+  ZoneScoped;
+
+  self.context_stack.emplace_back(self.active_context);
+  self.active_context = context;
+}
+
+auto Input::pop_context(this Input& self) -> void {
+  ZoneScoped;
+
+  if (!self.context_stack.empty()) {
+    self.active_context = self.context_stack.back();
+    self.context_stack.pop_back();
+  }
+}
+
+auto Input::get_active_context(this const Input& self) -> std::string_view {
+  ZoneScoped;
+
+  return self.active_context;
+}
+
+auto Input::check_input_active(this const Input& self, const InputCode& input, InputState check_state) -> bool {
+  auto is_axis = input.type == InputType::GamepadAxis || input.type == InputType::MouseAxis;
+  if (is_axis) {
+    return false;
+  }
+
+  const auto check = [&input, check_state, &self]() {
+    switch (input.type) {
+      case InputType::Keyboard: {
+        switch (check_state) {
+          case InputState::Pressed : return self.get_key_pressed(input.key_code);
+          case InputState::Released: return self.get_key_released(input.key_code);
+          case InputState::Held    : return self.get_key_held(input.key_code);
+        }
+      }
+      case InputType::MouseButton: {
+        switch (check_state) {
+          case InputState::Pressed : return self.get_mouse_clicked(input.mouse_code);
+          case InputState::Released: return self.get_mouse_released(input.mouse_code);
+          case InputState::Held    : return self.get_mouse_held(input.mouse_code);
+        }
+      }
+      case InputType::MouseAxis:
+      case InputType::GamepadButton:
+      case InputType::GamepadAxis:
+        /* TODO: */ break;
+    }
+
+    return false;
+  };
+
+  bool input_active = check();
+  if (!input_active) {
+    return false;
+  }
+
+  if (input.mod_code != ModCode::None) {
+    return mod_matches(self.input_data.mod_code, input.mod_code);
+  }
+
+  return true;
+}
+
+auto Input::get_action_pressed(this const Input& self, std::string_view action_id) -> bool {
+  ZoneScoped;
+
+  auto binding = self.get_active_binding(action_id);
+  if (!binding) {
+    return false;
+  }
+
+  for (const auto& input : binding->primary_inputs) {
+    return self.check_input_active(input, InputState::Pressed);
+  }
+
+  for (const auto& input : binding->secondary_inputs) {
+    return self.check_input_active(input, InputState::Pressed);
+  }
+
+  return false;
+}
+
+auto Input::get_action_released(this const Input& self, std::string_view action_id) -> bool {
+  ZoneScoped;
+
+  auto binding = self.get_active_binding(action_id);
+  if (!binding) {
+    return false;
+  }
+
+  for (const auto& input : binding->primary_inputs) {
+    return self.check_input_active(input, InputState::Released);
+  }
+
+  for (const auto& input : binding->secondary_inputs) {
+    return self.check_input_active(input, InputState::Released);
+  }
+
+  return false;
+}
+
+auto Input::get_action_held(this const Input& self, std::string_view action_id) -> bool {
+  ZoneScoped;
+
+  auto binding = self.get_active_binding(action_id);
+  if (!binding) {
+    return false;
+  }
+
+  for (const auto& input : binding->primary_inputs) {
+    return self.check_input_active(input, InputState::Held);
+  }
+
+  for (const auto& input : binding->secondary_inputs) {
+    return self.check_input_active(input, InputState::Held);
+  }
+
+  return false;
+}
+
+auto Input::get_action_axis(this const Input& self, std::string_view action_id) -> f32 {
+  ZoneScoped;
+
+  // TODO:
+
+  return 0.f;
+}
+
+auto Input::get_key_pressed(this const Input& self, const KeyCode key) -> bool {
+  ZoneScoped;
+
+  auto it = self.input_data.key_pressed.find(key);
+  if (it != self.input_data.key_pressed.end()) {
+    return it->second;
+  }
+
+  return false;
+}
+
+auto Input::get_key_released(this const Input& self, const KeyCode key) -> bool {
+  ZoneScoped;
+
+  auto it = self.input_data.key_released.find(key);
+  if (it != self.input_data.key_released.end()) {
+    return it->second;
+  }
+
+  return false;
+}
+
+auto Input::get_key_held(this const Input& self, const KeyCode key) -> bool {
+  ZoneScoped;
+
+  auto it = self.input_data.key_held.find(key);
+  if (it != self.input_data.key_held.end()) {
+    return it->second;
+  }
+
+  return false;
+}
+
+auto Input::get_mouse_clicked(this const Input& self, const MouseCode key) -> bool {
+  ZoneScoped;
+
+  auto it = self.input_data.mouse_pressed.find(key);
+  if (it != self.input_data.mouse_pressed.end()) {
+    return it->second;
+  }
+
+  return false;
+}
+
+auto Input::get_mouse_released(this const Input& self, const MouseCode key) -> bool {
+  ZoneScoped;
+
+  auto it = self.input_data.mouse_released.find(key);
+  if (it != self.input_data.mouse_released.end()) {
+    return it->second;
+  }
+
+  return false;
+}
+
+auto Input::get_mouse_held(this const Input& self, const MouseCode key) -> bool {
+  ZoneScoped;
+
+  auto it = self.input_data.mouse_held.find(key);
+  if (it != self.input_data.mouse_held.end()) {
+    return it->second;
+  }
+
+  return false;
+}
+
+auto Input::find_conflicts(this const Input& self, const ActionBinding& binding) -> std::vector<std::string> {
+  ZoneScoped;
+
+  std::vector<std::string> conflicts;
+
+  auto check_inputs = [&self, &conflicts, &binding](const std::vector<InputCode>& inputs) {
+    for (const auto& input : inputs) {
+      auto range = self.input_to_actions.equal_range(input);
+      for (auto it = range.first; it != range.second; ++it) {
+        const auto& existing_action = it->second;
+        // Only conflict if same context
+        if (auto existing_binding = self.get_binding(existing_action);
+            existing_binding && existing_binding->context == binding.context && existing_action != binding.action_id) {
+          conflicts.push_back(existing_action);
+        }
+      }
+    }
+  };
+
+  check_inputs(binding.primary_inputs);
+  check_inputs(binding.secondary_inputs);
+
+  std::ranges::sort(conflicts);
+  auto [first, last] = std::ranges::unique(conflicts);
+  conflicts.erase(first, last);
+
+  return conflicts;
+}
+
+auto Input::add_to_reverse_map(this Input& self, const ActionBinding& binding) -> void {
+  ZoneScoped;
+
+  auto add_inputs = [&self, &binding](const std::vector<InputCode>& inputs) {
+    for (const auto& input : inputs) {
+      self.input_to_actions.emplace(input, binding.action_id);
+    }
+  };
+
+  add_inputs(binding.primary_inputs);
+  add_inputs(binding.secondary_inputs);
+}
+
+auto Input::remove_from_reverse_map(this Input& self, const ActionBinding& binding) -> void {
+  ZoneScoped;
+
+  auto remove_inputs = [&self, binding](const std::vector<InputCode>& inputs) {
+    for (const auto& input : inputs) {
+      auto range = self.input_to_actions.equal_range(input);
+      for (auto it = range.first; it != range.second;) {
+        if (it->second == binding.action_id) {
+          it = self.input_to_actions.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
+  };
+
+  remove_inputs(binding.primary_inputs);
+  remove_inputs(binding.secondary_inputs);
+}
+
+auto Input::get_mouse_position(this const Input& self) -> glm::vec2 { return self.input_data.mouse_pos; }
+
+auto Input::get_mouse_position_rel(this const Input& self) -> glm::vec2 { return self.input_data.mouse_pos_rel; }
 
 auto Input::set_mouse_position_global(const float x, const float y) -> void {
   ZoneScoped;
@@ -69,143 +407,6 @@ auto Input::get_mouse_scroll_offset_y() -> f32 { return input_data.scroll_offset
 
 auto Input::get_mouse_moved() -> bool { return input_data.mouse_moved; }
 
-auto Input::to_keycode(u32 keycode_, u32 scancode_) -> KeyCode {
-  ZoneScoped;
-
-  SDL_Scancode scancode = static_cast<SDL_Scancode>(scancode_);
-  switch (scancode) {
-    case SDL_SCANCODE_KP_0       : return KeyCode::KP0;
-    case SDL_SCANCODE_KP_1       : return KeyCode::KP1;
-    case SDL_SCANCODE_KP_2       : return KeyCode::KP2;
-    case SDL_SCANCODE_KP_3       : return KeyCode::KP3;
-    case SDL_SCANCODE_KP_4       : return KeyCode::KP4;
-    case SDL_SCANCODE_KP_5       : return KeyCode::KP5;
-    case SDL_SCANCODE_KP_6       : return KeyCode::KP6;
-    case SDL_SCANCODE_KP_7       : return KeyCode::KP7;
-    case SDL_SCANCODE_KP_8       : return KeyCode::KP8;
-    case SDL_SCANCODE_KP_9       : return KeyCode::KP9;
-    case SDL_SCANCODE_KP_PERIOD  : return KeyCode::KPDecimal;
-    case SDL_SCANCODE_KP_DIVIDE  : return KeyCode::KPDivide;
-    case SDL_SCANCODE_KP_MULTIPLY: return KeyCode::KPMultiply;
-    case SDL_SCANCODE_KP_MINUS   : return KeyCode::KPSubtract;
-    case SDL_SCANCODE_KP_PLUS    : return KeyCode::KPAdd;
-    case SDL_SCANCODE_KP_ENTER   : return KeyCode::KPEnter;
-    case SDL_SCANCODE_KP_EQUALS  : return KeyCode::KPEqual;
-    default                      : break;
-  }
-
-  SDL_Keycode keycode = static_cast<SDL_Keycode>(keycode_);
-  switch (keycode) {
-    case SDLK_TAB         : return KeyCode::Tab;
-    case SDLK_LEFT        : return KeyCode::Left;
-    case SDLK_RIGHT       : return KeyCode::Right;
-    case SDLK_UP          : return KeyCode::Up;
-    case SDLK_DOWN        : return KeyCode::Down;
-    case SDLK_PAGEUP      : return KeyCode::PageUp;
-    case SDLK_PAGEDOWN    : return KeyCode::PageDown;
-    case SDLK_HOME        : return KeyCode::Home;
-    case SDLK_END         : return KeyCode::End;
-    case SDLK_INSERT      : return KeyCode::Insert;
-    case SDLK_DELETE      : return KeyCode::Delete;
-    case SDLK_BACKSPACE   : return KeyCode::Backspace;
-    case SDLK_SPACE       : return KeyCode::Space;
-    case SDLK_RETURN      : return KeyCode::Return;
-    case SDLK_ESCAPE      : return KeyCode::Escape;
-    case SDLK_APOSTROPHE  : return KeyCode::Apostrophe;
-    case SDLK_COMMA       : return KeyCode::Comma;
-    case SDLK_MINUS       : return KeyCode::Minus;
-    case SDLK_PERIOD      : return KeyCode::Period;
-    case SDLK_SLASH       : return KeyCode::Slash;
-    case SDLK_SEMICOLON   : return KeyCode::Semicolon;
-    case SDLK_EQUALS      : return KeyCode::Equal;
-    case SDLK_LEFTBRACKET : return KeyCode::LeftBracket;
-    case SDLK_BACKSLASH   : return KeyCode::Backslash;
-    case SDLK_RIGHTBRACKET: return KeyCode::RightBracket;
-    case SDLK_GRAVE       : return KeyCode::GraveAccent;
-    case SDLK_CAPSLOCK    : return KeyCode::CapsLock;
-    case SDLK_SCROLLLOCK  : return KeyCode::ScrollLock;
-    case SDLK_NUMLOCKCLEAR: return KeyCode::NumLock;
-    case SDLK_PRINTSCREEN : return KeyCode::PrintScreen;
-    case SDLK_PAUSE       : return KeyCode::Pause;
-
-    case SDLK_LCTRL       : return KeyCode::LeftControl;
-    case SDLK_LSHIFT      : return KeyCode::LeftShift;
-    case SDLK_LALT        : return KeyCode::LeftAlt;
-    case SDLK_LGUI        : return KeyCode::LeftSuper;
-    case SDLK_RCTRL       : return KeyCode::RightControl;
-    case SDLK_RSHIFT      : return KeyCode::RightShift;
-    case SDLK_RALT        : return KeyCode::RightAlt;
-    case SDLK_RGUI        : return KeyCode::RightSuper;
-    case SDLK_APPLICATION : return KeyCode::Menu;
-
-    case SDLK_0           : return KeyCode::D0;
-    case SDLK_1           : return KeyCode::D1;
-    case SDLK_2           : return KeyCode::D2;
-    case SDLK_3           : return KeyCode::D3;
-    case SDLK_4           : return KeyCode::D4;
-    case SDLK_5           : return KeyCode::D5;
-    case SDLK_6           : return KeyCode::D6;
-    case SDLK_7           : return KeyCode::D7;
-    case SDLK_8           : return KeyCode::D8;
-    case SDLK_9           : return KeyCode::D9;
-
-    case SDLK_A           : return KeyCode::A;
-    case SDLK_B           : return KeyCode::B;
-    case SDLK_C           : return KeyCode::C;
-    case SDLK_D           : return KeyCode::D;
-    case SDLK_E           : return KeyCode::E;
-    case SDLK_F           : return KeyCode::F;
-    case SDLK_G           : return KeyCode::G;
-    case SDLK_H           : return KeyCode::H;
-    case SDLK_I           : return KeyCode::I;
-    case SDLK_J           : return KeyCode::J;
-    case SDLK_K           : return KeyCode::K;
-    case SDLK_L           : return KeyCode::L;
-    case SDLK_M           : return KeyCode::M;
-    case SDLK_N           : return KeyCode::N;
-    case SDLK_O           : return KeyCode::O;
-    case SDLK_P           : return KeyCode::P;
-    case SDLK_Q           : return KeyCode::Q;
-    case SDLK_R           : return KeyCode::R;
-    case SDLK_S           : return KeyCode::S;
-    case SDLK_T           : return KeyCode::T;
-    case SDLK_U           : return KeyCode::U;
-    case SDLK_V           : return KeyCode::V;
-    case SDLK_W           : return KeyCode::W;
-    case SDLK_X           : return KeyCode::X;
-    case SDLK_Y           : return KeyCode::Y;
-    case SDLK_Z           : return KeyCode::Z;
-
-    case SDLK_F1          : return KeyCode::F1;
-    case SDLK_F2          : return KeyCode::F2;
-    case SDLK_F3          : return KeyCode::F3;
-    case SDLK_F4          : return KeyCode::F4;
-    case SDLK_F5          : return KeyCode::F5;
-    case SDLK_F6          : return KeyCode::F6;
-    case SDLK_F7          : return KeyCode::F7;
-    case SDLK_F8          : return KeyCode::F8;
-    case SDLK_F9          : return KeyCode::F9;
-    case SDLK_F10         : return KeyCode::F10;
-    case SDLK_F11         : return KeyCode::F11;
-    case SDLK_F12         : return KeyCode::F12;
-    case SDLK_F13         : return KeyCode::F13;
-    case SDLK_F14         : return KeyCode::F14;
-    case SDLK_F15         : return KeyCode::F15;
-    case SDLK_F16         : return KeyCode::F16;
-    case SDLK_F17         : return KeyCode::F17;
-    case SDLK_F18         : return KeyCode::F18;
-    case SDLK_F19         : return KeyCode::F19;
-    case SDLK_F20         : return KeyCode::F20;
-    case SDLK_F21         : return KeyCode::F21;
-    case SDLK_F22         : return KeyCode::F22;
-    case SDLK_F23         : return KeyCode::F23;
-    case SDLK_F24         : return KeyCode::F24;
-
-    default               : break;
-  }
-  return KeyCode::None;
-}
-
 auto Input::to_mouse_code(SDL_MouseButtonFlags key) -> MouseCode {
   ZoneScoped;
 
@@ -221,4 +422,45 @@ auto Input::to_mouse_code(SDL_MouseButtonFlags key) -> MouseCode {
   return MouseCode::None;
 }
 
+auto Input::set_mod(const ModCode mod) -> void {
+  ZoneScoped;
+
+  input_data.mod_code = mod;
+}
+
+auto Input::set_key_pressed(const KeyCode key, const bool a) -> void {
+  ZoneScoped;
+
+  input_data.key_pressed.insert_or_assign(key, a);
+}
+
+void Input::set_key_released(const KeyCode key, const bool a) {
+  ZoneScoped;
+
+  input_data.key_released.insert_or_assign(key, a);
+}
+
+void Input::set_key_held(const KeyCode key, const bool a) {
+  ZoneScoped;
+
+  input_data.key_held.insert_or_assign(key, a);
+}
+
+void Input::set_mouse_clicked(const MouseCode key, const bool a) {
+  ZoneScoped;
+
+  input_data.mouse_pressed.insert_or_assign(key, a);
+}
+
+void Input::set_mouse_released(const MouseCode key, const bool a) {
+  ZoneScoped;
+
+  input_data.mouse_released.insert_or_assign(key, a);
+}
+
+void Input::set_mouse_held(const MouseCode key, const bool a) {
+  ZoneScoped;
+
+  input_data.mouse_held.insert_or_assign(key, a);
+}
 } // namespace ox
