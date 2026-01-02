@@ -173,7 +173,7 @@ float3 agx_tonemapping(float3 color) {
 
 [[shader("fragment")]]
 f32x4 fs_main(VertexOutput input) {
-    f32x3 color = input_image.sample_mip(sampler, input.tex_coord, 0.0).rgb;
+    f32x3 color = input_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
 
     if ((scene_flags & SceneFlags::HasChromaticAberration) != 0) {
         f32x2 rgmag = FfxLensGetRGMag(C.post_process_settings.chromatic_aberration_amount);
@@ -181,7 +181,7 @@ f32x4 fs_main(VertexOutput input) {
     }
 
     if ((scene_flags & SceneFlags::HasBloom) != 0) {
-        f32x3 bloom = bloom_image.sample_mip(sampler, input.tex_coord, 0.0).rgb;
+        f32x3 bloom = bloom_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
         color += bloom;
     }
 

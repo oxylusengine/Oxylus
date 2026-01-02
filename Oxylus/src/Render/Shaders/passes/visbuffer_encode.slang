@@ -67,7 +67,7 @@ func fs_main(VertexOutput input) -> u32 {
     }
 #endif
 
-    com::atomic_add(overdraw[u32x2(input.position.xy)], 1u, com::memory_order_acq_rel, com::MemoryLocation::Image, MemoryScope::QueueFamily);
+    __atomic_add(overdraw[u32x2(input.position.xy)], 1u, MemoryOrder::AcquireRelease);
 
     let vis = VisBufferData(input.meshlet_instance_index, input.triangle_index);
     return vis.encode();

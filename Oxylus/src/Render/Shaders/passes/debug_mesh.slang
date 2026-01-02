@@ -44,7 +44,7 @@ func vs_main(VertexInput input, uniform ParameterBlock<ShaderParameters> params)
 
 [[shader("fragment")]]
 func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params) -> f32x4 {
-  const f32 scene_depth = params.depth_image.load(u32x2(input.position.xy));
+  const f32 scene_depth = params.depth_image.Load(u32x3(u32x2(input.position.xy), 0));
   const f32 fragment_depth = input.position.z;
 
   f32x4 final_color = input.color;

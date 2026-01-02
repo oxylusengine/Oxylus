@@ -73,12 +73,12 @@ func sobel_outline(u32x2 pixel_pos, f32x3 color) -> f32x3 {
     var y = f32x3(0.0);
     for (uint tap = 0; tap < 9; tap++) {
         let sample_pos = i32x2(pixel_pos) + sample_offset[tap];
-        let texel = params.visbuffer_data.load(sample_pos);
+        let texel = params.visbuffer_data.Load(u32x3(sample_pos, 0));
         if (texel == ~0u) {
             continue;
         }
 
-        let depth_raw = params.depth.load(sample_pos);
+        let depth_raw = params.depth.Load(u32x3(sample_pos, 0));
         let sample_density_depth = log2(depth_raw + 1.0) * 10.0;
 
         x += f32(sobel_x[tap]) * sample_density_depth;
@@ -96,7 +96,7 @@ func fs_main(
     uniform f32 heatmap_scale
 ) -> f32x4 {
     let pixel_pos = u32x2(input.position.xy);
-    let texel = params.visbuffer_data.load(pixel_pos);
+    let texel = params.visbuffer_data.Load(u32x3(pixel_pos, 0));
     if (texel == ~0u) {
         discard;
     }
@@ -118,7 +118,7 @@ func fs_main(
         } break;
         case DebugView::Overdraw: {
             let draw_scale = clamp(heatmap_scale, 0.0, 100.0) / 100.0;
-            let draw_count = f32(params.overdraw.load(pixel_pos));
+            let draw_count = f32(params.overdraw.Load(u32x3(pixel_pos, 0)));
             let heat = 1.0 - exp2(-draw_count * draw_scale);
             color = inferno(heat);
         } break;
@@ -135,27 +135,27 @@ func fs_main(
             color = hsv_to_rgb(lod_color);
         } break;
         case DebugView::Albedo: {
-            color = params.albedo.sample_mip(params.linear_repeat_sampler, input.tex_coord, 0).rgb;
+            color = params.albedo.SampleLevel(params.linear_repeat_sampler, input.tex_coord, 0).rgb;
         } break;
         case DebugView::Normal: {
-            let sampled_normal = params.normal.load(pixel_pos);
+            let sampled_normal = params.normal.Load(u32x3(pixel_pos, 0));
             f32x3 mapped_normal = com::oct_to_vec3(sampled_normal.xy);
             color = mapped_normal * 0.5 + 0.5;
         } break;
         case DebugView::Emissive: {
-            color = params.emissive.load(pixel_pos).rgb;
+            color = params.emissive.Load(u32x3(pixel_pos, 0)).rgb;
         } break;
         case DebugView::Metallic: {
-            color = params.metallic_roughness_occlusion.load(pixel_pos).rrr;
+            color = params.metallic_roughness_occlusion.Load(u32x3(pixel_pos, 0)).rrr;
         } break;
         case DebugView::Roughness: {
-            color = params.metallic_roughness_occlusion.load(pixel_pos).ggg;
+            color = params.metallic_roughness_occlusion.Load(u32x3(pixel_pos, 0)).ggg;
         } break;
         case DebugView::BakedOcclusion: {
-            color = params.metallic_roughness_occlusion.load(pixel_pos).bbb;
+            color = params.metallic_roughness_occlusion.Load(u32x3(pixel_pos, 0)).bbb;
         } break;
         case DebugView::GTAO: {
-            color = params.ambient_occlusion.load(pixel_pos).rrr;
+            color = params.ambient_occlusion.Load(u32x3(pixel_pos, 0)).rrr;
         } break;
         default:;
     }

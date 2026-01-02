@@ -38,7 +38,7 @@ public struct DebugDrawer {
 };
 
 func push_draw(__ref DebugDrawData draw_data) -> u32 {
-    let index = com::atomic_add(draw_data.draw_count, 1, com::memory_order_acq_rel);
+    let index = __atomic_add(draw_data.draw_count, 1);
     if (index < draw_data.capacity) {
         return index;
     }
@@ -49,7 +49,7 @@ func push_draw(__ref DebugDrawData draw_data) -> u32 {
 public func debug_draw_aabb(__ref DebugDrawer drawer, in DebugAABB v) -> void {
     let index = push_draw(drawer.aabb_data);
     if (index != ~0u) {
-        com::atomic_add(drawer.aabb_draw_cmd.instance_count, 1, com::memory_order_acq_rel);
+        __atomic_add(drawer.aabb_draw_cmd.instance_count, 1);
         drawer.aabb_buffer[index] = v;
     }
 }
@@ -57,7 +57,7 @@ public func debug_draw_aabb(__ref DebugDrawer drawer, in DebugAABB v) -> void {
 public func debug_draw_rect(__ref DebugDrawer drawer, in DebugRect v) -> void {
     let index = push_draw(drawer.rect_data);
     if (index != ~0u) {
-        com::atomic_add(drawer.rect_draw_cmd.instance_count, 1, com::memory_order_acq_rel);
+        __atomic_add(drawer.rect_draw_cmd.instance_count, 1);
         drawer.rect_buffer[index] = v;
     }
 }

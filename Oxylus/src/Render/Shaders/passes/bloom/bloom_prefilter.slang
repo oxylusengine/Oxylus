@@ -32,5 +32,5 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID,
 
   f32x3 result = downsample(params.source_image, params.sampler, uv, 0);
   result = prefilter(result, pc.clamp, pc.threshold, epsilon);
-  params.result_image.store(img_coords, f32x4(result, 1.0f));
+  params.result_image.Store(img_coords, f32x4(result, 1.0f));
 }

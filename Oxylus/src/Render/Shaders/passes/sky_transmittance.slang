@@ -42,5 +42,5 @@ func cs_main(
         optical_depth += medium.extinction_sum * distance_per_step;
     }
 
-    params.sky_transmittance_lut.store(thread_id.xy, f32x4(exp(-optical_depth), 1.0));
+    params.sky_transmittance_lut.Store(thread_id.xy, f32x4(exp(-optical_depth), 1.0));
 }

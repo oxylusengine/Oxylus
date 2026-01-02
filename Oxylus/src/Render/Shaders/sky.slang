@@ -217,12 +217,12 @@ public func integrate_single_scattered_luminance(
         f32 sun_theta = dot(info.sun_dir, up_vec);
 
         f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
-        f32x3 sun_transmittance = transmittance_image.sample_mip(lut_sampler, transmittance_uv, 0.0).rgb;
+        f32x3 sun_transmittance = transmittance_image.SampleLevel(lut_sampler, transmittance_uv, 0.0).rgb;
 
         f32x3 MS = 0.0;
         if (info.eval_multiscattering) {
             f32x2 multiscatter_uv = multiscattering_params_to_lut_uv(atmosphere, altitude, sun_theta);
-            MS = multiscattering_image.sample_mip(lut_sampler, multiscatter_uv, 0.0).rgb;
+            MS = multiscattering_image.SampleLevel(lut_sampler, multiscatter_uv, 0.0).rgb;
         }
 
         f32x3 scattering_phase = medium_info.mie_scattering * mie_phase + medium_info.rayleigh_scattering * rayleigh_phase;;
@@ -247,7 +247,7 @@ public func integrate_single_scattered_luminance(
         f32 NoL = saturate(dot(normalize(info.sun_dir), normalize(up_vec)));
 
         f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
-        f32x3 sun_transmittance = transmittance_image.sample_mip(lut_sampler, transmittance_uv, 0.0).rgb;
+        f32x3 sun_transmittance = transmittance_image.SampleLevel(lut_sampler, transmittance_uv, 0.0).rgb;
 
         result.luminance += info.sun_intensity * (sun_transmittance * result.transmittance * NoL * atmosphere.terrain_albedo / PI);
     }
@@ -284,7 +284,7 @@ public func sample_aerial_perspective(
 #if 0
     return f32x4(relative_depth, linear_slice, non_linear_w, linear_w);
 #endif
-    var aerial_perspective = aerial_perspective_lut.sample_mip(sampler, f32x3(uv, non_linear_w), 0.0);
+    var aerial_perspective = aerial_perspective_lut.SampleLevel(sampler, f32x3(uv, non_linear_w), 0.0);
     aerial_perspective.xyz *= weight;
     aerial_perspective.w = 1.0 - (weight * (1.0 - aerial_perspective.w));
     aerial_perspective.xyz *= atmosphere.aerial_perspective_exposure;

@@ -55,5 +55,5 @@ func cs_main(
     f32x3 scattered_luminance = luminance * isotropic_phase;
     f32x3 f_ms = 1.0 / (1.0 - multi_scattering_as_1);
 
-    params.sky_multiscattering_lut.store(thread_id.xy, f32x4(scattered_luminance * f_ms, 1.0));
+    params.sky_multiscattering_lut.Store(thread_id.xy, f32x4(scattered_luminance * f_ms, 1.0));
 }

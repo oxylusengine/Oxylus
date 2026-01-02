@@ -15,5 +15,5 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID) -> void {
         return;
     }
 
-    dst_image.Store(thread_id.xy, src_image.load(thread_id.xy, 0));
+    dst_image.Store(thread_id.xy, src_image.Load(u32x3(thread_id.xy, 0), 0));
 }

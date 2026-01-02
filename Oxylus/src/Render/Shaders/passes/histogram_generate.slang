@@ -31,10 +31,10 @@ func bin_lum(f32 luminance) -> u32 {
 [[numthreads(HISTOGRAM_THREADS_X, HISTOGRAM_THREADS_Y, 1)]]
 func cs_main(u32 group_index : SV_GroupIndex, u32x3 thread_id : SV_DispatchThreadID) -> void {
     histogram_shared[group_index] = 0;
-    com::control_barrier(com::memory_order_acq_rel);
+    GroupMemoryBarrierWithGroupSync();
 
     if (all(thread_id.xy < C.src_image_size)) {
-        const f32x3 color = src_image.load(thread_id.xy).rgb;
+        const f32x3 color = src_image.Load(u32x3(thread_id.xy, 0)).rgb;
         const f32 luminance = com::rec2020_to_xyz(color).y;
         const u32 bin_index = bin_lum(luminance);
         __atomic_add(histogram_shared[bin_index], 1, MemoryOrder::AcquireRelease);

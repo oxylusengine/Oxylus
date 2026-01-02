@@ -92,7 +92,7 @@ func cs_main(
   if (pixel_coords.x >= width || pixel_coords.y >= height)
       return;
 
-  let texel = params.visbuffer.load(pixel_coords);
+  let texel = params.visbuffer.Load(u32x3(pixel_coords, 0));
   if (texel == ~0u) {
     return;
   }

@@ -74,5 +74,5 @@ func cs_main(
       shadow = smoothstep(1.0, 0.3, raymarch_result.hit_penetration_frac);
   }
 
-  params.dst_image.store(img_coords, shadow);
+  params.dst_image.Store(img_coords, shadow);
 }
