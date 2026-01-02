@@ -4,6 +4,7 @@ target("Oxylus")
     add_rpathdirs("@executable_path")
 
     add_includedirs("./include", { public = true })
+    add_includedirs("./src/UI", { public = false }) -- For ImGuiSPV_VS.hpp and FS.hpp
     add_files("./src/**.cpp")
     add_forceincludes("tracy/Tracy.hpp")
 

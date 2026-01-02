@@ -78,6 +78,7 @@ packages = {
 if has_config("tests") then
   packages["gtest"] = {
     debug = is_mode("debug"),
+    system = false,
     configs = {
       main = true,
       gmock = true,
