@@ -22,8 +22,8 @@ jobs:
           - { runner: windows-2025, os: windows, arch: x64,    toolchain: msvc,     mode: release, runtime: MT }
           - { runner: windows-2025, os: windows, arch: x64,    toolchain: msvc,     mode: debug,   runtime: MTd }
 
-          - { runner: windows-2025, os: windows, arch: x64,    toolchain: clang-cl, mode: release, runtime: MT }
-          - { runner: windows-2025, os: windows, arch: x64,    toolchain: clang-cl, mode: debug,   runtime: MTd }
+          - { runner: windows-2025, os: windows, arch: x64,    toolchain: clang-cl, mode: release, runtime: MD }
+          - { runner: windows-2025, os: windows, arch: x64,    toolchain: clang-cl, mode: debug,   runtime: MDd }
 
           - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: clang-20, mode: release, runtime: c++_static }
           - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: clang-20, mode: debug,   runtime: c++_static }
