@@ -1,111 +1,24 @@
 #include "Render/Slang/Compiler.hpp"
 
+#include <ankerl/unordered_dense.h>
 #include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
+#include <shared_mutex>
 #include <slang-com-ptr.h>
 #include <slang.h>
+#include <spirv-tools/optimizer.hpp>
 
-#include "Memory/Stack.hpp"
 #include "OS/File.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
-struct SlangBlob : ISlangBlob {
-  std::vector<u8> m_data = {};
-  std::atomic_uint32_t m_refCount = 1;
-
-  ISlangUnknown* getInterface(const SlangUUID&) { return nullptr; }
-  SLANG_NO_THROW SlangResult SLANG_MCALL queryInterface(const SlangUUID& uuid, void** outObject) SLANG_OVERRIDE {
-    ISlangUnknown* intf = getInterface(uuid);
-    if (intf) {
-      addRef();
-      *outObject = intf;
-      return SLANG_OK;
-    }
-    return SLANG_E_NO_INTERFACE;
-  }
-
-  SLANG_NO_THROW uint32_t SLANG_MCALL addRef() override { return ++m_refCount; }
-
-  SLANG_NO_THROW uint32_t SLANG_MCALL release() override {
-    --m_refCount;
-    if (m_refCount == 0) {
-      delete this;
-      return 0;
-    }
-    return m_refCount;
-  }
-
-  SlangBlob(const std::vector<u8>& data) : m_data(data) {}
-  virtual ~SlangBlob() = default;
-  SLANG_NO_THROW const void* SLANG_MCALL getBufferPointer() final { return m_data.data(); };
-  SLANG_NO_THROW size_t SLANG_MCALL getBufferSize() final { return m_data.size(); };
-};
-
-// PERF: When we are at Editor environment, shaders obviously needs to be loaded
-// through file system. But when we are at runtime environment, we don't need
-// file system because we probably would have proper asset manager with all
-// shaders are preloaded into virtual environment, so ::loadFile would just
-// return already existing shader file.
-struct SlangVirtualFS : ISlangFileSystem {
-  std::filesystem::path _root_dir;
-  std::atomic_uint32_t m_refCount;
-
-  SLANG_NO_THROW SlangResult SLANG_MCALL queryInterface(const SlangUUID& uuid, void** outObject) SLANG_OVERRIDE {
-    ISlangUnknown* intf = getInterface(uuid);
-    if (intf) {
-      addRef();
-      *outObject = intf;
-      return SLANG_OK;
-    }
-    return SLANG_E_NO_INTERFACE;
-  }
-
-  SLANG_NO_THROW uint32_t SLANG_MCALL addRef() override { return ++m_refCount; }
-
-  SLANG_NO_THROW uint32_t SLANG_MCALL release() override {
-    --m_refCount;
-    if (m_refCount == 0) {
-      delete this;
-      return 0;
-    }
-    return m_refCount;
-  }
-
-  SlangVirtualFS(std::filesystem::path root_dir) : _root_dir(std::move(root_dir)), m_refCount(1) {}
-  virtual ~SlangVirtualFS() = default;
-
-  ISlangUnknown* getInterface(const SlangUUID&) { return nullptr; }
-  SLANG_NO_THROW void* SLANG_MCALL castAs(const SlangUUID&) final { return nullptr; }
-
-  SLANG_NO_THROW SlangResult SLANG_MCALL loadFile(const char* path_cstr, ISlangBlob** outBlob) final {
-    const auto path = std::string(path_cstr);
-
-    const auto root_path = std::filesystem::relative(_root_dir);
-    const auto module_path = root_path / path;
-
-    const auto result = File::to_bytes(module_path);
-    if (!result.empty()) {
-      *outBlob = new SlangBlob(result);
-
-      return SLANG_OK;
-    }
-
-    return SLANG_E_NOT_FOUND;
-  }
-};
-
-using SlangSession_H = Handle<struct SlangSession>;
-template <>
-struct Handle<SlangModule>::Impl {
-  SlangSession_H session = {};
-  slang::IModule* slang_module = nullptr;
-};
-
 template <>
 struct Handle<SlangSession>::Impl {
-  std::unique_ptr<SlangVirtualFS> shader_virtual_env;
-  Slang::ComPtr<slang::ISession> session;
+  std::string name = {};
+  std::filesystem::path root_directory = {};
+  std::shared_mutex cached_modules_mutex = {};
+  ankerl::unordered_dense::map<std::filesystem::path, slang::IModule*> cached_modules = {};
+  Slang::ComPtr<slang::ISession> slang_session = {};
 };
 
 template <>
@@ -113,157 +26,224 @@ struct Handle<SlangCompiler>::Impl {
   Slang::ComPtr<slang::IGlobalSession> global_session;
 };
 
-auto SlangModule::destroy() -> void {
-  delete impl;
-  impl = nullptr;
-}
-
-auto SlangModule::get_entry_point(std::string_view name) -> option<SlangEntryPoint> {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  Slang::ComPtr<slang::IEntryPoint> entry_point;
-  if (SLANG_FAILED(impl->slang_module->findEntryPointByName(stack.null_terminate_cstr(name), entry_point.writeRef()))) {
-    OX_LOG_ERROR("Shader entry point '{}' is not found.", name);
-    return {};
-  }
-
-  std::vector<slang::IComponentType*> component_types;
-  component_types.push_back(impl->slang_module);
-  component_types.push_back(entry_point);
-
-  Slang::ComPtr<slang::IComponentType> composed_program;
-  {
-    Slang::ComPtr<slang::IBlob> diagnostics_blob;
-    const auto result = impl->session->session->createCompositeComponentType(
-      component_types.data(),
-      u32(component_types.size()),
-      composed_program.writeRef(),
-      diagnostics_blob.writeRef()
-    );
-    if (diagnostics_blob) {
-      OX_LOG_INFO("{}", (const char*)diagnostics_blob->getBufferPointer());
-    }
-
-    if (SLANG_FAILED(result)) {
-      OX_LOG_ERROR("Failed to composite shader module.");
-      return nullopt;
-    }
-  }
-
-  Slang::ComPtr<slang::IComponentType> linked_program;
-  {
-    Slang::ComPtr<slang::IBlob> diagnostics_blob;
-    composed_program->link(linked_program.writeRef(), diagnostics_blob.writeRef());
-    if (diagnostics_blob) {
-      OX_LOG_INFO("{}", (const char*)diagnostics_blob->getBufferPointer());
-    }
-  }
-
-  Slang::ComPtr<slang::IBlob> spirv_code;
-  {
-    Slang::ComPtr<slang::IBlob> diagnostics_blob;
-    const auto result = linked_program->getEntryPointCode(0, 0, spirv_code.writeRef(), diagnostics_blob.writeRef());
-    if (diagnostics_blob) {
-      OX_LOG_INFO("{}", (const char*)diagnostics_blob->getBufferPointer());
-    }
-
-    if (SLANG_FAILED(result)) {
-      OX_LOG_ERROR("Failed to compile shader module.\n{}", (const char*)diagnostics_blob->getBufferPointer());
-      return nullopt;
-    }
-  }
-
-  auto ir = std::vector<u32>(spirv_code->getBufferSize() / 4);
-  std::memcpy(ir.data(), spirv_code->getBufferPointer(), spirv_code->getBufferSize());
-
-  return SlangEntryPoint{
-    .ir = std::move(ir),
-  };
-}
-
-ShaderReflection SlangModule::get_reflection() {
-  ZoneScoped;
-
-  ShaderReflection result = {};
-  slang::ShaderReflection* program_layout = impl->slang_module->getLayout();
-  option<u32> compute_entry_point_index = nullopt;
-
-  const uint64_t entry_point_count = program_layout->getEntryPointCount();
-  for (u32 i = 0; i < entry_point_count; i++) {
-    auto* entry_point = program_layout->getEntryPointByIndex(i);
-    if (entry_point->getStage() == SLANG_STAGE_COMPUTE) {
-      compute_entry_point_index = i;
-      break;
-    }
-  }
-
-  // Get push constants
-  const u32 param_count = program_layout->getParameterCount();
-  for (u32 i = 0; i < param_count; i++) {
-    auto* param = program_layout->getParameterByIndex(i);
-    auto* type_layout = param->getTypeLayout();
-    auto* element_type_layout = type_layout->getElementTypeLayout();
-    const auto param_category = param->getCategory();
-
-    if (param_category == slang::ParameterCategory::PushConstantBuffer) {
-      usize push_constant_size = 0;
-      const auto field_count = element_type_layout->getFieldCount();
-      for (u32 f = 0; f < field_count; f++) {
-        auto* field_param = element_type_layout->getFieldByIndex(f);
-        auto* field_type_layout = field_param->getTypeLayout();
-        push_constant_size += field_type_layout->getSize();
-      }
-
-      result.pipeline_layout_index = static_cast<u32>(push_constant_size / sizeof(u32));
-      break;
-    }
-  }
-
-  if (compute_entry_point_index.has_value()) {
-    auto* entry_point = program_layout->getEntryPointByIndex(compute_entry_point_index.value());
-    entry_point->getComputeThreadGroupSize(3, glm::value_ptr(result.thread_group_size));
-  }
-
-  return result;
-}
-
-auto SlangModule::session() -> SlangSession { return impl->session; }
-
 auto SlangSession::destroy() -> void {
   delete impl;
   impl = nullptr;
 }
 
-auto SlangSession::load_module(const SlangModuleInfo& info) -> option<SlangModule> {
+auto SlangSession::compile_shader(const SlangShaderInfo& info) -> option<std::vector<SlangEntryPoint>> {
   ZoneScoped;
-  memory::ScopedStack stack;
+  auto diagnostics_blob = Slang::ComPtr<slang::IBlob>();
+  auto shader_path = (impl->root_directory / info.path).lexically_normal();
+  auto shader_path_str = shader_path.string();
 
-  slang::IModule* slang_module = {};
-  const auto source_data = File::to_string(info.path);
-  if (source_data.empty()) {
-    OX_LOG_ERROR("Failed to read shader file '{}'!", info.path);
-    return nullopt;
+  slang::IModule* main_module = nullptr;
+  {
+    auto read_lock = std::shared_lock(impl->cached_modules_mutex);
+    auto slang_module_it = impl->cached_modules.find(shader_path);
+    if (slang_module_it == impl->cached_modules.end()) {
+      read_lock.unlock();
+
+      const auto source_data = File::to_string(shader_path);
+      if (source_data.empty()) {
+        OX_LOG_ERROR(
+          "An error occured during compiling '{}::{}', the file '{}' is empty.",
+          impl->name,
+          info.module_name,
+          shader_path
+        );
+        return nullopt;
+      }
+
+      main_module = impl->slang_session->loadModuleFromSourceString(
+        info.module_name.c_str(),
+        shader_path_str.c_str(),
+        source_data.c_str(),
+        diagnostics_blob.writeRef()
+      );
+
+      auto write_lock = std::unique_lock(impl->cached_modules_mutex);
+      impl->cached_modules.emplace(shader_path, main_module);
+    } else {
+      main_module = slang_module_it->second;
+    }
   }
-
-  auto path_str = info.path.string();
-  Slang::ComPtr<slang::IBlob> diagnostics_blob;
-  slang_module = impl->session->loadModuleFromSourceString(
-    info.module_name.c_str(),
-    path_str.c_str(),
-    source_data.c_str(),
-    diagnostics_blob.writeRef()
-  );
 
   if (diagnostics_blob) {
-    OX_LOG_INFO("{}", (const char*)diagnostics_blob->getBufferPointer());
+    auto sv = std::string_view(
+      static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
+      diagnostics_blob->getBufferSize()
+    );
+    OX_LOG_INFO("{}::{} {}", impl->name, info.module_name, sv);
   }
 
-  const auto module_impl = new SlangModule::Impl;
-  module_impl->slang_module = slang_module;
-  module_impl->session = impl;
+  auto entry_points = std::vector<SlangEntryPoint>{};
+  for (const auto& entry_point_name : info.entry_points) {
+    auto entry_point = Slang::ComPtr<slang::IEntryPoint>();
+    if (SLANG_FAILED(main_module->findEntryPointByName(entry_point_name.c_str(), entry_point.writeRef()))) {
+      auto sv = std::string_view(
+        static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
+        diagnostics_blob->getBufferSize()
+      );
+      OX_LOG_ERROR(
+        "An error occured while compiling entry point {}::{}::{} {}",
+        impl->name,
+        info.module_name,
+        entry_point_name,
+        sv
+      );
+      return nullopt;
+    }
 
-  return SlangModule(module_impl);
+    // Composition
+    auto component_types = std::vector<slang::IComponentType*>();
+    component_types.push_back(main_module);
+    component_types.push_back(entry_point);
+    auto composed_program = Slang::ComPtr<slang::IComponentType>();
+    auto compose_result = impl->slang_session->createCompositeComponentType(
+      component_types.data(),
+      component_types.size(),
+      composed_program.writeRef(),
+      diagnostics_blob.writeRef()
+    );
+    if (diagnostics_blob) {
+      auto sv = std::string_view(
+        static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
+        diagnostics_blob->getBufferSize()
+      );
+      OX_LOG_ERROR("[Slang Composer] {}::{}::{} {}", impl->name, info.module_name, entry_point_name, sv);
+    }
+    if (SLANG_FAILED(compose_result)) {
+      return nullopt;
+    }
+
+    // Linking
+    auto linked_program = Slang::ComPtr<slang::IComponentType>();
+    auto link_result = composed_program->link(linked_program.writeRef(), diagnostics_blob.writeRef());
+    if (diagnostics_blob) {
+      auto sv = std::string_view(
+        static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
+        diagnostics_blob->getBufferSize()
+      );
+      OX_LOG_ERROR("[Slang Linker] {}::{}::{} {}", impl->name, info.module_name, entry_point_name, sv);
+    }
+    if (SLANG_FAILED(link_result)) {
+      return nullopt;
+    }
+
+    // Reflection
+    auto* entry_point_layout = linked_program->getLayout();
+    auto* entry_point_reflection = entry_point_layout->getEntryPointByIndex(0);
+
+    // Codegen
+    auto spirv_code = Slang::ComPtr<slang::IBlob>();
+    auto codegen_result = linked_program->getEntryPointCode(0, 0, spirv_code.writeRef(), diagnostics_blob.writeRef());
+    if (diagnostics_blob) {
+      auto sv = std::string_view(
+        static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
+        diagnostics_blob->getBufferSize()
+      );
+      OX_LOG_ERROR("[Slang Codegen] {}::{}::{} {}", impl->name, info.module_name, entry_point_name, sv);
+    }
+    if (SLANG_FAILED(codegen_result)) {
+      return nullopt;
+    }
+
+    auto spv_message_cb =
+      [&](spv_message_level_t level, const char* source, const spv_position_t& position, const char* message) {
+        switch (level) {
+          case SPV_MSG_FATAL:
+          case SPV_MSG_INTERNAL_ERROR:
+          case SPV_MSG_ERROR         : {
+            OX_LOG_ERROR("[SPVOPT]: {}: {}", source, message);
+          } break;
+          case SPV_MSG_WARNING: {
+            OX_LOG_WARN("[SPVOPT]: {}: {}", source, message);
+          } break;
+          case SPV_MSG_INFO: {
+            OX_LOG_INFO("[SPVOPT]: {}: {}", source, message);
+          } break;
+          case SPV_MSG_DEBUG: {
+            OX_LOG_TRACE("[SPVOPT]: {}: {}", source, message);
+          } break;
+        }
+      };
+
+    auto optimizer = spvtools::Optimizer(SPV_ENV_UNIVERSAL_1_5);
+    optimizer.SetMessageConsumer(spv_message_cb);
+
+    // Order of these passes matter, also there is a reason some of them are duplicate
+
+    optimizer.RegisterPass(spvtools::CreateStripDebugInfoPass());
+    optimizer.RegisterPass(spvtools::CreateStripNonSemanticInfoPass());
+
+    optimizer.RegisterPass(spvtools::CreatePropagateLineInfoPass());
+    optimizer.RegisterPass(spvtools::CreateWrapOpKillPass());
+    optimizer.RegisterPass(spvtools::CreateDeadBranchElimPass());
+    optimizer.RegisterPass(spvtools::CreateMergeReturnPass());
+    optimizer.RegisterPass(spvtools::CreateInlineExhaustivePass());
+    optimizer.RegisterPass(spvtools::CreateEliminateDeadFunctionsPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreatePrivateToLocalPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleBlockLoadStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateScalarReplacementPass());
+    optimizer.RegisterPass(spvtools::CreateLocalAccessChainConvertPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleBlockLoadStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateCompactIdsPass());
+    optimizer.RegisterPass(spvtools::CreateLocalMultiStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateCCPPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateLoopUnrollPass(true));
+    optimizer.RegisterPass(spvtools::CreateDeadBranchElimPass());
+    optimizer.RegisterPass(spvtools::CreateRedundancyEliminationPass());
+    optimizer.RegisterPass(spvtools::CreateCombineAccessChainsPass());
+    optimizer.RegisterPass(spvtools::CreateSimplificationPass());
+    optimizer.RegisterPass(spvtools::CreateScalarReplacementPass());
+    optimizer.RegisterPass(spvtools::CreateLocalAccessChainConvertPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleBlockLoadStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateLocalSingleStoreElimPass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateSSARewritePass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateVectorDCEPass());
+    optimizer.RegisterPass(spvtools::CreateDeadInsertElimPass());
+    optimizer.RegisterPass(spvtools::CreateDeadBranchElimPass());
+    optimizer.RegisterPass(spvtools::CreateSimplificationPass());
+    optimizer.RegisterPass(spvtools::CreateIfConversionPass());
+    optimizer.RegisterPass(spvtools::CreateCopyPropagateArraysPass());
+    optimizer.RegisterPass(spvtools::CreateReduceLoadSizePass());
+    optimizer.RegisterPass(spvtools::CreateAggressiveDCEPass());
+    optimizer.RegisterPass(spvtools::CreateBlockMergePass());
+    optimizer.RegisterPass(spvtools::CreateRedundancyEliminationPass());
+    optimizer.RegisterPass(spvtools::CreateDeadBranchElimPass());
+    optimizer.RegisterPass(spvtools::CreateBlockMergePass());
+    optimizer.RegisterPass(spvtools::CreateSimplificationPass());
+    optimizer.RegisterPass(spvtools::CreateCompactIdsPass());
+    optimizer.RegisterPass(spvtools::CreateRedundancyEliminationPass());
+    optimizer.RegisterPass(spvtools::CreateCFGCleanupPass());
+
+    optimizer.RegisterPass(spvtools::CreateRedundantLineInfoElimPass());
+
+    auto optimizer_options = spvtools::OptimizerOptions{};
+    optimizer_options.set_run_validator(false);
+
+    auto spirv = std::vector<u32>{};
+    OX_ASSERT(optimizer.Run(
+      reinterpret_cast<const u32*>(spirv_code->getBufferPointer()),
+      spirv_code->getBufferSize() / sizeof(u32),
+      &spirv,
+      optimizer_options
+    ));
+
+    entry_points.push_back({.code = std::move(spirv)});
+  }
+
+  return std::move(entry_points);
 }
 
 auto SlangCompiler::create() -> option<SlangCompiler> {
@@ -282,12 +262,10 @@ auto SlangCompiler::destroy() -> void {
 auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSession> {
   ZoneScoped;
 
-  auto slang_fs = std::make_unique<SlangVirtualFS>(info.root_directory);
-
   slang::CompilerOptionEntry entries[] = {
     {.name = slang::CompilerOptionName::Optimization,
-     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = info.optimizaton_level}},
-#if OX_DEBUG
+     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_OPTIMIZATION_LEVEL_MAXIMAL}},
+#if 0
     {.name = slang::CompilerOptionName::DebugInformationFormat,
      .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_FORMAT_DEFAULT}},
     {.name = slang::CompilerOptionName::DebugInformation,
@@ -345,7 +323,6 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
     .searchPathCount = count_of(search_paths),
     .preprocessorMacros = macros.data(),
     .preprocessorMacroCount = static_cast<u32>(macros.size()),
-    .fileSystem = slang_fs.get(),
   };
   Slang::ComPtr<slang::ISession> session;
   if (SLANG_FAILED(impl->global_session->createSession(session_desc, session.writeRef()))) {
@@ -354,10 +331,10 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
   }
 
   const auto session_impl = new SlangSession::Impl;
-  session_impl->shader_virtual_env = std::move(slang_fs);
-  session_impl->session = std::move(session);
+  session_impl->name = info.name;
+  session_impl->root_directory = info.root_directory;
+  session_impl->slang_session = std::move(session);
 
   return SlangSession(session_impl);
 }
-
 } // namespace ox

@@ -8,7 +8,6 @@
 #include "Core/App.hpp"
 #include "OS/File.hpp"
 #include "OS/OS.hpp"
-#include "Render/Slang/Slang.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
@@ -72,34 +71,43 @@ auto EmbedAsset::embed_texture(
 }
 
 auto EmbedAsset::embed_shader(
-  vuk::Runtime& runtime, const std::string& shader_path, const std::string& out_path, const std::string& entry_point
+  const std::string& shader_path, const std::string& out_path, const std::string& entry_point
 ) -> void {
   auto& vfs = App::get_vfs();
   auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
-
-  Slang slang = {};
-  slang.create_session({.root_directory = shaders_dir, .definitions = {}});
-
-  vuk::PipelineBaseCreateInfo pipeline_ci = {};
   const auto full_shader_path = shaders_dir / shader_path;
-
   if (!std::filesystem::exists(full_shader_path)) {
     OX_LOG_ERROR("Shader file not found: {}", full_shader_path.string());
     return;
   }
 
-  slang.add_shader(pipeline_ci, {.path = full_shader_path, .entry_points = {entry_point}});
+  auto slang_global_session = SlangCompiler::create();
+  if (!slang_global_session.has_value()) {
+    return;
+  }
+  auto slang_session = slang_global_session->new_session({.root_directory = shaders_dir});
+  if (!slang_session.has_value()) {
+    return;
+  }
 
-  if (pipeline_ci.shaders.empty()) {
+  OX_DEFER(&) {
+    if (slang_global_session.has_value())
+      slang_global_session->destroy();
+    if (slang_session.has_value())
+      slang_session->destroy();
+  };
+
+  auto compiled_entry_points = slang_session->compile_shader({.module_name = "main", .entry_points = {entry_point}});
+  if (!compiled_entry_points.has_value()) {
     OX_LOG_ERROR("Failed to compile shader: {}", shader_path);
     return;
   }
 
-  auto& shader = pipeline_ci.shaders.front();
-  const auto& spirv_data = shader.data;
-  const u32 spirv_size = shader.size;
+  auto& shader = compiled_entry_points->front();
+  const auto& spirv_data = shader.code;
+  const u32 spirv_size = shader.code.size();
 
-  if (spirv_data.empty() || spirv_size == 0) {
+  if (spirv_size == 0) {
     OX_LOG_ERROR("Compiled shader is empty: {}", shader_path);
     return;
   }

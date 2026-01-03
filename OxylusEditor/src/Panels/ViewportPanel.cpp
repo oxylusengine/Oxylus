@@ -10,7 +10,6 @@
 #include "Editor.hpp"
 #include "Render/Camera.hpp"
 #include "Render/RendererConfig.hpp"
-#include "Render/Slang/Slang.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/ECSModule/Core.hpp"
@@ -74,43 +73,22 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
   if (!runtime.is_pipeline_available("mouse_picking_pipeline")) {
     auto& vfs = App::get_vfs();
     auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
-    Slang slang = {};
-    slang.create_session({.root_directory = shaders_dir, .definitions = {}});
-
-    slang.create_pipeline(
-      runtime,
-      "mouse_picking_pipeline_2d",
-      {.path = shaders_dir / "editor/mouse_picking_2d.slang", .entry_points = {"cs_main"}}
-    );
-
-    slang.create_pipeline(
-      runtime,
-      "mouse_picking_pipeline",
-      {.path = shaders_dir / "editor/mouse_picking.slang", .entry_points = {"cs_main"}}
-    );
-
-    slang.create_pipeline(
-      runtime,
-      "highlighting_pipeline",
-      {.path = shaders_dir / "editor/highlighting.slang", .entry_points = {"cs_main"}}
-    );
-
-    slang.create_pipeline(
-      runtime,
-      "apply_highlighting_pipeline",
-      {.path = shaders_dir / "editor/apply_highlighting.slang", .entry_points = {"vs_main", "fs_main"}}
-    );
-
-    slang.create_pipeline(
-      runtime,
-      "grid_pipeline",
-      {.path = shaders_dir / "editor/grid.slang", .entry_points = {"vs_main", "fs_main"}}
-    );
-
-    slang.create_pipeline(
-      runtime,
-      "apply_grid_pipeline",
-      {.path = shaders_dir / "editor/apply_grid.slang", .entry_points = {"vs_main", "fs_main"}}
+    vk_context.create_pipelines(
+      {.root_directory = shaders_dir},
+      {
+        {.path = "editor/mouse_picking_2d.slang",
+         .module_name = "mouse_picking_pipeline_2d",
+         .entry_points = {"cs_main"}},
+        {.path = "editor/mouse_picking.slang", .module_name = "mouse_picking_pipeline", .entry_points = {"cs_main"}},
+        {.path = "editor/highlighting.slang", .module_name = "highlighting_pipeline", .entry_points = {"cs_main"}},
+        {.path = "editor/apply_highlighting.slang",
+         .module_name = "apply_highlighting_pipeline",
+         .entry_points = {"vs_main", "fs_main"}},
+        {.path = "editor/grid.slang", .module_name = "grid_pipeline", .entry_points = {"vs_main", "fs_main"}},
+        {.path = "editor/apply_grid.slang",
+         .module_name = "apply_grid_pipeline",
+         .entry_points = {"vs_main", "fs_main"}},
+      }
     );
   }
 }
