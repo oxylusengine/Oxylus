@@ -8,40 +8,26 @@
 
 namespace ox {
 struct SlangSessionInfo {
-  i32 optimizaton_level;
+  std::string name = {};
+  i32 optimizaton_level = 3;
   std::vector<std::pair<std::string, std::string>> definitions = {};
   std::filesystem::path root_directory = {};
 };
 
-struct SlangModuleInfo {
+struct SlangShaderInfo {
   std::filesystem::path path = {};
   std::string module_name = {};
+  std::vector<std::string> entry_points = {};
 };
 
 struct SlangEntryPoint {
-  std::vector<u32> ir = {};
-};
-
-struct ShaderReflection {
-  u32 pipeline_layout_index = 0;
-  glm::u64vec3 thread_group_size = {};
-};
-
-struct SlangSession;
-struct SlangModule : Handle<SlangModule> {
-  void destroy();
-
-  option<SlangEntryPoint> get_entry_point(std::string_view name);
-  ShaderReflection get_reflection();
-  SlangSession session();
+  std::vector<u32> code = {};
 };
 
 struct SlangSession : Handle<SlangSession> {
-  friend SlangModule;
-
   auto destroy() -> void;
 
-  option<SlangModule> load_module(const SlangModuleInfo& info);
+  auto compile_shader(const SlangShaderInfo& info) -> option<std::vector<SlangEntryPoint>>;
 };
 
 struct SlangCompiler : Handle<SlangCompiler> {

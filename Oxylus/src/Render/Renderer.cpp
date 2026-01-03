@@ -1,11 +1,12 @@
 #include "Render/Renderer.hpp"
 
+#include <vuk/runtime/CommandBuffer.hpp>
+
 #include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Render/RendererInstance.hpp"
-#include "Render/Slang/Slang.hpp"
 #include "Render/Vulkan/VkContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
@@ -30,7 +31,6 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   self.vk_context = &App::get_vkcontext();
 
-  auto& runtime = *self.vk_context->runtime;
   auto& bindless_set = self.vk_context->get_descriptor_set();
 
   self.vk_context->wait();
@@ -39,223 +39,98 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   auto& vfs = App::get_vfs();
   auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
 
-  Slang slang = {};
-  slang.create_session(
-    {.optimization_level = Slang::OptimizationLevel::Maximal,
-     .root_directory = shaders_dir,
-     .definitions = {
-       {"MAX_DIRECTIONAL_SHADOW_CASCADES", std::to_string(MAX_DIRECTIONAL_SHADOW_CASCADES)},
-       {"MESH_MAX_LODS", std::to_string(GPU::Mesh::MAX_LODS)},
-       {"CULLING_MESH_COUNT", "64"},
-       {"CULLING_MESHLET_COUNT", std::to_string(Model::MAX_MESHLET_INDICES)},
-       {"CULLING_TRIANGLE_COUNT", std::to_string(Model::MAX_MESHLET_PRIMITIVES)},
-       {"HISTOGRAM_THREADS_X", std::to_string(GPU::HISTOGRAM_THREADS_X)},
-       {"HISTOGRAM_THREADS_Y", std::to_string(GPU::HISTOGRAM_THREADS_Y)},
-     }}
-  );
+  self.vk_context->create_pipelines(
+    SlangSessionInfo{
+      .definitions =
+        {
+          {"MAX_DIRECTIONAL_SHADOW_CASCADES", std::to_string(MAX_DIRECTIONAL_SHADOW_CASCADES)},
+          {"MESH_MAX_LODS", std::to_string(GPU::Mesh::MAX_LODS)},
+          {"CULLING_MESH_COUNT", "64"},
+          {"CULLING_MESHLET_COUNT", std::to_string(Model::MAX_MESHLET_INDICES)},
+          {"CULLING_TRIANGLE_COUNT", std::to_string(Model::MAX_MESHLET_PRIMITIVES)},
+          {"HISTOGRAM_THREADS_X", std::to_string(GPU::HISTOGRAM_THREADS_X)},
+          {"HISTOGRAM_THREADS_Y", std::to_string(GPU::HISTOGRAM_THREADS_Y)},
+        },
+      .root_directory = shaders_dir,
+    },
+    {
+      {.path = "passes/2d_forward.slang",
+       .module_name = "2d_forward",
+       .entry_points = {"vs_main", "fs_main"},
+       .persistent_set = &bindless_set},
+      {.path = "passes/2d_forward_vis.slang",
+       .module_name = "2d_forward_vis",
+       .entry_points = {"vs_main", "fs_main"},
+       .persistent_set = &bindless_set},
 
-  slang.create_pipeline(
-    runtime,
-    "2d_forward",
-    {.path = shaders_dir / "passes/2d_forward.slang", .entry_points = {"vs_main", "fs_main"}},
-    &bindless_set
-  );
+      // --- Sky ---
+      {.path = "passes/sky_transmittance.slang", .module_name = "sky_transmittance", .entry_points = {"cs_main"}},
+      {.path = "passes/sky_multiscattering.slang", .module_name = "sky_multiscatter", .entry_points = {"cs_main"}},
+      {.path = "passes/sky_view.slang", .module_name = "sky_view", .entry_points = {"cs_main"}},
+      {.path = "passes/sky_aerial_perspective.slang",
+       .module_name = "sky_aerial_perspective",
+       .entry_points = {"cs_main"}},
 
-  slang.create_pipeline(
-    runtime,
-    "2d_forward_vis",
-    {.path = shaders_dir / "passes/2d_forward_vis.slang", .entry_points = {"vs_main", "fs_main"}},
-    &bindless_set
-  );
+      // --- VISBUFFER ---
+      {.path = "passes/cull_meshes.slang", .module_name = "vis_cull_meshes", .entry_points = {"cs_main"}},
+      {.path = "passes/cull_meshes.slang",
+       .module_name = "vis_generate_cull_commands",
+       .entry_points = {"generate_commands_cs_main"}},
+      {.path = "passes/cull_meshlets.slang", .module_name = "vis_cull_meshlets", .entry_points = {"cs_main"}},
+      {.path = "passes/cull_triangles.slang", .module_name = "vis_cull_triangles", .entry_points = {"cs_main"}},
+      {.path = "passes/visbuffer_encode.slang",
+       .module_name = "visbuffer_encode",
+       .entry_points = {"vs_main", "fs_main"},
+       .persistent_set = &bindless_set},
+      {.path = "passes/visbuffer_clear.slang", .module_name = "visbuffer_clear", .entry_points = {"cs_main"}},
+      {.path = "passes/visbuffer_decode.slang",
+       .module_name = "visbuffer_decode",
+       .entry_points = {"vs_main", "fs_main"},
+       .persistent_set = &bindless_set},
 
-  // --- Sky ---
-  slang.create_pipeline(
-    runtime,
-    "sky_transmittance",
-    {.path = shaders_dir / "passes/sky_transmittance.slang", .entry_points = {"cs_main"}}
-  );
+      // --- SHADOWMAP ---
+      {.path = "passes/shadowmap_cull_meshes.slang",
+       .module_name = "shadowmap_cull_meshes",
+       .entry_points = {"cs_main"}},
+      {.path = "passes/shadowmap_cull_meshes.slang",
+       .module_name = "shadowmap_generate_cull_commands",
+       .entry_points = {"generate_commands_cs_main"}},
+      {.path = "passes/shadowmap_cull_meshlets.slang",
+       .module_name = "shadowmap_cull_meshlets",
+       .entry_points = {"cs_main"}},
+      {.path = "passes/shadowmap_cull_triangles.slang",
+       .module_name = "shadowmap_cull_triangles",
+       .entry_points = {"cs_main"}},
+      {.path = "passes/shadowmap_draw.slang", .module_name = "shadowmap_draw", .entry_points = {"vs_main", "fs_main"}},
+      {.path = "passes/debug_view.slang", .module_name = "debug_view", .entry_points = {"vs_main", "fs_main"}},
 
-  slang.create_pipeline(
-    runtime,
-    "sky_multiscatter",
-    {.path = shaders_dir / "passes/sky_multiscattering.slang", .entry_points = {"cs_main"}}
-  );
+      // --- PBR ---
+      {.path = "passes/pbr_apply.slang", .module_name = "pbr_apply", .entry_points = {"vs_main", "fs_main"}},
 
-  slang
-    .create_pipeline(runtime, "sky_view", {.path = shaders_dir / "passes/sky_view.slang", .entry_points = {"cs_main"}});
+      //  --- FFX ---
+      {.path = "passes/hiz.slang", .module_name = "hiz", .entry_points = {"cs_main"}},
 
-  slang.create_pipeline(
-    runtime,
-    "sky_aerial_perspective",
-    {.path = shaders_dir / "passes/sky_aerial_perspective.slang", .entry_points = {"cs_main"}}
-  );
+      // --- PostProcess ---
+      {.path = "passes/histogram_generate.slang", .module_name = "histogram_generate", .entry_points = {"cs_main"}},
+      {.path = "passes/histogram_average.slang", .module_name = "histogram_average", .entry_points = {"cs_main"}},
+      {.path = "passes/tonemap.slang", .module_name = "tonemap", .entry_points = {"vs_main", "fs_main"}},
 
-  // --- VISBUFFER ---
-  slang.create_pipeline(
-    runtime,
-    "vis_cull_meshes",
-    {.path = shaders_dir / "passes/cull_meshes.slang", .entry_points = {"cs_main"}}
-  );
+      // --- Bloom ---
+      {.path = "passes/bloom/bloom_prefilter.slang", .module_name = "bloom_prefilter", .entry_points = {"cs_main"}},
+      {.path = "passes/bloom/bloom_downsample.slang", .module_name = "bloom_downsample", .entry_points = {"cs_main"}},
+      {.path = "passes/bloom/bloom_upsample.slang", .module_name = "bloom_upsample", .entry_points = {"cs_main"}},
 
-  slang.create_pipeline(
-    runtime,
-    "vis_generate_cull_commands",
-    {.path = shaders_dir / "passes/cull_meshes.slang", .entry_points = {"generate_commands_cs_main"}}
-  );
+      // --- VBGTAO ---
+      {.path = "passes/gtao/vbgtao_prefilter.slang", .module_name = "vbgtao_prefilter", .entry_points = {"cs_main"}},
+      {.path = "passes/gtao/vbgtao_main.slang", .module_name = "vbgtao_main", .entry_points = {"cs_main"}},
+      {.path = "passes/gtao/vbgtao_denoise.slang", .module_name = "vbgtao_denoise", .entry_points = {"cs_main"}},
 
-  slang.create_pipeline(
-    runtime,
-    "vis_cull_meshlets",
-    {.path = shaders_dir / "passes/cull_meshlets.slang", .entry_points = {"cs_main"}}
-  );
+      // --- FXAA ---
+      {.path = "passes/fxaa/fxaa.slang", .module_name = "fxaa", .entry_points = {"vs_main", "fs_main"}},
 
-  slang.create_pipeline(
-    runtime,
-    "vis_cull_triangles",
-    {.path = shaders_dir / "passes/cull_triangles.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "visbuffer_encode",
-    {.path = shaders_dir / "passes/visbuffer_encode.slang", .entry_points = {"vs_main", "fs_main"}},
-    &bindless_set
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "visbuffer_clear",
-    {.path = shaders_dir / "passes/visbuffer_clear.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "visbuffer_decode",
-    {.path = shaders_dir / "passes/visbuffer_decode.slang", .entry_points = {"vs_main", "fs_main"}},
-    &bindless_set
-  );
-
-  // --- SHADOWMAP ---
-  slang.create_pipeline(
-    runtime,
-    "shadowmap_cull_meshes",
-    {.path = shaders_dir / "passes/shadowmap_cull_meshes.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "shadowmap_generate_cull_commands",
-    {.path = shaders_dir / "passes/shadowmap_cull_meshes.slang", .entry_points = {"generate_commands_cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "shadowmap_cull_meshlets",
-    {.path = shaders_dir / "passes/shadowmap_cull_meshlets.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "shadowmap_cull_triangles",
-    {.path = shaders_dir / "passes/shadowmap_cull_triangles.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "shadowmap_draw",
-    {.path = shaders_dir / "passes/shadowmap_draw.slang", .entry_points = {"vs_main", "fs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "debug_view",
-    {.path = shaders_dir / "passes/debug_view.slang", .entry_points = {"vs_main", "fs_main"}}
-  );
-
-  // --- PBR ---
-  slang.create_pipeline(
-    runtime,
-    "pbr_apply",
-    {.path = shaders_dir / "passes/pbr_apply.slang", .entry_points = {"vs_main", "fs_main"}}
-  );
-
-  //  --- FFX ---
-  slang.create_pipeline(runtime, "hiz", {.path = shaders_dir / "passes/hiz.slang", .entry_points = {"cs_main"}});
-
-  // --- PostProcess ---
-  slang.create_pipeline(
-    runtime,
-    "histogram_generate",
-    {.path = shaders_dir / "passes/histogram_generate.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "histogram_average",
-    {.path = shaders_dir / "passes/histogram_average.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "tonemap",
-    {.path = shaders_dir / "passes/tonemap.slang", .entry_points = {"vs_main", "fs_main"}}
-  );
-
-  // --- Bloom ---
-  slang.create_pipeline(
-    runtime,
-    "bloom_prefilter",
-    {.path = shaders_dir / "passes/bloom/bloom_prefilter.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "bloom_downsample",
-    {.path = shaders_dir / "passes/bloom/bloom_downsample.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "bloom_upsample",
-    {.path = shaders_dir / "passes/bloom/bloom_upsample.slang", .entry_points = {"cs_main"}}
-  );
-
-  // --- VBGTAO ---
-  slang.create_pipeline(
-    runtime,
-    "vbgtao_prefilter",
-    {.path = shaders_dir / "passes/gtao/vbgtao_prefilter.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "vbgtao_main",
-    {.path = shaders_dir / "passes/gtao/vbgtao_main.slang", .entry_points = {"cs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "vbgtao_denoise",
-    {.path = shaders_dir / "passes/gtao/vbgtao_denoise.slang", .entry_points = {"cs_main"}}
-  );
-
-  // --- FXAA ---
-  slang.create_pipeline(
-    runtime,
-    "fxaa",
-    {.path = shaders_dir / "passes/fxaa/fxaa.slang", .entry_points = {"vs_main", "fs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "debug_mesh",
-    {.path = shaders_dir / "passes/debug_mesh.slang", .entry_points = {"vs_main", "fs_main"}}
-  );
-
-  slang.create_pipeline(
-    runtime,
-    "contact_shadows",
-    {.path = shaders_dir / "passes/contact_shadows.slang", .entry_points = {"cs_main"}}
+      {.path = "passes/debug_mesh.slang", .module_name = "debug_mesh", .entry_points = {"vs_main", "fs_main"}},
+      {.path = "passes/contact_shadows.slang", .module_name = "contact_shadows", .entry_points = {"cs_main"}},
+    }
   );
 
   self.sky_transmittance_lut_view = Texture("sky_transmittance_lut");
@@ -322,7 +197,8 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   auto transmittance_lut_pass = vuk::make_pass(
     "transmittance_lut_pass",
     [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) dst, VUK_BA(vuk::eComputeRead) atmos) {
-      cmd_list.bind_compute_pipeline("sky_transmittance")
+      cmd_list //
+        .bind_compute_pipeline("sky_transmittance")
         .bind_image(0, 0, dst)
         .bind_buffer(0, 1, atmos)
         .dispatch_invocations_per_pixel(dst);
