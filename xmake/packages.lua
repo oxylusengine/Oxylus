@@ -70,7 +70,8 @@ packages = {
       system_tracing = true,
     },
   },
-  ["sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444"] = {},
+  ["lua-ox v5.4.7"] = {},
+  ["sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444"] = { configs = { includes_lua = false } },
   ["unordered_dense v4.5.0"] = {},
   ["plf_colony v7.41"] = {},
   ["simdutf v6.2.0"] = {},
@@ -92,7 +93,6 @@ confs = {
     package = "fmt",
     override = "loguru.fmt",
     configs = {
-
       override = true,
       version = fmt_version,
       configs = fmt_configs,
