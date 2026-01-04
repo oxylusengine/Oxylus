@@ -18,7 +18,7 @@ enum class InputType : u8 { Keyboard, MouseButton, MouseAxis, GamepadButton, Gam
 
 struct InputCode {
   KeyCode key_code = KeyCode::None;
-  MouseCode mouse_code = MouseCode::None;
+  MouseCode mouse_code = MouseCode::Left;
   GamepadButtonCode gamepad_button_code = GamepadButtonCode::None;
   GamepadAxisCode gamepad_axis_code = GamepadAxisCode::None;
   ModCode mod_code = ModCode::None;
@@ -34,7 +34,7 @@ struct InputCode {
         mod_code(mod_code_),
         type(InputType::Keyboard) {}
 
-  InputCode(MouseCode mouse_code_ = MouseCode::None, ModCode mod_code_ = ModCode::None)
+  InputCode(MouseCode mouse_code_ = MouseCode::Left, ModCode mod_code_ = ModCode::None)
       : mouse_code(mouse_code_),
         mod_code(mod_code_),
         type(InputType::MouseButton) {}
@@ -101,8 +101,6 @@ public:
 
   auto reset_pressed() -> void;
   auto reset() -> void;
-
-  static auto to_mouse_code(u32 key) -> MouseCode;
 
   /// Binding
   auto get_binding(this const Input& self, std::string_view action_id) -> const ActionBinding*;

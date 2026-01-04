@@ -407,21 +407,6 @@ auto Input::get_mouse_scroll_offset_y() -> f32 { return input_data.scroll_offset
 
 auto Input::get_mouse_moved() -> bool { return input_data.mouse_moved; }
 
-auto Input::to_mouse_code(SDL_MouseButtonFlags key) -> MouseCode {
-  ZoneScoped;
-
-  switch (key) {
-    case SDL_BUTTON_LEFT  : return MouseCode::ButtonLeft;
-    case SDL_BUTTON_RIGHT : return MouseCode::ButtonRight;
-    case SDL_BUTTON_MIDDLE: return MouseCode::ButtonMiddle;
-    case SDL_BUTTON_X1    : return MouseCode::ButtonForward;
-    case SDL_BUTTON_X2    : return MouseCode::ButtonBackward;
-    default               : break;
-  }
-
-  return MouseCode::None;
-}
-
 auto Input::set_mod(const ModCode mod) -> void {
   ZoneScoped;
 

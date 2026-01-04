@@ -336,20 +336,11 @@ constexpr bool mod_matches(ModCode current, ModCode required) noexcept {
 }
 
 enum class MouseCode : u16 {
-  None = UINT16_MAX,
-  Button0 = 0,
-  Button1 = 1,
-  Button2 = 2,
-  Button3 = 3,
-  Button4 = 4,
-  Button5 = 5,
-  Button6 = 6,
-  Button7 = 7,
-  ButtonForward = Button4,
-  ButtonBackward = Button3,
-  ButtonLeft = Button0,
-  ButtonRight = Button1,
-  ButtonMiddle = Button2,
+  Left = 1,
+  Middle = 2,
+  Right = 3,
+  Forward = 4,
+  Backward = 5,
 };
 
 enum class GamepadButtonCode : i16 {

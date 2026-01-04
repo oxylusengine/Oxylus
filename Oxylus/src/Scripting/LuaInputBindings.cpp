@@ -117,9 +117,9 @@ auto InputBinding::bind(sol::state* state) -> void {
   state->new_enum<KeyCode, true>("KeyCode", key_items);
 
   const std::initializer_list<std::pair<sol::string_view, MouseCode>> mouse_items = {
-      {"Left", MouseCode::ButtonLeft},
-      {"Right", MouseCode::ButtonRight},
-      {"Middle", MouseCode::ButtonMiddle},
+      {"Left", MouseCode::Left},
+      {"Right", MouseCode::Right},
+      {"Middle", MouseCode::Middle},
   };
   state->new_enum<MouseCode, true>("MouseButton", mouse_items);
 }

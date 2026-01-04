@@ -201,15 +201,15 @@ auto Window::update(const Timestep& timestep) -> void {
     }
 
     auto& input_system = App::mod<Input>();
-    const auto ox_button = Input::to_mouse_code(button);
+    auto ox_mouse_button = static_cast<MouseCode>(button);
     if (down) {
-      input_system.set_mouse_clicked(ox_button, true);
-      input_system.set_mouse_released(ox_button, false);
-      input_system.set_mouse_held(ox_button, true);
+      input_system.set_mouse_clicked(ox_mouse_button, true);
+      input_system.set_mouse_released(ox_mouse_button, false);
+      input_system.set_mouse_held(ox_mouse_button, true);
     } else {
-      input_system.set_mouse_clicked(ox_button, false);
-      input_system.set_mouse_released(ox_button, true);
-      input_system.set_mouse_held(ox_button, false);
+      input_system.set_mouse_clicked(ox_mouse_button, false);
+      input_system.set_mouse_released(ox_mouse_button, true);
+      input_system.set_mouse_held(ox_mouse_button, false);
     }
   };
   window_callbacks.on_mouse_scroll = [](void* user_data, const glm::vec2 offset) {
