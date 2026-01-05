@@ -78,11 +78,20 @@ enum class ActionType {
   Axis    // Analog -1 to 1
 };
 
+struct ActionContext {
+  std::string_view action_id = {};
+  f32 axis_value = 0.f; // For axis actions
+};
+
 struct ActionBinding {
   std::string action_id = {};
   std::vector<InputCode> primary_inputs = {};
   std::vector<InputCode> secondary_inputs = {};
   std::string context = "default";
+  std::function<void(const ActionContext&)> on_pressed_callback = nullptr;
+  std::function<void(const ActionContext&)> on_released_callback = nullptr;
+  std::function<void(const ActionContext&)> on_held_callback = nullptr;
+  std::function<void(const ActionContext&)> on_axis_callback = nullptr;
 
   // Axis-specific settings
   f32 dead_zone = 0.15f;
@@ -180,7 +189,8 @@ private:
   auto add_to_reverse_map(this Input& self, const ActionBinding& binding) -> void;
   auto remove_from_reverse_map(this Input& self, const ActionBinding& binding) -> void;
 
-  enum class InputState { Pressed, Released, Held };
+  enum class InputState { None, Pressed, Released, Held };
+  auto do_callback(const ActionBinding& binding, InputState state) -> void;
   auto check_input_active(this const Input& self, const InputCode& input, InputState check_state) -> bool;
 
   auto set_mod(const ModCode mod) -> void;

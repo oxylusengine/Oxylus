@@ -2,7 +2,6 @@
 
 #include <ImGuizmo.h>
 #include <filesystem>
-#include <flecs.h>
 #include <imgui_internal.h>
 #include <vuk/vsl/Core.hpp>
 
@@ -41,6 +40,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
       .action_id = "new_scene",
       .primary_inputs = {InputCode(KeyCode::N, ModCode::AnyControl)},
       .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.new_scene(); }
     }
   );
   std::ignore = input.bind_action(
@@ -48,6 +48,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
       .action_id = "undo",
       .primary_inputs = {InputCode(KeyCode::Z, ModCode::AnyControl)},
       .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.undo(); }
     }
   );
   std::ignore = input.bind_action(
@@ -55,6 +56,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
       .action_id = "redo",
       .primary_inputs = {InputCode(KeyCode::Y, ModCode::AnyControl)},
       .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.redo(); }
     }
   );
   std::ignore = input.bind_action(
@@ -62,6 +64,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
       .action_id = "save_scene",
       .primary_inputs = {InputCode(KeyCode::S, ModCode::AnyControl)},
       .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.save_scene(); }
     }
   );
   std::ignore = input.bind_action(
@@ -69,6 +72,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
       .action_id = "open_scene_file_dialog",
       .primary_inputs = {InputCode(KeyCode::O, ModCode::AnyControl)},
       .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.open_scene_file_dialog(); }
     }
   );
   std::ignore = input.bind_action(
@@ -76,6 +80,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
       .action_id = "save_scene_as",
       .primary_inputs = {InputCode(KeyCode::S, ModCode::AnyControl | ModCode::AnyShift)},
       .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.save_scene_as(); }
     }
   );
 
@@ -224,8 +229,6 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
     ImGui::ShowStyleEditor();
   if (EditorCVar::cvar_show_imgui_demo.get())
     ImGui::ShowDemoWindow();
-
-  self.editor_shortcuts();
 
   constexpr ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
 
@@ -415,30 +418,6 @@ void Editor::save_scene_as() {
     .filters = dialog_filters,
     .multi_select = false,
   });
-}
-
-void Editor::editor_shortcuts() {
-  ZoneScoped;
-
-  auto& input_sys = App::mod<Input>();
-  if (input_sys.get_action_pressed("new_scene")) {
-    new_scene();
-  }
-  if (input_sys.get_action_pressed("undo")) {
-    undo();
-  }
-  if (input_sys.get_action_pressed("redo")) {
-    redo();
-  }
-  if (input_sys.get_action_pressed("save_scene")) {
-    save_scene();
-  }
-  if (input_sys.get_action_pressed("open_scene_file_dialog")) {
-    open_scene_file_dialog();
-  }
-  if (input_sys.get_action_pressed("save_scene_as")) {
-    save_scene_as();
-  }
 }
 
 void Editor::set_docking_layout(EditorLayout layout) {

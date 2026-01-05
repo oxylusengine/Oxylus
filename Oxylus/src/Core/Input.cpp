@@ -135,13 +135,57 @@ auto Input::get_active_context(this const Input& self) -> std::string_view {
   return self.active_context;
 }
 
+auto Input::do_callback(const ActionBinding& binding, const InputState state) -> void {
+  bool active = false;
+
+  for (const auto& input : binding.primary_inputs) {
+    if (check_input_active(input, state)) {
+      active = true;
+      break;
+    }
+  }
+
+  if (!active) {
+    for (const auto& input : binding.secondary_inputs) {
+      if (check_input_active(input, state)) {
+        active = true;
+        break;
+      }
+    }
+  }
+
+  if (active) {
+    switch (state) {
+      case InputState::None   : break;
+      case InputState::Pressed: {
+        if (binding.on_pressed_callback) {
+          binding.on_pressed_callback(ActionContext{.action_id = binding.action_id});
+        }
+        break;
+      }
+      case InputState::Released: {
+        if (binding.on_released_callback) {
+          binding.on_released_callback(ActionContext{.action_id = binding.action_id});
+        }
+        break;
+      }
+      case InputState::Held: {
+        if (binding.on_held_callback) {
+          binding.on_held_callback(ActionContext{.action_id = binding.action_id});
+        }
+        break;
+      }
+    }
+  }
+}
+
 auto Input::check_input_active(this const Input& self, const InputCode& input, InputState check_state) -> bool {
   auto is_axis = input.type == InputType::GamepadAxis || input.type == InputType::MouseAxis;
   if (is_axis) {
     return false;
   }
 
-  const auto check = [&input, check_state, &self]() {
+  const auto check = [&self, &input, check_state] {
     switch (input.type) {
       case InputType::Keyboard: {
         switch (check_state) {
@@ -417,35 +461,59 @@ auto Input::set_key_pressed(const KeyCode key, const bool a) -> void {
   ZoneScoped;
 
   input_data.key_pressed.insert_or_assign(key, a);
+
+  for (const auto& [id, binding] : action_bindings) {
+    do_callback(binding, InputState::Pressed);
+  }
 }
 
 void Input::set_key_released(const KeyCode key, const bool a) {
   ZoneScoped;
 
   input_data.key_released.insert_or_assign(key, a);
+
+  for (const auto& [id, binding] : action_bindings) {
+    do_callback(binding, InputState::Released);
+  }
 }
 
 void Input::set_key_held(const KeyCode key, const bool a) {
   ZoneScoped;
 
   input_data.key_held.insert_or_assign(key, a);
+
+  for (const auto& [id, binding] : action_bindings) {
+    do_callback(binding, InputState::Held);
+  }
 }
 
 void Input::set_mouse_clicked(const MouseCode key, const bool a) {
   ZoneScoped;
 
   input_data.mouse_pressed.insert_or_assign(key, a);
+
+  for (const auto& [id, binding] : action_bindings) {
+    do_callback(binding, InputState::Pressed);
+  }
 }
 
 void Input::set_mouse_released(const MouseCode key, const bool a) {
   ZoneScoped;
 
   input_data.mouse_released.insert_or_assign(key, a);
+
+  for (const auto& [id, binding] : action_bindings) {
+    do_callback(binding, InputState::Released);
+  }
 }
 
 void Input::set_mouse_held(const MouseCode key, const bool a) {
   ZoneScoped;
 
   input_data.mouse_held.insert_or_assign(key, a);
+
+  for (const auto& [id, binding] : action_bindings) {
+    do_callback(binding, InputState::Held);
+  }
 }
 } // namespace ox
