@@ -6,7 +6,7 @@
 #include <vuk/runtime/vk/Descriptor.hpp>
 
 #include "Asset/Texture.hpp"
-#include "Scene/ECSModule/Core.hpp"
+#include "Scene/Components.hpp"
 #include "Utils/OxMath.hpp"
 
 namespace ox {

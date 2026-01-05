@@ -11,27 +11,300 @@
 #include "Core/EventSystem.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
-#include "Scene/ECSModule/ComponentWrapper.hpp"
+#include "Scene/EntitySerializer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EditorTheme.hpp"
 
 namespace ox {
-static f32 degree_helper(const char* id, f32 value) {
-  f32 in_degrees = glm::degrees(value);
-  f32 in_radians = value;
+struct EntityInspector : IEntitySerializer {
+  UndoRedoSystem& undo_redo_system;
+  InspectorPanel& inspector_panel;
+  bool is_transform;
+  bool handled; // is something special being externally handled (vec3, uuid, etc...)
+  bool modified;
 
-  if (ImGui::BeginPopupContextItem(id)) {
-    UI::begin_properties();
-    if (UI::property("Set in degrees", &in_degrees)) {
-      in_radians = glm::radians(in_degrees);
+  EntityInspector(
+    flecs::world& world_, UndoRedoSystem& undo_redo_system_, InspectorPanel& inspector_panel_, bool is_transform_
+  )
+      : IEntitySerializer(world_),
+        undo_redo_system(undo_redo_system_),
+        inspector_panel(inspector_panel_),
+        is_transform(is_transform_),
+        handled(false),
+        modified(false) {}
+
+  auto on_primitive(std::string_view name, Primitive primitive) -> void override {
+    if (handled) {
+      return;
     }
-    UI::end_properties();
-    ImGui::EndPopup();
+
+    std::visit(
+      ox::match{
+        [](const auto&) {},
+        [&](bool* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system //
+              .set_merge_enabled(false)
+              .execute_command<PropertyChangeCommand<bool>>(v, old_v, *v, std::string(name))
+              .set_merge_enabled(true);
+            modified = true;
+          }
+        },
+        [&](c8* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<c8>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+        [&](i8* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<i8>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+        [&](u8* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<u8>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+        [&](i16* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<i16>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+        [&](u16* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<u16>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+        [&](i32* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<i32>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+        [&](u32* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<u32>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+        [&](i64* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<i64>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+        [&](u64* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<u64>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+        [&](f32* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<f32>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+        [&](f64* v) {
+          auto old_v = *v;
+          if (UI::property(name.data(), v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<f64>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        },
+      },
+      primitive
+    );
   }
 
-  return in_radians;
-}
+  auto on_string(std::string_view name, const c8** str) -> void override {}
+
+  auto on_entity(std::string_view name, flecs::entity* entity) -> void override {}
+
+  auto on_component(std::string_view name, flecs::id_t* component) -> void override {}
+
+  auto on_struct(std::string_view name, flecs::meta::op_t* ops, i32 op_count, void* base) -> void override {
+    if (!name.empty()) {
+      if (ops->type == world.entity<glm::vec2>()) {
+        handled = true;
+        auto* v = static_cast<glm::vec2*>(base);
+        auto old_v = *v;
+        if (UI::property_vector(name.data(), *v)) {
+          undo_redo_system.execute_command<PropertyChangeCommand<glm::vec2>>(v, old_v, *v, std::string(name));
+          modified = true;
+        }
+      } else if (ops->type == world.entity<glm::vec3>()) {
+        handled = true;
+        auto* v = static_cast<glm::vec3*>(base);
+        auto old_v = *v;
+        if (is_transform) {
+          if (name == "rotation") {
+            auto rotation = glm::degrees(*v);
+            if (UI::draw_vec3_control(name.data(), rotation)) {
+              *v = glm::radians(rotation);
+              undo_redo_system.execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, std::string(name));
+              modified = true;
+            }
+          } else {
+            if (UI::draw_vec3_control(name.data(), *v)) {
+              undo_redo_system.execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, std::string(name));
+              modified = true;
+            }
+          }
+        } else {
+          if (UI::property_vector(name.data(), *v)) {
+            undo_redo_system.execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, std::string(name));
+            modified = true;
+          }
+        }
+      } else if (ops->type == world.entity<glm::vec4>()) {
+        handled = true;
+        auto* v = static_cast<glm::vec4*>(base);
+        auto old_v = *v;
+        if (UI::property_vector(name.data(), *v)) {
+          undo_redo_system.execute_command<PropertyChangeCommand<glm::vec4>>(v, old_v, *v, std::string(name));
+          modified = true;
+        }
+      }
+
+      serialize_ops(ops + 1, op_count - 1, base);
+      handled = false;
+    } else {
+      // root level serialization
+      serialize_ops(ops + 1, op_count - 1, base);
+    }
+  }
+
+  auto on_opaque(std::string_view name, flecs::entity type, void* ptr) -> void override {
+    if (type == world.entity<UUID>()) {
+      auto* uuid = static_cast<UUID*>(ptr);
+      UI::end_properties();
+
+      ImGui::Separator();
+      UI::begin_properties();
+      auto uuid_str = uuid->str();
+      UI::input_text(name.data(), &uuid_str, ImGuiInputTextFlags_ReadOnly);
+      UI::end_properties();
+
+      auto& asset_man = App::mod<AssetManager>();
+
+      static bool draw_asset_picker = false;
+      if (UI::button(ICON_MDI_CIRCLE_DOUBLE)) {
+        draw_asset_picker = !draw_asset_picker;
+      }
+
+      if (draw_asset_picker) {
+        Asset selected = {};
+        AssetType filter = {};
+        inspector_panel.viewer.render("Asset Picker", &draw_asset_picker, filter, &selected);
+
+        // NOTE: We don't allow model assets to be loaded this way yet(or ever).
+        if (selected.type != AssetType::None && selected.type != AssetType::Model) {
+          // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
+          auto* existing_asset = asset_man.get_asset(*uuid);
+          const bool is_same_asset = selected.uuid == *uuid;
+          const bool is_same_type = existing_asset->type == selected.type;
+          const bool is_loaded = asset_man.load_asset(selected.uuid);
+          if (!is_same_asset && is_same_type && is_loaded) {
+            if (*uuid) {
+              asset_man.unload_asset(*uuid);
+            }
+            *uuid = selected.uuid;
+            modified = true;
+          }
+        }
+      }
+
+      ImGui::SameLine();
+
+      const float x = ImGui::GetContentRegionAvail().x;
+      const float y = ImGui::GetFrameHeight();
+      const auto btn = fmt::format("{} Drop an asset file", ICON_MDI_FILE_UPLOAD);
+      if (UI::button(btn.c_str(), {x, y})) {
+      }
+      if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+          const auto payload = PayloadData::from_payload(imgui_payload);
+          if (payload->get_str().empty())
+            return;
+          if (auto imported_asset = asset_man.import_asset(payload->str)) {
+            if (auto* existing_asset = asset_man.get_asset(*uuid)) {
+              asset_man.unload_asset(existing_asset->uuid);
+            }
+            if (asset_man.load_asset(imported_asset)) {
+              *uuid = imported_asset;
+              modified = true;
+            }
+          }
+        }
+        ImGui::EndDragDropTarget();
+      }
+      ImGui::Spacing();
+      ImGui::Separator();
+
+      if (auto* asset = asset_man.get_asset(*uuid)) {
+        switch (asset->type) {
+          case ox::AssetType::None: {
+            break;
+          }
+          case AssetType::Shader: {
+            inspector_panel.draw_shader_asset(uuid, asset);
+            break;
+          }
+          case AssetType::Model: {
+            inspector_panel.draw_model_asset(uuid, asset);
+            break;
+          }
+          case AssetType::Texture: {
+            inspector_panel.draw_texture_asset(uuid, asset);
+            break;
+          }
+          case AssetType::Material: {
+            inspector_panel.draw_material_asset(uuid, asset);
+            break;
+          }
+          case AssetType::Font: {
+            inspector_panel.draw_font_asset(uuid, asset);
+            break;
+          }
+          case AssetType::Scene: {
+            inspector_panel.draw_scene_asset(uuid, asset);
+            break;
+          }
+          case AssetType::Audio: {
+            inspector_panel.draw_audio_asset(uuid, asset);
+            break;
+          }
+          case AssetType::Script: {
+            if (inspector_panel.draw_script_asset(uuid, asset)) {
+              modified = true;
+            }
+            break;
+          }
+        }
+      }
+
+      UI::begin_properties();
+    }
+  }
+};
 
 InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION, true), scene_(nullptr) {
   viewer.search_icon = ICON_MDI_MAGNIFY;
@@ -265,7 +538,6 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     return;
 
   auto& editor = App::mod<Editor>();
-
   auto& undo_redo_system = editor.undo_redo_system;
 
   ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + 20.0f));
@@ -320,32 +592,28 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     ImGui::EndPopup();
   }
 
-  for (auto& component : components) {
-    auto* entity_component = entity.try_get_mut(component);
-    if (!entity_component) {
-      continue;
-    }
+  entity.each([&](flecs::id id) {
+    memory::ScopedStack stack;
     static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
                                                      ImGuiTreeNodeFlags_SpanAvailWidth |
                                                      ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
                                                      ImGuiTreeNodeFlags_FramePadding;
+    const float line_height = editor.editor_theme.regular_font_size + GImGui->Style.FramePadding.y * 2.0f;
 
-    auto& editor_theme = editor.editor_theme;
-
-    const float line_height = editor_theme.regular_font_size + GImGui->Style.FramePadding.y * 2.0f;
+    auto ty = id.type_id();
+    if (!ty) {
+      return;
+    }
 
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + line_height * 0.25f);
 
-    auto component_entity = component.entity();
-    auto component_name = component_entity.name();
-
-    std::string
-      name_str = fmt::format("{} {}:{}", ICON_MDI_VIEW_GRID, component_name.c_str(), (u64)component_entity.id());
-    const bool open = ImGui::TreeNodeEx(name_str.c_str(), TREE_FLAGS, "%s", name_str.c_str());
+    auto component_name = ty.name();
+    auto name_cstr = stack.format_char("{} {}:{}", ICON_MDI_VIEW_GRID, component_name.c_str(), id.raw_id());
+    const bool open = ImGui::TreeNodeEx(name_cstr, TREE_FLAGS, "%s", name_cstr);
 
     bool remove_component = false;
 
-    ImGui::PushID(name_str.c_str());
+    ImGui::PushID(name_cstr);
     const float frame_height = ImGui::GetFrameHeight();
     ImGui::SameLine(ImGui::GetContentRegionMax().x - frame_height * 1.2f);
     if (UI::button(ICON_MDI_COG, ImVec2{frame_height * 1.2f, frame_height}))
@@ -355,238 +623,35 @@ void InspectorPanel::draw_components(flecs::entity entity) {
       if (ImGui::MenuItem("Remove Component"))
         remove_component = true;
       if (ImGui::MenuItem("Reset Component"))
-        entity.remove(component).add(component);
+        entity.remove(id).add(id);
       ImGui::EndPopup();
     }
     ImGui::PopID();
 
-    if (open) {
-      ECS::ComponentWrapper component_wrapped(entity, component);
+    if (open && ty.has<flecs::TypeSerializer>()) {
+      ImGuiTableFlags properties_flags = UI::default_properties_flags;
+      // Special case for Transform Component
+      const auto is_transform_component = ty.name() == "TransformComponent";
+      if (is_transform_component)
+        properties_flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV;
 
-      component_wrapped.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
-        ImGuiTableFlags properties_flags = UI::default_properties_flags;
+      UI::begin_properties(properties_flags);
 
-        // Special case for Transform Component
-        const auto is_transform_component = component_name == "TransformComponent";
-        if (is_transform_component)
-          properties_flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV;
+      auto world = entity.world();
+      auto inspector = EntityInspector(world, *undo_redo_system.get(), *this, is_transform_component);
+      auto* component = entity.get_mut(id);
+      inspector.serialize(ty, component);
+      if (inspector.modified) {
+        entity.modified(id);
+      }
 
-        UI::begin_properties(properties_flags);
-
-        std::visit(
-          ox::match{
-            [](const auto&) {},
-            [&](bool* v) {
-              bool old_v = *v;
-              if (UI::property(member_name.data(), v)) {
-                undo_redo_system //
-                  ->set_merge_enabled(false)
-                  .execute_command<PropertyChangeCommand<bool>>(v, old_v, *v, member_name.data())
-                  .set_merge_enabled(true);
-              }
-            },
-            [&](u16* v) {
-              u16 old_v = *v;
-              if (UI::property(member_name.data(), v))
-                undo_redo_system->execute_command<PropertyChangeCommand<u16>>(v, old_v, *v, member_name.data());
-            },
-            [&](f32* v) {
-              f32 old_v = *v;
-              if (UI::property(member_name.data(), v))
-                undo_redo_system->execute_command<PropertyChangeCommand<f32>>(v, old_v, *v, member_name.data());
-              *v = degree_helper(member_name.data(), *v);
-            },
-            [&](f64* v) {
-              f64 old_v = *v;
-              if (UI::property(member_name.data(), v))
-                undo_redo_system->execute_command<PropertyChangeCommand<f64>>(v, old_v, *v, member_name.data());
-              *v = degree_helper(member_name.data(), static_cast<f32>(*v));
-            },
-            [&](i32* v) {
-              i32 old_v = *v;
-              if (UI::property(member_name.data(), v))
-                undo_redo_system->execute_command<PropertyChangeCommand<i32>>(v, old_v, *v, member_name.data());
-            },
-            [&](u32* v) {
-              u32 old_v = *v;
-              if (UI::property(member_name.data(), v))
-                undo_redo_system->execute_command<PropertyChangeCommand<u32>>(v, old_v, *v, member_name.data());
-            },
-            [&](i64* v) {
-              i64 old_v = *v;
-              if (UI::property(member_name.data(), v))
-                undo_redo_system->execute_command<PropertyChangeCommand<i64>>(v, old_v, *v, member_name.data());
-            },
-            [&](u64* v) {
-              u64 old_v = *v;
-              if (UI::property(member_name.data(), v))
-                undo_redo_system->execute_command<PropertyChangeCommand<u64>>(v, old_v, *v, member_name.data());
-            },
-            [&](glm::vec2* v) {
-              glm::vec2 old_v = *v;
-              if (UI::property_vector(member_name.data(), *v))
-                undo_redo_system->execute_command<PropertyChangeCommand<glm::vec2>>(v, old_v, *v, member_name.data());
-            },
-            [&](glm::vec3* v) {
-              if (is_transform_component) {
-                // Display rotation field of transform component as degrees instead of radians
-                if (member_name == "rotation") {
-                  glm::vec3 old_v = *v;
-                  glm::vec3 rotation = glm::degrees(*v);
-                  if (UI::draw_vec3_control(member_name.data(), rotation)) {
-                    *v = glm::radians(rotation);
-                    undo_redo_system
-                      ->execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, member_name.data());
-                    entity.modified(component);
-                  }
-                } else {
-                  glm::vec3 old_v = *v;
-                  if (UI::draw_vec3_control(member_name.data(), *v)) {
-                    undo_redo_system
-                      ->execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, member_name.data());
-                    entity.modified(component);
-                  }
-                }
-              } else {
-                glm::vec3 old_v = *v;
-                if (UI::property_vector(member_name.data(), *v))
-                  undo_redo_system->execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, member_name.data());
-              }
-            },
-            [&](glm::vec4* v) {
-              glm::vec4 old_v = *v;
-              if (UI::property_vector(member_name.data(), *v)) {
-                undo_redo_system->execute_command<PropertyChangeCommand<glm::vec4>>(v, old_v, *v, member_name.data());
-                entity.modified(component);
-              }
-            },
-            [&](glm::quat* v) { /* noop */ },
-            [&](glm::mat4* v) { /* noop */ },
-            [&](std::string* v) {
-              std::string old_v = *v;
-              if (UI::input_text(member_name.data(), v))
-                undo_redo_system->execute_command<PropertyChangeCommand<std::string>>(v, old_v, *v, member_name.data());
-            },
-            [&](UUID* uuid) {
-              UI::end_properties();
-
-              ImGui::Separator();
-              UI::begin_properties();
-              auto uuid_str = uuid->str();
-              UI::input_text(member_name.data(), &uuid_str, ImGuiInputTextFlags_ReadOnly);
-              UI::end_properties();
-
-              auto& asset_man = App::mod<AssetManager>();
-
-              static bool draw_asset_picker = false;
-              if (UI::button(ICON_MDI_CIRCLE_DOUBLE)) {
-                draw_asset_picker = !draw_asset_picker;
-              }
-
-              if (draw_asset_picker) {
-                Asset selected = {};
-                AssetType filter = {};
-                viewer.render("Asset Picker", &draw_asset_picker, filter, &selected);
-
-                // NOTE: We don't allow model assets to be loaded this way yet(or ever).
-                if (selected.type != AssetType::None && selected.type != AssetType::Model) {
-                  // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
-                  auto* existing_asset = asset_man.get_asset(*uuid);
-                  const bool is_same_asset = selected.uuid == *uuid;
-                  const bool is_same_type = existing_asset->type == selected.type;
-                  const bool is_loaded = asset_man.load_asset(selected.uuid);
-                  if (!is_same_asset && is_same_type && is_loaded) {
-                    if (*uuid) {
-                      asset_man.unload_asset(*uuid);
-                    }
-                    *uuid = selected.uuid;
-                    entity.modified(component);
-                  }
-                }
-              }
-
-              ImGui::SameLine();
-
-              const float x = ImGui::GetContentRegionAvail().x;
-              const float y = ImGui::GetFrameHeight();
-              const auto btn = fmt::format("{} Drop an asset file", ICON_MDI_FILE_UPLOAD);
-              if (UI::button(btn.c_str(), {x, y})) {
-              }
-              if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
-                  const auto payload = PayloadData::from_payload(imgui_payload);
-                  if (payload->get_str().empty())
-                    return;
-                  if (auto imported_asset = asset_man.import_asset(payload->str)) {
-                    if (auto* existing_asset = asset_man.get_asset(*uuid)) {
-                      asset_man.unload_asset(existing_asset->uuid);
-                    }
-                    if (asset_man.load_asset(imported_asset)) {
-                      *uuid = imported_asset;
-                      entity.modified(component);
-                    }
-                  }
-                }
-                ImGui::EndDragDropTarget();
-              }
-              ImGui::Spacing();
-              ImGui::Separator();
-
-              if (auto* asset = asset_man.get_asset(*uuid)) {
-                switch (asset->type) {
-                  case ox::AssetType::None: {
-                    break;
-                  }
-                  case AssetType::Shader: {
-                    draw_shader_asset(uuid, asset);
-                    break;
-                  }
-                  case AssetType::Model: {
-                    draw_model_asset(uuid, asset);
-                    break;
-                  }
-                  case AssetType::Texture: {
-                    draw_texture_asset(uuid, asset);
-                    break;
-                  }
-                  case AssetType::Material: {
-                    draw_material_asset(uuid, asset);
-                    break;
-                  }
-                  case AssetType::Font: {
-                    draw_font_asset(uuid, asset);
-                    break;
-                  }
-                  case AssetType::Scene: {
-                    draw_scene_asset(uuid, asset);
-                    break;
-                  }
-                  case AssetType::Audio: {
-                    draw_audio_asset(uuid, asset);
-                    break;
-                  }
-                  case AssetType::Script: {
-                    if (draw_script_asset(uuid, asset))
-                      entity.modified(component);
-                    break;
-                  }
-                }
-              }
-
-              UI::begin_properties();
-            },
-          },
-          member
-        );
-
-        UI::end_properties();
-      });
+      UI::end_properties();
       ImGui::TreePop();
     }
 
     if (remove_component)
-      entity.remove(component);
-  }
+      entity.remove(id);
+  });
 }
 
 void InspectorPanel::draw_asset_info(Asset* asset) {

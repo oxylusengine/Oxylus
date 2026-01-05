@@ -4,7 +4,6 @@
 #include <sol/state.hpp>
 
 #include "Core/Types.hpp"
-#include "Scene/ECSModule/ComponentWrapper.hpp"
 #include "Scene/Scene.hpp"
 
 struct ecs_world_t {};
@@ -18,7 +17,7 @@ static auto get_component_table(sol::state* state, flecs::entity* entity, const 
   result["component_id"] = component;
 
   auto f_id = flecs::id(entity->world(), component);
-  ECS::ComponentWrapper component_wrapped(*entity, f_id);
+  // ECS::ComponentWrapper component_wrapped(*entity, f_id);
 
 #define MEMBER_PTR(type, value)                                                                                        \
   result[member_name] = *value;                                                                                        \
@@ -27,31 +26,31 @@ static auto get_component_table(sol::state* state, flecs::entity* entity, const 
       *value = new_value;                                                                                              \
     });
 
-  component_wrapped.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
-    std::visit(
-      ox::match{
-        [](const auto&) {},
-        [&](bool* v) { MEMBER_PTR(bool, v); },
-        [&](u8* v) { MEMBER_PTR(u8, v); },
-        [&](u16* v) { MEMBER_PTR(u16, v); },
-        [&](u32* v) { MEMBER_PTR(u32, v); },
-        [&](u64* v) { MEMBER_PTR(u64, v); },
-        [&](i8* v) { MEMBER_PTR(i8, v); },
-        [&](i16* v) { MEMBER_PTR(i16, v); },
-        [&](i32* v) { MEMBER_PTR(i32, v); },
-        [&](i64* v) { MEMBER_PTR(i64, v); },
-        [&](f32* v) { MEMBER_PTR(f32, v); },
-        [&](f64* v) { MEMBER_PTR(f64, v); },
-        [&](std::string* v) { MEMBER_PTR(std::string, v); },
-        [&](glm::vec2* v) { MEMBER_PTR(glm::vec2, v); },
-        [&](glm::vec3* v) { MEMBER_PTR(glm::vec3, v); },
-        [&](glm::vec4* v) { MEMBER_PTR(glm::vec4, v); },
-        [&](glm::mat4* v) { MEMBER_PTR(glm::mat4, v); },
-        [&](UUID* v) { MEMBER_PTR(UUID, v); },
-      },
-      member
-    );
-  });
+  // component_wrapped.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
+  //   std::visit(
+  //     ox::match{
+  //       [](const auto&) {},
+  //       [&](bool* v) { MEMBER_PTR(bool, v); },
+  //       [&](u8* v) { MEMBER_PTR(u8, v); },
+  //       [&](u16* v) { MEMBER_PTR(u16, v); },
+  //       [&](u32* v) { MEMBER_PTR(u32, v); },
+  //       [&](u64* v) { MEMBER_PTR(u64, v); },
+  //       [&](i8* v) { MEMBER_PTR(i8, v); },
+  //       [&](i16* v) { MEMBER_PTR(i16, v); },
+  //       [&](i32* v) { MEMBER_PTR(i32, v); },
+  //       [&](i64* v) { MEMBER_PTR(i64, v); },
+  //       [&](f32* v) { MEMBER_PTR(f32, v); },
+  //       [&](f64* v) { MEMBER_PTR(f64, v); },
+  //       [&](std::string* v) { MEMBER_PTR(std::string, v); },
+  //       [&](glm::vec2* v) { MEMBER_PTR(glm::vec2, v); },
+  //       [&](glm::vec3* v) { MEMBER_PTR(glm::vec3, v); },
+  //       [&](glm::vec4* v) { MEMBER_PTR(glm::vec4, v); },
+  //       [&](glm::mat4* v) { MEMBER_PTR(glm::mat4, v); },
+  //       [&](UUID* v) { MEMBER_PTR(UUID, v); },
+  //     },
+  //     member
+  //   );
+  // });
 
   return result;
 }

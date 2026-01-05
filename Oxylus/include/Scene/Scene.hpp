@@ -15,7 +15,6 @@
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Render/RendererInstance.hpp"
-#include "Scene/ECSModule/Core.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Scripting/LuaSystem.hpp"
 #include "Utils/Timestep.hpp"

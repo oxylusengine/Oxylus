@@ -25,7 +25,7 @@ packages = {
     },
     system = false,
   },
-  ["flecs-ox v4.1.0"] = {},
+  ["flecs v4.1.4"] = {},
   ["fmt " .. fmt_version] = { configs = fmt_configs, system = false },
   ["loguru v2.1.0"] = {
     configs = {

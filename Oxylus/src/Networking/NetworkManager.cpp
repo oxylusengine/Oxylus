@@ -6,6 +6,7 @@ namespace ox {
 auto NetworkManager::init() -> std::expected<void, std::string> {
   ZoneScoped;
 
+  // TODO: There is also `_with_callbacks` version to controll allocations ourselves
   if (enet_initialize() != 0) {
     return std::unexpected("An error occurred while initializing ENet");
   }

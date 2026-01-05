@@ -31,8 +31,6 @@
 #include "Render/Camera.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
-#include "Scene/ECSModule/ComponentWrapper.hpp"
-#include "Scene/ECSModule/Core.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "Utils/JsonHelpers.hpp"
 #include "Utils/JsonWriter.hpp"
@@ -88,7 +86,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   ZoneScoped;
   self.scene_name = name;
 
-  self.component_db.import_module(self.world.import <Core>());
+  self.component_db.import_module(self.world.import <CoreComponentsModule>());
 
   auto& renderer = App::mod<Renderer>();
   self.renderer_instance = renderer.new_instance(self);
@@ -600,10 +598,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       cc.yaw = tc.rotation.y;
       Camera::update(cc, screen_extent);
     });
-
-  self.world.system<const TransformComponent, MeshComponent>("meshes_update")
-    .kind(flecs::PostUpdate)
-    .each([](const TransformComponent& tc, MeshComponent& mc) {});
 
   self.world.system<SpriteComponent>("sprite_update")
     .kind(flecs::PostUpdate)
@@ -1519,51 +1513,31 @@ auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   writer.begin_obj();
   writer["name"] = e.name();
 
-  std::vector<ECS::ComponentWrapper> components = {};
-  writer["tags"].begin_array();
-  e.each([&](flecs::id component_id) {
-    if (!component_id.is_entity()) {
-      return;
-    }
-
-    ECS::ComponentWrapper component(e, component_id);
-    if (!component.is_component()) {
-      writer << component.path;
-    } else {
-      components.emplace_back(e, component_id);
-    }
-  });
-  writer.end_array();
+  // std::vector<ECS::ComponentWrapper> components = {};
+  // writer["tags"].begin_array();
+  // e.each([&](flecs::id component_id) {
+  //   if (!component_id.is_entity()) {
+  //     return;
+  //   }
+  //
+  //   ECS::ComponentWrapper component(e, component_id);
+  //   if (!component.is_component()) {
+  //     writer << component.path;
+  //   } else {
+  //     components.emplace_back(e, component_id);
+  //   }
+  // });
+  // writer.end_array();
 
   writer["components"].begin_array();
-  for (auto& component : components) {
-    writer.begin_obj();
-    writer["name"] = component.path;
-    component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
-      auto& member_json = writer[member_name];
-      std::visit(
-        ox::match{
-          [](const auto&) {},
-          [&](bool* v) { member_json = *v; },
-          [&](u16* v) { member_json = *v; },
-          [&](f32* v) { member_json = *v; },
-          [&](i32* v) { member_json = *v; },
-          [&](u32* v) { member_json = *v; },
-          [&](i64* v) { member_json = *v; },
-          [&](u64* v) { member_json = *v; },
-          [&](glm::vec2* v) { member_json = *v; },
-          [&](glm::vec3* v) { member_json = *v; },
-          [&](glm::vec4* v) { member_json = *v; },
-          [&](glm::quat* v) { member_json = *v; },
-          [&](glm::mat4* v) { member_json = std::span(glm::value_ptr(*v), 16); },
-          [&](std::string* v) { member_json = *v; },
-          [&](UUID* v) { member_json = v->str().c_str(); },
-        },
-        member
-      );
-    });
-    writer.end_obj();
-  }
+  // for (auto& component : components) {
+  //   writer.begin_obj();
+  //   writer["name"] = component.path;
+  //   component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::MemberInfo& member) {
+  //     auto& member_json = writer[member_name];
+  //   });
+  //   writer.end_obj();
+  // }
   writer.end_array();
 
   writer["children"].begin_array();
@@ -1618,38 +1592,38 @@ auto Scene::json_to_entity(
     }
 
     e.add(component_id);
-    ECS::ComponentWrapper component(e, component_id);
-    component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
-      auto member_json = component_json[member_name];
-      if (member_json.error()) {
-        // Default construct
-        return;
-      }
-
-      std::visit(
-        ox::match{
-          [](const auto&) {},
-          [&](bool* v) { *v = static_cast<bool>(member_json.get_bool().value_unsafe()); },
-          [&](u16* v) { *v = static_cast<u16>(member_json.get_uint64().value_unsafe()); },
-          [&](f32* v) { *v = static_cast<f32>(member_json.get_double().value_unsafe()); },
-          [&](i32* v) { *v = static_cast<i32>(member_json.get_int64().value_unsafe()); },
-          [&](u32* v) { *v = static_cast<u32>(member_json.get_uint64().value_unsafe()); },
-          [&](i64* v) { *v = member_json.get_int64().value_unsafe(); },
-          [&](u64* v) { *v = member_json.get_uint64().value_unsafe(); },
-          [&](glm::vec2* v) { json_to_vec(member_json.value_unsafe(), *v); },
-          [&](glm::vec3* v) { json_to_vec(member_json.value_unsafe(), *v); },
-          [&](glm::vec4* v) { json_to_vec(member_json.value_unsafe(), *v); },
-          [&](glm::quat* v) { json_to_quat(member_json.value_unsafe(), *v); },
-          // [&](glm::mat4 *v) {json_to_mat(member_json.value(), *v); },
-          [&](std::string* v) { *v = member_json.get_string().value_unsafe(); },
-          [&](UUID* v) {
-            *v = UUID::from_string(member_json.get_string().value_unsafe()).value();
-            requested_assets.push_back(*v);
-          },
-        },
-        member
-      );
-    });
+    // ECS::ComponentWrapper component(e, component_id);
+    // component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
+    //   auto member_json = component_json[member_name];
+    //   if (member_json.error()) {
+    //     // Default construct
+    //     return;
+    //   }
+    //
+    //   std::visit(
+    //     ox::match{
+    //       [](const auto&) {},
+    //       [&](bool* v) { *v = static_cast<bool>(member_json.get_bool().value_unsafe()); },
+    //       [&](u16* v) { *v = static_cast<u16>(member_json.get_uint64().value_unsafe()); },
+    //       [&](f32* v) { *v = static_cast<f32>(member_json.get_double().value_unsafe()); },
+    //       [&](i32* v) { *v = static_cast<i32>(member_json.get_int64().value_unsafe()); },
+    //       [&](u32* v) { *v = static_cast<u32>(member_json.get_uint64().value_unsafe()); },
+    //       [&](i64* v) { *v = member_json.get_int64().value_unsafe(); },
+    //       [&](u64* v) { *v = member_json.get_uint64().value_unsafe(); },
+    //       [&](glm::vec2* v) { json_to_vec(member_json.value_unsafe(), *v); },
+    //       [&](glm::vec3* v) { json_to_vec(member_json.value_unsafe(), *v); },
+    //       [&](glm::vec4* v) { json_to_vec(member_json.value_unsafe(), *v); },
+    //       [&](glm::quat* v) { json_to_quat(member_json.value_unsafe(), *v); },
+    //       // [&](glm::mat4 *v) {json_to_mat(member_json.value(), *v); },
+    //       [&](std::string* v) { *v = member_json.get_string().value_unsafe(); },
+    //       [&](UUID* v) {
+    //         *v = UUID::from_string(member_json.get_string().value_unsafe()).value();
+    //         requested_assets.push_back(*v);
+    //       },
+    //     },
+    //     member
+    //   );
+    // });
 
     e.modified(component_id);
   }

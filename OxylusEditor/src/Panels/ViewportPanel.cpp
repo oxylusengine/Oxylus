@@ -12,7 +12,7 @@
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Render/Vulkan/VkContext.hpp"
-#include "Scene/ECSModule/Core.hpp"
+#include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"

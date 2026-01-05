@@ -5,7 +5,7 @@
 
 #include "Core/App.hpp"
 #include "Render/Camera.hpp"
-#include "Scene/ECSModule/Core.hpp"
+#include "Scene/Components.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
