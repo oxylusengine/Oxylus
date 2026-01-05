@@ -15,9 +15,10 @@ Sampler sampler;
 Image2D<f32x4> input_image;
 [[vk::binding(2, 0)]]
 Image2D<f32x4> bloom_image;
+[[vk::binding(3, 0)]]
+ConstantBuffer<HistogramLuminance> histogram_luminance;
 
 struct PushConstants {
-    HistogramLuminance *luminance;
     PostProcessSettings post_process_settings;
     i32x2 screen_size;
 };
@@ -186,7 +187,8 @@ f32x4 fs_main(VertexOutput input) {
     }
 
     if ((scene_flags & SceneFlags::HasEyeAdaptation) != 0) {
-        let exposure = C.luminance->exposure;
+        let exposure = histogram_luminance.exposure;
+        printf("exposure = %f\n", exposure);
         color = color * (exposure + 1.0);
     }
 

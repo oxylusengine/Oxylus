@@ -7,38 +7,38 @@ namespace ox {
 auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostProcessContext& context) -> void {
   ZoneScoped;
 
-  auto histogram_buffer = self.renderer.vk_context->alloc_transient_buffer(
+  auto histogram_bin_indices_buffer = self.renderer.vk_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
     GPU::HISTOGRAM_BIN_COUNT * sizeof(u32)
   );
+  vuk::fill(histogram_bin_indices_buffer, 0);
 
   auto histogram_generate_pass = vuk::make_pass(
     "histogram generate",
     [settings = self.eye_adaptation](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eComputeSampled) src,
-      VUK_BA(vuk::eComputeRW | vuk::eTransferWrite) histogram
+      VUK_BA(vuk::eComputeRW) histogram_bin_indices
     ) {
       cmd_list
-          .fill_buffer(histogram, 0_u32)
           .bind_compute_pipeline("histogram_generate")
           .bind_image(0, 0, src)
           .push_constants(vuk::ShaderStageFlagBits::eCompute,
             0,
             PushConstants( //
-              histogram->device_address,
+              histogram_bin_indices->device_address,
               glm::uvec2(src->extent.width, src->extent.height),
               settings.min_exposure,
               1.0f / (settings.max_exposure - settings.min_exposure)))
           .dispatch_invocations_per_pixel(src);
 
-      return std::make_tuple(src, histogram);
+      return std::make_tuple(src, histogram_bin_indices);
     }
   );
 
-  std::tie(context.final_attachment, histogram_buffer) = histogram_generate_pass(
+  std::tie(context.final_attachment, histogram_bin_indices_buffer) = histogram_generate_pass(
     std::move(context.final_attachment),
-    std::move(histogram_buffer)
+    std::move(histogram_bin_indices_buffer)
   );
 
   auto pixel_count = f32(context.final_attachment->extent.width * context.final_attachment->extent.height);
@@ -51,12 +51,12 @@ auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostPro
     ) {
       cmd_list //
         .bind_compute_pipeline("histogram_average")
+        .bind_buffer(0, 0, histogram)
+        .bind_buffer(0, 1, exposure)
         .push_constants(
           vuk::ShaderStageFlagBits::eCompute,
           0,
           PushConstants(
-            histogram->device_address,
-            exposure->device_address,
             pixel_count,
             settings.min_exposure,
             settings.max_exposure - settings.min_exposure,
@@ -71,7 +71,7 @@ auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostPro
   );
 
   self.prepared_frame.exposure_buffer = histogram_average_pass(
-    std::move(histogram_buffer),
+    std::move(histogram_bin_indices_buffer),
     std::move(self.prepared_frame.exposure_buffer)
   );
 }
@@ -206,8 +206,9 @@ auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessCon
         .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
         .bind_image(0, 1, src)
         .bind_image(0, 2, bloom_src)
+        .bind_buffer(0, 3, exposure)
         .specialize_constants(0, std::to_underlying(scene_flags))
-        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(exposure->device_address, pp, size))
+        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(pp, size))
         .draw(3, 1, 0, 0);
 
       return dst;

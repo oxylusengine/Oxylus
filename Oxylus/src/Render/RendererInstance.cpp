@@ -1577,8 +1577,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       vuk::MemoryUsage::eGPUonly,
       sizeof(GPU::HistogramLuminance)
     );
+    self.prepared_frame.exposure_buffer = vuk::acquire_buf("exposure buffer", *self.exposure_buffer, vuk::eMemoryRead);
+    vuk::fill(self.prepared_frame.exposure_buffer, 1.0f);
+  } else {
+    self.prepared_frame.exposure_buffer = vuk::acquire_buf("exposure buffer", *self.exposure_buffer, vuk::eMemoryRead);
   }
-
-  self.prepared_frame.exposure_buffer = vuk::acquire_buf("exposure buffer", *self.exposure_buffer, vuk::eMemoryRead);
 }
 } // namespace ox
