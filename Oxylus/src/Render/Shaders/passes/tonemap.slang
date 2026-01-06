@@ -188,7 +188,6 @@ f32x4 fs_main(VertexOutput input) {
 
     if ((scene_flags & SceneFlags::HasEyeAdaptation) != 0) {
         let exposure = histogram_luminance.exposure;
-        printf("exposure = %f\n", exposure);
         color = color * (exposure + 1.0);
     }
 

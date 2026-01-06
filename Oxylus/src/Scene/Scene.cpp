@@ -41,6 +41,7 @@ namespace ox {
 struct JsonEntityDeserializer : IEntitySerializer {
   simdjson::ondemand::value json_value;
   memory::ScopedStack stack;
+  std::vector<UUID> requested_assets = {};
 
   JsonEntityDeserializer(flecs::world& world_, simdjson::ondemand::value value_)
       : IEntitySerializer(world_),
@@ -261,6 +262,10 @@ struct JsonEntityDeserializer : IEntitySerializer {
       if (!result.error() && opaque_info->assign_string) {
         auto* str_cstr = stack.null_terminate_cstr(result.value_unsafe());
         opaque_info->assign_string(field_ptr, str_cstr);
+
+        if (field_type == world.entity<UUID>()) {
+          requested_assets.push_back(*static_cast<UUID*>(field_ptr));
+        }
       }
     }
   }
@@ -1828,6 +1833,7 @@ auto Scene::json_to_entity(
       auto* component = e.get_mut(component_id);
       auto deserializer = JsonEntityDeserializer(self.world, field_json.value());
       deserializer.serialize(component_id, component);
+      requested_assets.insert_range(requested_assets.end(), std::move(deserializer.requested_assets));
       e.modified(component_id);
     }
   }

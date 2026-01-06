@@ -26,6 +26,8 @@ in pkgs.mkShell.override {
 
     pkgs.meshoptimizer
 
+    pkgs.zenity
+
     # SDL3
     pkgs.xorg.libX11
     pkgs.xorg.libxcb
