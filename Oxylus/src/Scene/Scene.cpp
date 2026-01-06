@@ -31,13 +31,241 @@
 #include "Render/Camera.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
+#include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
-#include "Utils/JsonHelpers.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Random.hpp"
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+struct JsonEntityDeserializer : IEntitySerializer {
+  simdjson::ondemand::value json_value;
+  memory::ScopedStack stack;
+
+  JsonEntityDeserializer(flecs::world& world_, simdjson::ondemand::value value_)
+      : IEntitySerializer(world_),
+        json_value(std::move(value_)) {}
+
+  auto on_primitive(std::string_view name, Primitive primitive) -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error()) {
+      return;
+    }
+
+    std::visit(
+      ox::match{
+        [](const auto&) {},
+        [&](bool* v) {
+          auto result = field_result.get_bool();
+          if (!result.error()) {
+            *v = result.value_unsafe();
+          }
+        },
+        [&](c8* v) {
+          auto result = field_result.get_string();
+          if (!result.error() && !result.value_unsafe().empty()) {
+            *v = result.value_unsafe()[0];
+          }
+        },
+        [&](i8* v) {
+          auto result = field_result.get_int64();
+          if (!result.error()) {
+            *v = static_cast<i8>(result.value_unsafe());
+          }
+        },
+        [&](u8* v) {
+          auto result = field_result.get_uint64();
+          if (!result.error()) {
+            *v = static_cast<u8>(result.value_unsafe());
+          }
+        },
+        [&](i16* v) {
+          auto result = field_result.get_int64();
+          if (!result.error()) {
+            *v = static_cast<i16>(result.value_unsafe());
+          }
+        },
+        [&](u16* v) {
+          auto result = field_result.get_uint64();
+          if (!result.error()) {
+            *v = static_cast<u16>(result.value_unsafe());
+          }
+        },
+        [&](i32* v) {
+          auto result = field_result.get_int64();
+          if (!result.error()) {
+            *v = static_cast<i32>(result.value_unsafe());
+          }
+        },
+        [&](u32* v) {
+          auto result = field_result.get_uint64();
+          if (!result.error()) {
+            *v = static_cast<u32>(result.value_unsafe());
+          }
+        },
+        [&](i64* v) {
+          auto result = field_result.get_int64();
+          if (!result.error()) {
+            *v = result.value_unsafe();
+          }
+        },
+        [&](u64* v) {
+          auto result = field_result.get_uint64();
+          if (!result.error()) {
+            *v = result.value_unsafe();
+          }
+        },
+        [&](f32* v) {
+          auto result = field_result.get_double();
+          if (!result.error()) {
+            *v = static_cast<f32>(result.value_unsafe());
+          }
+        },
+        [&](f64* v) {
+          auto result = field_result.get_double();
+          if (!result.error()) {
+            *v = result.value_unsafe();
+          }
+        },
+      },
+      primitive
+    );
+  }
+
+  auto on_string(std::string_view name, const c8** str) -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error()) {
+      return;
+    }
+
+    auto result = field_result.get_string();
+    if (!result.error()) {
+      auto str_view = result.value_unsafe();
+      auto* str_copy = stack.null_terminate_cstr(str_view);
+      *str = str_copy;
+    }
+  }
+
+  auto on_entity(std::string_view name, flecs::entity* entity) -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error()) {
+      return;
+    }
+
+    auto result = field_result.get_string();
+    if (!result.error()) {
+      auto entity_name = result.value_unsafe();
+      auto* entity_name_cstr = stack.null_terminate_cstr(entity_name);
+      auto found_entity = world.lookup(entity_name_cstr);
+      if (found_entity.is_valid()) {
+        *entity = found_entity;
+      }
+    }
+  }
+
+  auto on_component(std::string_view name, flecs::id_t* component) -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error()) {
+      return;
+    }
+
+    auto result = field_result.get_string();
+    if (!result.error()) {
+      auto comp_name = result.value_unsafe();
+      auto* comp_name_cstr = stack.null_terminate_cstr(comp_name);
+      auto comp_entity = world.lookup(comp_name_cstr);
+      if (comp_entity.is_valid()) {
+        *component = comp_entity.id();
+      }
+    }
+  }
+
+  auto on_struct(std::string_view name, flecs::meta::op_t* ops, i32 op_count, void* base) -> void override {
+    ZoneScoped;
+
+    if (!name.empty()) {
+      auto field_result = json_value[name];
+      if (field_result.error()) {
+        return;
+      }
+
+      auto nested_value = field_result.get_object();
+      if (nested_value.error()) {
+        return;
+      }
+
+      auto nested_deserializer = JsonEntityDeserializer(world, field_result.value_unsafe());
+      nested_deserializer.serialize_ops(ops + 1, op_count - 1, base);
+    } else {
+      serialize_ops(ops + 1, op_count - 1, base);
+    }
+  }
+
+  auto on_opaque_value(
+    std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
+  ) -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error()) {
+      return;
+    }
+
+    auto* opaque_info = ecs_get(world, field_type, EcsOpaque);
+    if (!opaque_info) {
+      return;
+    }
+
+    if (opaque_type == flecs::Bool) {
+      auto result = field_result.get_bool();
+      if (!result.error() && opaque_info->assign_bool) {
+        opaque_info->assign_bool(field_ptr, result.value_unsafe());
+      }
+    } else if (opaque_type == flecs::Char) {
+      auto result = field_result.get_string();
+      if (!result.error() && !result.value_unsafe().empty() && opaque_info->assign_char) {
+        opaque_info->assign_char(field_ptr, result.value_unsafe()[0]);
+      }
+    } else if (opaque_type == flecs::Byte || opaque_type == flecs::U8) {
+      auto result = field_result.get_uint64();
+      if (!result.error() && opaque_info->assign_uint) {
+        opaque_info->assign_uint(field_ptr, static_cast<u64>(result.value_unsafe()));
+      }
+    } else if (opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 ||
+               opaque_type == flecs::Uptr) {
+      auto result = field_result.get_uint64();
+      if (!result.error() && opaque_info->assign_uint) {
+        opaque_info->assign_uint(field_ptr, result.value_unsafe());
+      }
+    } else if (opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 ||
+               opaque_type == flecs::I64 || opaque_type == flecs::Iptr) {
+      auto result = field_result.get_int64();
+      if (!result.error() && opaque_info->assign_int) {
+        opaque_info->assign_int(field_ptr, result.value_unsafe());
+      }
+    } else if (opaque_type == flecs::F32 || opaque_type == flecs::F64) {
+      auto result = field_result.get_double();
+      if (!result.error() && opaque_info->assign_float) {
+        opaque_info->assign_float(field_ptr, result.value_unsafe());
+      }
+    } else if (opaque_type == flecs::String) {
+      auto result = field_result.get_string();
+      if (!result.error() && opaque_info->assign_string) {
+        auto* str_cstr = stack.null_terminate_cstr(result.value_unsafe());
+        opaque_info->assign_string(field_ptr, str_cstr);
+      }
+    }
+  }
+};
+
 auto Scene::safe_entity_name(this const Scene& self, std::string prefix) -> std::string {
   ZoneScoped;
 
@@ -1510,34 +1738,37 @@ void Scene::create_character_controller(
 auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   ZoneScoped;
 
+  auto world = e.world();
   writer.begin_obj();
   writer["name"] = e.name();
+  writer["tags"].begin_array();
+  auto components = std::vector<flecs::entity>{};
+  e.each([&](flecs::id component_id) {
+    if (!component_id.is_entity()) {
+      return;
+    }
 
-  // std::vector<ECS::ComponentWrapper> components = {};
-  // writer["tags"].begin_array();
-  // e.each([&](flecs::id component_id) {
-  //   if (!component_id.is_entity()) {
-  //     return;
-  //   }
-  //
-  //   ECS::ComponentWrapper component(e, component_id);
-  //   if (!component.is_component()) {
-  //     writer << component.path;
-  //   } else {
-  //     components.emplace_back(e, component_id);
-  //   }
-  // });
-  // writer.end_array();
+    auto ty = component_id.entity();
+    if (ty.has<flecs::Component>()) {
+      components.push_back(ty);
+    } else {
+      writer << ty.path();
+    }
+  });
+  writer.end_array();
 
   writer["components"].begin_array();
-  // for (auto& component : components) {
-  //   writer.begin_obj();
-  //   writer["name"] = component.path;
-  //   component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::MemberInfo& member) {
-  //     auto& member_json = writer[member_name];
-  //   });
-  //   writer.end_obj();
-  // }
+  for (auto& component : components) {
+    auto* component_data = e.get_mut(component.id());
+
+    writer.begin_obj();
+    writer.key(component.path().c_str());
+    writer.begin_obj();
+    auto serializer = JsonEntitySerializer(world, writer);
+    serializer.serialize(component, component_data);
+    writer.end_obj();
+    writer.end_obj();
+  }
   writer.end_array();
 
   writer["children"].begin_array();
@@ -1573,59 +1804,32 @@ auto Scene::json_to_entity(
 
   auto components_json = json["components"];
   for (auto component_json : components_json.get_array()) {
-    auto component_name_json = component_json["name"];
-    if (component_name_json.error()) {
-      OX_LOG_ERROR("Entity '{}' has corrupt components JSON array.", e.name().c_str());
-      return flecs::entity::null();
+    auto component_obj_json = component_json.get_object();
+    for (auto field_json : component_obj_json) {
+      auto component_name_json = field_json.unescaped_key();
+      if (component_name_json.error()) {
+        OX_LOG_ERROR("Entity '{}' has corrupt components JSON array.", e.name().c_str());
+        return flecs::entity::null();
+      }
+
+      const auto* component_name = stack.null_terminate_cstr(component_name_json.value_unsafe());
+      auto component_id = world.lookup(component_name);
+      if (!component_id) {
+        OX_LOG_ERROR("Entity '{}' has invalid component named '{}'!", e.name().c_str(), component_name);
+        return flecs::entity::null();
+      }
+
+      if (!self.component_db.is_component_known(component_id)) {
+        OX_LOG_WARN("Skipping unkown component {}:{}", component_name, (u64)component_id);
+        continue;
+      }
+
+      e.add(component_id);
+      auto* component = e.get_mut(component_id);
+      auto deserializer = JsonEntityDeserializer(self.world, field_json.value());
+      deserializer.serialize(component_id, component);
+      e.modified(component_id);
     }
-
-    const auto* component_name = stack.null_terminate_cstr(component_name_json.get_string().value_unsafe());
-    auto component_id = world.lookup(component_name);
-    if (!component_id) {
-      OX_LOG_ERROR("Entity '{}' has invalid component named '{}'!", e.name().c_str(), component_name);
-      return flecs::entity::null();
-    }
-
-    if (!self.component_db.is_component_known(component_id)) {
-      OX_LOG_WARN("Skipping unkown component {}:{}", component_name, (u64)component_id);
-      continue;
-    }
-
-    e.add(component_id);
-    // ECS::ComponentWrapper component(e, component_id);
-    // component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
-    //   auto member_json = component_json[member_name];
-    //   if (member_json.error()) {
-    //     // Default construct
-    //     return;
-    //   }
-    //
-    //   std::visit(
-    //     ox::match{
-    //       [](const auto&) {},
-    //       [&](bool* v) { *v = static_cast<bool>(member_json.get_bool().value_unsafe()); },
-    //       [&](u16* v) { *v = static_cast<u16>(member_json.get_uint64().value_unsafe()); },
-    //       [&](f32* v) { *v = static_cast<f32>(member_json.get_double().value_unsafe()); },
-    //       [&](i32* v) { *v = static_cast<i32>(member_json.get_int64().value_unsafe()); },
-    //       [&](u32* v) { *v = static_cast<u32>(member_json.get_uint64().value_unsafe()); },
-    //       [&](i64* v) { *v = member_json.get_int64().value_unsafe(); },
-    //       [&](u64* v) { *v = member_json.get_uint64().value_unsafe(); },
-    //       [&](glm::vec2* v) { json_to_vec(member_json.value_unsafe(), *v); },
-    //       [&](glm::vec3* v) { json_to_vec(member_json.value_unsafe(), *v); },
-    //       [&](glm::vec4* v) { json_to_vec(member_json.value_unsafe(), *v); },
-    //       [&](glm::quat* v) { json_to_quat(member_json.value_unsafe(), *v); },
-    //       // [&](glm::mat4 *v) {json_to_mat(member_json.value(), *v); },
-    //       [&](std::string* v) { *v = member_json.get_string().value_unsafe(); },
-    //       [&](UUID* v) {
-    //         *v = UUID::from_string(member_json.get_string().value_unsafe()).value();
-    //         requested_assets.push_back(*v);
-    //       },
-    //     },
-    //     member
-    //   );
-    // });
-
-    e.modified(component_id);
   }
 
   auto children_json = json["children"];

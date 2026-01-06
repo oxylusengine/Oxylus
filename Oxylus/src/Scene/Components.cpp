@@ -62,14 +62,16 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
     .opaque(flecs::String)
     .serialize([](const flecs::serializer* s, const UUID* data) {
       auto str = data->str();
-      return s->value(flecs::String, str.c_str());
+      auto* cstr = str.c_str();
+      return s->value(flecs::String, &cstr);
     })
     .assign_string([](UUID* data, const char* value) { *data = UUID::from_string(std::string_view(value)).value(); });
 
   world.component<TransformComponent>("TransformComponent")
-    .member<glm::vec3>("position") //
+    .member<glm::vec3>("position")
     .member<glm::vec3>("rotation")
-    .member<glm::vec3>("scale");
+    .member<glm::vec3>("scale")
+    .add<Networked>();
 
   // Layer
   world

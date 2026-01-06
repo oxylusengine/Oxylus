@@ -431,6 +431,8 @@ struct Hidden {};
 
 struct AssetOwner {};
 
+struct Networked {};
+
 struct CoreComponentsModule {
   CoreComponentsModule(flecs::world& world);
 };

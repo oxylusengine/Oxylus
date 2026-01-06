@@ -21,7 +21,9 @@ struct IEntitySerializer {
   virtual auto on_entity(std::string_view name, flecs::entity* entity) -> void = 0;
   virtual auto on_component(std::string_view name, flecs::id_t* component) -> void = 0;
   virtual auto on_struct(std::string_view name, flecs::meta::op_t* ops, i32 op_count, void* base) -> void = 0;
-  virtual auto on_opaque(std::string_view name, flecs::entity type, void* ptr) -> void = 0;
+  virtual auto on_opaque_value(
+    std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
+  ) -> void = 0;
 };
 
 struct JsonEntitySerializer : IEntitySerializer {
@@ -34,7 +36,9 @@ struct JsonEntitySerializer : IEntitySerializer {
   auto on_entity(std::string_view name, flecs::entity* entity) -> void override;
   auto on_component(std::string_view name, flecs::id_t* component) -> void override;
   auto on_struct(std::string_view name, flecs::meta::op_t* ops, i32 op_count, void* base) -> void override;
-  auto on_opaque(std::string_view name, flecs::entity type, void* ptr) -> void override;
+  auto on_opaque_value(
+    std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
+  ) -> void override;
 };
 
 } // namespace ox

@@ -192,9 +192,11 @@ struct EntityInspector : IEntitySerializer {
     }
   }
 
-  auto on_opaque(std::string_view name, flecs::entity type, void* ptr) -> void override {
-    if (type == world.entity<UUID>()) {
-      auto* uuid = static_cast<UUID*>(ptr);
+  auto on_opaque_value(
+    std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
+  ) -> void override {
+    if (field_type == world.entity<UUID>()) {
+      auto* uuid = static_cast<UUID*>(field_ptr);
       UI::end_properties();
 
       ImGui::Separator();
