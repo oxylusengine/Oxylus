@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ankerl/svector.h>
 #include <expected>
 #include <memory>
 #include <string>
@@ -24,8 +25,8 @@ struct NetworkManager {
   constexpr static auto MODULE_NAME = "NetworkManager";
 
   TLSFAllocator allocator = {};
-  std::vector<std::unique_ptr<NetServer>> servers = {};
-  std::vector<std::unique_ptr<NetClient>> clients = {};
+  ankerl::svector<std::unique_ptr<NetServer>, 1> servers = {};
+  ankerl::svector<std::unique_ptr<NetClient>, 1> clients = {};
 
   auto init(this NetworkManager&) -> std::expected<void, std::string>;
   auto deinit(this NetworkManager&) -> std::expected<void, std::string>;
