@@ -1,9 +1,9 @@
 #pragma once
 
 #include "Core/Project.hpp"
+#include "Networking/NetClient.hpp"
 #include "Panels/MainViewportPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
-#include "Panels/ViewportPanel.hpp"
 #include "UI/RuntimeConsole.hpp"
 #include "Utils/Command.hpp"
 #include "Utils/EditorContext.hpp"
@@ -48,6 +48,8 @@ public:
     OX_ASSERT(editor_panels.contains(hash_code));
     return dynamic_cast<T*>(editor_panels[hash_code].get());
   }
+
+  NetClient* test_client = nullptr;
 
   SceneManager scene_manager = {};
 

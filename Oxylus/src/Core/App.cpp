@@ -139,14 +139,13 @@ void App::run(this App& self) {
     OX_LOG_ERROR("Failed to initalize EventSystem: {}", event_system_init_result.error());
 
   self.registry.init();
-
   self.job_manager.wait();
 
   auto has_input_mod = self.registry.has<Input>();
   auto has_asset_manager_mod = self.registry.has<AssetManager>();
 
   while (self.is_running) {
-    const i32 frame_limit = RendererCVar::cvar_frame_limit.get();
+    const i32 frame_limit = self.frame_limit > 0 ? self.frame_limit : RendererCVar::cvar_frame_limit.get();
     if (frame_limit > 0) {
       self.timestep.set_max_frame_time(1000.0 / static_cast<f64>(frame_limit));
     } else {

@@ -73,6 +73,11 @@ public:
     return get()->registry.has<T>();
   }
 
+  auto with_frame_limit(this App& self, i32 frame_limit) -> App& {
+    self.frame_limit = frame_limit;
+    return self;
+  }
+
   auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
 
   static auto get_window() -> const Window&;
@@ -104,6 +109,7 @@ private:
   ModuleRegistry registry = {};
 
   Timestep timestep = {};
+  i32 frame_limit = 0;
 
   bool is_running = true;
 

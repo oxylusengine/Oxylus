@@ -91,6 +91,7 @@ target("Oxylus")
         "vk-bootstrap",
         "vuk",
         "unordered_dense",
+        "svector",
         "tracy",
         "fmt",
         "plf_colony",
