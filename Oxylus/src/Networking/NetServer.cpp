@@ -2,11 +2,29 @@
 
 #include <enet.h>
 
+#include "Asset/AssetManager.hpp"
+#include "Core/App.hpp"
 #include "Core/Base.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
 auto NetServer::tick(this NetServer& self, const Timestep& ts) -> void {
+  ZoneScoped;
+
+  if (App::has_mod<AssetManager>()) {
+    self.tick_scene(ts);
+  }
+
+  self.tick_network(ts);
+}
+
+auto NetServer::tick_scene(this NetServer& self, const Timestep& ts) -> void {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
+}
+
+auto NetServer::tick_network(this NetServer& self, const Timestep& ts) -> void {
   ZoneScoped;
 
   auto event = ENetEvent{};
@@ -72,7 +90,7 @@ auto NetServer::handle_net_packet(
   switch (type) {
     case NetPacketType::Handshake: {
       if (packet_size < sizeof(NetHandshakePacket)) {
-        return;
+        break;
       }
       auto& handshake_packet = *static_cast<const NetHandshakePacket*>(packet_data);
       // TODO: Actually do some auth checks on client
@@ -98,6 +116,24 @@ auto NetServer::handle_net_packet(
         SlotMap_decode_id(new_client_id).index,
         SlotMap_decode_id(new_client_id).version
       );
+    } break;
+    case NetPacketType::SceneSnapshot: {
+      // This is not our job
+    } break;
+    case NetPacketType::ClientAck: {
+      if (packet_size < sizeof(NetClientAckPacket)) {
+        break;
+      }
+
+      const auto* packet = static_cast<const NetClientAckPacket*>(packet_data);
+      auto client_snapshot_it = self.client_snapshots.find(client_id);
+      if (client_snapshot_it == self.client_snapshots.end()) {
+        // TODO, BUG: This is very illegal, should probably report this?
+        break;
+      }
+
+      auto& [_, state] = *client_snapshot_it;
+      state.ack(packet->acked);
     } break;
     case NetPacketType::Game: {
       self.on_game_packet(client_id, packet_data, packet_size);

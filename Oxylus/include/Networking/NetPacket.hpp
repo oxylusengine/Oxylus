@@ -8,6 +8,8 @@ namespace ox {
 enum class NetPacketType : u32 {
   Unknown = 0,
   Handshake,
+  SceneSnapshot,
+  ClientAck,
 
   // This packet is entirely handled by the "game".
   // There is no additional checks done byNetServer/NetClient.
@@ -29,6 +31,16 @@ consteval auto enable_bitmask(NetPacketFlag);
 struct NetHandshakePacket {
   u32 version = 0;
   u64 net_id = ~0_u64;
+};
+
+struct NetSceneSnapshotPacket {
+  u32 sequence = 0;
+  u32 entitiy_count = 0;
+  u32 removed_entity_count = 0;
+};
+
+struct NetClientAckPacket {
+  u32 acked = 0;
 };
 
 struct NetPacket {

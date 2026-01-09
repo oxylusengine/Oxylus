@@ -32,6 +32,7 @@
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/EntitySerializer.hpp"
+#include "Scene/SceneSnapshot.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Random.hpp"

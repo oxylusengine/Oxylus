@@ -2,7 +2,9 @@
 
 namespace ox {
 constexpr static auto NET_CHANNEL_COUNT = 2;
-}
+constexpr static auto NET_CHANNEL_STATE_SYNC = 0; // Unreliable
+constexpr static auto NET_CHANNEL_RPC = 1;        // Reliable
+} // namespace ox
 
 typedef struct _ENetHost ENetHost;
 typedef struct _ENetPeer ENetPeer;
