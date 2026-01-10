@@ -168,6 +168,14 @@ private:
     ankerl::unordered_dense::map<MouseCode, bool> mouse_released = {};
     ankerl::unordered_dense::map<MouseCode, bool> mouse_held = {};
 
+    struct GamepadData {
+      ankerl::unordered_dense::map<GamepadButtonCode, bool> gamepad_pressed = {};
+      ankerl::unordered_dense::map<GamepadButtonCode, bool> gamepad_released = {};
+    };
+
+    static constexpr u32 MAX_GAMEPAD_COUNT = 4;
+    GamepadData gamepad_data_array[MAX_GAMEPAD_COUNT] = {};
+
     f32 mouse_offset_x = {};
     f32 mouse_offset_y = {};
     f32 scroll_offset_y = {};
@@ -184,6 +192,7 @@ private:
   std::vector<std::string> context_stack = {};
   std::unordered_multimap<std::string, ActionBinding> action_bindings = {};
   std::unordered_multimap<InputCode, std::string, InputCode::Hash> input_to_actions = {};
+  std::chrono::milliseconds gamepad_repeat_delay = std::chrono::milliseconds(5);
 
   auto find_conflicts(this const Input& self, const ActionBinding& binding) -> std::vector<std::string>;
   auto add_to_reverse_map(this Input& self, const ActionBinding& binding) -> void;
@@ -194,11 +203,14 @@ private:
   auto check_input_active(this const Input& self, const InputCode& input, InputState check_state) -> bool;
 
   auto set_mod(const ModCode mod) -> void;
-  auto set_key_pressed(const KeyCode key, const bool a) -> void;
-  void set_key_released(const KeyCode key, const bool a);
-  void set_key_held(const KeyCode key, const bool a);
-  void set_mouse_clicked(const MouseCode key, const bool a);
-  void set_mouse_released(const MouseCode key, const bool a);
-  void set_mouse_held(const MouseCode key, const bool a);
+  auto set_key_pressed(const KeyCode key, const bool state) -> void;
+  void set_key_released(const KeyCode key, const bool state);
+  void set_key_held(const KeyCode key, const bool state);
+  void set_mouse_clicked(const MouseCode key, const bool state);
+  void set_mouse_released(const MouseCode key, const bool state);
+  void set_mouse_held(const MouseCode key, const bool state);
+
+  auto set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode button, const bool state) -> void;
+  auto set_gamepad_button_released(u32 instance_id, const GamepadButtonCode button, const bool state) -> void;
 };
 } // namespace ox

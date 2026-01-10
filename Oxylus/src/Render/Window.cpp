@@ -249,6 +249,23 @@ auto Window::update(const Timestep& timestep) -> void {
     }
   };
 
+  window_callbacks.on_gamepad_axis = [](void* user_data, u8 axis, i16 value, u32 instance_id) {
+
+  };
+
+  window_callbacks.on_gamepad = [](void* user_data, u32 button_code, u32 instance_id, bool down) {
+    auto& input_system = App::mod<Input>();
+    const auto ox_button_code = static_cast<GamepadButtonCode>(button_code);
+
+    if (down) {
+      input_system.set_gamepad_button_pressed(instance_id, ox_button_code, true);
+      input_system.set_gamepad_button_released(instance_id, ox_button_code, false);
+    } else {
+      input_system.set_gamepad_button_pressed(instance_id, ox_button_code, false);
+      input_system.set_gamepad_button_released(instance_id, ox_button_code, true);
+    }
+  };
+
   impl->cursor_overridden = false;
 
   poll(window_callbacks);
@@ -274,6 +291,21 @@ auto Window::poll(const WindowCallbacks& callbacks) const -> void {
         }
         break;
       }
+
+      case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+        if (callbacks.on_gamepad_axis) {
+          callbacks.on_gamepad_axis(callbacks.user_data, e.gaxis.axis, e.gaxis.value, e.gaxis.which);
+        }
+        break;
+      }
+      case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+      case SDL_EVENT_GAMEPAD_BUTTON_UP  : {
+        if (callbacks.on_gamepad) {
+          callbacks.on_gamepad(callbacks.user_data, e.gbutton.button, e.gbutton.which, e.gbutton.down);
+        }
+        break;
+      }
+
       case SDL_EVENT_MOUSE_MOTION: {
         if (callbacks.on_mouse_pos) {
           callbacks.on_mouse_pos(callbacks.user_data, {e.motion.x, e.motion.y}, {e.motion.xrel, e.motion.yrel});

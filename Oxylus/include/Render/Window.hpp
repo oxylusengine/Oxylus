@@ -54,12 +54,17 @@ struct SystemDisplay {
 struct WindowCallbacks {
   void* user_data = nullptr;
   void (*on_resize)(void* user_data, glm::uvec2 size) = nullptr;
+  void (*on_close)(void* user_data) = nullptr;
+
   void (*on_mouse_pos)(void* user_data, glm::vec2 position, glm::vec2 relative) = nullptr;
   void (*on_mouse_button)(void* user_data, u8 button, bool down) = nullptr;
   void (*on_mouse_scroll)(void* user_data, glm::vec2 offset) = nullptr;
+
   void (*on_text_input)(void* user_data, const c8* text) = nullptr;
   void (*on_key)(void* user_data, u32 key_code, u32 scan_code, u16 mods, bool down, bool repeat) = nullptr;
-  void (*on_close)(void* user_data) = nullptr;
+
+  void (*on_gamepad_axis)(void* user_data, u8 axis, i16 value, u32 instance_id) = nullptr;
+  void (*on_gamepad)(void* user_data, u32 button_code, u32 instance_id, bool down) = nullptr;
 };
 
 enum class DialogKind : u32 {
