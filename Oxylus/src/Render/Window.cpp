@@ -42,7 +42,7 @@ struct Handle<Window>::Impl {
 auto Window::create(const WindowInfo& info) -> Window {
   ZoneScoped;
 
-  if (!SDL_Init(SDL_INIT_EVENTS | SDL_INIT_VIDEO)) {
+  if (!SDL_Init(SDL_INIT_EVENTS | SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     OX_LOG_ERROR("Failed to initialize SDL! {}", SDL_GetError());
     return Handle(nullptr);
   }
@@ -194,7 +194,7 @@ auto Window::update(const Timestep& timestep) -> void {
     input_system.input_data.mouse_pos_rel = relative;
     input_system.input_data.mouse_moved = true;
   };
-  window_callbacks.on_mouse_button = [](void* user_data, const u8 button, const bool down) {
+  window_callbacks.on_mouse_button = [](void* user_data, u32 instance_id, const u8 button, const bool down) {
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_button(button, down);
@@ -203,13 +203,13 @@ auto Window::update(const Timestep& timestep) -> void {
     auto& input_system = App::mod<Input>();
     auto ox_mouse_button = static_cast<MouseCode>(button);
     if (down) {
-      input_system.set_mouse_clicked(ox_mouse_button, true);
-      input_system.set_mouse_released(ox_mouse_button, false);
-      input_system.set_mouse_held(ox_mouse_button, true);
+      input_system.set_mouse_clicked(instance_id, ox_mouse_button, true);
+      input_system.set_mouse_released(instance_id, ox_mouse_button, false);
+      input_system.set_mouse_held(instance_id, ox_mouse_button, true);
     } else {
-      input_system.set_mouse_clicked(ox_mouse_button, false);
-      input_system.set_mouse_released(ox_mouse_button, true);
-      input_system.set_mouse_held(ox_mouse_button, false);
+      input_system.set_mouse_clicked(instance_id, ox_mouse_button, false);
+      input_system.set_mouse_released(instance_id, ox_mouse_button, true);
+      input_system.set_mouse_held(instance_id, ox_mouse_button, false);
     }
   };
   window_callbacks.on_mouse_scroll = [](void* user_data, const glm::vec2 offset) {
@@ -222,7 +222,7 @@ auto Window::update(const Timestep& timestep) -> void {
     input_system.input_data.scroll_offset_y = offset.y;
   };
   window_callbacks.on_key =
-    [](void* user_data, const u32 key_code, const u32 scan_code, const u16 mods, const bool down, const bool repeat) {
+    [](void* user_data, const u32 key_code, const u32 scan_code, const u16 mods, const u32 instance_id, const bool down, const bool repeat) {
       if (App::has_mod<ImGuiRenderer>()) {
         auto& imgui_renderer = App::mod<ImGuiRenderer>();
         imgui_renderer.on_key(key_code, scan_code, mods, down);
@@ -233,13 +233,13 @@ auto Window::update(const Timestep& timestep) -> void {
       const auto ox_mod = static_cast<ModCode>(mods);
       input_system.set_mod(ox_mod);
       if (down) {
-        input_system.set_key_pressed(ox_key_code, !repeat);
-        input_system.set_key_released(ox_key_code, false);
-        input_system.set_key_held(ox_key_code, true);
+        input_system.set_key_pressed(instance_id, ox_key_code, !repeat);
+        input_system.set_key_released(instance_id, ox_key_code, false);
+        input_system.set_key_held(instance_id, ox_key_code, true);
       } else {
-        input_system.set_key_pressed(ox_key_code, false);
-        input_system.set_key_released(ox_key_code, true);
-        input_system.set_key_held(ox_key_code, false);
+        input_system.set_key_pressed(instance_id, ox_key_code, false);
+        input_system.set_key_released(instance_id, ox_key_code, true);
+        input_system.set_key_held(instance_id, ox_key_code, false);
       }
     };
   window_callbacks.on_text_input = [](void* user_data, const c8* text) {
@@ -264,6 +264,15 @@ auto Window::update(const Timestep& timestep) -> void {
       input_system.set_gamepad_button_pressed(instance_id, ox_button_code, false);
       input_system.set_gamepad_button_released(instance_id, ox_button_code, true);
     }
+  };
+
+  window_callbacks.on_gamepad_added = [](void* user_data, u32 instance_id) {
+    auto gamepad = SDL_OpenGamepad(instance_id);
+    if (!gamepad) {
+      LOG_SDL_ERROR(SDL_OpenGamepad);
+    }
+    auto name = SDL_GetGamepadName(gamepad);
+    OX_LOG_INFO("Gamepad connected: {} ID: {}", name, instance_id);
   };
 
   impl->cursor_overridden = false;
@@ -305,6 +314,12 @@ auto Window::poll(const WindowCallbacks& callbacks) const -> void {
         }
         break;
       }
+      case SDL_EVENT_GAMEPAD_ADDED: {
+        if (callbacks.on_gamepad_added) {
+          callbacks.on_gamepad_added(callbacks.user_data, e.gdevice.which);
+        }
+        break;
+      }
 
       case SDL_EVENT_MOUSE_MOTION: {
         if (callbacks.on_mouse_pos) {
@@ -315,7 +330,7 @@ auto Window::poll(const WindowCallbacks& callbacks) const -> void {
       case SDL_EVENT_MOUSE_BUTTON_UP  : {
         if (callbacks.on_mouse_button) {
           const auto state = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
-          callbacks.on_mouse_button(callbacks.user_data, e.button.button, state);
+          callbacks.on_mouse_button(callbacks.user_data, e.button.which, e.button.button, state);
         }
       } break;
       case SDL_EVENT_MOUSE_WHEEL: {
@@ -327,7 +342,7 @@ auto Window::poll(const WindowCallbacks& callbacks) const -> void {
       case SDL_EVENT_KEY_UP  : {
         if (callbacks.on_key) {
           const auto state = e.type == SDL_EVENT_KEY_DOWN;
-          callbacks.on_key(callbacks.user_data, e.key.key, e.key.scancode, e.key.mod, state, e.key.repeat);
+          callbacks.on_key(callbacks.user_data, e.key.key, e.key.scancode, e.key.mod, e.key.which, state, e.key.repeat);
         }
       } break;
       case SDL_EVENT_TEXT_INPUT: {

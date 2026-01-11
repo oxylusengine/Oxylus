@@ -80,6 +80,7 @@ enum class ActionType {
 
 struct ActionContext {
   std::string_view action_id = {};
+  u32 instance_id = 0;
   f32 axis_value = 0.f; // For axis actions
 };
 
@@ -128,10 +129,10 @@ public:
   auto pop_context(this Input& self) -> void;
   auto get_active_context(this const Input& self) -> std::string_view;
 
-  auto get_action_pressed(this const Input& self, std::string_view action_id) -> bool;
-  auto get_action_released(this const Input& self, std::string_view action_id) -> bool;
-  auto get_action_held(this const Input& self, std::string_view action_id) -> bool;
-  auto get_action_axis(this const Input& self, std::string_view action_id) -> f32;
+  auto get_action_pressed(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> bool;
+  auto get_action_released(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> bool;
+  auto get_action_held(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> bool;
+  auto get_action_axis(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> f32;
 
   /// Keyboard
   auto get_key_pressed(this const Input& self, const KeyCode key) -> bool;
@@ -156,6 +157,11 @@ public:
   auto get_mouse_scroll_offset_y() -> f32;
   auto get_mouse_moved() -> bool;
 
+  /// Gamepad
+  auto get_gamepad_button_pressed(this const Input& self, u32 instance_id, GamepadButtonCode button) -> bool;
+  auto get_gamepad_button_released(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
+  auto get_gamepad_button_held(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
+
 private:
   friend struct Window;
 
@@ -171,10 +177,11 @@ private:
     struct GamepadData {
       ankerl::unordered_dense::map<GamepadButtonCode, bool> gamepad_pressed = {};
       ankerl::unordered_dense::map<GamepadButtonCode, bool> gamepad_released = {};
+      ankerl::unordered_dense::map<GamepadButtonCode, bool> gamepad_held = {};
     };
 
-    static constexpr u32 MAX_GAMEPAD_COUNT = 4;
-    GamepadData gamepad_data_array[MAX_GAMEPAD_COUNT] = {};
+    // Gamepad instance ID to data
+    ankerl::unordered_dense::map<u32, GamepadData> gamepad_data_map = {};
 
     f32 mouse_offset_x = {};
     f32 mouse_offset_y = {};
@@ -199,16 +206,17 @@ private:
   auto remove_from_reverse_map(this Input& self, const ActionBinding& binding) -> void;
 
   enum class InputState { None, Pressed, Released, Held };
-  auto do_callback(const ActionBinding& binding, InputState state) -> void;
-  auto check_input_active(this const Input& self, const InputCode& input, InputState check_state) -> bool;
+  auto do_callback(const ActionBinding& binding, u32 instance_id, InputState state) -> void;
+  auto check_input_active(this const Input& self, const InputCode& input, u32 instance_id, InputState check_state)
+    -> bool;
 
   auto set_mod(const ModCode mod) -> void;
-  auto set_key_pressed(const KeyCode key, const bool state) -> void;
-  void set_key_released(const KeyCode key, const bool state);
-  void set_key_held(const KeyCode key, const bool state);
-  void set_mouse_clicked(const MouseCode key, const bool state);
-  void set_mouse_released(const MouseCode key, const bool state);
-  void set_mouse_held(const MouseCode key, const bool state);
+  auto set_key_pressed(u32 instance_id, const KeyCode key, const bool state) -> void;
+  void set_key_released(u32 instance_id, const KeyCode key, const bool state);
+  void set_key_held(u32 instance_id, const KeyCode key, const bool state);
+  void set_mouse_clicked(u32 instance_id, const MouseCode key, const bool state);
+  void set_mouse_released(u32 instance_id, const MouseCode key, const bool state);
+  void set_mouse_held(u32 instance_id, const MouseCode key, const bool state);
 
   auto set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode button, const bool state) -> void;
   auto set_gamepad_button_released(u32 instance_id, const GamepadButtonCode button, const bool state) -> void;

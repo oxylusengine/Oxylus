@@ -16,6 +16,11 @@ auto Input::reset_pressed() -> void {
 
   input_data.key_pressed.clear();
   input_data.mouse_pressed.clear();
+
+  for (auto& [id, data] : input_data.gamepad_data_map) {
+    data.gamepad_pressed.clear();
+  }
+
   input_data.scroll_offset_y = 0;
   input_data.mouse_moved = false;
 }
@@ -29,6 +34,8 @@ auto Input::reset() -> void {
   input_data.mouse_pressed.clear();
   input_data.mouse_held.clear();
   input_data.mouse_released.clear();
+
+  input_data.gamepad_data_map.clear();
 
   input_data.scroll_offset_y = 0;
   input_data.mouse_moved = false;
@@ -135,11 +142,11 @@ auto Input::get_active_context(this const Input& self) -> std::string_view {
   return self.active_context;
 }
 
-auto Input::do_callback(const ActionBinding& binding, const InputState state) -> void {
+auto Input::do_callback(const ActionBinding& binding, const u32 instance_id, const InputState state) -> void {
   bool active = false;
 
   for (const auto& input : binding.primary_inputs) {
-    if (check_input_active(input, state)) {
+    if (check_input_active(input, instance_id, state)) {
       active = true;
       break;
     }
@@ -147,7 +154,7 @@ auto Input::do_callback(const ActionBinding& binding, const InputState state) ->
 
   if (!active) {
     for (const auto& input : binding.secondary_inputs) {
-      if (check_input_active(input, state)) {
+      if (check_input_active(input, instance_id, state)) {
         active = true;
         break;
       }
@@ -159,19 +166,19 @@ auto Input::do_callback(const ActionBinding& binding, const InputState state) ->
       case InputState::None   : break;
       case InputState::Pressed: {
         if (binding.on_pressed_callback) {
-          binding.on_pressed_callback(ActionContext{.action_id = binding.action_id});
+          binding.on_pressed_callback(ActionContext{.action_id = binding.action_id, .instance_id = instance_id});
         }
         break;
       }
       case InputState::Released: {
         if (binding.on_released_callback) {
-          binding.on_released_callback(ActionContext{.action_id = binding.action_id});
+          binding.on_released_callback(ActionContext{.action_id = binding.action_id, .instance_id = instance_id});
         }
         break;
       }
       case InputState::Held: {
         if (binding.on_held_callback) {
-          binding.on_held_callback(ActionContext{.action_id = binding.action_id});
+          binding.on_held_callback(ActionContext{.action_id = binding.action_id, .instance_id = instance_id});
         }
         break;
       }
@@ -179,13 +186,15 @@ auto Input::do_callback(const ActionBinding& binding, const InputState state) ->
   }
 }
 
-auto Input::check_input_active(this const Input& self, const InputCode& input, InputState check_state) -> bool {
+auto Input::check_input_active(
+  this const Input& self, const InputCode& input, const u32 instance_id, InputState check_state
+) -> bool {
   auto is_axis = input.type == InputType::GamepadAxis || input.type == InputType::MouseAxis;
   if (is_axis) {
     return false;
   }
 
-  const auto check = [&self, &input, check_state] {
+  const auto check = [&self, &input, instance_id, check_state] {
     switch (input.type) {
       case InputType::Keyboard: {
         switch (check_state) {
@@ -204,7 +213,14 @@ auto Input::check_input_active(this const Input& self, const InputCode& input, I
         }
       }
       case InputType::MouseAxis:
-      case InputType::GamepadButton:
+      case InputType::GamepadButton: {
+        switch (check_state) {
+          case InputState::Pressed : return self.get_gamepad_button_pressed(instance_id, input.gamepad_button_code);
+          case InputState::Released: return self.get_gamepad_button_released(instance_id, input.gamepad_button_code);
+          case InputState::Held    : return false; // TODO: implement held state for gamepad buttons
+          case InputState::None    : return false;
+        }
+      }
       case InputType::GamepadAxis:
         /* TODO: */ break;
     }
@@ -224,7 +240,7 @@ auto Input::check_input_active(this const Input& self, const InputCode& input, I
   return true;
 }
 
-auto Input::get_action_pressed(this const Input& self, std::string_view action_id) -> bool {
+auto Input::get_action_pressed(this const Input& self, std::string_view action_id, u32 instance_id) -> bool {
   ZoneScoped;
 
   auto binding = self.get_active_binding(action_id);
@@ -233,17 +249,17 @@ auto Input::get_action_pressed(this const Input& self, std::string_view action_i
   }
 
   for (const auto& input : binding->primary_inputs) {
-    return self.check_input_active(input, InputState::Pressed);
+    return self.check_input_active(input, instance_id, InputState::Pressed);
   }
 
   for (const auto& input : binding->secondary_inputs) {
-    return self.check_input_active(input, InputState::Pressed);
+    return self.check_input_active(input, instance_id, InputState::Pressed);
   }
 
   return false;
 }
 
-auto Input::get_action_released(this const Input& self, std::string_view action_id) -> bool {
+auto Input::get_action_released(this const Input& self, std::string_view action_id, u32 instance_id) -> bool {
   ZoneScoped;
 
   auto binding = self.get_active_binding(action_id);
@@ -252,17 +268,17 @@ auto Input::get_action_released(this const Input& self, std::string_view action_
   }
 
   for (const auto& input : binding->primary_inputs) {
-    return self.check_input_active(input, InputState::Released);
+    return self.check_input_active(input, instance_id, InputState::Released);
   }
 
   for (const auto& input : binding->secondary_inputs) {
-    return self.check_input_active(input, InputState::Released);
+    return self.check_input_active(input, instance_id, InputState::Released);
   }
 
   return false;
 }
 
-auto Input::get_action_held(this const Input& self, std::string_view action_id) -> bool {
+auto Input::get_action_held(this const Input& self, std::string_view action_id, u32 instance_id) -> bool {
   ZoneScoped;
 
   auto binding = self.get_active_binding(action_id);
@@ -271,17 +287,17 @@ auto Input::get_action_held(this const Input& self, std::string_view action_id) 
   }
 
   for (const auto& input : binding->primary_inputs) {
-    return self.check_input_active(input, InputState::Held);
+    return self.check_input_active(input, instance_id, InputState::Held);
   }
 
   for (const auto& input : binding->secondary_inputs) {
-    return self.check_input_active(input, InputState::Held);
+    return self.check_input_active(input, instance_id, InputState::Held);
   }
 
   return false;
 }
 
-auto Input::get_action_axis(this const Input& self, std::string_view action_id) -> f32 {
+auto Input::get_action_axis(this const Input& self, std::string_view action_id, u32 instance_id) -> f32 {
   ZoneScoped;
 
   // TODO:
@@ -445,13 +461,73 @@ auto Input::set_mouse_position_window(const Window& window, glm::vec2 position) 
   SDL_WarpMouseInWindow(static_cast<SDL_Window*>(window.get_handle()), position.x, position.y);
 }
 
-auto Input::get_mouse_offset_x() -> f32 { return input_data.mouse_offset_x; }
+auto Input::get_mouse_offset_x() -> f32 {
+  ZoneScoped;
 
-auto Input::get_mouse_offset_y() -> f32 { return input_data.mouse_offset_y; }
+  return input_data.mouse_offset_x;
+}
 
-auto Input::get_mouse_scroll_offset_y() -> f32 { return input_data.scroll_offset_y; }
+auto Input::get_mouse_offset_y() -> f32 {
+  ZoneScoped;
 
-auto Input::get_mouse_moved() -> bool { return input_data.mouse_moved; }
+  return input_data.mouse_offset_y;
+}
+
+auto Input::get_mouse_scroll_offset_y() -> f32 {
+  ZoneScoped;
+
+  return input_data.scroll_offset_y;
+}
+
+auto Input::get_mouse_moved() -> bool {
+  ZoneScoped;
+
+  return input_data.mouse_moved;
+}
+
+auto Input::get_gamepad_button_pressed(this const Input& self, u32 instance_id, const GamepadButtonCode button)
+  -> bool {
+  ZoneScoped;
+
+  const auto it = self.input_data.gamepad_data_map.find(instance_id);
+  if (it != self.input_data.gamepad_data_map.end()) {
+    const auto button_it = it->second.gamepad_pressed.find(button);
+    if (button_it != it->second.gamepad_pressed.end()) {
+      return button_it->second;
+    }
+  }
+
+  return false;
+}
+
+auto Input::get_gamepad_button_released(this const Input& self, u32 instance_id, const GamepadButtonCode button)
+  -> bool {
+  ZoneScoped;
+
+  const auto it = self.input_data.gamepad_data_map.find(instance_id);
+  if (it != self.input_data.gamepad_data_map.end()) {
+    const auto button_it = it->second.gamepad_released.find(button);
+    if (button_it != it->second.gamepad_released.end()) {
+      return button_it->second;
+    }
+  }
+
+  return false;
+}
+
+auto Input::get_gamepad_button_held(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool {
+  ZoneScoped;
+
+  const auto it = self.input_data.gamepad_data_map.find(instance_id);
+  if (it != self.input_data.gamepad_data_map.end()) {
+    const auto button_it = it->second.gamepad_held.find(button);
+    if (button_it != it->second.gamepad_held.end()) {
+      return button_it->second;
+    }
+  }
+
+  return false;
+}
 
 auto Input::set_mod(const ModCode mod) -> void {
   ZoneScoped;
@@ -459,74 +535,74 @@ auto Input::set_mod(const ModCode mod) -> void {
   input_data.mod_code = mod;
 }
 
-auto Input::set_key_pressed(const KeyCode key, const bool state) -> void {
+auto Input::set_key_pressed(u32 instance_id, const KeyCode key, const bool state) -> void {
   ZoneScoped;
 
   input_data.key_pressed.insert_or_assign(key, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, InputState::Pressed);
+      do_callback(binding, instance_id, InputState::Pressed);
     }
   }
 }
 
-void Input::set_key_released(const KeyCode key, const bool state) {
+void Input::set_key_released(u32 instance_id, const KeyCode key, const bool state) {
   ZoneScoped;
 
   input_data.key_released.insert_or_assign(key, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, InputState::Released);
+      do_callback(binding, instance_id, InputState::Released);
     }
   }
 }
 
-void Input::set_key_held(const KeyCode key, const bool state) {
+void Input::set_key_held(u32 instance_id, const KeyCode key, const bool state) {
   ZoneScoped;
 
   input_data.key_held.insert_or_assign(key, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, InputState::Held);
+      do_callback(binding, instance_id, InputState::Held);
     }
   }
 }
 
-void Input::set_mouse_clicked(const MouseCode key, const bool state) {
+void Input::set_mouse_clicked(u32 instance_id, const MouseCode key, const bool state) {
   ZoneScoped;
 
   input_data.mouse_pressed.insert_or_assign(key, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, InputState::Pressed);
+      do_callback(binding, instance_id, InputState::Pressed);
     }
   }
 }
 
-void Input::set_mouse_released(const MouseCode key, const bool state) {
+void Input::set_mouse_released(u32 instance_id, const MouseCode key, const bool state) {
   ZoneScoped;
 
   input_data.mouse_released.insert_or_assign(key, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, InputState::Released);
+      do_callback(binding, instance_id, InputState::Released);
     }
   }
 }
 
-void Input::set_mouse_held(const MouseCode key, const bool state) {
+void Input::set_mouse_held(u32 instance_id, const MouseCode key, const bool state) {
   ZoneScoped;
 
   input_data.mouse_held.insert_or_assign(key, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, InputState::Held);
+      do_callback(binding, instance_id, InputState::Held);
     }
   }
 }
@@ -534,11 +610,18 @@ void Input::set_mouse_held(const MouseCode key, const bool state) {
 auto Input::set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode button, const bool state) -> void {
   ZoneScoped;
 
-  input_data.gamepad_data_array[instance_id].gamepad_pressed.insert_or_assign(button, state);
+  const auto it = input_data.gamepad_data_map.find(instance_id);
+  if (it != input_data.gamepad_data_map.end()) {
+    it->second.gamepad_pressed.insert_or_assign(button, state);
+  } else {
+    auto data = InputData::GamepadData{};
+    data.gamepad_pressed.insert_or_assign(button, state);
+    input_data.gamepad_data_map.insert_or_assign(instance_id, data);
+  }
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, InputState::Pressed);
+      do_callback(binding, instance_id, InputState::Pressed);
     }
   }
 }
@@ -546,11 +629,18 @@ auto Input::set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode 
 auto Input::set_gamepad_button_released(u32 instance_id, const GamepadButtonCode button, const bool state) -> void {
   ZoneScoped;
 
-  input_data.gamepad_data_array[instance_id].gamepad_released.insert_or_assign(button, state);
+  const auto it = input_data.gamepad_data_map.find(instance_id);
+  if (it != input_data.gamepad_data_map.end()) {
+    it->second.gamepad_released.insert_or_assign(button, state);
+  } else {
+    auto data = InputData::GamepadData{};
+    data.gamepad_released.insert_or_assign(button, state);
+    input_data.gamepad_data_map.insert_or_assign(instance_id, data);
+  }
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, InputState::Pressed);
+      do_callback(binding, instance_id, InputState::Pressed);
     }
   }
 }
