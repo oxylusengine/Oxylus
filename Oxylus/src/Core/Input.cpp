@@ -1,7 +1,5 @@
 #include "Core/Input.hpp"
 
-#include <SDL3/SDL_gamepad.h>
-#include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
 
 #include "Render/Window.hpp"
@@ -14,31 +12,25 @@ auto Input::deinit() -> std::expected<void, std::string> { return {}; }
 auto Input::reset_pressed() -> void {
   ZoneScoped;
 
-  input_data.key_pressed.clear();
-  input_data.mouse_pressed.clear();
+  for (auto& [id, data] : input_data.keyboard_data_map) {
+    data.key_pressed.clear();
+  }
+
+  input_data.mouse_data.mouse_pressed.clear();
+  input_data.mouse_data.scroll_offset_y = 0;
+  input_data.mouse_data.mouse_moved = false;
 
   for (auto& [id, data] : input_data.gamepad_data_map) {
     data.gamepad_pressed.clear();
   }
-
-  input_data.scroll_offset_y = 0;
-  input_data.mouse_moved = false;
 }
 
 auto Input::reset() -> void {
   ZoneScoped;
 
-  input_data.key_pressed.clear();
-  input_data.key_held.clear();
-  input_data.key_released.clear();
-  input_data.mouse_pressed.clear();
-  input_data.mouse_held.clear();
-  input_data.mouse_released.clear();
-
+  input_data.keyboard_data_map.clear();
+  input_data.mouse_data = {};
   input_data.gamepad_data_map.clear();
-
-  input_data.scroll_offset_y = 0;
-  input_data.mouse_moved = false;
 }
 
 auto Input::get_binding(this const Input& self, std::string_view action_id) -> const ActionBinding* {
@@ -212,7 +204,7 @@ auto Input::check_input_active(
           case InputState::None    : return false;
         }
       }
-      case InputType::MouseAxis:
+      case InputType::MouseAxis    : break;
       case InputType::GamepadButton: {
         switch (check_state) {
           case InputState::Pressed : return self.get_gamepad_button_pressed(instance_id, input.gamepad_button_code);
@@ -221,8 +213,7 @@ auto Input::check_input_active(
           case InputState::None    : return false;
         }
       }
-      case InputType::GamepadAxis:
-        /* TODO: */ break;
+      case InputType::GamepadAxis: break;
     }
 
     return false;
@@ -305,34 +296,43 @@ auto Input::get_action_axis(this const Input& self, std::string_view action_id, 
   return 0.f;
 }
 
-auto Input::get_key_pressed(this const Input& self, const KeyCode key) -> bool {
+auto Input::get_key_pressed(this const Input& self, const KeyCode key, const u32 instance_id) -> bool {
   ZoneScoped;
 
-  auto it = self.input_data.key_pressed.find(key);
-  if (it != self.input_data.key_pressed.end()) {
-    return it->second;
+  const auto it = self.input_data.keyboard_data_map.find(instance_id);
+  if (it != self.input_data.keyboard_data_map.end()) {
+    const auto button_it = it->second.key_pressed.find(key);
+    if (button_it != it->second.key_pressed.end()) {
+      return button_it->second;
+    }
   }
 
   return false;
 }
 
-auto Input::get_key_released(this const Input& self, const KeyCode key) -> bool {
+auto Input::get_key_released(this const Input& self, const KeyCode key, const u32 instance_id) -> bool {
   ZoneScoped;
 
-  auto it = self.input_data.key_released.find(key);
-  if (it != self.input_data.key_released.end()) {
-    return it->second;
+  const auto it = self.input_data.keyboard_data_map.find(instance_id);
+  if (it != self.input_data.keyboard_data_map.end()) {
+    const auto button_it = it->second.key_released.find(key);
+    if (button_it != it->second.key_released.end()) {
+      return button_it->second;
+    }
   }
 
   return false;
 }
 
-auto Input::get_key_held(this const Input& self, const KeyCode key) -> bool {
+auto Input::get_key_held(this const Input& self, const KeyCode key, const u32 instance_id) -> bool {
   ZoneScoped;
 
-  auto it = self.input_data.key_held.find(key);
-  if (it != self.input_data.key_held.end()) {
-    return it->second;
+  const auto it = self.input_data.keyboard_data_map.find(instance_id);
+  if (it != self.input_data.keyboard_data_map.end()) {
+    const auto button_it = it->second.key_held.find(key);
+    if (button_it != it->second.key_held.end()) {
+      return button_it->second;
+    }
   }
 
   return false;
@@ -341,8 +341,8 @@ auto Input::get_key_held(this const Input& self, const KeyCode key) -> bool {
 auto Input::get_mouse_clicked(this const Input& self, const MouseCode key) -> bool {
   ZoneScoped;
 
-  auto it = self.input_data.mouse_pressed.find(key);
-  if (it != self.input_data.mouse_pressed.end()) {
+  const auto it = self.input_data.mouse_data.mouse_pressed.find(key);
+  if (it != self.input_data.mouse_data.mouse_pressed.end()) {
     return it->second;
   }
 
@@ -352,8 +352,8 @@ auto Input::get_mouse_clicked(this const Input& self, const MouseCode key) -> bo
 auto Input::get_mouse_released(this const Input& self, const MouseCode key) -> bool {
   ZoneScoped;
 
-  auto it = self.input_data.mouse_released.find(key);
-  if (it != self.input_data.mouse_released.end()) {
+  const auto it = self.input_data.mouse_data.mouse_released.find(key);
+  if (it != self.input_data.mouse_data.mouse_released.end()) {
     return it->second;
   }
 
@@ -363,12 +363,293 @@ auto Input::get_mouse_released(this const Input& self, const MouseCode key) -> b
 auto Input::get_mouse_held(this const Input& self, const MouseCode key) -> bool {
   ZoneScoped;
 
-  auto it = self.input_data.mouse_held.find(key);
-  if (it != self.input_data.mouse_held.end()) {
+  const auto it = self.input_data.mouse_data.mouse_held.find(key);
+  if (it != self.input_data.mouse_data.mouse_held.end()) {
     return it->second;
   }
 
   return false;
+}
+
+auto Input::get_mouse_position(this const Input& self) -> glm::vec2 {
+  ZoneScoped;
+
+  return self.input_data.mouse_data.mouse_pos;
+}
+
+auto Input::get_mouse_position_rel(this const Input& self) -> glm::vec2 {
+  ZoneScoped;
+
+  return self.input_data.mouse_data.mouse_pos_rel;
+}
+
+auto Input::get_mouse_offset_x(this const Input& self) -> f32 {
+  ZoneScoped;
+
+  return self.input_data.mouse_data.mouse_offset_x;
+}
+
+auto Input::get_mouse_offset_y(this const Input& self) -> f32 {
+  ZoneScoped;
+
+  return self.input_data.mouse_data.mouse_offset_y;
+}
+
+auto Input::get_mouse_scroll_offset_y(this const Input& self) -> f32 {
+  ZoneScoped;
+
+  return self.input_data.mouse_data.scroll_offset_y;
+}
+
+auto Input::get_mouse_moved(this const Input& self) -> bool {
+  ZoneScoped;
+
+  return self.input_data.mouse_data.mouse_moved;
+}
+
+auto Input::set_mouse_position_global(const float x, const float y) -> void {
+  ZoneScoped;
+
+  SDL_WarpMouseGlobal(x, y);
+}
+
+auto Input::get_relative_mouse_mode_window(const Window& window) -> bool {
+  ZoneScoped;
+
+  return SDL_GetWindowRelativeMouseMode(static_cast<SDL_Window*>(window.get_handle()));
+}
+
+auto Input::set_relative_mouse_mode_window(const Window& window, bool enabled) -> void {
+  ZoneScoped;
+
+  SDL_SetWindowRelativeMouseMode(static_cast<SDL_Window*>(window.get_handle()), enabled);
+}
+
+auto Input::set_mouse_position_window(const Window& window, glm::vec2 position) -> void {
+  ZoneScoped;
+
+  SDL_WarpMouseInWindow(static_cast<SDL_Window*>(window.get_handle()), position.x, position.y);
+}
+
+auto Input::get_gamepad_button_pressed(this const Input& self, u32 instance_id, const GamepadButtonCode button)
+  -> bool {
+  ZoneScoped;
+
+  const auto it = self.input_data.gamepad_data_map.find(instance_id);
+  if (it != self.input_data.gamepad_data_map.end()) {
+    const auto button_it = it->second.gamepad_pressed.find(button);
+    if (button_it != it->second.gamepad_pressed.end()) {
+      return button_it->second;
+    }
+  }
+
+  return false;
+}
+
+auto Input::get_gamepad_button_released(this const Input& self, u32 instance_id, const GamepadButtonCode button)
+  -> bool {
+  ZoneScoped;
+
+  const auto it = self.input_data.gamepad_data_map.find(instance_id);
+  if (it != self.input_data.gamepad_data_map.end()) {
+    const auto button_it = it->second.gamepad_released.find(button);
+    if (button_it != it->second.gamepad_released.end()) {
+      return button_it->second;
+    }
+  }
+
+  return false;
+}
+
+auto Input::get_gamepad_button_held(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool {
+  ZoneScoped;
+
+  const auto it = self.input_data.gamepad_data_map.find(instance_id);
+  if (it != self.input_data.gamepad_data_map.end()) {
+    const auto button_it = it->second.gamepad_held.find(button);
+    if (button_it != it->second.gamepad_held.end()) {
+      return button_it->second;
+    }
+  }
+
+  return false;
+}
+
+auto Input::set_mod(const ModCode mod) -> void {
+  ZoneScoped;
+
+  input_data.mod_code = mod;
+}
+
+auto Input::set_default_keyboard_id(u32 instance_id) -> void {
+  ZoneScoped;
+
+  if (default_keyboard_id != DEFAULT_INSTANCE_ID) {
+    return;
+  }
+
+  default_keyboard_id = instance_id;
+}
+
+auto Input::set_key_pressed(u32 instance_id, const KeyCode key, const bool state) -> void {
+  ZoneScoped;
+
+  const auto it = input_data.keyboard_data_map.find(instance_id);
+  if (it != input_data.keyboard_data_map.end()) {
+    it->second.key_pressed.insert_or_assign(key, state);
+  } else {
+    auto data = InputData::KeyboardData{};
+    data.key_pressed.insert_or_assign(key, state);
+    input_data.keyboard_data_map.insert_or_assign(instance_id, data);
+  }
+
+  if (state) {
+    for (const auto& [id, binding] : action_bindings) {
+      do_callback(binding, instance_id, InputState::Pressed);
+    }
+  }
+}
+
+void Input::set_key_released(u32 instance_id, const KeyCode key, const bool state) {
+  ZoneScoped;
+
+  const auto it = input_data.keyboard_data_map.find(instance_id);
+  if (it != input_data.keyboard_data_map.end()) {
+    it->second.key_released.insert_or_assign(key, state);
+  } else {
+    auto data = InputData::KeyboardData{};
+    data.key_released.insert_or_assign(key, state);
+    input_data.keyboard_data_map.insert_or_assign(instance_id, data);
+  }
+
+  if (state) {
+    for (const auto& [id, binding] : action_bindings) {
+      do_callback(binding, instance_id, InputState::Released);
+    }
+  }
+}
+
+void Input::set_key_held(u32 instance_id, const KeyCode key, const bool state) {
+  ZoneScoped;
+
+  const auto it = input_data.keyboard_data_map.find(instance_id);
+  if (it != input_data.keyboard_data_map.end()) {
+    it->second.key_held.insert_or_assign(key, state);
+  } else {
+    auto data = InputData::KeyboardData{};
+    data.key_held.insert_or_assign(key, state);
+    input_data.keyboard_data_map.insert_or_assign(instance_id, data);
+  }
+
+  if (state) {
+    for (const auto& [id, binding] : action_bindings) {
+      do_callback(binding, instance_id, InputState::Held);
+    }
+  }
+}
+
+void Input::set_mouse_clicked(const MouseCode key, const bool state) {
+  ZoneScoped;
+
+  input_data.mouse_data.mouse_pressed.insert_or_assign(key, state);
+
+  if (state) {
+    for (const auto& [id, binding] : action_bindings) {
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Pressed);
+    }
+  }
+}
+
+void Input::set_mouse_released(const MouseCode key, const bool state) {
+  ZoneScoped;
+
+  input_data.mouse_data.mouse_released.insert_or_assign(key, state);
+
+  if (state) {
+    for (const auto& [id, binding] : action_bindings) {
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Released);
+    }
+  }
+}
+
+void Input::set_mouse_held(const MouseCode key, const bool state) {
+  ZoneScoped;
+
+  input_data.mouse_data.mouse_held.insert_or_assign(key, state);
+
+  if (state) {
+    for (const auto& [id, binding] : action_bindings) {
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Held);
+    }
+  }
+}
+
+void Input::set_mouse_position(const glm::vec2& position) {
+  ZoneScoped;
+
+  input_data.mouse_data.mouse_pos = position;
+
+#if TODO
+  for (const auto& [id, binding] : action_bindings) {
+    do_callback(binding, instance_id, InputState::None);
+  }
+#endif
+}
+
+void Input::set_mouse_position_rel(const glm::vec2& position) {
+  ZoneScoped;
+
+  input_data.mouse_data.mouse_pos_rel = position;
+}
+
+void Input::set_mouse_scroll_offset_y(const f32 offset) {
+  ZoneScoped;
+
+  input_data.mouse_data.scroll_offset_y = offset;
+}
+
+void Input::set_mouse_moved(bool state) {
+  ZoneScoped;
+
+  input_data.mouse_data.mouse_moved = state;
+}
+
+auto Input::set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode button, const bool state) -> void {
+  ZoneScoped;
+
+  const auto it = input_data.gamepad_data_map.find(instance_id);
+  if (it != input_data.gamepad_data_map.end()) {
+    it->second.gamepad_pressed.insert_or_assign(button, state);
+  } else {
+    auto data = InputData::GamepadData{};
+    data.gamepad_pressed.insert_or_assign(button, state);
+    input_data.gamepad_data_map.insert_or_assign(instance_id, data);
+  }
+
+  if (state) {
+    for (const auto& [id, binding] : action_bindings) {
+      do_callback(binding, instance_id, InputState::Pressed);
+    }
+  }
+}
+
+auto Input::set_gamepad_button_released(u32 instance_id, const GamepadButtonCode button, const bool state) -> void {
+  ZoneScoped;
+
+  const auto it = input_data.gamepad_data_map.find(instance_id);
+  if (it != input_data.gamepad_data_map.end()) {
+    it->second.gamepad_released.insert_or_assign(button, state);
+  } else {
+    auto data = InputData::GamepadData{};
+    data.gamepad_released.insert_or_assign(button, state);
+    input_data.gamepad_data_map.insert_or_assign(instance_id, data);
+  }
+
+  if (state) {
+    for (const auto& [id, binding] : action_bindings) {
+      do_callback(binding, instance_id, InputState::Pressed);
+    }
+  }
 }
 
 auto Input::find_conflicts(this const Input& self, const ActionBinding& binding) -> std::vector<std::string> {
@@ -431,217 +712,5 @@ auto Input::remove_from_reverse_map(this Input& self, const ActionBinding& bindi
 
   remove_inputs(binding.primary_inputs);
   remove_inputs(binding.secondary_inputs);
-}
-
-auto Input::get_mouse_position(this const Input& self) -> glm::vec2 { return self.input_data.mouse_pos; }
-
-auto Input::get_mouse_position_rel(this const Input& self) -> glm::vec2 { return self.input_data.mouse_pos_rel; }
-
-auto Input::set_mouse_position_global(const float x, const float y) -> void {
-  ZoneScoped;
-
-  SDL_WarpMouseGlobal(x, y);
-}
-
-auto Input::get_relative_mouse_mode_window(const Window& window) -> bool {
-  ZoneScoped;
-
-  return SDL_GetWindowRelativeMouseMode(static_cast<SDL_Window*>(window.get_handle()));
-}
-
-auto Input::set_relative_mouse_mode_window(const Window& window, bool enabled) -> void {
-  ZoneScoped;
-
-  SDL_SetWindowRelativeMouseMode(static_cast<SDL_Window*>(window.get_handle()), enabled);
-}
-
-auto Input::set_mouse_position_window(const Window& window, glm::vec2 position) -> void {
-  ZoneScoped;
-
-  SDL_WarpMouseInWindow(static_cast<SDL_Window*>(window.get_handle()), position.x, position.y);
-}
-
-auto Input::get_mouse_offset_x() -> f32 {
-  ZoneScoped;
-
-  return input_data.mouse_offset_x;
-}
-
-auto Input::get_mouse_offset_y() -> f32 {
-  ZoneScoped;
-
-  return input_data.mouse_offset_y;
-}
-
-auto Input::get_mouse_scroll_offset_y() -> f32 {
-  ZoneScoped;
-
-  return input_data.scroll_offset_y;
-}
-
-auto Input::get_mouse_moved() -> bool {
-  ZoneScoped;
-
-  return input_data.mouse_moved;
-}
-
-auto Input::get_gamepad_button_pressed(this const Input& self, u32 instance_id, const GamepadButtonCode button)
-  -> bool {
-  ZoneScoped;
-
-  const auto it = self.input_data.gamepad_data_map.find(instance_id);
-  if (it != self.input_data.gamepad_data_map.end()) {
-    const auto button_it = it->second.gamepad_pressed.find(button);
-    if (button_it != it->second.gamepad_pressed.end()) {
-      return button_it->second;
-    }
-  }
-
-  return false;
-}
-
-auto Input::get_gamepad_button_released(this const Input& self, u32 instance_id, const GamepadButtonCode button)
-  -> bool {
-  ZoneScoped;
-
-  const auto it = self.input_data.gamepad_data_map.find(instance_id);
-  if (it != self.input_data.gamepad_data_map.end()) {
-    const auto button_it = it->second.gamepad_released.find(button);
-    if (button_it != it->second.gamepad_released.end()) {
-      return button_it->second;
-    }
-  }
-
-  return false;
-}
-
-auto Input::get_gamepad_button_held(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool {
-  ZoneScoped;
-
-  const auto it = self.input_data.gamepad_data_map.find(instance_id);
-  if (it != self.input_data.gamepad_data_map.end()) {
-    const auto button_it = it->second.gamepad_held.find(button);
-    if (button_it != it->second.gamepad_held.end()) {
-      return button_it->second;
-    }
-  }
-
-  return false;
-}
-
-auto Input::set_mod(const ModCode mod) -> void {
-  ZoneScoped;
-
-  input_data.mod_code = mod;
-}
-
-auto Input::set_key_pressed(u32 instance_id, const KeyCode key, const bool state) -> void {
-  ZoneScoped;
-
-  input_data.key_pressed.insert_or_assign(key, state);
-
-  if (state) {
-    for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Pressed);
-    }
-  }
-}
-
-void Input::set_key_released(u32 instance_id, const KeyCode key, const bool state) {
-  ZoneScoped;
-
-  input_data.key_released.insert_or_assign(key, state);
-
-  if (state) {
-    for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Released);
-    }
-  }
-}
-
-void Input::set_key_held(u32 instance_id, const KeyCode key, const bool state) {
-  ZoneScoped;
-
-  input_data.key_held.insert_or_assign(key, state);
-
-  if (state) {
-    for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Held);
-    }
-  }
-}
-
-void Input::set_mouse_clicked(u32 instance_id, const MouseCode key, const bool state) {
-  ZoneScoped;
-
-  input_data.mouse_pressed.insert_or_assign(key, state);
-
-  if (state) {
-    for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Pressed);
-    }
-  }
-}
-
-void Input::set_mouse_released(u32 instance_id, const MouseCode key, const bool state) {
-  ZoneScoped;
-
-  input_data.mouse_released.insert_or_assign(key, state);
-
-  if (state) {
-    for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Released);
-    }
-  }
-}
-
-void Input::set_mouse_held(u32 instance_id, const MouseCode key, const bool state) {
-  ZoneScoped;
-
-  input_data.mouse_held.insert_or_assign(key, state);
-
-  if (state) {
-    for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Held);
-    }
-  }
-}
-
-auto Input::set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode button, const bool state) -> void {
-  ZoneScoped;
-
-  const auto it = input_data.gamepad_data_map.find(instance_id);
-  if (it != input_data.gamepad_data_map.end()) {
-    it->second.gamepad_pressed.insert_or_assign(button, state);
-  } else {
-    auto data = InputData::GamepadData{};
-    data.gamepad_pressed.insert_or_assign(button, state);
-    input_data.gamepad_data_map.insert_or_assign(instance_id, data);
-  }
-
-  if (state) {
-    for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Pressed);
-    }
-  }
-}
-
-auto Input::set_gamepad_button_released(u32 instance_id, const GamepadButtonCode button, const bool state) -> void {
-  ZoneScoped;
-
-  const auto it = input_data.gamepad_data_map.find(instance_id);
-  if (it != input_data.gamepad_data_map.end()) {
-    it->second.gamepad_released.insert_or_assign(button, state);
-  } else {
-    auto data = InputData::GamepadData{};
-    data.gamepad_released.insert_or_assign(button, state);
-    input_data.gamepad_data_map.insert_or_assign(instance_id, data);
-  }
-
-  if (state) {
-    for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Pressed);
-    }
-  }
 }
 } // namespace ox

@@ -104,6 +104,8 @@ class Input {
 public:
   constexpr static auto MODULE_NAME = "Input";
 
+  constexpr static auto DEFAULT_INSTANCE_ID = 0_u32;
+
   enum class CursorState { Disabled = 0x00034003, Normal = 0x00034001, Hidden = 0x00034002 };
 
   auto init() -> std::expected<void, std::string>;
@@ -135,9 +137,9 @@ public:
   auto get_action_axis(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> f32;
 
   /// Keyboard
-  auto get_key_pressed(this const Input& self, const KeyCode key) -> bool;
-  auto get_key_released(this const Input& self, const KeyCode key) -> bool;
-  auto get_key_held(this const Input& self, const KeyCode key) -> bool;
+  auto get_key_pressed(this const Input& self, const KeyCode key, u32 instance_id = DEFAULT_INSTANCE_ID) -> bool;
+  auto get_key_released(this const Input& self, const KeyCode key, u32 instance_id = DEFAULT_INSTANCE_ID) -> bool;
+  auto get_key_held(this const Input& self, const KeyCode key, u32 instance_id = DEFAULT_INSTANCE_ID) -> bool;
 
   /// Mouse
   auto get_mouse_clicked(this const Input& self, const MouseCode key) -> bool;
@@ -145,6 +147,10 @@ public:
   auto get_mouse_held(this const Input& self, const MouseCode key) -> bool;
   auto get_mouse_position(this const Input& self) -> glm::vec2;
   auto get_mouse_position_rel(this const Input& self) -> glm::vec2;
+  auto get_mouse_offset_x(this const Input& self) -> f32;
+  auto get_mouse_offset_y(this const Input& self) -> f32;
+  auto get_mouse_scroll_offset_y(this const Input& self) -> f32;
+  auto get_mouse_moved(this const Input& self) -> bool;
 
   auto set_mouse_position_global(float x, float y) -> void;
   auto set_mouse_position_window(const Window& window, glm::vec2 position) -> void;
@@ -152,13 +158,8 @@ public:
   auto get_relative_mouse_mode_window(const Window& window) -> bool;
   auto set_relative_mouse_mode_window(const Window& window, bool enabled) -> void;
 
-  auto get_mouse_offset_x() -> f32;
-  auto get_mouse_offset_y() -> f32;
-  auto get_mouse_scroll_offset_y() -> f32;
-  auto get_mouse_moved() -> bool;
-
   /// Gamepad
-  auto get_gamepad_button_pressed(this const Input& self, u32 instance_id, GamepadButtonCode button) -> bool;
+  auto get_gamepad_button_pressed(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
   auto get_gamepad_button_released(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
   auto get_gamepad_button_held(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
 
@@ -167,12 +168,30 @@ private:
 
   struct InputData {
     ModCode mod_code = {};
-    ankerl::unordered_dense::map<KeyCode, bool> key_pressed = {};
-    ankerl::unordered_dense::map<KeyCode, bool> key_released = {};
-    ankerl::unordered_dense::map<KeyCode, bool> key_held = {};
-    ankerl::unordered_dense::map<MouseCode, bool> mouse_pressed = {};
-    ankerl::unordered_dense::map<MouseCode, bool> mouse_released = {};
-    ankerl::unordered_dense::map<MouseCode, bool> mouse_held = {};
+
+    struct KeyboardData {
+      ankerl::unordered_dense::map<KeyCode, bool> key_pressed = {};
+      ankerl::unordered_dense::map<KeyCode, bool> key_released = {};
+      ankerl::unordered_dense::map<KeyCode, bool> key_held = {};
+    };
+
+    // Keyboard instance ID to data
+    ankerl::unordered_dense::map<u32, KeyboardData> keyboard_data_map = {};
+
+    struct MouseData {
+      ankerl::unordered_dense::map<MouseCode, bool> mouse_pressed = {};
+      ankerl::unordered_dense::map<MouseCode, bool> mouse_released = {};
+      ankerl::unordered_dense::map<MouseCode, bool> mouse_held = {};
+
+      glm::vec2 mouse_pos = {};
+      glm::vec2 mouse_pos_rel = {};
+      f32 mouse_offset_x = {};
+      f32 mouse_offset_y = {};
+      f32 scroll_offset_y = {};
+      bool mouse_moved = false;
+    };
+
+    MouseData mouse_data = {};
 
     struct GamepadData {
       ankerl::unordered_dense::map<GamepadButtonCode, bool> gamepad_pressed = {};
@@ -182,13 +201,6 @@ private:
 
     // Gamepad instance ID to data
     ankerl::unordered_dense::map<u32, GamepadData> gamepad_data_map = {};
-
-    f32 mouse_offset_x = {};
-    f32 mouse_offset_y = {};
-    f32 scroll_offset_y = {};
-    glm::vec2 mouse_pos = {};
-    glm::vec2 mouse_pos_rel = {};
-    bool mouse_moved = false;
   };
 
   InputData input_data = {};
@@ -200,10 +212,7 @@ private:
   std::unordered_multimap<std::string, ActionBinding> action_bindings = {};
   std::unordered_multimap<InputCode, std::string, InputCode::Hash> input_to_actions = {};
   std::chrono::milliseconds gamepad_repeat_delay = std::chrono::milliseconds(5);
-
-  auto find_conflicts(this const Input& self, const ActionBinding& binding) -> std::vector<std::string>;
-  auto add_to_reverse_map(this Input& self, const ActionBinding& binding) -> void;
-  auto remove_from_reverse_map(this Input& self, const ActionBinding& binding) -> void;
+  u32 default_keyboard_id = DEFAULT_INSTANCE_ID;
 
   enum class InputState { None, Pressed, Released, Held };
   auto do_callback(const ActionBinding& binding, u32 instance_id, InputState state) -> void;
@@ -211,14 +220,25 @@ private:
     -> bool;
 
   auto set_mod(const ModCode mod) -> void;
+
+  auto set_default_keyboard_id(u32 instance_id) -> void;
   auto set_key_pressed(u32 instance_id, const KeyCode key, const bool state) -> void;
   void set_key_released(u32 instance_id, const KeyCode key, const bool state);
   void set_key_held(u32 instance_id, const KeyCode key, const bool state);
-  void set_mouse_clicked(u32 instance_id, const MouseCode key, const bool state);
-  void set_mouse_released(u32 instance_id, const MouseCode key, const bool state);
-  void set_mouse_held(u32 instance_id, const MouseCode key, const bool state);
+
+  void set_mouse_clicked(const MouseCode key, const bool state);
+  void set_mouse_released(const MouseCode key, const bool state);
+  void set_mouse_held(const MouseCode key, const bool state);
+  void set_mouse_position(const glm::vec2& position);
+  void set_mouse_position_rel(const glm::vec2& position);
+  void set_mouse_scroll_offset_y(const f32 offset);
+  void set_mouse_moved(bool state);
 
   auto set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode button, const bool state) -> void;
   auto set_gamepad_button_released(u32 instance_id, const GamepadButtonCode button, const bool state) -> void;
+
+  auto find_conflicts(this const Input& self, const ActionBinding& binding) -> std::vector<std::string>;
+  auto add_to_reverse_map(this Input& self, const ActionBinding& binding) -> void;
+  auto remove_from_reverse_map(this Input& self, const ActionBinding& binding) -> void;
 };
 } // namespace ox
