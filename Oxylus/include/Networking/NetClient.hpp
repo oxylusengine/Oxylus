@@ -33,7 +33,8 @@ struct NetClient {
   auto disconnect(this NetClient&, bool immediate, u32 data = 0) -> void;
   auto tick(this NetClient&, const Timestep& ts) -> void;
 
-  auto send(this NetClient&, NetPacket& packet, NetPacketFlag flags) -> void;
+  auto send_reliable(this NetClient&, NetPacket& packet) -> void;
+  auto send_unreliable(this NetClient&, NetPacket& packet) -> void;
   auto handle_net_packet(this NetClient&, NetPacketType type, const void* packet_data, usize packet_size) -> void;
 };
 } // namespace ox

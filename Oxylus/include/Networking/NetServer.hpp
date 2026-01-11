@@ -8,12 +8,19 @@
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+struct NetScene {
+  UUID scene = {};
+  std::vector<NetClientID> clients = {};
+};
+
 struct NetServer {
   ENetHost* local_host = nullptr;
   SlotMap<NetClient, NetClientID> remote_clients = {};
   u64 net_id_counter = 0;
+
   ankerl::unordered_dense::map<NetClientID, SceneSnapshotBuilder> client_snapshots = {};
-  UUID active_scene = {};
+  ankerl::unordered_dense::map<UUID, NetScene> scenes = {};
+  ankerl::unordered_dense::map<NetClientID, usize> client_to_scene = {};
 
   NetServer(ENetHost* local_host_) : local_host(local_host_) {};
   virtual ~NetServer() = default;
@@ -25,8 +32,10 @@ struct NetServer {
     this NetServer&, ENetPeer* remote_peer, NetPacketType type, const void* packet_data, usize packet_size
   ) -> void;
 
+  auto load_scene(this NetServer&, const UUID& uuid) -> bool;
+
   virtual auto on_client_connect(NetClientID client_id) -> void {};
   virtual auto on_client_disconnect(NetClientID client_id) -> void {};
-  virtual auto on_game_packet(NetClientID client_id, const void* packet_data, usize packet_size) -> void {};
+  virtual auto on_client_rpc(NetClientID client_id, const void* packet_data, usize packet_size) -> void {};
 };
 } // namespace ox

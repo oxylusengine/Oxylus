@@ -22,6 +22,30 @@ auto NetServer::tick_scene(this NetServer& self, const Timestep& ts) -> void {
   ZoneScoped;
 
   auto& asset_man = App::mod<AssetManager>();
+
+  // I think it's better to first update all scenes
+  for (const auto& [scene_uuid, _] : self.scenes) {
+    auto* scene = asset_man.get_scene(scene_uuid);
+    scene->runtime_update(ts);
+  }
+
+  for (const auto& [scene_uuid, net_scene] : self.scenes) {
+    auto* scene = asset_man.get_scene(scene_uuid);
+    auto tick_state = SceneState{};
+    SceneSnapshotBuilder::take_snapshot(scene->world, tick_state);
+    for (const auto& client_id : net_scene.clients) {
+      auto& [_, client_snapshot] = *self.client_snapshots.find(client_id);
+      auto* client = self.remote_clients.slot(client_id);
+
+      client_snapshot.set_current(tick_state);
+      auto delta_state = client_snapshot.delta();
+      if (auto delta_state_packet = NetPacket::scene_snapshot(delta_state, client_snapshot.current_sequence)) {
+        client->send_unreliable(*delta_state_packet);
+      }
+
+      client_snapshot.advance();
+    }
+  }
 }
 
 auto NetServer::tick_network(this NetServer& self, const Timestep& ts) -> void {
@@ -100,12 +124,9 @@ auto NetServer::handle_net_packet(
       auto new_client_id = self.remote_clients.create_slot(NetClient(remote_peer, unique_net_id));
       remote_peer->data = reinterpret_cast<void*>(static_cast<uptr>(new_client_id));
 
-      if (auto accept_handshake_packet = NetPacket::prepare<NetHandshakePacket>(
-            {.version = 1, .net_id = unique_net_id},
-            NetPacketType::Handshake
-          )) {
+      if (auto accept_handshake_packet = NetPacket::handshake({.version = 1, .net_id = unique_net_id})) {
         auto client = self.remote_clients.slot(new_client_id);
-        client->send(accept_handshake_packet.value(), NetPacketFlag::Reliable);
+        client->send_reliable(accept_handshake_packet.value());
       }
 
       self.on_client_connect(client_id);
@@ -135,12 +156,31 @@ auto NetServer::handle_net_packet(
       auto& [_, state] = *client_snapshot_it;
       state.ack(packet->acked);
     } break;
-    case NetPacketType::Game: {
-      self.on_game_packet(client_id, packet_data, packet_size);
+    case NetPacketType::RPC: {
+      self.on_client_rpc(client_id, packet_data, packet_size);
     } break;
     case NetPacketType::Unknown: {
       OX_LOG_ERROR("Peer {} sent an unkown packet.");
     } break;
   }
 }
+
+auto NetServer::load_scene(this NetServer& self, const UUID& uuid) -> bool {
+  ZoneScoped;
+
+  if (self.scenes.contains(uuid)) {
+    // We already have refcounting inside assetman but...
+    return true;
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+  if (!asset_man.load_asset(uuid)) {
+    return false;
+  }
+
+  self.scenes.emplace(uuid, NetScene{.scene = uuid});
+
+  return true;
+}
+
 } // namespace ox

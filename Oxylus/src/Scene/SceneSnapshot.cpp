@@ -5,6 +5,14 @@
 #include "Scene/Components.hpp"
 
 namespace ox {
+auto SceneSnapshotBuilder::set_current(this SceneSnapshotBuilder& self, SceneState& new_state) -> void {
+  ZoneScoped;
+
+  auto& current = self.current();
+  current.clear();
+  current = new_state; // There is gotta be a way to optimize this copy
+}
+
 auto SceneSnapshotBuilder::advance(this SceneSnapshotBuilder& self) -> void {
   ZoneScoped;
 
@@ -16,7 +24,7 @@ auto SceneSnapshotBuilder::advance(this SceneSnapshotBuilder& self) -> void {
 auto SceneSnapshotBuilder::find_last_acked(this SceneSnapshotBuilder& self) -> option<u8> {
   ZoneScoped;
 
-  for (auto i = 1_u32; i < MAX_SEQUENCES; i++) {
+  for (auto i = 1_u8; i < MAX_SEQUENCES; i++) {
     auto seq = (self.current_sequence + MAX_SEQUENCES - 1) % MAX_SEQUENCES;
     if (self.acks[seq]) {
       return seq;
@@ -82,8 +90,7 @@ auto SceneSnapshotBuilder::delta(this SceneSnapshotBuilder& self) -> SceneState 
   return delta;
 }
 
-auto SceneSnapshotBuilder::take_snapshot(this SceneSnapshotBuilder& self, flecs::world& world, SceneState& state)
-  -> void {
+auto SceneSnapshotBuilder::take_snapshot(flecs::world& world, SceneState& state) -> void {
   ZoneScoped;
 
   world.query_builder()

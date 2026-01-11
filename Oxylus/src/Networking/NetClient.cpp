@@ -53,8 +53,8 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> void {
         OX_LOG_INFO("NetClient connected.");
         self.status = NetClientStatus::Connected;
 
-        if (auto handshake_packet = NetPacket::prepare<NetHandshakePacket>({.version = 1}, NetPacketType::Handshake)) {
-          self.send(handshake_packet.value(), NetPacketFlag::Reliable);
+        if (auto handshake_packet = NetPacket::handshake({.version = 1})) {
+          self.send_reliable(handshake_packet.value());
         }
       } break;
       case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
@@ -106,12 +106,20 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> void {
   }
 }
 
-auto NetClient::send(this NetClient& self, NetPacket& packet, NetPacketFlag flags) -> void {
+auto NetClient::send_reliable(this NetClient& self, NetPacket& packet) -> void {
   ZoneScoped;
 
-  packet.set_flags(flags);
+  if (enet_peer_send(self.remote_peer, NET_CHANNEL_RELIABLE, packet) < 0) {
+    if (packet.can_destroy()) {
+      packet.destroy();
+    }
+  }
+}
 
-  if (enet_peer_send(self.remote_peer, 0, packet) < 0) {
+auto NetClient::send_unreliable(this NetClient& self, NetPacket& packet) -> void {
+  ZoneScoped;
+
+  if (enet_peer_send(self.remote_peer, NET_CHANNEL_UNRELIABLE, packet) < 0) {
     if (packet.can_destroy()) {
       packet.destroy();
     }
@@ -129,7 +137,14 @@ auto NetClient::handle_net_packet(this NetClient& self, NetPacketType type, cons
       }
       auto& handshake_packet = *static_cast<const NetHandshakePacket*>(packet_data);
       self.net_id = handshake_packet.net_id;
-      OX_LOG_INFO("{}", self.net_id);
+    } break;
+    case NetPacketType::SceneSnapshot: {
+    } break;
+    case NetPacketType::ClientAck: {
+      // Not our job
+    } break;
+    case NetPacketType::RPC: {
+      // TODO
     } break;
     case NetPacketType::Unknown: {
     } break;

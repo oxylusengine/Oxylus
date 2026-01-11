@@ -1,31 +1,20 @@
 #pragma once
 
+#include <span>
+
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
 #include "Networking/Fwd.hpp"
+#include "Scene/SceneSnapshot.hpp"
 
 namespace ox {
-enum class NetPacketType : u32 {
+enum class NetPacketType : u8 {
   Unknown = 0,
   Handshake,
   SceneSnapshot,
   ClientAck,
-
-  // This packet is entirely handled by the "game".
-  // There is no additional checks done byNetServer/NetClient.
-  Game,
+  RPC,
 };
-
-enum class NetPacketFlag : u32 {
-  None = 0,
-  Reliable = 1 << 0,
-  Unsequenced = 1 << 1,
-  NoAllocate = 1 << 2,
-  UnreliableFragment = 1 << 3,
-  Unthrottled = 1 << 4,
-  Sent = 1 << 8,
-};
-consteval auto enable_bitmask(NetPacketFlag);
 
 // Builtin packets
 struct NetHandshakePacket {
@@ -34,27 +23,36 @@ struct NetHandshakePacket {
 };
 
 struct NetSceneSnapshotPacket {
-  u32 sequence = 0;
+  u8 sequence = 0;
   u32 entitiy_count = 0;
   u32 removed_entity_count = 0;
 };
 
 struct NetClientAckPacket {
-  u32 acked = 0;
+  u8 acked = 0;
+};
+
+struct NetRPCPacket {
+  struct Parameter {
+    u16 data_size = 0;
+    void *data = nullptr;
+  };
+
+  u64 proc_hash = 0;
+  u8 parameter_count = 0;
+  u16 total_parameters_size = 0;
+  std::span<Parameter> parameters = {};
 };
 
 struct NetPacket {
   ENetPacket* inner = nullptr;
 
-  static auto prepare_raw(NetPacketType type, usize packet_size, const void* initial_data = nullptr)
-    -> option<NetPacket>;
-  template <typename T>
-  static auto prepare(const T& packet, NetPacketType type) -> option<NetPacket> {
-    return prepare_raw(type, sizeof(T), &packet);
-  }
+  static auto handshake(const NetHandshakePacket& info) -> option<NetPacket>;
+  static auto scene_snapshot(SceneState& state, u8 sequence) -> option<NetPacket>;
+  static auto client_ack(const NetClientAckPacket& info) -> option<NetPacket>;
+  static auto rpc(std::string_view proc, std::span<NetRPCPacket::Parameter> params) -> option<NetPacket>;
 
   auto destroy(this NetPacket&) -> void;
-  auto set_flags(this NetPacket&, NetPacketFlag flags) -> NetPacket&;
 
   auto decr_ref(this NetPacket&) -> usize;
   auto can_destroy(this NetPacket&) -> bool;
