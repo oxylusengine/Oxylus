@@ -35,8 +35,11 @@ struct NetClientAckPacket {
 struct NetRPCPacket {
   struct Parameter {
     u16 data_size = 0;
-    void *data = nullptr;
+    void* data = nullptr;
   };
+
+  template <typename T>
+  using Callback = void (*)(T&, std::span<Parameter>);
 
   u64 proc_hash = 0;
   u8 parameter_count = 0;

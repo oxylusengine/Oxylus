@@ -25,6 +25,8 @@ struct NetClient {
   f64 timeout_elapsed = 0.0f;
   f64 timeout_max = 0.0f;
 
+  ankerl::unordered_dense::map<u64, NetRPCPacket::Callback<NetClient>> rpcs = {};
+
   NetClient(ENetHost* local_host_) : local_host(local_host_) {};
   NetClient(ENetPeer* remote_peer_, u64 net_id_) : remote_peer(remote_peer_), net_id(net_id_) {};
   virtual ~NetClient() = default;
@@ -36,5 +38,8 @@ struct NetClient {
   auto send_reliable(this NetClient&, NetPacket& packet) -> void;
   auto send_unreliable(this NetClient&, NetPacket& packet) -> void;
   auto handle_net_packet(this NetClient&, NetPacketType type, const void* packet_data, usize packet_size) -> void;
+
+  // RPC
+  static auto test(NetClient&, std::span<NetRPCPacket::Parameter> params) -> void;
 };
 } // namespace ox
