@@ -205,13 +205,13 @@ auto Window::update(const Timestep& timestep) -> void {
     const auto ox_mod = static_cast<ModCode>(mods);
     input_system.set_mod(ox_mod);
     if (down) {
-      input_system.set_key_pressed(instance_id, ox_key_code, !repeat);
-      input_system.set_key_released(instance_id, ox_key_code, false);
-      input_system.set_key_held(instance_id, ox_key_code, true);
+      input_system.set_key_pressed(ox_key_code, !repeat);
+      input_system.set_key_released(ox_key_code, false);
+      input_system.set_key_held(ox_key_code, true);
     } else {
-      input_system.set_key_pressed(instance_id, ox_key_code, false);
-      input_system.set_key_released(instance_id, ox_key_code, true);
-      input_system.set_key_held(instance_id, ox_key_code, false);
+      input_system.set_key_pressed(ox_key_code, false);
+      input_system.set_key_released(ox_key_code, true);
+      input_system.set_key_held(ox_key_code, false);
     }
   };
   window_callbacks.on_text_input = [](void* user_data, const c8* text) {

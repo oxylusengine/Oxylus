@@ -12,10 +12,7 @@ auto Input::deinit() -> std::expected<void, std::string> { return {}; }
 auto Input::reset_pressed() -> void {
   ZoneScoped;
 
-  for (auto& [id, data] : input_data.keyboard_data_map) {
-    data.key_pressed.clear();
-  }
-
+  input_data.keyboard_data.key_pressed.clear();
   input_data.mouse_data.mouse_pressed.clear();
   input_data.mouse_data.scroll_offset_y = 0;
   input_data.mouse_data.mouse_moved = false;
@@ -28,7 +25,7 @@ auto Input::reset_pressed() -> void {
 auto Input::reset() -> void {
   ZoneScoped;
 
-  input_data.keyboard_data_map.clear();
+  input_data.keyboard_data = {};
   input_data.mouse_data = {};
   input_data.gamepad_data_map.clear();
 }
@@ -134,11 +131,13 @@ auto Input::get_active_context(this const Input& self) -> std::string_view {
   return self.active_context;
 }
 
-auto Input::do_callback(const ActionBinding& binding, const u32 instance_id, const InputState state) -> void {
+auto Input::do_callback(
+  const ActionBinding& binding, const u32 instance_id, const InputState state, const InputType type
+) -> void {
   bool active = false;
 
   for (const auto& input : binding.primary_inputs) {
-    if (check_input_active(input, instance_id, state)) {
+    if (check_input_active(input, instance_id, state, type)) {
       active = true;
       break;
     }
@@ -146,7 +145,7 @@ auto Input::do_callback(const ActionBinding& binding, const u32 instance_id, con
 
   if (!active) {
     for (const auto& input : binding.secondary_inputs) {
-      if (check_input_active(input, instance_id, state)) {
+      if (check_input_active(input, instance_id, state, type)) {
         active = true;
         break;
       }
@@ -179,15 +178,20 @@ auto Input::do_callback(const ActionBinding& binding, const u32 instance_id, con
 }
 
 auto Input::check_input_active(
-  this const Input& self, const InputCode& input, const u32 instance_id, InputState check_state
+  this const Input& self, const InputCode& input, const u32 instance_id, InputState check_state, InputType check_type
 ) -> bool {
   auto is_axis = input.type == InputType::GamepadAxis || input.type == InputType::MouseAxis;
   if (is_axis) {
     return false;
   }
 
+  if (input.type != InputType::Any && input.type != check_type) {
+    return false;
+  }
+
   const auto check = [&self, &input, instance_id, check_state] {
     switch (input.type) {
+      case InputType::Any     : OX_ASSERT(false, "Input type can not be Any!"); break;
       case InputType::Keyboard: {
         switch (check_state) {
           case InputState::Pressed : return self.get_key_pressed(input.key_code);
@@ -195,6 +199,7 @@ auto Input::check_input_active(
           case InputState::Held    : return self.get_key_held(input.key_code);
           case InputState::None    : return false;
         }
+        break;
       }
       case InputType::MouseButton: {
         switch (check_state) {
@@ -203,6 +208,7 @@ auto Input::check_input_active(
           case InputState::Held    : return self.get_mouse_held(input.mouse_code);
           case InputState::None    : return false;
         }
+        break;
       }
       case InputType::MouseAxis    : break;
       case InputType::GamepadButton: {
@@ -212,6 +218,7 @@ auto Input::check_input_active(
           case InputState::Held    : return false; // TODO: implement held state for gamepad buttons
           case InputState::None    : return false;
         }
+        break;
       }
       case InputType::GamepadAxis: break;
     }
@@ -240,11 +247,11 @@ auto Input::get_action_pressed(this const Input& self, std::string_view action_i
   }
 
   for (const auto& input : binding->primary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Pressed);
+    return self.check_input_active(input, instance_id, InputState::Pressed, InputType::Any);
   }
 
   for (const auto& input : binding->secondary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Pressed);
+    return self.check_input_active(input, instance_id, InputState::Pressed, InputType::Any);
   }
 
   return false;
@@ -259,11 +266,11 @@ auto Input::get_action_released(this const Input& self, std::string_view action_
   }
 
   for (const auto& input : binding->primary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Released);
+    return self.check_input_active(input, instance_id, InputState::Released, InputType::Any);
   }
 
   for (const auto& input : binding->secondary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Released);
+    return self.check_input_active(input, instance_id, InputState::Released, InputType::Any);
   }
 
   return false;
@@ -278,11 +285,11 @@ auto Input::get_action_held(this const Input& self, std::string_view action_id, 
   }
 
   for (const auto& input : binding->primary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Held);
+    return self.check_input_active(input, instance_id, InputState::Held, InputType::Any);
   }
 
   for (const auto& input : binding->secondary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Held);
+    return self.check_input_active(input, instance_id, InputState::Held, InputType::Any);
   }
 
   return false;
@@ -296,43 +303,34 @@ auto Input::get_action_axis(this const Input& self, std::string_view action_id, 
   return 0.f;
 }
 
-auto Input::get_key_pressed(this const Input& self, const KeyCode key, const u32 instance_id) -> bool {
+auto Input::get_key_pressed(this const Input& self, const KeyCode key) -> bool {
   ZoneScoped;
 
-  const auto it = self.input_data.keyboard_data_map.find(instance_id);
-  if (it != self.input_data.keyboard_data_map.end()) {
-    const auto button_it = it->second.key_pressed.find(key);
-    if (button_it != it->second.key_pressed.end()) {
-      return button_it->second;
-    }
+  const auto it = self.input_data.keyboard_data.key_pressed.find(key);
+  if (it != self.input_data.keyboard_data.key_pressed.end()) {
+    return it->second;
   }
 
   return false;
 }
 
-auto Input::get_key_released(this const Input& self, const KeyCode key, const u32 instance_id) -> bool {
+auto Input::get_key_released(this const Input& self, const KeyCode key) -> bool {
   ZoneScoped;
 
-  const auto it = self.input_data.keyboard_data_map.find(instance_id);
-  if (it != self.input_data.keyboard_data_map.end()) {
-    const auto button_it = it->second.key_released.find(key);
-    if (button_it != it->second.key_released.end()) {
-      return button_it->second;
-    }
+  const auto it = self.input_data.keyboard_data.key_pressed.find(key);
+  if (it != self.input_data.keyboard_data.key_pressed.end()) {
+    return it->second;
   }
 
   return false;
 }
 
-auto Input::get_key_held(this const Input& self, const KeyCode key, const u32 instance_id) -> bool {
+auto Input::get_key_held(this const Input& self, const KeyCode key) -> bool {
   ZoneScoped;
 
-  const auto it = self.input_data.keyboard_data_map.find(instance_id);
-  if (it != self.input_data.keyboard_data_map.end()) {
-    const auto button_it = it->second.key_held.find(key);
-    if (button_it != it->second.key_held.end()) {
-      return button_it->second;
-    }
+  const auto it = self.input_data.keyboard_data.key_held.find(key);
+  if (it != self.input_data.keyboard_data.key_held.end()) {
+    return it->second;
   }
 
   return false;
@@ -491,59 +489,38 @@ auto Input::set_default_keyboard_id(u32 instance_id) -> void {
   default_keyboard_id = instance_id;
 }
 
-auto Input::set_key_pressed(u32 instance_id, const KeyCode key, const bool state) -> void {
+auto Input::set_key_pressed(const KeyCode key, const bool state) -> void {
   ZoneScoped;
 
-  const auto it = input_data.keyboard_data_map.find(instance_id);
-  if (it != input_data.keyboard_data_map.end()) {
-    it->second.key_pressed.insert_or_assign(key, state);
-  } else {
-    auto data = InputData::KeyboardData{};
-    data.key_pressed.insert_or_assign(key, state);
-    input_data.keyboard_data_map.insert_or_assign(instance_id, data);
-  }
+  input_data.keyboard_data.key_pressed.insert_or_assign(key, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Pressed);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Pressed, InputType::Keyboard);
     }
   }
 }
 
-void Input::set_key_released(u32 instance_id, const KeyCode key, const bool state) {
+void Input::set_key_released(const KeyCode key, const bool state) {
   ZoneScoped;
 
-  const auto it = input_data.keyboard_data_map.find(instance_id);
-  if (it != input_data.keyboard_data_map.end()) {
-    it->second.key_released.insert_or_assign(key, state);
-  } else {
-    auto data = InputData::KeyboardData{};
-    data.key_released.insert_or_assign(key, state);
-    input_data.keyboard_data_map.insert_or_assign(instance_id, data);
-  }
+  input_data.keyboard_data.key_released.insert_or_assign(key, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Released);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Released, InputType::Keyboard);
     }
   }
 }
 
-void Input::set_key_held(u32 instance_id, const KeyCode key, const bool state) {
+void Input::set_key_held(const KeyCode key, const bool state) {
   ZoneScoped;
 
-  const auto it = input_data.keyboard_data_map.find(instance_id);
-  if (it != input_data.keyboard_data_map.end()) {
-    it->second.key_held.insert_or_assign(key, state);
-  } else {
-    auto data = InputData::KeyboardData{};
-    data.key_held.insert_or_assign(key, state);
-    input_data.keyboard_data_map.insert_or_assign(instance_id, data);
-  }
+  input_data.keyboard_data.key_held.insert_or_assign(key, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Held);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Held, InputType::Keyboard);
     }
   }
 }
@@ -555,7 +532,7 @@ void Input::set_mouse_clicked(const MouseCode key, const bool state) {
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Pressed);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Pressed, InputType::MouseButton);
     }
   }
 }
@@ -567,7 +544,7 @@ void Input::set_mouse_released(const MouseCode key, const bool state) {
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Released);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Released, InputType::MouseButton);
     }
   }
 }
@@ -579,7 +556,7 @@ void Input::set_mouse_held(const MouseCode key, const bool state) {
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Held);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Held, InputType::MouseButton);
     }
   }
 }
@@ -628,7 +605,7 @@ auto Input::set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode 
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Pressed);
+      do_callback(binding, instance_id, InputState::Pressed, InputType::GamepadButton);
     }
   }
 }
@@ -647,7 +624,7 @@ auto Input::set_gamepad_button_released(u32 instance_id, const GamepadButtonCode
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Pressed);
+      do_callback(binding, instance_id, InputState::Pressed, InputType::GamepadButton);
     }
   }
 }

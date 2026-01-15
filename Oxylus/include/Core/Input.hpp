@@ -14,7 +14,7 @@ struct Window;
 
 enum class BindingError { ActionNotFound, InvalidInput, ContextNotFound };
 
-enum class InputType : u8 { Keyboard, MouseButton, MouseAxis, GamepadButton, GamepadAxis };
+enum class InputType : u8 { Any, Keyboard, MouseButton, MouseAxis, GamepadButton, GamepadAxis };
 
 struct InputCode {
   KeyCode key_code = KeyCode::None;
@@ -61,6 +61,7 @@ struct InputCode {
       usize h1 = std::hash<i32>{}(static_cast<int>(ic.type));
       usize h2 = {};
       switch (ic.type) {
+        case InputType::Any          : break;
         case InputType::Keyboard     : h2 = std::hash<u16>{}(static_cast<u16>(ic.key_code)); break;
         case InputType::MouseButton  : h2 = std::hash<u16>{}(static_cast<u16>(ic.mouse_code)); break;
         case InputType::MouseAxis    : break;
@@ -137,9 +138,9 @@ public:
   auto get_action_axis(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> f32;
 
   /// Keyboard
-  auto get_key_pressed(this const Input& self, const KeyCode key, u32 instance_id = DEFAULT_INSTANCE_ID) -> bool;
-  auto get_key_released(this const Input& self, const KeyCode key, u32 instance_id = DEFAULT_INSTANCE_ID) -> bool;
-  auto get_key_held(this const Input& self, const KeyCode key, u32 instance_id = DEFAULT_INSTANCE_ID) -> bool;
+  auto get_key_pressed(this const Input& self, const KeyCode key) -> bool;
+  auto get_key_released(this const Input& self, const KeyCode key) -> bool;
+  auto get_key_held(this const Input& self, const KeyCode key) -> bool;
 
   /// Mouse
   auto get_mouse_clicked(this const Input& self, const MouseCode key) -> bool;
@@ -175,8 +176,7 @@ private:
       ankerl::unordered_dense::map<KeyCode, bool> key_held = {};
     };
 
-    // Keyboard instance ID to data
-    ankerl::unordered_dense::map<u32, KeyboardData> keyboard_data_map = {};
+    KeyboardData keyboard_data = {};
 
     struct MouseData {
       ankerl::unordered_dense::map<MouseCode, bool> mouse_pressed = {};
@@ -215,16 +215,17 @@ private:
   u32 default_keyboard_id = DEFAULT_INSTANCE_ID;
 
   enum class InputState { None, Pressed, Released, Held };
-  auto do_callback(const ActionBinding& binding, u32 instance_id, InputState state) -> void;
-  auto check_input_active(this const Input& self, const InputCode& input, u32 instance_id, InputState check_state)
-    -> bool;
+  auto do_callback(const ActionBinding& binding, u32 instance_id, InputState state, const InputType type) -> void;
+  auto check_input_active(
+    this const Input& self, const InputCode& input, u32 instance_id, InputState check_state, InputType check_type
+  ) -> bool;
 
   auto set_mod(const ModCode mod) -> void;
 
   auto set_default_keyboard_id(u32 instance_id) -> void;
-  auto set_key_pressed(u32 instance_id, const KeyCode key, const bool state) -> void;
-  void set_key_released(u32 instance_id, const KeyCode key, const bool state);
-  void set_key_held(u32 instance_id, const KeyCode key, const bool state);
+  auto set_key_pressed(const KeyCode key, const bool state) -> void;
+  void set_key_released(const KeyCode key, const bool state);
+  void set_key_held(const KeyCode key, const bool state);
 
   void set_mouse_clicked(const MouseCode key, const bool state);
   void set_mouse_released(const MouseCode key, const bool state);
