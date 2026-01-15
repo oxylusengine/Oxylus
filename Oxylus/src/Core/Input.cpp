@@ -1,5 +1,6 @@
 #include "Core/Input.hpp"
 
+#include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_mouse.h>
 
 #include "Render/Window.hpp"
@@ -131,113 +132,6 @@ auto Input::get_active_context(this const Input& self) -> std::string_view {
   return self.active_context;
 }
 
-auto Input::do_callback(
-  const ActionBinding& binding, const u32 instance_id, const InputState state, const InputType type
-) -> void {
-  bool active = false;
-
-  for (const auto& input : binding.primary_inputs) {
-    if (check_input_active(input, instance_id, state, type)) {
-      active = true;
-      break;
-    }
-  }
-
-  if (!active) {
-    for (const auto& input : binding.secondary_inputs) {
-      if (check_input_active(input, instance_id, state, type)) {
-        active = true;
-        break;
-      }
-    }
-  }
-
-  if (active) {
-    switch (state) {
-      case InputState::None   : break;
-      case InputState::Pressed: {
-        if (binding.on_pressed_callback) {
-          binding.on_pressed_callback(ActionContext{.action_id = binding.action_id, .instance_id = instance_id});
-        }
-        break;
-      }
-      case InputState::Released: {
-        if (binding.on_released_callback) {
-          binding.on_released_callback(ActionContext{.action_id = binding.action_id, .instance_id = instance_id});
-        }
-        break;
-      }
-      case InputState::Held: {
-        if (binding.on_held_callback) {
-          binding.on_held_callback(ActionContext{.action_id = binding.action_id, .instance_id = instance_id});
-        }
-        break;
-      }
-    }
-  }
-}
-
-auto Input::check_input_active(
-  this const Input& self, const InputCode& input, const u32 instance_id, InputState check_state, InputType check_type
-) -> bool {
-  auto is_axis = input.type == InputType::GamepadAxis || input.type == InputType::MouseAxis;
-  if (is_axis) {
-    return false;
-  }
-
-  if (input.type != InputType::Any && input.type != check_type) {
-    return false;
-  }
-
-  const auto check = [&self, &input, instance_id, check_state] {
-    switch (input.type) {
-      case InputType::Any     : OX_ASSERT(false, "Input type can not be Any!"); break;
-      case InputType::Keyboard: {
-        switch (check_state) {
-          case InputState::Pressed : return self.get_key_pressed(input.key_code);
-          case InputState::Released: return self.get_key_released(input.key_code);
-          case InputState::Held    : return self.get_key_held(input.key_code);
-          case InputState::None    : return false;
-        }
-        break;
-      }
-      case InputType::MouseButton: {
-        switch (check_state) {
-          case InputState::Pressed : return self.get_mouse_clicked(input.mouse_code);
-          case InputState::Released: return self.get_mouse_released(input.mouse_code);
-          case InputState::Held    : return self.get_mouse_held(input.mouse_code);
-          case InputState::None    : return false;
-        }
-        break;
-      }
-      case InputType::MouseAxis    : break;
-      case InputType::GamepadButton: {
-        switch (check_state) {
-          case InputState::Pressed : return self.get_gamepad_button_pressed(instance_id, input.gamepad_button_code);
-          case InputState::Released: return self.get_gamepad_button_released(instance_id, input.gamepad_button_code);
-          case InputState::Held    : return false; // TODO: implement held state for gamepad buttons
-          case InputState::None    : return false;
-        }
-        break;
-      }
-      case InputType::GamepadAxis: break;
-    }
-
-    return false;
-  };
-
-  bool input_active = check();
-  if (!input_active) {
-    return false;
-  }
-
-  if (input.mod_code != ModCode::None) {
-    return mod_matches(self.input_data.mod_code, input.mod_code);
-  }
-
-  return true;
-}
-
 auto Input::get_action_pressed(this const Input& self, std::string_view action_id, u32 instance_id) -> bool {
   ZoneScoped;
 
@@ -298,7 +192,18 @@ auto Input::get_action_held(this const Input& self, std::string_view action_id, 
 auto Input::get_action_axis(this const Input& self, std::string_view action_id, u32 instance_id) -> f32 {
   ZoneScoped;
 
-  // TODO:
+  auto binding = self.get_active_binding(action_id);
+  if (!binding) {
+    return 0.f;
+  }
+
+  for (const auto& input : binding->primary_inputs) {
+    return self.check_input_axis(input, instance_id, input.type);
+  }
+
+  for (const auto& input : binding->secondary_inputs) {
+    return self.check_input_axis(input, instance_id, input.type);
+  }
 
   return 0.f;
 }
@@ -473,6 +378,20 @@ auto Input::get_gamepad_button_held(this const Input& self, u32 instance_id, con
   return false;
 }
 
+auto Input::get_gamepad_axis(this const Input& self, u32 instance_id, const GamepadAxisCode axis) -> f32 {
+  ZoneScoped;
+
+  const auto it = self.input_data.gamepad_data_map.find(instance_id);
+  if (it != self.input_data.gamepad_data_map.end()) {
+    const auto axis_it = it->second.gamepad_axises.find(axis);
+    if (axis_it != it->second.gamepad_axises.end()) {
+      return axis_it->second;
+    }
+  }
+
+  return 0.f;
+}
+
 auto Input::set_mod(const ModCode mod) -> void {
   ZoneScoped;
 
@@ -566,11 +485,9 @@ void Input::set_mouse_position(const glm::vec2& position) {
 
   input_data.mouse_data.mouse_pos = position;
 
-#if TODO
   for (const auto& [id, binding] : action_bindings) {
-    do_callback(binding, instance_id, InputState::None);
+    do_callback(binding, DEFAULT_INSTANCE_ID, InputState::None, InputType::MouseAxis);
   }
-#endif
 }
 
 void Input::set_mouse_position_rel(const glm::vec2& position) {
@@ -597,9 +514,11 @@ auto Input::set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode 
   const auto it = input_data.gamepad_data_map.find(instance_id);
   if (it != input_data.gamepad_data_map.end()) {
     it->second.gamepad_pressed.insert_or_assign(button, state);
+    it->second.gamepad_held.insert_or_assign(button, true);
   } else {
     auto data = InputData::GamepadData{};
     data.gamepad_pressed.insert_or_assign(button, state);
+    data.gamepad_held.insert_or_assign(button, true);
     input_data.gamepad_data_map.insert_or_assign(instance_id, data);
   }
 
@@ -616,9 +535,11 @@ auto Input::set_gamepad_button_released(u32 instance_id, const GamepadButtonCode
   const auto it = input_data.gamepad_data_map.find(instance_id);
   if (it != input_data.gamepad_data_map.end()) {
     it->second.gamepad_released.insert_or_assign(button, state);
+    it->second.gamepad_held.insert_or_assign(button, false);
   } else {
     auto data = InputData::GamepadData{};
     data.gamepad_released.insert_or_assign(button, state);
+    data.gamepad_held.insert_or_assign(button, false);
     input_data.gamepad_data_map.insert_or_assign(instance_id, data);
   }
 
@@ -627,6 +548,140 @@ auto Input::set_gamepad_button_released(u32 instance_id, const GamepadButtonCode
       do_callback(binding, instance_id, InputState::Pressed, InputType::GamepadButton);
     }
   }
+}
+
+auto Input::set_gamepad_axis(u32 instance_id, const GamepadAxisCode axis, f32 value) -> void {
+  ZoneScoped;
+
+  const auto it = input_data.gamepad_data_map.find(instance_id);
+  if (it != input_data.gamepad_data_map.end()) {
+    it->second.gamepad_axises.insert_or_assign(axis, value);
+  } else {
+    auto data = InputData::GamepadData{};
+    data.gamepad_axises.insert_or_assign(axis, value);
+    input_data.gamepad_data_map.insert_or_assign(instance_id, data);
+  }
+}
+
+auto Input::check_input_active(
+  this const Input& self, const InputCode& input, const u32 instance_id, InputState check_state, InputType check_type
+) -> bool {
+  auto is_axis = input.type == InputType::GamepadAxis || input.type == InputType::MouseAxis;
+  if (is_axis) {
+    return false;
+  }
+
+  if (input.type != InputType::Any && input.type != check_type) {
+    return false;
+  }
+
+  const auto check = [&self, &input, instance_id, check_state] {
+    switch (input.type) {
+      case InputType::Any     : OX_ASSERT(false, "Input type can not be Any!"); break;
+      case InputType::Keyboard: {
+        switch (check_state) {
+          case InputState::Pressed : return self.get_key_pressed(input.key_code);
+          case InputState::Released: return self.get_key_released(input.key_code);
+          case InputState::Held    : return self.get_key_held(input.key_code);
+          case InputState::None    : return false;
+        }
+        break;
+      }
+      case InputType::MouseButton: {
+        switch (check_state) {
+          case InputState::Pressed : return self.get_mouse_clicked(input.mouse_code);
+          case InputState::Released: return self.get_mouse_released(input.mouse_code);
+          case InputState::Held    : return self.get_mouse_held(input.mouse_code);
+          case InputState::None    : return false;
+        }
+        break;
+      }
+      case InputType::MouseAxis    : break;
+      case InputType::GamepadButton: {
+        switch (check_state) {
+          case InputState::Pressed : return self.get_gamepad_button_pressed(instance_id, input.gamepad_button_code);
+          case InputState::Released: return self.get_gamepad_button_released(instance_id, input.gamepad_button_code);
+          case InputState::Held    : return self.get_gamepad_button_held(instance_id, input.gamepad_button_code);
+          case InputState::None    : return false;
+        }
+        break;
+      }
+      case InputType::GamepadAxis: break;
+    }
+
+    return false;
+  };
+
+  bool input_active = check();
+  if (!input_active) {
+    return false;
+  }
+
+  if (input.mod_code != ModCode::None) {
+    return mod_matches(self.input_data.mod_code, input.mod_code);
+  }
+
+  return true;
+}
+
+auto Input::do_callback(
+  const ActionBinding& binding, const u32 instance_id, const InputState state, const InputType type
+) -> void {
+  bool active = false;
+
+  for (const auto& input : binding.primary_inputs) {
+    if (check_input_active(input, instance_id, state, type)) {
+      active = true;
+      break;
+    }
+  }
+
+  if (!active) {
+    for (const auto& input : binding.secondary_inputs) {
+      if (check_input_active(input, instance_id, state, type)) {
+        active = true;
+        break;
+      }
+    }
+  }
+
+  if (active) {
+    switch (state) {
+      case InputState::None   : break;
+      case InputState::Pressed: {
+        if (binding.on_pressed_callback) {
+          binding.on_pressed_callback(ActionContext{.action_id = binding.action_id, .instance_id = instance_id});
+        }
+        break;
+      }
+      case InputState::Released: {
+        if (binding.on_released_callback) {
+          binding.on_released_callback(ActionContext{.action_id = binding.action_id, .instance_id = instance_id});
+        }
+        break;
+      }
+      case InputState::Held: {
+        if (binding.on_held_callback) {
+          binding.on_held_callback(ActionContext{.action_id = binding.action_id, .instance_id = instance_id});
+        }
+        break;
+      }
+    }
+  }
+}
+
+auto Input::check_input_axis(
+  this const Input& self, const InputCode& input, const u32 instance_id, InputType check_type
+) -> f32 {
+  ZoneScoped;
+
+  switch (check_type) {
+    case InputType::MouseAxis  : return 0.f; // TODO:
+    case InputType::GamepadAxis: return self.get_gamepad_axis(instance_id, input.gamepad_axis_code);
+    default                    : break;
+  }
+
+  return 0.f;
 }
 
 auto Input::find_conflicts(this const Input& self, const ActionBinding& binding) -> std::vector<std::string> {

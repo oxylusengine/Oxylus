@@ -163,6 +163,7 @@ public:
   auto get_gamepad_button_pressed(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
   auto get_gamepad_button_released(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
   auto get_gamepad_button_held(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
+  auto get_gamepad_axis(this const Input& self, u32 instance_id, const GamepadAxisCode axis) -> f32;
 
 private:
   friend struct Window;
@@ -197,6 +198,8 @@ private:
       ankerl::unordered_dense::map<GamepadButtonCode, bool> gamepad_pressed = {};
       ankerl::unordered_dense::map<GamepadButtonCode, bool> gamepad_released = {};
       ankerl::unordered_dense::map<GamepadButtonCode, bool> gamepad_held = {};
+
+      ankerl::unordered_dense::map<GamepadAxisCode, f32> gamepad_axises = {};
     };
 
     // Gamepad instance ID to data
@@ -211,14 +214,8 @@ private:
   std::vector<std::string> context_stack = {};
   std::unordered_multimap<std::string, ActionBinding> action_bindings = {};
   std::unordered_multimap<InputCode, std::string, InputCode::Hash> input_to_actions = {};
-  std::chrono::milliseconds gamepad_repeat_delay = std::chrono::milliseconds(5);
+  std::chrono::nanoseconds gamepad_repeat_delay = std::chrono::nanoseconds(50);
   u32 default_keyboard_id = DEFAULT_INSTANCE_ID;
-
-  enum class InputState { None, Pressed, Released, Held };
-  auto do_callback(const ActionBinding& binding, u32 instance_id, InputState state, const InputType type) -> void;
-  auto check_input_active(
-    this const Input& self, const InputCode& input, u32 instance_id, InputState check_state, InputType check_type
-  ) -> bool;
 
   auto set_mod(const ModCode mod) -> void;
 
@@ -237,6 +234,15 @@ private:
 
   auto set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode button, const bool state) -> void;
   auto set_gamepad_button_released(u32 instance_id, const GamepadButtonCode button, const bool state) -> void;
+  auto set_gamepad_axis(u32 instance_id, const GamepadAxisCode axis, f32 value) -> void;
+
+  enum class InputState { None, Pressed, Released, Held };
+  auto do_callback(const ActionBinding& binding, u32 instance_id, InputState state, const InputType type) -> void;
+  auto check_input_active(
+    this const Input& self, const InputCode& input, u32 instance_id, InputState check_state, InputType check_type
+  ) -> bool;
+  auto check_input_axis(this const Input& self, const InputCode& input, const u32 instance_id, InputType check_type)
+    -> f32;
 
   auto find_conflicts(this const Input& self, const ActionBinding& binding) -> std::vector<std::string>;
   auto add_to_reverse_map(this Input& self, const ActionBinding& binding) -> void;

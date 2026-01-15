@@ -262,7 +262,9 @@ auto Window::update(const Timestep& timestep) -> void {
   };
 
   window_callbacks.on_gamepad_axis = [](void* user_data, u8 axis, i16 value, u32 instance_id) {
-
+    auto& input_system = App::mod<Input>();
+    auto ox_axis_code = static_cast<GamepadAxisCode>(axis);
+    input_system.set_gamepad_axis(instance_id, ox_axis_code, value);
   };
 
   window_callbacks.on_gamepad = [](void* user_data, u32 button_code, u32 instance_id, bool down) {
