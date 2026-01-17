@@ -343,6 +343,8 @@ enum class MouseCode : u16 {
   Backward = 5,
 };
 
+enum class MouseAxisCode : i16 { None = -1, AxisX, AxisY, AxisXY };
+
 enum class GamepadButtonCode : i16 {
   None = -1,
   South, /* Bottom face button (e.g. Xbox A button) */

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Core/Keycodes.hpp"
+#include "Core/Option.hpp"
 
 namespace ox {
 struct Window;
@@ -21,6 +22,7 @@ struct InputCode {
   MouseCode mouse_code = MouseCode::Left;
   GamepadButtonCode gamepad_button_code = GamepadButtonCode::None;
   GamepadAxisCode gamepad_axis_code = GamepadAxisCode::None;
+  MouseAxisCode mouse_axis_code = MouseAxisCode::None;
   ModCode mod_code = ModCode::None;
 
   // For axes: which direction counts as "pressed"
@@ -39,18 +41,19 @@ struct InputCode {
         mod_code(mod_code_),
         type(InputType::MouseButton) {}
 
+  InputCode(MouseAxisCode mouse_axis_ = MouseAxisCode::AxisX)
+      : mouse_axis_code(mouse_axis_),
+        type(InputType::MouseAxis) {}
+
   InputCode(GamepadButtonCode gamepad_button_code_ = GamepadButtonCode::None, ModCode mod_code_ = ModCode::None)
       : gamepad_button_code(gamepad_button_code_),
         mod_code(mod_code_),
         type(InputType::GamepadButton) {}
 
   InputCode(
-    GamepadAxisCode gamepad_axis_code_ = GamepadAxisCode::None,
-    ModCode mod_code_ = ModCode::None,
-    AxisDirection axis_direction_ = AxisDirection::Both
+    GamepadAxisCode gamepad_axis_code_ = GamepadAxisCode::None, AxisDirection axis_direction_ = AxisDirection::Both
   )
       : gamepad_axis_code(gamepad_axis_code_),
-        mod_code(mod_code_),
         axis_direction(axis_direction_),
         type(InputType::GamepadAxis) {}
 
@@ -82,7 +85,7 @@ enum class ActionType {
 struct ActionContext {
   std::string_view action_id = {};
   u32 instance_id = 0;
-  f32 axis_value = 0.f; // For axis actions
+  glm::vec2 axis_value = {}; // For axis actions
 };
 
 struct ActionBinding {
@@ -93,7 +96,8 @@ struct ActionBinding {
   std::function<void(const ActionContext&)> on_pressed_callback = nullptr;
   std::function<void(const ActionContext&)> on_released_callback = nullptr;
   std::function<void(const ActionContext&)> on_held_callback = nullptr;
-  std::function<void(const ActionContext&)> on_axis_callback = nullptr;
+  std::function<void(const ActionContext&)> on_mouse_axis_callback = nullptr;
+  std::function<void(const ActionContext&)> on_gamepad_axis_callback = nullptr;
 
   // Axis-specific settings
   f32 dead_zone = 0.15f;
@@ -135,7 +139,7 @@ public:
   auto get_action_pressed(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> bool;
   auto get_action_released(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> bool;
   auto get_action_held(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> bool;
-  auto get_action_axis(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> f32;
+  auto get_action_axis(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> glm::vec2;
 
   /// Keyboard
   auto get_key_pressed(this const Input& self, const KeyCode key) -> bool;
@@ -237,12 +241,16 @@ private:
   auto set_gamepad_axis(u32 instance_id, const GamepadAxisCode axis, f32 value) -> void;
 
   enum class InputState { None, Pressed, Released, Held };
-  auto do_callback(const ActionBinding& binding, u32 instance_id, InputState state, const InputType type) -> void;
+  struct CallbackInfo {
+    f32 axis_value = 0.f;
+    glm::vec2 axis_vec2_value = {};
+  };
+  auto do_callback(this const Input& self, const ActionBinding& binding, u32 instance_id, InputState state, glm::vec2 axis_value = {}) -> void;
   auto check_input_active(
     this const Input& self, const InputCode& input, u32 instance_id, InputState check_state, InputType check_type
   ) -> bool;
   auto check_input_axis(this const Input& self, const InputCode& input, const u32 instance_id, InputType check_type)
-    -> f32;
+    -> option<glm::vec2>;
 
   auto find_conflicts(this const Input& self, const ActionBinding& binding) -> std::vector<std::string>;
   auto add_to_reverse_map(this Input& self, const ActionBinding& binding) -> void;
