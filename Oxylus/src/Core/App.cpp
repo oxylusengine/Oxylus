@@ -32,7 +32,10 @@ App::App(int argc, char** argv) {
   instance_->command_line_args = AppCommandLineArgs{argc, argv};
 }
 
-App::~App() { is_running = false; }
+App::~App() {
+  is_running = false;
+  instance_ = nullptr;
+}
 
 void App::set_instance(App* instance) { instance_ = instance; }
 
