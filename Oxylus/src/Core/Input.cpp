@@ -662,6 +662,10 @@ auto Input::do_callback(
   const InputState state,
   InputType callback_type
 ) -> void {
+  if (self.active_context != binding.context) {
+    return;
+  }
+
   bool active = false;
   option<glm::vec2> axis = nullopt;
 
