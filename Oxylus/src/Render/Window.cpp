@@ -176,7 +176,7 @@ auto Window::update(const Timestep& timestep) -> void {
   window_callbacks.user_data = nullptr;
   window_callbacks.on_resize = [](void* user_data, const glm::uvec2 size) {
     auto& event_system = App::get_event_system();
-    auto emit_result = event_system.emit<WindowResizeEvent>(WindowResizeEvent{.width = size.x, .height = size.y});
+    std::ignore = event_system.emit<WindowResizeEvent>(WindowResizeEvent{.width = size.x, .height = size.y});
   };
   window_callbacks.on_close = [](void* user_data) {
     App::get()->should_stop();

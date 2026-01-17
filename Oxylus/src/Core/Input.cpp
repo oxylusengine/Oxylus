@@ -443,7 +443,7 @@ auto Input::set_key_pressed(const KeyCode key, const bool state) -> void {
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Pressed);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Pressed, InputType::Keyboard);
     }
   }
 }
@@ -455,7 +455,7 @@ void Input::set_key_released(const KeyCode key, const bool state) {
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Released);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Released, InputType::Keyboard);
     }
   }
 }
@@ -467,7 +467,7 @@ void Input::set_key_held(const KeyCode key, const bool state) {
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Held);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Held, InputType::Keyboard);
     }
   }
 }
@@ -479,7 +479,7 @@ void Input::set_mouse_clicked(const MouseCode key, const bool state) {
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Pressed);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Pressed, InputType::MouseButton);
     }
   }
 }
@@ -491,7 +491,7 @@ void Input::set_mouse_released(const MouseCode key, const bool state) {
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Released);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Released, InputType::MouseButton);
     }
   }
 }
@@ -503,7 +503,7 @@ void Input::set_mouse_held(const MouseCode key, const bool state) {
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Held);
+      do_callback(binding, DEFAULT_INSTANCE_ID, InputState::Held, InputType::MouseButton);
     }
   }
 }
@@ -514,7 +514,7 @@ void Input::set_mouse_position(const glm::vec2& position) {
   input_data.mouse_data.mouse_pos = position;
 
   for (const auto& [id, binding] : action_bindings) {
-    do_callback(binding, DEFAULT_INSTANCE_ID, InputState::None, glm::vec2(position));
+    do_callback(binding, DEFAULT_INSTANCE_ID, InputState::None, InputType::MouseAxis);
   }
 }
 
@@ -552,7 +552,7 @@ auto Input::set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode 
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Pressed);
+      do_callback(binding, instance_id, InputState::Pressed, InputType::GamepadButton);
     }
   }
 }
@@ -573,7 +573,7 @@ auto Input::set_gamepad_button_released(u32 instance_id, const GamepadButtonCode
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Pressed);
+      do_callback(binding, instance_id, InputState::Pressed, InputType::GamepadButton);
     }
   }
 }
@@ -591,7 +591,7 @@ auto Input::set_gamepad_axis(u32 instance_id, const GamepadAxisCode axis, f32 va
   }
 
   for (const auto& [id, binding] : action_bindings) {
-    do_callback(binding, instance_id, InputState::None, glm::vec2(value));
+    do_callback(binding, instance_id, InputState::None, InputType::GamepadAxis);
   }
 }
 
@@ -661,22 +661,38 @@ auto Input::do_callback(
   const ActionBinding& binding,
   const u32 instance_id,
   const InputState state,
-  glm::vec2 axis_value
+  InputType callback_type
 ) -> void {
   bool active = false;
   option<glm::vec2> axis = nullopt;
 
-  bool is_gamepad = false;
-  bool is_mouse = false;
+  const auto axis_callback = callback_type == InputType::MouseAxis || callback_type == InputType::GamepadAxis;
 
   for (const auto& input : binding.primary_inputs) {
-    is_gamepad = input.type == InputType::GamepadAxis;
-    is_mouse = input.type == InputType::MouseAxis;
-    if (is_gamepad || is_mouse) {
+    if (input.type != callback_type)
+      continue;
+
+    if (axis_callback) {
       axis = self.check_input_axis(input, instance_id, input.type);
       active = true;
       break;
-    } else {
+    }
+    if (self.check_input_active(input, instance_id, state, input.type)) {
+      active = true;
+      break;
+    }
+  }
+
+  if (!active) {
+    for (const auto& input : binding.secondary_inputs) {
+      if (input.type != callback_type)
+        continue;
+
+      if (axis_callback) {
+        axis = self.check_input_axis(input, instance_id, input.type);
+        active = true;
+        break;
+      }
       if (self.check_input_active(input, instance_id, state, input.type)) {
         active = true;
         break;
@@ -684,33 +700,17 @@ auto Input::do_callback(
     }
   }
 
-  if (!active) {
-    for (const auto& input : binding.secondary_inputs) {
-      is_gamepad = input.type == InputType::GamepadAxis;
-      is_mouse = input.type == InputType::MouseAxis;
-      if (is_gamepad || is_mouse) {
-        axis = self.check_input_axis(input, instance_id, input.type);
-        active = true;
-        break;
-      } else {
-        if (self.check_input_active(input, instance_id, state, input.type)) {
-          active = true;
-          break;
-        }
-      }
-    }
-  }
-
   if (active) {
     if (axis.has_value()) {
-      if (is_mouse) {
+      if (callback_type == InputType::MouseAxis) {
         if (binding.on_mouse_axis_callback) {
           binding.on_mouse_axis_callback(
             ActionContext{.action_id = binding.action_id, .instance_id = instance_id, .axis_value = *axis}
           );
         }
         return;
-      } else if (is_gamepad) {
+      }
+      if (callback_type == InputType::GamepadAxis) {
         if (binding.on_gamepad_axis_callback) {
           binding.on_gamepad_axis_callback(
             ActionContext{.action_id = binding.action_id, .instance_id = instance_id, .axis_value = *axis}
