@@ -171,7 +171,7 @@ auto Window::destroy() const -> void {
   SDL_DestroyWindow(impl->handle);
 }
 
-auto Window::update(const Timestep& timestep) -> void {
+auto Window::update(const Timestep& timestep) const -> void {
   WindowCallbacks window_callbacks = {};
   window_callbacks.user_data = nullptr;
   window_callbacks.on_resize = [](void* user_data, const glm::uvec2 size) {

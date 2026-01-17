@@ -117,7 +117,7 @@ struct Window : Handle<Window> {
   static auto create(const WindowInfo& info) -> Window;
   auto destroy() const -> void;
 
-  auto update(const Timestep& timestep) -> void;
+  auto update(const Timestep& timestep) const -> void;
   auto poll(const WindowCallbacks& callbacks) const -> void;
 
   static auto display_at(u32 monitor_id = WindowInfo::USE_PRIMARY_MONITOR) -> option<SystemDisplay>;
