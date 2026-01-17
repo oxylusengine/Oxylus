@@ -83,14 +83,6 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
       .on_pressed_callback = [&self](const ActionContext&) { self.save_scene_as(); }
     }
   );
-  std::ignore = input.bind_action(
-    ActionBinding{
-      .action_id = "test",
-      .primary_inputs = {InputCode(GamepadButtonCode::East)},
-      .context = "editor",
-      .on_pressed_callback = [](const ActionContext&) { OX_LOG_INFO("TEST!!"); }
-    }
-  );
 
   self.active_project = std::make_unique<Project>();
 

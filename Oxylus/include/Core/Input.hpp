@@ -248,9 +248,8 @@ private:
   auto do_callback(
     this const Input& self, const ActionBinding& binding, u32 instance_id, InputState state, InputType callback_type
   ) -> void;
-  auto check_input_active(
-    this const Input& self, const InputCode& input, u32 instance_id, InputState check_state, InputType check_type
-  ) -> bool;
+  auto check_input_active(this const Input& self, const InputCode& input, u32 instance_id, InputState check_state)
+    -> bool;
   auto check_input_axis(this const Input& self, const InputCode& input, const u32 instance_id, InputType check_type)
     -> option<glm::vec2>;
 
