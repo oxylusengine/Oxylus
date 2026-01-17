@@ -2,7 +2,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "../OxHelpers.hpp"
+#include "../TestHelpers.hpp"
 #include "Core/Types.hpp"
 #include "Networking/Client.hpp"
 #include "Networking/NetworkManager.hpp"
