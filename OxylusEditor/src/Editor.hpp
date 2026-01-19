@@ -49,8 +49,6 @@ public:
     return dynamic_cast<T*>(editor_panels[hash_code].get());
   }
 
-  NetClient* test_client = nullptr;
-
   SceneManager scene_manager = {};
 
   std::unique_ptr<Project> active_project = nullptr;

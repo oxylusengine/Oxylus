@@ -22,7 +22,7 @@
 template <>
 struct ankerl::unordered_dense::hash<flecs::id> {
   using is_avalanching = void;
-  ox::u64 operator()(const flecs::id& v) const noexcept {
+  u64 operator()(const flecs::id& v) const noexcept {
     return ankerl::unordered_dense::detail::wyhash::hash(&v, sizeof(flecs::id));
   }
 };
@@ -30,7 +30,7 @@ struct ankerl::unordered_dense::hash<flecs::id> {
 template <>
 struct ankerl::unordered_dense::hash<flecs::entity> {
   using is_avalanching = void;
-  ox::u64 operator()(const flecs::entity& v) const noexcept {
+  u64 operator()(const flecs::entity& v) const noexcept {
     return ankerl::unordered_dense::detail::wyhash::hash(&v, sizeof(flecs::entity));
   }
 };

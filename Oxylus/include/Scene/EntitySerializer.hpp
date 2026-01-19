@@ -16,14 +16,14 @@ struct IEntitySerializer {
   auto serialize(flecs::entity type, void* component) -> void;
   auto serialize_ops(flecs::meta::op_t* ops, i32 op_count, void* base) -> void;
 
-  virtual auto on_primitive(std::string_view name, Primitive primitive) -> void = 0;
-  virtual auto on_string(std::string_view name, const c8** str) -> void = 0;
-  virtual auto on_entity(std::string_view name, flecs::entity* entity) -> void = 0;
-  virtual auto on_component(std::string_view name, flecs::id_t* component) -> void = 0;
-  virtual auto on_struct(std::string_view name, flecs::meta::op_t* ops, i32 op_count, void* base) -> void = 0;
+  virtual auto on_primitive(std::string_view name, Primitive primitive) -> void {};
+  virtual auto on_string(std::string_view name, const c8** str) -> void {};
+  virtual auto on_entity(std::string_view name, flecs::entity* entity) -> void {};
+  virtual auto on_component(std::string_view name, flecs::id_t* component) -> void {};
+  virtual auto on_struct(std::string_view name, flecs::meta::op_t* ops, i32 op_count, void* base) -> void {};
   virtual auto on_opaque_value(
     std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
-  ) -> void = 0;
+  ) -> void {};
 };
 
 struct JsonEntitySerializer : IEntitySerializer {

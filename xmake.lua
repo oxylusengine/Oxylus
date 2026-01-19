@@ -43,4 +43,5 @@ if has_config("tests") then
   includes("Oxylus/tests")
 end
 
+includes("ExampleGame")
 includes("ExampleServer")

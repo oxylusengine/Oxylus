@@ -1,12 +1,14 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
+
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
 
-#include <ankerl/unordered_dense.h>
-
 namespace ox {
 struct UUID {
+  constexpr static size_t LENGTH = 36;
+
 private:
   union {
     u64 u64x2[2] = {};
@@ -15,12 +17,10 @@ private:
   } m_data = {};
 
 #ifdef OX_DEBUG
-  std::string debug = {};
+  c8 debug[LENGTH] = {};
 #endif
 
 public:
-  constexpr static size_t LENGTH = 36;
-
   static UUID generate_random();
   static option<UUID> from_string(std::string_view str);
 
@@ -46,6 +46,6 @@ struct ankerl::unordered_dense::hash<ox::UUID> {
   using is_avalanching = void;
   auto operator()(const ox::UUID& uuid) const noexcept {
     const auto& v = uuid.bytes();
-    return ankerl::unordered_dense::detail::wyhash::hash(v.data(), v.size() * sizeof(ox::u8));
+    return ankerl::unordered_dense::detail::wyhash::hash(v.data(), v.size() * sizeof(u8));
   }
 };

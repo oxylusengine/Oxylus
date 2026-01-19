@@ -12,14 +12,6 @@ struct TransformComponent {
   glm::vec3 rotation = {};
   glm::vec3 scale = {1.0f, 1.0f, 1.0f};
 
-  TransformComponent() = default;
-  TransformComponent(glm::vec3 p, glm::vec3 r, glm::vec3 s) : position(p), rotation(r), scale(s) {}
-  TransformComponent(const glm::vec3& translation) : position(translation) {}
-
-  TransformComponent(const glm::mat4& transform_matrix) {
-    math::decompose_transform(transform_matrix, position, rotation, scale);
-  }
-
   void set_from_matrix(const glm::mat4& transform_matrix) {
     math::decompose_transform(transform_matrix, position, rotation, scale);
   }

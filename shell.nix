@@ -11,6 +11,7 @@ in pkgs.mkShell.override {
 
     pkgs.mold
 
+    pkgs.llvmPackages_latest.lldb
     pkgs.llvmPackages_latest.libcxx
     pkgs.llvmPackages_latest.libcxx.dev
     pkgs.llvmPackages_latest.compiler-rt
@@ -44,6 +45,7 @@ in pkgs.mkShell.override {
   LIBCXX_PATH="${pkgs.llvmPackages_latest.libcxx.dev}";
   LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
     pkgs.llvmPackages_latest.libcxx
+    pkgs.llvmPackages_latest.lldb
     pkgs.gcc14.cc.lib
     pkgs.vulkan-loader
     # SDL3

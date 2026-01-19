@@ -87,10 +87,6 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
     loguru::Verbosity_INFO
   );
 
-  auto& net = App::mod<ox::NetworkManager>();
-  self.test_client = net.create_client();
-  self.test_client->connect("127.0.0.1", 3131, 5000.0f);
-
   return {};
 }
 
@@ -98,8 +94,6 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   auto& job_man = App::get_job_manager();
   auto& net = App::mod<NetworkManager>();
   job_man.get_tracker().stop_tracking();
-
-  net.destroy_client(self.test_client);
 
   Log::remove_callback("editor_notifications");
 

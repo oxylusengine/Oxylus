@@ -918,7 +918,7 @@ auto RendererInstance::render(
             .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
             .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack_2d, vuk::VertexInputRate::eInstance)
             .push_constants(
-              vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
+              vuk::ShaderStageFlagBits::eVertex,
               0,
               PushConstants(camera->device_address, transforms_->device_address)
             )

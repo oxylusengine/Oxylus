@@ -63,7 +63,15 @@ option<UUID> UUID::from_string(std::string_view str) {
                          convert_segment(str, 24, 12).value();
 
 #ifdef OX_DEBUG
-  uuid.debug = uuid.str();
+  fmt::format_to(
+    uuid.debug,
+    "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+    static_cast<u32>(uuid.m_data.u64x2[0] >> 32_u64),
+    static_cast<u32>((uuid.m_data.u64x2[0] >> 16_u64) & 0x0000ffff_u64),
+    static_cast<u32>(uuid.m_data.u64x2[0] & 0x0000ffff_u64),
+    static_cast<u32>(uuid.m_data.u64x2[1] >> 48_u64),
+    uuid.m_data.u64x2[1] & 0x0000ffffffffffff_u64
+  );
 #endif
 
   return uuid;

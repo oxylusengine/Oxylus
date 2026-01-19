@@ -54,14 +54,21 @@ struct BufferWriter {
 
   auto reset(this BufferWriter& self) -> void { self.offset = 0; }
 
-  auto skip(this BufferWriter& self, usize skip_by) -> void { self.offset += skip_by; }
+  auto skip(this BufferWriter& self, usize skip_by) -> bool {
+    if (self.offset + skip_by > self.buffer.size()) {
+      return false;
+    }
+
+    self.offset += skip_by;
+
+    return true;
+  }
 
   std::span<u8> buffer;
   usize offset;
 };
 
-class BufferReader {
-public:
+struct BufferReader {
   BufferReader(const void* buffer_, usize length)
       : buffer(std::span{static_cast<const u8*>(buffer_), length}),
         offset(0) {}
@@ -102,13 +109,21 @@ public:
     return result;
   }
 
-  auto get_offset(this const BufferReader& self) -> usize { return self.offset; }
-
   auto remaining(this const BufferReader& self) -> usize { return self.buffer.size() - self.offset; }
 
   auto eof(this const BufferReader& self) -> bool { return self.offset >= self.buffer.size(); }
 
-  auto skip(this BufferReader& self, usize skip_by) -> void { self.offset += skip_by; }
+  auto skip(this BufferReader& self, usize skip_by) -> bool {
+    if (self.offset + skip_by > self.buffer.size()) {
+      return false;
+    }
+
+    self.offset += skip_by;
+
+    return true;
+  }
+
+  auto data(this const BufferReader& self) -> const u8* { return self.buffer.data(); }
 
   std::span<const u8> buffer;
   usize offset;

@@ -4,8 +4,74 @@
 #include "Scripting/LuaManager.hpp"
 
 namespace ox {
+template <typename T>
+struct ComponentBinder {
+  ComponentBinder(flecs::world& world_, sol::state* state_, sol::table& module_table_, const char* name)
+      : world(world_),
+        state(state_),
+        module_table(module_table_),
+        component(world_.component<T>(name)) {
+    if (state) {
+      usertype = state->create_named_table(name);
+      usertype["component_id"] = static_cast<u64>(component.id());
+    }
+  }
+
+  auto member(this ComponentBinder&& self, const char* name, auto member_pointer) -> ComponentBinder&& {
+    using MemberType = std::remove_cvref_t<decltype(std::declval<T>().*member_pointer)>;
+    self.component.member<MemberType>(name);
+    if (self.state) {
+      self.usertype[name] = member_pointer;
+    }
+
+    return std::move(self);
+  }
+
+  template <typename Tag>
+  auto add(this ComponentBinder&& self) -> ComponentBinder&& {
+    self.component.add<Tag>();
+    return std::move(self);
+  }
+
+  auto add(this ComponentBinder&& self, flecs::entity e) -> ComponentBinder&& {
+    self.component.add(e);
+    return std::move(self);
+  }
+
+  auto finalize(this ComponentBinder&& self) -> flecs::entity {
+    if (self.state) {
+      self.module_table[self.component.name().c_str()] = self.usertype;
+    }
+    return self.component;
+  }
+
+  operator flecs::entity() const { return component; }
+
+private:
+  flecs::world& world;
+  sol::state* state;
+  sol::table& module_table;
+  flecs::untyped_component component;
+  sol::table usertype;
+};
+
+template <typename T>
+auto bind_component(flecs::world& world, sol::state* state, sol::table& module_table, const char* name) {
+  return ComponentBinder<T>(world, state, module_table, name);
+}
+
 CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   ZoneScoped;
+
+#ifdef OX_LUA_BINDINGS
+  auto& lua_manager = App::mod<LuaManager>();
+  const auto state = lua_manager.get_state();
+  auto core_table = state->create_named_table("Core");
+#endif
+
+  auto cur_component = flecs::entity{};
+
+  world.module<CoreComponentsModule>("Core");
 
   world
     .component<glm::vec2>("glm::vec2") //
@@ -67,262 +133,277 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
     })
     .assign_string([](UUID* data, const char* value) { *data = UUID::from_string(std::string_view(value)).value(); });
 
-  world.component<TransformComponent>("TransformComponent")
-    .member<glm::vec3>("position")
-    .member<glm::vec3>("rotation")
-    .member<glm::vec3>("scale")
-    .add<Networked>();
+  bind_component<TransformComponent>(world, state, core_table, "TransformComponent")
+    .member("position", &TransformComponent::position)
+    .member("rotation", &TransformComponent::rotation)
+    .member("scale", &TransformComponent::scale)
+    .add<Networked>()
+    .finalize();
 
   // Layer
-  world
-    .component<LayerComponent>("LayerComponent") //
-    .member<u16>("layer");
+  bind_component<LayerComponent>(world, state, core_table, "LayerComponent")
+    .member("layer", &LayerComponent::layer)
+    .finalize();
 
   // Rendering Components
-  world.component<MeshComponent>("MeshComponent")
-    .member<u32>("mesh_index")
-    .member<bool>("cast_shadows")
-    .member<UUID>("mesh_uuid");
+  bind_component<MeshComponent>(world, state, core_table, "MeshComponent")
+    .member("mesh_index", &MeshComponent::mesh_index)
+    .member("cast_shadows", &MeshComponent::cast_shadows)
+    .member("mesh_uuid", &MeshComponent::mesh_uuid)
+    .finalize();
 
-  world.component<SpriteComponent>("SpriteComponent")
-    .member<u32>("layer")
-    .member<bool>("sort_y")
-    .member<bool>("flip_x")
-    .member<UUID>("material");
+  bind_component<SpriteComponent>(world, state, core_table, "SpriteComponent")
+    .member("layer", &SpriteComponent::layer)
+    .member("sort_y", &SpriteComponent::sort_y)
+    .member("flip_x", &SpriteComponent::flip_x)
+    .member("material", &SpriteComponent::material)
+    .add<Networked>()
+    .finalize();
 
-  world.component<SpriteAnimationComponent>("SpriteAnimationComponent")
-    .member<u32>("num_frames")
-    .member<bool>("loop")
-    .member<bool>("inverted")
-    .member<u32>("fps")
-    .member<u32>("columns")
-    .member<glm::vec2>("frame_size");
+  bind_component<SpriteAnimationComponent>(world, state, core_table, "SpriteAnimationComponent")
+    .member("num_frames", &SpriteAnimationComponent::num_frames)
+    .member("loop", &SpriteAnimationComponent::loop)
+    .member("inverted", &SpriteAnimationComponent::inverted)
+    .member("fps", &SpriteAnimationComponent::fps)
+    .member("columns", &SpriteAnimationComponent::columns)
+    .member("frame_size", &SpriteAnimationComponent::frame_size)
+    .finalize();
 
-  world.component<CameraComponent>("CameraComponent")
-    .member<u32>("projection")
-    .member<f32>("fov")
-    .member<f32>("aspect")
-    .member<f32>("far_clip")
-    .member<f32>("near_clip")
-    .member<f32>("tilt")
-    .member<f32>("zoom");
+  bind_component<CameraComponent>(world, state, core_table, "CameraComponent")
+    .member("projection", &CameraComponent::projection)
+    .member("fov", &CameraComponent::fov)
+    .member("aspect", &CameraComponent::aspect)
+    .member("far_clip", &CameraComponent::far_clip)
+    .member("near_clip", &CameraComponent::near_clip)
+    .member("tilt", &CameraComponent::tilt)
+    .member("zoom", &CameraComponent::zoom)
+    .finalize();
 
-  world.component<ParticleSystemComponent>("ParticleSystemComponent")
-    .member<UUID>("material")
-    .member<f32>("duration")
-    .member<bool>("looping")
-    .member<f32>("start_delay")
-    .member<f32>("start_lifetime")
-    .member<glm::vec3>("start_velocity")
-    .member<glm::vec4>("start_color")
-    .member<glm::vec4>("start_size")
-    .member<glm::vec4>("start_rotation")
-    .member<f32>("gravity_modifier")
-    .member<f32>("simulation_speed")
-    .member<bool>("play_on_awake")
-    .member<u32>("max_particles")
-    .member<u32>("rate_over_time")
-    .member<u32>("rate_over_distance")
-    .member<u32>("burst_count")
-    .member<glm::vec3>("position_start")
-    .member<glm::vec3>("position_end")
-    .member<bool>("velocity_over_lifetime_enabled")
-    .member<glm::vec3>("velocity_over_lifetime_start")
-    .member<glm::vec3>("velocity_over_lifetime_end")
-    .member<bool>("force_over_lifetime_enabled")
-    .member<glm::vec3>("force_over_lifetime_start")
-    .member<glm::vec3>("force_over_lifetime_end")
-    .member<bool>("color_over_lifetime_enabled")
-    .member<glm::vec4>("color_over_lifetime_start")
-    .member<glm::vec4>("color_over_lifetime_end")
-    .member<bool>("color_by_speed_enabled")
-    .member<glm::vec4>("color_by_speed_start")
-    .member<glm::vec4>("color_by_speed_end")
-    .member<f32>("color_by_speed_min_speed")
-    .member<f32>("color_by_speed_max_speed")
-    .member<bool>("size_over_lifetime_enabled")
-    .member<glm::vec3>("size_over_lifetime_start")
-    .member<glm::vec3>("size_over_lifetime_end")
-    .member<bool>("size_by_speed_enabled")
-    .member<glm::vec3>("size_by_speed_start")
-    .member<glm::vec3>("size_by_speed_end")
-    .member<f32>("size_by_speed_min_speed")
-    .member<f32>("size_by_speed_max_speed")
-    .member<bool>("rotation_over_lifetime_enabled")
-    .member<glm::vec3>("rotation_over_lifetime_start")
-    .member<glm::vec3>("rotation_over_lifetime_end")
-    .member<bool>("rotation_by_speed_enabled")
-    .member<glm::vec3>("rotation_by_speed_start")
-    .member<glm::vec3>("rotation_by_speed_end")
-    .member<f32>("rotation_by_speed_min_speed")
-    .member<f32>("rotation_by_speed_max_speed");
+  bind_component<ParticleSystemComponent>(world, state, core_table, "ParticleSystemComponent")
+    .member("material", &ParticleSystemComponent::material)
+    .member("duration", &ParticleSystemComponent::duration)
+    .member("looping", &ParticleSystemComponent::looping)
+    .member("start_delay", &ParticleSystemComponent::start_delay)
+    .member("start_lifetime", &ParticleSystemComponent::start_lifetime)
+    .member("start_velocity", &ParticleSystemComponent::start_velocity)
+    .member("start_color", &ParticleSystemComponent::start_color)
+    .member("start_size", &ParticleSystemComponent::start_size)
+    .member("start_rotation", &ParticleSystemComponent::start_rotation)
+    .member("gravity_modifier", &ParticleSystemComponent::gravity_modifier)
+    .member("simulation_speed", &ParticleSystemComponent::simulation_speed)
+    .member("play_on_awake", &ParticleSystemComponent::play_on_awake)
+    .member("max_particles", &ParticleSystemComponent::max_particles)
+    .member("rate_over_time", &ParticleSystemComponent::rate_over_time)
+    .member("rate_over_distance", &ParticleSystemComponent::rate_over_distance)
+    .member("burst_count", &ParticleSystemComponent::burst_count)
+    .member("position_start", &ParticleSystemComponent::position_start)
+    .member("position_end", &ParticleSystemComponent::position_end)
+    .member("velocity_over_lifetime_enabled", &ParticleSystemComponent::velocity_over_lifetime_enabled)
+    .member("velocity_over_lifetime_start", &ParticleSystemComponent::velocity_over_lifetime_start)
+    .member("velocity_over_lifetime_end", &ParticleSystemComponent::velocity_over_lifetime_end)
+    .member("force_over_lifetime_enabled", &ParticleSystemComponent::force_over_lifetime_enabled)
+    .member("force_over_lifetime_start", &ParticleSystemComponent::force_over_lifetime_start)
+    .member("force_over_lifetime_end", &ParticleSystemComponent::force_over_lifetime_end)
+    .member("color_over_lifetime_enabled", &ParticleSystemComponent::color_over_lifetime_enabled)
+    .member("color_over_lifetime_start", &ParticleSystemComponent::color_over_lifetime_start)
+    .member("color_over_lifetime_end", &ParticleSystemComponent::color_over_lifetime_end)
+    .member("color_by_speed_enabled", &ParticleSystemComponent::color_by_speed_enabled)
+    .member("color_by_speed_start", &ParticleSystemComponent::color_by_speed_start)
+    .member("color_by_speed_end", &ParticleSystemComponent::color_by_speed_end)
+    .member("color_by_speed_min_speed", &ParticleSystemComponent::color_by_speed_min_speed)
+    .member("color_by_speed_max_speed", &ParticleSystemComponent::color_by_speed_max_speed)
+    .member("size_over_lifetime_enabled", &ParticleSystemComponent::size_over_lifetime_enabled)
+    .member("size_over_lifetime_start", &ParticleSystemComponent::size_over_lifetime_start)
+    .member("size_over_lifetime_end", &ParticleSystemComponent::size_over_lifetime_end)
+    .member("size_by_speed_enabled", &ParticleSystemComponent::size_by_speed_enabled)
+    .member("size_by_speed_start", &ParticleSystemComponent::size_by_speed_start)
+    .member("size_by_speed_end", &ParticleSystemComponent::size_by_speed_end)
+    .member("size_by_speed_min_speed", &ParticleSystemComponent::size_by_speed_min_speed)
+    .member("size_by_speed_max_speed", &ParticleSystemComponent::size_by_speed_max_speed)
+    .member("rotation_over_lifetime_enabled", &ParticleSystemComponent::rotation_over_lifetime_enabled)
+    .member("rotation_over_lifetime_start", &ParticleSystemComponent::rotation_over_lifetime_start)
+    .member("rotation_over_lifetime_end", &ParticleSystemComponent::rotation_over_lifetime_end)
+    .member("rotation_by_speed_enabled", &ParticleSystemComponent::rotation_by_speed_enabled)
+    .member("rotation_by_speed_start", &ParticleSystemComponent::rotation_by_speed_start)
+    .member("rotation_by_speed_end", &ParticleSystemComponent::rotation_by_speed_end)
+    .member("rotation_by_speed_min_speed", &ParticleSystemComponent::rotation_by_speed_min_speed)
+    .member("rotation_by_speed_max_speed", &ParticleSystemComponent::rotation_by_speed_max_speed)
+    .finalize();
 
-  world.component<ParticleComponent>("ParticleComponent")
-    .member<glm::vec4>("color") //
-    .member<f32>("life_remaining");
+  bind_component<ParticleComponent>(world, state, core_table, "ParticleComponent")
+    .member("color", &ParticleComponent::color)
+    .member("life_remaining", &ParticleComponent::life_remaining)
+    .finalize();
 
-  world.component<LightComponent>("LightComponent")
-    .member<u32>("type")
-    .member<glm::vec3>("color")
-    .member<f32>("intensity")
-    .member<f32>("radius")
-    .member<f32>("outer_cone_angle")
-    .member<f32>("inner_cone_angle")
-    .member<bool>("cast_shadows")
-    .member<u32>("shadow_map_res")
-    .member<u32>("cascade_count")
-    .member<f32>("first_cascade_far_bound")
-    .member<f32>("maximum_shadow_distance")
-    .member<f32>("minimum_shadow_distance")
-    .member<f32>("cascade_overlap_propotion")
-    .member<f32>("depth_bias")
-    .member<f32>("normal_bias");
+  bind_component<LightComponent>(world, state, core_table, "LightComponent")
+    .member("type", &LightComponent::type)
+    .member("color", &LightComponent::color)
+    .member("intensity", &LightComponent::intensity)
+    .member("radius", &LightComponent::radius)
+    .member("outer_cone_angle", &LightComponent::outer_cone_angle)
+    .member("inner_cone_angle", &LightComponent::inner_cone_angle)
+    .member("cast_shadows", &LightComponent::cast_shadows)
+    .member("shadow_map_res", &LightComponent::shadow_map_res)
+    .member("cascade_count", &LightComponent::cascade_count)
+    .member("first_cascade_far_bound", &LightComponent::first_cascade_far_bound)
+    .member("maximum_shadow_distance", &LightComponent::maximum_shadow_distance)
+    .member("minimum_shadow_distance", &LightComponent::minimum_shadow_distance)
+    .member("cascade_overlap_propotion", &LightComponent::cascade_overlap_propotion)
+    .member("depth_bias", &LightComponent::depth_bias)
+    .member("normal_bias", &LightComponent::normal_bias)
+    .finalize();
 
-  world.component<AtmosphereComponent>("AtmosphereComponent")
-    .member<glm::vec3>("rayleigh_scattering")
-    .member<f32>("rayleigh_density")
-    .member<glm::vec3>("mie_scattering")
-    .member<f32>("mie_density")
-    .member<f32>("mie_extinction")
-    .member<f32>("mie_asymmetry")
-    .member<glm::vec3>("ozone_absorption")
-    .member<f32>("ozone_height")
-    .member<f32>("ozone_thickness")
-    .member<f32>("aerial_perspective_start_km")
-    .member<f32>("aerial_perspective_exposure");
+  bind_component<AtmosphereComponent>(world, state, core_table, "AtmosphereComponent")
+    .member("rayleigh_scattering", &AtmosphereComponent::rayleigh_scattering)
+    .member("rayleigh_density", &AtmosphereComponent::rayleigh_density)
+    .member("mie_scattering", &AtmosphereComponent::mie_scattering)
+    .member("mie_density", &AtmosphereComponent::mie_density)
+    .member("mie_extinction", &AtmosphereComponent::mie_extinction)
+    .member("mie_asymmetry", &AtmosphereComponent::mie_asymmetry)
+    .member("ozone_absorption", &AtmosphereComponent::ozone_absorption)
+    .member("ozone_height", &AtmosphereComponent::ozone_height)
+    .member("ozone_thickness", &AtmosphereComponent::ozone_thickness)
+    .member("aerial_perspective_start_km", &AtmosphereComponent::aerial_perspective_start_km)
+    .member("aerial_perspective_exposure", &AtmosphereComponent::aerial_perspective_exposure)
+    .finalize();
 
-  world.component<AutoExposureComponent>("AutoExposureComponent")
-    .member<f32>("min_exposure")
-    .member<f32>("max_exposure")
-    .member<f32>("adaptation_speed")
-    .member<f32>("ev100_bias");
+  bind_component<AutoExposureComponent>(world, state, core_table, "AutoExposureComponent")
+    .member("min_exposure", &AutoExposureComponent::min_exposure)
+    .member("max_exposure", &AutoExposureComponent::max_exposure)
+    .member("adaptation_speed", &AutoExposureComponent::adaptation_speed)
+    .member("ev100_bias", &AutoExposureComponent::ev100_bias)
+    .finalize();
 
-  world
-    .component<VignetteComponent>("VignetteComponent") //
-    .member<f32>("amount");
+  bind_component<VignetteComponent>(world, state, core_table, "VignetteComponent")
+    .member("amount", &VignetteComponent::amount)
+    .finalize();
 
-  world
-    .component<ChromaticAberrationComponent>("ChromaticAberrationComponent") //
-    .member<f32>("amount");
+  bind_component<ChromaticAberrationComponent>(world, state, core_table, "ChromaticAberrationComponent")
+    .member("amount", &ChromaticAberrationComponent::amount)
+    .finalize();
 
-  world.component<FilmGrainComponent>("FilmGrainComponent")
-    .member<f32>("amount") //
-    .member<f32>("scale");
+  bind_component<FilmGrainComponent>(world, state, core_table, "FilmGrainComponent")
+    .member("amount", &FilmGrainComponent::amount)
+    .member("scale", &FilmGrainComponent::scale)
+    .finalize();
 
   // Physics Components
-  world.component<RigidBodyComponent>("RigidBodyComponent")
-    .member<u32>("allowed_dofs")
-    .member<u32>("type")
-    .member<f32>("mass")
-    .member<f32>("linear_drag")
-    .member<f32>("angular_drag")
-    .member<f32>("gravity_factor")
-    .member<f32>("friction")
-    .member<f32>("restitution")
-    .member<bool>("allow_sleep")
-    .member<bool>("awake")
-    .member<bool>("continuous")
-    .member<bool>("interpolation")
-    .member<bool>("is_sensor");
+  bind_component<RigidBodyComponent>(world, state, core_table, "RigidBodyComponent")
+    .member("allowed_dofs", &RigidBodyComponent::allowed_dofs)
+    .member("type", &RigidBodyComponent::type)
+    .member("mass", &RigidBodyComponent::mass)
+    .member("linear_drag", &RigidBodyComponent::linear_drag)
+    .member("angular_drag", &RigidBodyComponent::angular_drag)
+    .member("gravity_factor", &RigidBodyComponent::gravity_factor)
+    .member("friction", &RigidBodyComponent::friction)
+    .member("restitution", &RigidBodyComponent::restitution)
+    .member("allow_sleep", &RigidBodyComponent::allow_sleep)
+    .member("awake", &RigidBodyComponent::awake)
+    .member("continuous", &RigidBodyComponent::continuous)
+    .member("interpolation", &RigidBodyComponent::interpolation)
+    .member("is_sensor", &RigidBodyComponent::is_sensor)
+    .finalize();
 
-  world.component<BoxColliderComponent>("BoxColliderComponent")
-    .member<glm::vec3>("size")
-    .member<glm::vec3>("offset")
-    .member<f32>("density")
-    .member<f32>("friction")
-    .member<f32>("restitution");
+  bind_component<BoxColliderComponent>(world, state, core_table, "BoxColliderComponent")
+    .member("size", &BoxColliderComponent::size)
+    .member("offset", &BoxColliderComponent::offset)
+    .member("density", &BoxColliderComponent::density)
+    .member("friction", &BoxColliderComponent::friction)
+    .member("restitution", &BoxColliderComponent::restitution)
+    .finalize();
 
-  world.component<SphereColliderComponent>("SphereColliderComponent")
-    .member<f32>("radius")
-    .member<glm::vec3>("offset")
-    .member<f32>("density")
-    .member<f32>("friction")
-    .member<f32>("restitution");
+  bind_component<SphereColliderComponent>(world, state, core_table, "SphereColliderComponent")
+    .member("radius", &SphereColliderComponent::radius)
+    .member("offset", &SphereColliderComponent::offset)
+    .member("density", &SphereColliderComponent::density)
+    .member("friction", &SphereColliderComponent::friction)
+    .member("restitution", &SphereColliderComponent::restitution)
+    .finalize();
 
-  world.component<CapsuleColliderComponent>("CapsuleColliderComponent")
-    .member<f32>("height")
-    .member<f32>("radius")
-    .member<glm::vec3>("offset")
-    .member<f32>("density")
-    .member<f32>("friction")
-    .member<f32>("restitution");
+  bind_component<CapsuleColliderComponent>(world, state, core_table, "CapsuleColliderComponent")
+    .member("height", &CapsuleColliderComponent::height)
+    .member("radius", &CapsuleColliderComponent::radius)
+    .member("offset", &CapsuleColliderComponent::offset)
+    .member("density", &CapsuleColliderComponent::density)
+    .member("friction", &CapsuleColliderComponent::friction)
+    .member("restitution", &CapsuleColliderComponent::restitution)
+    .finalize();
 
-  world.component<TaperedCapsuleColliderComponent>("TaperedCapsuleColliderComponent")
-    .member<f32>("height")
-    .member<f32>("top_radius")
-    .member<f32>("bottom_radius")
-    .member<glm::vec3>("offset")
-    .member<f32>("density")
-    .member<f32>("friction")
-    .member<f32>("restitution");
+  bind_component<TaperedCapsuleColliderComponent>(world, state, core_table, "TaperedCapsuleColliderComponent")
+    .member("height", &TaperedCapsuleColliderComponent::height)
+    .member("top_radius", &TaperedCapsuleColliderComponent::top_radius)
+    .member("bottom_radius", &TaperedCapsuleColliderComponent::bottom_radius)
+    .member("offset", &TaperedCapsuleColliderComponent::offset)
+    .member("density", &TaperedCapsuleColliderComponent::density)
+    .member("friction", &TaperedCapsuleColliderComponent::friction)
+    .member("restitution", &TaperedCapsuleColliderComponent::restitution)
+    .finalize();
 
-  world.component<CylinderColliderComponent>("CylinderColliderComponent")
-    .member<f32>("height")
-    .member<f32>("radius")
-    .member<glm::vec3>("offset")
-    .member<f32>("density")
-    .member<f32>("friction")
-    .member<f32>("restitution");
+  bind_component<CylinderColliderComponent>(world, state, core_table, "CylinderColliderComponent")
+    .member("height", &CylinderColliderComponent::height)
+    .member("radius", &CylinderColliderComponent::radius)
+    .member("offset", &CylinderColliderComponent::offset)
+    .member("density", &CylinderColliderComponent::density)
+    .member("friction", &CylinderColliderComponent::friction)
+    .member("restitution", &CylinderColliderComponent::restitution)
+    .finalize();
 
-  world.component<MeshColliderComponent>("MeshColliderComponent")
-    .member<glm::vec3>("offset")
-    .member<f32>("friction")
-    .member<f32>("restitution");
+  bind_component<MeshColliderComponent>(world, state, core_table, "MeshColliderComponent")
+    .member("offset", &MeshColliderComponent::offset)
+    .member("friction", &MeshColliderComponent::friction)
+    .member("restitution", &MeshColliderComponent::restitution)
+    .finalize();
 
-  world.component<CharacterControllerComponent>("CharacterControllerComponent")
-    .member<f32>("character_height_standing")
-    .member<f32>("character_radius_standing")
-    .member<f32>("character_height_crouching")
-    .member<f32>("character_radius_crouching")
-    .member<bool>("interpolation")
-    .member<bool>("control_movement_during_jump")
-    .member<f32>("jump_force")
-    .member<bool>("auto_bunny_hop")
-    .member<f32>("air_control")
-    .member<f32>("max_ground_speed")
-    .member<f32>("ground_acceleration")
-    .member<f32>("ground_deceleration")
-    .member<f32>("max_air_speed")
-    .member<f32>("air_acceleration")
-    .member<f32>("air_deceleration")
-    .member<f32>("max_strafe_speed")
-    .member<f32>("strafe_acceleration")
-    .member<f32>("strafe_deceleration")
-    .member<f32>("friction")
-    .member<f32>("gravity")
-    .member<f32>("collision_tolerance");
+  bind_component<CharacterControllerComponent>(world, state, core_table, "CharacterControllerComponent")
+    .member("character_height_standing", &CharacterControllerComponent::character_height_standing)
+    .member("character_radius_standing", &CharacterControllerComponent::character_radius_standing)
+    .member("character_height_crouching", &CharacterControllerComponent::character_height_crouching)
+    .member("character_radius_crouching", &CharacterControllerComponent::character_radius_crouching)
+    .member("interpolation", &CharacterControllerComponent::interpolation)
+    .member("control_movement_during_jump", &CharacterControllerComponent::control_movement_during_jump)
+    .member("jump_force", &CharacterControllerComponent::jump_force)
+    .member("auto_bunny_hop", &CharacterControllerComponent::auto_bunny_hop)
+    .member("air_control", &CharacterControllerComponent::air_control)
+    .member("max_ground_speed", &CharacterControllerComponent::max_ground_speed)
+    .member("ground_acceleration", &CharacterControllerComponent::ground_acceleration)
+    .member("ground_deceleration", &CharacterControllerComponent::ground_deceleration)
+    .member("max_air_speed", &CharacterControllerComponent::max_air_speed)
+    .member("air_acceleration", &CharacterControllerComponent::air_acceleration)
+    .member("air_deceleration", &CharacterControllerComponent::air_deceleration)
+    .member("max_strafe_speed", &CharacterControllerComponent::max_strafe_speed)
+    .member("strafe_acceleration", &CharacterControllerComponent::strafe_acceleration)
+    .member("strafe_deceleration", &CharacterControllerComponent::strafe_deceleration)
+    .member("friction", &CharacterControllerComponent::friction)
+    .member("gravity", &CharacterControllerComponent::gravity)
+    .member("collision_tolerance", &CharacterControllerComponent::collision_tolerance)
+    .finalize();
 
   // Audio Components
-  world.component<AudioSourceComponent>("AudioSourceComponent")
-    .member<UUID>("audio_source")
-    .member<u32>("attenuation_model")
-    .member<f32>("volume")
-    .member<f32>("pitch")
-    .member<bool>("play_on_awake")
-    .member<bool>("looping")
-    .member<bool>("spatialization")
-    .member<f32>("roll_off")
-    .member<f32>("min_gain")
-    .member<f32>("max_gain")
-    .member<f32>("min_distance")
-    .member<f32>("max_distance")
-    .member<f32>("cone_inner_angle")
-    .member<f32>("cone_outer_angle")
-    .member<f32>("cone_outer_gain")
-    .member<f32>("doppler_factor");
+  bind_component<AudioSourceComponent>(world, state, core_table, "AudioSourceComponent")
+    .member("audio_source", &AudioSourceComponent::audio_source)
+    .member("attenuation_model", &AudioSourceComponent::attenuation_model)
+    .member("volume", &AudioSourceComponent::volume)
+    .member("pitch", &AudioSourceComponent::pitch)
+    .member("play_on_awake", &AudioSourceComponent::play_on_awake)
+    .member("looping", &AudioSourceComponent::looping)
+    .member("spatialization", &AudioSourceComponent::spatialization)
+    .member("roll_off", &AudioSourceComponent::roll_off)
+    .member("min_gain", &AudioSourceComponent::min_gain)
+    .member("max_gain", &AudioSourceComponent::max_gain)
+    .member("min_distance", &AudioSourceComponent::min_distance)
+    .member("max_distance", &AudioSourceComponent::max_distance)
+    .member("cone_inner_angle", &AudioSourceComponent::cone_inner_angle)
+    .member("cone_outer_angle", &AudioSourceComponent::cone_outer_angle)
+    .member("cone_outer_gain", &AudioSourceComponent::cone_outer_gain)
+    .member("doppler_factor", &AudioSourceComponent::doppler_factor)
+    .finalize();
 
-  world.component<AudioListenerComponent>("AudioListenerComponent")
-    .member<bool>("active")
-    .member<u32>("listener_index")
-    .member<f32>("cone_inner_angle")
-    .member<f32>("cone_outer_angle")
-    .member<f32>("cone_outer_gain");
-
-#ifdef OX_LUA_BINDINGS
-  auto& lua_manager = App::mod<LuaManager>();
-  const auto state = lua_manager.get_state();
-
-  auto core_table = state->create_named_table("Core");
-#endif
+  bind_component<AudioListenerComponent>(world, state, core_table, "AudioListenerComponent")
+    .member("active", &AudioListenerComponent::active)
+    .member("listener_index", &AudioListenerComponent::listener_index)
+    .member("cone_inner_angle", &AudioListenerComponent::cone_inner_angle)
+    .member("cone_outer_angle", &AudioListenerComponent::cone_outer_angle)
+    .member("cone_outer_gain", &AudioListenerComponent::cone_outer_gain)
+    .finalize();
 }
 } // namespace ox

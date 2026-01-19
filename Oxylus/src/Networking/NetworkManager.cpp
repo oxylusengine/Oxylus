@@ -27,17 +27,7 @@ auto NetworkManager::deinit(this NetworkManager& self) -> std::expected<void, st
   return {};
 }
 
-auto NetworkManager::update(this NetworkManager& self, const Timestep& timestep) -> void {
-  ZoneScoped;
-
-  for (auto& server : self.servers) {
-    server->tick(timestep);
-  }
-
-  for (auto& client : self.clients) {
-    client->tick(timestep);
-  }
-}
+auto NetworkManager::update(this NetworkManager&, const Timestep&) -> void { ZoneScoped; }
 
 auto NetworkManager::create_server_handle(this NetworkManager& self, u16 port, u32 max_clients) -> ENetHost* {
   ZoneScoped;
@@ -76,7 +66,7 @@ auto NetworkManager::create_client_handle(this NetworkManager& self) -> ENetHost
   return local_host;
 }
 
-auto NetworkManager::destroy_server(this NetworkManager& self, NetServer*& server) -> void {
+auto NetworkManager::destroy_server(this NetworkManager& self, NetServer* server) -> void {
   ZoneScoped;
 
   enet_host_destroy(server->local_host);
@@ -85,7 +75,7 @@ auto NetworkManager::destroy_server(this NetworkManager& self, NetServer*& serve
   server = nullptr;
 }
 
-auto NetworkManager::destroy_client(this NetworkManager& self, NetClient*& client) -> void {
+auto NetworkManager::destroy_client(this NetworkManager& self, NetClient* client) -> void {
   ZoneScoped;
 
   client->disconnect(true);

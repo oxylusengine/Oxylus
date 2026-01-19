@@ -37,35 +37,35 @@ private:
   auto create_client_handle(this NetworkManager&) -> ENetHost*;
 
 public:
-  template <typename T = NetServer>
-  auto create_server(this NetworkManager& self, u16 port, u32 max_clients) -> T* {
+  template <typename T = NetServer, typename... Args>
+  auto create_server(this NetworkManager& self, u16 port, u32 max_clients, Args&&... args) -> T* {
     auto* host = self.create_server_handle(port, max_clients);
     if (!host) {
       return nullptr;
     }
 
-    auto server = std::make_unique<T>(host);
+    auto server = std::make_unique<T>(host, std::forward<Args>(args)...);
     auto server_ptr = server.get();
     self.servers.emplace_back(std::move(server));
 
     return server_ptr;
   }
 
-  template <typename T = NetClient>
-  auto create_client(this NetworkManager& self) -> T* {
+  template <typename T = NetClient, typename... Args>
+  auto create_client(this NetworkManager& self, Args&&... args) -> T* {
     auto* host = self.create_client_handle();
     if (!host) {
       return nullptr;
     }
 
-    auto client = std::make_unique<T>(host);
+    auto client = std::make_unique<T>(host, std::forward<Args>(args)...);
     auto client_ptr = client.get();
     self.clients.emplace_back(std::move(client));
 
     return client_ptr;
   }
 
-  auto destroy_server(this NetworkManager&, NetServer*& server) -> void;
-  auto destroy_client(this NetworkManager&, NetClient*& client) -> void;
+  auto destroy_server(this NetworkManager&, NetServer* server) -> void;
+  auto destroy_client(this NetworkManager&, NetClient* client) -> void;
 };
 } // namespace ox
