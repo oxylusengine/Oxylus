@@ -224,4 +224,31 @@ auto os::file_stderr(std::string_view str) -> void {
   WriteFile(stdout_hnd, str.data(), static_cast<u32>(str.length()), &written, nullptr);
 }
 
+auto os::file_map(FileDescriptor file, usize size) -> std::expected<void*, FileError> {
+  ZoneScoped;
+
+  auto file_handle = reinterpret_cast<HANDLE>(file);
+
+  auto map_handle = CreateFileMappingW(file_handle, nullptr, PAGE_READONLY, 0, 0, nullptr);
+  if (map_handle == nullptr) {
+    return std::unexpected(FileError::MapFailed);
+  }
+
+  auto* data = MapViewOfFile(map_handle, FILE_MAP_READ, 0, 0, size);
+
+  CloseHandle(map_handle);
+
+  if (data == nullptr) {
+    return std::unexpected(FileError::MapFailed);
+  }
+
+  return data;
+}
+
+auto os::file_unmap(FileDescriptor, void* data, usize) -> void {
+  ZoneScoped;
+
+  UnmapViewOfFile(data);
+}
+
 } // namespace ox

@@ -164,9 +164,6 @@ void App::run(this App& self) {
     if (has_input_mod)
       self.mod<Input>().reset_pressed();
 
-    if (has_asset_manager_mod)
-      self.mod<AssetManager>().load_deferred_assets();
-
     FrameMark;
   }
 

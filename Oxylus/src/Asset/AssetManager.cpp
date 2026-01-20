@@ -1,7 +1,12 @@
 #include "Asset/AssetManager.hpp"
 
+#include <fastgltf/core.hpp>
+#include <fastgltf/tools.hpp>
+#include <fastgltf/types.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 #include <meshoptimizer.h>
+#include <queue>
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
 
@@ -17,7 +22,105 @@
 #include "Utils/Log.hpp"
 #include "Utils/Profiler.hpp"
 
+template <>
+struct fastgltf::ElementTraits<glm::vec4> : fastgltf::ElementTraitsBase<glm::vec4, AccessorType::Vec4, float> {};
+template <>
+struct fastgltf::ElementTraits<glm::vec3> : fastgltf::ElementTraitsBase<glm::vec3, AccessorType::Vec3, float> {};
+template <>
+struct fastgltf::ElementTraits<glm::vec2> : fastgltf::ElementTraitsBase<glm::vec2, AccessorType::Vec2, float> {};
+
 namespace ox {
+auto get_default_gltf_extensions() -> fastgltf::Extensions {
+  auto extensions = fastgltf::Extensions::None;
+  extensions |= fastgltf::Extensions::KHR_mesh_quantization;
+  extensions |= fastgltf::Extensions::KHR_texture_transform;
+  extensions |= fastgltf::Extensions::KHR_texture_basisu;
+  extensions |= fastgltf::Extensions::KHR_lights_punctual;
+  extensions |= fastgltf::Extensions::KHR_materials_specular;
+  extensions |= fastgltf::Extensions::KHR_materials_ior;
+  extensions |= fastgltf::Extensions::KHR_materials_iridescence;
+  extensions |= fastgltf::Extensions::KHR_materials_volume;
+  extensions |= fastgltf::Extensions::KHR_materials_transmission;
+  extensions |= fastgltf::Extensions::KHR_materials_clearcoat;
+  extensions |= fastgltf::Extensions::KHR_materials_emissive_strength;
+  extensions |= fastgltf::Extensions::KHR_materials_sheen;
+  extensions |= fastgltf::Extensions::KHR_materials_unlit;
+  extensions |= fastgltf::Extensions::KHR_materials_anisotropy;
+  extensions |= fastgltf::Extensions::EXT_meshopt_compression;
+  extensions |= fastgltf::Extensions::EXT_texture_webp;
+  extensions |= fastgltf::Extensions::MSFT_texture_dds;
+
+  return extensions;
+}
+
+auto get_default_gltf_options() -> fastgltf::Options {
+  auto options = fastgltf::Options::None;
+  options |= fastgltf::Options::LoadExternalBuffers;
+  // options |= fastgltf::Options::DontRequireValidAssetMember;
+
+  return options;
+}
+
+auto gltf_mime_type_to_asset_file_type(fastgltf::MimeType mime) -> AssetFileType {
+  switch (mime) {
+    case fastgltf::MimeType::JPEG: return AssetFileType::JPEG;
+    case fastgltf::MimeType::PNG : return AssetFileType::PNG;
+    case fastgltf::MimeType::KTX2: return AssetFileType::KTX2;
+    case fastgltf::MimeType::DDS : return AssetFileType::DDS;
+    default                      : return AssetFileType::None;
+  }
+}
+
+auto gltf_mime_type_to_texture_mime_type(fastgltf::MimeType mime) -> TextureLoadInfo::MimeType {
+  switch (mime) {
+    case fastgltf::MimeType::JPEG:
+    case fastgltf::MimeType::PNG : return TextureLoadInfo::MimeType::Generic;
+    case fastgltf::MimeType::KTX2: return TextureLoadInfo::MimeType::KTX;
+    case fastgltf::MimeType::DDS : return TextureLoadInfo::MimeType::DDS;
+    default                      : return TextureLoadInfo::MimeType::Generic;
+  }
+}
+
+auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::SamplerCreateInfo {
+  auto get_address_mode = [](fastgltf::Wrap v) -> vuk::SamplerAddressMode {
+    switch (v) {
+      case fastgltf::Wrap::ClampToEdge   : return vuk::SamplerAddressMode::eClampToEdge;
+      case fastgltf::Wrap::MirroredRepeat: return vuk::SamplerAddressMode::eMirroredRepeat;
+      case fastgltf::Wrap::Repeat        : return vuk::SamplerAddressMode::eRepeat;
+    }
+  };
+
+  auto get_filter_mode = [](fastgltf::Filter v) -> vuk::Filter {
+    switch (v) {
+      case fastgltf::Filter::Nearest:
+      case fastgltf::Filter::NearestMipMapNearest:
+      case fastgltf::Filter::NearestMipMapLinear : return vuk::Filter::eNearest;
+      case fastgltf::Filter::Linear              :
+      case fastgltf::Filter::LinearMipMapNearest :
+      case fastgltf::Filter::LinearMipMapLinear  : return vuk::Filter::eLinear;
+    }
+  };
+
+  auto get_mip_filter_mode = [](fastgltf::Filter v) -> vuk::SamplerMipmapMode {
+    switch (v) {
+      case fastgltf::Filter::Nearest:
+      case fastgltf::Filter::NearestMipMapNearest:
+      case fastgltf::Filter::NearestMipMapLinear : return vuk::SamplerMipmapMode::eNearest;
+      case fastgltf::Filter::Linear              :
+      case fastgltf::Filter::LinearMipMapNearest :
+      case fastgltf::Filter::LinearMipMapLinear  : return vuk::SamplerMipmapMode::eLinear;
+    }
+  };
+
+  return vuk::SamplerCreateInfo{
+    .magFilter = get_filter_mode(gltf_sampler.magFilter.value_or(fastgltf::Filter::Linear)),
+    .minFilter = get_filter_mode(gltf_sampler.minFilter.value_or(fastgltf::Filter::Linear)),
+    .mipmapMode = get_mip_filter_mode(gltf_sampler.minFilter.value_or(fastgltf::Filter::Linear)),
+    .addressModeU = get_address_mode(gltf_sampler.wrapS),
+    .addressModeV = get_address_mode(gltf_sampler.wrapT),
+  };
+}
+
 auto begin_asset_meta(JsonWriter& writer, const UUID& uuid, AssetType type) -> void {
   ZoneScoped;
 
@@ -253,15 +356,6 @@ auto AssetManager::read_meta_file(const std::filesystem::path& path) -> std::uni
   return meta_file;
 }
 
-auto AssetManager::load_deferred_assets() -> void {
-  ZoneScoped;
-
-  for (auto& task : deferred_load_queue) {
-    task();
-  }
-  deferred_load_queue.clear();
-}
-
 auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {
   ZoneScoped;
   memory::ScopedStack stack;
@@ -282,7 +376,7 @@ auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> Asse
     case fnv64_c(".OXASSET"): return AssetFileType::Meta;
     case fnv64_c(".KTX2")   : return AssetFileType::KTX2;
     case fnv64_c(".LUA")    : return AssetFileType::LUA;
-    default                : return AssetFileType::None;
+    default                 : return AssetFileType::None;
   }
 }
 
@@ -501,22 +595,6 @@ auto AssetManager::register_asset(const std::filesystem::path& path) -> UUID {
     return UUID(nullptr);
   }
 
-  switch (type) {
-    case AssetType::Material: {
-      Material mat = {};
-      auto obj = meta_json->doc["material"];
-      if (!obj.error() && read_material_data(&mat, obj.value())) {
-        /* Since materials could contain textures that may be not yet registered
-           we defer them to be loaded at the end of frame */
-        deferred_load_queue.emplace_back([this, uuid, mat]() { load_material(uuid, mat); });
-      } else {
-        OX_LOG_ERROR("Couldn't parse material meta data!");
-      }
-      break;
-    }
-    default: break;
-  }
-
   return uuid;
 }
 
@@ -597,12 +675,12 @@ auto AssetManager::export_model(const UUID& uuid, JsonWriter& writer, const std:
   auto* model = this->get_model(uuid);
   OX_CHECK_NULL(model);
 
-  auto materials = std::vector<Material>(model->materials.size());
-  for (const auto& [material_uuid, material] : std::views::zip(model->materials, materials)) {
+  auto materials = std::vector<Material>(model->initial_materials.size());
+  for (const auto& [material_uuid, material] : std::views::zip(model->initial_materials, materials)) {
     material = *this->get_material(material_uuid);
   }
 
-  return write_mesh_asset_meta(writer, model->embedded_textures, model->materials, materials);
+  return write_mesh_asset_meta(writer, model->embedded_textures, model->initial_materials, materials);
 }
 
 auto AssetManager::export_scene(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool {
@@ -696,54 +774,150 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
 
   memory::ScopedStack stack;
 
-  auto* asset = this->get_asset(uuid);
-  if (asset->is_loaded()) {
-    // Model is collection of multiple assets and all child
-    // assets must be alive to safely process meshes.
-    // Don't acquire child refs.
-    asset->acquire_ref();
+  auto asset_path = std::filesystem::path{};
+  {
+    auto* asset = this->get_asset(uuid);
+    if (asset->is_loaded()) {
+      // Model is collection of multiple assets and all child
+      // assets must be alive to safely process meshes.
+      // Don't acquire child refs.
+      asset->acquire_ref();
 
-    return true;
+      return true;
+    }
+
+    asset_path = asset->path;
+    asset->acquire_ref();
   }
 
-  asset->model_id = model_map.create_slot();
-  auto* model = model_map.slot(asset->model_id);
+  // Initial parsing
+  auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(asset_path);
+  auto gltf_type = fastgltf::determineGltfFileType(gltf_buffer.get());
+  if (gltf_type == fastgltf::GltfType::Invalid) {
+    OX_LOG_ERROR("GLTF model type is invalid!");
+    return false;
+  }
 
-  auto meta_path = std::filesystem::path(asset->path.string() + ".oxasset");
+  auto gltf_parser = fastgltf::Parser(get_default_gltf_extensions());
+  auto gltf_result = gltf_parser.loadGltf(gltf_buffer.get(), asset_path.parent_path(), get_default_gltf_options());
+  if (!gltf_result) {
+    OX_LOG_ERROR("Failed to load GLTF! {}", fastgltf::getErrorMessage(gltf_result.error()));
+    return false;
+  }
+
+  auto gltf_asset = std::move(gltf_result.get());
+  if (gltf_asset.scenes.size() != 1) {
+    OX_LOG_ERROR("Error loading {}. The GLTF scene can only contain one scene.", asset_path);
+    return false;
+  }
+
+  auto meta_path = std::filesystem::path(asset_path.string() + ".oxasset");
   auto meta_json = read_meta_file(meta_path);
   if (!meta_json) {
     return false;
   }
 
-  auto asset_path = asset->path;
-  asset->acquire_ref();
+  auto model = Model{};
 
-  // Below we register new assets, which causes asset pointer to be invalidated.
-  // set this to nullptr so it's obvious when debugging.
-  asset = nullptr;
+  // extract UUIDs from meta file
+  auto textures = std::vector<UUID>(gltf_asset.textures.size());
+  auto embedded_textures_json = meta_json->doc["embedded_textures"];
+  for (auto embedded_texture_obj_json : embedded_textures_json.get_array()) {
+    for (auto field_json : embedded_texture_obj_json.get_object()) {
+      if (field_json.error()) {
+        OX_LOG_ERROR("Failed to import model {}! An element of `embedded_textures` is not an object.", asset_path);
+        return false;
+      }
 
-  // Load embedded textures
-  ankerl::unordered_dense::map<UUID, TextureLoadInfo> texture_info_map = {};
+      auto texture_uuid_str = field_json.unescaped_key();
+      if (embedded_texture_obj_json.error()) {
+        OX_LOG_ERROR("Failed to import model {}! An element of `embedded_textures` is not a string.", asset_path);
+        return false;
+      }
 
-  auto embedded_textures = std::vector<UUID>();
-  auto embedded_texture_uuids_json = meta_json->doc["embedded_textures"].get_array();
-  for (auto embedded_texture_uuid_json : embedded_texture_uuids_json) {
-    auto embedded_texture_uuid_str = embedded_texture_uuid_json.get_string().value_unsafe();
+      auto texture_uuid = UUID::from_string(embedded_texture_obj_json.value_unsafe());
+      if (!texture_uuid.has_value()) {
+        OX_LOG_ERROR("Failed to import model {}! An embedded texture with corrupt UUID.", asset_path);
+        return false;
+      }
 
-    auto embedded_texture_uuid = UUID::from_string(embedded_texture_uuid_str);
-    if (!embedded_texture_uuid.has_value()) {
-      OX_LOG_ERROR("Failed to import model {}! An embedded texture with corrupt UUID.", asset_path);
-      return false;
+      auto field_value_json = field_json.value();
+      auto image_index_json = field_value_json["image_index"].get_int64();
+      if (!image_index_json.error()) {
+        OX_LOG_ERROR(
+          "Failed to import model {}! An element of `embedded_textures` contain an invalid `image_index` field.",
+          asset_path
+        );
+        return false;
+      }
+
+      auto image_index = static_cast<usize>(image_index_json.value_unsafe());
+      if (textures.size() <= image_index) {
+        textures.resize(image_index + 1);
+      }
+      textures[image_index] = texture_uuid.value();
     }
+  }
 
-    embedded_textures.push_back(embedded_texture_uuid.value());
-    this->register_asset(embedded_texture_uuid.value(), AssetType::Texture, {});
+  // determine and initialize texture info
+  for (const auto& [texture_uuid, gltf_texture] : std::views::zip(textures, gltf_asset.textures)) {
+    if (auto& image_index = gltf_texture.imageIndex; image_index.has_value()) {
+      auto& image = gltf_asset.images[image_index.value()];
 
-    texture_info_map.emplace(embedded_texture_uuid.value(), TextureLoadInfo{});
+      auto mapped_file = File{};
+      auto texture_load_info = TextureLoadInfo{};
+      std::visit(
+        ox::match{
+          [](const auto&) {},
+          [&](fastgltf::sources::BufferView& v) {
+            // Embedded buffer
+            auto& buffer_view = gltf_asset.bufferViews[v.bufferViewIndex];
+            auto& buffer = gltf_asset.buffers[buffer_view.bufferIndex];
+            std::visit(
+              ox::match{
+                [](const auto&) {},
+                [&](fastgltf::sources::Array& array) {
+                  texture_load_info.bytes = std::span(
+                    reinterpret_cast<u8*>(array.bytes.data() + buffer_view.byteOffset),
+                    buffer_view.byteLength
+                  );
+                },
+              },
+              buffer.data
+            );
+
+            OX_ASSERT(register_asset(texture_uuid, AssetType::Texture, asset_path));
+            texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
+          },
+          [&](fastgltf::sources::Array& v) {
+            // Embedded array
+            OX_ASSERT(register_asset(texture_uuid, AssetType::Texture, asset_path));
+            texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
+          },
+          [&](fastgltf::sources::URI& uri) {
+            // External file
+            const auto& image_path = uri.uri.path();
+            mapped_file = File(image_path, FileAccess::Read);
+            auto* mapped_data = static_cast<u8*>(mapped_file.map());
+            OX_ASSERT(mapped_file.error == FileError::None);
+            texture_load_info.bytes = std::span(mapped_data, mapped_file.size);
+            texture_load_info.mime = gltf_mime_type_to_texture_mime_type(uri.mimeType);
+          },
+        },
+        image.data
+      );
+
+      if (gltf_texture.samplerIndex.has_value()) {
+        auto& sampler = gltf_asset.samplers[gltf_texture.samplerIndex.value()];
+        texture_load_info.sampler_info = gltf_sampler_to_sampler(sampler);
+      }
+
+      load_texture(texture_uuid, std::move(texture_load_info));
+    }
   }
 
   // Load registered UUIDs.
-  auto materials_json = meta_json->doc["embedded_materials"].get_array();
+  auto materials_json = meta_json->doc["materials"].get_array();
 
   auto materials = std::vector<Material>();
   for (auto material_json : materials_json) {
@@ -755,295 +929,195 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     }
 
     this->register_asset(material_uuid.value(), AssetType::Material, asset_path);
-    model->materials.emplace_back(material_uuid.value());
+    model.initial_materials.emplace_back(material_uuid.value());
 
     auto& material = materials.emplace_back();
     read_material_data(&material, material_json.value_unsafe());
   }
 
-  struct GLTFCallbacks {
-    Model* model = nullptr;
-
-    std::vector<glm::vec3> vertex_positions = {};
-    std::vector<glm::vec3> vertex_normals = {};
-    std::vector<glm::vec2> vertex_texcoords = {};
-    std::vector<Model::Index> indices = {};
-  };
-  auto on_new_primitive = [](
-                            void* user_data,
-                            u32 mesh_index,
-                            u32 material_index,
-                            u32 vertex_offset,
-                            u32 vertex_count,
-                            u32 index_offset,
-                            u32 index_count
-                          ) {
-    auto& asset_man = App::mod<AssetManager>();
-    auto* info = static_cast<GLTFCallbacks*>(user_data);
-    if (info->model->meshes.size() <= mesh_index) {
-      info->model->meshes.resize(mesh_index + 1);
-    }
-
-    auto& gltf_mesh = info->model->meshes[mesh_index];
-    auto primitive_index = info->model->primitives.size();
-    auto& primitive = info->model->primitives.emplace_back();
-    auto* material_asset = asset_man.get_asset(info->model->materials[material_index]);
-    auto global_material_index = SlotMap_decode_id(material_asset->material_id).index;
-
-    info->model->gpu_meshes.emplace_back();
-    info->model->gpu_mesh_buffers.emplace_back();
-
-    info->vertex_positions.resize(info->vertex_positions.size() + vertex_count);
-    info->vertex_normals.resize(info->vertex_normals.size() + vertex_count);
-    info->vertex_texcoords.resize(info->vertex_texcoords.size() + vertex_count);
-    info->indices.resize(info->indices.size() + index_count);
-
-    gltf_mesh.primitive_indices.push_back(static_cast<u32>(primitive_index));
-    primitive.material_index = global_material_index;
-    primitive.vertex_offset = vertex_offset;
-    primitive.vertex_count = vertex_count;
-    primitive.index_offset = index_offset;
-    primitive.index_count = index_count;
-  };
-  auto on_access_index = [](void* user_data, u32, u64 offset, u32 index) {
-    auto* info = static_cast<GLTFCallbacks*>(user_data);
-    info->indices[offset] = index;
-  };
-  auto on_access_position = [](void* user_data, u32, u64 offset, glm::vec3 position) {
-    auto* info = static_cast<GLTFCallbacks*>(user_data);
-    info->vertex_positions[offset] = position;
-  };
-  auto on_access_normal = [](void* user_data, u32, u64 offset, glm::vec3 normal) {
-    auto* info = static_cast<GLTFCallbacks*>(user_data);
-    info->vertex_normals[offset] = normal;
-  };
-  auto on_access_texcoord = [](void* user_data, u32, u64 offset, glm::vec2 texcoord) {
-    auto* info = static_cast<GLTFCallbacks*>(user_data);
-    info->vertex_texcoords[offset] = texcoord;
-  };
-
-  auto on_materials_load = [model, materials, &texture_info_map](
-                             std::vector<GLTFMaterialInfo>& gltf_materials,
-                             std::vector<GLTFTextureInfo>& textures,
-                             std::vector<GLTFImageInfo>& images,
-                             std::vector<GLTFSamplerInfo>& samplers
-                           ) {
-    auto load_texture_bytes = [&textures, &images, &samplers](u32 texture_index, TextureLoadInfo& inf) {
-      auto& texture = textures[texture_index];
-      if (auto& image_index = texture.image_index; image_index.has_value()) {
-        auto& image = images[image_index.value()];
-
-        switch (image.file_type) {
-          case AssetFileType::KTX2: inf.mime = TextureLoadInfo::MimeType::KTX; break;
-          case AssetFileType::DDS : inf.mime = TextureLoadInfo::MimeType::DDS; break;
-          default                 : inf.mime = TextureLoadInfo::MimeType::Generic; break;
-        }
-
-        if (texture.sampler_index.has_value()) {
-          auto& sampler = samplers[texture.sampler_index.value()];
-          inf.sampler_info.minFilter = sampler.min_filter;
-          inf.sampler_info.magFilter = sampler.mag_filter;
-          inf.sampler_info.addressModeU = sampler.address_u;
-          inf.sampler_info.addressModeV = sampler.address_v;
-        }
-
-        std::visit(
-          ox::match{
-            [&](const std::filesystem::path& p) {
-              auto extension = p.extension();
-
-              memory::ScopedStack s;
-              auto extension_upped = s.to_upper(extension.string());
-
-              if (extension_upped == ".KTX" || extension_upped == ".KTX2") {
-                inf.mime = TextureLoadInfo::MimeType::KTX;
-              } else if (extension_upped == ".DDS") {
-                inf.mime = TextureLoadInfo::MimeType::DDS;
-              }
-            },
-            [&](const std::vector<u8>& data) { inf.bytes = data; },
-          },
-          image.image_data
-        );
-      }
-    };
-
-    auto* app = App::get();
-    auto& asset_man = app->mod<AssetManager>();
-
-    for (const auto& [material_uuid, material, gltf_material] :
-         std::views::zip(model->materials, materials, gltf_materials)) {
-      if (auto texture_index = gltf_material.albedo_texture_index; texture_index.has_value()) {
-        auto& info = texture_info_map[material.albedo_texture];
-        load_texture_bytes(texture_index.value(), info);
-      }
-
-      if (auto texture_index = gltf_material.normal_texture_index; texture_index.has_value()) {
-        auto& info = texture_info_map[material.normal_texture];
-        load_texture_bytes(texture_index.value(), info);
-      }
-
-      if (auto texture_index = gltf_material.emissive_texture_index; texture_index.has_value()) {
-        auto& info = texture_info_map[material.emissive_texture];
-        load_texture_bytes(texture_index.value(), info);
-      }
-
-      if (auto texture_index = gltf_material.metallic_roughness_texture_index; texture_index.has_value()) {
-        auto& info = texture_info_map[material.metallic_roughness_texture];
-        load_texture_bytes(texture_index.value(), info);
-      }
-
-      if (auto texture_index = gltf_material.occlusion_texture_index; texture_index.has_value()) {
-        auto& info = texture_info_map[material.occlusion_texture];
-        load_texture_bytes(texture_index.value(), info);
-      }
-
-      asset_man.load_material(material_uuid, material, texture_info_map);
-    }
-  };
-
-  auto on_new_light = [](void* user_data, usize light_index, const GLTFLightInfo& light) {
-    auto* info = static_cast<GLTFCallbacks*>(user_data);
-
-    info->model->lights.emplace_back(
-      Model::Light{
-        .name = light.name,
-        .type = static_cast<Model::LightType>(light.type),
-        .color = light.color,
-        .intensity = light.intensity,
-        .range = light.range,
-        .inner_cone_angle = light.inner_cone_angle,
-        .outer_cone_angle = light.outer_cone_angle,
-      }
-    );
-  };
-
-  GLTFCallbacks gltf_callbacks = {.model = model};
-  auto gltf_model = GLTFMeshInfo::parse(
-    asset_path,
-    {.user_data = &gltf_callbacks,
-     .on_new_primitive = on_new_primitive,
-     .on_new_light = on_new_light,
-     .on_materials_load = on_materials_load,
-     .on_access_index = on_access_index,
-     .on_access_position = on_access_position,
-     .on_access_normal = on_access_normal,
-     .on_access_texcoord = on_access_texcoord}
-  );
-  if (!gltf_model.has_value()) {
-    OX_LOG_ERROR("Failed to parse Model '{}'!", asset_path);
-    return false;
-  }
-
-  //  ── SCENE HIERARCHY ─────────────────────────────────────────────────
-  for (const auto& node : gltf_model->nodes) {
-    model->nodes.push_back(
-      {.name = node.name,
-       .child_indices = node.children,
-       .mesh_index = node.mesh_index,
-       .light_index = node.light_index,
-       .translation = node.translation,
-       .rotation = node.rotation,
-       .scale = node.scale}
-    );
-  }
-
-  model->default_scene_index = gltf_model->defualt_scene_index.value_or(0_sz);
-  for (const auto& scene : gltf_model->scenes) {
-    model->scenes.push_back({.name = scene.name, .node_indices = scene.node_indices});
-  }
-
-  auto& context = App::get()->get_vkcontext();
-  //  ── MESH PROCESSING ─────────────────────────────────────────────────
-  auto model_indices = std::move(gltf_callbacks.indices);
-  auto model_vertices = std::move(gltf_callbacks.vertex_positions);
-  auto model_normals = std::move(gltf_callbacks.vertex_normals);
-  auto model_texcoords = std::move(gltf_callbacks.vertex_texcoords);
-
-  // for each model (aka gltf scene):
-  // - for each mesh:
-  // - - for each primitive:
-  // - - - for each lod:
-  // - - - - generate lods
-  // - - - - optimize and remap geometry
-  // - - - - calculate meshlets and bounds
+  // for (const auto& [material_uuid, material, gltf_material] :
+  //      std::views::zip(model.initial_materials, materials, gltf_asset.materials)) {
+  //   if (auto texture_index = gltf_material.pbrData.baseColorTexture; texture_index.has_value()) {
+  //     auto& info = texture_info_map[material.albedo_texture];
+  //     load_texture_bytes(texture_index.value(), info);
+  //   }
   //
-  for (const auto& mesh : model->meshes) {
-    for (auto primitive_index : mesh.primitive_indices) {
-      auto& primitive = model->primitives[primitive_index];
-      auto& gpu_mesh = model->gpu_meshes[primitive_index];
-      auto& gpu_mesh_buffer = model->gpu_mesh_buffers[primitive_index];
+  //   if (auto texture_index = gltf_material.normal_texture_index; texture_index.has_value()) {
+  //     auto& info = texture_info_map[material.normal_texture];
+  //     load_texture_bytes(texture_index.value(), info);
+  //   }
+  //
+  //   if (auto texture_index = gltf_material.emissive_texture_index; texture_index.has_value()) {
+  //     auto& info = texture_info_map[material.emissive_texture];
+  //     load_texture_bytes(texture_index.value(), info);
+  //   }
+  //
+  //   if (auto texture_index = gltf_material.metallic_roughness_texture_index; texture_index.has_value()) {
+  //     auto& info = texture_info_map[material.metallic_roughness_texture];
+  //     load_texture_bytes(texture_index.value(), info);
+  //   }
+  //
+  //   if (auto texture_index = gltf_material.occlusion_texture_index; texture_index.has_value()) {
+  //     auto& info = texture_info_map[material.occlusion_texture];
+  //     load_texture_bytes(texture_index.value(), info);
+  //   }
+  //
+  //   asset_man.load_material(material_uuid, material, texture_info_map);
+  // }
 
-      //  ── Geometry remapping ──────────────────────────────────────────────
-      auto primitive_indices = std::span(model_indices.data() + primitive.index_offset, primitive.index_count);
-      auto primitive_vertices = std::span(model_vertices.data() + primitive.vertex_offset, primitive.vertex_count);
-      auto primitive_normals = std::span(model_normals.data() + primitive.vertex_offset, primitive.vertex_count);
-      auto primitive_texcoords = std::span(model_texcoords.data() + primitive.vertex_offset, primitive.vertex_count);
+  auto& gltf_default_scene = gltf_asset.scenes[gltf_asset.defaultScene.value_or(0_sz)];
+  struct ProcessingNode {
+    usize gltf_node_index = 0;
+    usize parent_mesh_group_index = 0;
+  };
+  auto processing_gltf_nodes = std::queue<ProcessingNode>();
 
-      auto remapped_vertices = std::vector<u32>(primitive_vertices.size());
-      auto vertex_count = meshopt_optimizeVertexFetchRemap(
-        remapped_vertices.data(),
-        primitive_indices.data(),
-        primitive_indices.size(),
-        primitive.vertex_count
-      );
+  auto& root_mesh_group = model.mesh_groups.emplace_back();
+  root_mesh_group.name = gltf_default_scene.name;
+  for (auto node_index : gltf_default_scene.nodeIndices) {
+    processing_gltf_nodes.push({node_index, 0});
+  }
 
-      auto mesh_vertices = std::vector<glm::vec3>(vertex_count);
-      meshopt_remapVertexBuffer(
-        mesh_vertices.data(),
-        primitive_vertices.data(),
-        primitive_vertices.size(),
-        sizeof(glm::vec3),
-        remapped_vertices.data()
-      );
+  auto& vk_context = App::get()->get_vkcontext();
 
-      auto mesh_normals = std::vector<glm::vec3>(vertex_count);
-      meshopt_remapVertexBuffer(
-        mesh_normals.data(),
-        primitive_normals.data(),
-        primitive_normals.size(),
-        sizeof(glm::vec3),
-        remapped_vertices.data()
-      );
+  while (!processing_gltf_nodes.empty()) {
+    auto [gltf_node_index, parent_mesh_group_index] = processing_gltf_nodes.front();
+    const auto& node = gltf_asset.nodes[gltf_node_index];
+    auto& parent_mesh_group = model.mesh_groups[parent_mesh_group_index];
+    processing_gltf_nodes.pop();
 
-      auto mesh_texcoords = std::vector<glm::vec2>();
-      if (!primitive_texcoords.empty()) {
-        mesh_texcoords.resize(vertex_count);
+    auto mesh_group_index = model.mesh_groups.size();
+    parent_mesh_group.child_indices.push_back(mesh_group_index);
+
+    auto& mesh_group = model.mesh_groups.emplace_back();
+    mesh_group.name = node.name;
+
+    for (auto child_node_index : node.children) {
+      processing_gltf_nodes.push({child_node_index, mesh_group_index});
+    }
+
+    // Node translation
+    auto translation = glm::vec3{};
+    auto rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
+    auto scale = glm::vec3{};
+    if (auto* trs = std::get_if<fastgltf::TRS>(&node.transform)) {
+      translation = glm::make_vec3(trs->translation.data());
+      rotation = glm::quat::wxyz(trs->rotation.w(), trs->rotation.x(), trs->rotation.y(), trs->rotation.z());
+      scale = glm::make_vec3(trs->scale.data());
+    } else if (auto* mat = std::get_if<fastgltf::math::fmat4x4>(&node.transform)) {
+      auto transform_mat = glm::make_mat4x4(mat->data());
+      auto skew = glm::vec3{};
+      auto perspective = glm::vec4{};
+      glm::decompose(transform_mat, scale, rotation, translation, skew, perspective);
+    }
+
+    mesh_group.translation = translation;
+    mesh_group.rotation = rotation;
+    mesh_group.scale = scale;
+
+    if (!node.meshIndex.has_value()) {
+      continue;
+    }
+
+    const auto& gltf_mesh = gltf_asset.meshes[node.meshIndex.value()];
+    for (const auto& gltf_primitive : gltf_mesh.primitives) {
+      if (!gltf_primitive.indicesAccessor.has_value() || !gltf_primitive.materialIndex.has_value()) {
+        continue;
+      }
+
+      auto gpu_mesh = GPU::Mesh{};
+
+      auto& index_accessor = gltf_asset.accessors[gltf_primitive.indicesAccessor.value()];
+      auto raw_indices = std::vector<u32>(index_accessor.count);
+      fastgltf::iterateAccessorWithIndex<u32>(gltf_asset, index_accessor, [&](u32 index, usize i) { //
+        raw_indices[i] = index;
+      });
+
+      auto vertex_count = 0_u32;
+      auto vertex_remap = std::vector<u32>();
+      auto positions = std::vector<glm::vec3>();
+      if (auto attrib = gltf_primitive.findAttribute("POSITION"); attrib != gltf_primitive.attributes.end()) {
+        auto& accessor = gltf_asset.accessors[attrib->accessorIndex];
+        auto raw_positions = std::vector<glm::vec3>(accessor.count);
+        vertex_remap.resize(accessor.count);
+
+        fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf_asset, accessor, [&](glm::vec3 pos, usize i) { //
+          raw_positions[i] = pos;
+        });
+
+        vertex_count = meshopt_optimizeVertexFetchRemap(
+          vertex_remap.data(),
+          raw_indices.data(),
+          raw_indices.size(),
+          raw_positions.size()
+        );
+
+        positions.resize(vertex_count);
         meshopt_remapVertexBuffer(
-          mesh_texcoords.data(),
-          primitive_texcoords.data(),
-          primitive_texcoords.size(),
-          sizeof(glm::vec2),
-          remapped_vertices.data()
+          positions.data(),
+          raw_positions.data(),
+          raw_positions.size(),
+          sizeof(glm::vec3),
+          vertex_remap.data()
         );
       }
 
-      auto mesh_indices = std::vector<u32>(primitive.index_count);
-      meshopt_remapIndexBuffer(
-        mesh_indices.data(),
-        primitive_indices.data(),
-        primitive_indices.size(),
-        remapped_vertices.data()
-      );
+      auto normals = std::vector<glm::vec3>();
+      if (auto attrib = gltf_primitive.findAttribute("NORMAL"); attrib != gltf_primitive.attributes.end()) {
+        auto& accessor = gltf_asset.accessors[attrib->accessorIndex];
+        auto raw_normals = std::vector<glm::vec3>(accessor.count);
 
-      //  ── LOD generation ──────────────────────────────────────────────────
+        fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf_asset, accessor, [&](glm::vec3 normal, usize i) { //
+          raw_normals[i] = normal;
+        });
 
-      const auto mesh_upload_size = 0                               //
-                                    + ox::size_bytes(mesh_vertices) //
-                                    + ox::size_bytes(mesh_normals)  //
-                                    + ox::size_bytes(mesh_texcoords);
+        normals.resize(vertex_count);
+        meshopt_remapVertexBuffer(
+          normals.data(),
+          raw_normals.data(),
+          raw_normals.size(),
+          sizeof(glm::vec3),
+          vertex_remap.data()
+        );
+      }
+
+      auto texcoords = std::vector<glm::vec2>();
+      if (auto attrib = gltf_primitive.findAttribute("TEXCOORD_0"); attrib != gltf_primitive.attributes.end()) {
+        auto& accessor = gltf_asset.accessors[attrib->accessorIndex];
+        auto raw_texcoords = std::vector<glm::vec2>(accessor.count);
+
+        fastgltf::iterateAccessorWithIndex<glm::vec2>(gltf_asset, accessor, [&](glm::vec2 uv, usize i) { //
+          raw_texcoords[i] = uv;
+        });
+
+        texcoords.resize(vertex_count);
+        meshopt_remapVertexBuffer(
+          texcoords.data(),
+          raw_texcoords.data(),
+          raw_texcoords.size(),
+          sizeof(glm::vec2),
+          vertex_remap.data()
+        );
+      }
+
+      auto indices = std::vector<u32>(index_accessor.count);
+      meshopt_remapIndexBuffer(indices.data(), raw_indices.data(), raw_indices.size(), vertex_remap.data());
+
+      const auto mesh_upload_size = 0                           //
+                                    + ox::size_bytes(positions) //
+                                    + ox::size_bytes(normals)   //
+                                    + ox::size_bytes(texcoords);
       auto upload_size = mesh_upload_size;
 
-      std::pair<vuk::Value<vuk::Buffer>, u64> lod_cpu_buffers[GPU::Mesh::MAX_LODS] = {};
+      auto lod_cpu_buffers = std::array<std::pair<vuk::Value<vuk::Buffer>, u64>, GPU::Mesh::MAX_LODS>();
       auto last_lod_indices = std::vector<u32>();
       for (auto lod_index = 0_sz; lod_index < GPU::Mesh::MAX_LODS; lod_index++) {
         ZoneNamedN(z, "GPU Meshlet Generation", true);
 
         auto& cur_lod = gpu_mesh.lods[lod_index];
-
         auto simplified_indices = std::vector<u32>();
         if (lod_index == 0) {
-          simplified_indices = std::vector<u32>(mesh_indices.begin(), mesh_indices.end());
+          simplified_indices = std::vector<u32>(indices.begin(), indices.end());
         } else {
           const auto& last_lod = gpu_mesh.lods[lod_index - 1];
           auto lod_index_count = ((last_lod_indices.size() + 5_sz) / 6_sz) * 3_sz;
@@ -1052,22 +1126,23 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
           constexpr f32 NORMAL_WEIGHTS[] = {1.0f, 1.0f, 1.0f};
 
           auto result_error = 0.0f;
-          auto result_index_count = meshopt_simplifyWithAttributes( //
-              simplified_indices.data(),
-              last_lod_indices.data(),
-              last_lod_indices.size(),
-              reinterpret_cast<const f32*>(mesh_vertices.data()),
-              mesh_vertices.size(),
-              sizeof(glm::vec3),
-              reinterpret_cast<const f32*>(mesh_normals.data()),
-              sizeof(glm::vec3),
-              NORMAL_WEIGHTS,
-              ox::count_of(NORMAL_WEIGHTS),
-              nullptr,
-              lod_index_count,
-              TARGET_ERROR,
-              meshopt_SimplifyLockBorder,
-              &result_error);
+          auto result_index_count = meshopt_simplifyWithAttributes(
+            simplified_indices.data(),
+            last_lod_indices.data(),
+            last_lod_indices.size(),
+            reinterpret_cast<const f32*>(positions.data()),
+            vertex_count,
+            sizeof(glm::vec3),
+            reinterpret_cast<const f32*>(normals.data()),
+            sizeof(glm::vec3),
+            NORMAL_WEIGHTS,
+            ox::count_of(NORMAL_WEIGHTS),
+            nullptr,
+            lod_index_count,
+            TARGET_ERROR,
+            meshopt_SimplifyLockBorder,
+            &result_error
+          );
 
           cur_lod.error = last_lod.error + result_error;
           if (result_index_count > (lod_index_count + lod_index_count / 2) || result_error > 0.5 ||
@@ -1079,7 +1154,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
           simplified_indices.resize(result_index_count);
         }
 
-        gpu_mesh.vertex_count = static_cast<u32>(mesh_vertices.size());
+        gpu_mesh.vertex_count = vertex_count;
         gpu_mesh.lod_count += 1;
         last_lod_indices = simplified_indices;
 
@@ -1100,18 +1175,19 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
         auto indirect_vertex_indices = std::vector<u32>(max_meshlet_count * Model::MAX_MESHLET_INDICES);
         auto local_triangle_indices = std::vector<u8>(max_meshlet_count * Model::MAX_MESHLET_PRIMITIVES * 3);
 
-        auto meshlet_count = meshopt_buildMeshlets( //
-            raw_meshlets.data(),
-            indirect_vertex_indices.data(),
-            local_triangle_indices.data(),
-            simplified_indices.data(),
-            simplified_indices.size(),
-            reinterpret_cast<const f32*>(mesh_vertices.data()),
-            mesh_vertices.size(),
-            sizeof(glm::vec3),
-            Model::MAX_MESHLET_INDICES,
-            Model::MAX_MESHLET_PRIMITIVES,
-            0.0);
+        auto meshlet_count = meshopt_buildMeshlets(
+          raw_meshlets.data(),
+          indirect_vertex_indices.data(),
+          local_triangle_indices.data(),
+          simplified_indices.data(),
+          simplified_indices.size(),
+          reinterpret_cast<const f32*>(positions.data()),
+          vertex_count,
+          sizeof(glm::vec3),
+          Model::MAX_MESHLET_INDICES,
+          Model::MAX_MESHLET_PRIMITIVES,
+          0.0
+        );
 
         // Trim meshlets from worst case to current case
         raw_meshlets.resize(meshlet_count);
@@ -1128,21 +1204,29 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
           auto meshlet_bb_min = glm::vec3(std::numeric_limits<f32>::max());
           auto meshlet_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
           for (u32 i = 0; i < raw_meshlet.triangle_count * 3; i++) {
-            const auto& tri_pos =
-              mesh_vertices[indirect_vertex_indices
-                              [raw_meshlet.vertex_offset + local_triangle_indices[raw_meshlet.triangle_offset + i]]];
+            auto local_triangle_index_offset = raw_meshlet.triangle_offset + i;
+            OX_ASSERT(local_triangle_index_offset < local_triangle_indices.size());
+            auto local_triangle_index = local_triangle_indices[local_triangle_index_offset];
+            OX_ASSERT(local_triangle_index < raw_meshlet.vertex_count);
+            auto indirect_vertex_index_offset = raw_meshlet.vertex_offset + local_triangle_index;
+            OX_ASSERT(indirect_vertex_index_offset < indirect_vertex_indices.size());
+            auto indirect_vertex_index = indirect_vertex_indices[indirect_vertex_index_offset];
+            OX_ASSERT(indirect_vertex_index < vertex_count);
+
+            const auto& tri_pos = positions[indirect_vertex_index];
             meshlet_bb_min = glm::min(meshlet_bb_min, tri_pos);
             meshlet_bb_max = glm::max(meshlet_bb_max, tri_pos);
           }
 
           // Sphere and Cone computation
-          auto sphere_bounds = meshopt_computeMeshletBounds( //
-              &indirect_vertex_indices[raw_meshlet.vertex_offset],
-              &local_triangle_indices[raw_meshlet.triangle_offset],
-              raw_meshlet.triangle_count,
-              reinterpret_cast<f32*>(mesh_vertices.data()),
-              vertex_count,
-              sizeof(glm::vec3));
+          auto sphere_bounds = meshopt_computeMeshletBounds(
+            &indirect_vertex_indices[raw_meshlet.vertex_offset],
+            &local_triangle_indices[raw_meshlet.triangle_offset],
+            raw_meshlet.triangle_count,
+            reinterpret_cast<f32*>(positions.data()),
+            vertex_count,
+            sizeof(glm::vec3)
+          );
 
           meshlet.indirect_vertex_index_offset = raw_meshlet.vertex_offset;
           meshlet.local_triangle_index_offset = raw_meshlet.triangle_offset;
@@ -1167,7 +1251,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
                                + ox::size_bytes(meshlet_bounds)         //
                                + ox::size_bytes(local_triangle_indices) //
                                + ox::size_bytes(indirect_vertex_indices);
-        auto cpu_lod_buffer = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, lod_upload_size);
+        auto cpu_lod_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, lod_upload_size);
         auto cpu_lod_ptr = reinterpret_cast<u8*>(cpu_lod_buffer->mapped_ptr);
 
         auto upload_offset = 0_u64;
@@ -1195,41 +1279,42 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
         );
         upload_offset += ox::size_bytes(indirect_vertex_indices);
 
-        cur_lod.indices_count = static_cast<u32>(simplified_indices.size());
-        cur_lod.meshlet_count = static_cast<u32>(meshlet_count);
-        cur_lod.meshlet_bounds_count = static_cast<u32>(meshlet_bounds.size());
-        cur_lod.local_triangle_indices_count = static_cast<u32>(local_triangle_indices.size());
-        cur_lod.indirect_vertex_indices_count = static_cast<u32>(indirect_vertex_indices.size());
+        cur_lod.indices_count = simplified_indices.size();
+        cur_lod.meshlet_count = meshlet_count;
+        cur_lod.meshlet_bounds_count = meshlet_bounds.size();
+        cur_lod.local_triangle_indices_count = local_triangle_indices.size();
+        cur_lod.indirect_vertex_indices_count = indirect_vertex_indices.size();
 
         lod_cpu_buffers[lod_index] = std::pair(cpu_lod_buffer, lod_upload_size);
         upload_size += lod_upload_size;
       }
 
       auto mesh_upload_offset = 0_u64;
-      gpu_mesh_buffer = context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, upload_size);
+
+      auto gpu_mesh_buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, upload_size);
 
       // Mesh first
-      auto cpu_mesh_buffer = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, mesh_upload_size);
+      auto cpu_mesh_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, mesh_upload_size);
       auto cpu_mesh_ptr = reinterpret_cast<u8*>(cpu_mesh_buffer->mapped_ptr);
 
       auto gpu_mesh_bda = gpu_mesh_buffer->device_address;
       gpu_mesh.vertex_positions = gpu_mesh_bda + mesh_upload_offset;
-      std::memcpy(cpu_mesh_ptr + mesh_upload_offset, mesh_vertices.data(), ox::size_bytes(mesh_vertices));
-      mesh_upload_offset += ox::size_bytes(mesh_vertices);
+      std::memcpy(cpu_mesh_ptr + mesh_upload_offset, positions.data(), ox::size_bytes(positions));
+      mesh_upload_offset += ox::size_bytes(positions);
 
       gpu_mesh.vertex_normals = gpu_mesh_bda + mesh_upload_offset;
-      std::memcpy(cpu_mesh_ptr + mesh_upload_offset, mesh_normals.data(), ox::size_bytes(mesh_normals));
-      mesh_upload_offset += ox::size_bytes(mesh_normals);
+      std::memcpy(cpu_mesh_ptr + mesh_upload_offset, normals.data(), ox::size_bytes(normals));
+      mesh_upload_offset += ox::size_bytes(normals);
 
-      if (!mesh_texcoords.empty()) {
+      if (!texcoords.empty()) {
         gpu_mesh.texture_coords = gpu_mesh_bda + mesh_upload_offset;
-        std::memcpy(cpu_mesh_ptr + mesh_upload_offset, mesh_texcoords.data(), ox::size_bytes(mesh_texcoords));
-        mesh_upload_offset += ox::size_bytes(mesh_texcoords);
+        std::memcpy(cpu_mesh_ptr + mesh_upload_offset, texcoords.data(), ox::size_bytes(texcoords));
+        mesh_upload_offset += ox::size_bytes(texcoords);
       }
 
       auto gpu_mesh_subrange = vuk::discard_buf("mesh", gpu_mesh_buffer->subrange(0, mesh_upload_size));
-      gpu_mesh_subrange = context.upload_staging(std::move(cpu_mesh_buffer), std::move(gpu_mesh_subrange));
-      context.wait_on(std::move(gpu_mesh_subrange));
+      gpu_mesh_subrange = vk_context.upload_staging(std::move(cpu_mesh_buffer), std::move(gpu_mesh_subrange));
+      vk_context.wait_on(std::move(gpu_mesh_subrange));
 
       for (auto lod_index = 0_sz; lod_index < gpu_mesh.lod_count; lod_index++) {
         auto&& [lod_cpu_buffer, lod_upload_size] = lod_cpu_buffers[lod_index];
@@ -1245,11 +1330,18 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
           "mesh lod subrange",
           gpu_mesh_buffer->subrange(mesh_upload_offset, lod_upload_size)
         );
-        gpu_lod_subrange = context.upload_staging(std::move(lod_cpu_buffer), std::move(gpu_lod_subrange));
-        context.wait_on(std::move(gpu_lod_subrange));
+        gpu_lod_subrange = vk_context.upload_staging(std::move(lod_cpu_buffer), std::move(gpu_lod_subrange));
+        vk_context.wait_on(std::move(gpu_lod_subrange));
 
         mesh_upload_offset += lod_upload_size;
       }
+
+      auto mesh_index = model.gpu_meshes.size();
+      const auto& initial_material = model.initial_materials[gltf_primitive.materialIndex.value()];
+      mesh_group.mesh_indices.push_back(mesh_index);
+      model.initial_materials.push_back(initial_material);
+      model.gpu_meshes.push_back(gpu_mesh);
+      model.gpu_mesh_buffers.push_back(std::move(gpu_mesh_buffer));
     }
   }
 
@@ -1266,7 +1358,7 @@ auto AssetManager::unload_model(const UUID& uuid) -> bool {
   }
 
   auto* model = this->get_model(asset->model_id);
-  for (auto& v : model->materials) {
+  for (auto& v : model->initial_materials) {
     this->unload_material(v);
   }
 
@@ -1278,7 +1370,7 @@ auto AssetManager::unload_model(const UUID& uuid) -> bool {
   return true;
 }
 
-auto AssetManager::load_texture(const UUID& uuid, const TextureLoadInfo& info) -> bool {
+auto AssetManager::load_texture(const UUID& uuid, TextureLoadInfo info) -> bool {
   ZoneScoped;
 
   auto read_lock = std::shared_lock(textures_mutex);
@@ -1294,7 +1386,7 @@ auto AssetManager::load_texture(const UUID& uuid, const TextureLoadInfo& info) -
 
   {
     Texture texture{};
-    texture.create(asset->path, info);
+    texture.create(asset->path, std::move(info));
 
     auto write_lock = std::unique_lock(textures_mutex);
     asset->texture_id = texture_map.create_slot(std::move(texture));
@@ -1333,87 +1425,76 @@ auto AssetManager::is_texture_loaded(const UUID& uuid) -> bool {
   return asset->is_loaded();
 }
 
-auto AssetManager::load_material(
-  const UUID& uuid,
-  const Material& material_info,
-  option<ankerl::unordered_dense::map<UUID, TextureLoadInfo>> texture_info_map
-) -> bool {
+auto AssetManager::load_material(const UUID& uuid, const Material& info, const MateriaLoadInfo& load_info) -> bool {
   ZoneScoped;
 
   auto* asset = this->get_asset(uuid);
   OX_CHECK_NULL(asset);
-
-  // Materials don't explicitly load any resources, they need to increase child resources refs.
-
-  if (!asset->is_loaded()) {
-    asset->material_id = material_map.create_slot(const_cast<Material&&>(material_info));
+  if (asset->is_loaded()) {
+    asset->acquire_ref();
+    return true;
   }
 
-  struct LoadInfo {
-    UUID texture_uuid = {};
-    MaterialID material_id = {};
-    TextureLoadInfo texture_load_info = {};
-  };
-  std::vector<LoadInfo> load_infos = {};
-
-  auto* material = material_map.slot(asset->material_id);
-
-  this->set_material_dirty(asset->material_id);
-
-  const auto get_info = [&texture_info_map](UUID& texture, vuk::Format format) -> TextureLoadInfo {
-    TextureLoadInfo info = {.format = format};
-    if (texture_info_map.has_value()) {
-      auto& map = texture_info_map.value();
-      if (map.contains(texture)) {
-        info = map[texture];
-        info.format = format;
-      }
-    }
-    return info;
-  };
+  asset->material_id = material_map.create_slot({
+    .albedo_color = info.albedo_color,
+    .emissive_color = info.emissive_color,
+    .roughness_factor = info.roughness_factor,
+    .metallic_factor = info.metallic_factor,
+    .alpha_mode = info.alpha_mode,
+    .alpha_cutoff = info.alpha_cutoff,
+    .albedo_texture = info.albedo_texture,
+    .normal_texture = info.normal_texture,
+    .emissive_texture = info.emissive_texture,
+    .metallic_roughness_texture = info.metallic_roughness_texture,
+    .occlusion_texture = info.occlusion_texture,
+  });
 
   auto& job_man = App::get_job_manager();
 
-  if (material->albedo_texture) {
-    auto info = get_info(material->albedo_texture, vuk::Format::eR8G8B8A8Srgb);
-    load_infos.emplace_back(LoadInfo{material->albedo_texture, asset->material_id, info});
+  if (info.albedo_texture) {
+    auto job = Job::create([this,
+                            texture_uuid = info.albedo_texture,
+                            texture_info = std::move(load_info.albedo_texture)]() { load_texture(texture_uuid); });
+    job_man.submit(std::move(job));
   }
 
-  if (material->normal_texture) {
-    auto info = get_info(material->normal_texture, vuk::Format::eR8G8B8A8Unorm);
-    load_infos.emplace_back(LoadInfo{material->normal_texture, asset->material_id, info});
+  if (info.normal_texture) {
+    auto job = Job::create(
+      [this, texture_uuid = info.normal_texture, texture_info = std::move(load_info.normal_texture)]() {
+        load_texture(texture_uuid, {.format = vuk::Format::eR8G8B8A8Unorm});
+      }
+    );
+    job_man.submit(std::move(job));
   }
 
-  if (material->emissive_texture) {
-    auto info = get_info(material->emissive_texture, vuk::Format::eR8G8B8A8Srgb);
-    load_infos.emplace_back(LoadInfo{material->emissive_texture, asset->material_id, info});
+  if (info.emissive_texture) {
+    auto job = Job::create([this,
+                            texture_uuid = info.emissive_texture,
+                            texture_info = std::move(load_info.emissive_texture)]() { load_texture(texture_uuid); });
+    job_man.submit(std::move(job));
   }
 
-  if (material->metallic_roughness_texture) {
-    auto info = get_info(material->metallic_roughness_texture, vuk::Format::eR8G8B8A8Unorm);
-    load_infos.emplace_back(LoadInfo{material->metallic_roughness_texture, asset->material_id, info});
+  if (info.metallic_roughness_texture) {
+    auto job = Job::create([this,
+                            texture_uuid = info.metallic_roughness_texture,
+                            texture_info = std::move(load_info.metallic_roughness_texture)]() {
+      load_texture(texture_uuid, {.format = vuk::Format::eR8G8B8A8Unorm});
+    });
+    job_man.submit(std::move(job));
   }
 
-  if (material->occlusion_texture) {
-    auto info = get_info(material->occlusion_texture, vuk::Format::eR8G8B8A8Unorm);
-    load_infos.emplace_back(LoadInfo{material->occlusion_texture, asset->material_id, info});
+  if (info.occlusion_texture) {
+    auto job = Job::create(
+      [this, texture_uuid = info.occlusion_texture, texture_info = std::move(load_info.occlusion_texture)]() {
+        load_texture(texture_uuid, {.format = vuk::Format::eR8G8B8A8Unorm});
+      }
+    );
+    job_man.submit(std::move(job));
   }
 
-  job_man.push_job_name(fmt::format("Material job: {}", asset->uuid.str()));
-  job_man.for_each_async(
-    load_infos,
-    [](LoadInfo& info, usize index) {
-      auto& asset_man = App::mod<AssetManager>();
-      asset_man.load_texture(info.texture_uuid, info.texture_load_info);
-    },
-    [material_id = asset->material_id]() {
-      auto& asset_man = App::mod<AssetManager>();
-      asset_man.set_material_dirty(material_id);
-    }
-  );
-  job_man.pop_job_name();
-
+  this->set_material_dirty(asset->material_id);
   asset->acquire_ref();
+
   return true;
 }
 

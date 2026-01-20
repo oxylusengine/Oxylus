@@ -16,26 +16,13 @@ struct Model {
 
   using Index = u32;
 
-  struct Primitive {
-    u32 material_index = 0;
-    u32 vertex_count = 0;
-    u32 vertex_offset = 0;
-    u32 index_count = 0;
-    u32 index_offset = 0;
-  };
-
-  struct GLTFMesh {
-    std::string name = {};
-    std::vector<u32> primitive_indices = {};
-  };
-
-  struct Node {
+  struct MeshGroup {
     std::string name = {};
     std::vector<usize> child_indices = {};
-    ox::option<usize> mesh_index = ox::nullopt;
-    ox::option<usize> light_index = ox::nullopt;
+    std::vector<usize> mesh_indices = {};
+    std::vector<usize> light_indicies = {};
     glm::vec3 translation = {};
-    glm::quat rotation = {};
+    glm::quat rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
     glm::vec3 scale = {};
   };
 
@@ -57,17 +44,14 @@ struct Model {
   };
 
   std::vector<UUID> embedded_textures = {};
-  std::vector<UUID> materials = {};
-  std::vector<Primitive> primitives = {};
-  std::vector<GLTFMesh> meshes = {};
-  std::vector<Node> nodes = {};
+  std::vector<UUID> initial_materials = {};
+  std::vector<MeshGroup> mesh_groups = {};
   std::vector<Scene> scenes = {};
   std::vector<Light> lights = {};
-
-  usize default_scene_index = 0;
-
   std::vector<GPU::Mesh> gpu_meshes = {};
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};
+
+  usize default_scene_index = 0;
 };
 
 } // namespace ox

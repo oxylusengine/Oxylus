@@ -688,7 +688,7 @@ void InspectorPanel::draw_model_asset(UUID* uuid, Asset* asset) {
 
   auto& asset_man = App::mod<AssetManager>();
   if (auto* model = asset_man.get_model(*uuid)) {
-    for (auto& mat_uuid : model->materials) {
+    for (auto& mat_uuid : model->initial_materials) { // TODO: We should actually use model component here
       static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
                                                        ImGuiTreeNodeFlags_SpanAvailWidth |
                                                        ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |

@@ -55,8 +55,6 @@ public:
 
   auto read_meta_file(const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
 
-  auto load_deferred_assets() -> void;
-
   auto create_asset(AssetType type, const std::filesystem::path& path = {}) -> UUID;
 
   static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
@@ -88,15 +86,11 @@ public:
   auto load_model(const UUID& uuid) -> bool;
   auto unload_model(const UUID& uuid) -> bool;
 
-  auto load_texture(const UUID& uuid, const TextureLoadInfo& info = {}) -> bool;
+  auto load_texture(const UUID& uuid, TextureLoadInfo info = {}) -> bool;
   auto unload_texture(const UUID& uuid) -> bool;
   auto is_texture_loaded(const UUID& uuid) -> bool;
 
-  auto load_material(
-    const UUID& uuid,
-    const Material& material_info,
-    option<ankerl::unordered_dense::map<UUID, TextureLoadInfo>> texture_info_map = nullopt
-  ) -> bool;
+  auto load_material(const UUID& uuid, const Material& material_info, const MateriaLoadInfo& load_info = {}) -> bool;
   auto unload_material(const UUID& uuid) -> bool;
 
   auto load_scene(const UUID& uuid) -> bool;
@@ -147,7 +141,5 @@ private:
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};
   SlotMap<AudioSource, AudioID> audio_map = {};
   SlotMap<std::unique_ptr<LuaSystem>, ScriptID> script_map = {};
-
-  std::vector<std::function<void()>> deferred_load_queue = {};
 };
 } // namespace ox

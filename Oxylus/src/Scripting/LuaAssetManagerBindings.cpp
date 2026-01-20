@@ -43,7 +43,7 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
     SamplingMode::NearestClamped
   );
 
-  auto model = state->new_usertype<Model>("Model", "materials", &Model::materials);
+  auto model = state->new_usertype<Model>("Model", "materials", &Model::initial_materials);
   auto material = state->new_usertype<Material>(
     "Material",
 
