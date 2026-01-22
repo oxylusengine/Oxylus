@@ -24,10 +24,12 @@ auto GameServer::on_client_connect(ox::NetClientID client_id) -> void {
 
   auto* client = remote_clients.slot(client_id);
   auto& world = scene->world;
-  world.entity()
-    .set<ox::TransformComponent>({.scale = {0.1f, 0.1f, 0.1f}}) //
-    .set<ox::SpriteComponent>({.material = player_material})
-    .set<Player>({.net_id = client->net_id});
+  auto player_entity = world.entity()
+                         .set<ox::TransformComponent>({.scale = {0.1f, 0.1f, 0.1f}}) //
+                         .set<ox::SpriteComponent>({.material = player_material})
+                         .set<Player>({.net_id = client->net_id});
+
+  client_entities.emplace(client_id, player_entity);
 
   auto tick_state = ox::SceneState{};
   ox::SceneSnapshotBuilder::take_snapshot(scene->world, tick_state);
@@ -40,6 +42,11 @@ auto GameServer::on_client_disconnect(ox::NetClientID client_id) -> void {
   auto* client = remote_clients.slot(client_id);
   client_velocities.erase(client->net_id);
   client_snapshots.erase(client_id);
+
+  auto client_entity_it = client_entities.find(client_id);
+  if (client_entity_it != client_entities.end()) {
+    client_entity_it->second.destruct();
+  }
 }
 
 auto GameServer::on_client_ack(ox::NetClientID client_id, ox::NetClientAckPacket& packet) -> void {

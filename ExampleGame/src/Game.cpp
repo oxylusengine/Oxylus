@@ -217,7 +217,7 @@ auto Game::update(this Game& self, const ox::Timestep& timestep) -> void {
     } break;
     case ox::NetClientStatus::Connected: {
       ImGui::TextUnformatted("Client state: connected");
-      ImGui::Text("NetID: %lu", self.client->net_id);
+      ImGui::Text("NetID: %llu", self.client->net_id);
       auto& stats = self.client->stats;
       ImGui::Text(
         "Ping: %u\nRX: %u B/s\nTX: %u B/s\nLost packets: %u\nRTT: %u",
