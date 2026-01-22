@@ -15,7 +15,6 @@ auto VirtualKeyboard::release(this const VirtualKeyboard& self, KeyCode keycode,
   self.push_key_event(keycode, mod, false);
 }
 
-// a full "Tap" (Down then Up)
 void VirtualKeyboard::tap(this const VirtualKeyboard& self, KeyCode keycode, ModCode mod) {
   self.press(keycode);
   self.release(keycode);
@@ -34,7 +33,7 @@ void VirtualKeyboard::push_key_event(this const VirtualKeyboard& self, KeyCode k
   event.key.mod = static_cast<SDL_Keymod>(mod);
   event.key.down = down;
   event.key.repeat = false;
-  event.key.which = 0; // Should be fine for 'System Keyboard'
+  event.key.which = 0;
   auto& window = App::get_window();
   event.key.windowID = SDL_GetWindowID(reinterpret_cast<SDL_Window*>(window.get_handle()));
 
