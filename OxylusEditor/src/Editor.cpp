@@ -2,7 +2,6 @@
 
 #include <ImGuizmo.h>
 #include <filesystem>
-#include <flecs.h>
 #include <imgui_internal.h>
 #include <vuk/vsl/Core.hpp>
 
@@ -33,6 +32,57 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.undo_redo_system = std::make_unique<UndoRedoSystem>();
 
   self.editor_theme.init();
+
+  auto& input = App::mod<Input>();
+  input.set_context("editor");
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "new_scene",
+      .primary_inputs = {InputCode(KeyCode::N, ModCode::AnyControl)},
+      .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.new_scene(); }
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "undo",
+      .primary_inputs = {InputCode(KeyCode::Z, ModCode::AnyControl)},
+      .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.undo(); }
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "redo",
+      .primary_inputs = {InputCode(KeyCode::Y, ModCode::AnyControl)},
+      .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.redo(); }
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "save_scene",
+      .primary_inputs = {InputCode(KeyCode::S, ModCode::AnyControl)},
+      .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.save_scene(); }
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "open_scene_file_dialog",
+      .primary_inputs = {InputCode(KeyCode::O, ModCode::AnyControl)},
+      .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.open_scene_file_dialog(); }
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "save_scene_as",
+      .primary_inputs = {InputCode(KeyCode::S, ModCode::AnyControl | ModCode::AnyShift)},
+      .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.save_scene_as(); }
+    }
+  );
 
   self.active_project = std::make_unique<Project>();
 
@@ -86,10 +136,30 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
     loguru::Verbosity_INFO
   );
 
+  self.runtime_console
+    .register_command("test_loading", "Test Loading.", [&self](const RuntimeConsole::ParsedCommandValue&) {
+      self.notification_system.add(Notification("Test Loading", true, Notification::Type::Loading));
+    });
+
+  self.runtime_console.register_command("test_info", "Test Info.", [&self](const RuntimeConsole::ParsedCommandValue&) {
+    self.notification_system.add(Notification("Test Info", true, Notification::Type::Info));
+  });
+
+  self.runtime_console
+    .register_command("test_warn", "Test Warning.", [&self](const RuntimeConsole::ParsedCommandValue&) {
+      self.notification_system.add(Notification("Test Warning", true, Notification::Type::Warn));
+    });
+
+  self.runtime_console.register_command("test_err", "Test Error.", [&self](const RuntimeConsole::ParsedCommandValue&) {
+    self.notification_system.add(Notification("Test Error", true, Notification::Type::Error));
+  });
+
   return {};
 }
 
 auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
+  ZoneScoped;
+
   auto& job_man = App::get_job_manager();
   job_man.get_tracker().stop_tracking();
 
@@ -139,6 +209,8 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 }
 
 auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_attachment) -> void {
+  ZoneScoped;
+
   auto& job_man = App::get_job_manager();
 
   auto status = job_man.get_tracker().get_status();
@@ -157,8 +229,6 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
     ImGui::ShowStyleEditor();
   if (EditorCVar::cvar_show_imgui_demo.get())
     ImGui::ShowDemoWindow();
-
-  self.editor_shortcuts();
 
   constexpr ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
 
@@ -206,6 +276,8 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
 }
 
 void Editor::reset(this Editor& self) {
+  ZoneScoped;
+
   self.main_viewport_panel.reset();
 
   auto* sh = self.get_panel<SceneHierarchyPanel>();
@@ -215,6 +287,8 @@ void Editor::reset(this Editor& self) {
 }
 
 void Editor::new_scene(this Editor& self) {
+  ZoneScoped;
+
   App::get_vkcontext().wait();
 
   auto new_scene_id = self.scene_manager.new_scene();
@@ -225,6 +299,8 @@ void Editor::new_scene(this Editor& self) {
 }
 
 bool Editor::open_scene(const std::filesystem::path& path) {
+  ZoneScoped;
+
   auto loaded_scene = scene_manager.load_scene(path);
 
   if (loaded_scene.has_value()) {
@@ -236,6 +312,8 @@ bool Editor::open_scene(const std::filesystem::path& path) {
 }
 
 void Editor::open_scene_file_dialog() {
+  ZoneScoped;
+
   const auto& window = App::get_window();
   FileDialogFilter dialog_filters[] = {{.name = "Oxylus scene file(.oxscene)", .pattern = "oxscene"}};
   window.show_dialog({
@@ -262,6 +340,8 @@ void Editor::open_scene_file_dialog() {
 }
 
 void Editor::save_scene() {
+  ZoneScoped;
+
   auto* focused_viewport = main_viewport_panel.get_focused_viewport();
   if (!focused_viewport)
     return;
@@ -286,6 +366,8 @@ void Editor::save_scene() {
 }
 
 void Editor::save_scene_as() {
+  ZoneScoped;
+
   auto* focused_viewport = main_viewport_panel.get_focused_viewport();
   if (!focused_viewport)
     return;
@@ -338,31 +420,9 @@ void Editor::save_scene_as() {
   });
 }
 
-void Editor::editor_shortcuts() {
-  auto& input_sys = App::mod<Input>();
-  if (input_sys.get_key_held(KeyCode::LeftControl)) {
-    if (input_sys.get_key_pressed(KeyCode::Z)) {
-      undo();
-    }
-    if (input_sys.get_key_pressed(KeyCode::Y)) {
-      redo();
-    }
-    if (input_sys.get_key_pressed(KeyCode::N)) {
-      new_scene();
-    }
-    if (input_sys.get_key_pressed(KeyCode::S)) {
-      save_scene();
-    }
-    if (input_sys.get_key_pressed(KeyCode::O)) {
-      open_scene_file_dialog();
-    }
-    if (input_sys.get_key_held(KeyCode::LeftShift) && input_sys.get_key_pressed(KeyCode::S)) {
-      save_scene_as();
-    }
-  }
-}
-
 void Editor::set_docking_layout(EditorLayout layout) {
+  ZoneScoped;
+
   current_layout = layout;
   ImGui::DockBuilderRemoveNode(dockspace_id);
   ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_PassthruCentralNode);
@@ -396,12 +456,16 @@ void Editor::set_docking_layout(EditorLayout layout) {
 }
 
 void Editor::reset_current_docking_layout() {
+  ZoneScoped;
+
   set_docking_layout(current_layout);
 
   main_viewport_panel.update_dockspace();
 }
 
 void Editor::draw_menubar() {
+  ZoneScoped;
+
   if (ImGui::BeginMenuBar()) {
     if (ImGui::BeginMenu("File")) {
       ImGui::Separator();
@@ -437,6 +501,7 @@ void Editor::draw_menubar() {
       ImGui::MenuItem("Inspector", nullptr, &get_panel<InspectorPanel>()->visible);
       ImGui::MenuItem("Scene hierarchy", nullptr, &get_panel<SceneHierarchyPanel>()->visible);
       ImGui::MenuItem("Console window", nullptr, &runtime_console.visible);
+      ImGui::MenuItem("Text Editor", nullptr, &get_panel<TextEditorPanel>()->visible);
       if (ImGui::BeginMenu("Layout")) {
         if (ImGui::MenuItem("Classic")) {
           set_docking_layout(EditorLayout::Classic);
@@ -453,7 +518,6 @@ void Editor::draw_menubar() {
       if (ImGui::MenuItem("Asset Manager")) {
         get_panel<AssetManagerPanel>()->visible = true;
       }
-      UI::tooltip_hover("WIP");
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {

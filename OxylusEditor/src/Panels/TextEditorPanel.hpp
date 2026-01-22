@@ -13,7 +13,5 @@ public:
 
   void on_update() override;
   void on_render(vuk::ImageAttachment swapchain_attachment) override;
-
-private:
 };
 } // namespace ox

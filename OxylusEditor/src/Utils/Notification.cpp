@@ -7,9 +7,10 @@
 #include <tracy/Tracy.hpp>
 
 #include "Core/App.hpp"
+#include "EditorTheme.hpp"
 
 namespace ox {
-static constexpr auto notification_window_size = ImVec2(400.f, 50.f);
+static constexpr auto notification_window_size = ImVec2(400.f, 60.f);
 static constexpr auto root_window_size = ImVec2(420.f, 300.f);
 static constexpr f32 padding = 40.f;
 
@@ -28,12 +29,7 @@ auto NotificationSystem::add(Notification&& notif) -> void {
 
 auto NotificationSystem::draw() -> void {
   ZoneScoped;
-  const auto now = std::chrono::steady_clock::now();
   // Bottom right
-  ImVec2 notification_screen_pos = ImGui::GetMainViewport()->Size;
-  notification_screen_pos.x -= notification_window_size.x + padding;
-  notification_screen_pos.y -= notification_window_size.y + padding;
-
   ImVec2 root_screen_pos = ImGui::GetMainViewport()->Size;
   root_screen_pos.x -= root_window_size.x + padding;
   root_screen_pos.y -= root_window_size.y + padding;
@@ -56,9 +52,10 @@ auto NotificationSystem::draw() -> void {
   ImGui::End();
 
   // Cleanup
-  const auto delay = std::chrono::seconds(2); // so that really fast notifications don't flash
+  const auto now = std::chrono::steady_clock::now();
+  constexpr auto delay = std::chrono::seconds(2); // so that really fast notifications don't flash
   std::erase_if(active_notifications, [&](const auto& n) {
-    return n.second.completed && (now - n.second.created_at) > delay;
+    return n.second.completed && now - n.second.created_at > delay;
   });
 }
 
@@ -68,7 +65,9 @@ auto NotificationSystem::draw_single(Notification& notif) -> void {
   ImGui::SetNextWindowBgAlpha(0.8f);
   ImGui::SetNextWindowSize(notification_window_size, ImGuiCond_Always);
 
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 3.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 3.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 3.0f);
+  ImGui::PushStyleColor(ImGuiCol_Border, Gruvbox::dark0_hard.Value);
   if (ImGui::BeginChild(
         notif.title.c_str(),
         {},
@@ -83,9 +82,34 @@ auto NotificationSystem::draw_single(Notification& notif) -> void {
     config.setThickness(2.f);
     config.setRadius(16.f);
     config.setColor(ImColor(1.f, 1.f, 1.f, 1.f));
-    ImSpinner::Spinner("SpinnerAng270NoBg", config);
-    ImGui::SameLine();
-    ImGui::BeginChild("##load_text");
+    ImGui::PushFont(nullptr, 32.f);
+    constexpr auto icon_child_size = 60.f;
+    // Center icon vertically
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.f, 0.f));
+    ImGui::SetCursorPos(ImVec2(0.f, 0.f));
+    ImGui::BeginChild(
+      "##notification_icon",
+      ImVec2(icon_child_size, notification_window_size.y),
+      0,
+      ImGuiWindowFlags_NoBackground
+    );
+    ImGui::SetCursorPos(ImVec2(icon_child_size / 2.f - 16.f, icon_child_size / 2.f - 16.f));
+    switch (notif.type) {
+      case Notification::Info   : ImGui::TextUnformatted(ICON_MDI_INFORMATION); break;
+      case Notification::Warn   : ImGui::TextUnformatted(ICON_MDI_ALERT); break;
+      case Notification::Error  : ImGui::TextUnformatted(ICON_MDI_EXCLAMATION); break;
+      case Notification::Loading: ImSpinner::Spinner("SpinnerAng270NoBg", config); break;
+    }
+    ImGui::PopFont();
+    ImGui::EndChild();
+
+    // Put in the same line
+    ImGui::SetCursorPos(ImVec2(icon_child_size, 0.f));
+    ImGui::BeginChild(
+      "##notification_text",
+      ImVec2(notification_window_size.x - icon_child_size, notification_window_size.y)
+    );
     switch (notif.type) {
       case Notification::Info   : ImGui::Text("Info: "); break;
       case Notification::Warn   : ImGui::Text("Warning: "); break;
@@ -94,9 +118,11 @@ auto NotificationSystem::draw_single(Notification& notif) -> void {
     }
     ImGui::TextUnformatted(fmt::format("{}", notif.title).c_str());
     ImGui::EndChild();
+    ImGui::PopStyleVar(2); // WindowPadding, FramePadding
   }
   ImGui::EndChild();
 
-  ImGui::PopStyleVar();
+  ImGui::PopStyleVar(2);
+  ImGui::PopStyleColor();
 }
 } // namespace ox

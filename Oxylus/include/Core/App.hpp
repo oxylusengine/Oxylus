@@ -28,6 +28,8 @@ public:
   static App* get() { return instance_; }
   static void set_instance(App* instance);
 
+  auto init(this App& self) -> void;
+  auto step(this App& self) -> void;
   auto run(this App& self) -> void;
   auto stop(this App& self) -> void;
   auto should_stop(this App& self) -> void;
