@@ -166,6 +166,8 @@ public:
   auto set_relative_mouse_mode_window(const Window& window, bool enabled) -> void;
 
   /// Gamepad
+  auto get_gamepad_repeat_delay(this const Input& self) -> std::chrono::nanoseconds;
+  auto set_gamepad_repeat_delay(this Input& self, std::chrono::nanoseconds delay) -> void;
   auto get_gamepad_button_pressed(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
   auto get_gamepad_button_released(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
   auto get_gamepad_button_held(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;

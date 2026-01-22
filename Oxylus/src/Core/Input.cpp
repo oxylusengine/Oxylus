@@ -380,6 +380,18 @@ auto Input::set_mouse_position_window(const Window& window, glm::vec2 position) 
   SDL_WarpMouseInWindow(static_cast<SDL_Window*>(window.get_handle()), position.x, position.y);
 }
 
+auto Input::get_gamepad_repeat_delay(this const Input& self) -> std::chrono::nanoseconds {
+  ZoneScoped;
+
+  return self.gamepad_repeat_delay;
+}
+
+auto Input::set_gamepad_repeat_delay(this Input& self, std::chrono::nanoseconds delay) -> void {
+  ZoneScoped;
+
+  self.gamepad_repeat_delay = delay;
+}
+
 auto Input::get_gamepad_button_pressed(this const Input& self, u32 instance_id, const GamepadButtonCode button)
   -> bool {
   ZoneScoped;
