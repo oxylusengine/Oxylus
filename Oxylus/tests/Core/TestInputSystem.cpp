@@ -5,6 +5,7 @@
 #include "Core/Input.hpp"
 #include "Core/VirtualController.hpp"
 #include "Core/VirtualKeyboard.hpp"
+#include "Core/VirtualMouse.hpp"
 
 class InputManagerTest : public ::testing::Test {
 protected:
@@ -35,15 +36,15 @@ protected:
     app->stop();
     app.reset();
     v_keyboard.reset();
+    v_mouse.reset();
     v_controller.reset();
   }
 
   std::unique_ptr<ox::App> app = nullptr;
   std::unique_ptr<ox::VirtualKeyboard> v_keyboard = std::make_unique<ox::VirtualKeyboard>();
+  std::unique_ptr<ox::VirtualMouse> v_mouse = std::make_unique<ox::VirtualMouse>();
   std::unique_ptr<ox::VirtualController> v_controller = std::make_unique<ox::VirtualController>();
 };
-
-// --- Basic Functionality Tests ---
 
 TEST_F(InputManagerTest, KeyboardTestPressed) {
   bool pressed = false;
@@ -176,6 +177,88 @@ TEST_F(InputManagerTest, KeyboardTestHeld) {
   EXPECT_TRUE(held_callback);
   EXPECT_TRUE(held_mod);
   EXPECT_TRUE(held_callback_mod);
+}
+
+TEST_F(InputManagerTest, MouseTestPressed) {
+  bool pressed = false;
+  bool pressed_callback = false;
+
+  app->step();
+
+  auto& input = app->mod<ox::Input>();
+  std::ignore = input.bind_action(
+    ox::ActionBinding{
+      .action_id = "mouse_test_pressed",
+      .primary_inputs = {ox::InputCode(ox::MouseCode::Left)},
+      .on_pressed_callback = [&pressed_callback](const ox::ActionContext&) { pressed_callback = true; }
+    }
+  );
+
+  v_mouse->press(ox::MouseCode::Left);
+
+  app->get_window().update(app->get_timestep());
+
+  if (input.get_action_pressed("mouse_test_pressed")) {
+    pressed = true;
+  }
+
+  EXPECT_TRUE(pressed);
+  EXPECT_TRUE(pressed_callback);
+}
+
+TEST_F(InputManagerTest, MouseTestReleased) {
+  bool released = false;
+  bool released_callback = false;
+
+  app->step();
+
+  auto& input = app->mod<ox::Input>();
+  std::ignore = input.bind_action(
+    ox::ActionBinding{
+      .action_id = "mouse_test_released",
+      .primary_inputs = {ox::InputCode(ox::MouseCode::Left)},
+      .on_released_callback = [&released_callback](const ox::ActionContext&) { released_callback = true; }
+    }
+  );
+
+  v_mouse->release(ox::MouseCode::Left);
+
+  app->get_window().update(app->get_timestep());
+
+  if (input.get_action_released("mouse_test_released")) {
+    released = true;
+  }
+
+  EXPECT_TRUE(released);
+  EXPECT_TRUE(released_callback);
+}
+
+TEST_F(InputManagerTest, MouseTestHeld) {
+  bool held = false;
+  bool held_callback = false;
+
+  app->step();
+
+  auto& input = app->mod<ox::Input>();
+  std::ignore = input.bind_action(
+    ox::ActionBinding{
+      .action_id = "mouse_test_held",
+      .primary_inputs = {ox::InputCode(ox::MouseCode::Left)},
+      .on_held_callback = [&held_callback](const ox::ActionContext&) { held_callback = true; }
+    }
+  );
+
+  v_mouse->press(ox::MouseCode::Left);
+
+  app->get_window().update(app->get_timestep());
+  app->get_window().update(app->get_timestep());
+
+  if (input.get_action_held("mouse_test_held")) {
+    held = true;
+  }
+
+  EXPECT_TRUE(held);
+  EXPECT_TRUE(held_callback);
 }
 
 TEST_F(InputManagerTest, GamepadTestPressed) {
