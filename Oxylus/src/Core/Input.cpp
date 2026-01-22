@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_mouse.h>
+#include <SDL3/SDL_timer.h>
 
 #include "Render/Window.hpp"
 
@@ -9,6 +10,20 @@ namespace ox {
 auto Input::init() -> std::expected<void, std::string> { return {}; }
 
 auto Input::deinit() -> std::expected<void, std::string> { return {}; }
+
+auto Input::update() -> void {
+  ZoneScoped;
+
+  u64 now = SDL_GetTicksNS();
+  for (auto& [instance_id, data] : input_data.gamepad_data_map) {
+    if (now >= data.next_repeat_time) {
+      for (const auto& [id, binding] : action_bindings) {
+        do_callback(binding, instance_id, InputState::Held, InputType::GamepadButton);
+      }
+      data.next_repeat_time += gamepad_interval.count();
+    }
+  }
+}
 
 auto Input::reset_pressed() -> void {
   ZoneScoped;
@@ -429,16 +444,6 @@ auto Input::set_mod(const ModCode mod) -> void {
   input_data.mod_code = mod;
 }
 
-auto Input::set_default_keyboard_id(u32 instance_id) -> void {
-  ZoneScoped;
-
-  if (default_keyboard_id != DEFAULT_INSTANCE_ID) {
-    return;
-  }
-
-  default_keyboard_id = instance_id;
-}
-
 auto Input::set_key_pressed(const KeyCode key, const bool state) -> void {
   ZoneScoped;
 
@@ -542,14 +547,19 @@ void Input::set_mouse_moved(bool state) {
 auto Input::set_gamepad_button_pressed(u32 instance_id, const GamepadButtonCode button, const bool state) -> void {
   ZoneScoped;
 
+  const auto now = SDL_GetTicksNS();
+  const auto next_repeat_time = now + gamepad_repeat_delay.count();
+
   const auto it = input_data.gamepad_data_map.find(instance_id);
   if (it != input_data.gamepad_data_map.end()) {
     it->second.gamepad_pressed.insert_or_assign(button, state);
     it->second.gamepad_held.insert_or_assign(button, true);
+    it->second.next_repeat_time = next_repeat_time;
   } else {
     auto data = InputData::GamepadData{};
     data.gamepad_pressed.insert_or_assign(button, state);
     data.gamepad_held.insert_or_assign(button, true);
+    data.next_repeat_time = next_repeat_time;
     input_data.gamepad_data_map.insert_or_assign(instance_id, data);
   }
 
@@ -566,17 +576,17 @@ auto Input::set_gamepad_button_released(u32 instance_id, const GamepadButtonCode
   const auto it = input_data.gamepad_data_map.find(instance_id);
   if (it != input_data.gamepad_data_map.end()) {
     it->second.gamepad_released.insert_or_assign(button, state);
-    it->second.gamepad_held.insert_or_assign(button, false);
+    it->second.gamepad_held.insert_or_assign(button, !state);
   } else {
     auto data = InputData::GamepadData{};
     data.gamepad_released.insert_or_assign(button, state);
-    data.gamepad_held.insert_or_assign(button, false);
+    it->second.gamepad_held.insert_or_assign(button, !state);
     input_data.gamepad_data_map.insert_or_assign(instance_id, data);
   }
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
-      do_callback(binding, instance_id, InputState::Pressed, InputType::GamepadButton);
+      do_callback(binding, instance_id, InputState::Released, InputType::GamepadButton);
     }
   }
 }

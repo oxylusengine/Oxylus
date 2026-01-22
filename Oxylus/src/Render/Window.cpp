@@ -172,6 +172,9 @@ auto Window::destroy() const -> void {
 }
 
 auto Window::update(const Timestep& timestep) const -> void {
+  auto& input = App::mod<Input>();
+  input.update();
+
   WindowCallbacks window_callbacks = {};
   window_callbacks.user_data = nullptr;
   window_callbacks.on_resize = [](void* user_data, const glm::uvec2 size) {
@@ -182,10 +185,6 @@ auto Window::update(const Timestep& timestep) const -> void {
     App::get()->should_stop();
   };
 
-  window_callbacks.on_keyboard_added = [](void* user_data, u32 instance_id) {
-    auto& input_system = App::mod<Input>();
-    input_system.set_default_keyboard_id(instance_id);
-  };
   window_callbacks.on_key = [](
                               void* user_data,
                               const u32 key_code,

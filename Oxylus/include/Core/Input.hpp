@@ -116,6 +116,8 @@ public:
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
 
+  auto update() -> void;
+
   auto reset_pressed() -> void;
   auto reset() -> void;
 
@@ -204,6 +206,8 @@ private:
       ankerl::unordered_dense::map<GamepadButtonCode, bool> gamepad_held = {};
 
       ankerl::unordered_dense::map<GamepadAxisCode, f32> gamepad_axises = {};
+
+      u64 next_repeat_time = 0;
     };
 
     // Gamepad instance ID to data
@@ -218,12 +222,11 @@ private:
   std::vector<std::string> context_stack = {};
   std::unordered_multimap<std::string, ActionBinding> action_bindings = {};
   std::unordered_multimap<InputCode, std::string, InputCode::Hash> input_to_actions = {};
-  std::chrono::nanoseconds gamepad_repeat_delay = std::chrono::nanoseconds(50);
-  u32 default_keyboard_id = DEFAULT_INSTANCE_ID;
+  std::chrono::nanoseconds gamepad_repeat_delay = std::chrono::nanoseconds(500);
+  std::chrono::nanoseconds gamepad_interval = std::chrono::nanoseconds(50);
 
   auto set_mod(const ModCode mod) -> void;
 
-  auto set_default_keyboard_id(u32 instance_id) -> void;
   auto set_key_pressed(const KeyCode key, const bool state) -> void;
   void set_key_released(const KeyCode key, const bool state);
   void set_key_held(const KeyCode key, const bool state);

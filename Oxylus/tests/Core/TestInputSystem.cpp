@@ -1,9 +1,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "../TestHelpers.hpp"
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
+#include "Core/VirtualController.hpp"
 #include "Core/VirtualKeyboard.hpp"
 
 class InputManagerTest : public ::testing::Test {
@@ -27,16 +27,20 @@ protected:
     app->with<ox::Input>();
 
     app->init();
+
+    v_controller->connect();
   }
 
   void TearDown() override {
     app->stop();
     app.reset();
-    vk_keyboard.reset();
+    v_keyboard.reset();
+    v_controller.reset();
   }
 
   std::unique_ptr<ox::App> app = nullptr;
-  std::unique_ptr<ox::VirtualKeyboard> vk_keyboard = std::make_unique<ox::VirtualKeyboard>();
+  std::unique_ptr<ox::VirtualKeyboard> v_keyboard = std::make_unique<ox::VirtualKeyboard>();
+  std::unique_ptr<ox::VirtualController> v_controller = std::make_unique<ox::VirtualController>();
 };
 
 // --- Basic Functionality Tests ---
@@ -66,8 +70,8 @@ TEST_F(InputManagerTest, KeyboardTestPressed) {
     }
   );
 
-  vk_keyboard->press(ox::KeyCode::A);
-  vk_keyboard->press(ox::KeyCode::A, ox::ModCode::AnyControl);
+  v_keyboard->press(ox::KeyCode::A);
+  v_keyboard->press(ox::KeyCode::A, ox::ModCode::AnyControl);
 
   app->get_window().update(app->get_timestep());
 
@@ -110,8 +114,8 @@ TEST_F(InputManagerTest, KeyboardTestReleased) {
     }
   );
 
-  vk_keyboard->release(ox::KeyCode::A);
-  vk_keyboard->release(ox::KeyCode::A, ox::ModCode::AnyControl);
+  v_keyboard->release(ox::KeyCode::A);
+  v_keyboard->release(ox::KeyCode::A, ox::ModCode::AnyControl);
 
   app->get_window().update(app->get_timestep());
 
@@ -154,8 +158,8 @@ TEST_F(InputManagerTest, KeyboardTestHeld) {
     }
   );
 
-  vk_keyboard->press(ox::KeyCode::A);
-  vk_keyboard->press(ox::KeyCode::A, ox::ModCode::AnyControl);
+  v_keyboard->press(ox::KeyCode::A);
+  v_keyboard->press(ox::KeyCode::A, ox::ModCode::AnyControl);
 
   app->get_window().update(app->get_timestep());
   app->get_window().update(app->get_timestep());
@@ -172,4 +176,86 @@ TEST_F(InputManagerTest, KeyboardTestHeld) {
   EXPECT_TRUE(held_callback);
   EXPECT_TRUE(held_mod);
   EXPECT_TRUE(held_callback_mod);
+}
+
+TEST_F(InputManagerTest, GamepadTestPressed) {
+  bool pressed = false;
+  bool pressed_callback = false;
+
+  app->step();
+
+  auto& input = app->mod<ox::Input>();
+  std::ignore = input.bind_action(
+    ox::ActionBinding{
+      .action_id = "gamepad_test_pressed",
+      .primary_inputs = {ox::InputCode(ox::GamepadButtonCode::East)},
+      .on_pressed_callback = [&pressed_callback](const ox::ActionContext&) { pressed_callback = true; }
+    }
+  );
+
+  v_controller->simulate_button(ox::GamepadButtonCode::East, true);
+
+  app->get_window().update(app->get_timestep());
+
+  if (input.get_action_pressed("gamepad_test_pressed", v_controller->get_instance_id())) {
+    pressed = true;
+  }
+
+  EXPECT_TRUE(pressed);
+  EXPECT_TRUE(pressed_callback);
+}
+
+TEST_F(InputManagerTest, GamepadTestReleased) {
+  bool released = false;
+  bool released_callback = false;
+
+  app->step();
+
+  auto& input = app->mod<ox::Input>();
+  std::ignore = input.bind_action(
+    ox::ActionBinding{
+      .action_id = "gamepad_test_released",
+      .primary_inputs = {ox::InputCode(ox::GamepadButtonCode::East)},
+      .on_released_callback = [&released_callback](const ox::ActionContext&) { released_callback = true; }
+    }
+  );
+
+  v_controller->simulate_button(ox::GamepadButtonCode::East, true);
+  app->get_window().update(app->get_timestep());
+  v_controller->simulate_button(ox::GamepadButtonCode::East, false);
+  app->get_window().update(app->get_timestep());
+
+  if (input.get_action_released("gamepad_test_released", v_controller->get_instance_id())) {
+    released = true;
+  }
+
+  EXPECT_TRUE(released);
+  EXPECT_TRUE(released_callback);
+}
+
+TEST_F(InputManagerTest, GamepadTestHeld) {
+  bool held = false;
+  bool held_callback = false;
+
+  app->step();
+
+  auto& input = app->mod<ox::Input>();
+  std::ignore = input.bind_action(
+    ox::ActionBinding{
+      .action_id = "gamepad_test_held",
+      .primary_inputs = {ox::InputCode(ox::GamepadButtonCode::East)},
+      .on_held_callback = [&held_callback](const ox::ActionContext&) { held_callback = true; }
+    }
+  );
+
+  v_controller->simulate_button(ox::GamepadButtonCode::East, true);
+  app->get_window().update(app->get_timestep());
+  app->get_window().update(app->get_timestep());
+
+  if (input.get_action_held("gamepad_test_held", v_controller->get_instance_id())) {
+    held = true;
+  }
+
+  EXPECT_TRUE(held);
+  EXPECT_TRUE(held_callback);
 }

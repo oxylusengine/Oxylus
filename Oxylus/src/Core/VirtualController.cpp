@@ -39,7 +39,6 @@ auto VirtualController::simulate_button(this VirtualController& self, GamepadBut
   if (self.instance_id == 0)
     return;
 
-  // This injects the event into SDL's internal queue
   SDL_SetJoystickVirtualButton(as_joystick_handle(self.joystick_handle), (i32)button, down);
 }
 
@@ -47,7 +46,6 @@ void VirtualController::simulate_axis(this VirtualController& self, GamepadAxisC
   if (self.instance_id == 0 || !self.joystick_handle)
     return;
 
-  // Clamp float to -1.0 to 1.0
   value = std::clamp(value, -1.0f, 1.0f);
 
   i16 raw_value;
