@@ -42,6 +42,9 @@ class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
+  static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
+  static auto to_asset_type_sv(AssetType type) -> std::string_view;
+
   struct AssetMetaFile {
     simdjson::padded_string contents;
     simdjson::ondemand::parser parser;
@@ -56,22 +59,12 @@ public:
   auto read_meta_file(const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
 
   auto create_asset(AssetType type, const std::filesystem::path& path = {}) -> UUID;
-
-  static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
-  static auto to_asset_type_sv(AssetType type) -> std::string_view;
-
   auto import_asset(const std::filesystem::path& path) -> UUID;
-
   auto delete_asset(const UUID& uuid) -> void;
-
-  //  ── Registered Assets ─────────────────────────────────────────────────
-  // Assets that already exist in project root and have meta file with
-  // valid UUID's.
-  //
-  // Add already existing asset into the registry.
-  // File must end with `.oxasset` extension.
   auto register_asset(const std::filesystem::path& path) -> UUID;
   auto register_asset(const UUID& uuid, AssetType type, const std::filesystem::path& path) -> bool;
+  auto acquire_ref(const UUID &uuid) -> void;
+  auto release_ref(const UUID &uuid) -> void;
 
   auto export_asset(const UUID& uuid, const std::filesystem::path& path) -> bool;
   auto export_texture(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;

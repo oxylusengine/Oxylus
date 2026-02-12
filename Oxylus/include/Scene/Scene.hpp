@@ -61,7 +61,7 @@ public:
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
   ankerl::unordered_dense::map<u32, flecs::entity> transform_index_entities_map = {};
-  ankerl::unordered_dense::map<std::pair<UUID, usize>, std::vector<GPU::TransformID>> rendering_meshes_map = {};
+  SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
 
   std::vector<GPU::Material> gpu_materials = {};
 
