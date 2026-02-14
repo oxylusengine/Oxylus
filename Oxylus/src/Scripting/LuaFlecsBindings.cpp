@@ -127,7 +127,7 @@ struct LuaEntitySerializer : IEntitySerializer {
         table[name] = *vec;
         if (is_mutable) {
           table.set_function(set_name, [&](const sol::table& self, glm::vec3 value) { //
-              *vec = value;
+            *vec = value;
           });
         }
       } else {
@@ -667,6 +667,9 @@ auto FlecsBinding::bind(sol::state* state) -> void {
           } else if (type == "vec4") {
             component.member<glm::vec4>(field_name.c_str());
             defaults[field_name] = default_val.as<glm::vec3>();
+          } else if (type == "quat") {
+            component.member<glm::quat>(field_name.c_str());
+            defaults[field_name] = default_val.as<glm::quat>();
           }
         }
 

@@ -9,16 +9,11 @@
 namespace ox {
 struct TransformComponent {
   glm::vec3 position = {};
-  glm::vec3 rotation = {};
+  glm::quat rotation = glm::quat::wxyz(1.0, 0.0, 0.0, 0.0);
   glm::vec3 scale = {1.0f, 1.0f, 1.0f};
 
-  void set_from_matrix(const glm::mat4& transform_matrix) {
-    math::decompose_transform(transform_matrix, position, rotation, scale);
-  }
-
   glm::mat4 get_local_transform() const {
-    return glm::translate(glm::mat4(1.0f), position) * glm::toMat4(glm::quat(rotation)) *
-           glm::scale(glm::mat4(1.0f), scale);
+    return glm::translate(glm::mat4(1.0f), position) * glm::toMat4(rotation) * glm::scale(glm::mat4(1.0f), scale);
   }
 };
 
@@ -28,9 +23,10 @@ struct LayerComponent {
 
 // Rendering
 struct MeshComponent {
+  UUID model_uuid = {};
   u32 mesh_index = {};
+  UUID material_uuid = {};
   bool cast_shadows = true;
-  UUID mesh_uuid = {};
 
   AABB aabb = {};
 };
@@ -141,7 +137,7 @@ struct ParticleSystemComponent {
   glm::vec3 start_velocity = {0.f, 2.f, 0.f};
   glm::vec4 start_color = {1.f, 1.f, 1.f, 1.f};
   glm::vec4 start_size = {1.f, 1.f, 1.f, 1.f};
-  glm::vec4 start_rotation = {1.f, 1.f, 1.f, 1.f};
+  glm::quat start_rotation = glm::quat::wxyz(1.f, 0.f, 0.f, 0.f);
   f32 gravity_modifier = 0.f;
   f32 simulation_speed = 1.f;
   bool play_on_awake = true;
@@ -181,12 +177,12 @@ struct ParticleSystemComponent {
   f32 size_by_speed_max_speed = 1.f;
 
   bool rotation_over_lifetime_enabled = false;
-  glm::vec3 rotation_over_lifetime_start = {};
-  glm::vec3 rotation_over_lifetime_end = {};
+  glm::quat rotation_over_lifetime_start = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
+  glm::quat rotation_over_lifetime_end = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
 
   bool rotation_by_speed_enabled = false;
-  glm::vec3 rotation_by_speed_start = {};
-  glm::vec3 rotation_by_speed_end = {};
+  glm::quat rotation_by_speed_start = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
+  glm::quat rotation_by_speed_end = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
   f32 rotation_by_speed_min_speed = 0.f;
   f32 rotation_by_speed_max_speed = 1.f;
 
@@ -293,9 +289,9 @@ struct RigidBodyComponent {
 
   // For interpolation/extrapolation
   glm::vec3 previous_translation = glm::vec3(0.0f);
-  glm::quat previous_rotation = glm::vec3(0.0f);
+  glm::quat previous_rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
   glm::vec3 translation = glm::vec3(0.0f);
-  glm::quat rotation = glm::vec3(0.0f);
+  glm::quat rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
 };
 
 struct BoxColliderComponent {
@@ -382,9 +378,9 @@ struct CharacterControllerComponent {
 
   // For interpolation/extrapolation
   glm::vec3 previous_translation = glm::vec3(0.0f);
-  glm::quat previous_rotation = glm::vec3(0.0f);
+  glm::quat previous_rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
   glm::vec3 translation = glm::vec3(0.0f);
-  glm::quat rotation = glm::vec3(0.0f);
+  glm::quat rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
 };
 
 // Audio

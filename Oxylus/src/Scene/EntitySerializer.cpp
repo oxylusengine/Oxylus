@@ -90,7 +90,7 @@ auto IEntitySerializer::serialize_ops(flecs::meta::op_t* ops, i32 op_count, void
       } break;
 
       case EcsOpPushStruct: {
-        on_struct(name, ops, op.op_count - 1, ptr);
+        on_struct(name, ops + i, op.op_count - 1, ptr);
       } break;
 
       case EcsOpOpaqueValue: {

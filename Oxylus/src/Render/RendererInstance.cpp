@@ -1192,9 +1192,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
         self.directional_light.color = lc.color;
         self.directional_light.intensity = lc.intensity;
-        self.directional_light.direction.x = glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y);
-        self.directional_light.direction.y = glm::sin(tc.rotation.x) * glm::sin(tc.rotation.y);
-        self.directional_light.direction.z = glm::cos(tc.rotation.y);
+        auto sun_rotation = glm::eulerAngles(tc.rotation);
+        self.directional_light.direction.x = glm::cos(sun_rotation.x) * glm::sin(sun_rotation.y);
+        self.directional_light.direction.y = glm::sin(sun_rotation.x) * glm::sin(sun_rotation.y);
+        self.directional_light.direction.z = glm::cos(sun_rotation.y);
         self.directional_light.cascade_count = ox::min(
           lc.cascade_count,
           static_cast<u32>(MAX_DIRECTIONAL_SHADOW_CASCADES)

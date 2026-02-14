@@ -22,7 +22,7 @@ struct Model {
     std::vector<usize> mesh_indices = {};
     std::vector<usize> light_indicies = {};
     glm::vec3 translation = {};
-    glm::quat rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
+    glm::quat rotation = {};
     glm::vec3 scale = {};
   };
 
@@ -52,6 +52,14 @@ struct Model {
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};
 
   usize default_scene_index = 0;
+};
+
+enum struct MeshInstanceID : u64 { Invalid = ~0_u64 };
+struct MeshInstance {
+  UUID model_uuid = UUID(nullptr);
+  usize mesh_node_index = 0;
+  UUID material_uuid = UUID(nullptr);
+  GPU::TransformID transform_id = GPU::TransformID::Invalid;
 };
 
 } // namespace ox

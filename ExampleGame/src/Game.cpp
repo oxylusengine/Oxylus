@@ -99,7 +99,8 @@ auto Game::init(this Game& self) -> std::expected<void, std::string> {
 
   world.entity("camera")
     .set<ox::TransformComponent>(
-      {.position = glm::vec3(0.0f, 0.0f, 5.0f), .rotation = glm::vec3(0.0f, glm::radians(-90.0f), 0.0f)}
+      {.position = glm::vec3(0.0f, 0.0f, 5.0f),
+       .rotation = glm::quat(glm::vec3(0.0f, glm::radians(-90.0f), 0.0f))}
     )
     .set<ox::CameraComponent>({.projection = ox::CameraComponent::Orthographic});
 
