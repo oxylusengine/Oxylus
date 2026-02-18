@@ -155,11 +155,17 @@ struct EntityInspector : IEntitySerializer {
         }
       } else if (ops->type == world.entity<glm::quat>()) {
         auto* v = static_cast<glm::quat*>(base);
+
+        if (!inspector_panel.euler_cache) {
+          inspector_panel.euler_cache = glm::degrees(glm::eulerAngles(*v));
+        }
+
         auto old_v = *v;
-        auto euler_deg = glm::degrees(glm::eulerAngles(*v));
-        if (UI::draw_vec3_control(name.data(), euler_deg)) {
-          *v = glm::quat(glm::radians(euler_deg));
-          undo_redo_system.execute_command<PropertyChangeCommand<glm::quat>>(v, old_v, *v, std::string(name));
+        if (UI::draw_vec3_control(name.data(), *inspector_panel.euler_cache)) {
+          auto old_v_cmd = *v;
+          *v = glm::quat(glm::radians(inspector_panel.euler_cache.value()));
+          undo_redo_system.execute_command<PropertyChangeCommand<glm::quat>>(v, old_v_cmd, *v, std::string(name));
+
           modified = true;
         }
       } else {
@@ -318,7 +324,13 @@ void InspectorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
   editor_context.entity
     .and_then([this](flecs::entity e) {
+      if (e != this->last_edited_entity) {
+        this->euler_cache.reset();
+        this->last_edited_entity = e;
+      }
+
       this->draw_components(e);
+
       return option<std::monostate>{};
     })
     .or_else([this, &editor_context]() {
