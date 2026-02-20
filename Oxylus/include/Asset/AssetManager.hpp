@@ -44,6 +44,7 @@ public:
 
   static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
+  static auto write_gltf_meta(AssetManager& self, const std::filesystem::path& path, JsonWriter& json) -> bool;
 
   struct AssetMetaFile {
     simdjson::padded_string contents;
@@ -67,8 +68,6 @@ public:
   auto release_ref(const UUID &uuid) -> void;
 
   auto export_asset(const UUID& uuid, const std::filesystem::path& path) -> bool;
-  auto export_texture(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
-  auto export_model(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
   auto export_scene(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
   auto export_material(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
   auto export_script(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;

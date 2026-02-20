@@ -1,14 +1,14 @@
 let
   pkgs = import <nixpkgs> { };
   xssWrapper = pkgs.writeTextDir "lib/pkgconfig/xss.pc" ''
-    prefix=${pkgs.xorg.libXScrnSaver}
+    prefix=${pkgs.libXScrnSaver}
     exec_prefix=''${prefix}
     libdir=''${exec_prefix}/lib
     includedir=''${prefix}/include
 
     Name: Xss
     Description: X11 Screen Saver extension library
-    Version: ${pkgs.xorg.libXScrnSaver.version}
+    Version: ${pkgs.libXScrnSaver.version}
     Requires: x11 xext
     Cflags: -I''${includedir}
     Libs: -L''${libdir} -lXss
@@ -49,14 +49,14 @@ in pkgs.mkShell.override {
 
   buildInputs = [
     pkgs.util-macros
-    pkgs.xorg.libX11
-    pkgs.xorg.libxcb
-    pkgs.xorg.libXScrnSaver
-    pkgs.xorg.libXcursor
-    pkgs.xorg.libXext
-    pkgs.xorg.libXfixes
-    pkgs.xorg.libXi
-    pkgs.xorg.libXrandr
+    pkgs.libX11
+    pkgs.libxcb
+    pkgs.libXScrnSaver
+    pkgs.libXcursor
+    pkgs.libXext
+    pkgs.libXfixes
+    pkgs.libXi
+    pkgs.libXrandr
     pkgs.xorgproto
   ];
 
@@ -68,14 +68,14 @@ in pkgs.mkShell.override {
     pkgs.gcc14.cc.lib
     pkgs.vulkan-loader
     # SDL3
-    pkgs.xorg.libX11
-    pkgs.xorg.libxcb
-    pkgs.xorg.libXScrnSaver
-    pkgs.xorg.libXcursor
-    pkgs.xorg.libXext
-    pkgs.xorg.libXfixes
-    pkgs.xorg.libXi
-    pkgs.xorg.libXrandr
+    pkgs.libX11
+    pkgs.libxcb
+    pkgs.libXScrnSaver
+    pkgs.libXcursor
+    pkgs.libXext
+    pkgs.libXfixes
+    pkgs.libXi
+    pkgs.libXrandr
   ]}";
   NIX_ENFORCE_NO_NATIVE = "0";
 
