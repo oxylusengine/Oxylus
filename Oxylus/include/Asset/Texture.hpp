@@ -117,6 +117,8 @@ public:
            1;
   }
 
+  static auto path_to_mime(const std::filesystem::path &path) -> TextureLoadInfo::MimeType;
+
 private:
   vuk::ImageAttachment attachment_ = {};
   ImageID image_id = ImageID::Invalid;

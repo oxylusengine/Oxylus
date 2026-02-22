@@ -1,5 +1,6 @@
-﻿#include "Memory/Stack.hpp"
-#define STB_IMAGE_IMPLEMENTATION
+﻿#define STB_IMAGE_IMPLEMENTATION
+
+#include "Asset/Texture.hpp"
 
 #include <ktx.h>
 #include <stb_image.h>
@@ -7,15 +8,14 @@
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 #include <vuk/vsl/Core.hpp>
 
-#include "Asset/Texture.hpp"
 #include "Core/App.hpp"
+#include "Memory/Hasher.hpp"
+#include "Memory/Stack.hpp"
 #include "Render/Utils/DDS.hpp"
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
-void Texture::create(
-  const std::filesystem::path& path, TextureLoadInfo load_info, const std::source_location& loc
-) {
+void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_info, const std::source_location& loc) {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -399,5 +399,28 @@ u8* Texture::convert_to_four_channels(uint32_t width, uint32_t height, const u8*
     rgb += 3;
   }
   return buffer;
+}
+
+auto Texture::path_to_mime(const std::filesystem::path& path) -> TextureLoadInfo::MimeType {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  if (!path.has_extension()) {
+    return TextureLoadInfo::MimeType::Generic;
+  }
+
+  auto extension = stack.to_upper(path.extension().string());
+  switch (fnv64_str(extension)) {
+    case fnv64_c(".KTX"):
+    case fnv64_c(".KTX2"): {
+      return TextureLoadInfo::MimeType::KTX;
+    }
+    case fnv64_c(".DDS"): {
+      return TextureLoadInfo::MimeType::DDS;
+    }
+    default:;
+  }
+
+  return TextureLoadInfo::MimeType::Generic;
 }
 } // namespace ox

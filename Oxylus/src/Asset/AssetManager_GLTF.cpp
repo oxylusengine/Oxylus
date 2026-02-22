@@ -448,12 +448,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
         },
         [&](fastgltf::sources::URI& uri) {
           // External file
-          const auto& image_path = asset_path.parent_path() / uri.uri.path();
-          mapped_file = File(image_path, FileAccess::Read);
-          auto* mapped_data = static_cast<u8*>(mapped_file.map());
-          OX_ASSERT(mapped_file.error == FileError::None);
-          texture_load_info.bytes = std::span(mapped_data, mapped_file.size);
-          texture_load_info.mime = gltf_mime_type_to_texture_mime_type(uri.mimeType);
+          texture_load_info.mime = Texture::path_to_mime(uri.uri.fspath());
         },
       },
       image.data
