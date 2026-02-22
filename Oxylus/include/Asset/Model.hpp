@@ -20,13 +20,13 @@ struct Model {
     std::string name = {};
     std::vector<usize> child_indices = {};
     std::vector<usize> mesh_indices = {};
-    std::vector<usize> light_indicies = {};
+    std::vector<usize> light_indices = {};
     glm::vec3 translation = {};
     glm::quat rotation = {};
     glm::vec3 scale = {};
   };
 
-  enum class LightType { Directional, Point, Spot };
+  enum class LightType { Directional, Spot, Point };
 
   struct Light {
     std::string name;

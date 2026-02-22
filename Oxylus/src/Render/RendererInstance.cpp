@@ -1226,17 +1226,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           }
         );
       } else if (lc.type == LightComponent::LightType::Spot) {
-        const glm::vec3 direction = {
-          glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y),
-          -glm::sin(tc.rotation.x),
-          glm::cos(tc.rotation.x) * glm::cos(tc.rotation.y),
-        };
-
-        const glm::vec3 world_pos = Scene::get_world_position(e);
+        const auto direction = glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f));
+        const auto world_pos = Scene::get_world_position(e);
         spot_lights.emplace_back(
           GPU::SpotLight{
             .position = world_pos,
-            .direction = glm::normalize(direction),
+            .direction = direction,
             .color = lc.color,
             .intensity = lc.intensity,
             .cutoff = lc.radius,

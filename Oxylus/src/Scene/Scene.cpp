@@ -1355,27 +1355,28 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
       });
       mesh_entity.child_of(node_entity);
       mesh_entity.modified<TransformComponent>();
+    }
 
-      // if (mesh_group.light_index.has_value()) {
-      //   auto& node_light = model->lights[cur_node.light_index.value()];
-      //   auto lc = LightComponent{
-      //     .type = static_cast<LightComponent::LightType>(node_light.type),
-      //     .color = node_light.color,
-      //     .intensity = node_light.intensity,
-      //   };
+    for (const auto light_index : mesh_group.light_indices) {
+      auto& node_light = model->lights[light_index];
 
-      //   if (node_light.range.has_value()) {
-      //     lc.radius = *node_light.range;
-      //   }
-      //   if (node_light.inner_cone_angle.has_value()) {
-      //     lc.inner_cone_angle = *node_light.inner_cone_angle;
-      //   }
-      //   if (node_light.outer_cone_angle.has_value()) {
-      //     lc.inner_cone_angle = *node_light.inner_cone_angle;
-      //   }
+      auto lc = LightComponent{
+        .type = static_cast<LightComponent::LightType>(node_light.type),
+        .color = node_light.color,
+        .intensity = node_light.intensity,
+      };
 
-      //   node_entity.set<LightComponent>(lc);
-      // }
+      if (node_light.range.has_value()) {
+        lc.radius = *node_light.range;
+      }
+      if (node_light.inner_cone_angle.has_value()) {
+        lc.inner_cone_angle = *node_light.inner_cone_angle;
+      }
+      if (node_light.outer_cone_angle.has_value()) {
+        lc.outer_cone_angle = *node_light.outer_cone_angle;
+      }
+
+      node_entity.set<LightComponent>(lc);
     }
 
     for (const auto child_node_indices : mesh_group.child_indices) {

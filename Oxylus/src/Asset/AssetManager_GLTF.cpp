@@ -471,6 +471,19 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     load_material(material_uuid, gltf_material_to_material(gltf_material, model.textures));
   }
 
+  for (const auto& gltf_light : gltf_asset.lights) {
+    auto light = Model::Light{
+      .name = std::string(gltf_light.name),
+      .type = static_cast<Model::LightType>(gltf_light.type),
+      .color = glm::make_vec3(gltf_light.color.data()),
+      .intensity = gltf_light.intensity,
+      .range = gltf_light.range ? option<f32>(*gltf_light.range) : nullopt,
+      .inner_cone_angle = gltf_light.innerConeAngle ? option<f32>(*gltf_light.innerConeAngle) : nullopt,
+      .outer_cone_angle = gltf_light.outerConeAngle ? option<f32>(*gltf_light.outerConeAngle) : nullopt,
+    };
+    model.lights.push_back(std::move(light));
+  }
+
   auto& gltf_default_scene = gltf_asset.scenes[gltf_asset.defaultScene.value_or(0_sz)];
   struct ProcessingNode {
     usize gltf_node_index = 0;
@@ -520,6 +533,10 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     mesh_group.translation = translation;
     mesh_group.rotation = rotation;
     mesh_group.scale = scale;
+
+    if (node.lightIndex.has_value()) {
+      mesh_group.light_indices.push_back(node.lightIndex.value());
+    }
 
     if (!node.meshIndex.has_value()) {
       continue;

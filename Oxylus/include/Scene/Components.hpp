@@ -202,7 +202,7 @@ struct ParticleComponent {
 };
 
 struct LightComponent {
-  enum LightType : u32 { Directional = 0, Point, Spot };
+  enum LightType : u32 { Directional = 0, Spot, Point };
 
   u32 type = LightType::Point;
   glm::vec3 color = {0.02f, 0.02f, 0.02f};

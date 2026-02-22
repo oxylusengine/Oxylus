@@ -88,8 +88,8 @@ f32x3 point_light_contribution(
 f32 calculate_spot_light_attenuation(f32x3 light_direction, f32x3 spot_direction, f32 inner_cone_angle, f32 outer_cone_angle) {
     f32 cos_angle = dot(-light_direction, normalize(spot_direction));
 
-    f32 cos_inner = cos(radians(inner_cone_angle * 0.5));
-    f32 cos_outer = cos(radians(outer_cone_angle * 0.5));
+    f32 cos_inner = cos(inner_cone_angle);
+    f32 cos_outer = cos(outer_cone_angle);
 
     f32 spot_attenuation = smoothstep(cos_outer, cos_inner, cos_angle);
 
@@ -220,7 +220,6 @@ func fs_main(
     let ambient_contribution = base_ambient_color * albedo_color * sun_illuminance;
 
     var total_lighting = f32x3(0.0, 0.0, 0.0);
-    /*
     for(int point_light_idx = 0; point_light_idx < params.lights.point_light_count; point_light_idx++) {
         let light = params.lights.point_lights[point_light_idx];
         let point_light_contribution = point_light_contribution(
@@ -252,7 +251,6 @@ func fs_main(
 
         total_lighting += spot_light_contribution;
     }
-    */
 
     // https://marmosetco.tumblr.com/post/81245981087
     let horizon_fade = 1.3;
