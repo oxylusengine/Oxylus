@@ -3,7 +3,6 @@
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
 
-#include "Core/App.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
@@ -79,7 +78,14 @@ auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bo
   return true;
 }
 
-auto AssetManager::init() -> std::expected<void, std::string> { return {}; }
+auto AssetManager::init() -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  null_material = create_asset(AssetType::Material);
+  load_material(null_material, {});
+
+  return {};
+}
 
 auto AssetManager::deinit() -> std::expected<void, std::string> {
   ZoneScoped;
@@ -362,7 +368,7 @@ auto AssetManager::export_asset(const UUID& uuid, const std::filesystem::path& p
 
   switch (asset->type) {
     case AssetType::Texture:
-    case AssetType::Model: {
+    case AssetType::Model  : {
       // Exporting these seems pointless, so just dont support it
       OX_LOG_ERROR("Cannot export unsupported asset type {}.", to_asset_type_sv(asset->type));
       return false;
@@ -529,7 +535,7 @@ auto AssetManager::is_texture_loaded(const UUID& uuid) -> bool {
   return asset->is_loaded();
 }
 
-auto AssetManager::load_material(const UUID& uuid, const Material& info, const MateriaLoadInfo& load_info) -> bool {
+auto AssetManager::load_material(const UUID& uuid, const Material& info) -> bool {
   ZoneScoped;
 
   auto* asset = this->get_asset(uuid);
@@ -560,43 +566,6 @@ auto AssetManager::load_material(const UUID& uuid, const Material& info, const M
     .metallic_roughness_texture = info.metallic_roughness_texture,
     .occlusion_texture = info.occlusion_texture,
   });
-
-  auto& job_man = App::get_job_manager();
-
-  if (info.albedo_texture) {
-    auto job = Job::create([=, this, tex_info = std::move(load_info.albedo_texture)]() { //
-      load_texture(info.albedo_texture, std::move(tex_info));
-    });
-    job_man.submit(std::move(job));
-  }
-
-  if (info.normal_texture) {
-    auto job = Job::create([=, this, tex_info = std::move(load_info.normal_texture)]() { //
-      load_texture(info.normal_texture, std::move(tex_info));
-    });
-    job_man.submit(std::move(job));
-  }
-
-  if (info.emissive_texture) {
-    auto job = Job::create([=, this, tex_info = std::move(load_info.emissive_texture)]() { //
-      load_texture(info.emissive_texture, std::move(tex_info));
-    });
-    job_man.submit(std::move(job));
-  }
-
-  if (info.metallic_roughness_texture) {
-    auto job = Job::create([=, this, tex_info = std::move(load_info.metallic_roughness_texture)]() { //
-      load_texture(info.metallic_roughness_texture, std::move(tex_info));
-    });
-    job_man.submit(std::move(job));
-  }
-
-  if (info.occlusion_texture) {
-    auto job = Job::create([=, this, tex_info = std::move(load_info.occlusion_texture)]() { //
-      load_texture(info.occlusion_texture, std::move(tex_info));
-    });
-    job_man.submit(std::move(job));
-  }
 
   this->set_material_dirty(asset->material_id);
 
@@ -812,6 +781,10 @@ auto AssetManager::get_texture(const TextureID texture_id) -> Texture* {
   }
 
   return texture_map.slot(texture_id);
+}
+
+auto AssetManager::get_null_material() -> const Asset * {
+  return get_asset(null_material);
 }
 
 auto AssetManager::get_material(const UUID& uuid) -> Material* {

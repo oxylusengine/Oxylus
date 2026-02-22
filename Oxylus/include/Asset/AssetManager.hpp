@@ -64,8 +64,8 @@ public:
   auto delete_asset(const UUID& uuid) -> void;
   auto register_asset(const std::filesystem::path& path) -> UUID;
   auto register_asset(const UUID& uuid, AssetType type, const std::filesystem::path& path) -> bool;
-  auto acquire_ref(const UUID &uuid) -> void;
-  auto release_ref(const UUID &uuid) -> void;
+  auto acquire_ref(const UUID& uuid) -> void;
+  auto release_ref(const UUID& uuid) -> void;
 
   auto export_asset(const UUID& uuid, const std::filesystem::path& path) -> bool;
   auto export_scene(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
@@ -82,7 +82,7 @@ public:
   auto unload_texture(const UUID& uuid) -> bool;
   auto is_texture_loaded(const UUID& uuid) -> bool;
 
-  auto load_material(const UUID& uuid, const Material& material_info, const MateriaLoadInfo& load_info = {}) -> bool;
+  auto load_material(const UUID& uuid, const Material& material_info) -> bool;
   auto unload_material(const UUID& uuid) -> bool;
 
   auto load_scene(const UUID& uuid) -> bool;
@@ -102,6 +102,7 @@ public:
   auto get_texture(const UUID& uuid) -> Texture*;
   auto get_texture(TextureID texture_id) -> Texture*;
 
+  auto get_null_material() -> const Asset *;
   auto get_material(const UUID& uuid) -> Material*;
   auto get_material(MaterialID material_id) -> Material*;
   auto set_material_dirty(MaterialID material_id) -> void;
@@ -133,5 +134,7 @@ private:
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};
   SlotMap<AudioSource, AudioID> audio_map = {};
   SlotMap<std::unique_ptr<LuaSystem>, ScriptID> script_map = {};
+
+  UUID null_material = {};
 };
 } // namespace ox

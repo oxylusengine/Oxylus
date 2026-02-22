@@ -3,7 +3,6 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
-#include "Asset/Texture.hpp"
 #include "Core/UUID.hpp"
 
 namespace ox {
@@ -41,11 +40,4 @@ struct Material {
   UUID occlusion_texture = {};
 };
 
-struct MateriaLoadInfo {
-  TextureLoadInfo albedo_texture = {};
-  TextureLoadInfo normal_texture = {.format = vuk::Format::eR8G8B8A8Unorm};
-  TextureLoadInfo emissive_texture = {};
-  TextureLoadInfo metallic_roughness_texture = {.format = vuk::Format::eR8G8B8A8Unorm};
-  TextureLoadInfo occlusion_texture = {.format = vuk::Format::eR8G8B8A8Unorm};
-};
 } // namespace ox

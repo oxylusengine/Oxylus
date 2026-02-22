@@ -26,11 +26,6 @@ struct Model {
     glm::vec3 scale = {};
   };
 
-  struct Scene {
-    std::string name = {};
-    std::vector<usize> node_indices = {};
-  };
-
   enum class LightType { Directional, Point, Spot };
 
   struct Light {
@@ -43,12 +38,12 @@ struct Model {
     ox::option<f32> outer_cone_angle = ox::nullopt;
   };
 
-  std::vector<UUID> embedded_textures = {};
-  std::vector<UUID> initial_materials = {};
+  std::vector<UUID> textures = {};
+  std::vector<UUID> materials = {};
   std::vector<MeshGroup> mesh_groups = {};
-  std::vector<Scene> scenes = {};
   std::vector<Light> lights = {};
   std::vector<GPU::Mesh> gpu_meshes = {};
+  std::vector<option<u32>> material_indices = {}; // these are per mesh, not per MeshGroup
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};
 
   usize default_scene_index = 0;

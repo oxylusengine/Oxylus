@@ -1033,6 +1033,8 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         const auto* model = asset_man.get_model(mesh_instance.model_uuid);
         const auto& mesh = model->gpu_meshes[mesh_instance.mesh_node_index];
         const auto* material_asset = asset_man.get_asset(mesh_instance.material_uuid);
+        const auto material_id = material_asset ? material_asset->material_id
+                                                : asset_man.get_null_material()->material_id;
 
         auto unique_mesh = std::pair(mesh_instance.model_uuid, mesh_instance.mesh_node_index);
         auto mesh_index = 0_u32;
@@ -1050,7 +1052,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         auto& gpu_mesh_instance = gpu_mesh_instances.emplace_back();
         gpu_mesh_instance.mesh_index = mesh_index;
         gpu_mesh_instance.lod_index = lod0_index;
-        gpu_mesh_instance.material_index = SlotMap_decode_id(material_asset->material_id).index;
+        gpu_mesh_instance.material_index = SlotMap_decode_id(material_id).index;
         gpu_mesh_instance.transform_index = SlotMap_decode_id(mesh_instance.transform_id).index;
         gpu_mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
 
@@ -1312,9 +1314,8 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   }
 
   auto* model = asset_man.get_model(asset_uuid);
-  auto& default_scene = model->scenes[model->default_scene_index];
   auto& root_node = model->mesh_groups.front();
-  auto root_entity = self.create_entity(default_scene.name, default_scene.name.empty() ? false : true);
+  auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
 
   struct ProcessingNode {
     flecs::entity parent = {};
@@ -1344,11 +1345,13 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
       memory::ScopedStack stack;
       auto mesh_entity_name = !mesh_group.name.empty() ? stack.format("{} Mesh {}", mesh_group.name, mesh_index) : "";
       auto mesh_entity = self.create_entity(std::string(mesh_entity_name));
+      auto material_index = model->material_indices[mesh_index];
+      auto material_uuid = material_index.has_value() ? model->materials[material_index.value()] : UUID(nullptr);
       mesh_entity.set<TransformComponent>({});
       mesh_entity.set<MeshComponent>({
         .model_uuid = asset_uuid,
         .mesh_index = static_cast<u32>(mesh_index),
-        .material_uuid = model->initial_materials[mesh_index],
+        .material_uuid = material_uuid,
       });
       mesh_entity.child_of(node_entity);
       mesh_entity.modified<TransformComponent>();
@@ -1509,13 +1512,10 @@ auto Scene::attach_mesh(
   if (!material_uuid) {
     // No material override, use original one
     auto* model = asset_man.get_model(model_uuid);
-    if (mesh_index >= model->initial_materials.size()) {
-      // This should not happen because meshes and initial materials
-      // are inserted the same way
-      OX_DEBUGBREAK();
-      return false;
+    auto material_index = model->material_indices[mesh_index];
+    if (material_index.has_value()) {
+      overriden_material = model->materials[mesh_index];
     }
-    overriden_material = model->initial_materials[mesh_index];
   }
 
   auto instance_id = self.mesh_instances.create_slot(
