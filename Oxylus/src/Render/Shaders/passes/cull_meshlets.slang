@@ -10,7 +10,7 @@ import cull;
 [[vk::binding(0)]] Image2D<f32> hiz_image;
 [[vk::binding(1)]] Sampler hiz_sampler;
 [[vk::binding(2)]] ConstantBuffer<Camera> camera;
-[[vk::binding(3)]] StructuredBuffer<Mesh> meshes;
+[[vk::binding(3)]] StructuredBuffer<Mesh, ScalarDataLayout> meshes;
 [[vk::binding(4)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(5)]] StructuredBuffer<MeshletInstance> meshlet_instances;
 [[vk::binding(6)]] StructuredBuffer<Transform> transforms;

@@ -139,7 +139,12 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
 
   if (vulkan_validation_layers) {
     OX_LOG_INFO("Enabled vulkan validation layers.");
-    builder.request_validation_layers().set_debug_callback(
+    builder.request_validation_layers();
+  }
+
+  builder.enable_extension(VK_KHR_SURFACE_EXTENSION_NAME)
+    .enable_extension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)
+    .set_debug_callback(
       [](
         const VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
         const VkDebugUtilsMessageTypeFlagsEXT messageType,
@@ -147,10 +152,7 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
         void* pUserData
       ) -> VkBool32 { return debug_callback(messageSeverity, messageType, pCallbackData, pUserData); }
     );
-  }
-
-  builder.enable_extension(VK_KHR_SURFACE_EXTENSION_NAME)
-    .enable_extension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+  ;
 
   auto inst_ret = builder.build();
   if (!inst_ret) {
@@ -208,6 +210,7 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   vk11_features.shaderDrawParameters = true;
   vk11_features.variablePointers = true;
   vk11_features.variablePointersStorageBuffer = true;
+  vk11_features.uniformAndStorageBuffer16BitAccess = true;
 
   VkPhysicalDeviceVulkan12Features vk12_features{};
   vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;

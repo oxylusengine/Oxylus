@@ -783,9 +783,7 @@ auto AssetManager::get_texture(const TextureID texture_id) -> Texture* {
   return texture_map.slot(texture_id);
 }
 
-auto AssetManager::get_null_material() -> const Asset * {
-  return get_asset(null_material);
-}
+auto AssetManager::get_null_material() -> const Asset* { return get_asset(null_material); }
 
 auto AssetManager::get_material(const UUID& uuid) -> Material* {
   ZoneScoped;

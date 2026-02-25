@@ -118,10 +118,10 @@ func fs_main(VertexOutput input) -> FragmentOutput {
     let deriv = compute_partial_derivatives(world_positions, NDC.xy, params.camera.resolution);
     let tex_coord_grad = deriv.gradient_of(tex_coords);
 
-    // ALBEDO 
+    // ALBEDO
     output.albedo_color = material.sample_albedo_color(tex_coord_grad);
 
-    // NORMALS 
+    // NORMALS
     const f32x3x3 camera_relative_world_positions = {
         world_positions[0].xyz - params.camera.position.xyz,
         world_positions[1].xyz - params.camera.position.xyz,

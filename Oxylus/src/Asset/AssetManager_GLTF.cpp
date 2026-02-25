@@ -149,7 +149,7 @@ auto gltf_material_to_material(const fastgltf::Material& gltf_material, std::spa
   auto material = Material{};
 
   // PBR
-  auto& pbr = gltf_material.pbrData;
+  const auto& pbr = gltf_material.pbrData;
   material.albedo_color = glm::vec4(
     pbr.baseColorFactor.x(),
     pbr.baseColorFactor.y(),
@@ -554,6 +554,9 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
       auto vertex_count = 0_u32;
       auto vertex_remap = std::vector<u32>();
       auto positions = std::vector<glm::vec3>();
+      auto quantized_positions = std::vector<glm::u16vec4>();
+      auto quantized_normals = std::vector<u32>();
+      auto quantized_texcoords = std::vector<glm::u16vec2>();
       if (auto attrib = gltf_primitive.findAttribute("POSITION"); attrib != gltf_primitive.attributes.end()) {
         auto& accessor = gltf_asset.accessors[attrib->accessorIndex];
         auto raw_positions = std::vector<glm::vec3>(accessor.count);
@@ -621,10 +624,30 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
       auto indices = std::vector<u32>(index_accessor.count);
       meshopt_remapIndexBuffer(indices.data(), raw_indices.data(), raw_indices.size(), vertex_remap.data());
 
-      const auto mesh_upload_size = 0                           //
-                                    + ox::size_bytes(positions) //
-                                    + ox::size_bytes(normals)   //
-                                    + ox::size_bytes(texcoords);
+      quantized_positions.resize(vertex_count);
+      for (const auto& [position, quantized_position] : std::views::zip(positions, quantized_positions)) {
+        quantized_position.x = meshopt_quantizeHalf(position.x);
+        quantized_position.y = meshopt_quantizeHalf(position.y);
+        quantized_position.z = meshopt_quantizeHalf(position.z);
+      }
+
+      quantized_normals.resize(vertex_count);
+      for (const auto& [normal, quantized_normal] : std::views::zip(normals, quantized_normals)) {
+        quantized_normal = ((meshopt_quantizeSnorm(normal.x, 10) & 1023) << 20) |
+                           ((meshopt_quantizeSnorm(normal.y, 10) & 1023) << 10) |
+                           (meshopt_quantizeSnorm(normal.z, 10) & 1023);
+      }
+
+      quantized_texcoords.resize(vertex_count);
+      for (const auto& [texcoord, quantized_texcoord] : std::views::zip(texcoords, quantized_texcoords)) {
+        quantized_texcoord.x = meshopt_quantizeHalf(texcoord.x);
+        quantized_texcoord.y = meshopt_quantizeHalf(texcoord.y);
+      }
+
+      const auto mesh_upload_size = 0                                     //
+                                    + ox::size_bytes(quantized_positions) //
+                                    + ox::size_bytes(quantized_normals)   //
+                                    + ox::size_bytes(quantized_texcoords);
       auto upload_size = mesh_upload_size;
 
       auto lod_cpu_buffers = std::array<std::pair<vuk::Value<vuk::Buffer>, u64>, GPU::Mesh::MAX_LODS>();
@@ -817,17 +840,17 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
 
       auto gpu_mesh_bda = gpu_mesh_buffer->device_address;
       gpu_mesh.vertex_positions = gpu_mesh_bda + mesh_upload_offset;
-      std::memcpy(cpu_mesh_ptr + mesh_upload_offset, positions.data(), ox::size_bytes(positions));
-      mesh_upload_offset += ox::size_bytes(positions);
+      std::memcpy(cpu_mesh_ptr + mesh_upload_offset, quantized_positions.data(), ox::size_bytes(quantized_positions));
+      mesh_upload_offset += ox::size_bytes(quantized_positions);
 
       gpu_mesh.vertex_normals = gpu_mesh_bda + mesh_upload_offset;
-      std::memcpy(cpu_mesh_ptr + mesh_upload_offset, normals.data(), ox::size_bytes(normals));
-      mesh_upload_offset += ox::size_bytes(normals);
+      std::memcpy(cpu_mesh_ptr + mesh_upload_offset, quantized_normals.data(), ox::size_bytes(quantized_normals));
+      mesh_upload_offset += ox::size_bytes(quantized_normals);
 
       if (!texcoords.empty()) {
         gpu_mesh.texture_coords = gpu_mesh_bda + mesh_upload_offset;
-        std::memcpy(cpu_mesh_ptr + mesh_upload_offset, texcoords.data(), ox::size_bytes(texcoords));
-        mesh_upload_offset += ox::size_bytes(texcoords);
+        std::memcpy(cpu_mesh_ptr + mesh_upload_offset, quantized_texcoords.data(), ox::size_bytes(quantized_texcoords));
+        mesh_upload_offset += ox::size_bytes(quantized_texcoords);
       }
 
       auto gpu_mesh_subrange = vuk::discard_buf("mesh", gpu_mesh_buffer->subrange(0, mesh_upload_size));

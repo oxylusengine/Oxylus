@@ -266,7 +266,7 @@ public struct Meshlet {
 
     // Returns position of a vertex.
     public func position(in Mesh mesh, u32 index) -> f32x3 {
-        return mesh.vertex_positions[index];
+        return mesh.decode_position(index);
     }
 
     public func tex_coord(in Mesh mesh, u32 index) -> f32x2 {
@@ -274,7 +274,7 @@ public struct Meshlet {
             return {};
         }
 
-        return mesh.texture_coords[index];
+        return mesh.decode_texcoord(index);
     }
 
     // ----------------------------------------------------------
@@ -292,15 +292,15 @@ public struct Meshlet {
     }
 
     public func positions(in Mesh mesh, in u32x3 indices) -> f32x3x3 {
-        return { mesh.vertex_positions[indices.x],
-                 mesh.vertex_positions[indices.y],
-                 mesh.vertex_positions[indices.z] };
+        return { mesh.decode_position(indices.x),
+                 mesh.decode_position(indices.y),
+                 mesh.decode_position(indices.z) };
     }
 
     public func normals(in Mesh mesh, in u32x3 indices) -> f32x3x3 {
-        return { mesh.vertex_normals[indices.x],
-                 mesh.vertex_normals[indices.y],
-                 mesh.vertex_normals[indices.z] };
+        return { mesh.decode_normal(indices.x),
+                 mesh.decode_normal(indices.y),
+                 mesh.decode_normal(indices.z) };
     }
 
     public func tex_coords(in Mesh mesh, in u32x3 indices) -> f32x2x3 {
@@ -308,9 +308,9 @@ public struct Meshlet {
             return {};
         }
 
-        return { mesh.texture_coords[indices.x],
-                 mesh.texture_coords[indices.y],
-                 mesh.texture_coords[indices.z] };
+        return { mesh.decode_texcoord(indices.x),
+                 mesh.decode_texcoord(indices.y),
+                 mesh.decode_texcoord(indices.z) };
     }
 };
 
@@ -349,13 +349,56 @@ public struct MeshLOD {
 };
 
 public struct Mesh {
-    public f32x3 *vertex_positions = nullptr;
-    public f32x3 *vertex_normals = nullptr;
-    public f32x2 *texture_coords = nullptr;
+    public u16x4 *vertex_positions = nullptr;
+    public u32 *vertex_normals = nullptr;
+    public u16x2 *texture_coords = nullptr;
     public u32 vertex_count = 0;
     public u32 lod_count = 0;
     public MeshLOD lods[MESH_MAX_LODS] = {};
     public Bounds bounds = {};
+
+    func dequantize_half(u16 h) -> f32 {
+        u32 s = u32(h & 0x8000) << 16;
+        int em = h & 0x7fff;
+        int r = (em + (112 << 10)) << 13;
+        r = (em < (1 << 10)) ? 0 : r;
+        r += (em >= (31 << 10)) ? (112 << 23) : 0;
+
+        return asfloat(s | r);
+    }
+
+    func dequantize_snorm(u32 v, u32 bits) -> f32 {
+        let mask = (1u << bits) - 1u;
+        let half = 1u << (bits - 1u);
+        let sv = v & mask;
+        let signed = sv >= half ? i32(sv) - i32(mask) - 1 : i32(sv);
+        return clamp(f32(signed) / f32(half - 1u), -1.0, 1.0);
+    }
+
+    public func decode_position(u32 index) -> f32x3 {
+        return f32x3(
+            dequantize_half(vertex_positions[index].x),
+            dequantize_half(vertex_positions[index].y),
+            dequantize_half(vertex_positions[index].z)
+        );
+    }
+
+    public func decode_normal(u32 index) -> f32x3 {
+        let packed = vertex_normals[index];
+        return (f32x3(
+            dequantize_snorm(packed >> 20u, 10u),
+            dequantize_snorm(packed >> 10u, 10u),
+            dequantize_snorm(packed,        10u)
+        ));
+    }
+
+    public func decode_texcoord(u32 index) -> f32x2 {
+        let packed = vertex_normals[index];
+        return f32x2(
+            dequantize_half(texture_coords[index].x),
+            dequantize_half(texture_coords[index].y)
+        );
+    }
 };
 
 public struct MeshletInstanceVisibility {
