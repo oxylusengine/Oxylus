@@ -5,7 +5,7 @@ packages = {
   ["stb 2024.06.01"] = {},
   ["miniaudio 0.11.22"] = {},
   ["fastgltf-ox v0.8.0"] = { system = false, debug = is_mode("debug") },
-  ["meshoptimizer v0.22"] = {},
+  ["meshoptimizer v0.25"] = {},
   ["libsdl3 3.4.0"] = { configs = { x11 = true, wayland = false } },
   ["ktx-ox v4.4.0"] = { system = false, debug = false },
   ["zstd v1.5.7"] = { system = false },

@@ -372,7 +372,7 @@ public struct Mesh {
         let half = 1u << (bits - 1u);
         let sv = v & mask;
         let signed = sv >= half ? i32(sv) - i32(mask) - 1 : i32(sv);
-        return clamp(f32(signed) / f32(half - 1u), -1.0, 1.0);
+        return f32(signed) / f32(half - 1u);
     }
 
     public func decode_position(u32 index) -> f32x3 {

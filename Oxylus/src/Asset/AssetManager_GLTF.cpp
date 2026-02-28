@@ -257,9 +257,200 @@ auto AssetManager::write_gltf_meta(AssetManager& self, const std::filesystem::pa
   return true;
 }
 
-auto AssetManager::load_model(const UUID& uuid) -> bool {
+using IndexMap = ankerl::unordered_dense::map<usize, UUID>;
+
+// TASKS
+
+auto extract_embedded_texture_uuids(simdjson::ondemand::document& doc) -> option<IndexMap> {
   ZoneScoped;
 
+  auto result = ankerl::unordered_dense::map<usize, UUID>{};
+  for (auto obj_json : doc["embedded_textures"].get_array()) {
+    if (obj_json.error()) {
+      OX_LOG_ERROR("Bad embedded_textures entry.");
+      return nullopt;
+    }
+
+    auto uuid_json = obj_json["uuid"].get_string();
+    auto tex_index_json = obj_json["texture_index"].get_uint64();
+
+    if (uuid_json.error() || tex_index_json.error()) {
+      OX_LOG_ERROR("Corrupt embedded_textures entry.");
+      return nullopt;
+    }
+
+    auto texture_uuid = UUID::from_string(uuid_json.value_unsafe());
+    if (!texture_uuid.has_value()) {
+      OX_LOG_ERROR("Corrupt UUID in embedded_textures.");
+      return nullopt;
+    }
+
+    result.emplace(static_cast<usize>(tex_index_json.value_unsafe()), texture_uuid.value());
+  }
+
+  return result;
+}
+
+auto import_gltf_textures(
+  AssetManager& self,
+  const fastgltf::Asset& asset,
+  const std::filesystem::path& asset_path,
+  const IndexMap& embedded_texture_uuids
+) -> std::vector<UUID> {
+  ZoneScoped;
+
+  auto result = std::vector<UUID>();
+
+  for (const auto& [gltf_texture, texture_index] : std::views::zip(asset.textures, std::views::iota(0_sz))) {
+    auto image_index = get_effective_image_index(gltf_texture);
+    if (!image_index.has_value()) {
+      continue;
+    }
+
+    const auto& image = asset.images[image_index.value()];
+
+    auto texture_uuid = UUID(nullptr);
+    if (const auto* source = std::get_if<fastgltf::sources::URI>(&image.data)) {
+      texture_uuid = self.import_asset(asset_path.parent_path() / source->uri.fspath());
+    } else {
+      if (auto it = embedded_texture_uuids.find(texture_index); it != embedded_texture_uuids.end()) {
+        texture_uuid = it->second;
+        self.register_asset(texture_uuid, AssetType::Texture, asset_path);
+      }
+    }
+
+    result.push_back(texture_uuid);
+  }
+
+  return result;
+}
+
+auto extract_linear_texture_indices(const fastgltf::Asset& asset) -> ankerl::unordered_dense::set<usize> {
+  ZoneScoped;
+
+  auto result = ankerl::unordered_dense::set<usize>{};
+  for (const auto& material : asset.materials) {
+    if (material.normalTexture.has_value())
+      result.insert(material.normalTexture->textureIndex);
+    if (material.pbrData.metallicRoughnessTexture.has_value())
+      result.insert(material.pbrData.metallicRoughnessTexture->textureIndex);
+    if (material.occlusionTexture.has_value())
+      result.insert(material.occlusionTexture->textureIndex);
+
+    if (material.clearcoat) {
+      if (material.clearcoat->clearcoatRoughnessTexture.has_value())
+        result.insert(material.clearcoat->clearcoatRoughnessTexture->textureIndex);
+      if (material.clearcoat->clearcoatNormalTexture.has_value())
+        result.insert(material.clearcoat->clearcoatNormalTexture->textureIndex);
+    }
+    if (material.sheen) {
+      if (material.sheen->sheenRoughnessTexture.has_value())
+        result.insert(material.sheen->sheenRoughnessTexture->textureIndex);
+    }
+    if (material.specular) {
+      if (material.specular->specularTexture.has_value())
+        result.insert(material.specular->specularTexture->textureIndex);
+    }
+    if (material.transmission) {
+      if (material.transmission->transmissionTexture.has_value())
+        result.insert(material.transmission->transmissionTexture->textureIndex);
+    }
+    if (material.anisotropy) {
+      if (material.anisotropy->anisotropyTexture.has_value())
+        result.insert(material.anisotropy->anisotropyTexture->textureIndex);
+    }
+  }
+
+  return result;
+}
+
+auto load_gltf_texture(
+  AssetManager& self,
+  const fastgltf::Asset& asset,
+  const UUID& texture_uuid,
+  const fastgltf::Image& gltf_image,
+  const fastgltf::Texture& gltf_texture,
+  vuk::Format format
+) -> void {
+  ZoneScoped;
+
+  auto mapped_file = File{};
+  auto texture_load_info = TextureLoadInfo{
+    .format = format,
+  };
+  std::visit(
+    ox::match{
+      [](const auto&) {},
+      [&](const fastgltf::sources::BufferView& v) {
+        // Embedded buffer
+        auto& buffer_view = asset.bufferViews[v.bufferViewIndex];
+        auto& buffer = asset.buffers[buffer_view.bufferIndex];
+        std::visit(
+          ox::match{
+            [](const auto&) {},
+            [&](fastgltf::sources::Array& array) {
+              texture_load_info.bytes = std::span(
+                reinterpret_cast<u8*>(array.bytes.data() + buffer_view.byteOffset),
+                buffer_view.byteLength
+              );
+            },
+          },
+          buffer.data
+        );
+
+        texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
+      },
+      [&](const fastgltf::sources::Array& v) {
+        texture_load_info.bytes = std::span(
+          const_cast<u8*>(reinterpret_cast<const u8*>(v.bytes.data())),
+          v.bytes.size_bytes()
+        );
+        texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
+      },
+      [&](const fastgltf::sources::URI& uri) {
+        // External file
+        texture_load_info.mime = Texture::path_to_mime(uri.uri.fspath());
+      },
+    },
+    gltf_image.data
+  );
+
+  if (gltf_texture.samplerIndex.has_value()) {
+    const auto& sampler = asset.samplers[gltf_texture.samplerIndex.value()];
+    texture_load_info.sampler_info = gltf_sampler_to_sampler(sampler);
+  }
+
+  self.load_texture(texture_uuid, std::move(texture_load_info));
+}
+
+auto register_gltf_materials(
+  AssetManager& self, simdjson::ondemand::document& doc, const std::filesystem::path& asset_path
+) -> option<std::vector<UUID>> {
+  ZoneScoped;
+
+  auto result = std::vector<UUID>{};
+  auto materials_json = doc["materials"];
+  for (auto obj_json : materials_json) {
+    if (obj_json.error() || !obj_json.is_string()) {
+      OX_LOG_ERROR("Bad `embdedded_materials` field.");
+      return nullopt;
+    }
+
+    auto material_uuid = UUID::from_string(obj_json.get_string());
+    if (!material_uuid.has_value()) {
+      OX_LOG_ERROR("A material with corrupt UUID.");
+      return nullopt;
+    }
+
+    self.register_asset(material_uuid.value(), AssetType::Material, asset_path);
+    result.emplace_back(material_uuid.value());
+  }
+
+  return result;
+}
+
+auto AssetManager::load_model(const UUID& uuid) -> bool {
+  ZoneScoped;
   memory::ScopedStack stack;
 
   auto asset_path = std::filesystem::path{};
@@ -277,6 +468,8 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     asset_path = asset->path;
     asset->acquire_ref();
   }
+
+  auto& job_man = App::get_job_manager();
 
   // Initial parsing
   auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(asset_path);
@@ -305,169 +498,50 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     return false;
   }
 
-  auto model = Model{};
-
-  auto embedded_texture_uuids = ankerl::unordered_dense::map<usize, UUID>{};
-  for (auto obj_json : meta_json->doc["embedded_textures"].get_array()) {
-    if (obj_json.error()) {
-      OX_LOG_ERROR("Failed to import model {}! Bad embedded_textures entry.", asset_path);
-      return false;
-    }
-
-    auto uuid_json = obj_json["uuid"].get_string();
-    auto tex_index_json = obj_json["texture_index"].get_uint64();
-
-    if (uuid_json.error() || tex_index_json.error()) {
-      OX_LOG_ERROR("Failed to import model {}! Corrupt embedded_textures entry.", asset_path);
-      return false;
-    }
-
-    auto texture_uuid = UUID::from_string(uuid_json.value_unsafe());
-    if (!texture_uuid.has_value()) {
-      OX_LOG_ERROR("Failed to import model {}! Corrupt UUID in embedded_textures.", asset_path);
-      return false;
-    }
-
-    embedded_texture_uuids.emplace(static_cast<usize>(tex_index_json.value_unsafe()), texture_uuid.value());
+  auto embedded_texture_uuids_result = extract_embedded_texture_uuids(*meta_json->doc);
+  if (!embedded_texture_uuids_result.has_value()) {
+    return false;
   }
+  auto embedded_texture_uuids = std::move(embedded_texture_uuids_result.value());
 
-  auto materials_json = meta_json->doc["materials"];
-  for (auto obj_json : materials_json) {
-    if (obj_json.error() || !obj_json.is_string()) {
-      OX_LOG_ERROR("Failed to import model {}! Bad `embdedded_materials` field.", asset_path);
-      return false;
-    }
+  auto linear_texture_indices = extract_linear_texture_indices(gltf_asset);
+  auto textures = import_gltf_textures(*this, gltf_asset, asset_path, embedded_texture_uuids);
 
-    auto material_uuid = UUID::from_string(obj_json.get_string());
-    if (!material_uuid.has_value()) {
-      OX_LOG_ERROR("Failed to import model {}! A material with corrupt UUID.", asset_path);
-      return false;
-    }
-
-    register_asset(material_uuid.value(), AssetType::Material, asset_path);
-    model.materials.emplace_back(material_uuid.value());
-  }
-
-  // determine and initialize texture info
-  for (const auto& [gltf_texture, texture_index] : std::views::zip(gltf_asset.textures, std::views::iota(0_sz))) {
-    auto image_index = get_effective_image_index(gltf_texture);
-    if (!image_index.has_value()) {
-      continue;
-    }
-    auto& image = gltf_asset.images[image_index.value()];
-
-    auto texture_uuid = UUID{};
-    if (auto* source = std::get_if<fastgltf::sources::URI>(&image.data)) {
-      const auto& path = asset_path.parent_path() / source->uri.fspath();
-      texture_uuid = import_asset(path);
-    } else {
-      if (auto it = embedded_texture_uuids.find(texture_index); it != embedded_texture_uuids.end()) {
-        texture_uuid = it->second;
-        register_asset(texture_uuid, AssetType::Texture, asset_path);
-      }
-    }
-
-    model.textures.push_back(texture_uuid);
-  }
-
-  auto linear_texture_indices = ankerl::unordered_dense::set<usize>{};
-  for (const auto& material : gltf_asset.materials) {
-    if (material.normalTexture.has_value())
-      linear_texture_indices.insert(material.normalTexture->textureIndex);
-    if (material.pbrData.metallicRoughnessTexture.has_value())
-      linear_texture_indices.insert(material.pbrData.metallicRoughnessTexture->textureIndex);
-    if (material.occlusionTexture.has_value())
-      linear_texture_indices.insert(material.occlusionTexture->textureIndex);
-
-    if (material.clearcoat) {
-      if (material.clearcoat->clearcoatRoughnessTexture.has_value())
-        linear_texture_indices.insert(material.clearcoat->clearcoatRoughnessTexture->textureIndex);
-      if (material.clearcoat->clearcoatNormalTexture.has_value())
-        linear_texture_indices.insert(material.clearcoat->clearcoatNormalTexture->textureIndex);
-    }
-    if (material.sheen) {
-      if (material.sheen->sheenRoughnessTexture.has_value())
-        linear_texture_indices.insert(material.sheen->sheenRoughnessTexture->textureIndex);
-    }
-    if (material.specular) {
-      if (material.specular->specularTexture.has_value())
-        linear_texture_indices.insert(material.specular->specularTexture->textureIndex);
-    }
-    if (material.transmission) {
-      if (material.transmission->transmissionTexture.has_value())
-        linear_texture_indices.insert(material.transmission->transmissionTexture->textureIndex);
-    }
-    if (material.anisotropy) {
-      if (material.anisotropy->anisotropyTexture.has_value())
-        linear_texture_indices.insert(material.anisotropy->anisotropyTexture->textureIndex);
-    }
-  }
-
-  OX_ASSERT(gltf_asset.textures.size() == model.textures.size());
+  OX_ASSERT(gltf_asset.textures.size() == textures.size());
   for (const auto& [gltf_texture, texture_uuid, texture_index] :
-       std::views::zip(gltf_asset.textures, model.textures, std::views::iota(0_sz))) {
+       std::views::zip(gltf_asset.textures, textures, std::views::iota(0_sz))) {
     auto image_index = get_effective_image_index(gltf_texture);
     if (!image_index.has_value()) {
       continue;
     }
-    auto& image = gltf_asset.images[image_index.value()];
+
+    const auto& gltf_image = gltf_asset.images[image_index.value()];
+
     auto image_format = vuk::Format::eR8G8B8A8Srgb;
     if (linear_texture_indices.contains(texture_index)) {
       image_format = vuk::Format::eR8G8B8A8Unorm;
     }
 
-    auto mapped_file = File{};
-    auto texture_load_info = TextureLoadInfo{
-      .format = image_format,
-    };
-    std::visit(
-      ox::match{
-        [](const auto&) {},
-        [&](fastgltf::sources::BufferView& v) {
-          // Embedded buffer
-          auto& buffer_view = gltf_asset.bufferViews[v.bufferViewIndex];
-          auto& buffer = gltf_asset.buffers[buffer_view.bufferIndex];
-          std::visit(
-            ox::match{
-              [](const auto&) {},
-              [&](fastgltf::sources::Array& array) {
-                texture_load_info.bytes = std::span(
-                  reinterpret_cast<u8*>(array.bytes.data() + buffer_view.byteOffset),
-                  buffer_view.byteLength
-                );
-              },
-            },
-            buffer.data
-          );
-
-          texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
-        },
-        [&](fastgltf::sources::Array& v) {
-          texture_load_info.bytes = std::span(reinterpret_cast<u8*>(v.bytes.data()), v.bytes.size_bytes());
-          texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
-        },
-        [&](fastgltf::sources::URI& uri) {
-          // External file
-          texture_load_info.mime = Texture::path_to_mime(uri.uri.fspath());
-        },
-      },
-      image.data
-    );
-
-    if (gltf_texture.samplerIndex.has_value()) {
-      const auto& sampler = gltf_asset.samplers[gltf_texture.samplerIndex.value()];
-      texture_load_info.sampler_info = gltf_sampler_to_sampler(sampler);
-    }
-
-    load_texture(texture_uuid, std::move(texture_load_info));
+    job_man.submit(Job::create([asset_man = this, &gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format]() {
+      load_gltf_texture(*asset_man, gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format);
+    }));
   }
 
-  for (const auto& [material_uuid, gltf_material] : std::views::zip(model.materials, gltf_asset.materials)) {
-    load_material(material_uuid, gltf_material_to_material(gltf_material, model.textures));
+  job_man.wait();
+
+  auto materials_result = register_gltf_materials(*this, *meta_json->doc, asset_path);
+  if (!materials_result.has_value()) {
+    return false;
+  }
+  auto materials = std::move(materials_result.value());
+
+  for (const auto& [material_uuid, gltf_material] : std::views::zip(materials, gltf_asset.materials)) {
+    load_material(material_uuid, gltf_material_to_material(gltf_material, textures));
   }
 
+  auto lights = std::vector<Model::Light>();
   for (const auto& gltf_light : gltf_asset.lights) {
-    auto light = Model::Light{
+    lights.push_back({
       .name = std::string(gltf_light.name),
       .type = static_cast<Model::LightType>(gltf_light.type),
       .color = glm::make_vec3(gltf_light.color.data()),
@@ -475,10 +549,14 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
       .range = gltf_light.range ? option<f32>(*gltf_light.range) : nullopt,
       .inner_cone_angle = gltf_light.innerConeAngle ? option<f32>(*gltf_light.innerConeAngle) : nullopt,
       .outer_cone_angle = gltf_light.outerConeAngle ? option<f32>(*gltf_light.outerConeAngle) : nullopt,
-    };
-    model.lights.push_back(std::move(light));
+    });
   }
 
+  auto model = Model{
+    .textures = std::move(textures),
+    .materials = std::move(materials),
+    .lights = std::move(lights),
+  };
   auto& gltf_default_scene = gltf_asset.scenes[gltf_asset.defaultScene.value_or(0_sz)];
   struct ProcessingNode {
     usize gltf_node_index = 0;
