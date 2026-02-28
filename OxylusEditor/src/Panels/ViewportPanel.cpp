@@ -320,7 +320,7 @@ void ViewportPanel::on_update() {
   const auto smoothed_speed = actual_speed * 100.f;
   const auto camera_speed = EditorCVar::cvar_camera_smooth.get() ? smoothed_speed : actual_speed;
 
-  if (input_sys.get_mouse_held(MouseCode::ButtonRight) && !is_ortho) {
+  if ((input_sys.get_mouse_held(MouseCode::Button3) || input_sys.get_mouse_held(MouseCode::ButtonRight)) && !is_ortho) {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
     window.set_cursor_override(WindowCursor::Crosshair);
 
