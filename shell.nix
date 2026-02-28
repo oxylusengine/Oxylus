@@ -1,5 +1,18 @@
 let
   pkgs = import <nixpkgs> { };
+  xssWrapper = pkgs.writeTextDir "lib/pkgconfig/xss.pc" ''
+    prefix=${pkgs.libXScrnSaver}
+    exec_prefix=''${prefix}
+    libdir=''${exec_prefix}/lib
+    includedir=''${prefix}/include
+
+    Name: Xss
+    Description: X11 Screen Saver extension library
+    Version: ${pkgs.libXScrnSaver.version}
+    Requires: x11 xext
+    Cflags: -I''${includedir}
+    Libs: -L''${libdir} -lXss
+  '';
 in pkgs.mkShell.override {
   stdenv = pkgs.llvmPackages_latest.libcxxStdenv;
 } {
@@ -30,18 +43,24 @@ in pkgs.mkShell.override {
     pkgs.zenity
 
     # SDL3
-    pkgs.xorg.libX11
-    pkgs.xorg.libxcb
-    pkgs.xorg.libXScrnSaver
-    pkgs.xorg.libXcursor
-    pkgs.xorg.libXext
-    pkgs.xorg.libXfixes
-    pkgs.xorg.libXi
-    pkgs.xorg.libXrandr
-
+    pkgs.util-macros
     pkgs.vulkan-loader
   ];
 
+  buildInputs = [
+    pkgs.util-macros
+    pkgs.libX11
+    pkgs.libxcb
+    pkgs.libXScrnSaver
+    pkgs.libXcursor
+    pkgs.libXext
+    pkgs.libXfixes
+    pkgs.libXi
+    pkgs.libXrandr
+    pkgs.xorgproto
+  ];
+
+  PKG_CONFIG_PATH = "${xssWrapper}/lib/pkgconfig:$PKG_CONFIG_PATH";
   LIBCXX_PATH="${pkgs.llvmPackages_latest.libcxx.dev}";
   LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
     pkgs.llvmPackages_latest.libcxx
@@ -49,14 +68,14 @@ in pkgs.mkShell.override {
     pkgs.gcc14.cc.lib
     pkgs.vulkan-loader
     # SDL3
-    pkgs.xorg.libX11
-    pkgs.xorg.libxcb
-    pkgs.xorg.libXScrnSaver
-    pkgs.xorg.libXcursor
-    pkgs.xorg.libXext
-    pkgs.xorg.libXfixes
-    pkgs.xorg.libXi
-    pkgs.xorg.libXrandr
+    pkgs.libX11
+    pkgs.libxcb
+    pkgs.libXScrnSaver
+    pkgs.libXcursor
+    pkgs.libXext
+    pkgs.libXfixes
+    pkgs.libXi
+    pkgs.libXrandr
   ]}";
   NIX_ENFORCE_NO_NATIVE = "0";
 

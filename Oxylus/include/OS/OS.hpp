@@ -17,6 +17,7 @@ enum class FileError : i32 {
   InUse,
   Interrupted,
   BadFileDescriptor,
+  MapFailed,
   Unknown,
 };
 constexpr bool operator!(FileError v) { return v != FileError::None; }
@@ -24,7 +25,7 @@ constexpr bool operator!(FileError v) { return v != FileError::None; }
 enum class FileAccess {
   Read,
   Write,
-  ReadWrite
+  ReadWrite,
 };
 
 // Can we add stdout and other pipes here?
@@ -54,5 +55,7 @@ auto file_write(FileDescriptor file, const void* data, usize size) -> usize;
 auto file_seek(FileDescriptor file, i64 offset) -> void;
 auto file_stdout(std::string_view str) -> void;
 auto file_stderr(std::string_view str) -> void;
+auto file_map(FileDescriptor file, usize size) -> std::expected<void *, FileError>;
+auto file_unmap(FileDescriptor file, void *data, usize size) -> void;
 } // namespace os
 } // namespace ox

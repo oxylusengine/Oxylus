@@ -1,6 +1,7 @@
 #include "ViewportPanel.hpp"
 
 #include <ImGuizmo.h>
+#include <glm/gtx/matrix_decompose.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 
@@ -757,26 +758,38 @@ void ViewportPanel::draw_gizmos() {
     if (gizmo_mode_ == ImGuizmo::OPERATION::TRANSLATE && is_ortho)
       gizmo_mode_ = ImGuizmo::OPERATION::TRANSLATE_X | ImGuizmo::OPERATION::TRANSLATE_Y;
 
+    auto delta_mat = glm::mat4(1.0f);
     ImGuizmo::Manipulate(
       value_ptr(camera_view),
       value_ptr(camera_projection),
       static_cast<ImGuizmo::OPERATION>(gizmo_type_),
       static_cast<ImGuizmo::MODE>(gizmo_mode_),
       value_ptr(transform),
-      nullptr,
+      glm::value_ptr(delta_mat),
       snap ? snap_values : nullptr
     );
 
     if (ImGuizmo::IsUsing()) {
-      const flecs::entity parent = selected_entity.parent();
-      const glm::mat4& parent_world_transform = parent != flecs::entity::null() ? Scene::get_world_transform(parent)
-                                                                                : glm::mat4(1.0f);
-      glm::vec3 translation, rotation, scale;
-      if (math::decompose_transform(inverse(parent_world_transform) * transform, translation, rotation, scale)) {
-        tc->position = translation;
-        const glm::vec3 delta_rotation = rotation - tc->rotation;
-        tc->rotation += delta_rotation;
-        tc->scale = scale;
+      glm::vec3 delta_translation;
+      glm::quat delta_rotation;
+      glm::vec3 delta_scale;
+      glm::vec3 skew;
+      glm::vec4 perspective;
+
+      if (glm::decompose(delta_mat, delta_scale, delta_rotation, delta_translation, skew, perspective)) {
+        const flecs::entity parent = selected_entity.parent();
+        const glm::mat4 parent_world = parent != flecs::entity::null() //
+                                         ? Scene::get_world_transform(parent)
+                                         : glm::mat4(1.0f);
+
+        const glm::mat4 inv_parent = glm::inverse(parent_world);
+        if (gizmo_type_ == ImGuizmo::TRANSLATE) {
+          tc->position += glm::vec3(inv_parent * glm::vec4(delta_translation, 0.0f));
+        } else if (gizmo_type_ == ImGuizmo::ROTATE) {
+          tc->rotation = glm::quat_cast(inv_parent) * delta_rotation * tc->rotation;
+        } else if (gizmo_type_ == ImGuizmo::SCALE) {
+          tc->scale *= delta_scale;
+        }
 
         auto old_tc = *tc;
         undo_redo_system->execute_command<ComponentChangeCommand<TransformComponent>>(

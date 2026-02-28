@@ -1,5 +1,6 @@
-﻿#include "Memory/Stack.hpp"
-#define STB_IMAGE_IMPLEMENTATION
+﻿#define STB_IMAGE_IMPLEMENTATION
+
+#include "Asset/Texture.hpp"
 
 #include <ktx.h>
 #include <stb_image.h>
@@ -7,15 +8,14 @@
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 #include <vuk/vsl/Core.hpp>
 
-#include "Asset/Texture.hpp"
 #include "Core/App.hpp"
+#include "Memory/Hasher.hpp"
+#include "Memory/Stack.hpp"
 #include "Render/Utils/DDS.hpp"
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
-void Texture::create(
-  const std::filesystem::path& path, const TextureLoadInfo& load_info, const std::source_location& loc
-) {
+void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_info, const std::source_location& loc) {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -36,10 +36,10 @@ void Texture::create(
   if (is_generic) {
     if (!path.empty()) {
       stb_data = load_stb_image(stack.format_char("{}", path), &extent.width, &extent.height, &chans);
-    } else if (load_info.bytes.has_value()) {
+    } else if (!load_info.bytes.empty()) {
       stb_data = load_stb_image_from_memory(
-        (void*)load_info.bytes->data(), //
-        load_info.bytes->size(),
+        (void*)load_info.bytes.data(), //
+        load_info.bytes.size(),
         &extent.width,
         &extent.height,
         &chans
@@ -52,8 +52,8 @@ void Texture::create(
       if (result != dds::ReadResult::Success) {
         OX_LOG_INFO("Error while loading dds. {}", path);
       }
-    } else if (load_info.bytes.has_value()) {
-      auto result = dds::readImage((std::uint8_t*)load_info.bytes->data(), load_info.bytes->size(), &dds_image);
+    } else if (!load_info.bytes.empty()) {
+      auto result = dds::readImage(load_info.bytes.data(), load_info.bytes.size(), &dds_image);
       if (result != dds::ReadResult::Success) {
         OX_LOG_INFO("Error while loading dds. {}", path);
       }
@@ -65,10 +65,10 @@ void Texture::create(
   } else if (!is_generic) {
     ktxTexture2* ktx{};
     if (path.empty()) {
-      OX_CHECK_EQ(load_info.bytes.has_value(), true);
+      OX_CHECK_EQ(!load_info.bytes.empty(), true);
       if (const auto result = ktxTexture2_CreateFromMemory(
-            load_info.bytes->data(), //
-            load_info.bytes->size(),
+            load_info.bytes.data(), //
+            load_info.bytes.size(),
             KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
             &ktx
           );
@@ -399,5 +399,28 @@ u8* Texture::convert_to_four_channels(uint32_t width, uint32_t height, const u8*
     rgb += 3;
   }
   return buffer;
+}
+
+auto Texture::path_to_mime(const std::filesystem::path& path) -> TextureLoadInfo::MimeType {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  if (!path.has_extension()) {
+    return TextureLoadInfo::MimeType::Generic;
+  }
+
+  auto extension = stack.to_upper(path.extension().string());
+  switch (fnv64_str(extension)) {
+    case fnv64_c(".KTX"):
+    case fnv64_c(".KTX2"): {
+      return TextureLoadInfo::MimeType::KTX;
+    }
+    case fnv64_c(".DDS"): {
+      return TextureLoadInfo::MimeType::DDS;
+    }
+    default:;
+  }
+
+  return TextureLoadInfo::MimeType::Generic;
 }
 } // namespace ox

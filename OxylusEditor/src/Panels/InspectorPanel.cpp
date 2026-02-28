@@ -20,25 +20,15 @@ namespace ox {
 struct EntityInspector : IEntitySerializer {
   UndoRedoSystem& undo_redo_system;
   InspectorPanel& inspector_panel;
-  bool is_transform;
-  bool handled; // is something special being externally handled (vec3, uuid, etc...)
   bool modified;
 
-  EntityInspector(
-    flecs::world& world_, UndoRedoSystem& undo_redo_system_, InspectorPanel& inspector_panel_, bool is_transform_
-  )
+  EntityInspector(flecs::world& world_, UndoRedoSystem& undo_redo_system_, InspectorPanel& inspector_panel_)
       : IEntitySerializer(world_),
         undo_redo_system(undo_redo_system_),
         inspector_panel(inspector_panel_),
-        is_transform(is_transform_),
-        handled(false),
         modified(false) {}
 
   auto on_primitive(std::string_view name, Primitive primitive) -> void override {
-    if (handled) {
-      return;
-    }
-
     std::visit(
       ox::match{
         [](const auto&) {},
@@ -143,49 +133,44 @@ struct EntityInspector : IEntitySerializer {
   auto on_struct(std::string_view name, flecs::meta::op_t* ops, i32 op_count, void* base) -> void override {
     if (!name.empty()) {
       if (ops->type == world.entity<glm::vec2>()) {
-        handled = true;
         auto* v = static_cast<glm::vec2*>(base);
         auto old_v = *v;
-        if (UI::property_vector(name.data(), *v)) {
+        if (UI::draw_vec2_control(name.data(), *v)) {
           undo_redo_system.execute_command<PropertyChangeCommand<glm::vec2>>(v, old_v, *v, std::string(name));
           modified = true;
         }
       } else if (ops->type == world.entity<glm::vec3>()) {
-        handled = true;
         auto* v = static_cast<glm::vec3*>(base);
         auto old_v = *v;
-        if (is_transform) {
-          if (name == "rotation") {
-            auto rotation = glm::degrees(*v);
-            if (UI::draw_vec3_control(name.data(), rotation)) {
-              *v = glm::radians(rotation);
-              undo_redo_system.execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, std::string(name));
-              modified = true;
-            }
-          } else {
-            if (UI::draw_vec3_control(name.data(), *v)) {
-              undo_redo_system.execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, std::string(name));
-              modified = true;
-            }
-          }
-        } else {
-          if (UI::property_vector(name.data(), *v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, std::string(name));
-            modified = true;
-          }
+        if (UI::draw_vec3_control(name.data(), *v)) {
+          undo_redo_system.execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, std::string(name));
+          modified = true;
         }
       } else if (ops->type == world.entity<glm::vec4>()) {
-        handled = true;
         auto* v = static_cast<glm::vec4*>(base);
         auto old_v = *v;
         if (UI::property_vector(name.data(), *v)) {
           undo_redo_system.execute_command<PropertyChangeCommand<glm::vec4>>(v, old_v, *v, std::string(name));
           modified = true;
         }
-      }
+      } else if (ops->type == world.entity<glm::quat>()) {
+        auto* v = static_cast<glm::quat*>(base);
 
-      serialize_ops(ops + 1, op_count - 1, base);
-      handled = false;
+        if (!inspector_panel.euler_cache) {
+          inspector_panel.euler_cache = glm::degrees(glm::eulerAngles(*v));
+        }
+
+        auto old_v = *v;
+        if (UI::draw_vec3_control(name.data(), *inspector_panel.euler_cache)) {
+          auto old_v_cmd = *v;
+          *v = glm::quat(glm::radians(inspector_panel.euler_cache.value()));
+          undo_redo_system.execute_command<PropertyChangeCommand<glm::quat>>(v, old_v_cmd, *v, std::string(name));
+
+          modified = true;
+        }
+      } else {
+        serialize_ops(ops + 1, op_count - 1, base);
+      }
     } else {
       // root level serialization
       serialize_ops(ops + 1, op_count - 1, base);
@@ -339,7 +324,13 @@ void InspectorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
   editor_context.entity
     .and_then([this](flecs::entity e) {
+      if (e != this->last_edited_entity) {
+        this->euler_cache.reset();
+        this->last_edited_entity = e;
+      }
+
       this->draw_components(e);
+
       return option<std::monostate>{};
     })
     .or_else([this, &editor_context]() {
@@ -631,16 +622,12 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     ImGui::PopID();
 
     if (open && ty.has<flecs::TypeSerializer>()) {
-      ImGuiTableFlags properties_flags = UI::default_properties_flags;
-      // Special case for Transform Component
-      const auto is_transform_component = ty.name() == "TransformComponent";
-      if (is_transform_component)
-        properties_flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV;
+      ImGuiTableFlags properties_flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV;
 
       UI::begin_properties(properties_flags);
 
       auto world = entity.world();
-      auto inspector = EntityInspector(world, *undo_redo_system.get(), *this, is_transform_component);
+      auto inspector = EntityInspector(world, *undo_redo_system.get(), *this);
       auto* component = entity.get_mut(id);
       inspector.serialize(ty, component);
       if (inspector.modified) {
@@ -688,7 +675,7 @@ void InspectorPanel::draw_model_asset(UUID* uuid, Asset* asset) {
 
   auto& asset_man = App::mod<AssetManager>();
   if (auto* model = asset_man.get_model(*uuid)) {
-    for (auto& mat_uuid : model->materials) {
+    for (auto& mat_uuid : model->materials) { // TODO: We should actually use model component here
       static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
                                                        ImGuiTreeNodeFlags_SpanAvailWidth |
                                                        ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |

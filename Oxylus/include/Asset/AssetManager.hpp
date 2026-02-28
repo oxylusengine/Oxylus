@@ -42,6 +42,10 @@ class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
+  static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
+  static auto to_asset_type_sv(AssetType type) -> std::string_view;
+  static auto write_gltf_meta(AssetManager& self, const std::filesystem::path& path, JsonWriter& json) -> bool;
+
   struct AssetMetaFile {
     simdjson::padded_string contents;
     simdjson::ondemand::parser parser;
@@ -55,29 +59,15 @@ public:
 
   auto read_meta_file(const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
 
-  auto load_deferred_assets() -> void;
-
   auto create_asset(AssetType type, const std::filesystem::path& path = {}) -> UUID;
-
-  static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
-  static auto to_asset_type_sv(AssetType type) -> std::string_view;
-
   auto import_asset(const std::filesystem::path& path) -> UUID;
-
   auto delete_asset(const UUID& uuid) -> void;
-
-  //  ── Registered Assets ─────────────────────────────────────────────────
-  // Assets that already exist in project root and have meta file with
-  // valid UUID's.
-  //
-  // Add already existing asset into the registry.
-  // File must end with `.oxasset` extension.
   auto register_asset(const std::filesystem::path& path) -> UUID;
   auto register_asset(const UUID& uuid, AssetType type, const std::filesystem::path& path) -> bool;
+  auto acquire_ref(const UUID& uuid) -> void;
+  auto release_ref(const UUID& uuid) -> void;
 
   auto export_asset(const UUID& uuid, const std::filesystem::path& path) -> bool;
-  auto export_texture(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
-  auto export_model(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
   auto export_scene(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
   auto export_material(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
   auto export_script(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool;
@@ -88,15 +78,11 @@ public:
   auto load_model(const UUID& uuid) -> bool;
   auto unload_model(const UUID& uuid) -> bool;
 
-  auto load_texture(const UUID& uuid, const TextureLoadInfo& info = {}) -> bool;
+  auto load_texture(const UUID& uuid, TextureLoadInfo info = {}) -> bool;
   auto unload_texture(const UUID& uuid) -> bool;
   auto is_texture_loaded(const UUID& uuid) -> bool;
 
-  auto load_material(
-    const UUID& uuid,
-    const Material& material_info,
-    option<ankerl::unordered_dense::map<UUID, TextureLoadInfo>> texture_info_map = nullopt
-  ) -> bool;
+  auto load_material(const UUID& uuid, const Material& material_info) -> bool;
   auto unload_material(const UUID& uuid) -> bool;
 
   auto load_scene(const UUID& uuid) -> bool;
@@ -116,6 +102,7 @@ public:
   auto get_texture(const UUID& uuid) -> Texture*;
   auto get_texture(TextureID texture_id) -> Texture*;
 
+  auto get_null_material() -> const Asset *;
   auto get_material(const UUID& uuid) -> Material*;
   auto get_material(MaterialID material_id) -> Material*;
   auto set_material_dirty(MaterialID material_id) -> void;
@@ -148,6 +135,6 @@ private:
   SlotMap<AudioSource, AudioID> audio_map = {};
   SlotMap<std::unique_ptr<LuaSystem>, ScriptID> script_map = {};
 
-  std::vector<std::function<void()>> deferred_load_queue = {};
+  UUID null_material = {};
 };
 } // namespace ox

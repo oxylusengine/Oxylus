@@ -18,8 +18,7 @@ struct ComponentBinder {
   }
 
   auto member(this ComponentBinder&& self, const char* name, auto member_pointer) -> ComponentBinder&& {
-    using MemberType = std::remove_cvref_t<decltype(std::declval<T>().*member_pointer)>;
-    self.component.member<MemberType>(name);
+    self.component.member(name, member_pointer);
     if (self.state) {
       self.usertype[name] = member_pointer;
     }
@@ -73,48 +72,41 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   world.module<CoreComponentsModule>("Core");
 
-  world
-    .component<glm::vec2>("glm::vec2") //
-    .member<f32>("x")
-    .member<f32>("y");
+  world.component<glm::vec2>("glm::vec2")
+    .member("x", &glm::vec2::x) //
+    .member("y", &glm::vec2::y);
 
-  world
-    .component<glm::ivec2>("glm::ivec2") //
-    .member<i32>("x")
-    .member<i32>("y");
+  world.component<glm::ivec2>("glm::ivec2")
+    .member("x", &glm::ivec2::x) //
+    .member("y", &glm::ivec2::y);
 
-  world
-    .component<glm::vec3>("glm::vec3") //
-    .member<f32>("x")
-    .member<f32>("y")
-    .member<f32>("z");
+  world.component<glm::vec3>("glm::vec3")
+    .member("x", &glm::vec3::x) //
+    .member("y", &glm::vec3::y)
+    .member("z", &glm::vec3::z);
 
-  world
-    .component<glm::vec4>("glm::vec4") //
-    .member<f32>("x")
-    .member<f32>("y")
-    .member<f32>("z")
-    .member<f32>("w");
+  world.component<glm::vec4>("glm::vec4")
+    .member("x", &glm::vec4::x) //
+    .member("y", &glm::vec4::y)
+    .member("z", &glm::vec4::z)
+    .member("w", &glm::vec4::w);
 
-  world
-    .component<glm::mat3>("glm::mat3") //
-    .member<glm::vec3>("col0")
+  world.component<glm::mat3>("glm::mat3")
+    .member<glm::vec3>("col0") //
     .member<glm::vec3>("col1")
     .member<glm::vec3>("col2");
 
-  world
-    .component<glm::mat4>("glm::mat4") //
+  world.component<glm::mat4>("glm::mat4")
     .member<glm::vec4>("col0")
     .member<glm::vec4>("col1")
     .member<glm::vec4>("col2")
     .member<glm::vec4>("col3");
 
-  world
-    .component<glm::quat>("glm::quat") //
-    .member<f32>("x")
-    .member<f32>("y")
-    .member<f32>("z")
-    .member<f32>("w");
+  world.component<glm::quat>("glm::quat")
+    .member("x", &glm::quat::x) //
+    .member("y", &glm::quat::y)
+    .member("z", &glm::quat::z)
+    .member("w", &glm::quat::w);
 
   world.component<std::string>("std::string")
     .opaque(flecs::String)
@@ -147,9 +139,10 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   // Rendering Components
   bind_component<MeshComponent>(world, state, core_table, "MeshComponent")
+    .member("model_uuid", &MeshComponent::model_uuid)
     .member("mesh_index", &MeshComponent::mesh_index)
+    .member("material_uuid", &MeshComponent::material_uuid)
     .member("cast_shadows", &MeshComponent::cast_shadows)
-    .member("mesh_uuid", &MeshComponent::mesh_uuid)
     .finalize();
 
   bind_component<SpriteComponent>(world, state, core_table, "SpriteComponent")

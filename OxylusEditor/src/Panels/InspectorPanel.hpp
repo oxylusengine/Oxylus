@@ -21,6 +21,8 @@ public:
   };
 
   AssetManagerViewer viewer = {};
+  option<glm::vec3> euler_cache = nullopt;
+  flecs::entity last_edited_entity = flecs::entity::null();
 
   InspectorPanel();
 

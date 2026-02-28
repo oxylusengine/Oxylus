@@ -175,4 +175,24 @@ void os::file_stderr(std::string_view str) {
 
   write(STDERR_FILENO, str.data(), str.length());
 }
+
+auto os::file_map(FileDescriptor file, usize size) -> std::expected<void*, FileError> {
+  ZoneScoped;
+
+  auto* data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, static_cast<i32>(file), 0);
+  if (data == MAP_FAILED) {
+    return std::unexpected(FileError::MapFailed);
+  }
+
+  madvise(data, size, MADV_SEQUENTIAL);
+  madvise(data, size, MADV_WILLNEED);
+
+  return data;
+}
+
+auto os::file_unmap(FileDescriptor, void* data, usize size) -> void {
+  ZoneScoped;
+
+  os::mem_release(data, size);
+}
 } // namespace ox

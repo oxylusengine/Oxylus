@@ -39,4 +39,5 @@ struct Material {
   UUID metallic_roughness_texture = {};
   UUID occlusion_texture = {};
 };
+
 } // namespace ox

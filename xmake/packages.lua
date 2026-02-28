@@ -5,8 +5,8 @@ packages = {
   ["stb 2024.06.01"] = {},
   ["miniaudio 0.11.22"] = {},
   ["fastgltf-ox v0.8.0"] = { system = false, debug = is_mode("debug") },
-  ["meshoptimizer v0.22"] = {},
-  ["libsdl3 3.2.28"] = { configs = { x11 = true, wayland = false }, system = false },
+  ["meshoptimizer v0.25"] = {},
+  ["libsdl3 3.4.0"] = { configs = { x11 = true, wayland = false } },
   ["ktx-ox v4.4.0"] = { system = false, debug = false },
   ["zstd v1.5.7"] = { system = false },
   ["shader-slang v2025.15.1"] = { configs = { shared = true }, system = false },
@@ -38,7 +38,7 @@ packages = {
     configs = {
       debug_allocations = false,
     },
-    debug = is_mode("debug"),
+    debug = false,
   },
   ["toml++ v3.4.0"] = {
     configs = {

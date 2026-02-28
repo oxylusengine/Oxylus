@@ -39,7 +39,7 @@ bool UI::begin_properties(const ImGuiTableFlags flags, bool fixed_width, float w
     if (fixed_width)
       ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, ImGui::GetWindowWidth() * width);
     else
-      ImGui::TableSetupColumn("Property");
+      ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthStretch);
     return true;
   }
 
@@ -329,7 +329,7 @@ bool UI::draw_vec3_control(const char* label, glm::vec3& values, const char* too
 
   push_frame_style(false);
 
-  ImGui::PushMultiItemsWidths(3, ImGui::GetWindowWidth() - 150.0f);
+  ImGui::PushMultiItemsWidths(3, ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize);
 
   const float frame_height = ImGui::GetFrameHeight();
   const ImVec2 button_size = {2.f, frame_height};
@@ -415,8 +415,7 @@ bool UI::draw_vec2_control(const char* label, glm::vec2& values, const char* too
 
   push_frame_style(false);
 
-  const float x = ImGui::GetContentRegionAvail().x;
-  ImGui::PushMultiItemsWidths(2, x);
+  ImGui::PushMultiItemsWidths(2, ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize);
 
   const float frame_height = ImGui::GetFrameHeight();
   const ImVec2 button_size = {2.f, frame_height};

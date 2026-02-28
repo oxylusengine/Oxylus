@@ -32,7 +32,6 @@
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/EntitySerializer.hpp"
-#include "Scene/SceneSnapshot.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Random.hpp"
@@ -359,14 +358,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           self.add_transform(entity);
         self.set_dirty(entity);
 
-        if (mesh_event && mc.mesh_uuid)
-          self.attach_mesh(entity, mc.mesh_uuid, mc.mesh_index);
+        if (mesh_event && mc.model_uuid)
+          self.attach_mesh(entity, mc.model_uuid, mc.mesh_index, mc.material_uuid);
       } else if (it.event() == flecs::OnAdd) {
         self.add_transform(entity);
         self.set_dirty(entity);
       } else if (it.event() == flecs::OnRemove) {
-        if (mc.mesh_uuid)
-          self.detach_mesh(entity, mc.mesh_uuid, mc.mesh_index);
+        if (mc.model_uuid)
+          self.detach_mesh(entity);
 
         self.remove_transform(entity);
       }
@@ -453,7 +452,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([](flecs::iter& it, usize i, MeshComponent& c) {
       ZoneScopedN("MeshComponent AssetOwner handling");
       auto& asset_man = App::mod<AssetManager>();
-      asset_man.unload_asset(c.mesh_uuid);
+      asset_man.unload_asset(c.model_uuid);
     });
 
   self.world.observer<AudioSourceComponent>()
@@ -637,14 +636,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
 
       const JPH::Vec3 position = body->GetPosition();
-      const JPH::Vec3 rotation = body->GetRotation().GetEulerAngles();
+      const JPH::Quat rotation = body->GetRotation();
 
       rb.previous_translation = rb.translation;
       rb.previous_rotation = rb.rotation;
       rb.translation = {position.GetX(), position.GetY(), position.GetZ()};
-      rb.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
+      rb.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
       tc.position = rb.translation;
-      tc.rotation = glm::eulerAngles(rb.rotation);
+      tc.rotation = rb.rotation;
 
       e.modified<TransformComponent>();
     });
@@ -658,14 +657,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
       character->PostSimulation(ch.collision_tolerance);
       const JPH::Vec3 position = character->GetPosition();
-      const JPH::Vec3 rotation = character->GetRotation().GetEulerAngles();
+      const JPH::Quat rotation = character->GetRotation();
 
       ch.previous_translation = ch.translation;
       ch.previous_rotation = ch.rotation;
       ch.translation = {position.GetX(), position.GetY(), position.GetZ()};
-      ch.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
+      ch.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
       tc.position = ch.translation;
-      tc.rotation = glm::eulerAngles(ch.rotation);
+      tc.rotation = ch.rotation;
 
       e.modified<TransformComponent>();
     });
@@ -743,12 +742,25 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
 
       auto evaluate_over_time = []<typename T>(T start, T end, f32 factor) -> T {
-        return glm::lerp(end, start, factor);
+        if constexpr (std::is_same_v<T, glm::quat>) {
+          if (glm::dot(start, end) < 0.0f)
+            end = -end;
+          return glm::slerp(end, start, factor);
+        } else {
+          return glm::lerp(end, start, factor);
+        }
       };
 
       auto evaluate_by_speed = []<typename T>(T start, T end, f32 min_speed, f32 max_speed, f32 speed) -> T {
         f32 factor = math::inverse_lerp_clamped(min_speed, max_speed, speed);
-        return glm::lerp(end, start, factor);
+
+        if constexpr (std::is_same_v<T, glm::quat>) {
+          if (glm::dot(start, end) < 0.0f)
+            end = -end;
+          return glm::slerp(end, start, factor);
+        } else {
+          return glm::lerp(end, start, factor);
+        }
       };
 
       auto particle_entity = it.entity(i);
@@ -1015,37 +1027,40 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     auto gpu_mesh_instances = std::vector<GPU::MeshInstance>();
 
     if (self.meshes_dirty) {
-      for (const auto& [rendering_mesh, transform_ids] : self.rendering_meshes_map) {
-        auto* model = asset_man.get_model(rendering_mesh.first);
-        if (!model)
-          continue;
-        const auto& mesh = model->meshes[rendering_mesh.second];
+      auto mesh_instances = self.mesh_instances.slots_unsafe();
+      auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, usize>();
+      for (const auto& mesh_instance : mesh_instances) {
+        const auto* model = asset_man.get_model(mesh_instance.model_uuid);
+        const auto& mesh = model->gpu_meshes[mesh_instance.mesh_node_index];
+        const auto* material_asset = asset_man.get_asset(mesh_instance.material_uuid);
+        const auto material_id = material_asset ? material_asset->material_id
+                                                : asset_man.get_null_material()->material_id;
 
-        for (auto primitive_index : mesh.primitive_indices) {
-          const auto& primitive = model->primitives[primitive_index];
-          const auto& gpu_mesh = model->gpu_meshes[primitive_index];
-          auto mesh_index = static_cast<u32>(gpu_meshes.size());
-          gpu_meshes.emplace_back(gpu_mesh);
-
-          //  ── INSTANCING ──────────────────────────────────────────────────
-          for (const auto transform_id : transform_ids) {
-            auto lod0_index = 0;
-            const auto& lod0 = gpu_mesh.lods[lod0_index];
-
-            auto& mesh_instance = gpu_mesh_instances.emplace_back();
-            mesh_instance.mesh_index = mesh_index;
-            mesh_instance.lod_index = lod0_index;
-            mesh_instance.material_index = primitive.material_index;
-            mesh_instance.transform_index = SlotMap_decode_id(transform_id).index;
-            mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
-
-            meshlet_instance_visibility_offset += lod0.meshlet_count;
-            max_meshlet_instance_count += lod0.meshlet_count;
-          }
+        auto unique_mesh = std::pair(mesh_instance.model_uuid, mesh_instance.mesh_node_index);
+        auto mesh_index = 0_u32;
+        if (auto it = unique_mesh_to_gpu_mesh.find(unique_mesh); it != unique_mesh_to_gpu_mesh.end()) {
+          mesh_index = it->second;
+        } else {
+          mesh_index = static_cast<u32>(gpu_meshes.size());
+          gpu_meshes.emplace_back(mesh);
+          unique_mesh_to_gpu_mesh.emplace(unique_mesh, mesh_index);
         }
+
+        auto lod0_index = 0;
+        const auto& lod0 = mesh.lods[lod0_index];
+
+        auto& gpu_mesh_instance = gpu_mesh_instances.emplace_back();
+        gpu_mesh_instance.mesh_index = mesh_index;
+        gpu_mesh_instance.lod_index = lod0_index;
+        gpu_mesh_instance.material_index = SlotMap_decode_id(material_id).index;
+        gpu_mesh_instance.transform_index = SlotMap_decode_id(mesh_instance.transform_id).index;
+        gpu_mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
+
+        meshlet_instance_visibility_offset += lod0.meshlet_count;
+        max_meshlet_instance_count += lod0.meshlet_count;
       }
 
-      self.mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
+      self.gpu_mesh_instance_count = gpu_mesh_instances.size();
       self.max_meshlet_instance_count = max_meshlet_instance_count;
     }
 
@@ -1139,7 +1154,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     }
 
     auto update_info = RendererInstanceUpdateInfo{
-      .mesh_instance_count = self.mesh_instance_count,
+      .mesh_instance_count = self.gpu_mesh_instance_count,
       .max_meshlet_instance_count = self.max_meshlet_instance_count,
       .dirty_transform_ids = self.dirty_transforms,
       .gpu_transforms = self.transforms.slots_unsafe(),
@@ -1298,66 +1313,76 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
     return {};
   }
 
-  auto* imported_model = asset_man.get_model(asset_uuid);
-  auto& default_scene = imported_model->scenes[imported_model->default_scene_index];
-  auto root_entity = self.create_entity(default_scene.name, default_scene.name.empty() ? false : true);
+  auto* model = asset_man.get_model(asset_uuid);
+  auto& root_node = model->mesh_groups.front();
+  auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
 
-  auto visit_nodes = [&self, //
-                      &imported_model,
-                      &asset_uuid](this auto& visitor, flecs::entity& root, std::vector<usize>& node_indices) -> void {
-    for (const auto node_index : node_indices) {
-      auto& cur_node = imported_model->nodes[node_index];
-      auto node_entity = self.create_entity(cur_node.name, cur_node.name.empty() ? false : true);
-
-      const auto T = glm::translate(glm::mat4(1.0f), cur_node.translation);
-      const auto R = glm::mat4_cast(cur_node.rotation);
-      const auto S = glm::scale(glm::mat4(1.0f), cur_node.scale);
-      auto TRS = T * R * S;
-      auto transform_comp = TransformComponent{};
-      {
-        glm::quat rotation = {};
-        glm::vec3 skew = {};
-        glm::vec4 perspective = {};
-        glm::decompose(TRS, transform_comp.scale, rotation, transform_comp.position, skew, perspective);
-        transform_comp.rotation = glm::eulerAngles(glm::quat(rotation[3], rotation[0], rotation[1], rotation[2]));
-      }
-      node_entity.set(transform_comp);
-
-      if (cur_node.mesh_index.has_value()) {
-        node_entity.set<MeshComponent>(
-          {.mesh_index = static_cast<u32>(cur_node.mesh_index.value()), .mesh_uuid = asset_uuid}
-        );
-      }
-
-      if (cur_node.light_index.has_value()) {
-        auto& node_light = imported_model->lights[cur_node.light_index.value()];
-        auto lc = LightComponent{
-          .type = static_cast<LightComponent::LightType>(node_light.type),
-          .color = node_light.color,
-          .intensity = node_light.intensity,
-        };
-
-        if (node_light.range.has_value()) {
-          lc.radius = *node_light.range;
-        }
-        if (node_light.inner_cone_angle.has_value()) {
-          lc.inner_cone_angle = *node_light.inner_cone_angle;
-        }
-        if (node_light.outer_cone_angle.has_value()) {
-          lc.inner_cone_angle = *node_light.inner_cone_angle;
-        }
-
-        node_entity.set<LightComponent>(lc);
-      }
-
-      node_entity.child_of(root);
-      node_entity.modified<TransformComponent>();
-
-      visitor(node_entity, cur_node.child_indices);
-    }
+  struct ProcessingNode {
+    flecs::entity parent = {};
+    usize mesh_group_index = 0;
   };
 
-  visit_nodes(root_entity, default_scene.node_indices);
+  auto processing_nodes = std::stack<ProcessingNode>();
+  for (const auto child_index : root_node.child_indices) {
+    processing_nodes.push({root_entity, child_index});
+  }
+
+  while (!processing_nodes.empty()) {
+    const auto [parent_entity, mesh_group_index] = processing_nodes.top();
+    const auto& mesh_group = model->mesh_groups[mesh_group_index];
+    processing_nodes.pop();
+
+    auto node_entity = self.create_entity(mesh_group.name);
+    node_entity.set<TransformComponent>({
+      .position = mesh_group.translation,
+      .rotation = mesh_group.rotation,
+      .scale = mesh_group.scale,
+    });
+    node_entity.child_of(parent_entity);
+    node_entity.modified<TransformComponent>();
+
+    for (const auto mesh_index : mesh_group.mesh_indices) {
+      memory::ScopedStack stack;
+      auto mesh_entity_name = !mesh_group.name.empty() ? stack.format("{} Mesh {}", mesh_group.name, mesh_index) : "";
+      auto mesh_entity = self.create_entity(std::string(mesh_entity_name));
+      auto material_index = model->material_indices[mesh_index];
+      auto material_uuid = material_index.has_value() ? model->materials[material_index.value()] : UUID(nullptr);
+      mesh_entity.set<TransformComponent>({});
+      mesh_entity.set<MeshComponent>({
+        .model_uuid = asset_uuid,
+        .mesh_index = static_cast<u32>(mesh_index),
+        .material_uuid = material_uuid,
+      });
+      mesh_entity.child_of(node_entity);
+      mesh_entity.modified<TransformComponent>();
+    }
+
+    for (const auto light_index : mesh_group.light_indices) {
+      auto& node_light = model->lights[light_index];
+
+      auto lc = LightComponent{
+        .type = static_cast<LightComponent::LightType>(node_light.type),
+        .color = node_light.color,
+        .intensity = node_light.intensity,
+      };
+
+      if (node_light.range.has_value()) {
+        lc.radius = *node_light.range;
+      }
+      if (node_light.inner_cone_angle.has_value()) {
+        lc.inner_cone_angle = *node_light.inner_cone_angle;
+      }
+      if (node_light.outer_cone_angle.has_value()) {
+        lc.outer_cone_angle = *node_light.outer_cone_angle;
+      }
+
+      node_entity.set<LightComponent>(lc);
+    }
+
+    for (const auto child_node_indices : mesh_group.child_indices) {
+      processing_nodes.push({node_entity, child_node_indices});
+    }
+  }
 
   return root_entity;
 }
@@ -1368,7 +1393,7 @@ auto Scene::get_world_position(const flecs::entity entity) -> glm::vec3 {
   if (parent != flecs::entity::null()) {
     const glm::vec3 parent_position = get_world_position(parent);
     const auto& parent_tc = parent.get<TransformComponent>();
-    const glm::quat parent_rotation = glm::quat(parent_tc.rotation);
+    const glm::quat parent_rotation = parent_tc.rotation;
     const glm::vec3 rotated_scaled_pos = parent_rotation * (parent_tc.scale * tc.position);
     return parent_position + rotated_scaled_pos;
   }
@@ -1379,13 +1404,13 @@ auto Scene::get_world_transform(const flecs::entity entity) -> glm::mat4 {
   const auto& tc = entity.get<TransformComponent>();
   const auto parent = entity.parent();
   const glm::mat4 parent_transform = parent != flecs::entity::null() ? get_world_transform(parent) : glm::mat4(1.0f);
-  return parent_transform * glm::translate(glm::mat4(1.0f), tc.position) * glm::toMat4(glm::quat(tc.rotation)) *
+  return parent_transform * glm::translate(glm::mat4(1.0f), tc.position) * glm::mat4_cast(tc.rotation) *
          glm::scale(glm::mat4(1.0f), tc.scale);
 }
 
 auto Scene::get_local_transform(flecs::entity entity) -> glm::mat4 {
   const auto& tc = entity.get<TransformComponent>();
-  return glm::translate(glm::mat4(1.0f), tc.position) * glm::toMat4(glm::quat(tc.rotation)) *
+  return glm::translate(glm::mat4(1.0f), tc.position) * glm::mat4_cast(tc.rotation) *
          glm::scale(glm::mat4(1.0f), tc.scale);
 }
 
@@ -1461,8 +1486,12 @@ auto Scene::remove_transform(this Scene& self, flecs::entity entity) -> void {
   self.entity_transforms_map.erase(it);
 }
 
-auto Scene::attach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh_uuid, usize mesh_index) -> bool {
+auto Scene::attach_mesh(
+  this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid
+) -> bool {
   ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
 
   auto transforms_it = self.entity_transforms_map.find(entity);
   if (!self.entity_transforms_map.contains(entity)) {
@@ -1472,44 +1501,56 @@ auto Scene::attach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh
 
   const auto transform_id = transforms_it->second;
 
-  auto old_mesh_uuid = std::ranges::find_if(self.rendering_meshes_map, [transform_id](const auto& entry) {
-    const auto& [_, transform_ids] = entry;
-    return std::ranges::contains(transform_ids, transform_id);
-  });
-
-  if (old_mesh_uuid != self.rendering_meshes_map.end()) {
-    self.detach_mesh(entity, old_mesh_uuid->first.first, mesh_index);
+  // Find the old model UUID and detach it from entity.
+  auto mesh_instances_it = self.entity_to_mesh_instance_map.find(entity);
+  if (mesh_instances_it != self.entity_to_mesh_instance_map.end()) {
+    const auto old_mesh_instance_id = mesh_instances_it->second;
+    self.mesh_instances.destroy_slot(old_mesh_instance_id);
+    self.meshes_dirty = true;
   }
 
-  auto [instances_it, inserted] = self.rendering_meshes_map.try_emplace(std::pair{mesh_uuid, mesh_index});
-  if (!inserted && instances_it == self.rendering_meshes_map.end()) {
-    return false;
+  auto overriden_material = material_uuid;
+  if (!material_uuid) {
+    // No material override, use original one
+    auto* model = asset_man.get_model(model_uuid);
+    auto material_index = model->material_indices[mesh_index];
+    if (material_index.has_value()) {
+      overriden_material = model->materials[mesh_index];
+    }
   }
 
-  instances_it->second.emplace_back(transform_id);
+  auto instance_id = self.mesh_instances.create_slot(
+    MeshInstance{
+      .model_uuid = model_uuid,
+      .mesh_node_index = mesh_index,
+      .material_uuid = overriden_material,
+      .transform_id = transform_id,
+    }
+  );
+  self.entity_to_mesh_instance_map.emplace(entity, instance_id);
   self.meshes_dirty = true;
   self.set_dirty(entity);
 
   return true;
 }
 
-auto Scene::detach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh_uuid, usize mesh_index) -> bool {
+auto Scene::detach_mesh(this Scene& self, flecs::entity entity) -> bool {
   ZoneScoped;
 
-  auto instances_it = self.rendering_meshes_map.find(std::pair(mesh_uuid, mesh_index));
+  auto instances_it = self.entity_to_mesh_instance_map.find(entity);
   auto transforms_it = self.entity_transforms_map.find(entity);
-  if (instances_it == self.rendering_meshes_map.end() || transforms_it == self.entity_transforms_map.end()) {
+  if (instances_it == self.entity_to_mesh_instance_map.end() || transforms_it == self.entity_transforms_map.end()) {
     return false;
   }
 
   const auto transform_id = transforms_it->second;
-  auto& instances = instances_it->second;
-  std::erase_if(instances, [transform_id](const GPU::TransformID& id) { return id == transform_id; });
-  self.meshes_dirty = true;
-
-  if (instances.empty()) {
-    self.rendering_meshes_map.erase(instances_it);
+  const auto instance_id = instances_it->second;
+  if (!self.mesh_instances.slot(instance_id)) {
+    return false;
   }
+
+  self.mesh_instances.destroy_slot(instance_id);
+  self.meshes_dirty = true;
 
   return true;
 }

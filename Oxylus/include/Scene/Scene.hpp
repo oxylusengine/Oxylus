@@ -11,6 +11,7 @@
 
 #include <simdjson.h>
 
+#include "Asset/Model.hpp"
 #include "Core/UUID.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Render/DebugRenderer.hpp"
@@ -61,13 +62,15 @@ public:
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
   ankerl::unordered_dense::map<u32, flecs::entity> transform_index_entities_map = {};
-  ankerl::unordered_dense::map<std::pair<UUID, usize>, std::vector<GPU::TransformID>> rendering_meshes_map = {};
+
+  SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
+  ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};
 
   std::vector<GPU::Material> gpu_materials = {};
 
   bool meshes_dirty = false;
   bool force_material_update = true;
-  u32 mesh_instance_count = 0;
+  u32 gpu_mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
 
   explicit Scene(const std::string& name = "Untitled");
@@ -93,8 +96,10 @@ public:
   auto create_entity(const std::string& name = "", bool safe_naming = false) const -> flecs::entity;
 
   auto create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity;
-  auto attach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh_uuid, usize mesh_index) -> bool;
-  auto detach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh_uuid, usize mesh_index) -> bool;
+  auto attach_mesh(
+    this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid = {}
+  ) -> bool;
+  auto detach_mesh(this Scene& self, flecs::entity entity) -> bool;
 
   auto on_render(vuk::Extent3D extent, vuk::Format format) -> void;
   auto on_viewport_render(vuk::Extent3D extent, vuk::Format format) -> void;
