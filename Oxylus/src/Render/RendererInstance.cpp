@@ -1055,6 +1055,7 @@ auto RendererInstance::render(
   /// POST PROCESSING
   auto post_process_context = PostProcessContext{
     .delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f,
+    .extent = dst_extent,
     .dst_attachment = std::move(dst_attachment),
     .final_attachment = std::move(final_attachment),
     .bloom_upsampled_attachment = std::move(bloom_upsampled_attachment),

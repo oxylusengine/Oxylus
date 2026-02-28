@@ -139,6 +139,7 @@ auto SceneManager::load_default_scene(this SceneManager& self, SceneID scene_id)
   });
   sun.set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 10.f})
     .add<AtmosphereComponent>();
+  sun.set<AutoExposureComponent>({});
   const auto camera = editor_scene->scene->create_entity("camera", true);
   camera.set<CameraComponent>({});
 }

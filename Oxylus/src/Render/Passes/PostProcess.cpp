@@ -41,7 +41,7 @@ auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostPro
     std::move(histogram_bin_indices_buffer)
   );
 
-  auto pixel_count = f32(context.final_attachment->extent.width * context.final_attachment->extent.height);
+  auto pixel_count = f32(context.extent.width * context.extent.height);
   auto histogram_average_pass = vuk::make_pass(
     "histogram average",
     [pixel_count, delta_time = context.delta_time, settings = self.eye_adaptation](

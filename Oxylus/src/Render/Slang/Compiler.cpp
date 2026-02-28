@@ -149,6 +149,7 @@ auto SlangSession::compile_shader(const SlangShaderInfo& info) -> option<std::ve
       return nullopt;
     }
 
+#if 1
     auto spv_message_cb =
       [&](spv_message_level_t level, const char* source, const spv_position_t& position, const char* message) {
         switch (level) {
@@ -239,6 +240,10 @@ auto SlangSession::compile_shader(const SlangShaderInfo& info) -> option<std::ve
       &spirv,
       optimizer_options
     ));
+#else
+    auto spirv = std::vector<u32>(spirv_code->getBufferSize() / sizeof(u32));
+    std::memcpy(spirv.data(), spirv_code->getBufferPointer(), ox::size_bytes(spirv));
+#endif
 
     entry_points.push_back({.code = std::move(spirv)});
   }
