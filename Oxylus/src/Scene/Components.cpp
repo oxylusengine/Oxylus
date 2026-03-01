@@ -132,6 +132,13 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       return s->value(flecs::U32, data);
     });
 
+  world.component<LightComponent::LightType>("LightComponent::LightType")
+    .opaque(flecs::U32)
+    .serialize([](const flecs::serializer* s, const LightComponent::LightType* data) {
+      //
+      return s->value(flecs::U32, data);
+    });
+
   bind_component<TransformComponent>(world, state, core_table, "TransformComponent")
     .member("position", &TransformComponent::position)
     .member("rotation", &TransformComponent::rotation)
