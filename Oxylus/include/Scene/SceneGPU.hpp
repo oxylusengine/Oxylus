@@ -291,4 +291,11 @@ struct PostProcessSettings {
   alignas(4) f32 film_grain_amount = 0.5f;
   alignas(4) u32 film_grain_seed = 0;
 };
+
+enum struct TonemapType : u32 {
+  None = 0,
+  ACES,
+  AgX,
+  GT7,
+};
 } // namespace ox::GPU

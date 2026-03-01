@@ -1,40 +1,40 @@
 implementing common;
 
 namespace com {
+public constexpr static let REC709_TO_XYZ_MAT = f32x3x3(
+    0.4124564, 0.3575761, 0.1804375,
+    0.2126729, 0.7151522, 0.0721750,
+    0.0193339, 0.1191920, 0.9503041
+);
 public func rec709_to_xyz(f32x3 color) -> f32x3 {
-    f32x3x3 mat = {
-        0.4124564, 0.3575761, 0.1804375,
-        0.2126729, 0.7151522, 0.0721750,
-        0.0193339, 0.1191920, 0.9503041
-    };
-    return mul(mat, color);
+    return mul(REC709_TO_XYZ_MAT, color);
 }
 
+constexpr static let XYZ_TO_REC709_MAT = f32x3x3(
+     3.2404542, -1.5371385, -0.4985314,
+    -0.9692660,  1.8760108,  0.0415560,
+     0.0556434, -0.2040259,  1.0572252
+);
 public func xyz_to_rec709(f32x3 color) -> f32x3 {
-    f32x3x3 mat = {
-         3.2404542, -1.5371385, -0.4985314,
-        -0.9692660,  1.8760108,  0.0415560,
-         0.0556434, -0.2040259,  1.0572252
-    };
-    return mul(mat, color);
+    return mul(XYZ_TO_REC709_MAT, color);
 }
 
+constexpr static let REC2020_TO_XYZ_MAT = f32x3x3(
+    0.636958,  0.1446169, 0.168881,
+    0.2627002, 0.6779981, 0.0593017,
+    0.0,        0.0280727, 1.0609851
+);
 public func rec2020_to_xyz(f32x3 color) -> f32x3 {
-    f32x3x3 mat = {
-        0.636958,  0.1446169, 0.168881,
-        0.2627002, 0.6779981, 0.0593017,
-        0.0,        0.0280727, 1.0609851
-    };
-    return mul(mat, color);
+    return mul(REC2020_TO_XYZ_MAT, color);
 }
 
+constexpr static let XYZ_TO_REC2020_MAT = f32x3x3(
+     1.7166512, -0.3556708, -0.2533663,
+    -0.6666844,  1.6164812,  0.0157685,
+     0.0176399, -0.0427706,  0.9421031
+);
 public func xyz_to_rec2020(f32x3 color) -> f32x3 {
-    f32x3x3 mat = {
-         1.7166512, -0.3556708, -0.2533663,
-        -0.6666844,  1.6164812,  0.0157685,
-         0.0176399, -0.0427706,  0.9421031
-    };
-    return mul(mat, color);
+    return mul(XYZ_TO_REC2020_MAT, color);
 }
 
 public func xyz_to_Yxy(f32x3 color) -> f32x3 {

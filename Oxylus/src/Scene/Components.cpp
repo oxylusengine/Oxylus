@@ -125,6 +125,13 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
     })
     .assign_string([](UUID* data, const char* value) { *data = UUID::from_string(std::string_view(value)).value(); });
 
+  world.component<GPU::TonemapType>("GPU::TonemapType")
+    .opaque(flecs::U32)
+    .serialize([](const flecs::serializer* s, const GPU::TonemapType* data) {
+      //
+      return s->value(flecs::U32, data);
+    });
+
   bind_component<TransformComponent>(world, state, core_table, "TransformComponent")
     .member("position", &TransformComponent::position)
     .member("rotation", &TransformComponent::rotation)
@@ -397,6 +404,10 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
     .member("cone_inner_angle", &AudioListenerComponent::cone_inner_angle)
     .member("cone_outer_angle", &AudioListenerComponent::cone_outer_angle)
     .member("cone_outer_gain", &AudioListenerComponent::cone_outer_gain)
+    .finalize();
+
+  bind_component<TonemappingComponent>(world, state, core_table, "TonemappingComponent")
+    .member("tonemap_type", &TonemappingComponent::tonemap_type)
     .finalize();
 }
 } // namespace ox

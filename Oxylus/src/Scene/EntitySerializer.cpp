@@ -113,7 +113,10 @@ auto IEntitySerializer::serialize_ops(flecs::meta::op_t* ops, i32 op_count, void
       case EcsOpPrimitive: {
       } break;
 
-      case EcsOpEnum:
+      case EcsOpEnum: {
+        on_enum(name, ops->underlying_kind, ops->type, ptr);
+      } break;
+
       case EcsOpBitmask:
       case EcsOpPushArray:
       case EcsOpPushVector:

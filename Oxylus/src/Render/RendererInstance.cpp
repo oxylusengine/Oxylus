@@ -1364,6 +1364,14 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.gpu_scene_flags |= GPU::SceneFlags::HasFilmGrain;
     });
 
+  self.scene.world
+    .query_builder<const TonemappingComponent>() //
+    .build()
+    .each([&](flecs::entity e, const TonemappingComponent& tc) {
+      self.tonemap_type = tc.tonemap_type;
+      //
+    });
+
   auto zero_fill_pass = vuk::make_pass(
     "zero fill",
     [](vuk::CommandBuffer& command_buffer, VUK_BA(vuk::eTransferWrite) dst) {

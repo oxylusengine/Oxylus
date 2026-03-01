@@ -126,6 +126,17 @@ struct EntityInspector : IEntitySerializer {
 
   auto on_string(std::string_view name, const c8** str) -> void override {}
 
+  auto on_enum(std::string_view name, ecs_meta_op_kind_t underlying_kind, flecs::entity_t type, void* ptr)
+    -> void override {
+    UI::begin_property_grid(name.data(), nullptr);
+
+    auto field_names = std::vector<const char*>{};
+    world.entity(type).children([&](flecs::entity e) { field_names.push_back(e.name()); });
+    auto current = static_cast<i32*>(ptr);
+    ImGui::Combo("##enum_field", current, field_names.data(), field_names.size());
+    UI::end_property_grid();
+  }
+
   auto on_entity(std::string_view name, flecs::entity* entity) -> void override {}
 
   auto on_component(std::string_view name, flecs::id_t* component) -> void override {}

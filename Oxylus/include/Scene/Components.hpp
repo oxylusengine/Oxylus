@@ -4,6 +4,7 @@
 
 #include "Audio/AudioEngine.hpp"
 #include "Core/UUID.hpp"
+#include "Scene/SceneGPU.hpp"
 #include "Utils/OxMath.hpp"
 
 namespace ox {
@@ -253,6 +254,10 @@ struct ChromaticAberrationComponent {
 struct FilmGrainComponent {
   f32 amount = 0.6f;
   f32 scale = 0.7f;
+};
+
+struct TonemappingComponent {
+  GPU::TonemapType tonemap_type = GPU::TonemapType::AgX;
 };
 
 // Physics

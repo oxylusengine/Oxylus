@@ -1,5 +1,3 @@
-module tonemap;
-
 import common;
 import gpu;
 import scene;
@@ -9,14 +7,11 @@ import lens;
 #include <passes/histogram.slang>
 
 [[vk::constant_id(0)]] const u32 scene_flags = 0;
-[[vk::binding(0, 0)]]
-Sampler sampler;
-[[vk::binding(1, 0)]]
-Image2D<f32x4> input_image;
-[[vk::binding(2, 0)]]
-Image2D<f32x4> bloom_image;
-[[vk::binding(3, 0)]]
-ConstantBuffer<HistogramLuminance> histogram_luminance;
+[[vk::constant_id(1)]] const u32 tonemap_type = TonemapType::None;
+[[vk::binding(0, 0)]] Sampler sampler;
+[[vk::binding(1, 0)]] Image2D<f32x4> input_image;
+[[vk::binding(2, 0)]] Image2D<f32x4> bloom_image;
+[[vk::binding(3, 0)]] ConstantBuffer<HistogramLuminance> histogram_luminance;
 
 struct PushConstants {
     PostProcessSettings post_process_settings;
@@ -36,15 +31,6 @@ VertexOutput vs_main(u32 vertex_id : SV_VertexID) {
     output.position = f32x4(2.0 * output.tex_coord - 1.0, 1.0, 1.0);
 
     return output;
-}
-
-f32x3 ACES_Film(f32x3 x) {
-    const f32 a = 2.51;
-    const f32 b = 0.03;
-    const f32 c = 2.43;
-    const f32 d = 0.59;
-    const f32 e = 0.14;
-    return (x * (a * x + b)) / (x * (c * x + d) + e);
 }
 
 static const f32x3x3 ACESInputMat = {
@@ -81,54 +67,26 @@ f32x3 ACES_Fitted(f32x3 color) {
     return color;
 }
 
-f32x3 PBRNeutralToneMapping(f32x3 color) {
-    const f32 startCompression = 0.8 - 0.04;
-    const f32 desaturation = 0.15;
-
-    f32 x = min(color.r, min(color.g, color.b));
-    f32 offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
-    color -= offset;
-
-    f32 peak = max(color.r, max(color.g, color.b));
-    if (peak < startCompression) return color;
-
-    const f32 d = 1.0 - startCompression;
-    f32 newPeak = 1.0 - d * d / (peak + d - startCompression);
-    color *= newPeak / peak;
-
-    f32 g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
-    return lerp(color, newPeak, g);
-}
-
-#define SRGB_2_XYZ_MAT \
-transpose(float3x3( \
-	0.4124564, 0.3575761, 0.1804375, \
-    0.2126729, 0.7151522, 0.0721750, \
-    0.0193339, 0.1191920, 0.9503041 \
-))
-
-float luminance_from_col(float3 color)
-{
-    float3 luminance_coefficients = transpose(SRGB_2_XYZ_MAT)[1];
-    return dot(color, luminance_coefficients);
+float luminance_from_col(float3 color) {
+    return dot(color, com::REC709_TO_XYZ_MAT[1]);
 }
 
 float3 agxDefaultContrastApproximation(float3 x)
 {
-	float3 x2 = x * x;
-	float3 x4 = x2 * x2;
-	return +15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
+    float3 x2 = x * x;
+    float3 x4 = x2 * x2;
+    return +15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
 }
 void agxLook(inout float3 color)
 {
     const float3 slope      = (1.0f).xxx;
     const float3 power      = (1.1f).xxx;
     const float saturation  = 1.1;
-	float luma = luminance_from_col(color);
-	color = pow(color * slope, power);
-	color = max(luma + saturation * (color - luma), float3(0.0));
+    float luma = luminance_from_col(color);
+    color = pow(color * slope, power);
+    color = max(luma + saturation * (color - luma), float3(0.0));
 }
-float3 agx_tonemapping(float3 color) {
+float3 agx_tonemapping(float3 rec2020) {
     // AgX constants
     const float3x3 AgXInsetMatrix = transpose(float3x3(
         float3(0.856627153315983, 0.137318972929847, 0.11189821299995),
@@ -139,75 +97,69 @@ float3 agx_tonemapping(float3 color) {
         float3(1.1271005818144368, -0.1413297634984383, -0.14132976349843826),
         float3(-0.11060664309660323, 1.157823702216272, -0.11060664309660294),
         float3(-0.016493938717834573, -0.016493938717834257, 1.2519364065950405)));
-    const float3x3 LINEAR_REC2020_TO_LINEAR_SRGB = transpose(float3x3(
-        float3(1.6605, -0.1246, -0.0182),
-        float3(-0.5876, 1.1329, -0.1006),
-        float3(-0.0728, -0.0083, 1.1187)));
-    const float3x3 LINEAR_SRGB_TO_LINEAR_REC2020 = transpose(float3x3(
-        float3(0.6274, 0.0691, 0.0164),
-        float3(0.3293, 0.9195, 0.0880),
-        float3(0.0433, 0.0113, 0.8956)));
     // LOG2_MIN      = -10.0
     // LOG2_MAX      =  +6.5
     // MIDDLE_GRAY   =  0.18
     const float AgxMinEv = -12.47393; // log2( pow( 2, LOG2_MIN ) * MIDDLE_GRAY )
     const float AgxMaxEv = 4.026069;  // log2( pow( 2, LOG2_MAX ) * MIDDLE_GRAY )
-    color = mul(LINEAR_SRGB_TO_LINEAR_REC2020, color);
-    color = mul(AgXInsetMatrix, color);
+    rec2020 = mul(AgXInsetMatrix, rec2020);
     // Log2 encoding
-    color = max(color, 1e-10); // avoid 0 or negative numbers for log2
-    color = log2(color);
-    color = (color - AgxMinEv) / (AgxMaxEv - AgxMinEv);
-    color = clamp(color, 0.0, 1.0);
+    rec2020 = max(rec2020, 1e-10); // avoid 0 or negative numbers for log2
+    rec2020 = log2(rec2020);
+    rec2020 = (rec2020 - AgxMinEv) / (AgxMaxEv - AgxMinEv);
+    rec2020 = clamp(rec2020, 0.0, 1.0);
     // Apply sigmoid
-    color = agxDefaultContrastApproximation(color);
+    rec2020 = agxDefaultContrastApproximation(rec2020);
     // Apply AgX look
-    agxLook(color);
-    color = mul(AgXOutsetMatrix, color);
-    // Linearize
-    color = pow(max(float3(0.0), color), float3(2.2));
-    color = mul(LINEAR_REC2020_TO_LINEAR_SRGB, color);
-    // Gamut mapping. Simple clamp for now.
-    color = clamp(color, 0.0, 1.0);
-    return color;
+    agxLook(rec2020);
+    return mul(AgXOutsetMatrix, rec2020);
 }
 
 [[shader("fragment")]]
 f32x4 fs_main(VertexOutput input) {
-    f32x3 color = input_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
+    var rec709 = input_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
 
     if ((scene_flags & SceneFlags::HasChromaticAberration) != 0) {
-        f32x2 rgmag = FfxLensGetRGMag(C.post_process_settings.chromatic_aberration_amount);
-        color = FfxLensSampleWithChromaticAberration(input_image, sampler, i32x2(input.position.xy), C.screen_size / 2, rgmag.x, rgmag.y);
+        let rgmag = FfxLensGetRGMag(C.post_process_settings.chromatic_aberration_amount);
+        rec709 = FfxLensSampleWithChromaticAberration(input_image, sampler, i32x2(input.position.xy), C.screen_size / 2, rgmag.x, rgmag.y);
     }
 
     if ((scene_flags & SceneFlags::HasBloom) != 0) {
-        f32x3 bloom = bloom_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
-        color += bloom;
+        let bloom = bloom_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
+        rec709 += bloom;
     }
 
     if ((scene_flags & SceneFlags::HasEyeAdaptation) != 0) {
         let exposure = histogram_luminance.exposure;
-        color = color * (exposure + 1.0);
+        rec709 = rec709 * (exposure + 1.0);
     }
 
-    //color = ACES_Film(color);
-    //color = ACES_Fitted(color);
-    //color = PBRNeutralToneMapping(color);  // this looks like shit, figure out why
-    color = agx_tonemapping(color);
+    switch (tonemap_type) {
+        case TonemapType::ACES: {
+            rec709 = ACES_Fitted(rec709);
+        } break;
+        case TonemapType::AgX: {
+            var rec2020 = com::rec709_to_rec2020(rec709);
+            rec2020 = agx_tonemapping(rec2020);
+            rec2020 = pow(max(float3(0.0), rec2020), float3(2.2));
+            rec2020 = clamp(rec2020, 0.0, 1.0);
+            rec709 = com::rec2020_to_rec709(rec2020);
+        } break;
+        default:;
+    }
 
     if ((scene_flags & SceneFlags::HasVignette) != 0) {
-        FfxLensApplyVignette(i32x2(input.position.xy), C.screen_size / 2, color, C.post_process_settings.vignette_amount);
+        FfxLensApplyVignette(i32x2(input.position.xy), C.screen_size / 2, rec709, C.post_process_settings.vignette_amount);
     }
 
     if ((scene_flags & SceneFlags::HasFilmGrain) != 0) {
         FfxLensApplyFilmGrain(i32x2(input.position.xy),
-        color, 
+        rec709,
         C.post_process_settings.film_grain_scale,
-        C.post_process_settings.film_grain_amount, 
+        C.post_process_settings.film_grain_amount,
         C.post_process_settings.film_grain_seed);
     }
 
-    return f32x4(color, 1.0);
+    return f32x4(rec709, 1.0);
 }
 

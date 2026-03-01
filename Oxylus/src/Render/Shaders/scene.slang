@@ -424,6 +424,13 @@ public struct PostProcessSettings {
     public u32 film_grain_seed;
 };
 
+public enum TonemapType : u32 {
+    None = 0,
+    ACES,
+    AgX,
+    GT7,
+};
+
 // --- Bindings ---
 
 [[vk::binding(0, 1)]]

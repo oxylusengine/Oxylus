@@ -189,7 +189,7 @@ auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessCon
 
   auto tonemap_pass = vuk::make_pass(
     "tonemap",
-    [scene_flags = self.gpu_scene_flags, pp = self.post_proces_settings](
+    [scene_flags = self.gpu_scene_flags, pp = self.post_proces_settings, tt = self.tonemap_type](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eColorWrite) dst,
       VUK_IA(vuk::eFragmentSampled) src,
@@ -208,6 +208,7 @@ auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessCon
         .bind_image(0, 2, bloom_src)
         .bind_buffer(0, 3, exposure)
         .specialize_constants(0, std::to_underlying(scene_flags))
+        .specialize_constants(1, std::to_underlying(tt))
         .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(pp, size))
         .draw(3, 1, 0, 0);
 

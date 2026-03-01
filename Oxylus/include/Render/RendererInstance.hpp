@@ -238,8 +238,8 @@ struct DebugContext {
 
 struct PostProcessContext {
   f32 delta_time = 0.0f;
-
   vuk::Extent3D extent = {};
+
   vuk::Value<vuk::ImageAttachment> dst_attachment = {};
   vuk::Value<vuk::ImageAttachment> final_attachment = {};
   vuk::Value<vuk::ImageAttachment> bloom_upsampled_attachment = {};
@@ -339,6 +339,8 @@ private:
 
   GPU::SceneFlags gpu_scene_flags = {};
   bool occlusion_cull = true;
+
+  GPU::TonemapType tonemap_type = GPU::TonemapType::AgX;
 
   bool directional_light_cast_shadows = true;
   GPU::DirectionalLight directional_light = {};
