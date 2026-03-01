@@ -12,6 +12,7 @@ struct File {
   option<FileDescriptor> handle;
   usize size = 0;
   FileError error = FileError::None;
+  option<void *> mapped_data = nullopt;
 
   File() = default;
   File(const std::filesystem::path& path, FileAccess access);
@@ -40,6 +41,7 @@ struct File {
     return write_data(std::ranges::data(range), data_size);
   }
 
+  auto map() -> void *;
   auto read(void* data, usize data_size) -> u64;
   auto seek(i64 offset) -> void;
   auto close() -> void;

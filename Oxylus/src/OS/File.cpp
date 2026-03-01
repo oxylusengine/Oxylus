@@ -18,6 +18,19 @@ auto File::write_data(const void* data, usize data_size) -> u64 {
   return os::file_write(this->handle.value(), data, data_size);
 }
 
+auto File::map() -> void* {
+  ZoneScoped;
+
+  auto result = os::file_map(this->handle.value(), this->size);
+  if (result.has_value()) {
+    this->mapped_data = result.value();
+    return result.value();
+  }
+
+  this->error = result.error();
+  return nullptr;
+}
+
 auto File::read(void* data, usize data_size) -> u64 {
   ZoneScoped;
 
@@ -32,6 +45,11 @@ auto File::seek(i64 offset) -> void {
 
 auto File::close() -> void {
   ZoneScoped;
+
+  if (this->mapped_data.has_value()) {
+    os::file_unmap(this->handle.value(), this->mapped_data.value(), this->size);
+    this->mapped_data.reset();
+  }
 
   if (this->handle.has_value()) {
     os::file_close(this->handle.value());

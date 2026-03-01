@@ -1,6 +1,6 @@
 #include "Render/Camera.hpp"
 
-#include "Scene/ECSModule/Core.hpp"
+#include "Scene/Components.hpp"
 
 namespace ox {
 void Camera::update(CameraComponent& component, const glm::vec2& screen_size) {
@@ -23,8 +23,8 @@ void Camera::update(CameraComponent& component, const glm::vec2& screen_size) {
   component.right = glm::normalize(glm::cross(component.forward, {component.tilt, 1, component.tilt}));
   component.up = glm::normalize(glm::cross(component.right, component.forward));
 
-  component.matrices.view_matrix = glm::lookAt(
-      component.position, component.position + component.forward, component.up);
+  component.matrices
+    .view_matrix = glm::lookAt(component.position, component.position + component.forward, component.up);
 
   const auto extent = screen_size;
   if (extent.x != 0)
@@ -33,17 +33,21 @@ void Camera::update(CameraComponent& component, const glm::vec2& screen_size) {
     component.aspect = 1.0f;
 
   if (component.projection == CameraComponent::Projection::Perspective) {
-    component.matrices.projection_matrix = glm::perspective(glm::radians(component.fov),
-                                                            component.aspect,
-                                                            component.far_clip,
-                                                            component.near_clip); // reversed-z
+    component.matrices.projection_matrix = glm::perspective(
+      glm::radians(component.fov),
+      component.aspect,
+      component.far_clip,
+      component.near_clip
+    ); // reversed-z
   } else {
-    component.matrices.projection_matrix = glm::ortho(-component.aspect * component.zoom,
-                                                      component.aspect * component.zoom,
-                                                      -component.zoom,
-                                                      component.zoom,
-                                                      100.0f,
-                                                      -100.0f); // reversed-z
+    component.matrices.projection_matrix = glm::ortho(
+      -component.aspect * component.zoom,
+      component.aspect * component.zoom,
+      -component.zoom,
+      component.zoom,
+      100.0f,
+      -100.0f
+    ); // reversed-z
   }
 
   component.matrices.projection_matrix[1][1] *= -1.0f;
@@ -55,12 +59,12 @@ Frustum Camera::get_frustum(const CameraComponent& component, const glm::vec3& p
   const glm::vec3 forward_far = component.far_clip * component.forward;
 
   Frustum frustum = {
-      .top_face = {position, cross(component.right, forward_far - component.up * half_v_side)},
-      .bottom_face = {position, cross(forward_far + component.up * half_v_side, component.right)},
-      .right_face = {position, cross(forward_far - component.right * half_h_side, component.up)},
-      .left_face = {position, cross(component.up, forward_far + component.right * half_h_side)},
-      .far_face = {position + forward_far, -component.forward},
-      .near_face = {position + component.near_clip * component.forward, component.forward},
+    .top_face = {position, cross(component.right, forward_far - component.up * half_v_side)},
+    .bottom_face = {position, cross(forward_far + component.up * half_v_side, component.right)},
+    .right_face = {position, cross(forward_far - component.right * half_h_side, component.up)},
+    .left_face = {position, cross(component.up, forward_far + component.right * half_h_side)},
+    .far_face = {position + forward_far, -component.forward},
+    .near_face = {position + component.near_clip * component.forward, component.forward},
   };
 
   frustum.init();
@@ -68,9 +72,9 @@ Frustum Camera::get_frustum(const CameraComponent& component, const glm::vec3& p
   return frustum;
 }
 
-RayCast Camera::get_screen_ray(const CameraComponent& component,
-                               const glm::vec2& screen_pos,
-                               const glm::vec2& screen_size) {
+RayCast Camera::get_screen_ray(
+  const CameraComponent& component, const glm::vec2& screen_pos, const glm::vec2& screen_size
+) {
   const glm::mat4 view_inverse = inverse(component.matrices.view_matrix);
   const glm::mat4 proj_inverse = inverse(component.matrices.projection_matrix);
 

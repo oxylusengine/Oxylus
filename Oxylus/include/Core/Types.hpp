@@ -2,8 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
-namespace ox {
+using namespace std::string_view_literals;
+
 using f32 = float;
 using f64 = double;
 
@@ -43,6 +45,7 @@ constexpr c8 operator""_c8(const unsigned long long n) { return static_cast<c8>(
 constexpr c16 operator""_c16(const unsigned long long n) { return static_cast<c16>(n); }
 constexpr c32 operator""_c32(const unsigned long long n) { return static_cast<c32>(n); }
 
+namespace ox {
 // MINMAX
 template <typename T>
 const T& min(const T& a, const T& b) {

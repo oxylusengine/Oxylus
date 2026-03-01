@@ -5,7 +5,7 @@
 
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
-#include "Scene/ECSModule/Core.hpp"
+#include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 
 namespace ox {
@@ -29,9 +29,11 @@ void EditorTheme::init(this EditorTheme& self) {
   self.regular_font = imgui_renderer.load_font(regular_font_path, self.regular_font_size, fonts_config);
   fonts_config.MergeMode = true;
   fonts_config.GlyphMinAdvanceX = self.regular_font_size;
-  imgui_renderer.load_font(icon_font_path,
-                        self.regular_font_size,
-                        fonts_config); // NOTE: Ignoring return values of these since they are merged in
+  imgui_renderer.load_font(
+    icon_font_path,
+    self.regular_font_size,
+    fonts_config
+  ); // NOTE: Ignoring return values of these since they are merged in
 
   fonts_config.MergeMode = false;
   fonts_config.GlyphMinAdvanceX = {};

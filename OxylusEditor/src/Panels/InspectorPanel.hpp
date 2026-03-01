@@ -21,6 +21,8 @@ public:
   };
 
   AssetManagerViewer viewer = {};
+  option<glm::vec3> euler_cache = nullopt;
+  flecs::entity last_edited_entity = flecs::entity::null();
 
   InspectorPanel();
 
@@ -29,10 +31,6 @@ public:
   static void draw_material_properties(
     Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
   );
-
-private:
-  Scene* scene_;
-  bool rename_entity_ = false;
 
   void draw_components(flecs::entity entity);
   void draw_asset_info(Asset* asset);
@@ -45,5 +43,9 @@ private:
   void draw_scene_asset(UUID* uuid, Asset* asset);
   void draw_audio_asset(UUID* uuid, Asset* asset);
   bool draw_script_asset(UUID* uuid, Asset* asset);
+
+private:
+  Scene* scene_;
+  bool rename_entity_ = false;
 };
 } // namespace ox

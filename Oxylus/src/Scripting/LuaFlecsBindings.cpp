@@ -1,57 +1,175 @@
 #include "Scripting/LuaFlecsBindings.hpp"
 
 #include <flecs.h>
+#include <flecs/addons/meta.h>
 #include <sol/state.hpp>
 
 #include "Core/Types.hpp"
-#include "Scene/ECSModule/ComponentWrapper.hpp"
+#include "Memory/Stack.hpp"
+#include "Scene/EntitySerializer.hpp"
 #include "Scene/Scene.hpp"
 
 struct ecs_world_t {};
 
 namespace ox {
-static auto get_component_table(sol::state* state, flecs::entity* entity, const ecs_entity_t component, bool is_mutable)
-  -> sol::table {
-  ZoneScoped;
+struct LuaEntitySerializer : IEntitySerializer {
+  sol::state* state;
+  sol::table table;
+  bool is_mutable;
 
-  sol::table result = state->create_table();
-  result["component_id"] = component;
+  LuaEntitySerializer(flecs::world& world_, sol::state* state_, sol::table table_, bool is_mutable_)
+      : IEntitySerializer(world_),
+        state(state_),
+        table(std::move(table_)),
+        is_mutable(is_mutable_) {}
 
-  auto f_id = flecs::id(entity->world(), component);
-  ECS::ComponentWrapper component_wrapped(*entity, f_id);
+  auto on_primitive(std::string_view name, Primitive primitive) -> void override {
+    ZoneScoped;
 
-#define MEMBER_PTR(type, value)                                                                                        \
-  result[member_name] = *value;                                                                                        \
-  if (is_mutable)                                                                                                      \
-    result.set_function(fmt::format("set_{}", member_name), [value](const sol::table& self, type new_value) {          \
-      *value = new_value;                                                                                              \
-    });
+    memory::ScopedStack stack;
+    auto set_name = stack.format("set_{}", name);
 
-  component_wrapped.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
     std::visit(
       ox::match{
         [](const auto&) {},
-        [&](bool* v) { MEMBER_PTR(bool, v); },
-        [&](u8* v) { MEMBER_PTR(u8, v); },
-        [&](u16* v) { MEMBER_PTR(u16, v); },
-        [&](u32* v) { MEMBER_PTR(u32, v); },
-        [&](u64* v) { MEMBER_PTR(u64, v); },
-        [&](i8* v) { MEMBER_PTR(i8, v); },
-        [&](i16* v) { MEMBER_PTR(i16, v); },
-        [&](i32* v) { MEMBER_PTR(i32, v); },
-        [&](i64* v) { MEMBER_PTR(i64, v); },
-        [&](f32* v) { MEMBER_PTR(f32, v); },
-        [&](f64* v) { MEMBER_PTR(f64, v); },
-        [&](std::string* v) { MEMBER_PTR(std::string, v); },
-        [&](glm::vec2* v) { MEMBER_PTR(glm::vec2, v); },
-        [&](glm::vec3* v) { MEMBER_PTR(glm::vec3, v); },
-        [&](glm::vec4* v) { MEMBER_PTR(glm::vec4, v); },
-        [&](glm::mat4* v) { MEMBER_PTR(glm::mat4, v); },
-        [&](UUID* v) { MEMBER_PTR(UUID, v); },
+        [&](bool* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, bool value) { *v = value; });
+          }
+        },
+        [&](c8* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, c8 value) { *v = value; });
+          }
+        },
+        [&](i8* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, i8 value) { *v = value; });
+          }
+        },
+        [&](u8* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, u8 value) { *v = value; });
+          }
+        },
+        [&](i16* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, i16 value) { *v = value; });
+          }
+        },
+        [&](u16* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, u16 value) { *v = value; });
+          }
+        },
+        [&](i32* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, i32 value) { *v = value; });
+          }
+        },
+        [&](u32* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, u32 value) { *v = value; });
+          }
+        },
+        [&](i64* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, i64 value) { *v = value; });
+          }
+        },
+        [&](u64* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, u64 value) { *v = value; });
+          }
+        },
+        [&](f32* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, f32 value) { *v = value; });
+          }
+        },
+        [&](f64* v) {
+          table[name] = *v;
+          if (is_mutable) {
+            table.set_function(set_name, [&](const sol::table& self, f64 value) { *v = value; });
+          }
+        },
       },
-      member
+      primitive
     );
-  });
+  }
+
+  auto on_struct(std::string_view name, flecs::meta::op_t* ops, i32 op_count, void* base) -> void override {
+    ZoneScoped;
+
+    if (!name.empty()) {
+      memory::ScopedStack stack;
+      auto set_name = stack.format("set_{}", name);
+
+      if (ops->type_info == world.type_info<glm::vec2>()) {
+        auto vec = static_cast<glm::vec2*>(base);
+        table[name] = *vec;
+        if (is_mutable) {
+          table.set_function(set_name, [&](const sol::table& self, glm::vec2 value) { *vec = value; });
+        }
+      } else if (ops->type_info == world.type_info<glm::vec3>()) {
+        auto vec = static_cast<glm::vec2*>(base);
+        table[name] = *vec;
+        if (is_mutable) {
+          table.set_function(set_name, [&](const sol::table& self, glm::vec3 value) { //
+            *vec = value;
+          });
+        }
+      } else {
+        auto nested_table = state->create_table();
+        auto nested_serializer = LuaEntitySerializer(world, state, nested_table, is_mutable);
+        nested_serializer.serialize_ops(ops + 1, op_count - 1, base);
+        table[name] = nested_table;
+      }
+    } else {
+      serialize_ops(ops + 1, op_count - 1, base);
+    }
+  }
+
+  auto on_opaque_value(
+    std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void*
+  ) -> void override {
+    ZoneScoped;
+    memory::ScopedStack stack;
+    auto set_name = stack.format("set_{}", name);
+
+    if (field_type == world.entity<UUID>()) {
+      auto* uuid = static_cast<UUID*>(field_ptr);
+      table[name] = *uuid;
+      if (is_mutable) {
+        table.set_function(set_name, [&](const sol::table& self, UUID v) { *uuid = v; });
+      }
+    }
+  }
+};
+
+static auto get_component_table(
+  sol::state* state, flecs::world& world, ecs_entity_t component_ty, void* component_ptr, bool is_mutable
+) -> sol::table {
+  ZoneScoped;
+
+  sol::table result = state->create_table();
+  result["component_id"] = component_ty;
+
+  if (component_ptr) {
+    auto serializer = LuaEntitySerializer(world, state, result, is_mutable);
+    serializer.serialize(flecs::entity(world, component_ty), component_ptr);
+  }
 
   return result;
 }
@@ -105,7 +223,9 @@ auto FlecsBinding::bind(sol::state* state) -> void {
           auto entity = it->entities[i];
 
           auto e = flecs::entity{it->real_world, entity};
-          return get_component_table(state, &e, c, true);
+          flecs::world world = e.world();
+
+          return get_component_table(state, world, c, e.get_mut(c), true);
         }
 
       );
@@ -406,7 +526,8 @@ auto FlecsBinding::bind(sol::state* state) -> void {
       if (!e->has(component))
         return sol::nullopt;
 
-      return get_component_table(state, e, component, false);
+      flecs::world world = e->world();
+      return get_component_table(state, world, component, const_cast<void*>(e->get(component)), false);
     },
 
     "get_mut",
@@ -415,7 +536,8 @@ auto FlecsBinding::bind(sol::state* state) -> void {
       if (!e->has(component))
         return sol::nullopt;
 
-      return get_component_table(state, e, component, true);
+      flecs::world world = e->world();
+      return get_component_table(state, world, component, e->get_mut(component), true);
     },
 
     "ensure",
@@ -423,7 +545,8 @@ auto FlecsBinding::bind(sol::state* state) -> void {
       auto component = component_table.get<ecs_entity_t>("component_id");
       e->ensure(component);
 
-      return get_component_table(state, e, component, true);
+      flecs::world world = e->world();
+      return get_component_table(state, world, component, e->get_mut(component), true);
     },
 
     // only available with default values
@@ -544,6 +667,9 @@ auto FlecsBinding::bind(sol::state* state) -> void {
           } else if (type == "vec4") {
             component.member<glm::vec4>(field_name.c_str());
             defaults[field_name] = default_val.as<glm::vec3>();
+          } else if (type == "quat") {
+            component.member<glm::quat>(field_name.c_str());
+            defaults[field_name] = default_val.as<glm::quat>();
           }
         }
 

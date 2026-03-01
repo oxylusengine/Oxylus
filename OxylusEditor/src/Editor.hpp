@@ -1,9 +1,9 @@
 #pragma once
 
 #include "Core/Project.hpp"
+#include "Networking/NetClient.hpp"
 #include "Panels/MainViewportPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
-#include "Panels/ViewportPanel.hpp"
 #include "UI/RuntimeConsole.hpp"
 #include "Utils/Command.hpp"
 #include "Utils/EditorContext.hpp"

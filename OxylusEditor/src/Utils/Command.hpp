@@ -1,12 +1,15 @@
 #pragma once
 
-#include <Utils/JsonWriter.hpp>
 #include <chrono>
 #include <functional>
 #include <memory>
 #include <simdjson.h>
 #include <string>
 #include <vector>
+
+#include "Core/UUID.hpp"
+#include "Scene/Scene.hpp"
+#include "Utils/JsonWriter.hpp"
 
 namespace ox {
 class Command {
@@ -93,7 +96,6 @@ public:
   auto merge(std::unique_ptr<Command> other) -> std::unique_ptr<Command> override {
     if (auto other_cmd = dynamic_cast<PropertyChangeCommand<T>*>(other.get())) {
       auto merged = std::make_unique<PropertyChangeCommand<T>>(target_, old_value_, other_cmd->new_value_, id_);
-      other.release();
       return merged;
     }
     return nullptr;
@@ -143,7 +145,6 @@ public:
     if (auto other_cmd = dynamic_cast<ComponentChangeCommand<T>*>(other.get())) {
       auto
         merged = std::make_unique<ComponentChangeCommand<T>>(entity_, target_, old_value_, other_cmd->new_value_, id_);
-      other.release();
       return merged;
     }
     return nullptr;
@@ -259,9 +260,9 @@ public:
     return self;
   }
 
-  auto
-  execute_lambda(this UndoRedoSystem& self, std::function<void()> execute, std::function<void()> undo, std::string id)
-    -> UndoRedoSystem& {
+  auto execute_lambda(
+    this UndoRedoSystem& self, std::function<void()> execute, std::function<void()> undo, std::string id
+  ) -> UndoRedoSystem& {
     self.execute_command(std::make_unique<LambdaCommand>(std::move(execute), std::move(undo), std::move(id)));
     return self;
   }

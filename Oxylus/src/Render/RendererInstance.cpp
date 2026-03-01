@@ -918,7 +918,7 @@ auto RendererInstance::render(
             .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
             .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack_2d, vuk::VertexInputRate::eInstance)
             .push_constants(
-              vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
+              vuk::ShaderStageFlagBits::eVertex,
               0,
               PushConstants(camera->device_address, transforms_->device_address)
             )
@@ -1055,6 +1055,7 @@ auto RendererInstance::render(
   /// POST PROCESSING
   auto post_process_context = PostProcessContext{
     .delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f,
+    .extent = dst_extent,
     .dst_attachment = std::move(dst_attachment),
     .final_attachment = std::move(final_attachment),
     .bloom_upsampled_attachment = std::move(bloom_upsampled_attachment),
@@ -1192,9 +1193,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
         self.directional_light.color = lc.color;
         self.directional_light.intensity = lc.intensity;
-        self.directional_light.direction.x = glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y);
-        self.directional_light.direction.y = glm::sin(tc.rotation.x) * glm::sin(tc.rotation.y);
-        self.directional_light.direction.z = glm::cos(tc.rotation.y);
+        auto sun_rotation = glm::eulerAngles(tc.rotation);
+        self.directional_light.direction.x = glm::cos(sun_rotation.x) * glm::sin(sun_rotation.y);
+        self.directional_light.direction.y = glm::sin(sun_rotation.x) * glm::sin(sun_rotation.y);
+        self.directional_light.direction.z = glm::cos(sun_rotation.y);
         self.directional_light.cascade_count = ox::min(
           lc.cascade_count,
           static_cast<u32>(MAX_DIRECTIONAL_SHADOW_CASCADES)
@@ -1225,17 +1227,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           }
         );
       } else if (lc.type == LightComponent::LightType::Spot) {
-        const glm::vec3 direction = {
-          glm::cos(tc.rotation.x) * glm::sin(tc.rotation.y),
-          -glm::sin(tc.rotation.x),
-          glm::cos(tc.rotation.x) * glm::cos(tc.rotation.y),
-        };
-
-        const glm::vec3 world_pos = Scene::get_world_position(e);
+        const auto direction = glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f));
+        const auto world_pos = Scene::get_world_position(e);
         spot_lights.emplace_back(
           GPU::SpotLight{
             .position = world_pos,
-            .direction = glm::normalize(direction),
+            .direction = direction,
             .color = lc.color,
             .intensity = lc.intensity,
             .cutoff = lc.radius,
@@ -1577,8 +1574,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       vuk::MemoryUsage::eGPUonly,
       sizeof(GPU::HistogramLuminance)
     );
+    self.prepared_frame.exposure_buffer = vuk::acquire_buf("exposure buffer", *self.exposure_buffer, vuk::eMemoryRead);
+    vuk::fill(self.prepared_frame.exposure_buffer, 1.0f);
+  } else {
+    self.prepared_frame.exposure_buffer = vuk::acquire_buf("exposure buffer", *self.exposure_buffer, vuk::eMemoryRead);
   }
-
-  self.prepared_frame.exposure_buffer = vuk::acquire_buf("exposure buffer", *self.exposure_buffer, vuk::eMemoryRead);
 }
 } // namespace ox

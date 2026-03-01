@@ -5,9 +5,12 @@ import gpu;
 
 #include <passes/histogram.slang>
 
+[[vk::binding(0, 0)]]
+StructuredBuffer<u32> histogram_bin_indices;
+[[vk::binding(1, 0)]]
+RWStructuredBuffer<HistogramLuminance> luminance;
+
 struct PushConstants {
-    u32 *histogram;
-    HistogramLuminance *luminance;
     f32 pixel_count;
     f32 min_exposure;
     f32 exposure_range;
@@ -27,7 +30,7 @@ func ev100_from_luminance(f32 luminance) -> f32 {
 [[shader("compute")]]
 [[numthreads(HISTOGRAM_BIN_COUNT, 1, 1)]]
 func cs_main(u32 gid : SV_GroupIndex) -> void {
-    const let count_for_this_bin = gid == 0 ? 0.0 : f32(C.histogram[gid]);
+    const let count_for_this_bin = gid == 0 ? 0.0 : f32(histogram_bin_indices[gid]);
     histogram_shared[gid] = count_for_this_bin * f32(gid);
     GroupMemoryBarrierWithGroupSync();
 
@@ -43,11 +46,11 @@ func cs_main(u32 gid : SV_GroupIndex) -> void {
     if (gid == 0) {
         const f32 weighted_average_log2 = (histogram_shared[0] / max(C.pixel_count - count_for_this_bin, 1.0)) - 1.0;
         const f32 desired_luminance = exp2(((weighted_average_log2 / (HISTOGRAM_BIN_COUNT - 1)) * C.exposure_range) + C.min_exposure);
-        const f32 last_luminance = C.luminance->adapted_luminance;
+        const f32 last_luminance = luminance[0].adapted_luminance;
         const f32 adapted_luminance = last_luminance + (desired_luminance - last_luminance) * C.time_coeff;
         const f32 ev100 = ev100_from_luminance(adapted_luminance);
-        C.luminance->adapted_luminance = adapted_luminance;
-        C.luminance->exposure = 1.0 / (exp2(ev100) * 1.2);
+        luminance[0].adapted_luminance = adapted_luminance;
+        luminance[0].exposure = 1.0 / (exp2(ev100) * 1.2);
     }
 }
 

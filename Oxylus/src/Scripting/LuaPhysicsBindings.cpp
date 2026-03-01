@@ -11,9 +11,8 @@
 #include <Jolt/Physics/Character/Character.h>
 #include <sol/state.hpp>
 
-#include "Core/App.hpp"
 #include "Physics/RayCast.hpp"
-#include "Scene/ECSModule/Core.hpp"
+#include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
 #include "Scripting/LuaHelpers.hpp"
 #include "Utils/OxMath.hpp"

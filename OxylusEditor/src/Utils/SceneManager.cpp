@@ -1,7 +1,6 @@
 #include "SceneManager.hpp"
 
 #include "Core/App.hpp"
-#include "Editor.hpp"
 
 namespace ox {
 auto EditorScene::is_valid(this const EditorScene& self) -> bool {
@@ -135,12 +134,14 @@ auto SceneManager::load_default_scene(this SceneManager& self, SceneID scene_id)
   auto editor_scene = *editor_scene_p;
 
   const auto sun = editor_scene->scene->create_entity("sun", true);
-  sun.add<TransformComponent>();
-  sun.get_mut<TransformComponent>().rotation = glm::vec3{glm::radians(90.f), glm::radians(45.f), 0.f};
+  sun.set<TransformComponent>({
+    .rotation = glm::quat(glm::vec3(glm::radians(45.f), glm::radians(90.f), 0.f)),
+  });
   sun.set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 10.f})
     .add<AtmosphereComponent>();
+  sun.set<AutoExposureComponent>({});
   const auto camera = editor_scene->scene->create_entity("camera", true);
-  camera.add<CameraComponent>();
+  camera.set<CameraComponent>({});
 }
 
 auto SceneManager::get_scene(this const SceneManager& self, SceneID scene_id) -> std::shared_ptr<EditorScene> {

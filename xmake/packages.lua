@@ -5,8 +5,8 @@ packages = {
   ["stb 2024.06.01"] = {},
   ["miniaudio 0.11.22"] = {},
   ["fastgltf-ox v0.8.0"] = { system = false, debug = is_mode("debug") },
-  ["meshoptimizer v0.22"] = {},
-  ["libsdl3 3.2.28"] = { configs = { x11 = true, wayland = false }, system = false },
+  ["meshoptimizer v0.25"] = {},
+  ["libsdl3 3.4.0"] = { configs = { x11 = true, wayland = false } },
   ["ktx-ox v4.4.0"] = { system = false, debug = false },
   ["zstd v1.5.7"] = { system = false },
   ["shader-slang v2025.15.1"] = { configs = { shared = true }, system = false },
@@ -25,7 +25,7 @@ packages = {
     },
     system = false,
   },
-  ["flecs-ox v4.1.0"] = {},
+  ["flecs v4.1.4"] = {},
   ["fmt " .. fmt_version] = { configs = fmt_configs, system = false },
   ["loguru v2.1.0"] = {
     configs = {
@@ -38,7 +38,7 @@ packages = {
     configs = {
       debug_allocations = false,
     },
-    debug = is_mode("debug"),
+    debug = false,
   },
   ["toml++ v3.4.0"] = {
     configs = {
@@ -73,6 +73,7 @@ packages = {
   ["lua-ox v5.4.7"] = {},
   ["sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444"] = { configs = { includes_lua = false } },
   ["unordered_dense v4.5.0"] = {},
+  ["svector v1.0.3"] = {},
   ["plf_colony v7.41"] = {},
   ["simdutf v6.2.0"] = {},
 }

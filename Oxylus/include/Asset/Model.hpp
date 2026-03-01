@@ -16,35 +16,17 @@ struct Model {
 
   using Index = u32;
 
-  struct Primitive {
-    u32 material_index = 0;
-    u32 vertex_count = 0;
-    u32 vertex_offset = 0;
-    u32 index_count = 0;
-    u32 index_offset = 0;
-  };
-
-  struct GLTFMesh {
-    std::string name = {};
-    std::vector<u32> primitive_indices = {};
-  };
-
-  struct Node {
+  struct MeshGroup {
     std::string name = {};
     std::vector<usize> child_indices = {};
-    ox::option<usize> mesh_index = ox::nullopt;
-    ox::option<usize> light_index = ox::nullopt;
+    std::vector<usize> mesh_indices = {};
+    std::vector<usize> light_indices = {};
     glm::vec3 translation = {};
     glm::quat rotation = {};
     glm::vec3 scale = {};
   };
 
-  struct Scene {
-    std::string name = {};
-    std::vector<usize> node_indices = {};
-  };
-
-  enum class LightType { Directional, Point, Spot };
+  enum class LightType { Directional, Spot, Point };
 
   struct Light {
     std::string name;
@@ -56,18 +38,23 @@ struct Model {
     ox::option<f32> outer_cone_angle = ox::nullopt;
   };
 
-  std::vector<UUID> embedded_textures = {};
+  std::vector<UUID> textures = {};
   std::vector<UUID> materials = {};
-  std::vector<Primitive> primitives = {};
-  std::vector<GLTFMesh> meshes = {};
-  std::vector<Node> nodes = {};
-  std::vector<Scene> scenes = {};
+  std::vector<MeshGroup> mesh_groups = {};
   std::vector<Light> lights = {};
+  std::vector<GPU::Mesh> gpu_meshes = {};
+  std::vector<option<u32>> material_indices = {}; // these are per mesh, not per MeshGroup
+  std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};
 
   usize default_scene_index = 0;
+};
 
-  std::vector<GPU::Mesh> gpu_meshes = {};
-  std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};
+enum struct MeshInstanceID : u64 { Invalid = ~0_u64 };
+struct MeshInstance {
+  UUID model_uuid = UUID(nullptr);
+  usize mesh_node_index = 0;
+  UUID material_uuid = UUID(nullptr);
+  GPU::TransformID transform_id = GPU::TransformID::Invalid;
 };
 
 } // namespace ox

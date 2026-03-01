@@ -9,6 +9,7 @@
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
+#include "Networking/NetworkManager.hpp"
 #include "Panels/AssetManagerPanel.hpp"
 #include "Panels/ContentPanel.hpp"
 #include "Panels/EditorSettingsPanel.hpp"
@@ -91,6 +92,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
 
 auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   auto& job_man = App::get_job_manager();
+  auto& net = App::mod<NetworkManager>();
   job_man.get_tracker().stop_tracking();
 
   Log::remove_callback("editor_notifications");

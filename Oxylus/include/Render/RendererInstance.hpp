@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
+
 #include "Render/Renderer.hpp"
 #include "Scene/SceneGPU.hpp"
 
@@ -237,6 +239,7 @@ struct DebugContext {
 struct PostProcessContext {
   f32 delta_time = 0.0f;
 
+  vuk::Extent3D extent = {};
   vuk::Value<vuk::ImageAttachment> dst_attachment = {};
   vuk::Value<vuk::ImageAttachment> final_attachment = {};
   vuk::Value<vuk::ImageAttachment> bloom_upsampled_attachment = {};

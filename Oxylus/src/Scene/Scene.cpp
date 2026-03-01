@@ -31,15 +31,246 @@
 #include "Render/Camera.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
-#include "Scene/ECSModule/ComponentWrapper.hpp"
-#include "Scene/ECSModule/Core.hpp"
+#include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
-#include "Utils/JsonHelpers.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Random.hpp"
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+struct JsonEntityDeserializer : IEntitySerializer {
+  simdjson::ondemand::value json_value;
+  memory::ScopedStack stack;
+  std::vector<UUID> requested_assets = {};
+
+  JsonEntityDeserializer(flecs::world& world_, simdjson::ondemand::value value_)
+      : IEntitySerializer(world_),
+        json_value(std::move(value_)) {}
+
+  auto on_primitive(std::string_view name, Primitive primitive) -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error()) {
+      return;
+    }
+
+    std::visit(
+      ox::match{
+        [](const auto&) {},
+        [&](bool* v) {
+          auto result = field_result.get_bool();
+          if (!result.error()) {
+            *v = result.value_unsafe();
+          }
+        },
+        [&](c8* v) {
+          auto result = field_result.get_string();
+          if (!result.error() && !result.value_unsafe().empty()) {
+            *v = result.value_unsafe()[0];
+          }
+        },
+        [&](i8* v) {
+          auto result = field_result.get_int64();
+          if (!result.error()) {
+            *v = static_cast<i8>(result.value_unsafe());
+          }
+        },
+        [&](u8* v) {
+          auto result = field_result.get_uint64();
+          if (!result.error()) {
+            *v = static_cast<u8>(result.value_unsafe());
+          }
+        },
+        [&](i16* v) {
+          auto result = field_result.get_int64();
+          if (!result.error()) {
+            *v = static_cast<i16>(result.value_unsafe());
+          }
+        },
+        [&](u16* v) {
+          auto result = field_result.get_uint64();
+          if (!result.error()) {
+            *v = static_cast<u16>(result.value_unsafe());
+          }
+        },
+        [&](i32* v) {
+          auto result = field_result.get_int64();
+          if (!result.error()) {
+            *v = static_cast<i32>(result.value_unsafe());
+          }
+        },
+        [&](u32* v) {
+          auto result = field_result.get_uint64();
+          if (!result.error()) {
+            *v = static_cast<u32>(result.value_unsafe());
+          }
+        },
+        [&](i64* v) {
+          auto result = field_result.get_int64();
+          if (!result.error()) {
+            *v = result.value_unsafe();
+          }
+        },
+        [&](u64* v) {
+          auto result = field_result.get_uint64();
+          if (!result.error()) {
+            *v = result.value_unsafe();
+          }
+        },
+        [&](f32* v) {
+          auto result = field_result.get_double();
+          if (!result.error()) {
+            *v = static_cast<f32>(result.value_unsafe());
+          }
+        },
+        [&](f64* v) {
+          auto result = field_result.get_double();
+          if (!result.error()) {
+            *v = result.value_unsafe();
+          }
+        },
+      },
+      primitive
+    );
+  }
+
+  auto on_string(std::string_view name, const c8** str) -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error()) {
+      return;
+    }
+
+    auto result = field_result.get_string();
+    if (!result.error()) {
+      auto str_view = result.value_unsafe();
+      auto* str_copy = stack.null_terminate_cstr(str_view);
+      *str = str_copy;
+    }
+  }
+
+  auto on_entity(std::string_view name, flecs::entity* entity) -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error()) {
+      return;
+    }
+
+    auto result = field_result.get_string();
+    if (!result.error()) {
+      auto entity_name = result.value_unsafe();
+      auto* entity_name_cstr = stack.null_terminate_cstr(entity_name);
+      auto found_entity = world.lookup(entity_name_cstr);
+      if (found_entity.is_valid()) {
+        *entity = found_entity;
+      }
+    }
+  }
+
+  auto on_component(std::string_view name, flecs::id_t* component) -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error()) {
+      return;
+    }
+
+    auto result = field_result.get_string();
+    if (!result.error()) {
+      auto comp_name = result.value_unsafe();
+      auto* comp_name_cstr = stack.null_terminate_cstr(comp_name);
+      auto comp_entity = world.lookup(comp_name_cstr);
+      if (comp_entity.is_valid()) {
+        *component = comp_entity.id();
+      }
+    }
+  }
+
+  auto on_struct(std::string_view name, flecs::meta::op_t* ops, i32 op_count, void* base) -> void override {
+    ZoneScoped;
+
+    if (!name.empty()) {
+      auto field_result = json_value[name];
+      if (field_result.error()) {
+        return;
+      }
+
+      auto nested_value = field_result.get_object();
+      if (nested_value.error()) {
+        return;
+      }
+
+      auto nested_deserializer = JsonEntityDeserializer(world, field_result.value_unsafe());
+      nested_deserializer.serialize_ops(ops + 1, op_count - 1, base);
+    } else {
+      serialize_ops(ops + 1, op_count - 1, base);
+    }
+  }
+
+  auto on_opaque_value(
+    std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
+  ) -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error()) {
+      return;
+    }
+
+    auto* opaque_info = ecs_get(world, field_type, EcsOpaque);
+    if (!opaque_info) {
+      return;
+    }
+
+    if (opaque_type == flecs::Bool) {
+      auto result = field_result.get_bool();
+      if (!result.error() && opaque_info->assign_bool) {
+        opaque_info->assign_bool(field_ptr, result.value_unsafe());
+      }
+    } else if (opaque_type == flecs::Char) {
+      auto result = field_result.get_string();
+      if (!result.error() && !result.value_unsafe().empty() && opaque_info->assign_char) {
+        opaque_info->assign_char(field_ptr, result.value_unsafe()[0]);
+      }
+    } else if (opaque_type == flecs::Byte || opaque_type == flecs::U8) {
+      auto result = field_result.get_uint64();
+      if (!result.error() && opaque_info->assign_uint) {
+        opaque_info->assign_uint(field_ptr, static_cast<u64>(result.value_unsafe()));
+      }
+    } else if (opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 ||
+               opaque_type == flecs::Uptr) {
+      auto result = field_result.get_uint64();
+      if (!result.error() && opaque_info->assign_uint) {
+        opaque_info->assign_uint(field_ptr, result.value_unsafe());
+      }
+    } else if (opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 ||
+               opaque_type == flecs::I64 || opaque_type == flecs::Iptr) {
+      auto result = field_result.get_int64();
+      if (!result.error() && opaque_info->assign_int) {
+        opaque_info->assign_int(field_ptr, result.value_unsafe());
+      }
+    } else if (opaque_type == flecs::F32 || opaque_type == flecs::F64) {
+      auto result = field_result.get_double();
+      if (!result.error() && opaque_info->assign_float) {
+        opaque_info->assign_float(field_ptr, result.value_unsafe());
+      }
+    } else if (opaque_type == flecs::String) {
+      auto result = field_result.get_string();
+      if (!result.error() && opaque_info->assign_string) {
+        auto* str_cstr = stack.null_terminate_cstr(result.value_unsafe());
+        opaque_info->assign_string(field_ptr, str_cstr);
+
+        if (field_type == world.entity<UUID>()) {
+          requested_assets.push_back(*static_cast<UUID*>(field_ptr));
+        }
+      }
+    }
+  }
+};
+
 auto Scene::safe_entity_name(this const Scene& self, std::string prefix) -> std::string {
   ZoneScoped;
 
@@ -88,10 +319,12 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   ZoneScoped;
   self.scene_name = name;
 
-  self.component_db.import_module(self.world.import <Core>());
+  self.component_db.import_module(self.world.import <CoreComponentsModule>());
 
-  auto& renderer = App::mod<Renderer>();
-  self.renderer_instance = renderer.new_instance(self);
+  if (App::has_mod<Renderer>()) {
+    auto& renderer = App::mod<Renderer>();
+    self.renderer_instance = renderer.new_instance(self);
+  }
 
   auto& physics = App::mod<Physics>();
   self.physics_system = physics.new_system();
@@ -125,14 +358,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           self.add_transform(entity);
         self.set_dirty(entity);
 
-        if (mesh_event && mc.mesh_uuid)
-          self.attach_mesh(entity, mc.mesh_uuid, mc.mesh_index);
+        if (mesh_event && mc.model_uuid)
+          self.attach_mesh(entity, mc.model_uuid, mc.mesh_index, mc.material_uuid);
       } else if (it.event() == flecs::OnAdd) {
         self.add_transform(entity);
         self.set_dirty(entity);
       } else if (it.event() == flecs::OnRemove) {
-        if (mc.mesh_uuid)
-          self.detach_mesh(entity, mc.mesh_uuid, mc.mesh_index);
+        if (mc.model_uuid)
+          self.detach_mesh(entity);
 
         self.remove_transform(entity);
       }
@@ -219,7 +452,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([](flecs::iter& it, usize i, MeshComponent& c) {
       ZoneScopedN("MeshComponent AssetOwner handling");
       auto& asset_man = App::mod<AssetManager>();
-      asset_man.unload_asset(c.mesh_uuid);
+      asset_man.unload_asset(c.model_uuid);
     });
 
   self.world.observer<AudioSourceComponent>()
@@ -403,14 +636,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
 
       const JPH::Vec3 position = body->GetPosition();
-      const JPH::Vec3 rotation = body->GetRotation().GetEulerAngles();
+      const JPH::Quat rotation = body->GetRotation();
 
       rb.previous_translation = rb.translation;
       rb.previous_rotation = rb.rotation;
       rb.translation = {position.GetX(), position.GetY(), position.GetZ()};
-      rb.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
+      rb.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
       tc.position = rb.translation;
-      tc.rotation = glm::eulerAngles(rb.rotation);
+      tc.rotation = rb.rotation;
 
       e.modified<TransformComponent>();
     });
@@ -424,14 +657,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
       character->PostSimulation(ch.collision_tolerance);
       const JPH::Vec3 position = character->GetPosition();
-      const JPH::Vec3 rotation = character->GetRotation().GetEulerAngles();
+      const JPH::Quat rotation = character->GetRotation();
 
       ch.previous_translation = ch.translation;
       ch.previous_rotation = ch.rotation;
       ch.translation = {position.GetX(), position.GetY(), position.GetZ()};
-      ch.rotation = glm::vec3(rotation.GetX(), rotation.GetY(), rotation.GetZ());
+      ch.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
       tc.position = ch.translation;
-      tc.rotation = glm::eulerAngles(ch.rotation);
+      tc.rotation = ch.rotation;
 
       e.modified<TransformComponent>();
     });
@@ -509,12 +742,25 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
 
       auto evaluate_over_time = []<typename T>(T start, T end, f32 factor) -> T {
-        return glm::lerp(end, start, factor);
+        if constexpr (std::is_same_v<T, glm::quat>) {
+          if (glm::dot(start, end) < 0.0f)
+            end = -end;
+          return glm::slerp(end, start, factor);
+        } else {
+          return glm::lerp(end, start, factor);
+        }
       };
 
       auto evaluate_by_speed = []<typename T>(T start, T end, f32 min_speed, f32 max_speed, f32 speed) -> T {
         f32 factor = math::inverse_lerp_clamped(min_speed, max_speed, speed);
-        return glm::lerp(end, start, factor);
+
+        if constexpr (std::is_same_v<T, glm::quat>) {
+          if (glm::dot(start, end) < 0.0f)
+            end = -end;
+          return glm::slerp(end, start, factor);
+        } else {
+          return glm::lerp(end, start, factor);
+        }
       };
 
       auto particle_entity = it.entity(i);
@@ -600,10 +846,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       cc.yaw = tc.rotation.y;
       Camera::update(cc, screen_extent);
     });
-
-  self.world.system<const TransformComponent, MeshComponent>("meshes_update")
-    .kind(flecs::PostUpdate)
-    .each([](const TransformComponent& tc, MeshComponent& mc) {});
 
   self.world.system<SpriteComponent>("sprite_update")
     .kind(flecs::PostUpdate)
@@ -777,147 +1019,152 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     self.physics_system->DrawBodies(settings, self.physics_debug_renderer.get());
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-  auto meshlet_instance_visibility_offset = 0_u32;
-  auto max_meshlet_instance_count = 0_u32;
-  auto gpu_meshes = std::vector<GPU::Mesh>();
-  auto gpu_mesh_instances = std::vector<GPU::MeshInstance>();
+  if (self.renderer_instance) {
+    auto& asset_man = App::mod<AssetManager>();
+    auto meshlet_instance_visibility_offset = 0_u32;
+    auto max_meshlet_instance_count = 0_u32;
+    auto gpu_meshes = std::vector<GPU::Mesh>();
+    auto gpu_mesh_instances = std::vector<GPU::MeshInstance>();
 
-  if (self.meshes_dirty) {
-    for (const auto& [rendering_mesh, transform_ids] : self.rendering_meshes_map) {
-      auto* model = asset_man.get_model(rendering_mesh.first);
-      if (!model)
-        continue;
-      const auto& mesh = model->meshes[rendering_mesh.second];
+    if (self.meshes_dirty) {
+      auto mesh_instances = self.mesh_instances.slots_unsafe();
+      auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, usize>();
+      for (const auto& mesh_instance : mesh_instances) {
+        const auto* model = asset_man.get_model(mesh_instance.model_uuid);
+        const auto& mesh = model->gpu_meshes[mesh_instance.mesh_node_index];
+        const auto* material_asset = asset_man.get_asset(mesh_instance.material_uuid);
+        const auto material_id = material_asset ? material_asset->material_id
+                                                : asset_man.get_null_material()->material_id;
 
-      for (auto primitive_index : mesh.primitive_indices) {
-        const auto& primitive = model->primitives[primitive_index];
-        const auto& gpu_mesh = model->gpu_meshes[primitive_index];
-        auto mesh_index = static_cast<u32>(gpu_meshes.size());
-        gpu_meshes.emplace_back(gpu_mesh);
-
-        //  ── INSTANCING ──────────────────────────────────────────────────
-        for (const auto transform_id : transform_ids) {
-          auto lod0_index = 0;
-          const auto& lod0 = gpu_mesh.lods[lod0_index];
-
-          auto& mesh_instance = gpu_mesh_instances.emplace_back();
-          mesh_instance.mesh_index = mesh_index;
-          mesh_instance.lod_index = lod0_index;
-          mesh_instance.material_index = primitive.material_index;
-          mesh_instance.transform_index = SlotMap_decode_id(transform_id).index;
-          mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
-
-          meshlet_instance_visibility_offset += lod0.meshlet_count;
-          max_meshlet_instance_count += lod0.meshlet_count;
+        auto unique_mesh = std::pair(mesh_instance.model_uuid, mesh_instance.mesh_node_index);
+        auto mesh_index = 0_u32;
+        if (auto it = unique_mesh_to_gpu_mesh.find(unique_mesh); it != unique_mesh_to_gpu_mesh.end()) {
+          mesh_index = it->second;
+        } else {
+          mesh_index = static_cast<u32>(gpu_meshes.size());
+          gpu_meshes.emplace_back(mesh);
+          unique_mesh_to_gpu_mesh.emplace(unique_mesh, mesh_index);
         }
+
+        auto lod0_index = 0;
+        const auto& lod0 = mesh.lods[lod0_index];
+
+        auto& gpu_mesh_instance = gpu_mesh_instances.emplace_back();
+        gpu_mesh_instance.mesh_index = mesh_index;
+        gpu_mesh_instance.lod_index = lod0_index;
+        gpu_mesh_instance.material_index = SlotMap_decode_id(material_id).index;
+        gpu_mesh_instance.transform_index = SlotMap_decode_id(mesh_instance.transform_id).index;
+        gpu_mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
+
+        meshlet_instance_visibility_offset += lod0.meshlet_count;
+        max_meshlet_instance_count += lod0.meshlet_count;
       }
+
+      self.gpu_mesh_instance_count = gpu_mesh_instances.size();
+      self.max_meshlet_instance_count = max_meshlet_instance_count;
     }
 
-    self.mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
-    self.max_meshlet_instance_count = max_meshlet_instance_count;
-  }
-
-  auto uuid_to_image_index = [&](const UUID& uuid) -> option<u32> {
-    if (!uuid || !asset_man.is_texture_loaded(uuid)) {
-      return nullopt;
-    }
-
-    auto* texture = asset_man.get_texture(uuid);
-    return texture->get_view_index();
-  };
-
-  if (self.force_material_update) {
-    asset_man.set_all_materials_dirty();
-    self.force_material_update = false;
-  }
-
-  auto dirty_material_ids = asset_man.get_dirty_material_ids();
-  auto dirty_material_indices = std::vector<u32>();
-  for (const auto dirty_id : dirty_material_ids) {
-    const auto* material = asset_man.get_material(dirty_id);
-    if (!material)
-      continue;
-
-    auto dirty_index = SlotMap_decode_id(dirty_id).index;
-    dirty_material_indices.push_back(dirty_index);
-    if (dirty_index >= self.gpu_materials.size()) {
-      self.gpu_materials.resize(dirty_index + 1, {});
-    }
-
-    auto albedo_image_index = uuid_to_image_index(material->albedo_texture);
-    auto normal_image_index = uuid_to_image_index(material->normal_texture);
-    auto emissive_image_index = uuid_to_image_index(material->emissive_texture);
-    auto metallic_roughness_image_index = uuid_to_image_index(material->metallic_roughness_texture);
-    auto occlusion_image_index = uuid_to_image_index(material->occlusion_texture);
-    auto sampler_index = 0_u32;
-
-    auto flags = GPU::MaterialFlag::None;
-    if (albedo_image_index.has_value()) {
-      flags |= GPU::MaterialFlag::HasAlbedoImage;
-
-      // Incase we wanted to change a material's sampler after it's creation
-      // we should prefer material's sampler over texture's default sampler.
-      auto& vk_context = App::get_vkcontext();
-
-      auto* texture = asset_man.get_texture(material->albedo_texture);
-      sampler_index = texture->get_sampler_index();
-
-      auto texture_sampler = vk_context.resources.samplers.slot(texture->get_sampler_id());
-
-      vuk::SamplerCreateInfo sampler_ci = {};
-      switch (material->sampling_mode) {
-        case SamplingMode::LinearRepeated          : sampler_ci = vuk::LinearSamplerRepeated; break;
-        case SamplingMode::LinearClamped           : sampler_ci = vuk::LinearSamplerClamped; break;
-        case SamplingMode::NearestRepeated         : sampler_ci = vuk::NearestSamplerRepeated; break;
-        case SamplingMode::NearestClamped          : sampler_ci = vuk::NearestSamplerClamped; break;
-        case SamplingMode::LinearRepeatedAnisotropy: sampler_ci = vuk::LinearSamplerRepeatedAnisotropy; break;
+    auto uuid_to_image_index = [&](const UUID& uuid) -> option<u32> {
+      if (!uuid || !asset_man.is_texture_loaded(uuid)) {
+        return nullopt;
       }
-      auto material_sampler = vk_context.runtime->acquire_sampler(sampler_ci, vk_context.num_frames);
-      if (texture_sampler->id != material_sampler.id) {
-        auto sampler_id = vk_context.allocate_sampler(sampler_ci);
-        auto sampler_index_from_material = SlotMap_decode_id(sampler_id).index;
-        sampler_index = sampler_index_from_material;
-      }
-    }
 
-    flags |= normal_image_index.has_value() ? GPU::MaterialFlag::HasNormalImage : GPU::MaterialFlag::None;
-    flags |= emissive_image_index.has_value() ? GPU::MaterialFlag::HasEmissiveImage : GPU::MaterialFlag::None;
-    flags |= metallic_roughness_image_index.has_value() ? GPU::MaterialFlag::HasMetallicRoughnessImage
-                                                        : GPU::MaterialFlag::None;
-    flags |= occlusion_image_index.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
-
-    auto gpu_material = GPU::Material{
-      .albedo_color = material->albedo_color,
-      .emissive_color = material->emissive_color,
-      .roughness_factor = material->roughness_factor,
-      .metallic_factor = material->metallic_factor,
-      .alpha_cutoff = material->alpha_cutoff,
-      .flags = flags,
-      .sampler_index = sampler_index,
-      .albedo_image_index = albedo_image_index.value_or(0_u32),
-      .normal_image_index = normal_image_index.value_or(0_u32),
-      .emissive_image_index = emissive_image_index.value_or(0_u32),
-      .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
-      .occlusion_image_index = occlusion_image_index.value_or(0_u32),
-      .uv_size = material->uv_size,
-      .uv_offset = material->uv_offset,
+      auto* texture = asset_man.get_texture(uuid);
+      return texture->get_view_index();
     };
 
-    self.gpu_materials[dirty_index] = gpu_material;
-  }
+    if (self.force_material_update) {
+      asset_man.set_all_materials_dirty();
+      self.force_material_update = false;
+    }
 
-  auto update_info = RendererInstanceUpdateInfo{
-    .mesh_instance_count = self.mesh_instance_count,
-    .max_meshlet_instance_count = self.max_meshlet_instance_count,
-    .dirty_transform_ids = self.dirty_transforms,
-    .gpu_transforms = self.transforms.slots_unsafe(),
-    .dirty_material_indices = dirty_material_indices,
-    .gpu_materials = self.gpu_materials,
-    .gpu_meshes = gpu_meshes,
-    .gpu_mesh_instances = gpu_mesh_instances,
-  };
-  self.renderer_instance->update(update_info);
+    auto dirty_material_ids = asset_man.get_dirty_material_ids();
+    auto dirty_material_indices = std::vector<u32>();
+    for (const auto dirty_id : dirty_material_ids) {
+      const auto* material = asset_man.get_material(dirty_id);
+      if (!material)
+        continue;
+
+      auto dirty_index = SlotMap_decode_id(dirty_id).index;
+      dirty_material_indices.push_back(dirty_index);
+      if (dirty_index >= self.gpu_materials.size()) {
+        self.gpu_materials.resize(dirty_index + 1, {});
+      }
+
+      auto albedo_image_index = uuid_to_image_index(material->albedo_texture);
+      auto normal_image_index = uuid_to_image_index(material->normal_texture);
+      auto emissive_image_index = uuid_to_image_index(material->emissive_texture);
+      auto metallic_roughness_image_index = uuid_to_image_index(material->metallic_roughness_texture);
+      auto occlusion_image_index = uuid_to_image_index(material->occlusion_texture);
+      auto sampler_index = 0_u32;
+
+      auto flags = GPU::MaterialFlag::None;
+      if (albedo_image_index.has_value()) {
+        flags |= GPU::MaterialFlag::HasAlbedoImage;
+
+        // Incase we wanted to change a material's sampler after it's creation
+        // we should prefer material's sampler over texture's default sampler.
+        auto& vk_context = App::get_vkcontext();
+
+        auto* texture = asset_man.get_texture(material->albedo_texture);
+        sampler_index = texture->get_sampler_index();
+
+        auto texture_sampler = vk_context.resources.samplers.slot(texture->get_sampler_id());
+
+        vuk::SamplerCreateInfo sampler_ci = {};
+        switch (material->sampling_mode) {
+          case SamplingMode::LinearRepeated          : sampler_ci = vuk::LinearSamplerRepeated; break;
+          case SamplingMode::LinearClamped           : sampler_ci = vuk::LinearSamplerClamped; break;
+          case SamplingMode::NearestRepeated         : sampler_ci = vuk::NearestSamplerRepeated; break;
+          case SamplingMode::NearestClamped          : sampler_ci = vuk::NearestSamplerClamped; break;
+          case SamplingMode::LinearRepeatedAnisotropy: sampler_ci = vuk::LinearSamplerRepeatedAnisotropy; break;
+        }
+        auto material_sampler = vk_context.runtime->acquire_sampler(sampler_ci, vk_context.num_frames);
+        if (texture_sampler->id != material_sampler.id) {
+          auto sampler_id = vk_context.allocate_sampler(sampler_ci);
+          auto sampler_index_from_material = SlotMap_decode_id(sampler_id).index;
+          sampler_index = sampler_index_from_material;
+        }
+      }
+
+      flags |= normal_image_index.has_value() ? GPU::MaterialFlag::HasNormalImage : GPU::MaterialFlag::None;
+      flags |= emissive_image_index.has_value() ? GPU::MaterialFlag::HasEmissiveImage : GPU::MaterialFlag::None;
+      flags |= metallic_roughness_image_index.has_value() ? GPU::MaterialFlag::HasMetallicRoughnessImage
+                                                          : GPU::MaterialFlag::None;
+      flags |= occlusion_image_index.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
+
+      auto gpu_material = GPU::Material{
+        .albedo_color = material->albedo_color,
+        .emissive_color = material->emissive_color,
+        .roughness_factor = material->roughness_factor,
+        .metallic_factor = material->metallic_factor,
+        .alpha_cutoff = material->alpha_cutoff,
+        .flags = flags,
+        .sampler_index = sampler_index,
+        .albedo_image_index = albedo_image_index.value_or(0_u32),
+        .normal_image_index = normal_image_index.value_or(0_u32),
+        .emissive_image_index = emissive_image_index.value_or(0_u32),
+        .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
+        .occlusion_image_index = occlusion_image_index.value_or(0_u32),
+        .uv_size = material->uv_size,
+        .uv_offset = material->uv_offset,
+      };
+
+      self.gpu_materials[dirty_index] = gpu_material;
+    }
+
+    auto update_info = RendererInstanceUpdateInfo{
+      .mesh_instance_count = self.gpu_mesh_instance_count,
+      .max_meshlet_instance_count = self.max_meshlet_instance_count,
+      .dirty_transform_ids = self.dirty_transforms,
+      .gpu_transforms = self.transforms.slots_unsafe(),
+      .dirty_material_indices = dirty_material_indices,
+      .gpu_materials = self.gpu_materials,
+      .gpu_meshes = gpu_meshes,
+      .gpu_mesh_instances = gpu_mesh_instances,
+    };
+    self.renderer_instance->update(update_info);
+  }
   self.dirty_transforms.clear();
   self.meshes_dirty = false;
 }
@@ -1066,66 +1313,76 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
     return {};
   }
 
-  auto* imported_model = asset_man.get_model(asset_uuid);
-  auto& default_scene = imported_model->scenes[imported_model->default_scene_index];
-  auto root_entity = self.create_entity(default_scene.name, default_scene.name.empty() ? false : true);
+  auto* model = asset_man.get_model(asset_uuid);
+  auto& root_node = model->mesh_groups.front();
+  auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
 
-  auto visit_nodes = [&self, //
-                      &imported_model,
-                      &asset_uuid](this auto& visitor, flecs::entity& root, std::vector<usize>& node_indices) -> void {
-    for (const auto node_index : node_indices) {
-      auto& cur_node = imported_model->nodes[node_index];
-      auto node_entity = self.create_entity(cur_node.name, cur_node.name.empty() ? false : true);
-
-      const auto T = glm::translate(glm::mat4(1.0f), cur_node.translation);
-      const auto R = glm::mat4_cast(cur_node.rotation);
-      const auto S = glm::scale(glm::mat4(1.0f), cur_node.scale);
-      auto TRS = T * R * S;
-      auto transform_comp = TransformComponent{};
-      {
-        glm::quat rotation = {};
-        glm::vec3 skew = {};
-        glm::vec4 perspective = {};
-        glm::decompose(TRS, transform_comp.scale, rotation, transform_comp.position, skew, perspective);
-        transform_comp.rotation = glm::eulerAngles(glm::quat(rotation[3], rotation[0], rotation[1], rotation[2]));
-      }
-      node_entity.set(transform_comp);
-
-      if (cur_node.mesh_index.has_value()) {
-        node_entity.set<MeshComponent>(
-          {.mesh_index = static_cast<u32>(cur_node.mesh_index.value()), .mesh_uuid = asset_uuid}
-        );
-      }
-
-      if (cur_node.light_index.has_value()) {
-        auto& node_light = imported_model->lights[cur_node.light_index.value()];
-        auto lc = LightComponent{
-          .type = static_cast<LightComponent::LightType>(node_light.type),
-          .color = node_light.color,
-          .intensity = node_light.intensity,
-        };
-
-        if (node_light.range.has_value()) {
-          lc.radius = *node_light.range;
-        }
-        if (node_light.inner_cone_angle.has_value()) {
-          lc.inner_cone_angle = *node_light.inner_cone_angle;
-        }
-        if (node_light.outer_cone_angle.has_value()) {
-          lc.inner_cone_angle = *node_light.inner_cone_angle;
-        }
-
-        node_entity.set<LightComponent>(lc);
-      }
-
-      node_entity.child_of(root);
-      node_entity.modified<TransformComponent>();
-
-      visitor(node_entity, cur_node.child_indices);
-    }
+  struct ProcessingNode {
+    flecs::entity parent = {};
+    usize mesh_group_index = 0;
   };
 
-  visit_nodes(root_entity, default_scene.node_indices);
+  auto processing_nodes = std::stack<ProcessingNode>();
+  for (const auto child_index : root_node.child_indices) {
+    processing_nodes.push({root_entity, child_index});
+  }
+
+  while (!processing_nodes.empty()) {
+    const auto [parent_entity, mesh_group_index] = processing_nodes.top();
+    const auto& mesh_group = model->mesh_groups[mesh_group_index];
+    processing_nodes.pop();
+
+    auto node_entity = self.create_entity(mesh_group.name);
+    node_entity.set<TransformComponent>({
+      .position = mesh_group.translation,
+      .rotation = mesh_group.rotation,
+      .scale = mesh_group.scale,
+    });
+    node_entity.child_of(parent_entity);
+    node_entity.modified<TransformComponent>();
+
+    for (const auto mesh_index : mesh_group.mesh_indices) {
+      memory::ScopedStack stack;
+      auto mesh_entity_name = !mesh_group.name.empty() ? stack.format("{} Mesh {}", mesh_group.name, mesh_index) : "";
+      auto mesh_entity = self.create_entity(std::string(mesh_entity_name));
+      auto material_index = model->material_indices[mesh_index];
+      auto material_uuid = material_index.has_value() ? model->materials[material_index.value()] : UUID(nullptr);
+      mesh_entity.set<TransformComponent>({});
+      mesh_entity.set<MeshComponent>({
+        .model_uuid = asset_uuid,
+        .mesh_index = static_cast<u32>(mesh_index),
+        .material_uuid = material_uuid,
+      });
+      mesh_entity.child_of(node_entity);
+      mesh_entity.modified<TransformComponent>();
+    }
+
+    for (const auto light_index : mesh_group.light_indices) {
+      auto& node_light = model->lights[light_index];
+
+      auto lc = LightComponent{
+        .type = static_cast<LightComponent::LightType>(node_light.type),
+        .color = node_light.color,
+        .intensity = node_light.intensity,
+      };
+
+      if (node_light.range.has_value()) {
+        lc.radius = *node_light.range;
+      }
+      if (node_light.inner_cone_angle.has_value()) {
+        lc.inner_cone_angle = *node_light.inner_cone_angle;
+      }
+      if (node_light.outer_cone_angle.has_value()) {
+        lc.outer_cone_angle = *node_light.outer_cone_angle;
+      }
+
+      node_entity.set<LightComponent>(lc);
+    }
+
+    for (const auto child_node_indices : mesh_group.child_indices) {
+      processing_nodes.push({node_entity, child_node_indices});
+    }
+  }
 
   return root_entity;
 }
@@ -1136,7 +1393,7 @@ auto Scene::get_world_position(const flecs::entity entity) -> glm::vec3 {
   if (parent != flecs::entity::null()) {
     const glm::vec3 parent_position = get_world_position(parent);
     const auto& parent_tc = parent.get<TransformComponent>();
-    const glm::quat parent_rotation = glm::quat(parent_tc.rotation);
+    const glm::quat parent_rotation = parent_tc.rotation;
     const glm::vec3 rotated_scaled_pos = parent_rotation * (parent_tc.scale * tc.position);
     return parent_position + rotated_scaled_pos;
   }
@@ -1147,13 +1404,13 @@ auto Scene::get_world_transform(const flecs::entity entity) -> glm::mat4 {
   const auto& tc = entity.get<TransformComponent>();
   const auto parent = entity.parent();
   const glm::mat4 parent_transform = parent != flecs::entity::null() ? get_world_transform(parent) : glm::mat4(1.0f);
-  return parent_transform * glm::translate(glm::mat4(1.0f), tc.position) * glm::toMat4(glm::quat(tc.rotation)) *
+  return parent_transform * glm::translate(glm::mat4(1.0f), tc.position) * glm::mat4_cast(tc.rotation) *
          glm::scale(glm::mat4(1.0f), tc.scale);
 }
 
 auto Scene::get_local_transform(flecs::entity entity) -> glm::mat4 {
   const auto& tc = entity.get<TransformComponent>();
-  return glm::translate(glm::mat4(1.0f), tc.position) * glm::toMat4(glm::quat(tc.rotation)) *
+  return glm::translate(glm::mat4(1.0f), tc.position) * glm::mat4_cast(tc.rotation) *
          glm::scale(glm::mat4(1.0f), tc.scale);
 }
 
@@ -1229,8 +1486,12 @@ auto Scene::remove_transform(this Scene& self, flecs::entity entity) -> void {
   self.entity_transforms_map.erase(it);
 }
 
-auto Scene::attach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh_uuid, usize mesh_index) -> bool {
+auto Scene::attach_mesh(
+  this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid
+) -> bool {
   ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
 
   auto transforms_it = self.entity_transforms_map.find(entity);
   if (!self.entity_transforms_map.contains(entity)) {
@@ -1240,44 +1501,56 @@ auto Scene::attach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh
 
   const auto transform_id = transforms_it->second;
 
-  auto old_mesh_uuid = std::ranges::find_if(self.rendering_meshes_map, [transform_id](const auto& entry) {
-    const auto& [_, transform_ids] = entry;
-    return std::ranges::contains(transform_ids, transform_id);
-  });
-
-  if (old_mesh_uuid != self.rendering_meshes_map.end()) {
-    self.detach_mesh(entity, old_mesh_uuid->first.first, mesh_index);
+  // Find the old model UUID and detach it from entity.
+  auto mesh_instances_it = self.entity_to_mesh_instance_map.find(entity);
+  if (mesh_instances_it != self.entity_to_mesh_instance_map.end()) {
+    const auto old_mesh_instance_id = mesh_instances_it->second;
+    self.mesh_instances.destroy_slot(old_mesh_instance_id);
+    self.meshes_dirty = true;
   }
 
-  auto [instances_it, inserted] = self.rendering_meshes_map.try_emplace(std::pair{mesh_uuid, mesh_index});
-  if (!inserted && instances_it == self.rendering_meshes_map.end()) {
-    return false;
+  auto overriden_material = material_uuid;
+  if (!material_uuid) {
+    // No material override, use original one
+    auto* model = asset_man.get_model(model_uuid);
+    auto material_index = model->material_indices[mesh_index];
+    if (material_index.has_value()) {
+      overriden_material = model->materials[mesh_index];
+    }
   }
 
-  instances_it->second.emplace_back(transform_id);
+  auto instance_id = self.mesh_instances.create_slot(
+    MeshInstance{
+      .model_uuid = model_uuid,
+      .mesh_node_index = mesh_index,
+      .material_uuid = overriden_material,
+      .transform_id = transform_id,
+    }
+  );
+  self.entity_to_mesh_instance_map.emplace(entity, instance_id);
   self.meshes_dirty = true;
   self.set_dirty(entity);
 
   return true;
 }
 
-auto Scene::detach_mesh(this Scene& self, flecs::entity entity, const UUID& mesh_uuid, usize mesh_index) -> bool {
+auto Scene::detach_mesh(this Scene& self, flecs::entity entity) -> bool {
   ZoneScoped;
 
-  auto instances_it = self.rendering_meshes_map.find(std::pair(mesh_uuid, mesh_index));
+  auto instances_it = self.entity_to_mesh_instance_map.find(entity);
   auto transforms_it = self.entity_transforms_map.find(entity);
-  if (instances_it == self.rendering_meshes_map.end() || transforms_it == self.entity_transforms_map.end()) {
+  if (instances_it == self.entity_to_mesh_instance_map.end() || transforms_it == self.entity_transforms_map.end()) {
     return false;
   }
 
   const auto transform_id = transforms_it->second;
-  auto& instances = instances_it->second;
-  std::erase_if(instances, [transform_id](const GPU::TransformID& id) { return id == transform_id; });
-  self.meshes_dirty = true;
-
-  if (instances.empty()) {
-    self.rendering_meshes_map.erase(instances_it);
+  const auto instance_id = instances_it->second;
+  if (!self.mesh_instances.slot(instance_id)) {
+    return false;
   }
+
+  self.mesh_instances.destroy_slot(instance_id);
+  self.meshes_dirty = true;
 
   return true;
 }
@@ -1516,52 +1789,35 @@ void Scene::create_character_controller(
 auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   ZoneScoped;
 
+  auto world = e.world();
   writer.begin_obj();
   writer["name"] = e.name();
-
-  std::vector<ECS::ComponentWrapper> components = {};
   writer["tags"].begin_array();
+  auto components = std::vector<flecs::entity>{};
   e.each([&](flecs::id component_id) {
     if (!component_id.is_entity()) {
       return;
     }
 
-    ECS::ComponentWrapper component(e, component_id);
-    if (!component.is_component()) {
-      writer << component.path;
+    auto ty = component_id.entity();
+    if (ty.has<flecs::Component>()) {
+      components.push_back(ty);
     } else {
-      components.emplace_back(e, component_id);
+      writer << ty.path();
     }
   });
   writer.end_array();
 
   writer["components"].begin_array();
   for (auto& component : components) {
+    auto* component_data = e.get_mut(component.id());
+
     writer.begin_obj();
-    writer["name"] = component.path;
-    component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
-      auto& member_json = writer[member_name];
-      std::visit(
-        ox::match{
-          [](const auto&) {},
-          [&](bool* v) { member_json = *v; },
-          [&](u16* v) { member_json = *v; },
-          [&](f32* v) { member_json = *v; },
-          [&](i32* v) { member_json = *v; },
-          [&](u32* v) { member_json = *v; },
-          [&](i64* v) { member_json = *v; },
-          [&](u64* v) { member_json = *v; },
-          [&](glm::vec2* v) { member_json = *v; },
-          [&](glm::vec3* v) { member_json = *v; },
-          [&](glm::vec4* v) { member_json = *v; },
-          [&](glm::quat* v) { member_json = *v; },
-          [&](glm::mat4* v) { member_json = std::span(glm::value_ptr(*v), 16); },
-          [&](std::string* v) { member_json = *v; },
-          [&](UUID* v) { member_json = v->str().c_str(); },
-        },
-        member
-      );
-    });
+    writer.key(component.path().c_str());
+    writer.begin_obj();
+    auto serializer = JsonEntitySerializer(world, writer);
+    serializer.serialize(component, component_data);
+    writer.end_obj();
     writer.end_obj();
   }
   writer.end_array();
@@ -1599,59 +1855,33 @@ auto Scene::json_to_entity(
 
   auto components_json = json["components"];
   for (auto component_json : components_json.get_array()) {
-    auto component_name_json = component_json["name"];
-    if (component_name_json.error()) {
-      OX_LOG_ERROR("Entity '{}' has corrupt components JSON array.", e.name().c_str());
-      return flecs::entity::null();
-    }
-
-    const auto* component_name = stack.null_terminate_cstr(component_name_json.get_string().value_unsafe());
-    auto component_id = world.lookup(component_name);
-    if (!component_id) {
-      OX_LOG_ERROR("Entity '{}' has invalid component named '{}'!", e.name().c_str(), component_name);
-      return flecs::entity::null();
-    }
-
-    if (!self.component_db.is_component_known(component_id)) {
-      OX_LOG_WARN("Skipping unkown component {}:{}", component_name, (u64)component_id);
-      continue;
-    }
-
-    e.add(component_id);
-    ECS::ComponentWrapper component(e, component_id);
-    component.for_each([&](usize&, std::string_view member_name, ECS::ComponentWrapper::Member& member) {
-      auto member_json = component_json[member_name];
-      if (member_json.error()) {
-        // Default construct
-        return;
+    auto component_obj_json = component_json.get_object();
+    for (auto field_json : component_obj_json) {
+      auto component_name_json = field_json.unescaped_key();
+      if (component_name_json.error()) {
+        OX_LOG_ERROR("Entity '{}' has corrupt components JSON array.", e.name().c_str());
+        return flecs::entity::null();
       }
 
-      std::visit(
-        ox::match{
-          [](const auto&) {},
-          [&](bool* v) { *v = static_cast<bool>(member_json.get_bool().value_unsafe()); },
-          [&](u16* v) { *v = static_cast<u16>(member_json.get_uint64().value_unsafe()); },
-          [&](f32* v) { *v = static_cast<f32>(member_json.get_double().value_unsafe()); },
-          [&](i32* v) { *v = static_cast<i32>(member_json.get_int64().value_unsafe()); },
-          [&](u32* v) { *v = static_cast<u32>(member_json.get_uint64().value_unsafe()); },
-          [&](i64* v) { *v = member_json.get_int64().value_unsafe(); },
-          [&](u64* v) { *v = member_json.get_uint64().value_unsafe(); },
-          [&](glm::vec2* v) { json_to_vec(member_json.value_unsafe(), *v); },
-          [&](glm::vec3* v) { json_to_vec(member_json.value_unsafe(), *v); },
-          [&](glm::vec4* v) { json_to_vec(member_json.value_unsafe(), *v); },
-          [&](glm::quat* v) { json_to_quat(member_json.value_unsafe(), *v); },
-          // [&](glm::mat4 *v) {json_to_mat(member_json.value(), *v); },
-          [&](std::string* v) { *v = member_json.get_string().value_unsafe(); },
-          [&](UUID* v) {
-            *v = UUID::from_string(member_json.get_string().value_unsafe()).value();
-            requested_assets.push_back(*v);
-          },
-        },
-        member
-      );
-    });
+      const auto* component_name = stack.null_terminate_cstr(component_name_json.value_unsafe());
+      auto component_id = world.lookup(component_name);
+      if (!component_id) {
+        OX_LOG_ERROR("Entity '{}' has invalid component named '{}'!", e.name().c_str(), component_name);
+        return flecs::entity::null();
+      }
 
-    e.modified(component_id);
+      if (!self.component_db.is_component_known(component_id)) {
+        OX_LOG_WARN("Skipping unkown component {}:{}", component_name, (u64)component_id);
+        continue;
+      }
+
+      e.add(component_id);
+      auto* component = e.get_mut(component_id);
+      auto deserializer = JsonEntityDeserializer(self.world, field_json.value());
+      deserializer.serialize(component_id, component);
+      requested_assets.insert_range(requested_assets.end(), std::move(deserializer.requested_assets));
+      e.modified(component_id);
+    }
   }
 
   auto children_json = json["children"];
