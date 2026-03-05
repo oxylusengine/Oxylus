@@ -223,15 +223,11 @@ struct LightComponent {
 };
 
 struct AtmosphereComponent {
-  glm::vec3 rayleigh_scattering = {5.802f, 13.558f, 33.100f};
-  f32 rayleigh_density = 8.0;
+  glm::vec3 rayleigh_scattering = {6.604931f, 12.344918f, 39.412623f};
   glm::vec3 mie_scattering = {3.996f, 3.996f, 3.996f};
-  f32 mie_density = 1.2f;
-  f32 mie_extinction = 4.44f;
+  f32 mie_extinction = 4.43f;
   f32 mie_asymmetry = 3.6f;
-  glm::vec3 ozone_absorption = {0.650f, 1.881f, 0.085f};
-  f32 ozone_height = 25.0f;
-  f32 ozone_thickness = 15.0f;
+  glm::vec3 absorption_extiction = {1.29072f, 2.54036f, 0.0f};
   f32 aerial_perspective_start_km = 8.0f;
   f32 aerial_perspective_exposure = 1.0f;
 };

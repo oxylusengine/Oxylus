@@ -44,9 +44,7 @@ public func cornette_shanks_phase(f32 g, f32 altitude) -> f32 {
 }
 
 public func henyey_greenstein_phase(f32 g, f32 cos_theta) -> f32 {
-    const f32 g2 = g * g;
-    const f32 denom = 1.0 + g2 - 2.0 * g * cos_theta;
-    return (1.0 - g2) / (4.0 * PI * denom * sqrt(denom));
+    return (1.0f / (4.0f * PI)) * ((1.0f - (g * g)) / pow((1.0f + (g * g) - (2.0f * g * cos_theta)), 3.0f / 2.0f));
 }
 
 // 4.20
@@ -56,9 +54,8 @@ public func henyey_greenstein_phase(f32 g, f32 cos_theta) -> f32 {
 //  α = 1 and a = 0, Rayleigh scattering results.
 
 public func draine_phase(f32 alpha, f32 g, f32 cos_theta) -> f32 {
-    return (1.0 / (4.0 * PI)) *
-           ((1.0 - (g * g)) / pow((1.0 + (g * g) - (2.0 * g * cos_theta)), 3.0 / 2.0)) *
-           ((1.0 + (alpha * cos_theta * cos_theta)) / (1.0 + (alpha * (1.0 / 3.0) * (1.0 + (2.0 * g * g)))));
+    return henyey_greenstein_phase(g, cos_theta) *
+           ((1.0f + (alpha * cos_theta * cos_theta)) / (1.0f + (alpha * (1.0f / 3.0f) * (1.0f + (2.0f * g * g)))));
 }
 
 public func henyey_greenstein_draine_phase(f32 g, f32 cos_theta) -> f32 {
@@ -67,7 +64,7 @@ public func henyey_greenstein_draine_phase(f32 g, f32 cos_theta) -> f32 {
     const f32 alpha = exp(3.62489 - (8.29288 / (g + 5.52825)));
     const f32 w_d = exp(-(0.599085 / (g - 0.641583)) - 0.665888);
 
-    return lerp(draine_phase(0, g_hg, cos_theta), draine_phase(alpha, g_d, cos_theta), w_d);
+    return ((1.0f - w_d) * draine_phase(0, g_hg, cos_theta)) + (w_d * draine_phase(alpha, g_d, cos_theta));
 }
 
 /// GENERAL MATH

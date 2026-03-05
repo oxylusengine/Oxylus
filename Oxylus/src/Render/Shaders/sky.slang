@@ -12,7 +12,11 @@ public func from_unit_to_sub_uvs(f32x2 uv, f32x2 res) -> f32x2 {
     return (uv + 0.5 / res) * (res / (res + 1.0));
 }
 
-public func transmittance_params_to_lut_uv(f32 atmos_radius, f32 planet_radius, f32x2 p) -> f32x2 {
+public func transmittance_params_to_lut_uv(
+    f32x2 transmittance_lut_size,
+    f32 atmos_radius,
+    f32 planet_radius, f32x2 p
+) -> f32x2 {
     f32 h = com::safe_sqrt(
         atmos_radius * atmos_radius -
         planet_radius * planet_radius);
@@ -25,7 +29,7 @@ public func transmittance_params_to_lut_uv(f32 atmos_radius, f32 planet_radius, 
     f32 mu = (d - d_min) / (d_max - d_min);
     f32 r = rho / h;
 
-    return f32x2(mu, r);
+    return from_unit_to_sub_uvs(f32x2(mu, r), transmittance_lut_size);
 }
 
 public func multiscattering_params_to_lut_uv(in Atmosphere atmosphere, f32 altitude, f32 cos_theta) -> f32x2 {
@@ -40,29 +44,30 @@ public func sky_view_params_to_lut_uv(
     in Atmosphere atmosphere,
     bool intersect_planet,
     f32 altitude,
-    f32 view_zenith_cos_angle,
-    f32x2 light_on_plane
+    f32 view_zenith_angle,
+    f32 light_view_angle
 ) -> f32x2 {
-    f32 horizon = com::safe_sqrt(altitude * altitude - atmosphere.planet_radius * atmosphere.planet_radius);
-    f32 beta = acos(horizon / altitude);
-    f32 zenith_horizon_angle = PI - beta;
-    f32 view_zenith_angle = acos(view_zenith_cos_angle);
-
-    f32x2 uv = 0.0;
-    if (!intersect_planet) {
-        f32 coord = view_zenith_angle / zenith_horizon_angle;
-        coord = 1.0 - coord;
-        coord = com::safe_sqrt(coord);
-        coord = 1.0 - coord;
-        uv.y = coord * 0.5;
+    var uv: f32x2;
+    if (altitude < atmosphere.atmos_radius) {
+        let beta = asin(atmosphere.planet_radius / altitude);
+        let zenith_horizon_angle = PI - beta;
+        if (!intersect_planet) {
+            var coord = clamp(view_zenith_angle / zenith_horizon_angle, 0.0, 1.0);
+            coord = (1.0 - com::safe_sqrt(1.0 - coord)) * 0.5;
+            uv.y = coord;
+        } else {
+            var coord = clamp((view_zenith_angle - zenith_horizon_angle) / beta, 0.0, 1.0);
+            coord = (com::safe_sqrt(coord) + 1.0) * 0.5;
+            uv.y = coord;
+        }
     } else {
-        f32 coord = (view_zenith_angle - zenith_horizon_angle) / beta;
-        coord = com::safe_sqrt(coord);
-        uv.y = coord * 0.5 + 0.5;
+        let beta = asin(atmosphere.atmos_radius / altitude);
+        let zenith_horizon_angle = PI - beta;
+        var coord = clamp((view_zenith_angle - zenith_horizon_angle) / beta, 0.0, 1.0);
+        uv.y = com::safe_sqrt(coord);
     }
 
-    f32 theta = atan2(-light_on_plane.y, -light_on_plane.x);
-    uv.x = (theta + PI) / (2.0 * PI);
+    uv.x = com::safe_sqrt(light_view_angle / PI);
     return from_unit_to_sub_uvs(uv, f32x2(atmosphere.sky_view_lut_size.xy));
 }
 
@@ -70,35 +75,32 @@ public func uv_to_sky_view_lut_params(
     in Atmosphere atmosphere,
     f32x2 uv,
     f32 altitude
-) -> f32x3 {
+) -> f32x2 {
     uv = from_sub_uvs_to_unit(uv, f32x2(atmosphere.sky_view_lut_size.xy));
-    f32 horizon = com::safe_sqrt(altitude * altitude - atmosphere.planet_radius * atmosphere.planet_radius);
-    f32 beta = acos(horizon / altitude);
-    f32 zenith_horizon_angle = PI - beta;
+    var view_zenith_angle: f32;
+    var light_view_angle: f32;
 
-    f32 view_zenith_angle = 0.0;
-    if (uv.y < 0.5) {
-        f32 coord = uv.y * 2.0;
-        coord = 1.0 - coord;
-        coord *= coord;
-        coord = 1.0 - coord;
-        view_zenith_angle = zenith_horizon_angle * coord;
+    if (altitude < atmosphere.atmos_radius) {
+        let beta = asin(atmosphere.planet_radius / altitude);
+        let zenith_horizon_angle = PI - beta;
+        if (uv.y < 0.5) {
+            let y = 1.0 - 2.0 * uv.y;
+            let coord = 1.0 - y * y;
+            view_zenith_angle = zenith_horizon_angle * coord;
+        } else {
+            let y = 2.0 * uv.y - 1.0;
+            let coord = y * y;
+            view_zenith_angle = zenith_horizon_angle + beta * coord;
+        }
     } else {
-        f32 coord = uv.y * 2.0 - 1.0;
-        coord *= coord;
+        let beta = asin(atmosphere.atmos_radius / altitude);
+        let zenith_horizon_angle = PI - beta;
+        let coord = uv.y * uv.y;
         view_zenith_angle = zenith_horizon_angle + beta * coord;
     }
 
-    const f32 longitude_view_cos_angle = uv.x * TAU;
-    const f32 view_zenith_cos_angle = cos(view_zenith_angle);
-    const f32 view_zenith_sin_angle = com::safe_sqrt(1.0 - view_zenith_cos_angle * view_zenith_cos_angle) * (view_zenith_angle > 0.0 ? 1.0 : -1.0);
-    const f32 cos_longitude_view_cos_angle = cos(longitude_view_cos_angle);
-    const f32 sin_longitude_view_cos_angle = com::safe_sqrt(1.0 - cos_longitude_view_cos_angle * cos_longitude_view_cos_angle) * (longitude_view_cos_angle <= PI ? 1.0 : -1.0);
-    return f32x3(
-        view_zenith_sin_angle * cos_longitude_view_cos_angle,
-        view_zenith_cos_angle,
-        view_zenith_sin_angle * sin_longitude_view_cos_angle
-    );
+    light_view_angle = (uv.x * uv.x) * PI;
+    return f32x2(view_zenith_angle, light_view_angle);
 }
 
 public func move_to_top_atmosphere(inout f32x3 pos, f32x3 dir, f32 atmos_radius) -> bool {
@@ -116,36 +118,24 @@ public func move_to_top_atmosphere(inout f32x3 pos, f32x3 dir, f32 atmos_radius)
     return true;
 }
 
-public struct MediumScattering {
+public struct Medium {
     public f32x3 rayleigh_scattering;
-    public f32x3 rayleigh_extinction;
-
     public f32x3 mie_scattering;
-    public f32x3 mie_extinction;
-
-    public f32x3 ozone_absorption;
-    public f32x3 ozone_extinction;
-
-    public f32x3 scattering_sum;
-    public f32x3 extinction_sum;
+    public f32x3 extinction;
 
     [ForceInline]
     public __init(in Atmosphere atmosphere, f32 altitude) {
-        const f32 rayleigh_density  = exp(-altitude / atmosphere.rayleigh_density);
-        const f32 mie_density = exp(-altitude / atmosphere.mie_density);
-        const f32 ozone_density = max(0.0, 1.0 - abs(altitude - atmosphere.ozone_height) / atmosphere.ozone_thickness);
+        let mie_density = max(0.0, atmosphere.sample_density_profile(atmosphere.mie_density, altitude));
+        let rayleigh_density = max(0.0, atmosphere.sample_density_profile(atmosphere.rayleigh_density, altitude));
+        let ozone_density = max(0.0, atmosphere.sample_density_profile(atmosphere.absorption_density, altitude));
+
+        let mie_extinction = atmosphere.mie_extinction * mie_density;
+        let rayleigh_extinction = atmosphere.rayleigh_scatter * rayleigh_density;
+        let ozone_extinction = atmosphere.absorption_extiction * ozone_density;
 
         this.rayleigh_scattering = atmosphere.rayleigh_scatter * rayleigh_density;
-        this.rayleigh_extinction = this.rayleigh_scattering;  // Rayleigh scattering doesn't have absorption behavior
-
         this.mie_scattering = atmosphere.mie_scatter * mie_density;
-        this.mie_extinction = atmosphere.mie_extinction * mie_density;  // Mie scattering doesn't have absorption behavior
-
-        this.ozone_absorption = atmosphere.ozone_absorption * ozone_density;
-        this.ozone_extinction = this.ozone_absorption;
-
-        this.scattering_sum = this.rayleigh_scattering + this.mie_scattering;
-        this.extinction_sum = this.rayleigh_extinction + this.mie_extinction + this.ozone_extinction;
+        this.extinction = mie_extinction + rayleigh_extinction + ozone_extinction;
     }
 };
 
@@ -159,7 +149,6 @@ public struct AtmosphereIntegrateInfo {
     public f32x3 eye_pos = {};
     public f32x3 eye_dir = {};
     public f32x3 sun_dir = {};
-    public f32 sun_intensity = 10.0;
     public f32 step_count = 32.0;
     public f32 t_max = -1.0;
     public constexpr bool eval_planet_luminance = false;
@@ -196,60 +185,61 @@ public func integrate_single_scattered_luminance(
         integration_length = info.t_max;
     }
 
-    f32 cos_theta = dot(info.sun_dir, info.eye_dir);
-    f32 rayleigh_phase = com::rayleigh_phase(cos_theta);
-    f32 mie_phase = com::henyey_greenstein_draine_phase(atmosphere.mie_asymmetry, cos_theta);
+    let cos_theta = dot(info.sun_dir, info.eye_dir);
+    let rayleigh_phase = com::rayleigh_phase(cos_theta);
+    let mie_phase = com::henyey_greenstein_draine_phase(atmosphere.mie_asymmetry, cos_theta);
 
     var step_length = integration_length / info.step_count;
-    var old_ray_shift = 0.0;
-    for (f32 step = 0.0; step < info.step_count; step += 1.0) {
-        var new_ray_shift = integration_length * (step + 0.3) / info.step_count;
-        step_length = new_ray_shift - old_ray_shift;
-        old_ray_shift = new_ray_shift;
+    var step = integration_length * info.eye_dir / info.step_count;
+    for (var i = 0.0; i < info.step_count; i += 1.0) {
+        let step_pos = info.eye_pos + (i + 0.5) * step;
+        let h = length(step_pos);
+        let altitude = h - atmosphere.planet_radius;
+        let medium_info = Medium(atmosphere, altitude);
+        let medium_scattering = medium_info.rayleigh_scattering + medium_info.mie_scattering;
+        let scattering_phase = medium_info.mie_scattering * mie_phase
+                             + medium_info.rayleigh_scattering * rayleigh_phase;
 
-        let step_pos = info.eye_pos + new_ray_shift * info.eye_dir;
-        f32 h = length(step_pos);
-        f32 altitude = h - atmosphere.planet_radius;
-        let medium_info = MediumScattering(atmosphere, altitude);
+        let up = normalize(step_pos);
+        let sun_theta = dot(info.sun_dir, up);
 
-        f32x3 up_vec = normalize(step_pos);
-        f32x3 up_vec_scaled = PLANET_RADIUS_OFFSET * up_vec;
-        f32 sun_theta = dot(info.sun_dir, up_vec);
+        let transmittance_uv = transmittance_params_to_lut_uv(
+            atmosphere.transmittance_lut_size.xy, atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
+        let sun_transmittance = transmittance_image.SampleLevel(lut_sampler, transmittance_uv, 0.0).rgb;
 
-        f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
-        f32x3 sun_transmittance = transmittance_image.SampleLevel(lut_sampler, transmittance_uv, 0.0).rgb;
-
-        f32x3 MS = 0.0;
+        var ms_contribution = f32x3(0.0);
         if (info.eval_multiscattering) {
-            f32x2 multiscatter_uv = multiscattering_params_to_lut_uv(atmosphere, altitude, sun_theta);
-            MS = multiscattering_image.SampleLevel(lut_sampler, multiscatter_uv, 0.0).rgb;
+            let multiscatter_uv = multiscattering_params_to_lut_uv(atmosphere, altitude, sun_theta);
+            let ms = multiscattering_image.SampleLevel(lut_sampler, multiscatter_uv, 0.0).rgb;
+            ms_contribution = ms * medium_scattering;
         }
 
-        f32x3 scattering_phase = medium_info.mie_scattering * mie_phase + medium_info.rayleigh_scattering * rayleigh_phase;;
-        f32 earth_shadow = com::ray_sphere_intersect_nearest(step_pos - up_vec_scaled, info.sun_dir, atmosphere.planet_radius).hasValue ? 0.0 : 1.0;
-        f32x3 sun_luminance = earth_shadow * sun_transmittance * scattering_phase + (MS * medium_info.scattering_sum);
-        f32x3 step_transmittance = exp(-step_length * medium_info.extinction_sum);
+        let earth_shadow = com::ray_sphere_intersect_nearest(
+            step_pos - PLANET_RADIUS_OFFSET * up, info.sun_dir, atmosphere.planet_radius).hasValue ? 0.0 : 1.0;
+        let sun_luminance = earth_shadow * sun_transmittance * scattering_phase + ms_contribution;
+        let step_transmittance = exp(-step_length * medium_info.extinction);
 
-        f32x3 integral = (sun_luminance - sun_luminance * step_transmittance) / medium_info.extinction_sum;
-        f32x3 ms_integral = (medium_info.scattering_sum - medium_info.scattering_sum * step_transmittance) / medium_info.extinction_sum;
+        let integral = (sun_luminance - sun_luminance * step_transmittance) / medium_info.extinction;
+        let ms_integral = (medium_scattering - medium_scattering * step_transmittance) / medium_info.extinction;
 
-        result.luminance += info.sun_intensity * (integral * result.transmittance);
+        result.luminance += integral * result.transmittance;
         result.multiscattering_as_1 += ms_integral * result.transmittance;
         result.transmittance *= step_transmittance;
     }
 
     // Accumulate light bouncing off planet's ground
     if (info.eval_planet_luminance && planet_intersection.hasValue && integration_length == planet_intersection.value) {
-        f32x3 planet_pos = info.eye_pos + integration_length * info.eye_dir;
-        f32 h = length(planet_pos);
-        f32x3 up_vec = planet_pos / h;
-        f32 sun_theta = dot(info.sun_dir, up_vec);
-        f32 NoL = saturate(dot(normalize(info.sun_dir), normalize(up_vec)));
+        let planet_pos = info.eye_pos + integration_length * info.eye_dir;
+        let h = length(planet_pos);
+        let up = normalize(planet_pos);
+        let sun_theta = dot(info.sun_dir, up);
+        let NoL = saturate(dot(normalize(info.sun_dir), up));
 
-        f32x2 transmittance_uv = transmittance_params_to_lut_uv(atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
-        f32x3 sun_transmittance = transmittance_image.SampleLevel(lut_sampler, transmittance_uv, 0.0).rgb;
+        let transmittance_uv = transmittance_params_to_lut_uv(
+            atmosphere.transmittance_lut_size.xy, atmosphere.atmos_radius, atmosphere.planet_radius, f32x2(h, sun_theta));
+        let sun_transmittance = transmittance_image.SampleLevel(lut_sampler, transmittance_uv, 0.0).rgb;
 
-        result.luminance += info.sun_intensity * (sun_transmittance * result.transmittance * NoL * atmosphere.terrain_albedo / PI);
+        result.luminance += sun_transmittance * result.transmittance * NoL * atmosphere.terrain_albedo / PI;
     }
 
     return result;

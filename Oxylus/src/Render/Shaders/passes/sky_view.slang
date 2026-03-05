@@ -24,7 +24,14 @@ func cs_main(
     f32x3 eye_pos = params.atmosphere.eye_pos;
 
     f32 h = length(eye_pos);
-    const f32x3 eye_dir = uv_to_sky_view_lut_params(params.atmosphere, uv, h);
+    let sky_params = uv_to_sky_view_lut_params(params.atmosphere, uv, h);
+    let view_zenith_angle = sky_params.x;
+    let light_view_angle = sky_params.y;
+    let eye_dir = f32x3(
+        cos(light_view_angle) * sin(view_zenith_angle),
+        cos(view_zenith_angle),
+        sin(light_view_angle) * sin(view_zenith_angle),
+    );
 
     if (!move_to_top_atmosphere(eye_pos, eye_dir, params.atmosphere.atmos_radius)) {
         params.sky_view_lut.Store(thread_id.xy, 0.0);
@@ -39,8 +46,9 @@ func cs_main(
     info.eye_pos = eye_pos;
     info.eye_dir = eye_dir;
     info.sun_dir = sun_dir;
-    info.sun_intensity = params.directional_light.intensity;
-    info.step_count = 48;
+    info.eval_multiscattering = true;
+    info.eval_planet_luminance = true;
+    info.step_count = 64;
 
     let result = integrate_single_scattered_luminance(info, params.atmosphere, params.sampler, params.sky_transmittance_lut, params.sky_multiscattering_lut);
     let inv_luminance = 1.0 / max(result.luminance, float3(1.0 / 1048576.0));

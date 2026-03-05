@@ -55,30 +55,34 @@ public f32 specular_occlusion_ambient(f32x3 ambient_light, f32 roughness, f32 me
     return specular_occlusion;
 }
 
-public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 roughness, f32 metallic, f32x3 ambient_light_occluded) -> f32x3 {
-    f32x3 H = normalize(V + L);
-    f32 NoV = abs(dot(N, V)) + 1e-5;
-    f32 NoL = max(dot(N, L), 0.0);
-    f32 NoH = max(dot(N, H), 0.0);
-    f32 LoH = max(dot(L, H), 0.0);
+public float specular_occlusion_lagarde(float NoV, float visibility, float roughness) {
+    // Lagarde and de Rousiers 2014, "Moving Frostbite to PBR"
+    return saturate(pow(NoV + visibility, exp2(-16.0 * roughness - 1.0)) - 1.0 + visibility);
+}
 
-    const f32x3 dielectric_f0 = f32x3(0.04);
-    f32x3 F0 = lerp(dielectric_f0, albedo, metallic);
+public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 roughness, f32 metallic, f32 specular_occlusion) -> f32x3 {
+    let H = normalize(V + L);
+    let NoV = abs(dot(N, V)) + 1e-5;
+    let NoL = max(dot(N, L), 0.0);
+    let NoH = max(dot(N, H), 0.0);
+    let LoH = max(dot(L, H), 0.0);
+
+    let dielectric_f0 = f32x3(0.04);
+    let F0 = lerp(dielectric_f0, albedo, metallic);
 
     // Microfacet
-    f32 roughness2 = roughness * roughness;
-    f32 D = D_GGX(NoH, roughness2);
-    f32x3 G2 = Smith_G2_Height_Correlated_GGX_Lagarde(NoV, NoL, roughness2);
-    f32x3 F = F_Schlick(LoH, F0);
+    let roughness2 = roughness * roughness;
+    let D = D_GGX(NoH, roughness2);
+    let G2 = Smith_G2_Height_Correlated_GGX_Lagarde(NoV, NoL, roughness2);
+    let F = F_Schlick(LoH, F0);
 
-    f32x3 comp = GGX_energy_compensation(NoV, roughness2, F0);
+    let comp = GGX_energy_compensation(NoV, roughness, F);
 
     // Reflectance (Cook-Torrance)
-    // V already divided by denominator
-    f32 specular_occlusion = specular_occlusion_ambient(ambient_light_occluded, roughness, metallic);
-    f32x3 specular = F * D * G2 * specular_occlusion;
+    let specular = F * D * G2 * comp * specular_occlusion;
+
     // Diffuse
-    f32x3 diffuse = (1.0 - metallic) * albedo * Fd_Lambert();
-    // Frensel combination
-    return diffuse + specular * comp;
+    let diffuse = (1.0 - F) * (1.0 - metallic) * albedo * Fd_Lambert();
+
+    return diffuse + specular;
 }

@@ -527,8 +527,6 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
     }));
   }
 
-  job_man.wait();
-
   auto materials_result = register_gltf_materials(*this, *meta_json->doc, asset_path);
   if (!materials_result.has_value()) {
     return false;
@@ -966,6 +964,8 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
       model.gpu_mesh_buffers.push_back(std::move(gpu_mesh_buffer));
     }
   }
+
+  job_man.wait();
 
   {
     // auto write_lock = std::unique_lock(self.models_mutex);

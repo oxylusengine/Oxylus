@@ -62,7 +62,7 @@ f32x3 point_light_contribution(
     f32x3 albedo_color,
     f32 roughness,
     f32 metallic,
-    f32x3 ambient_light,
+    f32 specular_occlusion,
     PointLight light
 ) {
     f32x3 light_vector = light.position - world_position;
@@ -79,7 +79,7 @@ f32x3 point_light_contribution(
         return f32x3(0.0, 0.0, 0.0);
     }
 
-    f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic, ambient_light);
+    f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic, specular_occlusion);
     f32x3 radiance = light.color * attenuation * light.intensity;
 
     return brdf * radiance * NdotL;
@@ -103,7 +103,7 @@ f32x3 calculate_spot_light_contribution(
     f32x3 albedo_color,
     f32 roughness,
     f32 metallic,
-    f32x3 ambient_light,
+    f32 specular_occlusion,
     SpotLight light
 ) {
     f32x3 light_vector = light.position - world_position;
@@ -123,7 +123,7 @@ f32x3 calculate_spot_light_contribution(
         return f32x3(0.0, 0.0, 0.0);
     }
 
-    f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic, ambient_light);
+    f32x3 brdf = BRDF(V, N, L, albedo_color, roughness, metallic, specular_occlusion);
     f32x3 radiance = light.color * total_attenuation * light.intensity;
 
     return brdf * radiance * NdotL;
@@ -168,20 +168,22 @@ func fs_main(
     let R = reflect(-V, N);
 
     var indirect_illuminance = f32x3(0.0);
-    var sun_illuminance = f32x3(1.0);
+    var sun_illuminance = has_directional_light ? params.lights.directional_light.color * Li : f32x3(1.0);
     if (has_atmosphere) {
         let atmosphere = params.lights.atmosphere;
         let planet_radius = atmosphere.planet_radius;
         let atmos_radius = atmosphere.atmos_radius;
 
-        var eye_altitude = max(world_position.y, 0.0) * CAMERA_SCALE_UNIT;
+        var eye_altitude = max(params.camera.position.y, 0.0) * CAMERA_SCALE_UNIT;
         eye_altitude += planet_radius + PLANET_RADIUS_OFFSET;
+        let eye_pos = f32x3(0.0, eye_altitude, 0.0);
 
         let up = f32x3(0.0, 1.0, 0.0);
         let sun_cos_theta = dot(L, up);
         let horizon_darkening = smoothstep(-0.1, 0.3, sun_cos_theta);
 
         let transmittance_uv = transmittance_params_to_lut_uv(
+            atmosphere.transmittance_lut_size.xy,
             atmos_radius,
             planet_radius,
             f32x2(eye_altitude, sun_cos_theta));
@@ -189,21 +191,19 @@ func fs_main(
         sun_illuminance = sun_transmittance * Li * horizon_darkening;
 
         if (depth == 0.0) {
-            let eye_pos = params.lights.atmosphere.eye_pos;
-            let h = eye_pos.y;
-            let right = normalize(cross(up, -V));
-            let forward = normalize(cross(right, up));
-            let light_on_plane = normalize(f32x2(dot(L, forward), dot(L, right)));
-            let view_zenith_cos_angle = dot(-V, up);
+            let L_flat = normalize(f32x3(L.x, 0.0, L.z));
+            let V_flat = normalize(f32x3(V.x, 0.0, V.z));
+            let light_view_angle = acos(clamp(dot(L_flat, -V_flat), -1.0, 1.0));
+            let view_zenith_angle = acos(dot(-V, f32x3(0.0, 1.0, 0.0)));
             let planet_intersection = com::ray_sphere_intersect_nearest(eye_pos, -V, planet_radius);
             let sky_view_uv = sky_view_params_to_lut_uv(
-                *params.lights.atmosphere, planet_intersection.hasValue, h, view_zenith_cos_angle, light_on_plane);
+                *params.lights.atmosphere, planet_intersection.hasValue, eye_altitude, view_zenith_angle, light_view_angle);
             var sky_view = params.sky_view_lut.SampleLevel(params.linear_clamp_sampler, sky_view_uv, 0.0);
             if (!planet_intersection.hasValue) {
                 sky_view.rgb += draw_sun(-V, L, 1.0) * Li * sun_transmittance;
             }
 
-            return f32x4(sky_view.rgb * sky_view.a, 1.0);
+            return f32x4(sky_view.rgb * sky_view.a * Li, 1.0);
         }
 
         let aerial_perspective = sample_aerial_perspective(
@@ -217,7 +217,10 @@ func fs_main(
     }
 
     let base_ambient_color = has_directional_light ? params.lights.directional_light.color : f32x3(0.02);
-    let ambient_contribution = base_ambient_color * albedo_color * sun_illuminance;
+    let ambient_contribution = base_ambient_color * albedo_color * max(sun_illuminance, f32x3(0.02));
+
+    let NoV = abs(dot(N, V)) + 1e-5;
+    let specular_occlusion = specular_occlusion_lagarde(NoV, occlusion, roughness);
 
     var total_lighting = f32x3(0.0, 0.0, 0.0);
     for(int point_light_idx = 0; point_light_idx < params.lights.point_light_count; point_light_idx++) {
@@ -229,7 +232,7 @@ func fs_main(
             albedo_color,
             roughness,
             metallic,
-            base_ambient_color,
+            specular_occlusion,
             light
         );
 
@@ -245,7 +248,7 @@ func fs_main(
             albedo_color,
             roughness,
             metallic,
-            base_ambient_color,
+            specular_occlusion,
             light
         );
 
@@ -279,7 +282,7 @@ func fs_main(
                 L);
         }
 
-        let brdf = BRDF(V, N, L, albedo_color, roughness, metallic, base_ambient_color);
+        let brdf = BRDF(V, N, L, albedo_color, roughness, metallic, specular_occlusion);
         material_surface_color = brdf * horizon * sun_illuminance * NoL * directional_shadow * contact_shadow;
     }
 

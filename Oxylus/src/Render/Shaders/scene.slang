@@ -141,20 +141,32 @@ public struct Camera {
   public f32 acceptable_lod_error;
 };
 
+
+#ifndef ATMOS_PROFILE_LAYER_COUNT
+#define ATMOS_PROFILE_LAYER_COUNT 2
+#endif
+
+public struct AtmosDensityProfileLayer {
+    f32 width;
+    f32 exp_term;
+    f32 exp_scale;
+    f32 linear_term;
+    f32 constant_term;
+};
+
 public struct Atmosphere {
     public f32x3 eye_pos;
 
     public f32x3 rayleigh_scatter;
-    public f32   rayleigh_density;
+    public AtmosDensityProfileLayer rayleigh_density[ATMOS_PROFILE_LAYER_COUNT];
 
     public f32x3 mie_scatter;
-    public f32   mie_density;
     public f32   mie_extinction;
     public f32   mie_asymmetry;
+    public AtmosDensityProfileLayer mie_density[ATMOS_PROFILE_LAYER_COUNT];
 
-    public f32x3 ozone_absorption;
-    public f32   ozone_height;
-    public f32   ozone_thickness;
+    public f32x3 absorption_extiction;
+    public AtmosDensityProfileLayer absorption_density[ATMOS_PROFILE_LAYER_COUNT];
 
     public f32x3 terrain_albedo;
     public f32   planet_radius;
@@ -166,6 +178,30 @@ public struct Atmosphere {
     public i32x3 sky_view_lut_size;
     public i32x3 multiscattering_lut_size;
     public i32x3 aerial_perspective_lut_size;
+
+    public func sample_density_profile(
+        in AtmosDensityProfileLayer layer[ATMOS_PROFILE_LAYER_COUNT],
+        f32 altitude
+    ) -> f32 {
+        var layer_index = -1;
+        var current_layer_end = 0.0;
+        for (var i = 0; i < ATMOS_PROFILE_LAYER_COUNT; i++) {
+            current_layer_end = layer[i].width;
+            if (altitude < current_layer_end) {
+                layer_index = i;
+                break;
+            }
+        }
+
+        if (layer_index == -1) {
+            return 0.0;
+        }
+
+        return layer[layer_index].exp_term * exp(layer[layer_index].exp_scale * altitude)
+             + layer[layer_index].linear_term * altitude
+             + layer[layer_index].constant_term;
+    }
+
 };
 
 public enum SceneFlags : u32 {

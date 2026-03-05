@@ -135,22 +135,32 @@ constexpr static f32 CAMERA_SCALE_UNIT = 0.01f;
 constexpr static f32 INV_CAMERA_SCALE_UNIT = 1.0f / CAMERA_SCALE_UNIT;
 constexpr static f32 PLANET_RADIUS_OFFSET = 0.001f;
 
+struct AtmosDensityProfileLayer {
+  f32 width;
+  f32 exp_term;
+  f32 exp_scale;
+  f32 linear_term;
+  f32 constant_term;
+};
+
 struct Atmosphere {
   alignas(4) glm::vec3 eye_position = {}; // this is camera pos but its always above planet_radius
 
-  alignas(4) glm::vec3 rayleigh_scatter = {0.005802f, 0.013558f, 0.033100f};
-  alignas(4) f32 rayleigh_density = 8.0f;
+  alignas(4) glm::vec3 rayleigh_scatter = {0.006604931f, 0.012344918f, 0.039412623f};
+  alignas(4) AtmosDensityProfileLayer rayleigh_density_1 = {23.1f, 2.0f, -0.325f, 0.0f, 0.166};
+  alignas(4) AtmosDensityProfileLayer rayleigh_density_2 = {100.0f, 0.0f, -0.085f, 0.0f, 0.021f};
 
-  alignas(4) glm::vec3 mie_scatter = {0.003996f, 0.003996f, 0.003996f};
-  alignas(4) f32 mie_density = 1.2f;
-  alignas(4) f32 mie_extinction = 0.004440f;
+  alignas(4) glm::vec3 mie_scatter = {0.003996000159531832f, 0.003996000159531832f, 0.003996000159531832f};
+  alignas(4) f32 mie_extinction = 0.00443999981507659f;
   alignas(4) f32 mie_asymmetry = 3.6f;
+  alignas(4) AtmosDensityProfileLayer mie_density_1 = {11.0f, 1.19f, -0.530f, 0.0f, 0.266f};
+  alignas(4) AtmosDensityProfileLayer mie_density_2 = {74.7f, 0.730f, -0.090f, 0.0f, 0.0f};
 
-  alignas(4) glm::vec3 ozone_absorption = {0.000650f, 0.001881f, 0.000085f};
-  alignas(4) f32 ozone_height = 25.0f;
-  alignas(4) f32 ozone_thickness = 15.0f;
+  alignas(4) glm::vec3 absorption_extiction = {0.00129072f, 0.00254036f, 0.0f};
+  alignas(4) AtmosDensityProfileLayer absorption_density_1 = {52.9f, 0.00182376393f, 0.122f, 0.0f, 0.0f};
+  alignas(4) AtmosDensityProfileLayer absorption_density_2 = {52.2f, 20.6245170027f, -0.06666666666f, 0.0f, 0.0f};
 
-  alignas(4) glm::vec3 terrain_albedo = {0.3f, 0.3f, 0.3f};
+  alignas(4) glm::vec3 terrain_albedo = {0.03f, 0.03f, 0.03f};
   alignas(4) f32 planet_radius = 6360.0f;
   alignas(4) f32 atmos_radius = 6460.0f;
   alignas(4) f32 aerial_perspective_start_km = 8.0f;

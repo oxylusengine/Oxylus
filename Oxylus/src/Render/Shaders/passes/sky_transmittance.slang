@@ -38,8 +38,8 @@ func cs_main(
     for (f32 i = 0.0; i < STEP_COUNT; i += 1.0) {
         ray_pos += sun_dir * distance_per_step;
         let ray_altitude = length(ray_pos) - params.atmosphere.planet_radius;
-        const let medium = MediumScattering(params.atmosphere, ray_altitude);
-        optical_depth += medium.extinction_sum * distance_per_step;
+        const let medium = Medium(params.atmosphere, ray_altitude);
+        optical_depth += medium.extinction * distance_per_step;
     }
 
     params.sky_transmittance_lut.Store(thread_id.xy, f32x4(exp(-optical_depth), 1.0));

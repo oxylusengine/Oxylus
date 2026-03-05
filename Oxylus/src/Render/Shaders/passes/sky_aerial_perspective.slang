@@ -69,7 +69,6 @@ func cs_main(
     info.eye_pos = eye_pos;
     info.eye_dir = world_dir;
     info.sun_dir = normalize(params.directional_light.direction);
-    info.sun_intensity = params.directional_light.intensity;
     info.eval_planet_luminance = false;
     info.step_count = max(1.0, (f32(thread_id.z) + 1.0) * 2.0);
     info.t_max = t_max_max;

@@ -262,14 +262,10 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   bind_component<AtmosphereComponent>(world, state, core_table, "AtmosphereComponent")
     .member("rayleigh_scattering", &AtmosphereComponent::rayleigh_scattering)
-    .member("rayleigh_density", &AtmosphereComponent::rayleigh_density)
     .member("mie_scattering", &AtmosphereComponent::mie_scattering)
-    .member("mie_density", &AtmosphereComponent::mie_density)
     .member("mie_extinction", &AtmosphereComponent::mie_extinction)
     .member("mie_asymmetry", &AtmosphereComponent::mie_asymmetry)
-    .member("ozone_absorption", &AtmosphereComponent::ozone_absorption)
-    .member("ozone_height", &AtmosphereComponent::ozone_height)
-    .member("ozone_thickness", &AtmosphereComponent::ozone_thickness)
+    .member("absorption_extiction", &AtmosphereComponent::absorption_extiction)
     .member("aerial_perspective_start_km", &AtmosphereComponent::aerial_perspective_start_km)
     .member("aerial_perspective_exposure", &AtmosphereComponent::aerial_perspective_exposure)
     .finalize();

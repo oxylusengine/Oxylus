@@ -1103,7 +1103,7 @@ auto RendererInstance::render(
   }
 
   if (debugging) {
-    return self.apply_debug_view(debug_context, dst_attachment->extent);
+    return self.apply_debug_view(debug_context, dst_extent);
   }
 
   return dst_attachment;
@@ -1246,14 +1246,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
 
         self.atmosphere.rayleigh_scatter = atmos_info->rayleigh_scattering * 1e-3f;
-        self.atmosphere.rayleigh_density = atmos_info->rayleigh_density;
         self.atmosphere.mie_scatter = atmos_info->mie_scattering * 1e-3f;
-        self.atmosphere.mie_density = atmos_info->mie_density;
         self.atmosphere.mie_extinction = atmos_info->mie_extinction * 1e-3f;
         self.atmosphere.mie_asymmetry = atmos_info->mie_asymmetry;
-        self.atmosphere.ozone_absorption = atmos_info->ozone_absorption * 1e-3f;
-        self.atmosphere.ozone_height = atmos_info->ozone_height;
-        self.atmosphere.ozone_thickness = atmos_info->ozone_thickness;
+        self.atmosphere.absorption_extiction = atmos_info->absorption_extiction * 1e-3f;
         self.atmosphere.aerial_perspective_start_km = atmos_info->aerial_perspective_start_km;
         self.atmosphere.aerial_perspective_exposure = atmos_info->aerial_perspective_exposure;
         self.atmosphere.sky_view_lut_size = self.sky_view_lut_extent;

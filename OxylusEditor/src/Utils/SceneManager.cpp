@@ -135,7 +135,7 @@ auto SceneManager::load_default_scene(this SceneManager& self, SceneID scene_id)
 
   const auto sun = editor_scene->scene->create_entity("sun", true);
   sun.set<TransformComponent>({
-    .rotation = glm::quat(glm::vec3(glm::radians(45.f), glm::radians(90.f), 0.f)),
+    .rotation = glm::quat(glm::vec3(glm::radians(35.0f), glm::radians(90.0f), 0.f)),
   });
   sun.set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 10.f})
     .add<AtmosphereComponent>();
