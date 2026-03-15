@@ -4,7 +4,6 @@
 
 #include "Core/App.hpp"
 #include "Utils/CVars.hpp"
-#include "Utils/StringUtils.hpp"
 
 namespace ox {
 static ImVec4 get_color(const loguru::Verbosity verb) {
