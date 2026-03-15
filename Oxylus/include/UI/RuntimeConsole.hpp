@@ -27,6 +27,20 @@ public:
           return true;
         if (str_value == "false")
           return false;
+      } else if constexpr (std::is_floating_point_v<T>) {
+        // std::from_chars for floats is unavailable on Apple libc++ < LLVM 14
+        std::size_t pos{};
+        T value{};
+        if constexpr (std::is_same_v<T, float>)
+          value = std::stof(str_value, &pos);
+        else if constexpr (std::is_same_v<T, double>)
+          value = std::stod(str_value, &pos);
+        else
+          value = static_cast<T>(std::stold(str_value, &pos));
+
+        if (pos == str_value.size())
+          return value;
+        return std::nullopt;
       }
 
       T value{};
