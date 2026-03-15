@@ -21,58 +21,64 @@ func cs_main(
     uniform u32 mesh_instances_count,
 ) -> void {
     let mesh_instance_index = thread_id.x;
-    if (mesh_instance_index >= mesh_instances_count) {
-        return;
-    }
 
-    let mesh_instance = mesh_instances[mesh_instance_index];
-    let mesh = meshes[mesh_instance.mesh_index];
-    let transform = transforms[mesh_instance.transform_index];
-    let mvp = mul(camera.projection_view, transform.world);
+    var meshlet_count = 0u;
+    var lod_index = 0u;
 
-    if (!test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
-        return;
-    }
+    if (mesh_instance_index < mesh_instances_count) {
+        let mesh_instance = mesh_instances[mesh_instance_index];
+        let mesh = meshes[mesh_instance.mesh_index];
+        let transform = transforms[mesh_instance.transform_index];
+        let mvp = mul(camera.projection_view, transform.world);
 
-    let aabb_center = mul(transform.world, f32x4(mesh.bounds.aabb_center, 1.0)).xyz;
-    let aabb_extent = abs(mul(transform.world, f32x4(mesh.bounds.aabb_extent, 0.0)).xyz);
-    var lod_index = 0;
+        if (test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
 #if 1
-    // Credits:
-    // - https://github.com/Sunset-Flock/Timberdoodle/blob/786f141e261dff4756e7f1a67dd7f7a5e1277956/src/scene/mesh_lod.hpp#L45
-    let aabb_rough_extent = max(aabb_extent.x, max(aabb_extent.y, aabb_extent.z));
-    let aabb_rough_camera_distance = max(length(aabb_center - camera.position.xyz) - 0.5 * aabb_rough_extent, 0.0);
+            let aabb_center = mul(transform.world, f32x4(mesh.bounds.aabb_center, 1.0)).xyz;
+            let aabb_extent = abs(mul(transform.world, f32x4(mesh.bounds.aabb_extent, 0.0)).xyz);
+            // Credits:
+            // - https://github.com/Sunset-Flock/Timberdoodle/blob/786f141e261dff4756e7f1a67dd7f7a5e1277956/src/scene/mesh_lod.hpp#L45
+            let aabb_rough_extent = max(aabb_extent.x, max(aabb_extent.y, aabb_extent.z));
+            let aabb_rough_camera_distance = max(length(aabb_center - camera.position.xyz) - 0.5 * aabb_rough_extent, 0.0);
 
-    let fov90_distance_to_screen_ratio = 2.0f;
-    let pixel_size_at_1m = fov90_distance_to_screen_ratio / max(camera.resolution.x, camera.resolution.y);
-    let aabb_size_at_1m = (aabb_rough_extent / aabb_rough_camera_distance);
-    let rough_aabb_pixel_size = aabb_size_at_1m / pixel_size_at_1m;
+            let fov90_distance_to_screen_ratio = 2.0f;
+            let pixel_size_at_1m = fov90_distance_to_screen_ratio / max(camera.resolution.x, camera.resolution.y);
+            let aabb_size_at_1m = (aabb_rough_extent / aabb_rough_camera_distance);
+            let rough_aabb_pixel_size = aabb_size_at_1m / pixel_size_at_1m;
 
-    for (var i = 1; i < mesh.lod_count; i++) {
-        let mesh_lod = mesh.lods[i];
-        let rough_pixel_error = rough_aabb_pixel_size * mesh_lod.error;
-        if (rough_pixel_error < camera.acceptable_lod_error) {
-            lod_index = i;
-        } else {
-            break;
+            for (var i = 1; i < mesh.lod_count; i++) {
+                let mesh_lod = mesh.lods[i];
+                let rough_pixel_error = rough_aabb_pixel_size * mesh_lod.error;
+                if (rough_pixel_error < camera.acceptable_lod_error) {
+                    lod_index = i;
+                } else {
+                    break;
+                }
+            }
+#endif
+            meshlet_count = mesh.lods[lod_index].meshlet_count;
         }
     }
-#endif
 
-    mesh_instances[mesh_instance_index].lod_index = lod_index;
-    let mesh_lod = mesh.lods[lod_index];
-    let meshlet_count = mesh_lod.meshlet_count;
-    var base_meshlet_instance_offset = __atomic_add(
-        visibility[0].total_visible_meshlet_instances, meshlet_count, MemoryOrder::Relaxed);
-    for (u32 i = 0; i < meshlet_count; i++) {
-        let offset = base_meshlet_instance_offset + i;
-        meshlet_instances[offset].mesh_instance_index = mesh_instance_index;
-        meshlet_instances[offset].meshlet_index = i;
+    let lane_meshlet_offset = WavePrefixSum(meshlet_count);
+    let total_meshlet_count = WaveActiveSum(meshlet_count);
+
+    var base = 0u;
+    if (WaveIsFirstLane()) {
+        base = __atomic_add(visibility[0].total_visible_meshlet_instances, total_meshlet_count, MemoryOrder::Relaxed);
+        let new_total = base + total_meshlet_count;
+        let needed_groups = (new_total + CULLING_MESHLET_COUNT - 1u) / CULLING_MESHLET_COUNT;
+        __atomic_max(cull_meshlets_cmd[0].x, needed_groups, MemoryOrder::Relaxed);
     }
-}
+    base = WaveReadLaneFirst(base);
 
-[[shader("compute")]]
-[[numthreads(1, 1, 1)]]
-func generate_commands_cs_main() -> void {
-    cull_meshlets_cmd[0].x = (visibility[0].total_visible_meshlet_instances + (CULLING_MESHLET_COUNT - 1)) / CULLING_MESHLET_COUNT;
+    if (meshlet_count > 0u) {
+        mesh_instances[mesh_instance_index].lod_index = lod_index;
+
+        let base_offset = base + lane_meshlet_offset;
+        for (u32 i = 0u; i < meshlet_count; i++) {
+            let offset = base_offset + i;
+            meshlet_instances[offset].mesh_instance_index = mesh_instance_index;
+            meshlet_instances[offset].meshlet_index = i;
+        }
+    }
 }

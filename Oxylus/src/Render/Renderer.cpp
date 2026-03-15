@@ -73,9 +73,6 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
       // --- VISBUFFER ---
       {.path = "passes/cull_meshes.slang", .module_name = "vis_cull_meshes", .entry_points = {"cs_main"}},
-      {.path = "passes/cull_meshes.slang",
-       .module_name = "vis_generate_cull_commands",
-       .entry_points = {"generate_commands_cs_main"}},
       {.path = "passes/cull_meshlets.slang", .module_name = "vis_cull_meshlets", .entry_points = {"cs_main"}},
       {.path = "passes/cull_triangles.slang", .module_name = "vis_cull_triangles", .entry_points = {"cs_main"}},
       {.path = "passes/visbuffer_encode.slang",
@@ -92,9 +89,6 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
       {.path = "passes/shadowmap_cull_meshes.slang",
        .module_name = "shadowmap_cull_meshes",
        .entry_points = {"cs_main"}},
-      {.path = "passes/shadowmap_cull_meshes.slang",
-       .module_name = "shadowmap_generate_cull_commands",
-       .entry_points = {"generate_commands_cs_main"}},
       {.path = "passes/shadowmap_cull_meshlets.slang",
        .module_name = "shadowmap_cull_meshlets",
        .entry_points = {"cs_main"}},

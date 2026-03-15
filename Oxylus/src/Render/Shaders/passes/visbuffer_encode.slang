@@ -12,6 +12,7 @@ import visbuffer;
 [[vk::binding(4)]] StructuredBuffer<Transform> transforms;
 [[vk::binding(5)]] StructuredBuffer<Material> materials;
 [[vk::binding(6)]] StorageImage2D<u32, ImageFormat::R32UI> overdraw;
+[[vk::constant_id(1)]] const bool RENDER_OVERDRAW = false;
 
 struct VertexOutput {
     f32x4 position : SV_Position;
@@ -67,7 +68,9 @@ func fs_main(VertexOutput input) -> u32 {
     }
 #endif
 
-    __atomic_add(overdraw[u32x2(input.position.xy)], 1u, MemoryOrder::AcquireRelease);
+    if (RENDER_OVERDRAW) {
+        __atomic_add(overdraw[u32x2(input.position.xy)], 1u, MemoryOrder::AcquireRelease);
+    }
 
     let vis = VisBufferData(input.meshlet_instance_index, input.triangle_index);
     return vis.encode();
