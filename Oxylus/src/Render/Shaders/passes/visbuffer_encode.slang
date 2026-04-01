@@ -12,7 +12,7 @@ import visbuffer;
 [[vk::binding(4)]] StructuredBuffer<Transform> transforms;
 [[vk::binding(5)]] StructuredBuffer<Material> materials;
 [[vk::binding(6)]] StorageImage2D<u32, ImageFormat::R32UI> overdraw;
-[[vk::constant_id(1)]] const bool RENDER_OVERDRAW = false;
+[[vk::constant_id(0)]] const bool RENDER_OVERDRAW = false;
 
 struct VertexOutput {
     f32x4 position : SV_Position;
