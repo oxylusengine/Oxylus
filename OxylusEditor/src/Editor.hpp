@@ -83,8 +83,6 @@ public:
 
   auto get_context() -> EditorContext& { return editor_context; }
 
-  auto editor_shortcuts() -> void;
-
   auto get_selected_scene() -> Scene* {
     auto* sh_scene = get_panel<SceneHierarchyPanel>()->get_scene();
     if (sh_scene) {
