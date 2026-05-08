@@ -24,6 +24,7 @@ add_cxxflags(
   "-Wno-gnu-line-marker",
   "-Wno-gnu-anonymous-struct",
   "-Wno-gnu-zero-variadic-macro-arguments",
+  "-Wno-c2y-extensions",
   { tools = { "clang", "clangxx", "cl", "clang_cl", "clang-cl" } }
 )
 
@@ -42,4 +43,3 @@ end
 if has_config("tests") then
   includes("Oxylus/tests")
 end
-
