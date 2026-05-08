@@ -38,7 +38,7 @@ packages = {
     configs = {
       debug_allocations = false,
     },
-    debug = false,
+    debug = is_mode("debug"),
   },
   ["toml++ v3.4.0"] = {
     configs = {
