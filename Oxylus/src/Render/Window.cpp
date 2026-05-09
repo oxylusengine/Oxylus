@@ -32,7 +32,6 @@ struct Handle<Window>::Impl {
   SDL_Window* handle = nullptr;
   u32 monitor_id = {};
   std::array<SDL_Cursor*, static_cast<usize>(WindowCursor::Count)> cursors = {};
-  f32 display_content_scale = {};
   f32 window_content_scale = {};
   f32 refresh_rate = {};
 
@@ -85,19 +84,21 @@ auto Window::create(const WindowInfo& info) -> Window {
   impl->width = static_cast<u32>(new_width);
   impl->height = static_cast<u32>(new_height);
   impl->monitor_id = info.monitor;
-  impl->display_content_scale = display->content_scale;
   impl->refresh_rate = display->refresh_rate;
+  impl->window_content_scale = display->content_scale;
 
   const auto window_properties = SDL_CreateProperties();
   SDL_SetStringProperty(window_properties, SDL_PROP_WINDOW_CREATE_TITLE_STRING, info.title.c_str());
   SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_X_NUMBER, new_pos_x);
   SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_Y_NUMBER, new_pos_y);
-  SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, new_width);
-  SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, new_height);
-  SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, window_flags);
+  SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, new_width * display->content_scale);
+  SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, new_height * display->content_scale);
   if (info.flags & WindowFlag::HighPixelDensity) {
     SDL_SetBooleanProperty(window_properties, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
+    window_flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
   }
+  SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, window_flags);
+
   impl->handle = SDL_CreateWindowWithProperties(window_properties);
   SDL_DestroyProperties(window_properties);
 
@@ -145,12 +146,6 @@ auto Window::create(const WindowInfo& info) -> Window {
   i32 logical_height;
   SDL_GetWindowSize(impl->handle, &logical_width, &logical_height);
   SDL_StartTextInput(impl->handle);
-
-  f32 window_content_scale = SDL_GetWindowDisplayScale(impl->handle);
-  if (window_content_scale == 0) {
-    LOG_SDL_ERROR(SDL_GetWindowDisplayScale);
-  }
-  impl->window_content_scale = window_content_scale;
 
   impl->width = real_width;
   impl->height = real_height;
@@ -302,9 +297,23 @@ auto Window::poll(const WindowCallbacks& callbacks) const -> void {
       case SDL_EVENT_WINDOW_RESIZED: {
         impl->logical_width = e.window.data1;
         impl->logical_height = e.window.data2;
+        i32 pixel_w = {}, pixel_h = {};
+        SDL_GetWindowSizeInPixels(impl->handle, &pixel_w, &pixel_h);
+        impl->width = static_cast<u32>(pixel_w);
+        impl->height = static_cast<u32>(pixel_h);
 
         if (callbacks.on_resize) {
           callbacks.on_resize(callbacks.user_data, {e.window.data1, e.window.data2});
+        }
+      } break;
+      case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
+        impl->width = static_cast<u32>(e.window.data1);
+        impl->height = static_cast<u32>(e.window.data2);
+      } break;
+      case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED: {
+        const f32 new_scale = SDL_GetWindowDisplayScale(impl->handle);
+        if (new_scale > 0.0f) {
+          impl->window_content_scale = new_scale;
         }
       } break;
       case SDL_EVENT_WINDOW_RESTORED: {
@@ -513,12 +522,21 @@ auto Window::get_size_in_pixels() const -> glm::ivec2 {
   return {real_width, real_height};
 }
 
+auto Window::get_logical_size() const -> glm::ivec2 {
+  return {static_cast<i32>(impl->logical_width), static_cast<i32>(impl->logical_height)};
+}
 auto Window::get_logical_width() const -> u32 { return impl->logical_width; }
 auto Window::get_logical_height() const -> u32 { return impl->logical_height; }
 
+auto Window::get_real_size() const -> glm::ivec2 {
+  return {static_cast<i32>(impl->width), static_cast<i32>(impl->height)};
+}
+auto Window::get_real_width() const -> u32 { return impl->width; }
+auto Window::get_real_height() const -> u32 { return impl->height; }
+
 auto Window::get_handle() const -> void* { return impl->handle; }
 
-auto Window::get_display_content_scale() const -> f32 { return impl->display_content_scale; }
+auto Window::get_dpi_scale() const -> f32 { return impl->window_content_scale; }
 auto Window::get_window_content_scale() const -> f32 { return impl->window_content_scale; }
 
 auto Window::get_refresh_rate() const -> f32 { return impl->refresh_rate; }

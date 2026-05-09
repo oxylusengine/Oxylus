@@ -166,6 +166,7 @@ struct PreparedFrame {
 
 struct MainGeometryContext {
   bool late = false;
+  bool draw_overdraw = false;
 
   vuk::PersistentDescriptorSet* bindless_set = nullptr;
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
@@ -291,7 +292,9 @@ public:
   auto cull_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto draw_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto decode_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto cull_for_shadowmap(this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view) -> void;
+  auto cull_for_shadowmap(
+    this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, bool first
+  ) -> void;
   auto draw_for_shadowmap(
     this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, u32 cascade_index
   ) -> void;

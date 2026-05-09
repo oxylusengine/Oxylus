@@ -728,20 +728,19 @@ auto RendererInstance::render(
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0) {
     if (directional_shadows_enabled) {
-      auto directional_light_resolution = glm::vec2(directional_light_shadowmap_size, directional_light_shadowmap_size);
+      auto shadow_geometry_context = ShadowGeometryContext{};
       for (u32 cascade_index = 0; cascade_index < self.directional_light.cascade_count; cascade_index++) {
         auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
         auto& current_cascade = self.directional_light_cascades[cascade_index];
 
-        auto shadow_geometry_context = ShadowGeometryContext{
-          .shadowmap_attachment = std::move(current_cascade_attachment),
-        };
-        self.cull_for_shadowmap(shadow_geometry_context, current_cascade.projection_view);
+        shadow_geometry_context.shadowmap_attachment = std::move(current_cascade_attachment);
+        self.cull_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index == 0);
         self.draw_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index);
       }
     }
 
     auto main_geometry_context = MainGeometryContext{
+      .draw_overdraw = (std::to_underlying(debug_view) & std::to_underlying(GPU::DebugView::Overdraw)) == 1,
       .bindless_set = &bindless_set,
       .depth_attachment = std::move(depth_attachment),
       .hiz_attachment = std::move(hiz_attachment),
@@ -1103,7 +1102,7 @@ auto RendererInstance::render(
   }
 
   if (debugging) {
-    return self.apply_debug_view(debug_context, dst_attachment->extent);
+    return self.apply_debug_view(debug_context, dst_extent);
   }
 
   return dst_attachment;

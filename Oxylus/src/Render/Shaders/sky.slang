@@ -170,8 +170,8 @@ public func integrate_single_scattered_luminance(
     in AtmosphereIntegrateInfo info,
     in Atmosphere atmosphere,
     in Sampler lut_sampler,
-    in Image2D<f32x4> transmittance_image = {},
-    in Image2D<f32x4> multiscattering_image = {}
+    in Image2D<f32x4> transmittance_image,
+    in Image2D<f32x4> multiscattering_image
 ) -> AtmosphereLuminance {
     AtmosphereLuminance result = {};
 

@@ -197,7 +197,7 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
             .depth = 1,
           };
           auto size = vuk::compute_image_size(format, level_extent);
-          auto buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, size);
+          auto buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, size, 16);
 
           std::memcpy(buffer->mapped_ptr, ktx_data.data() + mip_data_offset, size);
           auto dst_mip = fut.mip(level);

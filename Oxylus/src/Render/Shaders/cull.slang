@@ -90,9 +90,9 @@ public func test_occlusion(
     in Image2D<f32> hiz_image,
     in Sampler hiz_sampler
 ) -> bool {
-    var width: u32;
-    var height: u32;
-    var hiz_levels = 0;
+    var width = 0u;
+    var height = 0u;
+    var hiz_levels = 0u;
     hiz_image.GetDimensions(0, width, height, hiz_levels);
     let hiz_size = f32x2(width, height);
 
@@ -103,7 +103,7 @@ public func test_occlusion(
 
     let size = max_texel - min_texel;
     let max_size = max(size.x, size.y);
-    var mip = max(floor(log2(max_size)), 0);
+    let mip = clamp(ceil(log2(f32(max_size))), 0.0, f32(hiz_levels - 1));
 
     let uv = ((f32x2(min_texel) + f32x2(max_texel)) * 0.5f) / hiz_size;
     let d = hiz_image.SampleLevel(hiz_sampler, uv, mip);

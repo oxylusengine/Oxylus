@@ -20,33 +20,41 @@ func cs_main(
     uniform u32 mesh_instances_count,
 ) -> void {
     let mesh_instance_index = thread_id.x;
-    if (mesh_instance_index >= mesh_instances_count) {
-        return;
+
+    var meshlet_count = 0u;
+    var lod_index = 0u;
+
+    if (mesh_instance_index < mesh_instances_count) {
+        let mesh_instance = mesh_instances[mesh_instance_index];
+        let mesh = meshes[mesh_instance.mesh_index];
+        let transform = transforms[mesh_instance.transform_index];
+        let mvp = mul(projection_view, transform.world);
+
+        if (test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
+            meshlet_count = mesh.lods[lod_index].meshlet_count;
+        }
     }
 
-    let mesh_instance = mesh_instances[mesh_instance_index];
-    let mesh = meshes[mesh_instance.mesh_index];
-    let transform = transforms[mesh_instance.transform_index];
-    let mvp = mul(projection_view, transform.world);
+    let lane_meshlet_offset = WavePrefixSum(meshlet_count);
+    let total_meshlet_count = WaveActiveSum(meshlet_count);
 
-    if (!test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
-        return;
+    var base = 0u;
+    if (WaveIsFirstLane()) {
+        base = __atomic_add(visibility[0], total_meshlet_count, MemoryOrder::Relaxed);
+        let new_total = base + total_meshlet_count;
+        let needed_groups = (new_total + CULLING_MESHLET_COUNT - 1u) / CULLING_MESHLET_COUNT;
+        __atomic_max(cull_meshlets_cmd[0].x, needed_groups, MemoryOrder::Relaxed);
     }
+    base = WaveReadLaneFirst(base);
 
-    let lod_index = 0; // TODO: VSM LODs
-    mesh_instances[mesh_instance_index].lod_index = lod_index;
-    let mesh_lod = mesh.lods[lod_index];
-    let meshlet_count = mesh_lod.meshlet_count;
-    var base_meshlet_instance_offset = __atomic_add(visibility[0], meshlet_count, MemoryOrder::Relaxed);
-    for (u32 i = 0; i < meshlet_count; i++) {
-        let offset = base_meshlet_instance_offset + i;
-        meshlet_instances[offset].mesh_instance_index = mesh_instance_index;
-        meshlet_instances[offset].meshlet_index = i;
+    if (meshlet_count > 0u) {
+        mesh_instances[mesh_instance_index].lod_index = lod_index;
+
+        let base_offset = base + lane_meshlet_offset;
+        for (u32 i = 0u; i < meshlet_count; i++) {
+            let offset = base_offset + i;
+            meshlet_instances[offset].mesh_instance_index = mesh_instance_index;
+            meshlet_instances[offset].meshlet_index = i;
+        }
     }
-}
-
-[[shader("compute")]]
-[[numthreads(1, 1, 1)]]
-func generate_commands_cs_main() -> void {
-    cull_meshlets_cmd[0].x = (visibility[0] + (CULLING_MESHLET_COUNT - 1)) / CULLING_MESHLET_COUNT;
 }

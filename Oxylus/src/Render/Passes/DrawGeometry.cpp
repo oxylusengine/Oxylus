@@ -10,7 +10,7 @@ auto RendererInstance::draw_for_visbuffer(this RendererInstance& self, MainGeome
 
   auto encode_pass = vuk::make_pass(
     stack.format("vis encode {}", context.late ? "late" : "early"),
-    [&descriptor_set = *context.bindless_set](
+    [&descriptor_set = *context.bindless_set, draw_overdraw = context.draw_overdraw](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eIndirectRead) triangle_indirect,
       VUK_BA(vuk::eIndexRead) index_buffer,
@@ -41,6 +41,7 @@ auto RendererInstance::draw_for_visbuffer(this RendererInstance& self, MainGeome
         .bind_buffer(0, 4, transforms)
         .bind_buffer(0, 5, materials)
         .bind_image(0, 6, overdraw)
+        .specialize_constants(0, draw_overdraw)
         .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
         .bind_persistent(1, descriptor_set)
         .draw_indexed_indirect(1, triangle_indirect);

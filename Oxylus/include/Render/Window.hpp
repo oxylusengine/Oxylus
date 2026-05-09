@@ -132,12 +132,16 @@ struct Window : Handle<Window> {
   auto get_surface(VkInstance instance) const -> VkSurfaceKHR;
 
   auto get_size_in_pixels() const -> glm::ivec2;
+  auto get_logical_size() const -> glm::ivec2;
   auto get_logical_width() const -> u32;
   auto get_logical_height() const -> u32;
+  auto get_real_size() const -> glm::ivec2;
+  auto get_real_width() const -> u32;
+  auto get_real_height() const -> u32;
 
   auto get_handle() const -> void*;
 
-  auto get_display_content_scale() const -> f32;
+  auto get_dpi_scale() const -> f32;
   auto get_window_content_scale() const -> f32;
 
   auto get_refresh_rate() const -> f32;
