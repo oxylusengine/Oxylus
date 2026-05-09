@@ -188,7 +188,7 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   auto swapchain_attachment = vk_context.new_frame();
   swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
 
-  imgui_renderer.begin_frame(timestep.get_seconds(), {window.get_logical_width(), window.get_logical_height()});
+  imgui_renderer.begin_frame(timestep.get_seconds(), window.get_logical_size(), window.get_real_size());
   ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
   ImGuizmo::BeginFrame();
 

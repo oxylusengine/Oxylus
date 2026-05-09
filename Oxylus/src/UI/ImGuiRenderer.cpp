@@ -71,9 +71,13 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   io.Fonts->TexDesiredFormat = ImTextureFormat_RGBA32;
 
   auto& window = App::get_window();
+  const float dpi_scale = window.get_dpi_scale();
   io.ConfigDpiScaleFonts = true;
-  io.ConfigDpiScaleViewports = true;
-  io.DisplayFramebufferScale = ImVec2(window.get_window_content_scale(), window.get_window_content_scale());
+  io.ConfigDpiScaleViewports = false;
+  io.DisplayFramebufferScale = ImVec2(dpi_scale, dpi_scale);
+  ImGuiStyle& style = ImGui::GetStyle();
+  style.ScaleAllSizes(dpi_scale);
+  style.FontScaleDpi = dpi_scale;
 
   auto& runtime = *App::get_vkcontext().runtime;
 
@@ -104,12 +108,16 @@ auto ImGuiRenderer::deinit() -> std::expected<void, std::string> {
   return {};
 }
 
-void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size) {
+void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size, glm::vec2 real_size) {
   ZoneScoped;
 
   auto& imgui = ImGui::GetIO();
   imgui.DeltaTime = static_cast<f32>(delta_time);
   imgui.DisplaySize = ImVec2(logical_size.x, logical_size.y);
+  imgui.DisplayFramebufferScale = ImVec2(
+    logical_size.x > 0 ? (real_size.x / logical_size.x) : 1.0f,
+    logical_size.y > 0 ? (real_size.y / logical_size.y) : 1.0f
+  );
 
   rendering_images.clear();
   acquired_images.clear();
