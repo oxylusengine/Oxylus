@@ -149,7 +149,7 @@ auto SlangSession::compile_shader(const SlangShaderInfo& info) -> option<std::ve
       return nullopt;
     }
 
-#if 1
+#if 0
     auto spv_message_cb =
       [&](spv_message_level_t level, const char* source, const spv_position_t& position, const char* message) {
         switch (level) {
@@ -297,7 +297,7 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
     {.name = slang::CompilerOptionName::Capability,
      .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvGroupNonUniformShuffle"}},
     {.name = slang::CompilerOptionName::Capability,
-     .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvImageGatherExtended"}}
+     .value = {.kind = slang::CompilerOptionValueKind::String, .stringValue0 = "spvImageGatherExtended"}},
   };
 
   std::vector<slang::PreprocessorMacroDesc> macros;
