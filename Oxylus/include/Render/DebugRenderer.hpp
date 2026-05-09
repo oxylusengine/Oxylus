@@ -6,6 +6,7 @@
 #include <glm/ext/quaternion_float.hpp>
 #include <vuk/Types.hpp>
 #include <vuk/runtime/CommandBuffer.hpp>
+#include <vuk/runtime/vk/Allocator.hpp>
 
 #include "Core/Types.hpp"
 #include "Physics/RayCast.hpp"

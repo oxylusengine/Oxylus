@@ -1,16 +1,16 @@
-local fmt_version = "12.0.0"
+local fmt_version = "12.1.0"
 local fmt_configs = { header_only = false, shared = false }
 
 packages = {
   ["stb 2024.06.01"] = {},
-  ["miniaudio 0.11.22"] = {},
+  ["miniaudio 0.11.24"] = {},
   ["fastgltf-ox v0.8.0"] = { system = false, debug = is_mode("debug") },
-  ["meshoptimizer v0.25"] = {},
-  ["libsdl3 3.4.0"] = { configs = { x11 = true, wayland = false } },
+  ["meshoptimizer v1.0.1"] = {},
+  ["libsdl3 3.4.4"] = { configs = { x11 = true, wayland = false } },
   ["ktx-ox v4.4.0"] = { system = false, debug = false },
   ["zstd v1.5.7"] = { system = false },
   ["shader-slang v2025.15.1"] = { configs = { shared = true }, system = false },
-  ["spirv-tools 1.4.309+0"] = { system = false },
+  ["spirv-tools 1.4.335+0"] = { system = false },
   ["enet-ox v2.6.5"] = {
     configs = {
       test = false,
@@ -18,14 +18,14 @@ packages = {
     },
   },
   ["imgui 42e91c315534a15133fb08fb8108cfdd515e0912"] = { configs = { wchar32 = true } },
-  ["glm 1.0.1"] = {
+  ["glm 1.0.3"] = {
     configs = {
       header_only = true,
       cxx_standard = "20",
     },
     system = false,
   },
-  ["flecs v4.1.4"] = {},
+  ["flecs v4.1.5"] = {},
   ["fmt " .. fmt_version] = { configs = fmt_configs, system = false },
   ["loguru v2.1.0"] = {
     configs = {
@@ -33,12 +33,12 @@ packages = {
     },
     system = false,
   },
-  ["vk-bootstrap v1.4.307"] = { system = false, debug = is_mode("debug") },
-  ["vuk 2025.09.14.2"] = {
+  ["vk-bootstrap v1.4.349"] = { system = false, debug = is_mode("debug") },
+  ["vuk 2026.05.03"] = {
     configs = {
       debug_allocations = false,
     },
-    debug = false,
+    debug = is_mode("debug"),
   },
   ["toml++ v3.4.0"] = {
     configs = {

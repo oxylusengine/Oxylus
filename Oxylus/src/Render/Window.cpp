@@ -42,7 +42,7 @@ struct Handle<Window>::Impl {
 auto Window::create(const WindowInfo& info) -> Window {
   ZoneScoped;
 
-  if (!SDL_Init(SDL_INIT_EVENTS | SDL_INIT_VIDEO)) {
+  if (!SDL_Init(SDL_INIT_EVENTS | SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     OX_LOG_ERROR("Failed to initialize SDL! {}", SDL_GetError());
     return Handle(nullptr);
   }
@@ -171,80 +171,121 @@ auto Window::destroy() const -> void {
   SDL_DestroyWindow(impl->handle);
 }
 
-auto Window::update(const Timestep& timestep) -> void {
+auto Window::update(const Timestep& timestep) const -> void {
+  auto& input = App::mod<Input>();
+  input.update();
+
   WindowCallbacks window_callbacks = {};
   window_callbacks.user_data = nullptr;
   window_callbacks.on_resize = [](void* user_data, const glm::uvec2 size) {
     auto& event_system = App::get_event_system();
-    auto emit_result = event_system.emit<WindowResizeEvent>(WindowResizeEvent{.width = size.x, .height = size.y});
+    std::ignore = event_system.emit<WindowResizeEvent>(WindowResizeEvent{.width = size.x, .height = size.y});
   };
   window_callbacks.on_close = [](void* user_data) {
     App::get()->should_stop();
   };
-  window_callbacks.on_mouse_pos = [](void* user_data, const glm::vec2 position, glm::vec2 relative) {
+
+  window_callbacks.on_key = [](
+                              void* user_data,
+                              const u32 key_code,
+                              const u32 scan_code,
+                              const u16 mods,
+                              const u32 instance_id,
+                              const bool down,
+                              const bool repeat
+                            ) {
+    if (App::has_mod<ImGuiRenderer>()) {
+      auto& imgui_renderer = App::mod<ImGuiRenderer>();
+      imgui_renderer.on_key(key_code, scan_code, mods, down);
+    }
+
+    auto& input_system = App::mod<Input>();
+    const auto ox_key_code = static_cast<KeyCode>(key_code);
+    const auto ox_mod = static_cast<ModCode>(mods);
+    input_system.set_mod(ox_mod);
+    if (down) {
+      input_system.set_key_pressed(ox_key_code, !repeat);
+      input_system.set_key_released(ox_key_code, false);
+      input_system.set_key_held(ox_key_code, true);
+    } else {
+      input_system.set_key_pressed(ox_key_code, false);
+      input_system.set_key_released(ox_key_code, true);
+      input_system.set_key_held(ox_key_code, false);
+    }
+  };
+  window_callbacks.on_text_input = [](void* user_data, const c8* text) {
+    if (App::has_mod<ImGuiRenderer>()) {
+      auto& imgui_renderer = App::mod<ImGuiRenderer>();
+      imgui_renderer.on_text_input(text);
+    }
+  };
+
+  window_callbacks.on_mouse_pos = [](void* user_data, u32 instance_id, const glm::vec2 position, glm::vec2 relative) {
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_pos(position);
     }
 
     auto& input_system = App::mod<Input>();
-    input_system.input_data.mouse_offset_x = input_system.input_data.mouse_pos.x - position.x;
-    input_system.input_data.mouse_offset_y = input_system.input_data.mouse_pos.y - position.y;
-    input_system.input_data.mouse_pos = position;
-    input_system.input_data.mouse_pos_rel = relative;
-    input_system.input_data.mouse_moved = true;
+    input_system.set_mouse_position(position);
+    input_system.set_mouse_position_rel(relative);
+    input_system.set_mouse_moved(true);
   };
-  window_callbacks.on_mouse_button = [](void* user_data, const u8 button, const bool down) {
+
+  window_callbacks.on_mouse_button = [](void* user_data, u32 instance_id, const u8 button, const bool down) {
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_button(button, down);
     }
 
     auto& input_system = App::mod<Input>();
-    const auto ox_button = Input::to_mouse_code(button);
+    auto ox_mouse_button = static_cast<MouseCode>(button);
     if (down) {
-      input_system.set_mouse_clicked(ox_button, true);
-      input_system.set_mouse_released(ox_button, false);
-      input_system.set_mouse_held(ox_button, true);
+      input_system.set_mouse_clicked(ox_mouse_button, true);
+      input_system.set_mouse_released(ox_mouse_button, false);
+      input_system.set_mouse_held(ox_mouse_button, true);
     } else {
-      input_system.set_mouse_clicked(ox_button, false);
-      input_system.set_mouse_released(ox_button, true);
-      input_system.set_mouse_held(ox_button, false);
+      input_system.set_mouse_clicked(ox_mouse_button, false);
+      input_system.set_mouse_released(ox_mouse_button, true);
+      input_system.set_mouse_held(ox_mouse_button, false);
     }
   };
-  window_callbacks.on_mouse_scroll = [](void* user_data, const glm::vec2 offset) {
+  window_callbacks.on_mouse_scroll = [](void* user_data, u32 instance_id, const glm::vec2 offset) {
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_scroll(offset);
     }
 
     auto& input_system = App::mod<Input>();
-    input_system.input_data.scroll_offset_y = offset.y;
+    input_system.set_mouse_scroll_offset_y(offset.y);
   };
-  window_callbacks.on_key =
-    [](void* user_data, const u32 key_code, const u32 scan_code, const u16 mods, const bool down, const bool repeat) {
-      if (App::has_mod<ImGuiRenderer>()) {
-        auto& imgui_renderer = App::mod<ImGuiRenderer>();
-        imgui_renderer.on_key(key_code, scan_code, mods, down);
-      }
 
-      auto& input_system = App::mod<Input>();
-      const auto ox_key_code = Input::to_keycode(key_code, scan_code);
-      if (down) {
-        input_system.set_key_pressed(ox_key_code, !repeat);
-        input_system.set_key_released(ox_key_code, false);
-        input_system.set_key_held(ox_key_code, true);
-      } else {
-        input_system.set_key_pressed(ox_key_code, false);
-        input_system.set_key_released(ox_key_code, true);
-        input_system.set_key_held(ox_key_code, false);
-      }
-    };
-  window_callbacks.on_text_input = [](void* user_data, const c8* text) {
-    if (App::has_mod<ImGuiRenderer>()) {
-      auto& imgui_renderer = App::mod<ImGuiRenderer>();
-      imgui_renderer.on_text_input(text);
+  window_callbacks.on_gamepad_axis = [](void* user_data, u8 axis, i16 value, u32 instance_id) {
+    auto& input_system = App::mod<Input>();
+    auto ox_axis_code = static_cast<GamepadAxisCode>(axis);
+    input_system.set_gamepad_axis(instance_id, ox_axis_code, value);
+  };
+
+  window_callbacks.on_gamepad = [](void* user_data, u32 button_code, u32 instance_id, bool down) {
+    auto& input_system = App::mod<Input>();
+    const auto ox_button_code = static_cast<GamepadButtonCode>(button_code);
+
+    if (down) {
+      input_system.set_gamepad_button_pressed(instance_id, ox_button_code, true);
+      input_system.set_gamepad_button_released(instance_id, ox_button_code, false);
+    } else {
+      input_system.set_gamepad_button_pressed(instance_id, ox_button_code, false);
+      input_system.set_gamepad_button_released(instance_id, ox_button_code, true);
     }
+  };
+
+  window_callbacks.on_gamepad_added = [](void* user_data, u32 instance_id) {
+    auto gamepad = SDL_OpenGamepad(instance_id);
+    if (!gamepad) {
+      LOG_SDL_ERROR(SDL_OpenGamepad);
+    }
+    auto name = SDL_GetGamepadName(gamepad);
+    OX_LOG_INFO("Gamepad connected: {} ID: {}", name, instance_id);
   };
 
   impl->cursor_overridden = false;
@@ -272,28 +313,22 @@ auto Window::poll(const WindowCallbacks& callbacks) const -> void {
         }
         break;
       }
-      case SDL_EVENT_MOUSE_MOTION: {
-        if (callbacks.on_mouse_pos) {
-          callbacks.on_mouse_pos(callbacks.user_data, {e.motion.x, e.motion.y}, {e.motion.xrel, e.motion.yrel});
+      case SDL_EVENT_QUIT: {
+        if (callbacks.on_close) {
+          callbacks.on_close(callbacks.user_data);
         }
       } break;
-      case SDL_EVENT_MOUSE_BUTTON_DOWN:
-      case SDL_EVENT_MOUSE_BUTTON_UP  : {
-        if (callbacks.on_mouse_button) {
-          const auto state = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
-          callbacks.on_mouse_button(callbacks.user_data, e.button.button, state);
+
+      case SDL_EVENT_KEYBOARD_ADDED: {
+        if (callbacks.on_keyboard_added) {
+          callbacks.on_keyboard_added(callbacks.user_data, e.kdevice.which);
         }
-      } break;
-      case SDL_EVENT_MOUSE_WHEEL: {
-        if (callbacks.on_mouse_scroll) {
-          callbacks.on_mouse_scroll(callbacks.user_data, {e.wheel.x, e.wheel.y});
-        }
-      } break;
+      }
       case SDL_EVENT_KEY_DOWN:
       case SDL_EVENT_KEY_UP  : {
         if (callbacks.on_key) {
           const auto state = e.type == SDL_EVENT_KEY_DOWN;
-          callbacks.on_key(callbacks.user_data, e.key.key, e.key.scancode, e.key.mod, state, e.key.repeat);
+          callbacks.on_key(callbacks.user_data, e.key.key, e.key.scancode, e.key.mod, e.key.which, state, e.key.repeat);
         }
       } break;
       case SDL_EVENT_TEXT_INPUT: {
@@ -301,12 +336,51 @@ auto Window::poll(const WindowCallbacks& callbacks) const -> void {
           callbacks.on_text_input(callbacks.user_data, e.text.text);
         }
       } break;
-      case SDL_EVENT_QUIT: {
-        if (callbacks.on_close) {
-          callbacks.on_close(callbacks.user_data);
+
+      case SDL_EVENT_MOUSE_MOTION: {
+        if (callbacks.on_mouse_pos) {
+          callbacks.on_mouse_pos(
+            callbacks.user_data,
+            e.motion.which,
+            {e.motion.x, e.motion.y},
+            {e.motion.xrel, e.motion.yrel}
+          );
         }
       } break;
-      default:;
+      case SDL_EVENT_MOUSE_BUTTON_DOWN:
+      case SDL_EVENT_MOUSE_BUTTON_UP  : {
+        if (callbacks.on_mouse_button) {
+          const auto state = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+          callbacks.on_mouse_button(callbacks.user_data, e.button.which, e.button.button, state);
+        }
+      } break;
+      case SDL_EVENT_MOUSE_WHEEL: {
+        if (callbacks.on_mouse_scroll) {
+          callbacks.on_mouse_scroll(callbacks.user_data, e.motion.which, {e.wheel.x, e.wheel.y});
+        }
+      } break;
+
+      case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+        if (callbacks.on_gamepad_axis) {
+          callbacks.on_gamepad_axis(callbacks.user_data, e.gaxis.axis, e.gaxis.value, e.gaxis.which);
+        }
+        break;
+      }
+      case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+      case SDL_EVENT_GAMEPAD_BUTTON_UP  : {
+        if (callbacks.on_gamepad) {
+          callbacks.on_gamepad(callbacks.user_data, e.gbutton.button, e.gbutton.which, e.gbutton.down);
+        }
+        break;
+      }
+      case SDL_EVENT_GAMEPAD_ADDED: {
+        if (callbacks.on_gamepad_added) {
+          callbacks.on_gamepad_added(callbacks.user_data, e.gdevice.which);
+        }
+        break;
+      }
+
+      default: break;
     }
   }
 }
@@ -340,7 +414,7 @@ auto Window::display_at(const u32 monitor_id) -> option<SystemDisplay> {
   }
 
   const auto scale = SDL_GetDisplayContentScale(display_ids[monitor_id]);
-  if (scale == 0) {
+  if (scale == 0.0f) {
     LOG_SDL_ERROR(SDL_GetError);
   }
 
