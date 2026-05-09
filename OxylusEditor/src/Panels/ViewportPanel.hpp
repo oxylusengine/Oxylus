@@ -30,8 +30,22 @@ private:
   std::shared_ptr<EditorScene> editor_scene_ = nullptr;
   bool draw_scene_stats = false;
 
+  enum class AspectRatio : i32 {
+    Auto = 0,
+    _16x9,
+    _16x10,
+    _3x2,
+    _4x3,
+    _21x9,
+    _32x9,
+    _9x16,
+  };
+  AspectRatio viewport_aspect_ratio = AspectRatio::Auto;
+
+  ImVec2 render_size = {};
   ImVec2 viewport_bounds_[2] = {};
   ImVec2 viewport_size = {};
+  ImVec2 viewport_offset = {};
   ImVec2 viewport_position_ = {};
   ImVec2 gizmo_position_ = ImVec2(1.0f, 1.0f);
   i32 gizmo_type_ = -1;

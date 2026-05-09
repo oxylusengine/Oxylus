@@ -175,21 +175,44 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
     const ImVec2 viewport_min_region = ImGui::GetWindowContentRegionMin();
     const ImVec2 viewport_max_region = ImGui::GetWindowContentRegionMax();
     viewport_position_ = ImGui::GetWindowPos();
-    viewport_bounds_[0] = {viewport_min_region.x + viewport_position_.x, viewport_min_region.y + viewport_position_.y};
-    viewport_bounds_[1] = {viewport_max_region.x + viewport_position_.x, viewport_max_region.y + viewport_position_.y};
+
+    viewport_size = ImGui::GetContentRegionAvail();
+    render_size = viewport_size;
+    viewport_offset = {};
+
+    // aspect ratio constraints
+    if (viewport_aspect_ratio != AspectRatio::Auto) {
+      float target_aspect = 0.0f;
+      switch (viewport_aspect_ratio) {
+        case AspectRatio::_16x9 : target_aspect = 16.0f / 9.0f; break;
+        case AspectRatio::_16x10: target_aspect = 16.0f / 10.0f; break;
+        case AspectRatio::_3x2  : target_aspect = 3.0f / 2.0f; break;
+        case AspectRatio::_4x3  : target_aspect = 4.0f / 3.0f; break;
+        case AspectRatio::_21x9 : target_aspect = 21.0f / 9.0f; break;
+        case AspectRatio::_32x9 : target_aspect = 32.0f / 9.0f; break;
+        case AspectRatio::_9x16 : target_aspect = 9.0f / 16.0f; break;
+        default                 : break;
+      }
+
+      const float window_aspect = viewport_size.x / viewport_size.y;
+
+      if (window_aspect > target_aspect) {
+        render_size.x = viewport_size.y * target_aspect;
+        viewport_offset.x = (viewport_size.x - render_size.x) * 0.5f;
+      } else {
+        render_size.y = viewport_size.x / target_aspect;
+        viewport_offset.y = (viewport_size.y - render_size.y) * 0.5f;
+      }
+    }
+
+    viewport_bounds_[0] = {
+      viewport_min_region.x + viewport_position_.x + viewport_offset.x,
+      viewport_min_region.y + viewport_position_.y + viewport_offset.y
+    };
+    viewport_bounds_[1] = {viewport_bounds_[0].x + render_size.x, viewport_bounds_[0].y + render_size.y};
 
     is_viewport_focused = ImGui::IsWindowFocused();
     is_viewport_hovered = ImGui::IsWindowHovered();
-
-    viewport_size = ImGui::GetContentRegionAvail();
-
-    //constexpr auto sixteen_nine_ar = 1.7777777f;
-    //const auto fixed_width = viewport_size.y * sixteen_nine_ar;
-    //ImGui::SetCursorPosX((viewport_size.x - fixed_width) * 0.5f);
-
-    // add offset since we render image with fixed aspect ratio
-    // const auto off = (viewport_size.x - fixed_width) * 0.5f;
-    // const auto viewport_offset_ = {viewport_bounds_[0].x + off * 0.5f, viewport_bounds_[0].y};
 
     if (!editor_scene_) {
       const auto warning_text = "No scene!";
@@ -212,34 +235,42 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       ImGui::Text(warning_text);
     } else {
       constexpr auto get_mouse_texel_coords =
-        [](glm::uvec2 render_size, ImVec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos)
+        [](glm::uvec2 render_s, ImVec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos)
         -> glm::uvec2 {
         ImVec2 rendered_min = {window_pos.x + content_min.x, window_pos.y + content_min.y};
         ImVec2 rendered_max = {window_pos.x + content_max.x, window_pos.y + content_max.y};
         ImVec2 rendered_size = {rendered_max.x - rendered_min.x, rendered_max.y - rendered_min.y};
 
-        if (mouse_pos.x < rendered_min.x || mouse_pos.x > rendered_max.x || mouse_pos.y < rendered_min.y ||
-            mouse_pos.y > rendered_max.y) {
+        if (
+          mouse_pos.x < rendered_min.x || mouse_pos.x > rendered_max.x || mouse_pos.y < rendered_min.y ||
+          mouse_pos.y > rendered_max.y
+        ) {
           return glm::uvec2(~0_u32);
         }
 
         glm::vec2 mouse_rel = {mouse_pos.x - rendered_min.x, mouse_pos.y - rendered_min.y};
 
         return glm::uvec2{
-          static_cast<u32>((mouse_rel.x / rendered_size.x) * render_size.x),
-          static_cast<u32>((mouse_rel.y / rendered_size.y) * render_size.y)
+          static_cast<u32>((mouse_rel.x / rendered_size.x) * render_s.x),
+          static_cast<u32>((mouse_rel.y / rendered_size.y) * render_s.y)
         };
       };
 
       auto mouse_pos = ImGui::GetMousePos();
+
+      ImVec2 corrected_min_region = {
+        viewport_min_region.x + viewport_offset.x,
+        viewport_min_region.y + viewport_offset.y
+      };
+      ImVec2 corrected_max_region = {corrected_min_region.x + render_size.x, corrected_min_region.y + render_size.y};
+
       glm::uvec2 picking_texel = get_mouse_texel_coords(
         {swapchain_attachment.extent.width, swapchain_attachment.extent.height},
         viewport_position_,
-        viewport_min_region,
-        viewport_max_region,
+        corrected_min_region,
+        corrected_max_region,
         mouse_pos
       );
-
       if (mouse_picking_enabled_) {
         mouse_picking_stages(renderer_instance, picking_texel);
       }
@@ -257,7 +288,9 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
       auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
       editor_scene_->get_scene()->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
-      UI::image(std::move(scene_view_image), ImVec2{viewport_size.x, viewport_size.y});
+
+      ImGui::SetCursorPos({ImGui::GetCursorPosX() + viewport_offset.x, ImGui::GetCursorPosY() + viewport_offset.y});
+      UI::image(std::move(scene_view_image), ImVec2{render_size.x, render_size.y});
 
       drag_drop();
     }
@@ -279,8 +312,10 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 }
 
 void ViewportPanel::on_update() {
-  if (!editor_scene_ || !is_viewport_hovered || editor_scene_->get_scene()->is_running() ||
-      !editor_camera.has<CameraComponent>()) {
+  if (
+    !editor_scene_ || !is_viewport_hovered || editor_scene_->get_scene()->is_running() ||
+    !editor_camera.has<CameraComponent>()
+  ) {
     return;
   }
 
@@ -614,6 +649,22 @@ void ViewportPanel::draw_settings_panel() {
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
   if (ImGui::TreeNodeEx("Viewport", TREE_FLAGS, "%s", "Viewport")) {
+    if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+      const char* aspect_ratios[8] = {
+        "Auto",
+        "16x9",
+        "16x10",
+        "3x2",
+        "4x3",
+        "21x9",
+        "32x9",
+        "9x16",
+      };
+
+      UI::property("Aspect Ratio", ((i32*)&viewport_aspect_ratio), aspect_ratios, 8);
+      UI::end_properties();
+    }
+
     if (open_action != -1)
       ImGui::SetNextItemOpen(open_action != 0);
     if (ImGui::TreeNodeEx("Camera", TREE_FLAGS, "%s", "Camera")) {
@@ -659,10 +710,10 @@ void ViewportPanel::draw_gizmos() {
     show_component_gizmo<LightComponent>(
       gizmo_icon_size_,
       "LightComponent",
-      viewport_size.x,
-      viewport_size.y,
-      0,
-      0,
+      render_size.x,
+      render_size.y,
+      viewport_offset.x,
+      viewport_offset.y,
       view_proj,
       frustum,
       editor_scene_->get_scene().get()
@@ -670,10 +721,10 @@ void ViewportPanel::draw_gizmos() {
     show_component_gizmo<AudioSourceComponent>(
       gizmo_icon_size_,
       "AudioSourceComponent",
-      viewport_size.x,
-      viewport_size.y,
-      0,
-      0,
+      render_size.x,
+      render_size.y,
+      viewport_offset.x,
+      viewport_offset.y,
       view_proj,
       frustum,
       editor_scene_->get_scene().get()
@@ -681,10 +732,10 @@ void ViewportPanel::draw_gizmos() {
     show_component_gizmo<AudioListenerComponent>(
       gizmo_icon_size_,
       "AudioListenerComponent",
-      viewport_size.x,
-      viewport_size.y,
-      0,
-      0,
+      render_size.x,
+      render_size.y,
+      viewport_offset.x,
+      viewport_offset.y,
       view_proj,
       frustum,
       editor_scene_->get_scene().get()
@@ -692,10 +743,10 @@ void ViewportPanel::draw_gizmos() {
     show_component_gizmo<CameraComponent>(
       gizmo_icon_size_,
       "CameraComponent",
-      viewport_size.x,
-      viewport_size.y,
-      0,
-      0,
+      render_size.x,
+      render_size.y,
+      viewport_offset.x,
+      viewport_offset.y,
       view_proj,
       frustum,
       editor_scene_->get_scene().get()
@@ -1189,7 +1240,11 @@ void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
   const ImVec2 frame_padding = ImGui::GetStyle().FramePadding;
   const ImVec2 button_size = {frame_height, frame_height};
   constexpr float button_count = 8.0f;
-  const ImVec2 gizmo_position = {viewport_bounds_[0].x + gizmo_position_.x, viewport_bounds_[0].y + gizmo_position_.y};
+  const ImVec2 window_pos = ImGui::GetWindowPos();
+  const ImVec2 content_min = ImGui::GetWindowContentRegionMin();
+  const ImVec2 panel_top_left = {window_pos.x + content_min.x, window_pos.y + content_min.y};
+
+  const ImVec2 gizmo_position = {panel_top_left.x + gizmo_position_.x, panel_top_left.y + gizmo_position_.y};
   const ImRect bb(
     gizmo_position.x,
     gizmo_position.y,
@@ -1199,8 +1254,8 @@ void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
   ImVec4 frame_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
   frame_color.w = 0.5f;
   ImGui::RenderFrame(bb.Min, bb.Max, ImGui::GetColorU32(frame_color), false, ImGui::GetStyle().FrameRounding);
-  const auto temp_gizmo_position = gizmo_position_;
 
+  const auto temp_gizmo_position = gizmo_position_;
   ImGui::SetCursorPos(
     {start_cursor_pos.x + temp_gizmo_position.x + frame_padding.x, start_cursor_pos.y + temp_gizmo_position.y}
   );
@@ -1235,13 +1290,15 @@ void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
       gizmo_type_ = ImGuizmo::BOUNDS;
     if (UI::toggle_button(ICON_MDI_ARROW_EXPAND_ALL, gizmo_type_ == ImGuizmo::UNIVERSAL, button_size, alpha, alpha))
       gizmo_type_ = ImGuizmo::UNIVERSAL;
-    if (UI::toggle_button(
-          gizmo_mode_ == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
-          gizmo_mode_ == ImGuizmo::WORLD,
-          button_size,
-          alpha,
-          alpha
-        ))
+    if (
+      UI::toggle_button(
+        gizmo_mode_ == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
+        gizmo_mode_ == ImGuizmo::WORLD,
+        button_size,
+        alpha,
+        alpha
+      )
+    )
       gizmo_mode_ = gizmo_mode_ == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
     if (UI::toggle_button(ICON_MDI_GRID, EditorCVar::cvar_draw_grid.get(), button_size, alpha, alpha))
       EditorCVar::cvar_draw_grid.toggle();
@@ -1249,13 +1306,15 @@ void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
     if (editor_camera.is_alive() && editor_camera.has<CameraComponent>()) {
       auto& cam = editor_camera.get_mut<CameraComponent>();
       UI::push_id();
-      if (UI::toggle_button(
-            ICON_MDI_CAMERA,
-            cam.projection == CameraComponent::Projection::Orthographic,
-            button_size,
-            alpha,
-            alpha
-          ))
+      if (
+        UI::toggle_button(
+          ICON_MDI_CAMERA,
+          cam.projection == CameraComponent::Projection::Orthographic,
+          button_size,
+          alpha,
+          alpha
+        )
+      )
         cam.projection = cam.projection == CameraComponent::Projection::Orthographic
                            ? CameraComponent::Projection::Perspective
                            : CameraComponent::Projection::Orthographic;
