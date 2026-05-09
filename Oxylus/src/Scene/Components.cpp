@@ -125,20 +125,6 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
     })
     .assign_string([](UUID* data, const char* value) { *data = UUID::from_string(std::string_view(value)).value(); });
 
-  world.component<GPU::TonemapType>("GPU::TonemapType")
-    .opaque(flecs::U32)
-    .serialize([](const flecs::serializer* s, const GPU::TonemapType* data) {
-      //
-      return s->value(flecs::U32, data);
-    });
-
-  world.component<LightComponent::LightType>("LightComponent::LightType")
-    .opaque(flecs::U32)
-    .serialize([](const flecs::serializer* s, const LightComponent::LightType* data) {
-      //
-      return s->value(flecs::U32, data);
-    });
-
   bind_component<TransformComponent>(world, state, core_table, "TransformComponent")
     .member("position", &TransformComponent::position)
     .member("rotation", &TransformComponent::rotation)
