@@ -183,9 +183,9 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
     viewport_size = ImGui::GetContentRegionAvail();
 
-    constexpr auto sixteen_nine_ar = 1.7777777f;
-    const auto fixed_width = viewport_size.y * sixteen_nine_ar;
-    ImGui::SetCursorPosX((viewport_size.x - fixed_width) * 0.5f);
+    //constexpr auto sixteen_nine_ar = 1.7777777f;
+    //const auto fixed_width = viewport_size.y * sixteen_nine_ar;
+    //ImGui::SetCursorPosX((viewport_size.x - fixed_width) * 0.5f);
 
     // add offset since we render image with fixed aspect ratio
     // const auto off = (viewport_size.x - fixed_width) * 0.5f;
@@ -257,7 +257,7 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
       auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
       editor_scene_->get_scene()->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
-      UI::image(std::move(scene_view_image), ImVec2{fixed_width, viewport_size.y});
+      UI::image(std::move(scene_view_image), ImVec2{viewport_size.x, viewport_size.y});
 
       drag_drop();
     }
