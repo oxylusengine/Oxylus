@@ -149,7 +149,7 @@ auto SlangSession::compile_shader(const SlangShaderInfo& info) -> option<std::ve
       return nullopt;
     }
 
-#if 0
+#if 1
     auto spv_message_cb =
       [&](spv_message_level_t level, const char* source, const spv_position_t& position, const char* message) {
         switch (level) {
@@ -275,6 +275,10 @@ auto SlangCompiler::new_session(const SlangSessionInfo& info) -> option<SlangSes
      .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_FORMAT_DEFAULT}},
     {.name = slang::CompilerOptionName::DebugInformation,
      .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_LEVEL_MAXIMAL}},
+#endif
+#if 0
+    {.name = slang::CompilerOptionName::DumpIntermediates,
+     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = 1}},
 #endif
     {.name = slang::CompilerOptionName::UseUpToDateBinaryModule,
      .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = 1}},
