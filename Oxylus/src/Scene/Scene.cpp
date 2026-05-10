@@ -170,6 +170,28 @@ struct JsonEntityDeserializer : IEntitySerializer {
     }
   }
 
+  auto on_enum(std::string_view name, ecs_meta_op_kind_t underlying_kind, flecs::entity_t type, void* ptr)
+    -> void override {
+    ZoneScoped;
+
+    auto field_result = json_value[name];
+    if (field_result.error() || !ptr) {
+      return;
+    }
+
+    if (underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
+        underlying_kind == EcsOpU64) {
+      auto result = field_result.get_uint64();
+      auto current = static_cast<u64*>(ptr);
+      *current = result.value_unsafe();
+    } else if (underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
+               underlying_kind == EcsOpI64) {
+      auto result = field_result.get_int64();
+      auto current = static_cast<i64*>(ptr);
+      *current = result.value_unsafe();
+    }
+  }
+
   auto on_component(std::string_view name, flecs::id_t* component) -> void override {
     ZoneScoped;
 

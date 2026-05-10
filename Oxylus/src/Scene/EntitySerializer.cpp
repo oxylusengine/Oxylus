@@ -174,6 +174,32 @@ auto JsonEntitySerializer::on_entity(std::string_view name, flecs::entity* entit
   }
 }
 
+auto JsonEntitySerializer::on_enum(
+  std::string_view name, ecs_meta_op_kind_t underlying_kind, flecs::entity_t type, void* ptr
+) -> void {
+  ZoneScoped;
+
+  if (underlying_kind == EcsOpU8) {
+    writer[name] = *static_cast<const u8*>(ptr);
+  } else if (underlying_kind == EcsOpU16) {
+    writer[name] = *static_cast<const u16*>(ptr);
+  } else if (underlying_kind == EcsOpU32) {
+    writer[name] = *static_cast<const u32*>(ptr);
+  } else if (underlying_kind == EcsOpU64) {
+    writer[name] = *static_cast<const u64*>(ptr);
+  } else if (underlying_kind == EcsOpU64) {
+    writer[name] = *static_cast<const u64*>(ptr);
+  } else if (underlying_kind == EcsOpI8) {
+    writer[name] = *static_cast<const i8*>(ptr);
+  } else if (underlying_kind == EcsOpI16) {
+    writer[name] = *static_cast<const i16*>(ptr);
+  } else if (underlying_kind == EcsOpI32) {
+    writer[name] = *static_cast<const i32*>(ptr);
+  } else if (underlying_kind == EcsOpI64) {
+    writer[name] = *static_cast<const i64*>(ptr);
+  }
+}
+
 auto JsonEntitySerializer::on_component(std::string_view name, flecs::id_t* component) -> void {
   ZoneScoped;
 
