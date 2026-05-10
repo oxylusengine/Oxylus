@@ -123,7 +123,7 @@ struct LuaEntitySerializer : IEntitySerializer {
           table.set_function(set_name, [&](const sol::table& self, glm::vec2 value) { *vec = value; });
         }
       } else if (ops->type_info == world.type_info<glm::vec3>()) {
-        auto vec = static_cast<glm::vec2*>(base);
+        auto vec = static_cast<glm::vec3*>(base);
         table[name] = *vec;
         if (is_mutable) {
           table.set_function(set_name, [&](const sol::table& self, glm::vec3 value) { //
