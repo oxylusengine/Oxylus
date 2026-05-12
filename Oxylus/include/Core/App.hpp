@@ -39,6 +39,9 @@ public:
   auto with_working_directory(this App& self, const std::filesystem::path& dir) -> App&;
   auto with_assets_directory(this App& self, const std::filesystem::path& dir) -> App&;
 
+  // Sets the number of worker threads for the JobManager, overriding the default hardware-based auto-detection.
+  auto with_workers(this App& self, const u32 count) -> App&;
+
   template <typename F>
   static void defer_to_next_frame(F&& func) {
     std::function<void()> task = std::forward<F>(func);
