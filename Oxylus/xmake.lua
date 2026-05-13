@@ -96,7 +96,7 @@ target("Oxylus")
         "fmt",
         "plf_colony",
         "simdutf",
-        "joltphysics",
+        "joltphysics-ox",
         "glm",
         "lua-ox",
         "sol2",

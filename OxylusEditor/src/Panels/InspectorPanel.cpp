@@ -167,9 +167,7 @@ struct EntityInspector : IEntitySerializer {
       } else if (ops->type == world.entity<glm::quat>()) {
         auto* v = static_cast<glm::quat*>(base);
 
-        if (!inspector_panel.euler_cache) {
-          inspector_panel.euler_cache = glm::degrees(glm::eulerAngles(*v));
-        }
+        inspector_panel.euler_cache = glm::degrees(glm::eulerAngles(*v));
 
         auto old_v = *v;
         if (UI::draw_vec3_control(name.data(), *inspector_panel.euler_cache)) {

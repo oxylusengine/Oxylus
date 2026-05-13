@@ -45,6 +45,17 @@ auto Job::signal(this Job& self, Arc<Barrier> barrier) -> Arc<Job> {
 auto JobManager::init() -> std::expected<void, std::string> {
   ZoneScoped;
 
+  if (desired_thread_count == auto_thread_count) {
+    unsigned int num_threads_available = std::thread::hardware_concurrency() - 1; // leave one for the OS
+    num_threads = num_threads_available;
+  } else {
+    num_threads = desired_thread_count;
+  }
+
+  for (u32 i = 0; i < num_threads; i++) {
+    this->workers.emplace_back([this, i]() { worker(i); });
+  }
+
   return {};
 }
 
@@ -56,19 +67,10 @@ auto JobManager::deinit() -> std::expected<void, std::string> {
   return {};
 }
 
-JobManager::JobManager(u32 threads) {
+auto JobManager::set_thread_count(this JobManager& self, u32 count) -> void {
   ZoneScoped;
 
-  if (threads == auto_thread_count) {
-    unsigned int num_threads_available = std::thread::hardware_concurrency() - 1; // leave one for the OS
-    num_threads = num_threads_available;
-  } else {
-    num_threads = threads;
-  }
-
-  for (u32 i = 0; i < num_threads; i++) {
-    this->workers.emplace_back([this, i]() { worker(i); });
-  }
+  self.desired_thread_count = count;
 }
 
 auto JobManager::shutdown(this JobManager& self) -> void {
