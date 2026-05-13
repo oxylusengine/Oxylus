@@ -864,8 +864,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([](const TransformComponent& tc, CameraComponent& cc) {
       const auto screen_extent = App::get_vkcontext().swapchain_extent;
       cc.position = tc.position;
-      cc.pitch = tc.rotation.x;
-      cc.yaw = tc.rotation.y;
       Camera::update(cc, screen_extent);
     });
 
