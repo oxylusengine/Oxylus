@@ -536,7 +536,7 @@ void InspectorPanel::draw_material_properties(
 void InspectorPanel::draw_components(flecs::entity entity) {
   ZoneScoped;
 
-  if (!entity)
+  if (!entity || !scene_)
     return;
 
   auto& editor = App::mod<Editor>();
