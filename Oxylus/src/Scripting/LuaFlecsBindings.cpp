@@ -236,17 +236,6 @@ struct LuaEntitySerializer : IEntitySerializer {
 
     if (str && *str) {
       table[name] = *str;
-      if (is_mutable) {
-        memory::ScopedStack stack;
-        auto set_name = stack.format("set_{}", name);
-        auto** str_ptr = const_cast<c8**>(str);
-        sol::table tbl = table;
-        std::string key(name);
-        table.set_function(set_name, [str_ptr, tbl, key](const sol::table& self, const std::string& value) mutable {
-          *str_ptr = strdup(value.c_str());
-          tbl[key] = *str_ptr;
-        });
-      }
     }
   }
 
@@ -456,12 +445,6 @@ struct LuaEntitySerializer : IEntitySerializer {
       auto** str = static_cast<const c8**>(field_ptr);
       if (str && *str) {
         table[name] = *str;
-        if (is_mutable) {
-          table.set_function(set_name, [str, tbl, key](const sol::table&, const std::string& val) mutable {
-            *const_cast<c8**>(str) = strdup(val.c_str());
-            tbl[key] = *const_cast<c8**>(str);
-          });
-        }
       }
     }
   }
