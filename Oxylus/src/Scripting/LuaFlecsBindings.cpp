@@ -35,73 +35,133 @@ struct LuaEntitySerializer : IEntitySerializer {
         [&](bool* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, bool value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, bool value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](c8* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, c8 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, c8 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](i8* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, i8 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, i8 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](u8* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, u8 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, u8 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](i16* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, i16 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, i16 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](u16* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, u16 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, u16 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](i32* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, i32 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, i32 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](u32* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, u32 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, u32 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](i64* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, i64 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, i64 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](u64* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, u64 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, u64 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](f32* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, f32 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, f32 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
         [&](f64* v) {
           table[name] = *v;
           if (is_mutable) {
-            table.set_function(set_name, [&](const sol::table& self, f64 value) { *v = value; });
+            sol::table tbl = table;
+            std::string key(name);
+            table.set_function(set_name, [v, tbl, key](const sol::table& self, f64 value) mutable {
+              *v = value;
+              tbl[key] = *v;
+            });
           }
         },
       },
@@ -120,14 +180,44 @@ struct LuaEntitySerializer : IEntitySerializer {
         auto vec = static_cast<glm::vec2*>(base);
         table[name] = *vec;
         if (is_mutable) {
-          table.set_function(set_name, [&](const sol::table& self, glm::vec2 value) { *vec = value; });
+          sol::table tbl = table;
+          std::string key(name);
+          table.set_function(set_name, [vec, tbl, key](const sol::table& self, glm::vec2 value) mutable {
+            *vec = value;
+            tbl[key] = *vec;
+          });
         }
       } else if (ops->type_info == world.type_info<glm::vec3>()) {
         auto vec = static_cast<glm::vec3*>(base);
         table[name] = *vec;
         if (is_mutable) {
-          table.set_function(set_name, [&](const sol::table& self, glm::vec3 value) { //
+          sol::table tbl = table;
+          std::string key(name);
+          table.set_function(set_name, [vec, tbl, key](const sol::table& self, glm::vec3 value) mutable {
             *vec = value;
+            tbl[key] = *vec;
+          });
+        }
+      } else if (ops->type_info == world.type_info<glm::vec4>()) {
+        auto vec = static_cast<glm::vec4*>(base);
+        table[name] = *vec;
+        if (is_mutable) {
+          sol::table tbl = table;
+          std::string key(name);
+          table.set_function(set_name, [vec, tbl, key](const sol::table& self, glm::vec4 value) mutable {
+            *vec = value;
+            tbl[key] = *vec;
+          });
+        }
+      } else if (ops->type_info == world.type_info<glm::quat>()) {
+        auto vec = static_cast<glm::quat*>(base);
+        table[name] = *vec;
+        if (is_mutable) {
+          sol::table tbl = table;
+          std::string key(name);
+          table.set_function(set_name, [vec, tbl, key](const sol::table& self, glm::quat value) mutable {
+            *vec = value;
+            tbl[key] = *vec;
           });
         }
       } else {
@@ -141,18 +231,237 @@ struct LuaEntitySerializer : IEntitySerializer {
     }
   }
 
+  auto on_string(std::string_view name, const c8** str) -> void override {
+    ZoneScoped;
+
+    if (str && *str) {
+      table[name] = *str;
+      if (is_mutable) {
+        memory::ScopedStack stack;
+        auto set_name = stack.format("set_{}", name);
+        auto** str_ptr = const_cast<c8**>(str);
+        sol::table tbl = table;
+        std::string key(name);
+        table.set_function(set_name, [str_ptr, tbl, key](const sol::table& self, const std::string& value) mutable {
+          *str_ptr = strdup(value.c_str());
+          tbl[key] = *str_ptr;
+        });
+      }
+    }
+  }
+
+  auto on_entity(std::string_view name, flecs::entity* entity) -> void override {
+    ZoneScoped;
+
+    if (entity && entity->is_valid()) {
+      table[name] = entity->name().c_str();
+      if (is_mutable) {
+        memory::ScopedStack stack;
+        auto set_name = stack.format("set_{}", name);
+        table.set_function(set_name, [entity](const sol::table& self, flecs::entity value) { *entity = value; });
+      }
+    }
+  }
+
+  auto on_enum(std::string_view name, ecs_meta_op_kind_t underlying_kind, flecs::entity_t type, void* ptr)
+    -> void override {
+    ZoneScoped;
+
+    auto get_value = [&]() -> i64 {
+      switch (underlying_kind) {
+        case EcsOpU8 : return static_cast<i64>(*static_cast<u8*>(ptr));
+        case EcsOpU16: return static_cast<i64>(*static_cast<u16*>(ptr));
+        case EcsOpU32: return static_cast<i64>(*static_cast<u32*>(ptr));
+        case EcsOpU64: return static_cast<i64>(*static_cast<u64*>(ptr));
+        case EcsOpI8 : return static_cast<i64>(*static_cast<i8*>(ptr));
+        case EcsOpI16: return static_cast<i64>(*static_cast<i16*>(ptr));
+        case EcsOpI32: return static_cast<i64>(*static_cast<i32*>(ptr));
+        case EcsOpI64: return *static_cast<i64*>(ptr);
+        default      : return 0;
+      }
+    };
+
+    table[name] = get_value();
+    if (is_mutable) {
+      memory::ScopedStack stack;
+      auto set_name = stack.format("set_{}", name);
+      sol::table tbl = table;
+      std::string key(name);
+      table.set_function(set_name, [underlying_kind, ptr, tbl, key](const sol::table& self, i64 value) mutable {
+        switch (underlying_kind) {
+          case EcsOpU8 : *static_cast<u8*>(ptr) = static_cast<u8>(value); break;
+          case EcsOpU16: *static_cast<u16*>(ptr) = static_cast<u16>(value); break;
+          case EcsOpU32: *static_cast<u32*>(ptr) = static_cast<u32>(value); break;
+          case EcsOpU64: *static_cast<u64*>(ptr) = static_cast<u64>(value); break;
+          case EcsOpI8 : *static_cast<i8*>(ptr) = static_cast<i8>(value); break;
+          case EcsOpI16: *static_cast<i16*>(ptr) = static_cast<i16>(value); break;
+          case EcsOpI32: *static_cast<i32*>(ptr) = static_cast<i32>(value); break;
+          case EcsOpI64: *static_cast<i64*>(ptr) = value; break;
+          default      : break;
+        }
+        tbl[key] = value;
+      });
+    }
+  }
+
+  auto on_component(std::string_view name, flecs::id_t* component) -> void override {
+    ZoneScoped;
+
+    if (component && *component) {
+      flecs::entity comp_entity(world, *component);
+      if (comp_entity.is_valid()) {
+        table[name] = comp_entity.name().c_str();
+        if (is_mutable) {
+          memory::ScopedStack stack;
+          auto set_name = stack.format("set_{}", name);
+          table.set_function(set_name, [component](const sol::table& self, flecs::entity value) {
+            *component = value;
+          });
+        }
+      }
+    }
+  }
+
   auto on_opaque_value(
-    std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void*
+    std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
   ) -> void override {
     ZoneScoped;
     memory::ScopedStack stack;
     auto set_name = stack.format("set_{}", name);
 
+    sol::table tbl = table;
+    std::string key(name);
+
     if (field_type == world.entity<UUID>()) {
       auto* uuid = static_cast<UUID*>(field_ptr);
       table[name] = *uuid;
       if (is_mutable) {
-        table.set_function(set_name, [&](const sol::table& self, UUID v) { *uuid = v; });
+        table.set_function(set_name, [uuid, tbl, key](const sol::table& self, UUID v) mutable {
+          *uuid = v;
+          tbl[key] = *uuid;
+        });
+      }
+      return;
+    }
+
+    if (opaque_type == flecs::Bool) {
+      auto* v = static_cast<bool*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, bool val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::Char) {
+      auto* v = static_cast<c8*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, c8 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::U8) {
+      auto* v = static_cast<u8*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, u8 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::U16) {
+      auto* v = static_cast<u16*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, u16 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::U32) {
+      auto* v = static_cast<u32*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, u32 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::U64 || opaque_type == flecs::Uptr) {
+      auto* v = static_cast<u64*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, u64 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::I8) {
+      auto* v = static_cast<i8*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, i8 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::I16) {
+      auto* v = static_cast<i16*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, i16 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::I32) {
+      auto* v = static_cast<i32*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, i32 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::I64 || opaque_type == flecs::Iptr) {
+      auto* v = static_cast<i64*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, i64 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::F32) {
+      auto* v = static_cast<f32*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, f32 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::F64) {
+      auto* v = static_cast<f64*>(field_ptr);
+      table[name] = *v;
+      if (is_mutable) {
+        table.set_function(set_name, [v, tbl, key](const sol::table&, f64 val) mutable {
+          *v = val;
+          tbl[key] = *v;
+        });
+      }
+    } else if (opaque_type == flecs::String) {
+      auto** str = static_cast<const c8**>(field_ptr);
+      if (str && *str) {
+        table[name] = *str;
+        if (is_mutable) {
+          table.set_function(set_name, [str, tbl, key](const sol::table&, const std::string& val) mutable {
+            *const_cast<c8**>(str) = strdup(val.c_str());
+            tbl[key] = *const_cast<c8**>(str);
+          });
+        }
       }
     }
   }

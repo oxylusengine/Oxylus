@@ -114,7 +114,7 @@ auto IEntitySerializer::serialize_ops(flecs::meta::op_t* ops, i32 op_count, void
       } break;
 
       case EcsOpEnum: {
-        on_enum(name, ops->underlying_kind, ops->type, ptr);
+        on_enum(name, op.underlying_kind, op.type, ptr);
       } break;
 
       case EcsOpBitmask:
@@ -185,8 +185,6 @@ auto JsonEntitySerializer::on_enum(
     writer[name] = *static_cast<const u16*>(ptr);
   } else if (underlying_kind == EcsOpU32) {
     writer[name] = *static_cast<const u32*>(ptr);
-  } else if (underlying_kind == EcsOpU64) {
-    writer[name] = *static_cast<const u64*>(ptr);
   } else if (underlying_kind == EcsOpU64) {
     writer[name] = *static_cast<const u64*>(ptr);
   } else if (underlying_kind == EcsOpI8) {
