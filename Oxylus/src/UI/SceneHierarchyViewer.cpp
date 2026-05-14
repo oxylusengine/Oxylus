@@ -44,10 +44,12 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
       if (UI::button(add_icon))
         ImGui::OpenPopup("scene_h_scripts_context_window");
 
-      if (ImGui::BeginPopupContextWindow(
-            "scene_h_scripts_context_window",
-            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
-          )) {
+      if (
+        ImGui::BeginPopupContextWindow(
+          "scene_h_scripts_context_window",
+          ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+        )
+      ) {
         draw_scripts_context_menu();
         ImGui::EndPopup();
       }
@@ -103,10 +105,12 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
           }
         }
 
-        if (ImGui::BeginPopupContextWindow(
-              "scene_h_scripts_context_window",
-              ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
-            )) {
+        if (
+          ImGui::BeginPopupContextWindow(
+            "scene_h_scripts_context_window",
+            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+          )
+        ) {
           selected_entity_.reset();
           selected_script_ = nullptr;
           draw_scripts_context_menu();
@@ -154,10 +158,12 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
       if (UI::button(add_icon))
         ImGui::OpenPopup("scene_h_entities_context_window");
 
-      if (ImGui::BeginPopupContextWindow(
-            "scene_h_entities_context_window",
-            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
-          )) {
+      if (
+        ImGui::BeginPopupContextWindow(
+          "scene_h_entities_context_window",
+          ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+        )
+      ) {
         draw_entities_context_menu();
         ImGui::EndPopup();
       }
@@ -193,10 +199,12 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
           });
         ImGui::PopStyleVar();
 
-        if (ImGui::BeginPopupContextWindow(
-              "scene_h_entities_context_window",
-              ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
-            )) {
+        if (
+          ImGui::BeginPopupContextWindow(
+            "scene_h_entities_context_window",
+            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+          )
+        ) {
           selected_entity_.reset();
           selected_script_ = nullptr;
           draw_entities_context_menu();

@@ -29,20 +29,16 @@ public:
   void on_render(vuk::ImageAttachment swapchain_attachment) override;
 
   static void draw_material_properties(
-    Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
+    ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
   );
 
   void draw_components(flecs::entity entity);
-  void draw_asset_info(Asset* asset);
+  void draw_asset_info(ReadGuard<Asset> asset);
 
-  void draw_shader_asset(UUID* uuid, Asset* asset);
-  void draw_model_asset(UUID* uuid, Asset* asset);
-  void draw_texture_asset(UUID* uuid, Asset* asset);
-  void draw_material_asset(UUID* uuid, Asset* asset);
-  void draw_font_asset(UUID* uuid, Asset* asset);
-  void draw_scene_asset(UUID* uuid, Asset* asset);
-  void draw_audio_asset(UUID* uuid, Asset* asset);
-  bool draw_script_asset(UUID* uuid, Asset* asset);
+  void draw_model_asset(ReadGuard<Asset> asset, ReadGuard<Model> model);
+  void draw_material_asset(ReadGuard<Asset> asset, ReadGuard<Material> material);
+  void draw_audio_asset(ReadGuard<Asset> asset, ReadGuard<AudioSource> audio);
+  bool draw_script_asset(ReadGuard<Asset> asset, ReadGuard<LuaSystem> lua_system);
 
 private:
   struct ComponentClipboard {

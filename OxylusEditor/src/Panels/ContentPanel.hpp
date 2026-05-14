@@ -9,8 +9,8 @@
 #include <vuk/Types.hpp>
 #include <vuk/Value.hpp>
 
+#include "Core/Types.hpp"
 #include "EditorPanel.hpp"
-#include "Utils/ThumbnailRenderer.hpp"
 
 namespace ox {
 class Texture;
@@ -70,11 +70,6 @@ private:
 
   std::string new_asset_name_ = {};
   bool should_open_new_asset_popup = false;
-
-  std::shared_mutex thumbnail_mutex = {};
-  bool mesh_thumbnails_enabled = false;
-  ankerl::unordered_dense::map<std::filesystem::path, std::shared_ptr<Texture>> thumbnail_cache_textures;
-  ankerl::unordered_dense::map<std::filesystem::path, vuk::ImageAttachment> thumbnail_cache_meshes;
 
   std::shared_ptr<Texture> _white_texture;
   std::filesystem::path _directory_to_delete;

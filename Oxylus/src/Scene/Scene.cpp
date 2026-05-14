@@ -179,13 +179,17 @@ struct JsonEntityDeserializer : IEntitySerializer {
       return;
     }
 
-    if (underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
-        underlying_kind == EcsOpU64) {
+    if (
+      underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
+      underlying_kind == EcsOpU64
+    ) {
       auto result = field_result.get_uint64();
       auto current = static_cast<u64*>(ptr);
       *current = result.value_unsafe();
-    } else if (underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
-               underlying_kind == EcsOpI64) {
+    } else if (
+      underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
+      underlying_kind == EcsOpI64
+    ) {
       auto result = field_result.get_int64();
       auto current = static_cast<i64*>(ptr);
       *current = result.value_unsafe();
@@ -262,14 +266,17 @@ struct JsonEntityDeserializer : IEntitySerializer {
       if (!result.error() && opaque_info->assign_uint) {
         opaque_info->assign_uint(field_ptr, static_cast<u64>(result.value_unsafe()));
       }
-    } else if (opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 ||
-               opaque_type == flecs::Uptr) {
+    } else if (
+      opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 || opaque_type == flecs::Uptr
+    ) {
       auto result = field_result.get_uint64();
       if (!result.error() && opaque_info->assign_uint) {
         opaque_info->assign_uint(field_ptr, result.value_unsafe());
       }
-    } else if (opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 ||
-               opaque_type == flecs::I64 || opaque_type == flecs::Iptr) {
+    } else if (
+      opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 || opaque_type == flecs::I64 ||
+      opaque_type == flecs::Iptr
+    ) {
       auto result = field_result.get_int64();
       if (!result.error() && opaque_info->assign_int) {
         opaque_info->assign_int(field_ptr, result.value_unsafe());
@@ -341,7 +348,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   ZoneScoped;
   self.scene_name = name;
 
-  self.component_db.import_module(self.world.import <CoreComponentsModule>());
+  self.component_db.import_module(self.world.import<CoreComponentsModule>());
 
   if (App::has_mod<Renderer>()) {
     auto& renderer = App::mod<Renderer>();
@@ -423,7 +430,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([](flecs::iter& it, usize i, SpriteComponent& c) {
       auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {
-        if (auto* material_asset = asset_man.get_asset(c.material)) {
+        if (auto material_asset = asset_man.get_asset(c.material)) {
           asset_man.unload_asset(material_asset->uuid);
         }
       }
@@ -442,7 +449,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnAdd)
     .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
       auto& asset_man = App::mod<AssetManager>();
-      auto* audio_asset = asset_man.get_audio(c.audio_source);
+      auto audio_asset = asset_man.get_audio(c.audio_source);
       if (!audio_asset)
         return;
 
@@ -561,7 +568,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           e.destruct();
         }
       } else if (it.event() == flecs::OnSet) {
-        if (auto* asset = asset_man.get_asset(c.material)) {
+        if (auto asset = asset_man.get_asset(c.material)) {
           if (!asset->is_loaded()) {
             asset_man.load_material(c.material, Material{});
           }
@@ -577,7 +584,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
       auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {
-        if (auto* material_asset = asset_man.get_asset(c.material)) {
+        if (auto material_asset = asset_man.get_asset(c.material)) {
           asset_man.unload_asset(material_asset->uuid);
         }
       }
@@ -607,7 +614,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .kind(flecs::PreUpdate)
     .each([](const flecs::entity& e, const TransformComponent& tc, const AudioSourceComponent& ac) {
       auto& asset_man = App::mod<AssetManager>();
-      if (auto* audio = asset_man.get_audio(ac.audio_source)) {
+      if (auto audio = asset_man.get_audio(ac.audio_source)) {
         auto& audio_engine = App::mod<AudioEngine>();
         audio_engine.set_source_attenuation_model(
           audio->get_source(),
@@ -731,8 +738,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       if (component.playing && !component.looping)
         component.system_time += sim_ts;
       const float delay = component.start_delay;
-      if (component.playing && (component.looping || (component.system_time <= delay + component.duration &&
-                                                      component.system_time > delay))) {
+      if (
+        component.playing &&
+        (component.looping || (component.system_time <= delay + component.duration && component.system_time > delay))
+      ) {
         // Emit particles in unit time
         component.spawn_time += sim_ts;
         if (component.spawn_time >= 1.0f / static_cast<float>(component.rate_over_time)) {
@@ -880,10 +889,12 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .kind(flecs::PostUpdate)
     .each([](flecs::iter& it, size_t, SpriteComponent& sprite, SpriteAnimationComponent& sprite_animation) {
       auto& asset_manager = App::mod<AssetManager>();
-      auto* material = asset_manager.get_material(sprite.material);
+      auto material = asset_manager.get_material(sprite.material);
 
-      if (sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
-          !material->albedo_texture)
+      if (
+        sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
+        !material->albedo_texture
+      )
         return;
 
       const auto dt = glm::clamp(static_cast<float>(it.delta_time()), 0.0f, 0.25f);
@@ -914,7 +925,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       const u32 frame_x = frame % sprite_animation.columns;
       const u32 frame_y = frame / sprite_animation.columns;
 
-      const auto* albedo_texture = asset_manager.get_texture(material->albedo_texture);
+      const auto albedo_texture = asset_manager.get_texture(material->albedo_texture);
       auto& uv_size = material->uv_size;
 
       auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
@@ -1050,9 +1061,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       auto mesh_instances = self.mesh_instances.slots_unsafe();
       auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, usize>();
       for (const auto& mesh_instance : mesh_instances) {
-        const auto* model = asset_man.get_model(mesh_instance.model_uuid);
+        const auto model = asset_man.get_model(mesh_instance.model_uuid);
         const auto& mesh = model->gpu_meshes[mesh_instance.mesh_node_index];
-        const auto* material_asset = asset_man.get_asset(mesh_instance.material_uuid);
+        const auto material_asset = asset_man.get_asset(mesh_instance.material_uuid);
         const auto material_id = material_asset ? material_asset->material_id
                                                 : asset_man.get_null_material()->material_id;
 
@@ -1089,7 +1100,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         return nullopt;
       }
 
-      auto* texture = asset_man.get_texture(uuid);
+      auto texture = asset_man.get_texture(uuid);
       return texture->get_view_index();
     };
 
@@ -1101,7 +1112,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     auto dirty_material_ids = asset_man.get_dirty_material_ids();
     auto dirty_material_indices = std::vector<u32>();
     for (const auto dirty_id : dirty_material_ids) {
-      const auto* material = asset_man.get_material(dirty_id);
+      const auto material = asset_man.get_material(dirty_id);
       if (!material)
         continue;
 
@@ -1126,7 +1137,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         // we should prefer material's sampler over texture's default sampler.
         auto& vk_context = App::get_vkcontext();
 
-        auto* texture = asset_man.get_texture(material->albedo_texture);
+        auto texture = asset_man.get_texture(material->albedo_texture);
         sampler_index = texture->get_sampler_index();
 
         auto texture_sampler = vk_context.resources.samplers.slot(texture->get_sampler_id());
@@ -1212,11 +1223,12 @@ auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> void {
   if (!asset_man.get_asset(lua_script)->is_loaded()) {
     asset_man.load_asset(lua_script);
   }
-  auto* script_system = asset_man.get_script(lua_script);
+  auto script_system = asset_man.get_script(lua_script);
 
   script_system->reload();
 
-  self.lua_systems.emplace(lua_script, script_system);
+  // TODO: This is so unsafe
+  self.lua_systems.emplace(lua_script, script_system.value);
 
   script_system->on_add(&self);
 
@@ -1227,7 +1239,7 @@ auto Scene::remove_lua_system(this Scene& self, const UUID& lua_script) -> void 
   ZoneScoped;
 
   auto& asset_man = App::mod<AssetManager>();
-  auto* script_system = asset_man.get_script(lua_script);
+  auto script_system = asset_man.get_script(lua_script);
 
   script_system->on_remove(&self);
 
@@ -1333,7 +1345,7 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
     return {};
   }
 
-  auto* model = asset_man.get_model(asset_uuid);
+  auto model = asset_man.get_model(asset_uuid);
   auto& root_node = model->mesh_groups.front();
   auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
 
@@ -1532,7 +1544,7 @@ auto Scene::attach_mesh(
   auto overriden_material = material_uuid;
   if (!material_uuid) {
     // No material override, use original one
-    auto* model = asset_man.get_model(model_uuid);
+    auto model = asset_man.get_model(model_uuid);
     auto material_index = model->material_indices[mesh_index];
     if (material_index.has_value()) {
       overriden_material = model->materials[mesh_index];
@@ -2001,8 +2013,10 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   auto entities_array = doc["entities"];
   if (!entities_array.error()) {
     for (auto entity_json : entities_array.get_array()) {
-      if (Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
-          flecs::entity::null()) {
+      if (
+        Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
+        flecs::entity::null()
+      ) {
         return false;
       }
     }
