@@ -113,6 +113,8 @@ auto AppBinding::bind(sol::state* state) -> void {
   APP_MOD(DebugRenderer);
   app.set("mod", mod_table);
 
+  SET_TYPE_FUNCTION(app, App, get);
+  SET_TYPE_FUNCTION(app, App, should_stop);
   SET_TYPE_FUNCTION(app, App, get_vfs);
   SET_TYPE_FUNCTION(app, App, get_event_system);
 
