@@ -533,6 +533,39 @@ void InspectorPanel::draw_material_properties(
   }
 }
 
+void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id id) {
+  ZoneScoped;
+
+  memory::ScopedStack stack;
+  auto remove_component_txt = stack.format("{} Remove Component", ICON_MDI_MINUS);
+  auto reset_component_txt = stack.format("{} Reset Component", ICON_MDI_RELOAD);
+  auto copy_component_txt = stack.format("{} Copy Component", ICON_MDI_CONTENT_COPY);
+  auto paste_component_txt = stack.format("{} Paste Component", ICON_MDI_CONTENT_PASTE);
+
+  if (ImGui::MenuItem(remove_component_txt.data())) {
+    remove_component = true;
+  }
+  if (ImGui::MenuItem(reset_component_txt.data())) {
+    entity.remove(id).add(id);
+  }
+  if (ImGui::MenuItem(copy_component_txt.data())) {
+    component_clipboard.source_entity = entity;
+    component_clipboard.component_id = id;
+  }
+  if (ImGui::MenuItem(paste_component_txt.data())) {
+    if (component_clipboard.is_valid() && component_clipboard.source_entity != entity) {
+      auto& editor = App::mod<Editor>();
+      auto& undo_redo_system = editor.undo_redo_system;
+      undo_redo_system->execute_command<ComponentCopyCommand>(
+        component_clipboard.source_entity,
+        entity,
+        component_clipboard.component_id,
+        "Paste Component"
+      );
+    }
+  }
+}
+
 void InspectorPanel::draw_components(flecs::entity entity) {
   ZoneScoped;
 
@@ -609,23 +642,25 @@ void InspectorPanel::draw_components(flecs::entity entity) {
 
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + line_height * 0.25f);
 
+    bool remove_component = false;
+
     auto component_name = ty.name();
     auto name_cstr = stack.format_char("{} {}:{}", ICON_MDI_VIEW_GRID, component_name.c_str(), id.raw_id());
     const bool open = ImGui::TreeNodeEx(name_cstr, TREE_FLAGS, "%s", name_cstr);
-
-    bool remove_component = false;
+    if (ImGui::BeginPopupContextItem()) {
+      draw_component_context_menu(remove_component, entity, id);
+      ImGui::EndPopup();
+    }
 
     ImGui::PushID(name_cstr);
     const float frame_height = ImGui::GetFrameHeight();
     ImGui::SameLine(ImGui::GetContentRegionMax().x - frame_height * 1.2f);
-    if (UI::button(ICON_MDI_COG, ImVec2{frame_height * 1.2f, frame_height}))
+    if (UI::button(ICON_MDI_COG, ImVec2{frame_height * 1.2f, frame_height})) {
       ImGui::OpenPopup("ComponentSettings");
+    }
 
     if (ImGui::BeginPopup("ComponentSettings")) {
-      if (ImGui::MenuItem("Remove Component"))
-        remove_component = true;
-      if (ImGui::MenuItem("Reset Component"))
-        entity.remove(id).add(id);
+      draw_component_context_menu(remove_component, entity, id);
       ImGui::EndPopup();
     }
     ImGui::PopID();
@@ -647,8 +682,9 @@ void InspectorPanel::draw_components(flecs::entity entity) {
       ImGui::TreePop();
     }
 
-    if (remove_component)
+    if (remove_component) {
       entity.remove(id);
+    }
   });
 }
 

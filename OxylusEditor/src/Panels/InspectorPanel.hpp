@@ -45,6 +45,17 @@ public:
   bool draw_script_asset(UUID* uuid, Asset* asset);
 
 private:
+  struct ComponentClipboard {
+    flecs::entity source_entity;
+    flecs::id_t component_id = 0;
+
+    bool is_valid() const { return source_entity.is_alive() && component_id != 0; }
+  };
+
+  ComponentClipboard component_clipboard = {};
+
+  void draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id id);
+
   Scene* scene_;
   bool rename_entity_ = false;
 };
