@@ -12,7 +12,9 @@
 #include "Scripting/LuaManager.hpp"
 
 namespace ox {
-#define APP_MOD(m) if (App::has_mod<m>()) mod_table.set(#m, std::ref(App::mod<m>()))
+#define APP_MOD(m)                                                                                                     \
+  if (App::has_mod<m>())                                                                                               \
+  mod_table.set(#m, std::ref(App::mod<m>()))
 
 class LuaScopedSubscription {
 public:
@@ -99,7 +101,11 @@ sol::object lua_subscribe_helper(EventSystem& system, sol::function callback) {
 }
 
 auto AppBinding::bind(sol::state* state) -> void {
-  auto app = state->create_table("App");
+  auto app = state->new_usertype<App>("App");
+  SET_TYPE_FUNCTION(app, App, should_stop);
+  SET_TYPE_FUNCTION(app, App, get);
+  SET_TYPE_FUNCTION(app, App, get_vfs);
+  SET_TYPE_FUNCTION(app, App, get_event_system);
 
   auto mod_table = state->create_table("Mod");
   APP_MOD(AssetManager);
@@ -112,11 +118,6 @@ auto AppBinding::bind(sol::state* state) -> void {
   APP_MOD(NetworkManager);
   APP_MOD(DebugRenderer);
   app.set("mod", mod_table);
-
-  SET_TYPE_FUNCTION(app, App, get);
-  SET_TYPE_FUNCTION(app, App, should_stop);
-  SET_TYPE_FUNCTION(app, App, get_vfs);
-  SET_TYPE_FUNCTION(app, App, get_event_system);
 
   auto timestep = state->new_usertype<Timestep>(
     "Timestep",
