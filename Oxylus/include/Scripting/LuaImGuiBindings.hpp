@@ -179,6 +179,8 @@ inline void SetScrollFromPosY(float localY, float centerYRatio) { ImGui::SetScro
 
 // Parameters stacks (shared)
 inline void PushFont(ImFont* pFont) { ImGui::PushFont(pFont); }
+inline void PushFont(float size) { ImGui::PushFont(nullptr, size); }
+inline void PushFont(ImFont* pFont, float size) { ImGui::PushFont(pFont, size); }
 inline void PopFont() { ImGui::PopFont(); }
 #ifdef SOL_IMGUI_USE_COLOR_U32
 inline void PushStyleColor(int idx, int col) { ImGui::PushStyleColor(static_cast<ImGuiCol>(idx), ImU32(col)); }
@@ -3035,7 +3037,14 @@ inline void init(sol::state* lua) {
 #pragma endregion Windows Scrolling
 
 #pragma region Parameters stacks (shared)
-  ImGui.set_function("PushFont", PushFont);
+  ImGui.set_function(
+    "PushFont",
+    sol::overload(
+      sol::resolve<void(ImFont*)>(PushFont),
+      sol::resolve<void(float)>(PushFont),
+      sol::resolve<void(ImFont*, float)>(PushFont)
+    )
+  );
   ImGui.set_function("PopFont", PopFont);
 #ifdef SOL_IMGUI_USE_COLOR_U32
   ImGui.set_function(
