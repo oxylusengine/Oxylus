@@ -9,10 +9,11 @@
 
 namespace ox {
 struct File {
-  option<FileDescriptor> handle;
+  option<FileDescriptor> handle = nullopt;
   usize size = 0;
   FileError error = FileError::None;
   option<void *> mapped_data = nullopt;
+  std::filesystem::path file_path = {};
 
   File() = default;
   File(const std::filesystem::path& path, FileAccess access);

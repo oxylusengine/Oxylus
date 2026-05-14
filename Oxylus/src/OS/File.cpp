@@ -1,10 +1,45 @@
 #include "OS/File.hpp"
 
+#include "Utils/Log.hpp"
+
 namespace ox {
-File::File(const std::filesystem::path& path, FileAccess access) {
+
+static auto file_error_to_str(FileError error) -> std::string_view {
+  ZoneScoped;
+
+  switch (error) {
+    case FileError::None             : return "None";
+    case FileError::NoAccess         : return "NoAccess";
+    case FileError::Exists           : return "Exists";
+    case FileError::IsDir            : return "IsDir";
+    case FileError::InUse            : return "InUse";
+    case FileError::Interrupted      : return "Interrupted";
+    case FileError::BadFileDescriptor: return "BadFileDescriptor";
+    case FileError::MapFailed        : return "MapFailed";
+    case FileError::Unknown          : return "Unknown";
+  }
+}
+
+static auto file_access_to_str(FileAccess access) -> std::string_view {
+  ZoneScoped;
+
+  switch (access) {
+    case FileAccess::Read     : return "Read";
+    case FileAccess::Write    : return "Write";
+    case FileAccess::ReadWrite: return "ReadWrite";
+  }
+}
+
+File::File(const std::filesystem::path& path, FileAccess access) : file_path(path) {
   auto file_handle = os::file_open(path, access);
   if (!file_handle.has_value()) {
     this->error = file_handle.error();
+    OX_LOG_ERROR(
+      "File error: {}, Path: {}, Access: {}",
+      file_error_to_str(this->error),
+      path.string(),
+      file_access_to_str(access)
+    );
     return;
   }
 
@@ -14,6 +49,15 @@ File::File(const std::filesystem::path& path, FileAccess access) {
 
 auto File::write_data(const void* data, usize data_size) -> u64 {
   ZoneScoped;
+
+  if (!this->handle.has_value()) {
+    OX_LOG_ERROR(
+      "Couldn't write data into file! Error: {}, Path: {}",
+      file_error_to_str(this->error),
+      this->file_path.string()
+    );
+    return {};
+  }
 
   return os::file_write(this->handle.value(), data, data_size);
 }
@@ -34,11 +78,29 @@ auto File::map() -> void* {
 auto File::read(void* data, usize data_size) -> u64 {
   ZoneScoped;
 
+  if (!this->handle.has_value()) {
+    OX_LOG_ERROR(
+      "Couldn't read into file! Error: {}, Path: {}",
+      file_error_to_str(this->error),
+      this->file_path.string()
+    );
+    return {};
+  }
+
   return os::file_read(this->handle.value(), data, data_size);
 }
 
 auto File::seek(i64 offset) -> void {
   ZoneScoped;
+
+  if (!this->handle.has_value()) {
+    OX_LOG_ERROR(
+      "Couldn't seek into file! Error: {}, Path: {}",
+      file_error_to_str(this->error),
+      this->file_path.string()
+    );
+    return;
+  }
 
   os::file_seek(this->handle.value(), offset);
 }
