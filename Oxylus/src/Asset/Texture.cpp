@@ -34,9 +34,7 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
   vuk::Format format = load_info.format;
 
   if (is_generic) {
-    if (!path.empty()) {
-      stb_data = load_stb_image(stack.format_char("{}", path), &extent.width, &extent.height, &chans);
-    } else if (!load_info.bytes.empty()) {
+    if (!load_info.bytes.empty()) {
       stb_data = load_stb_image_from_memory(
         (void*)load_info.bytes.data(), //
         load_info.bytes.size(),
@@ -44,6 +42,8 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
         &extent.height,
         &chans
       );
+    } else if (!path.empty()) {
+      stb_data = load_stb_image(stack.format_char("{}", path), &extent.width, &extent.height, &chans);
     }
   } else if (is_dds) {
     if (!path.empty()) {
@@ -53,7 +53,7 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
         OX_LOG_INFO("Error while loading dds. {}", path);
       }
     } else if (!load_info.bytes.empty()) {
-      auto result = dds::readImage(load_info.bytes.data(), load_info.bytes.size(), &dds_image);
+      auto result = dds::readImage(const_cast<u8*>(load_info.bytes.data()), load_info.bytes.size(), &dds_image);
       if (result != dds::ReadResult::Success) {
         OX_LOG_INFO("Error while loading dds. {}", path);
       }
@@ -66,20 +66,24 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
     ktxTexture2* ktx{};
     if (path.empty()) {
       OX_CHECK_EQ(!load_info.bytes.empty(), true);
-      if (const auto result = ktxTexture2_CreateFromMemory(
-            load_info.bytes.data(), //
-            load_info.bytes.size(),
-            KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
-            &ktx
-          );
-          result != KTX_SUCCESS) {
+      if (
+        const auto result = ktxTexture2_CreateFromMemory(
+          load_info.bytes.data(), //
+          load_info.bytes.size(),
+          KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+          &ktx
+        );
+        result != KTX_SUCCESS
+      ) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     } else {
       auto path_str = path.string();
-      if (const auto
-            result = ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
-          result != KTX_SUCCESS) {
+      if (
+        const auto
+          result = ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
+        result != KTX_SUCCESS
+      ) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     }
@@ -92,8 +96,10 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
     // If the image needs is in a supercompressed encoding, transcode it to a desired format
     if (ktxTexture2_NeedsTranscoding(ktx)) {
       ZoneNamedN(z, "Transcode KTX 2 Texture", true);
-      if (const auto result = ktxTexture2_TranscodeBasis(ktx, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
-          result != KTX_SUCCESS) {
+      if (
+        const auto result = ktxTexture2_TranscodeBasis(ktx, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
+        result != KTX_SUCCESS
+      ) {
         OX_LOG_ERROR("Couldn't transcode KTX2 file {}", ktxErrorString(result));
       }
     } else {
