@@ -449,13 +449,13 @@ auto register_gltf_materials(
   return result;
 }
 
-auto AssetManager::load_model(const UUID& uuid) -> bool {
+auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
 
   auto asset_path = std::filesystem::path{};
   {
-    auto* asset = this->get_asset(uuid);
+    auto asset = self.get_asset(uuid);
     if (asset->is_loaded()) {
       // Model is collection of multiple assets and all child
       // assets must be alive to safely process meshes.
@@ -493,7 +493,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
   }
 
   auto meta_path = std::filesystem::path(asset_path.string() + ".oxasset");
-  auto meta_json = read_meta_file(meta_path);
+  auto meta_json = self.read_meta_file(meta_path);
   if (!meta_json) {
     return false;
   }
@@ -505,7 +505,7 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
   auto embedded_texture_uuids = std::move(embedded_texture_uuids_result.value());
 
   auto linear_texture_indices = extract_linear_texture_indices(gltf_asset);
-  auto textures = import_gltf_textures(*this, gltf_asset, asset_path, embedded_texture_uuids);
+  auto textures = import_gltf_textures(self, gltf_asset, asset_path, embedded_texture_uuids);
 
   OX_ASSERT(gltf_asset.textures.size() == textures.size());
   for (const auto& [gltf_texture, texture_uuid, texture_index] :
@@ -522,21 +522,23 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
       image_format = vuk::Format::eR8G8B8A8Unorm;
     }
 
-    job_man.submit(Job::create([asset_man = this, &gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format]() {
-      load_gltf_texture(*asset_man, gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format);
-    }));
+    job_man.submit(
+      Job::create([&asset_man = self, &gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format]() {
+        load_gltf_texture(asset_man, gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format);
+      })
+    );
   }
 
   job_man.wait();
 
-  auto materials_result = register_gltf_materials(*this, *meta_json->doc, asset_path);
+  auto materials_result = register_gltf_materials(self, *meta_json->doc, asset_path);
   if (!materials_result.has_value()) {
     return false;
   }
   auto materials = std::move(materials_result.value());
 
   for (const auto& [material_uuid, gltf_material] : std::views::zip(materials, gltf_asset.materials)) {
-    load_material(material_uuid, gltf_material_to_material(gltf_material, textures));
+    self.load_material(material_uuid, gltf_material_to_material(gltf_material, textures));
   }
 
   auto lights = std::vector<Model::Light>();
@@ -764,8 +766,9 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
           );
 
           cur_lod.error = last_lod.error + result_error;
-          if (result_index_count > (lod_index_count + lod_index_count / 2) || result_error > 0.5 ||
-              result_index_count < 6) {
+          if (
+            result_index_count > (lod_index_count + lod_index_count / 2) || result_error > 0.5 || result_index_count < 6
+          ) {
             // Error bound
             break;
           }
@@ -969,28 +972,27 @@ auto AssetManager::load_model(const UUID& uuid) -> bool {
 
   {
     // auto write_lock = std::unique_lock(self.models_mutex);
-    auto* asset = get_asset(uuid);
-    asset->model_id = model_map.create_slot(std::move(model));
+    auto asset = self.get_asset(uuid);
+    asset->model_id = self.model_map.create_slot(std::move(model));
   }
 
   return true;
 }
 
-auto AssetManager::unload_model(const UUID& uuid) -> bool {
+auto AssetManager::unload_model(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
-  OX_CHECK_NULL(asset);
+  auto asset = self.get_asset(uuid);
   if (!(asset->is_loaded() && asset->release_ref())) {
     return false;
   }
 
-  auto* model = this->get_model(asset->model_id);
+  auto model = self.get_model(asset->model_id);
   for (auto& v : model->materials) {
-    this->unload_material(v);
+    self.unload_material(v);
   }
 
-  model_map.destroy_slot(asset->model_id);
+  self.model_map.destroy_slot(asset->model_id);
   asset->model_id = ModelID::Invalid;
 
   OX_LOG_TRACE("Unloaded model {}", uuid.str());

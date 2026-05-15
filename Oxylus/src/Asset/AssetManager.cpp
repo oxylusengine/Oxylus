@@ -48,7 +48,7 @@ auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Mater
   return true;
 }
 
-auto write_scene_asset_meta(JsonWriter& writer, Scene* scene) -> bool {
+auto write_scene_asset_meta(JsonWriter& writer, const Scene* scene) -> bool {
   ZoneScoped;
 
   writer["name"] = scene->scene_name;
@@ -78,20 +78,19 @@ auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bo
   return true;
 }
 
-auto AssetManager::init() -> std::expected<void, std::string> {
+auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
-  null_material = create_asset(AssetType::Material);
-  load_material(null_material, {});
+  self.null_material = self.create_asset(AssetType::Material);
+  self.load_material(self.null_material, {});
 
   return {};
 }
 
-auto AssetManager::deinit() -> std::expected<void, std::string> {
+auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
-  for (auto& [uuid, asset] : asset_registry) {
-    // leak check
+  for (auto& [uuid, asset] : self.asset_registry) {
     if (asset.is_loaded() && asset.ref_count != 0) {
       OX_LOG_WARN(
         "A {} asset ({}, {}) with refcount of {} is still alive!",
@@ -103,21 +102,22 @@ auto AssetManager::deinit() -> std::expected<void, std::string> {
     }
   }
 
-  asset_registry.clear();
-  dirty_materials.clear();
-  model_map.reset();
-  texture_map.reset();
-  material_map.reset();
-  scene_map.reset();
-  audio_map.reset();
-  script_map.reset();
+  self.asset_registry.clear();
+  self.dirty_materials.clear();
+  self.model_map.reset();
+  self.texture_map.reset();
+  self.material_map.reset();
+  self.scene_map.reset();
+  self.audio_map.reset();
+  self.script_map.reset();
 
   return {};
 }
 
-auto AssetManager::registry() const -> const AssetRegistry& { return asset_registry; }
+auto AssetManager::registry(this const AssetManager& self) -> const AssetRegistry& { return self.asset_registry; }
 
-auto AssetManager::read_meta_file(const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile> {
+auto AssetManager::read_meta_file(this AssetManager& self, const std::filesystem::path& path)
+  -> std::unique_ptr<AssetMetaFile> {
   auto content = File::to_string(path);
   if (content.empty()) {
     OX_LOG_ERROR("Failed to read/open file {}!", path);
@@ -125,9 +125,9 @@ auto AssetManager::read_meta_file(const std::filesystem::path& path) -> std::uni
   }
 
   auto meta_file = std::make_unique<AssetMetaFile>();
-
   meta_file->contents = simdjson::padded_string(content);
   meta_file->doc = meta_file->parser.iterate(meta_file->contents);
+
   if (meta_file->doc.error()) {
     OX_LOG_ERROR("Failed to parse meta file! {}", simdjson::error_message(meta_file->doc.error()));
     return nullptr;
@@ -177,9 +177,19 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
   }
 }
 
-auto AssetManager::create_asset(const AssetType type, const std::filesystem::path& path) -> UUID {
+// Caller must hold registry_mutex (shared or exclusive)
+auto AssetManager::get_asset_ptr(this AssetManager& self, const UUID& uuid) -> Asset* {
+  const auto it = self.asset_registry.find(uuid);
+  if (it == self.asset_registry.end()) {
+    return nullptr;
+  }
+  return &it->second;
+}
+
+auto AssetManager::create_asset(this AssetManager& self, const AssetType type, const std::filesystem::path& path)
+  -> UUID {
   const auto uuid = UUID::generate_random();
-  auto [asset_it, inserted] = asset_registry.try_emplace(uuid);
+  auto [asset_it, inserted] = self.asset_registry.try_emplace(uuid);
   if (!inserted) {
     OX_LOG_ERROR("Can't create asset {}!", uuid.str());
     return UUID(nullptr);
@@ -193,7 +203,7 @@ auto AssetManager::create_asset(const AssetType type, const std::filesystem::pat
   return asset.uuid;
 }
 
-auto AssetManager::import_asset(const std::filesystem::path& path) -> UUID {
+auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -203,9 +213,9 @@ auto AssetManager::import_asset(const std::filesystem::path& path) -> UUID {
   }
 
   auto asset_type = AssetType::None;
-  switch (this->to_asset_file_type(path)) {
+  switch (to_asset_file_type(path)) {
     case AssetFileType::Meta: {
-      return this->register_asset(path);
+      return self.register_asset(path);
     }
     case AssetFileType::GLB:
     case AssetFileType::GLTF: {
@@ -219,7 +229,7 @@ auto AssetManager::import_asset(const std::filesystem::path& path) -> UUID {
       asset_type = AssetType::Texture;
       break;
     }
-    case ox::AssetFileType::LUA: {
+    case AssetFileType::LUA: {
       asset_type = AssetType::Script;
       break;
     }
@@ -228,13 +238,12 @@ auto AssetManager::import_asset(const std::filesystem::path& path) -> UUID {
     }
   }
 
-  // Check for meta file before creating new asset
   auto meta_path = stack.format("{}.oxasset", path);
   if (std::filesystem::exists(meta_path)) {
-    return this->register_asset(meta_path);
+    return self.register_asset(meta_path);
   }
 
-  auto uuid = this->create_asset(asset_type, path);
+  auto uuid = self.create_asset(asset_type, path);
   if (!uuid) {
     return UUID(nullptr);
   }
@@ -244,17 +253,15 @@ auto AssetManager::import_asset(const std::filesystem::path& path) -> UUID {
 
   switch (asset_type) {
     case AssetType::Model: {
-      write_gltf_meta(*this, path, writer);
+      write_gltf_meta(self, path, writer);
     } break;
     case AssetType::Texture: {
       Texture texture = {};
-
       write_texture_asset_meta(writer, &texture);
     } break;
-    case ox::AssetType::Script: {
+    case AssetType::Script: {
       write_script_asset_meta(writer, nullptr);
-      break;
-    }
+    } break;
     default:;
   }
 
@@ -265,33 +272,46 @@ auto AssetManager::import_asset(const std::filesystem::path& path) -> UUID {
   return uuid;
 }
 
-auto AssetManager::delete_asset(const UUID& uuid) -> void {
+auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> void {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
-  if (asset->ref_count > 0) {
-    OX_LOG_WARN("Deleting alive asset {} with {} references!", asset->uuid.str(), asset->ref_count);
+  bool is_loaded = false;
+  u64 ref_count = 0;
+  {
+    auto read_lock = std::shared_lock(self.registry_mutex);
+    auto* asset = self.get_asset_ptr(uuid);
+    if (!asset)
+      return;
+
+    ref_count = asset->ref_count;
+    is_loaded = asset->is_loaded();
+
+    if (ref_count > 0) {
+      OX_LOG_WARN("Deleting alive asset {} with {} references!", asset->uuid.str(), ref_count);
+    }
   }
 
-  if (asset->is_loaded()) {
-    asset->ref_count = ox::min(asset->ref_count, 1_u64);
-    this->unload_asset(uuid);
-
+  if (is_loaded) {
     {
-      auto write_lock = std::unique_lock(registry_mutex);
-      asset_registry.erase(uuid);
+      auto read_lock = std::shared_lock(self.registry_mutex);
+      if (auto* asset = self.get_asset_ptr(uuid)) {
+        asset->ref_count = ox::min(asset->ref_count, 1_u64);
+      }
     }
+    self.unload_asset(uuid);
+
+    auto write_lock = std::unique_lock(self.registry_mutex);
+    self.asset_registry.erase(uuid);
   }
 
   OX_LOG_TRACE("Deleted asset {}.", uuid.str());
 }
 
-auto AssetManager::register_asset(const std::filesystem::path& path) -> UUID {
+auto AssetManager::register_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID {
   ZoneScoped;
-
   memory::ScopedStack stack;
 
-  auto meta_json = read_meta_file(path);
+  auto meta_json = self.read_meta_file(path);
   if (!meta_json) {
     return UUID(nullptr);
   }
@@ -313,25 +333,25 @@ auto AssetManager::register_asset(const std::filesystem::path& path) -> UUID {
   auto uuid = UUID::from_string(uuid_json.value_unsafe()).value();
   auto type = static_cast<AssetType>(type_json.value_unsafe().get_uint64());
 
-  if (!this->register_asset(uuid, type, asset_path)) {
+  if (!self.register_asset(uuid, type, asset_path)) {
     return UUID(nullptr);
   }
 
   return uuid;
 }
 
-auto AssetManager::register_asset(const UUID& uuid, AssetType type, const std::filesystem::path& path) -> bool {
+auto AssetManager::register_asset(
+  this AssetManager& self, const UUID& uuid, AssetType type, const std::filesystem::path& path
+) -> bool {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(registry_mutex);
+  auto write_lock = std::unique_lock(self.registry_mutex);
 
-  auto [asset_it, inserted] = asset_registry.try_emplace(uuid);
+  auto [asset_it, inserted] = self.asset_registry.try_emplace(uuid);
   if (!inserted) {
-    if (asset_it != asset_registry.end()) {
-      // Tried a reinsert, asset already exists
+    if (asset_it != self.asset_registry.end()) {
       return true;
     }
-
     return false;
   }
 
@@ -345,23 +365,26 @@ auto AssetManager::register_asset(const UUID& uuid, AssetType type, const std::f
   return true;
 }
 
-auto AssetManager::acquire_ref(const UUID& uuid) -> void {
+auto AssetManager::acquire_ref(this AssetManager& self, const UUID& uuid) -> void {
   ZoneScoped;
 
-  auto* asset = get_asset(uuid);
+  auto read_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
   if (asset && asset->is_loaded()) {
     asset->acquire_ref();
   }
 }
 
-auto AssetManager::release_ref(const UUID& uuid) -> void {
+auto AssetManager::release_ref(this AssetManager& self, const UUID& uuid) -> void {
   ZoneScoped;
 
-  unload_asset(uuid);
+  self.unload_asset(uuid);
 }
 
-auto AssetManager::export_asset(const UUID& uuid, const std::filesystem::path& path) -> bool {
-  auto* asset = this->get_asset(uuid);
+auto AssetManager::export_asset(this AssetManager& self, const UUID& uuid, const std::filesystem::path& path) -> bool {
+  auto asset = self.get_asset(uuid);
+  if (!asset)
+    return false;
 
   JsonWriter writer{};
   begin_asset_meta(writer, uuid, asset->type);
@@ -369,24 +392,20 @@ auto AssetManager::export_asset(const UUID& uuid, const std::filesystem::path& p
   switch (asset->type) {
     case AssetType::Texture:
     case AssetType::Model  : {
-      // Exporting these seems pointless, so just dont support it
       OX_LOG_ERROR("Cannot export unsupported asset type {}.", to_asset_type_sv(asset->type));
       return false;
-    } break;
+    }
     case AssetType::Scene: {
-      if (!this->export_scene(asset->uuid, writer, path)) {
+      if (!self.export_scene(asset->uuid, writer, path))
         return false;
-      }
     } break;
-    case ox::AssetType::Material: {
-      if (!this->export_material(asset->uuid, writer, path)) {
+    case AssetType::Material: {
+      if (!self.export_material(asset->uuid, writer, path))
         return false;
-      }
     } break;
-    case ox::AssetType::Script: {
-      if (!this->export_script(asset->uuid, writer, path)) {
+    case AssetType::Script: {
+      if (!self.export_script(asset->uuid, writer, path))
         return false;
-      }
     } break;
     default: return false;
   }
@@ -394,112 +413,105 @@ auto AssetManager::export_asset(const UUID& uuid, const std::filesystem::path& p
   return end_asset_meta(writer, path);
 }
 
-auto AssetManager::export_scene(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool {
+auto AssetManager::export_scene(
+  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+) -> bool {
   ZoneScoped;
 
-  auto* scene = this->get_scene(uuid);
-  OX_CHECK_NULL(scene);
-  write_scene_asset_meta(writer, scene);
+  auto scene = self.get_scene(uuid);
+  write_scene_asset_meta(writer, scene.value);
 
   return scene->save_to_file(path);
 }
 
-auto AssetManager::export_material(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool {
+auto AssetManager::export_material(
+  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+) -> bool {
   ZoneScoped;
 
-  auto* material = this->get_material(uuid);
-  OX_CHECK_NULL(material);
+  auto material = self.get_material(uuid);
 
   writer.key("material");
-  auto result = write_material_asset_meta(writer, uuid, *material);
-
-  return result;
+  return write_material_asset_meta(writer, uuid, *material.value);
 }
 
-auto AssetManager::export_script(const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path) -> bool {
+auto AssetManager::export_script(
+  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+) -> bool {
   ZoneScoped;
 
   return write_texture_asset_meta(writer, nullptr);
 }
 
-auto AssetManager::load_asset(const UUID& uuid) -> bool {
-  const auto* asset = this->get_asset(uuid);
-  switch (asset->type) {
-    case AssetType::Model: {
-      return this->load_model(uuid);
-    }
-    case AssetType::Texture: {
-      return this->load_texture(uuid);
-    }
-    case AssetType::Scene: {
-      return this->load_scene(uuid);
-    }
-    case AssetType::Audio: {
-      return this->load_audio(uuid);
-    }
-    case AssetType::Script: {
-      return this->load_script(uuid);
-    }
-    case AssetType::Material: {
-      return this->load_material(uuid, {});
-    }
-    default:;
+auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid) -> bool {
+  auto read_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
+  if (!asset)
+    return false;
+  auto type = asset->type;
+  read_lock.unlock();
+
+  switch (type) {
+    case AssetType::Model   : return self.load_model(uuid);
+    case AssetType::Texture : return self.load_texture(uuid);
+    case AssetType::Scene   : return self.load_scene(uuid);
+    case AssetType::Audio   : return self.load_audio(uuid);
+    case AssetType::Script  : return self.load_script(uuid);
+    case AssetType::Material: return self.load_material(uuid, {});
+    default                 :;
   }
 
   return false;
 }
 
-auto AssetManager::unload_asset(const UUID& uuid) -> bool {
-  const auto* asset = this->get_asset(uuid);
-  OX_CHECK_NULL(asset);
-  switch (asset->type) {
-    case AssetType::Model: {
-      return this->unload_model(uuid);
-    } break;
-    case AssetType::Texture: {
-      return this->unload_texture(uuid);
-    } break;
-    case AssetType::Scene: {
-      return this->unload_scene(uuid);
-    } break;
-    case AssetType::Audio: {
-      return this->unload_audio(uuid);
-      break;
-    }
-    case AssetType::Script: {
-      return this->unload_script(uuid);
-      break;
-    }
-    case AssetType::Material: {
-      return this->unload_material(uuid);
-      break;
-    }
-    default:;
+auto AssetManager::unload_asset(this AssetManager& self, const UUID& uuid) -> bool {
+  auto read_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
+  if (!asset)
+    return false;
+  auto type = asset->type;
+  read_lock.unlock();
+
+  switch (type) {
+    case AssetType::Model   : return self.unload_model(uuid);
+    case AssetType::Texture : return self.unload_texture(uuid);
+    case AssetType::Scene   : return self.unload_scene(uuid);
+    case AssetType::Audio   : return self.unload_audio(uuid);
+    case AssetType::Script  : return self.unload_script(uuid);
+    case AssetType::Material: return self.unload_material(uuid);
+    default                 :;
   }
 
   return false;
 }
 
-auto AssetManager::load_texture(const UUID& uuid, TextureLoadInfo info) -> bool {
+auto AssetManager::load_texture(this AssetManager& self, const UUID& uuid, TextureLoadInfo info) -> bool {
   ZoneScoped;
 
-  auto read_lock = std::shared_lock(textures_mutex);
-  auto* asset = this->get_asset(uuid);
-  OX_CHECK_NULL(asset);
-  asset->acquire_ref();
-
-  if (asset->is_loaded()) {
-    return true;
+  auto read_lock = std::shared_lock(self.textures_mutex);
+  {
+    auto reg_lock = std::shared_lock(self.registry_mutex);
+    auto* asset = self.get_asset_ptr(uuid);
+    OX_CHECK_NULL(asset);
+    asset->acquire_ref();
+    if (asset->is_loaded())
+      return true;
   }
 
   read_lock.unlock();
 
   {
     Texture texture{};
-    texture.create(asset->path, std::move(info));
+    {
+      auto reg_lock = std::shared_lock(self.registry_mutex);
+      auto* asset = self.get_asset_ptr(uuid);
+      texture.create(asset->path, std::move(info));
+    }
 
-    auto write_lock = std::unique_lock(textures_mutex);
-    asset->texture_id = texture_map.create_slot(std::move(texture));
+    auto write_lock = std::unique_lock(self.textures_mutex);
+    auto reg_lock = std::shared_lock(self.registry_mutex);
+    auto* asset = self.get_asset_ptr(uuid);
+    asset->texture_id = self.texture_map.create_slot(std::move(texture));
 
     OX_LOG_INFO("Loaded texture {} {}.", asset->uuid.str(), SlotMap_decode_id(asset->texture_id).index);
   }
@@ -507,15 +519,15 @@ auto AssetManager::load_texture(const UUID& uuid, TextureLoadInfo info) -> bool 
   return true;
 }
 
-auto AssetManager::unload_texture(const UUID& uuid) -> bool {
+auto AssetManager::unload_texture(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
-  if (!asset || !(asset->is_loaded() && asset->release_ref())) {
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
+  if (!asset || !(asset->is_loaded() && asset->release_ref()))
     return false;
-  }
 
-  texture_map.destroy_slot(asset->texture_id);
+  self.texture_map.destroy_slot(asset->texture_id);
   asset->texture_id = TextureID::Invalid;
 
   OX_LOG_TRACE("Unloaded texture {}", uuid.str());
@@ -523,37 +535,36 @@ auto AssetManager::unload_texture(const UUID& uuid) -> bool {
   return true;
 }
 
-auto AssetManager::is_texture_loaded(const UUID& uuid) -> bool {
+auto AssetManager::is_texture_loaded(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
-  std::shared_lock _(textures_mutex);
-  auto* asset = this->get_asset(uuid);
-  if (!asset) {
-    return false;
-  }
+  auto read_lock = std::shared_lock(self.textures_mutex);
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
 
-  return asset->is_loaded();
+  return asset && asset->is_loaded();
 }
 
-auto AssetManager::load_material(const UUID& uuid, const Material& info) -> bool {
+auto AssetManager::load_material(this AssetManager& self, const UUID& uuid, const Material& info) -> bool {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
   OX_CHECK_NULL(asset);
   asset->acquire_ref();
 
   if (asset->is_loaded()) {
-    auto* material = get_material(asset->material_id);
-    acquire_ref(material->albedo_texture);
-    acquire_ref(material->normal_texture);
-    acquire_ref(material->emissive_texture);
-    acquire_ref(material->metallic_roughness_texture);
-    acquire_ref(material->occlusion_texture);
-
+    auto* material = self.material_map.slot(asset->material_id);
+    reg_lock.unlock();
+    self.acquire_ref(material->albedo_texture);
+    self.acquire_ref(material->normal_texture);
+    self.acquire_ref(material->emissive_texture);
+    self.acquire_ref(material->metallic_roughness_texture);
+    self.acquire_ref(material->occlusion_texture);
     return true;
   }
 
-  asset->material_id = material_map.create_slot({
+  asset->material_id = self.material_map.create_slot({
     .albedo_color = info.albedo_color,
     .emissive_color = info.emissive_color,
     .roughness_factor = info.roughness_factor,
@@ -567,76 +578,78 @@ auto AssetManager::load_material(const UUID& uuid, const Material& info) -> bool
     .occlusion_texture = info.occlusion_texture,
   });
 
-  this->set_material_dirty(asset->material_id);
+  self.set_material_dirty(asset->material_id);
 
   return true;
 }
 
-auto AssetManager::unload_material(const UUID& uuid) -> bool {
+auto AssetManager::unload_material(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
   OX_CHECK_NULL(asset);
-  if (!(asset->is_loaded() && asset->release_ref())) {
+  if (!(asset->is_loaded() && asset->release_ref()))
     return false;
-  }
 
-  const auto* material = this->get_material(asset->material_id);
-  if (material->albedo_texture) {
-    this->unload_texture(material->albedo_texture);
-  }
+  const auto* material = self.material_map.slot(asset->material_id);
+  reg_lock.unlock();
 
-  if (material->normal_texture) {
-    this->unload_texture(material->normal_texture);
-  }
+  if (material->albedo_texture)
+    self.unload_texture(material->albedo_texture);
+  if (material->normal_texture)
+    self.unload_texture(material->normal_texture);
+  if (material->emissive_texture)
+    self.unload_texture(material->emissive_texture);
+  if (material->metallic_roughness_texture)
+    self.unload_texture(material->metallic_roughness_texture);
+  if (material->occlusion_texture)
+    self.unload_texture(material->occlusion_texture);
 
-  if (material->emissive_texture) {
-    this->unload_texture(material->emissive_texture);
+  {
+    auto reg_lock2 = std::shared_lock(self.registry_mutex);
+    auto* a = self.get_asset_ptr(uuid);
+    self.material_map.destroy_slot(a->material_id);
+    a->material_id = MaterialID::Invalid;
   }
-
-  if (material->metallic_roughness_texture) {
-    this->unload_texture(material->metallic_roughness_texture);
-  }
-
-  if (material->occlusion_texture) {
-    this->unload_texture(material->occlusion_texture);
-  }
-
-  material_map.destroy_slot(asset->material_id);
-  asset->material_id = MaterialID::Invalid;
 
   OX_LOG_INFO("Unloaded material {}", uuid.str());
 
   return true;
 }
 
-auto AssetManager::load_scene(const UUID& uuid) -> bool {
+auto AssetManager::load_scene(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
-  asset->scene_id = this->scene_map.create_slot(std::make_unique<Scene>());
-  auto* scene = this->scene_map.slot(asset->scene_id)->get();
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
+
+  asset->scene_id = self.scene_map.create_slot(std::make_unique<Scene>());
+  auto* scene = self.scene_map.slot(asset->scene_id)->get();
+  auto path = asset->path;
+  reg_lock.unlock();
 
   scene->init("unnamed_scene");
 
-  if (!scene->load_from_file(asset->path)) {
+  if (!scene->load_from_file(path))
     return false;
-  }
 
-  asset->acquire_ref();
+  auto reg_lock2 = std::shared_lock(self.registry_mutex);
+  self.get_asset_ptr(uuid)->acquire_ref();
+
   return true;
 }
 
-auto AssetManager::unload_scene(const UUID& uuid) -> bool {
+auto AssetManager::unload_scene(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
   OX_CHECK_NULL(asset);
-  if (!(asset->is_loaded() && asset->release_ref())) {
+  if (!(asset->is_loaded() && asset->release_ref()))
     return false;
-  }
 
-  scene_map.destroy_slot(asset->scene_id);
+  self.scene_map.destroy_slot(asset->scene_id);
   asset->scene_id = SceneID::Invalid;
 
   OX_LOG_INFO("Unloaded scene {}", uuid.str());
@@ -644,39 +657,39 @@ auto AssetManager::unload_scene(const UUID& uuid) -> bool {
   return true;
 }
 
-auto AssetManager::load_audio(const UUID& uuid) -> bool {
+auto AssetManager::load_audio(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
   OX_CHECK_NULL(asset);
   asset->acquire_ref();
 
-  if (asset->is_loaded()) {
+  if (asset->is_loaded())
     return true;
-  }
 
   AudioSource audio{};
   audio.load(asset->path);
-  asset->audio_id = audio_map.create_slot(std::move(audio));
+  asset->audio_id = self.audio_map.create_slot(std::move(audio));
 
   OX_LOG_INFO("Loaded audio {}", uuid.str());
 
   return true;
 }
 
-auto AssetManager::unload_audio(const UUID& uuid) -> bool {
+auto AssetManager::unload_audio(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
-  if (!asset || !(asset->is_loaded() && asset->release_ref())) {
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
+  if (!asset || !(asset->is_loaded() && asset->release_ref()))
     return false;
-  }
 
-  auto* audio = this->get_audio(asset->audio_id);
+  auto* audio = self.audio_map.slot(asset->audio_id);
   OX_CHECK_NULL(audio);
   audio->unload();
 
-  audio_map.destroy_slot(asset->audio_id);
+  self.audio_map.destroy_slot(asset->audio_id);
   asset->audio_id = AudioID::Invalid;
 
   OX_LOG_INFO("Unloaded audio {}.", uuid.str());
@@ -684,18 +697,19 @@ auto AssetManager::unload_audio(const UUID& uuid) -> bool {
   return true;
 }
 
-auto AssetManager::load_script(const UUID& uuid) -> bool {
+auto AssetManager::load_script(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
   OX_CHECK_NULL(asset);
   asset->acquire_ref();
 
   if (asset->is_loaded())
     return true;
 
-  asset->script_id = script_map.create_slot(std::make_unique<LuaSystem>());
-  auto* system = script_map.slot(asset->script_id);
+  asset->script_id = self.script_map.create_slot(std::make_unique<LuaSystem>());
+  auto* system = self.script_map.slot(asset->script_id);
   system->get()->load(asset->path);
 
   OX_LOG_INFO("Loaded script {} {}.", asset->uuid.str(), SlotMap_decode_id(asset->script_id).index);
@@ -703,15 +717,15 @@ auto AssetManager::load_script(const UUID& uuid) -> bool {
   return true;
 }
 
-auto AssetManager::unload_script(const UUID& uuid) -> bool {
+auto AssetManager::unload_script(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
-  auto* asset = this->get_asset(uuid);
-  if (!asset || !(asset->is_loaded() && asset->release_ref())) {
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
+  if (!asset || !(asset->is_loaded() && asset->release_ref()))
     return false;
-  }
 
-  script_map.destroy_slot(asset->script_id);
+  self.script_map.destroy_slot(asset->script_id);
   asset->script_id = ScriptID::Invalid;
 
   OX_LOG_INFO("Unloaded script {}.", uuid.str());
@@ -719,117 +733,128 @@ auto AssetManager::unload_script(const UUID& uuid) -> bool {
   return true;
 }
 
-auto AssetManager::get_asset(const UUID& uuid) -> Asset* {
+auto AssetManager::get_asset(this AssetManager& self, const UUID& uuid) -> ReadGuard<Asset> {
   ZoneScoped;
 
-  auto read_lock = std::shared_lock(registry_mutex);
-  const auto it = asset_registry.find(uuid);
-  if (it == asset_registry.end()) {
-    return nullptr;
+  self.registry_mutex.lock_shared();
+  const auto it = self.asset_registry.find(uuid);
+  if (it == self.asset_registry.end()) {
+    self.registry_mutex.unlock_shared();
+    return {};
   }
-
-  return &it->second;
+  return ReadGuard<Asset>(self.registry_mutex, &it->second, adopt_lock);
 }
 
-auto AssetManager::get_model(const UUID& uuid) -> Model* {
+auto AssetManager::get_model(this AssetManager& self, const UUID& uuid) -> ReadGuard<Model> {
   ZoneScoped;
 
-  const auto* asset = this->get_asset(uuid);
-  if (asset == nullptr) {
-    return nullptr;
+  ModelID model_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Model || guard->model_id == ModelID::Invalid)
+      return {};
+    model_id = guard->model_id;
   }
-
-  OX_CHECK_EQ(asset->type, AssetType::Model);
-  if (asset->type != AssetType::Model || asset->model_id == ModelID::Invalid) {
-    return nullptr;
-  }
-
-  return model_map.slot(asset->model_id);
+  return self.get_model(model_id);
 }
 
-auto AssetManager::get_model(const ModelID model_id) -> Model* {
+auto AssetManager::get_model(this AssetManager& self, const ModelID model_id) -> ReadGuard<Model> {
   ZoneScoped;
 
-  if (model_id == ModelID::Invalid) {
-    return nullptr;
+  if (model_id == ModelID::Invalid)
+    return {};
+  self.models_mutex.lock_shared();
+  auto* model = self.model_map.slot(model_id);
+  if (!model) {
+    self.models_mutex.unlock_shared();
+    return {};
   }
-
-  return model_map.slot(model_id);
+  return ReadGuard<Model>(self.models_mutex, model, adopt_lock);
 }
 
-auto AssetManager::get_texture(const UUID& uuid) -> Texture* {
+auto AssetManager::get_texture(this AssetManager& self, const UUID& uuid) -> ReadGuard<Texture> {
   ZoneScoped;
 
-  const auto* asset = this->get_asset(uuid);
-  if (asset == nullptr) {
-    return nullptr;
+  TextureID texture_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Texture || guard->texture_id == TextureID::Invalid)
+      return {};
+    texture_id = guard->texture_id;
   }
-
-  OX_CHECK_EQ(asset->type, AssetType::Texture);
-  if (asset->type != AssetType::Texture || asset->texture_id == TextureID::Invalid) {
-    return nullptr;
-  }
-
-  return texture_map.slot(asset->texture_id);
+  return self.get_texture(texture_id);
 }
 
-auto AssetManager::get_texture(const TextureID texture_id) -> Texture* {
+auto AssetManager::get_texture(this AssetManager& self, const TextureID texture_id) -> ReadGuard<Texture> {
   ZoneScoped;
 
-  if (texture_id == TextureID::Invalid) {
-    return nullptr;
+  if (texture_id == TextureID::Invalid)
+    return {};
+  self.textures_mutex.lock_shared();
+  auto* texture = self.texture_map.slot(texture_id);
+  if (!texture) {
+    self.textures_mutex.unlock_shared();
+    return {};
   }
-
-  return texture_map.slot(texture_id);
+  return ReadGuard<Texture>(self.textures_mutex, texture, adopt_lock);
 }
 
-auto AssetManager::get_null_material() -> const Asset* { return get_asset(null_material); }
-
-auto AssetManager::get_material(const UUID& uuid) -> Material* {
-  ZoneScoped;
-
-  const auto* asset = this->get_asset(uuid);
-  if (asset == nullptr) {
-    return nullptr;
-  }
-
-  OX_CHECK_EQ(asset->type, AssetType::Material);
-  if (asset->type != AssetType::Material || asset->material_id == MaterialID::Invalid) {
-    return nullptr;
-  }
-
-  return material_map.slot(asset->material_id);
+auto AssetManager::get_null_material(this AssetManager& self) -> ReadGuard<Asset> {
+  return self.get_asset(self.null_material);
 }
 
-auto AssetManager::get_material(const MaterialID material_id) -> Material* {
+auto AssetManager::get_material(this AssetManager& self, const UUID& uuid) -> ReadGuard<Material> {
   ZoneScoped;
 
-  if (material_id == MaterialID::Invalid) {
-    return nullptr;
+  MaterialID material_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Material || guard->material_id == MaterialID::Invalid)
+      return {};
+    material_id = guard->material_id;
   }
-
-  return material_map.slot(material_id);
+  return self.get_material(material_id);
 }
 
-auto AssetManager::set_material_dirty(MaterialID material_id) -> void {
+auto AssetManager::get_material(this AssetManager& self, const MaterialID material_id) -> ReadGuard<Material> {
   ZoneScoped;
 
-  std::shared_lock shared_lock(materials_mutex);
-  if (std::ranges::find(dirty_materials, material_id) != dirty_materials.end()) {
+  if (material_id == MaterialID::Invalid)
+    return {};
+  self.materials_mutex.lock_shared();
+  auto* material = self.material_map.slot(material_id);
+  if (!material) {
+    self.materials_mutex.unlock_shared();
+    return {};
+  }
+  return ReadGuard<Material>(self.materials_mutex, material, adopt_lock);
+}
+
+auto AssetManager::set_material_dirty(this AssetManager& self, MaterialID material_id) -> void {
+  ZoneScoped;
+
+  std::shared_lock shared_lock(self.materials_mutex);
+  if (std::ranges::find(self.dirty_materials, material_id) != self.dirty_materials.end()) {
     return;
   }
 
   shared_lock.unlock();
-  materials_mutex.lock();
-  dirty_materials.emplace_back(material_id);
-  materials_mutex.unlock();
+  self.materials_mutex.lock();
+  self.dirty_materials.emplace_back(material_id);
+  self.materials_mutex.unlock();
 }
 
-auto AssetManager::set_material_dirty(const UUID& uuid) -> void {
+auto AssetManager::set_material_dirty(this AssetManager& self, const UUID& uuid) -> void {
   ZoneScoped;
 
-  auto material = get_asset(uuid);
-  set_material_dirty(material->material_id);
+  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto* asset = self.get_asset_ptr(uuid);
+  if (!asset)
+    return;
+  auto id = asset->material_id;
+  reg_lock.unlock();
+
+  self.set_material_dirty(id);
 }
 
 auto AssetManager::set_all_materials_dirty(this AssetManager& self) -> void {
@@ -846,86 +871,95 @@ auto AssetManager::get_dirty_material_ids(this AssetManager& self) -> std::vecto
   ZoneScoped;
 
   auto read_lock = std::shared_lock(self.materials_mutex);
-  auto dirty_materials = std::vector(self.dirty_materials);
+  auto dirty_copy = std::vector(self.dirty_materials);
 
   read_lock.unlock();
+
   auto write_lock = std::unique_lock(self.materials_mutex);
   self.dirty_materials.clear();
 
-  return dirty_materials;
+  return dirty_copy;
 }
 
-auto AssetManager::get_scene(const UUID& uuid) -> Scene* {
+auto AssetManager::get_scene(this AssetManager& self, const UUID& uuid) -> ReadGuard<Scene> {
   ZoneScoped;
 
-  const auto* asset = this->get_asset(uuid);
-  if (asset == nullptr) {
-    return nullptr;
+  SceneID scene_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Scene || guard->scene_id == SceneID::Invalid)
+      return {};
+    scene_id = guard->scene_id;
   }
-
-  OX_CHECK_EQ(asset->type, AssetType::Scene);
-  if (asset->type != AssetType::Scene || asset->scene_id == SceneID::Invalid) {
-    return nullptr;
-  }
-
-  return scene_map.slot(asset->scene_id)->get();
+  return self.get_scene(scene_id);
 }
 
-auto AssetManager::get_scene(const SceneID scene_id) -> Scene* {
+auto AssetManager::get_scene(this AssetManager& self, const SceneID scene_id) -> ReadGuard<Scene> {
   ZoneScoped;
 
-  if (scene_id == SceneID::Invalid) {
-    return nullptr;
+  if (scene_id == SceneID::Invalid)
+    return {};
+  self.scenes_mutex.lock_shared();
+  auto* scene = self.scene_map.slot(scene_id);
+  if (!scene) {
+    self.scenes_mutex.unlock_shared();
+    return {};
   }
-
-  return scene_map.slot(scene_id)->get();
+  return ReadGuard<Scene>(self.scenes_mutex, scene->get(), adopt_lock);
 }
 
-auto AssetManager::get_audio(const UUID& uuid) -> AudioSource* {
-  const auto* asset = this->get_asset(uuid);
-  if (asset == nullptr) {
-    return nullptr;
-  }
-
-  OX_CHECK_EQ(asset->type, AssetType::Audio);
-  if (asset->type != AssetType::Audio || asset->audio_id == AudioID::Invalid) {
-    return nullptr;
-  }
-
-  return audio_map.slot(asset->audio_id);
-}
-
-auto AssetManager::get_audio(const AudioID audio_id) -> AudioSource* {
+auto AssetManager::get_audio(this AssetManager& self, const UUID& uuid) -> ReadGuard<AudioSource> {
   ZoneScoped;
 
-  if (audio_id == AudioID::Invalid) {
-    return nullptr;
+  AudioID audio_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Audio || guard->audio_id == AudioID::Invalid)
+      return {};
+    audio_id = guard->audio_id;
   }
-
-  return audio_map.slot(audio_id);
+  return self.get_audio(audio_id);
 }
 
-auto AssetManager::get_script(const UUID& uuid) -> LuaSystem* {
-  const auto* asset = this->get_asset(uuid);
-  if (asset == nullptr) {
-    return nullptr;
-  }
-
-  OX_CHECK_EQ(asset->type, AssetType::Script);
-  if (asset->type != AssetType::Script || asset->script_id == ScriptID::Invalid) {
-    return nullptr;
-  }
-
-  return script_map.slot(asset->script_id)->get();
-}
-
-auto AssetManager::get_script(ScriptID script_id) -> LuaSystem* {
+auto AssetManager::get_audio(this AssetManager& self, const AudioID audio_id) -> ReadGuard<AudioSource> {
   ZoneScoped;
 
-  if (script_id == ScriptID::Invalid) {
-    return nullptr;
+  if (audio_id == AudioID::Invalid)
+    return {};
+  self.audio_mutex.lock_shared();
+  auto* audio = self.audio_map.slot(audio_id);
+  if (!audio) {
+    self.audio_mutex.unlock_shared();
+    return {};
   }
-
-  return script_map.slot(script_id)->get();
+  return ReadGuard<AudioSource>(self.audio_mutex, audio, adopt_lock);
 }
+
+auto AssetManager::get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaSystem> {
+  ZoneScoped;
+
+  ScriptID script_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Script || guard->script_id == ScriptID::Invalid)
+      return {};
+    script_id = guard->script_id;
+  }
+  return self.get_script(script_id);
+}
+
+auto AssetManager::get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaSystem> {
+  ZoneScoped;
+
+  if (script_id == ScriptID::Invalid)
+    return {};
+  self.scripts_mutex.lock_shared();
+  auto* script = self.script_map.slot(script_id);
+  if (!script) {
+    self.scripts_mutex.unlock_shared();
+    return {};
+  }
+  return ReadGuard<LuaSystem>(self.scripts_mutex, script->get(), adopt_lock);
+}
+
 } // namespace ox

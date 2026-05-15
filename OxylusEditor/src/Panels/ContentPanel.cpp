@@ -8,14 +8,12 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
-#include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "OS/OS.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EditorConfig.hpp"
-#include "Utils/Profiler.hpp"
 
 namespace ox {
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_STRING = {
@@ -248,9 +246,6 @@ ContentPanel::ContentPanel() : EditorPanel("Contents", ICON_MDI_FOLDER_STAR, tru
      .loaded_data = white_texture_data,
      .extent = vuk::Extent3D{.width = 16u, .height = 16u, .depth = 1u}}
   );
-
-  ThumbnailRenderer rp;
-  rp.init(App::get_vkcontext());
 }
 
 void ContentPanel::init() {
@@ -547,52 +542,6 @@ void ContentPanel::render_body(bool grid) {
       const char* filename = file.name.c_str();
 
       auto file_path_str = file.file_path.string();
-      if (!is_dir && EditorCVar::cvar_file_thumbnails.get()) {
-        if (file.type == FileType::Texture) {
-          auto thumbnail_read_lock = std::shared_lock(thumbnail_mutex);
-          if (!thumbnail_cache_textures.contains(file.file_path)) {
-            auto& job_man = App::get_job_manager();
-            job_man.push_job_name("ContentPanelThumbnail");
-            job_man.submit(Job::create([this, file_path = file.file_path]() {
-              auto thumbnail_texture = std::make_shared<Texture>();
-              auto file_extension = file_path.extension();
-              TextureLoadInfo::MimeType mime_type = TextureLoadInfo::MimeType::Generic;
-              if (file_extension == "ktx" || file_extension == "ktx2") {
-                mime_type = TextureLoadInfo::MimeType::KTX;
-              }
-              thumbnail_texture->create(file_path, {.preset = Preset::eRTT2DUnmipped, .mime = mime_type});
-              auto write_lock = std::unique_lock(thumbnail_mutex);
-              thumbnail_cache_textures.emplace(file_path, thumbnail_texture);
-            }));
-            job_man.pop_job_name();
-          }
-        } else if (file.type == FileType::Model) {
-          if (!thumbnail_cache_meshes.contains(file.file_path) && mesh_thumbnails_enabled) {
-            const auto name = file.file_path.filename().string();
-            auto rp = std::make_unique<ThumbnailRenderer>();
-            rp->set_name(name);
-
-            auto& asset_man = App::mod<AssetManager>();
-            if (auto asset_uuid = asset_man.import_asset(file.file_path); asset_uuid) {
-              if (asset_man.load_model(asset_uuid)) {
-                auto* mesh_asset = asset_man.get_model(asset_uuid);
-                rp->set_model(mesh_asset);
-              }
-            }
-
-            auto thumb = rp->render(
-                             vk_context,
-                             {(u32)thumb_image_size, (u32)thumb_image_size, 1},
-                             vuk::Format::eR8G8B8A8Srgb
-            )
-                           .as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue);
-
-            auto ia = vk_context.wait_on_rg(std::move(thumb), false);
-
-            thumbnail_cache_meshes.emplace(file.file_path, std::move(ia));
-          }
-        }
-      }
 
       ImGui::TableNextColumn();
 
@@ -666,20 +615,9 @@ void ContentPanel::render_body(bool grid) {
         ImGui::SetCursorPos({cursor_pos.x + thumbnail_padding * 0.75f, cursor_pos.y + thumbnail_padding});
         ImGui::SetNextItemAllowOverlap();
 
-        auto thumbnail_read_lock = std::shared_lock(thumbnail_mutex);
-        auto thumbnail_exists = thumbnail_cache_textures.contains(file.file_path);
-
-        if (thumbnail_exists) {
-          UI::image(*thumbnail_cache_textures[file.file_path], {thumb_image_size, thumb_image_size});
-        } else if (false /*thumbnail_cache_meshes.contains(texture_name)*/) {
-          // auto texture = Texture::from_attachment(*vk_context.frame_allocator, thumbnail_cache_meshes[texture_name]);
-          // texture->set_name(fs::get_file_name(texture_name));
-          // UI::image(*texture, {thumb_image_size, thumb_image_size});
-        } else {
-          ImGui::PushFont(nullptr, thumb_image_size);
-          ImGui::TextUnformatted(file.icon.c_str());
-          ImGui::PopFont();
-        }
+        ImGui::PushFont(nullptr, thumb_image_size);
+        ImGui::TextUnformatted(file.icon.c_str());
+        ImGui::PopFont();
 
         // Type Color frame
         const ImVec2 type_color_frame_size = {scaled_thumbnail_size_x, scaled_thumbnail_size_x * 0.03f};
@@ -742,20 +680,13 @@ void ContentPanel::render_body(bool grid) {
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() - line_height);
 
-        auto thumbnail_read_lock = std::shared_lock(thumbnail_mutex);
-        auto thumbnail_exists = thumbnail_cache_textures.contains(file.file_path);
-
-        if (thumbnail_exists) {
-          UI::image(*thumbnail_cache_textures[file.file_path], {thumb_image_size, thumb_image_size});
-        } else {
-          auto file_type = FileType::Unknown;
-          auto ext_str = file.file_path.has_extension() ? "" : file.file_path.extension().string();
-          const auto& file_type_it = FILE_TYPES.find(ext_str);
-          if (file_type_it != FILE_TYPES.end()) {
-            file_type = file_type_it->second;
-          }
-          ImGui::TextUnformatted(FILE_TYPES_TO_ICON.at(file_type));
+        auto file_type = FileType::Unknown;
+        auto ext_str = file.file_path.has_extension() ? "" : file.file_path.extension().string();
+        const auto& file_type_it = FILE_TYPES.find(ext_str);
+        if (file_type_it != FILE_TYPES.end()) {
+          file_type = file_type_it->second;
         }
+        ImGui::TextUnformatted(FILE_TYPES_TO_ICON.at(file_type));
         ImGui::SameLine();
 
         ImGui::TextUnformatted(filename);
@@ -769,10 +700,12 @@ void ContentPanel::render_body(bool grid) {
     }
 
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, editor_theme.popup_item_spacing);
-    if (ImGui::BeginPopupContextWindow(
-          "AssetPanelHierarchyContextWindow",
-          ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
-        )) {
+    if (
+      ImGui::BeginPopupContextWindow(
+        "AssetPanelHierarchyContextWindow",
+        ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+      )
+    ) {
       editor_context.reset();
       if (auto p = draw_context_menu_items(current_directory_, true); !p.empty()) {
         directory_to_open = p;
