@@ -167,9 +167,7 @@ struct EntityInspector : IEntitySerializer {
       } else if (ops->type == world.entity<glm::quat>()) {
         auto* v = static_cast<glm::quat*>(base);
 
-        if (!inspector_panel.euler_cache) {
-          inspector_panel.euler_cache = glm::degrees(glm::eulerAngles(*v));
-        }
+        inspector_panel.euler_cache = glm::degrees(glm::eulerAngles(*v));
 
         auto old_v = *v;
         if (UI::draw_vec3_control(name.data(), *inspector_panel.euler_cache)) {
@@ -216,7 +214,7 @@ struct EntityInspector : IEntitySerializer {
         // NOTE: We don't allow model assets to be loaded this way yet(or ever).
         if (selected.type != AssetType::None && selected.type != AssetType::Model) {
           // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
-          auto* existing_asset = asset_man.get_asset(*uuid);
+          auto existing_asset = asset_man.get_asset(*uuid);
           const bool is_same_asset = selected.uuid == *uuid;
           const bool is_same_type = existing_asset->type == selected.type;
           const bool is_loaded = asset_man.load_asset(selected.uuid);
@@ -243,7 +241,7 @@ struct EntityInspector : IEntitySerializer {
           if (payload->get_str().empty())
             return;
           if (auto imported_asset = asset_man.import_asset(payload->str)) {
-            if (auto* existing_asset = asset_man.get_asset(*uuid)) {
+            if (auto existing_asset = asset_man.get_asset(*uuid)) {
               asset_man.unload_asset(existing_asset->uuid);
             }
             if (asset_man.load_asset(imported_asset)) {
@@ -257,41 +255,45 @@ struct EntityInspector : IEntitySerializer {
       ImGui::Spacing();
       ImGui::Separator();
 
-      if (auto* asset = asset_man.get_asset(*uuid)) {
+      if (auto asset = asset_man.get_asset(*uuid)) {
         switch (asset->type) {
           case ox::AssetType::None: {
             break;
           }
           case AssetType::Shader: {
-            inspector_panel.draw_shader_asset(uuid, asset);
+            // TODO: Shaders
             break;
           }
           case AssetType::Model: {
-            inspector_panel.draw_model_asset(uuid, asset);
+            auto model = asset_man.get_model(asset->model_id);
+            inspector_panel.draw_model_asset(std::move(asset), std::move(model));
             break;
           }
           case AssetType::Texture: {
-            inspector_panel.draw_texture_asset(uuid, asset);
+            // TODO: Textures
             break;
           }
           case AssetType::Material: {
-            inspector_panel.draw_material_asset(uuid, asset);
+            auto material = asset_man.get_material(asset->material_id);
+            inspector_panel.draw_material_asset(std::move(asset), std::move(material));
             break;
           }
           case AssetType::Font: {
-            inspector_panel.draw_font_asset(uuid, asset);
+            // TODO: Fonts
             break;
           }
           case AssetType::Scene: {
-            inspector_panel.draw_scene_asset(uuid, asset);
+            // TODO: Scenes
             break;
           }
           case AssetType::Audio: {
-            inspector_panel.draw_audio_asset(uuid, asset);
+            auto audio = asset_man.get_audio(asset->audio_id);
+            inspector_panel.draw_audio_asset(std::move(asset), std::move(audio));
             break;
           }
           case AssetType::Script: {
-            if (inspector_panel.draw_script_asset(uuid, asset)) {
+            auto script = asset_man.get_script(asset->script_id);
+            if (inspector_panel.draw_script_asset(std::move(asset), std::move(script))) {
               modified = true;
             }
             break;
@@ -333,47 +335,47 @@ void InspectorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
   on_begin();
 
-  editor_context.entity
-    .and_then([this](flecs::entity e) {
-      if (e != this->last_edited_entity) {
-        this->euler_cache.reset();
-        this->last_edited_entity = e;
-      }
+  auto _ = editor_context.entity
+             .and_then([this](flecs::entity e) {
+               if (e != this->last_edited_entity) {
+                 this->euler_cache.reset();
+                 this->last_edited_entity = e;
+               }
 
-      this->draw_components(e);
+               this->draw_components(e);
 
-      return option<std::monostate>{};
-    })
-    .or_else([this, &editor_context]() {
-      if (editor_context.type != EditorContext::Type::File)
-        return option<std::monostate>{};
+               return option<std::monostate>{};
+             })
+             .or_else([this, &editor_context]() {
+               if (editor_context.type != EditorContext::Type::File)
+                 return option<std::monostate>{};
 
-      return editor_context.str.and_then([this](const std::filesystem::path& path) {
-        if (path.extension() != ".oxasset")
-          return option<std::monostate>{};
+               return editor_context.str.and_then([this](const std::filesystem::path& path) {
+                 if (path.extension() != ".oxasset")
+                   return option<std::monostate>{};
 
-        auto& asset_man = App::mod<AssetManager>();
-        auto meta_file = asset_man.read_meta_file(path);
-        if (!meta_file)
-          return option<std::monostate>{};
+                 auto& asset_man = App::mod<AssetManager>();
+                 auto meta_file = asset_man.read_meta_file(path);
+                 if (!meta_file)
+                   return option<std::monostate>{};
 
-        auto uuid_str_json = meta_file->doc["uuid"].get_string();
-        if (uuid_str_json.error())
-          return option<std::monostate>{};
+                 auto uuid_str_json = meta_file->doc["uuid"].get_string();
+                 if (uuid_str_json.error())
+                   return option<std::monostate>{};
 
-        return UUID::from_string(uuid_str_json.value_unsafe()).and_then([this, &asset_man](UUID&& uuid) {
-          if (auto* asset = asset_man.get_asset(uuid))
-            this->draw_asset_info(asset);
-          return option<std::monostate>{};
-        });
-      });
-    });
+                 return UUID::from_string(uuid_str_json.value_unsafe()).and_then([this, &asset_man](UUID&& uuid) {
+                   if (auto asset = asset_man.get_asset(uuid))
+                     this->draw_asset_info(std::move(asset));
+                   return option<std::monostate>{};
+                 });
+               });
+             });
 
   on_end();
 }
 
 void InspectorPanel::draw_material_properties(
-  Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
+  ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
 ) {
   if (material_uuid) {
     const auto& window = App::get_window();
@@ -504,7 +506,7 @@ void InspectorPanel::draw_material_properties(
 
     if (selected.type == AssetType::Texture) {
       auto& asset_man = App::mod<AssetManager>();
-      auto* existing_asset = asset_man.get_asset(uuid);
+      auto existing_asset = asset_man.get_asset(uuid);
       const bool is_loaded = asset_man.load_asset(selected.uuid);
       if (is_loaded) {
         if (existing_asset) {
@@ -530,15 +532,48 @@ void InspectorPanel::draw_material_properties(
 
   if (dirty) {
     auto& asset_man = App::mod<AssetManager>();
-    if (const auto* asset = asset_man.get_asset(material_uuid))
+    if (const auto asset = asset_man.get_asset(material_uuid))
       asset_man.set_material_dirty(asset->material_id);
+  }
+}
+
+void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id id) {
+  ZoneScoped;
+
+  memory::ScopedStack stack;
+  auto remove_component_txt = stack.format("{} Remove Component", ICON_MDI_MINUS);
+  auto reset_component_txt = stack.format("{} Reset Component", ICON_MDI_RELOAD);
+  auto copy_component_txt = stack.format("{} Copy Component", ICON_MDI_CONTENT_COPY);
+  auto paste_component_txt = stack.format("{} Paste Component", ICON_MDI_CONTENT_PASTE);
+
+  if (ImGui::MenuItem(remove_component_txt.data())) {
+    remove_component = true;
+  }
+  if (ImGui::MenuItem(reset_component_txt.data())) {
+    entity.remove(id).add(id);
+  }
+  if (ImGui::MenuItem(copy_component_txt.data())) {
+    component_clipboard.source_entity = entity;
+    component_clipboard.component_id = id;
+  }
+  if (ImGui::MenuItem(paste_component_txt.data())) {
+    if (component_clipboard.is_valid() && component_clipboard.source_entity != entity) {
+      auto& editor = App::mod<Editor>();
+      auto& undo_redo_system = editor.undo_redo_system;
+      undo_redo_system->execute_command<ComponentCopyCommand>(
+        component_clipboard.source_entity,
+        entity,
+        component_clipboard.component_id,
+        "Paste Component"
+      );
+    }
   }
 }
 
 void InspectorPanel::draw_components(flecs::entity entity) {
   ZoneScoped;
 
-  if (!entity)
+  if (!entity || !scene_)
     return;
 
   auto& editor = App::mod<Editor>();
@@ -611,23 +646,25 @@ void InspectorPanel::draw_components(flecs::entity entity) {
 
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + line_height * 0.25f);
 
+    bool remove_component = false;
+
     auto component_name = ty.name();
     auto name_cstr = stack.format_char("{} {}:{}", ICON_MDI_VIEW_GRID, component_name.c_str(), id.raw_id());
     const bool open = ImGui::TreeNodeEx(name_cstr, TREE_FLAGS, "%s", name_cstr);
-
-    bool remove_component = false;
+    if (ImGui::BeginPopupContextItem()) {
+      draw_component_context_menu(remove_component, entity, id);
+      ImGui::EndPopup();
+    }
 
     ImGui::PushID(name_cstr);
     const float frame_height = ImGui::GetFrameHeight();
     ImGui::SameLine(ImGui::GetContentRegionMax().x - frame_height * 1.2f);
-    if (UI::button(ICON_MDI_COG, ImVec2{frame_height * 1.2f, frame_height}))
+    if (UI::button(ICON_MDI_COG, ImVec2{frame_height * 1.2f, frame_height})) {
       ImGui::OpenPopup("ComponentSettings");
+    }
 
     if (ImGui::BeginPopup("ComponentSettings")) {
-      if (ImGui::MenuItem("Remove Component"))
-        remove_component = true;
-      if (ImGui::MenuItem("Reset Component"))
-        entity.remove(id).add(id);
+      draw_component_context_menu(remove_component, entity, id);
       ImGui::EndPopup();
     }
     ImGui::PopID();
@@ -649,12 +686,13 @@ void InspectorPanel::draw_components(flecs::entity entity) {
       ImGui::TreePop();
     }
 
-    if (remove_component)
+    if (remove_component) {
       entity.remove(id);
+    }
   });
 }
 
-void InspectorPanel::draw_asset_info(Asset* asset) {
+void InspectorPanel::draw_asset_info(ReadGuard<Asset> asset) {
   ZoneScoped;
   auto& asset_man = App::mod<AssetManager>();
   auto type_str = asset_man.to_asset_type_sv(asset->type);
@@ -672,89 +710,76 @@ void InspectorPanel::draw_asset_info(Asset* asset) {
   UI::end_properties();
 
   if (asset->type == AssetType::Material) {
-    if (auto* mat = asset_man.get_material(asset->uuid)) {
+    if (auto mat = asset_man.get_material(asset->uuid)) {
       ImGui::SeparatorText("Material");
-      draw_material_properties(mat, asset->uuid, asset->path);
+      draw_material_properties(std::move(mat), asset->uuid, asset->path);
     }
   }
 }
 
-void InspectorPanel::draw_shader_asset(UUID* uuid, Asset* asset) {}
-
-void InspectorPanel::draw_model_asset(UUID* uuid, Asset* asset) {
+void InspectorPanel::draw_model_asset(ReadGuard<Asset> asset, ReadGuard<Model> model) {
   ZoneScoped;
 
-  auto& asset_man = App::mod<AssetManager>();
-  if (auto* model = asset_man.get_model(*uuid)) {
-    for (auto& mat_uuid : model->materials) { // TODO: We should actually use model component here
-      static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
-                                                       ImGuiTreeNodeFlags_SpanAvailWidth |
-                                                       ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
-                                                       ImGuiTreeNodeFlags_FramePadding;
+  if (!model) {
+    return;
+  }
 
-      if (auto* material = asset_man.get_material(mat_uuid)) {
-        const auto mat_uuid_str = mat_uuid.str();
-        if (ImGui::TreeNodeEx(mat_uuid_str.c_str(), TREE_FLAGS, "%s", mat_uuid_str.c_str())) {
-          draw_material_properties(material, mat_uuid, asset->path);
-          ImGui::TreePop();
-        }
+  auto& asset_man = App::mod<AssetManager>();
+  for (auto& mat_uuid : model->materials) { // TODO: We should actually use model component here
+    static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
+                                                     ImGuiTreeNodeFlags_SpanAvailWidth |
+                                                     ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
+                                                     ImGuiTreeNodeFlags_FramePadding;
+
+    if (auto material = asset_man.get_material(mat_uuid)) {
+      const auto mat_uuid_str = mat_uuid.str();
+      if (ImGui::TreeNodeEx(mat_uuid_str.c_str(), TREE_FLAGS, "%s", mat_uuid_str.c_str())) {
+        draw_material_properties(std::move(material), mat_uuid, asset->path);
+        ImGui::TreePop();
       }
     }
   }
 }
 
-void InspectorPanel::draw_texture_asset(UUID* uuid, Asset* asset) {}
-
-void InspectorPanel::draw_material_asset(UUID* uuid, Asset* asset) {
+void InspectorPanel::draw_material_asset(ReadGuard<Asset> asset, ReadGuard<Material> material) {
   ZoneScoped;
 
   ImGui::SeparatorText("Material");
 
-  auto& asset_man = App::mod<AssetManager>();
-
-  if (auto* material = asset_man.get_material(*uuid)) {
-    draw_material_properties(material, *uuid, asset->path);
+  if (material) {
+    draw_material_properties(std::move(material), asset->uuid, asset->path);
+  } else {
+    ImGui::Text("No Material");
   }
 }
 
-void InspectorPanel::draw_font_asset(UUID* uuid, Asset* asset) {}
-
-void InspectorPanel::draw_scene_asset(UUID* uuid, Asset* asset) {}
-
-void InspectorPanel::draw_audio_asset(UUID* uuid, Asset* asset) {
+void InspectorPanel::draw_audio_asset(ReadGuard<Asset> asset, ReadGuard<AudioSource> audio) {
   ZoneScoped;
-
-  auto& asset_man = App::mod<AssetManager>();
-
-  auto* audio_asset = asset_man.get_audio(*uuid);
-  if (!audio_asset)
-    return;
 
   auto& audio_engine = App::mod<AudioEngine>();
 
   ImGui::Spacing();
   if (UI::button(ICON_MDI_PLAY "Play "))
-    audio_engine.play_source(audio_asset->get_source());
+    audio_engine.play_source(audio->get_source());
   ImGui::SameLine();
   if (UI::button(ICON_MDI_PAUSE "Pause "))
-    audio_engine.pause_source(audio_asset->get_source());
+    audio_engine.pause_source(audio->get_source());
   ImGui::SameLine();
   if (UI::button(ICON_MDI_STOP "Stop "))
-    audio_engine.stop_source(audio_asset->get_source());
+    audio_engine.stop_source(audio->get_source());
   ImGui::Spacing();
 }
 
-bool InspectorPanel::draw_script_asset(UUID* uuid, Asset* asset) {
+bool InspectorPanel::draw_script_asset(ReadGuard<Asset> asset, ReadGuard<LuaSystem> lua_system) {
   ZoneScoped;
   memory::ScopedStack stack;
 
   auto& asset_man = App::mod<AssetManager>();
 
-  auto* script_asset = asset_man.get_script(*uuid);
-  if (!script_asset)
+  if (!lua_system)
     return false;
 
-  auto script_path = script_asset->get_path();
+  auto script_path = lua_system->get_path();
   auto script_path_filename = stack.format("{}", script_path.filename());
   auto script_path_str = script_path.string();
   UI::begin_properties(ImGuiTableFlags_SizingFixedFit);
@@ -763,15 +788,14 @@ bool InspectorPanel::draw_script_asset(UUID* uuid, Asset* asset) {
   UI::end_properties();
   auto* rld_str = stack.format_char("{} Reload", ICON_MDI_REFRESH);
   if (UI::button(rld_str)) {
-    script_asset->reload();
+    lua_system->reload();
     return true;
   }
   ImGui::SameLine();
   auto* rmv_str = stack.format_char("{} Remove", ICON_MDI_TRASH_CAN);
   if (UI::button(rmv_str)) {
-    if (uuid)
-      asset_man.unload_asset(*uuid);
-    *uuid = UUID(nullptr);
+    if (asset)
+      asset_man.unload_asset(asset->uuid);
   }
 
   return false;

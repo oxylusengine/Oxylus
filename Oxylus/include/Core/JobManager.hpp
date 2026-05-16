@@ -130,12 +130,13 @@ inline thread_local ThreadWorker this_thread_worker;
 
 class JobManager {
 public:
-  static constexpr u32 auto_thread_count = 0;
-  JobManager(u32 threads = auto_thread_count);
+  JobManager() = default;
   ~JobManager() = default;
 
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
+
+  auto set_thread_count(this JobManager& self, u32 count) -> void;
 
   auto shutdown(this JobManager& self) -> void;
   auto worker(this JobManager& self, u32 id) -> void;
@@ -233,6 +234,9 @@ private:
   JobTracker tracker = {};
 
   std::stack<std::string> job_name_stack = {};
+
+  static constexpr u32 auto_thread_count = 0;
+  u32 desired_thread_count = auto_thread_count;
 
   u32 num_threads = 0;
   std::vector<std::jthread> workers = {};

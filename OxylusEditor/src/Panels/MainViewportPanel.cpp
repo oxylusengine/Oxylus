@@ -179,13 +179,10 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
     if (panel->is_viewport_focused) {
       auto sh_scene = sh->get_scene();
 
-      if (sh_scene && panel_scene) {
-        // Did scene change?
-        if (sh_scene->get_id() != panel_scene->get_id()) {
+      if (sh_scene != panel_scene) {
+        if (!sh_scene || !panel_scene || sh_scene->get_id() != panel_scene->get_id()) {
           sh->set_scene(panel_scene);
         }
-      } else {
-        sh->set_scene(panel_scene);
       }
     }
 

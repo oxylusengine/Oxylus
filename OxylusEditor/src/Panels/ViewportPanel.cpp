@@ -241,10 +241,8 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         ImVec2 rendered_max = {window_pos.x + content_max.x, window_pos.y + content_max.y};
         ImVec2 rendered_size = {rendered_max.x - rendered_min.x, rendered_max.y - rendered_min.y};
 
-        if (
-          mouse_pos.x < rendered_min.x || mouse_pos.x > rendered_max.x || mouse_pos.y < rendered_min.y ||
-          mouse_pos.y > rendered_max.y
-        ) {
+        if (mouse_pos.x < rendered_min.x || mouse_pos.x > rendered_max.x || mouse_pos.y < rendered_min.y ||
+            mouse_pos.y > rendered_max.y) {
           return glm::uvec2(~0_u32);
         }
 
@@ -312,10 +310,8 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 }
 
 void ViewportPanel::on_update() {
-  if (
-    !editor_scene_ || !is_viewport_hovered || editor_scene_->get_scene()->is_running() ||
-    !editor_camera.has<CameraComponent>()
-  ) {
+  if (!editor_scene_ || !is_viewport_hovered || editor_scene_->get_scene()->is_running() ||
+      !editor_camera.has<CameraComponent>()) {
     return;
   }
 
@@ -331,7 +327,7 @@ void ViewportPanel::on_update() {
   const auto is_ortho = cam.projection == CameraComponent::Projection::Orthographic;
   if (is_ortho) {
     final_position = {0.0f, 0.0f, 0.0f};
-    final_yaw_pitch = {glm::radians(-90.f), 0.f};
+    final_yaw_pitch = {0.f, 0.f};
   }
 
   const auto& window = App::get_window();
@@ -402,9 +398,11 @@ void ViewportPanel::on_update() {
     math::smooth_damp(yaw_pitch, final_yaw_pitch, _rotation_velocity, _rotation_dampening, 1000.0f, dt);
 
   tc.position = EditorCVar::cvar_camera_smooth.as_bool() ? damped_position : final_position;
-  tc.rotation.x = EditorCVar::cvar_camera_smooth.as_bool() ? damped_yaw_pitch.y : final_yaw_pitch.y;
-  tc.rotation.y = EditorCVar::cvar_camera_smooth.as_bool() ? damped_yaw_pitch.x : final_yaw_pitch.x;
-
+  const float applied_pitch = EditorCVar::cvar_camera_smooth.as_bool() ? damped_yaw_pitch.y : final_yaw_pitch.y;
+  const float applied_yaw = EditorCVar::cvar_camera_smooth.as_bool() ? damped_yaw_pitch.x : final_yaw_pitch.x;
+  tc.rotation = glm::quat(glm::vec3(applied_pitch, applied_yaw, 0.0f));
+  cam.pitch = applied_pitch;
+  cam.yaw = applied_yaw;
   cam.zoom = static_cast<float>(EditorCVar::cvar_camera_zoom.get());
 }
 
@@ -1290,15 +1288,13 @@ void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
       gizmo_type_ = ImGuizmo::BOUNDS;
     if (UI::toggle_button(ICON_MDI_ARROW_EXPAND_ALL, gizmo_type_ == ImGuizmo::UNIVERSAL, button_size, alpha, alpha))
       gizmo_type_ = ImGuizmo::UNIVERSAL;
-    if (
-      UI::toggle_button(
-        gizmo_mode_ == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
-        gizmo_mode_ == ImGuizmo::WORLD,
-        button_size,
-        alpha,
-        alpha
-      )
-    )
+    if (UI::toggle_button(
+          gizmo_mode_ == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
+          gizmo_mode_ == ImGuizmo::WORLD,
+          button_size,
+          alpha,
+          alpha
+        ))
       gizmo_mode_ = gizmo_mode_ == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
     if (UI::toggle_button(ICON_MDI_GRID, EditorCVar::cvar_draw_grid.get(), button_size, alpha, alpha))
       EditorCVar::cvar_draw_grid.toggle();
@@ -1306,15 +1302,13 @@ void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
     if (editor_camera.is_alive() && editor_camera.has<CameraComponent>()) {
       auto& cam = editor_camera.get_mut<CameraComponent>();
       UI::push_id();
-      if (
-        UI::toggle_button(
-          ICON_MDI_CAMERA,
-          cam.projection == CameraComponent::Projection::Orthographic,
-          button_size,
-          alpha,
-          alpha
-        )
-      )
+      if (UI::toggle_button(
+            ICON_MDI_CAMERA,
+            cam.projection == CameraComponent::Projection::Orthographic,
+            button_size,
+            alpha,
+            alpha
+          ))
         cam.projection = cam.projection == CameraComponent::Projection::Orthographic
                            ? CameraComponent::Projection::Perspective
                            : CameraComponent::Projection::Orthographic;

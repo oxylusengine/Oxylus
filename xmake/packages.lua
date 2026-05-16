@@ -45,8 +45,8 @@ packages = {
       header_only = true,
     },
   },
-  ["simdjson-ox v3.12.2"] = {},
-  ["joltphysics-ox a1ce83ec7f7e014b116a4855dfc9cb2f2d4ef40a"] = {
+  ["simdjson v4.0.6"] = {},
+  ["joltphysics-ox v5.5.0"] = {
     configs = {
       debug_renderer = true,
       rtti = true,

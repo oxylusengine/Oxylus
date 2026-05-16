@@ -189,31 +189,24 @@ bool UI::texture_property(
 
   auto& asset_man = App::mod<AssetManager>();
 
-  auto* texture_asset = texture_uuid ? asset_man.get_asset(texture_uuid) : nullptr;
-
   ImGuiID picker_state_id = ImGui::GetID("picker_open");
   auto* state_storage = ImGui::GetStateStorage();
 
   // rect button with the texture
-  if (texture_asset) {
-    auto texture = asset_man.get_texture(texture_uuid);
+  if (auto texture_asset = asset_man.get_asset(texture_uuid)) {
+    auto texture = asset_man.get_texture(texture_asset->texture_id);
     if (texture) {
-      if (ImGui::ImageButton(label, App::mod<ImGuiRenderer>().add_image(*texture), {button_size, button_size})) {
+      if (ImGui::ImageButton(label, App::mod<ImGuiRenderer>().add_image(*texture.value), {button_size, button_size})) {
         state_storage->SetBool(picker_state_id, true);
         changed = true;
       }
       // tooltip
       if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
         ImGui::BeginTooltip();
-        const auto* texture_underlying = asset_man.get_texture(texture_asset->texture_id);
-        const auto txt_name = fmt::format(
-          "{}:{}",
-          texture_asset->path,
-          vuk::format_to_sv(texture_underlying->get_format())
-        );
+        const auto txt_name = fmt::format("{}:{}", texture_asset->path, vuk::format_to_sv(texture->get_format()));
         ImGui::TextUnformatted(txt_name.c_str());
         ImGui::Spacing();
-        ImGui::Image(App::mod<ImGuiRenderer>().add_image(*texture), {tooltip_size, tooltip_size});
+        ImGui::Image(App::mod<ImGuiRenderer>().add_image(*texture.value), {tooltip_size, tooltip_size});
         ImGui::EndTooltip();
       }
     }

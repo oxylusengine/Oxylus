@@ -212,6 +212,89 @@ private:
   std::string id_;
 };
 
+class ComponentCopyCommand : public Command {
+public:
+  ComponentCopyCommand(flecs::entity src, flecs::entity dst, flecs::id_t comp_id, std::string id)
+      : dst_(dst),
+        comp_id_(comp_id),
+        had_component_(dst.has(comp_id)),
+        id_(std::move(id)) {
+
+    const ecs_type_info_t* ti = ecs_get_type_info(dst.world().c_ptr(), comp_id);
+
+    if (ti && ti->size > 0) {
+      if (had_component_) {
+        const void* dst_ptr = dst.get(comp_id);
+        old_data_ = std::malloc(ti->size);
+        if (ti->hooks.copy_ctor) {
+          ti->hooks.copy_ctor(old_data_, dst_ptr, 1, ti);
+        } else {
+          std::memcpy(old_data_, dst_ptr, ti->size);
+        }
+      }
+
+      const void* src_ptr = src.get(comp_id);
+      if (src_ptr) {
+        new_data_ = std::malloc(ti->size);
+        if (ti->hooks.copy_ctor) {
+          ti->hooks.copy_ctor(new_data_, src_ptr, 1, ti);
+        } else {
+          std::memcpy(new_data_, src_ptr, ti->size);
+        }
+      }
+    }
+  }
+
+  ~ComponentCopyCommand() override {
+    const ecs_type_info_t* ti = ecs_get_type_info(dst_.world().c_ptr(), comp_id_);
+    if (ti) {
+      if (old_data_) {
+        if (ti->hooks.dtor)
+          ti->hooks.dtor(old_data_, 1, ti);
+        std::free(old_data_);
+      }
+      if (new_data_) {
+        if (ti->hooks.dtor)
+          ti->hooks.dtor(new_data_, 1, ti);
+        std::free(new_data_);
+      }
+    }
+  }
+
+  auto execute() -> void override {
+    const ecs_type_info_t* ti = ecs_get_type_info(dst_.world().c_ptr(), comp_id_);
+    if (ti && new_data_) {
+      ecs_set_id(dst_.world().c_ptr(), dst_.id(), comp_id_, ti->size, new_data_);
+    } else {
+      dst_.add(comp_id_);
+    }
+  }
+
+  auto undo() -> void override {
+    if (!had_component_) {
+      dst_.remove(comp_id_);
+      return;
+    }
+
+    const ecs_type_info_t* ti = ecs_get_type_info(dst_.world().c_ptr(), comp_id_);
+    if (ti && old_data_) {
+      ecs_set_id(dst_.world().c_ptr(), dst_.id(), comp_id_, ti->size, old_data_);
+    } else {
+      dst_.add(comp_id_);
+    }
+  }
+
+  auto get_id() const -> std::string_view override { return id_; }
+
+private:
+  flecs::entity dst_;
+  flecs::id_t comp_id_;
+  bool had_component_ = false;
+  void* old_data_ = nullptr;
+  void* new_data_ = nullptr;
+  std::string id_;
+};
+
 class UndoRedoSystem {
 public:
   explicit UndoRedoSystem(
