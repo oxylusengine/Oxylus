@@ -17,7 +17,7 @@ struct TextureLoadInfo {
   Preset preset = Preset::eMap2D;
   vuk::Format format = vuk::Format::eR8G8B8A8Srgb;
   enum class MimeType { Generic, KTX, DDS } mime = MimeType::Generic;
-  std::span<u8> bytes = {};
+  std::span<const u8> bytes = {};
   option<void*> loaded_data = ox::nullopt;
   option<vuk::Extent3D> extent = ox::nullopt;
   vuk::SamplerCreateInfo sampler_info = {

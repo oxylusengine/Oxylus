@@ -304,6 +304,7 @@ auto import_gltf_textures(
   for (const auto& [gltf_texture, texture_index] : std::views::zip(asset.textures, std::views::iota(0_sz))) {
     auto image_index = get_effective_image_index(gltf_texture);
     if (!image_index.has_value()) {
+      result.push_back(UUID(nullptr));
       continue;
     }
 
@@ -388,9 +389,9 @@ auto load_gltf_texture(
         std::visit(
           ox::match{
             [](const auto&) {},
-            [&](fastgltf::sources::Array& array) {
+            [&](const fastgltf::sources::Array& array) {
               texture_load_info.bytes = std::span(
-                reinterpret_cast<u8*>(array.bytes.data() + buffer_view.byteOffset),
+                reinterpret_cast<const u8*>(array.bytes.data() + buffer_view.byteOffset),
                 buffer_view.byteLength
               );
             },
