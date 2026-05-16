@@ -36,7 +36,7 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
   if (is_generic) {
     if (!load_info.bytes.empty()) {
       stb_data = load_stb_image_from_memory(
-        (void*)load_info.bytes.data(), //
+        (void*)load_info.bytes.data(),
         load_info.bytes.size(),
         &extent.width,
         &extent.height,
@@ -66,24 +66,20 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
     ktxTexture2* ktx{};
     if (path.empty()) {
       OX_CHECK_EQ(!load_info.bytes.empty(), true);
-      if (
-        const auto result = ktxTexture2_CreateFromMemory(
-          load_info.bytes.data(), //
-          load_info.bytes.size(),
-          KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
-          &ktx
-        );
-        result != KTX_SUCCESS
-      ) {
+      if (const auto result = ktxTexture2_CreateFromMemory(
+            load_info.bytes.data(), //
+            load_info.bytes.size(),
+            KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+            &ktx
+          );
+          result != KTX_SUCCESS) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     } else {
       auto path_str = path.string();
-      if (
-        const auto
-          result = ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
-        result != KTX_SUCCESS
-      ) {
+      if (const auto
+            result = ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
+          result != KTX_SUCCESS) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     }
@@ -96,10 +92,8 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
     // If the image needs is in a supercompressed encoding, transcode it to a desired format
     if (ktxTexture2_NeedsTranscoding(ktx)) {
       ZoneNamedN(z, "Transcode KTX 2 Texture", true);
-      if (
-        const auto result = ktxTexture2_TranscodeBasis(ktx, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
-        result != KTX_SUCCESS
-      ) {
+      if (const auto result = ktxTexture2_TranscodeBasis(ktx, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
+          result != KTX_SUCCESS) {
         OX_LOG_ERROR("Couldn't transcode KTX2 file {}", ktxErrorString(result));
       }
     } else {
@@ -345,7 +339,6 @@ std::unique_ptr<u8[]> Texture::load_stb_image_from_memory(
   ZoneScoped;
 
   int tex_width = 0, tex_height = 0, tex_channels = 0;
-  int size_of_channel = 8;
   const auto pixels = stbi_load_from_memory(
     static_cast<stbi_uc*>(buffer),
     static_cast<int>(len),
@@ -355,21 +348,21 @@ std::unique_ptr<u8[]> Texture::load_stb_image_from_memory(
     STBI_rgb_alpha
   );
 
-  if (stbi_is_16_bit_from_memory(static_cast<stbi_uc*>(buffer), static_cast<int>(len))) {
-    size_of_channel = 16;
+  if (!pixels) {
+    OX_LOG_ERROR("Failed to load image from memory. STB Error: {}", stbi_failure_reason());
+    return nullptr;
   }
-
-  if (tex_channels != 4)
-    tex_channels = 4;
 
   if (width)
     *width = tex_width;
   if (height)
     *height = tex_height;
-  if (bits)
-    *bits = tex_channels * size_of_channel;
 
-  const int32_t size = tex_width * tex_height * tex_channels * size_of_channel / 8;
+  // STBI_rgb_alpha is focred so the output is guaranteed to be 32-bit (4 channels * 8 bits)
+  if (bits)
+    *bits = 32;
+
+  const size_t size = static_cast<size_t>(tex_width) * static_cast<size_t>(tex_height) * 4;
   auto result = std::make_unique<u8[]>(size);
   memcpy(result.get(), pixels, size);
 
