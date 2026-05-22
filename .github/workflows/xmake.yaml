@@ -68,7 +68,8 @@ jobs:
       - name: Install MacOS dependencies
         if: ${{ matrix.platform.os == 'macos' }}
         run: |
-            /opt/homebrew/bin/python3 -m pip install --upgrade pip setuptools wheel
+            brew install pipx
+            pipx install setuptools wheel
 
       - name: Install LLVM for Windows
         if: ${{ matrix.platform.os == 'windows' }}
