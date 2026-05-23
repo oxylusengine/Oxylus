@@ -65,6 +65,17 @@ jobs:
           sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }} llvm-${{ env.LLVM_VERSION }} libllvm${{ env.LLVM_VERSION }} llvm-${{ env.LLVM_VERSION }}-runtime libclang-common-${{ env.LLVM_VERSION }}-dev libclang-${{ env.LLVM_VERSION }}-dev libclang1-${{ env.LLVM_VERSION }} libclang-rt-${{ env.LLVM_VERSION }}-dev libc++-${{ env.LLVM_VERSION }}-dev libc++abi-${{ env.LLVM_VERSION }}-dev libunwind-${{ env.LLVM_VERSION }}-dev libllvmlibc-${{ env.LLVM_VERSION }}-dev
           sudo apt install libx11-dev libxext-dev libxrandr-dev libxrender-dev libxfixes-dev libxi-dev libxinerama-dev libxkbcommon-dev
 
+      - name: Set up Python
+        if: ${{ matrix.platform.os == 'macos' }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Install MacOS dependencies
+        if: ${{ matrix.platform.os == 'macos' }}
+        run: |
+            python -m pip install --upgrade pip setuptools wheel
+
       - name: Install LLVM for Windows
         if: ${{ matrix.platform.os == 'windows' }}
         uses: KyleMayes/install-llvm-action@master

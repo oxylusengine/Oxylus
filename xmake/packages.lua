@@ -114,6 +114,7 @@ confs = {
 }
 
 function require_packages()
+  add_requireconfs("python", { override = true, system = true })
   for name, settings in pairs(packages) do
     add_requires(name, settings)
   end

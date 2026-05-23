@@ -1,6 +1,7 @@
 {
     "diagnostics.disable": [
         "undefined-global",
-        "codestyle-check"
+        "codestyle-check",
+        "lowercase-global"
     ]
 }
