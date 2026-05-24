@@ -34,8 +34,8 @@ enum class AssetFileType : u32 {
 };
 
 struct ShaderAssetEntry {
-    vuk::ShaderStageFlags shader_stage = {};
-    std::vector<u32> code = {};
+  vuk::ShaderStageFlags shader_stage = {};
+  std::vector<u32> code = {};
 };
 
 struct ShaderEntryPointData {
@@ -55,7 +55,8 @@ enum class AssetFileFlags : u32 {
 consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
-  c8 magic[2] = {'O', 'X'};
+  static constexpr auto SIGNATURE = 0x584F_u16;
+  u16 magic = SIGNATURE; // "OX"
   u16 version = 1;
   AssetType type = AssetType::None;
   AssetFileFlags flags = AssetFileFlags::None;

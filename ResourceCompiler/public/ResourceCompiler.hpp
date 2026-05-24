@@ -31,7 +31,6 @@
 #endif
 
 namespace ox::rc {
-
 struct ShaderSessionInfo {
   std::string name = {};
   std::filesystem::path root_directory = {};

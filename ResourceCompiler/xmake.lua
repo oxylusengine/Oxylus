@@ -29,6 +29,6 @@ target("rcli")
   add_files("./private/cli.cpp", "./private/ResourceConfig.cpp")
 
   add_deps("ResourceCompiler")
-  add_packages("fmt", "toml++")
+  add_packages("fmt", "toml++", "shader-slang")
 
 target_end()

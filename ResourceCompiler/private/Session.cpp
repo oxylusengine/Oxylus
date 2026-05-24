@@ -183,7 +183,7 @@ auto read_shader_asset(
     return false;
   }
 
-  if (out_header.magic[0] != 'O' || out_header.magic[1] != 'X') {
+  if (out_header.magic != AssetFileHeader::SIGNATURE) {
     OX_LOG_ERROR("Invalid shader asset magic in '{}'.", path);
     return false;
   }

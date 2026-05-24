@@ -642,7 +642,7 @@ auto VkContext::create_pipelines(
     return false;
   }
 
-  if (header.magic[0] != 'O' || header.magic[1] != 'X' || header.type != AssetType::Shader) {
+  if (header.magic != AssetFileHeader::SIGNATURE || header.type != AssetType::Shader) {
     OX_LOG_ERROR("Invalid shader asset '{}'.", asset_path);
     return false;
   }
