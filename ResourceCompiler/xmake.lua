@@ -13,23 +13,22 @@ target("ResourceCompiler")
 
   add_packages(
     "shader-slang",
-    "simdjson-ox",
-    "fastgltf-ox",
-    "meshoptimizer",
-    "xxhash",
+    "spirv-tools",
+    "zpp_bits",
     { public = false })
 
 target_end()
 
 target("rcli")
-  -- prevent any target depends on rcli
-  -- trying to compile before this one builds first
+-- prevent any target depends on rcli
+-- trying to compile before this one builds first
   set_policy("build.fence", true)
 
   set_kind("binary")
   set_languages("cxx23")
-  add_files("./private/cli.cpp")
+  add_files("./private/cli.cpp", "./private/ResourceConfig.cpp")
 
   add_deps("ResourceCompiler")
+  add_packages("fmt", "toml++")
 
 target_end()

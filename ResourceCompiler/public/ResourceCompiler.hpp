@@ -1,9 +1,11 @@
 #pragma once
 
 #include <filesystem>
-#include <source_location>
 #include <vector>
 
+#include "Asset/AssetFile.hpp"
+#include "Core/Handle.hpp"
+#include "Core/Option.hpp"
 #include "Core/Types.hpp"
 
 #if OX_PLATFORM_WINDOWS
@@ -29,22 +31,15 @@
 #endif
 
 namespace ox::rc {
-enum class ShaderOptimization : i32 {
-  None = 0,
-  Default,
-  High,
-  Maximal,
-};
 
 struct ShaderSessionInfo {
   std::string name = {};
   std::filesystem::path root_directory = {};
-  ShaderOptimization optimization = ShaderOptimization::Default;
-  bool debug_symbols = false;
+  i32 optimization_level = 3;
   std::vector<std::pair<std::string, std::string>> definitions = {};
 };
 
-struct ShaderInfo {
+struct ShaderCompileInfo {
   std::filesystem::path path = {};
   std::string module_name = {};
   std::vector<std::string> entry_points = {};
@@ -52,6 +47,26 @@ struct ShaderInfo {
 
 struct ShaderCompileRequest {
   ShaderSessionInfo session_info = {};
-  std::vector<ShaderInfo> shader_infos = {};
+  std::vector<ShaderCompileInfo> shaders = {};
 };
+
+struct OXRC_API Session : Handle<Session> {
+  static auto create() -> option<Session>;
+  auto destroy() -> void;
+
+  auto add_request(const ShaderCompileRequest& request) -> void;
+  auto compile() -> bool;
+  auto write_to_file(const std::filesystem::path& output_path) -> bool;
+
+  auto push_error(std::string msg) -> void;
+  auto push_message(std::string msg) -> void;
+  auto get_errors() const -> const std::vector<std::string>&;
+  auto get_messages() const -> const std::vector<std::string>&;
+};
+
+OXRC_API auto read_shader_asset(
+  const std::filesystem::path& path,
+  AssetFileHeader& out_header,
+  std::vector<ShaderPipelineData>& out_pipelines) -> bool;
+
 } // namespace ox::rc

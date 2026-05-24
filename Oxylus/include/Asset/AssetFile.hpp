@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vuk/Types.hpp>
+#include <vuk/runtime/vk/VkTypes.hpp>
 
 #include "Core/Types.hpp"
 
@@ -32,23 +33,32 @@ enum class AssetFileType : u32 {
   LUA,
 };
 
-enum class AssetFileFlags : u64 {
+struct ShaderAssetEntry {
+    vuk::ShaderStageFlags shader_stage = {};
+    std::vector<u32> code = {};
+};
+
+struct ShaderEntryPointData {
+  std::string name = {};
+  u32 shader_stage = {};
+  std::vector<u32> spirv = {};
+};
+
+struct ShaderPipelineData {
+  std::string module_name = {};
+  std::vector<ShaderEntryPointData> entry_points = {};
+};
+
+enum class AssetFileFlags : u32 {
   None = 0,
 };
 consteval void enable_bitmask(AssetFileFlags);
 
-struct TextureAssetFileHeader {
-  vuk::Extent3D extent = {};
-  vuk::Format format = vuk::Format::eUndefined;
-};
-
 struct AssetFileHeader {
   c8 magic[2] = {'O', 'X'};
   u16 version = 1;
-  AssetFileFlags flags = AssetFileFlags::None;
   AssetType type = AssetType::None;
-  union {
-    TextureAssetFileHeader texture_header = {};
-  };
+  AssetFileFlags flags = AssetFileFlags::None;
+  u32 entry_count = 0;
 };
 } // namespace ox

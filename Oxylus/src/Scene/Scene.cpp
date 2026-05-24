@@ -16,6 +16,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
 // clang-format on
+#include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <simdjson.h>
 #include <sol/state.hpp>

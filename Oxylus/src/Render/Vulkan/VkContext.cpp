@@ -10,9 +10,10 @@
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 #include <vuk/runtime/vk/PipelineInstance.hpp>
 #include <vuk/runtime/vk/Query.hpp>
+#include <zpp_bits.h>
 
 #include "Core/App.hpp"
-#include "Memory/Stack.hpp"
+#include "OS/File.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Window.hpp"
@@ -331,8 +332,6 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
 
   self.runtime->set_shader_target_version(VK_API_VERSION_1_3);
 
-  self.shader_compiler = SlangCompiler::create().value();
-
   self.tracy_profiler = std::make_shared<TracyProfiler>();
   self.tracy_profiler->init_for_vulkan(&self);
 
@@ -625,29 +624,35 @@ auto VkContext::commit_descriptor_set(this VkContext& self, std::span<VkWriteDes
 }
 
 auto VkContext::create_pipelines(
-  this VkContext& self, const SlangSessionInfo& session_info, const std::vector<PipelineCompileInfo>& pipeline_infos
+  this VkContext& self, const std::filesystem::path& asset_path, const std::vector<PipelineLoadInfo>& pipeline_infos
 ) -> bool {
   ZoneScoped;
-  memory::ScopedStack stack;
 
-  auto session = self.shader_compiler.new_session(session_info);
-  if (!session.has_value()) {
+  auto header = AssetFileHeader{};
+  auto pipelines = std::vector<ShaderPipelineData>{};
+  auto file_data = File::to_bytes(asset_path);
+  if (file_data.empty()) {
+    OX_LOG_ERROR("Failed to read shader asset from '{}'.", asset_path);
     return false;
   }
 
-  OX_DEFER(&) {
-    if (session)
-      session->destroy();
-  };
+  zpp::bits::in in(file_data);
+  if (failure(in(header, pipelines))) {
+    OX_LOG_ERROR("Failed to deserialize shader asset from '{}'.", asset_path);
+    return false;
+  }
+
+  if (header.magic[0] != 'O' || header.magic[1] != 'X' || header.type != AssetType::Shader) {
+    OX_LOG_ERROR("Invalid shader asset '{}'.", asset_path);
+    return false;
+  }
 
   for (const auto& pipeline_info : pipeline_infos) {
-    auto shader_info = SlangShaderInfo{
-      .path = pipeline_info.path,
-      .module_name = pipeline_info.module_name,
-      .entry_points = pipeline_info.entry_points,
-    };
-    auto entry_points = session->compile_shader(shader_info);
-    if (!entry_points.has_value()) {
+    auto it = std::ranges::find_if(pipelines, [&](const ShaderPipelineData& p) {
+      return p.module_name == pipeline_info.module_name;
+    });
+    if (it == pipelines.end()) {
+      OX_LOG_ERROR("Pipeline '{}' not found in asset '{}'.", pipeline_info.module_name, asset_path);
       continue;
     }
 
@@ -666,9 +671,8 @@ auto VkContext::create_pipelines(
       }
     }
 
-    for (const auto& [entry_point, entry_point_function] :
-         std::views::zip(entry_points.value(), pipeline_info.entry_points)) {
-      pipeline_ci.add_spirv(entry_point.code, pipeline_info.module_name, entry_point_function);
+    for (const auto& entry_point : it->entry_points) {
+      pipeline_ci.add_spirv(entry_point.spirv, it->module_name, entry_point.name);
     }
 
     self.runtime->create_named_pipeline(pipeline_info.module_name.c_str(), pipeline_ci);

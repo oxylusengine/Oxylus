@@ -3,7 +3,6 @@
 *.bat
 *.dll
 *.cmake
-*.toml
 *.cap
 *.ini
 

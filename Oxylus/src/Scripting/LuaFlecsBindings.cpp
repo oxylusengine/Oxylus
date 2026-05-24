@@ -8,6 +8,7 @@
 #include "Memory/Stack.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "Scene/Scene.hpp"
+#include "Utils/Log.hpp"
 
 struct ecs_world_t {};
 

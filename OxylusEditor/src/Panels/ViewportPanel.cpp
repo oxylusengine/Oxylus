@@ -75,20 +75,14 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
     auto& vfs = App::get_vfs();
     auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
     vk_context.create_pipelines(
-      {.root_directory = shaders_dir},
+      shaders_dir / "editor.oxasset",
       {
-        {.path = "editor/mouse_picking_2d.slang",
-         .module_name = "mouse_picking_pipeline_2d",
-         .entry_points = {"cs_main"}},
-        {.path = "editor/mouse_picking.slang", .module_name = "mouse_picking_pipeline", .entry_points = {"cs_main"}},
-        {.path = "editor/highlighting.slang", .module_name = "highlighting_pipeline", .entry_points = {"cs_main"}},
-        {.path = "editor/apply_highlighting.slang",
-         .module_name = "apply_highlighting_pipeline",
-         .entry_points = {"vs_main", "fs_main"}},
-        {.path = "editor/grid.slang", .module_name = "grid_pipeline", .entry_points = {"vs_main", "fs_main"}},
-        {.path = "editor/apply_grid.slang",
-         .module_name = "apply_grid_pipeline",
-         .entry_points = {"vs_main", "fs_main"}},
+        {"mouse_picking_pipeline_2d"},
+        {"mouse_picking_pipeline"},
+        {"highlighting_pipeline"},
+        {"apply_highlighting_pipeline"},
+        {"grid_pipeline"},
+        {"apply_grid_pipeline"},
       }
     );
   }
