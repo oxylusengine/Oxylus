@@ -1,8 +1,8 @@
 #pragma once
 
-#include <tracy/Tracy.hpp>
 #include <shared_mutex>
 #include <span>
+#include <tracy/Tracy.hpp>
 #include <vector>
 
 #include "Core/Types.hpp"
@@ -164,6 +164,19 @@ public:
 
     std::shared_lock _(self.mutex);
     return self.slots;
+  }
+
+  template <typename Func>
+  auto for_each_active(this Self& self, Func&& func) -> void {
+    ZoneScoped;
+
+    std::shared_lock _(self.mutex);
+
+    for (usize i = 0; i < self.slots.size(); ++i) {
+      if (self.states[i]) {
+        func(i, self.slots[i]);
+      }
+    }
   }
 
   auto get_mutex(this Self& self) -> std::shared_mutex& {
