@@ -103,6 +103,7 @@ target("Oxylus")
         "toml++",
         "loguru",
         "simdjson",
+        "rmlui",
         {public = true})
 
 target_end()

@@ -1,5 +1,6 @@
 #include "Render/Window.hpp"
 
+#include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <array>
@@ -13,6 +14,7 @@
 #include "Core/Input.hpp"
 #include "Memory/Stack.hpp"
 #include "UI/ImGuiRenderer.hpp"
+#include "UI/RmlUI.hpp"
 #include "Utils/Log.hpp"
 
 #define LOG_SDL_ERROR(call) OX_LOG_ERROR("{}: {}", #call, SDL_GetError())
@@ -194,6 +196,17 @@ auto Window::update(const Timestep& timestep) const -> void {
       imgui_renderer.on_key(key_code, scan_code, mods, down);
     }
 
+    if (App::has_mod<RmlUI>()) {
+      auto& rml = App::mod<RmlUI>();
+      for (auto& ctx : rml.get_contexts()) {
+        if (down) {
+          ctx->ProcessKeyDown(RmlSystem::convert_key(key_code), RmlSystem::convert_mod(mods));
+        } else {
+          ctx->ProcessKeyUp(RmlSystem::convert_key(key_code), RmlSystem::convert_mod(mods));
+        }
+      }
+    }
+
     auto& input_system = App::mod<Input>();
     const auto ox_key_code = static_cast<KeyCode>(key_code);
     const auto ox_mod = static_cast<ModCode>(mods);
@@ -213,12 +226,25 @@ auto Window::update(const Timestep& timestep) const -> void {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_text_input(text);
     }
+    if (App::has_mod<RmlUI>()) {
+      auto& rml = App::mod<RmlUI>();
+      for (auto& ctx : rml.get_contexts()) {
+        ctx->ProcessTextInput(text);
+      }
+    }
   };
 
   window_callbacks.on_mouse_pos = [](void* user_data, u32 instance_id, const glm::vec2 position, glm::vec2 relative) {
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_pos(position);
+    }
+
+    if (App::has_mod<RmlUI>()) {
+      auto& rml = App::mod<RmlUI>();
+      for (auto& ctx : rml.get_contexts()) {
+        ctx->ProcessMouseMove(position.x, position.y, 0);
+      }
     }
 
     auto& input_system = App::mod<Input>();
@@ -231,6 +257,17 @@ auto Window::update(const Timestep& timestep) const -> void {
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_button(button, down);
+    }
+
+    if (App::has_mod<RmlUI>()) {
+      auto& rml = App::mod<RmlUI>();
+      for (auto& ctx : rml.get_contexts()) {
+        if (down) {
+          ctx->ProcessMouseButtonDown(button, 0);
+        } else {
+          ctx->ProcessMouseButtonUp(button, 0);
+        }
+      }
     }
 
     auto& input_system = App::mod<Input>();
@@ -249,6 +286,13 @@ auto Window::update(const Timestep& timestep) const -> void {
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_scroll(offset);
+    }
+
+    if (App::has_mod<RmlUI>()) {
+      auto& rml = App::mod<RmlUI>();
+      for (auto& ctx : rml.get_contexts()) {
+        ctx->ProcessMouseWheel(offset.y, 0);
+      }
     }
 
     auto& input_system = App::mod<Input>();

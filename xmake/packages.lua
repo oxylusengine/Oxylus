@@ -76,6 +76,7 @@ packages = {
   ["svector v1.0.3"] = {},
   ["plf_colony v7.41"] = {},
   ["simdutf v6.2.0"] = {},
+  ["rmlui 6.2"] = {},
 }
 
 if has_config("tests") then
