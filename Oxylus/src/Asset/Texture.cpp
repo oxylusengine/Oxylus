@@ -358,7 +358,7 @@ std::unique_ptr<u8[]> Texture::load_stb_image_from_memory(
   if (height)
     *height = tex_height;
 
-  // STBI_rgb_alpha is focred so the output is guaranteed to be 32-bit (4 channels * 8 bits)
+  // STBI_rgb_alpha is forced so the output is guaranteed to be 32-bit (4 channels * 8 bits)
   if (bits)
     *bits = 32;
 
