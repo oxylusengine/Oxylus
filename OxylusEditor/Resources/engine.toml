@@ -18,6 +18,12 @@ path = "passes/sky_transmittance.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "2d_forward_vis"
+path = "passes/2d_forward_vis.slang"
+entry_points = ["vs_main", "fs_main"]
+bindless = true
+
+[[shader_sessions.programs]]
 name = "sky_multiscatter"
 path = "passes/sky_multiscattering.slang"
 entry_points = ["cs_main"]
