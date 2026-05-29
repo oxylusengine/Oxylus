@@ -13,7 +13,6 @@
 #include <zpp_bits.h>
 
 #include "Core/App.hpp"
-#include "OS/File.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Window.hpp"
@@ -623,62 +622,32 @@ auto VkContext::commit_descriptor_set(this VkContext& self, std::span<VkWriteDes
   vkUpdateDescriptorSets(self.device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
 }
 
-auto VkContext::create_pipelines(
-  this VkContext& self, const std::filesystem::path& asset_path, const std::vector<PipelineLoadInfo>& pipeline_infos
-) -> bool {
+auto VkContext::create_pipeline(this VkContext& self, const ShaderPipelineData& pipeline_data) -> bool {
   ZoneScoped;
 
-  auto header = AssetFileHeader{};
-  auto pipelines = std::vector<ShaderPipelineData>{};
-  auto file_data = File::to_bytes(asset_path);
-  if (file_data.empty()) {
-    OX_LOG_ERROR("Failed to read shader asset from '{}'.", asset_path);
-    return false;
-  }
+  auto pipeline_ci = vuk::PipelineBaseCreateInfo{};
+  if (pipeline_data.bindless) {
+    const auto& bindless_set = self.resources.descriptor_set;
+    const auto& set_layout_create_info = bindless_set.set_layout_create_info;
+    pipeline_ci.explicit_set_layouts.emplace_back(set_layout_create_info);
 
-  zpp::bits::in in(file_data);
-  if (failure(in(header, pipelines))) {
-    OX_LOG_ERROR("Failed to deserialize shader asset from '{}'.", asset_path);
-    return false;
-  }
-
-  if (header.magic != AssetFileHeader::SIGNATURE || header.type != AssetType::Shader) {
-    OX_LOG_ERROR("Invalid shader asset '{}'.", asset_path);
-    return false;
-  }
-
-  for (const auto& pipeline_info : pipeline_infos) {
-    auto it = std::ranges::find_if(pipelines, [&](const ShaderPipelineData& p) {
-      return p.module_name == pipeline_info.module_name;
-    });
-    if (it == pipelines.end()) {
-      OX_LOG_ERROR("Pipeline '{}' not found in asset '{}'.", pipeline_info.module_name, asset_path);
-      continue;
+    for (const auto& [binding, binding_flags] :
+         std::views::zip(set_layout_create_info.bindings, set_layout_create_info.flags)) {
+      pipeline_ci.set_binding_flags(
+        static_cast<u32>(set_layout_create_info.index),
+        binding.binding,
+        static_cast<vuk::DescriptorBindingFlagBits>(binding_flags)
+      );
     }
-
-    auto pipeline_ci = vuk::PipelineBaseCreateInfo{};
-    if (pipeline_info.persistent_set) {
-      const auto& set_layout_create_info = pipeline_info.persistent_set->set_layout_create_info;
-      pipeline_ci.explicit_set_layouts.emplace_back(set_layout_create_info);
-
-      for (const auto& [binding, binding_flags] :
-           std::views::zip(set_layout_create_info.bindings, set_layout_create_info.flags)) {
-        pipeline_ci.set_binding_flags(
-          static_cast<u32>(set_layout_create_info.index),
-          binding.binding,
-          static_cast<vuk::DescriptorBindingFlagBits>(binding_flags)
-        );
-      }
-    }
-
-    for (const auto& entry_point : it->entry_points) {
-      pipeline_ci.add_spirv(entry_point.spirv, it->module_name, entry_point.name);
-    }
-
-    self.runtime->create_named_pipeline(pipeline_info.module_name.c_str(), pipeline_ci);
-
-    OX_LOG_INFO("Created pipeline named {}.", pipeline_info.module_name);
   }
+
+  for (const auto& entry_point : pipeline_data.entry_points) {
+    pipeline_ci.add_spirv(entry_point.spirv, pipeline_data.module_name, entry_point.name);
+  }
+
+  self.runtime->create_named_pipeline(pipeline_data.module_name.c_str(), pipeline_ci);
+
+  OX_LOG_INFO("Created pipeline named {}.", pipeline_data.module_name);
 
   return true;
 }

@@ -83,6 +83,7 @@ auto main(i32 argc, c8** argv) -> i32 {
         .path = prog.path,
         .module_name = prog.name,
         .entry_points = prog.entry_points,
+        .bindless = prog.bindless,
       });
     }
 

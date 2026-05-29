@@ -37,62 +37,19 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   // --- Shaders ---
   auto& vfs = App::get_vfs();
   auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
+  auto shader_file = AssetFile::unpack(shaders_dir / "engine.oxasset");
+  if (!shader_file.has_value()) {
+    return std::unexpected("Cannot initialize renderer shaders!");
+  }
 
-  self.vk_context->create_pipelines(
-    shaders_dir / "engine.oxasset",
-    {
-      {"2d_forward", &bindless_set},
-      {"2d_forward_vis", &bindless_set},
-
-      // --- Sky ---
-      {"sky_transmittance"},
-      {"sky_multiscatter"},
-      {"sky_view"},
-      {"sky_aerial_perspective"},
-
-      // --- VISBUFFER ---
-      {"vis_cull_meshes"},
-      {"vis_cull_meshlets"},
-      {"vis_cull_triangles"},
-      {"visbuffer_encode", &bindless_set},
-      {"visbuffer_clear"},
-      {"visbuffer_decode", &bindless_set},
-
-      // --- SHADOWMAP ---
-      {"shadowmap_cull_meshes"},
-      {"shadowmap_cull_meshlets"},
-      {"shadowmap_cull_triangles"},
-      {"shadowmap_draw"},
-      {"debug_view"},
-
-      // --- PBR ---
-      {"pbr_apply"},
-
-      // --- FFX ---
-      {"hiz"},
-
-      // --- PostProcess ---
-      {"histogram_generate"},
-      {"histogram_average"},
-      {"tonemap"},
-
-      // --- Bloom ---
-      {"bloom_prefilter"},
-      {"bloom_downsample"},
-      {"bloom_upsample"},
-
-      // --- VBGTAO ---
-      {"vbgtao_prefilter"},
-      {"vbgtao_main"},
-      {"vbgtao_denoise"},
-
-      // --- FXAA ---
-      {"fxaa"},
-
-      {"debug_mesh"},
-      {"contact_shadows"},
+  for (const auto &entry : shader_file->entries) {
+    const auto *pipeline_data = std::get_if<ShaderPipelineData>(&entry.data);
+    if (!pipeline_data) {
+      continue;
     }
-  );
+
+    self.vk_context->create_pipeline(*pipeline_data);
+  }
 
   self.sky_transmittance_lut_view = Texture("sky_transmittance_lut");
   self.sky_transmittance_lut_view.create(

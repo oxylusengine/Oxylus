@@ -12,6 +12,7 @@ struct ShaderProgramConfig {
   std::string name = {};
   std::filesystem::path path = {};
   std::vector<std::string> entry_points = {};
+  bool bindless = false;
 };
 
 struct ShaderSessionConfig {

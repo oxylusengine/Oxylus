@@ -1,8 +1,11 @@
 #pragma once
 
+#include <filesystem>
 #include <vuk/Types.hpp>
 #include <vuk/runtime/vk/VkTypes.hpp>
+#include <zpp_bits.h>
 
+#include "Core/Option.hpp"
 #include "Core/Types.hpp"
 
 namespace ox {
@@ -33,9 +36,8 @@ enum class AssetFileType : u32 {
   LUA,
 };
 
-struct ShaderAssetEntry {
-  vuk::ShaderStageFlags shader_stage = {};
-  std::vector<u32> code = {};
+struct NoneAsset {
+  using serialize_id = zpp::bits::serialization_id<AssetType::None>;
 };
 
 struct ShaderEntryPointData {
@@ -45,8 +47,31 @@ struct ShaderEntryPointData {
 };
 
 struct ShaderPipelineData {
-  std::string module_name = {};
+  using serialize_id = zpp::bits::serialization_id<AssetType::Shader>;
+
+  std::string module_name = "";
   std::vector<ShaderEntryPointData> entry_points = {};
+  bool bindless = false;
+};
+
+struct AssetFileEntry {
+  AssetType type = AssetType::None;
+  std::variant<NoneAsset, ShaderPipelineData> data;
+
+  constexpr static auto serialize(auto& archive, auto& self)
+    requires(std::remove_cvref_t<decltype(archive)>::kind() == zpp::bits::kind::in)
+  {
+    if (auto err = archive(self.type); zpp::bits::failure(err))
+      return err;
+    return archive(zpp::bits::known_id(self.type, self.data));
+  }
+
+  constexpr static auto serialize(auto& archive, auto& self)
+    requires(std::remove_cvref_t<decltype(archive)>::kind() == zpp::bits::kind::out)
+  {
+    auto _ = archive(self.type);
+    return std::visit([&](auto& v) { return archive(v); }, self.data);
+  }
 };
 
 enum class AssetFileFlags : u32 {
@@ -55,11 +80,20 @@ enum class AssetFileFlags : u32 {
 consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
-  static constexpr auto SIGNATURE = 0x584F_u16;
-  u16 magic = SIGNATURE; // "OX"
-  u16 version = 1;
-  AssetType type = AssetType::None;
+  static constexpr auto SIGNATURE = 0x4352584F_u32;
+  static constexpr auto VERSION = 1_u16;
+
+  u32 magic = SIGNATURE; // "OXRC"
+  u16 version = VERSION;
   AssetFileFlags flags = AssetFileFlags::None;
-  u32 entry_count = 0;
+};
+
+struct AssetFile {
+  AssetFileFlags flags = AssetFileFlags::None;
+  std::vector<AssetFileEntry> entries = {};
+
+  static auto unpack(const std::filesystem::path& path) -> option<AssetFile>;
+  auto pack(this AssetFile& self, const std::filesystem::path& path) -> bool;
+  auto add_entry(this AssetFile& self, ShaderPipelineData&& entry) -> void;
 };
 } // namespace ox

@@ -2,9 +2,7 @@
 
 #include <zpp_bits.h>
 
-#include "OS/File.hpp"
 #include "ShaderSession.hpp"
-#include "Utils/Log.hpp"
 
 namespace ox::rc {
 auto create_shader_session(slang::IGlobalSession* global_session, const ShaderSessionInfo& info)
@@ -89,9 +87,7 @@ auto Session::destroy() -> void {
   impl = nullptr;
 }
 
-auto Session::add_request(const ShaderCompileRequest& request) -> void {
-  impl->shader_requests.emplace_back(request);
-}
+auto Session::add_request(const ShaderCompileRequest& request) -> void { impl->shader_requests.emplace_back(request); }
 
 auto Session::push_error(std::string msg) -> void {
   auto lock = std::unique_lock(impl->messages_mutex);
@@ -139,7 +135,9 @@ auto Session::compile() -> bool {
       for (auto& ep : entry_points.value()) {
         pipeline.entry_points.push_back(std::move(ep));
       }
-      impl->compiled_pipelines.push_back(std::move(pipeline));
+
+      pipeline.bindless = shader.bindless;
+      impl->asset_file.add_entry(std::move(pipeline));
     }
   }
 
@@ -147,53 +145,7 @@ auto Session::compile() -> bool {
 }
 
 auto Session::write_to_file(const std::filesystem::path& output_path) -> bool {
-  auto header = AssetFileHeader{
-    .type = AssetType::Shader,
-    .entry_count = static_cast<u32>(impl->compiled_pipelines.size()),
-  };
-
-  auto [data, out] = zpp::bits::data_out();
-  if (failure(out(header, impl->compiled_pipelines))) {
-    push_error(fmt::format("Failed to serialize shader asset to '{}'.", output_path));
-    return false;
-  }
-
-  auto file = File(output_path, FileAccess::Write);
-  if (!file) {
-    push_error(fmt::format("Failed to open '{}' for writing.", output_path));
-    return false;
-  }
-
-  file.write(data);
-  return true;
-}
-
-auto read_shader_asset(
-  const std::filesystem::path& path, AssetFileHeader& out_header, std::vector<ShaderPipelineData>& out_pipelines
-) -> bool {
-  auto file_data = File::to_bytes(path);
-  if (file_data.empty()) {
-    OX_LOG_ERROR("Failed to read shader asset from '{}'.", path);
-    return false;
-  }
-
-  zpp::bits::in in(file_data);
-  if (failure(in(out_header, out_pipelines))) {
-    OX_LOG_ERROR("Failed to deserialize shader asset from '{}'.", path);
-    return false;
-  }
-
-  if (out_header.magic != AssetFileHeader::SIGNATURE) {
-    OX_LOG_ERROR("Invalid shader asset magic in '{}'.", path);
-    return false;
-  }
-
-  if (out_header.type != AssetType::Shader) {
-    OX_LOG_ERROR("Asset '{}' is not a shader asset.", path);
-    return false;
-  }
-
-  return true;
+  return impl->asset_file.pack(output_path);
 }
 
 } // namespace ox::rc

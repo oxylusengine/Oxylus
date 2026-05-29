@@ -4,6 +4,7 @@
 #include <slang-com-ptr.h>
 #include <string>
 
+#include "Asset/AssetFile.hpp"
 #include "ResourceCompiler.hpp"
 
 namespace ox {
@@ -18,6 +19,6 @@ struct Handle<rc::Session>::Impl {
   Slang::ComPtr<slang::IGlobalSession> slang_global_session = {};
 
   std::vector<rc::ShaderCompileRequest> shader_requests = {};
-  std::vector<ShaderPipelineData> compiled_pipelines = {};
+  AssetFile asset_file = {};
 };
 } // namespace ox

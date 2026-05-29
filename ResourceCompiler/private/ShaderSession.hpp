@@ -5,6 +5,7 @@
 #include <slang-com-ptr.h>
 #include <slang.h>
 
+#include "Asset/AssetFile.hpp"
 #include "ResourceCompiler.hpp"
 
 namespace ox::rc {

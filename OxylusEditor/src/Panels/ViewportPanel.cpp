@@ -74,17 +74,19 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
   if (!runtime.is_pipeline_available("mouse_picking_pipeline")) {
     auto& vfs = App::get_vfs();
     auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
-    vk_context.create_pipelines(
-      shaders_dir / "editor.oxasset",
-      {
-        {"mouse_picking_pipeline_2d"},
-        {"mouse_picking_pipeline"},
-        {"highlighting_pipeline"},
-        {"apply_highlighting_pipeline"},
-        {"grid_pipeline"},
-        {"apply_grid_pipeline"},
+    auto shader_file = AssetFile::unpack(shaders_dir / "editor.oxasset");
+    if (!shader_file.has_value()) {
+      return;
+    }
+
+    for (const auto& entry : shader_file->entries) {
+      const auto* pipeline_data = std::get_if<ShaderPipelineData>(&entry.data);
+      if (!pipeline_data) {
+        continue;
       }
-    );
+
+      vk_context.create_pipeline(*pipeline_data);
+    }
   }
 }
 
@@ -235,8 +237,10 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         ImVec2 rendered_max = {window_pos.x + content_max.x, window_pos.y + content_max.y};
         ImVec2 rendered_size = {rendered_max.x - rendered_min.x, rendered_max.y - rendered_min.y};
 
-        if (mouse_pos.x < rendered_min.x || mouse_pos.x > rendered_max.x || mouse_pos.y < rendered_min.y ||
-            mouse_pos.y > rendered_max.y) {
+        if (
+          mouse_pos.x < rendered_min.x || mouse_pos.x > rendered_max.x || mouse_pos.y < rendered_min.y ||
+          mouse_pos.y > rendered_max.y
+        ) {
           return glm::uvec2(~0_u32);
         }
 
@@ -304,8 +308,10 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 }
 
 void ViewportPanel::on_update() {
-  if (!editor_scene_ || !is_viewport_hovered || editor_scene_->get_scene()->is_running() ||
-      !editor_camera.has<CameraComponent>()) {
+  if (
+    !editor_scene_ || !is_viewport_hovered || editor_scene_->get_scene()->is_running() ||
+    !editor_camera.has<CameraComponent>()
+  ) {
     return;
   }
 
@@ -1282,13 +1288,15 @@ void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
       gizmo_type_ = ImGuizmo::BOUNDS;
     if (UI::toggle_button(ICON_MDI_ARROW_EXPAND_ALL, gizmo_type_ == ImGuizmo::UNIVERSAL, button_size, alpha, alpha))
       gizmo_type_ = ImGuizmo::UNIVERSAL;
-    if (UI::toggle_button(
-          gizmo_mode_ == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
-          gizmo_mode_ == ImGuizmo::WORLD,
-          button_size,
-          alpha,
-          alpha
-        ))
+    if (
+      UI::toggle_button(
+        gizmo_mode_ == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
+        gizmo_mode_ == ImGuizmo::WORLD,
+        button_size,
+        alpha,
+        alpha
+      )
+    )
       gizmo_mode_ = gizmo_mode_ == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
     if (UI::toggle_button(ICON_MDI_GRID, EditorCVar::cvar_draw_grid.get(), button_size, alpha, alpha))
       EditorCVar::cvar_draw_grid.toggle();
@@ -1296,13 +1304,15 @@ void ViewportPanel::transform_gizmos_button_group(ImVec2 start_cursor_pos) {
     if (editor_camera.is_alive() && editor_camera.has<CameraComponent>()) {
       auto& cam = editor_camera.get_mut<CameraComponent>();
       UI::push_id();
-      if (UI::toggle_button(
-            ICON_MDI_CAMERA,
-            cam.projection == CameraComponent::Projection::Orthographic,
-            button_size,
-            alpha,
-            alpha
-          ))
+      if (
+        UI::toggle_button(
+          ICON_MDI_CAMERA,
+          cam.projection == CameraComponent::Projection::Orthographic,
+          button_size,
+          alpha,
+          alpha
+        )
+      )
         cam.projection = cam.projection == CameraComponent::Projection::Orthographic
                            ? CameraComponent::Projection::Perspective
                            : CameraComponent::Projection::Orthographic;

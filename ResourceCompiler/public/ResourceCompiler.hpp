@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <vector>
 
-#include "Asset/AssetFile.hpp"
 #include "Core/Handle.hpp"
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
@@ -42,6 +41,7 @@ struct ShaderCompileInfo {
   std::filesystem::path path = {};
   std::string module_name = {};
   std::vector<std::string> entry_points = {};
+  bool bindless = false;
 };
 
 struct ShaderCompileRequest {
@@ -62,10 +62,5 @@ struct OXRC_API Session : Handle<Session> {
   auto get_errors() const -> const std::vector<std::string>&;
   auto get_messages() const -> const std::vector<std::string>&;
 };
-
-OXRC_API auto read_shader_asset(
-  const std::filesystem::path& path,
-  AssetFileHeader& out_header,
-  std::vector<ShaderPipelineData>& out_pipelines) -> bool;
 
 } // namespace ox::rc

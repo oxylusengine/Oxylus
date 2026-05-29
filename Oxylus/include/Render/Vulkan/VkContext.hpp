@@ -1,24 +1,18 @@
 #pragma once
 
 #include <VkBootstrap.h>
-#include <filesystem>
 #include <glm/glm.hpp>
 #include <vuk/RenderGraph.hpp>
 #include <vuk/Value.hpp>
 #include <vuk/runtime/vk/DeviceFrameResource.hpp>
 #include <vuk/runtime/vk/VkRuntime.hpp>
 
+#include "Asset/AssetFile.hpp"
 #include "Core/Base.hpp"
 #include "Core/Option.hpp"
 #include "Memory/SlotMap.hpp"
-#include "Asset/AssetFile.hpp"
 
 namespace ox {
-struct PipelineLoadInfo {
-  std::string module_name = {};
-  vuk::PersistentDescriptorSet* persistent_set = nullptr;
-};
-
 struct Window;
 class TracyProfiler;
 
@@ -99,8 +93,7 @@ public:
   ) -> vuk::PersistentDescriptorSet;
   auto commit_descriptor_set(this VkContext&, std::span<VkWriteDescriptorSet> writes) -> void;
 
-  auto create_pipelines(
-    this VkContext& self, const std::filesystem::path& asset_path, const std::vector<PipelineLoadInfo>& pipeline_infos) -> bool;
+  auto create_pipeline(this VkContext& self, const ShaderPipelineData& pipeline_data) -> bool;
 
   auto allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID;
   auto destroy_image(const ImageID id) -> void;
