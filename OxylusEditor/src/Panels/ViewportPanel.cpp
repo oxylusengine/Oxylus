@@ -74,7 +74,7 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
   if (!runtime.is_pipeline_available("mouse_picking_pipeline")) {
     auto& vfs = App::get_vfs();
     auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
-    auto shader_file = AssetFile::unpack(shaders_dir / "editor.oxasset");
+    auto shader_file = AssetFile::unpack(shaders_dir / "editor.oxpack");
     if (!shader_file.has_value()) {
       return;
     }

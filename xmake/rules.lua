@@ -52,7 +52,7 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
 
   local output_dir  = target:extraconf("rules", "ox.compile_shaders", "output_dir") or ""
   local output_name = target:extraconf("rules", "ox.compile_shaders", "output_name")
-                    or (path.basename(sourcefile) .. ".oxasset")
+                    or (path.basename(sourcefile) .. ".oxpack")
 
   local rcli       = target:dep("rcli"):targetfile()
   local abs_output = path.absolute(path.join(target:targetdir(), output_dir, output_name))

@@ -37,7 +37,7 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   // --- Shaders ---
   auto& vfs = App::get_vfs();
   auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
-  auto shader_file = AssetFile::unpack(shaders_dir / "engine.oxasset");
+  auto shader_file = AssetFile::unpack(shaders_dir / "engine.oxpack");
   if (!shader_file.has_value()) {
     return std::unexpected("Cannot initialize renderer shaders!");
   }
