@@ -16,7 +16,7 @@ struct File {
   std::filesystem::path file_path = {};
 
   File() = default;
-  File(const std::filesystem::path& path, FileAccess access);
+  File(const std::filesystem::path& path, FileAccess access) noexcept;
   File(const File&) = default;
   File(File&&) = default;
   ~File() { close(); }

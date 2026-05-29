@@ -10,9 +10,9 @@
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 #include <vuk/runtime/vk/PipelineInstance.hpp>
 #include <vuk/runtime/vk/Query.hpp>
+#include <zpp_bits.h>
 
 #include "Core/App.hpp"
-#include "Memory/Stack.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Window.hpp"
@@ -331,8 +331,6 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
 
   self.runtime->set_shader_target_version(VK_API_VERSION_1_3);
 
-  self.shader_compiler = SlangCompiler::create().value();
-
   self.tracy_profiler = std::make_shared<TracyProfiler>();
   self.tracy_profiler->init_for_vulkan(&self);
 
@@ -624,57 +622,32 @@ auto VkContext::commit_descriptor_set(this VkContext& self, std::span<VkWriteDes
   vkUpdateDescriptorSets(self.device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
 }
 
-auto VkContext::create_pipelines(
-  this VkContext& self, const SlangSessionInfo& session_info, const std::vector<PipelineCompileInfo>& pipeline_infos
-) -> bool {
+auto VkContext::create_pipeline(this VkContext& self, const ShaderPipelineData& pipeline_data) -> bool {
   ZoneScoped;
-  memory::ScopedStack stack;
 
-  auto session = self.shader_compiler.new_session(session_info);
-  if (!session.has_value()) {
-    return false;
+  auto pipeline_ci = vuk::PipelineBaseCreateInfo{};
+  if (pipeline_data.bindless) {
+    const auto& bindless_set = self.resources.descriptor_set;
+    const auto& set_layout_create_info = bindless_set.set_layout_create_info;
+    pipeline_ci.explicit_set_layouts.emplace_back(set_layout_create_info);
+
+    for (const auto& [binding, binding_flags] :
+         std::views::zip(set_layout_create_info.bindings, set_layout_create_info.flags)) {
+      pipeline_ci.set_binding_flags(
+        static_cast<u32>(set_layout_create_info.index),
+        binding.binding,
+        static_cast<vuk::DescriptorBindingFlagBits>(binding_flags)
+      );
+    }
   }
 
-  OX_DEFER(&) {
-    if (session)
-      session->destroy();
-  };
-
-  for (const auto& pipeline_info : pipeline_infos) {
-    auto shader_info = SlangShaderInfo{
-      .path = pipeline_info.path,
-      .module_name = pipeline_info.module_name,
-      .entry_points = pipeline_info.entry_points,
-    };
-    auto entry_points = session->compile_shader(shader_info);
-    if (!entry_points.has_value()) {
-      continue;
-    }
-
-    auto pipeline_ci = vuk::PipelineBaseCreateInfo{};
-    if (pipeline_info.persistent_set) {
-      const auto& set_layout_create_info = pipeline_info.persistent_set->set_layout_create_info;
-      pipeline_ci.explicit_set_layouts.emplace_back(set_layout_create_info);
-
-      for (const auto& [binding, binding_flags] :
-           std::views::zip(set_layout_create_info.bindings, set_layout_create_info.flags)) {
-        pipeline_ci.set_binding_flags(
-          static_cast<u32>(set_layout_create_info.index),
-          binding.binding,
-          static_cast<vuk::DescriptorBindingFlagBits>(binding_flags)
-        );
-      }
-    }
-
-    for (const auto& [entry_point, entry_point_function] :
-         std::views::zip(entry_points.value(), pipeline_info.entry_points)) {
-      pipeline_ci.add_spirv(entry_point.code, pipeline_info.module_name, entry_point_function);
-    }
-
-    self.runtime->create_named_pipeline(pipeline_info.module_name.c_str(), pipeline_ci);
-
-    OX_LOG_INFO("Created pipeline named {}.", pipeline_info.module_name);
+  for (const auto& entry_point : pipeline_data.entry_points) {
+    pipeline_ci.add_spirv(entry_point.spirv, pipeline_data.module_name, entry_point.name);
   }
+
+  self.runtime->create_named_pipeline(pipeline_data.module_name.c_str(), pipeline_ci);
+
+  OX_LOG_INFO("Created pipeline named {}.", pipeline_data.module_name);
 
   return true;
 }

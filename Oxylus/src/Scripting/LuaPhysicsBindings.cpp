@@ -15,6 +15,7 @@
 #include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
 #include "Scripting/LuaHelpers.hpp"
+#include "Utils/Log.hpp"
 #include "Utils/OxMath.hpp"
 #include "Render/Camera.hpp"
 // clang-format on

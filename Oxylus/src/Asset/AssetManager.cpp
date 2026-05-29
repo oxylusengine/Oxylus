@@ -2,6 +2,7 @@
 
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
+#include <zpp_bits.h>
 
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
