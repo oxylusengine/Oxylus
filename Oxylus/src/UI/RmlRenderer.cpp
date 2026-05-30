@@ -57,7 +57,7 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, VkContext& context, vuk::Val
   auto textures_array = vuk::declare_array("rml_sampled_textures", std::span(frame_textures));
 
   return vuk::make_pass("rml_ui_pass", //
-    [&self](vuk::CommandBuffer& command_buffer,
+    [dc = self.draw_commands](vuk::CommandBuffer& command_buffer,
       VUK_BA(vuk::Access::eVertexRead) vertex_buf,
       VUK_BA(vuk::Access::eIndexRead) index_buf,
       VUK_IA(vuk::eColorWrite) color_rt,
@@ -90,7 +90,7 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, VkContext& context, vuk::Val
         .bind_index_buffer(index_buf, vuk::IndexType::eUint32)
         .set_viewport(0, vuk::Rect2D::framebuffer());
 
-      for (const auto& cmd : self.draw_commands) {
+      for (const auto& cmd : dc) {
         if (cmd.scissor_enabled) {
           vuk::Rect2D scissor;
           scissor.offset = {cmd.scissor.x, cmd.scissor.y};
@@ -234,12 +234,7 @@ auto RmlRenderer::ReleaseTexture(Rml::TextureHandle texture_handle) -> void {
   ZoneScoped;
 
   auto id = static_cast<RmlTextureID>(texture_handle);
-
-  if (auto* texture_ptr = this->loaded_textures.slot(id)) {
-    (*texture_ptr)->destroy();
-
-    this->loaded_textures.destroy_slot(id);
-  }
+  this->loaded_textures.destroy_slot(id);
 }
 
 auto RmlRenderer::EnableScissorRegion(bool enable) -> void {
