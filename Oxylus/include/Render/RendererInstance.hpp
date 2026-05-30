@@ -191,6 +191,22 @@ struct ShadowGeometryContext {
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
 };
 
+struct RMVSMContext {
+  constexpr static u32 PAGE_SIZE = 128;
+  constexpr static u32 MAX_DIRECTIONAL_CLIPMAP_COUNT = 6;
+  constexpr static u32 DIRECTIONAL_IMAGE_SIZE = 1 << 12;
+  constexpr static u32 DIRECTIONAL_PAGE_TABLE_SIZE = DIRECTIONAL_IMAGE_SIZE / PAGE_SIZE;
+  constexpr static u32 DIRECTIONAL_MAX_PAGE_COUNT = DIRECTIONAL_PAGE_TABLE_SIZE * DIRECTIONAL_PAGE_TABLE_SIZE;
+  constexpr static u32 DIRECTIONAL_PAGE_MASK_COUNT = (DIRECTIONAL_MAX_PAGE_COUNT + 31) / 32;
+
+  bool sun_moved = false;
+  vuk::Extent3D depth_extent = {};
+  f32 min_shadow_dist = 0.001f;
+  f32 max_shadow_dist = 1000.0f;
+
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+};
+
 struct AtmosphereContext {
   vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_multiscatter_lut_attachment = {};
@@ -298,6 +314,7 @@ public:
   auto draw_for_shadowmap(
     this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, u32 cascade_index
   ) -> void;
+  auto draw_virtual_shadowmap(this RendererInstance&, RMVSMContext& context) -> void;
   auto draw_atmosphere(this RendererInstance&, AtmosphereContext& context) -> void;
   auto generate_ambient_occlusion(this RendererInstance&, AmbientOcclusionContext& context) -> void;
   auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
@@ -362,5 +379,13 @@ private:
   vuk::Unique<vuk::Buffer> spot_lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
   vuk::Unique<vuk::Buffer> exposure_buffer{};
+
+  vuk::Unique<vuk::Image> vsm_virtual_page_table{};
+  vuk::Unique<vuk::ImageView> vsm_virtual_page_table_view{};
+  vuk::ImageAttachment vsm_virtual_page_table_attachment = {};
+  vuk::Unique<vuk::Image> vsm_physical_page_table{};
+  vuk::Unique<vuk::ImageView> vsm_physical_page_table_f32_view{};
+  vuk::Unique<vuk::ImageView> vsm_physical_page_table_u32_view{};
+  vuk::ImageAttachment vsm_physical_page_table_attachment = {};
 };
 } // namespace ox

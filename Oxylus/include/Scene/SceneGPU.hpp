@@ -298,4 +298,33 @@ enum struct TonemapType : u32 {
   AgX,
   GT7,
 };
+
+struct VSMAllocRequest {
+  alignas(4) glm::ivec3 page_table_address = {};
+};
+
+struct VSMPageAllocator {
+  alignas(4) u32 active_request_count = {};
+  alignas(4) u32 dirty_physical_page_count = {};
+  alignas(8) u64 requests = {};
+  alignas(8) u64 dirty_physical_page_addresses = {};
+};
+
+struct VSMContext {
+  i32 page_size = 0;
+  i32 page_table_size = 0;
+  i32 physcial_page_table_size = 0;
+  i32 curr_clipmap_index = 0;
+  i32 clipmap_count = 0;
+  glm::ivec2 depth_extent = {};
+  f32 first_clipmap_width = 0;
+  f32 clipmap_selection_bias = 0;
+  f32 virtual_extent = 0;
+};
+
+struct VirtualClipmap {
+  glm::mat4 projection_view_mat = {};
+  glm::ivec2 page_offset = {};
+  f32 z_near = 0.0f;
+};
 } // namespace ox::GPU

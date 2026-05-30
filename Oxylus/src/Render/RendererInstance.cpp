@@ -229,6 +229,7 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
       renderer(parent_renderer) {
 
   auto& vk_context = App::get_vkcontext();
+  auto& allocator = vk_context.superframe_allocator;
   render_queue_2d.init();
 
   spot_lights_buffer = vk_context.allocate_buffer_super(
@@ -243,6 +244,48 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
   before_callbacks.resize(stage_count);
   after_callbacks.resize(stage_count);
+
+  vsm_virtual_page_table_attachment = vuk::ImageAttachment{
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
+    .extent =
+      {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+       .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+       .depth = 1},
+    .format = vuk::Format::eR32Uint,
+    .sample_count = vuk::Samples::e1,
+    .view_type = vuk::ImageViewType::e2DArray,
+    .base_level = 0,
+    .level_count = 1,
+    .base_layer = 0,
+    .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
+  };
+  vsm_virtual_page_table = *vuk::allocate_image(*allocator, vsm_virtual_page_table_attachment);
+  vsm_virtual_page_table_attachment.image = *vsm_virtual_page_table;
+  vsm_virtual_page_table_view = *vuk::allocate_image_view(*allocator, vsm_virtual_page_table_attachment);
+  vsm_virtual_page_table_attachment.image_view = *vsm_virtual_page_table_view;
+
+  vsm_physical_page_table_attachment = vuk::ImageAttachment{
+    .image_flags = vuk::ImageCreateFlagBits::eMutableFormat,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
+    .extent =
+      {.width = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .height = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .depth = 1},
+    .format = vuk::Format::eR32Sfloat,
+    .sample_count = vuk::Samples::e1,
+    .view_type = vuk::ImageViewType::e2D,
+    .base_level = 0,
+    .level_count = 1,
+    .base_layer = 0,
+    .layer_count = 1,
+  };
+  vsm_physical_page_table = *vuk::allocate_image(*allocator, vsm_physical_page_table_attachment);
+  vsm_physical_page_table_attachment.image = *vsm_physical_page_table;
+  vsm_physical_page_table_f32_view = *vuk::allocate_image_view(*allocator, vsm_physical_page_table_attachment);
+  vsm_physical_page_table_attachment.image_view = *vsm_physical_page_table_f32_view;
+  auto vsm_physical_page_table_u32_attachment = vsm_physical_page_table_attachment;
+  vsm_physical_page_table_u32_attachment.format = vuk::Format::eR32Uint;
+  vsm_physical_page_table_u32_view = *vuk::allocate_image_view(*allocator, vsm_physical_page_table_u32_attachment);
 
   rebuild_execution_order();
 }
@@ -787,6 +830,14 @@ auto RendererInstance::render(
     normal_attachment = std::move(main_geometry_context.normal_attachment);
     emissive_attachment = std::move(main_geometry_context.emissive_attachment);
     metallic_roughness_occlusion_attachment = std::move(main_geometry_context.metallic_roughness_occlusion_attachment);
+
+    auto rmvsm_context = RMVSMContext{
+      .sun_moved = true,
+      .depth_extent = dst_extent,
+      .depth_attachment = std::move(depth_attachment),
+    };
+    self.draw_virtual_shadowmap(rmvsm_context);
+    depth_attachment = std::move(rmvsm_context.depth_attachment);
 
     auto contact_shadows_pass = vuk::make_pass(
       "contact_shadows",

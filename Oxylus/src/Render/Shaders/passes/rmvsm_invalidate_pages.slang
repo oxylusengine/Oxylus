@@ -1,9 +1,8 @@
 import common;
-import base;
+import gpu;
 import rmvsm;
 
-[[vk::binding(0)]] Texture2DArray<u32> page_hash_table;
-[[vk::binding(1)]] RWTexture2DArray<u32, ImageFormat::R32UI> page_table;
+[[vk::binding(0)]] RWTexture2DArray<u32, ImageFormat::R32UI> page_table;
 
 [[shader("compute")]]
 [[numthreads(16, 16, 1)]]

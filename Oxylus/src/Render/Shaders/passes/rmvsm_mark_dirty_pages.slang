@@ -22,7 +22,7 @@ func cs_main(
 
     var page = VSMPageMetadata(params.page_tables.Load(i32x4(thread_id, 0)));
     if (page.is_backed() && page.is_dirty()) {
-        push_dirty_physical_page(params.allocator[0], page.get_physical_coords(ctx.physcial_page_table_size, page_size));
+        push_dirty_physical_page(params.allocator[0], page.get_physical_coords(ctx.physcial_page_table_size, ctx.page_size));
         __atomic_add(params.clear_cmd[0].z, 1, MemoryOrder::Relaxed);
     }
 }

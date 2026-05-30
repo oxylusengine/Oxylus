@@ -5,7 +5,6 @@ import rmvsm;
 
 struct ShaderParameters {
     ConstantBuffer<Camera> camera;
-    ConstantBuffer<DirectionalLight> directional_light;
     StructuredBuffer<VirtualClipmap> clipmaps;
 
     Texture2D<f32> depth_image;

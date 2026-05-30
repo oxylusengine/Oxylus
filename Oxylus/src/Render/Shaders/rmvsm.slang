@@ -75,9 +75,9 @@ public struct VSMPageMetadata {
         return this.data >> VSM_PAGE_PHYSICAL_ADDRESS_BITS;
     }
 
-    public func get_physical_coords(i32 physical_page_table_size, i32 page_size) -> u32x2 {
+    public func get_physical_coords(i32 physical_image_size, i32 page_size) -> u32x2 {
         let physical_address = this.get_physical_address();
-        let physical_page_count = physical_page_table_size / page_size;
+        let physical_page_count = physical_image_size / page_size;
         return u32x2(
             physical_address % physical_page_count,
             physical_address / physical_page_count

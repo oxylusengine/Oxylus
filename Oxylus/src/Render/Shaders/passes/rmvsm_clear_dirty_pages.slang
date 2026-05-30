@@ -14,13 +14,12 @@ func cs_main(
     uniform ParameterBlock<ShaderParameters> params,
     uniform VSMContext ctx,
 ) -> void {
-    let page_table_extent = ctx.get_page_table_extent().xy;
-    if (any(thread_id.xy >= page_table_extent)) {
+    if (any(thread_id.xy >= ctx.page_size)) {
         return;
     }
 
     let physical_page_coords = params.allocator.dirty_physical_page_coords[thread_id.z];
-    let physical_page_offset = physical_page_coords * page_table_extent;
+    let physical_page_offset = physical_page_coords * ctx.page_size;
     let physical_texel = physical_page_offset + thread_id.xy;
     params.physical_pages.Store(physical_texel, 1.0);
 }
