@@ -139,6 +139,12 @@ public struct Camera {
   public u32 output_index = 0;
   public f32x2 resolution;
   public f32 acceptable_lod_error;
+
+  public func unproject_uv(f32x2 uv, f32 depth) -> f32x3 {
+    let ndc = f32x4(uv * 2.0 - 1.0, depth, 1.0);
+    let world_pos_h = mul(this.inv_projection_view, ndc);
+    return world_pos_h.xyz / world_pos_h.w;
+  }
 };
 
 public struct Atmosphere {

@@ -76,7 +76,11 @@ public func safe_sqrt(f32 x) -> f32 {
 }
 
 public func mod(f32x3 x, f32x3 y) -> f32x3 {
-  return x - y * floor(x / y);
+    return x - y * floor(x / y);
+}
+
+public func mod(f32x2 x, f32x2 y) -> f32x2 {
+    return x - y * floor(x / y);
 }
 
 /// INTERSECTION
