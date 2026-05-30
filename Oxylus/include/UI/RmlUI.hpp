@@ -9,6 +9,7 @@
 #include "Core/Types.hpp"
 #include "UI/RmlRenderer.hpp"
 #include "UI/RmlSystem.hpp"
+#include "Utils/Timestep.hpp"
 
 namespace ox {
 class Renderer;
@@ -22,9 +23,10 @@ public:
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
 
-  auto update() -> void;
+  auto update(const Timestep& timestep) -> void;
 
   auto render_contexts(this RmlUI& self) -> void;
+  auto get_renderer(this RmlUI& self) -> RmlRenderer&;
 
   auto add_context(this RmlUI& self, u32 width, u32 height) -> option<Rml::Context*>;
   auto get_contexts(this RmlUI& self) -> std::span<Rml::Context*>;

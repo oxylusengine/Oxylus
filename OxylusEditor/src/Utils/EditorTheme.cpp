@@ -1,6 +1,7 @@
 ﻿#include "EditorTheme.hpp"
 
 #include <ImGuizmo.h>
+#include <RmlUi/Core.h>
 #include <icons/IconsMaterialDesignIcons.h>
 
 #include "Core/App.hpp"
@@ -19,6 +20,12 @@ void EditorTheme::init(this EditorTheme& self) {
   auto bold_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraSans-Bold.ttf");
   auto icon_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/materialdesignicons-webfont.ttf");
   auto mono_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraMono-Regular.ttf");
+
+  // TODO: This should be configurable from Editor UI.
+  // It should be a list of fonts that can be added and loaded since from CSS you can have multiple fonts.
+  if (!Rml::LoadFontFace(regular_font_path.string())) {
+    OX_LOG_ERROR("Couldn't load font face for RMLUI!");
+  }
 
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
 
