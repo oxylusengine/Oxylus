@@ -31,6 +31,7 @@ public:
     -> vuk::Value<vuk::ImageAttachment>;
 
   auto render_geometry(
+    this RmlRenderer& self,
     Rml::Vertex* vertices,
     int num_vertices,
     int* indices,
@@ -38,6 +39,8 @@ public:
     Rml::TextureHandle texture,
     const Rml::Vector2f& translation
   ) -> void;
+
+  auto set_white_texture(this RmlRenderer& self, Texture* texture) -> void;
 
   // --- Derived functions ---
   auto CompileGeometry(Rml::Span<const Rml::Vertex> vertices, Rml::Span<const int> indices)
@@ -62,6 +65,7 @@ private:
   std::vector<RmlDrawCmd> draw_commands = {};
 
   SlotMap<std::unique_ptr<Texture>, RmlTextureID> loaded_textures = {};
+  Texture* white_texture = nullptr;
 
   bool current_scissor_enabled = false;
   glm::ivec4 current_scissor; // x, y, w, h

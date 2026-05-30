@@ -35,12 +35,16 @@ func vs_main(VertexInput input) -> VertexOutput {
     f32x2 clip_space = (normalized * 2.0) - 1.0;
     output.position = f32x4(clip_space, 0.0, 1.0);
     output.tex_coord = input.tex_coord;
-    output.color = input.color;
+    output.color = f32x4(pow(input.color.rgb, f32x3(2.2)), input.color.a);
 
     return output;
 }
 
 [[shader("fragment")]]
 f32x4 fs_main(VertexOutput input) : SV_TARGET {
-    return texture.Sample(sampler, input.tex_coord) * input.color;
+    f32x4 tex_color = texture.Sample(sampler, input.tex_coord);
+    f32x4 final_color = tex_color * input.color;
+    final_color.rgb = final_color.rgb * tex_color.a * input.color.a;
+
+    return final_color;
 }

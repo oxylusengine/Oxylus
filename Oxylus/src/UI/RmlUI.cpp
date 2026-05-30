@@ -39,6 +39,19 @@ auto RmlUI::init() -> std::expected<void, std::string> {
     }
   );
 
+  uint32_t white_pixel = 0xFFFFFFFF;
+  white_texture = std::make_unique<Texture>();
+  white_texture->create(
+    {},
+    TextureLoadInfo{
+      .format = vuk::Format::eR8G8B8A8Unorm,
+      .loaded_data = &white_pixel,
+      .extent = vuk::Extent3D{1, 1, 1u}
+    }
+  );
+
+  this->rml_renderer.set_white_texture(white_texture.get());
+
   return {};
 }
 

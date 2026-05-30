@@ -36,5 +36,6 @@ private:
   std::vector<Rml::Context*> contexts = {};
   RmlRenderer rml_renderer = {};
   RmlSystem rml_system = {};
+  std::unique_ptr<Texture> white_texture = nullptr;
 };
 } // namespace ox

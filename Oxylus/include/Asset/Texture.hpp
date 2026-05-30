@@ -117,7 +117,7 @@ public:
            1;
   }
 
-  static auto path_to_mime(const std::filesystem::path &path) -> TextureLoadInfo::MimeType;
+  static auto path_to_mime(const std::filesystem::path& path) -> TextureLoadInfo::MimeType;
 
 private:
   vuk::ImageAttachment attachment_ = {};

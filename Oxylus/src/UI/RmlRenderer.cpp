@@ -27,9 +27,12 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, VkContext& context, vuk::Val
 
   std::unordered_map<RmlTextureID, uint32_t> acquired_texture_cache = {};
   std::vector<vuk::Value<vuk::ImageAttachment>> frame_textures = {};
+  frame_textures.emplace_back(self.white_texture->acquire());
   for (auto& cmd : self.draw_commands) {
-    if (!cmd.texture)
+    if (!cmd.texture) {
+      cmd.texture_array_index = 0;
       continue;
+    }
 
     auto tex_id = static_cast<RmlTextureID>(cmd.texture);
 
@@ -59,18 +62,29 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, VkContext& context, vuk::Val
       VUK_BA(vuk::Access::eIndexRead) index_buf,
       VUK_IA(vuk::eColorWrite) color_rt,
       VUK_ARG(vuk::ImageAttachment[], vuk::Access::eFragmentSampled) bound_textures) {
+        // Premultiplied alpha
+        vuk::PipelineColorBlendAttachmentState blend_state = {
+          .blendEnable = true,
+          .srcColorBlendFactor = vuk::BlendFactor::eOne,
+          .dstColorBlendFactor = vuk::BlendFactor::eOneMinusSrcAlpha,
+          .colorBlendOp = vuk::BlendOp::eAdd,
+          .srcAlphaBlendFactor = vuk::BlendFactor::eOne,
+          .dstAlphaBlendFactor = vuk::BlendFactor::eOneMinusSrcAlpha,
+          .alphaBlendOp = vuk::BlendOp::eAdd
+        };
+
     command_buffer.set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
         .set_rasterization(vuk::PipelineRasterizationStateCreateInfo{})
-        .set_color_blend(color_rt, vuk::BlendPreset::eAlphaBlend)
+        .set_color_blend(color_rt, blend_state)
         .bind_graphics_pipeline("rmlui")
         .bind_vertex_buffer(
           0,
           vertex_buf,
           0,
           vuk::Packed{
-            vuk::Format::eR32G32Sfloat,   // Position (8 bytes)
-            vuk::Format::eR8G8B8A8Unorm,  // Color (4 bytes)
-            vuk::Format::eR32G32Sfloat    // TexCoord (8 bytes)
+            vuk::Format::eR32G32Sfloat,   // Position
+            vuk::Format::eR8G8B8A8Unorm,  // Color
+            vuk::Format::eR32G32Sfloat    // TexCoord
           }
         )
         .bind_index_buffer(index_buf, vuk::IndexType::eUint32)
@@ -86,10 +100,6 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, VkContext& context, vuk::Val
           command_buffer.set_scissor(0, vuk::Rect2D::framebuffer());
         }
 
-        if (cmd.texture) {
-          command_buffer.bind_image(0, 1, bound_textures[cmd.texture_array_index])
-            .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear});
-        }
         struct PushConstant {
           f32 translation[2] = {};
           f32 screen_size[2] = {};
@@ -98,7 +108,9 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, VkContext& context, vuk::Val
         pc.translation[1] = cmd.translation.y;
         pc.screen_size[0] = static_cast<f32>(color_rt->extent.width);
         pc.screen_size[1] = static_cast<f32>(color_rt->extent.height);
-        command_buffer.push_constants(vuk::ShaderStageFlagBits::eVertex, 0, pc)
+        command_buffer.bind_image(0, 1, bound_textures[cmd.texture_array_index])
+                      .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
+                      .push_constants(vuk::ShaderStageFlagBits::eVertex, 0, pc)
                       .draw_indexed(cmd.index_count, 1, cmd.index_offset, cmd.vertex_offset, 0);
       }
 
@@ -119,6 +131,7 @@ auto RmlRenderer::CompileGeometry(Rml::Span<const Rml::Vertex> vertices, Rml::Sp
 }
 
 auto RmlRenderer::render_geometry(
+  this RmlRenderer& self,
   Rml::Vertex* vertices,
   int num_vertices,
   int* indices,
@@ -126,20 +139,28 @@ auto RmlRenderer::render_geometry(
   Rml::TextureHandle texture,
   const Rml::Vector2f& translation
 ) -> void {
+  ZoneScoped;
+
   RmlDrawCmd draw_cmd = {
     .index_count = static_cast<u32>(num_indices),
-    .index_offset = static_cast<u32>(this->frame_indices.size()),
-    .vertex_offset = static_cast<u32>(this->frame_vertices.size()),
+    .index_offset = static_cast<u32>(self.frame_indices.size()),
+    .vertex_offset = static_cast<u32>(self.frame_vertices.size()),
     .texture = texture,
     .translation = translation,
-    .scissor_enabled = this->current_scissor_enabled,
-    .scissor = this->current_scissor,
+    .scissor_enabled = self.current_scissor_enabled,
+    .scissor = self.current_scissor,
   };
 
-  this->frame_vertices.insert(this->frame_vertices.end(), vertices, vertices + num_vertices);
-  this->frame_indices.insert(this->frame_indices.end(), indices, indices + num_indices);
+  self.frame_vertices.insert(self.frame_vertices.end(), vertices, vertices + num_vertices);
+  self.frame_indices.insert(self.frame_indices.end(), indices, indices + num_indices);
 
-  this->draw_commands.push_back(draw_cmd);
+  self.draw_commands.push_back(draw_cmd);
+}
+
+auto RmlRenderer::set_white_texture(this RmlRenderer& self, Texture* texture) -> void {
+  ZoneScoped;
+
+  self.white_texture = texture;
 }
 
 auto RmlRenderer::RenderGeometry(
@@ -182,11 +203,25 @@ auto RmlRenderer::GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector
   -> Rml::TextureHandle {
   ZoneScoped;
 
+  std::vector<uint8_t> straight_alpha_data(source.begin(), source.end());
+
+  // Undo RmlUi's native premultiplication so the shader can universally handle straight alpha
+  for (size_t i = 0; i < straight_alpha_data.size(); i += 4) {
+    uint8_t alpha = straight_alpha_data[i + 3];
+    // Only divide if the pixel is semi-transparent
+    if (alpha > 0 && alpha < 255) {
+      straight_alpha_data[i + 0] = static_cast<uint8_t>(std::min(255, (straight_alpha_data[i + 0] * 255) / alpha));
+      straight_alpha_data[i + 1] = static_cast<uint8_t>(std::min(255, (straight_alpha_data[i + 1] * 255) / alpha));
+      straight_alpha_data[i + 2] = static_cast<uint8_t>(std::min(255, (straight_alpha_data[i + 2] * 255) / alpha));
+    }
+  }
+
   auto texture = std::make_unique<Texture>();
   texture->create(
     {},
     TextureLoadInfo{
-      .loaded_data = (void*)source.data(),
+      .format = vuk::Format::eR8G8B8A8Unorm,
+      .loaded_data = straight_alpha_data.data(),
       .extent = vuk::Extent3D{static_cast<u32>(source_dimensions.x), static_cast<u32>(source_dimensions.y), 1u}
     }
   );

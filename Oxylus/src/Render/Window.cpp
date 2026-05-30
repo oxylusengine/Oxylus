@@ -254,6 +254,8 @@ auto Window::update(const Timestep& timestep) const -> void {
   };
 
   window_callbacks.on_mouse_button = [](void* user_data, u32 instance_id, const u8 button, const bool down) {
+    auto ox_mouse_button = static_cast<MouseCode>(button);
+
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_button(button, down);
@@ -262,16 +264,22 @@ auto Window::update(const Timestep& timestep) const -> void {
     if (App::has_mod<RmlUI>()) {
       auto& rml = App::mod<RmlUI>();
       for (auto& ctx : rml.get_contexts()) {
+        auto rml_code = 0;
+        switch (ox_mouse_button) {
+          case MouseCode::Left  : rml_code = 0; break;
+          case MouseCode::Middle: rml_code = 2; break;
+          case MouseCode::Right : rml_code = 1; break;
+          default               : break;
+        }
         if (down) {
-          ctx->ProcessMouseButtonDown(button, 0);
+          ctx->ProcessMouseButtonDown(rml_code, 0);
         } else {
-          ctx->ProcessMouseButtonUp(button, 0);
+          ctx->ProcessMouseButtonUp(rml_code, 0);
         }
       }
     }
 
     auto& input_system = App::mod<Input>();
-    auto ox_mouse_button = static_cast<MouseCode>(button);
     if (down) {
       input_system.set_mouse_clicked(ox_mouse_button, true);
       input_system.set_mouse_released(ox_mouse_button, false);
@@ -291,7 +299,7 @@ auto Window::update(const Timestep& timestep) const -> void {
     if (App::has_mod<RmlUI>()) {
       auto& rml = App::mod<RmlUI>();
       for (auto& ctx : rml.get_contexts()) {
-        ctx->ProcessMouseWheel(offset.y, 0);
+        ctx->ProcessMouseWheel(offset.y * -1.f, 0);
       }
     }
 
