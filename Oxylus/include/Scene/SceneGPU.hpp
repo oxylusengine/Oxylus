@@ -195,6 +195,15 @@ struct CameraData {
   alignas(4) f32 acceptable_lod_error = 2.0f; // TODO: Make this configurable
 };
 
+struct CullCamera {
+  glm::mat4 projection_view = {};
+  glm::vec3 position = {};
+  f32 acceptable_lod_error = {};
+  glm::vec2 resolution = {};
+  f32 near_clip = {};
+  u32 mesh_instance_count = {};
+};
+
 #define MAX_POINT_LIGHTS 1024
 #define MAX_SPOT_LIGHTS 1024
 
@@ -320,6 +329,8 @@ struct VSMContext {
   f32 first_clipmap_width = 0;
   f32 clipmap_selection_bias = 0;
   f32 virtual_extent = 0;
+  f32 z_length = 0.0f;
+  glm::vec3 directional_light_dir = {};
 };
 
 struct VirtualClipmap {

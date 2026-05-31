@@ -201,10 +201,31 @@ struct RMVSMContext {
 
   bool sun_moved = false;
   vuk::Extent3D depth_extent = {};
-  f32 min_shadow_dist = 0.001f;
+  f32 max_shadow_dist = 1000.0f;
+
+  vuk::Value<vuk::Buffer> directional_clipmaps_buffer = {};
+
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> virtual_page_table_attachment = {};
+  vuk::Value<vuk::ImageAttachment> physical_page_table_attachment = {};
+};
+
+struct ShadowResolveContext {
+  // TODO: Add shadowmap kind enum
   f32 max_shadow_dist = 1000.0f;
 
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
+
+  // CSM:
+  vuk::Value<vuk::ImageAttachment> directional_shadowmap_attachment = {};
+
+  // VSM:
+  vuk::Value<vuk::Buffer> directional_clipmaps_buffer = {};
+  vuk::Value<vuk::ImageAttachment> virtual_page_table_attachment = {};
+  vuk::Value<vuk::ImageAttachment> physical_page_table_attachment = {};
+
+  vuk::Value<vuk::ImageAttachment> resolved_shadows_attachment = {};
 };
 
 struct AtmosphereContext {
@@ -236,7 +257,7 @@ struct PBRContext {
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> contact_shadows_attachment = {};
-  vuk::Value<vuk::ImageAttachment> directional_shadowmap_attachment = {};
+  vuk::Value<vuk::ImageAttachment> resolved_shadows_attachment = {};
 };
 
 struct DebugContext {
@@ -305,16 +326,18 @@ public:
   auto get_viewport_offset(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_offset; }
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto cull_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
+  auto cull_for_visbuffer(this RendererInstance&, MainGeometryContext& context, const GPU::CullCamera& cull_camera)
+    -> void;
   auto draw_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto decode_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto cull_for_shadowmap(
-    this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, bool first
+    this RendererInstance& self, ShadowGeometryContext& context, const GPU::CullCamera& cull_camera, bool first
   ) -> void;
   auto draw_for_shadowmap(
     this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, u32 cascade_index
   ) -> void;
   auto draw_virtual_shadowmap(this RendererInstance&, RMVSMContext& context) -> void;
+  auto resolve_shadowmap(this RendererInstance&, ShadowResolveContext& context) -> void;
   auto draw_atmosphere(this RendererInstance&, AtmosphereContext& context) -> void;
   auto generate_ambient_occlusion(this RendererInstance&, AmbientOcclusionContext& context) -> void;
   auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
@@ -363,7 +386,11 @@ private:
   GPU::TonemapType tonemap_type = GPU::TonemapType::AgX;
 
   bool directional_light_cast_shadows = true;
+  bool sun_direction_changed = false;
+  glm::vec3 previous_sun_direction = {};
   GPU::DirectionalLight directional_light = {};
+  f32 first_clipmap_width = 1.0f;
+  f32 clipmap_selection_bias = 2.0f;
   std::array<GPU::DirectionalLightCascade, MAX_DIRECTIONAL_SHADOW_CASCADES> directional_light_cascades = {};
   GPU::Atmosphere atmosphere = {};
   GPU::EyeAdaptationSettings eye_adaptation = {};

@@ -6,26 +6,25 @@ import debug_drawer;
 
 #include <defines.slang>
 
-[[vk::binding(0)]] ConstantBuffer<Camera> camera;
-[[vk::binding(1)]] StructuredBuffer<Mesh> meshes;
-[[vk::binding(2)]] StructuredBuffer<Transform> transforms;
-[[vk::binding(3)]] RWStructuredBuffer<MeshInstance> mesh_instances;
-[[vk::binding(4)]] RWStructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(5)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;
-[[vk::binding(6)]] RWStructuredBuffer<DispatchIndirectCommand> cull_meshlets_cmd;
+[[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
+[[vk::binding(1)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(2)]] RWStructuredBuffer<MeshInstance> mesh_instances;
+[[vk::binding(3)]] RWStructuredBuffer<MeshletInstance> meshlet_instances;
+[[vk::binding(4)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;
+[[vk::binding(5)]] RWStructuredBuffer<DispatchIndirectCommand> cull_meshlets_cmd;
 
 [[shader("compute")]]
 [[numthreads(CULLING_MESH_COUNT, 1, 1)]]
 func cs_main(
     uint3 thread_id : SV_DispatchThreadID,
-    uniform u32 mesh_instances_count,
+    uniform CullCamera camera,
 ) -> void {
     let mesh_instance_index = thread_id.x;
 
     var meshlet_count = 0u;
     var lod_index = 0u;
 
-    if (mesh_instance_index < mesh_instances_count) {
+    if (mesh_instance_index < camera.mesh_instances_count) {
         let mesh_instance = mesh_instances[mesh_instance_index];
         let mesh = meshes[mesh_instance.mesh_index];
         let transform = transforms[mesh_instance.transform_index];

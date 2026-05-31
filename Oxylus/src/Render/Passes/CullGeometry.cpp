@@ -68,7 +68,9 @@ auto RendererInstance::generate_hiz(this RendererInstance&, MainGeometryContext&
   );
 }
 
-auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeometryContext& context) -> void {
+auto RendererInstance::cull_for_visbuffer(
+  this RendererInstance& self, MainGeometryContext& context, const GPU::CullCamera& cull_camera
+) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -78,9 +80,8 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
     // 0;
     auto cull_meshes_pass = vuk::make_pass(
       "vis cull meshes",
-      [mesh_instance_count = self.prepared_frame.mesh_instance_count](
+      [cull_camera](
         vuk::CommandBuffer& cmd_list,
-        VUK_BA(vuk::eComputeUniformRead) camera,
         VUK_BA(vuk::eComputeRead) meshes,
         VUK_BA(vuk::eComputeRead) transforms,
         VUK_BA(vuk::eComputeRW) mesh_instances,
@@ -90,25 +91,16 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
       ) {
         cmd_list //
           .bind_compute_pipeline("vis_cull_meshes")
-          .bind_buffer(0, 0, camera)
-          .bind_buffer(0, 1, meshes)
-          .bind_buffer(0, 2, transforms)
-          .bind_buffer(0, 3, mesh_instances)
-          .bind_buffer(0, 4, meshlet_instances)
-          .bind_buffer(0, 5, visibility)
-          .bind_buffer(0, 6, cull_meshlets_cmd)
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, mesh_instance_count)
-          .dispatch_invocations(mesh_instance_count);
+          .bind_buffer(0, 0, meshes)
+          .bind_buffer(0, 1, transforms)
+          .bind_buffer(0, 2, mesh_instances)
+          .bind_buffer(0, 3, meshlet_instances)
+          .bind_buffer(0, 4, visibility)
+          .bind_buffer(0, 5, cull_meshlets_cmd)
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
+          .dispatch_invocations(cull_camera.mesh_instance_count);
 
-        return std::make_tuple(
-          camera,
-          meshes,
-          transforms,
-          mesh_instances,
-          meshlet_instances,
-          visibility,
-          cull_meshlets_cmd
-        );
+        return std::make_tuple(meshes, transforms, mesh_instances, meshlet_instances, visibility, cull_meshlets_cmd);
       }
     );
 
@@ -117,7 +109,6 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
       {.x = 0, .y = 1, .z = 1}
     );
     std::tie(
-      self.prepared_frame.camera_buffer,
       self.prepared_frame.meshes_buffer,
       self.prepared_frame.transforms_buffer,
       self.prepared_frame.mesh_instances_buffer,
@@ -126,7 +117,6 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
       context.cull_meshlets_cmd_buffer
     ) =
       cull_meshes_pass(
-        std::move(self.prepared_frame.camera_buffer),
         std::move(self.prepared_frame.meshes_buffer),
         std::move(self.prepared_frame.transforms_buffer),
         std::move(self.prepared_frame.mesh_instances_buffer),
@@ -138,11 +128,10 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
 
   auto cull_meshlets_pass = vuk::make_pass(
     stack.format("vis cull meshlets {}", context.late ? "late" : "early"),
-    [late = context.late, occlusion_cull_ = self.occlusion_cull](
+    [late = context.late, occlusion_cull_ = self.occlusion_cull, cull_camera](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eIndirectRead) dispatch_cmd,
       VUK_IA(vuk::eComputeSampled) hiz,
-      VUK_BA(vuk::eComputeUniformRead) camera,
       VUK_BA(vuk::eComputeRead) meshes,
       VUK_BA(vuk::eComputeRead) mesh_instances,
       VUK_BA(vuk::eComputeRead) meshlet_instances,
@@ -156,23 +145,22 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
         .bind_compute_pipeline("vis_cull_meshlets")
         .bind_image(0, 0, hiz)
         .bind_sampler(0, 1, hiz_sampler)
-        .bind_buffer(0, 2, camera)
-        .bind_buffer(0, 3, meshes)
-        .bind_buffer(0, 4, mesh_instances)
-        .bind_buffer(0, 5, meshlet_instances)
-        .bind_buffer(0, 6, transforms)
-        .bind_buffer(0, 7, visibility)
-        .bind_buffer(0, 8, visible_meshlet_instances_indices)
-        .bind_buffer(0, 9, meshlet_instance_visibility_mask)
-        .bind_buffer(0, 10, cull_triangles_cmd)
+        .bind_buffer(0, 2, meshes)
+        .bind_buffer(0, 3, mesh_instances)
+        .bind_buffer(0, 4, meshlet_instances)
+        .bind_buffer(0, 5, transforms)
+        .bind_buffer(0, 6, visibility)
+        .bind_buffer(0, 7, visible_meshlet_instances_indices)
+        .bind_buffer(0, 8, meshlet_instance_visibility_mask)
+        .bind_buffer(0, 9, cull_triangles_cmd)
         .specialize_constants(0, late)
         .specialize_constants(1, occlusion_cull_)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
         .dispatch_indirect(dispatch_cmd);
 
       return std::make_tuple(
         dispatch_cmd,
         hiz,
-        camera,
         meshes,
         mesh_instances,
         meshlet_instances,
@@ -192,7 +180,6 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
   std::tie(
     context.cull_meshlets_cmd_buffer,
     context.hiz_attachment,
-    self.prepared_frame.camera_buffer,
     self.prepared_frame.meshes_buffer,
     self.prepared_frame.mesh_instances_buffer,
     self.prepared_frame.meshlet_instances_buffer,
@@ -205,7 +192,6 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
     cull_meshlets_pass(
       std::move(context.cull_meshlets_cmd_buffer),
       std::move(context.hiz_attachment),
-      std::move(self.prepared_frame.camera_buffer),
       std::move(self.prepared_frame.meshes_buffer),
       std::move(self.prepared_frame.mesh_instances_buffer),
       std::move(self.prepared_frame.meshlet_instances_buffer),
@@ -218,10 +204,9 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
 
   auto cull_triangles_pass = vuk::make_pass(
     stack.format("vis cull triangles {}", context.late ? "late" : "early"),
-    [late = context.late](
+    [late = context.late, cull_camera](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eIndirectRead) cull_triangles_cmd,
-      VUK_BA(vuk::eComputeUniformRead) camera,
       VUK_BA(vuk::eComputeRead) meshes,
       VUK_BA(vuk::eComputeRead) mesh_instances,
       VUK_BA(vuk::eComputeRead) meshlet_instances,
@@ -233,20 +218,19 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
     ) {
       cmd_list //
         .bind_compute_pipeline("vis_cull_triangles")
-        .bind_buffer(0, 0, camera)
-        .bind_buffer(0, 1, meshes)
-        .bind_buffer(0, 2, mesh_instances)
-        .bind_buffer(0, 3, meshlet_instances)
-        .bind_buffer(0, 4, visibility)
-        .bind_buffer(0, 5, transforms)
-        .bind_buffer(0, 6, visible_meshlet_instances_indices)
-        .bind_buffer(0, 7, reordered_indices)
-        .bind_buffer(0, 8, draw_indexed_cmd)
+        .bind_buffer(0, 0, meshes)
+        .bind_buffer(0, 1, mesh_instances)
+        .bind_buffer(0, 2, meshlet_instances)
+        .bind_buffer(0, 3, visibility)
+        .bind_buffer(0, 4, transforms)
+        .bind_buffer(0, 5, visible_meshlet_instances_indices)
+        .bind_buffer(0, 6, reordered_indices)
+        .bind_buffer(0, 7, draw_indexed_cmd)
         .specialize_constants(0, late)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
         .dispatch_indirect(cull_triangles_cmd);
 
       return std::make_tuple(
-        camera,
         meshes,
         mesh_instances,
         meshlet_instances,
@@ -263,7 +247,6 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
     {.instanceCount = 1}
   );
   std::tie(
-    self.prepared_frame.camera_buffer,
     self.prepared_frame.meshes_buffer,
     self.prepared_frame.mesh_instances_buffer,
     self.prepared_frame.meshlet_instances_buffer,
@@ -275,7 +258,6 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
   ) =
     cull_triangles_pass(
       std::move(cull_triangles_cmd_buffer),
-      std::move(self.prepared_frame.camera_buffer),
       std::move(self.prepared_frame.meshes_buffer),
       std::move(self.prepared_frame.mesh_instances_buffer),
       std::move(self.prepared_frame.meshlet_instances_buffer),
@@ -288,14 +270,14 @@ auto RendererInstance::cull_for_visbuffer(this RendererInstance& self, MainGeome
 }
 
 auto RendererInstance::cull_for_shadowmap(
-  this RendererInstance& self, ShadowGeometryContext& context, glm::mat4& projection_view, bool first
+  this RendererInstance& self, ShadowGeometryContext& context, const GPU::CullCamera& cull_camera, bool first
 ) -> void {
   ZoneScoped;
 
   if (first) {
     auto cull_meshes_pass = vuk::make_pass(
       "sm cull meshes",
-      [mesh_instance_count = self.prepared_frame.mesh_instance_count, projection_view](
+      [mesh_instance_count = self.prepared_frame.mesh_instance_count, cull_camera](
         vuk::CommandBuffer& cmd_list,
         VUK_BA(vuk::eComputeRead) meshes,
         VUK_BA(vuk::eComputeRead) transforms,
@@ -312,7 +294,7 @@ auto RendererInstance::cull_for_shadowmap(
           .bind_buffer(0, 3, meshlet_instances)
           .bind_buffer(0, 4, visibility)
           .bind_buffer(0, 5, cull_meshlets_cmd)
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(projection_view, mesh_instance_count))
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
           .dispatch_invocations(mesh_instance_count);
 
         return std::make_tuple(meshes, transforms, mesh_instances, meshlet_instances, visibility, cull_meshlets_cmd);
@@ -342,8 +324,8 @@ auto RendererInstance::cull_for_shadowmap(
   }
 
   auto cull_meshlets_pass = vuk::make_pass(
-    "shadowmap cull meshlets",
-    [projection_view](
+    "sm cull meshlets",
+    [cull_camera](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eIndirectRead) dispatch_cmd,
       VUK_BA(vuk::eComputeRead) meshes,
@@ -363,7 +345,7 @@ auto RendererInstance::cull_for_shadowmap(
         .bind_buffer(0, 4, visibility)
         .bind_buffer(0, 5, visible_meshlet_instances_indices)
         .bind_buffer(0, 6, cull_triangles_cmd)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, projection_view)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
         .dispatch_indirect(dispatch_cmd);
 
       return std::make_tuple(
@@ -406,7 +388,7 @@ auto RendererInstance::cull_for_shadowmap(
 
   auto cull_triangles_pass = vuk::make_pass(
     "sm cull triangles",
-    [projection_view](
+    [cull_camera](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eIndirectRead) cull_triangles_cmd,
       VUK_BA(vuk::eComputeRead) meshes,
@@ -426,7 +408,7 @@ auto RendererInstance::cull_for_shadowmap(
         .bind_buffer(0, 4, visible_meshlet_instances_indices)
         .bind_buffer(0, 5, reordered_indices)
         .bind_buffer(0, 6, draw_indexed_cmd)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, projection_view)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
         .dispatch_indirect(cull_triangles_cmd);
 
       return std::make_tuple(

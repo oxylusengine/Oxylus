@@ -16,19 +16,18 @@ import cull;
 [[numthreads(CULLING_MESH_COUNT, 1, 1)]]
 func cs_main(
     uint3 thread_id : SV_DispatchThreadID,
-    uniform f32x4x4 projection_view,
-    uniform u32 mesh_instances_count,
+    uniform CullCamera camera
 ) -> void {
     let mesh_instance_index = thread_id.x;
 
     var meshlet_count = 0u;
     var lod_index = 0u;
 
-    if (mesh_instance_index < mesh_instances_count) {
+    if (mesh_instance_index < camera.mesh_instances_count) {
         let mesh_instance = mesh_instances[mesh_instance_index];
         let mesh = meshes[mesh_instance.mesh_index];
         let transform = transforms[mesh_instance.transform_index];
-        let mvp = mul(projection_view, transform.world);
+        let mvp = mul(camera.projection_view, transform.world);
 
         if (test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
             meshlet_count = mesh.lods[lod_index].meshlet_count;

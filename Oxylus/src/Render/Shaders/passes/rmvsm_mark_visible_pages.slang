@@ -38,7 +38,7 @@ func cs_main(
     let clipmap_info = clipmap.get_clipmap_info(world_pos);
     let virt_coords = clipmap_info.get_virt_coords(ctx.get_page_table_extent().xy);
     let wrapped_coords = ctx.page_coords_virtual_to_wrapped(virt_coords, clipmap.page_offset);
-    let page_table_address = i32x3(wrapped_coords, clipmap_index);
+    let page_table_address = i32x3(wrapped_coords, i32(clipmap_index));
 
     // scalarization loop in listing 3.3
     var first_thread_visible = all(wrapped_coords >= 0);

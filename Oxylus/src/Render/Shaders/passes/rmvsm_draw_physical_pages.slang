@@ -4,14 +4,13 @@ import scene;
 import visbuffer;
 import rmvsm;
 
-[[vk::binding(0)]] ConstantBuffer<DirectionalLight> directional_light;
-[[vk::binding(1)]] StructuredBuffer<Mesh> meshes;
-[[vk::binding(2)]] StructuredBuffer<MeshInstance> mesh_instances;
-[[vk::binding(3)]] StructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(4)]] StructuredBuffer<Transform> transforms;
-[[vk::binding(5)]] StructuredBuffer<VirtualClipmap> clipmaps;
-[[vk::binding(6)]] Texture2DArray<u32> page_tables;
-[[vk::binding(7)]] RWTexture2D<u32, 1, ImageFormat::R32UI> physical_pages;
+[[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
+[[vk::binding(1)]] StructuredBuffer<MeshInstance> mesh_instances;
+[[vk::binding(2)]] StructuredBuffer<MeshletInstance> meshlet_instances;
+[[vk::binding(3)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(4)]] StructuredBuffer<VirtualClipmap> clipmaps;
+[[vk::binding(5)]] Texture2DArray<u32> page_tables;
+[[vk::binding(6)]] RWTexture2D<u32, 1, ImageFormat::R32UI> physical_pages;
 
 [[vk::push_constant]] VSMContext ctx;
 

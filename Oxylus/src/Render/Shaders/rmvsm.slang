@@ -102,6 +102,8 @@ public struct VSMContext {
     public f32 first_clipmap_width;
     public f32 clipmap_selection_bias;
     public f32 virtual_extent;
+    public f32 z_length;
+    public f32x3 directional_light_dir;
 
     public func page_coords_virtual_to_wrapped(i32x2 virt_coords, i32x2 clipmap_offset) -> i32x2 {
         let bounds = i32x2(0, this.page_table_size - 1);
@@ -123,14 +125,19 @@ public struct VSMContext {
     }
 
     public func get_first_clipmap_texel_length() -> f32 {
+        // Account for page snapping reducing effective coverage by up to one page per side.
+        // See Timberdoodle's scale_ratio: (page_count - 2) / page_count
+        let page_count = this.page_table_size;
+        let scale_ratio = f32(page_count - 2) / f32(page_count);
+        let effective_width = this.first_clipmap_width * scale_ratio;
 #if VMS_USE_DIAG_PIXEL_FOOTPRINT
-        return (this.first_clipmap_width * 2.0) / this.virtual_extent;
+        return (effective_width * 2.0) / this.virtual_extent;
 #else
-        return this.first_clipmap_width * 2.0;
+        return effective_width * 2.0;
 #endif
     }
 
-    public func get_clipmap_index(in Camera camera, f32x2 uv, f32 depth) -> u32 {
+    public func get_clipmap_level_f(in Camera camera, f32x2 uv, f32 depth) -> f32 {
 #if VMS_USE_DIAG_PIXEL_FOOTPRINT
         // 2x2 diagonal pixel footprint calculation for better spatial information.
         // if this shit is too slow fallback to 2x1 approach (top down or left right)
@@ -155,15 +162,20 @@ public struct VSMContext {
 #endif
         let texel_length = this.get_first_clipmap_texel_length();
         let clipmap_level_f = log2(d / texel_length) + this.clipmap_selection_bias;
-        let clipmap_level = u32(max(clipmap_level_f, 0.0));
+        return max(clipmap_level_f, 0.0);
+    }
 
-        return min(clipmap_level, this.clipmap_count - 1);
+    public func get_clipmap_index(in Camera camera, f32x2 uv, f32 depth) -> u32 {
+        let level_f = this.get_clipmap_level_f(camera, uv, depth);
+        // Use ceil instead of floor: when pixel footprint approaches the boundary,
+        // round up to the coarser level to avoid a hard switch between adjacent pixels.
+        return min(u32(ceil(level_f)), u32(this.clipmap_count - 1));
     }
 };
 
 public struct VirtualClipmapInfo {
     f32x2 clip_uv;
-    f32 projected_depth;
+    public f32 projected_depth;
 
     public __init(f32x2 clip_uv, f32 projected_depth) {
         this.clip_uv = clip_uv;
@@ -215,4 +227,12 @@ public func push_page_alloc_request(__ref VSMPageAllocator allocator, in VSMAllo
 public func push_dirty_physical_page(__ref VSMPageAllocator allocator, u32x2 physical_page_address) -> void {
     let index = __atomic_add(allocator.dirty_physical_page_count, 1, MemoryOrder::AcquireRelease);
     allocator.dirty_physical_page_coords[index] = physical_page_address;
+}
+
+public func calc_shadow_bias(u32 clipmap_index, f32 first_clipmap_texel_length, f32x3 N, f32x3 L) -> f32 {
+    let clipmap_texel_size = exp2(f32(clipmap_index)) * first_clipmap_texel_length;
+    let sqrt2 = 1.41421356;
+    let q = 2.0 / 1048576.0;
+    let b = sqrt2 * clipmap_texel_size * 0.5;
+    return q + b * length(cross(N, L));
 }

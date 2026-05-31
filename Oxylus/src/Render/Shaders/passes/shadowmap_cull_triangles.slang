@@ -27,7 +27,7 @@ groupshared mat4 model_view_proj_shared;
 func cs_main(
     uint3 group_id : SV_GroupID,
     uint3 group_thread_id : SV_GroupThreadID,
-    uniform f32x4x4 projection_view
+    uniform CullCamera camera
 ) -> void {
     var visible_meshlet_instance_index = group_id.x;
     let local_index = group_thread_id.x;
@@ -43,7 +43,7 @@ func cs_main(
         meshlet_shared = mesh_lod_shared.meshlets[meshlet_instance.meshlet_index];
 
         let transform = transforms[mesh_instance.transform_index];
-        model_view_proj_shared = mul(projection_view, transform.world);
+        model_view_proj_shared = mul(camera.projection_view, transform.world);
     }
 
     GroupMemoryBarrierWithGroupSync();

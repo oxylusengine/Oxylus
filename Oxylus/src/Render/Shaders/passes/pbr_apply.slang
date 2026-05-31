@@ -22,7 +22,7 @@ struct ShaderParameters {
     Texture2D<f32x3> metallic_roughness_occlusion_image;
     Texture2D<f32> gtao_image;
     Texture2D<f32> contact_shadows;
-    Texture2DArray<f32> directional_shadows_map;
+    Texture2D<f32> resolved_shadows;
     ConstantBuffer<Lights> lights;
     ConstantBuffer<Camera> camera;
 };
@@ -265,18 +265,9 @@ func fs_main(
     var material_surface_color = f32x3(0.0);
     let NoL = max(dot(N, L), 0.0);
     if (NoL > 0.0) {
-        let view_z = -mul(params.camera.view, f32x4(world_position, 1.0)).z;
-        var directional_shadow = 1.0f;
-        if (has_directional_light && params.lights.directional_light.cascade_count > 0) {
-            directional_shadow = sample_shadow_map(
-                params.lights.directional_light,
-                params.lights.directional_light_cascades,
-                params.directional_shadows_map,
-                params.linear_clamp_sampler,
-                view_z,
-                world_position,
-                N,
-                L);
+        var directional_shadow = 1.0;
+        if ((scene_flags & SceneFlags::HasDirectionalLight) != 0) {
+            directional_shadow = params.resolved_shadows.Load(pixel_pos).r;
         }
 
         let brdf = BRDF(V, N, L, albedo_color, roughness, metallic, base_ambient_color);

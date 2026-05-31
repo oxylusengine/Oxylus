@@ -9,20 +9,20 @@ import cull;
 [[vk::constant_id(1)]] const bool OCCLUSION_CULL = true;
 [[vk::binding(0)]] Image2D<f32> hiz_image;
 [[vk::binding(1)]] Sampler hiz_sampler;
-[[vk::binding(2)]] ConstantBuffer<Camera> camera;
-[[vk::binding(3)]] StructuredBuffer<Mesh, ScalarDataLayout> meshes;
-[[vk::binding(4)]] StructuredBuffer<MeshInstance> mesh_instances;
-[[vk::binding(5)]] StructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(6)]] StructuredBuffer<Transform> transforms;
-[[vk::binding(7)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;
-[[vk::binding(8)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
-[[vk::binding(9)]] RWStructuredBuffer<u32> meshlet_instance_visibility_mask;
-[[vk::binding(10)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
+[[vk::binding(2)]] StructuredBuffer<Mesh, ScalarDataLayout> meshes;
+[[vk::binding(3)]] StructuredBuffer<MeshInstance> mesh_instances;
+[[vk::binding(4)]] StructuredBuffer<MeshletInstance> meshlet_instances;
+[[vk::binding(5)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(6)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;
+[[vk::binding(7)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
+[[vk::binding(8)]] RWStructuredBuffer<u32> meshlet_instance_visibility_mask;
+[[vk::binding(9)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
 
 [[shader("compute")]]
 [[numthreads(CULLING_MESHLET_COUNT, 1, 1)]]
 func cs_main(
     uint global_thread_id : SV_DispatchThreadID,
+    uniform CullCamera camera
 ) -> void {
     let meshlet_instance_index = global_thread_id;
     if (meshlet_instance_index >= visibility[0].total_visible_meshlet_instances) {

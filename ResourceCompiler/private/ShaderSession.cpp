@@ -151,7 +151,7 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
       return nullopt;
     }
 
-#if 0
+#if 1
     // SPIR-V optimization
     auto spv_message_cb =
       [&](spv_message_level_t level, const char* source, const spv_position_t& /*position*/, const char* message) {
