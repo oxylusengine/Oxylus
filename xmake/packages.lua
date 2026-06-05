@@ -1,3 +1,18 @@
+-- forwards lua-ox as lua so we dont rebuild it for rmlui
+package("lua")
+set_kind("library")
+add_deps("lua-ox")
+on_load(function(package)
+  package:set("version", "5.4.7")
+end)
+on_fetch(function(package)
+  local lua_ox = package:dep("lua-ox")
+  if lua_ox then
+    return lua_ox:fetch()
+  end
+end)
+package_end()
+
 local fmt_version = "12.1.0"
 local fmt_configs = { header_only = false, shared = false }
 
@@ -76,7 +91,13 @@ packages = {
   ["svector v1.0.3"] = {},
   ["plf_colony v7.41"] = {},
   ["simdutf v6.2.0"] = {},
-  ["rmlui 6.2"] = { debug = is_mode("debug") },
+  ["rmlui 6.2"] = {
+    configs = {
+      shared = false,
+      lua = true,
+    },
+    debug = is_mode("debug")
+  },
 }
 
 if has_config("tests") then
