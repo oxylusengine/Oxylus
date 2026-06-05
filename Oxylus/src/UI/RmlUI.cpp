@@ -24,6 +24,14 @@ auto RmlUI::init() -> std::expected<void, std::string> {
     return std::unexpected("Failed to create the main context of RmlUI!");
   }
 
+  auto& event_system = App::get_event_system();
+  auto sub_result = event_system.subscribe<WindowResizeEvent>([this](const WindowResizeEvent&) {
+    auto ws = App::get_window().get_real_size();
+    for (auto& context : this->contexts) {
+      context->SetDimensions({static_cast<i32>(ws.x), static_cast<i32>(ws.y)});
+    }
+  });
+
   auto& window = App::get_window();
   const f32 dpi_scale = window.get_dpi_scale();
   main_context->SetDensityIndependentPixelRatio(dpi_scale);
