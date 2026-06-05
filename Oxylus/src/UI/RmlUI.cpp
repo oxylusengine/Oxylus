@@ -24,6 +24,10 @@ auto RmlUI::init() -> std::expected<void, std::string> {
     return std::unexpected("Failed to create the main context of RmlUI!");
   }
 
+  auto& window = App::get_window();
+  const f32 dpi_scale = window.get_dpi_scale();
+  main_context->SetDensityIndependentPixelRatio(dpi_scale);
+
   this->contexts.emplace_back(main_context);
 
   Rml::Debugger::Initialise(main_context);

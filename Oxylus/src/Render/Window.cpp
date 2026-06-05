@@ -252,7 +252,10 @@ auto Window::update(const Timestep& timestep) const -> void {
     if (App::has_mod<RmlUI>()) {
       auto& rml = App::mod<RmlUI>();
       for (auto& ctx : rml.get_contexts()) {
-        ctx->ProcessMouseMove(position.x, position.y, 0);
+        auto& window = App::get_window();
+        const f32 dpi_scale = window.get_dpi_scale();
+        auto scaled_pos = position * dpi_scale;
+        ctx->ProcessMouseMove(scaled_pos.x, scaled_pos.y, 0);
       }
     }
 
