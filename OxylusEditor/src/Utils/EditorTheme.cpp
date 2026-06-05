@@ -21,8 +21,7 @@ void EditorTheme::init(this EditorTheme& self) {
   auto icon_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/materialdesignicons-webfont.ttf");
   auto mono_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraMono-Regular.ttf");
 
-  // TODO: This should be configurable from Editor UI.
-  // It should be a list of fonts that can be added and loaded since from CSS you can have multiple fonts.
+  // Only this font is loaded by default on editor for RmlUI. The rest of the user fonts should be loaded from lua.
   if (!Rml::LoadFontFace(regular_font_path.string())) {
     OX_LOG_ERROR("Couldn't load font face for RMLUI!");
   }
