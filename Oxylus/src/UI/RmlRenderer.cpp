@@ -103,11 +103,13 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, VkContext& context, vuk::Val
         struct PushConstant {
           f32 translation[2] = {};
           f32 screen_size[2] = {};
+          f32 transform[16] = {};
         } pc;
         pc.translation[0] = cmd.translation.x;
         pc.translation[1] = cmd.translation.y;
         pc.screen_size[0] = static_cast<f32>(color_rt->extent.width);
         pc.screen_size[1] = static_cast<f32>(color_rt->extent.height);
+        std::memcpy(pc.transform, cmd.transform.data(), sizeof(float) * 16);
         command_buffer.bind_image(0, 1, bound_textures[cmd.texture_array_index])
                       .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
                       .push_constants(vuk::ShaderStageFlagBits::eVertex, 0, pc)
@@ -147,6 +149,7 @@ auto RmlRenderer::render_geometry(
     .vertex_offset = static_cast<u32>(self.frame_vertices.size()),
     .texture = texture,
     .translation = translation,
+    .transform = self.current_transform,
     .scissor_enabled = self.current_scissor_enabled,
     .scissor = self.current_scissor,
   };
@@ -250,5 +253,15 @@ auto RmlRenderer::SetScissorRegion(Rml::Rectanglei region) -> void {
   this->current_scissor.y = region.TopLeft().y;
   this->current_scissor.z = region.Width();
   this->current_scissor.w = region.Height();
+}
+
+auto RmlRenderer::SetTransform(const Rml::Matrix4f* transform) -> void {
+  ZoneScoped;
+
+  if (transform) {
+    this->current_transform = *transform;
+  } else {
+    this->current_transform = Rml::Matrix4f::Identity();
+  }
 }
 } // namespace ox

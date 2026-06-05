@@ -23,6 +23,7 @@ struct VertexOutput {
 struct PushConstants {
     f32x2 translate;
     f32x2 screen_size;
+    f32x4x4 transform;
 };
 [[vk::push_constant]] PushConstants c;
 
@@ -31,7 +32,8 @@ func vs_main(VertexInput input) -> VertexOutput {
     VertexOutput output;
 
     f32x2 pixel_pos = input.position + c.translate;
-    f32x2 normalized = pixel_pos / c.screen_size;
+    f32x4 transformed_pos = mul(c.transform, f32x4(pixel_pos, 0.0, 1.0));
+    f32x2 normalized = transformed_pos.xy / c.screen_size;
     f32x2 clip_space = (normalized * 2.0) - 1.0;
     output.position = f32x4(clip_space, 0.0, 1.0);
     output.tex_coord = input.tex_coord;

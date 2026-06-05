@@ -15,6 +15,7 @@ struct RmlDrawCmd {
   Rml::TextureHandle texture;
   Rml::TextureHandle texture_array_index{};
   Rml::Vector2f translation;
+  Rml::Matrix4f transform;
   bool scissor_enabled;
   glm::ivec4 scissor; // x, y, w, h
 };
@@ -54,6 +55,7 @@ public:
   auto ReleaseTexture(Rml::TextureHandle texture) -> void override;
   auto EnableScissorRegion(bool enable) -> void override;
   auto SetScissorRegion(Rml::Rectanglei region) -> void override;
+  auto SetTransform(const Rml::Matrix4f* transform) -> void override;
 
 private:
   enum class RmlTextureID : u64 {};
@@ -69,5 +71,6 @@ private:
 
   bool current_scissor_enabled = false;
   glm::ivec4 current_scissor; // x, y, w, h
+  Rml::Matrix4f current_transform = Rml::Matrix4f::Identity();
 };
 } // namespace ox
