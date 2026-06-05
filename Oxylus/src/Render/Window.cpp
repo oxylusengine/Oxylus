@@ -35,6 +35,7 @@ struct Handle<Window>::Impl {
   u32 monitor_id = {};
   std::array<SDL_Cursor*, static_cast<usize>(WindowCursor::Count)> cursors = {};
   f32 window_content_scale = {};
+  f32 window_dpi_scale = {};
   f32 refresh_rate = {};
 
   bool cursor_overridden = false;
@@ -154,6 +155,14 @@ auto Window::create(const WindowInfo& info) -> Window {
 
   impl->logical_width = logical_width;
   impl->logical_height = logical_height;
+
+  f32 dpi_scale = SDL_GetWindowDisplayScale(impl->handle);
+  if (dpi_scale <= 0.f) {
+    LOG_SDL_ERROR(SDL_GetError);
+    dpi_scale = 1.f;
+  }
+
+  impl->window_dpi_scale = dpi_scale;
 
   const auto self = Window(impl);
   self.set_cursor(WindowCursor::Arrow);
@@ -588,7 +597,7 @@ auto Window::get_real_height() const -> u32 { return impl->height; }
 
 auto Window::get_handle() const -> void* { return impl->handle; }
 
-auto Window::get_dpi_scale() const -> f32 { return impl->window_content_scale; }
+auto Window::get_dpi_scale() const -> f32 { return impl->window_dpi_scale; }
 auto Window::get_window_content_scale() const -> f32 { return impl->window_content_scale; }
 
 auto Window::get_refresh_rate() const -> f32 { return impl->refresh_rate; }
