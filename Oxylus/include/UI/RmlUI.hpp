@@ -5,8 +5,6 @@
 #include <span>
 #include <string>
 
-#include "Core/Option.hpp"
-#include "Core/Types.hpp"
 #include "UI/RmlRenderer.hpp"
 #include "UI/RmlSystem.hpp"
 #include "Utils/Timestep.hpp"
@@ -28,12 +26,10 @@ public:
   auto render_contexts(this RmlUI& self) -> void;
   auto get_renderer(this RmlUI& self) -> RmlRenderer&;
 
-  auto add_context(this RmlUI& self, u32 width, u32 height) -> option<Rml::Context*>;
-  auto get_contexts(this RmlUI& self) -> std::span<Rml::Context*>;
+  auto get_contexts(this RmlUI& self) -> std::vector<Rml::Context*>;
   auto get_main_context(this const RmlUI& self) -> Rml::Context*;
 
 private:
-  std::vector<Rml::Context*> contexts = {};
   RmlRenderer rml_renderer = {};
   RmlSystem rml_system = {};
   std::unique_ptr<Texture> white_texture = nullptr;

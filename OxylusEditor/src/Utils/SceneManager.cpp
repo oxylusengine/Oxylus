@@ -89,6 +89,11 @@ auto SceneManager::new_play_scene(this SceneManager& self, SceneID from) -> Scen
 auto SceneManager::remove_scene(this SceneManager& self, SceneID id) -> void {
   ZoneScoped;
 
+  auto scene = self.scenes.slot(id);
+  if (scene != nullptr) {
+    scene->reset();
+  }
+
   self.scenes.destroy_slot(id);
 }
 

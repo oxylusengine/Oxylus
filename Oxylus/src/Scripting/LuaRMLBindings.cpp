@@ -4,8 +4,6 @@
 #include <RmlUi/Lua.h>
 #include <sol/state.hpp>
 
-#include "UI/RmlUI.hpp"
-
 namespace ox {
 auto RMLBinding::bind(sol::state* state) -> void {
   ZoneScoped;

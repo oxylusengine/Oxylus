@@ -114,6 +114,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
     sh->set_scene(nullptr);
   });
   std::ignore = event_system.subscribe<SceneStopEvent>([&self](const SceneStopEvent& e) {
+    self.scene_manager.remove_scene(e.scene_id);
     self.editor_context.reset();
     auto* sh = self.get_panel<SceneHierarchyPanel>();
     sh->set_scene(nullptr);

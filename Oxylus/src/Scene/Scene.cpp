@@ -16,6 +16,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
 // clang-format on
+#include <RmlUi/Core.h>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <simdjson.h>
 #include <sol/state.hpp>
@@ -33,6 +34,7 @@
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
+#include "UI/RmlUI.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Random.hpp"
 #include "Utils/Timestep.hpp"
@@ -179,17 +181,13 @@ struct JsonEntityDeserializer : IEntitySerializer {
       return;
     }
 
-    if (
-      underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
-      underlying_kind == EcsOpU64
-    ) {
+    if (underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
+        underlying_kind == EcsOpU64) {
       auto result = field_result.get_uint64();
       auto current = static_cast<u64*>(ptr);
       *current = result.value_unsafe();
-    } else if (
-      underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
-      underlying_kind == EcsOpI64
-    ) {
+    } else if (underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
+               underlying_kind == EcsOpI64) {
       auto result = field_result.get_int64();
       auto current = static_cast<i64*>(ptr);
       *current = result.value_unsafe();
@@ -266,17 +264,14 @@ struct JsonEntityDeserializer : IEntitySerializer {
       if (!result.error() && opaque_info->assign_uint) {
         opaque_info->assign_uint(field_ptr, static_cast<u64>(result.value_unsafe()));
       }
-    } else if (
-      opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 || opaque_type == flecs::Uptr
-    ) {
+    } else if (opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 ||
+               opaque_type == flecs::Uptr) {
       auto result = field_result.get_uint64();
       if (!result.error() && opaque_info->assign_uint) {
         opaque_info->assign_uint(field_ptr, result.value_unsafe());
       }
-    } else if (
-      opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 || opaque_type == flecs::I64 ||
-      opaque_type == flecs::Iptr
-    ) {
+    } else if (opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 ||
+               opaque_type == flecs::I64 || opaque_type == flecs::Iptr) {
       auto result = field_result.get_int64();
       if (!result.error() && opaque_info->assign_int) {
         opaque_info->assign_int(field_ptr, result.value_unsafe());
@@ -337,7 +332,7 @@ Scene::~Scene() {
     system->on_remove(this);
   }
 
-  world.release();
+  // world.release();
 
   lua_systems.clear();
   auto& lua_manager = App::mod<LuaManager>();
@@ -348,7 +343,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   ZoneScoped;
   self.scene_name = name;
 
-  self.component_db.import_module(self.world.import<CoreComponentsModule>());
+  self.component_db.import_module(self.world.import <CoreComponentsModule>());
 
   if (App::has_mod<Renderer>()) {
     auto& renderer = App::mod<Renderer>();
@@ -738,10 +733,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       if (component.playing && !component.looping)
         component.system_time += sim_ts;
       const float delay = component.start_delay;
-      if (
-        component.playing &&
-        (component.looping || (component.system_time <= delay + component.duration && component.system_time > delay))
-      ) {
+      if (component.playing && (component.looping || (component.system_time <= delay + component.duration &&
+                                                      component.system_time > delay))) {
         // Emit particles in unit time
         component.spawn_time += sim_ts;
         if (component.spawn_time >= 1.0f / static_cast<float>(component.rate_over_time)) {
@@ -891,10 +884,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       auto& asset_manager = App::mod<AssetManager>();
       auto material = asset_manager.get_material(sprite.material);
 
-      if (
-        sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
-        !material->albedo_texture
-      )
+      if (sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
+          !material->albedo_texture)
         return;
 
       const auto dt = glm::clamp(static_cast<float>(it.delta_time()), 0.0f, 0.25f);
@@ -1023,6 +1014,19 @@ auto Scene::runtime_stop(this Scene& self) -> void {
   // Scripting
   for (auto& [uuid, system] : self.lua_systems) {
     system->on_scene_stop(&self);
+  }
+
+  // RmlUI
+  auto& rmlui = App::mod<RmlUI>();
+  auto rml_ctxs = rmlui.get_contexts();
+  for (auto* ctx : rml_ctxs) {
+    auto doc_count = ctx->GetNumDocuments();
+    for (i32 i = 0; i < doc_count; i++) {
+      auto doc = ctx->GetDocument(i);
+      if (doc) {
+        doc->Hide();
+      }
+    }
   }
 }
 
@@ -2013,10 +2017,8 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   auto entities_array = doc["entities"];
   if (!entities_array.error()) {
     for (auto entity_json : entities_array.get_array()) {
-      if (
-        Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
-        flecs::entity::null()
-      ) {
+      if (Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
+          flecs::entity::null()) {
         return false;
       }
     }

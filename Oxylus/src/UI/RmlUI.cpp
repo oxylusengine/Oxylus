@@ -27,7 +27,7 @@ auto RmlUI::init() -> std::expected<void, std::string> {
   auto& event_system = App::get_event_system();
   auto sub_result = event_system.subscribe<WindowResizeEvent>([this](const WindowResizeEvent&) {
     auto ws = App::get_window().get_real_size();
-    for (auto& context : this->contexts) {
+    for (auto& context : this->get_contexts()) {
       context->SetDimensions({static_cast<i32>(ws.x), static_cast<i32>(ws.y)});
     }
   });
@@ -35,8 +35,6 @@ auto RmlUI::init() -> std::expected<void, std::string> {
   auto& window = App::get_window();
   const f32 dpi_scale = window.get_dpi_scale();
   main_context->SetDensityIndependentPixelRatio(dpi_scale);
-
-  this->contexts.emplace_back(main_context);
 
   Rml::Debugger::Initialise(main_context);
 
@@ -78,7 +76,7 @@ auto RmlUI::deinit() -> std::expected<void, std::string> {
 auto RmlUI::update(const Timestep& timestep) -> void {
   ZoneScoped;
 
-  for (const auto& ctx : this->contexts) {
+  for (const auto& ctx : this->get_contexts()) {
     ctx->Update();
   }
 }
@@ -86,7 +84,7 @@ auto RmlUI::update(const Timestep& timestep) -> void {
 auto RmlUI::render_contexts(this RmlUI& self) -> void {
   ZoneScoped;
 
-  for (const auto& ctx : self.contexts) {
+  for (const auto& ctx : self.get_contexts()) {
     ctx->Render();
   }
 }
@@ -97,25 +95,23 @@ auto RmlUI::get_renderer(this RmlUI& self) -> RmlRenderer& {
   return self.rml_renderer;
 }
 
-auto RmlUI::add_context(this RmlUI& self, u32 width, u32 height) -> option<Rml::Context*> {
+auto RmlUI::get_contexts(this RmlUI& self) -> std::vector<Rml::Context*> {
   ZoneScoped;
 
-  auto ctx = Rml::CreateContext("main", Rml::Vector2i(width, height));
-  if (!ctx) {
-    return nullopt;
+  std::vector<Rml::Context*> contexts = {};
+
+  auto num_context = Rml::GetNumContexts();
+  contexts.reserve(num_context);
+  for (i32 i = 0; i < num_context; i++) {
+    contexts.emplace_back(Rml::GetContext(i));
   }
 
-  return ctx;
-}
-
-auto RmlUI::get_contexts(this RmlUI& self) -> std::span<Rml::Context*> {
-  ZoneScoped;
-  return self.contexts;
+  return contexts;
 }
 
 auto RmlUI::get_main_context(this const RmlUI& self) -> Rml::Context* {
   ZoneScoped;
 
-  return self.contexts.empty() ? nullptr : self.contexts.front();
+  return Rml::GetContext("main");
 }
 } // namespace ox
