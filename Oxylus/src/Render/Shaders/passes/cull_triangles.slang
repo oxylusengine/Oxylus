@@ -6,7 +6,7 @@ import visbuffer;
 
 #include <defines.slang>
 
-[[vk::constant_id(0)]] const bool LATE = false;
+[[vk::constant_id(0)]] const CullFlag CULL_FLAGS;
 [[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(1)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(2)]] StructuredBuffer<MeshletInstance> meshlet_instances;
@@ -32,7 +32,7 @@ func cs_main(
     uniform CullCamera camera
 ) -> void {
     var visible_meshlet_instance_index = group_id.x;
-    if (LATE) {
+    if (HAS_FLAG(CULL_FLAGS, CullFlag.LatePass)) {
         visible_meshlet_instance_index += visibility[0].early_visible_meshlet_instances;
     }
 

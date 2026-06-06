@@ -460,6 +460,7 @@ public enum CullFlag : u32 {
     TestFrustum,
     SelectLOD,
     TestOcclusion,
+    LatePass,
 };
 
 // --- Bindings ---

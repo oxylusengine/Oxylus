@@ -5,8 +5,7 @@ import cull;
 
 #include <defines.slang>
 
-[[vk::constant_id(0)]] const bool LATE = false;
-[[vk::constant_id(1)]] const bool OCCLUSION_CULL = true;
+[[vk::constant_id(0)]] const CullFlag CULL_FLAGS;
 [[vk::binding(0)]] Image2D<f32> hiz_image;
 [[vk::binding(1)]] Sampler hiz_sampler;
 [[vk::binding(2)]] StructuredBuffer<Mesh, ScalarDataLayout> meshes;
@@ -41,7 +40,7 @@ func cs_main(
     var visibility_mask_index = 0;
     var visibility_bit = 0;
     var was_visible = true;
-    if (OCCLUSION_CULL) {
+    if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion)) {
         let meshlet_instance_visibility_index = mesh_instance.meshlet_instance_visibility_offset + meshlet_instance.meshlet_index;
         visibility_mask_index = meshlet_instance_visibility_index / 32;
         let bit_index = meshlet_instance_visibility_index - visibility_mask_index * 32;
@@ -49,18 +48,18 @@ func cs_main(
         was_visible = (meshlet_instance_visibility_mask[visibility_mask_index] & visibility_bit) != 0;
     }
 
-    var visible = LATE ? true : was_visible;
+    var visible = HAS_FLAG(CULL_FLAGS, CullFlag.LatePass) ? true : was_visible;
     visible = visible && test_frustum(mvp, bounds.aabb_center, bounds.aabb_extent);
 
-    if (OCCLUSION_CULL && LATE && visible) {
+    if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) && visible) {
         if (let screen_aabb = project_aabb(mvp, camera.near_clip, bounds.aabb_center, bounds.aabb_extent)) {
             visible = !test_occlusion(screen_aabb, hiz_image, hiz_sampler);
         }
     }
 
-    if (visible && (!LATE || !was_visible)) {
+    if (visible && (!HAS_FLAG(CULL_FLAGS, CullFlag.LatePass) || !was_visible)) {
         var index = 0;
-        if (!LATE) {
+        if (!HAS_FLAG(CULL_FLAGS, CullFlag.LatePass)) {
             index = __atomic_add(visibility[0].early_visible_meshlet_instances, 1, MemoryOrder::Relaxed);
         } else {
             let late_offset = __atomic_add(visibility[0].late_visible_meshlet_instances, 1, MemoryOrder::Relaxed);
@@ -72,7 +71,7 @@ func cs_main(
         __atomic_add(cull_triangles_cmd[0].x, 1, MemoryOrder::Relaxed);
     }
 
-    if (OCCLUSION_CULL && LATE) {
+    if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass)) {
         if (visible) {
             __atomic_or(meshlet_instance_visibility_mask[visibility_mask_index], visibility_bit, MemoryOrder::Relaxed);
         } else {
