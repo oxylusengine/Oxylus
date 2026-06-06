@@ -455,6 +455,13 @@ public enum TonemapType : u32 {
     GT7,
 };
 
+[[Flags]]
+public enum CullFlag : u32 {
+    TestFrustum,
+    SelectLOD,
+    TestOcclusion,
+};
+
 // --- Bindings ---
 
 [[vk::binding(0, 1)]]

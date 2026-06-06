@@ -341,7 +341,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
     vsm_ctx.curr_clipmap_index = clipmap_index;
 
-    self.cull_for_shadowmap(geometry_context, clipmap_camera, true);
+    self.cull_for_shadowmap(geometry_context, clipmap_camera, clipmap_index == 0);
 
     auto draw_physical_pages_pass = vuk::make_pass(
       stack.format("vsm draw clipmap {}", clipmap_index),

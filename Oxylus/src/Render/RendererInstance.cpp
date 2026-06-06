@@ -264,6 +264,10 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   vsm_virtual_page_table_attachment.image = *vsm_virtual_page_table;
   vsm_virtual_page_table_view = *vuk::allocate_image_view(*allocator, vsm_virtual_page_table_attachment);
   vsm_virtual_page_table_attachment.image_view = *vsm_virtual_page_table_view;
+  vk_context.wait_on(
+    vuk::clear_image(vuk::discard_ia("vsm virtual page table", vsm_virtual_page_table_attachment), vuk::Black<u32>)
+      .as_released(vuk::eComputeRW)
+  );
 
   vsm_physical_page_table_attachment = vuk::ImageAttachment{
     .image_flags = vuk::ImageCreateFlagBits::eMutableFormat,
@@ -286,6 +290,10 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   auto vsm_physical_page_table_u32_attachment = vsm_physical_page_table_attachment;
   vsm_physical_page_table_u32_attachment.format = vuk::Format::eR32Uint;
   vsm_physical_page_table_u32_view = *vuk::allocate_image_view(*allocator, vsm_physical_page_table_u32_attachment);
+  vk_context.wait_on(
+    vuk::clear_image(vuk::discard_ia("vsm physical page table", vsm_physical_page_table_attachment), vuk::Black<f32>)
+      .as_released(vuk::eFragmentSampled)
+  );
 
   rebuild_execution_order();
 }
