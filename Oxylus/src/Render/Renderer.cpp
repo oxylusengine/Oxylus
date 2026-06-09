@@ -2,7 +2,6 @@
 
 #include <vuk/runtime/CommandBuffer.hpp>
 
-#include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
@@ -38,94 +37,19 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   // --- Shaders ---
   auto& vfs = App::get_vfs();
   auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
+  auto shader_file = AssetFile::unpack(shaders_dir / "engine.oxpack");
+  if (!shader_file.has_value()) {
+    return std::unexpected("Cannot initialize renderer shaders!");
+  }
 
-  self.vk_context->create_pipelines(
-    SlangSessionInfo{
-      .definitions =
-        {
-          {"MAX_DIRECTIONAL_SHADOW_CASCADES", std::to_string(MAX_DIRECTIONAL_SHADOW_CASCADES)},
-          {"MESH_MAX_LODS", std::to_string(GPU::Mesh::MAX_LODS)},
-          {"CULLING_MESH_COUNT", "64"},
-          {"CULLING_MESHLET_COUNT", std::to_string(Model::MAX_MESHLET_INDICES)},
-          {"CULLING_TRIANGLE_COUNT", std::to_string(Model::MAX_MESHLET_PRIMITIVES)},
-          {"HISTOGRAM_THREADS_X", std::to_string(GPU::HISTOGRAM_THREADS_X)},
-          {"HISTOGRAM_THREADS_Y", std::to_string(GPU::HISTOGRAM_THREADS_Y)},
-        },
-      .root_directory = shaders_dir,
-    },
-    {
-      {.path = "passes/2d_forward.slang",
-       .module_name = "2d_forward",
-       .entry_points = {"vs_main", "fs_main"},
-       .persistent_set = &bindless_set},
-      {.path = "passes/2d_forward_vis.slang",
-       .module_name = "2d_forward_vis",
-       .entry_points = {"vs_main", "fs_main"},
-       .persistent_set = &bindless_set},
-
-      // --- Sky ---
-      {.path = "passes/sky_transmittance.slang", .module_name = "sky_transmittance", .entry_points = {"cs_main"}},
-      {.path = "passes/sky_multiscattering.slang", .module_name = "sky_multiscatter", .entry_points = {"cs_main"}},
-      {.path = "passes/sky_view.slang", .module_name = "sky_view", .entry_points = {"cs_main"}},
-      {.path = "passes/sky_aerial_perspective.slang",
-       .module_name = "sky_aerial_perspective",
-       .entry_points = {"cs_main"}},
-
-      // --- VISBUFFER ---
-      {.path = "passes/cull_meshes.slang", .module_name = "vis_cull_meshes", .entry_points = {"cs_main"}},
-      {.path = "passes/cull_meshlets.slang", .module_name = "vis_cull_meshlets", .entry_points = {"cs_main"}},
-      {.path = "passes/cull_triangles.slang", .module_name = "vis_cull_triangles", .entry_points = {"cs_main"}},
-      {.path = "passes/visbuffer_encode.slang",
-       .module_name = "visbuffer_encode",
-       .entry_points = {"vs_main", "fs_main"},
-       .persistent_set = &bindless_set},
-      {.path = "passes/visbuffer_clear.slang", .module_name = "visbuffer_clear", .entry_points = {"cs_main"}},
-      {.path = "passes/visbuffer_decode.slang",
-       .module_name = "visbuffer_decode",
-       .entry_points = {"vs_main", "fs_main"},
-       .persistent_set = &bindless_set},
-
-      // --- SHADOWMAP ---
-      {.path = "passes/shadowmap_cull_meshes.slang",
-       .module_name = "shadowmap_cull_meshes",
-       .entry_points = {"cs_main"}},
-      {.path = "passes/shadowmap_cull_meshlets.slang",
-       .module_name = "shadowmap_cull_meshlets",
-       .entry_points = {"cs_main"}},
-      {.path = "passes/shadowmap_cull_triangles.slang",
-       .module_name = "shadowmap_cull_triangles",
-       .entry_points = {"cs_main"}},
-      {.path = "passes/shadowmap_draw.slang", .module_name = "shadowmap_draw", .entry_points = {"vs_main", "fs_main"}},
-      {.path = "passes/debug_view.slang", .module_name = "debug_view", .entry_points = {"vs_main", "fs_main"}},
-
-      // --- PBR ---
-      {.path = "passes/pbr_apply.slang", .module_name = "pbr_apply", .entry_points = {"vs_main", "fs_main"}},
-
-      //  --- FFX ---
-      {.path = "passes/hiz.slang", .module_name = "hiz", .entry_points = {"cs_main"}},
-
-      // --- PostProcess ---
-      {.path = "passes/histogram_generate.slang", .module_name = "histogram_generate", .entry_points = {"cs_main"}},
-      {.path = "passes/histogram_average.slang", .module_name = "histogram_average", .entry_points = {"cs_main"}},
-      {.path = "passes/tonemap.slang", .module_name = "tonemap", .entry_points = {"vs_main", "fs_main"}},
-
-      // --- Bloom ---
-      {.path = "passes/bloom/bloom_prefilter.slang", .module_name = "bloom_prefilter", .entry_points = {"cs_main"}},
-      {.path = "passes/bloom/bloom_downsample.slang", .module_name = "bloom_downsample", .entry_points = {"cs_main"}},
-      {.path = "passes/bloom/bloom_upsample.slang", .module_name = "bloom_upsample", .entry_points = {"cs_main"}},
-
-      // --- VBGTAO ---
-      {.path = "passes/gtao/vbgtao_prefilter.slang", .module_name = "vbgtao_prefilter", .entry_points = {"cs_main"}},
-      {.path = "passes/gtao/vbgtao_main.slang", .module_name = "vbgtao_main", .entry_points = {"cs_main"}},
-      {.path = "passes/gtao/vbgtao_denoise.slang", .module_name = "vbgtao_denoise", .entry_points = {"cs_main"}},
-
-      // --- FXAA ---
-      {.path = "passes/fxaa/fxaa.slang", .module_name = "fxaa", .entry_points = {"vs_main", "fs_main"}},
-
-      {.path = "passes/debug_mesh.slang", .module_name = "debug_mesh", .entry_points = {"vs_main", "fs_main"}},
-      {.path = "passes/contact_shadows.slang", .module_name = "contact_shadows", .entry_points = {"cs_main"}},
+  for (const auto &entry : shader_file->entries) {
+    const auto *pipeline_data = std::get_if<ShaderPipelineData>(&entry.data);
+    if (!pipeline_data) {
+      continue;
     }
-  );
+
+    self.vk_context->create_pipeline(*pipeline_data);
+  }
 
   self.sky_transmittance_lut_view = Texture("sky_transmittance_lut");
   self.sky_transmittance_lut_view.create(

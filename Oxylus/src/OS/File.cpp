@@ -30,7 +30,7 @@ static auto file_access_to_str(FileAccess access) -> std::string_view {
   }
 }
 
-File::File(const std::filesystem::path& path, FileAccess access) : file_path(path) {
+File::File(const std::filesystem::path& path, FileAccess access) noexcept : file_path(path) {
   auto file_handle = os::file_open(path, access);
   if (!file_handle.has_value()) {
     this->error = file_handle.error();

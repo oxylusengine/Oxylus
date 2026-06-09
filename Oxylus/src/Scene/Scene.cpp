@@ -17,6 +17,7 @@
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
 // clang-format on
 #include <RmlUi/Core.h>
+#include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <simdjson.h>
 #include <sol/state.hpp>
@@ -358,6 +359,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .event(flecs::OnRemove)
+    .without<MeshComponent>()
     .each([&self](flecs::iter& it, usize i, TransformComponent&) {
       auto entity = it.entity(i);
       if (it.event() == flecs::OnSet) {
@@ -390,8 +392,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       } else if (it.event() == flecs::OnRemove) {
         if (mc.model_uuid)
           self.detach_mesh(entity);
-
-        self.remove_transform(entity);
+        if (it.event_id() == self.world.component<TransformComponent>()) {
+          self.remove_transform(entity);
+        }
       }
     });
 
@@ -1064,7 +1067,8 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     if (self.meshes_dirty) {
       auto mesh_instances = self.mesh_instances.slots_unsafe();
       auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, usize>();
-      for (const auto& mesh_instance : mesh_instances) {
+
+      self.mesh_instances.for_each_active([&](usize index, const MeshInstance& mesh_instance) {
         const auto model = asset_man.get_model(mesh_instance.model_uuid);
         const auto& mesh = model->gpu_meshes[mesh_instance.mesh_node_index];
         const auto material_asset = asset_man.get_asset(mesh_instance.material_uuid);
@@ -1093,7 +1097,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
         meshlet_instance_visibility_offset += lod0.meshlet_count;
         max_meshlet_instance_count += lod0.meshlet_count;
-      }
+      });
 
       self.gpu_mesh_instance_count = gpu_mesh_instances.size();
       self.max_meshlet_instance_count = max_meshlet_instance_count;
@@ -1587,6 +1591,8 @@ auto Scene::detach_mesh(this Scene& self, flecs::entity entity) -> bool {
 
   self.mesh_instances.destroy_slot(instance_id);
   self.meshes_dirty = true;
+
+  self.entity_to_mesh_instance_map.erase(instances_it);
 
   return true;
 }
