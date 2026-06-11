@@ -23,11 +23,11 @@ on_config(function(target)
 end)
 
 rule("ox.install_resources")
-    set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".tga", ".mp3", ".wav", ".ogg",
-    ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".rml", ".rcss")
-    before_buildcmd_file(function (target, batchcmds, sourcefile, opt)
-        local output_dir = target:extraconf("rules", "ox.install_resources", "output_dir") or ""
-        local root_dir = target:extraconf("rules", "ox.install_resources", "root_dir") or os.scriptdir()
+set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".mp3", ".wav", ".ogg",
+  ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".rml", ".rcss")
+before_buildcmd_file(function(target, batchcmds, sourcefile, opt)
+  local output_dir = target:extraconf("rules", "ox.install_resources", "output_dir") or ""
+  local root_dir = target:extraconf("rules", "ox.install_resources", "root_dir") or os.scriptdir()
 
   local abs_source = path.absolute(sourcefile)
   local rel_output = path.join(target:targetdir(), output_dir)
@@ -52,19 +52,22 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
 
   local output_dir  = target:extraconf("rules", "ox.compile_shaders", "output_dir") or ""
   local output_name = target:extraconf("rules", "ox.compile_shaders", "output_name")
-                    or (path.basename(sourcefile) .. ".oxpack")
+      or (path.basename(sourcefile) .. ".oxpack")
 
-  local rcli       = target:dep("rcli"):targetfile()
-  local abs_output = path.absolute(path.join(target:targetdir(), output_dir, output_name))
+  local rcli        = target:dep("rcli"):targetfile()
+  local abs_output  = path.absolute(path.join(target:targetdir(), output_dir, output_name))
 
-  local args = { "--config", config_path, "--output", abs_output }
+  local args        = { "--config", config_path, "--output", abs_output }
 
-        local abs_output = path.join(rel_output, path.filename(sourcefile))
-        batchcmds:show_progress(opt.progress, "${color.build.object}copying shader file %s", sourcefile)
-        batchcmds:mkdir(path.directory(abs_output))
-        batchcmds:cp(abs_source, abs_output)
+  batchcmds:show_progress(opt.progress,
+    "${color.build.object}compiling shaders from %s -> %s",
+    path.filename(config_path), output_name)
+  batchcmds:mkdir(path.directory(abs_output))
+  batchcmds:vrunv(rcli, args)
 
-        batchcmds:add_depfiles(sourcefile)
-        batchcmds:set_depmtime(os.mtime(abs_output))
-        batchcmds:set_depcache(target:dependfile(abs_output))
-    end)
+  batchcmds:add_depfiles(sourcefile)
+  batchcmds:add_depfiles(rcli)
+
+  batchcmds:set_depmtime(os.mtime(abs_output))
+  batchcmds:set_depcache(target:dependfile(abs_output))
+end)

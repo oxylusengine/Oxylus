@@ -38,17 +38,6 @@ auto RmlUI::init() -> std::expected<void, std::string> {
 
   Rml::Debugger::Initialise(main_context);
 
-  auto& vk_context = App::get_vkcontext();
-  auto& runtime = *vk_context.runtime;
-  auto& vfs = App::get_vfs();
-  auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
-  vk_context.create_pipelines(
-    {.root_directory = shaders_dir},
-    {
-      {.path = "passes/rmlui.slang", .module_name = "rmlui", .entry_points = {"vs_main", "fs_main"}},
-    }
-  );
-
   uint32_t white_pixel = 0xFFFFFFFF;
   white_texture = std::make_unique<Texture>();
   white_texture->create(
