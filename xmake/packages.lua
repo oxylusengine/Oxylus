@@ -1,20 +1,6 @@
--- forwards lua-ox as lua so we dont rebuild it for rmlui
-package("lua")
-set_kind("library")
-add_deps("lua-ox")
-on_load(function(package)
-  package:set("version", "5.4.7")
-end)
-on_fetch(function(package)
-  local lua_ox = package:dep("lua-ox")
-  if lua_ox then
-    return lua_ox:fetch()
-  end
-end)
-package_end()
-
 local fmt_version = "12.1.0"
 local fmt_configs = { header_only = false, shared = false }
+local lua_version = "v5.4.7"
 
 packages = {
   ["stb 2024.06.01"] = {},
@@ -85,7 +71,7 @@ packages = {
       system_tracing = true,
     },
   },
-  ["lua-ox v5.4.7"] = {},
+  ["lua " .. lua_version] = {},
   ["sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444"] = { configs = { includes_lua = false } },
   ["unordered_dense v4.5.0"] = {},
   ["svector v1.0.3"] = {},
@@ -134,6 +120,16 @@ confs = {
       system = false,
     },
   },
+
+  {
+    package = "lua",
+    override = "rmlui.lua",
+    configs = {
+      override = true,
+      version = lua_version,
+      system = false,
+    }
+  }
 }
 
 function require_packages()

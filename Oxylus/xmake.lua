@@ -97,7 +97,7 @@ target("Oxylus")
         "simdutf",
         "joltphysics-ox",
         "glm",
-        "lua-ox",
+        "lua",
         "sol2",
         "toml++",
         "loguru",
