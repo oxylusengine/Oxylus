@@ -27,3 +27,5 @@
 #endif
 
 #define HISTOGRAM_BIN_COUNT (HISTOGRAM_THREADS_X * HISTOGRAM_THREADS_Y * 1)
+
+#define HAS_FLAG(mask, bit) ((mask & bit) != 0)

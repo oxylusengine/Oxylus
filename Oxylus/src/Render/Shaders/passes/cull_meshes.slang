@@ -6,7 +6,7 @@ import debug_drawer;
 
 #include <defines.slang>
 
-[[vk::constant_id(0)]] const CullFlag CULL_FLAGS;
+[[vk::constant_id(0)]] const u32 CULL_FLAGS;
 [[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(1)]] StructuredBuffer<Transform> transforms;
 [[vk::binding(2)]] RWStructuredBuffer<MeshInstance> mesh_instances;
