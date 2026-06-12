@@ -20,9 +20,14 @@ auto EditorPanel::set_name(const std::string& name) -> void {
 }
 
 bool EditorPanel::on_begin(int32_t window_flags) {
-  ImGui::SetNextWindowSize(ImVec2(480, 640), ImGuiCond_Once);
+  ImGui::SetNextWindowSize(ImVec2(this->window_default_size.x, this->window_default_size.y), this->window_sizing_cond);
 
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+
+  if (this->window_center_at_appear) {
+    const auto center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, this->window_center_cond, ImVec2(0.5f, 0.5f));
+  }
 
   return ImGui::Begin(id_.c_str(), closable_ ? &visible : nullptr, window_flags | ImGuiWindowFlags_NoCollapse);
 }

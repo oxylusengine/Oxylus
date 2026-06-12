@@ -1,8 +1,11 @@
 #pragma once
 
+#include <imgui.h>
 #include <stdint.h>
 #include <string>
 #include <vuk/Types.hpp>
+
+#include "Core/Types.hpp"
 
 namespace ox {
 class EditorPanel {
@@ -31,15 +34,19 @@ public:
   auto set_icon(const char* icon) -> void { icon_ = icon; }
 
 protected:
-  auto on_begin(int32_t window_flags = 0) -> bool;
-  auto on_end() const -> void;
-
-  auto update_id() -> void;
-
   std::string name_;
   const char* icon_;
   std::string id_;
   bool closable_;
+  ImVec2 window_default_size = {480, 640};
+  ImGuiCond window_sizing_cond = ImGuiCond_Once;
+  bool window_center_at_appear = false;
+  ImGuiCond window_center_cond = ImGuiCond_Once;
+
+  auto on_begin(int32_t window_flags = 0) -> bool;
+  auto on_end() const -> void;
+
+  auto update_id() -> void;
 
 private:
   static uint32_t _count;
