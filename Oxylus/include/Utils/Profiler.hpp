@@ -13,13 +13,13 @@
 
 
 namespace ox {
-class VkContext;
+class RenderContext;
 
 class TracyProfiler {
 public:
   TracyProfiler() = default;
   ~TracyProfiler() { destroy_context(); }
-  void init_for_vulkan(this TracyProfiler& self, VkContext* context);
+  void init_for_vulkan(this TracyProfiler& self, RenderContext* context);
   vuk::ProfilingCallbacks setup_vuk_callback();
   void destroy_context();
 

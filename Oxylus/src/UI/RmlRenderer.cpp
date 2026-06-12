@@ -10,7 +10,7 @@ auto RmlRenderer::begin_frame(this RmlRenderer& self) -> void {
   self.current_scissor_enabled = false;
 }
 
-auto RmlRenderer::end_frame(this RmlRenderer& self, VkContext& context, vuk::Value<vuk::ImageAttachment> target)
+auto RmlRenderer::end_frame(this RmlRenderer& self, RenderContext& context, vuk::Value<vuk::ImageAttachment> target)
   -> vuk::Value<vuk::ImageAttachment> {
   usize vertex_size = self.frame_vertices.size() * sizeof(Rml::Vertex);
   usize index_size = self.frame_indices.size() * sizeof(i32);

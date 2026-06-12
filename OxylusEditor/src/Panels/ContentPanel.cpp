@@ -482,7 +482,7 @@ void ContentPanel::render_side_view() {
 void ContentPanel::render_body(bool grid) {
   const auto& editor_theme = App::mod<Editor>().editor_theme;
   auto& editor_context = App::mod<Editor>().get_context();
-  auto& vk_context = App::get_vkcontext();
+  auto& render_context = App::get_rendercontext();
 
   std::filesystem::path directory_to_open;
 

@@ -28,7 +28,7 @@ enum : u32 {
   DescriptorTable_StorageImageIndex,
 };
 
-class VkContext {
+class RenderContext {
 public:
   struct Resources {
     SlotMap<vuk::Buffer, BufferID> buffers = {};
@@ -68,32 +68,32 @@ public:
 
   std::string device_name = {};
 
-  VkContext() = default;
-  ~VkContext() = default;
+  RenderContext() = default;
+  ~RenderContext() = default;
 
-  auto create_context(this VkContext& self, const Window& window, bool vulkan_validation_layers) -> void;
-  auto destroy_context(this VkContext& self) -> void;
+  auto create_context(this RenderContext& self, const Window& window, bool vulkan_validation_layers) -> void;
+  auto destroy_context(this RenderContext& self) -> void;
 
-  auto new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachment>;
-  auto end_frame(this VkContext& self, vuk::Value<vuk::ImageAttachment> target) -> void;
+  auto new_frame(this RenderContext& self) -> vuk::Value<vuk::ImageAttachment>;
+  auto end_frame(this RenderContext& self, vuk::Value<vuk::ImageAttachment> target) -> void;
 
   auto handle_resize(u32 width, u32 height) -> void;
   auto set_vsync(bool enable) -> void;
   bool is_vsync() const;
 
-  auto wait(this VkContext& self) -> void;
+  auto wait(this RenderContext& self) -> void;
   auto wait_on(vuk::UntypedValue&& fut) -> void;
   auto wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment;
 
   auto create_persistent_descriptor_set(
-    this VkContext&,
+    this RenderContext&,
     u32 set_index,
     std::span<VkDescriptorSetLayoutBinding> bindings,
     std::span<VkDescriptorBindingFlags> binding_flags
   ) -> vuk::PersistentDescriptorSet;
-  auto commit_descriptor_set(this VkContext&, std::span<VkWriteDescriptorSet> writes) -> void;
+  auto commit_descriptor_set(this RenderContext&, std::span<VkWriteDescriptorSet> writes) -> void;
 
-  auto create_pipeline(this VkContext& self, const ShaderPipelineData& pipeline_data) -> bool;
+  auto create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool;
 
   auto allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID;
   auto destroy_image(const ImageID id) -> void;

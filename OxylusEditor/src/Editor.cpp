@@ -183,13 +183,13 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   self.main_viewport_panel.update(timestep, self.get_panel<SceneHierarchyPanel>());
 
-  auto& vk_context = App::get_vkcontext();
+  auto& render_context = App::get_rendercontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
   auto& rml = App::mod<RmlUI>();
   auto& rml_renderer = rml.get_renderer();
   auto& window = App::get_window();
 
-  auto swapchain_attachment = vk_context.new_frame();
+  auto swapchain_attachment = render_context.new_frame();
   swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
 
   rml_renderer.begin_frame();
@@ -213,10 +213,10 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   rml.render_contexts();
 
-  swapchain_attachment = imgui_renderer.end_frame(vk_context, std::move(swapchain_attachment));
-  swapchain_attachment = rml_renderer.end_frame(vk_context, std::move(swapchain_attachment));
+  swapchain_attachment = imgui_renderer.end_frame(render_context, std::move(swapchain_attachment));
+  swapchain_attachment = rml_renderer.end_frame(render_context, std::move(swapchain_attachment));
 
-  vk_context.end_frame(swapchain_attachment);
+  render_context.end_frame(swapchain_attachment);
 }
 
 auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_attachment) -> void {
@@ -302,7 +302,7 @@ void Editor::reset(this Editor& self) {
 void Editor::new_scene(this Editor& self) {
   ZoneScoped;
 
-  App::get_vkcontext().wait();
+  App::get_rendercontext().wait();
 
   auto new_scene_id = self.scene_manager.new_scene();
   self.scene_manager.load_default_scene(new_scene_id);

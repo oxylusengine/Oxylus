@@ -867,7 +867,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<const TransformComponent, CameraComponent>("camera_update")
     .kind(flecs::PostUpdate)
     .each([](const TransformComponent& tc, CameraComponent& cc) {
-      const auto screen_extent = App::get_vkcontext().swapchain_extent;
+      const auto screen_extent = App::get_rendercontext().swapchain_extent;
       cc.position = tc.position;
       Camera::update(cc, screen_extent);
     });
@@ -1143,12 +1143,12 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
         // Incase we wanted to change a material's sampler after it's creation
         // we should prefer material's sampler over texture's default sampler.
-        auto& vk_context = App::get_vkcontext();
+        auto& render_context = App::get_rendercontext();
 
         auto texture = asset_man.get_texture(material->albedo_texture);
         sampler_index = texture->get_sampler_index();
 
-        auto texture_sampler = vk_context.resources.samplers.slot(texture->get_sampler_id());
+        auto texture_sampler = render_context.resources.samplers.slot(texture->get_sampler_id());
 
         vuk::SamplerCreateInfo sampler_ci = {};
         switch (material->sampling_mode) {
@@ -1158,9 +1158,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
           case SamplingMode::NearestClamped          : sampler_ci = vuk::NearestSamplerClamped; break;
           case SamplingMode::LinearRepeatedAnisotropy: sampler_ci = vuk::LinearSamplerRepeatedAnisotropy; break;
         }
-        auto material_sampler = vk_context.runtime->acquire_sampler(sampler_ci, vk_context.num_frames);
+        auto material_sampler = render_context.runtime->acquire_sampler(sampler_ci, render_context.num_frames);
         if (texture_sampler->id != material_sampler.id) {
-          auto sampler_id = vk_context.allocate_sampler(sampler_ci);
+          auto sampler_id = render_context.allocate_sampler(sampler_ci);
           auto sampler_index_from_material = SlotMap_decode_id(sampler_id).index;
           sampler_index = sampler_index_from_material;
         }
