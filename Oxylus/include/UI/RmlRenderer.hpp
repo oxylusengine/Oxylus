@@ -5,7 +5,7 @@
 #include <vuk/Value.hpp>
 
 #include "Asset/Texture.hpp"
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 
 namespace ox {
 struct RmlDrawCmd {
@@ -28,7 +28,7 @@ struct RmlCompiledGeometry {
 class RmlRenderer : public Rml::RenderInterface {
 public:
   auto begin_frame(this RmlRenderer& self) -> void;
-  auto end_frame(this RmlRenderer& self, VkContext& context, vuk::Value<vuk::ImageAttachment> target)
+  auto end_frame(this RmlRenderer& self, RenderContext& context, vuk::Value<vuk::ImageAttachment> target)
     -> vuk::Value<vuk::ImageAttachment>;
 
   auto render_geometry(

@@ -3,7 +3,7 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Core/App.hpp"
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 #include "Utils/OxMath.hpp"
 
 namespace ox {
@@ -23,14 +23,14 @@ auto DebugRenderer::init() -> std::expected<void, std::string> {
   }
 
   auto [i_buff, i_buff_fut] = create_buffer(
-    *App::get_vkcontext().superframe_allocator,
+    *App::get_rendercontext().superframe_allocator,
     vuk::MemoryUsage::eCPUtoGPU,
     vuk::DomainFlagBits::eTransferOnGraphics,
     std::span(indices)
   );
 
   auto compiler = vuk::Compiler{};
-  i_buff_fut.wait(*App::get_vkcontext().superframe_allocator, compiler);
+  i_buff_fut.wait(*App::get_rendercontext().superframe_allocator, compiler);
 
   debug_renderer_context.index_buffer = std::move(i_buff);
 

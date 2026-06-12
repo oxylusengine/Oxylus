@@ -4,10 +4,10 @@
 #include <vuk/runtime/vk/VkQueueExecutor.hpp>
 #include <vuk/runtime/vk/VkRuntime.hpp>
 
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 
 namespace ox {
-void TracyProfiler::init_for_vulkan(this TracyProfiler& self, VkContext* context) {
+void TracyProfiler::init_for_vulkan(this TracyProfiler& self, RenderContext* context) {
 #if TRACY_ENABLE
   vuk::Runtime& runtime = context->runtime.value();
   vuk::Allocator& allocator = context->superframe_allocator.value();

@@ -8,7 +8,7 @@
 
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 
 using Preset = vuk::ImageAttachment::Preset;
 

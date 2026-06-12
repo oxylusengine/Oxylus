@@ -8,7 +8,7 @@
 #include "Render/DebugRenderer.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
@@ -41,7 +41,7 @@ struct RendererInstance::BufferTraits<GPU::Material> {
 };
 
 template <typename T>
-auto update_gpu_buffer(auto& self, auto& vk_context, const auto& gpu_data, const auto& dirty_ids) -> void {
+auto update_gpu_buffer(auto& self, auto& render_context, const auto& gpu_data, const auto& dirty_ids) -> void {
   using traits = RendererInstance::BufferTraits<T>;
 
   const auto data_size_bytes = gpu_data.size_bytes();
@@ -50,15 +50,15 @@ auto update_gpu_buffer(auto& self, auto& vk_context, const auto& gpu_data, const
   auto& buffer_ref = traits::get_buffer_ref(self);
 
   const auto rebuild_needed = !buffer_ref || buffer_ref->size <= data_size_bytes;
-  buffer_ref = vk_context.resize_buffer(std::move(buffer_ref), vuk::MemoryUsage::eGPUonly, data_size_bytes);
+  buffer_ref = render_context.resize_buffer(std::move(buffer_ref), vuk::MemoryUsage::eGPUonly, data_size_bytes);
 
   if (rebuild_needed) {
-    traits::get_prepared_buffer_ref(self) = vk_context.upload_staging(gpu_data, *buffer_ref);
+    traits::get_prepared_buffer_ref(self) = render_context.upload_staging(gpu_data, *buffer_ref);
   } else {
     const auto dirty_count = dirty_ids.size();
     const auto dirty_size_bytes = dirty_count * element_size;
 
-    auto upload_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_size_bytes);
+    auto upload_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_size_bytes);
     auto* dst_ptr = reinterpret_cast<T*>(upload_buffer->mapped_ptr);
 
     std::vector<typename traits::offset_type> upload_offsets;
@@ -93,11 +93,11 @@ auto update_gpu_buffer(auto& self, auto& vk_context, const auto& gpu_data, const
 }
 
 template <typename T>
-auto update_buffer_if_dirty(auto& self, auto& vk_context, const auto& gpu_data, const auto& dirty_ids) -> void {
+auto update_buffer_if_dirty(auto& self, auto& render_context, const auto& gpu_data, const auto& dirty_ids) -> void {
   using traits = RendererInstance::BufferTraits<T>;
 
   if (!dirty_ids.empty()) {
-    update_gpu_buffer<T>(self, vk_context, gpu_data, dirty_ids);
+    update_gpu_buffer<T>(self, render_context, gpu_data, dirty_ids);
   } else {
     auto& buffer_ref = traits::get_buffer_ref(self);
     if (buffer_ref) {
@@ -228,14 +228,14 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
     : scene(owner_scene),
       renderer(parent_renderer) {
 
-  auto& vk_context = App::get_vkcontext();
+  auto& render_context = App::get_rendercontext();
   render_queue_2d.init();
 
-  spot_lights_buffer = vk_context.allocate_buffer_super(
+  spot_lights_buffer = render_context.allocate_buffer_super(
     vuk::MemoryUsage::eGPUonly,
     MAX_SPOT_LIGHTS * sizeof(GPU::SpotLight)
   );
-  point_lights_buffer = vk_context.allocate_buffer_super(
+  point_lights_buffer = render_context.allocate_buffer_super(
     vuk::MemoryUsage::eGPUonly,
     MAX_POINT_LIGHTS * sizeof(GPU::PointLight)
   );
@@ -413,14 +413,14 @@ auto RendererInstance::render(
   self.viewport_size = {dst_extent.width, dst_extent.height};
   self.viewport_offset = render_info.viewport_offset;
 
-  auto& bindless_set = self.renderer.vk_context->get_descriptor_set();
+  auto& bindless_set = self.renderer.render_context->get_descriptor_set();
 
   self.camera_data.resolution = {dst_extent.width, dst_extent.height};
-  self.prepared_frame.camera_buffer = self.renderer.vk_context->scratch_buffer(self.camera_data);
+  self.prepared_frame.camera_buffer = self.renderer.render_context->scratch_buffer(self.camera_data);
 
   self.render_queue_2d.update();
   self.render_queue_2d.sort();
-  auto vertex_buffer_2d = self.renderer.vk_context->scratch_buffer_span(std::span(self.render_queue_2d.sprite_data));
+  auto vertex_buffer_2d = self.renderer.render_context->scratch_buffer_span(std::span(self.render_queue_2d.sprite_data));
 
   const auto scene_has_directional_light = self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight;
   const auto scene_has_atmosphere = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
@@ -763,7 +763,7 @@ auto RendererInstance::render(
     self.draw_for_visbuffer(main_geometry_context);
 
     {
-      RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, *self.renderer.vk_context);
+      RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, *self.renderer.render_context);
       ctx.set_viewport_size(self.viewport_size)
         .set_image_resource("visbuffer_attachment", std::move(main_geometry_context.visbuffer_attachment))
         .set_image_resource("depth_attachment", std::move(main_geometry_context.depth_attachment))
@@ -1008,7 +1008,7 @@ auto RendererInstance::render(
         std::move(self.prepared_frame.transforms_buffer)
       );
 
-    RenderStageContext ctx(self, self.shared_resources, RenderStage::Forward2D, *self.renderer.vk_context);
+    RenderStageContext ctx(self, self.shared_resources, RenderStage::Forward2D, *self.renderer.render_context);
     ctx.set_viewport_size(self.viewport_size)
       .set_image_resource("final_attachment", final_attachment)
       .set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attachment_2d));
@@ -1071,7 +1071,7 @@ auto RendererInstance::render(
   dst_attachment = self.apply_tonemap(post_process_context);
 
   {
-    RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, *self.renderer.vk_context);
+    RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, *self.renderer.render_context);
     ctx.set_viewport_size(self.viewport_size)
       .set_buffer_resource("camera_buffer", std::move(self.prepared_frame.camera_buffer))
       .set_image_resource("depth_attachment", std::move(depth_attachment))
@@ -1114,7 +1114,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.update_ran_this_frame = true;
 
   auto& asset_man = App::mod<AssetManager>();
-  auto& vk_context = *self.renderer.vk_context;
+  auto& render_context = *self.renderer.render_context;
 
   self.gpu_scene_flags = {};
   self.prepared_frame = {};
@@ -1360,7 +1360,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     .each([&](flecs::entity e, const TransformComponent& tc, const FilmGrainComponent& c) {
       self.post_proces_settings.film_grain_amount = c.amount;
       self.post_proces_settings.film_grain_scale = c.scale;
-      self.post_proces_settings.film_grain_seed = vk_context.num_frames % 16;
+      self.post_proces_settings.film_grain_seed = render_context.num_frames % 16;
 
       self.gpu_scene_flags |= GPU::SceneFlags::HasFilmGrain;
     });
@@ -1381,13 +1381,13 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     }
   );
 
-  update_buffer_if_dirty<GPU::Transforms>(self, vk_context, info.gpu_transforms, info.dirty_transform_ids);
-  update_buffer_if_dirty<GPU::Material>(self, vk_context, info.gpu_materials, info.dirty_material_indices);
+  update_buffer_if_dirty<GPU::Transforms>(self, render_context, info.gpu_transforms, info.dirty_transform_ids);
+  update_buffer_if_dirty<GPU::Material>(self, render_context, info.gpu_materials, info.dirty_material_indices);
 
   // TODO: Keep track of updated lights and only update them.
   if (!point_lights.empty()) {
     auto point_lights_size_bytes = ox::size_bytes(point_lights);
-    auto src_point_lights_buffer = vk_context.alloc_transient_buffer(
+    auto src_point_lights_buffer = render_context.alloc_transient_buffer(
       vuk::MemoryUsage::eCPUtoGPU,
       point_lights_size_bytes
     );
@@ -1409,7 +1409,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   if (!spot_lights.empty()) {
     auto spot_lights_size_bytes = ox::size_bytes(spot_lights);
-    auto src_spot_lights_buffer = vk_context.alloc_transient_buffer(
+    auto src_spot_lights_buffer = render_context.alloc_transient_buffer(
       vuk::MemoryUsage::eCPUtoGPU,
       spot_lights_size_bytes
     );
@@ -1437,7 +1437,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   };
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) {
-    auto atmosphere_buffer = self.renderer.vk_context->scratch_buffer(self.atmosphere);
+    auto atmosphere_buffer = self.renderer.render_context->scratch_buffer(self.atmosphere);
     lights_info.atmosphere = atmosphere_buffer->device_address;
     self.prepared_frame.atmosphere_buffer = std::move(atmosphere_buffer);
   }
@@ -1445,8 +1445,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   if (self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) {
     auto directional_light_cascade_count = ox::max(1_u32, self.directional_light.cascade_count);
 
-    auto directional_light_buffer = vk_context.scratch_buffer(self.directional_light);
-    auto directional_light_cascades_buffer = vk_context.alloc_transient_buffer(
+    auto directional_light_buffer = render_context.scratch_buffer(self.directional_light);
+    auto directional_light_cascades_buffer = render_context.alloc_transient_buffer(
       vuk::MemoryUsage::eGPUtoCPU,
       directional_light_cascade_count * sizeof(GPU::DirectionalLightCascade)
     );
@@ -1465,33 +1465,33 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.directional_light_cascades_buffer = std::move(directional_light_cascades_buffer);
   }
 
-  self.prepared_frame.lights_buffer = vk_context.scratch_buffer(lights_info);
+  self.prepared_frame.lights_buffer = render_context.scratch_buffer(lights_info);
 
   if (!info.gpu_meshes.empty()) {
-    self.meshes_buffer = vk_context.resize_buffer(
+    self.meshes_buffer = render_context.resize_buffer(
       std::move(self.meshes_buffer),
       vuk::MemoryUsage::eGPUonly,
       info.gpu_meshes.size_bytes()
     );
-    self.prepared_frame.meshes_buffer = vk_context.upload_staging(info.gpu_meshes, *self.meshes_buffer);
+    self.prepared_frame.meshes_buffer = render_context.upload_staging(info.gpu_meshes, *self.meshes_buffer);
   } else if (self.meshes_buffer) {
     self.prepared_frame.meshes_buffer = vuk::acquire_buf("meshes", *self.meshes_buffer, vuk::Access::eMemoryRead);
   }
 
   if (!info.gpu_mesh_instances.empty()) {
-    self.mesh_instances_buffer = vk_context.resize_buffer(
+    self.mesh_instances_buffer = render_context.resize_buffer(
       std::move(self.mesh_instances_buffer),
       vuk::MemoryUsage::eGPUonly,
       info.gpu_mesh_instances.size_bytes()
     );
-    self.prepared_frame.mesh_instances_buffer = vk_context.upload_staging(
+    self.prepared_frame.mesh_instances_buffer = render_context.upload_staging(
       info.gpu_mesh_instances,
       *self.mesh_instances_buffer
     );
 
     auto meshlet_instance_visibility_mask_size_bytes = (info.max_meshlet_instance_count + 31) / 32 * sizeof(u32);
 
-    self.meshlet_instance_visibility_mask_buffer = vk_context.resize_buffer(
+    self.meshlet_instance_visibility_mask_buffer = render_context.resize_buffer(
       std::move(self.meshlet_instance_visibility_mask_buffer),
       vuk::MemoryUsage::eGPUonly,
       meshlet_instance_visibility_mask_size_bytes
@@ -1520,15 +1520,15 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.prepared_frame.mesh_instance_count = info.mesh_instance_count;
   self.prepared_frame.max_meshlet_instance_count = info.max_meshlet_instance_count;
   if (info.max_meshlet_instance_count > 0) {
-    self.prepared_frame.meshlet_instances_buffer = vk_context.alloc_transient_buffer(
+    self.prepared_frame.meshlet_instances_buffer = render_context.alloc_transient_buffer(
       vuk::MemoryUsage::eGPUonly,
       self.prepared_frame.max_meshlet_instance_count * sizeof(GPU::MeshletInstance)
     );
-    self.prepared_frame.visible_meshlet_instances_indices_buffer = vk_context.alloc_transient_buffer(
+    self.prepared_frame.visible_meshlet_instances_indices_buffer = render_context.alloc_transient_buffer(
       vuk::MemoryUsage::eGPUonly,
       self.prepared_frame.max_meshlet_instance_count * sizeof(u32)
     );
-    self.prepared_frame.reordered_indices_buffer = vk_context.alloc_transient_buffer(
+    self.prepared_frame.reordered_indices_buffer = render_context.alloc_transient_buffer(
       vuk::MemoryUsage::eGPUonly,
       self.prepared_frame.max_meshlet_instance_count * Model::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32)
     );
@@ -1556,12 +1556,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     std::span<DebugRenderer::Vertex> vertices_span = line_vertices;
 
     if (!vertices.empty()) {
-      self.debug_renderer_verticies_buffer = vk_context.resize_buffer(
+      self.debug_renderer_verticies_buffer = render_context.resize_buffer(
         std::move(self.debug_renderer_verticies_buffer),
         vuk::MemoryUsage::eGPUonly,
         vertices_span.size_bytes()
       );
-      self.prepared_frame.debug_renderer_verticies_buffer = vk_context.upload_staging(
+      self.prepared_frame.debug_renderer_verticies_buffer = render_context.upload_staging(
         vertices_span,
         *self.debug_renderer_verticies_buffer
       );
@@ -1579,7 +1579,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.update_vbgtao_info();
 
   if (!self.exposure_buffer) {
-    self.exposure_buffer = vk_context.allocate_buffer_super(
+    self.exposure_buffer = render_context.allocate_buffer_super(
       vuk::MemoryUsage::eGPUonly,
       sizeof(GPU::HistogramLuminance)
     );

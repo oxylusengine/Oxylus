@@ -1,4 +1,4 @@
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 
 #include <ranges>
 #include <sstream>
@@ -128,7 +128,7 @@ vuk::Swapchain make_swapchain(
   return std::move(*old_swapchain);
 }
 
-auto VkContext::create_context(this VkContext& self, const Window& window, bool vulkan_validation_layers) -> void {
+auto RenderContext::create_context(this RenderContext& self, const Window& window, bool vulkan_validation_layers) -> void {
   ZoneScoped;
   vkb::InstanceBuilder builder;
   builder //
@@ -396,7 +396,7 @@ auto VkContext::create_context(this VkContext& self, const Window& window, bool 
   );
 }
 
-auto VkContext::destroy_context(this VkContext& self) -> void {
+auto RenderContext::destroy_context(this RenderContext& self) -> void {
   ZoneScoped;
   self.runtime->wait_idle();
 
@@ -418,7 +418,7 @@ auto VkContext::destroy_context(this VkContext& self) -> void {
   self.resources.pipelines.reset();
 }
 
-auto VkContext::handle_resize(u32 width, u32 height) -> void {
+auto RenderContext::handle_resize(u32 width, u32 height) -> void {
   wait();
 
   swapchain = make_swapchain(
@@ -432,14 +432,14 @@ auto VkContext::handle_resize(u32 width, u32 height) -> void {
   );
 }
 
-auto VkContext::set_vsync(bool enable) -> void {
+auto RenderContext::set_vsync(bool enable) -> void {
   const auto set_present_mode = enable ? vuk::PresentModeKHR::eFifo : vuk::PresentModeKHR::eImmediate;
   present_mode = set_present_mode;
 }
 
-auto VkContext::is_vsync() const -> bool { return present_mode == vuk::PresentModeKHR::eFifo; }
+auto RenderContext::is_vsync() const -> bool { return present_mode == vuk::PresentModeKHR::eFifo; }
 
-auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachment> {
+auto RenderContext::new_frame(this RenderContext& self) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
   auto vsync_cvar_enabled = static_cast<bool>(RendererCVar::cvar_vsync.get());
@@ -501,7 +501,7 @@ auto VkContext::new_frame(this VkContext& self) -> vuk::Value<vuk::ImageAttachme
   return acquired_image;
 }
 
-auto VkContext::end_frame(this VkContext& self, vuk::Value<vuk::ImageAttachment> target_) -> void {
+auto RenderContext::end_frame(this RenderContext& self, vuk::Value<vuk::ImageAttachment> target_) -> void {
   ZoneScoped;
 
   auto entire_thing = vuk::enqueue_presentation(std::move(target_));
@@ -520,21 +520,21 @@ auto VkContext::end_frame(this VkContext& self, vuk::Value<vuk::ImageAttachment>
   self.num_frames = self.runtime->get_frame_count();
 }
 
-auto VkContext::wait(this VkContext& self) -> void {
+auto RenderContext::wait(this RenderContext& self) -> void {
   ZoneScoped;
 
   OX_LOG_INFO("Device wait idle triggered!");
   self.runtime->wait_idle();
 }
 
-auto VkContext::wait_on(vuk::UntypedValue&& fut) -> void {
+auto RenderContext::wait_on(vuk::UntypedValue&& fut) -> void {
   ZoneScoped;
 
   thread_local vuk::Compiler _compiler;
   fut.wait(superframe_allocator.value(), _compiler);
 }
 
-auto VkContext::wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment {
+auto RenderContext::wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment {
   ZoneScoped;
 
   auto& allocator = superframe_allocator.value();
@@ -545,8 +545,8 @@ auto VkContext::wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -
   return *fut.get(allocator, _compiler);
 }
 
-auto VkContext::create_persistent_descriptor_set(
-  this VkContext& self,
+auto RenderContext::create_persistent_descriptor_set(
+  this RenderContext& self,
   u32 set_index,
   std::span<VkDescriptorSetLayoutBinding> bindings,
   std::span<VkDescriptorBindingFlags> binding_flags
@@ -616,13 +616,13 @@ auto VkContext::create_persistent_descriptor_set(
   };
 }
 
-auto VkContext::commit_descriptor_set(this VkContext& self, std::span<VkWriteDescriptorSet> writes) -> void {
+auto RenderContext::commit_descriptor_set(this RenderContext& self, std::span<VkWriteDescriptorSet> writes) -> void {
   ZoneScoped;
 
   vkUpdateDescriptorSets(self.device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
 }
 
-auto VkContext::create_pipeline(this VkContext& self, const ShaderPipelineData& pipeline_data) -> bool {
+auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool {
   ZoneScoped;
 
   auto pipeline_ci = vuk::PipelineBaseCreateInfo{};
@@ -652,7 +652,7 @@ auto VkContext::create_pipeline(this VkContext& self, const ShaderPipelineData& 
   return true;
 }
 
-auto VkContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {
+auto RenderContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {
   ZoneScoped;
 
   vuk::ImageCreateInfo ici;
@@ -691,7 +691,7 @@ auto VkContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> 
   return resources.images.create_slot(std::move(image));
 }
 
-auto VkContext::destroy_image(const ImageID id) -> void {
+auto RenderContext::destroy_image(const ImageID id) -> void {
   ZoneScoped;
 
   auto image = *resources.images.slot(id);
@@ -699,14 +699,14 @@ auto VkContext::destroy_image(const ImageID id) -> void {
   resources.images.destroy_slot(id);
 }
 
-auto VkContext::image(const ImageID id) -> vuk::Image {
+auto RenderContext::image(const ImageID id) -> vuk::Image {
   ZoneScoped;
 
   auto image = resources.images.slot(id);
   return *image;
 }
 
-auto VkContext::allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID {
+auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID {
   ZoneScoped;
 
   vuk::ImageViewCreateInfo ivci;
@@ -783,7 +783,7 @@ auto VkContext::allocate_image_view(const vuk::ImageAttachment& image_attachment
   return image_view_id;
 }
 
-auto VkContext::destroy_image_view(const ImageViewID id) -> void {
+auto RenderContext::destroy_image_view(const ImageViewID id) -> void {
   ZoneScoped;
 
   auto view = *resources.image_views.slot(id);
@@ -791,14 +791,14 @@ auto VkContext::destroy_image_view(const ImageViewID id) -> void {
   resources.image_views.destroy_slot(id);
 }
 
-auto VkContext::image_view(const ImageViewID id) -> vuk::ImageView {
+auto RenderContext::image_view(const ImageViewID id) -> vuk::ImageView {
   ZoneScoped;
 
   auto view = resources.image_views.slot(id);
   return *view;
 }
 
-auto VkContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info) -> SamplerID {
+auto RenderContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info) -> SamplerID {
   ZoneScoped;
 
   auto sampler = runtime->acquire_sampler(sampler_info, num_frames);
@@ -828,19 +828,19 @@ auto VkContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info) -> 
   return sampler_id;
 }
 
-auto VkContext::destroy_sampler(const SamplerID id) -> void {
+auto RenderContext::destroy_sampler(const SamplerID id) -> void {
   ZoneScoped;
 
   resources.samplers.destroy_slot(id);
 }
 
-auto VkContext::sampler(const SamplerID id) -> vuk::Sampler {
+auto RenderContext::sampler(const SamplerID id) -> vuk::Sampler {
   ZoneScoped;
 
   return *resources.samplers.slot(id);
 }
 
-auto VkContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
+auto RenderContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
   -> vuk::Unique<vuk::Buffer> {
   if (!buffer || new_size > buffer->size) {
     wait();
@@ -852,14 +852,14 @@ auto VkContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsag
   return std::move(buffer);
 }
 
-auto VkContext::allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment) -> vuk::Unique<vuk::Buffer> {
+auto RenderContext::allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment) -> vuk::Unique<vuk::Buffer> {
   return *vuk::allocate_buffer(
     superframe_allocator.value(),
     {.mem_usage = usage, .size = size, .alignment = alignment}
   );
 }
 
-auto VkContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, vuk::source_location LOC) noexcept
+auto RenderContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, vuk::source_location LOC) noexcept
   -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
@@ -883,7 +883,7 @@ auto VkContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, vuk
   return vuk::acquire_buf("image buffer", buffer_handle, vuk::eNone, LOC);
 }
 
-auto VkContext::alloc_transient_buffer_raw(
+auto RenderContext::alloc_transient_buffer_raw(
   vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC
 ) -> vuk::Buffer {
   ZoneScoped;
@@ -898,7 +898,7 @@ auto VkContext::alloc_transient_buffer_raw(
   return *buffer;
 }
 
-auto VkContext::alloc_transient_buffer(vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC)
+auto RenderContext::alloc_transient_buffer(vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC)
   -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
@@ -906,7 +906,7 @@ auto VkContext::alloc_transient_buffer(vuk::MemoryUsage usage, usize size, usize
   return vuk::acquire_buf("transient buffer", buffer, vuk::Access::eNone, LOC);
 }
 
-auto VkContext::upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Buffer>&& dst, vuk::source_location LOC)
+auto RenderContext::upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Buffer>&& dst, vuk::source_location LOC)
   -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
@@ -927,7 +927,7 @@ auto VkContext::upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Bu
   return upload_pass(std::move(src), std::move(dst));
 }
 
-auto VkContext::upload_staging(
+auto RenderContext::upload_staging(
   vuk::Value<vuk::Buffer>&& src, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC
 ) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
@@ -936,7 +936,7 @@ auto VkContext::upload_staging(
   return upload_staging(std::move(src), std::move(dst_buffer), LOC);
 }
 
-auto VkContext::upload_staging(
+auto RenderContext::upload_staging(
   void* data, u64 data_size, vuk::Value<vuk::Buffer>&& dst, u64 dst_offset, vuk::source_location LOC
 ) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
@@ -948,7 +948,7 @@ auto VkContext::upload_staging(
   return upload_staging(std::move(cpu_buffer), std::move(dst_buffer), LOC);
 }
 
-auto VkContext::upload_staging(void* data, u64 data_size, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC)
+auto RenderContext::upload_staging(void* data, u64 data_size, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC)
   -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
@@ -959,7 +959,7 @@ auto VkContext::upload_staging(void* data, u64 data_size, vuk::Buffer& dst, u64 
   return upload_staging(std::move(cpu_buffer), std::move(dst_buffer), LOC);
 }
 
-auto VkContext::scratch_buffer(const void* data, u64 size, usize alignment, vuk::source_location LOC)
+auto RenderContext::scratch_buffer(const void* data, u64 size, usize alignment, vuk::source_location LOC)
   -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
