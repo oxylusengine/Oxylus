@@ -267,9 +267,11 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
 
     self.main_viewport_panel.on_render(swapchain_attachment);
 
-    for (const auto& panel : self.editor_panels | std::views::values) {
-      if (panel->visible)
-        panel->on_render(swapchain_attachment);
+    if (!self.main_viewport_panel.is_fullscreen()) {
+      for (const auto& panel : self.editor_panels | std::views::values) {
+        if (panel->visible)
+          panel->on_render(swapchain_attachment);
+      }
     }
 
     self.runtime_console.on_imgui_render();

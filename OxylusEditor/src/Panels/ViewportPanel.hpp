@@ -11,7 +11,6 @@ public:
   flecs::entity editor_camera = {};
 
   bool performance_overlay_visible = true;
-  bool fullscreen_viewport = false;
   bool is_viewport_focused = {};
   bool is_viewport_hovered = {};
 

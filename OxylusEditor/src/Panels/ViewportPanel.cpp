@@ -138,11 +138,6 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       if (ImGui::MenuItem(ICON_MDI_SPHERE, nullptr, gizmo_settings_popup)) {
         gizmo_settings_popup = true;
       }
-      auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
-      ImGui::SetCursorPosX(viewport_size.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
-      if (ImGui::MenuItem(ICON_MDI_ARROW_EXPAND_ALL)) {
-        fullscreen_viewport = !fullscreen_viewport;
-      }
       ImGui::EndMenuBar();
     }
 
