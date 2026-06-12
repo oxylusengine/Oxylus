@@ -449,12 +449,12 @@ void ViewportPanel::draw_stats_overlay(bool draw) const {
   window_pos_pivot.y = 0.0f;
   ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
   ImGui::SetNextWindowBgAlpha(0.35f);
-  ImGui::SetNextWindowSize(draw ? ImVec2({220.f, 0.f}) : ImVec2(0.f, 0.f));
+  ImGui::SetNextWindowSize(draw ? ImVec2({220.f, 0.f}) : ImVec2(120.f, 5.f), ImGuiCond_Always);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   auto overlay_id = fmt::format("{}_overlay", get_id());
   if (ImGui::Begin(overlay_id.c_str(), nullptr, window_flags)) {
-    ImGui::Text("%.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+    ImGui::Text("%.1f FPS (%.1f ms)", ImGui::GetIO().Framerate, 1000.0f / ImGui::GetIO().Framerate);
     if (draw) {
       ImGui::Text("Scripts in scene: %zu", editor_scene_->get_scene()->get_lua_systems().size());
       const auto transform_entities_count = editor_scene_->get_scene()->world.count<TransformComponent>();
