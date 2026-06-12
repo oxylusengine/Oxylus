@@ -56,7 +56,7 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, VkContext& context, vuk::Val
 
   auto textures_array = vuk::declare_array("rml_sampled_textures", std::span(frame_textures));
 
-  return vuk::make_pass("rml_ui_pass", //
+  return vuk::make_pass("rmlui", //
     [dc = self.draw_commands](vuk::CommandBuffer& command_buffer,
       VUK_BA(vuk::Access::eVertexRead) vertex_buf,
       VUK_BA(vuk::Access::eIndexRead) index_buf,
