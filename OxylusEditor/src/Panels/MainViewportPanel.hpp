@@ -14,6 +14,7 @@ public:
   auto get_focused_viewport(this const MainViewportPanel& self) -> ViewportPanel*;
   auto get_visible_viwports(this const MainViewportPanel& self) -> std::vector<ViewportPanel*>;
   auto is_fullscreen(this const MainViewportPanel& self) -> bool;
+  auto toggle_fullscreen(this MainViewportPanel& self) -> void;
 
   auto add_new_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void;
   auto add_new_play_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void;

@@ -85,6 +85,14 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
       .on_pressed_callback = [&self](const ActionContext&) { self.save_scene_as(); }
     }
   );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "fullscreen_viewport",
+      .primary_inputs = {InputCode(KeyCode::F11)},
+      .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.main_viewport_panel.toggle_fullscreen(); }
+    }
+  );
 
   self.active_project = std::make_unique<Project>();
 

@@ -95,6 +95,12 @@ auto MainViewportPanel::is_fullscreen(this const MainViewportPanel& self) -> boo
   return self.fullscreen_viewport;
 }
 
+auto MainViewportPanel::toggle_fullscreen(this MainViewportPanel& self) -> void {
+  ZoneScoped;
+
+  self.fullscreen_viewport = !self.fullscreen_viewport;
+}
+
 auto MainViewportPanel::add_new_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void {
   ZoneScoped;
 
