@@ -1,5 +1,6 @@
 #include "Render/Window.hpp"
 
+#include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <array>
@@ -13,6 +14,7 @@
 #include "Core/Input.hpp"
 #include "Memory/Stack.hpp"
 #include "UI/ImGuiRenderer.hpp"
+#include "UI/RmlUI.hpp"
 #include "Utils/Log.hpp"
 
 #define LOG_SDL_ERROR(call) OX_LOG_ERROR("{}: {}", #call, SDL_GetError())
@@ -33,6 +35,7 @@ struct Handle<Window>::Impl {
   u32 monitor_id = {};
   std::array<SDL_Cursor*, static_cast<usize>(WindowCursor::Count)> cursors = {};
   f32 window_content_scale = {};
+  f32 window_dpi_scale = {};
   f32 refresh_rate = {};
 
   bool cursor_overridden = false;
@@ -153,6 +156,14 @@ auto Window::create(const WindowInfo& info) -> Window {
   impl->logical_width = logical_width;
   impl->logical_height = logical_height;
 
+  f32 dpi_scale = SDL_GetWindowDisplayScale(impl->handle);
+  if (dpi_scale <= 0.f) {
+    LOG_SDL_ERROR(SDL_GetError);
+    dpi_scale = 1.f;
+  }
+
+  impl->window_dpi_scale = dpi_scale;
+
   const auto self = Window(impl);
   self.set_cursor(WindowCursor::Arrow);
   return self;
@@ -194,6 +205,17 @@ auto Window::update(const Timestep& timestep) const -> void {
       imgui_renderer.on_key(key_code, scan_code, mods, down);
     }
 
+    if (App::has_mod<RmlUI>()) {
+      auto& rml = App::mod<RmlUI>();
+      for (auto& ctx : rml.get_contexts()) {
+        if (down) {
+          ctx->ProcessKeyDown(RmlSystem::convert_key(key_code), RmlSystem::convert_mod(mods));
+        } else {
+          ctx->ProcessKeyUp(RmlSystem::convert_key(key_code), RmlSystem::convert_mod(mods));
+        }
+      }
+    }
+
     auto& input_system = App::mod<Input>();
     const auto ox_key_code = static_cast<KeyCode>(key_code);
     const auto ox_mod = static_cast<ModCode>(mods);
@@ -213,12 +235,28 @@ auto Window::update(const Timestep& timestep) const -> void {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_text_input(text);
     }
+    if (App::has_mod<RmlUI>()) {
+      auto& rml = App::mod<RmlUI>();
+      for (auto& ctx : rml.get_contexts()) {
+        ctx->ProcessTextInput(text);
+      }
+    }
   };
 
   window_callbacks.on_mouse_pos = [](void* user_data, u32 instance_id, const glm::vec2 position, glm::vec2 relative) {
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_pos(position);
+    }
+
+    if (App::has_mod<RmlUI>()) {
+      auto& rml = App::mod<RmlUI>();
+      for (auto& ctx : rml.get_contexts()) {
+        auto& window = App::get_window();
+        const f32 dpi_scale = window.get_dpi_scale();
+        auto scaled_pos = position * dpi_scale;
+        ctx->ProcessMouseMove(scaled_pos.x, scaled_pos.y, 0);
+      }
     }
 
     auto& input_system = App::mod<Input>();
@@ -228,13 +266,32 @@ auto Window::update(const Timestep& timestep) const -> void {
   };
 
   window_callbacks.on_mouse_button = [](void* user_data, u32 instance_id, const u8 button, const bool down) {
+    auto ox_mouse_button = static_cast<MouseCode>(button);
+
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_button(button, down);
     }
 
+    if (App::has_mod<RmlUI>()) {
+      auto& rml = App::mod<RmlUI>();
+      for (auto& ctx : rml.get_contexts()) {
+        auto rml_code = 0;
+        switch (ox_mouse_button) {
+          case MouseCode::Left  : rml_code = 0; break;
+          case MouseCode::Middle: rml_code = 2; break;
+          case MouseCode::Right : rml_code = 1; break;
+          default               : break;
+        }
+        if (down) {
+          ctx->ProcessMouseButtonDown(rml_code, 0);
+        } else {
+          ctx->ProcessMouseButtonUp(rml_code, 0);
+        }
+      }
+    }
+
     auto& input_system = App::mod<Input>();
-    auto ox_mouse_button = static_cast<MouseCode>(button);
     if (down) {
       input_system.set_mouse_clicked(ox_mouse_button, true);
       input_system.set_mouse_released(ox_mouse_button, false);
@@ -249,6 +306,13 @@ auto Window::update(const Timestep& timestep) const -> void {
     if (App::has_mod<ImGuiRenderer>()) {
       auto& imgui_renderer = App::mod<ImGuiRenderer>();
       imgui_renderer.on_mouse_scroll(offset);
+    }
+
+    if (App::has_mod<RmlUI>()) {
+      auto& rml = App::mod<RmlUI>();
+      for (auto& ctx : rml.get_contexts()) {
+        ctx->ProcessMouseWheel(offset.y * -1.f, 0);
+      }
     }
 
     auto& input_system = App::mod<Input>();
@@ -536,7 +600,7 @@ auto Window::get_real_height() const -> u32 { return impl->height; }
 
 auto Window::get_handle() const -> void* { return impl->handle; }
 
-auto Window::get_dpi_scale() const -> f32 { return impl->window_content_scale; }
+auto Window::get_dpi_scale() const -> f32 { return impl->window_dpi_scale; }
 auto Window::get_window_content_scale() const -> f32 { return impl->window_content_scale; }
 
 auto Window::get_refresh_rate() const -> f32 { return impl->refresh_rate; }

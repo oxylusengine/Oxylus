@@ -24,7 +24,7 @@ end)
 
 rule("ox.install_resources")
 set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".mp3", ".wav", ".ogg",
-  ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene")
+  ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".rml", ".rcss")
 before_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local output_dir = target:extraconf("rules", "ox.install_resources", "output_dir") or ""
   local root_dir = target:extraconf("rules", "ox.install_resources", "root_dir") or os.scriptdir()
@@ -52,12 +52,12 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
 
   local output_dir  = target:extraconf("rules", "ox.compile_shaders", "output_dir") or ""
   local output_name = target:extraconf("rules", "ox.compile_shaders", "output_name")
-                    or (path.basename(sourcefile) .. ".oxpack")
+      or (path.basename(sourcefile) .. ".oxpack")
 
-  local rcli       = target:dep("rcli"):targetfile()
-  local abs_output = path.absolute(path.join(target:targetdir(), output_dir, output_name))
+  local rcli        = target:dep("rcli"):targetfile()
+  local abs_output  = path.absolute(path.join(target:targetdir(), output_dir, output_name))
 
-  local args = { "--config", config_path, "--output", abs_output }
+  local args        = { "--config", config_path, "--output", abs_output }
 
   batchcmds:show_progress(opt.progress,
     "${color.build.object}compiling shaders from %s -> %s",

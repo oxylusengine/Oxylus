@@ -1,5 +1,6 @@
 local fmt_version = "12.1.0"
 local fmt_configs = { header_only = false, shared = false }
+local lua_version = "v5.4.7"
 
 packages = {
   ["stb 2024.06.01"] = {},
@@ -70,12 +71,19 @@ packages = {
       system_tracing = true,
     },
   },
-  ["lua-ox v5.4.7"] = {},
+  ["lua " .. lua_version] = {},
   ["sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444"] = { configs = { includes_lua = false } },
   ["unordered_dense v4.5.0"] = {},
   ["svector v1.0.3"] = {},
   ["plf_colony v7.41"] = {},
   ["simdutf v6.2.0"] = {},
+  ["rmlui 6.2"] = {
+    configs = {
+      shared = false,
+      lua = true,
+    },
+    debug = is_mode("debug")
+  },
   ["zpp_bits v4.7.1"] = {},
 }
 
@@ -112,6 +120,16 @@ confs = {
       system = false,
     },
   },
+
+  {
+    package = "lua",
+    override = "rmlui.lua",
+    configs = {
+      override = true,
+      version = lua_version,
+      system = false,
+    }
+  }
 }
 
 function require_packages()

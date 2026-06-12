@@ -16,6 +16,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
 // clang-format on
+#include <RmlUi/Core.h>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <simdjson.h>
@@ -34,6 +35,7 @@
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
+#include "UI/RmlUI.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Random.hpp"
 #include "Utils/Timestep.hpp"
@@ -331,7 +333,7 @@ Scene::~Scene() {
     system->on_remove(this);
   }
 
-  world.release();
+  // world.release();
 
   lua_systems.clear();
   auto& lua_manager = App::mod<LuaManager>();
@@ -1015,6 +1017,19 @@ auto Scene::runtime_stop(this Scene& self) -> void {
   // Scripting
   for (auto& [uuid, system] : self.lua_systems) {
     system->on_scene_stop(&self);
+  }
+
+  // RmlUI
+  auto& rmlui = App::mod<RmlUI>();
+  auto rml_ctxs = rmlui.get_contexts();
+  for (auto* ctx : rml_ctxs) {
+    auto doc_count = ctx->GetNumDocuments();
+    for (i32 i = 0; i < doc_count; i++) {
+      auto doc = ctx->GetDocument(i);
+      if (doc) {
+        doc->Hide();
+      }
+    }
   }
 }
 

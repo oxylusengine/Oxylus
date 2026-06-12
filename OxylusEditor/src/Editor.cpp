@@ -18,6 +18,7 @@
 #include "Panels/TextEditorPanel.hpp"
 #include "Render/Window.hpp"
 #include "UI/ImGuiRenderer.hpp"
+#include "UI/RmlUI.hpp"
 #include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
 #include "Utils/Command.hpp"
@@ -113,6 +114,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
     sh->set_scene(nullptr);
   });
   std::ignore = event_system.subscribe<SceneStopEvent>([&self](const SceneStopEvent& e) {
+    self.scene_manager.remove_scene(e.scene_id);
     self.editor_context.reset();
     auto* sh = self.get_panel<SceneHierarchyPanel>();
     sh->set_scene(nullptr);
@@ -183,10 +185,14 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   auto& vk_context = App::get_vkcontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
+  auto& rml = App::mod<RmlUI>();
+  auto& rml_renderer = rml.get_renderer();
   auto& window = App::get_window();
 
   auto swapchain_attachment = vk_context.new_frame();
   swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
+
+  rml_renderer.begin_frame();
 
   imgui_renderer.begin_frame(timestep.get_seconds(), window.get_logical_size(), window.get_real_size());
   ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
@@ -205,7 +211,10 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   self.render(sc_info);
 
+  rml.render_contexts();
+
   swapchain_attachment = imgui_renderer.end_frame(vk_context, std::move(swapchain_attachment));
+  swapchain_attachment = rml_renderer.end_frame(vk_context, std::move(swapchain_attachment));
 
   vk_context.end_frame(swapchain_attachment);
 }
