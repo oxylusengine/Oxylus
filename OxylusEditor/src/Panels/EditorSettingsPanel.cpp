@@ -10,7 +10,7 @@
 
 namespace ox {
 EditorSettingsPanel::EditorSettingsPanel() : EditorPanel("Editor Settings", ICON_MDI_COGS, false) {
-  this->window_default_size = {450, 250};
+  this->window_default_size = {500, 300};
   this->window_sizing_cond = ImGuiCond_Always;
   this->window_center_at_appear = true;
 }

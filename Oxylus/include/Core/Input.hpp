@@ -122,6 +122,7 @@ public:
   auto reset() -> void;
 
   /// Binding
+  auto get_bindings(this const Input& self) -> std::unordered_multimap<std::string, ActionBinding>;
   auto get_binding(this const Input& self, std::string_view action_id) -> const ActionBinding*;
   auto get_active_binding(this const Input& self, std::string_view action_id) -> const ActionBinding*;
   auto bind_action(this Input& self, ActionBinding binding) -> std::expected<void, BindingError>;

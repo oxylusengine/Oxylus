@@ -49,6 +49,12 @@ auto Input::reset() -> void {
   input_data.gamepad_data_map.clear();
 }
 
+auto Input::get_bindings(this const Input& self) -> std::unordered_multimap<std::string, ActionBinding> {
+  ZoneScoped;
+
+return self.action_bindings;
+}
+
 auto Input::get_binding(this const Input& self, std::string_view action_id) -> const ActionBinding* {
   ZoneScoped;
 
