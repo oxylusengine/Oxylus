@@ -40,7 +40,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "new_scene",
-      .primary_inputs = {InputCode(KeyCode::N, ModCode::AnyControl)},
+      .primary_inputs = {InputCode(ScanCode::N, ModCode::AnyControl)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.new_scene(); }
     }
@@ -48,7 +48,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "undo",
-      .primary_inputs = {InputCode(KeyCode::Z, ModCode::AnyControl)},
+      .primary_inputs = {InputCode(ScanCode::Z, ModCode::AnyControl)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.undo(); }
     }
@@ -56,7 +56,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "redo",
-      .primary_inputs = {InputCode(KeyCode::Y, ModCode::AnyControl)},
+      .primary_inputs = {InputCode(ScanCode::Y, ModCode::AnyControl)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.redo(); }
     }
@@ -64,7 +64,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "save_scene",
-      .primary_inputs = {InputCode(KeyCode::S, ModCode::AnyControl)},
+      .primary_inputs = {InputCode(ScanCode::S, ModCode::AnyControl)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.save_scene(); }
     }
@@ -72,7 +72,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "open_scene_file_dialog",
-      .primary_inputs = {InputCode(KeyCode::O, ModCode::AnyControl)},
+      .primary_inputs = {InputCode(ScanCode::O, ModCode::AnyControl)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.open_scene_file_dialog(); }
     }
@@ -80,7 +80,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "save_scene_as",
-      .primary_inputs = {InputCode(KeyCode::S, ModCode::AnyControl | ModCode::AnyShift)},
+      .primary_inputs = {InputCode(ScanCode::S, ModCode::AnyControl | ModCode::AnyShift)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.save_scene_as(); }
     }
@@ -88,7 +88,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "fullscreen_viewport",
-      .primary_inputs = {InputCode(KeyCode::F11)},
+      .primary_inputs = {InputCode(ScanCode::F11)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.main_viewport_panel.toggle_fullscreen(); }
     }

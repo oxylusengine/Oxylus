@@ -7,20 +7,20 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-auto VirtualKeyboard::press(this const VirtualKeyboard& self, KeyCode keycode, ModCode mod) -> void {
+auto VirtualKeyboard::press(this const VirtualKeyboard& self, ScanCode keycode, ModCode mod) -> void {
   self.push_key_event(keycode, mod, true);
 }
 
-auto VirtualKeyboard::release(this const VirtualKeyboard& self, KeyCode keycode, ModCode mod) -> void {
+auto VirtualKeyboard::release(this const VirtualKeyboard& self, ScanCode keycode, ModCode mod) -> void {
   self.push_key_event(keycode, mod, false);
 }
 
-void VirtualKeyboard::tap(this const VirtualKeyboard& self, KeyCode keycode, ModCode mod) {
+void VirtualKeyboard::tap(this const VirtualKeyboard& self, ScanCode keycode, ModCode mod) {
   self.press(keycode);
   self.release(keycode);
 }
 
-void VirtualKeyboard::push_key_event(this const VirtualKeyboard& self, KeyCode keycode, ModCode mod, bool down) {
+void VirtualKeyboard::push_key_event(this const VirtualKeyboard& self, ScanCode keycode, ModCode mod, bool down) {
   SDL_Event event;
   SDL_zero(event);
 
@@ -29,8 +29,8 @@ void VirtualKeyboard::push_key_event(this const VirtualKeyboard& self, KeyCode k
   event.common.timestamp = SDL_GetTicksNS();
 
   event.key.type = static_cast<SDL_EventType>(event.type);
-  event.key.key = static_cast<SDL_Keycode>(keycode);
   event.key.mod = static_cast<SDL_Keymod>(mod);
+  event.key.scancode = static_cast<SDL_Scancode>(keycode);
   event.key.down = down;
   event.key.repeat = false;
   event.key.which = 0;

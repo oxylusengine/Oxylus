@@ -328,7 +328,7 @@ void ViewportPanel::on_update() {
   const auto& window = App::get_window();
 
   auto& input_sys = App::mod<Input>();
-  if (input_sys.get_key_pressed(KeyCode::F)) {
+  if (input_sys.get_key_pressed(ScanCode::F)) {
     auto& editor_context = App::mod<Editor>().get_context();
     if (editor_context.entity.has_value()) {
       const auto entity_tc = editor_context.entity->get<TransformComponent>();
@@ -358,18 +358,18 @@ void ViewportPanel::on_update() {
 
     const float max_move_speed = camera_speed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f) * dt;
 
-    if (input_sys.get_key_held(KeyCode::W))
+    if (input_sys.get_key_held(ScanCode::W))
       final_position += cam.forward * max_move_speed;
-    else if (input_sys.get_key_held(KeyCode::S))
+    else if (input_sys.get_key_held(ScanCode::S))
       final_position -= cam.forward * max_move_speed;
-    if (input_sys.get_key_held(KeyCode::D))
+    if (input_sys.get_key_held(ScanCode::D))
       final_position += cam.right * max_move_speed;
-    else if (input_sys.get_key_held(KeyCode::A))
+    else if (input_sys.get_key_held(ScanCode::A))
       final_position -= cam.right * max_move_speed;
 
-    if (input_sys.get_key_held(KeyCode::Q)) {
+    if (input_sys.get_key_held(ScanCode::Q)) {
       final_position.y -= max_move_speed;
-    } else if (input_sys.get_key_held(KeyCode::E)) {
+    } else if (input_sys.get_key_held(ScanCode::E)) {
       final_position.y += max_move_speed;
     }
   }
@@ -749,20 +749,20 @@ void ViewportPanel::draw_gizmos() {
   const flecs::entity selected_entity = editor_context.entity.value_or(flecs::entity::null());
 
   auto& input_sys = App::mod<Input>();
-  if (input_sys.get_key_held(KeyCode::LeftControl)) {
-    if (input_sys.get_key_pressed(KeyCode::Q)) {
+  if (input_sys.get_key_held(ScanCode::LeftControl)) {
+    if (input_sys.get_key_pressed(ScanCode::Q)) {
       if (!ImGuizmo::IsUsing())
         gizmo_type_ = -1;
     }
-    if (input_sys.get_key_pressed(KeyCode::W)) {
+    if (input_sys.get_key_pressed(ScanCode::W)) {
       if (!ImGuizmo::IsUsing())
         gizmo_type_ = ImGuizmo::OPERATION::TRANSLATE;
     }
-    if (input_sys.get_key_pressed(KeyCode::E)) {
+    if (input_sys.get_key_pressed(ScanCode::E)) {
       if (!ImGuizmo::IsUsing())
         gizmo_type_ = ImGuizmo::OPERATION::ROTATE;
     }
-    if (input_sys.get_key_pressed(KeyCode::R)) {
+    if (input_sys.get_key_pressed(ScanCode::R)) {
       if (!ImGuizmo::IsUsing())
         gizmo_type_ = ImGuizmo::OPERATION::SCALE;
     }
@@ -789,7 +789,7 @@ void ViewportPanel::draw_gizmos() {
     glm::mat4 transform = Scene::get_world_transform(selected_entity);
 
     // Snapping
-    const bool snap = input_sys.get_key_held(KeyCode::LeftControl);
+    const bool snap = input_sys.get_key_held(ScanCode::LeftControl);
     float snap_value = 0.5f; // Snap to 0.5m for translation/scale
     // Snap to 45 degrees for rotation
     if (gizmo_type_ == ImGuizmo::OPERATION::ROTATE)

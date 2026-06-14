@@ -59,20 +59,20 @@ TEST_F(InputManagerTest, KeyboardTestPressed) {
   std::ignore = input.bind_action(
     ox::ActionBinding{
       .action_id = "test_pressed",
-      .primary_inputs = {ox::InputCode(ox::KeyCode::A)},
+      .primary_inputs = {ox::InputCode(ox::ScanCode::A)},
       .on_pressed_callback = [&pressed_callback](const ox::ActionContext&) { pressed_callback = true; }
     }
   );
   std::ignore = input.bind_action(
     ox::ActionBinding{
       .action_id = "test_pressed_mod",
-      .primary_inputs = {ox::InputCode(ox::KeyCode::A, ox::ModCode::AnyControl)},
+      .primary_inputs = {ox::InputCode(ox::ScanCode::A, ox::ModCode::AnyControl)},
       .on_pressed_callback = [&pressed_callback_mod](const ox::ActionContext&) { pressed_callback_mod = true; }
     }
   );
 
-  v_keyboard->press(ox::KeyCode::A);
-  v_keyboard->press(ox::KeyCode::A, ox::ModCode::AnyControl);
+  v_keyboard->press(ox::ScanCode::A);
+  v_keyboard->press(ox::ScanCode::A, ox::ModCode::AnyControl);
 
   app->get_window().update(app->get_timestep());
 
@@ -103,20 +103,20 @@ TEST_F(InputManagerTest, KeyboardTestReleased) {
   std::ignore = input.bind_action(
     ox::ActionBinding{
       .action_id = "test_released",
-      .primary_inputs = {ox::InputCode(ox::KeyCode::A)},
+      .primary_inputs = {ox::InputCode(ox::ScanCode::A)},
       .on_released_callback = [&released_callback](const ox::ActionContext&) { released_callback = true; }
     }
   );
   std::ignore = input.bind_action(
     ox::ActionBinding{
       .action_id = "test_released_mod",
-      .primary_inputs = {ox::InputCode(ox::KeyCode::A, ox::ModCode::AnyControl)},
+      .primary_inputs = {ox::InputCode(ox::ScanCode::A, ox::ModCode::AnyControl)},
       .on_released_callback = [&released_callback_mod](const ox::ActionContext&) { released_callback_mod = true; }
     }
   );
 
-  v_keyboard->release(ox::KeyCode::A);
-  v_keyboard->release(ox::KeyCode::A, ox::ModCode::AnyControl);
+  v_keyboard->release(ox::ScanCode::A);
+  v_keyboard->release(ox::ScanCode::A, ox::ModCode::AnyControl);
 
   app->get_window().update(app->get_timestep());
 
@@ -147,20 +147,20 @@ TEST_F(InputManagerTest, KeyboardTestHeld) {
   std::ignore = input.bind_action(
     ox::ActionBinding{
       .action_id = "test_held",
-      .primary_inputs = {ox::InputCode(ox::KeyCode::A)},
+      .primary_inputs = {ox::InputCode(ox::ScanCode::A)},
       .on_held_callback = [&held_callback](const ox::ActionContext&) { held_callback = true; }
     }
   );
   std::ignore = input.bind_action(
     ox::ActionBinding{
       .action_id = "test_held_mod",
-      .primary_inputs = {ox::InputCode(ox::KeyCode::A, ox::ModCode::AnyControl)},
+      .primary_inputs = {ox::InputCode(ox::ScanCode::A, ox::ModCode::AnyControl)},
       .on_held_callback = [&held_callback_mod](const ox::ActionContext&) { held_callback_mod = true; }
     }
   );
 
-  v_keyboard->press(ox::KeyCode::A);
-  v_keyboard->press(ox::KeyCode::A, ox::ModCode::AnyControl);
+  v_keyboard->press(ox::ScanCode::A);
+  v_keyboard->press(ox::ScanCode::A, ox::ModCode::AnyControl);
 
   app->get_window().update(app->get_timestep());
   app->get_window().update(app->get_timestep());

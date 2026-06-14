@@ -1,6 +1,7 @@
 #include "Core/Input.hpp"
 
 #include <SDL3/SDL_gamepad.h>
+#include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_timer.h>
 
@@ -28,8 +29,8 @@ auto Input::update() -> void {
 auto Input::reset_pressed() -> void {
   ZoneScoped;
 
-  input_data.keyboard_data.key_pressed.clear();
-  input_data.keyboard_data.key_released.clear();
+  input_data.keyboard_data.scancode_pressed.clear();
+  input_data.keyboard_data.scancode_released.clear();
   input_data.mouse_data.mouse_pressed.clear();
   input_data.mouse_data.mouse_released.clear();
   input_data.mouse_data.scroll_offset_y = 0;
@@ -52,7 +53,7 @@ auto Input::reset() -> void {
 auto Input::get_bindings(this const Input& self) -> std::unordered_multimap<std::string, ActionBinding> {
   ZoneScoped;
 
-return self.action_bindings;
+  return self.action_bindings;
 }
 
 auto Input::get_binding(this const Input& self, std::string_view action_id) -> const ActionBinding* {
@@ -260,37 +261,53 @@ auto Input::get_action_axis(this const Input& self, std::string_view action_id, 
   return {};
 }
 
-auto Input::get_key_pressed(this const Input& self, const KeyCode key) -> bool {
+auto Input::get_key_pressed(this const Input& self, const ScanCode key) -> bool {
   ZoneScoped;
 
-  const auto it = self.input_data.keyboard_data.key_pressed.find(key);
-  if (it != self.input_data.keyboard_data.key_pressed.end()) {
+  const auto it = self.input_data.keyboard_data.scancode_pressed.find(key);
+  if (it != self.input_data.keyboard_data.scancode_pressed.end()) {
     return it->second;
   }
 
   return false;
 }
 
-auto Input::get_key_released(this const Input& self, const KeyCode key) -> bool {
+auto Input::get_key_released(this const Input& self, const ScanCode key) -> bool {
   ZoneScoped;
 
-  const auto it = self.input_data.keyboard_data.key_released.find(key);
-  if (it != self.input_data.keyboard_data.key_released.end()) {
+  const auto it = self.input_data.keyboard_data.scancode_released.find(key);
+  if (it != self.input_data.keyboard_data.scancode_released.end()) {
     return it->second;
   }
 
   return false;
 }
 
-auto Input::get_key_held(this const Input& self, const KeyCode key) -> bool {
+auto Input::get_key_held(this const Input& self, const ScanCode key) -> bool {
   ZoneScoped;
 
-  const auto it = self.input_data.keyboard_data.key_held.find(key);
-  if (it != self.input_data.keyboard_data.key_held.end()) {
+  const auto it = self.input_data.keyboard_data.scancode_held.find(key);
+  if (it != self.input_data.keyboard_data.scancode_held.end()) {
     return it->second;
   }
 
   return false;
+}
+
+auto Input::get_keyboard_state(this const Input& self) -> std::pair<u32, const bool*> {
+  ZoneScoped;
+
+  int numkeys;
+  const bool* keyboard_state = SDL_GetKeyboardState(&numkeys);
+
+  return {numkeys, keyboard_state};
+}
+
+auto Input::get_mod_state(this const Input& self) -> ModCode {
+  ZoneScoped;
+
+  auto mod_state = SDL_GetModState();
+  return static_cast<ModCode>(mod_state);
 }
 
 auto Input::get_mouse_clicked(this const Input& self, const MouseCode key) -> bool {
@@ -456,16 +473,31 @@ auto Input::get_gamepad_axis(this const Input& self, u32 instance_id, const Game
   return 0.f;
 }
 
+auto Input::get_key_name(KeyCode key) -> std::string_view {
+  ZoneScoped;
+
+  auto key_name = SDL_GetKeyName(static_cast<SDL_Keycode>(key));
+  return key_name;
+}
+
+auto Input::get_key_code_from_scan_code(ScanCode scan_code) -> KeyCode {
+  return static_cast<KeyCode>(SDL_GetKeyFromScancode(static_cast<SDL_Scancode>(scan_code), SDL_GetModState(), false));
+}
+
+auto Input::get_scan_code_from_key_code(KeyCode key_code) -> ScanCode {
+  return static_cast<ScanCode>(SDL_GetScancodeFromKey(static_cast<SDL_Keycode>(key_code), nullptr));
+}
+
 auto Input::set_mod(const ModCode mod) -> void {
   ZoneScoped;
 
   input_data.mod_code = mod;
 }
 
-auto Input::set_key_pressed(const KeyCode key, const bool state) -> void {
+auto Input::set_key_pressed(const ScanCode scan_code, const bool state) -> void {
   ZoneScoped;
 
-  input_data.keyboard_data.key_pressed.insert_or_assign(key, state);
+  input_data.keyboard_data.scancode_pressed.insert_or_assign(scan_code, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
@@ -474,10 +506,10 @@ auto Input::set_key_pressed(const KeyCode key, const bool state) -> void {
   }
 }
 
-void Input::set_key_released(const KeyCode key, const bool state) {
+void Input::set_key_released(const ScanCode scan_code, const bool state) {
   ZoneScoped;
 
-  input_data.keyboard_data.key_released.insert_or_assign(key, state);
+  input_data.keyboard_data.scancode_released.insert_or_assign(scan_code, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
@@ -486,10 +518,10 @@ void Input::set_key_released(const KeyCode key, const bool state) {
   }
 }
 
-void Input::set_key_held(const KeyCode key, const bool state) {
+void Input::set_key_held(const ScanCode scan_code, const bool state) {
   ZoneScoped;
 
-  input_data.keyboard_data.key_held.insert_or_assign(key, state);
+  input_data.keyboard_data.scancode_held.insert_or_assign(scan_code, state);
 
   if (state) {
     for (const auto& [id, binding] : action_bindings) {
@@ -639,9 +671,9 @@ auto Input::check_input_active(
       case InputType::Any     : OX_ASSERT(false, "Input type can not be Any!"); break;
       case InputType::Keyboard: {
         switch (check_state) {
-          case InputState::Pressed : return self.get_key_pressed(input.key_code);
-          case InputState::Released: return self.get_key_released(input.key_code);
-          case InputState::Held    : return self.get_key_held(input.key_code);
+          case InputState::Pressed : return self.get_key_pressed(input.scan_code);
+          case InputState::Released: return self.get_key_released(input.scan_code);
+          case InputState::Held    : return self.get_key_held(input.scan_code);
           case InputState::None    : return false;
         }
         break;
