@@ -338,4 +338,12 @@ struct VirtualClipmap {
   glm::ivec2 page_offset = {};
   f32 z_near = 0.0f;
 };
+
+enum struct CullFlag : u32 {
+    TestFrustum = 1 << 0,
+    SelectLOD = 1 << 1,
+    TestOcclusion = 1 << 2,
+    LatePass = 1 << 3,
+};
+
 } // namespace ox::GPU

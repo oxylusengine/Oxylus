@@ -164,6 +164,11 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> debug_renderer_verticies_buffer = {};
 };
 
+struct CullContext {
+  GPU::CullFlag cull_flags = {};
+  GPU::CullCamera cull_camera = {};
+};
+
 struct MainGeometryContext {
   bool late = false;
   bool draw_overdraw = false;
