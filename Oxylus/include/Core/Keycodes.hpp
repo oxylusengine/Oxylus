@@ -574,25 +574,26 @@ constexpr bool mod_matches(ModCode current, ModCode required) noexcept {
   u16 current_bits = static_cast<u16>(current) & ~lock_mask;
   u16 required_bits = static_cast<u16>(required);
 
-  u16 normalized_current = current_bits;
+  constexpr u16 any_ctrl = static_cast<u16>(ModCode::AnyControl);
+  constexpr u16 any_shift = static_cast<u16>(ModCode::AnyShift);
+  constexpr u16 any_alt = static_cast<u16>(ModCode::AnyAlt);
+  constexpr u16 any_super = static_cast<u16>(ModCode::AnySuper);
 
-  if (current_bits & static_cast<u16>(ModCode::AnyControl)) {
-    normalized_current |= static_cast<u16>(ModCode::AnyControl);
-  }
-  if (current_bits & static_cast<u16>(ModCode::AnyShift)) {
-    normalized_current |= static_cast<u16>(ModCode::AnyShift);
-  }
-  if (current_bits & static_cast<u16>(ModCode::AnyAlt)) {
-    normalized_current |= static_cast<u16>(ModCode::AnyAlt);
-  }
-  if (current_bits & static_cast<u16>(ModCode::AnySuper)) {
-    normalized_current |= static_cast<u16>(ModCode::AnySuper);
-  }
+  bool ctrl_match = ((required_bits & any_ctrl) == any_ctrl) ? (current_bits & any_ctrl) != 0
+                                                             : (current_bits & any_ctrl) == (required_bits & any_ctrl);
 
-  constexpr u16 mod_mask = static_cast<u16>(ModCode::AnyControl) | static_cast<u16>(ModCode::AnyShift) |
-                           static_cast<u16>(ModCode::AnyAlt) | static_cast<u16>(ModCode::AnySuper);
+  bool shift_match = ((required_bits & any_shift) == any_shift)
+                       ? (current_bits & any_shift) != 0
+                       : (current_bits & any_shift) == (required_bits & any_shift);
 
-  return (normalized_current & mod_mask) == (required_bits & mod_mask);
+  bool alt_match = ((required_bits & any_alt) == any_alt) ? (current_bits & any_alt) != 0
+                                                          : (current_bits & any_alt) == (required_bits & any_alt);
+
+  bool super_match = ((required_bits & any_super) == any_super)
+                       ? (current_bits & any_super) != 0
+                       : (current_bits & any_super) == (required_bits & any_super);
+
+  return ctrl_match && shift_match && alt_match && super_match;
 }
 
 enum class MouseCode : u16 {

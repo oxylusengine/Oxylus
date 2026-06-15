@@ -1,6 +1,5 @@
 #include "EditorSettingsPanel.hpp"
 
-#include <SDL3/SDL_scancode.h>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 
@@ -29,11 +28,11 @@ auto EditorSettingsPanel::option_row_to_sv(OptionRows row) -> std::string_view {
 auto EditorSettingsPanel::draw_general_tab() -> void {
   ZoneScoped;
 
-  ImGui::BeginChild("right_panel", ImVec2(300, 0), ImGuiChildFlags_Borders);
+  ImGui::BeginChild("right_panel", ImVec2(320, 0), ImGuiChildFlags_Borders);
   {
     auto& editor = App::mod<Editor>();
     auto& undo_redo_system = editor.undo_redo_system;
-    UI::begin_properties(UI::default_properties_flags, true, 0.3f);
+    UI::begin_properties(UI::default_properties_flags, true, 0.4f);
     auto current_history_size = undo_redo_system->get_max_history_size();
     if (UI::property("Undo history size", &current_history_size))
       undo_redo_system->set_max_history_size(current_history_size);
@@ -45,13 +44,13 @@ auto EditorSettingsPanel::draw_general_tab() -> void {
 auto EditorSettingsPanel::draw_keybinds_tab() -> void {
   ZoneScoped;
 
-  ImGui::BeginChild("right_panel", ImVec2(300, 0), ImGuiChildFlags_Borders);
+  ImGui::BeginChild("right_panel", ImVec2(320, 0), ImGuiChildFlags_Borders);
   {
     auto& input = App::mod<Input>();
     auto bindings = input.get_bindings();
     static std::string waiting_for_bind = "";
 
-    UI::begin_properties(UI::default_properties_flags, true, 0.5f);
+    UI::begin_properties(UI::default_properties_flags, true, 0.4f);
 
     for (auto& [id, binding] : bindings) {
       if (binding.context == "editor") {
