@@ -80,7 +80,6 @@ void EditorTheme::apply_theme(bool dark) {
   ImVec4* colors = ImGui::GetStyle().Colors;
 
   if (dark) {
-
     colors[ImGuiCol_Text] = ImVec4(1.f, 1.f, 1.f, 1.00f);
     colors[ImGuiCol_TextDisabled] = ImVec4(0.42f, 0.42f, 0.42f, 1.00f);
     colors[ImGuiCol_TextSelectedBg] = ImVec4(0.85f, 0.48f, 0.00f, 0.73f);
@@ -98,11 +97,11 @@ void EditorTheme::apply_theme(bool dark) {
     colors[ImGuiCol_Border] = ImVec4(0.178f, 0.178f, 0.178f, 1.000f);
     colors[ImGuiCol_BorderShadow] = ImVec4(0.178f, 0.178f, 0.178f, 1.000f);
 
-    colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
-    colors[ImGuiCol_TitleBgActive] = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
-    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
+    colors[ImGuiCol_TitleBg] = Gruvbox::dark0_hardest;
+    colors[ImGuiCol_TitleBgActive] = Gruvbox::dark0_hardest;
+    colors[ImGuiCol_TitleBgCollapsed] = Gruvbox::dark0_hardest;
 
-    colors[ImGuiCol_MenuBarBg] = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
+    colors[ImGuiCol_MenuBarBg] = Gruvbox::dark0_hardest;
 
     colors[ImGuiCol_ScrollbarBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
     colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.34f, 0.34f, 0.34f, 1.00f);
@@ -118,15 +117,15 @@ void EditorTheme::apply_theme(bool dark) {
     colors[ImGuiCol_ButtonHovered] = ImVec4(0.28f, 0.28f, 0.28f, 1.00f);
     colors[ImGuiCol_ButtonActive] = ImVec4(1.00f, 0.56f, 0.00f, 0.82f);
 
-    colors[ImGuiCol_Header] = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);
+    colors[ImGuiCol_Header] = Gruvbox::dark0_hardest;
     colors[ImGuiCol_HeaderHovered] = ImVec4(0.27f, 0.27f, 0.27f, 1.00f);
     colors[ImGuiCol_HeaderActive] = ImVec4(0.27f, 0.27f, 0.27f, 1.00f);
 
-    colors[ImGuiCol_Separator] = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
+    colors[ImGuiCol_Separator] = Gruvbox::dark0_hardest;
     colors[ImGuiCol_SeparatorHovered] = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
     colors[ImGuiCol_SeparatorActive] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
 
-    colors[ImGuiCol_ResizeGrip] = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
+    colors[ImGuiCol_ResizeGrip] = Gruvbox::dark0_hardest;
     colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.19f, 0.19f, 0.19f, 1.00f);
     colors[ImGuiCol_ResizeGripActive] = ImVec4(0.31f, 0.31f, 0.31f, 1.00f);
 
@@ -205,7 +204,7 @@ void EditorTheme::set_style() {
     style->TabBorderSize = 1.0f;
     style->DockingSeparatorSize = 3.0f;
 
-    style->WindowRounding = 6.0f;
+    style->WindowRounding = 0.0f;
     style->ChildRounding = 0.0f;
     style->FrameRounding = 2.0f;
     style->PopupRounding = 2.0f;

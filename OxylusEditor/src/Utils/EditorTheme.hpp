@@ -8,6 +8,7 @@ struct ImFont;
 
 namespace ox {
 namespace Gruvbox {
+constexpr auto dark0_hardest = ImColor(20, 20, 20, 255);
 constexpr auto dark0_hard = ImColor(29, 32, 33, 255);
 constexpr auto dark0 = ImColor(40, 40, 40, 255);
 constexpr auto dark0_soft = ImColor(50, 48, 47, 255);

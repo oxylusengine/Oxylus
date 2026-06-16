@@ -32,7 +32,7 @@ auto EditorSettingsPanel::draw_general_tab() -> void {
   {
     auto& editor = App::mod<Editor>();
     auto& undo_redo_system = editor.undo_redo_system;
-    UI::begin_properties(UI::default_properties_flags, true, 0.4f);
+    UI::begin_properties(UI::default_properties_flags | ImGuiTableFlags_BordersInnerH, true, 0.4f);
     auto current_history_size = undo_redo_system->get_max_history_size();
     if (UI::property("Undo history size", &current_history_size))
       undo_redo_system->set_max_history_size(current_history_size);
@@ -50,7 +50,7 @@ auto EditorSettingsPanel::draw_keybinds_tab() -> void {
     auto bindings = input.get_bindings();
     static std::string waiting_for_bind = "";
 
-    UI::begin_properties(UI::default_properties_flags, true, 0.4f);
+    UI::begin_properties(UI::default_properties_flags | ImGuiTableFlags_BordersInnerH, true, 0.4f);
 
     for (auto& [id, binding] : bindings) {
       if (binding.context == "editor") {
@@ -147,7 +147,7 @@ void EditorSettingsPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
           auto opt_sv = option_row_to_sv(opt);
           ImGui::TableNextRow();
           ImGui::TableNextColumn();
-          if (ImGui::Selectable(opt_sv.data())) {
+          if (ImGui::Selectable(opt_sv.data(), this->selected_row == opt)) {
             this->selected_row = opt;
           }
         }
