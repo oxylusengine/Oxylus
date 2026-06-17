@@ -324,8 +324,16 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   };
 
   // CullGeometryContext is hoisted outside the clipmap loop so the visibility /
-  // dispatch-command buffers allocated by the first cascade's `cull_meshes`
-  // pre-pass persist across subsequent cascades.
+  // dispatch-command buffers allocated by the first iteration's `cull_meshes`
+  // pre-pass persist across subsequent iterations.
+  //
+  // We iterate from the largest clipmap (highest index) down to the smallest.
+  // Clipmap 0 covers the smallest area around the camera; if we ran `cull_meshes`
+  // against it, any mesh outside that tiny frustum would be marked invisible and
+  // stay invisible for every subsequent clipmap. The largest clipmap's frustum
+  // contains all the others, so culling against it yields a superset of every
+  // clipmap's visible meshes. Per-clipmap `cull_meshlets` then refines against
+  // each clipmap's own (tighter) frustum.
   auto cull_geometry_context = CullGeometryContext{
     .use_hiz = false,
   };
@@ -341,7 +349,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
      .layer_count = 1}
   );
 
-  for (auto clipmap_index = 0_u32; clipmap_index < RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT; clipmap_index++) {
+  for (auto reverse_index = 0_u32; reverse_index < RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT; reverse_index++) {
+    const auto clipmap_index = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT - 1 - reverse_index;
     const auto& clipmap = directional_clipmaps[clipmap_index];
     clipmap_camera.projection_view = clipmap.projection_view_mat;
     clipmap_camera.near_clip = clipmap.z_near;
@@ -349,7 +358,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vsm_ctx.curr_clipmap_index = clipmap_index;
 
     cull_geometry_context.cull_camera = clipmap_camera;
-    cull_geometry_context.init_cull_meshes = (clipmap_index == 0);
+    cull_geometry_context.init_cull_meshes = (reverse_index == 0);
     self.cull_geometry(cull_geometry_context);
     geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
 

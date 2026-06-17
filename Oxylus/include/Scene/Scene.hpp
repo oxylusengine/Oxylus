@@ -115,7 +115,12 @@ public:
 
   auto set_dirty(this Scene& self, flecs::entity entity) -> void;
 
-  auto safe_entity_name(this const Scene& self, std::string prefix) -> std::string;
+  // Returns `prefix` (or a non-conflicting variant) that is free both at the
+  // world root and under `parent`'s child scope. Pass an invalid `parent` to
+  // only check the world root. This is needed because flecs registers child
+  // names in the parent's own name index when `child_of` is added, so a name
+  // that's free at the root can still conflict under a parent.
+  auto safe_entity_name(this const Scene& self, std::string prefix, flecs::entity parent = {}) -> std::string;
 
   auto get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem*;
   auto get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, LuaSystem*>&;
