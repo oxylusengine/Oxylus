@@ -303,15 +303,74 @@ struct JsonEntityDeserializer : IEntitySerializer {
   }
 };
 
-auto Scene::safe_entity_name(this const Scene& self, std::string prefix) -> std::string {
+auto Scene::safe_entity_name(this const Scene& self, std::string prefix, flecs::entity parent) -> std::string {
   ZoneScoped;
 
-  u32 index = 0;
-  std::string new_entity_name = prefix;
-  while (self.world.lookup(new_entity_name.data()) > 0) {
-    index += 1;
-    new_entity_name = fmt::format("{}_{}", prefix, index);
+  // A name must be free BOTH at the world root (where `world.entity(name)` will
+  // initially create it) AND under `parent`'s child scope (where it lands after
+  // `child_of(parent)` reparents it). flecs keeps a per-scope name index, so a
+  // name that's free at the root can still cause `flecs_reparent_name_index` to
+  // abort when the parent already has a child by that name.
+  auto name_exists = [&](const char* name) -> bool {
+    if (parent.is_valid()) {
+      if (parent.lookup(name) != 0) {
+        return true;
+      }
+    }
+    return self.world.lookup(name) > 0;
+  };
+
+  // Fast path: prefix itself is free.
+  if (!name_exists(prefix.data())) {
+    return prefix;
   }
+
+  // Detect a Blender-style ".NNN" suffix (e.g. "leaf.001", "Cube.042"). If the
+  // original name already exists, we increment the numeric portion so that
+  // duplicated exports get sensible successors ("leaf.001" -> "leaf.002" ->
+  // "leaf.003") instead of the uglier "leaf.001_1" / "leaf.001_2" the old
+  // logic produced. Names without such a suffix fall back to "_1", "_2", ...
+  auto try_parse_blender_suffix = [](const std::string& s, std::string& out_base, u32& out_num, usize& out_width)
+    -> bool {
+    const auto dot = s.rfind('.');
+    if (dot == std::string::npos || dot == 0) {
+      return false;
+    }
+    const auto suffix = std::string_view{s}.substr(dot + 1);
+    if (suffix.empty() || suffix.size() > 9) {
+      return false;
+    }
+    for (char c : suffix) {
+      if (c < '0' || c > '9') {
+        return false;
+      }
+    }
+    out_base = s.substr(0, dot);
+    out_num = static_cast<u32>(std::stoul(std::string{suffix}));
+    out_width = suffix.size();
+    return true;
+  };
+
+  auto new_entity_name = prefix;
+
+  std::string base;
+  u32 num = 0;
+  usize width = 0;
+  const bool is_blender_style = try_parse_blender_suffix(prefix, base, num, width);
+
+  if (is_blender_style) {
+    do {
+      num += 1;
+      new_entity_name = fmt::format("{}.{:0{}}", base, num, width);
+    } while (name_exists(new_entity_name.data()));
+  } else {
+    u32 index = 0;
+    do {
+      index += 1;
+      new_entity_name = fmt::format("{}_{}", prefix, index);
+    } while (name_exists(new_entity_name.data()));
+  }
+
   return new_entity_name;
 }
 
@@ -1404,7 +1463,13 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
     const auto& mesh_group = model->mesh_groups[mesh_group_index];
     processing_nodes.pop();
 
-    auto node_entity = self.create_entity(mesh_group.name);
+    // Resolve a name that's unique both at the world root and under
+    // `parent_entity`'s child scope BEFORE creating the entity. `create_entity`
+    // would only deduplicate against the root, which still triggers flecs's
+    // `flecs_reparent_name_index` abort when `child_of` finds the name already
+    // registered under the parent.
+    const auto safe_node_name = self.safe_entity_name(std::string{mesh_group.name}, parent_entity);
+    auto node_entity = self.create_entity(safe_node_name, false);
     node_entity.set<TransformComponent>({
       .position = mesh_group.translation,
       .rotation = mesh_group.rotation,
@@ -1416,7 +1481,8 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
     for (const auto mesh_index : mesh_group.mesh_indices) {
       memory::ScopedStack stack;
       auto mesh_entity_name = !mesh_group.name.empty() ? stack.format("{} Mesh {}", mesh_group.name, mesh_index) : "";
-      auto mesh_entity = self.create_entity(std::string(mesh_entity_name));
+      const auto safe_mesh_name = self.safe_entity_name(std::string{mesh_entity_name}, node_entity);
+      auto mesh_entity = self.create_entity(safe_mesh_name, false);
       auto material_index = model->material_indices[mesh_index];
       auto material_uuid = material_index.has_value() ? model->materials[material_index.value()] : UUID(nullptr);
       mesh_entity.set<TransformComponent>({});
