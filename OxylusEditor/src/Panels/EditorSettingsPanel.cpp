@@ -9,7 +9,7 @@
 #include "UI/UI.hpp"
 
 namespace ox {
-EditorSettingsPanel::EditorSettingsPanel() : EditorPanel("Editor Settings", ICON_MDI_COGS, false) {
+EditorSettingsPanel::EditorSettingsPanel() : EditorPanelState("Editor Settings", ICON_MDI_COGS, false) {
   this->window_default_size = {500, 300};
   this->window_sizing_cond = ImGuiCond_Always;
   this->window_center_at_appear = true;
@@ -130,10 +130,10 @@ auto EditorSettingsPanel::draw_keybinds_tab() -> void {
   ImGui::EndChild();
 }
 
-void EditorSettingsPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
+auto EditorSettingsPanel::on_render(this EditorSettingsPanel& self, vuk::ImageAttachment swapchain_attachment) -> void {
   constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking |
                                             ImGuiWindowFlags_NoResize;
-  if (on_begin(window_flags)) {
+  if (self.on_begin(window_flags)) {
     constexpr auto table_flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersOuter |
                                  ImGuiTableFlags_BordersV | ImGuiTableFlags_BordersH;
 
@@ -144,24 +144,24 @@ void EditorSettingsPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       if (ImGui::BeginTable("options_side", 1, ImGuiTableFlags_BordersH)) {
         for (u32 opt_index = 0; opt_index < static_cast<u32>(OptionRows::Count); opt_index++) {
           auto opt = static_cast<OptionRows>(opt_index);
-          auto opt_sv = option_row_to_sv(opt);
+          auto opt_sv = self.option_row_to_sv(opt);
           ImGui::TableNextRow();
           ImGui::TableNextColumn();
-          if (ImGui::Selectable(opt_sv.data(), this->selected_row == opt)) {
-            this->selected_row = opt;
+          if (ImGui::Selectable(opt_sv.data(), self.selected_row == opt)) {
+            self.selected_row = opt;
           }
         }
         ImGui::EndTable();
       }
       ImGui::TableNextColumn();
 
-      switch (this->selected_row) {
+      switch (self.selected_row) {
         case OptionRows::General: {
-          this->draw_general_tab();
+          self.draw_general_tab();
           break;
         }
         case OptionRows::Keybinds: {
-          this->draw_keybinds_tab();
+          self.draw_keybinds_tab();
           break;
         }
         default: break;
@@ -170,7 +170,7 @@ void EditorSettingsPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       ImGui::EndTable();
     }
 
-    on_end();
+    self.on_end();
   }
 }
 } // namespace ox

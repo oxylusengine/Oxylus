@@ -1,10 +1,10 @@
 #pragma once
 
-#include "Panels/EditorPanel.hpp"
+#include "Panels/EditorPanelState.hpp"
 #include "ViewportPanel.hpp"
 
 namespace ox {
-class MainViewportPanel : public EditorPanel {
+class MainViewportPanel : public EditorPanelState {
 public:
   MainViewportPanel();
 
@@ -20,7 +20,9 @@ public:
   auto add_new_play_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void;
   auto add_viewport(this MainViewportPanel& self) -> ViewportPanel*;
 
-  void on_render(vuk::ImageAttachment swapchain_attachment) override;
+  auto on_update(this MainViewportPanel& self) -> void{}
+  auto on_render(this MainViewportPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+
   void update(this MainViewportPanel& self, const Timestep& timestep, SceneHierarchyPanel* sh);
 
   auto update_dockspace(this MainViewportPanel& self) -> void;

@@ -3,18 +3,17 @@
 #include <filesystem>
 
 #include "Asset/Texture.hpp"
-#include "EditorPanel.hpp"
+#include "EditorPanelState.hpp"
 
 namespace ox {
-class ProjectPanel : public EditorPanel {
+class ProjectPanel : public EditorPanelState {
 public:
   ProjectPanel();
-  ~ProjectPanel() override = default;
 
-  void on_update() override;
-  void on_render(vuk::ImageAttachment swapchain_attachment) override;
+  auto on_update(this ProjectPanel& self) -> void {}
+  auto on_render(this ProjectPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
 
-  void load_project_for_editor(const std::filesystem::path& filepath);
+  auto load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) -> void;
 
 private:
   std::shared_ptr<Texture> engine_banner = nullptr;

@@ -234,7 +234,7 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(
   return {any_node_clicked, node_clicked};
 }
 
-ContentPanel::ContentPanel() : EditorPanel("Contents", ICON_MDI_FOLDER_STAR, true) {
+ContentPanel::ContentPanel() : EditorPanelState("Contents", ICON_MDI_FOLDER_STAR, true) {
   _white_texture = std::make_shared<Texture>();
   char white_texture_data[16 * 16 * 4];
   memset(white_texture_data, 0xff, 16 * 16 * 4);
@@ -248,58 +248,58 @@ ContentPanel::ContentPanel() : EditorPanel("Contents", ICON_MDI_FOLDER_STAR, tru
   );
 }
 
-void ContentPanel::init() {
+void ContentPanel::init(this ContentPanel& self) {
   auto vfs = App::get_vfs();
   if (!vfs.is_mounted_dir(VFS::PROJECT_DIR))
     return;
 
   auto assets_dir = vfs.resolve_physical_dir(VFS::PROJECT_DIR, "");
-  assets_directory_ = assets_dir;
-  current_directory_ = assets_directory_;
-  refresh();
+  self.assets_directory_ = assets_dir;
+  self.current_directory_ = self.assets_directory_;
+  self.refresh();
 
-  this->filewatch = std::make_unique<filewatch::FileWatch<std::string>>(
-    assets_directory_.string(),
-    [this](const auto&, const filewatch::Event e) { refresh(); }
+  self.filewatch = std::make_unique<filewatch::FileWatch<std::string>>(
+    self.assets_directory_.string(),
+    [&self](const auto&, const filewatch::Event e) { self.refresh(); }
   );
 }
 
-void ContentPanel::on_update() { elapsed_time_ += static_cast<float>(App::get_timestep()); }
+void ContentPanel::on_update(this ContentPanel& self) { self.elapsed_time_ += static_cast<float>(App::get_timestep()); }
 
-void ContentPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
+void ContentPanel::on_render(this ContentPanel& self, vuk::ImageAttachment swapchain_attachment) {
   constexpr ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar;
 
   constexpr ImGuiTableFlags tableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_ContextMenuInBody;
 
-  if (assets_directory_.empty()) {
-    init();
+  if (self.assets_directory_.empty()) {
+    self.init();
   }
 
-  on_begin(windowFlags);
+  self.on_begin(windowFlags);
   {
-    render_header();
+    self.render_header();
     ImGui::Separator();
     const ImVec2 availableRegion = ImGui::GetContentRegionAvail();
     if (ImGui::BeginTable("MainViewTable", 2, tableFlags, availableRegion)) {
       ImGui::TableSetupColumn("##side_view", ImGuiTableColumnFlags_WidthFixed, 150);
       ImGui::TableNextRow();
       ImGui::TableNextColumn();
-      render_side_view();
+      self.render_side_view();
       ImGui::TableNextColumn();
-      render_body(EditorCVar::cvar_file_thumbnail_size.get() >= thumbnail_size_grid_limit);
+      self.render_body(EditorCVar::cvar_file_thumbnail_size.get() >= self.thumbnail_size_grid_limit);
 
       ImGui::EndTable();
     }
   }
-  on_end();
+  self.on_end();
 }
 
-void ContentPanel::render_header() {
+void ContentPanel::render_header(this ContentPanel& self) {
   if (UI::button(ICON_MDI_COG))
     ImGui::OpenPopup("SettingsPopup");
   ImGui::SameLine();
   if (UI::button(ICON_MDI_REFRESH)) {
-    refresh();
+    self.refresh();
   }
 
   if (ImGui::BeginPopup("SettingsPopup")) {
@@ -307,8 +307,8 @@ void ContentPanel::render_header() {
     UI::property(
       "Thumbnail Size",
       EditorCVar::cvar_file_thumbnail_size.get_ptr(),
-      thumbnail_size_grid_limit - 0.1f,
-      thumbnail_max_limit
+      self.thumbnail_size_grid_limit - 0.1f,
+      self.thumbnail_max_limit
     );
     UI::property("Show file thumbnails", reinterpret_cast<bool*>(EditorCVar::cvar_file_thumbnails.get_ptr()));
     UI::property("Show meta files", reinterpret_cast<bool*>(EditorCVar::cvar_show_meta_files.get_ptr()));
@@ -318,8 +318,8 @@ void ContentPanel::render_header() {
 
   ImGui::SameLine();
   const float cursorPosX = ImGui::GetCursorPosX();
-  filter_.Draw("###ConsoleFilter", ImGui::GetContentRegionAvail().x);
-  if (!filter_.IsActive()) {
+  self.filter_.Draw("###ConsoleFilter", ImGui::GetContentRegionAvail().x);
+  if (!self.filter_.IsActive()) {
     ImGui::SameLine();
     ImGui::SetCursorPosX(cursorPosX + ImGui::GetFontSize() * 0.5f);
     ImGui::TextUnformatted(ICON_MDI_MAGNIFY " Search...");
@@ -331,7 +331,7 @@ void ContentPanel::render_header() {
   // Back button
   {
     bool disabled_back_button = false;
-    if (current_directory_ == assets_directory_)
+    if (self.current_directory_ == self.assets_directory_)
       disabled_back_button = true;
 
     if (disabled_back_button) {
@@ -340,8 +340,8 @@ void ContentPanel::render_header() {
     }
 
     if (UI::button(ICON_MDI_ARROW_LEFT_CIRCLE_OUTLINE)) {
-      back_stack_.push(current_directory_);
-      update_directory_entries(current_directory_.parent_path());
+      self.back_stack_.push(self.current_directory_);
+      self.update_directory_entries(self.current_directory_.parent_path());
     }
 
     if (disabled_back_button) {
@@ -355,7 +355,7 @@ void ContentPanel::render_header() {
   // Front button
   {
     bool disabled_front_button = false;
-    if (back_stack_.empty())
+    if (self.back_stack_.empty())
       disabled_front_button = true;
 
     if (disabled_front_button) {
@@ -364,9 +364,9 @@ void ContentPanel::render_header() {
     }
 
     if (UI::button(ICON_MDI_ARROW_RIGHT_CIRCLE_OUTLINE)) {
-      const auto& top = back_stack_.top();
-      update_directory_entries(top);
-      back_stack_.pop();
+      const auto& top = self.back_stack_.top();
+      self.update_directory_entries(top);
+      self.back_stack_.pop();
     }
 
     if (disabled_front_button) {
@@ -379,14 +379,14 @@ void ContentPanel::render_header() {
 
   ImGui::SameLine();
   if (UI::button(ICON_MDI_HOME)) {
-    directory_to_open = assets_directory_;
+    directory_to_open = self.assets_directory_;
   }
 
   ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
   ImGui::PushStyleColor(ImGuiCol_Button, {0.0f, 0.0f, 0.0f, 0.0f});
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, {0.0f, 0.0f, 0.0f, 0.0f});
-  std::filesystem::path current = assets_directory_.parent_path();
-  const std::filesystem::path current_directory = std::filesystem::relative(current_directory_, current);
+  std::filesystem::path current = self.assets_directory_.parent_path();
+  const std::filesystem::path current_directory = std::filesystem::relative(self.current_directory_, current);
 
   ImGui::SameLine();
   ImGui::TextUnformatted(ICON_MDI_FOLDER);
@@ -398,7 +398,7 @@ void ContentPanel::render_header() {
       directory_to_open = current;
     }
 
-    if (current_directory_ != current) {
+    if (self.current_directory_ != current) {
       ImGui::SameLine();
       ImGui::TextUnformatted("/");
     }
@@ -407,10 +407,10 @@ void ContentPanel::render_header() {
   ImGui::PopStyleVar();
 
   if (!directory_to_open.empty())
-    update_directory_entries(directory_to_open);
+    self.update_directory_entries(directory_to_open);
 }
 
-void ContentPanel::render_side_view() {
+void ContentPanel::render_side_view(this ContentPanel& self) {
   ZoneScoped;
   static int selection_mask = 0;
 
@@ -428,7 +428,7 @@ void ContentPanel::render_side_view() {
     const auto& editor_theme = App::mod<Editor>().editor_theme;
 
     ImGuiTreeNodeFlags node_flags = tree_node_flags;
-    const bool selected = current_directory_ == assets_directory_ && selection_mask == 0;
+    const bool selected = self.current_directory_ == self.assets_directory_ && selection_mask == 0;
     if (selected) {
       node_flags |= ImGuiTreeNodeFlags_Selected;
       ImGui::PushStyleColor(ImGuiCol_Header, editor_theme.header_selected_color);
@@ -437,11 +437,11 @@ void ContentPanel::render_side_view() {
       ImGui::PushStyleColor(ImGuiCol_HeaderHovered, editor_theme.header_hovered_color);
     }
 
-    const bool opened = ImGui::TreeNodeEx(assets_directory_.string().c_str(), node_flags, "");
+    const bool opened = ImGui::TreeNodeEx(self.assets_directory_.string().c_str(), node_flags, "");
     ImGui::PopStyleColor(selected ? 2 : 1);
 
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-      update_directory_entries(assets_directory_);
+      self.update_directory_entries(self.assets_directory_);
       selection_mask = 0;
     }
     const char* folderIcon = opened ? ICON_MDI_FOLDER_OPEN : ICON_MDI_FOLDER;
@@ -454,8 +454,8 @@ void ContentPanel::render_side_view() {
 
     if (opened) {
       uint32_t count = 0;
-      const auto [is_clicked, clicked_node] = directory_tree_view_recursive(
-        assets_directory_,
+      const auto [is_clicked, clicked_node] = self.directory_tree_view_recursive(
+        self.assets_directory_,
         &count,
         &selection_mask,
         tree_node_flags
@@ -479,7 +479,7 @@ void ContentPanel::render_side_view() {
   ImGui::PopStyleVar();
 }
 
-void ContentPanel::render_body(bool grid) {
+void ContentPanel::render_body(this ContentPanel& self, bool grid) {
   const auto& editor_theme = App::mod<Editor>().editor_theme;
   auto& editor_context = App::mod<Editor>().get_context();
   auto& render_context = App::get_rendercontext();
@@ -526,9 +526,9 @@ void ContentPanel::render_body(bool grid) {
 
     int i = 0;
 
-    auto read_lock = std::shared_lock(directory_mutex_);
-    for (auto& file : directory_entries_) {
-      if (!filter_.PassFilter(file.name.c_str()))
+    auto read_lock = std::shared_lock(self.directory_mutex_);
+    for (auto& file : self.directory_entries_) {
+      if (!self.filter_.PassFilter(file.name.c_str()))
         continue;
 
       if (!(bool)EditorCVar::cvar_show_meta_files.get()) {
@@ -566,7 +566,7 @@ void ContentPanel::render_body(bool grid) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, editor_theme.popup_item_spacing);
         if (ImGui::BeginPopupContextItem()) {
           if (ImGui::MenuItem("Delete")) {
-            _directory_to_delete = path;
+            self._directory_to_delete = path;
             ImGui::CloseCurrentPopup();
           }
           if (ImGui::MenuItem("Rename")) {
@@ -575,7 +575,7 @@ void ContentPanel::render_body(bool grid) {
 
           ImGui::Separator();
 
-          if (auto p = draw_context_menu_items(path, is_dir); !p.empty()) {
+          if (auto p = self.draw_context_menu_items(path, is_dir); !p.empty()) {
             directory_to_open = p;
           }
           ImGui::EndPopup();
@@ -593,7 +593,7 @@ void ContentPanel::render_body(bool grid) {
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
           if (is_dir) {
             directory_to_open = path;
-            filter_.Clear();
+            self.filter_.Clear();
           } else {
             open_file(path);
             editor_context.reset();
@@ -604,7 +604,7 @@ void ContentPanel::render_body(bool grid) {
         ImGui::SetCursorPos({cursor_pos.x + padding, cursor_pos.y + padding});
         ImGui::SetNextItemAllowOverlap();
         UI::image(
-          *_white_texture,
+          *self._white_texture,
           {background_thumbnail_size.x - padding * 2.f, background_thumbnail_size.y - padding * 2.f},
           {},
           {},
@@ -623,7 +623,7 @@ void ContentPanel::render_body(bool grid) {
         const ImVec2 type_color_frame_size = {scaled_thumbnail_size_x, scaled_thumbnail_size_x * 0.03f};
         ImGui::SetCursorPosX(cursor_pos.x + padding);
         UI::image(
-          *_white_texture,
+          *self._white_texture,
           type_color_frame_size,
           {0, 0},
           {1, 1},
@@ -672,7 +672,7 @@ void ContentPanel::render_body(bool grid) {
 
         if (is_dir && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
           directory_to_open = path;
-          filter_.Clear();
+          self.filter_.Clear();
         }
 
         drag_drop_from(file.file_path.c_str());
@@ -707,7 +707,7 @@ void ContentPanel::render_body(bool grid) {
       )
     ) {
       editor_context.reset();
-      if (auto p = draw_context_menu_items(current_directory_, true); !p.empty()) {
+      if (auto p = self.draw_context_menu_items(self.current_directory_, true); !p.empty()) {
         directory_to_open = p;
       }
       ImGui::EndPopup();
@@ -722,7 +722,7 @@ void ContentPanel::render_body(bool grid) {
 
   ImGui::PopStyleVar();
 
-  if (!_directory_to_delete.empty()) {
+  if (!self._directory_to_delete.empty()) {
     if (!ImGui::IsPopupOpen("Delete?"))
       ImGui::OpenPopup("Delete?");
   }
@@ -730,54 +730,54 @@ void ContentPanel::render_body(bool grid) {
   if (ImGui::BeginPopupModal("Delete?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::Text(
       "%s will be deleted. \nAre you sure? This operation cannot be undone!\n\n",
-      _directory_to_delete.string().c_str()
+      self._directory_to_delete.string().c_str()
     );
     ImGui::Separator();
     if (ImGui::Button("OK", ImVec2(120, 0))) {
-      std::filesystem::remove_all(_directory_to_delete);
-      _directory_to_delete.clear();
-      refresh();
+      std::filesystem::remove_all(self._directory_to_delete);
+      self._directory_to_delete.clear();
+      self.refresh();
       ImGui::CloseCurrentPopup();
     }
     ImGui::SetItemDefaultFocus();
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(120, 0))) {
       ImGui::CloseCurrentPopup();
-      _directory_to_delete.clear();
+      self._directory_to_delete.clear();
     }
     editor_context.reset();
     ImGui::EndPopup();
   }
 
-  if (should_open_new_asset_popup)
+  if (self.should_open_new_asset_popup)
     ImGui::OpenPopup("New Material");
 
   if (ImGui::BeginPopupModal("New Material", nullptr, ImGuiWindowFlags_NoResize)) {
     UI::begin_properties();
-    UI::input_text("Name", &new_asset_name_);
+    UI::input_text("Name", &self.new_asset_name_);
     UI::end_properties();
 
     if (ImGui::Button("Create", ImVec2(120, 0))) {
-      if (!new_asset_name_.empty()) {
+      if (!self.new_asset_name_.empty()) {
         auto& asset_man = App::mod<AssetManager>();
-        auto asset = asset_man.create_asset(AssetType::Material, current_directory_.string());
+        auto asset = asset_man.create_asset(AssetType::Material, self.current_directory_.string());
         asset_man.load_asset(asset);
-        if (asset_man.export_asset(asset, (current_directory_ / new_asset_name_).string())) {
-          OX_LOG_INFO("Created new material asset {}", new_asset_name_);
-          refresh();
+        if (asset_man.export_asset(asset, (self.current_directory_ / self.new_asset_name_).string())) {
+          OX_LOG_INFO("Created new material asset {}", self.new_asset_name_);
+          self.refresh();
         } else {
-          OX_LOG_ERROR("Couldn't create material asset {}", new_asset_name_);
+          OX_LOG_ERROR("Couldn't create material asset {}", self.new_asset_name_);
         }
-        new_asset_name_.clear();
-        should_open_new_asset_popup = false;
+        self.new_asset_name_.clear();
+        self.should_open_new_asset_popup = false;
         ImGui::CloseCurrentPopup();
       }
     }
 
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-      new_asset_name_.clear();
-      should_open_new_asset_popup = false;
+      self.new_asset_name_.clear();
+      self.should_open_new_asset_popup = false;
       ImGui::CloseCurrentPopup();
     }
 
@@ -785,14 +785,14 @@ void ContentPanel::render_body(bool grid) {
   }
 
   if (!directory_to_open.empty())
-    update_directory_entries(directory_to_open);
+    self.update_directory_entries(directory_to_open);
 }
 
-void ContentPanel::update_directory_entries(const std::filesystem::path& directory) {
+void ContentPanel::update_directory_entries(this ContentPanel& self, const std::filesystem::path& directory) {
   ZoneScoped;
-  std::unique_lock lock(directory_mutex_);
-  current_directory_ = directory;
-  directory_entries_.clear();
+  std::unique_lock lock(self.directory_mutex_);
+  self.current_directory_ = directory;
+  self.directory_entries_.clear();
 
   if (directory.empty())
     return;
@@ -801,7 +801,7 @@ void ContentPanel::update_directory_entries(const std::filesystem::path& directo
   for (auto& directory_entry : directory_it) {
     const auto& path = directory_entry.path();
     auto file_name_str = path.filename().string();
-    const auto relative_path = std::filesystem::relative(path, assets_directory_);
+    const auto relative_path = std::filesystem::relative(path, self.assets_directory_);
     auto extension_str = path.extension().string();
 
     if (file_name_str.starts_with('.'))
@@ -836,15 +836,17 @@ void ContentPanel::update_directory_entries(const std::filesystem::path& directo
       file_type_color
     };
 
-    directory_entries_.push_back(entry);
+    self.directory_entries_.push_back(entry);
   }
 
-  elapsed_time_ = 0.0f;
+  self.elapsed_time_ = 0.0f;
 }
 
-void ContentPanel::refresh() { update_directory_entries(current_directory_); }
+void ContentPanel::refresh(this ContentPanel& self) { self.update_directory_entries(self.current_directory_); }
 
-std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesystem::path& context, bool is_dir) {
+std::filesystem::path ContentPanel::draw_context_menu_items(
+  this ContentPanel& self, const std::filesystem::path& context, bool is_dir
+) {
   std::filesystem::path dir_to_open = {};
 
   if (ImGui::MenuItem("Open")) {
@@ -870,8 +872,8 @@ std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesyste
         editor_context.reset(EditorContext::Type::File, new_folder_path);
       }
       if (ImGui::MenuItem("Material")) {
-        new_asset_name_.clear();
-        should_open_new_asset_popup = true;
+        self.new_asset_name_.clear();
+        self.should_open_new_asset_popup = true;
       }
       ImGui::EndMenu();
     }
@@ -886,7 +888,7 @@ std::filesystem::path ContentPanel::draw_context_menu_items(const std::filesyste
 
   if (is_dir) {
     if (ImGui::MenuItem("Refresh")) {
-      refresh();
+      self.refresh();
     }
   }
 

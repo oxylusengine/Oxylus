@@ -11,7 +11,7 @@
 #include "Render/DebugRenderer.hpp"
 
 namespace ox {
-SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON_MDI_VIEW_LIST, true) {
+SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanelState("Scene Hierarchy", ICON_MDI_VIEW_LIST, true) {
   viewer.add_icon = ICON_MDI_PLUS;
   viewer.search_icon = ICON_MDI_MAGNIFY;
   viewer.entity_icon = ICON_MDI_CUBE_OUTLINE;
@@ -33,26 +33,26 @@ SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanel("Scene Hierarchy", ICON
   });
 }
 
-auto SceneHierarchyPanel::on_update() -> void {
+auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
   auto& editor = App::mod<Editor>();
   auto& editor_context = editor.get_context();
   auto& undo_redo_system = editor.undo_redo_system;
 
   if (editor_context.type == EditorContext::Type::Entity) {
     if (editor_context.entity.has_value())
-      viewer.selected_entity_.set(editor_context.entity.value());
+      self.viewer.selected_entity_.set(editor_context.entity.value());
   } else {
-    viewer.selected_entity_.entity = flecs::entity::null();
+    self.viewer.selected_entity_.entity = flecs::entity::null();
   }
 
-  if (viewer.selected_entity_.get() != flecs::entity::null()) {
-    if (auto* cam = viewer.selected_entity_.get().try_get<CameraComponent>()) {
+  if (self.viewer.selected_entity_.get() != flecs::entity::null()) {
+    if (auto* cam = self.viewer.selected_entity_.get().try_get<CameraComponent>()) {
       const auto proj = cam->get_projection_matrix() * cam->get_view_matrix();
       auto& debug_renderer = App::mod<DebugRenderer>();
       debug_renderer.draw_frustum(proj, glm::vec4(0, 1, 0, 1), cam->near_clip, cam->far_clip);
     }
-    if (auto* light = viewer.selected_entity_.get().try_get<LightComponent>()) {
-      const glm::vec3 world_pos = Scene::get_world_position(viewer.selected_entity_.get());
+    if (auto* light = self.viewer.selected_entity_.get().try_get<LightComponent>()) {
+      const glm::vec3 world_pos = Scene::get_world_position(self.viewer.selected_entity_.get());
       if (light->type == LightComponent::Point) {
         auto& debug_renderer = App::mod<DebugRenderer>();
         debug_renderer.draw_sphere(light->radius, world_pos, glm::vec4(0, 1.f, 0.f, 1.f));
@@ -70,52 +70,52 @@ auto SceneHierarchyPanel::on_update() -> void {
         return cloned_entity.set_name(clone_name.data());
       };
 
-      viewer.selected_entity_.set(clone_entity(viewer.selected_entity_.get()));
+      self.viewer.selected_entity_.set(clone_entity(self.viewer.selected_entity_.get()));
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Delete) &&
-        (viewer.table_hovered_ || editor.main_viewport_panel.get_focused_viewport())) {
-      viewer.deleted_entity_ = viewer.selected_entity_.get();
+        (self.viewer.table_hovered_ || editor.main_viewport_panel.get_focused_viewport())) {
+      self.viewer.deleted_entity_ = self.viewer.selected_entity_.get();
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F2)) {
-      viewer.renaming_entity_ = viewer.selected_entity_.get();
+      self.viewer.renaming_entity_ = self.viewer.selected_entity_.get();
     }
   }
 
-  if (viewer.selected_script_ && ImGui::IsKeyPressed(ImGuiKey_Delete) &&
-      (viewer.table_hovered_ || viewer.table_hovered_scripts)) {
-    viewer.get_scene()->remove_lua_system(*viewer.selected_script_);
+  if (self.viewer.selected_script_ && ImGui::IsKeyPressed(ImGuiKey_Delete) &&
+      (self.viewer.table_hovered_ || self.viewer.table_hovered_scripts)) {
+    self.viewer.get_scene()->remove_lua_system(*self.viewer.selected_script_);
   }
 
-  if (viewer.deleted_entity_) {
-    auto command_id = fmt::format("delete entity {}", viewer.deleted_entity_.name().c_str());
-    undo_redo_system->execute_command<EntityDeleteCommand>(viewer.get_scene(), viewer.deleted_entity_, "", command_id);
-    viewer.selected_entity_.reset();
+  if (self.viewer.deleted_entity_) {
+    auto command_id = fmt::format("delete entity {}", self.viewer.deleted_entity_.name().c_str());
+    undo_redo_system->execute_command<EntityDeleteCommand>(self.viewer.get_scene(), self.viewer.deleted_entity_, "", command_id);
+    self.viewer.selected_entity_.reset();
   }
 }
 
-auto SceneHierarchyPanel::on_render(vuk::ImageAttachment swapchain_attachment) -> void {
+auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAttachment swapchain_attachment) -> void {
   ZoneScoped;
 
-  viewer.render(id_.c_str(), &visible);
+  self.viewer.render(self.id.c_str(), &self.visible);
 }
 
-auto SceneHierarchyPanel::set_scene(EditorScene* scene) -> void {
+auto SceneHierarchyPanel::set_scene(this SceneHierarchyPanel& self, EditorScene* scene) -> void {
   ZoneScoped;
 
   if (scene == nullptr) {
-    current_scene = nullptr;
-    viewer.set_scene(nullptr);
+    self.current_scene = nullptr;
+    self.viewer.set_scene(nullptr);
 
     return;
   }
 
-  current_scene = scene;
-  viewer.set_scene(scene->get_scene().get());
+  self.current_scene = scene;
+  self.viewer.set_scene(scene->get_scene().get());
 }
 
-auto SceneHierarchyPanel::get_scene() const -> EditorScene* {
+auto SceneHierarchyPanel::get_scene(this const SceneHierarchyPanel& self) -> EditorScene* {
   ZoneScoped;
 
-  return current_scene;
+  return self.current_scene;
 }
 } // namespace ox
