@@ -47,7 +47,7 @@ packages = {
     },
   },
   ["simdjson v4.0.6"] = {},
-  ["joltphysics-ox v5.5.0"] = {
+  ["joltphysics v5.5.0"] = {
     configs = {
       debug_renderer = true,
       rtti = true,
@@ -57,7 +57,6 @@ packages = {
       sse4_1 = true,
       sse4_2 = true,
       tzcnt = true,
-      enable_floating_point_exceptions = false,
     },
   },
   ["tracy v0.11.1"] = {
