@@ -68,19 +68,17 @@ auto RendererInstance::generate_hiz(this RendererInstance&, MainGeometryContext&
   );
 }
 
-auto RendererInstance::cull_for_visbuffer(
-  this RendererInstance& self, MainGeometryContext& context, const GPU::CullCamera& cull_camera
-) -> void {
+auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 
-  if (!context.late) {
-    // TODO: Slang is fucking up as usual when using this as push constants BDA
-    // auto debug_drawer_buffer_ptr = context.debug_drawer_buffer.node ? context.debug_drawer_buffer->device_address :
-    // 0;
+  const auto& cull_camera = context.cull_camera;
+
+  // --- Stage 1: cull_meshes (only on the first cull of a sequence) ---
+  if (context.init_cull_meshes) {
     static constexpr auto cull_meshes_flags = GPU::CullFlag::TestFrustum | GPU::CullFlag::SelectLOD;
     auto cull_meshes_pass = vuk::make_pass(
-      "vis cull meshes",
+      context.use_hiz ? "vis cull meshes" : "sm cull meshes",
       [cull_camera](
         vuk::CommandBuffer& cmd_list,
         VUK_BA(vuk::eComputeRead) meshes,
@@ -128,92 +126,158 @@ auto RendererInstance::cull_for_visbuffer(
       );
   }
 
-  auto cull_meshlets_flags = GPU::CullFlag::TestFrustum;
-  if (self.occlusion_cull) {
-    cull_meshlets_flags |= GPU::CullFlag::TestOcclusion;
-  }
-  if (context.late) {
-    cull_meshlets_flags |= GPU::CullFlag::LatePass;
-  }
-
-  auto cull_meshlets_pass = vuk::make_pass(
-    stack.format("vis cull meshlets {}", context.late ? "late" : "early"),
-    [cull_meshlets_flags, cull_camera](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eIndirectRead) dispatch_cmd,
-      VUK_IA(vuk::eComputeSampled) hiz,
-      VUK_BA(vuk::eComputeRead) meshes,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
-      VUK_BA(vuk::eComputeRead) meshlet_instances,
-      VUK_BA(vuk::eComputeRead) transforms,
-      VUK_BA(vuk::eComputeRW) visibility,
-      VUK_BA(vuk::eComputeRW) visible_meshlet_instances_indices,
-      VUK_BA(vuk::eComputeRW) meshlet_instance_visibility_mask,
-      VUK_BA(vuk::eComputeRW) cull_triangles_cmd
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("cull_meshlets_hiz")
-        .bind_image(0, 0, hiz)
-        .bind_sampler(0, 1, hiz_sampler)
-        .bind_buffer(0, 2, meshes)
-        .bind_buffer(0, 3, mesh_instances)
-        .bind_buffer(0, 4, meshlet_instances)
-        .bind_buffer(0, 5, transforms)
-        .bind_buffer(0, 6, visibility)
-        .bind_buffer(0, 7, visible_meshlet_instances_indices)
-        .bind_buffer(0, 8, meshlet_instance_visibility_mask)
-        .bind_buffer(0, 9, cull_triangles_cmd)
-        .specialize_constants(0, std::to_underlying(cull_meshlets_flags))
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
-        .dispatch_indirect(dispatch_cmd);
-
-      return std::make_tuple(
-        dispatch_cmd,
-        hiz,
-        meshes,
-        mesh_instances,
-        meshlet_instances,
-        transforms,
-        visibility,
-        visible_meshlet_instances_indices,
-        meshlet_instance_visibility_mask,
-        cull_triangles_cmd
-      );
-    }
-  );
-
+  // --- Stage 2: cull_meshlets (two versions due to different descriptor sets) ---
   auto cull_triangles_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DispatchIndirectCommand>(
     {.x = 0, .y = 1, .z = 1}
   );
 
-  std::tie(
-    context.cull_meshlets_cmd_buffer,
-    context.hiz_attachment,
-    self.prepared_frame.meshes_buffer,
-    self.prepared_frame.mesh_instances_buffer,
-    self.prepared_frame.meshlet_instances_buffer,
-    self.prepared_frame.transforms_buffer,
-    context.visibility_buffer,
-    self.prepared_frame.visible_meshlet_instances_indices_buffer,
-    self.prepared_frame.meshlet_instance_visibility_mask_buffer,
-    cull_triangles_cmd_buffer
-  ) =
-    cull_meshlets_pass(
-      std::move(context.cull_meshlets_cmd_buffer),
-      std::move(context.hiz_attachment),
-      std::move(self.prepared_frame.meshes_buffer),
-      std::move(self.prepared_frame.mesh_instances_buffer),
-      std::move(self.prepared_frame.meshlet_instances_buffer),
-      std::move(self.prepared_frame.transforms_buffer),
-      std::move(context.visibility_buffer),
-      std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
-      std::move(self.prepared_frame.meshlet_instance_visibility_mask_buffer),
-      std::move(cull_triangles_cmd_buffer)
+  if (context.use_hiz) {
+    auto cull_meshlets_flags = GPU::CullFlag::TestFrustum;
+    if (self.occlusion_cull) {
+      cull_meshlets_flags |= GPU::CullFlag::TestOcclusion;
+    }
+    if (context.late) {
+      cull_meshlets_flags |= GPU::CullFlag::LatePass;
+    }
+
+    auto cull_meshlets_pass = vuk::make_pass(
+      stack.format("vis cull meshlets {}", context.late ? "late" : "early"),
+      [cull_meshlets_flags, cull_camera](
+        vuk::CommandBuffer& cmd_list,
+        VUK_BA(vuk::eIndirectRead) dispatch_cmd,
+        VUK_IA(vuk::eComputeSampled) hiz,
+        VUK_BA(vuk::eComputeRead) meshes,
+        VUK_BA(vuk::eComputeRead) mesh_instances,
+        VUK_BA(vuk::eComputeRead) meshlet_instances,
+        VUK_BA(vuk::eComputeRead) transforms,
+        VUK_BA(vuk::eComputeRW) visibility,
+        VUK_BA(vuk::eComputeRW) visible_meshlet_instances_indices,
+        VUK_BA(vuk::eComputeRW) meshlet_instance_visibility_mask,
+        VUK_BA(vuk::eComputeRW) cull_triangles_cmd
+      ) {
+        cmd_list //
+          .bind_compute_pipeline("cull_meshlets_hiz")
+          .bind_image(0, 0, hiz)
+          .bind_sampler(0, 1, hiz_sampler)
+          .bind_buffer(0, 2, meshes)
+          .bind_buffer(0, 3, mesh_instances)
+          .bind_buffer(0, 4, meshlet_instances)
+          .bind_buffer(0, 5, transforms)
+          .bind_buffer(0, 6, visibility)
+          .bind_buffer(0, 7, visible_meshlet_instances_indices)
+          .bind_buffer(0, 8, meshlet_instance_visibility_mask)
+          .bind_buffer(0, 9, cull_triangles_cmd)
+          .specialize_constants(0, std::to_underlying(cull_meshlets_flags))
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
+          .dispatch_indirect(dispatch_cmd);
+
+        return std::make_tuple(
+          dispatch_cmd,
+          hiz,
+          meshes,
+          mesh_instances,
+          meshlet_instances,
+          transforms,
+          visibility,
+          visible_meshlet_instances_indices,
+          meshlet_instance_visibility_mask,
+          cull_triangles_cmd
+        );
+      }
     );
 
+    std::tie(
+      context.cull_meshlets_cmd_buffer,
+      context.hiz_attachment,
+      self.prepared_frame.meshes_buffer,
+      self.prepared_frame.mesh_instances_buffer,
+      self.prepared_frame.meshlet_instances_buffer,
+      self.prepared_frame.transforms_buffer,
+      context.visibility_buffer,
+      self.prepared_frame.visible_meshlet_instances_indices_buffer,
+      self.prepared_frame.meshlet_instance_visibility_mask_buffer,
+      cull_triangles_cmd_buffer
+    ) =
+      cull_meshlets_pass(
+        std::move(context.cull_meshlets_cmd_buffer),
+        std::move(context.hiz_attachment),
+        std::move(self.prepared_frame.meshes_buffer),
+        std::move(self.prepared_frame.mesh_instances_buffer),
+        std::move(self.prepared_frame.meshlet_instances_buffer),
+        std::move(self.prepared_frame.transforms_buffer),
+        std::move(context.visibility_buffer),
+        std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
+        std::move(self.prepared_frame.meshlet_instance_visibility_mask_buffer),
+        std::move(cull_triangles_cmd_buffer)
+      );
+  } else {
+    static constexpr auto cull_meshlets_flags = GPU::CullFlag::TestFrustum;
+    auto cull_meshlets_pass = vuk::make_pass(
+      "sm cull meshlets",
+      [cull_camera](
+        vuk::CommandBuffer& cmd_list,
+        VUK_BA(vuk::eIndirectRead) dispatch_cmd,
+        VUK_BA(vuk::eComputeRead) meshes,
+        VUK_BA(vuk::eComputeRead) mesh_instances,
+        VUK_BA(vuk::eComputeRead) meshlet_instances,
+        VUK_BA(vuk::eComputeRead) transforms,
+        VUK_BA(vuk::eComputeRW) visibility,
+        VUK_BA(vuk::eComputeRW) visible_meshlet_instances_indices,
+        VUK_BA(vuk::eComputeRW) cull_triangles_cmd
+      ) {
+        cmd_list //
+          .bind_compute_pipeline("cull_meshlets")
+          .bind_buffer(0, 0, meshes)
+          .bind_buffer(0, 1, mesh_instances)
+          .bind_buffer(0, 2, meshlet_instances)
+          .bind_buffer(0, 3, transforms)
+          .bind_buffer(0, 4, visibility)
+          .bind_buffer(0, 5, visible_meshlet_instances_indices)
+          .bind_buffer(0, 6, cull_triangles_cmd)
+          .specialize_constants(0, std::to_underlying(cull_meshlets_flags))
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
+          .dispatch_indirect(dispatch_cmd);
+
+        return std::make_tuple(
+          dispatch_cmd,
+          meshes,
+          mesh_instances,
+          meshlet_instances,
+          transforms,
+          visibility,
+          visible_meshlet_instances_indices,
+          cull_triangles_cmd
+        );
+      }
+    );
+
+    std::tie(
+      context.cull_meshlets_cmd_buffer,
+      self.prepared_frame.meshes_buffer,
+      self.prepared_frame.mesh_instances_buffer,
+      self.prepared_frame.meshlet_instances_buffer,
+      self.prepared_frame.transforms_buffer,
+      context.visibility_buffer,
+      self.prepared_frame.visible_meshlet_instances_indices_buffer,
+      cull_triangles_cmd_buffer
+    ) =
+      cull_meshlets_pass(
+        std::move(context.cull_meshlets_cmd_buffer),
+        std::move(self.prepared_frame.meshes_buffer),
+        std::move(self.prepared_frame.mesh_instances_buffer),
+        std::move(self.prepared_frame.meshlet_instances_buffer),
+        std::move(self.prepared_frame.transforms_buffer),
+        std::move(context.visibility_buffer),
+        std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
+        std::move(cull_triangles_cmd_buffer)
+      );
+  }
+
+  // --- Stage 3: cull_triangles (shared by both versions) ---
+  const auto cull_triangles_flags = (context.use_hiz && context.late) ? GPU::CullFlag::LatePass : GPU::CullFlag{};
   auto cull_triangles_pass = vuk::make_pass(
-    stack.format("vis cull triangles {}", context.late ? "late" : "early"),
-    [cull_triangles_flags = context.late ? GPU::CullFlag::LatePass : GPU::CullFlag{}, cull_camera](
+    context.use_hiz ? stack.format("vis cull triangles {}", context.late ? "late" : "early") : "sm cull triangles",
+    [cull_triangles_flags, cull_camera](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eIndirectRead) cull_triangles_cmd,
       VUK_BA(vuk::eComputeRead) meshes,
@@ -236,194 +300,6 @@ auto RendererInstance::cull_for_visbuffer(
         .bind_buffer(0, 6, reordered_indices)
         .bind_buffer(0, 7, draw_indexed_cmd)
         .specialize_constants(0, std::to_underlying(cull_triangles_flags))
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
-        .dispatch_indirect(cull_triangles_cmd);
-
-      return std::make_tuple(
-        meshes,
-        mesh_instances,
-        meshlet_instances,
-        visibility,
-        transforms,
-        visible_meshlet_instances_indices,
-        reordered_indices,
-        draw_indexed_cmd
-      );
-    }
-  );
-
-  context.draw_geometry_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DrawIndexedIndirectCommand>(
-    {.instanceCount = 1}
-  );
-  std::tie(
-    self.prepared_frame.meshes_buffer,
-    self.prepared_frame.mesh_instances_buffer,
-    self.prepared_frame.meshlet_instances_buffer,
-    context.visibility_buffer,
-    self.prepared_frame.transforms_buffer,
-    self.prepared_frame.visible_meshlet_instances_indices_buffer,
-    self.prepared_frame.reordered_indices_buffer,
-    context.draw_geometry_cmd_buffer
-  ) =
-    cull_triangles_pass(
-      std::move(cull_triangles_cmd_buffer),
-      std::move(self.prepared_frame.meshes_buffer),
-      std::move(self.prepared_frame.mesh_instances_buffer),
-      std::move(self.prepared_frame.meshlet_instances_buffer),
-      std::move(context.visibility_buffer),
-      std::move(self.prepared_frame.transforms_buffer),
-      std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
-      std::move(self.prepared_frame.reordered_indices_buffer),
-      std::move(context.draw_geometry_cmd_buffer)
-    );
-}
-
-auto RendererInstance::cull_for_shadowmap(
-  this RendererInstance& self, ShadowGeometryContext& context, const GPU::CullCamera& cull_camera, bool first
-) -> void {
-  ZoneScoped;
-
-  if (first) {
-    static constexpr auto cull_meshes_flags = GPU::CullFlag::TestFrustum | GPU::CullFlag::SelectLOD;
-    auto cull_meshes_pass = vuk::make_pass(
-      "sm cull meshes",
-      [mesh_instance_count = self.prepared_frame.mesh_instance_count, cull_camera](
-        vuk::CommandBuffer& cmd_list,
-        VUK_BA(vuk::eComputeRead) meshes,
-        VUK_BA(vuk::eComputeRead) transforms,
-        VUK_BA(vuk::eComputeRW) mesh_instances,
-        VUK_BA(vuk::eComputeRW) meshlet_instances,
-        VUK_BA(vuk::eComputeRW) visibility,
-        VUK_BA(vuk::eComputeRW) cull_meshlets_cmd
-      ) {
-        cmd_list //
-          .bind_compute_pipeline("cull_meshes")
-          .bind_buffer(0, 0, meshes)
-          .bind_buffer(0, 1, transforms)
-          .bind_buffer(0, 2, mesh_instances)
-          .bind_buffer(0, 3, meshlet_instances)
-          .bind_buffer(0, 4, visibility)
-          .bind_buffer(0, 5, cull_meshlets_cmd)
-          .specialize_constants(0, std::to_underlying(cull_meshes_flags))
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
-          .dispatch_invocations(mesh_instance_count);
-
-        return std::make_tuple(meshes, transforms, mesh_instances, meshlet_instances, visibility, cull_meshlets_cmd);
-      }
-    );
-
-    context.visibility_buffer = self.renderer.vk_context->scratch_buffer<GPU::MeshletInstanceVisibility>({});
-    context.cull_meshlets_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DispatchIndirectCommand>(
-      {.x = 0, .y = 1, .z = 1}
-    );
-    std::tie(
-      self.prepared_frame.meshes_buffer,
-      self.prepared_frame.transforms_buffer,
-      self.prepared_frame.mesh_instances_buffer,
-      self.prepared_frame.meshlet_instances_buffer,
-      context.visibility_buffer,
-      context.cull_meshlets_cmd_buffer
-    ) =
-      cull_meshes_pass(
-        std::move(self.prepared_frame.meshes_buffer),
-        std::move(self.prepared_frame.transforms_buffer),
-        std::move(self.prepared_frame.mesh_instances_buffer),
-        std::move(self.prepared_frame.meshlet_instances_buffer),
-        std::move(context.visibility_buffer),
-        std::move(context.cull_meshlets_cmd_buffer)
-      );
-  }
-
-  static constexpr auto cull_meshlets_flags = GPU::CullFlag::TestFrustum;
-  auto cull_meshlets_pass = vuk::make_pass(
-    "sm cull meshlets",
-    [cull_camera](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eIndirectRead) dispatch_cmd,
-      VUK_BA(vuk::eComputeRead) meshes,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
-      VUK_BA(vuk::eComputeRead) meshlet_instances,
-      VUK_BA(vuk::eComputeRead) transforms,
-      VUK_BA(vuk::eComputeRW) visibility,
-      VUK_BA(vuk::eComputeRW) visible_meshlet_instances_indices,
-      VUK_BA(vuk::eComputeRW) cull_triangles_cmd
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("cull_meshlets")
-        .bind_buffer(0, 0, meshes)
-        .bind_buffer(0, 1, mesh_instances)
-        .bind_buffer(0, 2, meshlet_instances)
-        .bind_buffer(0, 3, transforms)
-        .bind_buffer(0, 4, visibility)
-        .bind_buffer(0, 5, visible_meshlet_instances_indices)
-        .bind_buffer(0, 6, cull_triangles_cmd)
-        .specialize_constants(0, std::to_underlying(cull_meshlets_flags))
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
-        .dispatch_indirect(dispatch_cmd);
-
-      return std::make_tuple(
-        dispatch_cmd,
-        meshes,
-        mesh_instances,
-        meshlet_instances,
-        transforms,
-        visibility,
-        visible_meshlet_instances_indices,
-        cull_triangles_cmd
-      );
-    }
-  );
-
-  auto cull_triangles_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DispatchIndirectCommand>(
-    {.x = 0, .y = 1, .z = 1}
-  );
-
-  std::tie(
-    context.cull_meshlets_cmd_buffer,
-    self.prepared_frame.meshes_buffer,
-    self.prepared_frame.mesh_instances_buffer,
-    self.prepared_frame.meshlet_instances_buffer,
-    self.prepared_frame.transforms_buffer,
-    context.visibility_buffer,
-    self.prepared_frame.visible_meshlet_instances_indices_buffer,
-    cull_triangles_cmd_buffer
-  ) =
-    cull_meshlets_pass(
-      std::move(context.cull_meshlets_cmd_buffer),
-      std::move(self.prepared_frame.meshes_buffer),
-      std::move(self.prepared_frame.mesh_instances_buffer),
-      std::move(self.prepared_frame.meshlet_instances_buffer),
-      std::move(self.prepared_frame.transforms_buffer),
-      std::move(context.visibility_buffer),
-      std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
-      std::move(cull_triangles_cmd_buffer)
-    );
-
-  auto cull_triangles_pass = vuk::make_pass(
-    "sm cull triangles",
-    [cull_camera](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eIndirectRead) cull_triangles_cmd,
-      VUK_BA(vuk::eComputeRead) meshes,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
-      VUK_BA(vuk::eComputeRead) meshlet_instances,
-      VUK_BA(vuk::eComputeRead) visibility,
-      VUK_BA(vuk::eComputeRead) transforms,
-      VUK_BA(vuk::eComputeRead) visible_meshlet_instances_indices,
-      VUK_BA(vuk::eComputeRW) reordered_indices,
-      VUK_BA(vuk::eComputeRW) draw_indexed_cmd
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("cull_triangles")
-        .bind_buffer(0, 0, meshes)
-        .bind_buffer(0, 1, mesh_instances)
-        .bind_buffer(0, 2, meshlet_instances)
-        .bind_buffer(0, 3, visibility)
-        .bind_buffer(0, 4, transforms)
-        .bind_buffer(0, 5, visible_meshlet_instances_indices)
-        .bind_buffer(0, 6, reordered_indices)
-        .bind_buffer(0, 7, draw_indexed_cmd)
-        .specialize_constants(0, std::to_underlying(GPU::CullFlag{}))
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
         .dispatch_indirect(cull_triangles_cmd);
 

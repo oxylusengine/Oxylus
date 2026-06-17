@@ -793,13 +793,31 @@ auto RendererInstance::render(
       .mesh_instance_count = self.prepared_frame.mesh_instance_count,
     };
     main_geometry_context.late = false;
-    self.cull_for_visbuffer(main_geometry_context, cull_camera);
+    // The CullGeometryContext is hoisted outside both passes so the visibility /
+    // dispatch-command buffers allocated by the early pass's `cull_meshes`
+    // pre-pass persist into the late pass (which runs with `init_cull_meshes = false`).
+    auto cull_geometry_context = CullGeometryContext{
+      .use_hiz = true,
+      .late = main_geometry_context.late,
+      .init_cull_meshes = true,
+      .cull_camera = cull_camera,
+      .hiz_attachment = std::move(main_geometry_context.hiz_attachment),
+    };
+    self.cull_geometry(cull_geometry_context);
+    main_geometry_context.hiz_attachment = std::move(cull_geometry_context.hiz_attachment);
+    main_geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
     self.draw_for_visbuffer(main_geometry_context);
 
     self.generate_hiz(main_geometry_context);
 
     main_geometry_context.late = true;
-    self.cull_for_visbuffer(main_geometry_context, cull_camera);
+    cull_geometry_context.late = main_geometry_context.late;
+    cull_geometry_context.init_cull_meshes = false;
+    cull_geometry_context.cull_camera = cull_camera;
+    cull_geometry_context.hiz_attachment = std::move(main_geometry_context.hiz_attachment);
+    self.cull_geometry(cull_geometry_context);
+    main_geometry_context.hiz_attachment = std::move(cull_geometry_context.hiz_attachment);
+    main_geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
     self.draw_for_visbuffer(main_geometry_context);
 
     {
@@ -859,7 +877,7 @@ auto RendererInstance::render(
       //     .mesh_instance_count = self.prepared_frame.mesh_instance_count,
       //   };
 
-      //   self.cull_for_shadowmap(shadow_geometry_context, cull_camera, cascade_index == 0);
+      //   self.cull_geometry(cull_geometry_context, ...);
       //   self.draw_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index);
       // }
 

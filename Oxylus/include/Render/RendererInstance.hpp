@@ -164,9 +164,25 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> debug_renderer_verticies_buffer = {};
 };
 
-struct CullContext {
-  GPU::CullFlag cull_flags = {};
+struct CullGeometryContext {
+  // When true, uses `cull_meshlets_hiz` (VisBuffer path with occlusion culling);
+  // when false, uses `cull_meshlets` (shadowmap path, frustum only).
+  bool use_hiz = false;
+  // HiZ late-pass occlusion culling flag (only meaningful when `use_hiz` is true).
+  bool late = false;
+  // When true, runs the `cull_meshes` pre-pass (allocates/zeroes the visibility
+  // and dispatch buffers). Run once per sequence: visbuffer early pass or
+  // shadowmap cascade 0; subsequent culls in the sequence set this to false.
+  bool init_cull_meshes = false;
+
   GPU::CullCamera cull_camera = {};
+
+  // HiZ pyramid attachment consumed by `cull_meshlets_hiz` (only when `use_hiz`).
+  vuk::Value<vuk::ImageAttachment> hiz_attachment = {};
+
+  vuk::Value<vuk::Buffer> visibility_buffer = {};
+  vuk::Value<vuk::Buffer> cull_meshlets_cmd_buffer = {};
+  vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
 };
 
 struct MainGeometryContext {
@@ -183,16 +199,12 @@ struct MainGeometryContext {
   vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
 
-  vuk::Value<vuk::Buffer> visibility_buffer = {};
-  vuk::Value<vuk::Buffer> cull_meshlets_cmd_buffer = {};
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
 };
 
 struct ShadowGeometryContext {
   vuk::Value<vuk::ImageAttachment> shadowmap_attachment = {};
 
-  vuk::Value<vuk::Buffer> visibility_buffer = {};
-  vuk::Value<vuk::Buffer> cull_meshlets_cmd_buffer = {};
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
 };
 
@@ -331,13 +343,9 @@ public:
   auto get_viewport_offset(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_offset; }
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto cull_for_visbuffer(this RendererInstance&, MainGeometryContext& context, const GPU::CullCamera& cull_camera)
-    -> void;
+  auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
   auto draw_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto decode_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto cull_for_shadowmap(
-    this RendererInstance& self, ShadowGeometryContext& context, const GPU::CullCamera& cull_camera, bool first
-  ) -> void;
   auto draw_for_shadowmap(
     this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, u32 cascade_index
   ) -> void;

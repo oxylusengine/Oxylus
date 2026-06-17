@@ -323,6 +323,13 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     .mesh_instance_count = self.prepared_frame.mesh_instance_count,
   };
 
+  // CullGeometryContext is hoisted outside the clipmap loop so the visibility /
+  // dispatch-command buffers allocated by the first cascade's `cull_meshes`
+  // pre-pass persist across subsequent cascades.
+  auto cull_geometry_context = CullGeometryContext{
+    .use_hiz = false,
+  };
+
   auto physical_depth_attachment = vuk::declare_ia(
     "vsm depth",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eDepthStencilAttachment,
@@ -341,7 +348,10 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
     vsm_ctx.curr_clipmap_index = clipmap_index;
 
-    self.cull_for_shadowmap(geometry_context, clipmap_camera, clipmap_index == 0);
+    cull_geometry_context.cull_camera = clipmap_camera;
+    cull_geometry_context.init_cull_meshes = (clipmap_index == 0);
+    self.cull_geometry(cull_geometry_context);
+    geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
 
     auto draw_physical_pages_pass = vuk::make_pass(
       stack.format("vsm draw clipmap {}", clipmap_index),
