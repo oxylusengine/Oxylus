@@ -345,5 +345,6 @@ enum struct CullFlag : u32 {
     TestOcclusion = 1 << 2,
     LatePass = 1 << 3,
 };
+consteval void enable_bitmask(CullFlag);
 
 } // namespace ox::GPU
