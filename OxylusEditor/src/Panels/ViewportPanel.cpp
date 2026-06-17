@@ -10,9 +10,9 @@
 #include "Core/Input.hpp"
 #include "Editor.hpp"
 #include "Render/Camera.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
-#include "Render/RenderContext.hpp"
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
@@ -21,39 +21,45 @@
 #include "Utils/OxMath.hpp"
 
 namespace ox {
-template <typename T>
-void show_component_gizmo(
-  f32 icon_size,
-  const std::string& name,
-  const float width,
-  const float height,
-  const float xpos,
-  const float ypos,
-  const glm::mat4& view_proj,
-  const Frustum& frustum,
-  Scene* scene
-) {
+struct GizmoInfo {
+  f32 icon_size;
+  f32 width;
+  f32 height;
+  f32 xpos;
+  f32 ypos;
+  glm::mat4 view_proj;
+  Frustum frustum;
+};
+template <typename T, typename Func>
+void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, Scene* scene, Func&& icon_select_func) {
   auto& editor = App::mod<Editor>();
   auto& editor_theme = editor.editor_theme;
 
-  const char* icon = editor_theme.component_icon_map.at(typeid(T).hash_code());
-  scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T&) {
+  scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T& component) {
     const glm::vec3 pos = Scene::get_world_transform(entity)[3];
 
     if (entity.has<Hidden>())
       return;
 
-    if (frustum.is_inside(pos) == (uint32_t)Intersection::Outside)
+    if (gizmo_info.frustum.is_inside(pos) == (u32)Intersection::Outside)
       return;
 
-    const glm::vec2 screen_pos = math::world_to_screen(pos, view_proj, width, height, xpos, ypos);
-    ImGui::SetCursorPos({screen_pos.x - (icon_size / 2.f), screen_pos.y - (icon_size / 2.f)});
+    const glm::vec2 screen_pos = math::world_to_screen(
+      pos,
+      gizmo_info.view_proj,
+      gizmo_info.width,
+      gizmo_info.height,
+      gizmo_info.xpos,
+      gizmo_info.ypos
+    );
+    ImGui::SetCursorPos({screen_pos.x - (gizmo_info.icon_size / 2.f), screen_pos.y - (gizmo_info.icon_size / 2.f)});
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.7f, 0.7f, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.1f));
 
-    ImGui::PushFont(nullptr, icon_size);
+    ImGui::PushFont(nullptr, gizmo_info.icon_size);
     ImGui::PushID(static_cast<i32>(entity.id()));
-    if (ImGui::Button(icon, {icon_size, icon_size})) {
+    const char* icon = icon_select_func(editor_theme.component_icon_map.at(typeid(T).hash_code()), component);
+    if (ImGui::Button(icon, {gizmo_info.icon_size, gizmo_info.icon_size})) {
       auto& editor_context = editor.get_context();
       editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
     }
@@ -121,11 +127,11 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
     if (ImGui::BeginMenuBar()) {
       if (!editor_scene_->is_playing()) {
         if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE)) {
-          App::mod<Editor>().save_scene();
+          editor.save_scene();
         }
         UI::tooltip_hover("Save scene");
         if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE_MOVE)) {
-          App::mod<Editor>().save_scene_as();
+          editor.save_scene_as();
         }
         UI::tooltip_hover("Save scene as");
         if (ImGui::MenuItem(ICON_MDI_COG)) {
@@ -700,49 +706,44 @@ void ViewportPanel::draw_gizmos() {
   const Frustum& frustum = Camera::get_frustum(cam, cam.position);
 
   if (draw_component_gizmos_) {
-    show_component_gizmo<LightComponent>(
+    const GizmoInfo gizmo_info = {
       gizmo_icon_size_,
-      "LightComponent",
       render_size.x,
       render_size.y,
       viewport_offset.x,
       viewport_offset.y,
       view_proj,
       frustum,
-      editor_scene_->get_scene().get()
+    };
+    show_component_gizmo<LightComponent>(
+      gizmo_info,
+      "LightComponent",
+      editor_scene_->get_scene().get(),
+      [](const char* icon, const LightComponent& c) {
+        switch (c.type) {
+          case LightComponent::Directional: return ICON_MDI_WEATHER_SUNNY;
+          case LightComponent::Spot       : return ICON_MDI_SPOTLIGHT;
+          case LightComponent::Point      : return icon;
+        }
+      }
     );
     show_component_gizmo<AudioSourceComponent>(
-      gizmo_icon_size_,
+      gizmo_info,
       "AudioSourceComponent",
-      render_size.x,
-      render_size.y,
-      viewport_offset.x,
-      viewport_offset.y,
-      view_proj,
-      frustum,
-      editor_scene_->get_scene().get()
+      editor_scene_->get_scene().get(),
+      [](const char* icon, const AudioSourceComponent& c) { return icon; }
     );
     show_component_gizmo<AudioListenerComponent>(
-      gizmo_icon_size_,
+      gizmo_info,
       "AudioListenerComponent",
-      render_size.x,
-      render_size.y,
-      viewport_offset.x,
-      viewport_offset.y,
-      view_proj,
-      frustum,
-      editor_scene_->get_scene().get()
+      editor_scene_->get_scene().get(),
+      [](const char* icon, const AudioListenerComponent& c) { return icon; }
     );
     show_component_gizmo<CameraComponent>(
-      gizmo_icon_size_,
+      gizmo_info,
       "CameraComponent",
-      render_size.x,
-      render_size.y,
-      viewport_offset.x,
-      viewport_offset.y,
-      view_proj,
-      frustum,
-      editor_scene_->get_scene().get()
+      editor_scene_->get_scene().get(),
+      [](const char* icon, const CameraComponent& c) { return icon; }
     );
   }
 
