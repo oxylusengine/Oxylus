@@ -21,8 +21,6 @@ inline AutoCVar_Int cvar_culling_frustum("rr.culling_frustum", "Frustum Culling"
 inline AutoCVar_Int cvar_culling_occlusion("rr.culling_occlusion", "Occlusion culling", 1);
 inline AutoCVar_Int cvar_culling_triangle("rr.culling_triangle", "Triangle culling", 1);
 
-inline AutoCVar_Int cvar_reload_renderer("rr.reload_renderer", "reload renderer", 0);
-
 inline AutoCVar_Int cvar_contact_shadows("pp.contact_shadows", "enable contact shadows", 1);
 inline AutoCVar_Int cvar_contact_shadows_steps("pp.contact_shadows_steps", "contact shadows steps", 8);
 inline AutoCVar_Float cvar_contact_shadows_thickness("pp.contact_shadows_thickness", "contact shadows thickness", 0.1f);

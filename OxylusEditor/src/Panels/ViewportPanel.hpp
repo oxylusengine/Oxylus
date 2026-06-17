@@ -50,6 +50,10 @@ private:
   i32 gizmo_type = -1;
   i32 gizmo_mode = 0;
 
+  bool use_snap = true;
+  f32 snap_amount = 1.f;
+  f32 rotate_snap_amount = 45.f;
+
   bool draw_component_gizmos = true;
   f32 gizmo_icon_size = 32.f;
   bool draw_entity_highlighting = true;
@@ -64,13 +68,14 @@ private:
   glm::vec3 translation_velocity = glm::vec3(0);
   glm::vec2 rotation_velocity = glm::vec2(0);
 
-  void draw_settings_panel(this ViewportPanel& self);
-  void draw_gizmo_settings_panel(this ViewportPanel& self);
-  void draw_stats_overlay(this const ViewportPanel& self, bool draw_scene_stats);
-  void draw_gizmos(this ViewportPanel& self);
+  auto draw_settings_panel(this ViewportPanel& self) -> void;
+  auto draw_gizmo_settings_panel(this ViewportPanel& self) -> void;
+  auto draw_snap_settings_panel(this ViewportPanel& self) -> void;
+  auto draw_stats_overlay(this const ViewportPanel& self, bool draw_scene_stats) -> void;
+  auto draw_gizmos(this ViewportPanel& self) -> void;
   auto mouse_picking_stages(this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void;
   auto grid_stage(this ViewportPanel& self, RendererInstance* renderer_instance) -> void;
-  void transform_gizmos_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos);
-  void scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos);
+  auto transform_gizmos_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) -> void;
+  auto scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) -> void;
 };
 } // namespace ox

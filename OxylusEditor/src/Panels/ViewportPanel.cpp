@@ -122,6 +122,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
 
     bool viewport_settings_popup = false;
     bool gizmo_settings_popup = false;
+    bool snap_settings_popup = false;
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
     auto& style = ImGui::GetStyle();
@@ -146,6 +147,9 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       if (ImGui::MenuItem(ICON_MDI_SPHERE, nullptr, gizmo_settings_popup)) {
         gizmo_settings_popup = true;
       }
+      if (ImGui::MenuItem(ICON_MDI_MAGNET, nullptr, snap_settings_popup)) {
+        snap_settings_popup = true;
+      }
       ImGui::EndMenuBar();
     }
 
@@ -155,7 +159,6 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       ImGui::OpenPopup("viewport_settings");
 
     ImGui::SetNextWindowSize(ImVec2(345, 0));
-    ImGui::SetNextWindowBgAlpha(0.85f);
     if (ImGui::BeginPopup("viewport_settings")) {
       self.draw_settings_panel();
       ImGui::EndPopup();
@@ -164,10 +167,18 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     if (gizmo_settings_popup)
       ImGui::OpenPopup("gizmo_settings");
 
-    ImGui::SetNextWindowSize(ImVec2(345, 0));
-    ImGui::SetNextWindowBgAlpha(0.85f);
+    ImGui::SetNextWindowSize(ImVec2(325, 0));
     if (ImGui::BeginPopup("gizmo_settings")) {
       self.draw_gizmo_settings_panel();
+      ImGui::EndPopup();
+    }
+
+    if (snap_settings_popup)
+      ImGui::OpenPopup("snap_settings");
+
+    ImGui::SetNextWindowSize(ImVec2(325, 0));
+    if (ImGui::BeginPopup("snap_settings")) {
+      self.draw_snap_settings_panel();
       ImGui::EndPopup();
     }
 
@@ -417,7 +428,7 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
   cam.zoom = static_cast<float>(EditorCVar::cvar_camera_zoom.get());
 }
 
-void ViewportPanel::set_context(this ViewportPanel& self, const std::shared_ptr<EditorScene>& scene) {
+auto ViewportPanel::set_context(this ViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void {
   OX_CHECK_NULL(scene);
 
   self.editor_scene = scene;
@@ -433,7 +444,7 @@ void ViewportPanel::set_context(this ViewportPanel& self, const std::shared_ptr<
   std::ignore = event_system.emit<Editor::ViewportSceneLoadEvent>(Editor::ViewportSceneLoadEvent{});
 }
 
-void ViewportPanel::drag_drop(this const ViewportPanel& self) {
+auto ViewportPanel::drag_drop(this const ViewportPanel& self) -> void {
   if (ImGui::BeginDragDropTarget()) {
     if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
       const auto* payload = PayloadData::from_payload(imgui_payload);
@@ -448,7 +459,7 @@ void ViewportPanel::drag_drop(this const ViewportPanel& self) {
   }
 }
 
-void ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw) {
+auto ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw) -> void {
   if (!self.performance_overlay_visible || !self.editor_scene)
     return;
   auto work_pos = ImVec2(self.viewport_position.x, self.viewport_position.y);
@@ -493,7 +504,7 @@ void ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw
   ImGui::PopStyleVar(2);
 }
 
-void ViewportPanel::draw_settings_panel(this ViewportPanel& self) {
+auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
   ZoneScoped;
 
   i32 open_action = -1;
@@ -551,8 +562,6 @@ void ViewportPanel::draw_settings_panel(this ViewportPanel& self) {
       window.get_refresh_rate(),
       window.get_window_content_scale()
     );
-    if (UI::icon_button(ICON_MDI_RELOAD, "Reload renderer"))
-      RendererCVar::cvar_reload_renderer.toggle();
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
       UI::property("VSync", (bool*)RendererCVar::cvar_vsync.get_ptr());
       UI::end_properties();
@@ -692,14 +701,23 @@ void ViewportPanel::draw_settings_panel(this ViewportPanel& self) {
   }
 }
 
-void ViewportPanel::draw_gizmo_settings_panel(this ViewportPanel& self) {
+auto ViewportPanel::draw_gizmo_settings_panel(this ViewportPanel& self) -> void {
   if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
     UI::property("Draw grid", (bool*)EditorCVar::cvar_draw_grid.get_ptr());
-    UI::property<float>("Grid distance", EditorCVar::cvar_draw_grid_distance.get_ptr(), 10.f, 10000.0f);
+    UI::property<f32>("Grid distance", EditorCVar::cvar_draw_grid_distance.get_ptr(), 10.f, 10000.0f);
 
     UI::property("Draw Component Gizmos", &self.draw_component_gizmos);
     UI::property("Component Gizmos Size", &self.gizmo_icon_size);
     UI::property("Entity Highlighting", &self.draw_entity_highlighting);
+    UI::end_properties();
+  }
+}
+
+auto ViewportPanel::draw_snap_settings_panel(this ViewportPanel& self) -> void {
+  if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+    UI::property("Use Snap", &self.use_snap);
+    UI::property<f32>("Snap Step", &self.snap_amount, 0.5f, 100.0f, nullptr, 0.5f, "%.1f");
+    UI::property<f32>("Rotate Snap Step", &self.snap_amount, 45.f, 360.0f, nullptr, 0.5f, "%.1f");
     UI::end_properties();
   }
 }
@@ -800,11 +818,10 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
     glm::mat4 transform = Scene::get_world_transform(selected_entity);
 
     // Snapping
-    const bool snap = input_sys.get_key_held(ScanCode::LeftControl);
-    float snap_value = 0.5f; // Snap to 0.5m for translation/scale
-    // Snap to 45 degrees for rotation
+    const bool snap = input_sys.get_key_held(ScanCode::LeftControl) || self.use_snap;
+    float snap_value = self.snap_amount;
     if (self.gizmo_type == ImGuizmo::OPERATION::ROTATE)
-      snap_value = 45.0f;
+      snap_value = self.rotate_snap_amount;
 
     const float snap_values[3] = {snap_value, snap_value, snap_value};
 
