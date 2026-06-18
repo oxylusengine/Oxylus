@@ -64,6 +64,7 @@ CMakeSettings.json
 /cmake-build-release-visual-studio
 CMakeLists.txt
 .clangd
+renderer_config.toml
 
 # xmake
 .xmake

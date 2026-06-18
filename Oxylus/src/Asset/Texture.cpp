@@ -19,8 +19,8 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
   ZoneScoped;
   memory::ScopedStack stack;
 
-  auto& vk_context = App::get_vkcontext();
-  auto& allocator = vk_context.superframe_allocator;
+  auto& render_context = App::get_rendercontext();
+  auto& allocator = render_context.superframe_allocator;
 
   const auto is_generic = load_info.mime == TextureLoadInfo::MimeType::Generic;
   const auto is_dds = load_info.mime == TextureLoadInfo::MimeType::DDS;
@@ -66,20 +66,24 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
     ktxTexture2* ktx{};
     if (path.empty()) {
       OX_CHECK_EQ(!load_info.bytes.empty(), true);
-      if (const auto result = ktxTexture2_CreateFromMemory(
-            load_info.bytes.data(), //
-            load_info.bytes.size(),
-            KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
-            &ktx
-          );
-          result != KTX_SUCCESS) {
+      if (
+        const auto result = ktxTexture2_CreateFromMemory(
+          load_info.bytes.data(), //
+          load_info.bytes.size(),
+          KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+          &ktx
+        );
+        result != KTX_SUCCESS
+      ) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     } else {
       auto path_str = path.string();
-      if (const auto
-            result = ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
-          result != KTX_SUCCESS) {
+      if (
+        const auto
+          result = ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
+        result != KTX_SUCCESS
+      ) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     }
@@ -92,8 +96,10 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
     // If the image needs is in a supercompressed encoding, transcode it to a desired format
     if (ktxTexture2_NeedsTranscoding(ktx)) {
       ZoneNamedN(z, "Transcode KTX 2 Texture", true);
-      if (const auto result = ktxTexture2_TranscodeBasis(ktx, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
-          result != KTX_SUCCESS) {
+      if (
+        const auto result = ktxTexture2_TranscodeBasis(ktx, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
+        result != KTX_SUCCESS
+      ) {
         OX_LOG_ERROR("Couldn't transcode KTX2 file {}", ktxErrorString(result));
       }
     } else {
@@ -120,10 +126,10 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
   );
   ia.usage |= vuk::ImageUsageFlagBits::eTransferDst | vuk::ImageUsageFlagBits::eTransferSrc;
 
-  image_id = vk_context.allocate_image(ia);
-  ia.image = vk_context.image(image_id);
-  image_view_id = vk_context.allocate_image_view(ia);
-  ia.image_view = vk_context.image_view(image_view_id);
+  image_id = render_context.allocate_image(ia);
+  ia.image = render_context.image(image_id);
+  image_view_id = render_context.allocate_image_view(ia);
+  ia.image_view = render_context.image_view(image_view_id);
 
   std::vector<u8> ktx_data = {};
   std::vector<usize> ktx_per_level_offsets = {};
@@ -178,7 +184,7 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
 
         for (u32 level = 0; level < ia.level_count; level++) {
           auto mip = dds_image.mipmaps[level];
-          auto buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, mip.size());
+          auto buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, mip.size());
           std::memcpy(buffer->mapped_ptr, mip.data(), mip.size());
           auto dst_mip = fut.mip(level);
           auto acquired_buf = vuk::acquire_buf("transient buffer", *buffer, vuk::Access::eNone);
@@ -197,7 +203,7 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
             .depth = 1,
           };
           auto size = vuk::compute_image_size(format, level_extent);
-          auto buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, size, 16);
+          auto buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, size, 16);
 
           std::memcpy(buffer->mapped_ptr, ktx_data.data() + mip_data_offset, size);
           auto dst_mip = fut.mip(level);
@@ -224,7 +230,7 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
 
   auto sampler_ci = load_info.sampler_info;
   sampler_ci.maxLod = f32(ia.level_count);
-  sampler_id = vk_context.allocate_sampler(sampler_ci);
+  sampler_id = render_context.allocate_sampler(sampler_ci);
   attachment_ = ia;
 
   set_name(name_, loc);
@@ -245,15 +251,15 @@ auto Texture::destroy() -> void {
   attachment_ = {};
   name_ = {};
 
-  auto& vk_context = App::get_vkcontext();
+  auto& render_context = App::get_rendercontext();
 
-  vk_context.destroy_image(image_id);
+  render_context.destroy_image(image_id);
   image_id = {};
 
-  vk_context.destroy_image_view(image_view_id);
+  render_context.destroy_image_view(image_view_id);
   image_view_id = {};
 
-  vk_context.destroy_sampler(sampler_id);
+  render_context.destroy_sampler(sampler_id);
   sampler_id = {};
 }
 
@@ -272,22 +278,22 @@ vuk::Value<vuk::ImageAttachment> Texture::discard(vuk::Name name, vuk::source_lo
 auto Texture::get_image() const -> const vuk::Image {
   ZoneScoped;
 
-  auto& vk_context = App::get_vkcontext();
+  auto& render_context = App::get_rendercontext();
 
-  return vk_context.image(image_id);
+  return render_context.image(image_id);
 }
 
 auto Texture::get_view() const -> const vuk::ImageView {
   ZoneScoped;
 
-  auto& vk_context = App::get_vkcontext();
+  auto& render_context = App::get_rendercontext();
 
-  return vk_context.image_view(image_view_id);
+  return render_context.image_view(image_view_id);
 }
 
 void Texture::set_name(const vuk::Name& name, const std::source_location& loc) {
   ZoneScoped;
-  auto& vk_context = App::get_vkcontext();
+  auto& render_context = App::get_rendercontext();
   vuk::Name new_name = name;
   if (new_name.is_invalid()) {
     auto file = loc.file_name();
@@ -295,8 +301,8 @@ void Texture::set_name(const vuk::Name& name, const std::source_location& loc) {
     new_name = vuk::Name(n);
   }
 
-  vk_context.runtime->set_name(vk_context.image(image_id).image, new_name);
-  vk_context.runtime->set_name(vk_context.image_view(image_view_id).payload, new_name);
+  render_context.runtime->set_name(render_context.image(image_id).image, new_name);
+  render_context.runtime->set_name(render_context.image_view(image_view_id).payload, new_name);
 
   name_ = new_name;
 }

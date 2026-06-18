@@ -95,13 +95,14 @@ target("Oxylus")
         "fmt",
         "plf_colony",
         "simdutf",
-        "joltphysics-ox",
+        "joltphysics",
         "glm",
-        "lua-ox",
+        "lua",
         "sol2",
         "toml++",
         "loguru",
         "simdjson",
+        "rmlui",
         {public = true})
 
 target_end()

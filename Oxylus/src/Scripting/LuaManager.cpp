@@ -14,6 +14,7 @@
   #include "Scripting/LuaInputBindings.hpp"        // IWYU pragma: export
   #include "Scripting/LuaMathBindings.hpp"         // IWYU pragma: export
   #include "Scripting/LuaPhysicsBindings.hpp"      // IWYU pragma: export
+  #include "Scripting/LuaRMLBindings.hpp"          // IWYU pragma: export
   #include "Scripting/LuaRendererBindings.hpp"     // IWYU pragma: export
   #include "Scripting/LuaSceneBindings.hpp"        // IWYU pragma: export
   #include "Scripting/LuaUIBindings.hpp"           // IWYU pragma: export
@@ -61,6 +62,7 @@ auto LuaManager::init() -> std::expected<void, std::string> {
   BIND(SceneBinding);
   BIND(UIBinding);
   BIND(VFSBinding);
+  BIND(RMLBinding);
 #endif
 
   return {};

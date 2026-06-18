@@ -568,7 +568,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
     processing_gltf_nodes.push({node_index, 0});
   }
 
-  auto& vk_context = App::get()->get_vkcontext();
+  auto& render_context = App::get()->get_rendercontext();
 
   auto align_up = [](u64 v, u64 align) -> u64 {
     return (v + align - 1_u64) & ~(align - 1_u64);
@@ -883,7 +883,6 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         gpu_mesh.bounds.aabb_center = (mesh_bb_max + mesh_bb_min) * 0.5f;
         gpu_mesh.bounds.aabb_extent = mesh_bb_max - mesh_bb_min;
 
-        // Compute exact size with alignment, including end-padding so next LOD base is 8-aligned
         auto lod_upload_size = compute_lod_upload_size(
           simplified_indices,
           meshlets,
@@ -892,7 +891,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
           indirect_vertex_indices
         );
 
-        auto cpu_lod_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, lod_upload_size);
+        auto cpu_lod_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, lod_upload_size);
         auto cpu_lod_ptr = reinterpret_cast<u8*>(cpu_lod_buffer->mapped_ptr);
 
         auto upload_offset = 0_u64;
@@ -936,9 +935,8 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
       auto mesh_upload_offset = 0_u64;
 
-      auto gpu_mesh_buffer = vk_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, upload_size);
-
-      auto cpu_mesh_buffer = vk_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, mesh_upload_size);
+      auto gpu_mesh_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, upload_size);
+      auto cpu_mesh_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, mesh_upload_size);
       auto cpu_mesh_ptr = reinterpret_cast<u8*>(cpu_mesh_buffer->mapped_ptr);
 
       auto gpu_mesh_bda = gpu_mesh_buffer->device_address;
@@ -961,8 +959,8 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
       mesh_upload_offset = mesh_upload_size;
 
       auto gpu_mesh_subrange = vuk::discard_buf("mesh", gpu_mesh_buffer->subrange(0, mesh_upload_size));
-      gpu_mesh_subrange = vk_context.upload_staging(std::move(cpu_mesh_buffer), std::move(gpu_mesh_subrange));
-      vk_context.wait_on(std::move(gpu_mesh_subrange));
+      gpu_mesh_subrange = render_context.upload_staging(std::move(cpu_mesh_buffer), std::move(gpu_mesh_subrange));
+      render_context.wait_on(std::move(gpu_mesh_subrange));
 
       for (auto lod_index = 0_sz; lod_index < gpu_mesh.lod_count; lod_index++) {
         auto&& [lod_cpu_buffer, lod_upload_size] = lod_cpu_buffers[lod_index];
@@ -978,8 +976,8 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
           "mesh lod subrange",
           gpu_mesh_buffer->subrange(mesh_upload_offset, lod_upload_size)
         );
-        gpu_lod_subrange = vk_context.upload_staging(std::move(lod_cpu_buffer), std::move(gpu_lod_subrange));
-        vk_context.wait_on(std::move(gpu_lod_subrange));
+        gpu_lod_subrange = render_context.upload_staging(std::move(lod_cpu_buffer), std::move(gpu_lod_subrange));
+        render_context.wait_on(std::move(gpu_lod_subrange));
 
         mesh_upload_offset += lod_upload_size;
       }

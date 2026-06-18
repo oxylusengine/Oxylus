@@ -12,7 +12,7 @@
 #include "Core/App.hpp"
 #include "ImGuiSPV_FS.hpp"
 #include "ImGuiSPV_VS.hpp"
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/Window.hpp"
 #include "Utils/Profiler.hpp"
 
@@ -79,7 +79,7 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   style.ScaleAllSizes(dpi_scale);
   style.FontScaleDpi = dpi_scale;
 
-  auto& runtime = *App::get_vkcontext().runtime;
+  auto& runtime = *App::get_rendercontext().runtime;
 
   auto pipelie_ci = vuk::PipelineBaseCreateInfo{};
   pipelie_ci.add_spirv(
@@ -125,7 +125,7 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size, gl
   ImGui::NewFrame();
 }
 
-vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(VkContext& context, vuk::Value<vuk::ImageAttachment> target) {
+vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(RenderContext& context, vuk::Value<vuk::ImageAttachment> target) {
   ZoneScoped;
 
   ImGui::Render();

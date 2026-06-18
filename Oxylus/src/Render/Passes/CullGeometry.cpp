@@ -104,8 +104,8 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
       }
     );
 
-    context.visibility_buffer = self.renderer.vk_context->scratch_buffer<GPU::MeshletInstanceVisibility>({});
-    context.cull_meshlets_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DispatchIndirectCommand>(
+    context.visibility_buffer = self.renderer.render_context->scratch_buffer<GPU::MeshletInstanceVisibility>({});
+    context.cull_meshlets_cmd_buffer = self.renderer.render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
       {.x = 0, .y = 1, .z = 1}
     );
     std::tie(
@@ -127,7 +127,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
   }
 
   // --- Stage 2: cull_meshlets (two versions due to different descriptor sets) ---
-  auto cull_triangles_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DispatchIndirectCommand>(
+  auto cull_triangles_cmd_buffer = self.renderer.render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
     {.x = 0, .y = 1, .z = 1}
   );
 
@@ -316,7 +316,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
     }
   );
 
-  context.draw_geometry_cmd_buffer = self.renderer.vk_context->scratch_buffer<vuk::DrawIndexedIndirectCommand>(
+  context.draw_geometry_cmd_buffer = self.renderer.render_context->scratch_buffer<vuk::DrawIndexedIndirectCommand>(
     {.instanceCount = 1}
   );
   std::tie(

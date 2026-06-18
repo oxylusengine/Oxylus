@@ -12,7 +12,7 @@
 namespace ox {
 class RendererInstance;
 class Scene;
-class VkContext;
+class RenderContext;
 
 class Renderer {
 public:
@@ -154,7 +154,7 @@ public:
 private:
   friend RendererInstance;
 
-  VkContext* vk_context = nullptr;
+  RenderContext* render_context = nullptr;
   bool initalized = false;
 
   Texture sky_transmittance_lut_view;

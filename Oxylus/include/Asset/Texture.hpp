@@ -8,7 +8,7 @@
 
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 
 using Preset = vuk::ImageAttachment::Preset;
 
@@ -117,7 +117,7 @@ public:
            1;
   }
 
-  static auto path_to_mime(const std::filesystem::path &path) -> TextureLoadInfo::MimeType;
+  static auto path_to_mime(const std::filesystem::path& path) -> TextureLoadInfo::MimeType;
 
 private:
   vuk::ImageAttachment attachment_ = {};

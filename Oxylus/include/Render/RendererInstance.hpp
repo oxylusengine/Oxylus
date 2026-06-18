@@ -45,18 +45,18 @@ struct RenderStageContext {
   RendererInstance& renderer_instance;
   SharedResources& shared_resources;
   RenderStage current_stage;
-  VkContext& vk_context;
+  RenderContext& render_context;
 
   glm::uvec2 viewport_size;
 
   ankerl::unordered_dense::map<std::string, vuk::Value<vuk::Buffer>> buffer_resources = {};
   ankerl::unordered_dense::map<std::string, vuk::Value<vuk::ImageAttachment>> image_resources = {};
 
-  RenderStageContext(RendererInstance& instance, SharedResources& shared_r, RenderStage stage, VkContext& vkctx)
+  RenderStageContext(RendererInstance& instance, SharedResources& shared_r, RenderStage stage, RenderContext& rctx)
       : renderer_instance(instance),
         shared_resources(shared_r),
         current_stage(stage),
-        vk_context(vkctx) {}
+        render_context(rctx) {}
 
   auto get_buffer_resource(this const RenderStageContext& self, const std::string& name) -> vuk::Value<vuk::Buffer> {
     return std::move(self.buffer_resources.at(name));

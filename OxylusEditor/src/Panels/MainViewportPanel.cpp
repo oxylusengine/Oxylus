@@ -64,6 +64,8 @@ auto MainViewportPanel::reset(this MainViewportPanel& self) -> void {
 }
 
 auto MainViewportPanel::get_focused_viewport(this const MainViewportPanel& self) -> ViewportPanel* {
+  ZoneScoped;
+
   for (auto& viewport : self.viewport_panels) {
     if (viewport->is_viewport_focused) {
       return viewport.get();
@@ -74,6 +76,8 @@ auto MainViewportPanel::get_focused_viewport(this const MainViewportPanel& self)
 }
 
 auto MainViewportPanel::get_visible_viwports(this const MainViewportPanel& self) -> std::vector<ViewportPanel*> {
+  ZoneScoped;
+
   auto v = std::vector<ViewportPanel*>{};
 
   for (auto& viewport : self.viewport_panels) {
@@ -85,7 +89,15 @@ auto MainViewportPanel::get_visible_viwports(this const MainViewportPanel& self)
   return v;
 }
 
+auto MainViewportPanel::is_fullscreen(this const MainViewportPanel& self) -> bool {
+  ZoneScoped;
+
+  return self.fullscreen_viewport;
+}
+
 auto MainViewportPanel::add_new_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void {
+  ZoneScoped;
+
   auto* viewport = self.add_viewport();
   viewport->set_context(scene);
 
@@ -114,6 +126,8 @@ auto MainViewportPanel::add_viewport(this MainViewportPanel& self) -> ViewportPa
 
 void MainViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   if (on_begin(ImGuiWindowFlags_MenuBar)) {
+    auto viewport_size = ImGui::GetContentRegionAvail();
+    auto& style = ImGui::GetStyle();
     if (ImGui::BeginMenuBar()) {
       if (ImGui::MenuItem(ICON_MDI_PLUS_THICK)) {
         App::mod<Editor>().new_scene();
@@ -123,6 +137,11 @@ void MainViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
         App::mod<Editor>().open_scene_file_dialog();
       }
       UI::tooltip_hover("Open scene");
+      auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
+      ImGui::SetCursorPosX(viewport_size.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
+      if (ImGui::MenuItem(ICON_MDI_ARROW_EXPAND_ALL)) {
+        fullscreen_viewport = !fullscreen_viewport;
+      }
       ImGui::EndMenuBar();
     }
 
@@ -137,22 +156,15 @@ void MainViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       dock_should_update = false;
     }
 
-    auto fullscreen_view = viewport_panels |
-                           std::views::filter([](const auto& panel) { return panel->fullscreen_viewport; });
-
-    if (fullscreen_view) {
-      fullscreen_view.front()->on_render(swapchain_attachment);
-    } else {
-      for (const auto& panel : viewport_panels) {
-        auto* viewport_editor_scene = panel->get_scene();
-        if (viewport_editor_scene) {
-          if (viewport_editor_scene->is_playing()) {
-            viewport_editor_scene->get_scene()->on_render(swapchain_attachment.extent, swapchain_attachment.format);
-          }
+    for (const auto& panel : viewport_panels) {
+      auto* viewport_editor_scene = panel->get_scene();
+      if (viewport_editor_scene) {
+        if (viewport_editor_scene->is_playing()) {
+          viewport_editor_scene->get_scene()->on_render(swapchain_attachment.extent, swapchain_attachment.format);
         }
-
-        panel->on_render(swapchain_attachment);
       }
+
+      panel->on_render(swapchain_attachment);
     }
   }
 

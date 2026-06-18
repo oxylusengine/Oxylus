@@ -12,6 +12,7 @@
 #include "Render/RendererConfig.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "UI/ImGuiRenderer.hpp"
+#include "UI/RmlUI.hpp"
 
 namespace ox {
 using DefaultModules = std::tuple<
@@ -24,5 +25,6 @@ using DefaultModules = std::tuple<
   RendererConfig,
   Renderer,
   DebugRenderer,
-  ImGuiRenderer>;
+  ImGuiRenderer,
+  RmlUI>;
 }

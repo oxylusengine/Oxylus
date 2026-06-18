@@ -65,7 +65,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   ZoneScoped;
   memory::ScopedStack stack;
 
-  auto& vk = self.renderer.vk_context;
+  auto& render_context = self.renderer.render_context;
 
   auto vsm_ctx = GPU::VSMContext{
     .page_size = RMVSMContext::PAGE_SIZE,
@@ -83,7 +83,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   GPU::VirtualClipmap directional_clipmaps[RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT] = {};
   constexpr static auto directional_clipmaps_size_bytes = ox::count_of(directional_clipmaps) *
                                                           sizeof(GPU::VirtualClipmap);
-  context.directional_clipmaps_buffer = vk->alloc_transient_buffer(
+  context.directional_clipmaps_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eCPUtoGPU,
     directional_clipmaps_size_bytes
   );
@@ -96,23 +96,23 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   );
   std::memcpy(context.directional_clipmaps_buffer->mapped_ptr, directional_clipmaps, directional_clipmaps_size_bytes);
 
-  auto page_visibility_mask_buffer = vk->alloc_transient_buffer(
+  auto page_visibility_mask_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
     RMVSMContext::DIRECTIONAL_PAGE_MASK_COUNT * sizeof(u32)
   );
-  auto allocation_requests_buffer = vk->alloc_transient_buffer(
+  auto allocation_requests_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
     RMVSMContext::DIRECTIONAL_MAX_PAGE_COUNT * sizeof(GPU::VSMAllocRequest)
   );
-  auto dirty_physical_page_addresses_buffer = vk->alloc_transient_buffer(
+  auto dirty_physical_page_addresses_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
     RMVSMContext::DIRECTIONAL_MAX_PAGE_COUNT * sizeof(glm::uvec2)
   );
-  auto page_allocator_buffer = vk->scratch_buffer<GPU::VSMPageAllocator>({
+  auto page_allocator_buffer = render_context->scratch_buffer<GPU::VSMPageAllocator>({
     .requests = allocation_requests_buffer->device_address,
     .dirty_physical_page_addresses = dirty_physical_page_addresses_buffer->device_address,
   });
-  auto clear_dirty_pages_cmd_buffer = vk->scratch_buffer<vuk::DispatchIndirectCommand>({
+  auto clear_dirty_pages_cmd_buffer = render_context->scratch_buffer<vuk::DispatchIndirectCommand>({
     .x = RMVSMContext::PAGE_SIZE / 16,
     .y = RMVSMContext::PAGE_SIZE / 16,
   });

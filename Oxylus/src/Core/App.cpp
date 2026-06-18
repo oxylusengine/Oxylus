@@ -7,9 +7,9 @@
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererConfig.hpp"
-#include "Render/Vulkan/VkContext.hpp"
 #include "Render/Window.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "Utils/Profiler.hpp"
@@ -57,10 +57,10 @@ auto App::init(this App& self) -> void {
   }
 
   if (self.registry.has<Renderer>()) {
-    self.vk_context = std::make_unique<VkContext>();
+    self.render_context = std::make_unique<RenderContext>();
 
     const bool enable_validation = self.command_line_args.contains("--vulkan-validation");
-    self.vk_context->create_context(*self.window, enable_validation);
+    self.render_context->create_context(*self.window, enable_validation);
   }
 
   auto job_manager_init_result = self.job_manager.init();
@@ -138,8 +138,8 @@ void App::stop(this App& self) {
   if (self.window.has_value()) {
     self.window->destroy();
   }
-  if (self.vk_context != nullptr) {
-    self.vk_context->destroy_context();
+  if (self.render_context != nullptr) {
+    self.render_context->destroy_context();
   }
 }
 
@@ -197,8 +197,8 @@ auto App::get_window() -> const Window& {
   return instance_->window.value();
 }
 
-auto App::get_vkcontext() -> VkContext& {
-  return *instance_->vk_context; //
+auto App::get_rendercontext() -> RenderContext& {
+  return *instance_->render_context; //
 }
 
 auto App::get_timestep() -> const Timestep& {

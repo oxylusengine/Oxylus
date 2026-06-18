@@ -5,13 +5,13 @@
 #include "Core/JobManager.hpp"
 #include "Core/ModuleRegistry.hpp"
 #include "Core/VFS.hpp"
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/Window.hpp"
 #include "Utils/Timestep.hpp"
 
 namespace ox {
 class ImGuiLayer;
-class VkContext;
+class RenderContext;
 
 struct WindowResizeEvent {
   u32 width = 0;
@@ -86,7 +86,7 @@ public:
   auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
 
   static auto get_window() -> const Window&;
-  static auto get_vkcontext() -> VkContext&;
+  static auto get_rendercontext() -> RenderContext&;
   static auto get_timestep() -> const Timestep&;
   static auto get_vfs() -> VFS&;
   static auto get_job_manager() -> JobManager&;
@@ -105,7 +105,7 @@ private:
   AppCommandLineArgs command_line_args = {};
   option<WindowInfo> window_info = nullopt;
 
-  std::unique_ptr<VkContext> vk_context = nullptr;
+  std::unique_ptr<RenderContext> render_context = nullptr;
   option<Window> window = nullopt;
 
   VFS vfs = {};

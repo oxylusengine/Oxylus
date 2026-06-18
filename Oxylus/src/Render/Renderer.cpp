@@ -6,7 +6,7 @@
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Render/RendererInstance.hpp"
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
@@ -28,11 +28,11 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   self.initalized = true;
 
-  self.vk_context = &App::get_vkcontext();
+  self.render_context = &App::get_rendercontext();
 
-  auto& bindless_set = self.vk_context->get_descriptor_set();
+  auto& bindless_set = self.render_context->get_descriptor_set();
 
-  self.vk_context->wait();
+  self.render_context->wait();
 
   // --- Shaders ---
   auto& vfs = App::get_vfs();
@@ -48,7 +48,7 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
       continue;
     }
 
-    self.vk_context->create_pipeline(*pipeline_data);
+    self.render_context->create_pipeline(*pipeline_data);
   }
 
   self.sky_transmittance_lut_view = Texture("sky_transmittance_lut");
@@ -108,7 +108,7 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   auto temp_atmos_info = GPU::Atmosphere{};
   temp_atmos_info.transmittance_lut_size = self.sky_transmittance_lut_view.get_extent();
   temp_atmos_info.multiscattering_lut_size = self.sky_multiscatter_lut_view.get_extent();
-  auto temp_atmos_buffer = self.vk_context->scratch_buffer(temp_atmos_info);
+  auto temp_atmos_buffer = self.render_context->scratch_buffer(temp_atmos_info);
 
   auto transmittance_lut_attachment = self.sky_transmittance_lut_view.discard("sky_transmittance_lut");
 
@@ -165,8 +165,8 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     vuk::DomainFlagBits::eGraphicsQueue
   );
 
-  self.vk_context->wait_on(std::move(transmittance_lut_attachment));
-  self.vk_context->wait_on(std::move(multiscatter_lut_attachment));
+  self.render_context->wait_on(std::move(transmittance_lut_attachment));
+  self.render_context->wait_on(std::move(multiscatter_lut_attachment));
 
   struct Vertex {
     alignas(4) glm::vec3 position = {};
@@ -187,22 +187,22 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   auto indices = std::vector<uint32_t>{0, 1, 2, 2, 3, 0};
 
-  self.quad_vertex_buffer = self.vk_context->resize_buffer(
+  self.quad_vertex_buffer = self.render_context->resize_buffer(
     std::move(self.quad_vertex_buffer),
     vuk::MemoryUsage::eGPUonly,
     ox::size_bytes(vertices)
   );
-  auto upload_quad_vertex_buffer = self.vk_context->upload_staging(std::span(vertices), *self.quad_vertex_buffer);
+  auto upload_quad_vertex_buffer = self.render_context->upload_staging(std::span(vertices), *self.quad_vertex_buffer);
 
-  self.quad_index_buffer = self.vk_context->resize_buffer(
+  self.quad_index_buffer = self.render_context->resize_buffer(
     std::move(self.quad_index_buffer),
     vuk::MemoryUsage::eGPUonly,
     ox::size_bytes(indices)
   );
-  auto upload_quad_index_buffer = self.vk_context->upload_staging(std::span(indices), *self.quad_index_buffer);
+  auto upload_quad_index_buffer = self.render_context->upload_staging(std::span(indices), *self.quad_index_buffer);
 
-  self.vk_context->wait_on(std::move(upload_quad_vertex_buffer));
-  self.vk_context->wait_on(std::move(upload_quad_index_buffer));
+  self.render_context->wait_on(std::move(upload_quad_vertex_buffer));
+  self.render_context->wait_on(std::move(upload_quad_index_buffer));
 
   return {};
 }

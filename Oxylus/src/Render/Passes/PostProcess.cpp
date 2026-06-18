@@ -7,7 +7,7 @@ namespace ox {
 auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostProcessContext& context) -> void {
   ZoneScoped;
 
-  auto histogram_bin_indices_buffer = self.renderer.vk_context->alloc_transient_buffer(
+  auto histogram_bin_indices_buffer = self.renderer.render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
     GPU::HISTOGRAM_BIN_COUNT * sizeof(u32)
   );

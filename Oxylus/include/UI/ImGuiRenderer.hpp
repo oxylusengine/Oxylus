@@ -9,7 +9,7 @@
 #include "Asset/Texture.hpp"
 
 namespace ox {
-class VkContext;
+class RenderContext;
 class Renderer;
 class Input;
 class ImGuiRenderer {
@@ -26,7 +26,7 @@ public:
 
   void begin_frame(f64 delta_time, glm::vec2 logical_size, glm::vec2 real_size);
   [[nodiscard]]
-  vuk::Value<vuk::ImageAttachment> end_frame(VkContext& context, vuk::Value<vuk::ImageAttachment> target);
+  vuk::Value<vuk::ImageAttachment> end_frame(RenderContext& context, vuk::Value<vuk::ImageAttachment> target);
 
   ImTextureID add_image(vuk::Value<vuk::ImageAttachment>&& attachment);
   ImTextureID add_image(const Texture& texture);

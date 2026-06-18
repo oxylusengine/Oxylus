@@ -12,7 +12,7 @@
 #include "Render/Camera.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
-#include "Render/Vulkan/VkContext.hpp"
+#include "Render/RenderContext.hpp"
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
@@ -69,8 +69,8 @@ void show_component_gizmo(
 ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true) {
   ZoneScoped;
 
-  auto& vk_context = App::get_vkcontext();
-  auto& runtime = *vk_context.runtime;
+  auto& render_context = App::get_rendercontext();
+  auto& runtime = *render_context.runtime;
   if (!runtime.is_pipeline_available("mouse_picking_pipeline")) {
     auto& vfs = App::get_vfs();
     auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
@@ -85,7 +85,7 @@ ViewportPanel::ViewportPanel() : EditorPanel("Viewport", ICON_MDI_TERRAIN, true)
         continue;
       }
 
-      vk_context.create_pipeline(*pipeline_data);
+      render_context.create_pipeline(*pipeline_data);
     }
   }
 }
@@ -137,11 +137,6 @@ void ViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       }
       if (ImGui::MenuItem(ICON_MDI_SPHERE, nullptr, gizmo_settings_popup)) {
         gizmo_settings_popup = true;
-      }
-      auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
-      ImGui::SetCursorPosX(viewport_size.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
-      if (ImGui::MenuItem(ICON_MDI_ARROW_EXPAND_ALL)) {
-        fullscreen_viewport = !fullscreen_viewport;
       }
       ImGui::EndMenuBar();
     }
@@ -525,12 +520,12 @@ void ViewportPanel::draw_settings_panel() {
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
   if (ImGui::TreeNodeEx("Renderer", TREE_FLAGS, "%s", "Renderer")) {
-    auto& vk_context = App::get_vkcontext();
-    ImGui::Text("GPU: %s", vk_context.device_name.c_str());
+    auto& render_context = App::get_rendercontext();
+    ImGui::Text("GPU: %s", render_context.device_name.c_str());
     ImGui::Text(
       "Swapchain: %dx%d",
-      static_cast<u32>(vk_context.swapchain_extent.x),
-      static_cast<u32>(vk_context.swapchain_extent.y)
+      static_cast<u32>(render_context.swapchain_extent.x),
+      static_cast<u32>(render_context.swapchain_extent.y)
     );
     auto& window = App::get_window();
     ImGui::Text(
@@ -896,7 +891,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
       auto visbuffer_attach = ctx.get_image_resource("visbuffer_attachment_2d");
       auto final_attach = ctx.get_image_resource("final_attachment");
 
-      auto readback_buffer = ctx.vk_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+      auto readback_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
 
       auto pick_pass = vuk::make_pass(
         "mouse_picking_2d_pass",
@@ -923,7 +918,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
       );
 
       auto temp_compiler = vuk::Compiler{};
-      readback_buffer.wait(*ctx.vk_context.superframe_allocator, temp_compiler);
+      readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
 
       u32 texel_data = ~0_u32;
       std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
@@ -943,7 +938,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
       auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
       auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
 
-      auto readback_buffer = ctx.vk_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+      auto readback_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
 
       auto write_pass = vuk::make_pass(
         "mouse_picking_write_pass",
@@ -973,7 +968,7 @@ auto ViewportPanel::mouse_picking_stages(RendererInstance* renderer_instance, gl
       );
 
       auto temp_compiler = vuk::Compiler{};
-      readback_buffer.wait(*ctx.vk_context.superframe_allocator, temp_compiler);
+      readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
 
       u32 texel_data = ~0_u32;
       std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));

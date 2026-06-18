@@ -18,6 +18,7 @@
 #include "Panels/TextEditorPanel.hpp"
 #include "Render/Window.hpp"
 #include "UI/ImGuiRenderer.hpp"
+#include "UI/RmlUI.hpp"
 #include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
 #include "Utils/Command.hpp"
@@ -113,6 +114,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
     sh->set_scene(nullptr);
   });
   std::ignore = event_system.subscribe<SceneStopEvent>([&self](const SceneStopEvent& e) {
+    self.scene_manager.remove_scene(e.scene_id);
     self.editor_context.reset();
     auto* sh = self.get_panel<SceneHierarchyPanel>();
     sh->set_scene(nullptr);
@@ -181,12 +183,16 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   self.main_viewport_panel.update(timestep, self.get_panel<SceneHierarchyPanel>());
 
-  auto& vk_context = App::get_vkcontext();
+  auto& render_context = App::get_rendercontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
+  auto& rml = App::mod<RmlUI>();
+  auto& rml_renderer = rml.get_renderer();
   auto& window = App::get_window();
 
-  auto swapchain_attachment = vk_context.new_frame();
+  auto swapchain_attachment = render_context.new_frame();
   swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
+
+  rml_renderer.begin_frame();
 
   imgui_renderer.begin_frame(timestep.get_seconds(), window.get_logical_size(), window.get_real_size());
   ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
@@ -205,9 +211,12 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   self.render(sc_info);
 
-  swapchain_attachment = imgui_renderer.end_frame(vk_context, std::move(swapchain_attachment));
+  rml.render_contexts();
 
-  vk_context.end_frame(swapchain_attachment);
+  swapchain_attachment = imgui_renderer.end_frame(render_context, std::move(swapchain_attachment));
+  swapchain_attachment = rml_renderer.end_frame(render_context, std::move(swapchain_attachment));
+
+  render_context.end_frame(swapchain_attachment);
 }
 
 auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_attachment) -> void {
@@ -258,9 +267,11 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
 
     self.main_viewport_panel.on_render(swapchain_attachment);
 
-    for (const auto& panel : self.editor_panels | std::views::values) {
-      if (panel->visible)
-        panel->on_render(swapchain_attachment);
+    if (!self.main_viewport_panel.is_fullscreen()) {
+      for (const auto& panel : self.editor_panels | std::views::values) {
+        if (panel->visible)
+          panel->on_render(swapchain_attachment);
+      }
     }
 
     self.runtime_console.on_imgui_render();
@@ -291,7 +302,7 @@ void Editor::reset(this Editor& self) {
 void Editor::new_scene(this Editor& self) {
   ZoneScoped;
 
-  App::get_vkcontext().wait();
+  App::get_rendercontext().wait();
 
   auto new_scene_id = self.scene_manager.new_scene();
   self.scene_manager.load_default_scene(new_scene_id);
