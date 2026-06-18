@@ -10,6 +10,7 @@
 #include "Render/Utils/VukCommon.hpp"
 #include "Render/RenderContext.hpp"
 #include "Scene/SceneGPU.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 template <>
@@ -880,9 +881,9 @@ auto RendererInstance::render(
       //   self.cull_geometry(cull_geometry_context, ...);
       //   self.draw_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index);
       // }
-
+      
       auto rmvsm_context = RMVSMContext{
-        .sun_moved = true,
+        .sun_moved = self.sun_direction_changed,
         .depth_extent = dst_extent,
         .depth_attachment = std::move(depth_attachment),
       };

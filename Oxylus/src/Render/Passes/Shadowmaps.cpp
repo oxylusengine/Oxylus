@@ -117,33 +117,22 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     .y = RMVSMContext::PAGE_SIZE / 16,
   });
 
+  context.virtual_page_table_attachment = vuk::acquire_ia(
+    "vsm virtual page table",
+    self.vsm_virtual_page_table_attachment,
+    vuk::eComputeRW
+  );
+
+  context.physical_page_table_attachment = vuk::acquire_ia(
+    "vsm physical page table",
+    self.vsm_physical_page_table_attachment,
+    vuk::eFragmentSampled
+  );
+
   if (context.sun_moved) {
-    context.virtual_page_table_attachment = vuk::discard_ia(
-      "vsm virtual page table",
-      self.vsm_virtual_page_table_attachment
-    );
     context.virtual_page_table_attachment = vuk::clear_image(
       std::move(context.virtual_page_table_attachment),
       vuk::Black<u32>
-    );
-    context.physical_page_table_attachment = vuk::discard_ia(
-      "vsm physical page table",
-      self.vsm_physical_page_table_attachment
-    );
-    context.physical_page_table_attachment = vuk::clear_image(
-      std::move(context.physical_page_table_attachment),
-      vuk::Black<u32>
-    );
-  } else {
-    context.virtual_page_table_attachment = vuk::acquire_ia(
-      "vsm virtual page table",
-      self.vsm_virtual_page_table_attachment,
-      vuk::eComputeRW
-    );
-    context.physical_page_table_attachment = vuk::acquire_ia(
-      "vsm physical page table",
-      self.vsm_physical_page_table_attachment,
-      vuk::eFragmentSampled
     );
   }
 
