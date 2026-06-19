@@ -210,7 +210,7 @@ struct ShadowGeometryContext {
 
 struct RMVSMContext {
   constexpr static u32 PAGE_SIZE = 128;
-  constexpr static u32 MAX_DIRECTIONAL_CLIPMAP_COUNT = 6;
+  constexpr static u32 MAX_DIRECTIONAL_CLIPMAP_COUNT = 10;
   constexpr static u32 DIRECTIONAL_IMAGE_SIZE = 1 << 12;
   constexpr static u32 DIRECTIONAL_PAGE_TABLE_SIZE = DIRECTIONAL_IMAGE_SIZE / PAGE_SIZE;
   constexpr static u32 DIRECTIONAL_MAX_PAGE_COUNT = DIRECTIONAL_PAGE_TABLE_SIZE * DIRECTIONAL_PAGE_TABLE_SIZE;

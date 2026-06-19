@@ -229,10 +229,10 @@ public func push_dirty_physical_page(__ref VSMPageAllocator allocator, u32x2 phy
     allocator.dirty_physical_page_coords[index] = physical_page_address;
 }
 
-public func calc_shadow_bias(u32 clipmap_index, f32 first_clipmap_texel_length, f32x3 N, f32x3 L) -> f32 {
+public func calc_shadow_bias(u32 clipmap_index, f32 first_clipmap_texel_length, f32x3 N, f32x3 L, f32 NoL) -> f32 {
     let clipmap_texel_size = exp2(f32(clipmap_index)) * first_clipmap_texel_length;
     let sqrt2 = 1.41421356;
-    let q = 2.0 / 1048576.0;
+    let q = 2.0 / (1 << 23);
     let b = sqrt2 * clipmap_texel_size * 0.5;
-    return q + b * length(cross(N, L));
+    return q + b * length(cross(N, L)) / NoL;
 }

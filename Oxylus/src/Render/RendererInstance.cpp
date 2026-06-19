@@ -267,7 +267,7 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   vsm_virtual_page_table_attachment.image_view = *vsm_virtual_page_table_view;
   render_context.wait_on(
     vuk::clear_image(vuk::discard_ia("vsm virtual page table", vsm_virtual_page_table_attachment), vuk::Black<u32>)
-      .as_released(vuk::eComputeRW)
+      .as_released(vuk::eFragmentSampled)
   );
 
   vsm_physical_page_table_attachment = vuk::ImageAttachment{
@@ -881,7 +881,7 @@ auto RendererInstance::render(
       //   self.cull_geometry(cull_geometry_context, ...);
       //   self.draw_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index);
       // }
-      
+
       auto rmvsm_context = RMVSMContext{
         .sun_moved = self.sun_direction_changed,
         .depth_extent = dst_extent,
@@ -1310,12 +1310,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
         self.directional_light.color = lc.color;
         self.directional_light.intensity = lc.intensity;
-        auto sun_rotation = glm::eulerAngles(tc.rotation);
-        const auto new_dir = glm::vec3{
-          glm::cos(sun_rotation.x) * glm::sin(sun_rotation.y),
-          glm::sin(sun_rotation.x) * glm::sin(sun_rotation.y),
-          glm::cos(sun_rotation.y),
-        };
+        const auto new_dir = glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f));
         self.sun_direction_changed = new_dir != self.previous_sun_direction;
         self.previous_sun_direction = new_dir;
         self.directional_light.direction = new_dir;

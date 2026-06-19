@@ -120,7 +120,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   context.virtual_page_table_attachment = vuk::acquire_ia(
     "vsm virtual page table",
     self.vsm_virtual_page_table_attachment,
-    vuk::eComputeRW
+    vuk::eFragmentSampled
   );
 
   context.physical_page_table_attachment = vuk::acquire_ia(
