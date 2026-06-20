@@ -570,11 +570,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
   auto& render_context = App::get()->get_rendercontext();
 
-  auto align_up = [](u64 v, u64 align) -> u64 {
-    return (v + align - 1_u64) & ~(align - 1_u64);
-  };
-
-  auto compute_lod_upload_size = [&align_up](
+  auto compute_lod_upload_size = [](
                                    const std::vector<u32>& simplified_indices,
                                    const std::vector<GPU::Meshlet>& meshlets,
                                    const std::vector<GPU::Bounds>& meshlet_bounds,
@@ -583,15 +579,15 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
                                  ) -> u64 {
     auto offset = 0_u64;
     offset += ox::size_bytes(simplified_indices);
-    offset = align_up(offset, 8);
+    offset = ox::align_up(offset, 8);
     offset += ox::size_bytes(meshlets);
-    offset = align_up(offset, 8);
+    offset = ox::align_up(offset, 8);
     offset += ox::size_bytes(meshlet_bounds);
-    offset = align_up(offset, 8);
+    offset = ox::align_up(offset, 8);
     offset += ox::size_bytes(local_triangle_indices);
-    offset = align_up(offset, 4);
+    offset = ox::align_up(offset, 4);
     offset += ox::size_bytes(indirect_vertex_indices);
-    offset = align_up(offset, 8); // pad end so next LOD base stays 8-aligned
+    offset = ox::align_up(offset, 8); // pad end so next LOD base stays 8-aligned
     return offset;
   };
 
@@ -745,7 +741,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
       }
 
       // Pad mesh upload size to 8 so the first LOD base is 8-aligned
-      const auto mesh_upload_size = align_up(
+      const auto mesh_upload_size = ox::align_up(
         ox::size_bytes(quantized_positions) + ox::size_bytes(quantized_normals) + ox::size_bytes(quantized_texcoords),
         8
       );
