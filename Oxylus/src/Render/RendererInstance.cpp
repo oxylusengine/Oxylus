@@ -764,7 +764,7 @@ auto RendererInstance::render(
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
      .format = vuk::Format::eB10G11R11UfloatPack32,
      .sample_count = vuk::SampleCountFlagBits::e1,
-     .level_count = bloom_mip_count - 1,
+     .level_count = bloom_mip_count,
      .layer_count = 1}
   );
   bloom_upsampled_attachment.same_extent_as(final_attachment);
