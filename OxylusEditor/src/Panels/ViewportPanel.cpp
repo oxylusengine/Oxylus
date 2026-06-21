@@ -496,9 +496,9 @@ void ViewportPanel::draw_settings_panel() {
     RendererCVar::cvar_draw_bounding_boxes.set_default();
     RendererCVar::cvar_draw_camera_frustum.get_default();
     RendererCVar::cvar_bloom_enable.set_default();
+    RendererCVar::cvar_bloom_intensity.set_default();
     RendererCVar::cvar_bloom_threshold.set_default();
-    RendererCVar::cvar_bloom_clamp.set_default();
-    RendererCVar::cvar_bloom_quality_level.set_default();
+    RendererCVar::cvar_bloom_soft_threshold.set_default();
     RendererCVar::cvar_fxaa_enable.set_default();
     RendererCVar::cvar_vbgtao_quality_level.set_default();
     RendererCVar::cvar_vbgtao_radius.set_default();
@@ -589,10 +589,9 @@ void ViewportPanel::draw_settings_panel() {
     if (ImGui::TreeNodeEx("Bloom", TREE_FLAGS, "%s", "Bloom")) {
       if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
         UI::property("Enabled", (bool*)RendererCVar::cvar_bloom_enable.get_ptr());
-        UI::property<float>("Threshold", RendererCVar::cvar_bloom_threshold.get_ptr(), 0, 5);
-        UI::property<float>("Clamp", RendererCVar::cvar_bloom_clamp.get_ptr(), 0, 5);
-        const char* quality_levels[4] = {"Low", "Medium", "High", "Ultra"};
-        UI::property("Quality Level", RendererCVar::cvar_bloom_quality_level.get_ptr(), quality_levels, 4);
+        UI::property<float>("Intensity", RendererCVar::cvar_bloom_intensity.get_ptr(), 0.0f, 10.0f);
+        UI::property<float>("Threshold", RendererCVar::cvar_bloom_threshold.get_ptr(), 0.0f, 10.0f);
+        UI::property<float>("Soft Threshold", RendererCVar::cvar_bloom_soft_threshold.get_ptr(), 0.0f, 1.0f);
         UI::end_properties();
       }
       ImGui::TreePop();
