@@ -1,5 +1,6 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
+#include "Render/RendererConfig.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/VukCommon.hpp"
 
@@ -76,25 +77,44 @@ auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostPro
   );
 }
 
-auto RendererInstance::apply_bloom(
-  this RendererInstance&, PostProcessContext& context, f32 threshold, f32 clamp, u32 mip_count
-) -> void {
+auto RendererInstance::apply_bloom(this RendererInstance&, PostProcessContext& context) -> void {
   ZoneScoped;
 
+  const auto intensity = RendererCVar::cvar_bloom_intensity.get();
+  const auto threshold = RendererCVar::cvar_bloom_threshold.get();
+  const auto soft_threshold = RendererCVar::cvar_bloom_soft_threshold.get();
+
+  const auto half_extent = context.extent / 2;
+  const auto mip_count = Texture::get_mip_count(half_extent);
   auto bloom_downsampled_attachment = vuk::declare_ia(
     "bloom downsampled",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+     .extent = half_extent,
+     .sample_count = vuk::SampleCountFlagBits::e1,
+     .level_count = mip_count,
+     .layer_count = 1}
+  );
+  bloom_downsampled_attachment.same_format_as(context.final_attachment);
+  bloom_downsampled_attachment = vuk::clear_image(std::move(bloom_downsampled_attachment), vuk::Black<float>);
+
+  context.bloom_upsampled_attachment = vuk::declare_ia(
+    "bloom upsampled",
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+     .extent = half_extent,
      .format = vuk::Format::eB10G11R11UfloatPack32,
      .sample_count = vuk::SampleCountFlagBits::e1,
      .level_count = mip_count,
      .layer_count = 1}
   );
-  bloom_downsampled_attachment.same_extent_as(context.bloom_upsampled_attachment);
-  bloom_downsampled_attachment = vuk::clear_image(std::move(bloom_downsampled_attachment), vuk::Black<float>);
+  context.bloom_upsampled_attachment.same_format_as(context.final_attachment);
+  context.bloom_upsampled_attachment = vuk::clear_image(
+    std::move(context.bloom_upsampled_attachment),
+    vuk::Black<float>
+  );
 
   auto bloom_prefilter_pass = vuk::make_pass(
     "bloom prefilter",
-    [threshold, clamp](
+    [threshold, soft_threshold](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeSampled) src,
       VUK_IA(vuk::eComputeRW) out
@@ -103,9 +123,9 @@ auto RendererInstance::apply_bloom(
         .bind_compute_pipeline("bloom_prefilter")
         .bind_image(0, 0, out)
         .bind_image(0, 1, src)
-        .bind_sampler(0, 2, vuk::LinearSamplerClamped)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(threshold, clamp, src->extent))
-        .dispatch_invocations_per_pixel(src);
+        .bind_sampler(0, 2, vuk::LinearSamplerBorder)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(threshold, soft_threshold, out->extent))
+        .dispatch_invocations_per_pixel(out);
 
       return std::make_tuple(src, out);
     }
@@ -121,7 +141,8 @@ auto RendererInstance::apply_bloom(
     [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) bloom) {
       cmd_list //
         .bind_compute_pipeline("bloom_downsample")
-        .bind_sampler(0, 2, vuk::LinearSamplerClamped);
+        // ClampToBorder kills edge-bleed propagation through the mip chain.
+        .bind_sampler(0, 2, vuk::LinearSamplerBorder);
 
       auto extent = bloom->extent;
       for (auto i = 1_u32; i < bloom->level_count; i++) {
@@ -149,7 +170,7 @@ auto RendererInstance::apply_bloom(
 
   auto bloom_upsample_pass = vuk::make_pass(
     "bloom_upsample",
-    [](
+    [intensity](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeRW) bloom_upsampled,
       VUK_IA(vuk::eComputeSampled) bloom_downsampled
@@ -159,25 +180,24 @@ auto RendererInstance::apply_bloom(
 
       cmd_list //
         .bind_compute_pipeline("bloom_upsample")
+        .specialize_constants(0, 0u)
         .bind_sampler(0, 3, vuk::LinearSamplerClamped);
 
-      for (int32_t i = last_mip - 1; i >= 0; i--) {
-        auto mip_width = std::max(1_u32, extent.width >> i);
-        auto mip_height = std::max(1_u32, extent.height >> i);
+      for (int32_t i = last_mip; i > 0; i--) {
+        auto mip_width = std::max(1_u32, extent.width >> (i - 1));
+        auto mip_height = std::max(1_u32, extent.height >> (i - 1));
 
-        if (i == last_mip - 1) {
+        if (i == last_mip) {
           cmd_list.bind_image(0, 1, bloom_downsampled->mip(last_mip));
         } else {
-          cmd_list.image_barrier(bloom_upsampled->mip(i + 1), vuk::eComputeWrite, vuk::eComputeSampled);
-          cmd_list.bind_image(0, 1, bloom_upsampled->mip(i + 1));
+          cmd_list.image_barrier(bloom_upsampled->mip(i), vuk::eComputeWrite, vuk::eComputeSampled);
+          cmd_list.bind_image(0, 1, bloom_upsampled->mip(i));
         }
 
-        cmd_list.image_barrier(bloom_upsampled->mip(i), vuk::eComputeWrite, vuk::eComputeWrite);
-        cmd_list.bind_image(0, 0, bloom_upsampled->mip(i));
-        cmd_list.bind_image(0, 2, bloom_downsampled->mip(i));
-        cmd_list.push_constants(
-          vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height)
-        );
+        cmd_list.image_barrier(bloom_upsampled->mip(i - 1), vuk::eComputeWrite, vuk::eComputeWrite);
+        cmd_list.bind_image(0, 0, bloom_upsampled->mip(i - 1));
+        cmd_list.bind_image(0, 2, bloom_downsampled->mip(i - 1));
+        cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height, intensity));
         cmd_list.dispatch_invocations(mip_width, mip_height);
       }
 

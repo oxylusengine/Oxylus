@@ -168,17 +168,17 @@ entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
 name = "bloom_prefilter"
-path = "passes/bloom/bloom_prefilter.slang"
+path = "passes/bloom_prefilter.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
 name = "bloom_downsample"
-path = "passes/bloom/bloom_downsample.slang"
+path = "passes/bloom_downsample.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
 name = "bloom_upsample"
-path = "passes/bloom/bloom_upsample.slang"
+path = "passes/bloom_upsample.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]

@@ -736,40 +736,6 @@ auto RendererInstance::render(
     vuk::Black<f32>
   );
 
-  const f32 bloom_threshold = RendererCVar::cvar_bloom_threshold.get();
-  const f32 bloom_clamp = RendererCVar::cvar_bloom_clamp.get();
-  const u32 bloom_quality_level = static_cast<u32>(RendererCVar::cvar_bloom_quality_level.get());
-  u32 bloom_mip_count = 8;
-  switch (bloom_quality_level) {
-    case 0: {
-      bloom_mip_count = 4;
-      break;
-    }
-    case 1: {
-      bloom_mip_count = 5;
-      break;
-    }
-    case 2: {
-      bloom_mip_count = 6;
-      break;
-    }
-    case 3: {
-      bloom_mip_count = 8;
-      break;
-    }
-  }
-
-  auto bloom_upsampled_attachment = vuk::declare_ia(
-    "bloom upsampled",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eB10G11R11UfloatPack32,
-     .sample_count = vuk::SampleCountFlagBits::e1,
-     .level_count = bloom_mip_count,
-     .layer_count = 1}
-  );
-  bloom_upsampled_attachment.same_extent_as(final_attachment);
-  bloom_upsampled_attachment = vuk::clear_image(std::move(bloom_upsampled_attachment), vuk::Black<float>);
-
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0) {
     auto main_geometry_context = MainGeometryContext{
@@ -1173,7 +1139,6 @@ auto RendererInstance::render(
     .extent = dst_extent,
     .dst_attachment = std::move(dst_attachment),
     .final_attachment = std::move(final_attachment),
-    .bloom_upsampled_attachment = std::move(bloom_upsampled_attachment),
   };
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasEyeAdaptation) {
@@ -1181,7 +1146,7 @@ auto RendererInstance::render(
   }
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasBloom) {
-    self.apply_bloom(post_process_context, bloom_threshold, bloom_clamp, bloom_mip_count);
+    self.apply_bloom(post_process_context);
   }
 
   dst_attachment = self.apply_tonemap(post_process_context);
