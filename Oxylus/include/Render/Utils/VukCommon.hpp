@@ -109,6 +109,16 @@ inline SamplerCreateInfo LinearSamplerClamped = {
     .addressModeW = SamplerAddressMode::eClampToEdge,
 };
 
+inline SamplerCreateInfo LinearSamplerBorder = {
+    .magFilter = Filter::eLinear,
+    .minFilter = Filter::eLinear,
+    .mipmapMode = SamplerMipmapMode::eLinear,
+    .addressModeU = SamplerAddressMode::eClampToBorder,
+    .addressModeV = SamplerAddressMode::eClampToBorder,
+    .addressModeW = SamplerAddressMode::eClampToBorder,
+    .borderColor = BorderColor::eFloatTransparentBlack,
+};
+
 inline SamplerCreateInfo CmpDepthSampler = {
     .magFilter = Filter::eLinear,
     .minFilter = Filter::eLinear,
