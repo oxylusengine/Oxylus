@@ -35,7 +35,6 @@ inline AutoCVar_Float cvar_vbgtao_radius("pp.vbgtao_radius", "vbgtao radius", 0.
 inline AutoCVar_Float cvar_vbgtao_final_power("pp.vbgtao_final_power", "vbgtao final power", 1.2f);
 
 inline AutoCVar_Int cvar_bloom_enable("pp.bloom", "use bloom", 1);
-inline AutoCVar_Float cvar_bloom_intensity("pp.bloom_intensity", "bloom intensity", 0.15f);
 inline AutoCVar_Float cvar_bloom_threshold("pp.bloom_threshold", "bloom threshold", 1.0f);
 inline AutoCVar_Float cvar_bloom_soft_threshold("pp.bloom_soft_threshold", "bloom soft threshold", 0.125f);
 inline AutoCVar_Float cvar_bloom_radius("pp.bloom_radius", "bloom radius", 0.75f);

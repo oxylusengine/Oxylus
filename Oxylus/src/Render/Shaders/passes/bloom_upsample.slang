@@ -1,8 +1,6 @@
 import common;
 import gpu;
 
-static constexpr f32 ALPHA_INTERPOLATION = 1.0;
-[[vk::constant_id(0)]] const u32 is_final_composite = 0;
 [[vk::binding(0)]] StorageImage2D<f32x4, ImageFormat::R11F_G11F_B10F> result_image;
 [[vk::binding(1)]] Image2D<f32x4> source_image_upsample;
 [[vk::binding(2)]] Image2D<f32x4> source_image_downsample;
@@ -45,9 +43,5 @@ func cs_main(
                 + (a + c + g + i) * 0.0625;
 
   let source_color = source_image_downsample.SampleLevel(sampler, uv, 0).rgb;
-  let result = is_final_composite == 0
-    ? source_color + color_sum
-    : lerp(source_color, source_color + pc.intensity * color_sum, ALPHA_INTERPOLATION);
-
-  result_image.Store(img_coords, f32x4(result, 1.0));
+  result_image.Store(img_coords, f32x4(source_color + color_sum, 1.0));
 }
