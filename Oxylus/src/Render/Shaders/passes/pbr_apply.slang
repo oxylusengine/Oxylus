@@ -147,15 +147,15 @@ func fs_main(
     let emission = params.emissive_image.Load(pixel_pos);
 
     let metallic_roughness_occlusion = params.metallic_roughness_occlusion_image.Load(pixel_pos);
-    let metallic = metallic_roughness_occlusion.r;
-    let roughness = metallic_roughness_occlusion.g;
+    let metallic = clamp(metallic_roughness_occlusion.r, 0.0, 1.0);
+    let roughness = clamp(metallic_roughness_occlusion.g, 0.045, 1.0);
     let baked_occlusion = metallic_roughness_occlusion.b;
     let screen_space_occlusion = params.gtao_image.Load(pixel_pos).r;
     let occlusion = baked_occlusion * screen_space_occlusion;
 
     let NDC = f32x3(input.tex_coord * 2.0 - 1.0, depth);
     let world_position_h = mul(params.camera.inv_projection_view, f32x4(NDC, 1.0));
-    let world_position = world_position_h.xyz / world_position_h.w;
+    let world_position = world_position_h.xyz / max(world_position_h.w, 1e-6);
 
     let has_atmosphere = (scene_flags & SceneFlags::HasAtmosphere) != 0;
     let has_directional_light = (scene_flags & SceneFlags::HasDirectionalLight) != 0;
