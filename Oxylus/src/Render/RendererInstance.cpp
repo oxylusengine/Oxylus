@@ -6,9 +6,9 @@
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Render/DebugRenderer.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
-#include "Render/RenderContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
@@ -405,7 +405,9 @@ auto RendererInstance::render(
     self.shared_resources.clear();
   };
 
-  auto dst_extent = dst_attachment->extent;
+  const auto dst_extent = dst_attachment->extent;
+  const auto final_half_extent = dst_extent / 2;
+  const auto final_half_mip_count = Texture::get_mip_count(final_half_extent);
 
   OX_CHECK_GT(dst_extent.width, 0u);
   OX_CHECK_GT(dst_extent.height, 0u);
@@ -420,7 +422,9 @@ auto RendererInstance::render(
 
   self.render_queue_2d.update();
   self.render_queue_2d.sort();
-  auto vertex_buffer_2d = self.renderer.render_context->scratch_buffer_span(std::span(self.render_queue_2d.sprite_data));
+  auto vertex_buffer_2d = self.renderer.render_context->scratch_buffer_span(
+    std::span(self.render_queue_2d.sprite_data)
+  );
 
   const auto scene_has_directional_light = self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight;
   const auto scene_has_atmosphere = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
@@ -1017,12 +1021,25 @@ auto RendererInstance::render(
     std::tie(final_attachment, fxaa_attachment) = fxaa_pass(fxaa_attachment, final_attachment);
   }
 
+  auto bloom_upsampled_attachment = vuk::declare_ia(
+    "bloom upsampled",
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+     .extent = final_half_extent,
+     .format = vuk::Format::eB10G11R11UfloatPack32,
+     .sample_count = vuk::SampleCountFlagBits::e1,
+     .level_count = final_half_mip_count,
+     .layer_count = 1}
+  );
+  bloom_upsampled_attachment.same_format_as(final_attachment);
+  bloom_upsampled_attachment = vuk::clear_image(std::move(bloom_upsampled_attachment), vuk::Black<float>);
+
   /// POST PROCESSING
   auto post_process_context = PostProcessContext{
     .delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f,
     .extent = dst_extent,
     .dst_attachment = std::move(dst_attachment),
     .final_attachment = std::move(final_attachment),
+    .bloom_upsampled_attachment = std::move(bloom_upsampled_attachment),
   };
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasEyeAdaptation) {
