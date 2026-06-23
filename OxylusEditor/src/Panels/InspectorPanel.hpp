@@ -28,15 +28,15 @@ public:
 
   void on_render(vuk::ImageAttachment swapchain_attachment) override;
 
-  static void draw_material_properties(
+  static auto draw_material_properties(
     ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
-  );
+  ) -> bool;
 
   void draw_components(flecs::entity entity);
   void draw_asset_info(ReadGuard<Asset> asset);
 
   void draw_model_asset(ReadGuard<Asset> asset, ReadGuard<Model> model);
-  void draw_material_asset(ReadGuard<Asset> asset, ReadGuard<Material> material);
+  bool draw_material_asset(ReadGuard<Asset> asset, ReadGuard<Material> material);
   void draw_audio_asset(ReadGuard<Asset> asset, ReadGuard<AudioSource> audio);
   bool draw_script_asset(ReadGuard<Asset> asset, ReadGuard<LuaSystem> lua_system);
 

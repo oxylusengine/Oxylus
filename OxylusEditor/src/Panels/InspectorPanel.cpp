@@ -274,8 +274,14 @@ struct EntityInspector : IEntitySerializer {
             break;
           }
           case AssetType::Material: {
-            auto material = asset_man.get_material(asset->material_id);
-            inspector_panel.draw_material_asset(std::move(asset), std::move(material));
+            auto material_id = asset->material_id;
+            auto material = asset_man.get_material(material_id);
+            auto material_dirty = inspector_panel.draw_material_asset(std::move(asset), std::move(material));
+            material.reset();
+            if (material_dirty) {
+              material.reset();
+              asset_man.set_material_dirty(material_id);
+            }
             break;
           }
           case AssetType::Font: {
@@ -374,9 +380,9 @@ void InspectorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
   on_end();
 }
 
-void InspectorPanel::draw_material_properties(
+auto InspectorPanel::draw_material_properties(
   ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
-) {
+) -> bool {
   if (material_uuid) {
     const auto& window = App::get_window();
     static auto uuid_copy = material_uuid;
@@ -530,11 +536,7 @@ void InspectorPanel::draw_material_properties(
 
   UI::end_properties();
 
-  if (dirty) {
-    auto& asset_man = App::mod<AssetManager>();
-    if (const auto asset = asset_man.get_asset(material_uuid))
-      asset_man.set_material_dirty(asset->material_id);
-  }
+  return dirty;
 }
 
 void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id id) {
@@ -741,16 +743,18 @@ void InspectorPanel::draw_model_asset(ReadGuard<Asset> asset, ReadGuard<Model> m
   }
 }
 
-void InspectorPanel::draw_material_asset(ReadGuard<Asset> asset, ReadGuard<Material> material) {
+auto InspectorPanel::draw_material_asset(ReadGuard<Asset> asset, ReadGuard<Material> material) -> bool {
   ZoneScoped;
 
   ImGui::SeparatorText("Material");
 
   if (material) {
-    draw_material_properties(std::move(material), asset->uuid, asset->path);
+    return draw_material_properties(std::move(material), asset->uuid, asset->path);
   } else {
     ImGui::Text("No Material");
   }
+
+  return false;
 }
 
 void InspectorPanel::draw_audio_asset(ReadGuard<Asset> asset, ReadGuard<AudioSource> audio) {
