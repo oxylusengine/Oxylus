@@ -128,7 +128,8 @@ vuk::Swapchain make_swapchain(
   return std::move(*old_swapchain);
 }
 
-auto RenderContext::create_context(this RenderContext& self, const Window& window, bool vulkan_validation_layers) -> void {
+auto RenderContext::create_context(this RenderContext& self, const Window& window, bool vulkan_validation_layers)
+  -> void {
   ZoneScoped;
   vkb::InstanceBuilder builder;
   builder //
@@ -167,7 +168,8 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   self.surface = window.get_surface(instance);
   selector //
     .set_surface(self.surface)
-    .set_minimum_version(1, 3);
+    .set_minimum_version(1, 3)
+    .disable_portability_subset();
 #ifdef OX_USE_LLVMPIPE
   selector.prefer_gpu_device_type(vkb::PreferredDeviceType::cpu);
   selector.allow_any_gpu_device_type(false);
@@ -197,7 +199,9 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vk10_features.features.shaderInt64 = true;
   vk10_features.features.vertexPipelineStoresAndAtomics = true;
   vk10_features.features.depthClamp = true;
+#ifndef OX_PLATFORM_MACOSX
   vk10_features.features.fillModeNonSolid = true;
+#endif
   vk10_features.features.multiViewport = true;
   vk10_features.features.samplerAnisotropy = true;
   vk10_features.features.multiDrawIndirect = true;
@@ -898,16 +902,18 @@ auto RenderContext::alloc_transient_buffer_raw(
   return *buffer;
 }
 
-auto RenderContext::alloc_transient_buffer(vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC)
-  -> vuk::Value<vuk::Buffer> {
+auto RenderContext::alloc_transient_buffer(
+  vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC
+) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
   auto buffer = alloc_transient_buffer_raw(usage, size, alignment, LOC);
   return vuk::acquire_buf("transient buffer", buffer, vuk::Access::eNone, LOC);
 }
 
-auto RenderContext::upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Buffer>&& dst, vuk::source_location LOC)
-  -> vuk::Value<vuk::Buffer> {
+auto RenderContext::upload_staging(
+  vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Buffer>&& dst, vuk::source_location LOC
+) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
   auto upload_pass = vuk::make_pass(
@@ -948,8 +954,9 @@ auto RenderContext::upload_staging(
   return upload_staging(std::move(cpu_buffer), std::move(dst_buffer), LOC);
 }
 
-auto RenderContext::upload_staging(void* data, u64 data_size, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC)
-  -> vuk::Value<vuk::Buffer> {
+auto RenderContext::upload_staging(
+  void* data, u64 data_size, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC
+) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
   auto cpu_buffer = alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, data_size, 8, LOC);
