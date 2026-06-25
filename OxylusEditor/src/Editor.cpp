@@ -510,9 +510,6 @@ void Editor::draw_menubar(this Editor& self) {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Window")) {
-      if (ImGui::MenuItem("Add viewport", nullptr)) {
-        self.main_viewport_panel.add_viewport();
-      }
       ImGui::MenuItem("Inspector", nullptr, &self.editor_panel_registry.get<InspectorPanel>().visible);
       ImGui::MenuItem("Scene hierarchy", nullptr, &self.editor_panel_registry.get<SceneHierarchyPanel>().visible);
       ImGui::MenuItem("Console window", nullptr, &self.runtime_console.visible);
