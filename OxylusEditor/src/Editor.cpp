@@ -40,7 +40,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "new_scene",
-      .primary_inputs = {InputCode(KeyCode::N, ModCode::AnyControl)},
+      .primary_inputs = {InputCode(ScanCode::N, ModCode::AnyControl)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.new_scene(); }
     }
@@ -48,7 +48,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "undo",
-      .primary_inputs = {InputCode(KeyCode::Z, ModCode::AnyControl)},
+      .primary_inputs = {InputCode(ScanCode::Z, ModCode::AnyControl)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.undo(); }
     }
@@ -56,7 +56,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "redo",
-      .primary_inputs = {InputCode(KeyCode::Y, ModCode::AnyControl)},
+      .primary_inputs = {InputCode(ScanCode::Y, ModCode::AnyControl)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.redo(); }
     }
@@ -64,7 +64,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "save_scene",
-      .primary_inputs = {InputCode(KeyCode::S, ModCode::AnyControl)},
+      .primary_inputs = {InputCode(ScanCode::S, ModCode::AnyControl)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.save_scene(); }
     }
@@ -72,7 +72,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "open_scene_file_dialog",
-      .primary_inputs = {InputCode(KeyCode::O, ModCode::AnyControl)},
+      .primary_inputs = {InputCode(ScanCode::O, ModCode::AnyControl)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.open_scene_file_dialog(); }
     }
@@ -80,21 +80,29 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "save_scene_as",
-      .primary_inputs = {InputCode(KeyCode::S, ModCode::AnyControl | ModCode::AnyShift)},
+      .primary_inputs = {InputCode(ScanCode::S, ModCode::AnyControl | ModCode::AnyShift)},
       .context = "editor",
       .on_pressed_callback = [&self](const ActionContext&) { self.save_scene_as(); }
+    }
+  );
+  std::ignore = input.bind_action(
+    ActionBinding{
+      .action_id = "fullscreen_viewport",
+      .primary_inputs = {InputCode(ScanCode::F11)},
+      .context = "editor",
+      .on_pressed_callback = [&self](const ActionContext&) { self.main_viewport_panel.toggle_fullscreen(); }
     }
   );
 
   self.active_project = std::make_unique<Project>();
 
-  auto scene_hierarchy_panel = self.add_panel<SceneHierarchyPanel>();
-  self.add_panel<ContentPanel>();
-  self.add_panel<InspectorPanel>();
-  self.add_panel<EditorSettingsPanel>();
-  self.add_panel<ProjectPanel>();
-  self.add_panel<AssetManagerPanel>();
-  auto text_editor_panel = self.add_panel<TextEditorPanel>();
+  auto scene_hierarchy_panel = self.editor_panel_registry.add<SceneHierarchyPanel>();
+  self.editor_panel_registry.add<ContentPanel>();
+  self.editor_panel_registry.add<InspectorPanel>();
+  self.editor_panel_registry.add<EditorSettingsPanel>();
+  self.editor_panel_registry.add<ProjectPanel>();
+  self.editor_panel_registry.add<AssetManagerPanel>();
+  auto text_editor_panel = self.editor_panel_registry.add<TextEditorPanel>();
 
   scene_hierarchy_panel->viewer.opened_script_callback = [text_editor_panel](const UUID& uuid) {
     auto& asset_man = App::mod<AssetManager>();
@@ -110,14 +118,14 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   auto& event_system = App::get_event_system();
   std::ignore = event_system.subscribe<ScenePlayEvent>([&self](const ScenePlayEvent& e) {
     self.editor_context.reset();
-    auto* sh = self.get_panel<SceneHierarchyPanel>();
-    sh->set_scene(nullptr);
+    auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
+    sh.set_scene(nullptr);
   });
   std::ignore = event_system.subscribe<SceneStopEvent>([&self](const SceneStopEvent& e) {
     self.scene_manager.remove_scene(e.scene_id);
     self.editor_context.reset();
-    auto* sh = self.get_panel<SceneHierarchyPanel>();
-    sh->set_scene(nullptr);
+    auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
+    sh.set_scene(nullptr);
   });
 
   Log::add_callback(
@@ -175,13 +183,10 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
 auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   ZoneScoped;
 
-  for (const auto& panel : self.editor_panels | std::views::values) {
-    if (!panel->visible)
-      continue;
-    panel->on_update();
-  }
+  self.editor_panel_registry.update_all();
 
-  self.main_viewport_panel.update(timestep, self.get_panel<SceneHierarchyPanel>());
+  auto& shp = self.editor_panel_registry.get<SceneHierarchyPanel>();
+  self.main_viewport_panel.update(timestep, &shp);
 
   auto& render_context = App::get_rendercontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
@@ -268,10 +273,7 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
     self.main_viewport_panel.on_render(swapchain_attachment);
 
     if (!self.main_viewport_panel.is_fullscreen()) {
-      for (const auto& panel : self.editor_panels | std::views::values) {
-        if (panel->visible)
-          panel->on_render(swapchain_attachment);
-      }
+      self.editor_panel_registry.render_all(swapchain_attachment);
     }
 
     self.runtime_console.on_imgui_render();
@@ -293,8 +295,8 @@ void Editor::reset(this Editor& self) {
 
   self.main_viewport_panel.reset();
 
-  auto* sh = self.get_panel<SceneHierarchyPanel>();
-  sh->set_scene(nullptr);
+  auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
+  sh.set_scene(nullptr);
 
   self.scene_manager.reset();
 }
@@ -433,39 +435,39 @@ void Editor::save_scene_as() {
   });
 }
 
-void Editor::set_docking_layout(EditorLayout layout) {
+void Editor::set_docking_layout(this Editor& self, EditorLayout layout) {
   ZoneScoped;
 
-  current_layout = layout;
-  ImGui::DockBuilderRemoveNode(dockspace_id);
-  ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_PassthruCentralNode);
+  self.current_layout = layout;
+  ImGui::DockBuilderRemoveNode(self.dockspace_id);
+  ImGui::DockBuilderAddNode(self.dockspace_id, ImGuiDockNodeFlags_PassthruCentralNode);
 
   const ImVec2 size = ImGui::GetMainViewport()->WorkSize;
-  ImGui::DockBuilderSetNodeSize(dockspace_id, size);
+  ImGui::DockBuilderSetNodeSize(self.dockspace_id, size);
 
   if (layout == EditorLayout::BigViewport) {
-    const ImGuiID right_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Right, 0.8f, nullptr, &dockspace_id);
-    ImGuiID left_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.2f, nullptr, &dockspace_id);
+    const ImGuiID right_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Right, 0.8f, nullptr, &self.dockspace_id);
+    ImGuiID left_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Left, 0.2f, nullptr, &self.dockspace_id);
     const ImGuiID left_split_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Down, 0.4f, nullptr, &left_dock);
 
-    ImGui::DockBuilderDockWindow(main_viewport_panel.get_id(), right_dock);
-    ImGui::DockBuilderDockWindow(get_panel<SceneHierarchyPanel>()->get_id(), left_dock);
-    ImGui::DockBuilderDockWindow(get_panel<ContentPanel>()->get_id(), left_split_dock);
-    ImGui::DockBuilderDockWindow(get_panel<InspectorPanel>()->get_id(), left_dock);
+    ImGui::DockBuilderDockWindow(self.main_viewport_panel.get_id(), right_dock);
+    ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<SceneHierarchyPanel>().get_id(), left_dock);
+    ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<ContentPanel>().get_id(), left_split_dock);
+    ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<InspectorPanel>().get_id(), left_dock);
   } else if (layout == EditorLayout::Classic) {
-    const ImGuiID right_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Right, 0.2f, nullptr, &dockspace_id);
-    ImGuiID left_dock = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.85f, nullptr, &dockspace_id);
+    const ImGuiID right_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Right, 0.2f, nullptr, &self.dockspace_id);
+    ImGuiID left_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Left, 0.85f, nullptr, &self.dockspace_id);
     const ImGuiID left_bottom_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Down, 0.3f, nullptr, &left_dock);
     const ImGuiID
       left_vertical_split_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Left, 0.2f, nullptr, &left_dock);
 
-    ImGui::DockBuilderDockWindow(get_panel<InspectorPanel>()->get_id(), right_dock);
-    ImGui::DockBuilderDockWindow(main_viewport_panel.get_id(), left_dock);
-    ImGui::DockBuilderDockWindow(get_panel<ContentPanel>()->get_id(), left_bottom_dock);
-    ImGui::DockBuilderDockWindow(get_panel<SceneHierarchyPanel>()->get_id(), left_vertical_split_dock);
+    ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<InspectorPanel>().get_id(), right_dock);
+    ImGui::DockBuilderDockWindow(self.main_viewport_panel.get_id(), left_dock);
+    ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<ContentPanel>().get_id(), left_bottom_dock);
+    ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<SceneHierarchyPanel>().get_id(), left_vertical_split_dock);
   }
 
-  ImGui::DockBuilderFinish(dockspace_id);
+  ImGui::DockBuilderFinish(self.dockspace_id);
 }
 
 void Editor::reset_current_docking_layout() {
@@ -476,14 +478,14 @@ void Editor::reset_current_docking_layout() {
   main_viewport_panel.update_dockspace();
 }
 
-void Editor::draw_menubar() {
+void Editor::draw_menubar(this Editor& self) {
   ZoneScoped;
 
   if (ImGui::BeginMenuBar()) {
     if (ImGui::BeginMenu("File")) {
       ImGui::Separator();
       if (ImGui::MenuItem("Launcher...")) {
-        get_panel<ProjectPanel>()->visible = true;
+        self.editor_panel_registry.get<ProjectPanel>().visible = true;
       }
       ImGui::Separator();
       if (ImGui::MenuItem("Exit")) {
@@ -492,35 +494,35 @@ void Editor::draw_menubar() {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
-      ImGui::BeginDisabled(undo_redo_system->get_undo_count() < 1);
+      ImGui::BeginDisabled(self.undo_redo_system->get_undo_count() < 1);
       if (ImGui::MenuItem("Undo", "Ctrl + Z")) {
-        undo();
+        self.undo();
       }
       ImGui::EndDisabled();
-      ImGui::BeginDisabled(undo_redo_system->get_redo_count() < 1);
+      ImGui::BeginDisabled(self.undo_redo_system->get_redo_count() < 1);
       if (ImGui::MenuItem("Redo", "Ctrl + Y")) {
-        redo();
+        self.redo();
       }
       ImGui::EndDisabled();
       if (ImGui::MenuItem("Settings")) {
-        get_panel<EditorSettingsPanel>()->visible = true;
+        self.editor_panel_registry.get<EditorSettingsPanel>().visible = true;
       }
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Window")) {
       if (ImGui::MenuItem("Add viewport", nullptr)) {
-        main_viewport_panel.add_viewport();
+        self.main_viewport_panel.add_viewport();
       }
-      ImGui::MenuItem("Inspector", nullptr, &get_panel<InspectorPanel>()->visible);
-      ImGui::MenuItem("Scene hierarchy", nullptr, &get_panel<SceneHierarchyPanel>()->visible);
-      ImGui::MenuItem("Console window", nullptr, &runtime_console.visible);
-      ImGui::MenuItem("Text Editor", nullptr, &get_panel<TextEditorPanel>()->visible);
+      ImGui::MenuItem("Inspector", nullptr, &self.editor_panel_registry.get<InspectorPanel>().visible);
+      ImGui::MenuItem("Scene hierarchy", nullptr, &self.editor_panel_registry.get<SceneHierarchyPanel>().visible);
+      ImGui::MenuItem("Console window", nullptr, &self.runtime_console.visible);
+      ImGui::MenuItem("Text Editor", nullptr, &self.editor_panel_registry.get<TextEditorPanel>().visible);
       if (ImGui::BeginMenu("Layout")) {
         if (ImGui::MenuItem("Classic")) {
-          set_docking_layout(EditorLayout::Classic);
+          self.set_docking_layout(EditorLayout::Classic);
         }
         if (ImGui::MenuItem("Big Viewport")) {
-          set_docking_layout(EditorLayout::BigViewport);
+          self.set_docking_layout(EditorLayout::BigViewport);
         }
         ImGui::EndMenu();
       }
@@ -529,7 +531,7 @@ void Editor::draw_menubar() {
 
     if (ImGui::BeginMenu("Assets")) {
       if (ImGui::MenuItem("Asset Manager")) {
-        get_panel<AssetManagerPanel>()->visible = true;
+        self.editor_panel_registry.get<AssetManagerPanel>().visible = true;
       }
       ImGui::EndMenu();
     }
@@ -543,7 +545,7 @@ void Editor::draw_menubar() {
 
     {
       // Project name text
-      const std::string& project_name = active_project->get_config().name;
+      const std::string& project_name = self.active_project->get_config().name;
       ImGui::SetCursorPos(
         ImVec2(ImGui::GetMainViewport()->Size.x - 10 - ImGui::CalcTextSize(project_name.c_str()).x, 0)
       );

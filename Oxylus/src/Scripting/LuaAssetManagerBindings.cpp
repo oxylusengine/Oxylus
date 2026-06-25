@@ -24,7 +24,7 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
   asset_manager.set_function("get_material", [](AssetManager* am, const UUID& uuid) { return am->get_material(uuid); });
   asset_manager.set_function("get_mut_material", [](AssetManager* am, const UUID& uuid) {
     am->set_material_dirty(uuid);
-    return am->get_material(uuid);
+    return am->get_material(uuid).value;
   });
   asset_manager.set_function("set_material_dirty", [](AssetManager* am, const UUID& uuid) {
     am->set_material_dirty(uuid);

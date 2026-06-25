@@ -18,7 +18,7 @@ enum class BindingError { ActionNotFound, InvalidInput, ContextNotFound };
 enum class InputType : u8 { Any, Keyboard, MouseButton, MouseAxis, GamepadButton, GamepadAxis };
 
 struct InputCode {
-  KeyCode key_code = KeyCode::None;
+  ScanCode scan_code = ScanCode::Unknown;
   MouseCode mouse_code = MouseCode::Left;
   GamepadButtonCode gamepad_button_code = GamepadButtonCode::None;
   GamepadAxisCode gamepad_axis_code = GamepadAxisCode::None;
@@ -31,8 +31,8 @@ struct InputCode {
 
   InputType type;
 
-  InputCode(KeyCode key_code_ = KeyCode::None, ModCode mod_code_ = ModCode::None)
-      : key_code(key_code_),
+  InputCode(ScanCode scan_code_ = ScanCode::Unknown, ModCode mod_code_ = ModCode::None)
+      : scan_code(scan_code_),
         mod_code(mod_code_),
         type(InputType::Keyboard) {}
 
@@ -65,7 +65,7 @@ struct InputCode {
       usize h2 = {};
       switch (ic.type) {
         case InputType::Any          : break;
-        case InputType::Keyboard     : h2 = std::hash<u16>{}(static_cast<u16>(ic.key_code)); break;
+        case InputType::Keyboard     : h2 = std::hash<u16>{}(static_cast<u16>(ic.scan_code)); break;
         case InputType::MouseButton  : h2 = std::hash<u16>{}(static_cast<u16>(ic.mouse_code)); break;
         case InputType::MouseAxis    : break;
         case InputType::GamepadButton: h2 = std::hash<u16>{}(static_cast<i16>(ic.gamepad_button_code)); break;
@@ -122,6 +122,7 @@ public:
   auto reset() -> void;
 
   /// Binding
+  auto get_bindings(this const Input& self) -> std::unordered_multimap<std::string, ActionBinding>;
   auto get_binding(this const Input& self, std::string_view action_id) -> const ActionBinding*;
   auto get_active_binding(this const Input& self, std::string_view action_id) -> const ActionBinding*;
   auto bind_action(this Input& self, ActionBinding binding) -> std::expected<void, BindingError>;
@@ -144,9 +145,13 @@ public:
   auto get_action_axis(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> glm::vec2;
 
   /// Keyboard
-  auto get_key_pressed(this const Input& self, const KeyCode key) -> bool;
-  auto get_key_released(this const Input& self, const KeyCode key) -> bool;
-  auto get_key_held(this const Input& self, const KeyCode key) -> bool;
+  auto get_key_pressed(this const Input& self, const ScanCode key) -> bool;
+  auto get_key_released(this const Input& self, const ScanCode key) -> bool;
+  auto get_key_held(this const Input& self, const ScanCode key) -> bool;
+
+  // Returns the array of key states with numkeys to index the array.
+  auto get_keyboard_state(this const Input& self) -> std::pair<u32, const bool*>;
+  auto get_mod_state(this const Input& self) -> ModCode;
 
   /// Mouse
   auto get_mouse_clicked(this const Input& self, const MouseCode key) -> bool;
@@ -173,6 +178,11 @@ public:
   auto get_gamepad_button_held(this const Input& self, u32 instance_id, const GamepadButtonCode button) -> bool;
   auto get_gamepad_axis(this const Input& self, u32 instance_id, const GamepadAxisCode axis) -> f32;
 
+  // Utility
+  static auto get_key_name(KeyCode key) -> std::string_view;
+  static auto get_key_code_from_scan_code(ScanCode scan_code) -> KeyCode;
+  static auto get_scan_code_from_key_code(KeyCode key_code) -> ScanCode;
+
 private:
   friend struct Window;
 
@@ -180,9 +190,9 @@ private:
     ModCode mod_code = {};
 
     struct KeyboardData {
-      ankerl::unordered_dense::map<KeyCode, bool> key_pressed = {};
-      ankerl::unordered_dense::map<KeyCode, bool> key_released = {};
-      ankerl::unordered_dense::map<KeyCode, bool> key_held = {};
+      ankerl::unordered_dense::map<ScanCode, bool> scancode_pressed = {};
+      ankerl::unordered_dense::map<ScanCode, bool> scancode_released = {};
+      ankerl::unordered_dense::map<ScanCode, bool> scancode_held = {};
     };
 
     KeyboardData keyboard_data = {};
@@ -229,9 +239,9 @@ private:
 
   auto set_mod(const ModCode mod) -> void;
 
-  auto set_key_pressed(const KeyCode key, const bool state) -> void;
-  void set_key_released(const KeyCode key, const bool state);
-  void set_key_held(const KeyCode key, const bool state);
+  auto set_key_pressed(const ScanCode scan_code, const bool state) -> void;
+  void set_key_released(const ScanCode scan_code, const bool state);
+  void set_key_held(const ScanCode scan_code, const bool state);
 
   void set_mouse_clicked(const MouseCode key, const bool state);
   void set_mouse_released(const MouseCode key, const bool state);

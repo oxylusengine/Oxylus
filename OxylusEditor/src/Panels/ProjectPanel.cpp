@@ -14,7 +14,7 @@
 #include "Utils/EmbeddedBanner.hpp"
 
 namespace ox {
-ProjectPanel::ProjectPanel() : EditorPanel("Projects", ICON_MDI_ACCOUNT_BADGE, true) {
+ProjectPanel::ProjectPanel() : EditorPanelState("Projects", ICON_MDI_ACCOUNT_BADGE, true) {
   engine_banner = std::make_shared<Texture>();
   engine_banner->create(
     {},
@@ -26,9 +26,7 @@ ProjectPanel::ProjectPanel() : EditorPanel("Projects", ICON_MDI_ACCOUNT_BADGE, t
   );
 }
 
-void ProjectPanel::on_update() {}
-
-void ProjectPanel::load_project_for_editor(const std::filesystem::path& filepath) {
+void ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) {
   auto& editor = App::mod<Editor>();
   const auto& active_project = editor.active_project;
 
@@ -47,8 +45,8 @@ void ProjectPanel::load_project_for_editor(const std::filesystem::path& filepath
     }
     editor.reset_current_docking_layout();
     App::mod<EditorConfig>().add_recent_project(active_project.get());
-    editor.get_panel<ContentPanel>()->init();
-    visible = false;
+    editor.editor_panel_registry.get<ContentPanel>().init();
+    self.visible = false;
   }
 }
 
@@ -62,15 +60,15 @@ void ProjectPanel::new_project(
     App::mod<EditorConfig>().add_recent_project(active_project.get());
 }
 
-void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
-  if (visible && !ImGui::IsPopupOpen("ProjectSelector"))
+void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapchain_attachment) {
+  if (self.visible && !ImGui::IsPopupOpen("ProjectSelector"))
     ImGui::OpenPopup("ProjectSelector");
 
   constexpr auto flags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
                          ImGuiWindowFlags_NoBackground;
   static bool draw_new_project_panel = false;
 
-  const auto banner_size = engine_banner->get_extent();
+  const auto banner_size = self.engine_banner->get_extent();
 
   UI::center_next_window();
   ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.7f));
@@ -81,7 +79,7 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
     const auto& window = App::get_window();
 
-    UI::image(*engine_banner, {x, static_cast<float>(banner_size.height)});
+    UI::image(*self.engine_banner, {x, static_cast<float>(banner_size.height)});
     UI::spacing(2);
     ImGui::SeparatorText("Recent Projects");
     UI::spacing(2);
@@ -91,7 +89,7 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       if (draw_new_project_panel) {
         UI::begin_properties();
 
-        UI::input_text("Name", &new_project_name);
+        UI::input_text("Name", &self.new_project_name);
 
         UI::begin_property_grid("Directory", nullptr, false);
 
@@ -103,7 +101,7 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
           FileDialogFilter dialog_filters[] = {{.name = "Project dir", .pattern = "oxproj"}};
           window.show_dialog({
             .kind = DialogKind::OpenFolder,
-            .user_data = this,
+            .user_data = &self,
             .callback =
               [](void* user_data, const c8* const* files, i32) {
                 auto* panel = static_cast<ProjectPanel*>(user_data);
@@ -133,10 +131,10 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
         ImGui::SetNextItemWidth(-1);
         if (ImGui::Button("Create", ImVec2(120, 0))) {
-          new_project_dir = std::filesystem::path(new_project_dir_str).make_preferred();
-          new_project_asset_dir = std::filesystem::path(new_project_asset_dir_str).make_preferred();
-          new_project(new_project_dir, new_project_name, new_project_asset_dir);
-          visible = false;
+          self.new_project_dir = std::filesystem::path(new_project_dir_str).make_preferred();
+          self.new_project_asset_dir = std::filesystem::path(new_project_asset_dir_str).make_preferred();
+          new_project(self.new_project_dir, self.new_project_name, self.new_project_asset_dir);
+          self.visible = false;
           ImGui::CloseCurrentPopup();
         }
         ImGui::SetItemDefaultFocus();
@@ -150,7 +148,7 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
           auto project_name = project.stem().string();
           auto cursor_pos_y = ImGui::GetCursorPosY();
           if (ImGui::Button(project_name.c_str(), {-1.f, y})) {
-            load_project_for_editor(project);
+            self.load_project_for_editor(project);
           }
           UI::tooltip_hover(project.string().c_str());
 
@@ -176,7 +174,7 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
           FileDialogFilter dialog_filters[] = {{.name = "Oxylus Project", .pattern = "oxproj"}};
           window.show_dialog({
             .kind = DialogKind::OpenFile,
-            .user_data = this,
+            .user_data = &self,
             .callback =
               [](void* user_data, const c8* const* files, i32) {
                 auto* usr_data = static_cast<ProjectPanel*>(user_data);
@@ -207,7 +205,7 @@ void ProjectPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
           auto& editor = App::mod<Editor>();
           editor.reset();
           editor.new_scene();
-          visible = false;
+          self.visible = false;
           ImGui::CloseCurrentPopup();
         }
         ImGui::PopStyleColor();

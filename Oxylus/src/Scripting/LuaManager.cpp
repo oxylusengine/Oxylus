@@ -22,10 +22,10 @@
 #endif
 
 namespace ox {
-auto LuaManager::init() -> std::expected<void, std::string> {
+auto LuaManager::init(this LuaManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
-  _state = std::make_unique<sol::state>();
-  _state->open_libraries(
+  self.state = std::make_unique<sol::state>();
+  self.state->open_libraries(
     sol::lib::base,
     sol::lib::package,
     sol::lib::math,
@@ -34,9 +34,9 @@ auto LuaManager::init() -> std::expected<void, std::string> {
     sol::lib::string
   );
 
-  _state->set_function(
+  self.state->set_function(
     "require_script",
-    [s = _state.get()](const std::string& virtual_dir, const std::string& path) -> sol::object {
+    [s = self.state.get()](const std::string& virtual_dir, const std::string& path) -> sol::object {
       ZoneScopedN("LuaRequire");
       auto& vfs = App::get_vfs();
       auto physical_path = vfs.resolve_physical_dir(virtual_dir, path);
@@ -45,11 +45,11 @@ auto LuaManager::init() -> std::expected<void, std::string> {
     }
   );
 
-#define BIND(type) bind<type>(#type, _state.get());
+#define BIND(type) self.bind<type>(#type, self.state.get())
 
 #ifdef OX_LUA_BINDINGS
-  bind_log();
-  bind_vector();
+  self.bind_log();
+  self.bind_vector();
   BIND(AppBinding);
   BIND(AssetManagerBinding);
   BIND(AudioBinding);
@@ -68,9 +68,9 @@ auto LuaManager::init() -> std::expected<void, std::string> {
   return {};
 }
 
-auto LuaManager::deinit() -> std::expected<void, std::string> {
-  _state->collect_gc();
-  _state.reset();
+auto LuaManager::deinit(this LuaManager& self) -> std::expected<void, std::string> {
+  self.state->collect_gc();
+  self.state.reset();
 
   return {};
 }
@@ -87,19 +87,19 @@ auto LuaManager::deinit() -> std::expected<void, std::string> {
     )                                                                                                                  \
   );
 
-void LuaManager::bind_log() const {
+auto LuaManager::bind_log(this const LuaManager& self) -> void {
   ZoneScoped;
-  auto log = _state->create_table("Log");
+  sol::table log = self.state->create_named_table("Oxlog");
 
   SET_LOG_FUNCTIONS(log, "info", OX_LOG_INFO)
   SET_LOG_FUNCTIONS(log, "warn", OX_LOG_WARN)
   SET_LOG_FUNCTIONS(log, "error", OX_LOG_ERROR)
 }
 
-void LuaManager::bind_vector() const {
+auto LuaManager::bind_vector(this const LuaManager& self) -> void {
   ZoneScoped;
 
-  _state->set_function("create_number_vector", []() { return std::vector<f64>{}; });
-  _state->set_function("create_string_vector", []() { return std::vector<std::string>{}; });
+  self.state->set_function("new_number_vector", []() { return std::vector<f64>{}; });
+  self.state->set_function("new_string_vector", []() { return std::vector<std::string>{}; });
 }
 } // namespace ox

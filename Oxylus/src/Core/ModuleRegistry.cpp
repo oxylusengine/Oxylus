@@ -26,7 +26,8 @@ auto ModuleRegistry::init(this ModuleRegistry& self) -> bool {
 auto ModuleRegistry::deinit(this ModuleRegistry& self) -> bool {
   ZoneScoped;
 
-  for (const auto& [name, cb, type] : std::views::reverse(std::views::zip(self.module_names, self.deinit_callbacks, self.module_types))) {
+  for (const auto& [name, cb, type] :
+       std::views::reverse(std::views::zip(self.module_names, self.deinit_callbacks, self.module_types))) {
     Timer timer{};
 
     auto result = cb();
@@ -47,9 +48,7 @@ auto ModuleRegistry::update(this ModuleRegistry& self, const Timestep& timestep)
   ZoneScoped;
 
   for (const auto& cb : self.update_callbacks) {
-    if (cb.has_value()) {
-      cb.value()(timestep);
-    }
+    cb(timestep);
   }
 }
 } // namespace ox

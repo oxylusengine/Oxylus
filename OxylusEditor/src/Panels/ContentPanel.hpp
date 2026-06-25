@@ -10,39 +10,23 @@
 #include <vuk/Value.hpp>
 
 #include "Core/Types.hpp"
-#include "EditorPanel.hpp"
+#include "EditorPanelState.hpp"
 
 namespace ox {
 class Texture;
 
 enum class FileType { Unknown = 0, Directory, Meta, Scene, Prefab, Shader, Texture, Model, Audio, Script, Material };
 
-class ContentPanel : public EditorPanel {
+class ContentPanel : public EditorPanelState {
 public:
   ContentPanel();
 
-  ~ContentPanel() override = default;
-
-  ContentPanel(const ContentPanel& other) = delete;
-  ContentPanel(ContentPanel&& other) = delete;
-  ContentPanel& operator=(const ContentPanel& other) = delete;
-  ContentPanel& operator=(ContentPanel&& other) = delete;
-
-  void init();
-  void on_update() override;
-  void on_render(vuk::ImageAttachment swapchain_attachment) override;
+  auto init(this ContentPanel& self) -> void;
+  auto on_update(this ContentPanel& self) -> void;
+  auto on_render(this ContentPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
 
 private:
-  std::pair<bool, uint32_t> directory_tree_view_recursive(
-    const std::filesystem::path& path, uint32_t* count, int* selectionMask, ImGuiTreeNodeFlags flags
-  );
-  void render_header();
-  void render_side_view();
-  void render_body(bool grid);
-  void update_directory_entries(const std::filesystem::path& directory);
-  void refresh();
-
-  std::filesystem::path draw_context_menu_items(const std::filesystem::path& context, bool isDir);
+  std::filesystem::path draw_context_menu_items(this ContentPanel& self, const std::filesystem::path& context, bool isDir);
 
   struct File {
     std::string name;
@@ -75,5 +59,14 @@ private:
   std::filesystem::path _directory_to_delete;
 
   std::unique_ptr<filewatch::FileWatch<std::string>> filewatch = nullptr;
+
+  std::pair<bool, uint32_t> directory_tree_view_recursive(
+    const std::filesystem::path& path, uint32_t* count, int* selectionMask, ImGuiTreeNodeFlags flags
+  );
+  auto render_header(this ContentPanel& self) -> void;
+  auto render_side_view(this ContentPanel& self) -> void;
+  auto render_body(this ContentPanel& self, bool grid) -> void;
+  auto update_directory_entries(this ContentPanel& self, const std::filesystem::path& directory) -> void;
+  auto refresh(this ContentPanel& self) -> void;
 };
 } // namespace ox

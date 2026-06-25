@@ -241,17 +241,17 @@ auto Window::update(const Timestep& timestep) const -> void {
     }
 
     auto& input_system = App::mod<Input>();
-    const auto ox_key_code = static_cast<KeyCode>(key_code);
+    const auto ox_scan_code = static_cast<ScanCode>(scan_code);
     const auto ox_mod = static_cast<ModCode>(mods);
     input_system.set_mod(ox_mod);
     if (down) {
-      input_system.set_key_pressed(ox_key_code, !repeat);
-      input_system.set_key_released(ox_key_code, false);
-      input_system.set_key_held(ox_key_code, true);
+      input_system.set_key_pressed(ox_scan_code, !repeat);
+      input_system.set_key_released(ox_scan_code, false);
+      input_system.set_key_held(ox_scan_code, true);
     } else {
-      input_system.set_key_pressed(ox_key_code, false);
-      input_system.set_key_released(ox_key_code, true);
-      input_system.set_key_held(ox_key_code, false);
+      input_system.set_key_pressed(ox_scan_code, false);
+      input_system.set_key_released(ox_scan_code, true);
+      input_system.set_key_held(ox_scan_code, false);
     }
   };
   window_callbacks.on_text_input = [](void* user_data, const c8* text) {

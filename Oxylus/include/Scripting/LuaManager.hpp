@@ -11,10 +11,10 @@ class LuaManager {
 public:
   constexpr static auto MODULE_NAME = "LuaManager";
 
-  auto init() -> std::expected<void, std::string>;
-  auto deinit() -> std::expected<void, std::string>;
+  auto init(this LuaManager& self) -> std::expected<void, std::string>;
+  auto deinit(this LuaManager& self) -> std::expected<void, std::string>;
 
-  auto get_state() const -> sol::state* { return _state.get(); }
+  auto get_state(this const LuaManager& self) -> sol::state* { return self.state.get(); }
 
   template <typename T>
   void bind(this LuaManager& self, const std::string& name, sol::state* state) {
@@ -32,9 +32,9 @@ public:
 
 private:
   ankerl::unordered_dense::map<std::string, std::unique_ptr<LuaBinding>> bindings = {};
-  std::unique_ptr<sol::state> _state = nullptr;
+  std::unique_ptr<sol::state> state = nullptr;
 
-  void bind_log() const;
-  void bind_vector() const;
+  auto bind_log(this const LuaManager& self) -> void;
+  auto bind_vector(this const LuaManager& self) -> void;
 };
 } // namespace ox

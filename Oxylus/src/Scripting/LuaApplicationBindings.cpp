@@ -107,7 +107,7 @@ auto AppBinding::bind(sol::state* state) -> void {
   SET_TYPE_FUNCTION(app, App, get_vfs);
   SET_TYPE_FUNCTION(app, App, get_event_system);
 
-  auto mod_table = state->create_table("Mod");
+  auto mod_table = state->create_named_table("Mod");
   APP_MOD(AssetManager);
   APP_MOD(AudioEngine);
   APP_MOD(LuaManager);

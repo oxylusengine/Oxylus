@@ -58,7 +58,7 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
   auto result_type = state->new_usertype<JPH::BroadPhaseCastResult>("RayCastResult");
   result_type["fraction"] = &JPH::BroadPhaseCastResult::mFraction;
 
-  auto physics_table = state->create_table("Physics");
+  auto physics_table = state->create_named_table("Physics");
   physics_table.set_function(
     "cast_ray",
     [](Scene* scene, const RayCast& ray) -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> {

@@ -43,7 +43,7 @@ namespace ox {
 auto MathBinding::bind(sol::state* state) -> void {
   ZoneScoped;
 
-  auto glm_table = state->create_table("glm");
+  auto glm_table = state->create_named_table("glm");
 
   auto vec2 = state->new_usertype<glm::vec2>("vec2", sol::constructors<glm::vec2(float, float), glm::vec2(float)>());
   SET_TYPE_FIELD(vec2, glm::vec2, x);
