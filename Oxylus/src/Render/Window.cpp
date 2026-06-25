@@ -49,6 +49,8 @@ auto Window::create(const WindowInfo& info) -> Window {
     return Handle(nullptr);
   }
 
+  SDL_Vulkan_LoadLibrary("/Users/halim/VulkanSDK/1.4.350.1/macOS/lib/libvulkan.1.dylib");
+
   const auto display = display_at(info.monitor);
   if (!display.has_value()) {
     OX_LOG_ERROR("No available displays!");

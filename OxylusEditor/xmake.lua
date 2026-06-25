@@ -26,4 +26,6 @@ target("OxylusEditor")
         output_dir = "Resources/Shaders",
     })
 
+add_runenvs("VK_DRIVER_FILES", "/Users/halim/VulkanSDK/1.4.350.1/macOS/share/vulkan/icd.d/kosmickrisp.json")
+
 target_end()

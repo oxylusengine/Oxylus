@@ -167,7 +167,8 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   self.surface = window.get_surface(instance);
   selector //
     .set_surface(self.surface)
-    .set_minimum_version(1, 3);
+    .set_minimum_version(1, 3)
+    .disable_portability_subset();
 #ifdef OX_USE_LLVMPIPE
   selector.prefer_gpu_device_type(vkb::PreferredDeviceType::cpu);
   selector.allow_any_gpu_device_type(false);
@@ -197,7 +198,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vk10_features.features.shaderInt64 = true;
   vk10_features.features.vertexPipelineStoresAndAtomics = true;
   vk10_features.features.depthClamp = true;
-  vk10_features.features.fillModeNonSolid = true;
+  // vk10_features.features.fillModeNonSolid = true;
   vk10_features.features.multiViewport = true;
   vk10_features.features.samplerAnisotropy = true;
   vk10_features.features.multiDrawIndirect = true;
