@@ -523,19 +523,14 @@ struct GT7ToneMapping
 f32x4 fs_main(VertexOutput input) {
     var rec709 = input_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
 
-    if ((scene_flags & SceneFlags::HasChromaticAberration) != 0) {
-        let rgmag = FfxLensGetRGMag(C.post_process_settings.chromatic_aberration_amount);
-        rec709 = FfxLensSampleWithChromaticAberration(input_image, sampler, i32x2(input.position.xy), C.screen_size / 2, rgmag.x, rgmag.y);
+    if ((scene_flags & SceneFlags::HasEyeAdaptation) != 0) {
+        let exposure = histogram_luminance.exposure;
+        rec709 = rec709 * (exposure + 1.0);
     }
 
     if ((scene_flags & SceneFlags::HasBloom) != 0) {
         let bloom = bloom_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
         rec709 += bloom;
-    }
-
-    if ((scene_flags & SceneFlags::HasEyeAdaptation) != 0) {
-        let exposure = histogram_luminance.exposure;
-        rec709 = rec709 * (exposure + 1.0);
     }
 
     switch (tonemap_type) {
@@ -559,6 +554,11 @@ f32x4 fs_main(VertexOutput input) {
         default:;
     }
 
+    if ((scene_flags & SceneFlags::HasChromaticAberration) != 0) {
+        let rgmag = FfxLensGetRGMag(C.post_process_settings.chromatic_aberration_amount);
+        rec709 = FfxLensSampleWithChromaticAberration(input_image, sampler, i32x2(input.position.xy), C.screen_size / 2, rgmag.x, rgmag.y);
+    }
+
     if ((scene_flags & SceneFlags::HasVignette) != 0) {
         FfxLensApplyVignette(i32x2(input.position.xy), C.screen_size / 2, rec709, C.post_process_settings.vignette_amount);
     }
@@ -573,4 +573,3 @@ f32x4 fs_main(VertexOutput input) {
 
     return f32x4(rec709, 1.0);
 }
-

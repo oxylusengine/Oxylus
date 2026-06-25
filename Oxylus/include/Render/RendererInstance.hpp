@@ -303,8 +303,7 @@ public:
   auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
     -> vuk::Value<vuk::ImageAttachment>;
   auto apply_eye_adaptation(this RendererInstance&, PostProcessContext& context) -> void;
-  auto apply_bloom(this RendererInstance&, PostProcessContext& context, f32 threshold, f32 clamp, u32 mip_count)
-    -> void;
+  auto apply_bloom(this RendererInstance&, PostProcessContext& context) -> void;
   auto apply_tonemap(this RendererInstance&, PostProcessContext& context) -> vuk::Value<vuk::ImageAttachment>;
   auto apply_debug_view(this RendererInstance&, DebugContext& context, vuk::Extent3D extent)
     -> vuk::Value<vuk::ImageAttachment>;

@@ -6,9 +6,9 @@
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Render/DebugRenderer.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
-#include "Render/RenderContext.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
@@ -405,7 +405,9 @@ auto RendererInstance::render(
     self.shared_resources.clear();
   };
 
-  auto dst_extent = dst_attachment->extent;
+  const auto dst_extent = dst_attachment->extent;
+  const auto final_half_extent = dst_extent / 2;
+  const auto final_half_mip_count = Texture::get_mip_count(final_half_extent);
 
   OX_CHECK_GT(dst_extent.width, 0u);
   OX_CHECK_GT(dst_extent.height, 0u);
@@ -420,7 +422,9 @@ auto RendererInstance::render(
 
   self.render_queue_2d.update();
   self.render_queue_2d.sort();
-  auto vertex_buffer_2d = self.renderer.render_context->scratch_buffer_span(std::span(self.render_queue_2d.sprite_data));
+  auto vertex_buffer_2d = self.renderer.render_context->scratch_buffer_span(
+    std::span(self.render_queue_2d.sprite_data)
+  );
 
   const auto scene_has_directional_light = self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight;
   const auto scene_has_atmosphere = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
@@ -690,40 +694,6 @@ auto RendererInstance::render(
     std::move(vbgtao_depth_differences_attachment),
     vuk::Black<f32>
   );
-
-  const f32 bloom_threshold = RendererCVar::cvar_bloom_threshold.get();
-  const f32 bloom_clamp = RendererCVar::cvar_bloom_clamp.get();
-  const u32 bloom_quality_level = static_cast<u32>(RendererCVar::cvar_bloom_quality_level.get());
-  u32 bloom_mip_count = 8;
-  switch (bloom_quality_level) {
-    case 0: {
-      bloom_mip_count = 4;
-      break;
-    }
-    case 1: {
-      bloom_mip_count = 5;
-      break;
-    }
-    case 2: {
-      bloom_mip_count = 6;
-      break;
-    }
-    case 3: {
-      bloom_mip_count = 8;
-      break;
-    }
-  }
-
-  auto bloom_upsampled_attachment = vuk::declare_ia(
-    "bloom upsampled",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eB10G11R11UfloatPack32,
-     .sample_count = vuk::SampleCountFlagBits::e1,
-     .level_count = bloom_mip_count - 1,
-     .layer_count = 1}
-  );
-  bloom_upsampled_attachment.same_extent_as(final_attachment);
-  bloom_upsampled_attachment = vuk::clear_image(std::move(bloom_upsampled_attachment), vuk::Black<float>);
 
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0) {
@@ -1051,6 +1021,18 @@ auto RendererInstance::render(
     std::tie(final_attachment, fxaa_attachment) = fxaa_pass(fxaa_attachment, final_attachment);
   }
 
+  auto bloom_upsampled_attachment = vuk::declare_ia(
+    "bloom upsampled",
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+     .extent = final_half_extent,
+     .format = vuk::Format::eB10G11R11UfloatPack32,
+     .sample_count = vuk::SampleCountFlagBits::e1,
+     .level_count = final_half_mip_count,
+     .layer_count = 1}
+  );
+  bloom_upsampled_attachment.same_format_as(final_attachment);
+  bloom_upsampled_attachment = vuk::clear_image(std::move(bloom_upsampled_attachment), vuk::Black<float>);
+
   /// POST PROCESSING
   auto post_process_context = PostProcessContext{
     .delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f,
@@ -1065,7 +1047,7 @@ auto RendererInstance::render(
   }
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasBloom) {
-    self.apply_bloom(post_process_context, bloom_threshold, bloom_clamp, bloom_mip_count);
+    self.apply_bloom(post_process_context);
   }
 
   dst_attachment = self.apply_tonemap(post_process_context);
