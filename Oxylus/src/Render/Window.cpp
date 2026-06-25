@@ -41,6 +41,28 @@ struct Handle<Window>::Impl {
   bool cursor_overridden = false;
 };
 
+auto load_vulkan_library() -> void {
+#ifdef OX_PLATFORM_MACOSX
+  if (const char* sdk_path = std::getenv("VULKAN_SDK")) {
+    std::filesystem::path lib_path = sdk_path;
+    lib_path /= "lib/libvulkan.1.dylib";
+
+    if (std::filesystem::exists(lib_path)) {
+      SDL_Vulkan_LoadLibrary(lib_path.string().c_str());
+      return;
+    }
+  }
+
+  // Fallback
+  if (std::filesystem::exists("/usr/local/lib/libvulkan.1.dylib")) {
+    SDL_Vulkan_LoadLibrary("/usr/local/lib/libvulkan.1.dylib");
+    return;
+  }
+#endif
+
+  SDL_Vulkan_LoadLibrary(nullptr);
+}
+
 auto Window::create(const WindowInfo& info) -> Window {
   ZoneScoped;
 
@@ -49,7 +71,7 @@ auto Window::create(const WindowInfo& info) -> Window {
     return Handle(nullptr);
   }
 
-  SDL_Vulkan_LoadLibrary("/Users/halim/VulkanSDK/1.4.350.1/macOS/lib/libvulkan.1.dylib");
+  load_vulkan_library();
 
   const auto display = display_at(info.monitor);
   if (!display.has_value()) {
