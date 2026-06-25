@@ -744,7 +744,7 @@ auto InspectorPanel::draw_model_asset(this InspectorPanel& self, ReadGuard<Asset
   }
 }
 
-auto InspectorPanel::draw_material_asset(ReadGuard<Asset> asset, ReadGuard<Material> material) -> bool {
+auto InspectorPanel::draw_material_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Material> material) -> bool {
   ZoneScoped;
 
   ImGui::SeparatorText("Material");
