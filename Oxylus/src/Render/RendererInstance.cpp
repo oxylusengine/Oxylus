@@ -247,8 +247,7 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   after_callbacks.resize(stage_count);
 
   vsm_virtual_page_table_attachment = vuk::ImageAttachment{
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
-             vuk::ImageUsageFlagBits::eTransferDst,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
     .extent =
       {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
        .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
@@ -270,10 +269,31 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
       .as_released(vuk::eFragmentSampled)
   );
 
+  vsm_hpb_attachment = vuk::ImageAttachment{
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+    .extent =
+      {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+       .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+       .depth = 1},
+    .format = vuk::Format::eR8Uint,
+    .sample_count = vuk::Samples::e1,
+    .view_type = vuk::ImageViewType::e2DArray,
+    .base_level = 0,
+    .level_count = 1 + static_cast<u32>(std::log2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE)),
+    .base_layer = 0,
+    .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
+  };
+  vsm_hpb = *vuk::allocate_image(*allocator, vsm_hpb_attachment);
+  vsm_hpb_attachment.image = *vsm_hpb;
+  vsm_hpb_view = *vuk::allocate_image_view(*allocator, vsm_hpb_attachment);
+  vsm_hpb_attachment.image_view = *vsm_hpb_view;
+  render_context.wait_on(
+    vuk::clear_image(vuk::discard_ia("vsm hpb", vsm_hpb_attachment), vuk::Black<u32>).as_released(vuk::eFragmentSampled)
+  );
+
   vsm_physical_page_table_attachment = vuk::ImageAttachment{
     .image_flags = vuk::ImageCreateFlagBits::eMutableFormat,
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
-             vuk::ImageUsageFlagBits::eTransferDst,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
     .extent =
       {.width = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .height = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .depth = 1},
     .format = vuk::Format::eR32Sfloat,
