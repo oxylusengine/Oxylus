@@ -182,13 +182,17 @@ struct JsonEntityDeserializer : IEntitySerializer {
       return;
     }
 
-    if (underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
-        underlying_kind == EcsOpU64) {
+    if (
+      underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
+      underlying_kind == EcsOpU64
+    ) {
       auto result = field_result.get_uint64();
       auto current = static_cast<u64*>(ptr);
       *current = result.value_unsafe();
-    } else if (underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
-               underlying_kind == EcsOpI64) {
+    } else if (
+      underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
+      underlying_kind == EcsOpI64
+    ) {
       auto result = field_result.get_int64();
       auto current = static_cast<i64*>(ptr);
       *current = result.value_unsafe();
@@ -265,14 +269,17 @@ struct JsonEntityDeserializer : IEntitySerializer {
       if (!result.error() && opaque_info->assign_uint) {
         opaque_info->assign_uint(field_ptr, static_cast<u64>(result.value_unsafe()));
       }
-    } else if (opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 ||
-               opaque_type == flecs::Uptr) {
+    } else if (
+      opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 || opaque_type == flecs::Uptr
+    ) {
       auto result = field_result.get_uint64();
       if (!result.error() && opaque_info->assign_uint) {
         opaque_info->assign_uint(field_ptr, result.value_unsafe());
       }
-    } else if (opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 ||
-               opaque_type == flecs::I64 || opaque_type == flecs::Iptr) {
+    } else if (
+      opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 || opaque_type == flecs::I64 ||
+      opaque_type == flecs::Iptr
+    ) {
       auto result = field_result.get_int64();
       if (!result.error() && opaque_info->assign_int) {
         opaque_info->assign_int(field_ptr, result.value_unsafe());
@@ -344,7 +351,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   ZoneScoped;
   self.scene_name = name;
 
-  self.component_db.import_module(self.world.import <CoreComponentsModule>());
+  self.component_db.import_module(self.world.import<CoreComponentsModule>());
 
   if (App::has_mod<Renderer>()) {
     auto& renderer = App::mod<Renderer>();
@@ -374,28 +381,38 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.observer<TransformComponent, MeshComponent>()
     .event(flecs::OnAdd)
+    .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
+      auto entity = it.entity(i);
+      self.add_transform(entity);
+      self.set_dirty(entity);
+    });
+
+  self.world.observer<TransformComponent, MeshComponent>()
     .event(flecs::OnSet)
+    .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
+      auto entity = it.entity(i);
+      if (!self.entity_transforms_map.contains(entity))
+        self.add_transform(entity);
+      self.set_dirty(entity);
+
+      if (mc.model_uuid)
+        self.attach_mesh(entity, mc.model_uuid, mc.mesh_index, mc.material_uuid);
+
+      if (auto id = self.get_entity_transform_id(entity)) {
+        if (auto* transform = self.get_entity_transform(*id)) {
+          mc.world_aabb = mc.baked_aabb.get_transformed(transform->world);
+        }
+      }
+    });
+
+  self.world.observer<TransformComponent, MeshComponent>()
     .event(flecs::OnRemove)
     .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
       auto entity = it.entity(i);
-      const auto mesh_event = it.event_id() == self.world.component<MeshComponent>();
-      if (it.event() == flecs::OnSet) {
-        if (!self.entity_transforms_map.contains(entity))
-          self.add_transform(entity);
-        self.set_dirty(entity);
-
-        if (mesh_event && mc.model_uuid)
-          self.attach_mesh(entity, mc.model_uuid, mc.mesh_index, mc.material_uuid);
-      } else if (it.event() == flecs::OnAdd) {
-        self.add_transform(entity);
-        self.set_dirty(entity);
-      } else if (it.event() == flecs::OnRemove) {
-        if (mc.model_uuid)
-          self.detach_mesh(entity);
-        if (it.event_id() == self.world.component<TransformComponent>()) {
-          self.remove_transform(entity);
-        }
+      if (mc.model_uuid) {
+        self.detach_mesh(entity);
       }
+      self.remove_transform(entity);
     });
 
   self.world.observer<TransformComponent, SpriteComponent>()
@@ -736,8 +753,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       if (component.playing && !component.looping)
         component.system_time += sim_ts;
       const float delay = component.start_delay;
-      if (component.playing && (component.looping || (component.system_time <= delay + component.duration &&
-                                                      component.system_time > delay))) {
+      if (
+        component.playing &&
+        (component.looping || (component.system_time <= delay + component.duration && component.system_time > delay))
+      ) {
         // Emit particles in unit time
         component.spawn_time += sim_ts;
         if (component.spawn_time >= 1.0f / static_cast<float>(component.rate_over_time)) {
@@ -872,12 +891,21 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       Camera::update(cc, screen_extent);
     });
 
-  self.world.system<SpriteComponent>("sprite_update")
+  self.world.system<SpriteComponent>("sprite_aabb")
     .kind(flecs::PostUpdate)
     .each([](const flecs::entity entity, SpriteComponent& sprite) {
       if (RendererCVar::cvar_draw_bounding_boxes.get()) {
         auto& debug_renderer = App::mod<DebugRenderer>();
         debug_renderer.draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
+      }
+    });
+
+  self.world.system<MeshComponent>("mesh_aabb")
+    .kind(flecs::PostUpdate)
+    .each([](const flecs::entity entity, MeshComponent& mc) {
+      if (RendererCVar::cvar_draw_bounding_boxes.get()) {
+        auto& debug_renderer = App::mod<DebugRenderer>();
+        debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.f, 1.f, 0.f, 1.0f));
       }
     });
 
@@ -887,8 +915,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       auto& asset_manager = App::mod<AssetManager>();
       auto material = asset_manager.get_material(sprite.material);
 
-      if (sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
-          !material->albedo_texture)
+      if (
+        sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
+        !material->albedo_texture
+      )
         return;
 
       const auto dt = glm::clamp(static_cast<float>(it.delta_time()), 0.0f, 0.25f);
@@ -1357,6 +1387,8 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   auto& root_node = model->mesh_groups.front();
   auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
 
+  auto model_base_aabb = model->get_base_aabb();
+
   struct ProcessingNode {
     flecs::entity parent = {};
     usize mesh_group_index = 0;
@@ -1392,6 +1424,7 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
         .model_uuid = asset_uuid,
         .mesh_index = static_cast<u32>(mesh_index),
         .material_uuid = material_uuid,
+        .baked_aabb = model_base_aabb,
       });
       mesh_entity.child_of(node_entity);
       mesh_entity.modified<TransformComponent>();
@@ -2023,8 +2056,10 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   auto entities_array = doc["entities"];
   if (!entities_array.error()) {
     for (auto entity_json : entities_array.get_array()) {
-      if (Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
-          flecs::entity::null()) {
+      if (
+        Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
+        flecs::entity::null()
+      ) {
         return false;
       }
     }

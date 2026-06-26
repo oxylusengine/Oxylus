@@ -29,7 +29,8 @@ struct MeshComponent {
   UUID material_uuid = {};
   bool cast_shadows = true;
 
-  AABB aabb = {};
+  AABB baked_aabb = {};
+  AABB world_aabb = {};
 };
 
 struct SpriteComponent {
