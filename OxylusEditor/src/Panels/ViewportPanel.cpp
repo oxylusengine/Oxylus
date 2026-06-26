@@ -914,100 +914,123 @@ static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
 auto ViewportPanel::mouse_picking_stages(
   this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel
 ) -> void {
+  ZoneScoped;
+
   auto using_gizmo = ImGuizmo::IsOver();
-  if (!(!using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered)) {
-    return;
+  bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered;
+
+  if (should_pick) {
+    renderer_instance->add_stage_after(
+      RenderStage::Forward2D,
+      "mouse_picking_2d",
+      [s = self.editor_scene, picking_texel](RenderStageContext& ctx) {
+        auto visbuffer_attach = ctx.get_image_resource("visbuffer_attachment_2d");
+        auto final_attach = ctx.get_image_resource("final_attachment");
+
+        auto readback_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+
+        auto pick_pass = vuk::make_pass(
+          "mouse_picking_2d_pass",
+          [picking_texel](
+            vuk::CommandBuffer& cmd_list,
+            VUK_BA(vuk::eComputeWrite) buffer,
+            VUK_IA(vuk::eComputeSampled) visbuffer_,
+            VUK_IA(vuk::eComputeSampled) final_
+          ) {
+            cmd_list.bind_compute_pipeline("entity_mouse_picking_2d")
+              .bind_image(0, 0, visbuffer_)
+              .push_constants(
+                vuk::ShaderStageFlagBits::eCompute,
+                0,
+                PushConstants(picking_texel, buffer->device_address)
+              )
+              .dispatch(1, 1, 1);
+
+            return std::make_tuple(buffer, visbuffer_, final_);
+          }
+        );
+
+        std::tie(readback_buffer, visbuffer_attach, final_attach) = pick_pass(
+          std::move(readback_buffer),
+          std::move(visbuffer_attach),
+          std::move(final_attach)
+        );
+
+        auto temp_compiler = vuk::Compiler{};
+        readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
+
+        u32 texel_data = ~0_u32;
+        std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
+        pick_entity(s.get(), texel_data);
+
+        ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attach))
+          .set_image_resource("final_attachment", std::move(final_attach));
+      }
+    );
+
+    renderer_instance->add_stage_after(
+      RenderStage::VisBufferEncode,
+      "mouse_picking",
+      [picking_texel, s = self.editor_scene](RenderStageContext& ctx) {
+        auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
+        auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
+        auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
+
+        auto readback_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+
+        auto write_pass = vuk::make_pass(
+          "mouse_picking_write_pass",
+          [picking_texel](
+            vuk::CommandBuffer& cmd_list,
+            VUK_BA(vuk::eComputeWrite) buffer,
+            VUK_IA(vuk::eComputeSampled) visbuffer_,
+            VUK_BA(vuk::eComputeRead) meshlet_instances_,
+            VUK_BA(vuk::eComputeRead) mesh_instances_
+          ) {
+            cmd_list.bind_compute_pipeline("entity_mouse_picking")
+              .bind_buffer(0, 0, meshlet_instances_)
+              .bind_buffer(0, 1, mesh_instances_)
+              .bind_image(0, 2, visbuffer_)
+              .push_constants(
+                vuk::ShaderStageFlagBits::eCompute,
+                0,
+                PushConstants(picking_texel, buffer->device_address)
+              )
+              .dispatch(1, 1, 1);
+
+            return std::make_tuple(buffer, visbuffer_, meshlet_instances_, mesh_instances_);
+          }
+        );
+
+        std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
+          std::move(readback_buffer),
+          std::move(visbuffer),
+          std::move(meshlet_instances),
+          std::move(mesh_instances)
+        );
+
+        auto temp_compiler = vuk::Compiler{};
+        readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
+
+        u32 texel_data = ~0_u32;
+        std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
+        pick_entity(s.get(), texel_data);
+
+        ctx.set_image_resource("visbuffer_attachment", std::move(visbuffer))
+          .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
+          .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
+      }
+    );
   }
 
   renderer_instance->add_stage_after(
-    RenderStage::Forward2D,
-    "mouse_picking_2d",
-    [s = self.editor_scene, picking_texel](RenderStageContext& ctx) {
-      auto visbuffer_attach = ctx.get_image_resource("visbuffer_attachment_2d");
-      auto final_attach = ctx.get_image_resource("final_attachment");
-
-      auto readback_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
-
-      auto pick_pass = vuk::make_pass(
-        "mouse_picking_2d_pass",
-        [picking_texel](
-          vuk::CommandBuffer& cmd_list,
-          VUK_BA(vuk::eComputeWrite) buffer,
-          VUK_IA(vuk::eComputeSampled) visbuffer_,
-          VUK_IA(vuk::eComputeSampled) final_
-        ) {
-          cmd_list
-            .bind_compute_pipeline("entity_mouse_picking_2d") //
-            .bind_image(0, 0, visbuffer_)
-            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(picking_texel, buffer->device_address))
-            .dispatch(1, 1, 1);
-
-          return std::make_tuple(buffer, visbuffer_, final_);
-        }
-      );
-
-      std::tie(readback_buffer, visbuffer_attach, final_attach) = pick_pass(
-        std::move(readback_buffer),
-        std::move(visbuffer_attach),
-        std::move(final_attach)
-      );
-
-      auto temp_compiler = vuk::Compiler{};
-      readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
-
-      u32 texel_data = ~0_u32;
-      std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
-      pick_entity(s.get(), texel_data);
-
-      ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attach))
-        .set_image_resource("final_attachment", std::move(final_attach));
-    }
-  );
-
-  renderer_instance->add_stage_after(
     RenderStage::VisBufferEncode,
-    "mouse_picking",
-    [picking_texel, s = self.editor_scene](RenderStageContext& ctx) {
+    "entity_highlight_generation",
+    [s = self.editor_scene](RenderStageContext& ctx) {
       auto depth_attachment = ctx.get_image_resource("depth_attachment");
       auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
       auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
       auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
-
-      auto readback_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
-
-      auto write_pass = vuk::make_pass(
-        "mouse_picking_write_pass",
-        [picking_texel](
-          vuk::CommandBuffer& cmd_list,
-          VUK_BA(vuk::eComputeWrite) buffer,
-          VUK_IA(vuk::eComputeSampled) visbuffer_,
-          VUK_BA(vuk::eComputeRead) meshlet_instances_,
-          VUK_BA(vuk::eComputeRead) mesh_instances_
-        ) {
-          cmd_list.bind_compute_pipeline("entity_mouse_picking")
-            .bind_buffer(0, 0, meshlet_instances_)
-            .bind_buffer(0, 1, mesh_instances_)
-            .bind_image(0, 2, visbuffer_)
-            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(picking_texel, buffer->device_address))
-            .dispatch(1, 1, 1);
-
-          return std::make_tuple(buffer, visbuffer_, meshlet_instances_, mesh_instances_);
-        }
-      );
-
-      std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
-        std::move(readback_buffer),
-        std::move(visbuffer),
-        std::move(meshlet_instances),
-        std::move(mesh_instances)
-      );
-
-      auto temp_compiler = vuk::Compiler{};
-      readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
-
-      u32 texel_data = ~0_u32;
-      std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
-      pick_entity(s.get(), texel_data);
 
       auto highlight_attachment = vuk::declare_ia(
         "highlight",
@@ -1023,18 +1046,15 @@ auto ViewportPanel::mouse_picking_stages(
         [s](
           vuk::CommandBuffer& cmd_list,
           VUK_IA(vuk::eComputeRW) result,
-          VUK_BA(vuk::eHostRead) entity_buffer,
           VUK_IA(vuk::eComputeSampled) visbuffer_,
           VUK_IA(vuk::eComputeSampled) depth,
           VUK_BA(vuk::eComputeRead) meshlet_instances_,
           VUK_BA(vuk::eComputeRead) mesh_instances_
         ) {
           auto& editor_context = App::mod<Editor>().get_context();
-
           std::vector<u32> transform_indices = {};
 
           if (editor_context.entity.has_value()) {
-            // if selected entity is not a mesh check if it has mesh childs
             if (!editor_context.entity->has<MeshComponent>()) {
               editor_context.entity->children([s, &transform_indices](flecs::entity e) {
                 if (e.has<MeshComponent>()) {
@@ -1068,19 +1088,17 @@ auto ViewportPanel::mouse_picking_stages(
             }
           }
 
-          return std::make_tuple(result, entity_buffer, visbuffer_, depth, meshlet_instances_, mesh_instances_);
+          return std::make_tuple(result, visbuffer_, depth, meshlet_instances_, mesh_instances_);
         }
       );
 
-      std::tie(highlight_attachment, readback_buffer, visbuffer, depth_attachment, meshlet_instances, mesh_instances) =
-        highlight_pass(
-          std::move(highlight_attachment),
-          std::move(readback_buffer),
-          std::move(visbuffer),
-          std::move(depth_attachment),
-          std::move(meshlet_instances),
-          std::move(mesh_instances)
-        );
+      std::tie(highlight_attachment, visbuffer, depth_attachment, meshlet_instances, mesh_instances) = highlight_pass(
+        std::move(highlight_attachment),
+        std::move(visbuffer),
+        std::move(depth_attachment),
+        std::move(meshlet_instances),
+        std::move(mesh_instances)
+      );
 
       ctx.set_shared_image_resource("highlight_attachment", std::move(highlight_attachment))
         .set_image_resource("depth_attachment", std::move(depth_attachment))
@@ -1141,7 +1159,6 @@ auto ViewportPanel::mouse_picking_stages(
       *highlight_attachment
     );
 
-    // change result_attachment to highlight applied attachment
     ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
       .set_image_resource("result_attachment", std::move(highlight_applied_attachment));
   });
