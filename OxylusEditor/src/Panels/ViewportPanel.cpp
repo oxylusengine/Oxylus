@@ -797,11 +797,6 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
   if (selected_entity == flecs::entity::null() || !self.editor_camera.has<CameraComponent>())
     return;
 
-  if (auto* mc = selected_entity.try_get<MeshComponent>()) {
-    auto& debug_renderer = App::mod<DebugRenderer>();
-    debug_renderer.draw_aabb(mc->world_aabb, glm::vec4(0.f, 1.f, 0.f, 1.0f));
-  }
-
   if (self.gizmo_type == -1)
     return;
 

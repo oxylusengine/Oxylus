@@ -891,12 +891,21 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       Camera::update(cc, screen_extent);
     });
 
-  self.world.system<SpriteComponent>("sprite_update")
+  self.world.system<SpriteComponent>("sprite_aabb")
     .kind(flecs::PostUpdate)
     .each([](const flecs::entity entity, SpriteComponent& sprite) {
       if (RendererCVar::cvar_draw_bounding_boxes.get()) {
         auto& debug_renderer = App::mod<DebugRenderer>();
         debug_renderer.draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
+      }
+    });
+
+  self.world.system<MeshComponent>("mesh_aabb")
+    .kind(flecs::PostUpdate)
+    .each([](const flecs::entity entity, MeshComponent& mc) {
+      if (RendererCVar::cvar_draw_bounding_boxes.get()) {
+        auto& debug_renderer = App::mod<DebugRenderer>();
+        debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.f, 1.f, 0.f, 1.0f));
       }
     });
 
