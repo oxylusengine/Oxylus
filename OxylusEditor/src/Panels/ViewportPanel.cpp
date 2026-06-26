@@ -77,7 +77,7 @@ ViewportPanel::ViewportPanel() : EditorPanelState("Viewport", ICON_MDI_TERRAIN, 
 
   auto& render_context = App::get_rendercontext();
   auto& runtime = *render_context.runtime;
-  if (!runtime.is_pipeline_available("mouse_picking_pipeline")) {
+  if (!runtime.is_pipeline_available("mouse_picking")) {
     auto& vfs = App::get_vfs();
     auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
     auto shader_file = AssetFile::unpack(shaders_dir / "editor.oxpack");
@@ -937,7 +937,7 @@ auto ViewportPanel::mouse_picking_stages(
           VUK_IA(vuk::eComputeSampled) final_
         ) {
           cmd_list
-            .bind_compute_pipeline("mouse_picking_pipeline_2d") //
+            .bind_compute_pipeline("entity_mouse_picking_2d") //
             .bind_image(0, 0, visbuffer_)
             .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(picking_texel, buffer->device_address))
             .dispatch(1, 1, 1);
@@ -984,7 +984,7 @@ auto ViewportPanel::mouse_picking_stages(
           VUK_BA(vuk::eComputeRead) meshlet_instances_,
           VUK_BA(vuk::eComputeRead) mesh_instances_
         ) {
-          cmd_list.bind_compute_pipeline("mouse_picking_pipeline")
+          cmd_list.bind_compute_pipeline("entity_mouse_picking")
             .bind_buffer(0, 0, meshlet_instances_)
             .bind_buffer(0, 1, mesh_instances_)
             .bind_image(0, 2, visbuffer_)
@@ -1056,7 +1056,7 @@ auto ViewportPanel::mouse_picking_stages(
             if (!transform_indices.empty()) {
               auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
               std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
-              cmd_list.bind_compute_pipeline("highlighting_pipeline")
+              cmd_list.bind_compute_pipeline("entity_highlighting")
                 .bind_buffer(0, 0, meshlet_instances_)
                 .bind_buffer(0, 1, mesh_instances_)
                 .bind_image(0, 2, visbuffer_)
@@ -1120,7 +1120,7 @@ auto ViewportPanel::mouse_picking_stages(
         VUK_IA(vuk::eFragmentSampled) source,
         VUK_IA(vuk::eFragmentSampled) highlight
       ) {
-        cmd_list.bind_graphics_pipeline("apply_highlighting_pipeline")
+        cmd_list.bind_graphics_pipeline("apply_highlighting")
           .set_rasterization({})
           .broadcast_color_blend({})
           .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
@@ -1177,7 +1177,7 @@ auto ViewportPanel::grid_stage(this ViewportPanel& self, RendererInstance* rende
         auto grid_transform = glm::translate(glm::mat4(1.0f), position) * glm::toMat4(glm::quat(rotation)) *
                               glm::scale(glm::mat4(1.0f), scale);
 
-        cmd_list.bind_graphics_pipeline("grid_pipeline")
+        cmd_list.bind_graphics_pipeline("grid")
           .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
           .set_viewport(0, vuk::Rect2D::framebuffer())
           .set_scissor(0, vuk::Rect2D::framebuffer())
@@ -1227,7 +1227,7 @@ auto ViewportPanel::grid_stage(this ViewportPanel& self, RendererInstance* rende
         VUK_IA(vuk::eFragmentSampled) source,
         VUK_IA(vuk::eFragmentSampled) grid
       ) {
-        cmd_list.bind_graphics_pipeline("apply_grid_pipeline")
+        cmd_list.bind_graphics_pipeline("apply_grid")
           .set_rasterization({})
           .broadcast_color_blend({})
           .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
