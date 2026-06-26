@@ -961,7 +961,9 @@ auto ViewportPanel::mouse_picking_stages(
 
         u32 texel_data = ~0_u32;
         std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
-        pick_entity(s.get(), texel_data);
+        if (texel_data != ~0_u32) {
+            pick_entity(s.get(), texel_data);
+        }
 
         ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attach))
           .set_image_resource("final_attachment", std::move(final_attach));
@@ -1056,15 +1058,21 @@ auto ViewportPanel::mouse_picking_stages(
 
           if (editor_context.entity.has_value()) {
             if (!editor_context.entity->has<MeshComponent>()) {
-              editor_context.entity->children([s, &transform_indices](flecs::entity e) {
-                if (e.has<MeshComponent>()) {
-                  auto transform_id = s->get_scene()->get_entity_transform_id(e);
-                  if (transform_id.has_value()) {
-                    auto transform_index = SlotMap_decode_id(*transform_id).index;
-                    transform_indices.emplace_back(transform_index);
+              auto traverse_hierarchy = [&](this auto&& f, flecs::entity entity) -> void {
+                entity.children([s, &transform_indices, &f](flecs::entity child) {
+                  if (child.has<MeshComponent>()) {
+                    auto transform_id = s->get_scene()->get_entity_transform_id(child);
+                    if (transform_id.has_value()) {
+                      auto transform_index = SlotMap_decode_id(*transform_id).index;
+                      transform_indices.emplace_back(transform_index);
+                    }
                   }
-                }
-              });
+
+                  f(child);
+                });
+              };
+
+              traverse_hierarchy(*editor_context.entity);
             } else {
               auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
               if (transform_id.has_value()) {
