@@ -10,7 +10,7 @@ struct ShaderParameters {
     Texture2D<f32> depth_image;
 
     RWTexture2DArray<u32, ImageFormat::R32UI> page_tables;
-    RWStructuredBuffer<u32> page_visibility_mask;
+    RWStructuredBuffer<u32> page_occupancy;
     RWStructuredBuffer<VSMPageAllocator> allocator;
 };
 
@@ -64,10 +64,7 @@ func cs_main(
                 // we already have allocated this page, and it was marked visible
                 // keep track of visible and backed pages so the allocator wont overwrite it
                 let physical_address = prev_page.get_physical_address();
-                let visibility_mask_index = physical_address / 32;
-                let bit_index = physical_address % 32;
-                let visibility_bit = 1 << bit_index;
-                __atomic_or(params.page_visibility_mask[visibility_mask_index], visibility_bit, MemoryOrder::Relaxed);
+                params.page_occupancy[physical_address] = 1u;
             } else {
                 let alloc_request = VSMAllocRequest(page_table_address);
                 push_page_alloc_request(params.allocator[0], alloc_request);

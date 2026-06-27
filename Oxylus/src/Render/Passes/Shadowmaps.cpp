@@ -96,9 +96,10 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   );
   std::memcpy(context.directional_clipmaps_buffer->mapped_ptr, directional_clipmaps, directional_clipmaps_size_bytes);
 
-  auto page_visibility_mask_buffer = render_context->alloc_transient_buffer(
+  constexpr static auto max_physical_page_count = RMVSMContext::DIRECTIONAL_PAGE_MASK_COUNT * 32u;
+  auto page_occupancy_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
-    RMVSMContext::DIRECTIONAL_PAGE_MASK_COUNT * sizeof(u32)
+    max_physical_page_count * sizeof(u32)
   );
   auto allocation_requests_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
@@ -108,9 +109,14 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vuk::MemoryUsage::eGPUonly,
     RMVSMContext::DIRECTIONAL_MAX_PAGE_COUNT * sizeof(glm::uvec2)
   );
+  auto free_page_list_buffer = render_context->alloc_transient_buffer(
+    vuk::MemoryUsage::eGPUonly,
+    max_physical_page_count * sizeof(u32)
+  );
   auto page_allocator_buffer = render_context->scratch_buffer<GPU::VSMPageAllocator>({
     .requests = allocation_requests_buffer->device_address,
-    .dirty_physical_page_addresses = dirty_physical_page_addresses_buffer->device_address,
+    .dirty_physical_page_coords = dirty_physical_page_addresses_buffer->device_address,
+    .free_page_list = free_page_list_buffer->device_address,
   });
   auto clear_dirty_pages_cmd_buffer = render_context->scratch_buffer<vuk::DispatchIndirectCommand>({
     .x = RMVSMContext::PAGE_SIZE / 16,
@@ -176,22 +182,22 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       VUK_BA(vuk::eComputeRead) clipmaps,
       VUK_IA(vuk::eComputeSampled) depth,
       VUK_IA(vuk::eComputeRW) page_table,
-      VUK_BA(vuk::eComputeRW | vuk::eTransferRW) page_visibility_mask,
+      VUK_BA(vuk::eComputeRW | vuk::eTransferRW) page_occupancy,
       VUK_BA(vuk::eComputeRW) allocator
     ) {
       cmd_list //
-        .fill_buffer(page_visibility_mask, 0_u32)
+        .fill_buffer(page_occupancy, 0_u32)
         .bind_compute_pipeline("rmvsm_mark_visible_pages")
         .bind_buffer(0, 0, camera)
         .bind_buffer(0, 1, clipmaps)
         .bind_image(0, 2, depth)
         .bind_image(0, 3, page_table)
-        .bind_buffer(0, 4, page_visibility_mask)
+        .bind_buffer(0, 4, page_occupancy)
         .bind_buffer(0, 5, allocator)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
         .dispatch_invocations_per_pixel(depth);
 
-      return std::make_tuple(camera, clipmaps, depth, page_table, page_visibility_mask, allocator);
+      return std::make_tuple(camera, clipmaps, depth, page_table, page_occupancy, allocator);
     }
   );
 
@@ -200,7 +206,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     context.directional_clipmaps_buffer,
     context.depth_attachment,
     context.virtual_page_table_attachment,
-    page_visibility_mask_buffer,
+    page_occupancy_buffer,
     page_allocator_buffer
   ) =
     mark_visible_pages_pass(
@@ -208,7 +214,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       std::move(context.directional_clipmaps_buffer),
       std::move(context.depth_attachment),
       std::move(context.virtual_page_table_attachment),
-      std::move(page_visibility_mask_buffer),
+      std::move(page_occupancy_buffer),
       std::move(page_allocator_buffer)
     );
 
@@ -227,21 +233,43 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
   context.virtual_page_table_attachment = free_invisible_pages_pass(std::move(context.virtual_page_table_attachment));
 
+  auto build_free_page_list_pass = vuk::make_pass(
+    "vsm build free page list",
+    [](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eComputeRW) allocator,
+      VUK_BA(vuk::eComputeRead) page_occupancy
+    ) {
+      constexpr auto physical_page_count = RMVSMContext::DIRECTIONAL_PAGE_MASK_COUNT * 32u;
+      cmd_list //
+        .bind_compute_pipeline("rmvsm_build_free_page_list")
+        .bind_buffer(0, 0, allocator)
+        .bind_buffer(0, 1, page_occupancy)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, physical_page_count)
+        .dispatch_invocations(physical_page_count);
+
+      return std::make_tuple(allocator, page_occupancy);
+    }
+  );
+
+  std::tie(page_allocator_buffer, page_occupancy_buffer) = build_free_page_list_pass(
+    std::move(page_allocator_buffer),
+    std::move(page_occupancy_buffer)
+  );
+
   auto allocate_pages_pass = vuk::make_pass(
     "vsm allocate pages",
     [](
       vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeUniformRead) allocator,
-      VUK_BA(vuk::eComputeRW) page_visibility_mask,
+      VUK_BA(vuk::eComputeRW) allocator,
       VUK_IA(vuk::eComputeRW) page_table
     ) {
+      constexpr auto max_request_count = RMVSMContext::DIRECTIONAL_MAX_PAGE_COUNT;
       cmd_list //
         .bind_compute_pipeline("rmvsm_allocate_pages")
         .bind_buffer(0, 0, allocator)
-        .bind_buffer(0, 1, page_visibility_mask)
-        .bind_image(0, 2, page_table)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, RMVSMContext::DIRECTIONAL_PAGE_MASK_COUNT)
-        .dispatch(1);
+        .bind_image(0, 1, page_table)
+        .dispatch_invocations(max_request_count);
 
       return std::make_tuple(page_table, allocator);
     }
@@ -249,7 +277,6 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
   std::tie(context.virtual_page_table_attachment, page_allocator_buffer) = allocate_pages_pass(
     std::move(page_allocator_buffer),
-    std::move(page_visibility_mask_buffer),
     std::move(context.virtual_page_table_attachment)
   );
 

@@ -3,42 +3,39 @@ import gpu;
 import scene;
 import rmvsm;
 
-struct ShaderParameters {
-    ConstantBuffer<VSMPageAllocator> allocator;
-
-    RWStructuredBuffer<u32> page_visibility_mask;
-    RWTexture2DArray<u32, ImageFormat::R32UI> page_tables;
-};
-ParameterBlock<ShaderParameters> params;
-
-func poll_requests(u32 mask_count, u32 request_index) -> void {
-    let request = params.allocator.requests[request_index];
-
-    for (var i = 0; i < mask_count; i++) {
-        let mask = params.page_visibility_mask[i];
-        let bit = firstbitlow(~mask);
-        if (bit != -1) {
-            params.page_visibility_mask[i] |= 1 << bit;
-            let physical_page_index = i * 32 + bit;
-
-            let page_data = params.page_tables.Load(request.page_table_address);
-            var page = VSMPageMetadata(page_data);
-            page.set_physical_address(physical_page_index);
-            page.set_dirty(true);
-            page.set_backed(true);
-            params.page_tables.Store(request.page_table_address, page.data);
-            return;
-        }
-    }
-}
+[[vk::binding(0)]] RWStructuredBuffer<VSMPageAllocator> allocator;
+[[vk::binding(1)]] RWTexture2DArray<u32, ImageFormat::R32UI> page_tables;
 
 [[shader("compute")]]
-[[numthreads(1, 1, 1)]]
-func cs_main(
-    u32x2 thread_id : SV_DispatchThreadID,
-    uniform u32 visible_bit_mask_count,
-) -> void {
-    for (var i = 0; i < params.allocator.active_request_count; i++) {
-        poll_requests(visible_bit_mask_count, i);
+[[numthreads(64, 1, 1)]]
+func cs_main(u32 thread_id : SV_DispatchThreadID) -> void {
+    let has_request = thread_id < allocator[0].active_request_count;
+
+    let local_offset = WavePrefixCountBits(has_request);
+    let wave_total = WaveActiveCountBits(has_request);
+
+    var wave_base = 0u;
+    if (WaveIsFirstLane()) {
+        wave_base = pop_free_page_slots(allocator[0], wave_total);
     }
+    wave_base = WaveReadLaneFirst(wave_base);
+
+    if (!has_request) {
+        return;
+    }
+
+    let slot = wave_base + local_offset;
+    if (slot >= allocator[0].free_page_count) {
+        return;
+    }
+
+    let physical_page_index = allocator[0].free_page_list[slot];
+    let request = allocator[0].requests[thread_id];
+
+    let page_data = page_tables.Load(request.page_table_address);
+    var page = VSMPageMetadata(page_data);
+    page.set_physical_address(physical_page_index);
+    page.set_dirty(true);
+    page.set_backed(true);
+    page_tables.Store(request.page_table_address, page.data);
 }

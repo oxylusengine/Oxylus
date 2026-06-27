@@ -315,8 +315,11 @@ struct VSMAllocRequest {
 struct VSMPageAllocator {
   alignas(4) u32 active_request_count = {};
   alignas(4) u32 dirty_physical_page_count = {};
+  alignas(4) u32 free_page_count = {};
+  alignas(4) u32 alloc_cursor = {};
   alignas(8) u64 requests = {};
-  alignas(8) u64 dirty_physical_page_addresses = {};
+  alignas(8) u64 dirty_physical_page_coords = {};
+  alignas(8) u64 free_page_list = {};
 };
 
 struct VSMContext {

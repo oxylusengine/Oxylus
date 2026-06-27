@@ -206,8 +206,6 @@ public struct VirtualClipmap {
     }
 };
 
-// TODO: Replace this entire allocator
-
 public struct VSMAllocRequest {
     public i32x3 page_table_address;
 };
@@ -215,8 +213,11 @@ public struct VSMAllocRequest {
 public struct VSMPageAllocator {
     public u32 active_request_count;
     public u32 dirty_physical_page_count;
+    public u32 free_page_count;
+    public u32 alloc_cursor;
     public VSMAllocRequest *requests;
     public u32x2 *dirty_physical_page_coords;
+    public u32 *free_page_list;
 };
 
 public func push_page_alloc_request(__ref VSMPageAllocator allocator, in VSMAllocRequest request) -> void {
@@ -227,6 +228,14 @@ public func push_page_alloc_request(__ref VSMPageAllocator allocator, in VSMAllo
 public func push_dirty_physical_page(__ref VSMPageAllocator allocator, u32x2 physical_page_address) -> void {
     let index = __atomic_add(allocator.dirty_physical_page_count, 1, MemoryOrder::AcquireRelease);
     allocator.dirty_physical_page_coords[index] = physical_page_address;
+}
+
+public func reserve_free_page_slots(__ref VSMPageAllocator allocator, u32 count) -> u32 {
+    return __atomic_add(allocator.free_page_count, count, MemoryOrder::AcquireRelease);
+}
+
+public func pop_free_page_slots(__ref VSMPageAllocator allocator, u32 count) -> u32 {
+    return __atomic_add(allocator.alloc_cursor, count, MemoryOrder::AcquireRelease);
 }
 
 public func calc_shadow_bias(u32 clipmap_index, f32 first_clipmap_texel_length, f32x3 N, f32x3 L, f32 NoL) -> f32 {
