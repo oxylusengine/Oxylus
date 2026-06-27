@@ -165,9 +165,10 @@ struct PreparedFrame {
 };
 
 struct CullGeometryContext {
-  // When true, uses `cull_meshlets_hiz` (VisBuffer path with occlusion culling);
-  // when false, uses `cull_meshlets` (shadowmap path, frustum only).
+  // When true, uses `cull_meshlets_hiz` (VisBuffer path with occlusion culling)
   bool use_hiz = false;
+  // When true, uses `cull_meshlets_hpb` (VSM shadowmaps path with page culling)
+  bool use_hpb = false;
   // HiZ late-pass occlusion culling flag (only meaningful when `use_hiz` is true).
   bool late = false;
   // When true, runs the `cull_meshes` pre-pass (allocates/zeroes the visibility
@@ -176,9 +177,14 @@ struct CullGeometryContext {
   bool init_cull_meshes = false;
 
   GPU::CullCamera cull_camera = {};
+  u32 vsm_layer_index = 0;
+  glm::ivec2 vsm_page_offset = {};
 
   // HiZ pyramid attachment consumed by `cull_meshlets_hiz` (only when `use_hiz`).
   vuk::Value<vuk::ImageAttachment> hiz_attachment = {};
+
+  // HPB pyramid attachment consumed by `cull_meshlets_hpb` (only when `use_hpb`)
+  vuk::Value<vuk::ImageAttachment> hpb_attachment = {};
 
   vuk::Value<vuk::Buffer> visibility_buffer = {};
   vuk::Value<vuk::Buffer> cull_meshlets_cmd_buffer = {};

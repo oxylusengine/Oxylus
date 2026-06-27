@@ -20,7 +20,7 @@ func cs_main(
     var cached = false;
     if (IS_FIRST_PASS) {
         let page = VSMPageMetadata(virtual_page_table.Load(u32x4(thread_id, 0)));
-        cached = page.is_visible();
+        cached = page.is_visible() && page.is_backed() && page.is_dirty();
     } else {
         let tl = src_hpb.Load(i32x4(thread_id.xy * 2 + i32x2(0, 0), thread_id.z, 0));
         let tr = src_hpb.Load(i32x4(thread_id.xy * 2 + i32x2(0, 1), thread_id.z, 0));

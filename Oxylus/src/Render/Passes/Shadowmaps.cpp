@@ -370,6 +370,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   // each clipmap's own (tighter) frustum.
   auto cull_geometry_context = CullGeometryContext{
     .use_hiz = false,
+    .use_hpb = true,
+    .hpb_attachment = std::move(hpb_attachment),
   };
 
   auto physical_depth_attachment = vuk::declare_ia(
@@ -393,6 +395,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
     cull_geometry_context.cull_camera = clipmap_camera;
     cull_geometry_context.init_cull_meshes = (reverse_index == 0);
+    cull_geometry_context.vsm_layer_index = clipmap_index;
+    cull_geometry_context.vsm_page_offset = clipmap.page_offset;
     self.cull_geometry(cull_geometry_context);
     geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
 
@@ -409,8 +413,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         VUK_BA(vuk::eVertexRead | vuk::eFragmentRead) clipmaps,
         VUK_IA(vuk::eFragmentSampled) page_tables,
         VUK_IA(vuk::eFragmentRW) physical_pages,
-        VUK_IA(vuk::eDepthStencilRW) dummy_depth,
-        VUK_IA(vuk::eFragmentSampled) dummy_hpb
+        VUK_IA(vuk::eDepthStencilRW) dummy_depth
       ) {
         auto viewport_rect = vuk::Rect2D{
           .offset = {.x = 0, .y = 0},
@@ -444,8 +447,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
           clipmaps,
           page_tables,
           physical_pages,
-          dummy_depth,
-          dummy_hpb
+          dummy_depth
         );
       }
     );
@@ -459,8 +461,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       context.directional_clipmaps_buffer,
       context.virtual_page_table_attachment,
       context.physical_page_table_attachment,
-      physical_depth_attachment,
-      hpb_attachment
+      physical_depth_attachment
     ) =
       draw_physical_pages_pass(
         std::move(geometry_context.draw_geometry_cmd_buffer),
@@ -472,8 +473,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         std::move(context.directional_clipmaps_buffer),
         std::move(context.virtual_page_table_attachment),
         std::move(context.physical_page_table_attachment),
-        std::move(physical_depth_attachment),
-        std::move(hpb_attachment)
+        std::move(physical_depth_attachment)
       );
   }
 }

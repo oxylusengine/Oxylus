@@ -65,6 +65,11 @@ path = "passes/cull_meshlets_hiz.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "cull_meshlets_hpb"
+path = "passes/cull_meshlets_hpb.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "cull_triangles"
 path = "passes/cull_triangles.slang"
 entry_points = ["cs_main"]
