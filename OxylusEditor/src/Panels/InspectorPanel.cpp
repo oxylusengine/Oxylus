@@ -276,8 +276,14 @@ struct EntityInspector : IEntitySerializer {
             break;
           }
           case AssetType::Material: {
-            auto material = asset_man.get_material(asset->material_id);
-            inspector_panel.draw_material_asset(std::move(asset), std::move(material));
+            auto material_id = asset->material_id;
+            auto material = asset_man.get_material(material_id);
+            auto material_dirty = inspector_panel.draw_material_asset(std::move(asset), std::move(material));
+            material.reset();
+            if (material_dirty) {
+              material.reset();
+              asset_man.set_material_dirty(material_id);
+            }
             break;
           }
           case AssetType::Font: {
@@ -308,7 +314,7 @@ struct EntityInspector : IEntitySerializer {
   }
 };
 
-InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION, true), scene_(nullptr) {
+InspectorPanel::InspectorPanel() : EditorPanelState("Inspector", ICON_MDI_INFORMATION, true), scene_(nullptr) {
   viewer.search_icon = ICON_MDI_MAGNIFY;
   viewer.filter_icon = ICON_MDI_FILTER;
 
@@ -330,29 +336,29 @@ InspectorPanel::InspectorPanel() : EditorPanel("Inspector", ICON_MDI_INFORMATION
   });
 }
 
-void InspectorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
+void InspectorPanel::on_render(this InspectorPanel& self, vuk::ImageAttachment swapchain_attachment) {
   auto& editor = App::mod<Editor>();
   auto& editor_context = editor.get_context();
-  scene_ = editor.get_selected_scene();
+  self.scene_ = editor.get_selected_scene();
 
-  on_begin();
+  self.on_begin();
 
   auto _ = editor_context.entity
-             .and_then([this](flecs::entity e) {
-               if (e != this->last_edited_entity) {
-                 this->euler_cache.reset();
-                 this->last_edited_entity = e;
+             .and_then([&self](flecs::entity e) {
+               if (e != self.last_edited_entity) {
+                 self.euler_cache.reset();
+                 self.last_edited_entity = e;
                }
 
-               this->draw_components(e);
+               self.draw_components(e);
 
                return option<std::monostate>{};
              })
-             .or_else([this, &editor_context]() {
+             .or_else([&self, &editor_context]() {
                if (editor_context.type != EditorContext::Type::File)
                  return option<std::monostate>{};
 
-               return editor_context.str.and_then([this](const std::filesystem::path& path) {
+               return editor_context.str.and_then([&self](const std::filesystem::path& path) {
                  if (path.extension() != ".oxasset")
                    return option<std::monostate>{};
 
@@ -365,20 +371,20 @@ void InspectorPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
                  if (uuid_str_json.error())
                    return option<std::monostate>{};
 
-                 return UUID::from_string(uuid_str_json.value_unsafe()).and_then([this, &asset_man](UUID&& uuid) {
+                 return UUID::from_string(uuid_str_json.value_unsafe()).and_then([&self, &asset_man](UUID&& uuid) {
                    if (auto asset = asset_man.get_asset(uuid))
-                     this->draw_asset_info(std::move(asset));
+                     self.draw_asset_info(std::move(asset));
                    return option<std::monostate>{};
                  });
                });
              });
 
-  on_end();
+  self.on_end();
 }
 
-void InspectorPanel::draw_material_properties(
+auto InspectorPanel::draw_material_properties(
   ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
-) {
+) -> bool {
   if (material_uuid) {
     const auto& window = App::get_window();
     static auto uuid_copy = material_uuid;
@@ -532,14 +538,10 @@ void InspectorPanel::draw_material_properties(
 
   UI::end_properties();
 
-  if (dirty) {
-    auto& asset_man = App::mod<AssetManager>();
-    if (const auto asset = asset_man.get_asset(material_uuid))
-      asset_man.set_material_dirty(asset->material_id);
-  }
+  return dirty;
 }
 
-void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id id) {
+void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id fid) {
   ZoneScoped;
 
   memory::ScopedStack stack;
@@ -552,11 +554,11 @@ void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::
     remove_component = true;
   }
   if (ImGui::MenuItem(reset_component_txt.data())) {
-    entity.remove(id).add(id);
+    entity.remove(fid).add(fid);
   }
   if (ImGui::MenuItem(copy_component_txt.data())) {
     component_clipboard.source_entity = entity;
-    component_clipboard.component_id = id;
+    component_clipboard.component_id = fid;
   }
   if (ImGui::MenuItem(paste_component_txt.data())) {
     if (component_clipboard.is_valid() && component_clipboard.source_entity != entity) {
@@ -572,10 +574,10 @@ void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::
   }
 }
 
-void InspectorPanel::draw_components(flecs::entity entity) {
+void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity entity) {
   ZoneScoped;
 
-  if (!entity || !scene_)
+  if (!entity || !self.scene_)
     return;
 
   auto& editor = App::mod<Editor>();
@@ -583,7 +585,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
 
   ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + 20.0f));
   std::string new_name = entity.name().c_str();
-  if (rename_entity_)
+  if (self.rename_entity_)
     ImGui::SetKeyboardFocusHere();
   UI::push_frame_style();
   if (ImGui::InputText("##Tag", &new_name, ImGuiInputTextFlags_EnterReturnsTrue)) {
@@ -597,7 +599,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     ImGui::OpenPopup("add_component");
   }
 
-  const auto components = scene_->component_db.get_components();
+  const auto components = self.scene_->component_db.get_components();
 
   if (ImGui::BeginPopup("add_component")) {
     static ImGuiTextFilter add_component_filter = {};
@@ -633,7 +635,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     ImGui::EndPopup();
   }
 
-  entity.each([&](flecs::id id) {
+  entity.each([&](flecs::id fid) {
     memory::ScopedStack stack;
     static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
                                                      ImGuiTreeNodeFlags_SpanAvailWidth |
@@ -641,7 +643,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
                                                      ImGuiTreeNodeFlags_FramePadding;
     const float line_height = editor.editor_theme.regular_font_size + GImGui->Style.FramePadding.y * 2.0f;
 
-    auto ty = id.type_id();
+    auto ty = fid.type_id();
     if (!ty) {
       return;
     }
@@ -651,10 +653,10 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     bool remove_component = false;
 
     auto component_name = ty.name();
-    auto name_cstr = stack.format_char("{} {}:{}", ICON_MDI_VIEW_GRID, component_name.c_str(), id.raw_id());
+    auto name_cstr = stack.format_char("{} {}:{}", ICON_MDI_VIEW_GRID, component_name.c_str(), fid.raw_id());
     const bool open = ImGui::TreeNodeEx(name_cstr, TREE_FLAGS, "%s", name_cstr);
     if (ImGui::BeginPopupContextItem()) {
-      draw_component_context_menu(remove_component, entity, id);
+      self.draw_component_context_menu(remove_component, entity, fid);
       ImGui::EndPopup();
     }
 
@@ -666,7 +668,7 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     }
 
     if (ImGui::BeginPopup("ComponentSettings")) {
-      draw_component_context_menu(remove_component, entity, id);
+      self.draw_component_context_menu(remove_component, entity, fid);
       ImGui::EndPopup();
     }
     ImGui::PopID();
@@ -677,11 +679,11 @@ void InspectorPanel::draw_components(flecs::entity entity) {
       UI::begin_properties(properties_flags);
 
       auto world = entity.world();
-      auto inspector = EntityInspector(world, *undo_redo_system.get(), *this);
-      auto* component = entity.get_mut(id);
+      auto inspector = EntityInspector(world, *undo_redo_system.get(), self);
+      auto* component = entity.get_mut(fid);
       inspector.serialize(ty, component);
       if (inspector.modified) {
-        entity.modified(id);
+        entity.modified(fid);
       }
 
       UI::end_properties();
@@ -689,12 +691,12 @@ void InspectorPanel::draw_components(flecs::entity entity) {
     }
 
     if (remove_component) {
-      entity.remove(id);
+      entity.remove(fid);
     }
   });
 }
 
-void InspectorPanel::draw_asset_info(ReadGuard<Asset> asset) {
+auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset) -> void {
   ZoneScoped;
   auto& asset_man = App::mod<AssetManager>();
   auto type_str = asset_man.to_asset_type_sv(asset->type);
@@ -719,7 +721,8 @@ void InspectorPanel::draw_asset_info(ReadGuard<Asset> asset) {
   }
 }
 
-void InspectorPanel::draw_model_asset(ReadGuard<Asset> asset, ReadGuard<Model> model) {
+auto InspectorPanel::draw_model_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Model> model)
+  -> void {
   ZoneScoped;
 
   if (!model) {
@@ -743,19 +746,21 @@ void InspectorPanel::draw_model_asset(ReadGuard<Asset> asset, ReadGuard<Model> m
   }
 }
 
-void InspectorPanel::draw_material_asset(ReadGuard<Asset> asset, ReadGuard<Material> material) {
+auto InspectorPanel::draw_material_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Material> material) -> bool {
   ZoneScoped;
 
   ImGui::SeparatorText("Material");
 
   if (material) {
-    draw_material_properties(std::move(material), asset->uuid, asset->path);
+    return draw_material_properties(std::move(material), asset->uuid, asset->path);
   } else {
     ImGui::Text("No Material");
   }
+
+  return false;
 }
 
-void InspectorPanel::draw_audio_asset(ReadGuard<Asset> asset, ReadGuard<AudioSource> audio) {
+void InspectorPanel::draw_audio_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<AudioSource> audio) {
   ZoneScoped;
 
   auto& audio_engine = App::mod<AudioEngine>();
@@ -772,7 +777,9 @@ void InspectorPanel::draw_audio_asset(ReadGuard<Asset> asset, ReadGuard<AudioSou
   ImGui::Spacing();
 }
 
-bool InspectorPanel::draw_script_asset(ReadGuard<Asset> asset, ReadGuard<LuaSystem> lua_system) {
+bool InspectorPanel::draw_script_asset(
+  this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<LuaSystem> lua_system
+) {
   ZoneScoped;
   memory::ScopedStack stack;
 

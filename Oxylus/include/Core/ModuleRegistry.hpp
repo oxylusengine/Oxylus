@@ -25,10 +25,6 @@ concept ModuleHasUpdate = requires(T t, const Timestep& timestep) { t.update(tim
 template <typename T>
 concept ModuleHasRender = requires(T t, vuk::Extent3D extent, vuk::Format format) { t.render(extent, format); };
 
-struct TypeIndexHash {
-  std::size_t operator()(const std::type_index& ti) const noexcept { return ti.hash_code(); }
-};
-
 struct ModuleRegistry {
   using ModulePtr = std::unique_ptr<void, void (*)(void*)>;
   using Registry = ankerl::unordered_dense::map<std::type_index, ModulePtr, TypeIndexHash>;
@@ -36,7 +32,7 @@ struct ModuleRegistry {
   Registry registry = {};
   std::vector<std::type_index> module_types = {};
   std::vector<std::function<std::expected<void, std::string>()>> init_callbacks = {};
-  std::vector<ox::option<std::function<void(const Timestep&)>>> update_callbacks = {};
+  std::vector<std::function<void(const Timestep&)>> update_callbacks = {};
   std::vector<std::function<std::expected<void, std::string>()>> deinit_callbacks = {};
   std::vector<std::string_view> module_names = {};
 
@@ -97,8 +93,6 @@ struct ModuleRegistry {
       update_callbacks.emplace_back([m = static_cast<T*>(module.get())](const Timestep& timestep) {
         m->update(timestep);
       });
-    } else {
-      update_callbacks.emplace_back(ox::nullopt);
     }
 
     module_names.emplace_back(T::MODULE_NAME);

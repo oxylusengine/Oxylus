@@ -29,7 +29,8 @@ struct MeshComponent {
   UUID material_uuid = {};
   bool cast_shadows = true;
 
-  AABB aabb = {};
+  AABB baked_aabb = {};
+  AABB world_aabb = {};
 };
 
 struct SpriteComponent {
@@ -85,7 +86,7 @@ struct CameraComponent {
     Perspective = 0,
     Orthographic = 1,
   };
-  u32 projection = Projection::Perspective;
+  Projection projection = Projection::Perspective;
   f32 fov = 60.f;
   f32 aspect = 16.f / 9.f;
   f32 far_clip = 1000.f;

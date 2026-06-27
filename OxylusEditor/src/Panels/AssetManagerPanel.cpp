@@ -1,20 +1,20 @@
 #include "AssetManagerPanel.hpp"
 
-#include <tracy/Tracy.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
+#include <tracy/Tracy.hpp>
 
 namespace ox {
-AssetManagerPanel::AssetManagerPanel() : EditorPanel("Asset Manager", ICON_MDI_FOLDER_SYNC, false) {
+AssetManagerPanel::AssetManagerPanel() : EditorPanelState("Asset Manager", ICON_MDI_FOLDER_SYNC, false) {
   viewer.filter_icon = ICON_MDI_FILTER;
   viewer.search_icon = ICON_MDI_MAGNIFY;
 }
 
-void AssetManagerPanel::on_update() {}
+void AssetManagerPanel::on_update(this AssetManagerPanel& self) {}
 
-void AssetManagerPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
+void AssetManagerPanel::on_render(this AssetManagerPanel& self, vuk::ImageAttachment swapchain_attachment) {
   ZoneScoped;
 
-  viewer.render(id_.c_str(), &visible);
+  self.viewer.render(self.id.c_str(), &self.visible);
 }
 } // namespace ox

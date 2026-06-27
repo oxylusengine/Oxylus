@@ -9,7 +9,7 @@ namespace ox {
 auto UIBinding::bind(sol::state* state) -> void {
   LuaImGuiBindings::init(state);
 
-  auto ui = state->create_table("UI");
+  auto ui = state->create_named_table("UI");
   ui.set_function("center_next_window", &UI::center_next_window);
 }
 } // namespace ox

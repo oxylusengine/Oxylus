@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
+#include <typeindex>
 
 using namespace std::string_view_literals;
 
@@ -98,4 +99,8 @@ inline usize size_bytes(const T& v) {
 }
 
 constexpr void hash_combine(usize& seed, const usize v) noexcept { seed ^= v + 0x9e3779b9 + (seed << 6) + (seed >> 2); }
+
+struct TypeIndexHash {
+  std::size_t operator()(const std::type_index& ti) const noexcept { return ti.hash_code(); }
+};
 } // namespace ox

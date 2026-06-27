@@ -9,7 +9,7 @@
 #include "UI/UI.hpp"
 
 namespace ox {
-MainViewportPanel::MainViewportPanel() : EditorPanel("Scenes", ICON_MDI_VIDEO_3D, true, false) {}
+MainViewportPanel::MainViewportPanel() : EditorPanelState("Scenes", ICON_MDI_VIDEO_3D, true, false) {}
 
 auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
   auto& event_system = App::get_event_system();
@@ -95,6 +95,12 @@ auto MainViewportPanel::is_fullscreen(this const MainViewportPanel& self) -> boo
   return self.fullscreen_viewport;
 }
 
+auto MainViewportPanel::toggle_fullscreen(this MainViewportPanel& self) -> void {
+  ZoneScoped;
+
+  self.fullscreen_viewport = !self.fullscreen_viewport;
+}
+
 auto MainViewportPanel::add_new_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void {
   ZoneScoped;
 
@@ -124,8 +130,8 @@ auto MainViewportPanel::add_viewport(this MainViewportPanel& self) -> ViewportPa
   return viewport.get();
 }
 
-void MainViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
-  if (on_begin(ImGuiWindowFlags_MenuBar)) {
+void MainViewportPanel::on_render(this MainViewportPanel& self, vuk::ImageAttachment swapchain_attachment) {
+  if (self.on_begin(ImGuiWindowFlags_MenuBar)) {
     auto viewport_size = ImGui::GetContentRegionAvail();
     auto& style = ImGui::GetStyle();
     if (ImGui::BeginMenuBar()) {
@@ -140,7 +146,7 @@ void MainViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
       auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
       ImGui::SetCursorPosX(viewport_size.x - button_width.x - (style.ItemInnerSpacing.x * 2.f));
       if (ImGui::MenuItem(ICON_MDI_ARROW_EXPAND_ALL)) {
-        fullscreen_viewport = !fullscreen_viewport;
+        self.fullscreen_viewport = !self.fullscreen_viewport;
       }
       ImGui::EndMenuBar();
     }
@@ -149,14 +155,14 @@ void MainViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
 
     ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
 
-    drag_drop();
+    self.drag_drop();
 
-    if (dock_should_update) {
-      set_dockspace();
-      dock_should_update = false;
+    if (self.dock_should_update) {
+      self.set_dockspace();
+      self.dock_should_update = false;
     }
 
-    for (const auto& panel : viewport_panels) {
+    for (const auto& panel : self.viewport_panels) {
       auto* viewport_editor_scene = panel->get_scene();
       if (viewport_editor_scene) {
         if (viewport_editor_scene->is_playing()) {
@@ -168,7 +174,7 @@ void MainViewportPanel::on_render(vuk::ImageAttachment swapchain_attachment) {
     }
   }
 
-  on_end();
+  self.on_end();
 }
 
 void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& timestep, SceneHierarchyPanel* sh) {

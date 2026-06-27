@@ -1,7 +1,9 @@
 ﻿#pragma once
 
-#include <glm/vec3.hpp>
 #include <glm/mat4x4.hpp>
+#include <glm/vec3.hpp>
+
+#include "Scene/SceneGPU.hpp"
 
 namespace ox {
 class RayCast;
@@ -20,10 +22,14 @@ struct AABB {
   ~AABB() = default;
   AABB(const AABB& other) = default;
   AABB(const glm::vec3 min_, const glm::vec3 max_) : min(min_), max(max_) {}
+  AABB(const GPU::Bounds& bounds) {
+    min = bounds.aabb_center - bounds.aabb_extent;
+    max = bounds.aabb_center + bounds.aabb_extent;
+  }
 
   glm::vec3 get_center() const { return (max + min) * 0.5f; }
-  glm::vec3 get_extents() const { return max - min; }
-  glm::vec3 get_size() const { return get_extents(); }
+  glm::vec3 get_size() const { return max - min; }
+  glm::vec3 get_extents() const { return get_size() * 0.5f; }
 
   void translate(const glm::vec3& translation);
   void scale(const glm::vec3& scale);

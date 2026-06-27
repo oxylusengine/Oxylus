@@ -12,7 +12,7 @@ inline AutoCVar_Int cvar_vsync("rr.vsync", "toggle vsync", 1);
 inline AutoCVar_Int cvar_frame_limit("rr.frame_limit", "Limits the framerate with a sleep. 0: Disable, > 0: Enable", 0);
 
 inline AutoCVar_Int cvar_enable_debug_renderer("rr.debug_renderer", "enable debug renderer", 1);
-inline AutoCVar_Int cvar_draw_bounding_boxes("rr.draw_bounding_boxes", "draw mesh bounding boxes", 0);
+inline AutoCVar_Int cvar_draw_bounding_boxes("rr.draw_bounding_boxes", "draw mesh and sprite bounding boxes", 0);
 inline AutoCVar_Int cvar_enable_physics_debug_renderer("rr.physics_debug_renderer", "enable physics debug renderer", 0);
 inline AutoCVar_Int cvar_freeze_culling_frustum("rr.freeze_culling_frustum", "freeze culling frustum", 0);
 inline AutoCVar_Int cvar_draw_camera_frustum("rr.draw_camera_frustum", "draw camera frustum", 0);
@@ -20,8 +20,6 @@ inline AutoCVar_Int cvar_debug_view("rr.debug_view", "0: None, 1: Triangles, 2: 
 inline AutoCVar_Int cvar_culling_frustum("rr.culling_frustum", "Frustum Culling", 1);
 inline AutoCVar_Int cvar_culling_occlusion("rr.culling_occlusion", "Occlusion culling", 1);
 inline AutoCVar_Int cvar_culling_triangle("rr.culling_triangle", "Triangle culling", 1);
-
-inline AutoCVar_Int cvar_reload_renderer("rr.reload_renderer", "reload renderer", 0);
 
 inline AutoCVar_Int cvar_contact_shadows("pp.contact_shadows", "enable contact shadows", 1);
 inline AutoCVar_Int cvar_contact_shadows_steps("pp.contact_shadows_steps", "contact shadows steps", 8);

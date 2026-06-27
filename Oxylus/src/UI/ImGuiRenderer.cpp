@@ -76,7 +76,6 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   io.ConfigDpiScaleViewports = false;
   io.DisplayFramebufferScale = ImVec2(dpi_scale, dpi_scale);
   ImGuiStyle& style = ImGui::GetStyle();
-  style.ScaleAllSizes(dpi_scale);
   style.FontScaleDpi = dpi_scale;
 
   auto& runtime = *App::get_rendercontext().runtime;

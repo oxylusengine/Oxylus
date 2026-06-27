@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Core/Project.hpp"
-#include "Networking/NetClient.hpp"
+#include "Panels/EditorPanelRegistry.hpp"
 #include "Panels/MainViewportPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "UI/RuntimeConsole.hpp"
@@ -34,20 +34,7 @@ public:
 
   // Panels
   MainViewportPanel main_viewport_panel = {};
-  ankerl::unordered_dense::map<size_t, std::unique_ptr<EditorPanel>> editor_panels;
-
-  template <typename T>
-  auto add_panel() -> T* {
-    editor_panels.emplace(typeid(T).hash_code(), std::make_unique<T>());
-    return get_panel<T>();
-  }
-
-  template <typename T>
-  auto get_panel() -> T* {
-    const auto hash_code = typeid(T).hash_code();
-    OX_ASSERT(editor_panels.contains(hash_code));
-    return dynamic_cast<T*>(editor_panels[hash_code].get());
-  }
+  EditorPanelRegistry editor_panel_registry = {};
 
   SceneManager scene_manager = {};
 
@@ -84,7 +71,7 @@ public:
   auto get_context() -> EditorContext& { return editor_context; }
 
   auto get_selected_scene() -> Scene* {
-    auto* sh_scene = get_panel<SceneHierarchyPanel>()->get_scene();
+    auto* sh_scene = editor_panel_registry.get<SceneHierarchyPanel>().get_scene();
     if (sh_scene) {
       return sh_scene->get_scene().get();
     }
@@ -92,7 +79,7 @@ public:
     return nullptr;
   }
 
-  auto set_docking_layout(EditorLayout layout) -> void;
+  auto set_docking_layout(this Editor& self, EditorLayout layout) -> void;
   auto reset_current_docking_layout() -> void;
 
 private:
@@ -103,7 +90,7 @@ private:
 
   auto save_project(const std::string& path) -> void;
 
-  auto draw_menubar() -> void;
+  auto draw_menubar(this Editor& self) -> void;
 
   auto undo() const -> void;
   auto redo() const -> void;

@@ -41,6 +41,28 @@ struct Handle<Window>::Impl {
   bool cursor_overridden = false;
 };
 
+auto load_vulkan_library() -> void {
+#ifdef OX_PLATFORM_MACOSX
+  if (const char* sdk_path = std::getenv("VULKAN_SDK")) {
+    std::filesystem::path lib_path = sdk_path;
+    lib_path /= "lib/libvulkan.1.dylib";
+
+    if (std::filesystem::exists(lib_path)) {
+      SDL_Vulkan_LoadLibrary(lib_path.string().c_str());
+      return;
+    }
+  }
+
+  // Fallback
+  if (std::filesystem::exists("/usr/local/lib/libvulkan.1.dylib")) {
+    SDL_Vulkan_LoadLibrary("/usr/local/lib/libvulkan.1.dylib");
+    return;
+  }
+#endif
+
+  SDL_Vulkan_LoadLibrary(nullptr);
+}
+
 auto Window::create(const WindowInfo& info) -> Window {
   ZoneScoped;
 
@@ -48,6 +70,8 @@ auto Window::create(const WindowInfo& info) -> Window {
     OX_LOG_ERROR("Failed to initialize SDL! {}", SDL_GetError());
     return Handle(nullptr);
   }
+
+  load_vulkan_library();
 
   const auto display = display_at(info.monitor);
   if (!display.has_value()) {
@@ -217,17 +241,17 @@ auto Window::update(const Timestep& timestep) const -> void {
     }
 
     auto& input_system = App::mod<Input>();
-    const auto ox_key_code = static_cast<KeyCode>(key_code);
+    const auto ox_scan_code = static_cast<ScanCode>(scan_code);
     const auto ox_mod = static_cast<ModCode>(mods);
     input_system.set_mod(ox_mod);
     if (down) {
-      input_system.set_key_pressed(ox_key_code, !repeat);
-      input_system.set_key_released(ox_key_code, false);
-      input_system.set_key_held(ox_key_code, true);
+      input_system.set_key_pressed(ox_scan_code, !repeat);
+      input_system.set_key_released(ox_scan_code, false);
+      input_system.set_key_held(ox_scan_code, true);
     } else {
-      input_system.set_key_pressed(ox_key_code, false);
-      input_system.set_key_released(ox_key_code, true);
-      input_system.set_key_held(ox_key_code, false);
+      input_system.set_key_pressed(ox_scan_code, false);
+      input_system.set_key_released(ox_scan_code, true);
+      input_system.set_key_held(ox_scan_code, false);
     }
   };
   window_callbacks.on_text_input = [](void* user_data, const c8* text) {

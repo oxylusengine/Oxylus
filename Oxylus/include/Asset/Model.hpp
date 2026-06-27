@@ -32,7 +32,7 @@ struct Model {
     std::string name;
     LightType type;
     glm::vec3 color = {1.0f, 1.0f, 1.0f};
-    float intensity = 1.0f;
+    f32 intensity = 1.0f;
     ox::option<f32> range = ox::nullopt;
     ox::option<f32> inner_cone_angle = ox::nullopt;
     ox::option<f32> outer_cone_angle = ox::nullopt;
@@ -47,6 +47,8 @@ struct Model {
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};
 
   usize default_scene_index = 0;
+
+  auto get_base_aabb(this const Model& self) -> GPU::Bounds;
 };
 
 enum struct MeshInstanceID : u64 { Invalid = ~0_u64 };

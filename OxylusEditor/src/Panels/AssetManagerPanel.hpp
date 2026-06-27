@@ -1,22 +1,15 @@
 #pragma once
 
-#include "Panels/EditorPanel.hpp"
+#include "Panels/EditorPanelState.hpp"
 #include "UI/AssetManagerViewer.hpp"
 
 namespace ox {
-class AssetManagerPanel : public EditorPanel {
+class AssetManagerPanel : public EditorPanelState {
 public:
   AssetManagerPanel();
 
-  ~AssetManagerPanel() override = default;
-
-  AssetManagerPanel(const AssetManagerPanel& other) = delete;
-  AssetManagerPanel(AssetManagerPanel&& other) = delete;
-  AssetManagerPanel& operator=(const AssetManagerPanel& other) = delete;
-  AssetManagerPanel& operator=(AssetManagerPanel&& other) = delete;
-
-  void on_update() override;
-  void on_render(vuk::ImageAttachment swapchain_attachment) override;
+  auto on_update(this AssetManagerPanel& self) -> void;
+  auto on_render(this AssetManagerPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
 
 private:
   AssetManagerViewer viewer = {};

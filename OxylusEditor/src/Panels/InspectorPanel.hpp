@@ -2,13 +2,13 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/UUID.hpp"
-#include "EditorPanel.hpp"
+#include "EditorPanelState.hpp"
 #include "UI/AssetManagerViewer.hpp"
 
 namespace ox {
 struct Material;
 class Scene;
-class InspectorPanel : public EditorPanel {
+class InspectorPanel : public EditorPanelState {
 public:
   struct DialogLoadEvent {
     UUID* asset_uuid = {};
@@ -26,31 +26,32 @@ public:
 
   InspectorPanel();
 
-  void on_render(vuk::ImageAttachment swapchain_attachment) override;
+  auto on_update(this InspectorPanel& self) -> void {}
+  auto on_render(this InspectorPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
 
-  static void draw_material_properties(
+  static auto draw_material_properties(
     ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
-  );
+  ) -> bool;
 
-  void draw_components(flecs::entity entity);
-  void draw_asset_info(ReadGuard<Asset> asset);
+  auto draw_components(this InspectorPanel& self, flecs::entity entity) -> void;
+  auto draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset) -> void;
 
-  void draw_model_asset(ReadGuard<Asset> asset, ReadGuard<Model> model);
-  void draw_material_asset(ReadGuard<Asset> asset, ReadGuard<Material> material);
-  void draw_audio_asset(ReadGuard<Asset> asset, ReadGuard<AudioSource> audio);
-  bool draw_script_asset(ReadGuard<Asset> asset, ReadGuard<LuaSystem> lua_system);
+  auto draw_model_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Model> model) -> void;
+  auto draw_material_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Material> material) -> bool;
+  auto draw_audio_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<AudioSource> audio) -> void;
+  auto draw_script_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<LuaSystem> lua_system) -> bool;
 
 private:
   struct ComponentClipboard {
     flecs::entity source_entity;
     flecs::id_t component_id = 0;
 
-    bool is_valid() const { return source_entity.is_alive() && component_id != 0; }
+    auto is_valid() const -> bool { return source_entity.is_alive() && component_id != 0; }
   };
 
   ComponentClipboard component_clipboard = {};
 
-  void draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id id);
+  auto draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id id) -> void;
 
   Scene* scene_;
   bool rename_entity_ = false;
