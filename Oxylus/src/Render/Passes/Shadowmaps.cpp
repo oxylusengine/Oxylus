@@ -129,6 +129,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vuk::eFragmentSampled
   );
 
+  auto hpb_attachment = vuk::acquire_ia("vsm hpb", self.vsm_hpb_attachment, vuk::eFragmentSampled);
+
   if (context.sun_moved) {
     context.virtual_page_table_attachment = vuk::clear_image(
       std::move(context.virtual_page_table_attachment),
@@ -233,7 +235,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       VUK_BA(vuk::eComputeRW) page_visibility_mask,
       VUK_IA(vuk::eComputeRW) page_table
     ) {
-      cmd_list.bind_compute_pipeline("rmvsm_allocate_pages")
+      cmd_list //
+        .bind_compute_pipeline("rmvsm_allocate_pages")
         .bind_buffer(0, 0, allocator)
         .bind_buffer(0, 1, page_visibility_mask)
         .bind_image(0, 2, page_table)
@@ -248,6 +251,48 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     std::move(page_allocator_buffer),
     std::move(page_visibility_mask_buffer),
     std::move(context.virtual_page_table_attachment)
+  );
+
+  auto downsample_hpb_pass = vuk::make_pass(
+    "vsm downsample hpb",
+    [](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eComputeSampled) page_table,
+      VUK_IA(vuk::eComputeRW) hpb
+    ) {
+      for (auto i = 0_u32; i < hpb->level_count; i++) {
+        auto src = i == 0 ? page_table : hpb->mip(i - 1);
+        auto dst = hpb->mip(i);
+
+        auto level_extent = vuk::Extent3D{
+          std::max(1u, page_table->extent.width >> i),
+          std::max(1u, page_table->extent.height >> i),
+          page_table->layer_count,
+        };
+
+        if (i > 0) {
+          cmd_list.image_barrier(src, vuk::eComputeWrite, vuk::eComputeSampled);
+        }
+
+        cmd_list //
+          .bind_compute_pipeline("rmvsm_downsample_hpb")
+          .specialize_constants(0, i == 0)
+          .bind_image(0, 0, page_table)
+          .bind_image(0, 1, src)
+          .bind_image(0, 2, dst)
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, level_extent)
+          .dispatch_invocations(level_extent.width, level_extent.height, hpb->layer_count);
+      }
+
+      cmd_list.image_barrier(hpb, vuk::eComputeSampled, vuk::eComputeRW);
+
+      return std::make_tuple(page_table, hpb);
+    }
+  );
+
+  std::tie(context.virtual_page_table_attachment, hpb_attachment) = downsample_hpb_pass(
+    std::move(context.virtual_page_table_attachment),
+    std::move(hpb_attachment)
   );
 
   auto mark_dirty_pages_pass = vuk::make_pass(
@@ -364,7 +409,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         VUK_BA(vuk::eVertexRead | vuk::eFragmentRead) clipmaps,
         VUK_IA(vuk::eFragmentSampled) page_tables,
         VUK_IA(vuk::eFragmentRW) physical_pages,
-        VUK_IA(vuk::eDepthStencilRW) dummy_depth
+        VUK_IA(vuk::eDepthStencilRW) dummy_depth,
+        VUK_IA(vuk::eFragmentSampled) dummy_hpb
       ) {
         auto viewport_rect = vuk::Rect2D{
           .offset = {.x = 0, .y = 0},
@@ -398,7 +444,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
           clipmaps,
           page_tables,
           physical_pages,
-          dummy_depth
+          dummy_depth,
+          dummy_hpb
         );
       }
     );
@@ -412,7 +459,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       context.directional_clipmaps_buffer,
       context.virtual_page_table_attachment,
       context.physical_page_table_attachment,
-      physical_depth_attachment
+      physical_depth_attachment,
+      hpb_attachment
     ) =
       draw_physical_pages_pass(
         std::move(geometry_context.draw_geometry_cmd_buffer),
@@ -424,7 +472,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         std::move(context.directional_clipmaps_buffer),
         std::move(context.virtual_page_table_attachment),
         std::move(context.physical_page_table_attachment),
-        std::move(physical_depth_attachment)
+        std::move(physical_depth_attachment),
+        std::move(hpb_attachment)
       );
   }
 }

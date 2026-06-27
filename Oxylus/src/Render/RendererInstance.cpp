@@ -247,7 +247,8 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   after_callbacks.resize(stage_count);
 
   vsm_virtual_page_table_attachment = vuk::ImageAttachment{
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
     .extent =
       {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
        .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
@@ -270,7 +271,8 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   );
 
   vsm_hpb_attachment = vuk::ImageAttachment{
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
     .extent =
       {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
        .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
@@ -293,7 +295,8 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
 
   vsm_physical_page_table_attachment = vuk::ImageAttachment{
     .image_flags = vuk::ImageCreateFlagBits::eMutableFormat,
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
     .extent =
       {.width = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .height = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .depth = 1},
     .format = vuk::Format::eR32Sfloat,
