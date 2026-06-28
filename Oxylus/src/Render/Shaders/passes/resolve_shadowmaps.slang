@@ -29,10 +29,6 @@ func hash2(f32x2 p) -> f32x2 {
     return fract(sin(d) * 43758.5453);
 }
 
-func calc_vsm_shadow_bias(in VSMContext vsm_ctx, u32 clipmap_index, f32x3 N, f32x3 L, f32 NoL) -> f32 {
-    return calc_shadow_bias(clipmap_index, vsm_ctx.get_first_clipmap_texel_length(), N, L, NoL);
-}
-
 func sample_vsm_shadow_depth(
     in VSMContext vsm_ctx,
     i32 clipmap_index,
@@ -95,19 +91,25 @@ func pcss_shadow(
     let L = vsm_ctx.directional_light_dir;
     let NoL = max(dot(flat_normal, L), 0.0);
 
-    let max_bias = exp2(f32(base_clipmap_index)) * 0.02;
-    let base_bias = min(max_bias, 0.01 + calc_vsm_shadow_bias(vsm_ctx, u32(base_clipmap_index), flat_normal, L, NoL));
+    let clipmap_texel_size = exp2(f32(base_clipmap_index)) * vsm_ctx.get_first_clipmap_texel_length();
+    let sqrt2 = 1.41421356;
+    let quantize = 2.0 / (1 << 23);
+    let b = sqrt2 * clipmap_texel_size * 0.5;
+    let base_bias = quantize + b + (NoL < 0.99 ? b * length(cross(flat_normal, L)) / max(NoL, 0.1f) : b);
     let inv_z_length = 1.0 / vsm_ctx.z_length;
+
+    let normal_offset_world = clipmap_texel_size * (1.0 + 2.0 * (1.0 - NoL));
+    let offset_world_position = world_position + flat_normal * normal_offset_world;
 
     var tangent = f32x3(0.0);
     var bitangent = f32x3(0.0);
     perpendicular_basis(L, tangent, bitangent);
 
-    let receiver_info = clipmaps[base_clipmap_index].get_clipmap_info(world_position);
+    let receiver_info = clipmaps[base_clipmap_index].get_clipmap_info(offset_world_position);
     let d_receiver_norm = receiver_info.projected_depth;
     let d_receiver_world = d_receiver_norm * vsm_ctx.z_length;
 
-    let center_depth = sample_vsm_shadow_depth_with_fallback(vsm_ctx, base_clipmap_index, world_position);
+    let center_depth = sample_vsm_shadow_depth_with_fallback(vsm_ctx, base_clipmap_index, offset_world_position);
 
     // Blocker search
     var accum_depth_world = 0.0;
@@ -122,7 +124,7 @@ func pcss_shadow(
         let pcf_bias = 2.0 * r;
         let bias_norm = inv_z_length * (base_bias + lerp(pcf_bias, 0.0, NoL));
 
-        let depth = sample_vsm_shadow_depth_with_fallback(vsm_ctx, base_clipmap_index, world_position + offset);
+        let depth = sample_vsm_shadow_depth_with_fallback(vsm_ctx, base_clipmap_index, offset_world_position + offset);
         if (depth == VSM_DEPTH_MISS) {
             continue;
         }
@@ -164,7 +166,7 @@ func pcss_shadow(
         let pcf_bias = 2.0 * r;
         let bias_norm = inv_z_length * (base_bias + lerp(pcf_bias, 0.0, NoL));
 
-        let depth = sample_vsm_shadow_depth_with_fallback(vsm_ctx, base_clipmap_index, world_position + offset);
+        let depth = sample_vsm_shadow_depth_with_fallback(vsm_ctx, base_clipmap_index, offset_world_position + offset);
         if (depth == VSM_DEPTH_MISS) {
             continue;
         }
@@ -178,6 +180,7 @@ func pcss_shadow(
     if (valid_pcf_samples == 0u) {
         return hard_shadow;
     }
+
     return light_visibility / f32(valid_pcf_samples);
 }
 
