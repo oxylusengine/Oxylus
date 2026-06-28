@@ -217,7 +217,7 @@ struct ShadowGeometryContext {
 struct RMVSMContext {
   constexpr static u32 PAGE_SIZE = 128;
   constexpr static u32 MAX_DIRECTIONAL_CLIPMAP_COUNT = 10;
-  constexpr static u32 DIRECTIONAL_IMAGE_SIZE = 1 << 12;
+  constexpr static u32 DIRECTIONAL_IMAGE_SIZE = 1 << 13;
   constexpr static u32 DIRECTIONAL_PAGE_TABLE_SIZE = DIRECTIONAL_IMAGE_SIZE / PAGE_SIZE;
   constexpr static u32 DIRECTIONAL_MAX_PAGE_COUNT = DIRECTIONAL_PAGE_TABLE_SIZE * DIRECTIONAL_PAGE_TABLE_SIZE;
   constexpr static u32 DIRECTIONAL_PAGE_MASK_COUNT = (DIRECTIONAL_MAX_PAGE_COUNT + 31) / 32;
@@ -287,6 +287,8 @@ struct DebugContext {
   f32 overdraw_heatmap_scale = 0.0f;
   GPU::DebugView debug_view = GPU::DebugView::None;
 
+  vuk::Value<vuk::Buffer> vsm_clipmaps_buffer = {};
+
   vuk::Value<vuk::ImageAttachment> visbuffer_attachment = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
   vuk::Value<vuk::ImageAttachment> overdraw_attachment = {};
@@ -295,6 +297,7 @@ struct DebugContext {
   vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> vsm_page_table_attachment = {};
 };
 
 struct PostProcessContext {

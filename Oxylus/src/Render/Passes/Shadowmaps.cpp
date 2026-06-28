@@ -172,7 +172,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     }
   );
 
-  context.virtual_page_table_attachment = invalidate_pages_pass(std::move(context.virtual_page_table_attachment));
+  // context.virtual_page_table_attachment = invalidate_pages_pass(std::move(context.virtual_page_table_attachment));
 
   auto mark_visible_pages_pass = vuk::make_pass(
     "vsm mark visible pages",
@@ -549,7 +549,7 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
         .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, vsm_ctx)
         .draw(3, 1, 0, 0);
 
-      return std::make_tuple(resolved, camera, depth, normals);
+      return std::make_tuple(resolved, camera, depth, normals, page_tables, physical_pages, clipmaps);
     }
   );
 
@@ -557,7 +557,10 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
     context.resolved_shadows_attachment,
     self.prepared_frame.camera_buffer,
     context.depth_attachment,
-    context.normal_attachment
+    context.normal_attachment,
+    context.virtual_page_table_attachment,
+    context.physical_page_table_attachment,
+    context.directional_clipmaps_buffer
   ) =
     resolve_pass(
       std::move(context.resolved_shadows_attachment),

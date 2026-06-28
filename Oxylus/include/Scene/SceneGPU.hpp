@@ -28,6 +28,7 @@ enum class DebugView : i32 {
   Roughness,
   BakedOcclusion,
   GTAO,
+  RMVSM,
 
   Count,
 };

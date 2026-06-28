@@ -592,7 +592,8 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
           "Metallic",
           "Roughness",
           "Baked Occlusion",
-          "GTAO"
+          "GTAO",
+          "Virtual Shadowmaps"
         };
         UI::property(
           "Debug View",

@@ -762,6 +762,8 @@ auto RendererInstance::render(
     std::move(vbgtao_depth_differences_attachment),
     vuk::Black<f32>
   );
+  auto rmvsm_virtual_page_table_attachment = vuk::Value<vuk::ImageAttachment>{};
+  auto rmvsm_virtual_clipmaps_buffer = vuk::Value<vuk::Buffer>{};
 
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0) {
@@ -841,40 +843,6 @@ auto RendererInstance::render(
     metallic_roughness_occlusion_attachment = std::move(main_geometry_context.metallic_roughness_occlusion_attachment);
 
     if (self.directional_light_cast_shadows) {
-      // auto directional_light_shadowmap_attachment = vuk::declare_ia(
-      //   "directional light shadowmap",
-      //   {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eDepthStencilAttachment,
-      //    .extent = vuk::Extent3D{self.directional_light.cascade_size, self.directional_light.cascade_size, 1},
-      //    .format = vuk::Format::eD32Sfloat,
-      //    .sample_count = vuk::SampleCountFlagBits::e1,
-      //    .level_count = 1,
-      //    .layer_count = max(self.directional_light.cascade_count, 2_u32)}
-      // );
-      // directional_light_shadowmap_attachment = vuk::clear_image(
-      //   std::move(directional_light_shadowmap_attachment),
-      //   vuk::DepthZero
-      // );
-
-      // auto shadow_geometry_context = ShadowGeometryContext{};
-      // for (u32 cascade_index = 0; cascade_index < self.directional_light.cascade_count; cascade_index++) {
-      //   auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
-      //   auto& current_cascade = self.directional_light_cascades[cascade_index];
-
-      //   shadow_geometry_context.shadowmap_attachment = std::move(current_cascade_attachment);
-
-      //   auto cull_camera = GPU::CullCamera{
-      //     .projection_view = current_cascade.projection_view,
-      //     .position = self.camera_data.position,
-      //     .acceptable_lod_error = self.camera_data.acceptable_lod_error,
-      //     .resolution = self.camera_data.resolution,
-      //     .near_clip = self.camera_data.near_clip,
-      //     .mesh_instance_count = self.prepared_frame.mesh_instance_count,
-      //   };
-
-      //   self.cull_geometry(cull_geometry_context, ...);
-      //   self.draw_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index);
-      // }
-
       auto rmvsm_context = RMVSMContext{
         .sun_moved = self.sun_direction_changed,
         .depth_extent = dst_extent,
@@ -895,6 +863,8 @@ auto RendererInstance::render(
       depth_attachment = std::move(shadow_resolve_context.depth_attachment);
       normal_attachment = std::move(shadow_resolve_context.normal_attachment);
       resolved_shadows_attachment = std::move(shadow_resolve_context.resolved_shadows_attachment);
+      rmvsm_virtual_page_table_attachment = std::move(shadow_resolve_context.virtual_page_table_attachment);
+      rmvsm_virtual_clipmaps_buffer = std::move(shadow_resolve_context.directional_clipmaps_buffer);
     }
 
     auto contact_shadows_pass = vuk::make_pass(
@@ -1217,6 +1187,12 @@ auto RendererInstance::render(
     .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
     .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
   };
+
+  if (debug_view == GPU::DebugView::RMVSM) {
+    debug_context.vsm_page_table_attachment = std::move(rmvsm_virtual_page_table_attachment);
+    debug_context.vsm_clipmaps_buffer = std::move(rmvsm_virtual_clipmaps_buffer);
+  }
+
   auto debug_renderer_enabled = RendererCVar::cvar_enable_debug_renderer.as_bool();
   if (debug_renderer_enabled) {
     return self.draw_for_debug(debug_context, std::move(dst_attachment));
