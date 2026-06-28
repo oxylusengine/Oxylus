@@ -259,6 +259,8 @@ void ContentPanel::init(this ContentPanel& self) {
   self.current_directory_ = self.assets_directory_;
   self.refresh();
 
+  self.thumbnail_manager.init();
+
   self.filewatch = std::make_unique<filewatch::FileWatch<std::string>>(
     self.assets_directory_.string(),
     [&self](const auto&, const filewatch::Event e) { self.refresh(); }
@@ -623,7 +625,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           if (file.type == FileType::Texture) {
             thumbnail_image = self.thumbnail_manager.get_thumbnail_texture(file_path_str);
           } else if (file.type == FileType::Model) {
-            // thumbnail_image = self.thumbnail_manager.get_thumbnail_model(file_path_str);
+            thumbnail_image = self.thumbnail_manager.get_thumbnail_model(file_path_str);
           }
         }
         if (use_thumbnail_image) {

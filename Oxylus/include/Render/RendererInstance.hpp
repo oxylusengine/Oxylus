@@ -286,6 +286,7 @@ public:
   ) -> vuk::Value<vuk::ImageAttachment>;
   auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void;
 
+  auto get_viewport_size(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_size; }
   auto get_viewport_offset(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_offset; }
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;

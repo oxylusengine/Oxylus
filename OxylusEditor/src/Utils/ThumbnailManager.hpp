@@ -26,10 +26,16 @@ private:
   std::shared_mutex thumbnail_mutex = {};
   std::filesystem::path cache_dir = {};
 
-  auto render_thumbnail(this ThumbnailManager& self, Model* model, u32 size) -> std::vector<u8>;
+  auto render_thumbnail(this ThumbnailManager& self, UUID model_uuid, u32 size) -> option<std::vector<u8>>;
   auto get_asset_hash(this const ThumbnailManager& self, const std::filesystem::path& path) -> std::string;
+
   auto calculate_thumbnail_camera(
-    this ThumbnailManager& self, const ox::AABB& model_aabb, glm::mat4& out_view, glm::mat4& out_proj
+    this ThumbnailManager& self,
+    const ox::AABB& model_aabb,
+    glm::vec3& out_position,
+    glm::quat& out_rotation,
+    f32& out_near,
+    f32& out_far
   ) -> void;
 };
 } // namespace ox
