@@ -11,6 +11,7 @@
 
 #include "Core/Types.hpp"
 #include "EditorPanelState.hpp"
+#include "Utils/ThumbnailManager.hpp"
 
 namespace ox {
 class Texture;
@@ -26,7 +27,9 @@ public:
   auto on_render(this ContentPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
 
 private:
-  std::filesystem::path draw_context_menu_items(this ContentPanel& self, const std::filesystem::path& context, bool isDir);
+  std::filesystem::path draw_context_menu_items(
+    this ContentPanel& self, const std::filesystem::path& context, bool isDir
+  );
 
   struct File {
     std::string name;
@@ -60,8 +63,10 @@ private:
 
   std::unique_ptr<filewatch::FileWatch<std::string>> filewatch = nullptr;
 
-  std::pair<bool, uint32_t> directory_tree_view_recursive(
-    const std::filesystem::path& path, uint32_t* count, int* selectionMask, ImGuiTreeNodeFlags flags
+  ThumbnailManager thumbnail_manager;
+
+  std::pair<bool, u32> directory_tree_view_recursive(
+    const std::filesystem::path& path, u32* count, i32* selectionMask, ImGuiTreeNodeFlags flags
   );
   auto render_header(this ContentPanel& self) -> void;
   auto render_side_view(this ContentPanel& self) -> void;

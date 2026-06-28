@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
+#include <imspinner.h>
 #include <misc/cpp/imgui_stdlib.h>
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 
@@ -138,15 +139,15 @@ static void open_file(const std::filesystem::path& path) {
   }
 }
 
-std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(
-  const std::filesystem::path& path, uint32_t* count, int* selectionMask, ImGuiTreeNodeFlags flags
+std::pair<bool, u32> ContentPanel::directory_tree_view_recursive(
+  const std::filesystem::path& path, u32* count, i32* selectionMask, ImGuiTreeNodeFlags flags
 ) {
   ZoneScoped;
 
   auto& editor_theme = App::mod<Editor>().editor_theme;
 
   bool any_node_clicked = false;
-  uint32_t node_clicked = 0;
+  u32 node_clicked = 0;
 
   if (path.empty())
     return {};
@@ -176,7 +177,7 @@ std::pair<bool, uint32_t> ContentPanel::directory_tree_view_recursive(
       ImGui::PushStyleColor(ImGuiCol_HeaderHovered, editor_theme.header_hovered_color);
     }
 
-    const uint64_t id = *count;
+    const u64 id = *count;
     const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(id), nodeFlags, "");
     ImGui::PopStyleColor(selected ? 2 : 1);
 
@@ -453,7 +454,7 @@ void ContentPanel::render_side_view(this ContentPanel& self) {
     ImGui::TextUnformatted("Assets");
 
     if (opened) {
-      uint32_t count = 0;
+      u32 count = 0;
       const auto [is_clicked, clicked_node] = self.directory_tree_view_recursive(
         self.assets_directory_,
         &count,
@@ -498,12 +499,12 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
   const ImVec2 background_thumbnail_size = {scaled_thumbnail_size_x + padding * 2, scaled_thumbnail_size};
 
   const float panel_width = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize;
-  int column_count = static_cast<int>(panel_width / cell_size);
+  i32 column_count = static_cast<i32>(panel_width / cell_size);
   if (column_count < 1)
     column_count = 1;
 
   float line_height = ImGui::GetTextLineHeight();
-  int flags = ImGuiTableFlags_ContextMenuInBody | ImGuiTableFlags_ScrollY;
+  i32 flags = ImGuiTableFlags_ContextMenuInBody | ImGuiTableFlags_ScrollY;
 
   if (!grid) {
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, {0, 0});
@@ -524,7 +525,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
   if (ImGui::BeginTable("BodyTable", column_count, flags)) {
     bool any_item_hovered = false;
 
-    int i = 0;
+    i32 i = 0;
 
     auto read_lock = std::shared_lock(self.directory_mutex_);
     for (auto& file : self.directory_entries_) {
@@ -615,11 +616,38 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
         ImGui::SetCursorPos({cursor_pos.x + thumbnail_padding * 0.75f, cursor_pos.y + thumbnail_padding});
         ImGui::SetNextItemAllowOverlap();
 
-        ImGui::PushFont(nullptr, thumb_image_size);
-        ImGui::TextUnformatted(file.icon.c_str());
-        ImGui::PopFont();
+        auto use_thumbnail_image = !is_dir && EditorCVar::cvar_file_thumbnails.get() &&
+                                   (file.type == FileType::Texture || file.type == FileType::Model);
+        auto thumbnail_image = option<std::shared_ptr<Texture>>(nullopt);
+        if (use_thumbnail_image) {
+          if (file.type == FileType::Texture) {
+            thumbnail_image = self.thumbnail_manager.get_thumbnail_texture(file_path_str);
+          } else if (file.type == FileType::Model) {
+            // thumbnail_image = self.thumbnail_manager.get_thumbnail_model(file_path_str);
+          }
+        }
+        if (use_thumbnail_image) {
+          if (thumbnail_image.has_value()) {
+            UI::image(**thumbnail_image, {thumb_image_size, thumb_image_size});
+          } else {
+            ImSpinner::detail::SpinnerConfig config{};
+            config.setSpinnerType(ImSpinner::e_st_ang);
+            config.setSpeed(6.f);
+            config.setAngle(4.f);
+            config.setThickness(2.f);
+            config.setRadius(thumb_image_size / 2.f);
+            config.setColor(ImColor(1.f, 1.f, 1.f, 1.f));
+            ImGui::PushFont(nullptr, thumb_image_size);
+            ImSpinner::Spinner("SpinnerAng270NoBg", config);
+            ImGui::PopFont();
+          }
+        } else {
+          ImGui::PushFont(nullptr, thumb_image_size);
+          ImGui::TextUnformatted(file.icon.c_str());
+          ImGui::PopFont();
+        }
 
-        // Type Color frame
+        // Type color frame
         const ImVec2 type_color_frame_size = {scaled_thumbnail_size_x, scaled_thumbnail_size_x * 0.03f};
         ImGui::SetCursorPosX(cursor_pos.x + padding);
         UI::image(
@@ -686,7 +714,8 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
         if (file_type_it != FILE_TYPES.end()) {
           file_type = file_type_it->second;
         }
-        ImGui::TextUnformatted(FILE_TYPES_TO_ICON.at(file_type));
+        auto file_icon = FILE_TYPES_TO_ICON.at(file_type);
+        ImGui::TextUnformatted(file_icon);
         ImGui::SameLine();
 
         ImGui::TextUnformatted(filename);
@@ -700,12 +729,10 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     }
 
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, editor_theme.popup_item_spacing);
-    if (
-      ImGui::BeginPopupContextWindow(
-        "AssetPanelHierarchyContextWindow",
-        ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
-      )
-    ) {
+    if (ImGui::BeginPopupContextWindow(
+          "AssetPanelHierarchyContextWindow",
+          ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+        )) {
       editor_context.reset();
       if (auto p = self.draw_context_menu_items(self.current_directory_, true); !p.empty()) {
         directory_to_open = p;
@@ -859,7 +886,7 @@ std::filesystem::path ContentPanel::draw_context_menu_items(
   if (is_dir) {
     if (ImGui::BeginMenu("Create")) {
       if (ImGui::MenuItem("Folder")) {
-        int i = 0;
+        i32 i = 0;
         bool created = false;
         std::string new_folder_path;
         while (!created) {
