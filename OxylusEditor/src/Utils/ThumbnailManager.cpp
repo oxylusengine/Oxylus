@@ -213,7 +213,7 @@ auto ThumbnailManager::get_asset_hash(this const ThumbnailManager& self, const s
   ZoneScoped;
 
   auto last_write = std::filesystem::last_write_time(path).time_since_epoch().count();
-  std::string signature = path.string() + std::to_string(last_write);
+  std::string signature = path.string() + fmt::format("{}", last_write);
   size_t hash_val = std::hash<std::string>{}(signature);
   return fmt::format("{:X}", hash_val);
 }
