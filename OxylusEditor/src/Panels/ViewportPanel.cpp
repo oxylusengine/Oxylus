@@ -153,6 +153,10 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       ImGui::EndMenuBar();
     }
 
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    ImRect menu_bar_rect = window->MenuBarRect();
+    self.is_menubar_hovered = ImGui::IsMouseHoveringRect(menu_bar_rect.Min, menu_bar_rect.Max);
+
     self.draw_stats_overlay(self.draw_scene_stats);
 
     if (viewport_settings_popup)
@@ -601,7 +605,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
           static_cast<i32>(ox::count_of(debug_views))
         );
         UI::property("Enable frustum culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
-        UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
+        UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_occlusion.get_ptr());
         UI::property("Enable triangle culling", (bool*)RendererCVar::cvar_culling_triangle.get_ptr());
         UI::end_properties();
       }
@@ -912,7 +916,8 @@ auto ViewportPanel::mouse_picking_stages(
   ZoneScoped;
 
   auto using_gizmo = ImGuizmo::IsOver();
-  bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered;
+  bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
+                     !self.is_widgets_hovered && !self.is_menubar_hovered;
 
   if (should_pick) {
     renderer_instance->add_stage_after(
@@ -957,7 +962,7 @@ auto ViewportPanel::mouse_picking_stages(
         u32 texel_data = ~0_u32;
         std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
         if (texel_data != ~0_u32) {
-            pick_entity(s.get(), texel_data);
+          pick_entity(s.get(), texel_data);
         }
 
         ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attach))
@@ -1372,6 +1377,8 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
     ImGui::PopStyleVar(2);
   }
   ImGui::EndGroup();
+
+  self.is_widgets_hovered = ImGui::IsItemHovered();
 }
 
 void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) {
