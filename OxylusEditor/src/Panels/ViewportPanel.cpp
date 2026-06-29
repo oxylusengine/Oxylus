@@ -923,7 +923,7 @@ auto ViewportPanel::mouse_picking_stages(
     renderer_instance->add_stage_after(
       RenderStage::Forward2D,
       "mouse_picking_2d",
-      [s = self.editor_scene, picking_texel](RenderStageContext& ctx) {
+      [s = self.editor_scene.get(), picking_texel](RenderStageContext& ctx) {
         auto visbuffer_attach = ctx.get_image_resource("visbuffer_attachment_2d");
         auto final_attach = ctx.get_image_resource("final_attachment");
 
@@ -962,7 +962,7 @@ auto ViewportPanel::mouse_picking_stages(
         u32 texel_data = ~0_u32;
         std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
         if (texel_data != ~0_u32) {
-          pick_entity(s.get(), texel_data);
+          pick_entity(s, texel_data);
         }
 
         ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attach))
@@ -973,7 +973,7 @@ auto ViewportPanel::mouse_picking_stages(
     renderer_instance->add_stage_after(
       RenderStage::VisBufferEncode,
       "mouse_picking",
-      [picking_texel, s = self.editor_scene](RenderStageContext& ctx) {
+      [picking_texel, s = self.editor_scene.get()](RenderStageContext& ctx) {
         auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
         auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
         auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
@@ -1016,7 +1016,7 @@ auto ViewportPanel::mouse_picking_stages(
 
         u32 texel_data = ~0_u32;
         std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
-        pick_entity(s.get(), texel_data);
+        pick_entity(s, texel_data);
 
         ctx.set_image_resource("visbuffer_attachment", std::move(visbuffer))
           .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
@@ -1025,10 +1025,14 @@ auto ViewportPanel::mouse_picking_stages(
     );
   }
 
+  if (!self.draw_entity_highlighting) {
+    return;
+  }
+
   renderer_instance->add_stage_after(
     RenderStage::VisBufferEncode,
     "entity_highlight_generation",
-    [s = self.editor_scene](RenderStageContext& ctx) {
+    [s = self.editor_scene.get()](RenderStageContext& ctx) {
       auto depth_attachment = ctx.get_image_resource("depth_attachment");
       auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
       auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
@@ -1115,10 +1119,6 @@ auto ViewportPanel::mouse_picking_stages(
         .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
     }
   );
-
-  if (!self.draw_entity_highlighting) {
-    return;
-  }
 
   renderer_instance->add_stage_after(RenderStage::PostProcessing, "entity_highlighting", [](RenderStageContext& ctx) {
     auto result_attachment = ctx.get_image_resource("result_attachment");
