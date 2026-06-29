@@ -1047,9 +1047,38 @@ auto ViewportPanel::mouse_picking_stages(
       highlight_attachment.same_shape_as(visbuffer);
       highlight_attachment = vuk::clear_image(std::move(highlight_attachment), vuk::Black<f32>);
 
+      auto& editor_context = App::mod<Editor>().get_context();
+      std::vector<u32> transform_indices = {};
+
+      if (editor_context.entity.has_value()) {
+        if (!editor_context.entity->has<MeshComponent>()) {
+          auto traverse_hierarchy = [&](this auto&& f, flecs::entity entity) -> void {
+            entity.children([s, &transform_indices, &f](flecs::entity child) {
+              if (child.has<MeshComponent>()) {
+                auto transform_id = s->get_scene()->get_entity_transform_id(child);
+                if (transform_id.has_value()) {
+                  auto transform_index = SlotMap_decode_id(*transform_id).index;
+                  transform_indices.emplace_back(transform_index);
+                }
+              }
+
+              f(child);
+            });
+          };
+
+          traverse_hierarchy(*editor_context.entity);
+        } else {
+          auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
+          if (transform_id.has_value()) {
+            auto transform_index = SlotMap_decode_id(*transform_id).index;
+            transform_indices.emplace_back(transform_index);
+          }
+        }
+      }
+
       auto highlight_pass = vuk::make_pass(
         "highlighting_pass",
-        [s](
+        [transform_indices](
           vuk::CommandBuffer& cmd_list,
           VUK_IA(vuk::eComputeRW) result,
           VUK_IA(vuk::eComputeSampled) visbuffer_,
@@ -1057,47 +1086,18 @@ auto ViewportPanel::mouse_picking_stages(
           VUK_BA(vuk::eComputeRead) meshlet_instances_,
           VUK_BA(vuk::eComputeRead) mesh_instances_
         ) {
-          auto& editor_context = App::mod<Editor>().get_context();
-          std::vector<u32> transform_indices = {};
-
-          if (editor_context.entity.has_value()) {
-            if (!editor_context.entity->has<MeshComponent>()) {
-              auto traverse_hierarchy = [&](this auto&& f, flecs::entity entity) -> void {
-                entity.children([s, &transform_indices, &f](flecs::entity child) {
-                  if (child.has<MeshComponent>()) {
-                    auto transform_id = s->get_scene()->get_entity_transform_id(child);
-                    if (transform_id.has_value()) {
-                      auto transform_index = SlotMap_decode_id(*transform_id).index;
-                      transform_indices.emplace_back(transform_index);
-                    }
-                  }
-
-                  f(child);
-                });
-              };
-
-              traverse_hierarchy(*editor_context.entity);
-            } else {
-              auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
-              if (transform_id.has_value()) {
-                auto transform_index = SlotMap_decode_id(*transform_id).index;
-                transform_indices.emplace_back(transform_index);
-              }
-            }
-
-            if (!transform_indices.empty()) {
-              auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
-              std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
-              cmd_list.bind_compute_pipeline("entity_highlighting")
-                .bind_buffer(0, 0, meshlet_instances_)
-                .bind_buffer(0, 1, mesh_instances_)
-                .bind_image(0, 2, visbuffer_)
-                .bind_image(0, 3, depth)
-                .bind_image(0, 4, result)
-                .bind_sampler(0, 6, vuk::NearestSamplerClamped)
-                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size()))
-                .dispatch_invocations_per_pixel(visbuffer_);
-            }
+          if (!transform_indices.empty()) {
+            auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
+            std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
+            cmd_list.bind_compute_pipeline("entity_highlighting")
+              .bind_buffer(0, 0, meshlet_instances_)
+              .bind_buffer(0, 1, mesh_instances_)
+              .bind_image(0, 2, visbuffer_)
+              .bind_image(0, 3, depth)
+              .bind_image(0, 4, result)
+              .bind_sampler(0, 6, vuk::NearestSamplerClamped)
+              .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size()))
+              .dispatch_invocations_per_pixel(visbuffer_);
           }
 
           return std::make_tuple(result, visbuffer_, depth, meshlet_instances_, mesh_instances_);
