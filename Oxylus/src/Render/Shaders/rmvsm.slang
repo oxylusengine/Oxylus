@@ -13,6 +13,8 @@ public enum VSMPageState : u32 {
     Backed,
     // DEBUG: Is dynamically invalidated
     Invalidated,
+    // DEBUG: Is allocation failed
+    AllocationFailed,
 };
 
 public constexpr static u32 VSM_METADATA_BITS = 16u;
@@ -69,6 +71,15 @@ public struct VSMPageMetadata {
     [mutating]
     public func set_invalidated(bool v) -> void {
         this.data = (this.data & ~VSMPageState.Invalidated) | (VSMPageState.Invalidated * u32(v));
+    }
+
+    public func is_alloc_failed() -> bool {
+        return (this.data & VSMPageState.AllocationFailed) != 0;
+    }
+
+    [mutating]
+    public func set_alloc_failed(bool v) -> void {
+        this.data = (this.data & ~VSMPageState.AllocationFailed) | (VSMPageState.AllocationFailed * u32(v));
     }
 
     public func get_physical_address() -> u32 {
@@ -160,15 +171,15 @@ public struct VSMContext {
         let center_pos = camera.unproject_uv(uv, depth);
         let d = length(center_pos - camera.position);
 #endif
-        let texel_length = this.get_first_clipmap_texel_length();
-        let clipmap_level_f = log2(d / texel_length) + this.clipmap_selection_bias;
+        let page_count = this.virtual_extent / this.page_size;
+        let scale_ratio = f32(page_count - 2) / f32(page_count);
+        let base_scale = this.get_first_clipmap_texel_length() * scale_ratio;
+        let clipmap_level_f = log2(d / base_scale) + this.clipmap_selection_bias;
         return max(clipmap_level_f, 0.0);
     }
 
     public func get_clipmap_index(in Camera camera, f32x2 uv, f32 depth) -> u32 {
         let level_f = this.get_clipmap_level_f(camera, uv, depth);
-        // Use ceil instead of floor: when pixel footprint approaches the boundary,
-        // round up to the coarser level to avoid a hard switch between adjacent pixels.
         return min(u32(ceil(level_f)), u32(this.clipmap_count - 1));
     }
 };

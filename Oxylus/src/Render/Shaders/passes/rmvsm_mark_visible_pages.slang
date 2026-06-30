@@ -14,13 +14,23 @@ struct ShaderParameters {
     RWStructuredBuffer<VSMPageAllocator> allocator;
 };
 
+groupshared VirtualClipmap shared_clipmaps[10];
+
+
 [[shader("compute")]]
 [[numthreads(16, 16, 1)]]
 func cs_main(
     u32x2 thread_id : SV_DispatchThreadID,
+    u32 group_index : SV_GroupIndex,
     uniform ParameterBlock<ShaderParameters> params,
     uniform VSMContext ctx
 ) -> void {
+    if (group_index < 10) {
+        shared_clipmaps[group_index] = params.clipmaps[group_index];
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
     if (any(thread_id >= u32x2(ctx.depth_extent))) {
         return;
     }
@@ -34,7 +44,7 @@ func cs_main(
     let world_pos = params.camera.unproject_uv(uv, depth);
 
     let clipmap_index = ctx.get_clipmap_index(params.camera, uv, depth);
-    let clipmap = params.clipmaps[clipmap_index];
+    let clipmap = shared_clipmaps[clipmap_index];
     let clipmap_info = clipmap.get_clipmap_info(world_pos);
     let virt_coords = clipmap_info.get_virt_coords(ctx.get_page_table_extent().xy);
     let wrapped_coords = ctx.page_coords_virtual_to_wrapped(virt_coords, clipmap.page_offset);

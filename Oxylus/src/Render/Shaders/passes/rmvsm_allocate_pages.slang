@@ -25,15 +25,17 @@ func cs_main(u32 thread_id : SV_DispatchThreadID) -> void {
     }
 
     let slot = wave_base + local_offset;
+    let request = allocator[0].requests[thread_id];
+    let page_data = page_tables.Load(request.page_table_address);
+    var page = VSMPageMetadata(page_data);
+
     if (slot >= allocator[0].free_page_count) {
+        page.set_alloc_failed(true);
         return;
     }
 
     let physical_page_index = allocator[0].free_page_list[slot];
-    let request = allocator[0].requests[thread_id];
 
-    let page_data = page_tables.Load(request.page_table_address);
-    var page = VSMPageMetadata(page_data);
     page.set_physical_address(physical_page_index);
     page.set_dirty(true);
     page.set_backed(true);

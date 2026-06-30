@@ -161,14 +161,29 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
   auto invalidate_pages_pass = vuk::make_pass(
     "vsm invalidate pages",
-    [vsm_ctx](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) page_table) {
+    [vsm_ctx](
+      vuk::CommandBuffer& cmd_list,
+      VUK_IA(vuk::eComputeRW) page_table,
+      VUK_BA(vuk::eComputeRead) dirty_mesh_indices,
+      VUK_BA(vuk::eComputeRead) mesh_instances,
+      VUK_BA(vuk::eComputeRead) meshes,
+      VUK_BA(vuk::eComputeRead) transforms,
+      VUK_BA(vuk::eComputeRead) clipmaps
+    ) {
+      constexpr auto max_tiles = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE * RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE;
+
       cmd_list //
         .bind_compute_pipeline("rmvsm_invalidate_pages")
         .bind_image(0, 0, page_table)
+        .bind_buffer(0, 1, dirty_mesh_indices)
+        .bind_buffer(0, 2, mesh_instances)
+        .bind_buffer(0, 3, meshes)
+        .bind_buffer(0, 4, transforms)
+        .bind_buffer(0, 5, clipmaps)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
-        .dispatch_invocations_per_pixel(page_table, 1.0f, 1.0f, static_cast<f32>(page_table->layer_count));
+        .dispatch_invocations(1 /* dirty_mesh_instance_count */, max_tiles, page_table->layer_count);
 
-      return page_table;
+      return std::make_tuple(page_table, dirty_mesh_indices, mesh_instances, meshes, transforms, clipmaps);
     }
   );
 
@@ -235,11 +250,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
   auto build_free_page_list_pass = vuk::make_pass(
     "vsm build free page list",
-    [](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeRW) allocator,
-      VUK_BA(vuk::eComputeRead) page_occupancy
-    ) {
+    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eComputeRW) allocator, VUK_BA(vuk::eComputeRead) page_occupancy) {
       constexpr auto physical_page_count = RMVSMContext::DIRECTIONAL_PAGE_MASK_COUNT * 32u;
       cmd_list //
         .bind_compute_pipeline("rmvsm_build_free_page_list")
@@ -259,11 +270,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
   auto allocate_pages_pass = vuk::make_pass(
     "vsm allocate pages",
-    [](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeRW) allocator,
-      VUK_IA(vuk::eComputeRW) page_table
-    ) {
+    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eComputeRW) allocator, VUK_IA(vuk::eComputeRW) page_table) {
       constexpr auto max_request_count = RMVSMContext::DIRECTIONAL_MAX_PAGE_COUNT;
       cmd_list //
         .bind_compute_pipeline("rmvsm_allocate_pages")

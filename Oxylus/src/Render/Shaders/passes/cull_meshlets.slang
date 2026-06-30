@@ -28,6 +28,7 @@ func cs_main(
     if (group_thread_id == 0) {
         visible_count_shared = 0;
     }
+
     GroupMemoryBarrierWithGroupSync();
 
     var local_slot = ~0u;
@@ -47,12 +48,14 @@ func cs_main(
             meshlet_indices_shared[local_slot] = meshlet_instance_index;
         }
     }
+
     GroupMemoryBarrierWithGroupSync();
 
     if (visible_count_shared > 0) {
         if (group_thread_id == 0) {
             base_index_shared = __atomic_add(cull_triangles_cmd[0].x, visible_count_shared, MemoryOrder::Relaxed);
         }
+
         GroupMemoryBarrierWithGroupSync();
 
         if (local_slot < visible_count_shared) {

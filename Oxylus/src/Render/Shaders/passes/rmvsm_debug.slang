@@ -54,6 +54,10 @@ func fs_main(
       return f32x4(clipmap_color, 1.0);
     }
 
+    if (!page.is_backed() && page.is_visible()) {
+      return f32x4(1.0, 0.0, 0.0, 1.0);
+    }
+
     let page_status = f32x3(f32(page.is_backed()), f32(page.is_dirty()), f32(page.is_visible()));
     return f32x4(page_status, 1.0);
 }

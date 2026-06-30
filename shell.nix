@@ -45,8 +45,6 @@ in pkgs.mkShell.override {
     # SDL3
     pkgs.util-macros
     pkgs.vulkan-loader
-
-    pkgs.shader-slang
   ];
 
   buildInputs = [

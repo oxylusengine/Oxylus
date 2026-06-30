@@ -91,7 +91,7 @@ func pcss_shadow(
     let L = vsm_ctx.directional_light_dir;
     let NoL = max(dot(flat_normal, L), 0.0);
 
-    let clipmap_texel_size = exp2(f32(base_clipmap_index)) * vsm_ctx.get_first_clipmap_texel_length();
+    let clipmap_texel_size = pow(2.0, f32(base_clipmap_index + 1)) * vsm_ctx.get_first_clipmap_texel_length();
     let sqrt2 = 1.41421356;
     let quantize = 2.0 / (1 << 23);
     let b = sqrt2 * clipmap_texel_size * 0.5;

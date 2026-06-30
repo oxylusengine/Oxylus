@@ -13,6 +13,8 @@ public:
   bool performance_overlay_visible = true;
   bool is_viewport_focused = {};
   bool is_viewport_hovered = {};
+  bool is_widgets_hovered = {};
+  bool is_menubar_hovered = {};
 
   ViewportPanel();
   ~ViewportPanel();

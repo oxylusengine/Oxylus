@@ -1,5 +1,3 @@
-module cull;
-
 import common;
 import gpu;
 import debug_drawer;
