@@ -10,6 +10,11 @@ public:
   Timestep();
   ~Timestep();
 
+  Timestep(const Timestep& other) = delete;
+  Timestep(Timestep&& other) = delete;
+  Timestep& operator=(const Timestep& other) = delete;
+  Timestep& operator=(Timestep&& other) = delete;
+
   auto on_update(this Timestep& self) -> void;
   auto get_millis(this const Timestep& self) -> f64 { return self.timestep; }
   auto get_elapsed_millis(this const Timestep& self) -> f64 { return self.elapsed; }

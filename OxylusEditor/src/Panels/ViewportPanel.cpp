@@ -153,6 +153,10 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       ImGui::EndMenuBar();
     }
 
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    ImRect menu_bar_rect = window->MenuBarRect();
+    self.is_menubar_hovered = ImGui::IsMouseHoveringRect(menu_bar_rect.Min, menu_bar_rect.Max);
+
     self.draw_stats_overlay(self.draw_scene_stats);
 
     if (viewport_settings_popup)
@@ -601,7 +605,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
           static_cast<i32>(ox::count_of(debug_views))
         );
         UI::property("Enable frustum culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
-        UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
+        UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_occlusion.get_ptr());
         UI::property("Enable triangle culling", (bool*)RendererCVar::cvar_culling_triangle.get_ptr());
         UI::end_properties();
       }
@@ -912,13 +916,14 @@ auto ViewportPanel::mouse_picking_stages(
   ZoneScoped;
 
   auto using_gizmo = ImGuizmo::IsOver();
-  bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered;
+  bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
+                     !self.is_widgets_hovered && !self.is_menubar_hovered;
 
   if (should_pick) {
     renderer_instance->add_stage_after(
       RenderStage::Forward2D,
       "mouse_picking_2d",
-      [s = self.editor_scene, picking_texel](RenderStageContext& ctx) {
+      [s = self.editor_scene.get(), picking_texel](RenderStageContext& ctx) {
         auto visbuffer_attach = ctx.get_image_resource("visbuffer_attachment_2d");
         auto final_attach = ctx.get_image_resource("final_attachment");
 
@@ -957,7 +962,7 @@ auto ViewportPanel::mouse_picking_stages(
         u32 texel_data = ~0_u32;
         std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
         if (texel_data != ~0_u32) {
-            pick_entity(s.get(), texel_data);
+          pick_entity(s, texel_data);
         }
 
         ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attach))
@@ -968,7 +973,7 @@ auto ViewportPanel::mouse_picking_stages(
     renderer_instance->add_stage_after(
       RenderStage::VisBufferEncode,
       "mouse_picking",
-      [picking_texel, s = self.editor_scene](RenderStageContext& ctx) {
+      [picking_texel, s = self.editor_scene.get()](RenderStageContext& ctx) {
         auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
         auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
         auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
@@ -1011,7 +1016,7 @@ auto ViewportPanel::mouse_picking_stages(
 
         u32 texel_data = ~0_u32;
         std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
-        pick_entity(s.get(), texel_data);
+        pick_entity(s, texel_data);
 
         ctx.set_image_resource("visbuffer_attachment", std::move(visbuffer))
           .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
@@ -1020,10 +1025,14 @@ auto ViewportPanel::mouse_picking_stages(
     );
   }
 
+  if (!self.draw_entity_highlighting) {
+    return;
+  }
+
   renderer_instance->add_stage_after(
     RenderStage::VisBufferEncode,
     "entity_highlight_generation",
-    [s = self.editor_scene](RenderStageContext& ctx) {
+    [s = self.editor_scene.get()](RenderStageContext& ctx) {
       auto depth_attachment = ctx.get_image_resource("depth_attachment");
       auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
       auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
@@ -1038,9 +1047,38 @@ auto ViewportPanel::mouse_picking_stages(
       highlight_attachment.same_shape_as(visbuffer);
       highlight_attachment = vuk::clear_image(std::move(highlight_attachment), vuk::Black<f32>);
 
+      auto& editor_context = App::mod<Editor>().get_context();
+      std::vector<u32> transform_indices = {};
+
+      if (editor_context.entity.has_value()) {
+        if (!editor_context.entity->has<MeshComponent>()) {
+          auto traverse_hierarchy = [&](this auto&& f, flecs::entity entity) -> void {
+            entity.children([s, &transform_indices, &f](flecs::entity child) {
+              if (child.has<MeshComponent>()) {
+                auto transform_id = s->get_scene()->get_entity_transform_id(child);
+                if (transform_id.has_value()) {
+                  auto transform_index = SlotMap_decode_id(*transform_id).index;
+                  transform_indices.emplace_back(transform_index);
+                }
+              }
+
+              f(child);
+            });
+          };
+
+          traverse_hierarchy(*editor_context.entity);
+        } else {
+          auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
+          if (transform_id.has_value()) {
+            auto transform_index = SlotMap_decode_id(*transform_id).index;
+            transform_indices.emplace_back(transform_index);
+          }
+        }
+      }
+
       auto highlight_pass = vuk::make_pass(
         "highlighting_pass",
-        [s](
+        [transform_indices](
           vuk::CommandBuffer& cmd_list,
           VUK_IA(vuk::eComputeRW) result,
           VUK_IA(vuk::eComputeSampled) visbuffer_,
@@ -1048,47 +1086,18 @@ auto ViewportPanel::mouse_picking_stages(
           VUK_BA(vuk::eComputeRead) meshlet_instances_,
           VUK_BA(vuk::eComputeRead) mesh_instances_
         ) {
-          auto& editor_context = App::mod<Editor>().get_context();
-          std::vector<u32> transform_indices = {};
-
-          if (editor_context.entity.has_value()) {
-            if (!editor_context.entity->has<MeshComponent>()) {
-              auto traverse_hierarchy = [&](this auto&& f, flecs::entity entity) -> void {
-                entity.children([s, &transform_indices, &f](flecs::entity child) {
-                  if (child.has<MeshComponent>()) {
-                    auto transform_id = s->get_scene()->get_entity_transform_id(child);
-                    if (transform_id.has_value()) {
-                      auto transform_index = SlotMap_decode_id(*transform_id).index;
-                      transform_indices.emplace_back(transform_index);
-                    }
-                  }
-
-                  f(child);
-                });
-              };
-
-              traverse_hierarchy(*editor_context.entity);
-            } else {
-              auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
-              if (transform_id.has_value()) {
-                auto transform_index = SlotMap_decode_id(*transform_id).index;
-                transform_indices.emplace_back(transform_index);
-              }
-            }
-
-            if (!transform_indices.empty()) {
-              auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
-              std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
-              cmd_list.bind_compute_pipeline("entity_highlighting")
-                .bind_buffer(0, 0, meshlet_instances_)
-                .bind_buffer(0, 1, mesh_instances_)
-                .bind_image(0, 2, visbuffer_)
-                .bind_image(0, 3, depth)
-                .bind_image(0, 4, result)
-                .bind_sampler(0, 6, vuk::NearestSamplerClamped)
-                .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size()))
-                .dispatch_invocations_per_pixel(visbuffer_);
-            }
+          if (!transform_indices.empty()) {
+            auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
+            std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
+            cmd_list.bind_compute_pipeline("entity_highlighting")
+              .bind_buffer(0, 0, meshlet_instances_)
+              .bind_buffer(0, 1, mesh_instances_)
+              .bind_image(0, 2, visbuffer_)
+              .bind_image(0, 3, depth)
+              .bind_image(0, 4, result)
+              .bind_sampler(0, 6, vuk::NearestSamplerClamped)
+              .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size()))
+              .dispatch_invocations_per_pixel(visbuffer_);
           }
 
           return std::make_tuple(result, visbuffer_, depth, meshlet_instances_, mesh_instances_);
@@ -1110,10 +1119,6 @@ auto ViewportPanel::mouse_picking_stages(
         .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
     }
   );
-
-  if (!self.draw_entity_highlighting) {
-    return;
-  }
 
   renderer_instance->add_stage_after(RenderStage::PostProcessing, "entity_highlighting", [](RenderStageContext& ctx) {
     auto result_attachment = ctx.get_image_resource("result_attachment");
@@ -1372,6 +1377,8 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
     ImGui::PopStyleVar(2);
   }
   ImGui::EndGroup();
+
+  self.is_widgets_hovered = ImGui::IsItemHovered();
 }
 
 void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) {
