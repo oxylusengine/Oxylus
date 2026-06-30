@@ -724,6 +724,8 @@ auto ViewportPanel::draw_snap_settings_panel(this ViewportPanel& self) -> void {
 }
 
 void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
+  ZoneScoped;
+
   auto& editor = App::mod<Editor>();
   auto& editor_context = editor.get_context();
   auto& undo_redo_system = editor.undo_redo_system;
@@ -984,6 +986,8 @@ auto highlight_mask_stage(RenderStageContext& ctx, const std::vector<u32>& trans
 
 auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAttachment> original_result_attachment)
   -> option<vuk::Value<vuk::ImageAttachment>> {
+  ZoneScoped;
+
   auto silhouette_mask = ctx.get_shared_image_resource("silhouette_mask");
   if (!silhouette_mask.has_value()) {
     return nullopt;

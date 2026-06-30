@@ -139,9 +139,9 @@ static void open_file(const std::filesystem::path& path) {
   }
 }
 
-std::pair<bool, u32> ContentPanel::directory_tree_view_recursive(
+auto ContentPanel::directory_tree_view_recursive(
   const std::filesystem::path& path, u32* count, i32* selectionMask, ImGuiTreeNodeFlags flags
-) {
+) -> std::pair<bool, u32> {
   ZoneScoped;
 
   auto& editor_theme = App::mod<Editor>().editor_theme;
@@ -267,7 +267,13 @@ void ContentPanel::init(this ContentPanel& self) {
   );
 }
 
-void ContentPanel::on_update(this ContentPanel& self) { self.elapsed_time_ += static_cast<float>(App::get_timestep()); }
+void ContentPanel::on_update(this ContentPanel& self) {
+  ZoneScoped;
+
+  self.elapsed_time_ += static_cast<float>(App::get_timestep());
+
+  self.thumbnail_manager.update();
+}
 
 void ContentPanel::on_render(this ContentPanel& self, vuk::ImageAttachment swapchain_attachment) {
   constexpr ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar;
@@ -731,10 +737,12 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     }
 
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, editor_theme.popup_item_spacing);
-    if (ImGui::BeginPopupContextWindow(
-          "AssetPanelHierarchyContextWindow",
-          ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
-        )) {
+    if (
+      ImGui::BeginPopupContextWindow(
+        "AssetPanelHierarchyContextWindow",
+        ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems
+      )
+    ) {
       editor_context.reset();
       if (auto p = self.draw_context_menu_items(self.current_directory_, true); !p.empty()) {
         directory_to_open = p;
@@ -819,6 +827,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
 void ContentPanel::update_directory_entries(this ContentPanel& self, const std::filesystem::path& directory) {
   ZoneScoped;
+
   std::unique_lock lock(self.directory_mutex_);
   self.current_directory_ = directory;
   self.directory_entries_.clear();
@@ -871,11 +880,16 @@ void ContentPanel::update_directory_entries(this ContentPanel& self, const std::
   self.elapsed_time_ = 0.0f;
 }
 
-void ContentPanel::refresh(this ContentPanel& self) { self.update_directory_entries(self.current_directory_); }
+void ContentPanel::refresh(this ContentPanel& self) {
+  ZoneScoped;
 
-std::filesystem::path ContentPanel::draw_context_menu_items(
-  this ContentPanel& self, const std::filesystem::path& context, bool is_dir
-) {
+  self.update_directory_entries(self.current_directory_);
+}
+
+auto ContentPanel::draw_context_menu_items(this ContentPanel& self, const std::filesystem::path& context, bool is_dir)
+  -> std::filesystem::path {
+  ZoneScoped;
+
   std::filesystem::path dir_to_open = {};
 
   if (ImGui::MenuItem("Open")) {

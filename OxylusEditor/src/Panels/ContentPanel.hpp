@@ -27,10 +27,6 @@ public:
   auto on_render(this ContentPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
 
 private:
-  std::filesystem::path draw_context_menu_items(
-    this ContentPanel& self, const std::filesystem::path& context, bool isDir
-  );
-
   struct File {
     std::string name;
     std::filesystem::path file_path;
@@ -65,9 +61,11 @@ private:
 
   ThumbnailManager thumbnail_manager;
 
-  std::pair<bool, u32> directory_tree_view_recursive(
+  auto draw_context_menu_items(this ContentPanel& self, const std::filesystem::path& context, bool isDir)
+    -> std::filesystem::path;
+  auto directory_tree_view_recursive(
     const std::filesystem::path& path, u32* count, i32* selectionMask, ImGuiTreeNodeFlags flags
-  );
+  ) -> std::pair<bool, u32>;
   auto render_header(this ContentPanel& self) -> void;
   auto render_side_view(this ContentPanel& self) -> void;
   auto render_body(this ContentPanel& self, bool grid) -> void;
