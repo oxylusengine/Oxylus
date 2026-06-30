@@ -51,13 +51,14 @@ func cs_main(
     bool is_occluded = (pixel_depth > 0.00001f);
 
     if (is_occluded && config.occluded_mode == 0) {
-      params.out_color[pixel_coords] = back_color;
+      params.out_color[pixel_coords] = f32x4(com::linear_to_srgb(back_color.rgb), back_color.a);
     } else if (is_occluded && config.occluded_mode == 1) {
-      params.out_color[pixel_coords] = lerp(back_color, final_outline, 0.35);
+      f32x4 lerped = lerp(back_color, final_outline, 0.35);
+      params.out_color[pixel_coords] = f32x4(com::linear_to_srgb(lerped.rgb), lerped.a);
     } else {
-      params.out_color[pixel_coords] = final_outline;
+      params.out_color[pixel_coords] = f32x4(com::linear_to_srgb(final_outline.rgb), final_outline.a);
     }
   } else {
-    params.out_color[pixel_coords] = back_color;
+    params.out_color[pixel_coords] = f32x4(com::linear_to_srgb(back_color.rgb), back_color.a);
   }
 }
