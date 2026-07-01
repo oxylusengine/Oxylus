@@ -1384,14 +1384,6 @@ auto Scene::enable_all_phases() -> void {
   world.entity(flecs::PostUpdate).enable();
 }
 
-void Scene::on_render(const vuk::Extent3D extent, const vuk::Format format) {
-  ZoneScoped;
-
-  for (auto& [uuid, system] : lua_systems) {
-    system->on_scene_render(this, extent, format);
-  }
-}
-
 auto Scene::on_viewport_render(vuk::Extent3D extent, vuk::Format format) -> void {
   ZoneScoped;
 

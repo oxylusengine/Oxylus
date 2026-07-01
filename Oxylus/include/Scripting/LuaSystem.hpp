@@ -41,7 +41,6 @@ public:
   auto on_scene_stop(this const LuaSystem& self, Scene* scene) -> void;
   auto on_scene_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void;
   auto on_scene_fixed_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void;
-  auto on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent, vuk::Format format) -> void;
   auto on_viewport_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent, vuk::Format format) -> void;
 
   auto on_contact_added(
@@ -82,7 +81,6 @@ private:
   std::unique_ptr<sol::protected_function> on_scene_stop_func = nullptr;
   std::unique_ptr<sol::protected_function> on_scene_update_func = nullptr;
   std::unique_ptr<sol::protected_function> on_scene_fixed_update_func = nullptr;
-  std::unique_ptr<sol::protected_function> on_scene_render_func = nullptr;
   std::unique_ptr<sol::protected_function> on_viewport_render_func = nullptr;
 
   std::unique_ptr<sol::protected_function> on_contact_added_func = nullptr;

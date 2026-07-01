@@ -101,7 +101,6 @@ public:
   ) -> bool;
   auto detach_mesh(this Scene& self, flecs::entity entity) -> bool;
 
-  auto on_render(vuk::Extent3D extent, vuk::Format format) -> void;
   auto on_viewport_render(vuk::Extent3D extent, vuk::Format format) -> void;
 
   static auto copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Scene>;
