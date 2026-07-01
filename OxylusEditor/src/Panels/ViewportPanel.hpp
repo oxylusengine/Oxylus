@@ -43,7 +43,17 @@ private:
   };
   AspectRatio viewport_aspect_ratio = AspectRatio::Auto;
 
+  enum class ScaleAmount : i32 {
+    _1x = 0,
+    _2x = 1,
+    _4x = 2,
+    _8x = 3,
+  };
+  ScaleAmount viewport_scale_amount = ScaleAmount::_1x;
+
+  bool scale_viewport_size_with_content_scale = true;
   ImVec2 render_size = {};
+  ImVec2 scaled_render_size = {};
   ImVec2 viewport_bounds_[2] = {};
   ImVec2 viewport_size = {};
   ImVec2 viewport_offset = {};
@@ -75,7 +85,8 @@ private:
   auto draw_snap_settings_panel(this ViewportPanel& self) -> void;
   auto draw_stats_overlay(this const ViewportPanel& self, bool draw_scene_stats) -> void;
   auto draw_gizmos(this ViewportPanel& self) -> void;
-  auto mouse_picking_stages(this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel) -> void;
+  auto mouse_picking_stages(this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel)
+    -> void;
   auto grid_stage(this ViewportPanel& self, RendererInstance* renderer_instance) -> void;
   auto transform_gizmos_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) -> void;
   auto scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) -> void;

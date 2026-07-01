@@ -153,8 +153,8 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       ImGui::EndMenuBar();
     }
 
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    ImRect menu_bar_rect = window->MenuBarRect();
+    ImGuiWindow* imgui_window = ImGui::GetCurrentWindow();
+    ImRect menu_bar_rect = imgui_window->MenuBarRect();
     self.is_menubar_hovered = ImGui::IsMouseHoveringRect(menu_bar_rect.Min, menu_bar_rect.Max);
 
     self.draw_stats_overlay(self.draw_scene_stats);
@@ -219,6 +219,13 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       }
     }
 
+    self.scaled_render_size = self.render_size;
+    const u32 scale = self.scale_viewport_size_with_content_scale
+                        ? static_cast<u32>(App::get_window().get_window_content_scale())
+                        : (1u << static_cast<u32>(self.viewport_scale_amount)); // 0->1, 1->2, 2->4, 3->8
+
+    self.scaled_render_size.x *= scale;
+    self.scaled_render_size.y *= scale;
     self.viewport_bounds_[0] = {
       viewport_min_region.x + self.viewport_position.x + self.viewport_offset.x,
       viewport_min_region.y + self.viewport_position.y + self.viewport_offset.y
@@ -285,7 +292,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       };
 
       glm::uvec2 picking_texel = get_mouse_texel_coords(
-        {swapchain_attachment.extent.width, swapchain_attachment.extent.height},
+        {self.scaled_render_size.x, self.scaled_render_size.y},
         self.viewport_position,
         corrected_min_region,
         corrected_max_region,
@@ -303,7 +310,13 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         .viewport_offset = {self.viewport_position.x, self.viewport_position.y},
       };
 
-      auto viewport_attachment = vuk::declare_ia("viewport", swapchain_attachment);
+      auto viewport_attachment_info = swapchain_attachment;
+      viewport_attachment_info.extent = vuk::Extent3D{
+        static_cast<u32>(self.scaled_render_size.x),
+        static_cast<u32>(self.scaled_render_size.y),
+        1u,
+      };
+      auto viewport_attachment = vuk::declare_ia("viewport", viewport_attachment_info);
       viewport_attachment = vuk::clear_image(std::move(viewport_attachment), vuk::Black<f32>);
 
       auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
@@ -667,7 +680,19 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
   if (ImGui::TreeNodeEx("Viewport", TREE_FLAGS, "%s", "Viewport")) {
+    auto resolution = fmt::format("Viewport Resolution: {}x{}", self.scaled_render_size.x, self.scaled_render_size.y);
+    ImGui::TextUnformatted(resolution.c_str());
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+      UI::property("Scale Viewport With Content Scale", &self.scale_viewport_size_with_content_scale);
+      const char* scale_amounts[4] = {
+        "1x",
+        "2x",
+        "4x",
+        "8x",
+      };
+      ImGui::BeginDisabled(self.scale_viewport_size_with_content_scale);
+      UI::property("Scale Viewport", ((i32*)&self.viewport_scale_amount), scale_amounts, 4);
+      ImGui::EndDisabled();
       const char* aspect_ratios[8] = {
         "Auto",
         "16x9",
@@ -678,7 +703,6 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
         "32x9",
         "9x16",
       };
-
       UI::property("Aspect Ratio", ((i32*)&self.viewport_aspect_ratio), aspect_ratios, 8);
       UI::end_properties();
     }
