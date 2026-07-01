@@ -81,7 +81,6 @@ private:
   std::unique_ptr<sol::protected_function> on_scene_stop_func = nullptr;
   std::unique_ptr<sol::protected_function> on_scene_update_func = nullptr;
   std::unique_ptr<sol::protected_function> on_scene_fixed_update_func = nullptr;
-  std::unique_ptr<sol::protected_function> on_viewport_render_func = nullptr;
 
   std::unique_ptr<sol::protected_function> on_contact_added_func = nullptr;
   std::unique_ptr<sol::protected_function> on_contact_persisted_func = nullptr;
