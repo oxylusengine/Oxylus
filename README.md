@@ -6,6 +6,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Hatrickek/OxylusEngine/xmake.yaml?&style=for-the-badge&logo=cmake&logoColor=orange&labelColor=black)](https://github.com/Hatrickek/OxylusEngine/actions/workflows/xmake.yaml)
 [![Discord](https://img.shields.io/discord/1364938544736370820?style=for-the-badge&logo=discord&logoColor=orange&label=Discord&link=https%3A%2F%2Fdiscord.gg%2FcbQDJrWszk)](https://discord.gg/cbQDJrWszk)
 
+<p align="center">
+<img src="https://raw.githubusercontent.com/oxylusengine/oxylus-resources/70e36b4dbb102eec9bc531c51d6a47510d3a5d54/home.png" height="800" />
+</p>
+
 ## About   
 Oxylus is a simple yet powerful data-driven game engine built in C++ with a focus on developer productivity and performance. It is free and will be open-source forever!
 
@@ -63,4 +67,3 @@ Windows, Linux and Mac (with MoltenVK) is supported.
 	- `xmake build`
 - To run the editor with xmake run:
   - `xmake r OxylusEditor`
-
