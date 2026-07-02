@@ -9,7 +9,7 @@ struct CompositeParameters {
   Texture2D<f32> dilated_horiz_mask;
   Texture2D<f32> scene_depth;
   Texture2D<f32x4> scene_color;
-  RWTexture2D<f32x4> out_color;
+  Sampler linear_sampler;
 };
 
 struct PushConstants {
@@ -19,13 +19,15 @@ struct PushConstants {
   i32 occluded_mode;   // 0 = Hide behind walls, 1 = Faded behind walls, 2 = Always visible
 };
 
-[[shader("compute")]] [[numthreads(16, 16, 1)]]
-func cs_main(
-  const u32x3 id : SV_DispatchThreadID, uniform ParameterBlock<CompositeParameters> params, uniform PushConstants config
-) -> void {
-  u32x2 pixel_coords = id.xy;
+#include <fullscreen.slang>
+
+[[shader("fragment")]]
+func fs_main(VertexOutput input, uniform ParameterBlock<CompositeParameters> params, uniform PushConstants config)
+  -> f32x4 {
+  u32x2 pixel_coords = u32x2(input.position.xy);
+
   if (pixel_coords.x >= config.resolution.x || pixel_coords.y >= config.resolution.y) {
-    return;
+    discard;
   }
 
   i32 r = max(1, config.outline_width);
@@ -42,7 +44,7 @@ func cs_main(
   f32 center_mask = params.original_mask.Load(i32x3(pixel_coords, 0)).r;
   f32 edge_intensity = max_mask - center_mask;
 
-  f32x4 back_color = params.scene_color.Load(i32x3(pixel_coords, 0));
+  f32x4 back_color = params.scene_color.Sample(params.linear_sampler, input.tex_coord);
 
   if (edge_intensity > 0.01) {
     f32 pixel_depth = params.scene_depth.Load(i32x3(pixel_coords, 0)).r;
@@ -50,15 +52,17 @@ func cs_main(
 
     bool is_occluded = (pixel_depth > 0.00001f);
 
+    f32x4 final_color;
     if (is_occluded && config.occluded_mode == 0) {
-      params.out_color[pixel_coords] = f32x4(com::linear_to_srgb(back_color.rgb), back_color.a);
+      final_color = back_color;
     } else if (is_occluded && config.occluded_mode == 1) {
-      f32x4 lerped = lerp(back_color, final_outline, 0.35);
-      params.out_color[pixel_coords] = f32x4(com::linear_to_srgb(lerped.rgb), lerped.a);
+      final_color = lerp(back_color, final_outline, 0.35);
     } else {
-      params.out_color[pixel_coords] = f32x4(com::linear_to_srgb(final_outline.rgb), final_outline.a);
+      final_color = final_outline;
     }
-  } else {
-    params.out_color[pixel_coords] = f32x4(com::linear_to_srgb(back_color.rgb), back_color.a);
+
+    return final_color;
   }
+
+  return back_color;
 }

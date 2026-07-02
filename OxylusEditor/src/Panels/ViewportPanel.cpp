@@ -1060,11 +1060,11 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
     "outline_composite",
     [](
       vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eComputeSampled) original_mask,
-      VUK_IA(vuk::eComputeSampled) dilated_horiz_mask,
-      VUK_IA(vuk::eComputeSampled) depth,
-      VUK_IA(vuk::eComputeSampled) color,
-      VUK_IA(vuk::eComputeWrite) out_composite
+      VUK_IA(vuk::eFragmentSampled) original_mask,
+      VUK_IA(vuk::eFragmentSampled) dilated_horiz_mask,
+      VUK_IA(vuk::eFragmentSampled) depth,
+      VUK_IA(vuk::eFragmentSampled) color,
+      VUK_IA(vuk::eColorWrite) out_composite
     ) {
       // NOTE: HideBehindWalls is here for future use. Currently we render the silhoutte using main visbuffer which
       // geometry alread passes the depth test.
@@ -1083,14 +1083,17 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
 
       push_block.resolution = glm::uvec2(color->extent.width, color->extent.height);
 
-      cmd_list.bind_compute_pipeline("highlight_composite")
+      cmd_list.bind_graphics_pipeline("highlight_composite")
+        .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
+        .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
+        .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
         .bind_image(0, 0, original_mask)
         .bind_image(0, 1, dilated_horiz_mask)
         .bind_image(0, 2, depth)
         .bind_image(0, 3, color)
-        .bind_image(0, 4, out_composite)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, push_block)
-        .dispatch_invocations_per_pixel(out_composite);
+        .bind_sampler(0, 4, vuk::LinearSamplerClamped)
+        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, push_block)
+        .draw(3, 1, 0, 0);
 
       return std::make_tuple(original_mask, dilated_horiz_mask, depth, color, out_composite);
     }
