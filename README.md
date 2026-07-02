@@ -11,6 +11,10 @@ Oxylus is a simple yet powerful data-driven game engine built in C++ with a focu
 
 Be aware that Oxylus is still in it's early stages of development. Some important features and documentation might be missing. Oxylus will have many API breaking changes both on C++ and Lua. Only use if you're okay with these.
 
+<p align="center">
+<img src="https://raw.githubusercontent.com/oxylusengine/oxylus-resources/70e36b4dbb102eec9bc531c51d6a47510d3a5d54/home.png" height="800" />
+</p>
+
 ## Design Goals
 - **Powerful**: Full support for both 2D and 3D development
 - **Intuitive**: Beginner-friendly yet endlessly adaptable for power users
@@ -63,4 +67,3 @@ Windows, Linux and Mac (with MoltenVK) is supported.
 	- `xmake build`
 - To run the editor with xmake run:
   - `xmake r OxylusEditor`
-
