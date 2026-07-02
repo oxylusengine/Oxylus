@@ -15,6 +15,7 @@ class ThumbnailManager {
 public:
   auto init(this ThumbnailManager& self) -> void;
   auto update(this ThumbnailManager& self) -> void;
+  auto reset(this ThumbnailManager& self) -> void;
 
   auto get_thumbnail_model(this ThumbnailManager& self, const std::filesystem::path& asset_path)
     -> option<std::shared_ptr<Texture>>;

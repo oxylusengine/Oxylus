@@ -84,6 +84,19 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
   }
 }
 
+auto ThumbnailManager::reset(this ThumbnailManager& self) -> void {
+  ZoneScoped;
+
+  if (std::filesystem::exists(self.cache_dir)) {
+    std::filesystem::remove_all(self.cache_dir);
+  }
+
+  self.init();
+
+  auto lock = std::unique_lock(self.thumbnail_mutex);
+  self.thumbnail_cache.clear();
+}
+
 auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const std::filesystem::path& asset_path)
   -> option<std::shared_ptr<Texture>> {
   ZoneScoped;

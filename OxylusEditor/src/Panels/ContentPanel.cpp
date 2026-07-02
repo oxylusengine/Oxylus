@@ -313,6 +313,10 @@ void ContentPanel::render_header(this ContentPanel& self) {
 
   if (ImGui::BeginPopup("SettingsPopup")) {
     UI::begin_properties(ImGuiTableFlags_SizingStretchSame);
+    UI::property("Show meta files", reinterpret_cast<bool*>(EditorCVar::cvar_show_meta_files.get_ptr()));
+    UI::end_properties();
+    ImGui::SeparatorText("Thumbnails");
+    UI::begin_properties(ImGuiTableFlags_SizingStretchSame);
     UI::property(
       "Thumbnail Size",
       EditorCVar::cvar_file_thumbnail_size.get_ptr(),
@@ -320,8 +324,9 @@ void ContentPanel::render_header(this ContentPanel& self) {
       self.thumbnail_max_limit
     );
     UI::property("Show file thumbnails", reinterpret_cast<bool*>(EditorCVar::cvar_file_thumbnails.get_ptr()));
-    UI::property("Show meta files", reinterpret_cast<bool*>(EditorCVar::cvar_show_meta_files.get_ptr()));
     UI::end_properties();
+    if (UI::button("Reset thumbnail cache"))
+      self.thumbnail_manager.reset();
     ImGui::EndPopup();
   }
 
