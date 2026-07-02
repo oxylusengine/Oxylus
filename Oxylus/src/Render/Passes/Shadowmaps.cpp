@@ -187,7 +187,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     }
   );
 
-  if (!context.sun_moved && dirty_mesh_count > 0) {
+  if (false) {
     std::tie(
       context.virtual_page_table_attachment,
       self.prepared_frame.dirty_mesh_instances_buffer,
