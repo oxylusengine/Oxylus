@@ -153,8 +153,8 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       ImGui::EndMenuBar();
     }
 
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    ImRect menu_bar_rect = window->MenuBarRect();
+    ImGuiWindow* imgui_window = ImGui::GetCurrentWindow();
+    ImRect menu_bar_rect = imgui_window->MenuBarRect();
     self.is_menubar_hovered = ImGui::IsMouseHoveringRect(menu_bar_rect.Min, menu_bar_rect.Max);
 
     self.draw_stats_overlay(self.draw_scene_stats);
@@ -219,6 +219,13 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       }
     }
 
+    self.scaled_render_size = self.render_size;
+    const u32 scale = self.scale_viewport_size_with_content_scale
+                        ? static_cast<u32>(App::get_window().get_window_content_scale())
+                        : (1u << static_cast<u32>(self.viewport_scale_amount)); // 0->1, 1->2, 2->4, 3->8
+
+    self.scaled_render_size.x *= scale;
+    self.scaled_render_size.y *= scale;
     self.viewport_bounds_[0] = {
       viewport_min_region.x + self.viewport_position.x + self.viewport_offset.x,
       viewport_min_region.y + self.viewport_position.y + self.viewport_offset.y
@@ -285,7 +292,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       };
 
       glm::uvec2 picking_texel = get_mouse_texel_coords(
-        {swapchain_attachment.extent.width, swapchain_attachment.extent.height},
+        {self.scaled_render_size.x, self.scaled_render_size.y},
         self.viewport_position,
         corrected_min_region,
         corrected_max_region,
@@ -303,11 +310,16 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         .viewport_offset = {self.viewport_position.x, self.viewport_position.y},
       };
 
-      auto viewport_attachment = vuk::declare_ia("viewport", swapchain_attachment);
+      auto viewport_attachment_info = swapchain_attachment;
+      viewport_attachment_info.extent = vuk::Extent3D{
+        static_cast<u32>(self.scaled_render_size.x),
+        static_cast<u32>(self.scaled_render_size.y),
+        1u,
+      };
+      auto viewport_attachment = vuk::declare_ia("viewport", viewport_attachment_info);
       viewport_attachment = vuk::clear_image(std::move(viewport_attachment), vuk::Black<f32>);
 
       auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
-      self.editor_scene->get_scene()->on_viewport_render(swapchain_attachment.extent, swapchain_attachment.format);
 
       ImGui::SetCursorPos(
         {ImGui::GetCursorPosX() + self.viewport_offset.x, ImGui::GetCursorPosY() + self.viewport_offset.y}
@@ -668,7 +680,19 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
   if (open_action != -1)
     ImGui::SetNextItemOpen(open_action != 0);
   if (ImGui::TreeNodeEx("Viewport", TREE_FLAGS, "%s", "Viewport")) {
+    auto resolution = fmt::format("Viewport Resolution: {}x{}", self.scaled_render_size.x, self.scaled_render_size.y);
+    ImGui::TextUnformatted(resolution.c_str());
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+      UI::property("Scale Viewport With Content Scale", &self.scale_viewport_size_with_content_scale);
+      const char* scale_amounts[4] = {
+        "1x",
+        "2x",
+        "4x",
+        "8x",
+      };
+      ImGui::BeginDisabled(self.scale_viewport_size_with_content_scale);
+      UI::property("Scale Viewport", ((i32*)&self.viewport_scale_amount), scale_amounts, 4);
+      ImGui::EndDisabled();
       const char* aspect_ratios[8] = {
         "Auto",
         "16x9",
@@ -679,7 +703,6 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
         "32x9",
         "9x16",
       };
-
       UI::property("Aspect Ratio", ((i32*)&self.viewport_aspect_ratio), aspect_ratios, 8);
       UI::end_properties();
     }
@@ -724,6 +747,8 @@ auto ViewportPanel::draw_snap_settings_panel(this ViewportPanel& self) -> void {
 }
 
 void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
+  ZoneScoped;
+
   auto& editor = App::mod<Editor>();
   auto& editor_context = editor.get_context();
   auto& undo_redo_system = editor.undo_redo_system;
@@ -910,6 +935,186 @@ static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
   }
 }
 
+auto highlight_mask_stage(RenderStageContext& ctx, const std::vector<u32>& transform_indices) -> void {
+  ZoneScoped;
+
+  auto selected_count = transform_indices.size();
+
+  auto mask_generation_pass = vuk::make_pass(
+    "stencil_mask",
+    [selected_count](
+      vuk::CommandBuffer& cmd_list,
+      VUK_IA(vuk::eComputeWrite) mask,
+      VUK_IA(vuk::eComputeSampled) visbuffer,
+      VUK_BA(vuk::eComputeRead) meshlet_instances,
+      VUK_BA(vuk::eComputeRead) mesh_instances,
+      VUK_BA(vuk::eComputeRead) transform_indices_buffer_
+    ) {
+      cmd_list.bind_compute_pipeline("highlight_mask_generate")
+        .bind_buffer(0, 0, meshlet_instances)
+        .bind_buffer(0, 1, mesh_instances)
+        .bind_image(0, 2, visbuffer)
+        .bind_image(0, 3, mask)
+        .bind_buffer(0, 4, transform_indices_buffer_)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, selected_count)
+        .dispatch_invocations_per_pixel(mask);
+
+      return std::make_tuple(mask, visbuffer, meshlet_instances, mesh_instances, transform_indices_buffer_);
+    }
+  );
+
+  auto depth_attachment = ctx.get_image_resource("depth_attachment");
+  auto visbuffer_attachment = ctx.get_image_resource("visbuffer_attachment");
+  auto meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
+  auto mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
+
+  auto silhouette_mask = vuk::declare_ia(
+    "selection_silhouette_mask",
+    {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+     .format = vuk::Format::eR8Unorm,
+     .sample_count = vuk::Samples::e1,
+     .base_level = 0,
+     .level_count = 1,
+     .base_layer = 0,
+     .layer_count = 1}
+  );
+  silhouette_mask.same_extent_as(visbuffer_attachment);
+  silhouette_mask = vuk::clear_image(std::move(silhouette_mask), vuk::Black<f32>);
+
+  size_t buffer_size = transform_indices.size() * sizeof(u32);
+  auto transform_indices_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, buffer_size);
+  std::memcpy(transform_indices_buffer->mapped_ptr, transform_indices.data(), buffer_size);
+
+  std::tie(
+    silhouette_mask,
+    visbuffer_attachment,
+    meshlet_instances_buffer,
+    mesh_instances_buffer,
+    transform_indices_buffer
+  ) =
+    mask_generation_pass(
+      std::move(silhouette_mask),
+      std::move(visbuffer_attachment),
+      std::move(meshlet_instances_buffer),
+      std::move(mesh_instances_buffer),
+      std::move(transform_indices_buffer)
+    );
+
+  ctx.set_shared_image_resource("silhouette_mask", std::move(silhouette_mask))
+    .set_image_resource("depth_attachment", std::move(depth_attachment))
+    .set_image_resource("visbuffer_attachment", std::move(visbuffer_attachment))
+    .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances_buffer))
+    .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances_buffer));
+}
+
+auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAttachment> original_result_attachment)
+  -> option<vuk::Value<vuk::ImageAttachment>> {
+  ZoneScoped;
+
+  auto silhouette_mask = ctx.get_shared_image_resource("silhouette_mask");
+  if (!silhouette_mask.has_value()) {
+    return nullopt;
+  }
+
+  auto depth_attachment = ctx.get_image_resource("depth_attachment");
+
+  auto outline_composite_output = vuk::declare_ia(
+    "outlined_composite",
+    {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eColorAttachment |
+              vuk::ImageUsageFlagBits::eSampled,
+     .sample_count = vuk::Samples::e1}
+  );
+  outline_composite_output.same_format_as(original_result_attachment);
+  outline_composite_output.same_shape_as(original_result_attachment);
+  outline_composite_output = vuk::clear_image(std::move(outline_composite_output), vuk::Black<f32>);
+
+  auto temp_mask = vuk::declare_ia(
+    "temp_horiz_dilated_mask",
+    {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+     .format = vuk::Format::eR8Unorm,
+     .sample_count = vuk::Samples::e1}
+  );
+  temp_mask.same_shape_as(outline_composite_output);
+
+  auto horiz_dilate_pass = vuk::make_pass(
+    "horizontal_dilate_pass",
+    [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeSampled) input_mask, VUK_IA(vuk::eComputeWrite) output_mask) {
+      struct PushConstants {
+        glm::uvec2 resolution;
+        i32 radius = 8;
+      } push_block;
+
+      push_block.resolution = glm::uvec2(input_mask->extent.width, input_mask->extent.height);
+
+      cmd_list.bind_compute_pipeline("highlight_dilate_horizontal")
+        .bind_image(0, 0, input_mask)
+        .bind_image(0, 1, output_mask)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, push_block)
+        .dispatch_invocations_per_pixel(output_mask);
+
+      return std::make_tuple(input_mask, output_mask);
+    }
+  );
+
+  auto composite_pass = vuk::make_pass(
+    "outline_composite",
+    [](
+      vuk::CommandBuffer& cmd_list,
+      VUK_IA(vuk::eFragmentSampled) original_mask,
+      VUK_IA(vuk::eFragmentSampled) dilated_horiz_mask,
+      VUK_IA(vuk::eFragmentSampled) depth,
+      VUK_IA(vuk::eFragmentSampled) color,
+      VUK_IA(vuk::eColorWrite) out_composite
+    ) {
+      // NOTE: HideBehindWalls is here for future use. Currently we render the silhoutte using main visbuffer which
+      // geometry alread passes the depth test.
+      // DimBehindWalls will also make the outlines slightly transparent.
+      enum OccludeMode {
+        HideBehindWalls = 0,
+        DimmBehindWalls = 1,
+        AlwaysVisible = 2,
+      };
+      struct PushConstants {
+        glm::vec4 outline_color = glm::vec4(1.0f, 0.53f, 0.0f, 1.0f); // Pure Gold
+        glm::uvec2 resolution;
+        i32 outline_width = 5;
+        i32 occluded_mode = OccludeMode::AlwaysVisible;
+      } push_block;
+
+      push_block.resolution = glm::uvec2(color->extent.width, color->extent.height);
+
+      cmd_list.bind_graphics_pipeline("highlight_composite")
+        .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
+        .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
+        .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
+        .bind_image(0, 0, original_mask)
+        .bind_image(0, 1, dilated_horiz_mask)
+        .bind_image(0, 2, depth)
+        .bind_image(0, 3, color)
+        .bind_sampler(0, 4, vuk::LinearSamplerClamped)
+        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, push_block)
+        .draw(3, 1, 0, 0);
+
+      return std::make_tuple(original_mask, dilated_horiz_mask, depth, color, out_composite);
+    }
+  );
+
+  std::tie(silhouette_mask, temp_mask) = horiz_dilate_pass(std::move(*silhouette_mask), std::move(temp_mask));
+
+  std::tie(*silhouette_mask, temp_mask, depth_attachment, original_result_attachment, outline_composite_output) =
+    composite_pass(
+      std::move(*silhouette_mask),
+      std::move(temp_mask),
+      std::move(depth_attachment),
+      std::move(original_result_attachment),
+      std::move(outline_composite_output)
+    );
+
+  ctx.set_image_resource("depth_attachment", std::move(depth_attachment));
+
+  return outline_composite_output;
+}
+
 auto ViewportPanel::mouse_picking_stages(
   this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel
 ) -> void {
@@ -1031,22 +1236,8 @@ auto ViewportPanel::mouse_picking_stages(
 
   renderer_instance->add_stage_after(
     RenderStage::VisBufferEncode,
-    "entity_highlight_generation",
+    "entity_highlighting",
     [s = self.editor_scene.get()](RenderStageContext& ctx) {
-      auto depth_attachment = ctx.get_image_resource("depth_attachment");
-      auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
-      auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
-      auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
-
-      auto highlight_attachment = vuk::declare_ia(
-        "highlight",
-        {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-         .format = vuk::Format::eR32Sfloat,
-         .sample_count = vuk::Samples::e1}
-      );
-      highlight_attachment.same_shape_as(visbuffer);
-      highlight_attachment = vuk::clear_image(std::move(highlight_attachment), vuk::Black<f32>);
-
       auto& editor_context = App::mod<Editor>().get_context();
       std::vector<u32> transform_indices = {};
 
@@ -1076,99 +1267,21 @@ auto ViewportPanel::mouse_picking_stages(
         }
       }
 
-      auto highlight_pass = vuk::make_pass(
-        "highlighting_pass",
-        [transform_indices](
-          vuk::CommandBuffer& cmd_list,
-          VUK_IA(vuk::eComputeRW) result,
-          VUK_IA(vuk::eComputeSampled) visbuffer_,
-          VUK_IA(vuk::eComputeSampled) depth,
-          VUK_BA(vuk::eComputeRead) meshlet_instances_,
-          VUK_BA(vuk::eComputeRead) mesh_instances_
-        ) {
-          if (!transform_indices.empty()) {
-            auto* buffer = cmd_list._scratch_buffer(0, 5, transform_indices.size() * sizeof(u32));
-            std::memcpy(buffer, transform_indices.data(), transform_indices.size() * sizeof(u32));
-            cmd_list.bind_compute_pipeline("entity_highlighting")
-              .bind_buffer(0, 0, meshlet_instances_)
-              .bind_buffer(0, 1, mesh_instances_)
-              .bind_image(0, 2, visbuffer_)
-              .bind_image(0, 3, depth)
-              .bind_image(0, 4, result)
-              .bind_sampler(0, 6, vuk::NearestSamplerClamped)
-              .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants((u32)transform_indices.size()))
-              .dispatch_invocations_per_pixel(visbuffer_);
-          }
+      if (transform_indices.empty()) {
+        return;
+      }
 
-          return std::make_tuple(result, visbuffer_, depth, meshlet_instances_, mesh_instances_);
-        }
-      );
-
-      std::tie(highlight_attachment, visbuffer, depth_attachment, meshlet_instances, mesh_instances) = highlight_pass(
-        std::move(highlight_attachment),
-        std::move(visbuffer),
-        std::move(depth_attachment),
-        std::move(meshlet_instances),
-        std::move(mesh_instances)
-      );
-
-      ctx.set_shared_image_resource("highlight_attachment", std::move(highlight_attachment))
-        .set_image_resource("depth_attachment", std::move(depth_attachment))
-        .set_image_resource("visbuffer_attachment", std::move(visbuffer))
-        .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
-        .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
+      highlight_mask_stage(ctx, transform_indices);
     }
   );
 
   renderer_instance->add_stage_after(RenderStage::PostProcessing, "entity_highlighting", [](RenderStageContext& ctx) {
     auto result_attachment = ctx.get_image_resource("result_attachment");
-    auto highlight_attachment = ctx.get_shared_image_resource("highlight_attachment");
-
-    if (!highlight_attachment.has_value()) {
-      ctx.set_image_resource("result_attachment", std::move(result_attachment));
-      return;
-    }
-
-    auto highlight_applied_attachment = vuk::declare_ia(
-      "highlight_applied_attachment",
-      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-       .sample_count = vuk::Samples::e1}
+    auto composite_result = highlight_composite_stage(ctx, result_attachment);
+    ctx.set_image_resource(
+      "result_attachment",
+      std::move(composite_result.has_value() ? *composite_result : result_attachment)
     );
-    highlight_applied_attachment.same_shape_as(result_attachment);
-    highlight_applied_attachment.same_format_as(result_attachment);
-    highlight_applied_attachment = vuk::clear_image(std::move(highlight_applied_attachment), vuk::Black<f32>);
-
-    auto highlight_pass = vuk::make_pass(
-      "apply_highlighting_pass",
-      [](
-        vuk::CommandBuffer& cmd_list,
-        VUK_IA(vuk::eColorRW) result,
-        VUK_IA(vuk::eFragmentSampled) source,
-        VUK_IA(vuk::eFragmentSampled) highlight
-      ) {
-        cmd_list.bind_graphics_pipeline("apply_highlighting")
-          .set_rasterization({})
-          .broadcast_color_blend({})
-          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-          .set_viewport(0, vuk::Rect2D::framebuffer())
-          .set_scissor(0, vuk::Rect2D::framebuffer())
-          .bind_image(0, 0, highlight)
-          .bind_image(0, 1, source)
-          .bind_sampler(0, 2, vuk::LinearSamplerClamped)
-          .draw(3, 1, 0, 0);
-
-        return std::make_tuple(result, source, highlight);
-      }
-    );
-
-    std::tie(highlight_applied_attachment, result_attachment, *highlight_attachment) = highlight_pass(
-      highlight_applied_attachment,
-      result_attachment,
-      *highlight_attachment
-    );
-
-    ctx.set_shared_image_resource("highlight_attachment", std::move(*highlight_attachment))
-      .set_image_resource("result_attachment", std::move(highlight_applied_attachment));
   });
 }
 

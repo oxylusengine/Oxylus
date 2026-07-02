@@ -1,9 +1,13 @@
 ﻿#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
 
 #include "Asset/Texture.hpp"
 
 #include <ktx.h>
 #include <stb_image.h>
+#include <stb_image_resize2.h>
+#include <stb_image_write.h>
 #include <vuk/RenderGraph.hpp>
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 #include <vuk/vsl/Core.hpp>
@@ -43,7 +47,41 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
         &chans
       );
     } else if (!path.empty()) {
-      stb_data = load_stb_image(stack.format_char("{}", path), &extent.width, &extent.height, &chans);
+      u32 original_width, original_height;
+      stb_data = load_stb_image(stack.format_char("{}", path), &original_width, &original_height, &chans);
+
+      u32 target_width = original_width;
+      u32 target_height = original_height;
+
+      if (load_info.extent.has_value()) {
+        if (original_width > load_info.extent->width || original_height > load_info.extent->height) {
+          target_width = load_info.extent->width;
+          target_height = load_info.extent->height;
+        }
+      }
+
+      extent.width = target_width;
+      extent.height = target_height;
+
+      if (target_width != original_width || target_height != original_height) {
+        size_t resized_size = target_width * target_height * 4;
+
+        auto resized_data = std::make_unique<u8[]>(resized_size);
+
+        stbir_resize_uint8_linear(
+          stb_data.get(),
+          original_width,
+          original_height,
+          0,
+          resized_data.get(),
+          target_width,
+          target_height,
+          0,
+          STBIR_RGBA
+        );
+
+        stb_data = std::move(resized_data);
+      }
     }
   } else if (is_dds) {
     if (!path.empty()) {
@@ -66,24 +104,20 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
     ktxTexture2* ktx{};
     if (path.empty()) {
       OX_CHECK_EQ(!load_info.bytes.empty(), true);
-      if (
-        const auto result = ktxTexture2_CreateFromMemory(
-          load_info.bytes.data(), //
-          load_info.bytes.size(),
-          KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
-          &ktx
-        );
-        result != KTX_SUCCESS
-      ) {
+      if (const auto result = ktxTexture2_CreateFromMemory(
+            load_info.bytes.data(), //
+            load_info.bytes.size(),
+            KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+            &ktx
+          );
+          result != KTX_SUCCESS) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     } else {
       auto path_str = path.string();
-      if (
-        const auto
-          result = ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
-        result != KTX_SUCCESS
-      ) {
+      if (const auto
+            result = ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
+          result != KTX_SUCCESS) {
         OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
       }
     }
@@ -96,10 +130,8 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
     // If the image needs is in a supercompressed encoding, transcode it to a desired format
     if (ktxTexture2_NeedsTranscoding(ktx)) {
       ZoneNamedN(z, "Transcode KTX 2 Texture", true);
-      if (
-        const auto result = ktxTexture2_TranscodeBasis(ktx, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
-        result != KTX_SUCCESS
-      ) {
+      if (const auto result = ktxTexture2_TranscodeBasis(ktx, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
+          result != KTX_SUCCESS) {
         OX_LOG_ERROR("Couldn't transcode KTX2 file {}", ktxErrorString(result));
       }
     } else {
@@ -307,9 +339,8 @@ void Texture::set_name(const vuk::Name& name, const std::source_location& loc) {
   name_ = new_name;
 }
 
-std::unique_ptr<u8[]> Texture::load_stb_image(
-  const std::filesystem::path& path, uint32_t* width, uint32_t* height, uint32_t* bits, bool srgb
-) {
+auto Texture::load_stb_image(const std::filesystem::path& path, u32* width, u32* height, u32* bits, bool srgb)
+  -> std::unique_ptr<u8[]> {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -331,7 +362,7 @@ std::unique_ptr<u8[]> Texture::load_stb_image(
   if (bits)
     *bits = tex_channels * size_of_channel;
 
-  const int32_t size = tex_width * tex_height * tex_channels * size_of_channel / 8;
+  const i32 size = tex_width * tex_height * tex_channels * size_of_channel / 8;
   auto result = std::make_unique<u8[]>(size);
   memcpy(result.get(), pixels, size);
   stbi_image_free(pixels);
@@ -340,7 +371,7 @@ std::unique_ptr<u8[]> Texture::load_stb_image(
 }
 
 std::unique_ptr<u8[]> Texture::load_stb_image_from_memory(
-  void* buffer, size_t len, uint32_t* width, uint32_t* height, uint32_t* bits, bool flipY, bool srgb
+  void* buffer, size_t len, u32* width, u32* height, u32* bits, bool flipY, bool srgb
 ) {
   ZoneScoped;
 
@@ -376,10 +407,10 @@ std::unique_ptr<u8[]> Texture::load_stb_image_from_memory(
   return result;
 }
 
-u8* Texture::get_magenta_texture(uint32_t width, uint32_t height, uint32_t channels) {
+u8* Texture::get_magenta_texture(u32 width, u32 height, u32 channels) {
   ZoneScoped;
 
-  const uint32_t size = width * height * channels;
+  const u32 size = width * height * channels;
   const auto data = new u8[size];
 
   const u8 magenta[16] = {255, 0, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 0, 255, 255};
@@ -389,15 +420,15 @@ u8* Texture::get_magenta_texture(uint32_t width, uint32_t height, uint32_t chann
   return data;
 }
 
-u8* Texture::convert_to_four_channels(uint32_t width, uint32_t height, const u8* three_channel_data) {
+u8* Texture::convert_to_four_channels(u32 width, u32 height, const u8* three_channel_data) {
   ZoneScoped;
 
   const auto bufferSize = width * height * 4;
   const auto buffer = new u8[bufferSize];
   auto* rgba = buffer;
   const auto* rgb = three_channel_data;
-  for (uint32_t i = 0; i < width * height; ++i) {
-    for (uint32_t j = 0; j < 3; ++j) {
+  for (u32 i = 0; i < width * height; ++i) {
+    for (u32 j = 0; j < 3; ++j) {
       rgba[j] = rgb[j];
     }
     rgba += 4;

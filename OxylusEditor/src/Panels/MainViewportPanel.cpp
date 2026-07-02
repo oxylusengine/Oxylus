@@ -163,13 +163,6 @@ void MainViewportPanel::on_render(this MainViewportPanel& self, vuk::ImageAttach
     }
 
     for (const auto& panel : self.viewport_panels) {
-      auto* viewport_editor_scene = panel->get_scene();
-      if (viewport_editor_scene) {
-        if (viewport_editor_scene->is_playing()) {
-          viewport_editor_scene->get_scene()->on_render(swapchain_attachment.extent, swapchain_attachment.format);
-        }
-      }
-
       panel->on_render(swapchain_attachment);
     }
   }

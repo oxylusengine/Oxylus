@@ -975,6 +975,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
     // auto write_lock = std::unique_lock(self.models_mutex);
     auto asset = self.get_asset(uuid);
     asset->model_id = self.model_map.create_slot(std::move(model));
+    OX_LOG_INFO("Loaded model {} {}.", asset->uuid.str(), SlotMap_decode_id(asset->model_id).index);
   }
 
   return true;
@@ -996,7 +997,7 @@ auto AssetManager::unload_model(this AssetManager& self, const UUID& uuid) -> bo
   self.model_map.destroy_slot(asset->model_id);
   asset->model_id = ModelID::Invalid;
 
-  OX_LOG_TRACE("Unloaded model {}", uuid.str());
+  OX_LOG_INFO("Unloaded model {}", uuid.str());
 
   return true;
 }
