@@ -261,6 +261,19 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
 
   auto thumbnail_scene = Scene("ThumbnailScene");
   auto model_entity = thumbnail_scene.create_model_entity(model_uuid);
+  model_entity.add<AssetOwner>();
+
+  auto traverse_hierarchy = [](this auto&& f, flecs::entity entity) -> void {
+    entity.children([&f](flecs::entity child) {
+      if (child.has<MeshComponent>()) {
+        child.add<AssetOwner>();
+      }
+
+      f(child);
+    });
+  };
+
+  traverse_hierarchy(model_entity);
 
   auto& asset_man = App::mod<AssetManager>();
   auto model_asset = asset_man.get_model(model_uuid);

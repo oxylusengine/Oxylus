@@ -305,7 +305,7 @@ auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> vo
     self.asset_registry.erase(uuid);
   }
 
-  OX_LOG_TRACE("Deleted asset {}.", uuid.str());
+  OX_LOG_INFO("Deleted asset {}.", uuid.str());
 }
 
 auto AssetManager::register_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID {
@@ -531,7 +531,7 @@ auto AssetManager::unload_texture(this AssetManager& self, const UUID& uuid) -> 
   self.texture_map.destroy_slot(asset->texture_id);
   asset->texture_id = TextureID::Invalid;
 
-  OX_LOG_TRACE("Unloaded texture {}", uuid.str());
+  OX_LOG_INFO("Unloaded texture {}", uuid.str());
 
   return true;
 }
