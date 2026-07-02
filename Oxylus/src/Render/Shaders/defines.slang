@@ -26,6 +26,14 @@
 #define HISTOGRAM_THREADS_Y 16
 #endif
 
+// Workgroup Y size for `rmvsm_invalidate_pages`. Must match
+// `INVALIDATE_PAGES_WORKGROUP_Y` in Shadowmaps.cpp. A mesh can cover at most
+// page_table_size x page_table_size tiles, so this many lanes cover a worst-case
+// rect in at most page_table_size strided iterations. Also matches AMD wavefront64.
+#ifndef INVALIDATE_PAGES_WORKGROUP_Y
+#define INVALIDATE_PAGES_WORKGROUP_Y 64
+#endif
+
 #define HISTOGRAM_BIN_COUNT (HISTOGRAM_THREADS_X * HISTOGRAM_THREADS_Y * 1)
 
 #define HAS_FLAG(mask, bit) ((mask & bit) != 0)

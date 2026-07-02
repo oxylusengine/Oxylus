@@ -137,6 +137,7 @@ struct RendererInstanceUpdateInfo {
 
   std::span<GPU::Mesh> gpu_meshes = {};
   std::span<GPU::MeshInstance> gpu_mesh_instances = {};
+  std::span<u32> dirty_mesh_instance_indices = {};
 };
 
 struct PreparedFrame {
@@ -158,6 +159,9 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> point_lights_buffer = {};
   vuk::Value<vuk::Buffer> spot_lights_buffer = {};
   vuk::Value<vuk::Buffer> exposure_buffer = {};
+
+  vuk::Value<vuk::Buffer> dirty_mesh_instances_buffer = {};
+  u32 dirty_mesh_instance_count = 0;
 
   u32 line_index_count = 0;
   u32 triangle_index_count = 0;

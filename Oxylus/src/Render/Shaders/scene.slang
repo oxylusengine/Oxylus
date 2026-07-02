@@ -244,6 +244,7 @@ public struct Lights {
 public struct Transform {
   public mat4 local = {};
   public mat4 world = {};
+  public mat4 previous_world = {};
   public mat3 normal = {};
 
   public func to_world_position(in f32x3 position) -> f32x4 {

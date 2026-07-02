@@ -159,9 +159,11 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
   context.virtual_page_table_attachment = reset_page_visibility_pass(std::move(context.virtual_page_table_attachment));
 
+  const auto dirty_mesh_count = self.prepared_frame.dirty_mesh_instance_count;
+
   auto invalidate_pages_pass = vuk::make_pass(
     "vsm invalidate pages",
-    [vsm_ctx](
+    [vsm_ctx, dirty_mesh_count](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eComputeRW) page_table,
       VUK_BA(vuk::eComputeRead) dirty_mesh_indices,
@@ -170,8 +172,6 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       VUK_BA(vuk::eComputeRead) transforms,
       VUK_BA(vuk::eComputeRead) clipmaps
     ) {
-      constexpr auto max_tiles = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE * RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE;
-
       cmd_list //
         .bind_compute_pipeline("rmvsm_invalidate_pages")
         .bind_image(0, 0, page_table)
@@ -181,13 +181,29 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         .bind_buffer(0, 4, transforms)
         .bind_buffer(0, 5, clipmaps)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
-        .dispatch_invocations(1 /* dirty_mesh_instance_count */, max_tiles, page_table->layer_count);
+        .dispatch_invocations(dirty_mesh_count, RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE, page_table->layer_count);
 
       return std::make_tuple(page_table, dirty_mesh_indices, mesh_instances, meshes, transforms, clipmaps);
     }
   );
 
-  // context.virtual_page_table_attachment = invalidate_pages_pass(std::move(context.virtual_page_table_attachment));
+  if (!context.sun_moved && dirty_mesh_count > 0) {
+    std::tie(
+      context.virtual_page_table_attachment,
+      self.prepared_frame.dirty_mesh_instances_buffer,
+      self.prepared_frame.mesh_instances_buffer,
+      self.prepared_frame.meshes_buffer,
+      self.prepared_frame.transforms_buffer,
+      context.directional_clipmaps_buffer
+    ) = invalidate_pages_pass(
+      std::move(context.virtual_page_table_attachment),
+      std::move(self.prepared_frame.dirty_mesh_instances_buffer),
+      std::move(self.prepared_frame.mesh_instances_buffer),
+      std::move(self.prepared_frame.meshes_buffer),
+      std::move(self.prepared_frame.transforms_buffer),
+      std::move(context.directional_clipmaps_buffer)
+    );
+  }
 
   auto mark_visible_pages_pass = vuk::make_pass(
     "vsm mark visible pages",
