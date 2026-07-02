@@ -21,12 +21,14 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
 
       const auto source_data = File::to_string(shader_path);
       if (source_data.empty()) {
-        self.rc_session.push_error(fmt::format(
-          "An error occured during compiling '{}::{}', the file '{}' is empty.",
-          self.name,
-          info.module_name,
-          shader_path
-        ));
+        self.rc_session.push_error(
+          fmt::format(
+            "An error occured during compiling '{}::{}', the file '{}' is empty.",
+            self.name,
+            info.module_name,
+            shader_path
+          )
+        );
         return nullopt;
       }
 
@@ -75,13 +77,15 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
           static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
           diagnostics_blob->getBufferSize()
         );
-        self.rc_session.push_error(fmt::format(
-          "An error occured while compiling entry point {}::{}::{} {}",
-          self.name,
-          info.module_name,
-          entry_point_name,
-          sv
-        ));
+        self.rc_session.push_error(
+          fmt::format(
+            "An error occured while compiling entry point {}::{}::{} {}",
+            self.name,
+            info.module_name,
+            entry_point_name,
+            sv
+          )
+        );
       }
       return nullopt;
     }
@@ -147,6 +151,7 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
       return nullopt;
     }
 
+#if 1
     // SPIR-V optimization
     auto spv_message_cb =
       [&](spv_message_level_t level, const char* source, const spv_position_t& /*position*/, const char* message) {
@@ -231,6 +236,10 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
       &spirv,
       optimizer_options
     ));
+#else
+    auto spirv = std::vector<u32>(spirv_code->getBufferSize() / sizeof(u32));
+    std::memcpy(spirv.data(), spirv_code->getBufferPointer(), ox::size_bytes(spirv));
+#endif
 
     results.push_back({
       .name = entry_point_name,

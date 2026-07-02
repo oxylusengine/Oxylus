@@ -137,6 +137,7 @@ struct RendererInstanceUpdateInfo {
 
   std::span<GPU::Mesh> gpu_meshes = {};
   std::span<GPU::MeshInstance> gpu_mesh_instances = {};
+  std::span<u32> dirty_mesh_instance_indices = {};
 };
 
 struct PreparedFrame {
@@ -159,9 +160,39 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> spot_lights_buffer = {};
   vuk::Value<vuk::Buffer> exposure_buffer = {};
 
+  vuk::Value<vuk::Buffer> dirty_mesh_instances_buffer = {};
+  u32 dirty_mesh_instance_count = 0;
+
   u32 line_index_count = 0;
   u32 triangle_index_count = 0;
   vuk::Value<vuk::Buffer> debug_renderer_verticies_buffer = {};
+};
+
+struct CullGeometryContext {
+  // When true, uses `cull_meshlets_hiz` (VisBuffer path with occlusion culling)
+  bool use_hiz = false;
+  // When true, uses `cull_meshlets_hpb` (VSM shadowmaps path with page culling)
+  bool use_hpb = false;
+  // HiZ late-pass occlusion culling flag (only meaningful when `use_hiz` is true).
+  bool late = false;
+  // When true, runs the `cull_meshes` pre-pass (allocates/zeroes the visibility
+  // and dispatch buffers). Run once per sequence: visbuffer early pass or
+  // shadowmap cascade 0; subsequent culls in the sequence set this to false.
+  bool init_cull_meshes = false;
+
+  GPU::CullCamera cull_camera = {};
+  u32 vsm_layer_index = 0;
+  glm::ivec2 vsm_page_offset = {};
+
+  // HiZ pyramid attachment consumed by `cull_meshlets_hiz` (only when `use_hiz`).
+  vuk::Value<vuk::ImageAttachment> hiz_attachment = {};
+
+  // HPB pyramid attachment consumed by `cull_meshlets_hpb` (only when `use_hpb`)
+  vuk::Value<vuk::ImageAttachment> hpb_attachment = {};
+
+  vuk::Value<vuk::Buffer> visibility_buffer = {};
+  vuk::Value<vuk::Buffer> cull_meshlets_cmd_buffer = {};
+  vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
 };
 
 struct MainGeometryContext {
@@ -178,17 +209,50 @@ struct MainGeometryContext {
   vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
 
-  vuk::Value<vuk::Buffer> visibility_buffer = {};
-  vuk::Value<vuk::Buffer> cull_meshlets_cmd_buffer = {};
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
 };
 
 struct ShadowGeometryContext {
   vuk::Value<vuk::ImageAttachment> shadowmap_attachment = {};
 
-  vuk::Value<vuk::Buffer> visibility_buffer = {};
-  vuk::Value<vuk::Buffer> cull_meshlets_cmd_buffer = {};
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
+};
+
+struct RMVSMContext {
+  constexpr static u32 PAGE_SIZE = 128;
+  constexpr static u32 MAX_DIRECTIONAL_CLIPMAP_COUNT = 10;
+  constexpr static u32 DIRECTIONAL_IMAGE_SIZE = 1 << 13;
+  constexpr static u32 DIRECTIONAL_PAGE_TABLE_SIZE = DIRECTIONAL_IMAGE_SIZE / PAGE_SIZE;
+  constexpr static u32 DIRECTIONAL_MAX_PAGE_COUNT = DIRECTIONAL_PAGE_TABLE_SIZE * DIRECTIONAL_PAGE_TABLE_SIZE;
+  constexpr static u32 DIRECTIONAL_PAGE_MASK_COUNT = (DIRECTIONAL_MAX_PAGE_COUNT + 31) / 32;
+
+  bool sun_moved = false;
+  vuk::Extent3D depth_extent = {};
+  f32 max_shadow_dist = 1000.0f;
+
+  vuk::Value<vuk::Buffer> directional_clipmaps_buffer = {};
+
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> virtual_page_table_attachment = {};
+  vuk::Value<vuk::ImageAttachment> physical_page_table_attachment = {};
+};
+
+struct ShadowResolveContext {
+  // TODO: Add shadowmap kind enum
+  f32 max_shadow_dist = 1000.0f;
+
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
+
+  // CSM:
+  vuk::Value<vuk::ImageAttachment> directional_shadowmap_attachment = {};
+
+  // VSM:
+  vuk::Value<vuk::Buffer> directional_clipmaps_buffer = {};
+  vuk::Value<vuk::ImageAttachment> virtual_page_table_attachment = {};
+  vuk::Value<vuk::ImageAttachment> physical_page_table_attachment = {};
+
+  vuk::Value<vuk::ImageAttachment> resolved_shadows_attachment = {};
 };
 
 struct AtmosphereContext {
@@ -220,12 +284,14 @@ struct PBRContext {
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> contact_shadows_attachment = {};
-  vuk::Value<vuk::ImageAttachment> directional_shadowmap_attachment = {};
+  vuk::Value<vuk::ImageAttachment> resolved_shadows_attachment = {};
 };
 
 struct DebugContext {
   f32 overdraw_heatmap_scale = 0.0f;
   GPU::DebugView debug_view = GPU::DebugView::None;
+
+  vuk::Value<vuk::Buffer> vsm_clipmaps_buffer = {};
 
   vuk::Value<vuk::ImageAttachment> visbuffer_attachment = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
@@ -235,6 +301,7 @@ struct DebugContext {
   vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> vsm_page_table_attachment = {};
 };
 
 struct PostProcessContext {
@@ -289,15 +356,14 @@ public:
   auto get_viewport_offset(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_offset; }
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto cull_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
+  auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
   auto draw_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto decode_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto cull_for_shadowmap(
-    this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, bool first
-  ) -> void;
   auto draw_for_shadowmap(
     this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, u32 cascade_index
   ) -> void;
+  auto draw_virtual_shadowmap(this RendererInstance&, RMVSMContext& context) -> void;
+  auto resolve_shadowmap(this RendererInstance&, ShadowResolveContext& context) -> void;
   auto draw_atmosphere(this RendererInstance&, AtmosphereContext& context) -> void;
   auto generate_ambient_occlusion(this RendererInstance&, AmbientOcclusionContext& context) -> void;
   auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
@@ -345,7 +411,11 @@ private:
   GPU::TonemapType tonemap_type = GPU::TonemapType::AgX;
 
   bool directional_light_cast_shadows = true;
+  bool sun_direction_changed = false;
+  glm::vec3 previous_sun_direction = {};
   GPU::DirectionalLight directional_light = {};
+  f32 first_clipmap_width = 1.0f;
+  f32 clipmap_selection_bias = 2.0f;
   std::array<GPU::DirectionalLightCascade, MAX_DIRECTIONAL_SHADOW_CASCADES> directional_light_cascades = {};
   GPU::Atmosphere atmosphere = {};
   GPU::EyeAdaptationSettings eye_adaptation = {};
@@ -361,5 +431,16 @@ private:
   vuk::Unique<vuk::Buffer> spot_lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
   vuk::Unique<vuk::Buffer> exposure_buffer{};
+
+  vuk::Unique<vuk::Image> vsm_virtual_page_table{};
+  vuk::Unique<vuk::ImageView> vsm_virtual_page_table_view{};
+  vuk::ImageAttachment vsm_virtual_page_table_attachment = {};
+  vuk::Unique<vuk::Image> vsm_hpb{};
+  vuk::Unique<vuk::ImageView> vsm_hpb_view{};
+  vuk::ImageAttachment vsm_hpb_attachment = {};
+  vuk::Unique<vuk::Image> vsm_physical_page_table{};
+  vuk::Unique<vuk::ImageView> vsm_physical_page_table_f32_view{};
+  vuk::Unique<vuk::ImageView> vsm_physical_page_table_u32_view{};
+  vuk::ImageAttachment vsm_physical_page_table_attachment = {};
 };
 } // namespace ox

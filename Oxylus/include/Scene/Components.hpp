@@ -221,6 +221,8 @@ struct LightComponent {
   f32 cascade_overlap_propotion = 0.2f;
   f32 depth_bias = 0.002f;
   f32 normal_bias = 1.8f;
+  f32 first_clipmap_width = 10.0f;
+  f32 clipmap_selection_bias = -1.5f;
 };
 
 struct AtmosphereComponent {

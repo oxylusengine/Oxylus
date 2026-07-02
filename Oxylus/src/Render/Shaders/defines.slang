@@ -26,4 +26,11 @@
 #define HISTOGRAM_THREADS_Y 16
 #endif
 
+// Workgroup Y size for `rmvsm_invalidate_pages`. Must match dispatch in Shadowmaps.cpp.
+#ifndef INVALIDATE_PAGES_WORKGROUP_Y
+#define INVALIDATE_PAGES_WORKGROUP_Y 64
+#endif
+
 #define HISTOGRAM_BIN_COUNT (HISTOGRAM_THREADS_X * HISTOGRAM_THREADS_Y * 1)
+
+#define HAS_FLAG(mask, bit) ((mask & bit) != 0)

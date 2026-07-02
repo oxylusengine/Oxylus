@@ -4,13 +4,13 @@ import common;
 
 public f32 D_GGX(f32 NoH, f32 roughness2) {
     f32 f = ((roughness2 - 1.0) * NoH * NoH + 1.0);
-    return roughness2 / (PI * f * f);
+    return roughness2 / (PI * f * f + 1e-7);
 }
 
 public f32 Smith_G2_Height_Correlated_GGX_Lagarde(f32 NoV, f32 NoL, f32 roughness2) {
     f32 GGXL = NoV * sqrt((-NoL * roughness2 + NoL) * NoL + roughness2);
     f32 GGXV = NoL * sqrt((-NoV * roughness2 + NoV) * NoV + roughness2);
-    return saturate(0.5f / (GGXV + GGXL));
+    return saturate(0.5f / (GGXV + GGXL + 1e-7));
 }
 
 public f32x3 F_Schlick(f32 LoH, f32x3 specular_albedo) {
@@ -35,7 +35,7 @@ public func GGX_Albedo_Analytic(f32 NdotV, f32 alpha, f32 F0, f32 F90) -> f32x3 
 
 public func GGX_energy_compensation(f32 NdotV, f32 alpha, f32x3 Fss) -> f32x3 {
     f32 Ess = GGX_Albedo_Analytic(NdotV, alpha, 1.0, 1.0).x;
-    return 1.0 + Fss * (1.0 - Ess) / Ess;
+    return 1.0 + Fss * (1.0 - Ess) / max(Ess, 1e-5);
 }
 
 // https://github.com/lander-vr/godot/blob/56730d0cb2e4fd06c0ef23c7e44d8e9e8e64edf0/drivers/gles3/shaders/scene.glsl
@@ -56,7 +56,8 @@ public f32 specular_occlusion_ambient(f32x3 ambient_light, f32 roughness, f32 me
 }
 
 public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 roughness, f32 metallic, f32x3 ambient_light_occluded) -> f32x3 {
-    f32x3 H = normalize(V + L);
+    f32x3 VL = V + L;
+    f32x3 H = dot(VL, VL) > 1e-8 ? normalize(VL) : N;
     f32 NoV = abs(dot(N, V)) + 1e-5;
     f32 NoL = max(dot(N, L), 0.0);
     f32 NoH = max(dot(N, H), 0.0);

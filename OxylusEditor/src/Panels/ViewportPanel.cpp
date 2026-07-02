@@ -596,7 +596,8 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
           "Metallic",
           "Roughness",
           "Baked Occlusion",
-          "GTAO"
+          "GTAO",
+          "Virtual Shadowmaps"
         };
         UI::property(
           "Debug View",
@@ -617,7 +618,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
     if (ImGui::TreeNodeEx("Bloom", TREE_FLAGS, "%s", "Bloom")) {
       if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
         UI::property("Enabled", (bool*)RendererCVar::cvar_bloom_enable.get_ptr());
-        UI::property<float>("Threshold", RendererCVar::cvar_bloom_threshold.get_ptr(), 0.0f, 10.0f);
+        UI::property<float>("Threshold", RendererCVar::cvar_bloom_threshold.get_ptr(), 0.0f, 100.0f);
         UI::property<float>("Soft Threshold", RendererCVar::cvar_bloom_soft_threshold.get_ptr(), 0.0f, 1.0f);
         UI::end_properties();
       }

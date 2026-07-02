@@ -50,17 +50,27 @@ path = "passes/sky_aerial_perspective.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
-name = "vis_cull_meshes"
+name = "cull_meshes"
 path = "passes/cull_meshes.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
-name = "vis_cull_meshlets"
+name = "cull_meshlets"
 path = "passes/cull_meshlets.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
-name = "vis_cull_triangles"
+name = "cull_meshlets_hiz"
+path = "passes/cull_meshlets_hiz.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "cull_meshlets_hpb"
+path = "passes/cull_meshlets_hpb.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "cull_triangles"
 path = "passes/cull_triangles.slang"
 entry_points = ["cs_main"]
 
@@ -82,23 +92,68 @@ entry_points = ["vs_main", "fs_main"]
 bindless = true
 
 [[shader_sessions.programs]]
-name = "shadowmap_cull_meshes"
-path = "passes/shadowmap_cull_meshes.slang"
-entry_points = ["cs_main"]
-
-[[shader_sessions.programs]]
-name = "shadowmap_cull_meshlets"
-path = "passes/shadowmap_cull_meshlets.slang"
-entry_points = ["cs_main"]
-
-[[shader_sessions.programs]]
-name = "shadowmap_cull_triangles"
-path = "passes/shadowmap_cull_triangles.slang"
-entry_points = ["cs_main"]
-
-[[shader_sessions.programs]]
 name = "shadowmap_draw"
 path = "passes/shadowmap_draw.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_allocate_pages"
+path = "passes/rmvsm_allocate_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_build_free_page_list"
+path = "passes/rmvsm_build_free_page_list.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_clear_dirty_pages"
+path = "passes/rmvsm_clear_dirty_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_debug"
+path = "passes/rmvsm_debug.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_downsample_hpb"
+path = "passes/rmvsm_downsample_hpb.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_draw_physical_pages"
+path = "passes/rmvsm_draw_physical_pages.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_free_invisible_pages"
+path = "passes/rmvsm_free_invisible_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_invalidate_pages"
+path = "passes/rmvsm_invalidate_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_mark_dirty_pages"
+path = "passes/rmvsm_mark_dirty_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_mark_visible_pages"
+path = "passes/rmvsm_mark_visible_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_reset_page_visibility"
+path = "passes/rmvsm_reset_page_visibility.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "resolve_shadowmaps"
+path = "passes/resolve_shadowmaps.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]

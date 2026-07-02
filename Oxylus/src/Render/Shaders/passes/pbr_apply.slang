@@ -22,7 +22,7 @@ struct ShaderParameters {
     Texture2D<f32x3> metallic_roughness_occlusion_image;
     Texture2D<f32> gtao_image;
     Texture2D<f32> contact_shadows;
-    Texture2DArray<f32> directional_shadows_map;
+    Texture2D<f32> resolved_shadows;
     ConstantBuffer<Lights> lights;
     ConstantBuffer<Camera> camera;
 };
@@ -147,15 +147,15 @@ func fs_main(
     let emission = params.emissive_image.Load(pixel_pos);
 
     let metallic_roughness_occlusion = params.metallic_roughness_occlusion_image.Load(pixel_pos);
-    let metallic = metallic_roughness_occlusion.r;
-    let roughness = metallic_roughness_occlusion.g;
+    let metallic = clamp(metallic_roughness_occlusion.r, 0.0, 1.0);
+    let roughness = clamp(metallic_roughness_occlusion.g, 0.045, 1.0);
     let baked_occlusion = metallic_roughness_occlusion.b;
     let screen_space_occlusion = params.gtao_image.Load(pixel_pos).r;
     let occlusion = baked_occlusion * screen_space_occlusion;
 
     let NDC = f32x3(input.tex_coord * 2.0 - 1.0, depth);
     let world_position_h = mul(params.camera.inv_projection_view, f32x4(NDC, 1.0));
-    let world_position = world_position_h.xyz / world_position_h.w;
+    let world_position = world_position_h.xyz / max(world_position_h.w, 1e-6);
 
     let has_atmosphere = (scene_flags & SceneFlags::HasAtmosphere) != 0;
     let has_directional_light = (scene_flags & SceneFlags::HasDirectionalLight) != 0;
@@ -265,18 +265,9 @@ func fs_main(
     var material_surface_color = f32x3(0.0);
     let NoL = max(dot(N, L), 0.0);
     if (NoL > 0.0) {
-        let view_z = -mul(params.camera.view, f32x4(world_position, 1.0)).z;
-        var directional_shadow = 1.0f;
-        if (has_directional_light && params.lights.directional_light.cascade_count > 0) {
-            directional_shadow = sample_shadow_map(
-                params.lights.directional_light,
-                params.lights.directional_light_cascades,
-                params.directional_shadows_map,
-                params.linear_clamp_sampler,
-                view_z,
-                world_position,
-                N,
-                L);
+        var directional_shadow = 1.0;
+        if ((scene_flags & SceneFlags::HasDirectionalLight) != 0) {
+            directional_shadow = params.resolved_shadows.Load(pixel_pos).r;
         }
 
         let brdf = BRDF(V, N, L, albedo_color, roughness, metallic, base_ambient_color);

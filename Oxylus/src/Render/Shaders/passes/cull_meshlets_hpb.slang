@@ -5,7 +5,6 @@ import cull;
 
 #include <defines.slang>
 
-[[vk::constant_id(0)]] const u32 CULL_FLAGS;
 [[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(1)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(2)]] StructuredBuffer<MeshletInstance> meshlet_instances;
@@ -13,6 +12,8 @@ import cull;
 [[vk::binding(4)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;
 [[vk::binding(5)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
 [[vk::binding(6)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
+[[vk::binding(7)]] Texture2DArray<u8> hpb;
+[[vk::binding(8)]] SamplerState hpb_sampler;
 
 groupshared u32 visible_count_shared;
 groupshared u32 base_index_shared;
@@ -23,12 +24,13 @@ groupshared u32 meshlet_indices_shared[CULLING_MESHLET_COUNT];
 func cs_main(
     uint global_thread_id : SV_DispatchThreadID,
     uint group_thread_id : SV_GroupThreadID,
-    uniform CullCamera camera
+    uniform CullCamera camera,
+    uniform u32 vsm_layer_index,
+    uniform i32x2 vsm_page_offset
 ) -> void {
     if (group_thread_id == 0) {
         visible_count_shared = 0;
     }
-
     GroupMemoryBarrierWithGroupSync();
 
     var local_slot = ~0u;
@@ -44,18 +46,24 @@ func cs_main(
         let bounds = mesh_lod.meshlet_bounds[meshlet_instance.meshlet_index];
 
         if (test_frustum(mvp, bounds.aabb_center, bounds.aabb_extent)) {
-            local_slot = __atomic_add(visible_count_shared, 1, MemoryOrder::Relaxed);
-            meshlet_indices_shared[local_slot] = meshlet_instance_index;
+            var visible = true;
+
+            if (let screen_aabb = project_aabb(mvp, camera.near_clip, bounds.aabb_center, bounds.aabb_extent)) {
+                visible = test_vsm_page(screen_aabb, hpb, hpb_sampler, vsm_layer_index, vsm_page_offset);
+            }
+
+            if (visible) {
+                local_slot = __atomic_add(visible_count_shared, 1, MemoryOrder::Relaxed);
+                meshlet_indices_shared[local_slot] = meshlet_instance_index;
+            }
         }
     }
-
     GroupMemoryBarrierWithGroupSync();
 
     if (visible_count_shared > 0) {
         if (group_thread_id == 0) {
             base_index_shared = __atomic_add(cull_triangles_cmd[0].x, visible_count_shared, MemoryOrder::Relaxed);
         }
-
         GroupMemoryBarrierWithGroupSync();
 
         if (local_slot < visible_count_shared) {

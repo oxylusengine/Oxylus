@@ -244,6 +244,8 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
     .member("cascade_overlap_propotion", &LightComponent::cascade_overlap_propotion)
     .member("depth_bias", &LightComponent::depth_bias)
     .member("normal_bias", &LightComponent::normal_bias)
+    .member("first_clipmap_width", &LightComponent::first_clipmap_width)
+    .member("clipmap_selection_bias", &LightComponent::clipmap_selection_bias)
     .finalize();
 
   bind_component<AtmosphereComponent>(world, state, core_table, "AtmosphereComponent")

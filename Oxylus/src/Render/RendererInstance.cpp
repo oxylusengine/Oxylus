@@ -10,6 +10,7 @@
 #include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/SceneGPU.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 template <>
@@ -229,6 +230,7 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
       renderer(parent_renderer) {
 
   auto& render_context = App::get_rendercontext();
+  auto& allocator = render_context.superframe_allocator;
   render_queue_2d.init();
 
   spot_lights_buffer = render_context.allocate_buffer_super(
@@ -243,6 +245,79 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
   before_callbacks.resize(stage_count);
   after_callbacks.resize(stage_count);
+
+  vsm_virtual_page_table_attachment = vuk::ImageAttachment{
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
+    .extent =
+      {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+       .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+       .depth = 1},
+    .format = vuk::Format::eR32Uint,
+    .sample_count = vuk::Samples::e1,
+    .view_type = vuk::ImageViewType::e2DArray,
+    .base_level = 0,
+    .level_count = 1,
+    .base_layer = 0,
+    .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
+  };
+  vsm_virtual_page_table = *vuk::allocate_image(*allocator, vsm_virtual_page_table_attachment);
+  vsm_virtual_page_table_attachment.image = *vsm_virtual_page_table;
+  vsm_virtual_page_table_view = *vuk::allocate_image_view(*allocator, vsm_virtual_page_table_attachment);
+  vsm_virtual_page_table_attachment.image_view = *vsm_virtual_page_table_view;
+  render_context.wait_on(
+    vuk::clear_image(vuk::discard_ia("vsm virtual page table", vsm_virtual_page_table_attachment), vuk::Black<u32>)
+      .as_released(vuk::eFragmentSampled)
+  );
+
+  vsm_hpb_attachment = vuk::ImageAttachment{
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
+    .extent =
+      {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+       .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+       .depth = 1},
+    .format = vuk::Format::eR8Uint,
+    .sample_count = vuk::Samples::e1,
+    .view_type = vuk::ImageViewType::e2DArray,
+    .base_level = 0,
+    .level_count = 1 + static_cast<u32>(std::log2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE)),
+    .base_layer = 0,
+    .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
+  };
+  vsm_hpb = *vuk::allocate_image(*allocator, vsm_hpb_attachment);
+  vsm_hpb_attachment.image = *vsm_hpb;
+  vsm_hpb_view = *vuk::allocate_image_view(*allocator, vsm_hpb_attachment);
+  vsm_hpb_attachment.image_view = *vsm_hpb_view;
+  render_context.wait_on(
+    vuk::clear_image(vuk::discard_ia("vsm hpb", vsm_hpb_attachment), vuk::Black<u32>).as_released(vuk::eFragmentSampled)
+  );
+
+  vsm_physical_page_table_attachment = vuk::ImageAttachment{
+    .image_flags = vuk::ImageCreateFlagBits::eMutableFormat,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
+    .extent =
+      {.width = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .height = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .depth = 1},
+    .format = vuk::Format::eR32Sfloat,
+    .sample_count = vuk::Samples::e1,
+    .view_type = vuk::ImageViewType::e2D,
+    .base_level = 0,
+    .level_count = 1,
+    .base_layer = 0,
+    .layer_count = 1,
+  };
+  vsm_physical_page_table = *vuk::allocate_image(*allocator, vsm_physical_page_table_attachment);
+  vsm_physical_page_table_attachment.image = *vsm_physical_page_table;
+  vsm_physical_page_table_f32_view = *vuk::allocate_image_view(*allocator, vsm_physical_page_table_attachment);
+  vsm_physical_page_table_attachment.image_view = *vsm_physical_page_table_f32_view;
+  auto vsm_physical_page_table_u32_attachment = vsm_physical_page_table_attachment;
+  vsm_physical_page_table_u32_attachment.format = vuk::Format::eR32Uint;
+  vsm_physical_page_table_u32_view = *vuk::allocate_image_view(*allocator, vsm_physical_page_table_u32_attachment);
+  render_context.wait_on(
+    vuk::clear_image(vuk::discard_ia("vsm physical page table", vsm_physical_page_table_attachment), vuk::Black<f32>)
+      .as_released(vuk::eFragmentSampled)
+  );
 
   rebuild_execution_order();
 }
@@ -607,22 +682,6 @@ auto RendererInstance::render(
     std::move(overdraw_attachment)
   );
 
-  auto directional_shadows_enabled = self.directional_light_cast_shadows;
-  auto directional_light_shadowmap_size = max(self.directional_light.cascade_size * directional_shadows_enabled, 1_u32);
-  auto directional_light_shadowmap_attachment = vuk::declare_ia(
-    "directional light shadowmap",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eDepthStencilAttachment,
-     .extent = vuk::Extent3D{directional_light_shadowmap_size, directional_light_shadowmap_size, 1},
-     .format = vuk::Format::eD32Sfloat,
-     .sample_count = vuk::SampleCountFlagBits::e1,
-     .level_count = 1,
-     .layer_count = max(self.directional_light.cascade_count, 2_u32)}
-  );
-  directional_light_shadowmap_attachment = vuk::clear_image(
-    std::move(directional_light_shadowmap_attachment),
-    vuk::DepthZero
-  );
-
   auto contact_shadows_attachment = vuk::declare_ia(
     "contact shadows",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
@@ -631,6 +690,15 @@ auto RendererInstance::render(
   );
   contact_shadows_attachment.same_shape_as(final_attachment);
   contact_shadows_attachment = vuk::clear_image(std::move(contact_shadows_attachment), vuk::Black<f32>);
+
+  auto resolved_shadows_attachment = vuk::declare_ia(
+    "shadows",
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+     .format = vuk::Format::eR32Sfloat,
+     .sample_count = vuk::SampleCountFlagBits::e1}
+  );
+  resolved_shadows_attachment.same_shape_as(final_attachment);
+  resolved_shadows_attachment = vuk::clear_image(std::move(resolved_shadows_attachment), vuk::Black<f32>);
 
   auto albedo_attachment = vuk::declare_ia(
     "albedo",
@@ -694,21 +762,11 @@ auto RendererInstance::render(
     std::move(vbgtao_depth_differences_attachment),
     vuk::Black<f32>
   );
+  auto rmvsm_virtual_page_table_attachment = vuk::Value<vuk::ImageAttachment>{};
+  auto rmvsm_virtual_clipmaps_buffer = vuk::Value<vuk::Buffer>{};
 
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0) {
-    if (directional_shadows_enabled) {
-      auto shadow_geometry_context = ShadowGeometryContext{};
-      for (u32 cascade_index = 0; cascade_index < self.directional_light.cascade_count; cascade_index++) {
-        auto current_cascade_attachment = directional_light_shadowmap_attachment.layer(cascade_index);
-        auto& current_cascade = self.directional_light_cascades[cascade_index];
-
-        shadow_geometry_context.shadowmap_attachment = std::move(current_cascade_attachment);
-        self.cull_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index == 0);
-        self.draw_for_shadowmap(shadow_geometry_context, current_cascade.projection_view, cascade_index);
-      }
-    }
-
     auto main_geometry_context = MainGeometryContext{
       .draw_overdraw = (std::to_underlying(debug_view) & std::to_underlying(GPU::DebugView::Overdraw)) == 1,
       .bindless_set = &bindless_set,
@@ -722,14 +780,40 @@ auto RendererInstance::render(
       .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
     };
 
+    auto cull_camera = GPU::CullCamera{
+      .projection_view = self.camera_data.projection_view,
+      .position = self.camera_data.position,
+      .acceptable_lod_error = self.camera_data.acceptable_lod_error,
+      .resolution = self.camera_data.resolution,
+      .near_clip = self.camera_data.near_clip,
+      .mesh_instance_count = self.prepared_frame.mesh_instance_count,
+    };
     main_geometry_context.late = false;
-    self.cull_for_visbuffer(main_geometry_context);
+    // The CullGeometryContext is hoisted outside both passes so the visibility /
+    // dispatch-command buffers allocated by the early pass's `cull_meshes`
+    // pre-pass persist into the late pass (which runs with `init_cull_meshes = false`).
+    auto cull_geometry_context = CullGeometryContext{
+      .use_hiz = true,
+      .late = main_geometry_context.late,
+      .init_cull_meshes = true,
+      .cull_camera = cull_camera,
+      .hiz_attachment = std::move(main_geometry_context.hiz_attachment),
+    };
+    self.cull_geometry(cull_geometry_context);
+    main_geometry_context.hiz_attachment = std::move(cull_geometry_context.hiz_attachment);
+    main_geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
     self.draw_for_visbuffer(main_geometry_context);
 
     self.generate_hiz(main_geometry_context);
 
     main_geometry_context.late = true;
-    self.cull_for_visbuffer(main_geometry_context);
+    cull_geometry_context.late = main_geometry_context.late;
+    cull_geometry_context.init_cull_meshes = false;
+    cull_geometry_context.cull_camera = cull_camera;
+    cull_geometry_context.hiz_attachment = std::move(main_geometry_context.hiz_attachment);
+    self.cull_geometry(cull_geometry_context);
+    main_geometry_context.hiz_attachment = std::move(cull_geometry_context.hiz_attachment);
+    main_geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
     self.draw_for_visbuffer(main_geometry_context);
 
     {
@@ -757,6 +841,31 @@ auto RendererInstance::render(
     normal_attachment = std::move(main_geometry_context.normal_attachment);
     emissive_attachment = std::move(main_geometry_context.emissive_attachment);
     metallic_roughness_occlusion_attachment = std::move(main_geometry_context.metallic_roughness_occlusion_attachment);
+
+    if (self.directional_light_cast_shadows) {
+      auto rmvsm_context = RMVSMContext{
+        .sun_moved = self.sun_direction_changed,
+        .depth_extent = dst_extent,
+        .depth_attachment = std::move(depth_attachment),
+      };
+      self.draw_virtual_shadowmap(rmvsm_context);
+      depth_attachment = std::move(rmvsm_context.depth_attachment);
+
+      auto shadow_resolve_context = ShadowResolveContext{
+        .depth_attachment = std::move(depth_attachment),
+        .normal_attachment = std::move(normal_attachment),
+        .directional_clipmaps_buffer = std::move(rmvsm_context.directional_clipmaps_buffer),
+        .virtual_page_table_attachment = std::move(rmvsm_context.virtual_page_table_attachment),
+        .physical_page_table_attachment = std::move(rmvsm_context.physical_page_table_attachment),
+        .resolved_shadows_attachment = std::move(resolved_shadows_attachment),
+      };
+      self.resolve_shadowmap(shadow_resolve_context);
+      depth_attachment = std::move(shadow_resolve_context.depth_attachment);
+      normal_attachment = std::move(shadow_resolve_context.normal_attachment);
+      resolved_shadows_attachment = std::move(shadow_resolve_context.resolved_shadows_attachment);
+      rmvsm_virtual_page_table_attachment = std::move(shadow_resolve_context.virtual_page_table_attachment);
+      rmvsm_virtual_clipmaps_buffer = std::move(shadow_resolve_context.directional_clipmaps_buffer);
+    }
 
     auto contact_shadows_pass = vuk::make_pass(
       "contact_shadows",
@@ -838,7 +947,7 @@ auto RendererInstance::render(
     .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
     .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
     .contact_shadows_attachment = std::move(contact_shadows_attachment),
-    .directional_shadowmap_attachment = std::move(directional_light_shadowmap_attachment),
+    .resolved_shadows_attachment = std::move(resolved_shadows_attachment),
   };
   final_attachment = self.apply_pbr(pbr_context, std::move(final_attachment));
   depth_attachment = std::move(pbr_context.depth_attachment);
@@ -1078,6 +1187,12 @@ auto RendererInstance::render(
     .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
     .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
   };
+
+  if (debug_view == GPU::DebugView::RMVSM) {
+    debug_context.vsm_page_table_attachment = std::move(rmvsm_virtual_page_table_attachment);
+    debug_context.vsm_clipmaps_buffer = std::move(rmvsm_virtual_clipmaps_buffer);
+  }
+
   auto debug_renderer_enabled = RendererCVar::cvar_enable_debug_renderer.as_bool();
   if (debug_renderer_enabled) {
     return self.draw_for_debug(debug_context, std::move(dst_attachment));
@@ -1176,10 +1291,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
         self.directional_light.color = lc.color;
         self.directional_light.intensity = lc.intensity;
-        auto sun_rotation = glm::eulerAngles(tc.rotation);
-        self.directional_light.direction.x = glm::cos(sun_rotation.x) * glm::sin(sun_rotation.y);
-        self.directional_light.direction.y = glm::sin(sun_rotation.x) * glm::sin(sun_rotation.y);
-        self.directional_light.direction.z = glm::cos(sun_rotation.y);
+        const auto new_dir = glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f));
+        self.sun_direction_changed = new_dir != self.previous_sun_direction;
+        self.previous_sun_direction = new_dir;
+        self.directional_light.direction = new_dir;
         self.directional_light.cascade_count = ox::min(
           lc.cascade_count,
           static_cast<u32>(MAX_DIRECTIONAL_SHADOW_CASCADES)
@@ -1188,6 +1303,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.directional_light.cascades_overlap_proportion = lc.cascade_overlap_propotion;
         self.directional_light.depth_bias = lc.depth_bias;
         self.directional_light.normal_bias = lc.normal_bias;
+        self.first_clipmap_width = lc.first_clipmap_width;
+        self.clipmap_selection_bias = lc.clipmap_selection_bias;
 
         self.directional_light_cast_shadows = lc.cast_shadows;
 
@@ -1501,6 +1618,21 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   self.prepared_frame.mesh_instance_count = info.mesh_instance_count;
   self.prepared_frame.max_meshlet_instance_count = info.max_meshlet_instance_count;
+
+  if (!info.dirty_mesh_instance_indices.empty()) {
+    self.prepared_frame.dirty_mesh_instance_count =
+      static_cast<u32>(info.dirty_mesh_instance_indices.size());
+    auto dirty_mesh_instances_buffer = render_context.alloc_transient_buffer(
+      vuk::MemoryUsage::eCPUtoGPU,
+      info.dirty_mesh_instance_indices.size_bytes()
+    );
+    std::memcpy(
+      dirty_mesh_instances_buffer->mapped_ptr,
+      info.dirty_mesh_instance_indices.data(),
+      info.dirty_mesh_instance_indices.size_bytes()
+    );
+    self.prepared_frame.dirty_mesh_instances_buffer = std::move(dirty_mesh_instances_buffer);
+  }
   if (info.max_meshlet_instance_count > 0) {
     self.prepared_frame.meshlet_instances_buffer = render_context.alloc_transient_buffer(
       vuk::MemoryUsage::eGPUonly,

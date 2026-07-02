@@ -76,7 +76,11 @@ public func safe_sqrt(f32 x) -> f32 {
 }
 
 public func mod(f32x3 x, f32x3 y) -> f32x3 {
-  return x - y * floor(x / y);
+    return x - y * floor(x / y);
+}
+
+public func mod(f32x2 x, f32x2 y) -> f32x2 {
+    return x - y * floor(x / y);
 }
 
 /// INTERSECTION
@@ -164,4 +168,9 @@ public func build_orthonormal_basis(f32x3 n) -> f32x3x3 {
 
 public func unpack_u32_low(u32 packed) -> u32 { return packed & 0xFFFF; }
 public func unpack_u32_high(u32 packed) -> u32 { return (packed >> 16) & 0xFFFF; }
+
+public func hammersley2d(u32 i, u32 N) -> f32x2 {
+    return f32x2(f32(i) / f32(N), f32(reversebits(i)) * 2.3283064365386963e-10);
+}
+
 }

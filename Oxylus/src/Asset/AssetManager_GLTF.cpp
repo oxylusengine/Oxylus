@@ -458,11 +458,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
   {
     auto asset = self.get_asset(uuid);
     if (asset->is_loaded()) {
-      // Model is collection of multiple assets and all child
-      // assets must be alive to safely process meshes.
-      // Don't acquire child refs.
       asset->acquire_ref();
-
       return true;
     }
 
@@ -472,7 +468,6 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
   auto& job_man = App::get_job_manager();
 
-  // Initial parsing
   auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(asset_path);
   auto gltf_type = fastgltf::determineGltfFileType(gltf_buffer.get());
   if (gltf_type == fastgltf::GltfType::Invalid) {
@@ -575,6 +570,27 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
   auto& render_context = App::get()->get_rendercontext();
 
+  auto compute_lod_upload_size = [](
+                                   const std::vector<u32>& simplified_indices,
+                                   const std::vector<GPU::Meshlet>& meshlets,
+                                   const std::vector<GPU::Bounds>& meshlet_bounds,
+                                   const std::vector<u8>& local_triangle_indices,
+                                   const std::vector<u32>& indirect_vertex_indices
+                                 ) -> u64 {
+    auto offset = 0_u64;
+    offset += ox::size_bytes(simplified_indices);
+    offset = ox::align_up(offset, 8);
+    offset += ox::size_bytes(meshlets);
+    offset = ox::align_up(offset, 8);
+    offset += ox::size_bytes(meshlet_bounds);
+    offset = ox::align_up(offset, 8);
+    offset += ox::size_bytes(local_triangle_indices);
+    offset = ox::align_up(offset, 4);
+    offset += ox::size_bytes(indirect_vertex_indices);
+    offset = ox::align_up(offset, 8); // pad end so next LOD base stays 8-aligned
+    return offset;
+  };
+
   while (!processing_gltf_nodes.empty()) {
     auto [gltf_node_index, parent_mesh_group_index] = processing_gltf_nodes.front();
     const auto& node = gltf_asset.nodes[gltf_node_index];
@@ -591,7 +607,6 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
       processing_gltf_nodes.push({child_node_index, mesh_group_index});
     }
 
-    // Node translation
     auto translation = glm::vec3{};
     auto rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
     auto scale = glm::vec3{};
@@ -628,7 +643,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
       auto& index_accessor = gltf_asset.accessors[gltf_primitive.indicesAccessor.value()];
       auto raw_indices = std::vector<u32>(index_accessor.count);
-      fastgltf::iterateAccessorWithIndex<u32>(gltf_asset, index_accessor, [&](u32 index, usize i) { //
+      fastgltf::iterateAccessorWithIndex<u32>(gltf_asset, index_accessor, [&](u32 index, usize i) {
         raw_indices[i] = index;
       });
 
@@ -643,7 +658,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         auto raw_positions = std::vector<glm::vec3>(accessor.count);
         vertex_remap.resize(accessor.count);
 
-        fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf_asset, accessor, [&](glm::vec3 pos, usize i) { //
+        fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf_asset, accessor, [&](glm::vec3 pos, usize i) {
           raw_positions[i] = pos;
         });
 
@@ -669,7 +684,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         auto& accessor = gltf_asset.accessors[attrib->accessorIndex];
         auto raw_normals = std::vector<glm::vec3>(accessor.count);
 
-        fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf_asset, accessor, [&](glm::vec3 normal, usize i) { //
+        fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf_asset, accessor, [&](glm::vec3 normal, usize i) {
           raw_normals[i] = normal;
         });
 
@@ -688,7 +703,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         auto& accessor = gltf_asset.accessors[attrib->accessorIndex];
         auto raw_texcoords = std::vector<glm::vec2>(accessor.count);
 
-        fastgltf::iterateAccessorWithIndex<glm::vec2>(gltf_asset, accessor, [&](glm::vec2 uv, usize i) { //
+        fastgltf::iterateAccessorWithIndex<glm::vec2>(gltf_asset, accessor, [&](glm::vec2 uv, usize i) {
           raw_texcoords[i] = uv;
         });
 
@@ -725,10 +740,11 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         quantized_texcoord.y = meshopt_quantizeHalf(texcoord.y);
       }
 
-      const auto mesh_upload_size = 0                                     //
-                                    + ox::size_bytes(quantized_positions) //
-                                    + ox::size_bytes(quantized_normals)   //
-                                    + ox::size_bytes(quantized_texcoords);
+      // Pad mesh upload size to 8 so the first LOD base is 8-aligned
+      const auto mesh_upload_size = ox::align_up(
+        ox::size_bytes(quantized_positions) + ox::size_bytes(quantized_normals) + ox::size_bytes(quantized_texcoords),
+        8
+      );
       auto upload_size = mesh_upload_size;
 
       auto lod_cpu_buffers = std::array<std::pair<vuk::Value<vuk::Buffer>, u64>, GPU::Mesh::MAX_LODS>();
@@ -770,7 +786,6 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
           if (
             result_index_count > (lod_index_count + lod_index_count / 2) || result_error > 0.5 || result_index_count < 6
           ) {
-            // Error bound
             break;
           }
 
@@ -788,7 +803,6 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
           vertex_count
         );
 
-        // Worst case count
         auto max_meshlet_count = meshopt_buildMeshletsBound(
           simplified_indices.size(),
           Model::MAX_MESHLET_INDICES,
@@ -812,7 +826,6 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
           0.0
         );
 
-        // Trim meshlets from worst case to current case
         raw_meshlets.resize(meshlet_count);
         auto meshlets = std::vector<GPU::Meshlet>(meshlet_count);
         const auto& last_meshlet = raw_meshlets[meshlet_count - 1];
@@ -823,7 +836,6 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         auto mesh_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
         auto meshlet_bounds = std::vector<GPU::Bounds>(meshlet_count);
         for (const auto& [raw_meshlet, meshlet, bounds] : std::views::zip(raw_meshlets, meshlets, meshlet_bounds)) {
-          // AABB computation
           auto meshlet_bb_min = glm::vec3(std::numeric_limits<f32>::max());
           auto meshlet_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
           for (u32 i = 0; i < raw_meshlet.triangle_count * 3; i++) {
@@ -841,7 +853,6 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
             meshlet_bb_max = glm::max(meshlet_bb_max, tri_pos);
           }
 
-          // Sphere and Cone computation
           auto sphere_bounds = meshopt_computeMeshletBounds(
             &indirect_vertex_indices[raw_meshlet.vertex_offset],
             &local_triangle_indices[raw_meshlet.triangle_offset],
@@ -868,31 +879,38 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         gpu_mesh.bounds.aabb_center = (mesh_bb_max + mesh_bb_min) * 0.5f;
         gpu_mesh.bounds.aabb_extent = mesh_bb_max - mesh_bb_min;
 
-        auto lod_upload_size = 0                                        //
-                               + ox::size_bytes(simplified_indices)     //
-                               + ox::size_bytes(meshlets)               //
-                               + ox::size_bytes(meshlet_bounds)         //
-                               + ox::size_bytes(local_triangle_indices) //
-                               + ox::size_bytes(indirect_vertex_indices);
+        auto lod_upload_size = compute_lod_upload_size(
+          simplified_indices,
+          meshlets,
+          meshlet_bounds,
+          local_triangle_indices,
+          indirect_vertex_indices
+        );
+
         auto cpu_lod_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, lod_upload_size);
         auto cpu_lod_ptr = reinterpret_cast<u8*>(cpu_lod_buffer->mapped_ptr);
 
         auto upload_offset = 0_u64;
+
         cur_lod.indices = upload_offset;
         std::memcpy(cpu_lod_ptr + upload_offset, simplified_indices.data(), ox::size_bytes(simplified_indices));
         upload_offset += ox::size_bytes(simplified_indices);
+        upload_offset = align_up(upload_offset, 8);
 
         cur_lod.meshlets = upload_offset;
         std::memcpy(cpu_lod_ptr + upload_offset, meshlets.data(), ox::size_bytes(meshlets));
         upload_offset += ox::size_bytes(meshlets);
+        upload_offset = align_up(upload_offset, 8);
 
         cur_lod.meshlet_bounds = upload_offset;
         std::memcpy(cpu_lod_ptr + upload_offset, meshlet_bounds.data(), ox::size_bytes(meshlet_bounds));
         upload_offset += ox::size_bytes(meshlet_bounds);
+        upload_offset = align_up(upload_offset, 8);
 
         cur_lod.local_triangle_indices = upload_offset;
         std::memcpy(cpu_lod_ptr + upload_offset, local_triangle_indices.data(), ox::size_bytes(local_triangle_indices));
         upload_offset += ox::size_bytes(local_triangle_indices);
+        upload_offset = align_up(upload_offset, 4);
 
         cur_lod.indirect_vertex_indices = upload_offset;
         std::memcpy(
@@ -900,7 +918,6 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
           indirect_vertex_indices.data(),
           ox::size_bytes(indirect_vertex_indices)
         );
-        upload_offset += ox::size_bytes(indirect_vertex_indices);
 
         cur_lod.indices_count = simplified_indices.size();
         cur_lod.meshlet_count = meshlet_count;
@@ -915,12 +932,11 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
       auto mesh_upload_offset = 0_u64;
 
       auto gpu_mesh_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, upload_size);
-
-      // Mesh first
       auto cpu_mesh_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, mesh_upload_size);
       auto cpu_mesh_ptr = reinterpret_cast<u8*>(cpu_mesh_buffer->mapped_ptr);
 
       auto gpu_mesh_bda = gpu_mesh_buffer->device_address;
+
       gpu_mesh.vertex_positions = gpu_mesh_bda + mesh_upload_offset;
       std::memcpy(cpu_mesh_ptr + mesh_upload_offset, quantized_positions.data(), ox::size_bytes(quantized_positions));
       mesh_upload_offset += ox::size_bytes(quantized_positions);
@@ -934,6 +950,9 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         std::memcpy(cpu_mesh_ptr + mesh_upload_offset, quantized_texcoords.data(), ox::size_bytes(quantized_texcoords));
         mesh_upload_offset += ox::size_bytes(quantized_texcoords);
       }
+
+      // Advance to the 8-aligned base for LOD data (matches mesh_upload_size computation)
+      mesh_upload_offset = mesh_upload_size;
 
       auto gpu_mesh_subrange = vuk::discard_buf("mesh", gpu_mesh_buffer->subrange(0, mesh_upload_size));
       gpu_mesh_subrange = render_context.upload_staging(std::move(cpu_mesh_buffer), std::move(gpu_mesh_subrange));
@@ -972,7 +991,6 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
   }
 
   {
-    // auto write_lock = std::unique_lock(self.models_mutex);
     auto asset = self.get_asset(uuid);
     asset->model_id = self.model_map.create_slot(std::move(model));
   }
