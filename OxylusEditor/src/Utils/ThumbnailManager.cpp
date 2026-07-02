@@ -22,28 +22,6 @@ auto ThumbnailManager::init(this ThumbnailManager& self) -> void {
 auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
   ZoneScoped;
 
-  std::vector<PendingUpload> uploads_to_process;
-  {
-    std::lock_guard lock(self.queue_mutex);
-    uploads_to_process = std::move(self.pending_uploads);
-    self.pending_uploads.clear();
-  }
-
-  for (const auto& upload : uploads_to_process) {
-    auto thumbnail_texture = std::make_shared<Texture>();
-    thumbnail_texture->create(
-      {},
-      TextureLoadInfo{
-        .loaded_data = const_cast<u8*>(upload.pixel_data.data()),
-        .extent = vuk::Extent3D{upload.size, upload.size, 1}
-      }
-    );
-
-    auto lock = std::unique_lock(self.thumbnail_mutex);
-    self.thumbnail_cache.insert_or_assign(upload.asset_hash, thumbnail_texture);
-    self.active_jobs.erase(upload.asset_hash);
-  }
-
   PendingMeshRender render_job;
   bool has_render_job = false;
   {
@@ -125,41 +103,17 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
   auto& job_man = App::get_job_manager();
   job_man.push_job_name("ContentPanelThumbnail_TextureLoad");
   job_man.submit(Job::create([&self, asset_path, asset_hash]() {
-    i32 width, height, chans;
-    u8* raw_pixels = stbi_load(asset_path.string().c_str(), &width, &height, &chans, 4);
-
-    if (raw_pixels) {
-      std::vector<u8> pixel_data;
-      u32 actual_size = THUMBNAIL_SIZE;
-
-      if (width > (i32)THUMBNAIL_SIZE || height > (i32)THUMBNAIL_SIZE) {
-        pixel_data.resize(THUMBNAIL_SIZE * THUMBNAIL_SIZE * 4);
-        stbir_resize_uint8_linear(
-          raw_pixels,
-          width,
-          height,
-          0,
-          pixel_data.data(),
-          THUMBNAIL_SIZE,
-          THUMBNAIL_SIZE,
-          0,
-          STBIR_RGBA
-        );
-        stbi_image_free(raw_pixels);
-      } else {
-        pixel_data.assign(raw_pixels, raw_pixels + (width * height * 4));
-        actual_size = static_cast<u32>(width);
-        stbi_image_free(raw_pixels);
+    auto thumbnail_texture = std::make_shared<Texture>();
+    thumbnail_texture->create(
+      asset_path.string(),
+      TextureLoadInfo{
+        .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}
       }
+    );
 
-      std::lock_guard lock(self.queue_mutex);
-      self.pending_uploads.push_back(
-        {.asset_hash = asset_hash, .pixel_data = std::move(pixel_data), .size = actual_size}
-      );
-    } else {
-      std::lock_guard lock(self.thumbnail_mutex);
-      self.active_jobs.erase(asset_hash);
-    }
+    auto lock = std::unique_lock(self.thumbnail_mutex);
+    self.thumbnail_cache.insert_or_assign(asset_hash, thumbnail_texture);
+    self.active_jobs.erase(asset_hash);
   }));
   job_man.pop_job_name();
 
@@ -197,21 +151,17 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
     auto& job_man = App::get_job_manager();
     job_man.push_job_name("ContentPanelThumbnail_ModelCacheLoad");
     job_man.submit(Job::create([&self, expected_png, asset_hash]() {
-      int width, height, chans;
-      u8* raw_pixels = stbi_load(expected_png.string().c_str(), &width, &height, &chans, 4);
+      auto thumbnail_texture = std::make_shared<Texture>();
+      thumbnail_texture->create(
+        expected_png.string(),
+        TextureLoadInfo{
+          .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}
+        }
+      );
 
-      if (raw_pixels) {
-        std::vector<u8> pixel_data(raw_pixels, raw_pixels + (width * height * 4));
-        stbi_image_free(raw_pixels);
-
-        std::lock_guard lock(self.queue_mutex);
-        self.pending_uploads.push_back(
-          {.asset_hash = asset_hash, .pixel_data = std::move(pixel_data), .size = static_cast<u32>(width)}
-        );
-      } else {
-        std::lock_guard lock(self.thumbnail_mutex);
-        self.active_jobs.erase(asset_hash);
-      }
+      auto lock = std::unique_lock(self.thumbnail_mutex);
+      self.thumbnail_cache.insert_or_assign(asset_hash, thumbnail_texture);
+      self.active_jobs.erase(asset_hash);
     }));
     job_man.pop_job_name();
 

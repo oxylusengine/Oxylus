@@ -23,12 +23,6 @@ public:
     -> option<std::shared_ptr<Texture>>;
 
 private:
-  struct PendingUpload {
-    std::string asset_hash;
-    std::vector<u8> pixel_data;
-    u32 size = 256;
-  };
-
   struct PendingMeshRender {
     std::string asset_hash;
     UUID model_uuid;
@@ -44,7 +38,6 @@ private:
   std::shared_mutex thumbnail_mutex = {};
 
   std::mutex queue_mutex;
-  std::vector<PendingUpload> pending_uploads = {};
   std::queue<PendingMeshRender> pending_mesh_renders = {};
 
   auto render_thumbnail(this ThumbnailManager& self, UUID model_uuid, u32 size) -> option<std::vector<u8>>;
