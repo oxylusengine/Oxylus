@@ -291,3 +291,30 @@ public func sample_aerial_perspective(
 
     return aerial_perspective;
 }
+
+
+public func get_atmosphere_illuminance_along_ray(
+    in Atmosphere atmosphere,
+    in Sampler sampler,
+    in Image2D<f32x4> sky_view_image,
+    f32x3 sun_dir,
+    f32x3 eye_pos,
+    f32x3 eye_dir
+) -> f32x3 {
+    let height = length(eye_pos);
+    let up_vec = eye_pos / height;
+    let view_zenith_cos_angle = dot(eye_dir, up_vec);
+
+    let side_vec_raw = cross(up_vec, eye_dir);
+    let side_vec = length(side_vec_raw) > 1e-5 ? normalize(side_vec_raw) : f32x3(1.0, 0.0, 0.0);
+    let forward_vec = normalize(cross(side_vec, up_vec));
+
+    let sun_dir = normalize(sun_dir);
+    let light_on_plane = normalize(f32x2(dot(sun_dir, forward_vec), dot(sun_dir, side_vec)));
+
+    let intersect_planet = com::ray_sphere_intersect_nearest(eye_pos, eye_dir, atmosphere.planet_radius).hasValue;
+    let uv = sky_view_params_to_lut_uv(atmosphere, intersect_planet, height, view_zenith_cos_angle, light_on_plane);
+
+    let result = sky_view_image.SampleLevel(sampler, uv, 0.0);
+    return result.rgb * result.a;
+}

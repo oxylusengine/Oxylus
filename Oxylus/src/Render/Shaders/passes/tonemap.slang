@@ -86,7 +86,7 @@ void agxLook(inout float3 color)
     color = pow(color * slope, power);
     color = max(luma + saturation * (color - luma), float3(0.0));
 }
-float3 agx_tonemapping(float3 rec2020) {
+float3 agx_tonemapping(float3 color) {
     // AgX constants
     const float3x3 AgXInsetMatrix = transpose(float3x3(
         float3(0.856627153315983, 0.137318972929847, 0.11189821299995),
@@ -97,22 +97,34 @@ float3 agx_tonemapping(float3 rec2020) {
         float3(1.1271005818144368, -0.1413297634984383, -0.14132976349843826),
         float3(-0.11060664309660323, 1.157823702216272, -0.11060664309660294),
         float3(-0.016493938717834573, -0.016493938717834257, 1.2519364065950405)));
+    const float3x3 LINEAR_REC2020_TO_LINEAR_SRGB =
+        transpose(float3x3(float3(1.6605, -0.1246, -0.0182), float3(-0.5876, 1.1329, -0.1006), float3(-0.0728, -0.0083, 1.1187)));
+    const float3x3 LINEAR_SRGB_TO_LINEAR_REC2020 =
+        transpose(float3x3(float3(0.6274, 0.0691, 0.0164), float3(0.3293, 0.9195, 0.0880), float3(0.0433, 0.0113, 0.8956)));
+
     // LOG2_MIN      = -10.0
     // LOG2_MAX      =  +6.5
     // MIDDLE_GRAY   =  0.18
     const float AgxMinEv = -12.47393; // log2( pow( 2, LOG2_MIN ) * MIDDLE_GRAY )
-    const float AgxMaxEv = 4.026069;  // log2( pow( 2, LOG2_MAX ) * MIDDLE_GRAY )
-    rec2020 = mul(AgXInsetMatrix, rec2020);
+    const float AgxMaxEv = 4.026069; // log2( pow( 2, LOG2_MAX ) * MIDDLE_GRAY )
+    color = mul(LINEAR_SRGB_TO_LINEAR_REC2020, color);
+    color = mul(AgXInsetMatrix, color);
     // Log2 encoding
-    rec2020 = max(rec2020, 1e-10); // avoid 0 or negative numbers for log2
-    rec2020 = log2(rec2020);
-    rec2020 = (rec2020 - AgxMinEv) / (AgxMaxEv - AgxMinEv);
-    rec2020 = clamp(rec2020, 0.0, 1.0);
+    color = max(color, 1e-10); // avoid 0 or negative numbers for log2
+    color = log2(color);
+    color = (color - AgxMinEv) / (AgxMaxEv - AgxMinEv);
+    color = clamp(color, 0.0, 1.0);
     // Apply sigmoid
-    rec2020 = agxDefaultContrastApproximation(rec2020);
+    color = agxDefaultContrastApproximation(color);
     // Apply AgX look
-    agxLook(rec2020);
-    return mul(AgXOutsetMatrix, rec2020);
+    agxLook(color);
+    color = mul(AgXOutsetMatrix, color);
+    // Linearize
+    color = pow(max(float3(0.0), color), float3(2.2));
+    color = mul(LINEAR_REC2020_TO_LINEAR_SRGB, color);
+    // Gamut mapping. Simple clamp for now.
+    color = clamp(color, 0.0, 1.0);
+    return color;
 }
 
 // -----------------------------------------------------------------------------
@@ -521,55 +533,55 @@ struct GT7ToneMapping
 
 [[shader("fragment")]]
 f32x4 fs_main(VertexOutput input) {
-    var rec709 = input_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
+    var color = input_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
 
     if ((scene_flags & SceneFlags::HasEyeAdaptation) != 0) {
+        // histogram_average.slang computes the standard EV100->linear exposure
+        // multiplier (1 / (2^ev100 * 1.2)); apply it directly.
         let exposure = histogram_luminance.exposure;
-        rec709 = rec709 * (exposure + 1.0);
+        color = color * exposure;
     }
 
     if ((scene_flags & SceneFlags::HasBloom) != 0) {
         let bloom = bloom_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
-        rec709 += bloom;
+        color += bloom;
     }
 
     switch (tonemap_type) {
         case TonemapType::ACES: {
-            rec709 = ACES_Fitted(rec709);
+            color = ACES_Fitted(color);
         } break;
         case TonemapType::AgX: {
-            var rec2020 = com::rec709_to_rec2020(rec709);
-            rec2020 = agx_tonemapping(rec2020);
-            rec2020 = pow(max(float3(0.0), rec2020), float3(2.2));
-            rec2020 = clamp(rec2020, 0.0, 1.0);
-            rec709 = com::rec2020_to_rec709(rec2020);
+            color = agx_tonemapping(color);
         } break;
         case TonemapType::GT7: {
             var gt7 = GT7ToneMapping();
             gt7.initializeAsSDR();
-            var rec2020 = f32x3(0.0);
-            gt7.applyToneMapping(com::rec709_to_rec2020(rec709), rec2020);
-            rec709 = com::rec2020_to_rec709(rec2020);
+            // GT7 tone mapping operates in linear Rec.2020.
+            f32x3 rec2020In = com::rec709_to_rec2020(color);
+            f32x3 rec2020Out = f32x3(0.0);
+            gt7.applyToneMapping(rec2020In, rec2020Out);
+            color = com::rec2020_to_rec709(rec2020Out);
         } break;
         default:;
     }
 
     if ((scene_flags & SceneFlags::HasChromaticAberration) != 0) {
         let rgmag = FfxLensGetRGMag(C.post_process_settings.chromatic_aberration_amount);
-        rec709 = FfxLensSampleWithChromaticAberration(input_image, sampler, i32x2(input.position.xy), C.screen_size / 2, rgmag.x, rgmag.y);
+        color = FfxLensSampleWithChromaticAberration(input_image, sampler, i32x2(input.position.xy), C.screen_size / 2, rgmag.x, rgmag.y);
     }
 
     if ((scene_flags & SceneFlags::HasVignette) != 0) {
-        FfxLensApplyVignette(i32x2(input.position.xy), C.screen_size / 2, rec709, C.post_process_settings.vignette_amount);
+        FfxLensApplyVignette(i32x2(input.position.xy), C.screen_size / 2, color, C.post_process_settings.vignette_amount);
     }
 
     if ((scene_flags & SceneFlags::HasFilmGrain) != 0) {
         FfxLensApplyFilmGrain(i32x2(input.position.xy),
-        rec709,
+        color,
         C.post_process_settings.film_grain_scale,
         C.post_process_settings.film_grain_amount,
         C.post_process_settings.film_grain_seed);
     }
 
-    return f32x4(rec709, 1.0);
+    return f32x4(color, 1.0);
 }

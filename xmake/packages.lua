@@ -10,7 +10,7 @@ packages = {
   ["libsdl3 3.4.4"] = { configs = { x11 = true, wayland = false } },
   ["ktx-ox v4.4.0"] = { system = false, debug = false },
   ["zstd v1.5.7"] = { system = false },
-  ["shader-slang v2025.15.1"] = { configs = { shared = true }, system = false },
+  ["shader-slang v2026.12.2"] = { configs = { shared = true }, system = false },
   ["spirv-tools 1.4.335+0"] = { system = false },
   ["enet-ox v2.6.5"] = {
     configs = {
@@ -35,7 +35,7 @@ packages = {
     system = false,
   },
   ["vk-bootstrap v1.4.349"] = { system = false, debug = is_mode("debug") },
-  ["vuk 2025.09.14.2"] = {
+  ["vuk 2026.07.2"] = {
     configs = {
       debug_allocations = false,
     },

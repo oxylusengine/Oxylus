@@ -157,6 +157,13 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
     vuk::Samples::e1
   );
   ia.usage |= vuk::ImageUsageFlagBits::eTransferDst | vuk::ImageUsageFlagBits::eTransferSrc;
+  ia.image_flags |= load_info.image_flags;
+  if (load_info.layer_count.has_value()) {
+    ia.layer_count = *load_info.layer_count;
+  }
+  if (load_info.view_type.has_value()) {
+    ia.view_type = *load_info.view_type;
+  }
 
   image_id = render_context.allocate_image(ia);
   ia.image = render_context.image(image_id);
