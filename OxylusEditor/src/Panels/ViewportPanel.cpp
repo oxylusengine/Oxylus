@@ -939,7 +939,7 @@ static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
 auto highlight_mask_stage(RenderStageContext& ctx, const std::vector<u32>& transform_indices) -> void {
   ZoneScoped;
 
-  auto selected_count = transform_indices.size();
+  auto selected_count = static_cast<u32>(transform_indices.size());
 
   auto mask_generation_pass = vuk::make_pass(
     "stencil_mask",
@@ -957,7 +957,7 @@ auto highlight_mask_stage(RenderStageContext& ctx, const std::vector<u32>& trans
         .bind_image(0, 2, visbuffer)
         .bind_image(0, 3, mask)
         .bind_buffer(0, 4, transform_indices_buffer_)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, selected_count)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(selected_count))
         .dispatch_invocations_per_pixel(mask);
 
       return std::make_tuple(mask, visbuffer, meshlet_instances, mesh_instances, transform_indices_buffer_);
@@ -1040,7 +1040,7 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
   auto horiz_dilate_pass = vuk::make_pass(
     "horizontal_dilate_pass",
     [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeSampled) input_mask, VUK_IA(vuk::eComputeWrite) output_mask) {
-      struct PushConstants {
+      struct PC {
         glm::uvec2 resolution;
         i32 radius = 8;
       } push_block;
@@ -1050,7 +1050,7 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
       cmd_list.bind_compute_pipeline("highlight_dilate_horizontal")
         .bind_image(0, 0, input_mask)
         .bind_image(0, 1, output_mask)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, push_block)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(push_block))
         .dispatch_invocations_per_pixel(output_mask);
 
       return std::make_tuple(input_mask, output_mask);
@@ -1075,7 +1075,7 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
         DimmBehindWalls = 1,
         AlwaysVisible = 2,
       };
-      struct PushConstants {
+      struct PC {
         glm::vec4 outline_color = glm::vec4(1.0f, 0.53f, 0.0f, 1.0f); // Pure Gold
         glm::uvec2 resolution;
         i32 outline_width = 5;
@@ -1093,7 +1093,7 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
         .bind_image(0, 2, depth)
         .bind_image(0, 3, color)
         .bind_sampler(0, 4, vuk::LinearSamplerClamped)
-        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, push_block)
+        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(push_block))
         .draw(3, 1, 0, 0);
 
       return std::make_tuple(original_mask, dilated_horiz_mask, depth, color, out_composite);
