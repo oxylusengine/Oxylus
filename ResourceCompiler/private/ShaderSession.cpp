@@ -21,12 +21,14 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
 
       const auto source_data = File::to_string(shader_path);
       if (source_data.empty()) {
-        self.rc_session.push_error(fmt::format(
-          "An error occured during compiling '{}::{}', the file '{}' is empty.",
-          self.name,
-          info.module_name,
-          shader_path
-        ));
+        self.rc_session.push_error(
+          fmt::format(
+            "An error occured during compiling '{}::{}', the file '{}' is empty.",
+            self.name,
+            info.module_name,
+            shader_path
+          )
+        );
         return nullopt;
       }
 
@@ -75,13 +77,15 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
           static_cast<const c8*>(diagnostics_blob->getBufferPointer()),
           diagnostics_blob->getBufferSize()
         );
-        self.rc_session.push_error(fmt::format(
-          "An error occured while compiling entry point {}::{}::{} {}",
-          self.name,
-          info.module_name,
-          entry_point_name,
-          sv
-        ));
+        self.rc_session.push_error(
+          fmt::format(
+            "An error occured while compiling entry point {}::{}::{} {}",
+            self.name,
+            info.module_name,
+            entry_point_name,
+            sv
+          )
+        );
       }
       return nullopt;
     }
@@ -153,17 +157,14 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
         switch (level) {
           case SPV_MSG_FATAL:
           case SPV_MSG_INTERNAL_ERROR:
-          case SPV_MSG_ERROR:
-            self.rc_session.push_error(fmt::format("[SPVOPT]: {}: {}", source, message));
-            break;
-          case SPV_MSG_WARNING:
-          case SPV_MSG_INFO:
-          case SPV_MSG_DEBUG:
-            self.rc_session.push_message(fmt::format("[SPVOPT]: {}: {}", source, message));
-            break;
+          case SPV_MSG_ERROR         : self.rc_session.push_error(fmt::format("[SPVOPT]: {}: {}", source, message)); break;
+          case SPV_MSG_WARNING       :
+          case SPV_MSG_INFO          :
+          case SPV_MSG_DEBUG         : self.rc_session.push_message(fmt::format("[SPVOPT]: {}: {}", source, message)); break;
         }
       };
 
+#if 0
     auto optimizer = spvtools::Optimizer(SPV_ENV_UNIVERSAL_1_5);
     optimizer.SetMessageConsumer(spv_message_cb);
 
@@ -231,6 +232,11 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
       &spirv,
       optimizer_options
     ));
+#else
+    auto spirv_ptr = reinterpret_cast<const u32*>(spirv_code->getBufferPointer());
+    auto spirv = std::vector<u32>(spirv_code->getBufferSize() / sizeof(u32));
+    std::memcpy(spirv.data(), spirv_ptr, spirv_code->getBufferSize());
+#endif
 
     results.push_back({
       .name = entry_point_name,

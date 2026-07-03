@@ -20,6 +20,9 @@ struct TextureLoadInfo {
   std::span<const u8> bytes = {};
   option<void*> loaded_data = ox::nullopt;
   option<vuk::Extent3D> extent = ox::nullopt;
+  vuk::ImageCreateFlags image_flags = {};
+  option<uint32_t> layer_count = ox::nullopt;
+  option<vuk::ImageViewType> view_type = ox::nullopt;
   vuk::SamplerCreateInfo sampler_info = {
     .magFilter = vuk::Filter::eLinear,
     .minFilter = vuk::Filter::eLinear,

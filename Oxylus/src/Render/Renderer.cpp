@@ -1,6 +1,7 @@
 #include "Render/Renderer.hpp"
 
 #include <vuk/runtime/CommandBuffer.hpp>
+#include <vuk/vsl/Core.hpp>
 
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
@@ -104,6 +105,22 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
      .loaded_data = hilbert_noise,
      .extent = vuk::Extent3D{.width = HILBERT_NOISE_LUT_WIDTH, .height = HILBERT_NOISE_LUT_WIDTH, .depth = 1u}}
   );
+
+  self.sky_cubemap_view = Texture("sky_cubemap");
+  self.sky_cubemap_view.create(
+    {},
+    {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
+     .format = vuk::Format::eR16G16B16A16Sfloat,
+     .extent = vuk::Extent3D{.width = 32u, .height = 32u, .depth = 1u},
+     .image_flags = vuk::ImageCreateFlagBits::eCubeCompatible,
+     .layer_count = 6u,
+     .view_type = vuk::ImageViewType::eCube}
+  );
+
+  auto sky_cubemap_init = self.sky_cubemap_view.discard("sky_cubemap_init");
+  sky_cubemap_init = vuk::clear_image(std::move(sky_cubemap_init), vuk::Black<float>);
+  sky_cubemap_init = sky_cubemap_init.as_released(vuk::eFragmentSampled);
+  self.render_context->wait_on(std::move(sky_cubemap_init));
 
   auto temp_atmos_info = GPU::Atmosphere{};
   temp_atmos_info.transmittance_lut_size = self.sky_transmittance_lut_view.get_extent();
@@ -214,14 +231,15 @@ auto Renderer::deinit(this Renderer& self) -> std::expected<void, std::string> {
 }
 
 auto Renderer::new_frame(this Renderer& self) -> void {
-  self.acquired_sky_transmittance_lut_view = self.sky_transmittance_lut_view.acquire(
+  self.sky_transmittance_lut_attachment = self.sky_transmittance_lut_view.acquire(
     "sky_transmittance_lut",
     vuk::Access::eComputeSampled
   );
-  self.acquired_sky_multiscatter_lut_view = self.sky_multiscatter_lut_view.acquire(
+  self.sky_multiscatter_lut_attachment = self.sky_multiscatter_lut_view.acquire(
     "sky_multiscatter_lut",
     vuk::Access::eComputeSampled
   );
-  self.acquired_hilbert_noise_lut = self.hilbert_noise_lut.acquire("hilbert noise", vuk::eComputeSampled);
+  self.hilbert_noise_lut_attachment = self.hilbert_noise_lut.acquire("hilbert noise", vuk::eComputeSampled);
+  self.sky_cubemap_attachment = self.sky_cubemap_view.acquire("sky_cubemap", vuk::Access::eFragmentSampled);
 }
 } // namespace ox
