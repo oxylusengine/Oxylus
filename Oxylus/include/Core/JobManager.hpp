@@ -130,11 +130,15 @@ inline thread_local ThreadWorker this_thread_worker;
 
 class JobManager {
 public:
+  inline static const std::thread::id main_thread_id = std::this_thread::get_id();
+
   JobManager() = default;
   ~JobManager() = default;
 
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
+
+  static auto is_main_thread() noexcept -> bool { return std::this_thread::get_id() == main_thread_id; }
 
   auto set_thread_count(this JobManager& self, u32 count) -> void;
 

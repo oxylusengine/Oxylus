@@ -182,17 +182,13 @@ struct JsonEntityDeserializer : IEntitySerializer {
       return;
     }
 
-    if (
-      underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
-      underlying_kind == EcsOpU64
-    ) {
+    if (underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
+        underlying_kind == EcsOpU64) {
       auto result = field_result.get_uint64();
       auto current = static_cast<u64*>(ptr);
       *current = result.value_unsafe();
-    } else if (
-      underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
-      underlying_kind == EcsOpI64
-    ) {
+    } else if (underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
+               underlying_kind == EcsOpI64) {
       auto result = field_result.get_int64();
       auto current = static_cast<i64*>(ptr);
       *current = result.value_unsafe();
@@ -269,17 +265,14 @@ struct JsonEntityDeserializer : IEntitySerializer {
       if (!result.error() && opaque_info->assign_uint) {
         opaque_info->assign_uint(field_ptr, static_cast<u64>(result.value_unsafe()));
       }
-    } else if (
-      opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 || opaque_type == flecs::Uptr
-    ) {
+    } else if (opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 ||
+               opaque_type == flecs::Uptr) {
       auto result = field_result.get_uint64();
       if (!result.error() && opaque_info->assign_uint) {
         opaque_info->assign_uint(field_ptr, result.value_unsafe());
       }
-    } else if (
-      opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 || opaque_type == flecs::I64 ||
-      opaque_type == flecs::Iptr
-    ) {
+    } else if (opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 ||
+               opaque_type == flecs::I64 || opaque_type == flecs::Iptr) {
       auto result = field_result.get_int64();
       if (!result.error() && opaque_info->assign_int) {
         opaque_info->assign_int(field_ptr, result.value_unsafe());
@@ -410,7 +403,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   ZoneScoped;
   self.scene_name = name;
 
-  self.component_db.import_module(self.world.import<CoreComponentsModule>());
+  self.component_db.import_module(self.world.import <CoreComponentsModule>());
 
   if (App::has_mod<Renderer>()) {
     auto& renderer = App::mod<Renderer>();
@@ -812,10 +805,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       if (component.playing && !component.looping)
         component.system_time += sim_ts;
       const float delay = component.start_delay;
-      if (
-        component.playing &&
-        (component.looping || (component.system_time <= delay + component.duration && component.system_time > delay))
-      ) {
+      if (component.playing && (component.looping || (component.system_time <= delay + component.duration &&
+                                                      component.system_time > delay))) {
         // Emit particles in unit time
         component.spawn_time += sim_ts;
         if (component.spawn_time >= 1.0f / static_cast<float>(component.rate_over_time)) {
@@ -944,10 +935,11 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.system<const TransformComponent, CameraComponent>("camera_update")
     .kind(flecs::PostUpdate)
-    .each([](const TransformComponent& tc, CameraComponent& cc) {
-      const auto screen_extent = App::get_rendercontext().swapchain_extent;
+    .each([&self](const TransformComponent& tc, CameraComponent& cc) {
       cc.position = tc.position;
-      Camera::update(cc, screen_extent);
+      auto ri = self.get_renderer_instance();
+      if (ri)
+        Camera::update(cc, ri->get_viewport_size());
     });
 
   self.world.system<SpriteComponent>("sprite_aabb")
@@ -974,10 +966,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       auto& asset_manager = App::mod<AssetManager>();
       auto material = asset_manager.get_material(sprite.material);
 
-      if (
-        sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
-        !material->albedo_texture
-      )
+      if (sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
+          !material->albedo_texture)
         return;
 
       const auto dt = glm::clamp(static_cast<float>(it.delta_time()), 0.0f, 0.25f);
@@ -1392,25 +1382,6 @@ auto Scene::enable_all_phases() -> void {
   world.entity(flecs::PreUpdate).enable();
   world.entity(flecs::OnUpdate).enable();
   world.entity(flecs::PostUpdate).enable();
-}
-
-void Scene::on_render(const vuk::Extent3D extent, const vuk::Format format) {
-  ZoneScoped;
-
-  for (auto& [uuid, system] : lua_systems) {
-    system->on_scene_render(this, extent, format);
-  }
-}
-
-auto Scene::on_viewport_render(vuk::Extent3D extent, vuk::Format format) -> void {
-  ZoneScoped;
-
-  if (!is_running())
-    return;
-
-  for (auto& [uuid, system] : lua_systems) {
-    system->on_viewport_render(this, extent, format);
-  }
 }
 
 auto Scene::create_entity(const std::string& name, bool safe_naming) const -> flecs::entity {
@@ -2122,10 +2093,8 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   auto entities_array = doc["entities"];
   if (!entities_array.error()) {
     for (auto entity_json : entities_array.get_array()) {
-      if (
-        Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
-        flecs::entity::null()
-      ) {
+      if (Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
+          flecs::entity::null()) {
         return false;
       }
     }

@@ -90,31 +90,28 @@ public:
 
   static auto load_stb_image(
     const std::filesystem::path& path,
-    uint32_t* width = nullptr,
-    uint32_t* height = nullptr,
-    uint32_t* bits = nullptr,
+    u32* width = nullptr,
+    u32* height = nullptr,
+    u32* bits = nullptr,
     bool srgb = true
   ) -> std::unique_ptr<u8[]>;
 
   static auto load_stb_image_from_memory(
     void* buffer,
     size_t len,
-    uint32_t* width = nullptr,
-    uint32_t* height = nullptr,
-    uint32_t* bits = nullptr,
+    u32* width = nullptr,
+    u32* height = nullptr,
+    u32* bits = nullptr,
     bool flipY = false,
     bool srgb = true
   ) -> std::unique_ptr<u8[]>;
 
-  static auto get_magenta_texture(uint32_t width, uint32_t height, uint32_t channels) -> u8*;
+  static auto get_magenta_texture(u32 width, u32 height, u32 channels) -> u8*;
 
-  static auto convert_to_four_channels(uint32_t width, uint32_t height, const u8* three_channel_data) -> uint8_t*;
+  static auto convert_to_four_channels(u32 width, u32 height, const u8* three_channel_data) -> uint8_t*;
 
-  static auto get_mip_count(const vuk::Extent3D extent) -> uint32_t {
-    return static_cast<uint32_t>(
-             log2f(static_cast<float>(std::max(std::max(extent.width, extent.height), extent.depth)))
-           ) +
-           1;
+  static auto get_mip_count(const vuk::Extent3D extent) -> u32 {
+    return static_cast<u32>(log2f(static_cast<f32>(std::max(std::max(extent.width, extent.height), extent.depth)))) + 1;
   }
 
   static auto path_to_mime(const std::filesystem::path& path) -> TextureLoadInfo::MimeType;
