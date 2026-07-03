@@ -1,5 +1,3 @@
-module cull;
-
 import common;
 import gpu;
 import debug_drawer;
@@ -85,10 +83,37 @@ public func test_frustum(in f32x4x4 mvp, in f32x3 aabb_center, in f32x3 aabb_ext
     return true;
 }
 
+public func sample_level_min_reduction_2x2(
+    in Image2D<f32> img,
+    in f32x2 uv,
+    in u32 mip_level
+) -> f32 {
+    var mip_w = 0u;
+    var mip_h = 0u;
+    var levels = 0u;
+    img.GetDimensions(mip_level, mip_w, mip_h, levels);
+    let mip_size = f32x2(f32(mip_w), f32(mip_h));
+    let max_c = i32x2(i32(mip_w) - 1, i32(mip_h) - 1);
+    let zero = i32x2(0, 0);
+
+    let base = i32x2(floor(uv * mip_size - 0.5));
+
+    let c00 = clamp(base,               zero, max_c);
+    let c10 = clamp(base + i32x2(1, 0), zero, max_c);
+    let c01 = clamp(base + i32x2(0, 1), zero, max_c);
+    let c11 = clamp(base + i32x2(1, 1), zero, max_c);
+
+    let p00 = img.Load(i32x3(c00, i32(mip_level))).r;
+    let p10 = img.Load(i32x3(c10, i32(mip_level))).r;
+    let p01 = img.Load(i32x3(c01, i32(mip_level))).r;
+    let p11 = img.Load(i32x3(c11, i32(mip_level))).r;
+
+    return min(min(p00, p10), min(p01, p11));
+}
+
 public func test_occlusion(
     in ScreenAabb screen_aabb,
-    in Image2D<f32> hiz_image,
-    in Sampler hiz_sampler
+    in Image2D<f32> hiz_image
 ) -> bool {
     var width = 0u;
     var height = 0u;
@@ -96,19 +121,48 @@ public func test_occlusion(
     hiz_image.GetDimensions(0, width, height, hiz_levels);
     let hiz_size = f32x2(width, height);
 
-    let min_uv = screen_aabb.min.xy * hiz_size;
-    let max_uv = screen_aabb.max.xy * hiz_size;
-    let min_texel = u32x2(max(min_uv, 0.0));
-    let max_texel = u32x2(min(max_uv, hiz_size - 1.0));
+    let min_texel = u32x2(max(screen_aabb.min.xy * hiz_size, 0.0));
+    let max_texel = u32x2(min(screen_aabb.max.xy * hiz_size, hiz_size - 1.0));
 
     let size = max_texel - min_texel;
     let max_size = max(size.x, size.y);
     let mip = clamp(ceil(log2(f32(max_size))), 0.0, f32(hiz_levels - 1));
 
     let uv = ((f32x2(min_texel) + f32x2(max_texel)) * 0.5f) / hiz_size;
-    let d = hiz_image.SampleLevel(hiz_sampler, uv, mip);
+    let d = sample_level_min_reduction_2x2(hiz_image, uv, u32(mip));
     constexpr static let EPSILON = 1e-7;
     return screen_aabb.max.z <= d - EPSILON;
+}
+
+public func test_vsm_page(
+  in ScreenAabb screen_aabb,
+  in Texture2DArray<u8> hpb,
+  in SamplerState hpb_sampler,
+  in u32 layer,
+  in i32x2 page_offset
+) -> bool {
+    var width = 0u;
+    var height = 0u;
+    var elements = 0u;
+    var hpb_levels = 0u;
+    hpb.GetDimensions(0, width, height, elements, hpb_levels);
+    let hpb_size = f32x2(width, height);
+
+    let page_offset_uv = f32x2(page_offset) / hpb_size;
+
+    let min_uv = screen_aabb.min.xy;
+    let max_uv = screen_aabb.max.xy;
+
+    let box_w = (max_uv.x - min_uv.x) * hpb_size.x;
+    let box_h = (max_uv.y - min_uv.y) * hpb_size.y;
+    let mip = clamp(ceil(log2(max(box_w, box_h))), 0.0, f32(hpb_levels - 1));
+
+    let tl = hpb.SampleLevel(hpb_sampler, f32x3(fract(f32x2(min_uv.x, min_uv.y) + page_offset_uv), f32(layer)), mip) != 0;
+    let tr = hpb.SampleLevel(hpb_sampler, f32x3(fract(f32x2(max_uv.x, min_uv.y) + page_offset_uv), f32(layer)), mip) != 0;
+    let bl = hpb.SampleLevel(hpb_sampler, f32x3(fract(f32x2(min_uv.x, max_uv.y) + page_offset_uv), f32(layer)), mip) != 0;
+    let br = hpb.SampleLevel(hpb_sampler, f32x3(fract(f32x2(max_uv.x, max_uv.y) + page_offset_uv), f32(layer)), mip) != 0;
+
+    return tl | tr | bl | br;
 }
 
 // https://zeux.io/2023/04/28/triangle-backface-culling/#fnref:3

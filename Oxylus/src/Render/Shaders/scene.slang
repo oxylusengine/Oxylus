@@ -139,6 +139,21 @@ public struct Camera {
   public u32 output_index = 0;
   public f32x2 resolution;
   public f32 acceptable_lod_error;
+
+  public func unproject_uv(f32x2 uv, f32 depth) -> f32x3 {
+    let ndc = f32x4(uv * 2.0 - 1.0, depth, 1.0);
+    let world_pos_h = mul(this.inv_projection_view, ndc);
+    return world_pos_h.xyz / world_pos_h.w;
+  }
+};
+
+public struct CullCamera {
+    public mat4 projection_view = {};
+    public f32x3 position = {};
+    public f32 acceptable_lod_error = {};
+    public f32x2 resolution = {};
+    public f32 near_clip = {};
+    public u32 mesh_instances_count = {};
 };
 
 public struct Atmosphere {
@@ -168,6 +183,11 @@ public struct Atmosphere {
     public i32x3 aerial_perspective_lut_size;
 };
 
+public struct Sky {
+    public f32x4 solid_color;
+    public bool has_texture;
+};
+
 public enum SceneFlags : u32 {
   None = 0,
   HasDirectionalLight = 1 << 0,
@@ -180,6 +200,7 @@ public enum SceneFlags : u32 {
   HasChromaticAberration = 1 << 7,
   HasVignette = 1 << 8,
   HasContactShadows = 1 << 9,
+  HasSky = 1 << 10,
 };
 
 public struct DirectionalLightCascade {
@@ -224,11 +245,13 @@ public struct Lights {
   public PointLight *point_lights;
   public SpotLight *spot_lights;
   public Atmosphere *atmosphere;
+  public Sky *sky;
 };
 
 public struct Transform {
   public mat4 local = {};
   public mat4 world = {};
+  public mat4 previous_world = {};
   public mat3 normal = {};
 
   public func to_world_position(in f32x3 position) -> f32x4 {
@@ -258,9 +281,17 @@ public struct Meshlet {
     public u32 vertex_count = 0;
     public u32 triangle_count = 0;
 
+    static func get_micro_index(Ptr<u32> buf, u32 byte_offset) -> u32 {
+        let pack_index = byte_offset >> 2;
+        let index_pack = buf[pack_index];
+        let in_pack_offset = byte_offset & 3;
+        let in_pack_shift = in_pack_offset * 8;
+        return (index_pack >> in_pack_shift) & 0xFF;
+    }
+
     // Takes a local triange index and returns an index to index buffer.
     public func index(in MeshLOD mesh_lod, u32 i) -> u32 {
-        let local_triangle_index = u32(mesh_lod.local_triangle_indices[this.local_triangle_index_offset + i]);
+        let local_triangle_index = get_micro_index(mesh_lod.local_triangle_indices, this.local_triangle_index_offset + i);
         return mesh_lod.indirect_vertex_indices[this.indirect_vertex_index_offset + local_triangle_index];
     }
 
@@ -280,10 +311,11 @@ public struct Meshlet {
     // ----------------------------------------------------------
 
     public func indices(in MeshLOD mesh_lod, u32 i) -> u32x3 {
+        let base = this.local_triangle_index_offset + i * 3;
         let local_triangle_indices = u32x3(
-            u32(mesh_lod.local_triangle_indices[this.local_triangle_index_offset + i * 3 + 0]),
-            u32(mesh_lod.local_triangle_indices[this.local_triangle_index_offset + i * 3 + 1]),
-            u32(mesh_lod.local_triangle_indices[this.local_triangle_index_offset + i * 3 + 2]),
+            get_micro_index(mesh_lod.local_triangle_indices, base + 0),
+            get_micro_index(mesh_lod.local_triangle_indices, base + 1),
+            get_micro_index(mesh_lod.local_triangle_indices, base + 2),
         );
 
         return { mesh_lod.indirect_vertex_indices[this.indirect_vertex_index_offset + local_triangle_indices.x],
@@ -338,7 +370,7 @@ public struct MeshLOD {
     public u32 *indices = nullptr;
     public Meshlet *meshlets = nullptr;
     public Bounds *meshlet_bounds = nullptr;
-    public u8 *local_triangle_indices = nullptr;
+    public u32 *local_triangle_indices = nullptr;
     public u32 *indirect_vertex_indices = nullptr;
     public u32 indices_count = 0;
     public u32 meshlet_count = 0;
@@ -429,6 +461,14 @@ public enum TonemapType : u32 {
     ACES,
     AgX,
     GT7,
+};
+
+[[Flags]]
+public enum CullFlag : u32 {
+    TestFrustum,
+    SelectLOD,
+    TestOcclusion,
+    LatePass,
 };
 
 // --- Bindings ---

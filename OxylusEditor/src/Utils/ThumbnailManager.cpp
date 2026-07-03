@@ -1,5 +1,6 @@
 #include "ThumbnailManager.hpp"
 
+#include <imgui.h>
 #include <stb_image.h>
 #include <stb_image_resize2.h>
 #include <stb_image_write.h>
@@ -7,9 +8,9 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
+#include "Utils/ThumbnailCamera.hpp"
 
 namespace ox {
-
 auto ThumbnailManager::init(this ThumbnailManager& self) -> void {
   ZoneScoped;
 
@@ -37,7 +38,6 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
     auto pixels = self.render_thumbnail(render_job.model_uuid, THUMBNAIL_SIZE);
 
     if (pixels.has_value() && !pixels->empty()) {
-
       auto& job_man = App::get_job_manager();
       job_man.push_job_name("ContentPanelThumbnail_WritePNG");
       job_man.submit(Job::create([expected_png = render_job.expected_png, pixel_bytes = *pixels]() {
@@ -234,27 +234,32 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
   }
 
   const auto sun = thumbnail_scene.create_entity("sun", true);
-  sun.set<TransformComponent>({
-    .rotation = glm::quat(glm::vec3(glm::radians(45.f), glm::radians(90.f), 0.f)),
-  });
-  sun.set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 10.f})
-    .add<AtmosphereComponent>();
-  sun.set<AutoExposureComponent>({});
+  sun
+    .set<TransformComponent>({
+      .rotation = glm::quat(glm::vec3(glm::radians(45.f), glm::radians(90.f), 0.f)),
+    })
+    .set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 10.f})
+    .add<AtmosphereComponent>()
+    .add<SkyComponent>()
+    .set<AutoExposureComponent>({});
 
-  glm::vec3 out_pos;
-  glm::quat out_rot;
-  f32 out_near, out_far;
-  self.calculate_thumbnail_camera(AABB(model_asset->get_base_aabb()), out_pos, out_rot, out_near, out_far);
+  f32 cam_fov = 40.f;
+
+  auto transform = ThumbnailCamera::calculate_from_model(*model_asset.value, cam_fov, 1.0f);
 
   const auto camera = thumbnail_scene.create_entity("camera", true);
   camera.set<CameraComponent>({CameraComponent{
-    .fov = 40.f,
-    .far_clip = out_far,
-    .near_clip = out_near,
+    .fov = cam_fov,
+    .far_clip = transform.far_clip,
+    .near_clip = transform.near_clip,
+    .yaw = transform.yaw,
+    .pitch = transform.pitch,
+    .position = transform.position,
   }});
+
   camera.set<TransformComponent>(TransformComponent{
-    .position = out_pos,
-    .rotation = out_rot,
+    .position = transform.position,
+    .rotation = transform.rotation,
   });
 
   auto& ts = App::get_timestep();
@@ -290,41 +295,4 @@ auto ThumbnailManager::get_asset_hash(this const ThumbnailManager& self, const s
   size_t hash_val = std::hash<std::string>{}(signature);
   return fmt::format("{:X}", hash_val);
 }
-
-auto ThumbnailManager::calculate_thumbnail_camera(
-  this ThumbnailManager& self,
-  const ox::AABB& model_aabb,
-  glm::vec3& out_position,
-  glm::quat& out_rotation,
-  f32& out_near,
-  f32& out_far
-) -> void {
-  ZoneScoped;
-
-  glm::vec3 extents = model_aabb.get_extents();
-  f32 radius = glm::max(0.1f, glm::length(extents));
-
-  f32 fov_radians = glm::radians(45.0f);
-  f32 distance = (radius / glm::sin(fov_radians * 0.5f)) * 1.3f;
-
-  glm::vec3 target = glm::vec3(0.0f);
-
-  f32 pitch = glm::radians(25.0f);
-  f32 yaw = glm::radians(35.0f);
-
-  glm::vec3 offset_direction = glm::vec3(
-    glm::cos(pitch) * glm::sin(yaw), // X
-    glm::sin(pitch),                 // Y
-    glm::cos(pitch) * glm::cos(yaw)  // Z
-  );
-
-  out_position = target + offset_direction * distance;
-
-  glm::mat4 view_matrix = glm::lookAt(out_position, target, glm::vec3(0.0f, 1.0f, 0.0f));
-  out_rotation = glm::quat_cast(glm::inverse(view_matrix));
-
-  out_near = glm::max(0.01f, distance - (radius * 2.0f));
-  out_far = distance + (radius * 2.0f);
-}
-
 } // namespace ox

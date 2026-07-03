@@ -6,16 +6,15 @@ import visbuffer;
 
 #include <defines.slang>
 
-[[vk::constant_id(0)]] const bool LATE = false;
-[[vk::binding(0)]] ConstantBuffer<Camera> camera;
-[[vk::binding(1)]] StructuredBuffer<Mesh> meshes;
-[[vk::binding(2)]] StructuredBuffer<MeshInstance> mesh_instances;
-[[vk::binding(3)]] StructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(4)]] StructuredBuffer<MeshletInstanceVisibility> visibility;
-[[vk::binding(5)]] StructuredBuffer<Transform> transforms;
-[[vk::binding(6)]] StructuredBuffer<u32> visible_meshlet_instances_indices;
-[[vk::binding(7)]] RWStructuredBuffer<u32> reordered_indices;
-[[vk::binding(8)]] RWStructuredBuffer<DrawIndexedIndirectCommand> draw_cmd;
+[[vk::constant_id(0)]] const u32 CULL_FLAGS;
+[[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
+[[vk::binding(1)]] StructuredBuffer<MeshInstance> mesh_instances;
+[[vk::binding(2)]] StructuredBuffer<MeshletInstance> meshlet_instances;
+[[vk::binding(3)]] StructuredBuffer<MeshletInstanceVisibility> visibility;
+[[vk::binding(4)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(5)]] StructuredBuffer<u32> visible_meshlet_instances_indices;
+[[vk::binding(6)]] RWStructuredBuffer<u32> reordered_indices;
+[[vk::binding(7)]] RWStructuredBuffer<DrawIndexedIndirectCommand> draw_cmd;
 
 groupshared u32 base_index_shared;
 groupshared u32 triangles_passed_shared;
@@ -30,9 +29,10 @@ groupshared mat4 model_view_proj_shared;
 func cs_main(
     uint3 group_id : SV_GroupID,
     uint3 group_thread_id : SV_GroupThreadID,
+    uniform CullCamera camera
 ) -> void {
     var visible_meshlet_instance_index = group_id.x;
-    if (LATE) {
+    if (HAS_FLAG(CULL_FLAGS, CullFlag.LatePass)) {
         visible_meshlet_instance_index += visibility[0].early_visible_meshlet_instances;
     }
 

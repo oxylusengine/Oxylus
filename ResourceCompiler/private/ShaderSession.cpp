@@ -151,6 +151,7 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
       return nullopt;
     }
 
+#if 0
     // SPIR-V optimization
     auto spv_message_cb =
       [&](spv_message_level_t level, const char* source, const spv_position_t& /*position*/, const char* message) {
@@ -164,7 +165,6 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
         }
       };
 
-#if 0
     auto optimizer = spvtools::Optimizer(SPV_ENV_UNIVERSAL_1_5);
     optimizer.SetMessageConsumer(spv_message_cb);
 
@@ -233,9 +233,8 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
       optimizer_options
     ));
 #else
-    auto spirv_ptr = reinterpret_cast<const u32*>(spirv_code->getBufferPointer());
     auto spirv = std::vector<u32>(spirv_code->getBufferSize() / sizeof(u32));
-    std::memcpy(spirv.data(), spirv_ptr, spirv_code->getBufferSize());
+    std::memcpy(spirv.data(), spirv_code->getBufferPointer(), ox::size_bytes(spirv));
 #endif
 
     results.push_back({

@@ -331,7 +331,7 @@ auto RendererInstance::apply_pbr(
       VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
       VUK_IA(vuk::eFragmentSampled) gtao,
       VUK_IA(vuk::eFragmentSampled) contact_shadows,
-      VUK_IA(vuk::eFragmentSampled) shadows,
+      VUK_IA(vuk::eFragmentSampled) resolved_shadows,
       VUK_BA(vuk::eFragmentUniformRead) lights,
       VUK_BA(vuk::eFragmentUniformRead) camera
     ) {
@@ -354,7 +354,7 @@ auto RendererInstance::apply_pbr(
         .bind_image(0, 9, metallic_roughness_occlusion)
         .bind_image(0, 10, gtao)
         .bind_image(0, 11, contact_shadows)
-        .bind_image(0, 12, shadows)
+        .bind_image(0, 12, resolved_shadows)
         .bind_buffer(0, 13, lights)
         .bind_buffer(0, 14, camera)
         .bind_image(0, 15, sky_cubemap)
@@ -374,7 +374,7 @@ auto RendererInstance::apply_pbr(
         metallic_roughness_occlusion,
         gtao,
         contact_shadows,
-        shadows,
+        resolved_shadows,
         lights,
         camera
       );
@@ -394,7 +394,7 @@ auto RendererInstance::apply_pbr(
     context.metallic_roughness_occlusion_attachment,
     context.ambient_occlusion_attachment,
     context.contact_shadows_attachment,
-    context.directional_shadowmap_attachment,
+    context.resolved_shadows_attachment,
     self.prepared_frame.lights_buffer,
     self.prepared_frame.camera_buffer
   ) =
@@ -411,7 +411,7 @@ auto RendererInstance::apply_pbr(
       std::move(context.metallic_roughness_occlusion_attachment),
       std::move(context.ambient_occlusion_attachment),
       std::move(context.contact_shadows_attachment),
-      std::move(context.directional_shadowmap_attachment),
+      std::move(context.resolved_shadows_attachment),
       std::move(self.prepared_frame.lights_buffer),
       std::move(self.prepared_frame.camera_buffer)
     );

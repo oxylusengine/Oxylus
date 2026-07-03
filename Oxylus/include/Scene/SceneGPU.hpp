@@ -10,6 +10,7 @@ enum class TransformID : u64 { Invalid = ~0_u64 };
 struct Transforms {
   alignas(4) glm::mat4 local = {};
   alignas(4) glm::mat4 world = {};
+  alignas(4) glm::mat4 previous_world = {};
   alignas(4) glm::mat3 normal = {};
 };
 
@@ -28,6 +29,7 @@ enum class DebugView : i32 {
   Roughness,
   BakedOcclusion,
   GTAO,
+  RMVSM,
 
   Count,
 };
@@ -162,6 +164,11 @@ struct Atmosphere {
   alignas(4) vuk::Extent3D aerial_perspective_lut_size = {};
 };
 
+struct SkyData {
+  glm::vec4 solid_color = {0.f, 0.f, 0.f, 1.f};
+  bool has_texture = false;
+};
+
 struct CameraData {
   alignas(4) glm::vec4 position = {};
 
@@ -193,6 +200,15 @@ struct CameraData {
   alignas(4) u32 output_index = 0;
   alignas(4) glm::vec2 resolution = {};
   alignas(4) f32 acceptable_lod_error = 2.0f; // TODO: Make this configurable
+};
+
+struct CullCamera {
+  glm::mat4 projection_view = {};
+  glm::vec3 position = {};
+  f32 acceptable_lod_error = {};
+  glm::vec2 resolution = {};
+  f32 near_clip = {};
+  u32 mesh_instance_count = {};
 };
 
 #define MAX_POINT_LIGHTS 1024
@@ -242,6 +258,7 @@ struct Lights {
   alignas(8) u64 point_lights = 0;
   alignas(8) u64 spot_lights = 0;
   alignas(8) u64 atmosphere = 0;
+  alignas(8) u64 sky = 0;
 };
 
 enum class SceneFlags : u32 {
@@ -256,6 +273,7 @@ enum class SceneFlags : u32 {
   HasChromaticAberration = 1 << 7,
   HasVignette = 1 << 8,
   HasContactShadows = 1 << 9,
+  HasSky = 1 << 10,
 };
 consteval void enable_bitmask(SceneFlags);
 
@@ -298,4 +316,47 @@ enum struct TonemapType : u32 {
   AgX,
   GT7,
 };
+
+struct VSMAllocRequest {
+  alignas(4) glm::ivec3 page_table_address = {};
+};
+
+struct VSMPageAllocator {
+  alignas(4) u32 active_request_count = {};
+  alignas(4) u32 dirty_physical_page_count = {};
+  alignas(4) u32 free_page_count = {};
+  alignas(4) u32 alloc_cursor = {};
+  alignas(8) u64 requests = {};
+  alignas(8) u64 dirty_physical_page_coords = {};
+  alignas(8) u64 free_page_list = {};
+};
+
+struct VSMContext {
+  i32 page_size = 0;
+  i32 page_table_size = 0;
+  i32 physcial_page_table_size = 0;
+  i32 curr_clipmap_index = 0;
+  i32 clipmap_count = 0;
+  glm::ivec2 depth_extent = {};
+  f32 first_clipmap_width = 0;
+  f32 clipmap_selection_bias = 0;
+  f32 virtual_extent = 0;
+  f32 z_length = 0.0f;
+  glm::vec3 directional_light_dir = {};
+};
+
+struct VirtualClipmap {
+  glm::mat4 projection_view_mat = {};
+  glm::ivec2 page_offset = {};
+  f32 z_near = 0.0f;
+};
+
+enum struct CullFlag : u32 {
+    TestFrustum = 1 << 0,
+    SelectLOD = 1 << 1,
+    TestOcclusion = 1 << 2,
+    LatePass = 1 << 3,
+};
+consteval void enable_bitmask(CullFlag);
+
 } // namespace ox::GPU

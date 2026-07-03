@@ -1142,6 +1142,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     auto max_meshlet_instance_count = 0_u32;
     auto gpu_meshes = std::vector<GPU::Mesh>();
     auto gpu_mesh_instances = std::vector<GPU::MeshInstance>();
+    auto mesh_slot_to_gpu_index = ankerl::unordered_dense::map<u32, u32>();
 
     if (self.meshes_dirty) {
       auto mesh_instances = self.mesh_instances.slots_unsafe();
@@ -1174,12 +1175,28 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         gpu_mesh_instance.transform_index = SlotMap_decode_id(mesh_instance.transform_id).index;
         gpu_mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
 
+        mesh_slot_to_gpu_index[static_cast<u32>(index)] = static_cast<u32>(gpu_mesh_instances.size() - 1);
+
         meshlet_instance_visibility_offset += lod0.meshlet_count;
         max_meshlet_instance_count += lod0.meshlet_count;
       });
 
       self.gpu_mesh_instance_count = gpu_mesh_instances.size();
       self.max_meshlet_instance_count = max_meshlet_instance_count;
+    } else if (!self.dirty_mesh_instances.empty()) {
+      u32 gpu_idx = 0;
+      self.mesh_instances.for_each_active([&](usize slot_index, const MeshInstance&) {
+        mesh_slot_to_gpu_index[static_cast<u32>(slot_index)] = gpu_idx++;
+      });
+    }
+
+    auto dirty_mesh_instance_gpu_indices = std::vector<u32>();
+    dirty_mesh_instance_gpu_indices.reserve(self.dirty_mesh_instances.size());
+    for (const auto mesh_instance_id : self.dirty_mesh_instances) {
+      const auto slot_index = SlotMap_decode_id(mesh_instance_id).index;
+      if (const auto it = mesh_slot_to_gpu_index.find(slot_index); it != mesh_slot_to_gpu_index.end()) {
+        dirty_mesh_instance_gpu_indices.push_back(it->second);
+      }
     }
 
     auto uuid_to_image_index = [&](const UUID& uuid) -> option<u32> {
@@ -1280,10 +1297,18 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       .gpu_materials = self.gpu_materials,
       .gpu_meshes = gpu_meshes,
       .gpu_mesh_instances = gpu_mesh_instances,
+      .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices,
     };
     self.renderer_instance->update(update_info);
+
+    for (const auto transform_id : self.dirty_transforms) {
+      if (auto* gpu_transform = self.transforms.slot(transform_id)) {
+        gpu_transform->previous_world = gpu_transform->world;
+      }
+    }
   }
   self.dirty_transforms.clear();
+  self.dirty_mesh_instances.clear();
   self.meshes_dirty = false;
 }
 
@@ -1553,6 +1578,14 @@ auto Scene::set_dirty(this Scene& self, flecs::entity entity) -> void {
   gpu_transform->world = visit_parent(self, entity);
   gpu_transform->normal = glm::mat3(gpu_transform->world);
   self.dirty_transforms.push_back(transform_id);
+
+  // Mark the entity's mesh instance (if any) as dirty so the VSM invalidate-pages
+  // pass can clear pages the mesh used to cover. Child entities are notified below,
+  // which re-enters `set_dirty` for each child that has a transform.
+  if (const auto mesh_it = self.entity_to_mesh_instance_map.find(entity);
+      mesh_it != self.entity_to_mesh_instance_map.end()) {
+    self.dirty_mesh_instances.push_back(mesh_it->second);
+  }
 
   // notify children
   entity.children([](flecs::entity e) {

@@ -20,7 +20,7 @@ import shadows;
 [[vk::binding(9)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
 [[vk::binding(10)]] Texture2D<f32> gtao_image;
 [[vk::binding(11)]] Texture2D<f32> contact_shadows;
-[[vk::binding(12)]] Texture2DArray<f32> directional_shadows_map;
+[[vk::binding(12)]] Texture2D<f32> resolved_shadows;
 [[vk::binding(13)]] ConstantBuffer<Lights> lights;
 [[vk::binding(14)]] ConstantBuffer<Camera> camera;
 [[vk::binding(15)]] TextureCube<f32x4> sky_cubemap;
@@ -141,8 +141,9 @@ func fs_main(
     let emission = emissive_image.Load(pixel_pos);
 
     let metallic_roughness_occlusion = metallic_roughness_occlusion_image.Load(pixel_pos);
-    let metallic = metallic_roughness_occlusion.r;
-    let roughness = metallic_roughness_occlusion.g;
+    let metallic = clamp(metallic_roughness_occlusion.r, 0.0, 1.0);
+    let roughness = clamp(metallic_roughness_occlusion.g, 0.045, 1.0);
+
     let baked_occlusion = metallic_roughness_occlusion.b;
     let screen_space_occlusion = gtao_image.Load(pixel_pos).r;
     let occlusion = baked_occlusion * screen_space_occlusion;
@@ -152,6 +153,7 @@ func fs_main(
     let world_position = world_position_h.xyz / world_position_h.w;
 
     let has_atmosphere = (scene_flags & SceneFlags::HasAtmosphere) != 0;
+    let has_sky = (scene_flags & SceneFlags::HasSky) != 0;
     let has_directional_light = (scene_flags & SceneFlags::HasDirectionalLight) != 0;
 
     // PBR constants
@@ -163,18 +165,21 @@ func fs_main(
     let NoV = abs(dot(N, V)) + 1e-5;
     let NoL = max(dot(N, L), 0.0);
 
-    var directional_shadow = 1.0f;
-    if (has_directional_light && lights.directional_light.cascade_count > 0) {
-        let view_z = -mul(camera.view, f32x4(world_position, 1.0)).z;
-        directional_shadow = sample_shadow_map(
-            lights.directional_light,
-            lights.directional_light_cascades,
-            directional_shadows_map,
-            linear_clamp_sampler,
-            view_z,
-            world_position,
-            N,
-            L);
+    if (has_sky) {
+      if (depth == 0.0) {
+          let sky = lights.sky;
+          if (sky.has_texture) {
+            // TODO: return the texture
+            return f32x4(1.f);
+          } else {
+            return f32x4(sky.solid_color);
+          }
+      }
+    }
+
+    var directional_shadow = 1.0;
+    if ((scene_flags & SceneFlags::HasDirectionalLight) != 0) {
+        directional_shadow = resolved_shadows.Load(pixel_pos).r;
     }
 
     var indirect_illuminance = f32x3(0.0);
