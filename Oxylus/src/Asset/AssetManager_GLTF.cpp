@@ -471,6 +471,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
   }
 
   auto& job_man = App::get_job_manager();
+  auto run_async = job_man.is_main_thread();
 
   // Initial parsing
   auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(asset_path);
@@ -523,14 +524,20 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
       image_format = vuk::Format::eR8G8B8A8Unorm;
     }
 
-    job_man.submit(
-      Job::create([&asset_man = self, &gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format]() {
-        load_gltf_texture(asset_man, gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format);
-      })
-    );
+    auto work = [&asset_man = self, &gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format]() {
+      load_gltf_texture(asset_man, gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format);
+    };
+
+    if (run_async) {
+      job_man.submit(Job::create([work]() { work(); }));
+    } else {
+      work();
+    }
   }
 
-  job_man.wait();
+  if (run_async) {
+    job_man.wait();
+  }
 
   auto materials_result = register_gltf_materials(self, *meta_json->doc, asset_path);
   if (!materials_result.has_value()) {
