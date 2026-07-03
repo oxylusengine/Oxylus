@@ -7,14 +7,15 @@ import cull;
 
 [[vk::constant_id(0)]] const u32 CULL_FLAGS;
 [[vk::binding(0)]] Image2D<f32> hiz_image;
-[[vk::binding(1)]] StructuredBuffer<Mesh, ScalarDataLayout> meshes;
-[[vk::binding(2)]] StructuredBuffer<MeshInstance> mesh_instances;
-[[vk::binding(3)]] StructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(4)]] StructuredBuffer<Transform> transforms;
-[[vk::binding(5)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;
-[[vk::binding(6)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
-[[vk::binding(7)]] RWStructuredBuffer<u32> meshlet_instance_visibility_mask;
-[[vk::binding(8)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
+[[vk::binding(1)]] Sampler hiz_sampler;
+[[vk::binding(2)]] StructuredBuffer<Mesh, ScalarDataLayout> meshes;
+[[vk::binding(3)]] StructuredBuffer<MeshInstance> mesh_instances;
+[[vk::binding(4)]] StructuredBuffer<MeshletInstance> meshlet_instances;
+[[vk::binding(5)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(6)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;
+[[vk::binding(7)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
+[[vk::binding(8)]] RWStructuredBuffer<u32> meshlet_instance_visibility_mask;
+[[vk::binding(9)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
 
 [[shader("compute")]]
 [[numthreads(CULLING_MESHLET_COUNT, 1, 1)]]
@@ -52,7 +53,7 @@ func cs_main(
 
     if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) && visible) {
         if (let screen_aabb = project_aabb(mvp, camera.near_clip, bounds.aabb_center, bounds.aabb_extent)) {
-            visible = !test_occlusion(screen_aabb, hiz_image);
+            visible = !test_occlusion(screen_aabb, hiz_image, hiz_sampler);
         }
     }
 
