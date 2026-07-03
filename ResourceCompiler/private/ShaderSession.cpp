@@ -158,17 +158,14 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
         switch (level) {
           case SPV_MSG_FATAL:
           case SPV_MSG_INTERNAL_ERROR:
-          case SPV_MSG_ERROR:
-            self.rc_session.push_error(fmt::format("[SPVOPT]: {}: {}", source, message));
-            break;
-          case SPV_MSG_WARNING:
-          case SPV_MSG_INFO:
-          case SPV_MSG_DEBUG:
-            self.rc_session.push_message(fmt::format("[SPVOPT]: {}: {}", source, message));
-            break;
+          case SPV_MSG_ERROR         : self.rc_session.push_error(fmt::format("[SPVOPT]: {}: {}", source, message)); break;
+          case SPV_MSG_WARNING       :
+          case SPV_MSG_INFO          :
+          case SPV_MSG_DEBUG         : self.rc_session.push_message(fmt::format("[SPVOPT]: {}: {}", source, message)); break;
         }
       };
 
+#if 0
     auto optimizer = spvtools::Optimizer(SPV_ENV_UNIVERSAL_1_5);
     optimizer.SetMessageConsumer(spv_message_cb);
 

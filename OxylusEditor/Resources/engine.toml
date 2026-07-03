@@ -50,7 +50,12 @@ path = "passes/sky_aerial_perspective.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
-name = "cull_meshes"
+name = "sky_ibl"
+path = "passes/sky_ibl.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "vis_cull_meshes"
 path = "passes/cull_meshes.slang"
 entry_points = ["cs_main"]
 

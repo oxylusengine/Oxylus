@@ -260,6 +260,7 @@ struct AtmosphereContext {
   vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_multiscatter_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
+  vuk::Value<vuk::ImageAttachment> sky_cubemap_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_aerial_perspective_lut_attachment = {};
 };
 
@@ -277,7 +278,7 @@ struct PBRContext {
   vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_aerial_perspective_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
-  // vuk::Value<vuk::ImageAttachment> sky_cubemap_attachment = {};
+  vuk::Value<vuk::ImageAttachment> sky_cubemap_attachment = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
   vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
   vuk::Value<vuk::ImageAttachment> normal_attachment = {};

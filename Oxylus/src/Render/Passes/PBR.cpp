@@ -51,6 +51,53 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
       std::move(context.sky_view_lut_attachment)
     );
 
+  auto sky_cubemap_pass = vuk::make_pass(
+    "sky cubemap",
+    [sun_dir = self.directional_light.direction,
+     sun_intensity = self.directional_light.intensity,
+     sun_ambient_strength = 0.15f,
+     frame_index = static_cast<u32>(self.renderer.render_context->num_frames)](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eComputeSampled) sky_view_lut,
+      VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
+      VUK_BA(vuk::eComputeRead) atmosphere,
+      VUK_BA(vuk::eComputeRead) camera,
+      VUK_IA(vuk::eComputeRW) sky_cubemap
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("sky_ibl")
+        .bind_sampler(0, 0, vuk::LinearSamplerClamped)
+        .bind_image(0, 1, sky_view_lut)
+        .bind_image(0, 5, sky_transmittance_lut)
+        .bind_buffer(0, 2, atmosphere)
+        .bind_buffer(0, 3, camera)
+        .bind_image(0, 4, sky_cubemap)
+        .push_constants(
+          vuk::ShaderStageFlagBits::eCompute,
+          0,
+          PushConstants(sun_dir, sun_intensity, sun_ambient_strength, frame_index)
+        )
+        .dispatch_invocations_per_pixel(sky_cubemap, 1.0f, 1.0f, sky_cubemap->layer_count);
+
+      return std::make_tuple(sky_view_lut, sky_transmittance_lut, atmosphere, camera, sky_cubemap);
+    }
+  );
+
+  std::tie(
+    context.sky_view_lut_attachment,
+    context.sky_transmittance_lut_attachment,
+    self.prepared_frame.atmosphere_buffer,
+    self.prepared_frame.camera_buffer,
+    context.sky_cubemap_attachment
+  ) =
+    sky_cubemap_pass(
+      std::move(context.sky_view_lut_attachment),
+      std::move(context.sky_transmittance_lut_attachment),
+      std::move(self.prepared_frame.atmosphere_buffer),
+      std::move(self.prepared_frame.camera_buffer),
+      std::move(context.sky_cubemap_attachment)
+    );
+
   auto sky_aerial_perspective_pass = vuk::make_pass(
     "sky aerial perspective",
     [](
@@ -276,6 +323,7 @@ auto RendererInstance::apply_pbr(
       VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
       VUK_IA(vuk::eFragmentSampled) sky_aerial_perspective_lut_attachment,
       VUK_IA(vuk::eFragmentSampled) sky_view_lut,
+      VUK_IA(vuk::eFragmentSampled) sky_cubemap,
       VUK_IA(vuk::eFragmentSampled) depth,
       VUK_IA(vuk::eFragmentSampled) albedo,
       VUK_IA(vuk::eFragmentSampled) normal,
@@ -309,7 +357,8 @@ auto RendererInstance::apply_pbr(
         .bind_image(0, 12, resolved_shadows)
         .bind_buffer(0, 13, lights)
         .bind_buffer(0, 14, camera)
-        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, scene_flags)
+        .bind_image(0, 15, sky_cubemap)
+        .specialize_constants(0, std::to_underlying(scene_flags))
         .draw(3, 1, 0, 0);
 
       return std::make_tuple(
@@ -317,6 +366,7 @@ auto RendererInstance::apply_pbr(
         sky_transmittance_lut,
         sky_aerial_perspective_lut_attachment,
         sky_view_lut,
+        sky_cubemap,
         depth,
         albedo,
         normal,
@@ -336,6 +386,7 @@ auto RendererInstance::apply_pbr(
     context.sky_transmittance_lut_attachment,
     context.sky_aerial_perspective_lut_attachment,
     context.sky_view_lut_attachment,
+    context.sky_cubemap_attachment,
     context.depth_attachment,
     context.albedo_attachment,
     context.normal_attachment,
@@ -352,6 +403,7 @@ auto RendererInstance::apply_pbr(
       std::move(context.sky_transmittance_lut_attachment),
       std::move(context.sky_aerial_perspective_lut_attachment),
       std::move(context.sky_view_lut_attachment),
+      std::move(context.sky_cubemap_attachment),
       std::move(context.depth_attachment),
       std::move(context.albedo_attachment),
       std::move(context.normal_attachment),

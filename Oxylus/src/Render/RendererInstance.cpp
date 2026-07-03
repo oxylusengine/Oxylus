@@ -627,7 +627,9 @@ auto RendererInstance::render(
   sky_aerial_perspective_attachment.same_format_as(sky_view_lut_attachment);
   sky_aerial_perspective_attachment = vuk::clear_image(std::move(sky_aerial_perspective_attachment), vuk::Black<f32>);
 
-  auto hilbert_noise_lut_attachment = self.renderer.acquired_hilbert_noise_lut;
+  auto sky_cubemap_attachment = self.renderer.sky_cubemap_attachment;
+
+  auto hilbert_noise_lut_attachment = self.renderer.hilbert_noise_lut_attachment;
 
   auto visbuffer_attachment = vuk::declare_ia(
     "visbuffer",
@@ -900,14 +902,15 @@ auto RendererInstance::render(
     );
   }
 
-  auto sky_transmittance_lut_attachment = self.renderer.acquired_sky_transmittance_lut_view;
-  auto sky_multiscatter_lut_attachment = self.renderer.acquired_sky_multiscatter_lut_view;
+  auto sky_transmittance_lut_attachment = self.renderer.sky_transmittance_lut_attachment;
+  auto sky_multiscatter_lut_attachment = self.renderer.sky_multiscatter_lut_attachment;
 
   if (scene_has_atmosphere && scene_has_directional_light) {
     auto atmos_context = AtmosphereContext{
       .sky_transmittance_lut_attachment = sky_transmittance_lut_attachment,
       .sky_multiscatter_lut_attachment = sky_multiscatter_lut_attachment,
       .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
+      .sky_cubemap_attachment = std::move(sky_cubemap_attachment),
       .sky_aerial_perspective_lut_attachment = std::move(sky_aerial_perspective_attachment),
     };
     self.draw_atmosphere(atmos_context);
@@ -915,6 +918,7 @@ auto RendererInstance::render(
     sky_transmittance_lut_attachment = std::move(atmos_context.sky_transmittance_lut_attachment);
     sky_multiscatter_lut_attachment = std::move(atmos_context.sky_multiscatter_lut_attachment);
     sky_view_lut_attachment = std::move(atmos_context.sky_view_lut_attachment);
+    sky_cubemap_attachment = std::move(atmos_context.sky_cubemap_attachment);
     sky_aerial_perspective_attachment = std::move(atmos_context.sky_aerial_perspective_lut_attachment);
   }
 
@@ -940,6 +944,7 @@ auto RendererInstance::render(
     .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
     .sky_aerial_perspective_lut_attachment = std::move(sky_aerial_perspective_attachment),
     .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
+    .sky_cubemap_attachment = std::move(sky_cubemap_attachment),
     .depth_attachment = std::move(depth_attachment),
     .albedo_attachment = std::move(albedo_attachment),
     .normal_attachment = std::move(normal_attachment),
