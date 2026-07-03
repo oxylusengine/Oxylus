@@ -1,3 +1,13 @@
+//
+// Resolution Matched Virtual Shadowmaps by Matěj Sakmary (https://github.com/MatejSakmary).
+//
+// This implementation is an amalgamation of multiple other RM/S VSM implementations:
+// Mainly with improvements made by:
+// - Jake Ryan (https://github.com/JuanDiegoMontoya),
+// - J Stephano (https://ktstephano.github.io/rendering/stratusgfx/svsm),
+// - LVSTRI (https://github.com/LVSTRI)
+//
+
 import common;
 import scene;
 
