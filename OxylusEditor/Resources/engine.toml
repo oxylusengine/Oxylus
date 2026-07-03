@@ -55,7 +55,7 @@ path = "passes/sky_ibl.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
-name = "vis_cull_meshes"
+name = "cull_meshes"
 path = "passes/cull_meshes.slang"
 entry_points = ["cs_main"]
 

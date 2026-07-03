@@ -6,20 +6,6 @@
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
-static constexpr auto sampler_min_clamp_reduction_mode = VkSamplerReductionModeCreateInfo{
-  .sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO,
-  .pNext = nullptr,
-  .reductionMode = VK_SAMPLER_REDUCTION_MODE_MIN,
-};
-
-static constexpr auto hiz_sampler = vuk::SamplerCreateInfo{
-  .pNext = &sampler_min_clamp_reduction_mode,
-  .magFilter = vuk::Filter::eLinear,
-  .minFilter = vuk::Filter::eLinear,
-  .mipmapMode = vuk::SamplerMipmapMode::eNearest,
-  .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-  .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-};
 
 auto RendererInstance::generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void {
   ZoneScoped;
@@ -34,9 +20,7 @@ auto RendererInstance::generate_hiz(this RendererInstance&, MainGeometryContext&
       auto extent = dst->extent;
       auto mip_count = dst->level_count;
 
-      cmd_list //
-        .bind_compute_pipeline("hiz")
-        .bind_sampler(0, 0, hiz_sampler);
+      cmd_list.bind_compute_pipeline("hiz");
 
       for (auto i = 0_u32; i < mip_count; i++) {
         auto mip_width = std::max(1_u32, extent.width >> i);
@@ -44,15 +28,15 @@ auto RendererInstance::generate_hiz(this RendererInstance&, MainGeometryContext&
 
         auto mip = dst->mip(i);
         if (i == 0) {
-          cmd_list.bind_image(0, 1, src);
+          cmd_list.bind_image(0, 0, src);
         } else {
           auto prev_mip = dst->mip(i - 1);
           cmd_list.image_barrier(prev_mip, vuk::eComputeWrite, vuk::eComputeSampled);
-          cmd_list.bind_image(0, 1, prev_mip);
+          cmd_list.bind_image(0, 0, prev_mip);
         }
 
-        cmd_list.bind_image(0, 2, mip);
-        cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height, i));
+        cmd_list.bind_image(0, 1, mip);
+        cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height));
         cmd_list.dispatch_invocations(mip_width, mip_height);
       }
 
@@ -158,15 +142,14 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
         cmd_list //
           .bind_compute_pipeline("cull_meshlets_hiz")
           .bind_image(0, 0, hiz)
-          .bind_sampler(0, 1, hiz_sampler)
-          .bind_buffer(0, 2, meshes)
-          .bind_buffer(0, 3, mesh_instances)
-          .bind_buffer(0, 4, meshlet_instances)
-          .bind_buffer(0, 5, transforms)
-          .bind_buffer(0, 6, visibility)
-          .bind_buffer(0, 7, visible_meshlet_instances_indices)
-          .bind_buffer(0, 8, meshlet_instance_visibility_mask)
-          .bind_buffer(0, 9, cull_triangles_cmd)
+          .bind_buffer(0, 1, meshes)
+          .bind_buffer(0, 2, mesh_instances)
+          .bind_buffer(0, 3, meshlet_instances)
+          .bind_buffer(0, 4, transforms)
+          .bind_buffer(0, 5, visibility)
+          .bind_buffer(0, 6, visible_meshlet_instances_indices)
+          .bind_buffer(0, 7, meshlet_instance_visibility_mask)
+          .bind_buffer(0, 8, cull_triangles_cmd)
           .specialize_constants(0, std::to_underlying(cull_meshlets_flags))
           .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
           .dispatch_indirect(dispatch_cmd);
