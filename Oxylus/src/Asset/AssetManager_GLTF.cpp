@@ -467,6 +467,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
   }
 
   auto& job_man = App::get_job_manager();
+  auto run_async = job_man.is_main_thread();
 
   auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(asset_path);
   auto gltf_type = fastgltf::determineGltfFileType(gltf_buffer.get());
@@ -518,14 +519,20 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
       image_format = vuk::Format::eR8G8B8A8Unorm;
     }
 
-    job_man.submit(
-      Job::create([&asset_man = self, &gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format]() {
-        load_gltf_texture(asset_man, gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format);
-      })
-    );
+    auto work = [&asset_man = self, &gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format]() {
+      load_gltf_texture(asset_man, gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format);
+    };
+
+    if (run_async) {
+      job_man.submit(Job::create([work]() { work(); }));
+    } else {
+      work();
+    }
   }
 
-  job_man.wait();
+  if (run_async) {
+    job_man.wait();
+  }
 
   auto materials_result = register_gltf_materials(self, *meta_json->doc, asset_path);
   if (!materials_result.has_value()) {
@@ -993,6 +1000,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
   {
     auto asset = self.get_asset(uuid);
     asset->model_id = self.model_map.create_slot(std::move(model));
+    OX_LOG_INFO("Loaded model {} {}.", asset->uuid.str(), SlotMap_decode_id(asset->model_id).index);
   }
 
   return true;
@@ -1014,7 +1022,7 @@ auto AssetManager::unload_model(this AssetManager& self, const UUID& uuid) -> bo
   self.model_map.destroy_slot(asset->model_id);
   asset->model_id = ModelID::Invalid;
 
-  OX_LOG_TRACE("Unloaded model {}", uuid.str());
+  OX_LOG_INFO("Unloaded model {}", uuid.str());
 
   return true;
 }
