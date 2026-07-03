@@ -42,14 +42,5 @@ private:
 
   auto render_thumbnail(this ThumbnailManager& self, UUID model_uuid, u32 size) -> option<std::vector<u8>>;
   auto get_asset_hash(this const ThumbnailManager& self, const std::filesystem::path& path) -> std::string;
-
-  auto calculate_thumbnail_camera(
-    this ThumbnailManager& self,
-    const ox::AABB& model_aabb,
-    glm::vec3& out_position,
-    glm::quat& out_rotation,
-    f32& out_near,
-    f32& out_far
-  ) -> void;
 };
 } // namespace ox

@@ -616,7 +616,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
     auto translation = glm::vec3{};
     auto rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
-    auto scale = glm::vec3{};
+    auto scale = glm::vec3{1.f, 1.f, 1.f};
     if (auto* trs = std::get_if<fastgltf::TRS>(&node.transform)) {
       translation = glm::make_vec3(trs->translation.data());
       rotation = glm::quat::wxyz(trs->rotation.w(), trs->rotation.x(), trs->rotation.y(), trs->rotation.z());
