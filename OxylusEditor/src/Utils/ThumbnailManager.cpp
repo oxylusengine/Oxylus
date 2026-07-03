@@ -37,14 +37,20 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
     auto pixels = self.render_thumbnail(render_job.model_uuid, THUMBNAIL_SIZE);
 
     if (pixels.has_value() && !pixels->empty()) {
-      stbi_write_png(
-        render_job.expected_png.string().c_str(),
-        THUMBNAIL_SIZE,
-        THUMBNAIL_SIZE,
-        4,
-        pixels->data(),
-        THUMBNAIL_SIZE * 4
-      );
+
+      auto& job_man = App::get_job_manager();
+      job_man.push_job_name("ContentPanelThumbnail_WritePNG");
+      job_man.submit(Job::create([expected_png = render_job.expected_png, pixel_bytes = *pixels]() {
+        stbi_write_png(
+          expected_png.string().c_str(),
+          THUMBNAIL_SIZE,
+          THUMBNAIL_SIZE,
+          4,
+          pixel_bytes.data(),
+          THUMBNAIL_SIZE * 4
+        );
+      }));
+      job_man.pop_job_name();
 
       auto thumbnail_texture = std::make_shared<Texture>();
       thumbnail_texture->create(
@@ -106,9 +112,7 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
     auto thumbnail_texture = std::make_shared<Texture>();
     thumbnail_texture->create(
       asset_path.string(),
-      TextureLoadInfo{
-        .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}
-      }
+      TextureLoadInfo{.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}}
     );
 
     auto lock = std::unique_lock(self.thumbnail_mutex);
@@ -154,9 +158,7 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
       auto thumbnail_texture = std::make_shared<Texture>();
       thumbnail_texture->create(
         expected_png.string(),
-        TextureLoadInfo{
-          .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}
-        }
+        TextureLoadInfo{.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}}
       );
 
       auto lock = std::unique_lock(self.thumbnail_mutex);
@@ -227,6 +229,9 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
 
   auto& asset_man = App::mod<AssetManager>();
   auto model_asset = asset_man.get_model(model_uuid);
+  if (!model_asset) {
+    return nullopt;
+  }
 
   const auto sun = thumbnail_scene.create_entity("sun", true);
   sun.set<TransformComponent>({
@@ -265,7 +270,10 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
   readback_buffer = vuk::copy(scene_view_image, readback_buffer);
 
   auto temp_compiler = vuk::Compiler{};
-  readback_buffer.wait(*render_context.frame_allocator, temp_compiler);
+  {
+    std::scoped_lock lock(render_context.queue_mutex);
+    readback_buffer.wait(*render_context.frame_allocator, temp_compiler);
+  }
 
   std::vector<u8> pixel_data(buffer_size);
   std::memcpy(pixel_data.data(), readback_buffer->mapped_ptr, buffer_size);

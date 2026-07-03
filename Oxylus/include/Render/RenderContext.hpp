@@ -53,6 +53,7 @@ public:
   option<vuk::Allocator> frame_allocator = nullopt;
   plf::colony<std::pair<u64, vuk::Buffer>> tracked_buffers = {};
   std::shared_mutex pending_image_buffers_mutex = {};
+  std::shared_mutex queue_mutex = {};
 
   vuk::PresentModeKHR present_mode = vuk::PresentModeKHR::eFifo;
   std::optional<vuk::Swapchain> swapchain;
