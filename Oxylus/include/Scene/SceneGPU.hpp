@@ -164,6 +164,11 @@ struct Atmosphere {
   alignas(4) vuk::Extent3D aerial_perspective_lut_size = {};
 };
 
+struct SkyData {
+  glm::vec4 solid_color = {0.f, 0.f, 0.f, 1.f};
+  bool has_texture = false;
+};
+
 struct CameraData {
   alignas(4) glm::vec4 position = {};
 
@@ -253,6 +258,7 @@ struct Lights {
   alignas(8) u64 point_lights = 0;
   alignas(8) u64 spot_lights = 0;
   alignas(8) u64 atmosphere = 0;
+  alignas(8) u64 sky = 0;
 };
 
 enum class SceneFlags : u32 {
@@ -267,6 +273,7 @@ enum class SceneFlags : u32 {
   HasChromaticAberration = 1 << 7,
   HasVignette = 1 << 8,
   HasContactShadows = 1 << 9,
+  HasSky = 1 << 10,
 };
 consteval void enable_bitmask(SceneFlags);
 

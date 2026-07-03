@@ -37,7 +37,7 @@ struct SpriteComponent {
   u32 layer = 0;
   bool sort_y = true;
   bool flip_x = false;
-  ox::UUID material = {};
+  UUID material = {};
 
   AABB rect = {};
 };
@@ -223,6 +223,11 @@ struct LightComponent {
   f32 normal_bias = 1.8f;
   f32 first_clipmap_width = 10.0f;
   f32 clipmap_selection_bias = -1.5f;
+};
+
+struct SkyComponent {
+  glm::vec4 solid_color = glm::vec4{0.f, 0.f, 0.f, 1.0f};
+  UUID texture = {};
 };
 
 struct AtmosphereComponent {

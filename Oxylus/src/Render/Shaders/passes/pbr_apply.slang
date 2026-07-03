@@ -158,6 +158,7 @@ func fs_main(
     let world_position = world_position_h.xyz / max(world_position_h.w, 1e-6);
 
     let has_atmosphere = (scene_flags & SceneFlags::HasAtmosphere) != 0;
+    let has_sky = (scene_flags & SceneFlags::HasSky) != 0;
     let has_directional_light = (scene_flags & SceneFlags::HasDirectionalLight) != 0;
 
     // PBR constants
@@ -166,6 +167,18 @@ func fs_main(
     let V = normalize(params.camera.position.xyz - world_position);
     let N = normalize(mapped_normal);
     let R = reflect(-V, N);
+
+    if (has_sky) {
+      if (depth == 0.0) {
+          let sky = params.lights.sky;
+          if (sky.has_texture) {
+            // TODO: return the texture
+            return f32x4(1.f);
+          } else {
+            return f32x4(sky.solid_color);
+          }
+      }
+    }
 
     var indirect_illuminance = f32x3(0.0);
     var sun_illuminance = f32x3(1.0);
@@ -189,7 +202,7 @@ func fs_main(
         sun_illuminance = sun_transmittance * Li * horizon_darkening;
 
         if (depth == 0.0) {
-            let eye_pos = params.lights.atmosphere.eye_pos;
+            let eye_pos = atmosphere.eye_pos;
             let h = eye_pos.y;
             let right = normalize(cross(up, -V));
             let forward = normalize(cross(right, up));
@@ -197,7 +210,7 @@ func fs_main(
             let view_zenith_cos_angle = dot(-V, up);
             let planet_intersection = com::ray_sphere_intersect_nearest(eye_pos, -V, planet_radius);
             let sky_view_uv = sky_view_params_to_lut_uv(
-                *params.lights.atmosphere, planet_intersection.hasValue, h, view_zenith_cos_angle, light_on_plane);
+                *atmosphere, planet_intersection.hasValue, h, view_zenith_cos_angle, light_on_plane);
             var sky_view = params.sky_view_lut.SampleLevel(params.linear_clamp_sampler, sky_view_uv, 0.0);
             if (!planet_intersection.hasValue) {
                 sky_view.rgb += draw_sun(-V, L, 1.0) * Li * sun_transmittance;

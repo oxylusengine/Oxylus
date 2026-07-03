@@ -1365,6 +1365,13 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         eye_altitude += self.atmosphere.planet_radius + GPU::PLANET_RADIUS_OFFSET;
         self.atmosphere.eye_position = glm::vec3(0.0f, eye_altitude, 0.0f);
       }
+
+      if (const auto* sky_info = e.try_get<SkyComponent>()) {
+        self.gpu_scene_flags |= GPU::SceneFlags::HasSky;
+
+        self.sky_data.solid_color = sky_info->solid_color;
+        self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
+      }
     });
 
   self.render_queue_2d.init();
@@ -1541,6 +1548,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.atmosphere_buffer = std::move(atmosphere_buffer);
   }
 
+  if (self.gpu_scene_flags & GPU::SceneFlags::HasSky) {
+    auto sky_buffer = self.renderer.render_context->scratch_buffer(self.sky_data);
+    lights_info.sky = sky_buffer->device_address;
+    self.prepared_frame.sky_buffer = std::move(sky_buffer);
+  }
+
   if (self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) {
     auto directional_light_cascade_count = ox::max(1_u32, self.directional_light.cascade_count);
 
@@ -1620,8 +1633,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.prepared_frame.max_meshlet_instance_count = info.max_meshlet_instance_count;
 
   if (!info.dirty_mesh_instance_indices.empty()) {
-    self.prepared_frame.dirty_mesh_instance_count =
-      static_cast<u32>(info.dirty_mesh_instance_indices.size());
+    self.prepared_frame.dirty_mesh_instance_count = static_cast<u32>(info.dirty_mesh_instance_indices.size());
     auto dirty_mesh_instances_buffer = render_context.alloc_transient_buffer(
       vuk::MemoryUsage::eCPUtoGPU,
       info.dirty_mesh_instance_indices.size_bytes()

@@ -248,6 +248,11 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
     .member("clipmap_selection_bias", &LightComponent::clipmap_selection_bias)
     .finalize();
 
+  bind_component<SkyComponent>(world, state, core_table, "SkyComponent")
+    .member("solid_color", &SkyComponent::solid_color)
+    .member("texture", &SkyComponent::texture)
+    .finalize();
+
   bind_component<AtmosphereComponent>(world, state, core_table, "AtmosphereComponent")
     .member("rayleigh_scattering", &AtmosphereComponent::rayleigh_scattering)
     .member("rayleigh_density", &AtmosphereComponent::rayleigh_density)

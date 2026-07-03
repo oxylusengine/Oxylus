@@ -183,6 +183,11 @@ public struct Atmosphere {
     public i32x3 aerial_perspective_lut_size;
 };
 
+public struct Sky {
+    public f32x4 solid_color;
+    public bool has_texture;
+};
+
 public enum SceneFlags : u32 {
   None = 0,
   HasDirectionalLight = 1 << 0,
@@ -195,6 +200,7 @@ public enum SceneFlags : u32 {
   HasChromaticAberration = 1 << 7,
   HasVignette = 1 << 8,
   HasContactShadows = 1 << 9,
+  HasSky = 1 << 10,
 };
 
 public struct DirectionalLightCascade {
@@ -239,6 +245,7 @@ public struct Lights {
   public PointLight *point_lights;
   public SpotLight *spot_lights;
   public Atmosphere *atmosphere;
+  public Sky *sky;
 };
 
 public struct Transform {

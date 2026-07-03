@@ -159,6 +159,7 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> point_lights_buffer = {};
   vuk::Value<vuk::Buffer> spot_lights_buffer = {};
   vuk::Value<vuk::Buffer> exposure_buffer = {};
+  vuk::Value<vuk::Buffer> sky_buffer = {};
 
   vuk::Value<vuk::Buffer> dirty_mesh_instances_buffer = {};
   u32 dirty_mesh_instance_count = 0;
@@ -419,6 +420,7 @@ private:
   f32 clipmap_selection_bias = 2.0f;
   std::array<GPU::DirectionalLightCascade, MAX_DIRECTIONAL_SHADOW_CASCADES> directional_light_cascades = {};
   GPU::Atmosphere atmosphere = {};
+  GPU::SkyData sky_data = {};
   GPU::EyeAdaptationSettings eye_adaptation = {};
   GPU::VBGTAOSettings vbgtao_info = {};
   GPU::PostProcessSettings post_proces_settings = {};
