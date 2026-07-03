@@ -83,10 +83,25 @@ public func test_frustum(in f32x4x4 mvp, in f32x3 aabb_center, in f32x3 aabb_ext
     return true;
 }
 
+public func min_reduction(in Image2D<f32> hiz_image, i32x2 min_coord, i32x2 max_coords, u32 mip_u) -> f32 {
+  i32x2 c00 = min_coord;
+  i32x2 c10 = min(min_coord + int2(1, 0), max_coords);
+  i32x2 c01 = min(min_coord + int2(0, 1), max_coords);
+  i32x2 c11 = min(min_coord + int2(1, 1), max_coords);
+
+  f32 p00 = hiz_image.Load(int3(c00, mip_u)).r;
+  f32 p10 = hiz_image.Load(int3(c10, mip_u)).r;
+  f32 p01 = hiz_image.Load(int3(c01, mip_u)).r;
+  f32 p11 = hiz_image.Load(int3(c11, mip_u)).r;
+
+  f32 d = min(min(p00, p10), min(p01, p11));
+
+  return d;
+}
+
 public func test_occlusion(
     in ScreenAabb screen_aabb,
-    in Image2D<f32> hiz_image,
-    in Sampler hiz_sampler
+    in Image2D<f32> hiz_image
 ) -> bool {
     var width = 0u;
     var height = 0u;
@@ -98,12 +113,23 @@ public func test_occlusion(
     let max_texel = u32x2(min(screen_aabb.max.xy * hiz_size, hiz_size - 1.0));
 
     let size = max_texel - min_texel;
-    let max_size = max(size.x, size.y);
-    let mip = clamp(ceil(log2(f32(max_size))), 0.0, f32(hiz_levels - 1));
+    let max_size = max(max(size.x, size.y), 1u);
 
-    let uv = ((f32x2(min_texel) + f32x2(max_texel)) * 0.5f) / hiz_size;
-    let d = hiz_image.SampleLevel(hiz_sampler, uv, mip);
+    let mip = clamp(ceil(log2(f32(max_size))), 0.0, f32(hiz_levels - 1));
+    let mip_u = u32(mip);
+
+    var mip_width = 0u;
+    var mip_height = 0u;
+    var temp_levels = 0u;
+    hiz_image.GetDimensions(mip_u, mip_width, mip_height, temp_levels);
+    let max_coords = i32x2(mip_width, mip_height) - 1;
+
+    i32x2 min_coord = i32x2(min_texel >> mip_u);
+
+    f32 d = min_reduction(hiz_image, min_coord, max_coords, mip_u);
+
     constexpr static let EPSILON = 1e-7;
+
     return screen_aabb.max.z <= d - EPSILON;
 }
 
