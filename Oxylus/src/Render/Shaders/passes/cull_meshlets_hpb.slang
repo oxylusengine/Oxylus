@@ -43,12 +43,20 @@ func cs_main(
 
         let mesh = meshes[mesh_instance.mesh_index];
         let mesh_lod = mesh.lods[mesh_instance.lod_index];
-        let bounds = mesh_lod.meshlet_bounds[meshlet_instance.meshlet_index];
+        let meshlet_bounds = mesh_lod.meshlet_bounds[meshlet_instance.meshlet_index];
+        let aabb_center = meshlet_bounds.get_aabb_center();
+        let aabb_extent = meshlet_bounds.get_aabb_extent();
+        let cone_cutoff = meshlet_bounds.get_cone_cutoff();
 
-        if (test_frustum(mvp, bounds.aabb_center, bounds.aabb_extent)) {
+        let cone_axis = normalize(transform.to_world_normal(meshlet_bounds.get_cone_axis()));
+        let world_center = transform.to_world_position(aabb_center).xyz;
+        let world_radius = transform.to_world_radius(length(aabb_extent * 0.5));
+        let cone_visible = cone_cutoff >= 1.0 || !test_cone(world_center, world_radius, cone_axis, cone_cutoff, camera.position);
+
+        if (cone_visible && test_frustum(mvp, aabb_center, aabb_extent)) {
             var visible = true;
 
-            if (let screen_aabb = project_aabb(mvp, camera.near_clip, bounds.aabb_center, bounds.aabb_extent)) {
+            if (let screen_aabb = project_aabb(mvp, camera.near_clip, aabb_center, aabb_extent)) {
                 visible = test_vsm_page(screen_aabb, hpb, hpb_sampler, vsm_layer_index, vsm_page_offset);
             }
 

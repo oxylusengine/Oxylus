@@ -262,6 +262,13 @@ public struct Transform {
     return mul(this.normal, normal);
   }
 
+  public func to_world_radius(in f32 radius) -> f32 {
+    let sx = length(this.world[0].xyz);
+    let sy = length(this.world[1].xyz);
+    let sz = length(this.world[2].xyz);
+    return radius * max(sx, max(sy, sz));
+  }
+
   public func to_world_positions(in f32x3x3 positions) -> f32x4x3 {
     return {
       mul(this.world, f32x4(positions[0], 1.0)),
@@ -346,11 +353,45 @@ public struct Meshlet {
     }
 };
 
-public struct Bounds {
+public struct MeshletBounds {
+    u16x3 aabb_center;
+    i8x2 cone_axis_xy;
+    u16x3 aabb_extent;
+    i8 cone_axis_z;
+    i8 cone_cutoff;
+
+    public func get_cone_axis() -> f32x3 {
+        return f32x3(
+            i32(cone_axis_xy.x) / 127.0,
+            i32(cone_axis_xy.y) / 127.0,
+            i32(cone_axis_z) / 127.0
+        );
+    }
+
+    public func get_cone_cutoff() -> f32 {
+        return cone_cutoff / 127.0;
+    }
+
+    public func get_aabb_center() -> f32x3 {
+        return f32x3(
+            com::dequantize_half(aabb_center.x),
+            com::dequantize_half(aabb_center.y),
+            com::dequantize_half(aabb_center.z)
+        );
+    }
+
+    public func get_aabb_extent() -> f32x3 {
+        return f32x3(
+            com::dequantize_half(aabb_extent.x),
+            com::dequantize_half(aabb_extent.y),
+            com::dequantize_half(aabb_extent.z)
+        );
+    }
+};
+
+public struct MeshBounds {
     public f32x3 aabb_center = {};
     public f32x3 aabb_extent = {};
-    public f32x3 sphere_center = {};
-    public f32 sphere_radius = 0.0f;
 };
 
 public struct MeshletInstance {
@@ -369,7 +410,7 @@ public struct MeshInstance {
 public struct MeshLOD {
     public u32 *indices = nullptr;
     public Meshlet *meshlets = nullptr;
-    public Bounds *meshlet_bounds = nullptr;
+    public MeshletBounds *meshlet_bounds = nullptr;
     public u32 *local_triangle_indices = nullptr;
     public u32 *indirect_vertex_indices = nullptr;
     public u32 indices_count = 0;
@@ -387,48 +428,26 @@ public struct Mesh {
     public u32 vertex_count = 0;
     public u32 lod_count = 0;
     public MeshLOD lods[MESH_MAX_LODS] = {};
-    public Bounds bounds = {};
-
-    func dequantize_half(u16 h) -> f32 {
-        u32 s = u32(h & 0x8000) << 16;
-        int em = h & 0x7fff;
-        int r = (em + (112 << 10)) << 13;
-        r = (em < (1 << 10)) ? 0 : r;
-        r += (em >= (31 << 10)) ? (112 << 23) : 0;
-
-        return asfloat(s | r);
-    }
-
-    func dequantize_snorm(u32 v, u32 bits) -> f32 {
-        let mask = (1u << bits) - 1u;
-        let half = 1u << (bits - 1u);
-        let sv = v & mask;
-        let signed = sv >= half ? i32(sv) - i32(mask) - 1 : i32(sv);
-        return f32(signed) / f32(half - 1u);
-    }
+    public MeshBounds bounds = {};
 
     public func decode_position(u32 index) -> f32x3 {
         return f32x3(
-            dequantize_half(vertex_positions[index].x),
-            dequantize_half(vertex_positions[index].y),
-            dequantize_half(vertex_positions[index].z)
+            com::dequantize_half(vertex_positions[index].x),
+            com::dequantize_half(vertex_positions[index].y),
+            com::dequantize_half(vertex_positions[index].z)
         );
     }
 
     public func decode_normal(u32 index) -> f32x3 {
         let packed = vertex_normals[index];
-        return (f32x3(
-            dequantize_snorm(packed >> 20u, 10u),
-            dequantize_snorm(packed >> 10u, 10u),
-            dequantize_snorm(packed,        10u)
-        ));
+        return ((i32x3(packed) >> i32x3(20, 10, 0)) & i32x3(1023)) / 511.0 - 1.0;
     }
 
     public func decode_texcoord(u32 index) -> f32x2 {
-        let packed = vertex_normals[index];
+        let packed = texture_coords[index];
         return f32x2(
-            dequantize_half(texture_coords[index].x),
-            dequantize_half(texture_coords[index].y)
+            com::dequantize_half(packed.x),
+            com::dequantize_half(packed.y)
         );
     }
 };

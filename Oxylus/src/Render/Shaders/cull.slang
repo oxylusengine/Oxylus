@@ -169,3 +169,7 @@ public func test_vsm_page(
 public func test_triangle_backface(f32x4x3 clip_pos) -> bool {
     return determinant(f32x3x3(clip_pos[0].xyw, clip_pos[1].xyw, clip_pos[2].xyw)) >= 0.0001;
 }
+
+public func test_cone(f32x3 center, f32 radius, f32x3 cone_axis, f32 cone_cutoff, f32x3 camera_position) -> bool {
+	return dot(center - camera_position, cone_axis) >= cone_cutoff * length(center - camera_position) + radius;
+}

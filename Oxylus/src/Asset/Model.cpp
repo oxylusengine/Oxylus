@@ -1,11 +1,11 @@
 #include "Asset/Model.hpp"
 
 namespace ox {
-auto Model::get_base_aabb(this const Model& self) -> GPU::Bounds {
+auto Model::get_base_aabb(this const Model& self) -> GPU::MeshBounds {
   ZoneScoped;
 
   if (self.gpu_meshes.empty()) {
-    return GPU::Bounds{};
+    return GPU::MeshBounds{};
   }
 
   auto global_min = glm::vec3(std::numeric_limits<f32>::max());
@@ -19,12 +19,9 @@ auto Model::get_base_aabb(this const Model& self) -> GPU::Bounds {
     global_max = glm::max(global_max, mesh_max);
   }
 
-  auto base_bounds = GPU::Bounds{};
+  auto base_bounds = GPU::MeshBounds{};
   base_bounds.aabb_center = (global_min + global_max) * 0.5f;
   base_bounds.aabb_extent = (global_max - global_min) * 0.5f;
-
-  base_bounds.sphere_center = base_bounds.aabb_center;
-  base_bounds.sphere_radius = glm::length(base_bounds.aabb_extent);
 
   return base_bounds;
 }

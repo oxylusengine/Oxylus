@@ -580,7 +580,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
   auto compute_lod_upload_size = [](
                                    const std::vector<u32>& simplified_indices,
                                    const std::vector<GPU::Meshlet>& meshlets,
-                                   const std::vector<GPU::Bounds>& meshlet_bounds,
+                                   const std::vector<GPU::MeshletBounds>& meshlet_bounds,
                                    const std::vector<u8>& local_triangle_indices,
                                    const std::vector<u32>& indirect_vertex_indices
                                  ) -> u64 {
@@ -736,9 +736,9 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
       quantized_normals.resize(vertex_count);
       for (const auto& [normal, quantized_normal] : std::views::zip(normals, quantized_normals)) {
-        quantized_normal = ((meshopt_quantizeSnorm(normal.x, 10) & 1023) << 20) |
-                           ((meshopt_quantizeSnorm(normal.y, 10) & 1023) << 10) |
-                           (meshopt_quantizeSnorm(normal.z, 10) & 1023);
+        quantized_normal = ((meshopt_quantizeSnorm(normal.x, 10) + 511) << 20) |
+                           ((meshopt_quantizeSnorm(normal.y, 10) + 511) << 10) |
+                           (meshopt_quantizeSnorm(normal.z, 10) + 511);
       }
 
       quantized_texcoords.resize(vertex_count);
@@ -841,8 +841,8 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
         auto mesh_bb_min = glm::vec3(std::numeric_limits<f32>::max());
         auto mesh_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
-        auto meshlet_bounds = std::vector<GPU::Bounds>(meshlet_count);
-        for (const auto& [raw_meshlet, meshlet, bounds] : std::views::zip(raw_meshlets, meshlets, meshlet_bounds)) {
+        auto gpu_meshlet_bounds = std::vector<GPU::MeshletBounds>(meshlet_count);
+        for (const auto& [raw_meshlet, meshlet, bounds] : std::views::zip(raw_meshlets, meshlets, gpu_meshlet_bounds)) {
           auto meshlet_bb_min = glm::vec3(std::numeric_limits<f32>::max());
           auto meshlet_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
           for (u32 i = 0; i < raw_meshlet.triangle_count * 3; i++) {
@@ -860,7 +860,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
             meshlet_bb_max = glm::max(meshlet_bb_max, tri_pos);
           }
 
-          auto sphere_bounds = meshopt_computeMeshletBounds(
+          auto meshlet_bounds = meshopt_computeMeshletBounds(
             &indirect_vertex_indices[raw_meshlet.vertex_offset],
             &local_triangle_indices[raw_meshlet.triangle_offset],
             raw_meshlet.triangle_count,
@@ -869,15 +869,25 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
             sizeof(glm::vec3)
           );
 
+          auto meshlet_aabb_center = (meshlet_bb_max + meshlet_bb_min) * 0.5f;
+          auto meshlet_aabb_extent = meshlet_bb_max - meshlet_bb_min;
+
           meshlet.indirect_vertex_index_offset = raw_meshlet.vertex_offset;
           meshlet.local_triangle_index_offset = raw_meshlet.triangle_offset;
           meshlet.vertex_count = raw_meshlet.vertex_count;
           meshlet.triangle_count = raw_meshlet.triangle_count;
 
-          bounds.aabb_center = (meshlet_bb_max + meshlet_bb_min) * 0.5f;
-          bounds.aabb_extent = meshlet_bb_max - meshlet_bb_min;
-          bounds.sphere_center = glm::make_vec3(sphere_bounds.center);
-          bounds.sphere_radius = sphere_bounds.radius;
+          bounds.aabb_center.x = meshopt_quantizeHalf(meshlet_aabb_center.x);
+          bounds.aabb_center.y = meshopt_quantizeHalf(meshlet_aabb_center.y);
+          bounds.aabb_center.z = meshopt_quantizeHalf(meshlet_aabb_center.z);
+
+          bounds.aabb_extent.x = meshopt_quantizeHalf(meshlet_aabb_extent.x);
+          bounds.aabb_extent.y = meshopt_quantizeHalf(meshlet_aabb_extent.y);
+          bounds.aabb_extent.z = meshopt_quantizeHalf(meshlet_aabb_extent.z);
+
+          bounds.cone_axis_xy = {meshlet_bounds.cone_axis_s8[0], meshlet_bounds.cone_axis_s8[1]};
+          bounds.cone_axis_z = meshlet_bounds.cone_axis_s8[2];
+          bounds.cone_cutoff = meshlet_bounds.cone_cutoff_s8;
 
           mesh_bb_min = glm::min(mesh_bb_min, meshlet_bb_min);
           mesh_bb_max = glm::max(mesh_bb_max, meshlet_bb_max);
@@ -889,7 +899,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         auto lod_upload_size = compute_lod_upload_size(
           simplified_indices,
           meshlets,
-          meshlet_bounds,
+          gpu_meshlet_bounds,
           local_triangle_indices,
           indirect_vertex_indices
         );
@@ -910,8 +920,8 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         upload_offset = align_up(upload_offset, 8);
 
         cur_lod.meshlet_bounds = upload_offset;
-        std::memcpy(cpu_lod_ptr + upload_offset, meshlet_bounds.data(), ox::size_bytes(meshlet_bounds));
-        upload_offset += ox::size_bytes(meshlet_bounds);
+        std::memcpy(cpu_lod_ptr + upload_offset, gpu_meshlet_bounds.data(), ox::size_bytes(gpu_meshlet_bounds));
+        upload_offset += ox::size_bytes(gpu_meshlet_bounds);
         upload_offset = align_up(upload_offset, 8);
 
         cur_lod.local_triangle_indices = upload_offset;
@@ -928,7 +938,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
         cur_lod.indices_count = simplified_indices.size();
         cur_lod.meshlet_count = meshlet_count;
-        cur_lod.meshlet_bounds_count = meshlet_bounds.size();
+        cur_lod.meshlet_bounds_count = gpu_meshlet_bounds.size();
         cur_lod.local_triangle_indices_count = local_triangle_indices.size();
         cur_lod.indirect_vertex_indices_count = indirect_vertex_indices.size();
 
