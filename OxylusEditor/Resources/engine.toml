@@ -97,11 +97,6 @@ entry_points = ["vs_main", "fs_main"]
 bindless = true
 
 [[shader_sessions.programs]]
-name = "shadowmap_draw"
-path = "passes/shadowmap_draw.slang"
-entry_points = ["vs_main", "fs_main"]
-
-[[shader_sessions.programs]]
 name = "rmvsm_allocate_pages"
 path = "passes/rmvsm_allocate_pages.slang"
 entry_points = ["cs_main"]
@@ -130,6 +125,7 @@ entry_points = ["cs_main"]
 name = "rmvsm_draw_physical_pages"
 path = "passes/rmvsm_draw_physical_pages.slang"
 entry_points = ["vs_main", "fs_main"]
+bindless = true
 
 [[shader_sessions.programs]]
 name = "rmvsm_free_invisible_pages"

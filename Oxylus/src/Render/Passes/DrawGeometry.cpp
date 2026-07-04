@@ -88,68 +88,6 @@ auto RendererInstance::draw_for_visbuffer(this RendererInstance& self, MainGeome
     );
 }
 
-auto RendererInstance::draw_for_shadowmap(
-  this RendererInstance& self, ShadowGeometryContext& context, glm::mat4& projection_view, u32 cascade_index
-) -> void {
-  ZoneScoped;
-
-  auto encode_pass = vuk::make_pass(
-    "shadowmap draw",
-    [projection_view](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eIndirectRead) triangle_indirect,
-      VUK_BA(vuk::eIndexRead) index_buffer,
-      VUK_BA(vuk::eVertexRead) meshes,
-      VUK_BA(vuk::eVertexRead) mesh_instances,
-      VUK_BA(vuk::eVertexRead) meshlet_instances,
-      VUK_BA(vuk::eVertexRead) transforms,
-      VUK_IA(vuk::eDepthStencilRW) shadowmap
-    ) {
-      cmd_list //
-        .bind_graphics_pipeline("shadowmap_draw")
-        .set_rasterization({.cullMode = vuk::CullModeFlagBits::eBack})
-        .set_depth_stencil(
-          {.depthTestEnable = true, .depthWriteEnable = true, .depthCompareOp = vuk::CompareOp::eGreaterOrEqual}
-        )
-        .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-        .set_viewport(0, vuk::Rect2D::framebuffer())
-        .set_scissor(0, vuk::Rect2D::framebuffer())
-        .bind_buffer(0, 0, meshes)
-        .bind_buffer(0, 1, mesh_instances)
-        .bind_buffer(0, 2, meshlet_instances)
-        .bind_buffer(0, 3, transforms)
-        .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
-        .push_constants(vuk::ShaderStageFlagBits::eVertex, 0, projection_view)
-        .draw_indexed_indirect(1, triangle_indirect);
-
-      return std::make_tuple(
-        index_buffer, //
-        meshes,
-        mesh_instances,
-        meshlet_instances,
-        transforms
-      );
-    }
-  );
-
-  std::tie(
-    self.prepared_frame.reordered_indices_buffer,
-    self.prepared_frame.meshes_buffer,
-    self.prepared_frame.mesh_instances_buffer,
-    self.prepared_frame.meshlet_instances_buffer,
-    self.prepared_frame.transforms_buffer
-  ) =
-    encode_pass(
-      std::move(context.draw_geometry_cmd_buffer),
-      std::move(self.prepared_frame.reordered_indices_buffer),
-      std::move(self.prepared_frame.meshes_buffer),
-      std::move(self.prepared_frame.mesh_instances_buffer),
-      std::move(self.prepared_frame.meshlet_instances_buffer),
-      std::move(self.prepared_frame.transforms_buffer),
-      std::move(context.shadowmap_attachment)
-    );
-}
-
 auto RendererInstance::decode_visbuffer(this RendererInstance& self, MainGeometryContext& context) -> void {
   ZoneScoped;
 

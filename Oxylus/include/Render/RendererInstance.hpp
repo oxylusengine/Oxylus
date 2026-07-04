@@ -180,6 +180,7 @@ struct CullGeometryContext {
   // and dispatch buffers). Run once per sequence: visbuffer early pass or
   // shadowmap cascade 0; subsequent culls in the sequence set this to false.
   bool init_cull_meshes = false;
+  bool select_lods = true;
 
   GPU::CullCamera cull_camera = {};
   u32 vsm_layer_index = 0;
@@ -227,6 +228,7 @@ struct RMVSMContext {
   constexpr static u32 DIRECTIONAL_MAX_PAGE_COUNT = DIRECTIONAL_PAGE_TABLE_SIZE * DIRECTIONAL_PAGE_TABLE_SIZE;
   constexpr static u32 DIRECTIONAL_PAGE_MASK_COUNT = (DIRECTIONAL_MAX_PAGE_COUNT + 31) / 32;
 
+  vuk::PersistentDescriptorSet* bindless_set = nullptr;
   bool sun_moved = false;
   vuk::Extent3D depth_extent = {};
   f32 max_shadow_dist = 1000.0f;
@@ -362,9 +364,6 @@ public:
   auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
   auto draw_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto decode_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto draw_for_shadowmap(
-    this RendererInstance&, ShadowGeometryContext& context, glm::mat4& projection_view, u32 cascade_index
-  ) -> void;
   auto draw_virtual_shadowmap(this RendererInstance&, RMVSMContext& context) -> void;
   auto resolve_shadowmap(this RendererInstance&, ShadowResolveContext& context) -> void;
   auto draw_atmosphere(this RendererInstance&, AtmosphereContext& context) -> void;

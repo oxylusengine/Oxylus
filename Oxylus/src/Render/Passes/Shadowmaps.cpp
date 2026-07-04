@@ -187,7 +187,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     }
   );
 
-  if (false) {
+  if (!context.sun_moved && self.prepared_frame.dirty_mesh_instance_count > 0) {
     std::tie(
       context.virtual_page_table_attachment,
       self.prepared_frame.dirty_mesh_instances_buffer,
@@ -195,14 +195,15 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       self.prepared_frame.meshes_buffer,
       self.prepared_frame.transforms_buffer,
       context.directional_clipmaps_buffer
-    ) = invalidate_pages_pass(
-      std::move(context.virtual_page_table_attachment),
-      std::move(self.prepared_frame.dirty_mesh_instances_buffer),
-      std::move(self.prepared_frame.mesh_instances_buffer),
-      std::move(self.prepared_frame.meshes_buffer),
-      std::move(self.prepared_frame.transforms_buffer),
-      std::move(context.directional_clipmaps_buffer)
-    );
+    ) =
+      invalidate_pages_pass(
+        std::move(context.virtual_page_table_attachment),
+        std::move(self.prepared_frame.dirty_mesh_instances_buffer),
+        std::move(self.prepared_frame.mesh_instances_buffer),
+        std::move(self.prepared_frame.meshes_buffer),
+        std::move(self.prepared_frame.transforms_buffer),
+        std::move(context.directional_clipmaps_buffer)
+      );
   }
 
   auto mark_visible_pages_pass = vuk::make_pass(
@@ -311,7 +312,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       VUK_IA(vuk::eComputeRW) hpb
     ) {
       for (auto i = 0_u32; i < hpb->level_count; i++) {
-        auto src = i == 0 ? page_table : hpb->mip(i - 1);
+        auto src = i == 0 ? hpb->mip(0) : hpb->mip(i - 1);
         auto dst = hpb->mip(i);
 
         auto level_extent = vuk::Extent3D{
@@ -445,6 +446,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
     cull_geometry_context.cull_camera = clipmap_camera;
     cull_geometry_context.init_cull_meshes = (reverse_index == 0);
+    cull_geometry_context.select_lods = false;
     cull_geometry_context.vsm_layer_index = clipmap_index;
     cull_geometry_context.vsm_page_offset = clipmap.page_offset;
     self.cull_geometry(cull_geometry_context);
@@ -452,7 +454,9 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
     auto draw_physical_pages_pass = vuk::make_pass(
       stack.format("vsm draw clipmap {}", clipmap_index),
-      [vsm_ctx, vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
+      [&descriptor_set = *context.bindless_set,
+       vsm_ctx,
+       vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
         vuk::CommandBuffer& cmd_list,
         VUK_BA(vuk::eIndirectRead) triangle_indirect,
         VUK_BA(vuk::eIndexRead) index_buffer,
@@ -460,6 +464,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         VUK_BA(vuk::eVertexRead) mesh_instances,
         VUK_BA(vuk::eVertexRead) meshlet_instances,
         VUK_BA(vuk::eVertexRead) transforms,
+        VUK_BA(vuk::eFragmentRead) materials,
         VUK_BA(vuk::eVertexRead | vuk::eFragmentRead) clipmaps,
         VUK_IA(vuk::eFragmentSampled) page_tables,
         VUK_IA(vuk::eFragmentRW) physical_pages,
@@ -477,13 +482,15 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
           .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
           .set_viewport(0, viewport_rect)
           .set_scissor(0, vuk::Rect2D::framebuffer())
+          .bind_persistent(1, descriptor_set)
           .bind_buffer(0, 0, meshes)
           .bind_buffer(0, 1, mesh_instances)
           .bind_buffer(0, 2, meshlet_instances)
           .bind_buffer(0, 3, transforms)
-          .bind_buffer(0, 4, clipmaps)
-          .bind_image(0, 5, page_tables)
-          .bind_image(0, 6, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
+          .bind_buffer(0, 4, materials)
+          .bind_buffer(0, 5, clipmaps)
+          .bind_image(0, 6, page_tables)
+          .bind_image(0, 7, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
           .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
           .push_constants(vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment, 0, vsm_ctx)
           .draw_indexed_indirect(1, triangle_indirect);
@@ -494,6 +501,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
           mesh_instances,
           meshlet_instances,
           transforms,
+          materials,
           clipmaps,
           page_tables,
           physical_pages,
@@ -508,6 +516,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       self.prepared_frame.mesh_instances_buffer,
       self.prepared_frame.meshlet_instances_buffer,
       self.prepared_frame.transforms_buffer,
+      self.prepared_frame.materials_buffer,
       context.directional_clipmaps_buffer,
       context.virtual_page_table_attachment,
       context.physical_page_table_attachment,
@@ -520,6 +529,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         std::move(self.prepared_frame.mesh_instances_buffer),
         std::move(self.prepared_frame.meshlet_instances_buffer),
         std::move(self.prepared_frame.transforms_buffer),
+        std::move(self.prepared_frame.materials_buffer),
         std::move(context.directional_clipmaps_buffer),
         std::move(context.virtual_page_table_attachment),
         std::move(context.physical_page_table_attachment),
