@@ -539,7 +539,7 @@ f32x4 fs_main(VertexOutput input) {
         // histogram_average.slang computes the standard EV100->linear exposure
         // multiplier (1 / (2^ev100 * 1.2)); apply it directly.
         let exposure = histogram_luminance.exposure;
-        color = color * exposure;
+        color = color * (exposure + 1.0);
     }
 
     if ((scene_flags & SceneFlags::HasBloom) != 0) {

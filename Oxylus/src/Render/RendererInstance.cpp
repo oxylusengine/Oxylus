@@ -846,6 +846,7 @@ auto RendererInstance::render(
 
     if (self.directional_light_cast_shadows) {
       auto rmvsm_context = RMVSMContext{
+        .bindless_set = &bindless_set,
         .sun_moved = self.sun_direction_changed,
         .depth_extent = dst_extent,
         .depth_attachment = std::move(depth_attachment),

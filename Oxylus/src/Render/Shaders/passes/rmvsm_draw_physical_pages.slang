@@ -8,14 +8,17 @@ import rmvsm;
 [[vk::binding(1)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(2)]] StructuredBuffer<MeshletInstance> meshlet_instances;
 [[vk::binding(3)]] StructuredBuffer<Transform> transforms;
-[[vk::binding(4)]] StructuredBuffer<VirtualClipmap> clipmaps;
-[[vk::binding(5)]] Texture2DArray<u32> page_tables;
-[[vk::binding(6)]] RWTexture2D<u32, 1, ImageFormat::R32UI> physical_pages;
+[[vk::binding(4)]] StructuredBuffer<Material> materials;
+[[vk::binding(5)]] StructuredBuffer<VirtualClipmap> clipmaps;
+[[vk::binding(6)]] Texture2DArray<u32> page_tables;
+[[vk::binding(7)]] RWTexture2D<u32, 1, ImageFormat::R32UI> physical_pages;
 
 [[vk::push_constant]] VSMContext ctx;
 
 struct VertexOutput {
     f32x4 position : SV_Position;
+    f32x2 tex_coord : TEXCOORD;
+    nointerpolation u32 material_index;
 };
 
 [[shader("vertex")]]
@@ -38,6 +41,8 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
 
     VertexOutput output;
     output.position = clip_pos;
+    output.tex_coord = tex_coord;
+    output.material_index = mesh_instance.material_index;
 
     return output;
 }
@@ -58,6 +63,21 @@ func fs_main(VertexOutput input) -> void {
         let in_page_texel_coord = i32x2(com::mod(f32x2(virtual_texel_coord), f32x2(ctx.page_size)));
         let in_memory_offset = physical_page_coords * ctx.page_size;
         let physical_texel_coord = in_memory_offset + in_page_texel_coord;
+
+#if 1
+        let material = materials[input.material_index];
+        if (material.flags & MaterialFlag::HasAlbedoImage) {
+            UVGradient grad;
+            grad.uv = input.tex_coord;
+            grad.ddx = ddx(input.tex_coord);
+            grad.ddy = ddy(input.tex_coord);
+            let alpha_color = material.sample_albedo_color(grad).a;
+
+            if (alpha_color < clamp(material.alpha_cutoff, 0.001, 1.0)) {
+                return;
+            }
+        }
+#endif
         __atomic_min(physical_pages[physical_texel_coord], asuint(input.position.z / input.position.w));
     }
 }

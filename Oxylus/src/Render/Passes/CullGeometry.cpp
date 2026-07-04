@@ -60,10 +60,13 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
 
   // --- Stage 1: cull_meshes (only on the first cull of a sequence) ---
   if (context.init_cull_meshes) {
-    static constexpr auto cull_meshes_flags = GPU::CullFlag::TestFrustum | GPU::CullFlag::SelectLOD;
+    auto cull_meshes_flags = GPU::CullFlag::TestFrustum;
+    if (context.select_lods)
+      cull_meshes_flags |= GPU::CullFlag::SelectLOD;
+
     auto cull_meshes_pass = vuk::make_pass(
-      context.use_hiz ? "vis cull meshes" : "sm cull meshes",
-      [cull_camera](
+      context.use_hiz ? "vis cull meshes" : "cull meshes",
+      [cull_camera, cull_meshes_flags](
         vuk::CommandBuffer& cmd_list,
         VUK_BA(vuk::eComputeRead) meshes,
         VUK_BA(vuk::eComputeRead) transforms,
