@@ -173,4 +173,14 @@ public func hammersley2d(u32 i, u32 N) -> f32x2 {
     return f32x2(f32(i) / f32(N), f32(reversebits(i)) * 2.3283064365386963e-10);
 }
 
+public func dequantize_half(u16 h) -> f32 {
+    u32 s = u32(h & 0x8000) << 16;
+    int em = h & 0x7fff;
+    int r = (em + (112 << 10)) << 13;
+    r = (em < (1 << 10)) ? 0 : r;
+    r += (em >= (31 << 10)) ? (112 << 23) : 0;
+
+    return asfloat(s | r);
+}
+
 }

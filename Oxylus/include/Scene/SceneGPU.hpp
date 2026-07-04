@@ -69,11 +69,17 @@ struct Material {
   alignas(4) glm::vec2 uv_offset = {};
 };
 
-struct Bounds {
+struct MeshletBounds {
+  alignas(2) glm::u16vec3 aabb_center = {};
+  alignas(1) glm::i8vec2 cone_axis_xy = {};
+  alignas(2) glm::u16vec3 aabb_extent = {};
+  alignas(1) i8 cone_axis_z = {};
+  alignas(1) i8 cone_cutoff = {};
+};
+
+struct MeshBounds {
   alignas(4) glm::vec3 aabb_center = {};
   alignas(4) glm::vec3 aabb_extent = {};
-  alignas(4) glm::vec3 sphere_center = {};
-  alignas(4) f32 sphere_radius = 0.0f;
 };
 
 struct MeshletInstanceVisibility {
@@ -130,7 +136,7 @@ struct Mesh {
   alignas(4) u32 vertex_count = 0;
   alignas(4) u32 lod_count = 0;
   alignas(8) MeshLOD lods[MAX_LODS] = {};
-  alignas(4) Bounds bounds = {};
+  alignas(4) MeshBounds bounds = {};
 };
 
 constexpr static f32 CAMERA_SCALE_UNIT = 0.01f;
