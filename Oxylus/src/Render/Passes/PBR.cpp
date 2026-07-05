@@ -60,7 +60,7 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeSampled) sky_view_lut,
       VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
-      VUK_BA(vuk::eComputeRead) atmosphere,
+      VUK_BA(vuk::eComputeRead) atmosphere_,
       VUK_BA(vuk::eComputeRead) camera,
       VUK_IA(vuk::eComputeRW) sky_cubemap
     ) {
@@ -69,7 +69,7 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
         .bind_sampler(0, 0, vuk::LinearSamplerClamped)
         .bind_image(0, 1, sky_view_lut)
         .bind_image(0, 5, sky_transmittance_lut)
-        .bind_buffer(0, 2, atmosphere)
+        .bind_buffer(0, 2, atmosphere_)
         .bind_buffer(0, 3, camera)
         .bind_image(0, 4, sky_cubemap)
         .push_constants(
@@ -79,7 +79,7 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
         )
         .dispatch_invocations_per_pixel(sky_cubemap, 1.0f, 1.0f, sky_cubemap->layer_count);
 
-      return std::make_tuple(sky_view_lut, sky_transmittance_lut, atmosphere, camera, sky_cubemap);
+      return std::make_tuple(sky_view_lut, sky_transmittance_lut, atmosphere_, camera, sky_cubemap);
     }
   );
 

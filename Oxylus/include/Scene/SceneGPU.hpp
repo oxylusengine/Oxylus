@@ -171,8 +171,8 @@ struct Atmosphere {
 };
 
 struct SkyData {
-  glm::vec4 solid_color = {0.f, 0.f, 0.f, 1.f};
-  bool has_texture = false;
+  alignas(4) glm::vec4 solid_color = {0.f, 0.f, 0.f, 1.f};
+  alignas(4) u32 has_texture = false;
 };
 
 struct CameraData {
