@@ -249,7 +249,7 @@ func fs_main(
 
         let ibl_specular = F * specular_radiance * specular_strength * spec_ao * specular_shadow_vis;
 
-        indirect_illuminance = aerial_perspective.rgb * aerial_perspective.a + ibl_diffuse + ibl_specular;
+        indirect_illuminance = aerial_perspective.rgb * aerial_perspective.a + (ibl_diffuse + ibl_specular) * horizon_darkening;
     }
 
     let base_ambient_color = has_directional_light ? lights.directional_light.color : f32x3(0.02);
