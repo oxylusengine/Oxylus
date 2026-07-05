@@ -343,43 +343,56 @@ void InspectorPanel::on_render(this InspectorPanel& self, vuk::ImageAttachment s
 
   self.on_begin();
 
-  auto _ = editor_context.entity
-             .and_then([&self](flecs::entity e) {
-               if (e != self.last_edited_entity) {
-                 self.euler_cache.reset();
-                 self.last_edited_entity = e;
-               }
-
-               self.draw_components(e);
-
-               return option<std::monostate>{};
-             })
-             .or_else([&self, &editor_context]() {
-               if (editor_context.type != EditorContext::Type::File)
-                 return option<std::monostate>{};
-
-               return editor_context.str.and_then([&self](const std::filesystem::path& path) {
-                 if (path.extension() != ".oxasset")
-                   return option<std::monostate>{};
-
-                 auto& asset_man = App::mod<AssetManager>();
-                 auto meta_file = asset_man.read_meta_file(path);
-                 if (!meta_file)
-                   return option<std::monostate>{};
-
-                 auto uuid_str_json = meta_file->doc["uuid"].get_string();
-                 if (uuid_str_json.error())
-                   return option<std::monostate>{};
-
-                 return UUID::from_string(uuid_str_json.value_unsafe()).and_then([&self, &asset_man](UUID&& uuid) {
-                   if (auto asset = asset_man.get_asset(uuid))
-                     self.draw_asset_info(std::move(asset));
-                   return option<std::monostate>{};
-                 });
-               });
-             });
+  self.handle_editor_context();
 
   self.on_end();
+}
+
+auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
+  ZoneScoped;
+
+  auto& editor = App::mod<Editor>();
+  auto& editor_context = editor.get_context();
+
+  if (editor_context.entity) {
+    auto e = editor_context.entity.value();
+
+    if (e != self.last_edited_entity) {
+      self.euler_cache.reset();
+      self.last_edited_entity = e;
+    }
+
+    self.draw_components(e);
+  } else if (editor_context.type == EditorContext::Type::File) {
+    if (!editor_context.str.has_value()) {
+      return;
+    }
+
+    auto& asset_man = App::mod<AssetManager>();
+
+    auto path = std::filesystem::path(editor_context.str.value());
+    std::unique_ptr<AssetManager::AssetMetaFile> meta_file = nullptr;
+
+    if (path.extension() == ".oxasset") {
+      meta_file = asset_man.read_meta_file(path);
+    } else {
+      meta_file = asset_man.read_meta_file_from_asset(path);
+    }
+
+    if (!meta_file) {
+      return;
+    }
+
+    auto uuid_str_json = meta_file->doc["uuid"].get_string();
+    if (uuid_str_json.error())
+      return;
+
+    auto uuid_from_str = UUID::from_string(uuid_str_json.value_unsafe());
+    if (uuid_from_str.has_value()) {
+      if (auto asset = asset_man.get_asset(*uuid_from_str))
+        self.draw_asset_info(std::move(asset));
+    }
+  }
 }
 
 auto InspectorPanel::draw_material_properties(
@@ -698,6 +711,7 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
 
 auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset) -> void {
   ZoneScoped;
+  auto& editor = App::mod<Editor>();
   auto& asset_man = App::mod<AssetManager>();
   auto type_str = asset_man.to_asset_type_sv(asset->type);
   auto uuid_str = asset->uuid.str();
@@ -706,6 +720,23 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
 
   ImGui::SeparatorText("Asset");
   ImGui::Indent();
+
+  f32 thumbnail_image_size = 256;
+  auto thumbnail_image = option<std::shared_ptr<Texture>>(nullopt);
+  if (asset->type == AssetType::Texture) {
+    thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(path_str);
+  } else if (asset->type == AssetType::Model) {
+    thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(path_str);
+  }
+  if (thumbnail_image.has_value()) {
+    auto region = ImGui::GetContentRegionAvail();
+    UI::image(**thumbnail_image, {region.x, region.x});
+  } else {
+    ImGui::PushFont(nullptr, thumbnail_image_size);
+    ImGui::Text("No thumbnail");
+    ImGui::PopFont();
+  }
+
   UI::begin_properties(ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit);
   UI::text("Type", type_str);
   UI::input_text("UUID", &uuid_str, ImGuiInputTextFlags_ReadOnly);
@@ -746,7 +777,9 @@ auto InspectorPanel::draw_model_asset(this InspectorPanel& self, ReadGuard<Asset
   }
 }
 
-auto InspectorPanel::draw_material_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Material> material) -> bool {
+auto InspectorPanel::draw_material_asset(
+  this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Material> material
+) -> bool {
   ZoneScoped;
 
   ImGui::SeparatorText("Material");

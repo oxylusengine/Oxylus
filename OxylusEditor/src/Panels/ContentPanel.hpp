@@ -11,7 +11,6 @@
 
 #include "Core/Types.hpp"
 #include "EditorPanelState.hpp"
-#include "Utils/ThumbnailManager.hpp"
 
 namespace ox {
 class Texture;
@@ -58,8 +57,6 @@ private:
   std::filesystem::path _directory_to_delete;
 
   std::unique_ptr<filewatch::FileWatch<std::string>> filewatch = nullptr;
-
-  ThumbnailManager thumbnail_manager;
 
   auto draw_context_menu_items(this ContentPanel& self, const std::filesystem::path& context, bool isDir)
     -> std::filesystem::path;

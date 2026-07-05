@@ -60,6 +60,7 @@ public:
   auto registry(this const AssetManager& self) -> const AssetRegistry&;
 
   auto read_meta_file(this AssetManager& self, const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
+  auto read_meta_file_from_asset(this AssetManager& self, const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
 
   auto create_asset(this AssetManager& self, AssetType type, const std::filesystem::path& path = {}) -> UUID;
   auto import_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID;

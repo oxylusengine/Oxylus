@@ -17,9 +17,9 @@ public:
   auto update(this ThumbnailManager& self) -> void;
   auto reset(this ThumbnailManager& self) -> void;
 
-  auto get_thumbnail_model(this ThumbnailManager& self, const std::filesystem::path& asset_path)
-    -> option<std::shared_ptr<Texture>>;
   auto get_thumbnail_texture(this ThumbnailManager& self, const std::filesystem::path& asset_path)
+    -> option<std::shared_ptr<Texture>>;
+  auto get_thumbnail_model(this ThumbnailManager& self, const std::filesystem::path& asset_path)
     -> option<std::shared_ptr<Texture>>;
 
 private:

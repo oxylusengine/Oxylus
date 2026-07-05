@@ -29,6 +29,8 @@ public:
   auto on_update(this InspectorPanel& self) -> void {}
   auto on_render(this InspectorPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
 
+  auto handle_editor_context(this InspectorPanel& self) -> void;
+
   static auto draw_material_properties(
     ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
   ) -> bool;

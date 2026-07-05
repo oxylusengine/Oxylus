@@ -259,8 +259,6 @@ void ContentPanel::init(this ContentPanel& self) {
   self.current_directory_ = self.assets_directory_;
   self.refresh();
 
-  self.thumbnail_manager.init();
-
   self.filewatch = std::make_unique<filewatch::FileWatch<std::string>>(
     self.assets_directory_.string(),
     [&self](const auto&, const filewatch::Event e) { self.refresh(); }
@@ -271,8 +269,6 @@ void ContentPanel::on_update(this ContentPanel& self) {
   ZoneScoped;
 
   self.elapsed_time_ += static_cast<float>(App::get_timestep());
-
-  self.thumbnail_manager.update();
 }
 
 void ContentPanel::on_render(this ContentPanel& self, vuk::ImageAttachment swapchain_attachment) {
@@ -326,7 +322,7 @@ void ContentPanel::render_header(this ContentPanel& self) {
     UI::property("Show file thumbnails", reinterpret_cast<bool*>(EditorCVar::cvar_file_thumbnails.get_ptr()));
     UI::end_properties();
     if (UI::button("Reset thumbnail cache"))
-      self.thumbnail_manager.reset();
+      App::mod<Editor>().thumbnail_manager.reset();
     ImGui::EndPopup();
   }
 
@@ -494,8 +490,9 @@ void ContentPanel::render_side_view(this ContentPanel& self) {
 }
 
 void ContentPanel::render_body(this ContentPanel& self, bool grid) {
-  const auto& editor_theme = App::mod<Editor>().editor_theme;
-  auto& editor_context = App::mod<Editor>().get_context();
+  auto& editor = App::mod<Editor>();
+  const auto& editor_theme = editor.editor_theme;
+  auto& editor_context = editor.get_context();
   auto& render_context = App::get_rendercontext();
 
   std::filesystem::path directory_to_open;
@@ -622,7 +619,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           {background_thumbnail_size.x - padding * 2.f, background_thumbnail_size.y - padding * 2.f},
           {},
           {},
-          App::mod<Editor>().editor_theme.window_bg_alternative_color
+          editor.editor_theme.window_bg_alternative_color
         );
 
         // Thumbnail Image
@@ -634,9 +631,9 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
         auto thumbnail_image = option<std::shared_ptr<Texture>>(nullopt);
         if (use_thumbnail_image) {
           if (file.type == FileType::Texture) {
-            thumbnail_image = self.thumbnail_manager.get_thumbnail_texture(file_path_str);
+            thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(file_path_str);
           } else if (file.type == FileType::Model) {
-            thumbnail_image = self.thumbnail_manager.get_thumbnail_model(file_path_str);
+            thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(file_path_str);
           }
         }
         if (use_thumbnail_image) {

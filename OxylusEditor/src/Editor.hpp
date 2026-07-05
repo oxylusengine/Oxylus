@@ -10,6 +10,7 @@
 #include "Utils/EditorTheme.hpp"
 #include "Utils/Notification.hpp"
 #include "Utils/SceneManager.hpp"
+#include "Utils/ThumbnailManager.hpp"
 
 namespace ox {
 class Editor {
@@ -41,6 +42,8 @@ public:
   std::unique_ptr<Project> active_project = nullptr;
 
   EditorTheme editor_theme;
+
+  ThumbnailManager thumbnail_manager;
 
   // Layout
   ImGuiID dockspace_id;

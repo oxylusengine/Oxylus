@@ -115,7 +115,11 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   return {};
 }
 
-auto AssetManager::registry(this const AssetManager& self) -> const AssetRegistry& { return self.asset_registry; }
+auto AssetManager::registry(this const AssetManager& self) -> const AssetRegistry& {
+  ZoneScoped;
+
+  return self.asset_registry;
+}
 
 auto AssetManager::read_meta_file(this AssetManager& self, const std::filesystem::path& path)
   -> std::unique_ptr<AssetMetaFile> {
@@ -135,6 +139,24 @@ auto AssetManager::read_meta_file(this AssetManager& self, const std::filesystem
   }
 
   return meta_file;
+}
+
+auto AssetManager::read_meta_file_from_asset(this AssetManager& self, const std::filesystem::path& path)
+  -> std::unique_ptr<AssetMetaFile> {
+  ZoneScoped;
+
+  if (!std::filesystem::exists(path)) {
+    return nullptr;
+  }
+
+  memory::ScopedStack stack;
+
+  auto meta_path = stack.format("{}.oxasset", path);
+  if (!std::filesystem::exists(meta_path)) {
+    return nullptr;
+  }
+
+  return self.read_meta_file(meta_path);
 }
 
 auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {

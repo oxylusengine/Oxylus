@@ -165,6 +165,8 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
     self.notification_system.add(Notification("Test Error", true, Notification::Type::Error));
   });
 
+  self.thumbnail_manager.init();
+
   return {};
 }
 
@@ -182,6 +184,8 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
 
 auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   ZoneScoped;
+
+  self.thumbnail_manager.update();
 
   self.editor_panel_registry.update_all();
 
@@ -446,8 +450,10 @@ void Editor::set_docking_layout(this Editor& self, EditorLayout layout) {
   ImGui::DockBuilderSetNodeSize(self.dockspace_id, size);
 
   if (layout == EditorLayout::BigViewport) {
-    const ImGuiID right_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Right, 0.8f, nullptr, &self.dockspace_id);
-    ImGuiID left_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Left, 0.2f, nullptr, &self.dockspace_id);
+    const ImGuiID
+      right_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Right, 0.8f, nullptr, &self.dockspace_id);
+    ImGuiID
+      left_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Left, 0.2f, nullptr, &self.dockspace_id);
     const ImGuiID left_split_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Down, 0.4f, nullptr, &left_dock);
 
     ImGui::DockBuilderDockWindow(self.main_viewport_panel.get_id(), right_dock);
@@ -455,8 +461,10 @@ void Editor::set_docking_layout(this Editor& self, EditorLayout layout) {
     ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<ContentPanel>().get_id(), left_split_dock);
     ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<InspectorPanel>().get_id(), left_dock);
   } else if (layout == EditorLayout::Classic) {
-    const ImGuiID right_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Right, 0.2f, nullptr, &self.dockspace_id);
-    ImGuiID left_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Left, 0.85f, nullptr, &self.dockspace_id);
+    const ImGuiID
+      right_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Right, 0.2f, nullptr, &self.dockspace_id);
+    ImGuiID
+      left_dock = ImGui::DockBuilderSplitNode(self.dockspace_id, ImGuiDir_Left, 0.85f, nullptr, &self.dockspace_id);
     const ImGuiID left_bottom_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Down, 0.3f, nullptr, &left_dock);
     const ImGuiID
       left_vertical_split_dock = ImGui::DockBuilderSplitNode(left_dock, ImGuiDir_Left, 0.2f, nullptr, &left_dock);
@@ -464,7 +472,10 @@ void Editor::set_docking_layout(this Editor& self, EditorLayout layout) {
     ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<InspectorPanel>().get_id(), right_dock);
     ImGui::DockBuilderDockWindow(self.main_viewport_panel.get_id(), left_dock);
     ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<ContentPanel>().get_id(), left_bottom_dock);
-    ImGui::DockBuilderDockWindow(self.editor_panel_registry.get<SceneHierarchyPanel>().get_id(), left_vertical_split_dock);
+    ImGui::DockBuilderDockWindow(
+      self.editor_panel_registry.get<SceneHierarchyPanel>().get_id(),
+      left_vertical_split_dock
+    );
   }
 
   ImGui::DockBuilderFinish(self.dockspace_id);
