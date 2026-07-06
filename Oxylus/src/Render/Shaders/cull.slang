@@ -173,3 +173,7 @@ public func test_triangle_backface(f32x4x3 clip_pos) -> bool {
 public func test_cone(f32x3 center, f32 radius, f32x3 cone_axis, f32 cone_cutoff, f32x3 camera_position) -> bool {
 	return dot(center - camera_position, cone_axis) >= cone_cutoff * length(center - camera_position) + radius;
 }
+
+public func test_cone_directional(f32x3 cone_axis, f32 cone_cutoff, f32x3 view_dir) -> bool {
+    return dot(cone_axis, view_dir) >= cone_cutoff;
+}

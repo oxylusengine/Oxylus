@@ -111,7 +111,7 @@ public struct VSMPageMetadata {
     }
 };
 
-#define VMS_USE_DIAG_PIXEL_FOOTPRINT 1
+#define VMS_USE_DIAG_PIXEL_FOOTPRINT 0
 
 public struct VSMContext {
     public i32 page_size;
@@ -151,11 +151,7 @@ public struct VSMContext {
         let page_count = this.page_table_size;
         let scale_ratio = f32(page_count - 2) / f32(page_count);
         let effective_width = this.first_clipmap_width * scale_ratio;
-#if VMS_USE_DIAG_PIXEL_FOOTPRINT
         return (effective_width * 2.0) / this.virtual_extent;
-#else
-        return effective_width * 2.0;
-#endif
     }
 
     public func get_clipmap_level_f(in Camera camera, f32x2 uv, f32 depth) -> f32 {
@@ -178,19 +174,25 @@ public struct VSMContext {
         );
         let d = min(dx, dy);
 #else
-        let center_pos = camera.unproject_uv(uv, depth);
-        let d = length(center_pos - camera.position);
+    let center_pos = camera.unproject_uv(uv, depth);
+    let d = length(center_pos - camera.position.xyz);
+
+    let page_count = this.virtual_extent / this.page_size;
+    let scale_ratio = f32(page_count - 2) / f32(page_count);
+    let base_scale = this.first_clipmap_width * 2.0 * scale_ratio;
+
+    let clipmap_level_f = log2((d / base_scale) * this.clipmap_selection_bias);
 #endif
-        let page_count = this.virtual_extent / this.page_size;
-        let scale_ratio = f32(page_count - 2) / f32(page_count);
-        let base_scale = this.get_first_clipmap_texel_length() * scale_ratio;
-        let clipmap_level_f = log2(d / base_scale) + this.clipmap_selection_bias;
         return max(clipmap_level_f, 0.0);
     }
 
     public func get_clipmap_index(in Camera camera, f32x2 uv, f32 depth) -> u32 {
         let level_f = this.get_clipmap_level_f(camera, uv, depth);
+#if VMS_USE_DIAG_PIXEL_FOOTPRINT
         return min(u32(ceil(level_f)), u32(this.clipmap_count - 1));
+#else
+        return clamp(u32(ceil(level_f)), 1u, u32(this.clipmap_count - 1));
+#endif
     }
 };
 

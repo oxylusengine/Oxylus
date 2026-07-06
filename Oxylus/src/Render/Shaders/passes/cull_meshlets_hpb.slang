@@ -49,9 +49,7 @@ func cs_main(
         let cone_cutoff = meshlet_bounds.get_cone_cutoff();
 
         let cone_axis = normalize(transform.to_world_normal(meshlet_bounds.get_cone_axis()));
-        let world_center = transform.to_world_position(aabb_center).xyz;
-        let world_radius = transform.to_world_radius(length(aabb_extent * 0.5));
-        let cone_visible = cone_cutoff >= 1.0 || !test_cone(world_center, world_radius, cone_axis, cone_cutoff, camera.position);
+        let cone_visible = cone_cutoff >= 1.0 || !test_cone_directional(cone_axis, cone_cutoff, camera.position);
 
         if (cone_visible && test_frustum(mvp, aabb_center, aabb_extent)) {
             var visible = true;

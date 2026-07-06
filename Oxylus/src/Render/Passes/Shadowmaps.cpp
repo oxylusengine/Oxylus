@@ -401,7 +401,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   auto geometry_context = ShadowGeometryContext{};
 
   auto clipmap_camera = GPU::CullCamera{
-    .position = self.camera_data.position,
+    .position = -self.directional_light.direction,
     .acceptable_lod_error = self.camera_data.acceptable_lod_error,
     .resolution = self.camera_data.resolution,
     .near_clip = self.camera_data.near_clip,
