@@ -29,6 +29,7 @@ auto NotificationSystem::add(Notification&& notif) -> void {
 
 auto NotificationSystem::draw() -> void {
   ZoneScoped;
+
   // Bottom right
   ImVec2 root_screen_pos = ImGui::GetMainViewport()->Size;
   root_screen_pos.x -= root_window_size.x + padding;
@@ -42,7 +43,11 @@ auto NotificationSystem::draw() -> void {
   ImGui::SetNextWindowPos({root_screen_pos.x, root_screen_pos.y}, ImGuiCond_Always);
   ImGui::SetNextWindowSize(root_window_size, ImGuiCond_Always);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.f, 0.f, 0.f, 0.f));
-  ImGui::Begin("##Notifications", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+  ImGui::Begin(
+    "##Notifications",
+    nullptr,
+    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav
+  );
   ImGui::PopStyleColor();
 
   for (auto& [name, notif] : active_notifications) {
@@ -68,13 +73,15 @@ auto NotificationSystem::draw_single(Notification& notif) -> void {
   ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 3.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 3.0f);
   ImGui::PushStyleColor(ImGuiCol_Border, Gruvbox::dark0_hard.Value);
-  if (ImGui::BeginChild(
-        notif.title.c_str(),
-        {},
-        ImGuiChildFlags_Borders | ImGuiChildFlags_FrameStyle,
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
-          ImGuiWindowFlags_NoFocusOnAppearing
-      )) {
+  if (
+    ImGui::BeginChild(
+      notif.title.c_str(),
+      {},
+      ImGuiChildFlags_Borders | ImGuiChildFlags_FrameStyle,
+      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing
+    )
+  ) {
     ImSpinner::detail::SpinnerConfig config{};
     config.setSpinnerType(ImSpinner::e_st_ang);
     config.setSpeed(6.f);

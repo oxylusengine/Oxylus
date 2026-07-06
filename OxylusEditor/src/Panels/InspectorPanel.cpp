@@ -721,18 +721,19 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
   ImGui::SeparatorText("Asset");
   ImGui::Indent();
 
-  f32 thumbnail_image_size = 256;
   auto thumbnail_image = option<std::shared_ptr<Texture>>(nullopt);
   if (asset->type == AssetType::Texture) {
     thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(path_str);
   } else if (asset->type == AssetType::Model) {
     thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(path_str);
   }
+  const auto indent_spacing = ImGui::GetStyle().IndentSpacing;
+  const auto region = ImGui::GetContentRegionAvail();
+  auto content_width = region.x - ImGui::GetStyle().IndentSpacing;
   if (thumbnail_image.has_value()) {
-    auto region = ImGui::GetContentRegionAvail();
-    UI::image(**thumbnail_image, {region.x, region.x});
+    UI::image(**thumbnail_image, {content_width, content_width});
   } else {
-    ImGui::PushFont(nullptr, thumbnail_image_size);
+    ImGui::PushFont(nullptr, 32.f);
     ImGui::Text("No thumbnail");
     ImGui::PopFont();
   }
@@ -743,6 +744,8 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
   UI::input_text("File", &name, ImGuiInputTextFlags_ReadOnly);
   UI::input_text("Path", &path_str, ImGuiInputTextFlags_ReadOnly);
   UI::end_properties();
+
+  ImGui::Unindent();
 
   if (asset->type == AssetType::Material) {
     if (auto mat = asset_man.get_material(asset->uuid)) {

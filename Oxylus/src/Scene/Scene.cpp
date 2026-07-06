@@ -182,13 +182,17 @@ struct JsonEntityDeserializer : IEntitySerializer {
       return;
     }
 
-    if (underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
-        underlying_kind == EcsOpU64) {
+    if (
+      underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
+      underlying_kind == EcsOpU64
+    ) {
       auto result = field_result.get_uint64();
       auto current = static_cast<u64*>(ptr);
       *current = result.value_unsafe();
-    } else if (underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
-               underlying_kind == EcsOpI64) {
+    } else if (
+      underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
+      underlying_kind == EcsOpI64
+    ) {
       auto result = field_result.get_int64();
       auto current = static_cast<i64*>(ptr);
       *current = result.value_unsafe();
@@ -265,14 +269,17 @@ struct JsonEntityDeserializer : IEntitySerializer {
       if (!result.error() && opaque_info->assign_uint) {
         opaque_info->assign_uint(field_ptr, static_cast<u64>(result.value_unsafe()));
       }
-    } else if (opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 ||
-               opaque_type == flecs::Uptr) {
+    } else if (
+      opaque_type == flecs::U16 || opaque_type == flecs::U32 || opaque_type == flecs::U64 || opaque_type == flecs::Uptr
+    ) {
       auto result = field_result.get_uint64();
       if (!result.error() && opaque_info->assign_uint) {
         opaque_info->assign_uint(field_ptr, result.value_unsafe());
       }
-    } else if (opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 ||
-               opaque_type == flecs::I64 || opaque_type == flecs::Iptr) {
+    } else if (
+      opaque_type == flecs::I8 || opaque_type == flecs::I16 || opaque_type == flecs::I32 || opaque_type == flecs::I64 ||
+      opaque_type == flecs::Iptr
+    ) {
       auto result = field_result.get_int64();
       if (!result.error() && opaque_info->assign_int) {
         opaque_info->assign_int(field_ptr, result.value_unsafe());
@@ -323,8 +330,8 @@ auto Scene::safe_entity_name(this const Scene& self, std::string prefix, flecs::
   // duplicated exports get sensible successors ("leaf.001" -> "leaf.002" ->
   // "leaf.003") instead of the uglier "leaf.001_1" / "leaf.001_2" the old
   // logic produced. Names without such a suffix fall back to "_1", "_2", ...
-  auto try_parse_blender_suffix = [](const std::string& s, std::string& out_base, u32& out_num, usize& out_width)
-    -> bool {
+  auto try_parse_blender_suffix =
+    [](const std::string& s, std::string& out_base, u32& out_num, usize& out_width) -> bool {
     const auto dot = s.rfind('.');
     if (dot == std::string::npos || dot == 0) {
       return false;
@@ -403,7 +410,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   ZoneScoped;
   self.scene_name = name;
 
-  self.component_db.import_module(self.world.import <CoreComponentsModule>());
+  self.component_db.import_module(self.world.import<CoreComponentsModule>());
 
   if (App::has_mod<Renderer>()) {
     auto& renderer = App::mod<Renderer>();
@@ -703,19 +710,15 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   // --- Physics Systems ---
 
-  // TODOs(hatrickek):
-  // Interpolation for rigibodies.
-
   const auto physics_tick_source = self.world.timer().interval(self.physics_interval);
 
-  self.world
-    .system("physics_step") //
+  self.world.system("physics_step")
     .kind(flecs::OnUpdate)
     .tick_source(physics_tick_source)
     .run([&self](flecs::iter& it) {
       OX_CHECK_NULL(self.physics_system);
       auto& p = App::mod<Physics>();
-      self.physics_system->Update(it.delta_time(), 1, p.get_temp_allocator(), p.get_job_system());
+      self.physics_system->Update(self.physics_interval, 1, p.get_temp_allocator(), p.get_job_system());
     });
 
   self.world.system<TransformComponent, RigidBodyComponent>("rigidbody_update")
@@ -738,8 +741,18 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       rb.previous_rotation = rb.rotation;
       rb.translation = {position.GetX(), position.GetY(), position.GetZ()};
       rb.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
-      tc.position = rb.translation;
-      tc.rotation = rb.rotation;
+    });
+
+  self.world.system<TransformComponent, const RigidBodyComponent>("physics_interpolate")
+    .kind(flecs::OnUpdate)
+    .each([&self](const flecs::entity& e, TransformComponent& tc, const RigidBodyComponent& rb) {
+      if (!rb.runtime_body)
+        return;
+
+      f32 alpha = std::clamp(self.physics_accumulator / self.physics_interval, 0.0f, 1.0f);
+
+      tc.position = glm::mix(rb.previous_translation, rb.translation, alpha);
+      tc.rotation = glm::slerp(rb.previous_rotation, rb.rotation, alpha);
 
       e.modified<TransformComponent>();
     });
@@ -805,8 +818,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       if (component.playing && !component.looping)
         component.system_time += sim_ts;
       const float delay = component.start_delay;
-      if (component.playing && (component.looping || (component.system_time <= delay + component.duration &&
-                                                      component.system_time > delay))) {
+      if (
+        component.playing &&
+        (component.looping || (component.system_time <= delay + component.duration && component.system_time > delay))
+      ) {
         // Emit particles in unit time
         component.spawn_time += sim_ts;
         if (component.spawn_time >= 1.0f / static_cast<float>(component.rate_over_time)) {
@@ -966,8 +981,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       auto& asset_manager = App::mod<AssetManager>();
       auto material = asset_manager.get_material(sprite.material);
 
-      if (sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
-          !material->albedo_texture)
+      if (
+        sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
+        !material->albedo_texture
+      )
         return;
 
       const auto dt = glm::clamp(static_cast<float>(it.delta_time()), 0.0f, 0.25f);
@@ -1114,6 +1131,11 @@ auto Scene::runtime_stop(this Scene& self) -> void {
 
 auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void {
   ZoneScoped;
+
+  self.physics_accumulator += delta_time.get_millis();
+  while (self.physics_accumulator >= self.physics_interval) {
+    self.physics_accumulator -= self.physics_interval;
+  }
 
   self.run_deferred_functions();
 
@@ -1582,8 +1604,10 @@ auto Scene::set_dirty(this Scene& self, flecs::entity entity) -> void {
   // Mark the entity's mesh instance (if any) as dirty so the VSM invalidate-pages
   // pass can clear pages the mesh used to cover. Child entities are notified below,
   // which re-enters `set_dirty` for each child that has a transform.
-  if (const auto mesh_it = self.entity_to_mesh_instance_map.find(entity);
-      mesh_it != self.entity_to_mesh_instance_map.end()) {
+  if (
+    const auto mesh_it = self.entity_to_mesh_instance_map.find(entity);
+    mesh_it != self.entity_to_mesh_instance_map.end()
+  ) {
     self.dirty_mesh_instances.push_back(mesh_it->second);
   }
 
@@ -2126,8 +2150,10 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   auto entities_array = doc["entities"];
   if (!entities_array.error()) {
     for (auto entity_json : entities_array.get_array()) {
-      if (Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
-          flecs::entity::null()) {
+      if (
+        Scene::json_to_entity(self, flecs::entity::null(), entity_json.value_unsafe(), requested_assets) ==
+        flecs::entity::null()
+      ) {
         return false;
       }
     }
