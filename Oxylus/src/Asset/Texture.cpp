@@ -28,6 +28,7 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
 
   const auto is_generic = load_info.mime == TextureLoadInfo::MimeType::Generic;
   const auto is_dds = load_info.mime == TextureLoadInfo::MimeType::DDS;
+  const auto is_ktx = load_info.mime == TextureLoadInfo::MimeType::KTX;
 
   std::unique_ptr<u8[]> stb_data = nullptr;
   std::unique_ptr<ktxTexture2, decltype([](ktxTexture2* p) { ktxTexture_Destroy(ktxTexture(p)); })> ktx_texture = {};
@@ -100,7 +101,7 @@ void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_inf
     extent.width = dds_image.width;
     extent.height = dds_image.height;
     format = static_cast<vuk::Format>(dds::getVulkanFormat(dds_image.format, dds_image.supportsAlpha));
-  } else if (!is_generic) {
+  } else if (is_ktx) {
     ktxTexture2* ktx{};
     if (path.empty()) {
       OX_CHECK_EQ(!load_info.bytes.empty(), true);

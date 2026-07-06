@@ -112,7 +112,10 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
     auto thumbnail_texture = std::make_shared<Texture>();
     thumbnail_texture->create(
       asset_path.string(),
-      TextureLoadInfo{.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}}
+      TextureLoadInfo{
+        .mime = Texture::path_to_mime(asset_path),
+        .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}
+      }
     );
 
     auto lock = std::unique_lock(self.thumbnail_mutex);
@@ -158,7 +161,10 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
       auto thumbnail_texture = std::make_shared<Texture>();
       thumbnail_texture->create(
         expected_png.string(),
-        TextureLoadInfo{.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}}
+        TextureLoadInfo{
+          .mime = Texture::path_to_mime(expected_png),
+          .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}
+        }
       );
 
       auto lock = std::unique_lock(self.thumbnail_mutex);

@@ -157,6 +157,7 @@ public:
 
   auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
 
+  // TODO: Get rid of this.
   // This will reset RendererInstance's reference to acquired vuk resources.
   // If I don't do this vuk complains about resources not being unique when there is another RendererInstance being
   // rendered even when this is not.
