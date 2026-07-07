@@ -1,5 +1,3 @@
-module histogram_generate;
-
 import common;
 import gpu;
 
@@ -12,7 +10,7 @@ struct PushConstants {
     u32 *histogram;
     u32x2 src_image_size;
     f32 min_exposure;
-    f32 exposure_range_inv;
+    f32 max_exposure;
 };
 [[vk::push_constant]] PushConstants C;
 
@@ -23,8 +21,8 @@ func bin_lum(f32 luminance) -> u32 {
         return 0;
     }
 
-    const f32 log_luminance = saturate((log2(luminance) - C.min_exposure) * C.exposure_range_inv);
-    return u32(log_luminance * f32(HISTOGRAM_BIN_COUNT - 1) + 1.0);
+    let mapped = com::remap(log2(luminance), C.min_exposure, C.max_exposure, 1.0, float(HISTOGRAM_BIN_COUNT - 1));
+    return clamp(i32(mapped), 0, HISTOGRAM_BIN_COUNT - 1);
 }
 
 [[shader("compute")]]
@@ -34,9 +32,9 @@ func cs_main(u32 group_index : SV_GroupIndex, u32x3 thread_id : SV_DispatchThrea
     GroupMemoryBarrierWithGroupSync();
 
     if (all(thread_id.xy < C.src_image_size)) {
-        const f32x3 color = src_image.Load(u32x3(thread_id.xy, 0)).rgb;
-        const f32 luminance = com::rec2020_to_xyz(color).y;
-        const u32 bin_index = bin_lum(luminance);
+        let color = src_image.Load(u32x3(thread_id.xy, 0)).rgb;
+        let luminance = dot(color, f32x3(0.2127, 0.7152, 0.0722));
+        let bin_index = bin_lum(luminance);
         __atomic_add(histogram_shared[bin_index], 1, MemoryOrder::AcquireRelease);
     }
 

@@ -30,7 +30,7 @@ auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostPro
               histogram_bin_indices->device_address,
               glm::uvec2(src->extent.width, src->extent.height),
               settings.min_exposure,
-              1.0f / (settings.max_exposure - settings.min_exposure)))
+              settings.max_exposure))
           .dispatch_invocations_per_pixel(src);
 
       return std::make_tuple(src, histogram_bin_indices);

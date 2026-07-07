@@ -81,7 +81,7 @@ void agxLook(inout float3 color)
 {
     const float3 slope      = (1.0f).xxx;
     const float3 power      = (1.1f).xxx;
-    const float saturation  = 1.1;
+    const float saturation  = 1.3;
     float luma = luminance_from_col(color);
     color = pow(color * slope, power);
     color = max(luma + saturation * (color - luma), float3(0.0));
@@ -125,6 +125,139 @@ float3 agx_tonemapping(float3 color) {
     // Gamut mapping. Simple clamp for now.
     color = clamp(color, 0.0, 1.0);
     return color;
+}
+
+f32x3x3 inverse(f32x3x3 m)
+{
+    f32 a = m[0].x, b = m[0].y, c = m[0].z;
+    f32 d = m[1].x, e = m[1].y, f = m[1].z;
+    f32 g = m[2].x, h = m[2].y, i = m[2].z;
+
+    f32 A =  (e * i - f * h);
+    f32 B = -(d * i - f * g);
+    f32 C =  (d * h - e * g);
+    f32 D = -(b * i - c * h);
+    f32 E =  (a * i - c * g);
+    f32 F = -(a * h - b * g);
+    f32 G =  (b * f - c * e);
+    f32 H = -(a * f - c * d);
+    f32 I =  (a * e - b * d);
+
+    f32 det = a * A + b * B + c * C;
+    f32 invDet = 1.0 / det;
+
+    return f32x3x3(
+        A * invDet, D * invDet, G * invDet,
+        B * invDet, E * invDet, H * invDet,
+        C * invDet, F * invDet, I * invDet
+    );
+}
+
+f32x3 color_XyYToXYZ(f32x3 xyY)
+{
+    f32 Y = xyY.z;
+    f32 X = (xyY.x * Y) / xyY.y;
+    f32 Z = ((1.0 - xyY.x - xyY.y) * Y) / xyY.y;
+    return f32x3(X, Y, Z);
+}
+
+f32x3 color_Unproject(f32x2 xy)
+{
+    return color_XyYToXYZ(f32x3(xy.x, xy.y, 1.0));
+}
+
+f32x3x3 color_PrimariesToMatrix(f32x2 xy_red, f32x2 xy_green, f32x2 xy_blue, f32x2 xy_white)
+{
+    f32x3 XYZ_red   = color_Unproject(xy_red);
+    f32x3 XYZ_green = color_Unproject(xy_green);
+    f32x3 XYZ_blue  = color_Unproject(xy_blue);
+    f32x3 XYZ_white = color_Unproject(xy_white);
+
+    // Rows here = GLSL's columns (see gotcha above).
+    f32x3x3 temp = f32x3x3(
+        XYZ_red.x, XYZ_green.x, XYZ_blue.x,
+        1.0,       1.0,         1.0,
+        XYZ_red.z, XYZ_green.z, XYZ_blue.z
+    );
+    f32x3 scale = mul(inverse(temp), XYZ_white);
+
+    // Same story: rows = GLSL's columns.
+    return f32x3x3(
+        XYZ_red.x * scale.x, XYZ_green.x * scale.y, XYZ_blue.x * scale.z,
+        XYZ_red.y * scale.x, XYZ_green.y * scale.y, XYZ_blue.y * scale.z,
+        XYZ_red.z * scale.x, XYZ_green.z * scale.y, XYZ_blue.z * scale.z
+    );
+}
+
+f32x3x3 color_ComputeCompressionMatrix(f32x2 xyR, f32x2 xyG, f32x2 xyB, f32x2 xyW, f32 compression)
+{
+    f32 scale_factor = 1.0 / (1.0 - compression);
+    f32x2 R = lerp(xyW, xyR, scale_factor);
+    f32x2 G = lerp(xyW, xyG, scale_factor);
+    f32x2 B = lerp(xyW, xyB, scale_factor);
+    f32x2 W = xyW;
+
+    return color_PrimariesToMatrix(R, G, B, W);
+}
+
+f32 color_DualSection(f32 x, f32 linear, f32 peak)
+{
+    // Length of linear section
+    f32 S = peak * linear;
+    if (x < S)
+    {
+        return x;
+    }
+    else
+    {
+        f32 C = peak / (peak - S);
+        return peak - (peak - S) * exp((-C * (x - S)) / peak);
+    }
+}
+
+f32x3 color_DualSection(f32x3 x, f32 linear, f32 peak)
+{
+    x.x = color_DualSection(x.x, linear, peak);
+    x.y = color_DualSection(x.y, linear, peak);
+    x.z = color_DualSection(x.z, linear, peak);
+    return x;
+}
+
+f32x3 AgX_DS(f32x3 color_srgb)
+{
+    const let AGX_SATURATION = 1.3;
+    const let AGX_COMPRESSION = 0.15;
+    const let AGX_LINEAR = 0.10;
+    const let AGX_PEAK = 1.0;
+    f32x3 workingColor = max(color_srgb, 0.0);
+
+    f32x3x3 sRGB_to_XYZ = color_PrimariesToMatrix(
+        f32x2(0.64, 0.33),
+        f32x2(0.3, 0.6),
+        f32x2(0.15, 0.06),
+        f32x2(0.3127, 0.3290));
+
+    f32x3x3 adjusted_to_XYZ = color_ComputeCompressionMatrix(
+        f32x2(0.64, 0.33),
+        f32x2(0.3, 0.6),
+        f32x2(0.15, 0.06),
+        f32x2(0.3127, 0.3290),
+        AGX_COMPRESSION);
+
+    f32x3x3 XYZ_to_adjusted = inverse(adjusted_to_XYZ);
+    f32x3x3 sRGB_to_adjusted = mul(sRGB_to_XYZ, XYZ_to_adjusted);
+
+    workingColor = mul(sRGB_to_adjusted, workingColor);
+    workingColor = clamp(color_DualSection(workingColor, AGX_LINEAR, AGX_PEAK), 0.0, 1.0);
+
+    f32x3 luminanceWeight = f32x3(0.2126729, 0.7151522, 0.0721750);
+    f32x3 desaturation = f32x3(dot(workingColor, luminanceWeight));
+    workingColor = lerp(desaturation, workingColor, AGX_SATURATION);
+    workingColor = clamp(workingColor, 0.0, 1.0);
+
+    workingColor = mul(inverse(sRGB_to_adjusted), workingColor);
+
+    return workingColor;
 }
 
 // -----------------------------------------------------------------------------
@@ -536,10 +669,8 @@ f32x4 fs_main(VertexOutput input) {
     var color = input_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
 
     if ((scene_flags & SceneFlags::HasEyeAdaptation) != 0) {
-        // histogram_average.slang computes the standard EV100->linear exposure
-        // multiplier (1 / (2^ev100 * 1.2)); apply it directly.
         let exposure = histogram_luminance.exposure;
-        color = color * (exposure + 1.0);
+        color *= exposure;
     }
 
     if ((scene_flags & SceneFlags::HasBloom) != 0) {
@@ -552,7 +683,7 @@ f32x4 fs_main(VertexOutput input) {
             color = ACES_Fitted(color);
         } break;
         case TonemapType::AgX: {
-            color = agx_tonemapping(color);
+            color = AgX_DS(color);
         } break;
         case TonemapType::GT7: {
             var gt7 = GT7ToneMapping();

@@ -245,7 +245,7 @@ struct AtmosphereComponent {
 };
 
 struct AutoExposureComponent {
-  f32 min_exposure = -6.f;
+  f32 min_exposure = -11.5f;
   f32 max_exposure = 18.f;
   f32 adaptation_speed = 1.1f;
   f32 ev100_bias = 1.f;

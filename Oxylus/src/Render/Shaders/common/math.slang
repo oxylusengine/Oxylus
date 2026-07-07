@@ -183,4 +183,7 @@ public func dequantize_half(u16 h) -> f32 {
     return asfloat(s | r);
 }
 
+public func remap(float val, float start1, float end1, float start2, float end2) -> float {
+  return (val - start1) / (end1 - start1) * (end2 - start2) + start2;
+}
 }
