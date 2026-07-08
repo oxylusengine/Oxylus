@@ -155,6 +155,9 @@ public:
     flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
   ) const -> void;
 
+  auto render(
+    this Scene& self, vuk::Value<vuk::ImageAttachment>&& dst_attachment, const Renderer::RenderInfo& render_info
+  ) -> vuk::Value<vuk::ImageAttachment>;
   auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
 
   // TODO: Get rid of this.

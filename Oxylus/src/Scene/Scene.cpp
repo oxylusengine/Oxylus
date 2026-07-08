@@ -1955,6 +1955,21 @@ void Scene::create_character_controller(
   ch_body->SetUserData(static_cast<u64>(entity.id()));
 }
 
+auto Scene::render(
+  this Scene& self, vuk::Value<vuk::ImageAttachment>&& dst_attachment, const Renderer::RenderInfo& render_info
+) -> vuk::Value<vuk::ImageAttachment> {
+  ZoneScoped;
+
+  auto ri = self.get_renderer_instance();
+  OX_CHECK_NULL(ri);
+
+  for (auto& [uuid, system] : self.lua_systems) {
+    system->on_scene_render(&self, dst_attachment->extent);
+  }
+
+  return ri->render(std::move(dst_attachment), render_info);
+}
+
 auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   ZoneScoped;
 

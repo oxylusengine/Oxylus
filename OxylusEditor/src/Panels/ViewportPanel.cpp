@@ -319,7 +319,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       auto viewport_attachment = vuk::declare_ia("viewport", viewport_attachment_info);
       viewport_attachment = vuk::clear_image(std::move(viewport_attachment), vuk::Black<f32>);
 
-      auto scene_view_image = renderer_instance->render(std::move(viewport_attachment), render_info);
+      auto scene_view_image = self.editor_scene->get_scene()->render(std::move(viewport_attachment), render_info);
 
       ImGui::SetCursorPos(
         {ImGui::GetCursorPosX() + self.viewport_offset.x, ImGui::GetCursorPosY() + self.viewport_offset.y}

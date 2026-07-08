@@ -90,6 +90,9 @@ auto LuaSystem::init_script(
   );
   reset_unused(self.on_scene_fixed_update_func);
 
+  self.on_scene_render_func = std::make_unique<sol::protected_function>((*self.environment)["on_scene_render"]);
+  reset_unused(self.on_scene_render_func);
+
   self.on_contact_added_func = std::make_unique<sol::protected_function>((*self.environment)["on_contact_added"]);
   reset_unused(self.on_contact_added_func);
 
@@ -135,6 +138,7 @@ auto LuaSystem::reset_functions(this LuaSystem& self) -> void {
   self.on_scene_stop_func.reset();
   self.on_scene_update_func.reset();
   self.on_scene_fixed_update_func.reset();
+  self.on_scene_render_func.reset();
 
   self.on_contact_added_func.reset();
   self.on_contact_persisted_func.reset();
@@ -191,6 +195,16 @@ auto LuaSystem::on_scene_fixed_update(this const LuaSystem& self, Scene* scene, 
 
   const auto result = self.on_scene_fixed_update_func->call(scene, delta_time);
   check_result(result, "on_scene_fixed_update");
+}
+
+auto LuaSystem::on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent) -> void {
+  ZoneScoped;
+
+  if (!self.on_scene_render_func)
+    return;
+
+  const auto result = self.on_scene_render_func->call(scene, glm::vec3(extent.width, extent.height, extent.depth));
+  check_result(result, "on_scene_render");
 }
 
 auto LuaSystem::on_scene_stop(this const LuaSystem& self, Scene* scene) -> void {
