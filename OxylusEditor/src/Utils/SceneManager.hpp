@@ -12,6 +12,8 @@ public:
   EditorScene() : scene(std::make_shared<Scene>()) {}
   EditorScene(const std::shared_ptr<Scene>& s) : scene(s) {}
 
+  ~EditorScene();
+
   auto is_valid(this const EditorScene& self) -> bool;
   auto is_playing(this const EditorScene& self) -> bool;
 

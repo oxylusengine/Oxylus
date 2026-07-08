@@ -2222,9 +2222,4 @@ auto Scene::load_from_file(this Scene& self, const std::filesystem::path& path) 
 
   return self.from_json(content);
 }
-
-auto Scene::reset_renderer_instance() -> void {
-  auto& renderer = App::mod<Renderer>();
-  renderer_instance = renderer.new_instance(*this);
-}
 } // namespace ox

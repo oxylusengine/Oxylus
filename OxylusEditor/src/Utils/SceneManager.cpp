@@ -3,6 +3,8 @@
 #include "Core/App.hpp"
 
 namespace ox {
+EditorScene::~EditorScene() { stop(); }
+
 auto EditorScene::is_valid(this const EditorScene& self) -> bool {
   ZoneScoped;
 
@@ -46,16 +48,12 @@ auto EditorScene::play(this EditorScene& self) -> void {
   self.get_scene()->meshes_dirty = true;
   self.get_scene()->runtime_start();
   self.scene_state = SceneState::Play;
-
-  self.get_scene()->reset_renderer_instance();
 }
 
 auto EditorScene::stop(this EditorScene& self) -> void {
   ZoneScoped;
 
   self.scene_state = SceneState::Edit;
-
-  self.get_scene()->reset_renderer_instance();
 }
 
 auto SceneManager::reset(this SceneManager& self) -> void {
