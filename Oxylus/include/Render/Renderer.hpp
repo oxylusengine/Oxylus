@@ -78,8 +78,6 @@ public:
     std::vector<DrawBatch2D> batches = {};
     std::vector<SpriteGPUData> sprite_data = {};
 
-    vuk::Name current_pipeline_name = {};
-
     u32 num_sprites = 0;
     u32 previous_offset = 0;
 
@@ -90,21 +88,12 @@ public:
       clear();
       batches.reserve(last_batches_size);
       sprite_data.reserve(last_sprite_data_size);
+      batches.emplace_back(
+        DrawBatch2D{.pipeline_name = "2d_forward", .offset = previous_offset, .count = num_sprites - previous_offset}
+      );
     }
 
-    // TODO: this will take a list of materials
-    // TODO: sort pipelines
-    void update() {
-      const vuk::Name pipeline_name = "2d_forward"; // TODO: hardcoded until we have a modular material shader system
-      if (current_pipeline_name != pipeline_name) {
-        batches.emplace_back(
-          DrawBatch2D{.pipeline_name = pipeline_name, .offset = previous_offset, .count = num_sprites - previous_offset}
-        );
-        current_pipeline_name = pipeline_name;
-      }
-
-      previous_offset = num_sprites;
-    }
+    void update() { previous_offset = num_sprites; }
 
     void add(
       const SpriteComponent& sprite, const float& position_y, u32 transform_id, u32 material_id, const float distance
@@ -137,7 +126,6 @@ public:
       previous_offset = 0;
       last_batches_size = static_cast<u32>(batches.size());
       last_sprite_data_size = static_cast<u32>(sprite_data.size());
-      current_pipeline_name = {};
 
       batches.clear();
       sprite_data.clear();

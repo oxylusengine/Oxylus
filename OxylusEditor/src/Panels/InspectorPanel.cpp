@@ -203,6 +203,7 @@ struct EntityInspector : IEntitySerializer {
 
       auto& asset_man = App::mod<AssetManager>();
 
+      ImGui::PushID(field_ptr);
       static bool draw_asset_picker = false;
       if (UI::button(ICON_MDI_CIRCLE_DOUBLE)) {
         draw_asset_picker = !draw_asset_picker;
@@ -235,8 +236,9 @@ struct EntityInspector : IEntitySerializer {
       const float x = ImGui::GetContentRegionAvail().x;
       const float y = ImGui::GetFrameHeight();
       const auto btn = fmt::format("{} Drop an asset file", ICON_MDI_FILE_UPLOAD);
-      if (UI::button(btn.c_str(), {x, y})) {
-      }
+      UI::button(btn.c_str(), {x, y});
+      ImGui::PopID();
+
       if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
           const auto payload = PayloadData::from_payload(imgui_payload);
@@ -761,22 +763,6 @@ auto InspectorPanel::draw_model_asset(this InspectorPanel& self, ReadGuard<Asset
 
   if (!model) {
     return;
-  }
-
-  auto& asset_man = App::mod<AssetManager>();
-  for (auto& mat_uuid : model->materials) { // TODO: We should actually use model component here
-    static constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_DefaultOpen |
-                                                     ImGuiTreeNodeFlags_SpanAvailWidth |
-                                                     ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
-                                                     ImGuiTreeNodeFlags_FramePadding;
-
-    if (auto material = asset_man.get_material(mat_uuid)) {
-      const auto mat_uuid_str = mat_uuid.str();
-      if (ImGui::TreeNodeEx(mat_uuid_str.c_str(), TREE_FLAGS, "%s", mat_uuid_str.c_str())) {
-        draw_material_properties(std::move(material), mat_uuid, asset->path);
-        ImGui::TreePop();
-      }
-    }
   }
 }
 
