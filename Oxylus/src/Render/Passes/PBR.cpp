@@ -9,12 +9,12 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
   ZoneScoped;
   auto sky_view_pass = vuk::make_pass(
     "sky view",
-    [](
+    [sun_dir = self.directional_light.direction,
+     sun_intensity = self.directional_light.intensity](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
       VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
-      VUK_BA(vuk::eComputeUniformRead) atmosphere_,
-      VUK_BA(vuk::eComputeUniformRead) directional_light_,
+      VUK_BA(vuk::eComputeUniformRead) atmosphere,
       VUK_IA(vuk::eComputeRW) sky_view_lut
     ) {
       cmd_list //
@@ -22,17 +22,11 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
         .bind_sampler(0, 0, vuk::LinearSamplerClamped)
         .bind_image(0, 1, sky_transmittance_lut)
         .bind_image(0, 2, sky_multiscatter_lut)
-        .bind_buffer(0, 3, atmosphere_)
-        .bind_buffer(0, 4, directional_light_)
-        .bind_image(0, 5, sky_view_lut)
+        .bind_buffer(0, 3, atmosphere)
+        .bind_image(0, 4, sky_view_lut)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sun_dir, sun_intensity))
         .dispatch_invocations_per_pixel(sky_view_lut);
-      return std::make_tuple(
-        sky_transmittance_lut,
-        sky_multiscatter_lut,
-        atmosphere_,
-        directional_light_,
-        sky_view_lut
-      );
+      return std::make_tuple(sky_transmittance_lut, sky_multiscatter_lut, atmosphere, sky_view_lut);
     }
   );
 
@@ -40,14 +34,12 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
     context.sky_transmittance_lut_attachment,
     context.sky_multiscatter_lut_attachment,
     self.prepared_frame.atmosphere_buffer,
-    self.prepared_frame.directional_light_buffer,
     context.sky_view_lut_attachment
   ) =
     sky_view_pass(
       std::move(context.sky_transmittance_lut_attachment),
       std::move(context.sky_multiscatter_lut_attachment),
       std::move(self.prepared_frame.atmosphere_buffer),
-      std::move(self.prepared_frame.directional_light_buffer),
       std::move(context.sky_view_lut_attachment)
     );
 
@@ -100,12 +92,11 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
 
   auto sky_aerial_perspective_pass = vuk::make_pass(
     "sky aerial perspective",
-    [](
+    [sun_dir = self.directional_light.direction, sun_intensity = self.directional_light.intensity](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
       VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
       VUK_BA(vuk::eComputeUniformRead) atmosphere_,
-      VUK_BA(vuk::eComputeUniformRead) directional_light_,
       VUK_BA(vuk::eComputeUniformRead) camera,
       VUK_IA(vuk::eComputeRW) sky_aerial_perspective_lut
     ) {
@@ -115,16 +106,15 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
         .bind_image(0, 1, sky_transmittance_lut)
         .bind_image(0, 2, sky_multiscatter_lut)
         .bind_buffer(0, 3, atmosphere_)
-        .bind_buffer(0, 4, directional_light_)
-        .bind_buffer(0, 5, camera)
-        .bind_image(0, 6, sky_aerial_perspective_lut)
+        .bind_buffer(0, 4, camera)
+        .bind_image(0, 5, sky_aerial_perspective_lut)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sun_dir, sun_intensity))
         .dispatch_invocations_per_pixel(sky_aerial_perspective_lut);
 
       return std::make_tuple(
         sky_transmittance_lut,
         sky_multiscatter_lut,
         atmosphere_,
-        directional_light_,
         camera,
         sky_aerial_perspective_lut
       );
@@ -135,7 +125,6 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
     context.sky_transmittance_lut_attachment,
     context.sky_multiscatter_lut_attachment,
     self.prepared_frame.atmosphere_buffer,
-    self.prepared_frame.directional_light_buffer,
     self.prepared_frame.camera_buffer,
     context.sky_aerial_perspective_lut_attachment
   ) =
@@ -143,7 +132,6 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
       std::move(context.sky_transmittance_lut_attachment),
       std::move(context.sky_multiscatter_lut_attachment),
       std::move(self.prepared_frame.atmosphere_buffer),
-      std::move(self.prepared_frame.directional_light_buffer),
       std::move(self.prepared_frame.camera_buffer),
       std::move(context.sky_aerial_perspective_lut_attachment)
     );
@@ -317,7 +305,9 @@ auto RendererInstance::apply_pbr(
 
   auto pbr_apply_pass = vuk::make_pass(
     "pbr apply",
-    [scene_flags = self.gpu_scene_flags](
+    [scene_flags = self.gpu_scene_flags,
+     sun_dir = self.directional_light.direction,
+     sun_intensity = self.directional_light.intensity](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eColorWrite) dst,
       VUK_IA(vuk::eFragmentSampled) sky_transmittance_lut,
@@ -332,7 +322,6 @@ auto RendererInstance::apply_pbr(
       VUK_IA(vuk::eFragmentSampled) gtao,
       VUK_IA(vuk::eFragmentSampled) contact_shadows,
       VUK_IA(vuk::eFragmentSampled) resolved_shadows,
-      VUK_BA(vuk::eFragmentUniformRead) lights,
       VUK_BA(vuk::eFragmentUniformRead) camera
     ) {
       cmd_list //
@@ -346,18 +335,18 @@ auto RendererInstance::apply_pbr(
         .bind_sampler(0, 1, vuk::LinearSamplerRepeated)
         .bind_image(0, 2, sky_transmittance_lut)
         .bind_image(0, 3, sky_aerial_perspective_lut_attachment)
-        .bind_image(0, 4, sky_view_lut)
-        .bind_image(0, 5, depth)
-        .bind_image(0, 6, albedo)
-        .bind_image(0, 7, normal)
-        .bind_image(0, 8, emissive)
-        .bind_image(0, 9, metallic_roughness_occlusion)
-        .bind_image(0, 10, gtao)
-        .bind_image(0, 11, contact_shadows)
-        .bind_image(0, 12, resolved_shadows)
-        .bind_buffer(0, 13, lights)
+        .bind_image(0, 4, sky_cubemap)
+        .bind_image(0, 5, sky_view_lut)
+        .bind_image(0, 6, depth)
+        .bind_image(0, 7, albedo)
+        .bind_image(0, 8, normal)
+        .bind_image(0, 9, emissive)
+        .bind_image(0, 10, metallic_roughness_occlusion)
+        .bind_image(0, 11, gtao)
+        .bind_image(0, 12, contact_shadows)
+        .bind_image(0, 13, resolved_shadows)
         .bind_buffer(0, 14, camera)
-        .bind_image(0, 15, sky_cubemap)
+        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants())
         .specialize_constants(0, std::to_underlying(scene_flags))
         .draw(3, 1, 0, 0);
 
@@ -375,7 +364,6 @@ auto RendererInstance::apply_pbr(
         gtao,
         contact_shadows,
         resolved_shadows,
-        lights,
         camera
       );
     }
@@ -395,7 +383,6 @@ auto RendererInstance::apply_pbr(
     context.ambient_occlusion_attachment,
     context.contact_shadows_attachment,
     context.resolved_shadows_attachment,
-    self.prepared_frame.lights_buffer,
     self.prepared_frame.camera_buffer
   ) =
     pbr_apply_pass(
@@ -412,7 +399,6 @@ auto RendererInstance::apply_pbr(
       std::move(context.ambient_occlusion_attachment),
       std::move(context.contact_shadows_attachment),
       std::move(context.resolved_shadows_attachment),
-      std::move(self.prepared_frame.lights_buffer),
       std::move(self.prepared_frame.camera_buffer)
     );
 

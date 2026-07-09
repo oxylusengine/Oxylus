@@ -12,18 +12,17 @@ import shadows;
 [[vk::binding(1)]] Sampler linear_repeat_sampler;
 [[vk::binding(2)]] Texture2D<f32x4> sky_transmittance_lut;
 [[vk::binding(3)]] Texture3D<f32x4> sky_aerial_perspective_lut;
-[[vk::binding(4)]] Texture2D<f32x4> sky_view_lut;
-[[vk::binding(5)]] Texture2D<f32> depth_image;
-[[vk::binding(6)]] Texture2D<f32x4> albedo_image;
-[[vk::binding(7)]] Texture2D<f32x4> normal_image;
-[[vk::binding(8)]] Texture2D<f32x3> emissive_image;
-[[vk::binding(9)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
-[[vk::binding(10)]] Texture2D<f32> gtao_image;
-[[vk::binding(11)]] Texture2D<f32> contact_shadows;
-[[vk::binding(12)]] Texture2D<f32> resolved_shadows;
-[[vk::binding(13)]] ConstantBuffer<Lights> lights;
+[[vk::binding(4)]] TextureCube<f32x4> sky_cubemap;
+[[vk::binding(5)]] Texture2D<f32x4> sky_view_lut;
+[[vk::binding(6)]] Texture2D<f32> depth_image;
+[[vk::binding(7)]] Texture2D<f32x4> albedo_image;
+[[vk::binding(8)]] Texture2D<f32x4> normal_image;
+[[vk::binding(9)]] Texture2D<f32x3> emissive_image;
+[[vk::binding(10)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
+[[vk::binding(11)]] Texture2D<f32> gtao_image;
+[[vk::binding(12)]] Texture2D<f32> contact_shadows;
+[[vk::binding(13)]] Texture2D<f32> resolved_shadows;
 [[vk::binding(14)]] ConstantBuffer<Camera> camera;
-[[vk::binding(15)]] TextureCube<f32x4> sky_cubemap;
 
 func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
     let min_cos_theta = cos(radius * PI / 180.0);
@@ -127,7 +126,10 @@ f32x3 calculate_spot_light_contribution(
 
 [[shader("fragment")]]
 func fs_main(
-    VertexOutput input
+    VertexOutput input,
+    uniform f32x3 L,
+    uniform f32 Li,
+    uniform f32x3 base_ambient_color,
 ) -> f32x4 {
     let pixel_pos = u32x3(u32x2(input.position.xy), 0);
     let depth = depth_image.Load(pixel_pos);
@@ -153,19 +155,16 @@ func fs_main(
     let world_position = world_position_h.xyz / world_position_h.w;
 
     let has_atmosphere = (scene_flags & SceneFlags::HasAtmosphere) != 0;
-    let has_sky = (scene_flags & SceneFlags::HasSky) != 0;
     let has_directional_light = (scene_flags & SceneFlags::HasDirectionalLight) != 0;
 
     // PBR constants
-    let Li = has_directional_light ? lights.directional_light.intensity : 1.0;
-    let L = has_directional_light ? lights.directional_light.direction : f32x3(0.0, 1.0, 0.0);
     let V = normalize(camera.position.xyz - world_position);
     let N = normalize(mapped_normal);
     let R = reflect(-V, N);
     let NoV = abs(dot(N, V)) + 1e-5;
     let NoL = max(dot(N, L), 0.0);
 
-    if (has_sky) {
+    if ((scene_flags & SceneFlags::HasSky) != 0) {
       if (depth == 0.0) {
           let sky = lights.sky;
           if (sky.has_texture) {
@@ -175,11 +174,6 @@ func fs_main(
             return f32x4(sky.solid_color);
           }
       }
-    }
-
-    var directional_shadow = 1.0;
-    if ((scene_flags & SceneFlags::HasDirectionalLight) != 0) {
-        directional_shadow = resolved_shadows.Load(pixel_pos).r;
     }
 
     var indirect_illuminance = f32x3(0.0);
@@ -252,7 +246,6 @@ func fs_main(
         indirect_illuminance = aerial_perspective.rgb * aerial_perspective.a + (ibl_diffuse + ibl_specular) * horizon_darkening;
     }
 
-    let base_ambient_color = has_directional_light ? lights.directional_light.color : f32x3(0.02);
     let ambient_contribution = has_atmosphere ? f32x3(0.0) : base_ambient_color * albedo_color * sun_illuminance;
 
     var total_lighting = f32x3(0.0, 0.0, 0.0);
@@ -282,15 +275,22 @@ func fs_main(
         );
     }
 
-    // https://marmosetco.tumblr.com/post/81245981087
-    let horizon_fade = 1.3;
-    var horizon = saturate(1.0 + horizon_fade * dot(R, smooth_normal));
-    horizon *= horizon;
+    var directional_shadow = 1.0;
+    if ((scene_flags & SceneFlags::HasDirectionalLight) != 0) {
+        directional_shadow = resolved_shadows.Load(pixel_pos).r;
+    }
 
     var contact_shadow = 1.0f;
     if ((scene_flags & SceneFlags::HasContactShadows) != 0) {
         contact_shadow = 1.0f - contact_shadows.Load(pixel_pos).r;
     }
+
+    let visibility = directional_shadow * contact_shadow;
+
+    // https://marmosetco.tumblr.com/post/81245981087
+    let horizon_fade = 1.3;
+    var horizon = saturate(1.0 + horizon_fade * dot(R, smooth_normal));
+    horizon *= horizon;
 
     var material_surface_color = f32x3(0.0);
     if (NoL > 0.0) {

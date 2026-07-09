@@ -217,26 +217,13 @@ struct CullCamera {
   u32 mesh_instance_count = {};
 };
 
-#define MAX_POINT_LIGHTS 1024
-#define MAX_SPOT_LIGHTS 1024
-
-#define MAX_DIRECTIONAL_SHADOW_CASCADES 4
-
-struct DirectionalLightCascade {
-  alignas(4) glm::mat4 projection_view = {};
-  alignas(4) f32 far_bound = 0.0f;
-  alignas(4) f32 texel_size = 0.0f;
-};
+#define MAX_POINT_LIGHTS 64
+#define MAX_SPOT_LIGHTS 64
 
 struct DirectionalLight {
   alignas(4) glm::vec3 color = {0.02, 0.02, 0.02};
   alignas(4) f32 intensity = 10.0f;
   alignas(4) glm::vec3 direction = {};
-  alignas(4) u32 cascade_count = {};
-  alignas(4) u32 cascade_size = {};
-  alignas(4) f32 cascades_overlap_proportion = {};
-  alignas(4) f32 depth_bias = {};
-  alignas(4) f32 normal_bias = {};
 };
 
 struct PointLight {
@@ -254,17 +241,6 @@ struct SpotLight {
   alignas(4) f32 cutoff;
   alignas(4) f32 inner_cone_angle;
   alignas(4) f32 outer_cone_angle;
-};
-
-struct Lights {
-  alignas(4) u32 point_light_count = 0;
-  alignas(4) u32 spot_light_count = 0;
-  alignas(8) u64 direction_light = 0;
-  alignas(8) u64 direction_light_cascades = 0;
-  alignas(8) u64 point_lights = 0;
-  alignas(8) u64 spot_lights = 0;
-  alignas(8) u64 atmosphere = 0;
-  alignas(8) u64 sky = 0;
 };
 
 enum class SceneFlags : u32 {
@@ -358,10 +334,10 @@ struct VirtualClipmap {
 };
 
 enum struct CullFlag : u32 {
-    TestFrustum = 1 << 0,
-    SelectLOD = 1 << 1,
-    TestOcclusion = 1 << 2,
-    LatePass = 1 << 3,
+  TestFrustum = 1 << 0,
+  SelectLOD = 1 << 1,
+  TestOcclusion = 1 << 2,
+  LatePass = 1 << 3,
 };
 consteval void enable_bitmask(CullFlag);
 

@@ -10,7 +10,6 @@ struct ShaderParameters {
     Image2D<f32x4> sky_transmittance_lut;
     Image2D<f32x4> sky_multiscattering_lut;
     ConstantBuffer<Atmosphere> atmosphere;
-    ConstantBuffer<DirectionalLight> directional_light;
     StorageImage2D<f32x4, ImageFormat::RGBA16F> sky_view_lut;
 };
 
@@ -18,7 +17,9 @@ struct ShaderParameters {
 [[numthreads(16, 16, 1)]]
 func cs_main(
     u32x3 thread_id : SV_DispatchThreadID,
-    uniform ParameterBlock<ShaderParameters> params
+    uniform ParameterBlock<ShaderParameters> params,
+    uniform f32x3 sun_dir,
+    uniform f32 sun_intensity,
 ) {
     f32x2 uv = f32x2(thread_id.xy) / f32x2(params.atmosphere.sky_view_lut_size.xy);
     f32x3 eye_pos = params.atmosphere.eye_pos;
@@ -32,14 +33,14 @@ func cs_main(
     }
 
     f32x3 up_vec = eye_pos / h;
-    f32 sun_zenith_cos_angle = dot(normalize(params.directional_light.direction), up_vec);
+    f32 sun_zenith_cos_angle = dot(sun_dir, up_vec);
     f32x3 sun_dir = normalize(f32x3(com::safe_sqrt(1.0 - sun_zenith_cos_angle * sun_zenith_cos_angle), sun_zenith_cos_angle, 0.0));
 
     AtmosphereIntegrateInfo info = {};
     info.eye_pos = eye_pos;
     info.eye_dir = eye_dir;
     info.sun_dir = sun_dir;
-    info.sun_intensity = params.directional_light.intensity;
+    info.sun_intensity = sun_intensity;
     info.step_count = 48;
 
     let result = integrate_single_scattered_luminance(info, params.atmosphere, params.sampler, params.sky_transmittance_lut, params.sky_multiscattering_lut);

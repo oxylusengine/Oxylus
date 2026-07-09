@@ -153,9 +153,6 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> materials_buffer = {};
   vuk::Value<vuk::Buffer> camera_buffer = {};
   vuk::Value<vuk::Buffer> atmosphere_buffer = {};
-  vuk::Value<vuk::Buffer> lights_buffer = {};
-  vuk::Value<vuk::Buffer> directional_light_buffer = {};
-  vuk::Value<vuk::Buffer> directional_light_cascades_buffer = {};
   vuk::Value<vuk::Buffer> point_lights_buffer = {};
   vuk::Value<vuk::Buffer> spot_lights_buffer = {};
   vuk::Value<vuk::Buffer> exposure_buffer = {};
@@ -418,7 +415,6 @@ private:
   GPU::DirectionalLight directional_light = {};
   f32 first_clipmap_width = 1.0f;
   f32 clipmap_selection_bias = 2.0f;
-  std::array<GPU::DirectionalLightCascade, MAX_DIRECTIONAL_SHADOW_CASCADES> directional_light_cascades = {};
   GPU::Atmosphere atmosphere = {};
   GPU::SkyData sky_data = {};
   GPU::EyeAdaptationSettings eye_adaptation = {};

@@ -10,7 +10,6 @@ struct ShaderParameters {
     Image2D<f32x4> sky_transmittance_lut;
     Image2D<f32x4> sky_multiscattering_lut;
     ConstantBuffer<Atmosphere> atmosphere;
-    ConstantBuffer<DirectionalLight> directional_light;
     ConstantBuffer<Camera> camera;
     StorageImage3D<f32x4, ImageFormat::RGBA16F> sky_aerial_perspective_lut;
 };
@@ -19,7 +18,9 @@ struct ShaderParameters {
 [[numthreads(16, 16, 1)]]
 func cs_main(
     u32x3 thread_id : SV_DispatchThreadID,
-    uniform ParameterBlock<ShaderParameters> params
+    uniform ParameterBlock<ShaderParameters> params,
+    uniform f32x3 sun_dir,
+    uniform f32 sun_intensity
 ) -> void {
     const let lut_size = params.atmosphere.aerial_perspective_lut_size;
     f32x2 uv = f32x2(f32x2(thread_id.xy) + 0.5) / f32x2(lut_size.xy);
@@ -68,8 +69,8 @@ func cs_main(
     AtmosphereIntegrateInfo info = {};
     info.eye_pos = eye_pos;
     info.eye_dir = world_dir;
-    info.sun_dir = normalize(params.directional_light.direction);
-    info.sun_intensity = params.directional_light.intensity;
+    info.sun_dir = sun_dir;
+    info.sun_intensity = sun_intensity;
     info.eval_planet_luminance = false;
     info.step_count = max(1.0, (f32(thread_id.z) + 1.0) * 2.0);
     info.t_max = t_max_max;

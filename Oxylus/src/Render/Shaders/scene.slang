@@ -213,11 +213,6 @@ public struct DirectionalLight {
   public f32x3 color;
   public f32 intensity;
   public f32x3 direction;
-  public u32 cascade_count;
-  public u32 cascade_size;
-  public f32 cascades_overlap_proportion;
-  public f32 depth_bias;
-  public f32 normal_bias;
 };
 
 public struct PointLight {
@@ -235,17 +230,6 @@ public struct SpotLight {
   public f32 cutoff;
   public f32 inner_cone_angle;
   public f32 outer_cone_angle;
-};
-
-public struct Lights {
-  public u32 point_light_count;
-  public u32 spot_light_count;
-  public DirectionalLight *directional_light;
-  public DirectionalLightCascade *directional_light_cascades;
-  public PointLight *point_lights;
-  public SpotLight *spot_lights;
-  public Atmosphere *atmosphere;
-  public Sky *sky;
 };
 
 public struct Transform {
