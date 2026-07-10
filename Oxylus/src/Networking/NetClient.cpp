@@ -1,5 +1,6 @@
 #include "Networking/NetClient.hpp"
 
+#include "Core/App.hpp"
 #include "Core/Base.hpp"
 #include "Utils/Log.hpp"
 
@@ -151,6 +152,10 @@ auto NetClient::handle_packet(this NetClient& self, NetPacket& packet) -> void {
       if (!state.has_value()) {
         return;
       }
+
+      // TODO: Copying the whole scene snapshot...
+      auto& es = App::get_event_system();
+      std::ignore = es.emit<ClientSceneSnapshotEvent>(ClientSceneSnapshotEvent(state->first, state->second));
 
       self.on_scene_snapshot(state->first, std::move(state->second));
     } break;

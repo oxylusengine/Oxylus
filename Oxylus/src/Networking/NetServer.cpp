@@ -2,6 +2,7 @@
 
 #include <enet.h>
 
+#include "Core/App.hpp"
 #include "Core/Base.hpp"
 #include "Utils/Log.hpp"
 
@@ -32,6 +33,9 @@ auto NetServer::tick(this NetServer& self, const Timestep& ts) -> bool {
         if (remote_peer->data) {
           client_id = static_cast<NetClientID>(reinterpret_cast<uptr>(remote_peer->data));
         }
+
+        auto& es = App::get_event_system();
+        std::ignore = es.emit<ClientDisconnectEvent>({.client_id = client_id});
 
         self.on_client_disconnect(client_id);
         self.remote_clients.destroy_slot(client_id);
@@ -92,6 +96,9 @@ auto NetServer::handle_packet(this NetServer& self, ENetPeer* remote_peer, NetPa
         client->send_reliable(accept_handshake_packet.value());
       }
 
+      auto& es = App::get_event_system();
+      std::ignore = es.emit<ClientConnectEvent>({.client_id = client_id});
+
       self.on_client_connect(client_id);
 
       OX_LOG_INFO(
@@ -109,6 +116,9 @@ auto NetServer::handle_packet(this NetServer& self, ENetPeer* remote_peer, NetPa
       if (!client_ack.has_value()) {
         return;
       }
+
+      auto& es = App::get_event_system();
+      std::ignore = es.emit<ClientAckEvent>(ClientAckEvent(client_id, client_ack.value()));
 
       self.on_client_ack(client_id, client_ack.value());
     } break;
