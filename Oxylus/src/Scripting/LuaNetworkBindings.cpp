@@ -76,6 +76,9 @@ auto NetworkBinding::bind(sol::state* state) -> void {
   state->new_usertype<NetClient>(
     "NetClient",
 
+    "stats",
+    &NetClient::stats,
+
     "set_tick_rate",
     &NetClient::set_tick_rate,
 
