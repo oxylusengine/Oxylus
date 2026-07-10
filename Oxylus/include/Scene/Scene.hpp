@@ -59,8 +59,6 @@ public:
   f32 physics_interval = 1.f / 60.f; // used only on initialization
 
   std::vector<GPU::TransformID> dirty_transforms = {};
-  // Stable IDs (into `mesh_instances`) of mesh instances whose transform moved this frame.
-  // Resolved to GPU buffer indices in `runtime_update` and consumed by the VSM invalidate-pages pass.
   std::vector<MeshInstanceID> dirty_mesh_instances = {};
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
@@ -68,6 +66,8 @@ public:
 
   SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};
+
+  SlotMap<GPU::Light, GPU::LightID> lights = {};
 
   std::vector<GPU::Material> gpu_materials = {};
 

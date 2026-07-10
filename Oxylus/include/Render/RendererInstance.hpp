@@ -153,10 +153,8 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> materials_buffer = {};
   vuk::Value<vuk::Buffer> camera_buffer = {};
   vuk::Value<vuk::Buffer> atmosphere_buffer = {};
-  vuk::Value<vuk::Buffer> point_lights_buffer = {};
-  vuk::Value<vuk::Buffer> spot_lights_buffer = {};
+  vuk::Value<vuk::Buffer> lights_buffer = {};
   vuk::Value<vuk::Buffer> exposure_buffer = {};
-  vuk::Value<vuk::Buffer> sky_buffer = {};
 
   vuk::Value<vuk::Buffer> dirty_mesh_instances_buffer = {};
   u32 dirty_mesh_instance_count = 0;
@@ -426,8 +424,7 @@ private:
   vuk::Unique<vuk::Buffer> meshes_buffer{};
   vuk::Unique<vuk::Buffer> materials_buffer{};
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
-  vuk::Unique<vuk::Buffer> point_lights_buffer{};
-  vuk::Unique<vuk::Buffer> spot_lights_buffer{};
+  vuk::Unique<vuk::Buffer> lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
   vuk::Unique<vuk::Buffer> exposure_buffer{};
 

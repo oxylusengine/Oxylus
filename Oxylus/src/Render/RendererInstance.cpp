@@ -117,14 +117,11 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   auto& allocator = render_context.superframe_allocator;
   render_queue_2d.init();
 
-  spot_lights_buffer = render_context.allocate_buffer_super(
+  lights_buffer = render_context.allocate_buffer_super(
     vuk::MemoryUsage::eGPUonly,
-    MAX_SPOT_LIGHTS * sizeof(GPU::SpotLight)
+    GPU::MAX_LIGHTS * sizeof(GPU::Light)
   );
-  point_lights_buffer = render_context.allocate_buffer_super(
-    vuk::MemoryUsage::eGPUonly,
-    MAX_POINT_LIGHTS * sizeof(GPU::PointLight)
-  );
+  transforms_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, sizeof(GPU::Transforms));
 
   constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
   before_callbacks.resize(stage_count);
@@ -387,15 +384,6 @@ auto RendererInstance::render(
 
   const auto scene_has_atmosphere = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
   const auto scene_has_directional_light = self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight;
-
-  if (scene_has_atmosphere) {
-    auto prepare_atmosphere_pass = vuk::make_pass(
-      "prepare_atmosphere",
-      [](vuk::CommandBuffer& cmd, VUK_BA(vuk::eMemoryRead) atmosphere_) { return atmosphere_; }
-    );
-
-    self.prepared_frame.atmosphere_buffer = prepare_atmosphere_pass(self.prepared_frame.atmosphere_buffer);
-  }
 
   if (RendererCVar::cvar_bloom_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasBloom;
@@ -748,9 +736,9 @@ auto RendererInstance::render(
     );
 
     std::tie(contact_shadows_attachment, depth_attachment, self.prepared_frame.camera_buffer) = contact_shadows_pass(
-      contact_shadows_attachment,
-      depth_attachment,
-      self.prepared_frame.camera_buffer
+      std::move(contact_shadows_attachment),
+      std::move(depth_attachment),
+      std::move(self.prepared_frame.camera_buffer)
     );
   }
 
@@ -981,7 +969,7 @@ auto RendererInstance::render(
       }
     );
 
-    std::tie(final_attachment, fxaa_attachment) = fxaa_pass(fxaa_attachment, final_attachment);
+    std::tie(final_attachment, fxaa_attachment) = fxaa_pass(std::move(fxaa_attachment), std::move(final_attachment));
   }
 
   auto bloom_upsampled_attachment = vuk::declare_ia(
@@ -1126,16 +1114,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   math::calc_frustum_planes(self.camera_data.projection_view, self.camera_data.frustum_planes);
 
-  std::vector<GPU::PointLight> point_lights = {};
-  std::vector<GPU::SpotLight> spot_lights = {};
+  self.scene.lights.reset();
 
   self.scene.world
     .query_builder<const TransformComponent, const LightComponent>() //
     .build()
-    .each([&self,
-           cam,
-           &point_lights,
-           &spot_lights](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
+    .each([&self, cam](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
       if (!e.enabled()) {
         return;
       }
@@ -1152,32 +1136,24 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.clipmap_selection_bias = lc.clipmap_selection_bias;
 
         self.directional_light_cast_shadows = lc.cast_shadows;
-      } else if (lc.type == LightComponent::LightType::Point) {
-        const glm::vec3 world_pos = Scene::get_world_position(e);
-        point_lights.emplace_back(
-          GPU::PointLight{
-            .position = world_pos,
-            .color = lc.color,
+      } else {
+        const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
+        const auto direction = lc.type == LightComponent::LightType::Spot
+          ? glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f))
+          : glm::vec3(0.0f);
+        const auto light_id = self.scene.lights.create_slot(
+          GPU::Light{
+            .position = tc.position,
             .intensity = lc.intensity,
-            .cutoff = lc.radius,
-          }
-        );
-      } else if (lc.type == LightComponent::LightType::Spot) {
-        const auto direction = glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f));
-        const auto world_pos = Scene::get_world_position(e);
-        spot_lights.emplace_back(
-          GPU::SpotLight{
-            .position = world_pos,
+            .color = lc.color,
+            .range = lc.radius,
             .direction = direction,
-            .color = lc.color,
-            .intensity = lc.intensity,
-            .cutoff = lc.radius,
             .inner_cone_angle = lc.inner_cone_angle,
             .outer_cone_angle = lc.outer_cone_angle,
+            .kind = kind,
           }
         );
       }
-
       if (const auto* atmos_info = e.try_get<AtmosphereComponent>()) {
         self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
 
@@ -1326,60 +1302,21 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   update_buffer_if_dirty<GPU::Transforms>(self, render_context, info.gpu_transforms, info.dirty_transform_ids);
   update_buffer_if_dirty<GPU::Material>(self, render_context, info.gpu_materials, info.dirty_material_indices);
 
-  // TODO: Keep track of updated lights and only update them.
-  if (!point_lights.empty()) {
-    auto point_lights_size_bytes = ox::size_bytes(point_lights);
-    auto src_point_lights_buffer = render_context.alloc_transient_buffer(
-      vuk::MemoryUsage::eCPUtoGPU,
-      point_lights_size_bytes
-    );
-    std::memcpy(src_point_lights_buffer->mapped_ptr, point_lights.data(), point_lights_size_bytes);
-
-    auto dst_point_lights_buffer = vuk::acquire_buf(
-      "point lights",
-      self.point_lights_buffer->subrange(0, point_lights_size_bytes),
-      vuk::eMemoryRead
-    );
-    self.prepared_frame.point_lights_buffer = vuk::copy(
-      std::move(src_point_lights_buffer),
-      std::move(dst_point_lights_buffer)
-    );
-  } else {
-    self.prepared_frame
-      .point_lights_buffer = vuk::acquire_buf("point lights", *self.point_lights_buffer, vuk::eMemoryRead);
+  {
+    const auto lights_span = self.scene.lights.slots_unsafe();
+    const auto count = std::min<std::size_t>(lights_span.size(), GPU::MAX_LIGHTS);
+    const auto size_bytes = count * sizeof(GPU::Light);
+    if (count > 0) {
+      auto src_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, size_bytes);
+      std::memcpy(src_buffer->mapped_ptr, lights_span.data(), size_bytes);
+      auto dst_buffer = vuk::acquire_buf("lights", self.lights_buffer->subrange(0, size_bytes), vuk::eMemoryRead);
+      self.prepared_frame.lights_buffer = vuk::copy(std::move(src_buffer), std::move(dst_buffer));
+    } else {
+      self.prepared_frame.lights_buffer = vuk::acquire_buf("lights", *self.lights_buffer, vuk::eMemoryRead);
+    }
   }
 
-  if (!spot_lights.empty()) {
-    auto spot_lights_size_bytes = ox::size_bytes(spot_lights);
-    auto src_spot_lights_buffer = render_context.alloc_transient_buffer(
-      vuk::MemoryUsage::eCPUtoGPU,
-      spot_lights_size_bytes
-    );
-    std::memcpy(src_spot_lights_buffer->mapped_ptr, spot_lights.data(), spot_lights_size_bytes);
-
-    auto dst_spot_lights_buffer = vuk::acquire_buf(
-      "spot lights",
-      self.spot_lights_buffer->subrange(0, spot_lights_size_bytes),
-      vuk::eMemoryRead
-    );
-    self.prepared_frame.spot_lights_buffer = vuk::copy(
-      std::move(src_spot_lights_buffer),
-      std::move(dst_spot_lights_buffer)
-    );
-  } else {
-    self.prepared_frame
-      .spot_lights_buffer = vuk::acquire_buf("spot lights", *self.spot_lights_buffer, vuk::eMemoryRead);
-  }
-
-  if (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) {
-    auto atmosphere_buffer = self.renderer.render_context->scratch_buffer(self.atmosphere);
-    self.prepared_frame.atmosphere_buffer = std::move(atmosphere_buffer);
-  }
-
-  if (self.gpu_scene_flags & GPU::SceneFlags::HasSky) {
-    auto sky_buffer = self.renderer.render_context->scratch_buffer(self.sky_data);
-    self.prepared_frame.sky_buffer = std::move(sky_buffer);
-  }
+  self.prepared_frame.atmosphere_buffer = self.renderer.render_context->scratch_buffer(self.atmosphere);
 
   if (!info.gpu_meshes.empty()) {
     self.meshes_buffer = render_context.resize_buffer(

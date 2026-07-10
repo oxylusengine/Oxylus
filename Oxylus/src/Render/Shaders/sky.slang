@@ -37,7 +37,7 @@ public func multiscattering_params_to_lut_uv(in Atmosphere atmosphere, f32 altit
 }
 
 public func sky_view_params_to_lut_uv(
-    in Atmosphere atmosphere,
+    Atmosphere *atmosphere,
     bool intersect_planet,
     f32 altitude,
     f32 view_zenith_cos_angle,
@@ -256,7 +256,7 @@ public func integrate_single_scattered_luminance(
 }
 
 public func sample_aerial_perspective(
-    in Atmosphere atmosphere,
+    Atmosphere *atmosphere,
     in Image3D<f32x4> aerial_perspective_lut,
     in Sampler sampler,
     f32x2 uv,
@@ -294,7 +294,7 @@ public func sample_aerial_perspective(
 
 
 public func get_atmosphere_illuminance_along_ray(
-    in Atmosphere atmosphere,
+    Atmosphere *atmosphere,
     in Sampler sampler,
     in Image2D<f32x4> sky_view_image,
     f32x3 sun_dir,

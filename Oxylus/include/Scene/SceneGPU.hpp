@@ -7,6 +7,8 @@
 
 namespace ox::GPU {
 enum class TransformID : u64 { Invalid = ~0_u64 };
+enum class LightID : u64 { Invalid = ~0_u64 };
+
 struct Transforms {
   alignas(4) glm::mat4 local = {};
   alignas(4) glm::mat4 world = {};
@@ -217,8 +219,7 @@ struct CullCamera {
   u32 mesh_instance_count = {};
 };
 
-#define MAX_POINT_LIGHTS 64
-#define MAX_SPOT_LIGHTS 64
+constexpr static u32 MAX_LIGHTS = 256;
 
 struct DirectionalLight {
   alignas(4) glm::vec3 color = {0.02, 0.02, 0.02};
@@ -226,21 +227,18 @@ struct DirectionalLight {
   alignas(4) glm::vec3 direction = {};
 };
 
-struct PointLight {
-  alignas(4) glm::vec3 position;
-  alignas(4) glm::vec3 color;
-  alignas(4) f32 intensity;
-  alignas(4) f32 cutoff;
-};
+enum class LightKind : u32 { Directional = 0, Point = 1, Spot = 2 };
 
-struct SpotLight {
-  alignas(4) glm::vec3 position;
-  alignas(4) glm::vec3 direction;
-  alignas(4) glm::vec3 color;
-  alignas(4) f32 intensity;
-  alignas(4) f32 cutoff;
-  alignas(4) f32 inner_cone_angle;
-  alignas(4) f32 outer_cone_angle;
+struct Light {
+  alignas(4) glm::vec3 position = {};
+  alignas(4) f32 intensity = 1.0f;
+  alignas(4) glm::vec3 color = {1.0f, 1.0f, 1.0f};
+  alignas(4) f32 range = 0.0f;
+  alignas(4) glm::vec3 direction = {};
+  alignas(4) f32 inner_cone_angle = 0.0f; // spot only (radians)
+  alignas(4) f32 outer_cone_angle = 0.0f; // spot only (radians)
+  alignas(4) LightKind kind = LightKind::Point;
+  alignas(4) u32 pad[2] = {};
 };
 
 enum class SceneFlags : u32 {
