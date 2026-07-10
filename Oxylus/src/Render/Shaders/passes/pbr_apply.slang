@@ -165,16 +165,9 @@ func fs_main(
     let NoV = abs(dot(N, V)) + 1e-5;
     let NoL = max(dot(N, L), 0.0);
 
-    if (has_sky) {
-      if (depth == 0.0) {
-          let sky = lights.sky;
-          if (sky.has_texture) {
-            // TODO: return the texture
-            return f32x4(1.f);
-          } else {
-            return f32x4(sky.solid_color);
-          }
-      }
+    if (has_sky && depth == 0.0) {
+      // TODO: return the texture
+      return lights.sky.has_texture ? f32x4(1.f) : f32x4(lights.sky.solid_color);
     }
 
     var directional_shadow = 1.0;
