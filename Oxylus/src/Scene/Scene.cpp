@@ -1694,7 +1694,7 @@ auto Scene::attach_mesh(
       .transform_id = transform_id,
     }
   );
-  self.entity_to_mesh_instance_map.emplace(entity, instance_id);
+  self.entity_to_mesh_instance_map.insert_or_assign(entity, instance_id);
   self.meshes_dirty = true;
   self.set_dirty(entity);
 

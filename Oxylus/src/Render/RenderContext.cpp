@@ -847,10 +847,13 @@ auto RenderContext::sampler(const SamplerID id) -> vuk::Sampler {
 auto RenderContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
   -> vuk::Unique<vuk::Buffer> {
   if (!buffer || new_size > buffer->size) {
-    wait();
+    const auto old_size = buffer ? buffer->size : 0_u64;
+    const auto alloc_size = buffer ? std::max(new_size, buffer->size * 2) : new_size;
+
     buffer.reset();
 
-    return allocate_buffer_super(usage, new_size);
+    OX_LOG_TRACE("resize_buffer growth {} -> {}", old_size, alloc_size);
+    return allocate_buffer_super(usage, alloc_size);
   }
 
   return std::move(buffer);
