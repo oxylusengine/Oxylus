@@ -1,6 +1,9 @@
 ﻿#pragma once
-#include <cstring>
+
 #include <flecs.h>
+#include <string>
+
+#include "Core/Option.hpp"
 
 namespace ox {
 struct EditorContext {

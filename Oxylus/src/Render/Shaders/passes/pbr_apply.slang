@@ -3,7 +3,6 @@ import common;
 import pbr;
 import sky;
 import scene;
-import shadows;
 
 #include <fullscreen.slang>
 
@@ -12,18 +11,17 @@ import shadows;
 [[vk::binding(1)]] Sampler linear_repeat_sampler;
 [[vk::binding(2)]] Texture2D<f32x4> sky_transmittance_lut;
 [[vk::binding(3)]] Texture3D<f32x4> sky_aerial_perspective_lut;
-[[vk::binding(4)]] Texture2D<f32x4> sky_view_lut;
-[[vk::binding(5)]] Texture2D<f32> depth_image;
-[[vk::binding(6)]] Texture2D<f32x4> albedo_image;
-[[vk::binding(7)]] Texture2D<f32x4> normal_image;
-[[vk::binding(8)]] Texture2D<f32x3> emissive_image;
-[[vk::binding(9)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
-[[vk::binding(10)]] Texture2D<f32> gtao_image;
-[[vk::binding(11)]] Texture2D<f32> contact_shadows;
+[[vk::binding(4)]] TextureCube<f32x4> sky_cubemap;
+[[vk::binding(5)]] Texture2D<f32x4> sky_view_lut;
+[[vk::binding(6)]] Texture2D<f32> depth_image;
+[[vk::binding(7)]] Texture2D<f32x4> albedo_image;
+[[vk::binding(8)]] Texture2D<f32x4> normal_image;
+[[vk::binding(9)]] Texture2D<f32x3> emissive_image;
+[[vk::binding(10)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
+[[vk::binding(11)]] Texture2D<f32> gtao_image;
 [[vk::binding(12)]] Texture2D<f32> resolved_shadows;
-[[vk::binding(13)]] ConstantBuffer<Lights> lights;
+[[vk::binding(13)]] Texture2D<f32> contact_shadows;
 [[vk::binding(14)]] ConstantBuffer<Camera> camera;
-[[vk::binding(15)]] TextureCube<f32x4> sky_cubemap;
 
 func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
     let min_cos_theta = cos(radius * PI / 180.0);
@@ -60,13 +58,14 @@ f32x3 point_light_contribution(
     f32x3 albedo_color,
     f32 roughness,
     f32 metallic,
-    PointLight light
+    f32x3 light_position,
+    Light light
 ) {
-    f32x3 light_vector = light.position - world_position;
+    f32x3 light_vector = light_position - world_position;
     f32 light_distance = length(light_vector);
     f32x3 L = light_vector / light_distance;
 
-    f32 attenuation = lights_attenuate_point(light_distance, light.cutoff);
+    f32 attenuation = lights_attenuate_point(light_distance, light.range);
     if (attenuation <= 0.0 || light.intensity <= 0.0) {
         return f32x3(0.0, 0.0, 0.0);
     }
@@ -100,14 +99,16 @@ f32x3 calculate_spot_light_contribution(
     f32x3 albedo_color,
     f32 roughness,
     f32 metallic,
-    SpotLight light
+    f32x3 light_position,
+    f32x3 light_direction,
+    Light light
 ) {
-    f32x3 light_vector = light.position - world_position;
+    f32x3 light_vector = light_position - world_position;
     f32 light_distance = length(light_vector);
     f32x3 L = light_vector / light_distance;
 
-    f32 distance_attenuation = lights_attenuate_point(light_distance, light.cutoff);
-    f32 spot_attenuation = calculate_spot_light_attenuation(L, light.direction, light.inner_cone_angle, light.outer_cone_angle);
+    f32 distance_attenuation = lights_attenuate_point(light_distance, light.range);
+    f32 spot_attenuation = calculate_spot_light_attenuation(L, light_direction, light.inner_cone_angle, light.outer_cone_angle);
     f32 total_attenuation = distance_attenuation * spot_attenuation;
 
     if (total_attenuation <= 0.0 || light.intensity <= 0.0) {
@@ -127,7 +128,14 @@ f32x3 calculate_spot_light_contribution(
 
 [[shader("fragment")]]
 func fs_main(
-    VertexOutput input
+  VertexOutput input,
+  uniform f32x3 L,
+  uniform f32 Li,
+  uniform f32x3 base_ambient_color,
+  uniform u32 light_count,
+  uniform Atmosphere *atmosphere,
+  uniform Light *lights,
+  uniform Sky *sky,
 ) -> f32x4 {
     let pixel_pos = u32x3(u32x2(input.position.xy), 0);
     let depth = depth_image.Load(pixel_pos);
@@ -153,37 +161,30 @@ func fs_main(
     let world_position = world_position_h.xyz / world_position_h.w;
 
     let has_atmosphere = (scene_flags & SceneFlags::HasAtmosphere) != 0;
-    let has_sky = (scene_flags & SceneFlags::HasSky) != 0;
     let has_directional_light = (scene_flags & SceneFlags::HasDirectionalLight) != 0;
 
     // PBR constants
-    let Li = has_directional_light ? lights.directional_light.intensity : 1.0;
-    let L = has_directional_light ? lights.directional_light.direction : f32x3(0.0, 1.0, 0.0);
     let V = normalize(camera.position.xyz - world_position);
     let N = normalize(mapped_normal);
     let R = reflect(-V, N);
     let NoV = abs(dot(N, V)) + 1e-5;
     let NoL = max(dot(N, L), 0.0);
 
-    if (has_sky && depth == 0.0) {
+    if ((scene_flags & SceneFlags::HasSky) != 0 && depth == 0.0) {
       // TODO: return the texture
-      return lights.sky.has_texture ? f32x4(1.f) : f32x4(lights.sky.solid_color);
+      return sky.has_texture ? f32x4(1.f) : f32x4(sky.solid_color);
     }
 
-    var directional_shadow = 1.0;
-    if ((scene_flags & SceneFlags::HasDirectionalLight) != 0) {
-        directional_shadow = resolved_shadows.Load(pixel_pos).r;
-    }
+    let directional_shadow = ((scene_flags & SceneFlags::HasDirectionalLight) != 0) ? resolved_shadows.Load(pixel_pos) : 1.0f;
+    let contact_shadow = ((scene_flags & SceneFlags::HasContactShadows) != 0) ? contact_shadows.Load(pixel_pos) : 1.0f;
+    let visibility = directional_shadow * contact_shadow;
 
     var indirect_illuminance = f32x3(0.0);
     var sun_illuminance = f32x3(Li);
     if (has_atmosphere) {
-        let atmosphere = lights.atmosphere;
         let planet_radius = atmosphere.planet_radius;
         let atmos_radius = atmosphere.atmos_radius;
-
-        var eye_altitude = max(world_position.y, 0.0) * CAMERA_SCALE_UNIT;
-        eye_altitude += planet_radius + PLANET_RADIUS_OFFSET;
+        let world_eye_pos = atmosphere.get_eye_pos(world_position);
 
         let up = f32x3(0.0, 1.0, 0.0);
         let sun_cos_theta = dot(L, up);
@@ -192,12 +193,12 @@ func fs_main(
         let transmittance_uv = transmittance_params_to_lut_uv(
             atmos_radius,
             planet_radius,
-            f32x2(eye_altitude, sun_cos_theta));
+            f32x2(world_eye_pos.y, sun_cos_theta));
         let sun_transmittance = sky_transmittance_lut.SampleLevel(linear_clamp_sampler, transmittance_uv, 0.0).rgb;
         sun_illuminance = sun_transmittance * Li * horizon_darkening;
 
         if (depth == 0.0) {
-            let eye_pos = lights.atmosphere.eye_pos;
+            let eye_pos = atmosphere.get_eye_pos(camera.position.xyz);
             let h = eye_pos.y;
             let right = normalize(cross(up, -V));
             let forward = normalize(cross(right, up));
@@ -205,7 +206,7 @@ func fs_main(
             let view_zenith_cos_angle = dot(-V, up);
             let planet_intersection = com::ray_sphere_intersect_nearest(eye_pos, -V, planet_radius);
             let sky_view_uv = sky_view_params_to_lut_uv(
-                *lights.atmosphere, planet_intersection.hasValue, h, view_zenith_cos_angle, light_on_plane);
+                atmosphere, planet_intersection.hasValue, h, view_zenith_cos_angle, light_on_plane);
             var sky_view = sky_view_lut.SampleLevel(linear_clamp_sampler, sky_view_uv, 0.0);
             if (!planet_intersection.hasValue) {
                 sky_view.rgb += draw_sun(-V, L, 1.0) * Li * sun_transmittance;
@@ -215,7 +216,7 @@ func fs_main(
         }
 
         let aerial_perspective = sample_aerial_perspective(
-            *lights.atmosphere,
+            atmosphere,
             sky_aerial_perspective_lut,
             linear_clamp_sampler,
             input.tex_coord,
@@ -237,7 +238,7 @@ func fs_main(
 
         let SPECULAR_SHADOW_STRENGTH = 1.0;
         let specular_shadow_vis = has_directional_light
-            ? lerp(1.0, directional_shadow, SPECULAR_SHADOW_STRENGTH)
+            ? lerp(1.0, visibility, SPECULAR_SHADOW_STRENGTH)
             : 1.0;
 
         let ibl_specular = F * specular_radiance * specular_strength * spec_ao * specular_shadow_vis;
@@ -245,50 +246,31 @@ func fs_main(
         indirect_illuminance = aerial_perspective.rgb * aerial_perspective.a + (ibl_diffuse + ibl_specular) * horizon_darkening;
     }
 
-    let base_ambient_color = has_directional_light ? lights.directional_light.color : f32x3(0.02);
     let ambient_contribution = has_atmosphere ? f32x3(0.0) : base_ambient_color * albedo_color * sun_illuminance;
 
     var total_lighting = f32x3(0.0, 0.0, 0.0);
-    for(int point_light_idx = 0; point_light_idx < lights.point_light_count; point_light_idx++) {
-        let light = lights.point_lights[point_light_idx];
-        total_lighting += point_light_contribution(
-            world_position,
-            N,
-            V,
-            albedo_color,
-            roughness,
-            metallic,
-            light
-        );
+    for (u32 light_index = 0; light_index < light_count; light_index++) {
+        let light = lights[light_index];
+
+        if (light.kind == LightKind::Point) {
+            total_lighting += point_light_contribution(
+                world_position, N, V, albedo_color, roughness, metallic, light.position, light);
+        } else if (light.kind == LightKind::Spot) {
+            total_lighting += calculate_spot_light_contribution(
+                world_position, N, V, albedo_color, roughness, metallic, light.position, light.direction, light);
+        }
     }
 
-    for(int spot_light_idx = 0; spot_light_idx < lights.spot_light_count; spot_light_idx++) {
-        let light = lights.spot_lights[spot_light_idx];
-        total_lighting += calculate_spot_light_contribution(
-            world_position,
-            N,
-            V,
-            albedo_color,
-            roughness,
-            metallic,
-            light
-        );
-    }
 
     // https://marmosetco.tumblr.com/post/81245981087
     let horizon_fade = 1.3;
     var horizon = saturate(1.0 + horizon_fade * dot(R, smooth_normal));
     horizon *= horizon;
 
-    var contact_shadow = 1.0f;
-    if ((scene_flags & SceneFlags::HasContactShadows) != 0) {
-        contact_shadow = 1.0f - contact_shadows.Load(pixel_pos).r;
-    }
-
     var material_surface_color = f32x3(0.0);
     if (NoL > 0.0) {
         let result = BRDF(V, N, L, albedo_color, roughness, metallic);
-        material_surface_color = (result.diffuse + result.specular) * horizon * sun_illuminance * NoL * directional_shadow * contact_shadow;
+        material_surface_color = (result.diffuse + result.specular) * horizon * sun_illuminance * NoL * visibility;
     }
 
     let indirect_illuminance_sum = (indirect_illuminance + ambient_contribution) * occlusion;

@@ -7,6 +7,8 @@
 
 namespace ox::GPU {
 enum class TransformID : u64 { Invalid = ~0_u64 };
+enum class LightID : u64 { Invalid = ~0_u64 };
+
 struct Transforms {
   alignas(4) glm::mat4 local = {};
   alignas(4) glm::mat4 world = {};
@@ -144,8 +146,6 @@ constexpr static f32 INV_CAMERA_SCALE_UNIT = 1.0f / CAMERA_SCALE_UNIT;
 constexpr static f32 PLANET_RADIUS_OFFSET = 0.001f;
 
 struct Atmosphere {
-  alignas(4) glm::vec3 eye_position = {}; // this is camera pos but its always above planet_radius
-
   alignas(4) glm::vec3 rayleigh_scatter = {0.005802f, 0.013558f, 0.033100f};
   alignas(4) f32 rayleigh_density = 8.0f;
 
@@ -217,54 +217,26 @@ struct CullCamera {
   u32 mesh_instance_count = {};
 };
 
-#define MAX_POINT_LIGHTS 1024
-#define MAX_SPOT_LIGHTS 1024
-
-#define MAX_DIRECTIONAL_SHADOW_CASCADES 4
-
-struct DirectionalLightCascade {
-  alignas(4) glm::mat4 projection_view = {};
-  alignas(4) f32 far_bound = 0.0f;
-  alignas(4) f32 texel_size = 0.0f;
-};
+constexpr static u32 MAX_LIGHTS = 256;
 
 struct DirectionalLight {
   alignas(4) glm::vec3 color = {0.02, 0.02, 0.02};
   alignas(4) f32 intensity = 10.0f;
   alignas(4) glm::vec3 direction = {};
-  alignas(4) u32 cascade_count = {};
-  alignas(4) u32 cascade_size = {};
-  alignas(4) f32 cascades_overlap_proportion = {};
-  alignas(4) f32 depth_bias = {};
-  alignas(4) f32 normal_bias = {};
 };
 
-struct PointLight {
-  alignas(4) glm::vec3 position;
-  alignas(4) glm::vec3 color;
-  alignas(4) f32 intensity;
-  alignas(4) f32 cutoff;
-};
+enum class LightKind : u32 { Directional = 0, Point = 1, Spot = 2 };
 
-struct SpotLight {
-  alignas(4) glm::vec3 position;
-  alignas(4) glm::vec3 direction;
-  alignas(4) glm::vec3 color;
-  alignas(4) f32 intensity;
-  alignas(4) f32 cutoff;
-  alignas(4) f32 inner_cone_angle;
-  alignas(4) f32 outer_cone_angle;
-};
-
-struct Lights {
-  alignas(4) u32 point_light_count = 0;
-  alignas(4) u32 spot_light_count = 0;
-  alignas(8) u64 direction_light = 0;
-  alignas(8) u64 direction_light_cascades = 0;
-  alignas(8) u64 point_lights = 0;
-  alignas(8) u64 spot_lights = 0;
-  alignas(8) u64 atmosphere = 0;
-  alignas(8) u64 sky = 0;
+struct Light {
+  alignas(4) glm::vec3 position = {};
+  alignas(4) f32 intensity = 1.0f;
+  alignas(4) glm::vec3 color = {1.0f, 1.0f, 1.0f};
+  alignas(4) f32 range = 0.0f;
+  alignas(4) glm::vec3 direction = {};
+  alignas(4) f32 inner_cone_angle = 0.0f; // spot only (radians)
+  alignas(4) f32 outer_cone_angle = 0.0f; // spot only (radians)
+  alignas(4) LightKind kind = LightKind::Point;
+  alignas(4) u32 pad[2] = {};
 };
 
 enum class SceneFlags : u32 {
@@ -358,10 +330,10 @@ struct VirtualClipmap {
 };
 
 enum struct CullFlag : u32 {
-    TestFrustum = 1 << 0,
-    SelectLOD = 1 << 1,
-    TestOcclusion = 1 << 2,
-    LatePass = 1 << 3,
+  TestFrustum = 1 << 0,
+  SelectLOD = 1 << 1,
+  TestOcclusion = 1 << 2,
+  LatePass = 1 << 3,
 };
 consteval void enable_bitmask(CullFlag);
 

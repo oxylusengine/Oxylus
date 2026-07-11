@@ -157,8 +157,6 @@ public struct CullCamera {
 };
 
 public struct Atmosphere {
-    public f32x3 eye_pos;
-
     public f32x3 rayleigh_scatter;
     public f32   rayleigh_density;
 
@@ -181,6 +179,12 @@ public struct Atmosphere {
     public i32x3 sky_view_lut_size;
     public i32x3 multiscattering_lut_size;
     public i32x3 aerial_perspective_lut_size;
+
+    public func get_eye_pos(f32x3 position) -> f32x3 {
+        var altitude = position.y * CAMERA_SCALE_UNIT;
+        altitude += this.planet_radius + PLANET_RADIUS_OFFSET;
+        return f32x3(0.0, altitude, 0.0);
+    }
 };
 
 public struct Sky {
@@ -213,39 +217,21 @@ public struct DirectionalLight {
   public f32x3 color;
   public f32 intensity;
   public f32x3 direction;
-  public u32 cascade_count;
-  public u32 cascade_size;
-  public f32 cascades_overlap_proportion;
-  public f32 depth_bias;
-  public f32 normal_bias;
 };
 
-public struct PointLight {
-  public f32x3 position;
-  public f32x3 color;
-  public f32 intensity;
-  public f32 cutoff;
-};
+public enum LightKind : u32 { Directional = 0, Point = 1, Spot = 2 };
 
-public struct SpotLight {
-  public f32x3 position;
-  public f32x3 direction;
-  public f32x3 color;
-  public f32 intensity;
-  public f32 cutoff;
-  public f32 inner_cone_angle;
-  public f32 outer_cone_angle;
-};
-
-public struct Lights {
-  public u32 point_light_count;
-  public u32 spot_light_count;
-  public DirectionalLight *directional_light;
-  public DirectionalLightCascade *directional_light_cascades;
-  public PointLight *point_lights;
-  public SpotLight *spot_lights;
-  public Atmosphere *atmosphere;
-  public Sky *sky;
+public struct Light {
+  public f32x3 position = {};
+  public f32 intensity = 1.0;
+  public f32x3 color = {1.0, 1.0, 1.0};
+  public f32 range = 0.0;
+  public f32x3 direction = {};
+  public f32 inner_cone_angle = 0.0; // spot only (radians)
+  public f32 outer_cone_angle = 0.0; // spot only (radians)
+  public LightKind kind = LightKind::Point;
+  public u32 _pad_0 = 0;
+  public u32 _pad_1 = 0;
 };
 
 public struct Transform {

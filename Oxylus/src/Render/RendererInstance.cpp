@@ -109,122 +109,6 @@ auto update_buffer_if_dirty(auto& self, auto& render_context, const auto& gpu_da
   }
 }
 
-auto get_frustum_corners(f32 fov, f32 aspect_ratio, f32 z_near, f32 z_far) -> std::array<glm::vec3, 8> {
-  auto tan_half_fov = glm::tan(glm::radians(fov) / 2.0f);
-  auto a = glm::abs(z_near) * tan_half_fov;
-  auto b = glm::abs(z_far) * tan_half_fov;
-
-  return std::array<glm::vec3, 8>{
-    glm::vec3(a * aspect_ratio, -a, z_near),  // bottom right
-    glm::vec3(a * aspect_ratio, a, z_near),   // top right
-    glm::vec3(-a * aspect_ratio, a, z_near),  // top left
-    glm::vec3(-a * aspect_ratio, -a, z_near), // bottom left
-    glm::vec3(b * aspect_ratio, -b, z_far),   // bottom right
-    glm::vec3(b * aspect_ratio, b, z_far),    // top right
-    glm::vec3(-b * aspect_ratio, b, z_far),   // top left
-    glm::vec3(-b * aspect_ratio, -b, z_far),  // bottom left
-  };
-}
-
-auto calculate_cascade_bounds(usize cascade_count, f32 nearest_bound, f32 maximum_shadow_distance)
-  -> std::array<f32, MAX_DIRECTIONAL_SHADOW_CASCADES> {
-  if (cascade_count == 1) {
-    return {maximum_shadow_distance};
-  }
-  auto base = glm::pow(maximum_shadow_distance / nearest_bound, 1.0f / static_cast<f32>(cascade_count - 1));
-
-  auto result = std::array<f32, MAX_DIRECTIONAL_SHADOW_CASCADES>();
-  for (u32 i = 0; i < cascade_count; i++) {
-    result[i] = nearest_bound * glm::pow(base, static_cast<f32>(i));
-  }
-
-  return result;
-}
-
-auto calculate_cascaded_shadow_matrices(
-  GPU::DirectionalLight& light,
-  std::span<GPU::DirectionalLightCascade> cascades,
-  const LightComponent& light_comp,
-  const CameraComponent& camera
-) -> void {
-  ZoneScoped;
-
-  auto overlap_factor = 1.0f - light_comp.cascade_overlap_propotion;
-  auto far_bounds = calculate_cascade_bounds(
-    light.cascade_count,
-    light_comp.first_cascade_far_bound,
-    light_comp.maximum_shadow_distance
-  );
-  auto near_bounds = std::array<f32, MAX_DIRECTIONAL_SHADOW_CASCADES>();
-  near_bounds[0] = light_comp.minimum_shadow_distance;
-  for (u32 i = 1; i < light.cascade_count; i++) {
-    near_bounds[i] = overlap_factor * far_bounds[i - 1];
-  }
-
-  auto forward = glm::normalize(light.direction);
-  auto up = (glm::abs(glm::dot(forward, glm::vec3(0, 1, 0))) > 0.99f) ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
-  auto right = glm::normalize(glm::cross(up, forward));
-  up = glm::normalize(glm::cross(forward, right));
-
-  auto world_from_light = glm::mat4(
-    glm::vec4(right, 0.0f),
-    glm::vec4(up, 0.0f),
-    glm::vec4(forward, 0.0f),
-    glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)
-  );
-  auto light_to_world_inverse = glm::transpose(world_from_light);
-  auto camera_to_world = camera.get_inv_view_matrix();
-
-  for (u32 cascade_index = 0; cascade_index < light.cascade_count; ++cascade_index) {
-    auto& cascade = cascades[cascade_index];
-    auto split_near = near_bounds[cascade_index];
-    auto split_far = far_bounds[cascade_index];
-    auto corners = get_frustum_corners(camera.fov, camera.aspect, -split_near, -split_far);
-
-    auto min = glm::vec3(std::numeric_limits<f32>::max());
-    auto max = glm::vec3(std::numeric_limits<f32>::lowest());
-    for (const auto& corner : corners) {
-      auto world_corner = camera_to_world * glm::vec4(corner, 1.0f);
-      auto light_view_corner = glm::vec3(light_to_world_inverse * world_corner);
-      min = glm::min(min, light_view_corner);
-      max = glm::max(max, light_view_corner);
-    }
-
-    auto body_diagonal = glm::length2(corners[0] - corners[6]);
-    auto far_plane_diagonal = glm::length2(corners[4] - corners[6]);
-    auto cascade_diameter = glm::ceil(glm::sqrt(glm::max(body_diagonal, far_plane_diagonal)));
-    f32 cascade_texel_size = cascade_diameter / static_cast<f32>(light.cascade_size);
-
-    glm::vec3 center = glm::vec3(
-      glm::floor((min.x + max.x) * 0.5f / cascade_texel_size) * cascade_texel_size,
-      glm::floor((min.y + max.y) * 0.5f / cascade_texel_size) * cascade_texel_size,
-      max.z
-    );
-
-    auto cascade_from_world = glm::mat4(
-      light_to_world_inverse[0],
-      light_to_world_inverse[1],
-      light_to_world_inverse[2],
-      glm::vec4(-center, 1.0f)
-    );
-
-    auto z_extension = camera.far_clip * 0.5f;
-    auto extended_min_z = min.z - z_extension;
-    auto extended_max_z = max.z + z_extension;
-    auto r = 1.0f / (extended_max_z - extended_min_z);
-    auto clip_from_cascade = glm::mat4(
-      glm::vec4(2.0 / cascade_diameter, 0.0, 0.0, 0.0),
-      glm::vec4(0.0, 2.0 / cascade_diameter, 0.0, 0.0),
-      glm::vec4(0.0, 0.0, r, 0.0),
-      glm::vec4(0.0, 0.0, -extended_min_z * r, 1.0)
-    );
-
-    cascade.projection_view = clip_from_cascade * cascade_from_world;
-    cascade.far_bound = split_far;
-    cascade.texel_size = cascade_texel_size;
-  }
-}
-
 RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer)
     : scene(owner_scene),
       renderer(parent_renderer) {
@@ -233,14 +117,11 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   auto& allocator = render_context.superframe_allocator;
   render_queue_2d.init();
 
-  spot_lights_buffer = render_context.allocate_buffer_super(
+  lights_buffer = render_context.allocate_buffer_super(
     vuk::MemoryUsage::eGPUonly,
-    MAX_SPOT_LIGHTS * sizeof(GPU::SpotLight)
+    GPU::MAX_LIGHTS * sizeof(GPU::Light)
   );
-  point_lights_buffer = render_context.allocate_buffer_super(
-    vuk::MemoryUsage::eGPUonly,
-    MAX_POINT_LIGHTS * sizeof(GPU::PointLight)
-  );
+  transforms_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, sizeof(GPU::Transforms));
 
   constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
   before_callbacks.resize(stage_count);
@@ -501,53 +382,8 @@ auto RendererInstance::render(
     std::span(self.render_queue_2d.sprite_data)
   );
 
-  const auto scene_has_directional_light = self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight;
   const auto scene_has_atmosphere = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
-
-  if (scene_has_atmosphere) {
-    auto prepare_atmosphere_pass = vuk::make_pass(
-      "prepare_atmosphere",
-      [](vuk::CommandBuffer& cmd, VUK_BA(vuk::eMemoryRead) atmosphere_) { return atmosphere_; }
-    );
-
-    self.prepared_frame.atmosphere_buffer = prepare_atmosphere_pass(self.prepared_frame.atmosphere_buffer);
-  }
-
-  if (scene_has_directional_light) {
-    auto prepare_directional_light = vuk::make_pass(
-      "prepare_directional_light",
-      [](vuk::CommandBuffer& cmd, VUK_BA(vuk::eMemoryRead) buffer1, VUK_BA(vuk::eMemoryRead) buffer2) {
-        return std::make_tuple(buffer1, buffer2);
-      }
-    );
-
-    std::tie(self.prepared_frame.directional_light_buffer, self.prepared_frame.directional_light_cascades_buffer) =
-      prepare_directional_light(
-        self.prepared_frame.directional_light_buffer,
-        self.prepared_frame.directional_light_cascades_buffer
-      );
-  }
-
-  auto prepare_lights_pass = vuk::make_pass(
-    "prepare lights",
-    [](
-      vuk::CommandBuffer&,
-      VUK_BA(vuk::eMemoryRead) lights_,
-      VUK_BA(vuk::eMemoryRead) point_lights,
-      VUK_BA(vuk::eMemoryRead) spot_lights
-    ) { return std::make_tuple(lights_, point_lights, spot_lights); }
-  );
-
-  std::tie(
-    self.prepared_frame.lights_buffer,
-    self.prepared_frame.point_lights_buffer,
-    self.prepared_frame.spot_lights_buffer
-  ) =
-    prepare_lights_pass(
-      std::move(self.prepared_frame.lights_buffer),
-      std::move(self.prepared_frame.point_lights_buffer),
-      std::move(self.prepared_frame.spot_lights_buffer)
-    );
+  const auto scene_has_directional_light = self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight;
 
   if (RendererCVar::cvar_bloom_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasBloom;
@@ -600,6 +436,9 @@ auto RendererInstance::render(
      .layer_count = 1}
   );
   hiz_attachment = vuk::clear_image(std::move(hiz_attachment), vuk::DepthZero);
+
+  auto sky_transmittance_lut_attachment = self.renderer.sky_transmittance_lut_attachment;
+  auto sky_multiscatter_lut_attachment = self.renderer.sky_multiscatter_lut_attachment;
 
   auto sky_view_lut_attachment = vuk::declare_ia(
     "sky_view_lut",
@@ -897,14 +736,11 @@ auto RendererInstance::render(
     );
 
     std::tie(contact_shadows_attachment, depth_attachment, self.prepared_frame.camera_buffer) = contact_shadows_pass(
-      contact_shadows_attachment,
-      depth_attachment,
-      self.prepared_frame.camera_buffer
+      std::move(contact_shadows_attachment),
+      std::move(depth_attachment),
+      std::move(self.prepared_frame.camera_buffer)
     );
   }
-
-  auto sky_transmittance_lut_attachment = self.renderer.sky_transmittance_lut_attachment;
-  auto sky_multiscatter_lut_attachment = self.renderer.sky_multiscatter_lut_attachment;
 
   if (scene_has_atmosphere && scene_has_directional_light) {
     auto atmos_context = AtmosphereContext{
@@ -1133,7 +969,7 @@ auto RendererInstance::render(
       }
     );
 
-    std::tie(final_attachment, fxaa_attachment) = fxaa_pass(fxaa_attachment, final_attachment);
+    std::tie(final_attachment, fxaa_attachment) = fxaa_pass(std::move(fxaa_attachment), std::move(final_attachment));
   }
 
   auto bloom_upsampled_attachment = vuk::declare_ia(
@@ -1278,17 +1114,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   math::calc_frustum_planes(self.camera_data.projection_view, self.camera_data.frustum_planes);
 
-  std::vector<GPU::PointLight> point_lights = {};
-  std::vector<GPU::SpotLight> spot_lights = {};
+  self.scene.lights.reset();
 
   self.scene.world
     .query_builder<const TransformComponent, const LightComponent>() //
     .build()
-    .each([&self,
-           cam,
-           &point_lights,
-           &spot_lights,
-           current_camera](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
+    .each([&self](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
       if (!e.enabled()) {
         return;
       }
@@ -1301,53 +1132,28 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.sun_direction_changed = new_dir != self.previous_sun_direction;
         self.previous_sun_direction = new_dir;
         self.directional_light.direction = new_dir;
-        self.directional_light.cascade_count = ox::min(
-          lc.cascade_count,
-          static_cast<u32>(MAX_DIRECTIONAL_SHADOW_CASCADES)
-        );
-        self.directional_light.cascade_size = lc.shadow_map_res;
-        self.directional_light.cascades_overlap_proportion = lc.cascade_overlap_propotion;
-        self.directional_light.depth_bias = lc.depth_bias;
-        self.directional_light.normal_bias = lc.normal_bias;
         self.first_clipmap_width = lc.first_clipmap_width;
         self.clipmap_selection_bias = lc.clipmap_selection_bias;
 
         self.directional_light_cast_shadows = lc.cast_shadows;
-
-        if (lc.cast_shadows) {
-          calculate_cascaded_shadow_matrices(
-            self.directional_light,
-            self.directional_light_cascades,
-            lc,
-            current_camera
-          );
-        }
-      } else if (lc.type == LightComponent::LightType::Point) {
-        const glm::vec3 world_pos = Scene::get_world_position(e);
-        point_lights.emplace_back(
-          GPU::PointLight{
-            .position = world_pos,
-            .color = lc.color,
+      } else {
+        const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
+        const auto direction = lc.type == LightComponent::LightType::Spot
+          ? glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f))
+          : glm::vec3(0.0f);
+        const auto light_id = self.scene.lights.create_slot(
+          GPU::Light{
+            .position = tc.position,
             .intensity = lc.intensity,
-            .cutoff = lc.radius,
-          }
-        );
-      } else if (lc.type == LightComponent::LightType::Spot) {
-        const auto direction = glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f));
-        const auto world_pos = Scene::get_world_position(e);
-        spot_lights.emplace_back(
-          GPU::SpotLight{
-            .position = world_pos,
+            .color = lc.color,
+            .range = lc.radius,
             .direction = direction,
-            .color = lc.color,
-            .intensity = lc.intensity,
-            .cutoff = lc.radius,
             .inner_cone_angle = lc.inner_cone_angle,
             .outer_cone_angle = lc.outer_cone_angle,
+            .kind = kind,
           }
         );
       }
-
       if (const auto* atmos_info = e.try_get<AtmosphereComponent>()) {
         self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
 
@@ -1366,10 +1172,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.atmosphere.aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
         self.atmosphere.transmittance_lut_size = self.renderer.sky_transmittance_lut_view.get_extent();
         self.atmosphere.multiscattering_lut_size = self.renderer.sky_multiscatter_lut_view.get_extent();
-
-        f32 eye_altitude = cam.position.y * GPU::CAMERA_SCALE_UNIT;
-        eye_altitude += self.atmosphere.planet_radius + GPU::PLANET_RADIUS_OFFSET;
-        self.atmosphere.eye_position = glm::vec3(0.0f, eye_altitude, 0.0f);
       }
 
       if (const auto* sky_info = e.try_get<SkyComponent>()) {
@@ -1496,94 +1298,21 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   update_buffer_if_dirty<GPU::Transforms>(self, render_context, info.gpu_transforms, info.dirty_transform_ids);
   update_buffer_if_dirty<GPU::Material>(self, render_context, info.gpu_materials, info.dirty_material_indices);
 
-  // TODO: Keep track of updated lights and only update them.
-  if (!point_lights.empty()) {
-    auto point_lights_size_bytes = ox::size_bytes(point_lights);
-    auto src_point_lights_buffer = render_context.alloc_transient_buffer(
-      vuk::MemoryUsage::eCPUtoGPU,
-      point_lights_size_bytes
-    );
-    std::memcpy(src_point_lights_buffer->mapped_ptr, point_lights.data(), point_lights_size_bytes);
-
-    auto dst_point_lights_buffer = vuk::acquire_buf(
-      "point lights",
-      self.point_lights_buffer->subrange(0, point_lights_size_bytes),
-      vuk::eMemoryRead
-    );
-    self.prepared_frame.point_lights_buffer = vuk::copy(
-      std::move(src_point_lights_buffer),
-      std::move(dst_point_lights_buffer)
-    );
-  } else {
-    self.prepared_frame
-      .point_lights_buffer = vuk::acquire_buf("point lights", *self.point_lights_buffer, vuk::eMemoryRead);
-  }
-
-  if (!spot_lights.empty()) {
-    auto spot_lights_size_bytes = ox::size_bytes(spot_lights);
-    auto src_spot_lights_buffer = render_context.alloc_transient_buffer(
-      vuk::MemoryUsage::eCPUtoGPU,
-      spot_lights_size_bytes
-    );
-    std::memcpy(src_spot_lights_buffer->mapped_ptr, spot_lights.data(), spot_lights_size_bytes);
-
-    auto dst_spot_lights_buffer = vuk::acquire_buf(
-      "spot lights",
-      self.spot_lights_buffer->subrange(0, spot_lights_size_bytes),
-      vuk::eMemoryRead
-    );
-    self.prepared_frame.spot_lights_buffer = vuk::copy(
-      std::move(src_spot_lights_buffer),
-      std::move(dst_spot_lights_buffer)
-    );
-  } else {
-    self.prepared_frame
-      .spot_lights_buffer = vuk::acquire_buf("spot lights", *self.spot_lights_buffer, vuk::eMemoryRead);
-  }
-
-  auto lights_info = GPU::Lights{
-    .point_light_count = static_cast<u32>(point_lights.size()),
-    .spot_light_count = static_cast<u32>(spot_lights.size()),
-    .point_lights = self.point_lights_buffer->device_address,
-    .spot_lights = self.spot_lights_buffer->device_address,
-  };
-
-  if (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) {
-    auto atmosphere_buffer = self.renderer.render_context->scratch_buffer(self.atmosphere);
-    lights_info.atmosphere = atmosphere_buffer->device_address;
-    self.prepared_frame.atmosphere_buffer = std::move(atmosphere_buffer);
-  }
-
-  if (self.gpu_scene_flags & GPU::SceneFlags::HasSky) {
-    auto sky_buffer = self.renderer.render_context->scratch_buffer(self.sky_data);
-    lights_info.sky = sky_buffer->device_address;
-    self.prepared_frame.sky_buffer = std::move(sky_buffer);
-  }
-
-  if (self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) {
-    auto directional_light_cascade_count = ox::max(1_u32, self.directional_light.cascade_count);
-
-    auto directional_light_buffer = render_context.scratch_buffer(self.directional_light);
-    auto directional_light_cascades_buffer = render_context.alloc_transient_buffer(
-      vuk::MemoryUsage::eGPUtoCPU,
-      directional_light_cascade_count * sizeof(GPU::DirectionalLightCascade)
-    );
-
-    lights_info.direction_light = directional_light_buffer->device_address;
-    lights_info.direction_light_cascades = directional_light_cascades_buffer->device_address;
-    if (self.directional_light.cascade_count > 0) {
-      std::memcpy(
-        directional_light_cascades_buffer->mapped_ptr,
-        self.directional_light_cascades.data(),
-        ox::size_bytes(self.directional_light_cascades)
-      );
+  {
+    const auto lights_span = self.scene.lights.slots_unsafe();
+    const auto count = std::min<std::size_t>(lights_span.size(), GPU::MAX_LIGHTS);
+    const auto size_bytes = count * sizeof(GPU::Light);
+    if (count > 0) {
+      auto src_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, size_bytes);
+      std::memcpy(src_buffer->mapped_ptr, lights_span.data(), size_bytes);
+      auto dst_buffer = vuk::acquire_buf("lights", self.lights_buffer->subrange(0, size_bytes), vuk::eMemoryRead);
+      self.prepared_frame.lights_buffer = vuk::copy(std::move(src_buffer), std::move(dst_buffer));
+    } else {
+      self.prepared_frame.lights_buffer = vuk::acquire_buf("lights", *self.lights_buffer, vuk::eMemoryRead);
     }
-
-    self.prepared_frame.directional_light_buffer = std::move(directional_light_buffer);
-    self.prepared_frame.directional_light_cascades_buffer = std::move(directional_light_cascades_buffer);
   }
 
-  self.prepared_frame.lights_buffer = render_context.scratch_buffer(lights_info);
+  self.prepared_frame.atmosphere_buffer = self.renderer.render_context->scratch_buffer(self.atmosphere);
 
   if (!info.gpu_meshes.empty()) {
     self.meshes_buffer = render_context.resize_buffer(
