@@ -398,8 +398,6 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     std::move(context.physical_page_table_attachment)
   );
 
-  auto geometry_context = ShadowGeometryContext{};
-
   auto clipmap_camera = GPU::CullCamera{
     .position = -self.directional_light.direction,
     .acceptable_lod_error = self.camera_data.acceptable_lod_error,
@@ -422,6 +420,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   auto cull_geometry_context = CullGeometryContext{
     .use_hiz = false,
     .use_hpb = true,
+    .cull_flags = GPU::CullFlag::TestFrustum,
     .hpb_attachment = std::move(hpb_attachment),
   };
 
@@ -446,11 +445,10 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
     cull_geometry_context.cull_camera = clipmap_camera;
     cull_geometry_context.init_cull_meshes = (reverse_index == 0);
-    cull_geometry_context.select_lods = false;
     cull_geometry_context.vsm_layer_index = clipmap_index;
     cull_geometry_context.vsm_page_offset = clipmap.page_offset;
     self.cull_geometry(cull_geometry_context);
-    geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
+    auto draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
 
     auto draw_physical_pages_pass = vuk::make_pass(
       stack.format("vsm draw clipmap {}", clipmap_index),
@@ -523,7 +521,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       physical_depth_attachment
     ) =
       draw_physical_pages_pass(
-        std::move(geometry_context.draw_geometry_cmd_buffer),
+        std::move(draw_geometry_cmd_buffer),
         std::move(self.prepared_frame.reordered_indices_buffer),
         std::move(self.prepared_frame.meshes_buffer),
         std::move(self.prepared_frame.mesh_instances_buffer),

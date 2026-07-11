@@ -78,3 +78,6 @@ vsxmake2026
 
 # Zed
 .zed
+
+# vkconfig
+vk_layer_settings.txt

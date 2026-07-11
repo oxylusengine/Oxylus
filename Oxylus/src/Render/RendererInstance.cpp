@@ -629,13 +629,11 @@ auto RendererInstance::render(
       .near_clip = self.camera_data.near_clip,
       .mesh_instance_count = self.prepared_frame.mesh_instance_count,
     };
-    main_geometry_context.late = false;
     // The CullGeometryContext is hoisted outside both passes so the visibility /
     // dispatch-command buffers allocated by the early pass's `cull_meshes`
     // pre-pass persist into the late pass (which runs with `init_cull_meshes = false`).
     auto cull_geometry_context = CullGeometryContext{
       .use_hiz = true,
-      .late = main_geometry_context.late,
       .init_cull_meshes = true,
       .cull_camera = cull_camera,
       .hiz_attachment = std::move(main_geometry_context.hiz_attachment),
@@ -647,8 +645,7 @@ auto RendererInstance::render(
 
     self.generate_hiz(main_geometry_context);
 
-    main_geometry_context.late = true;
-    cull_geometry_context.late = main_geometry_context.late;
+    cull_geometry_context.cull_flags |= GPU::CullFlag::LatePass;
     cull_geometry_context.init_cull_meshes = false;
     cull_geometry_context.cull_camera = cull_camera;
     cull_geometry_context.hiz_attachment = std::move(main_geometry_context.hiz_attachment);
@@ -694,9 +691,9 @@ auto RendererInstance::render(
       depth_attachment = std::move(rmvsm_context.depth_attachment);
 
       auto shadow_resolve_context = ShadowResolveContext{
+        .directional_clipmaps_buffer = std::move(rmvsm_context.directional_clipmaps_buffer),
         .depth_attachment = std::move(depth_attachment),
         .normal_attachment = std::move(normal_attachment),
-        .directional_clipmaps_buffer = std::move(rmvsm_context.directional_clipmaps_buffer),
         .virtual_page_table_attachment = std::move(rmvsm_context.virtual_page_table_attachment),
         .physical_page_table_attachment = std::move(rmvsm_context.physical_page_table_attachment),
         .resolved_shadows_attachment = std::move(resolved_shadows_attachment),
@@ -1139,8 +1136,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       } else {
         const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
         const auto direction = lc.type == LightComponent::LightType::Spot
-          ? glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f))
-          : glm::vec3(0.0f);
+                                 ? glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f))
+                                 : glm::vec3(0.0f);
         const auto light_id = self.scene.lights.create_slot(
           GPU::Light{
             .position = tc.position,

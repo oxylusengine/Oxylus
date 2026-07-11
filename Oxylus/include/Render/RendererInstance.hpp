@@ -169,14 +169,12 @@ struct CullGeometryContext {
   bool use_hiz = false;
   // When true, uses `cull_meshlets_hpb` (VSM shadowmaps path with page culling)
   bool use_hpb = false;
-  // HiZ late-pass occlusion culling flag (only meaningful when `use_hiz` is true).
-  bool late = false;
   // When true, runs the `cull_meshes` pre-pass (allocates/zeroes the visibility
   // and dispatch buffers). Run once per sequence: visbuffer early pass or
   // shadowmap cascade 0; subsequent culls in the sequence set this to false.
   bool init_cull_meshes = false;
-  bool select_lods = true;
 
+  GPU::CullFlag cull_flags = GPU::CullFlag::TestAll;
   GPU::CullCamera cull_camera = {};
   u32 vsm_layer_index = 0;
   glm::ivec2 vsm_page_offset = {};
@@ -193,7 +191,6 @@ struct CullGeometryContext {
 };
 
 struct MainGeometryContext {
-  bool late = false;
   bool draw_overdraw = false;
 
   vuk::PersistentDescriptorSet* bindless_set = nullptr;
@@ -205,12 +202,6 @@ struct MainGeometryContext {
   vuk::Value<vuk::ImageAttachment> normal_attachment = {};
   vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
-
-  vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
-};
-
-struct ShadowGeometryContext {
-  vuk::Value<vuk::ImageAttachment> shadowmap_attachment = {};
 
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
 };
@@ -239,14 +230,9 @@ struct ShadowResolveContext {
   // TODO: Add shadowmap kind enum
   f32 max_shadow_dist = 1000.0f;
 
+  vuk::Value<vuk::Buffer> directional_clipmaps_buffer = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
   vuk::Value<vuk::ImageAttachment> normal_attachment = {};
-
-  // CSM:
-  vuk::Value<vuk::ImageAttachment> directional_shadowmap_attachment = {};
-
-  // VSM:
-  vuk::Value<vuk::Buffer> directional_clipmaps_buffer = {};
   vuk::Value<vuk::ImageAttachment> virtual_page_table_attachment = {};
   vuk::Value<vuk::ImageAttachment> physical_page_table_attachment = {};
 
@@ -403,7 +389,6 @@ private:
   GPU::CameraData previous_camera_data = {};
 
   GPU::SceneFlags gpu_scene_flags = {};
-  bool occlusion_cull = true;
 
   GPU::TonemapType tonemap_type = GPU::TonemapType::AgX;
 

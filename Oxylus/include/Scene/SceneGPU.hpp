@@ -330,10 +330,13 @@ struct VirtualClipmap {
 };
 
 enum struct CullFlag : u32 {
+  None = 0,
   TestFrustum = 1 << 0,
   SelectLOD = 1 << 1,
   TestOcclusion = 1 << 2,
   LatePass = 1 << 3,
+
+  TestAll = TestFrustum | SelectLOD | TestOcclusion,
 };
 consteval void enable_bitmask(CullFlag);
 

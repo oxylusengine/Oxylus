@@ -6,7 +6,6 @@
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
-
 auto RendererInstance::generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void {
   ZoneScoped;
 
@@ -56,17 +55,14 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
   ZoneScoped;
   memory::ScopedStack stack;
 
+  const auto cull_flags = context.cull_flags;
   const auto& cull_camera = context.cull_camera;
 
   // --- Stage 1: cull_meshes (only on the first cull of a sequence) ---
   if (context.init_cull_meshes) {
-    auto cull_meshes_flags = GPU::CullFlag::TestFrustum;
-    if (context.select_lods)
-      cull_meshes_flags |= GPU::CullFlag::SelectLOD;
-
     auto cull_meshes_pass = vuk::make_pass(
       context.use_hiz ? "vis cull meshes" : "cull meshes",
-      [cull_camera, cull_meshes_flags](
+      [cull_camera, cull_flags](
         vuk::CommandBuffer& cmd_list,
         VUK_BA(vuk::eComputeRead) meshes,
         VUK_BA(vuk::eComputeRead) transforms,
@@ -83,7 +79,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
           .bind_buffer(0, 3, meshlet_instances)
           .bind_buffer(0, 4, visibility)
           .bind_buffer(0, 5, cull_meshlets_cmd)
-          .specialize_constants(0, std::to_underlying(cull_meshes_flags))
+          .specialize_constants(0, std::to_underlying(cull_flags))
           .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
           .dispatch_invocations(cull_camera.mesh_instance_count);
 
@@ -119,17 +115,9 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
   );
 
   if (context.use_hiz) {
-    auto cull_meshlets_flags = GPU::CullFlag::TestFrustum;
-    if (self.occlusion_cull) {
-      cull_meshlets_flags |= GPU::CullFlag::TestOcclusion;
-    }
-    if (context.late) {
-      cull_meshlets_flags |= GPU::CullFlag::LatePass;
-    }
-
     auto cull_meshlets_pass = vuk::make_pass(
-      stack.format("vis cull meshlets {}", context.late ? "late" : "early"),
-      [cull_meshlets_flags, cull_camera](
+      stack.format("vis cull meshlets {}", cull_flags & GPU::CullFlag::LatePass ? "late" : "early"),
+      [cull_camera, cull_flags](
         vuk::CommandBuffer& cmd_list,
         VUK_BA(vuk::eIndirectRead) dispatch_cmd,
         VUK_IA(vuk::eComputeSampled) hiz,
@@ -153,7 +141,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
           .bind_buffer(0, 6, visible_meshlet_instances_indices)
           .bind_buffer(0, 7, meshlet_instance_visibility_mask)
           .bind_buffer(0, 8, cull_triangles_cmd)
-          .specialize_constants(0, std::to_underlying(cull_meshlets_flags))
+          .specialize_constants(0, std::to_underlying(cull_flags))
           .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
           .dispatch_indirect(dispatch_cmd);
 
@@ -325,10 +313,10 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
   }
 
   // --- Stage 3: cull_triangles (shared by both versions) ---
-  const auto cull_triangles_flags = (context.use_hiz && context.late) ? GPU::CullFlag::LatePass : GPU::CullFlag{};
   auto cull_triangles_pass = vuk::make_pass(
-    context.use_hiz ? stack.format("vis cull triangles {}", context.late ? "late" : "early") : "sm cull triangles",
-    [cull_triangles_flags, cull_camera](
+    context.use_hiz ? stack.format("cull triangles {}", cull_flags & GPU::CullFlag::LatePass ? "late" : "early")
+                    : "cull triangles",
+    [cull_flags, cull_camera](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eIndirectRead) cull_triangles_cmd,
       VUK_BA(vuk::eComputeRead) meshes,
@@ -350,7 +338,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
         .bind_buffer(0, 5, visible_meshlet_instances_indices)
         .bind_buffer(0, 6, reordered_indices)
         .bind_buffer(0, 7, draw_indexed_cmd)
-        .specialize_constants(0, std::to_underlying(cull_triangles_flags))
+        .specialize_constants(0, std::to_underlying(cull_flags))
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
         .dispatch_indirect(cull_triangles_cmd);
 

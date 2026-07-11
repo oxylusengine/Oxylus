@@ -1,15 +1,13 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
-#include "Memory/Stack.hpp"
 #include "Render/RendererInstance.hpp"
 
 namespace ox {
 auto RendererInstance::draw_for_visbuffer(this RendererInstance& self, MainGeometryContext& context) -> void {
   ZoneScoped;
-  memory::ScopedStack stack;
 
   auto encode_pass = vuk::make_pass(
-    stack.format("vis encode {}", context.late ? "late" : "early"),
+    "vis encode",
     [&descriptor_set = *context.bindless_set, draw_overdraw = context.draw_overdraw](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eIndirectRead) triangle_indirect,
