@@ -146,8 +146,6 @@ constexpr static f32 INV_CAMERA_SCALE_UNIT = 1.0f / CAMERA_SCALE_UNIT;
 constexpr static f32 PLANET_RADIUS_OFFSET = 0.001f;
 
 struct Atmosphere {
-  alignas(4) glm::vec3 eye_position = {}; // this is camera pos but its always above planet_radius
-
   alignas(4) glm::vec3 rayleigh_scatter = {0.005802f, 0.013558f, 0.033100f};
   alignas(4) f32 rayleigh_density = 8.0f;
 

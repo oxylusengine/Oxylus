@@ -1172,10 +1172,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.atmosphere.aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
         self.atmosphere.transmittance_lut_size = self.renderer.sky_transmittance_lut_view.get_extent();
         self.atmosphere.multiscattering_lut_size = self.renderer.sky_multiscatter_lut_view.get_extent();
-
-        f32 eye_altitude = cam.position.y * GPU::CAMERA_SCALE_UNIT;
-        eye_altitude += self.atmosphere.planet_radius + GPU::PLANET_RADIUS_OFFSET;
-        self.atmosphere.eye_position = glm::vec3(0.0f, eye_altitude, 0.0f);
       }
 
       if (const auto* sky_info = e.try_get<SkyComponent>()) {

@@ -157,8 +157,6 @@ public struct CullCamera {
 };
 
 public struct Atmosphere {
-    public f32x3 eye_pos;
-
     public f32x3 rayleigh_scatter;
     public f32   rayleigh_density;
 
@@ -181,6 +179,12 @@ public struct Atmosphere {
     public i32x3 sky_view_lut_size;
     public i32x3 multiscattering_lut_size;
     public i32x3 aerial_perspective_lut_size;
+
+    public func get_eye_pos(f32x3 position) -> f32x3 {
+        var altitude = position.y * CAMERA_SCALE_UNIT;
+        altitude += this.planet_radius + PLANET_RADIUS_OFFSET;
+        return f32x3(0.0, altitude, 0.0);
+    }
 };
 
 public struct Sky {

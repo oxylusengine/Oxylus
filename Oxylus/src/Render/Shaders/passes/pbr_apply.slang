@@ -187,9 +187,7 @@ func fs_main(
     if (has_atmosphere) {
         let planet_radius = atmosphere.planet_radius;
         let atmos_radius = atmosphere.atmos_radius;
-
-        var eye_altitude = max(world_position.y, 0.0) * CAMERA_SCALE_UNIT;
-        eye_altitude += planet_radius + PLANET_RADIUS_OFFSET;
+        let world_eye_pos = atmosphere.get_eye_pos(world_position);
 
         let up = f32x3(0.0, 1.0, 0.0);
         let sun_cos_theta = dot(L, up);
@@ -198,12 +196,12 @@ func fs_main(
         let transmittance_uv = transmittance_params_to_lut_uv(
             atmos_radius,
             planet_radius,
-            f32x2(eye_altitude, sun_cos_theta));
+            f32x2(world_eye_pos.y, sun_cos_theta));
         let sun_transmittance = sky_transmittance_lut.SampleLevel(linear_clamp_sampler, transmittance_uv, 0.0).rgb;
         sun_illuminance = sun_transmittance * Li * horizon_darkening;
 
         if (depth == 0.0) {
-            let eye_pos = atmosphere.eye_pos;
+            let eye_pos = atmosphere.get_eye_pos(camera.position.xyz);
             let h = eye_pos.y;
             let right = normalize(cross(up, -V));
             let forward = normalize(cross(right, up));

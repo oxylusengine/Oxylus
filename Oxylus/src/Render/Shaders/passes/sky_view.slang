@@ -20,21 +20,22 @@ func cs_main(
     uniform ParameterBlock<ShaderParameters> params,
     uniform f32x3 sun_dir,
     uniform f32 sun_intensity,
+    uniform f32x3 camera_pos,
 ) {
-    f32x2 uv = f32x2(thread_id.xy) / f32x2(params.atmosphere.sky_view_lut_size.xy);
-    f32x3 eye_pos = params.atmosphere.eye_pos;
+    let uv = f32x2(thread_id.xy) / f32x2(params.atmosphere.sky_view_lut_size.xy);
+    var eye_pos = params.atmosphere.get_eye_pos(camera_pos);
 
-    f32 h = length(eye_pos);
-    const f32x3 eye_dir = uv_to_sky_view_lut_params(params.atmosphere, uv, h);
+    let h = length(eye_pos);
+    let eye_dir = uv_to_sky_view_lut_params(params.atmosphere, uv, h);
 
     if (!move_to_top_atmosphere(eye_pos, eye_dir, params.atmosphere.atmos_radius)) {
         params.sky_view_lut.Store(thread_id.xy, 0.0);
         return;
     }
 
-    f32x3 up_vec = eye_pos / h;
-    f32 sun_zenith_cos_angle = dot(sun_dir, up_vec);
-    f32x3 sun_dir = normalize(f32x3(com::safe_sqrt(1.0 - sun_zenith_cos_angle * sun_zenith_cos_angle), sun_zenith_cos_angle, 0.0));
+    let up_vec = eye_pos / h;
+    let sun_zenith_cos_angle = dot(sun_dir, up_vec);
+    let sun_dir = normalize(f32x3(com::safe_sqrt(1.0 - sun_zenith_cos_angle * sun_zenith_cos_angle), sun_zenith_cos_angle, 0.0));
 
     AtmosphereIntegrateInfo info = {};
     info.eye_pos = eye_pos;

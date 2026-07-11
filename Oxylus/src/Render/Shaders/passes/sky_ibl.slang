@@ -67,9 +67,7 @@ func cs_main(
     let uv = (f32x2(pixel) + 0.5) / f32(IBL_CUBE_RES);
     let output_dir = normalize(mul(CUBE_MAP_FACE_ROTATION(face), f32x3(uv * 2.0 - 1.0, -1.0)));
 
-    var eye_altitude = params.camera.position.y * CAMERA_SCALE_UNIT;
-    eye_altitude += atmosphere.planet_radius + PLANET_RADIUS_OFFSET;
-    let eye_pos = f32x3(0.0, eye_altitude, 0.0);
+    let eye_pos = atmosphere.get_eye_pos(params.camera.position.xyz);
 
     let up = abs(output_dir.y) < 0.999 ? f32x3(0.0, 1.0, 0.0) : f32x3(1.0, 0.0, 0.0);
     let tangent = normalize(cross(up, output_dir));
@@ -104,7 +102,7 @@ func cs_main(
     let transmittance_uv = transmittance_params_to_lut_uv(
         atmosphere.atmos_radius,
         atmosphere.planet_radius,
-        f32x2(eye_altitude, sun_cos_zenith));
+        f32x2(eye_pos.y, sun_cos_zenith));
     let sun_color = params.sky_transmittance_lut.SampleLevel(params.sampler, transmittance_uv, 0.0).rgb;
     let sun_facing = saturate(dot(output_dir, sun_dir));
     let sun_term = sun_ambient_strength * sun_color * sun_intensity * sun_facing / PI;
