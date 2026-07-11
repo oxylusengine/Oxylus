@@ -848,7 +848,7 @@ auto RenderContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::Memory
   -> vuk::Unique<vuk::Buffer> {
   if (!buffer || new_size > buffer->size) {
     const auto old_size = buffer ? buffer->size : 0_u64;
-    const auto alloc_size = buffer ? std::max(new_size, buffer->size * 2) : new_size;
+    const auto alloc_size = buffer ? std::max(new_size, buffer->size * 2_u64) : new_size;
 
     buffer.reset();
 
