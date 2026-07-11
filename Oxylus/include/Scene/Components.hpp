@@ -213,14 +213,9 @@ struct LightComponent {
   f32 outer_cone_angle = 70;
   f32 inner_cone_angle = 0.0f;
   bool cast_shadows = true;
-  u32 shadow_map_res = 2048;
-  u32 cascade_count = 4;
   f32 first_cascade_far_bound = 10.0f;
   f32 maximum_shadow_distance = 1000.0f;
   f32 minimum_shadow_distance = 0.01f;
-  f32 cascade_overlap_propotion = 0.2f;
-  f32 depth_bias = 0.002f;
-  f32 normal_bias = 1.8f;
   f32 first_clipmap_width = 10.0f;
   f32 clipmap_selection_bias = -1.5f;
 };

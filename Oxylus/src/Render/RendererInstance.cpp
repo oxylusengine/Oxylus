@@ -1119,7 +1119,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.scene.world
     .query_builder<const TransformComponent, const LightComponent>() //
     .build()
-    .each([&self, cam](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
+    .each([&self](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
       if (!e.enabled()) {
         return;
       }
