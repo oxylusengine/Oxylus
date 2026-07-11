@@ -180,7 +180,8 @@ func fs_main(
     let visibility = directional_shadow * contact_shadow;
 
     var indirect_illuminance = f32x3(0.0);
-    var sun_illuminance = f32x3(Li);
+    var direct_illuminance = f32x3(0.0);
+    var aerial_perspective_contribution = f32x3(0.0);
     if (has_atmosphere) {
         let planet_radius = atmosphere.planet_radius;
         let atmos_radius = atmosphere.atmos_radius;
@@ -190,12 +191,8 @@ func fs_main(
         let sun_cos_theta = dot(L, up);
         let horizon_darkening = smoothstep(-0.1, 0.3, sun_cos_theta);
 
-        let transmittance_uv = transmittance_params_to_lut_uv(
-            atmos_radius,
-            planet_radius,
-            f32x2(world_eye_pos.y, sun_cos_theta));
-        let sun_transmittance = sky_transmittance_lut.SampleLevel(linear_clamp_sampler, transmittance_uv, 0.0).rgb;
-        sun_illuminance = sun_transmittance * Li * horizon_darkening;
+        let sun_transmittance = get_direct_sun_lighting(atmosphere, linear_clamp_sampler, sky_transmittance_lut, world_eye_pos.y, sun_cos_theta);
+        direct_illuminance = sun_transmittance * Li * horizon_darkening;
 
         if (depth == 0.0) {
             let eye_pos = atmosphere.get_eye_pos(camera.position.xyz);
@@ -221,32 +218,29 @@ func fs_main(
             linear_clamp_sampler,
             input.tex_coord,
             (world_position - camera.position.xyz) * CAMERA_SCALE_UNIT);
+        aerial_perspective_contribution = aerial_perspective.rgb * aerial_perspective.a;
+
+        let reflection_dir = normalize(lerp(N, R, 1.0 - roughness));
+        let specular_sample = sky_cubemap.SampleLevel(linear_clamp_sampler, reflection_dir, 0.0);
+        let diffuse_sample = sky_cubemap.SampleLevel(linear_clamp_sampler, N, 0.0);
+
+        let specular_sky = specular_sample.rgb * specular_sample.a;
+        let diffuse_sky = diffuse_sample.rgb * diffuse_sample.a;
 
         let dielectric_F0 = f32x3(0.04);
         let F0 = lerp(dielectric_F0, albedo_color, metallic);
-        let F = F_SchlickRoughness(NoV, F0, roughness);
-        let kD = (1.0 - metallic) * (1.0 - F);
 
-        let diffuse_irradiance = sky_cubemap.SampleLevel(linear_clamp_sampler, N, 0.0).rgb;
-        let ibl_diffuse = kD * albedo_color * diffuse_irradiance;
+        let alpha = perceptual_roughness_to_alpha(roughness);
+        let AB = GGX_directional_albedo(NoV, alpha);
+        let kS = F0 * AB.x + AB.y;
+        let kD = (1.0 - metallic) * (1.0 - kS);
 
-        let reflection_dir = normalize(lerp(N, R, 1.0 - roughness));
-        let specular_radiance = sky_cubemap.SampleLevel(linear_clamp_sampler, reflection_dir, 0.0).rgb;
-        let specular_strength = (1.0 - roughness) * (1.0 - roughness);
+        let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-        let spec_ao = specular_occlusion_horizon(NoV, occlusion, roughness);
-
-        let SPECULAR_SHADOW_STRENGTH = 1.0;
-        let specular_shadow_vis = has_directional_light
-            ? lerp(1.0, visibility, SPECULAR_SHADOW_STRENGTH)
-            : 1.0;
-
-        let ibl_specular = F * specular_radiance * specular_strength * spec_ao * specular_shadow_vis;
-
-        indirect_illuminance = aerial_perspective.rgb * aerial_perspective.a + (ibl_diffuse + ibl_specular) * horizon_darkening;
+        let ibl_diffuse = kD * diffuse_sky * albedo_color * Fd_Lambert();
+        let ibl_specular = kS * specular_sky * spec_occlusion;
+        indirect_illuminance = ((ibl_diffuse * occlusion) + ibl_specular) * horizon_darkening;
     }
-
-    let ambient_contribution = has_atmosphere ? f32x3(0.0) : base_ambient_color * albedo_color * sun_illuminance;
 
     var total_lighting = f32x3(0.0, 0.0, 0.0);
     for (u32 light_index = 0; light_index < light_count; light_index++) {
@@ -270,10 +264,9 @@ func fs_main(
     var material_surface_color = f32x3(0.0);
     if (NoL > 0.0) {
         let result = BRDF(V, N, L, albedo_color, roughness, metallic);
-        material_surface_color = (result.diffuse + result.specular) * horizon * sun_illuminance * NoL * visibility;
+        material_surface_color = (result.diffuse + result.specular) * horizon * direct_illuminance * NoL * visibility;
     }
 
-    let indirect_illuminance_sum = (indirect_illuminance + ambient_contribution) * occlusion;
-    let final_color = material_surface_color + total_lighting + indirect_illuminance_sum + emission;
+    let final_color = material_surface_color + total_lighting + indirect_illuminance + emission + aerial_perspective_contribution;
     return f32x4(final_color, 1.0);
 }

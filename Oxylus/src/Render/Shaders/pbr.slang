@@ -31,7 +31,7 @@ public constexpr f32 Fd_Lambert() {
     return 1.0 / PI;
 }
 
-func GGX_directional_albedo(f32 NoV, f32 alpha) -> f32x2 {
+public func GGX_directional_albedo(f32 NoV, f32 alpha) -> f32x2 {
     let x = NoV;
     let y = alpha;
     let x2 = x * x;

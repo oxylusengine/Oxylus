@@ -318,3 +318,18 @@ public func get_atmosphere_illuminance_along_ray(
     let result = sky_view_image.SampleLevel(sampler, uv, 0.0);
     return result.rgb * result.a;
 }
+
+public func get_direct_sun_lighting(
+    Atmosphere *atmosphere,
+    in Sampler sampler,
+    in Image2D<f32x4> transmittance_lut,
+    f32 eye_altitude,
+    f32 sun_cos_theta
+) -> f32x3 {
+    let transmittance_uv = transmittance_params_to_lut_uv(
+        atmosphere.atmos_radius,
+        atmosphere.planet_radius,
+        f32x2(eye_altitude, sun_cos_theta));
+
+    return transmittance_lut.SampleLevel(sampler, transmittance_uv, 0.0).rgb;
+}

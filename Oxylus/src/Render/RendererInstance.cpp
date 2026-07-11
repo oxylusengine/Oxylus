@@ -1148,26 +1148,27 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         return;
       }
 
+      const glm::mat4 world_transform = self.scene.get_world_transform(e);
+      const glm::vec3 world_position = world_transform[3];
+      const glm::vec3 world_forward = glm::normalize(glm::mat3(world_transform) * glm::vec3(0.0f, 0.0f, -1.0f));
+
       if (lc.type == LightComponent::LightType::Directional) {
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
         self.directional_light.color = lc.color;
         self.directional_light.intensity = lc.intensity;
-        const auto new_dir = glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f));
-        self.sun_direction_changed = new_dir != self.previous_sun_direction;
-        self.previous_sun_direction = new_dir;
-        self.directional_light.direction = new_dir;
+        self.sun_direction_changed = world_forward != self.previous_sun_direction;
+        self.previous_sun_direction = world_forward;
+        self.directional_light.direction = world_forward;
         self.first_clipmap_width = lc.first_clipmap_width;
         self.clipmap_selection_bias = lc.clipmap_selection_bias;
 
         self.directional_light_cast_shadows = lc.cast_shadows;
       } else {
         const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
-        const auto direction = lc.type == LightComponent::LightType::Spot
-                                 ? glm::normalize(tc.rotation * glm::vec3(0.0f, 0.0f, -1.0f))
-                                 : glm::vec3(0.0f);
+        const auto direction = lc.type == LightComponent::LightType::Spot ? world_forward : glm::vec3(0.0f);
         const auto light_id = self.scene.lights.create_slot(
           GPU::Light{
-            .position = tc.position,
+            .position = world_position,
             .intensity = lc.intensity,
             .color = lc.color,
             .range = lc.radius,
