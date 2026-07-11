@@ -6,49 +6,55 @@
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
-auto RendererInstance::generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void {
+auto RendererInstance::generate_hiz(this RendererInstance& self, MainGeometryContext& context) -> void {
   ZoneScoped;
 
-  auto hiz_generate_slow_pass = vuk::make_pass(
-    "hiz generate slow",
+  auto spd_global_atomic = self.renderer.render_context->scratch_buffer<u32>(0u);
+
+  auto hiz_generate_pass = vuk::make_pass(
+    "hiz generate",
     [](
       vuk::CommandBuffer& cmd_list, //
+      VUK_BA(vuk::eComputeRW) spd_atomic,
       VUK_IA(vuk::eComputeSampled) src,
       VUK_IA(vuk::eComputeRW) dst
     ) {
-      auto extent = dst->extent;
-      auto mip_count = dst->level_count;
+      const auto extent = dst->extent;
+      const auto mip_count = std::min(dst->level_count, 13u);
+      const auto work_group_count = (extent.width / 64) * (extent.height / 64);
 
-      cmd_list.bind_compute_pipeline("hiz");
+      cmd_list //
+        .bind_compute_pipeline("hiz")
+        .specialize_constants(0, 1_u32)
+        .specialize_constants(1, extent.width)
+        .specialize_constants(2, extent.height)
+        .bind_buffer(0, 0, spd_atomic)
+        .bind_sampler(0, 1, vuk::NearestSamplerClamped)
+        .bind_image(0, 2, src);
 
-      for (auto i = 0_u32; i < mip_count; i++) {
-        auto mip_width = std::max(1_u32, extent.width >> i);
-        auto mip_height = std::max(1_u32, extent.height >> i);
-
-        auto mip = dst->mip(i);
-        if (i == 0) {
-          cmd_list.bind_image(0, 0, src);
-        } else {
-          auto prev_mip = dst->mip(i - 1);
-          cmd_list.image_barrier(prev_mip, vuk::eComputeWrite, vuk::eComputeSampled);
-          cmd_list.bind_image(0, 0, prev_mip);
-        }
-
-        cmd_list.bind_image(0, 1, mip);
-        cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height));
-        cmd_list.dispatch_invocations(mip_width, mip_height);
+      for (auto i = 0_u32; i < 13; i++) {
+        cmd_list.bind_image(0, 3 + i, dst->mip(std::min(i, dst->level_count - 1)));
       }
 
-      cmd_list.image_barrier(dst, vuk::eComputeSampled, vuk::eComputeRW);
+      cmd_list //
+        .push_constants(
+          vuk::ShaderStageFlagBits::eCompute,
+          0,
+          PushConstants(mip_count, work_group_count, glm::mat2x2(1.0f))
+        )
+        .dispatch(extent.width / 64, extent.height / 64, 1);
 
-      return std::make_tuple(src, dst);
+      return std::make_tuple(spd_atomic, src, dst);
     }
   );
 
-  std::tie(context.depth_attachment, context.hiz_attachment) = hiz_generate_slow_pass(
+  auto [_atomic, depth, hiz] = hiz_generate_pass(
+    std::move(spd_global_atomic),
     std::move(context.depth_attachment),
     std::move(context.hiz_attachment)
   );
+  context.depth_attachment = std::move(depth);
+  context.hiz_attachment = std::move(hiz);
 }
 
 auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void {

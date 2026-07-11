@@ -432,7 +432,7 @@ auto RendererInstance::render(
      .extent = hiz_extent,
      .format = vuk::Format::eR32Sfloat,
      .sample_count = vuk::SampleCountFlagBits::e1,
-     .level_count = Texture::get_mip_count(hiz_extent),
+     .level_count = std::min(Texture::get_mip_count(hiz_extent), 13u),
      .layer_count = 1}
   );
   hiz_attachment = vuk::clear_image(std::move(hiz_attachment), vuk::DepthZero);
