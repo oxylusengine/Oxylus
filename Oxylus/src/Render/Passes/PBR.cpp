@@ -11,7 +11,8 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
   auto sky_view_pass = vuk::make_pass(
     "sky view",
     [sun_dir = self.directional_light.direction,
-     sun_intensity = self.directional_light.intensity](
+     sun_intensity = self.directional_light.intensity,
+     camera_pos = self.camera_data.position](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
       VUK_IA(vuk::eComputeSampled) sky_multiscatter_lut,
@@ -25,7 +26,11 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
         .bind_image(0, 2, sky_multiscatter_lut)
         .bind_buffer(0, 3, atmosphere)
         .bind_image(0, 4, sky_view_lut)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sun_dir, sun_intensity))
+        .push_constants(
+          vuk::ShaderStageFlagBits::eCompute,
+          0,
+          PushConstants(sun_dir, sun_intensity, glm::vec3(camera_pos))
+        )
         .dispatch_invocations_per_pixel(sky_view_lut);
       return std::make_tuple(sky_transmittance_lut, sky_multiscatter_lut, atmosphere, sky_view_lut);
     }

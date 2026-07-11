@@ -69,7 +69,7 @@ public:
   auto register_asset(this AssetManager& self, const UUID& uuid, AssetType type, const std::filesystem::path& path)
     -> bool;
   auto acquire_ref(this AssetManager& self, const UUID& uuid) -> void;
-  auto release_ref(this AssetManager& self, const UUID& uuid) -> void;
+  auto unload(this AssetManager& self, const UUID& uuid) -> void;
 
   auto export_asset(this AssetManager& self, const UUID& uuid, const std::filesystem::path& path) -> bool;
   auto export_scene(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)

@@ -69,7 +69,7 @@ auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bo
   writer.end_obj();
 
   auto meta_path = path;
-  if (path.has_extension() && path.extension() != "oxasset") {
+  if (path.has_extension() && path.extension() != ".oxasset") {
     meta_path += ".oxasset";
   }
 
@@ -316,13 +316,15 @@ auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> vo
 
   if (is_loaded) {
     {
-      auto read_lock = std::shared_lock(self.registry_mutex);
+      auto write_lock = std::unique_lock(self.registry_mutex);
       if (auto* asset = self.get_asset_ptr(uuid)) {
         asset->ref_count = ox::min(asset->ref_count, 1_u64);
       }
     }
     self.unload_asset(uuid);
+  }
 
+  {
     auto write_lock = std::unique_lock(self.registry_mutex);
     self.asset_registry.erase(uuid);
   }
@@ -398,7 +400,7 @@ auto AssetManager::acquire_ref(this AssetManager& self, const UUID& uuid) -> voi
   }
 }
 
-auto AssetManager::release_ref(this AssetManager& self, const UUID& uuid) -> void {
+auto AssetManager::unload(this AssetManager& self, const UUID& uuid) -> void {
   ZoneScoped;
 
   self.unload_asset(uuid);
@@ -463,7 +465,7 @@ auto AssetManager::export_script(
 ) -> bool {
   ZoneScoped;
 
-  return write_texture_asset_meta(writer, nullptr);
+  return write_script_asset_meta(writer, nullptr);
 }
 
 auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid) -> bool {
@@ -534,6 +536,8 @@ auto AssetManager::load_texture(this AssetManager& self, const UUID& uuid, Textu
     auto write_lock = std::unique_lock(self.textures_mutex);
     auto reg_lock = std::shared_lock(self.registry_mutex);
     auto* asset = self.get_asset_ptr(uuid);
+    if (asset->is_loaded())
+      return true;
     asset->texture_id = self.texture_map.create_slot(std::move(texture));
 
     OX_LOG_INFO("Loaded texture {} {}.", asset->uuid.str(), SlotMap_decode_id(asset->texture_id).index);
@@ -571,7 +575,7 @@ auto AssetManager::is_texture_loaded(this AssetManager& self, const UUID& uuid) 
 auto AssetManager::load_material(this AssetManager& self, const UUID& uuid, const Material& info) -> bool {
   ZoneScoped;
 
-  auto reg_lock = std::shared_lock(self.registry_mutex);
+  auto reg_lock = std::unique_lock(self.registry_mutex);
   auto* asset = self.get_asset_ptr(uuid);
   OX_CHECK_NULL(asset);
   asset->acquire_ref();
@@ -646,6 +650,10 @@ auto AssetManager::load_scene(this AssetManager& self, const UUID& uuid) -> bool
 
   auto reg_lock = std::shared_lock(self.registry_mutex);
   auto* asset = self.get_asset_ptr(uuid);
+  if (asset->is_loaded()) {
+    asset->acquire_ref();
+    return true;
+  }
 
   asset->scene_id = self.scene_map.create_slot(std::make_unique<Scene>());
   auto* scene = self.scene_map.slot(asset->scene_id)->get();
@@ -856,15 +864,12 @@ auto AssetManager::get_material(this AssetManager& self, const MaterialID materi
 auto AssetManager::set_material_dirty(this AssetManager& self, MaterialID material_id) -> void {
   ZoneScoped;
 
-  std::shared_lock shared_lock(self.materials_mutex);
+  auto lock = std::unique_lock(self.materials_mutex);
   if (std::ranges::find(self.dirty_materials, material_id) != self.dirty_materials.end()) {
     return;
   }
 
-  shared_lock.unlock();
-  self.materials_mutex.lock();
   self.dirty_materials.emplace_back(material_id);
-  self.materials_mutex.unlock();
 }
 
 auto AssetManager::set_material_dirty(this AssetManager& self, const UUID& uuid) -> void {
@@ -893,12 +898,8 @@ auto AssetManager::set_all_materials_dirty(this AssetManager& self) -> void {
 auto AssetManager::get_dirty_material_ids(this AssetManager& self) -> std::vector<MaterialID> {
   ZoneScoped;
 
-  auto read_lock = std::shared_lock(self.materials_mutex);
-  auto dirty_copy = std::vector(self.dirty_materials);
-
-  read_lock.unlock();
-
   auto write_lock = std::unique_lock(self.materials_mutex);
+  auto dirty_copy = std::vector(self.dirty_materials);
   self.dirty_materials.clear();
 
   return dirty_copy;
