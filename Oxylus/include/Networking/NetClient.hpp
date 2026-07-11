@@ -16,6 +16,11 @@ enum class NetClientStatus : u32 {
   TimedOut,
 };
 
+struct ClientSceneSnapshotEvent {
+  u8 sequence;
+  SceneState scene_state;
+};
+
 struct NetClient {
   NetClientStatus status = NetClientStatus::None;
   NetStats stats = {};
@@ -33,7 +38,7 @@ struct NetClient {
   NetClient(ENetPeer* remote_peer_, u64 net_id_) : remote_peer(remote_peer_), net_id(net_id_) { add_builtin_procs(); }
   virtual ~NetClient() = default;
 
-  auto set_tick_rate(this NetClient &, f64 tick_rate) -> void;
+  auto set_tick_rate(this NetClient&, f64 tick_rate) -> void;
   auto connect(this NetClient&, std::string_view host_name, u16 port, f64 timeout) -> bool;
   auto disconnect(this NetClient&, bool immediate, u32 data = 0) -> void;
   auto tick(this NetClient&, const Timestep& ts) -> bool;

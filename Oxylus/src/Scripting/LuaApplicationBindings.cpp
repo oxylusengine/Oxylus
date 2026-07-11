@@ -146,16 +146,6 @@ auto AppBinding::bind(sol::state* state) -> void {
 
   app.set_function("get_timestep", []() -> const Timestep* { return &App::get_timestep(); });
 
-  state->new_usertype<WindowResizeEvent>(
-    "WindowResizeEvent",
-    sol::call_constructor,
-    sol::no_constructor,
-    "width",
-    &WindowResizeEvent::width,
-    "height",
-    &WindowResizeEvent::height
-  );
-
   state->new_usertype<LuaScopedSubscription>(
     "ScopedSubscription",
     sol::call_constructor,
@@ -170,11 +160,50 @@ auto AppBinding::bind(sol::state* state) -> void {
     }
   );
 
+  // --- EVENTS ---
+
+  state->new_usertype<WindowResizeEvent>(
+    "WindowResizeEvent",
+    sol::call_constructor,
+    sol::no_constructor,
+    "width",
+    &WindowResizeEvent::width,
+    "height",
+    &WindowResizeEvent::height
+  );
+
+  state->new_usertype<ClientConnectEvent>("ClientConnectEvent", "client_id", &ClientConnectEvent::client_id);
+  state->new_usertype<ClientDisconnectEvent>("ClientDisconnectEvent", "client_id", &ClientDisconnectEvent::client_id);
+  state->new_usertype<ClientAckEvent>(
+    "ClientAckEvent",
+    "client_id",
+    &ClientAckEvent::client_id,
+    "packet",
+    &ClientAckEvent::packet
+  );
+  state->new_usertype<ClientSceneSnapshotEvent>(
+    "ClientSceneSnapshotEvent",
+    &ClientSceneSnapshotEvent::sequence,
+    &ClientSceneSnapshotEvent::scene_state
+  );
+
   state->new_usertype<EventSystem>(
     "EventSystem",
 
     "subscribe_window_resize_event",
-    &lua_subscribe_helper<WindowResizeEvent>
+    &lua_subscribe_helper<WindowResizeEvent>,
+
+    "subscribe_client_connect_event",
+    &lua_subscribe_helper<ClientConnectEvent>,
+
+    "subscribe_client_disconnect_event",
+    &lua_subscribe_helper<ClientDisconnectEvent>,
+
+    "subscribe_client_ack_event",
+    &lua_subscribe_helper<ClientAckEvent>,
+
+    "subscribe_client_scene_snapshot_event",
+    &lua_subscribe_helper<ClientSceneSnapshotEvent>
   );
 }
 } // namespace ox

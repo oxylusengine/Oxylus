@@ -31,6 +31,7 @@ auto SceneBinding::bind(sol::state* state) -> void {
   SET_TYPE_FUNCTION(scene_type, Scene, get_world_transform);
   SET_TYPE_FUNCTION(scene_type, Scene, get_local_transform);
   SET_TYPE_FUNCTION(scene_type, Scene, get_renderer_instance);
+  SET_TYPE_FUNCTION(scene_type, Scene, is_running);
 
   scene_type.set_function("get_world_position",
                           [](Scene* scene, flecs::entity e) -> glm::vec3 { return scene->get_world_transform(e)[3]; });

@@ -170,15 +170,9 @@ func fs_main(
     let NoV = abs(dot(N, V)) + 1e-5;
     let NoL = max(dot(N, L), 0.0);
 
-    if ((scene_flags & SceneFlags::HasSky) != 0) {
-      if (depth == 0.0) {
-          if (sky.has_texture) {
-            // TODO: return the texture
-            return f32x4(1.f);
-          } else {
-            return f32x4(sky.solid_color);
-          }
-      }
+    if ((scene_flags & SceneFlags::HasSky) != 0 && depth == 0.0) {
+      // TODO: return the texture
+      return sky.has_texture ? f32x4(1.f) : f32x4(sky.solid_color);
     }
 
     let directional_shadow = ((scene_flags & SceneFlags::HasDirectionalLight) != 0) ? resolved_shadows.Load(pixel_pos) : 1.0f;

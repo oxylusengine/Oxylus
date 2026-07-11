@@ -4,6 +4,7 @@
 
 #include "Core/App.hpp"
 #include "OS/File.hpp"
+#include "Scripting/LuaNetworkBindings.hpp"
 
 #ifdef OX_LUA_BINDINGS
   #include "Scripting/LuaApplicationBindings.hpp"  // IWYU pragma: export
@@ -63,6 +64,7 @@ auto LuaManager::init(this LuaManager& self) -> std::expected<void, std::string>
   BIND(UIBinding);
   BIND(VFSBinding);
   BIND(RMLBinding);
+  BIND(NetworkBinding);
 #endif
 
   return {};

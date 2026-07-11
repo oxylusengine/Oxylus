@@ -6,6 +6,17 @@
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+struct ClientConnectEvent {
+  NetClientID client_id;
+};
+struct ClientDisconnectEvent {
+  NetClientID client_id;
+};
+struct ClientAckEvent {
+  NetClientID client_id;
+  NetClientAckPacket packet;
+};
+
 struct NetServer {
   ENetHost* local_host = nullptr;
   SlotMap<NetClient, NetClientID> remote_clients = {};
