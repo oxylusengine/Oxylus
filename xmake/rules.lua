@@ -49,6 +49,7 @@ rule("ox.compile_shaders")
 set_extensions(".toml")
 on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local config_path = path.absolute(sourcefile)
+  local config_dir  = path.directory(config_path)
 
   local output_dir  = target:extraconf("rules", "ox.compile_shaders", "output_dir") or ""
   local output_name = target:extraconf("rules", "ox.compile_shaders", "output_name")
@@ -67,6 +68,22 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
 
   batchcmds:add_depfiles(sourcefile)
   batchcmds:add_depfiles(rcli)
+
+  local root_dir = nil
+  local config_text = io.readfile(config_path)
+  for line in config_text:gmatch("[^\r\n]+") do
+    local rd = line:match('^%s*root_directory%s*=%s*"([^"]+)"')
+    if rd then
+      root_dir = path.absolute(path.join(config_dir, rd))
+    end
+    local p = line:match('^%s*path%s*=%s*"([^"]+)"')
+    if p and root_dir then
+      local slang_file = path.absolute(path.join(root_dir, p))
+      if os.isfile(slang_file) then
+        batchcmds:add_depfiles(slang_file)
+      end
+    end
+  end
 
   batchcmds:set_depmtime(os.mtime(abs_output))
   batchcmds:set_depcache(target:dependfile(abs_output))
