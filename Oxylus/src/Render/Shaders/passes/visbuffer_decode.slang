@@ -12,7 +12,7 @@ struct ShaderParameters {
     StructuredBuffer<MeshletInstance> meshlet_instances;
     StructuredBuffer<MeshInstance> mesh_instances;
     StructuredBuffer<Mesh> meshes;
-    StructuredBuffer<Transform> transforms;
+    StructuredBuffer<TransformWorld> transforms;
     StructuredBuffer<Material> materials;
 
     Image2D<u32> visbuffer;

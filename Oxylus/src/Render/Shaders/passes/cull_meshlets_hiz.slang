@@ -10,7 +10,7 @@ import cull;
 [[vk::binding(1)]] StructuredBuffer<Mesh, ScalarDataLayout> meshes;
 [[vk::binding(2)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(3)]] StructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(4)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(4)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(5)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;
 [[vk::binding(6)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
 [[vk::binding(7)]] RWStructuredBuffer<u32> meshlet_instance_visibility_mask;

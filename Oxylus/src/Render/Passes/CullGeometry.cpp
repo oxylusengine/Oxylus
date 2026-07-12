@@ -99,7 +99,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
     );
     std::tie(
       self.prepared_frame.meshes_buffer,
-      self.prepared_frame.transforms_buffer,
+      self.prepared_frame.transforms_world_buffer,
       self.prepared_frame.mesh_instances_buffer,
       self.prepared_frame.meshlet_instances_buffer,
       context.visibility_buffer,
@@ -107,7 +107,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
     ) =
       cull_meshes_pass(
         std::move(self.prepared_frame.meshes_buffer),
-        std::move(self.prepared_frame.transforms_buffer),
+        std::move(self.prepared_frame.transforms_world_buffer),
         std::move(self.prepared_frame.mesh_instances_buffer),
         std::move(self.prepared_frame.meshlet_instances_buffer),
         std::move(context.visibility_buffer),
@@ -172,7 +172,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
       self.prepared_frame.meshes_buffer,
       self.prepared_frame.mesh_instances_buffer,
       self.prepared_frame.meshlet_instances_buffer,
-      self.prepared_frame.transforms_buffer,
+      self.prepared_frame.transforms_world_buffer,
       context.visibility_buffer,
       self.prepared_frame.visible_meshlet_instances_indices_buffer,
       self.prepared_frame.meshlet_instance_visibility_mask_buffer,
@@ -184,7 +184,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
         std::move(self.prepared_frame.meshes_buffer),
         std::move(self.prepared_frame.mesh_instances_buffer),
         std::move(self.prepared_frame.meshlet_instances_buffer),
-        std::move(self.prepared_frame.transforms_buffer),
+        std::move(self.prepared_frame.transforms_world_buffer),
         std::move(context.visibility_buffer),
         std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
         std::move(self.prepared_frame.meshlet_instance_visibility_mask_buffer),
@@ -238,7 +238,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
       self.prepared_frame.meshes_buffer,
       self.prepared_frame.mesh_instances_buffer,
       self.prepared_frame.meshlet_instances_buffer,
-      self.prepared_frame.transforms_buffer,
+      self.prepared_frame.transforms_world_buffer,
       context.visibility_buffer,
       self.prepared_frame.visible_meshlet_instances_indices_buffer,
       cull_triangles_cmd_buffer,
@@ -249,7 +249,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
         std::move(self.prepared_frame.meshes_buffer),
         std::move(self.prepared_frame.mesh_instances_buffer),
         std::move(self.prepared_frame.meshlet_instances_buffer),
-        std::move(self.prepared_frame.transforms_buffer),
+        std::move(self.prepared_frame.transforms_world_buffer),
         std::move(context.visibility_buffer),
         std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
         std::move(cull_triangles_cmd_buffer),
@@ -301,7 +301,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
       self.prepared_frame.meshes_buffer,
       self.prepared_frame.mesh_instances_buffer,
       self.prepared_frame.meshlet_instances_buffer,
-      self.prepared_frame.transforms_buffer,
+      self.prepared_frame.transforms_world_buffer,
       context.visibility_buffer,
       self.prepared_frame.visible_meshlet_instances_indices_buffer,
       cull_triangles_cmd_buffer
@@ -311,7 +311,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
         std::move(self.prepared_frame.meshes_buffer),
         std::move(self.prepared_frame.mesh_instances_buffer),
         std::move(self.prepared_frame.meshlet_instances_buffer),
-        std::move(self.prepared_frame.transforms_buffer),
+        std::move(self.prepared_frame.transforms_world_buffer),
         std::move(context.visibility_buffer),
         std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
         std::move(cull_triangles_cmd_buffer)
@@ -369,7 +369,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
     self.prepared_frame.mesh_instances_buffer,
     self.prepared_frame.meshlet_instances_buffer,
     context.visibility_buffer,
-    self.prepared_frame.transforms_buffer,
+    self.prepared_frame.transforms_world_buffer,
     self.prepared_frame.visible_meshlet_instances_indices_buffer,
     self.prepared_frame.reordered_indices_buffer,
     context.draw_geometry_cmd_buffer
@@ -380,7 +380,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
       std::move(self.prepared_frame.mesh_instances_buffer),
       std::move(self.prepared_frame.meshlet_instances_buffer),
       std::move(context.visibility_buffer),
-      std::move(self.prepared_frame.transforms_buffer),
+      std::move(self.prepared_frame.transforms_world_buffer),
       std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
       std::move(self.prepared_frame.reordered_indices_buffer),
       std::move(context.draw_geometry_cmd_buffer)

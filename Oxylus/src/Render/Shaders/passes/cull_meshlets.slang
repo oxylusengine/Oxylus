@@ -9,7 +9,7 @@ import cull;
 [[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(1)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(2)]] StructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(3)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(3)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(4)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;
 [[vk::binding(5)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
 [[vk::binding(6)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;

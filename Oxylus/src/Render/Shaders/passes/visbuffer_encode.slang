@@ -1,5 +1,3 @@
-module visbuffer_encode;
-
 import common;
 import gpu;
 import scene;
@@ -9,17 +7,15 @@ import visbuffer;
 [[vk::binding(1)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(2)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(3)]] StructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(4)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(4)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(5)]] StructuredBuffer<Material> materials;
 [[vk::binding(6)]] StorageImage2D<u32, ImageFormat::R32UI> overdraw;
 [[vk::constant_id(0)]] const bool RENDER_OVERDRAW = false;
 
 struct VertexOutput {
     f32x4 position : SV_Position;
-    f32x3 vertex_pos : POSITION;
     f32x2 tex_coord : TEXCOORD;
-    nointerpolation u32 meshlet_instance_index;
-    nointerpolation u32 triangle_index;
+    nointerpolation u32 vis_data;
     nointerpolation u32 material_index;
 };
 
@@ -39,12 +35,12 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
     let world_pos = transform.to_world_position(vertex_pos);
     let clip_pos = mul(camera.projection_view, f32x4(world_pos.xyz, 1.0));
 
+    let encoded_vis = VisBufferData(vis.meshlet_instance_index, vis.triangle_index / 3);
+
     VertexOutput output;
     output.position = clip_pos;
-    output.vertex_pos = vertex_pos;
     output.tex_coord = tex_coord;
-    output.meshlet_instance_index = vis.meshlet_instance_index;
-    output.triangle_index = vis.triangle_index / 3;
+    output.vis_data = encoded_vis.encode();
     output.material_index = mesh_instance.material_index;
 
     return output;
@@ -69,9 +65,8 @@ func fs_main(VertexOutput input) -> u32 {
 #endif
 
     if (RENDER_OVERDRAW) {
-        __atomic_add(overdraw[u32x2(input.position.xy)], 1u, MemoryOrder::AcquireRelease);
+        __atomic_add(overdraw[u32x2(input.position.xy)], 1u, MemoryOrder::Relaxed);
     }
 
-    let vis = VisBufferData(input.meshlet_instance_index, input.triangle_index);
-    return vis.encode();
+    return input.vis_data;
 }

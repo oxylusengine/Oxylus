@@ -5,6 +5,7 @@
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
+#include "Memory/Stack.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/RendererConfig.hpp"
@@ -13,19 +14,100 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-template <>
-struct RendererInstance::BufferTraits<GPU::Transforms> {
-  using offset_type = u64;
-  static constexpr std::string_view buffer_name = "transforms";
-  static constexpr std::string_view pass_name = "update scene transforms";
+template <typename T>
+auto update_projected_transform_buffer(
+  auto& render_context,
+  std::span<GPU::Transforms> gpu_transforms,
+  std::span<GPU::TransformID> dirty_transform_ids,
+  vuk::Unique<vuk::Buffer>& buffer,
+  vuk::Value<vuk::Buffer>& prepared_buffer,
+  auto projection,
+  std::string_view buffer_name,
+  std::string_view pass_name
+) -> void {
+  memory::ScopedStack stack;
 
-  static auto get_buffer_ref(auto& self) -> auto& { return self.transforms_buffer; }
-  static auto& get_prepared_buffer_ref(auto& self) { return self.prepared_frame.transforms_buffer; }
+  constexpr auto full_rebuild_dirty_threshold = 0.4;
 
-  static auto get_index(const auto& dirty_id) -> usize { return SlotMap_decode_id(dirty_id).index; }
+  const auto element_count = gpu_transforms.size();
+  constexpr auto element_size = sizeof(T);
+  const auto rebuild_needed = !buffer || buffer->size < gpu_transforms.size_bytes();
 
-  static auto get_element(const auto& gpu_data, usize index) -> const auto& { return gpu_data[index]; }
-};
+  buffer = render_context.resize_buffer(std::move(buffer), vuk::MemoryUsage::eGPUonly, gpu_transforms.size_bytes());
+  if (dirty_transform_ids.empty()) {
+    if (buffer) {
+      prepared_buffer = vuk::acquire_buf(buffer_name, *buffer, vuk::Access::eMemoryRead);
+    }
+
+    return;
+  }
+
+  auto unique_indices = stack.alloc<u32>(dirty_transform_ids.size());
+  for (const auto& [unique_index, dirty_id] : std::views::zip(unique_indices, dirty_transform_ids)) {
+    unique_index = SlotMap_decode_id(dirty_id).index;
+  }
+  std::sort(unique_indices.begin(), unique_indices.end());
+  const auto unique_end = std::unique(unique_indices.begin(), unique_indices.end());
+  unique_indices = unique_indices.first(static_cast<usize>(unique_end - unique_indices.begin()));
+
+  if (rebuild_needed || static_cast<f64>(unique_indices.size()) >= element_count * full_rebuild_dirty_threshold) {
+    memory::ScopedStack staging_stack;
+
+    auto staging = staging_stack.alloc<T>(element_count);
+    for (auto i = 0_sz; i < element_count; ++i) {
+      staging[i] = projection(gpu_transforms[i]);
+    }
+    prepared_buffer = render_context.upload_staging(staging, *buffer);
+
+    return;
+  }
+
+  const auto dirty_count = unique_indices.size();
+  const auto dirty_size_bytes = dirty_count * element_size;
+
+  auto upload_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_size_bytes);
+  auto* dst_ptr = reinterpret_cast<T*>(upload_buffer->mapped_ptr);
+  for (usize i = 0; i < dirty_count; ++i) {
+    dst_ptr[i] = projection(gpu_transforms[unique_indices[i]]);
+  }
+
+  struct CopyRange {
+    usize src_offset = 0;
+    usize dst_offset = 0;
+    usize size_bytes = 0;
+  };
+
+  auto ranges = std::vector<CopyRange>{};
+  ranges.reserve(dirty_count);
+  for (auto i = 0_sz; i < dirty_count;) {
+    const auto start_index = unique_indices[i];
+    auto run_length = 1_sz;
+    while (i + run_length < dirty_count && unique_indices[i + run_length] == start_index + run_length) {
+      ++run_length;
+    }
+    ranges.push_back({i * element_size, start_index * element_size, run_length * element_size});
+    i += run_length;
+  }
+
+  auto update_pass = vuk::make_pass(
+    pass_name,
+    [copy_ranges = std::move(ranges)](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::Access::eTransferRead) src_buffer,
+      VUK_BA(vuk::Access::eTransferWrite) dst_buffer
+    ) {
+      for (const auto& r : copy_ranges) {
+        const auto src_subrange = src_buffer->subrange(r.src_offset, r.size_bytes);
+        const auto dst_subrange = dst_buffer->subrange(r.dst_offset, r.size_bytes);
+        cmd_list.copy_buffer(src_subrange, dst_subrange);
+      }
+      return dst_buffer;
+    }
+  );
+
+  auto buffer_handle = vuk::acquire_buf(buffer_name, *buffer, vuk::Access::eMemoryRead);
+  prepared_buffer = update_pass(std::move(upload_buffer), std::move(buffer_handle));
+}
 
 template <>
 struct RendererInstance::BufferTraits<GPU::Material> {
@@ -148,7 +230,14 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
     vuk::MemoryUsage::eGPUonly,
     GPU::MAX_LIGHTS * sizeof(GPU::Light)
   );
-  transforms_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, sizeof(GPU::Transforms));
+  transforms_world_buffer = render_context.allocate_buffer_super(
+    vuk::MemoryUsage::eGPUonly,
+    sizeof(GPU::TransformWorld)
+  );
+  transforms_previous_buffer = render_context.allocate_buffer_super(
+    vuk::MemoryUsage::eGPUonly,
+    sizeof(GPU::TransformPrevious)
+  );
 
   constexpr usize stage_count = static_cast<usize>(RenderStage::Count);
   before_callbacks.resize(stage_count);
@@ -878,14 +967,14 @@ auto RendererInstance::render(
       depth_attachment,
       self.prepared_frame.camera_buffer,
       vertex_buffer_2d,
-      self.prepared_frame.transforms_buffer
+      self.prepared_frame.transforms_world_buffer
     ) =
       forward_2d_vis_pass(
         std::move(visbuffer_attachment_2d),
         std::move(depth_attachment),
         std::move(vertex_buffer_2d),
         std::move(self.prepared_frame.camera_buffer),
-        std::move(self.prepared_frame.transforms_buffer)
+        std::move(self.prepared_frame.transforms_world_buffer)
       );
 
     auto forward_2d_pass = vuk::make_pass(
@@ -942,7 +1031,7 @@ auto RendererInstance::render(
       self.prepared_frame.camera_buffer,
       vertex_buffer_2d,
       self.prepared_frame.materials_buffer,
-      self.prepared_frame.transforms_buffer
+      self.prepared_frame.transforms_world_buffer
     ) =
       forward_2d_pass(
         std::move(final_attachment),
@@ -950,7 +1039,7 @@ auto RendererInstance::render(
         std::move(vertex_buffer_2d),
         std::move(self.prepared_frame.materials_buffer),
         std::move(self.prepared_frame.camera_buffer),
-        std::move(self.prepared_frame.transforms_buffer)
+        std::move(self.prepared_frame.transforms_world_buffer)
       );
 
     RenderStageContext ctx(self, self.shared_resources, RenderStage::Forward2D, *self.renderer.render_context);
@@ -1320,7 +1409,26 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     }
   );
 
-  update_buffer_if_dirty<GPU::Transforms>(self, render_context, info.gpu_transforms, info.dirty_transform_ids);
+  update_projected_transform_buffer<GPU::TransformWorld>(
+    render_context,
+    info.gpu_transforms,
+    info.dirty_transform_ids,
+    self.transforms_world_buffer,
+    self.prepared_frame.transforms_world_buffer,
+    [](const GPU::Transforms& t) { return GPU::TransformWorld{.world = t.world}; },
+    "transforms_world",
+    "update transform world"
+  );
+  update_projected_transform_buffer<GPU::TransformPrevious>(
+    render_context,
+    info.gpu_transforms,
+    info.dirty_transform_ids,
+    self.transforms_previous_buffer,
+    self.prepared_frame.transforms_previous_buffer,
+    [](const GPU::Transforms& t) { return GPU::TransformPrevious{.previous_world = t.previous_world}; },
+    "transforms_previous",
+    "update transform previous"
+  );
   update_buffer_if_dirty<GPU::Material>(self, render_context, info.gpu_materials, info.dirty_material_indices);
 
   {

@@ -10,8 +10,9 @@ import cull;
 [[vk::binding(1)]] StructuredBuffer<u32> dirty_mesh_instance_indices;
 [[vk::binding(2)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(3)]] StructuredBuffer<Mesh> meshes;
-[[vk::binding(4)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(4)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(5)]] StructuredBuffer<VirtualClipmap> clipmaps;
+[[vk::binding(6)]] StructuredBuffer<TransformPrevious> transforms_previous;
 
 constexpr static u32 INVALIDATE_PAGE_BLOCK_RESOLUTION = 8;
 
@@ -88,10 +89,11 @@ func cs_main(
 
     let mesh_instance = mesh_instances[dirty_mesh_instance_indices[mesh_index]];
     let transform = transforms[mesh_instance.transform_index];
+    let transform_previous = transforms_previous[mesh_instance.transform_index];
     let mesh = meshes[mesh_instance.mesh_index];
     let clipmap = clipmaps[clipmap_index];
 
-    let mvp_prev = mul(clipmap.projection_view_mat, transform.previous_world);
+    let mvp_prev = mul(clipmap.projection_view_mat, transform_previous.previous_world);
     invalidate_in_section(
       mvp_prev, clipmap.z_near,
       mesh.bounds.aabb_center, mesh.bounds.aabb_extent,
