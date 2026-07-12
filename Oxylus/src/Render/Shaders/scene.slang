@@ -48,11 +48,11 @@ public enum MaterialFlag : u32 {
 };
 
 public struct Material {
-  public f32x4 albedo_color = {};
-  public f32x3 emissive_color = {};
-  public f32 roughness_factor = 0.0;
-  public f32 metallic_factor = 0.0;
-  public f32 alpha_cutoff = 0.0;
+  public u16x4 albedo_color = {};
+  public u16x3 emissive_color = {};
+  public u16 roughness_factor = 0;
+  public u16 metallic_factor = 0;
+  public u16 alpha_cutoff = 0;
   public MaterialFlag flags = MaterialFlag::None;
   public u32 sampler_index = 0;
   public u32 albedo_image_index = 0;
@@ -60,17 +60,61 @@ public struct Material {
   public u32 emissive_image_index = 0;
   public u32 metallic_rougness_image_index = 0;
   public u32 occlusion_image_index = 0;
-  public f32x2 uv_size = {};
-  public f32x2 uv_offset = {};
+  public u16x2 uv_size = {};
+  public u16x2 uv_offset = {};
+
+  public func get_albedo_color() -> f32x4 {
+    return f32x4(
+      com::dequantize_half(albedo_color.x),
+      com::dequantize_half(albedo_color.y),
+      com::dequantize_half(albedo_color.z),
+      com::dequantize_half(albedo_color.w)
+    );
+  }
+
+  public func get_emissive_color() -> f32x3 {
+    return f32x3(
+      com::dequantize_half(emissive_color.x),
+      com::dequantize_half(emissive_color.y),
+      com::dequantize_half(emissive_color.z)
+    );
+  }
+
+  public func get_roughness_factor() -> f32 {
+    return com::dequantize_half(roughness_factor);
+  }
+
+  public func get_metallic_factor() -> f32 {
+    return com::dequantize_half(metallic_factor);
+  }
+
+  public func get_alpha_cutoff() -> f32 {
+    return com::dequantize_half(alpha_cutoff);
+  }
+
+  public func get_uv_size() -> f32x2 {
+    return f32x2(
+      com::dequantize_half(uv_size.x),
+      com::dequantize_half(uv_size.y)
+    );
+  }
+
+  public func get_uv_offset() -> f32x2 {
+    return f32x2(
+      com::dequantize_half(uv_offset.x),
+      com::dequantize_half(uv_offset.y)
+    );
+  }
 
   public func sample_albedo_color(in UVGradient grad) -> f32x4 {
+    const let albedo = this.get_albedo_color();
     if (this.flags & MaterialFlag::HasAlbedoImage) {
         const let color = global_images[NonUniformResourceIndex(this.albedo_image_index)]
             .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy);
-        return this.albedo_color * color;
+        return albedo * color;
     }
 
-    return this.albedo_color;
+    return albedo;
   }
 
   public func sample_normal_color(in UVGradient grad) -> f32x3 {
@@ -83,17 +127,18 @@ public struct Material {
   }
 
   public func sample_emissive_color(in UVGradient grad) -> f32x3 {
+    const let emissive = this.get_emissive_color();
     if (this.flags & MaterialFlag::HasEmissiveImage) {
         const let color = global_images[NonUniformResourceIndex(this.emissive_image_index)]
             .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy).rgb;
-        return this.emissive_color * color;
+        return emissive * color;
     }
 
-    return this.emissive_color;
+    return emissive;
   }
 
   public func sample_metallic_roughness(in UVGradient grad) -> f32x2 {
-    const let metallic_roughness = f32x2(this.metallic_factor, this.roughness_factor);
+    const let metallic_roughness = f32x2(this.get_metallic_factor(), this.get_roughness_factor());
     if (this.flags & MaterialFlag::HasMetallicRoughnessImage) {
         const let color = global_images[NonUniformResourceIndex(this.metallic_rougness_image_index)]
             .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy).bg;
@@ -234,18 +279,16 @@ public struct Light {
   public u32 _pad_1 = 0;
 };
 
-public struct Transform {
-  public mat4 local = {};
+public struct TransformWorld {
   public mat4 world = {};
-  public mat4 previous_world = {};
-  public mat3 normal = {};
 
   public func to_world_position(in f32x3 position) -> f32x4 {
     return mul(this.world, f32x4(position, 1.0));
   }
 
+  // Normal matrix derived from world (matches CPU-side mat3(world)).
   public func to_world_normal(in f32x3 normal) -> f32x3 {
-    return mul(this.normal, normal);
+    return mul(mat3(this.world), normal);
   }
 
   public func to_world_radius(in f32 radius) -> f32 {
@@ -264,8 +307,13 @@ public struct Transform {
   }
 
   public func to_world_normals(in f32x3x3 normals) -> f32x3x3 {
-    return { mul(this.normal, normals[0]), mul(this.normal, normals[1]), mul(this.normal, normals[2]) };
+    let n = mat3(this.world);
+    return { mul(n, normals[0]), mul(n, normals[1]), mul(n, normals[2]) };
   }
+};
+
+public struct TransformPrevious {
+  public mat4 previous_world = {};
 };
 
 public struct Meshlet {
@@ -413,7 +461,7 @@ public struct Mesh {
     public u16x2 *texture_coords = nullptr;
     public u32 vertex_count = 0;
     public u32 lod_count = 0;
-    public MeshLOD lods[MESH_MAX_LODS] = {};
+    public MeshLOD *lods = nullptr;
     public MeshBounds bounds = {};
 
     public func decode_position(u32 index) -> f32x3 {

@@ -7,7 +7,7 @@ import rmvsm;
 [[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(1)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(2)]] StructuredBuffer<MeshletInstance> meshlet_instances;
-[[vk::binding(3)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(3)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(4)]] StructuredBuffer<Material> materials;
 [[vk::binding(5)]] StructuredBuffer<VirtualClipmap> clipmaps;
 [[vk::binding(6)]] Texture2DArray<u32> page_tables;
@@ -73,7 +73,7 @@ func fs_main(VertexOutput input) -> void {
             grad.ddy = ddy(input.tex_coord);
             let alpha_color = material.sample_albedo_color(grad).a;
 
-            if (alpha_color < clamp(material.alpha_cutoff, 0.001, 1.0)) {
+            if (alpha_color < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
                 return;
             }
         }

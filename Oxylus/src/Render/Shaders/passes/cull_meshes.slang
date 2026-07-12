@@ -8,7 +8,7 @@ import debug_drawer;
 
 [[vk::constant_id(0)]] const u32 CULL_FLAGS;
 [[vk::binding(0)]] StructuredBuffer<Mesh> meshes;
-[[vk::binding(1)]] StructuredBuffer<Transform> transforms;
+[[vk::binding(1)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(2)]] RWStructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(3)]] RWStructuredBuffer<MeshletInstance> meshlet_instances;
 [[vk::binding(4)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;

@@ -170,6 +170,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       VUK_BA(vuk::eComputeRead) mesh_instances,
       VUK_BA(vuk::eComputeRead) meshes,
       VUK_BA(vuk::eComputeRead) transforms,
+      VUK_BA(vuk::eComputeRead) transforms_previous,
       VUK_BA(vuk::eComputeRead) clipmaps
     ) {
       cmd_list //
@@ -180,10 +181,11 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         .bind_buffer(0, 3, meshes)
         .bind_buffer(0, 4, transforms)
         .bind_buffer(0, 5, clipmaps)
+        .bind_buffer(0, 6, transforms_previous)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
         .dispatch_invocations(dirty_mesh_count, RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE, page_table->layer_count);
 
-      return std::make_tuple(page_table, dirty_mesh_indices, mesh_instances, meshes, transforms, clipmaps);
+      return std::make_tuple(page_table, dirty_mesh_indices, mesh_instances, meshes, transforms, transforms_previous, clipmaps);
     }
   );
 
@@ -193,7 +195,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       self.prepared_frame.dirty_mesh_instances_buffer,
       self.prepared_frame.mesh_instances_buffer,
       self.prepared_frame.meshes_buffer,
-      self.prepared_frame.transforms_buffer,
+      self.prepared_frame.transforms_world_buffer,
+      self.prepared_frame.transforms_previous_buffer,
       context.directional_clipmaps_buffer
     ) =
       invalidate_pages_pass(
@@ -201,7 +204,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         std::move(self.prepared_frame.dirty_mesh_instances_buffer),
         std::move(self.prepared_frame.mesh_instances_buffer),
         std::move(self.prepared_frame.meshes_buffer),
-        std::move(self.prepared_frame.transforms_buffer),
+        std::move(self.prepared_frame.transforms_world_buffer),
+        std::move(self.prepared_frame.transforms_previous_buffer),
         std::move(context.directional_clipmaps_buffer)
       );
   }
@@ -513,7 +517,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       self.prepared_frame.meshes_buffer,
       self.prepared_frame.mesh_instances_buffer,
       self.prepared_frame.meshlet_instances_buffer,
-      self.prepared_frame.transforms_buffer,
+      self.prepared_frame.transforms_world_buffer,
       self.prepared_frame.materials_buffer,
       context.directional_clipmaps_buffer,
       context.virtual_page_table_attachment,
@@ -526,7 +530,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         std::move(self.prepared_frame.meshes_buffer),
         std::move(self.prepared_frame.mesh_instances_buffer),
         std::move(self.prepared_frame.meshlet_instances_buffer),
-        std::move(self.prepared_frame.transforms_buffer),
+        std::move(self.prepared_frame.transforms_world_buffer),
         std::move(self.prepared_frame.materials_buffer),
         std::move(context.directional_clipmaps_buffer),
         std::move(context.virtual_page_table_attachment),

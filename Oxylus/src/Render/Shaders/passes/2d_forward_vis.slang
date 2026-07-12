@@ -4,7 +4,7 @@ import scene;
 
 struct PushConstants {
   Camera* camera_buffer;
-  Transform* transforms;
+  TransformWorld* transforms;
 };
 [[vk::push_constant]] PushConstants C;
 

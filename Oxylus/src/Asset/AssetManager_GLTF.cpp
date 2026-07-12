@@ -577,13 +577,14 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
   auto& render_context = App::get()->get_rendercontext();
 
-  auto compute_lod_upload_size = [](
-                                   const std::vector<u32>& simplified_indices,
-                                   const std::vector<GPU::Meshlet>& meshlets,
-                                   const std::vector<GPU::MeshletBounds>& meshlet_bounds,
-                                   const std::vector<u8>& local_triangle_indices,
-                                   const std::vector<u32>& indirect_vertex_indices
-                                 ) -> u64 {
+  auto compute_lod_upload_size = //
+    [](
+      const std::vector<u32>& simplified_indices,
+      const std::vector<GPU::Meshlet>& meshlets,
+      const std::vector<GPU::MeshletBounds>& meshlet_bounds,
+      const std::vector<u8>& local_triangle_indices,
+      const std::vector<u32>& indirect_vertex_indices
+    ) -> u64 {
     auto offset = 0_u64;
     offset += ox::size_bytes(simplified_indices);
     offset = ox::align_up(offset, 8);
@@ -647,6 +648,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
       }
 
       auto gpu_mesh = GPU::Mesh{};
+      auto gpu_mesh_lods = std::array<GPU::MeshLOD, GPU::Mesh::MAX_LODS>{};
 
       auto& index_accessor = gltf_asset.accessors[gltf_primitive.indicesAccessor.value()];
       auto raw_indices = std::vector<u32>(index_accessor.count);
@@ -759,12 +761,12 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
       for (auto lod_index = 0_sz; lod_index < GPU::Mesh::MAX_LODS; lod_index++) {
         ZoneNamedN(z, "GPU Meshlet Generation", true);
 
-        auto& cur_lod = gpu_mesh.lods[lod_index];
+        auto& cur_lod = gpu_mesh_lods[lod_index];
         auto simplified_indices = std::vector<u32>();
         if (lod_index == 0) {
           simplified_indices = std::vector<u32>(indices.begin(), indices.end());
         } else {
-          const auto& last_lod = gpu_mesh.lods[lod_index - 1];
+          const auto& last_lod = gpu_mesh_lods[lod_index - 1];
           auto lod_index_count = ((last_lod_indices.size() + 5_sz) / 6_sz) * 3_sz;
           simplified_indices.resize(last_lod_indices.size(), 0_u32);
           constexpr auto TARGET_ERROR = std::numeric_limits<f32>::max();
@@ -946,6 +948,9 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         upload_size += lod_upload_size;
       }
 
+      const auto lod_metadata_size = ox::align_up(gpu_mesh.lod_count * sizeof(GPU::MeshLOD), 8);
+      upload_size += lod_metadata_size;
+
       auto mesh_upload_offset = 0_u64;
 
       auto gpu_mesh_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, upload_size);
@@ -977,7 +982,7 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
       for (auto lod_index = 0_sz; lod_index < gpu_mesh.lod_count; lod_index++) {
         auto&& [lod_cpu_buffer, lod_upload_size] = lod_cpu_buffers[lod_index];
-        auto& lod = gpu_mesh.lods[lod_index];
+        auto& lod = gpu_mesh_lods[lod_index];
 
         lod.indices += gpu_mesh_bda + mesh_upload_offset;
         lod.meshlets += gpu_mesh_bda + mesh_upload_offset;
@@ -995,8 +1000,24 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
         mesh_upload_offset += lod_upload_size;
       }
 
+      gpu_mesh.lods = gpu_mesh_bda + mesh_upload_offset;
+      {
+        auto cpu_lod_meta_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, lod_metadata_size);
+        std::memcpy(cpu_lod_meta_buffer->mapped_ptr, gpu_mesh_lods.data(), gpu_mesh.lod_count * sizeof(GPU::MeshLOD));
+        auto gpu_lod_meta_subrange = vuk::discard_buf(
+          "mesh lod metadata",
+          gpu_mesh_buffer->subrange(mesh_upload_offset, lod_metadata_size)
+        );
+        gpu_lod_meta_subrange = render_context.upload_staging(
+          std::move(cpu_lod_meta_buffer),
+          std::move(gpu_lod_meta_subrange)
+        );
+        render_context.wait_on(std::move(gpu_lod_meta_subrange));
+      }
+
       auto mesh_index = model.gpu_meshes.size();
       mesh_group.mesh_indices.push_back(mesh_index);
+      model.lod0_meshlet_counts.push_back(gpu_mesh_lods[0].meshlet_count);
       auto mesh_material_index = option<u32>(nullopt);
       if (gltf_primitive.materialIndex.has_value()) {
         mesh_material_index = gltf_primitive.materialIndex.value();

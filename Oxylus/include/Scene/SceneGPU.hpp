@@ -10,10 +10,16 @@ enum class TransformID : u64 { Invalid = ~0_u64 };
 enum class LightID : u64 { Invalid = ~0_u64 };
 
 struct Transforms {
-  alignas(4) glm::mat4 local = {};
   alignas(4) glm::mat4 world = {};
   alignas(4) glm::mat4 previous_world = {};
-  alignas(4) glm::mat3 normal = {};
+};
+
+struct TransformWorld {
+  alignas(4) glm::mat4 world = {};
+};
+
+struct TransformPrevious {
+  alignas(4) glm::mat4 previous_world = {};
 };
 
 enum class DebugView : i32 {
@@ -55,11 +61,11 @@ enum class MaterialFlag : u32 {
 consteval void enable_bitmask(MaterialFlag);
 
 struct Material {
-  alignas(4) glm::vec4 albedo_color = {1.0f, 1.0f, 1.0f, 1.0f};
-  alignas(4) glm::vec3 emissive_color = {0.0f, 0.0f, 0.0f};
-  alignas(4) f32 roughness_factor = 0.0f;
-  alignas(4) f32 metallic_factor = 0.0f;
-  alignas(4) f32 alpha_cutoff = 0.0f;
+  alignas(2) glm::u16vec4 albedo_color = {};
+  alignas(2) glm::u16vec3 emissive_color = {};
+  alignas(2) u16 roughness_factor = 0;
+  alignas(2) u16 metallic_factor = 0;
+  alignas(2) u16 alpha_cutoff = 0;
   alignas(4) MaterialFlag flags = MaterialFlag::None;
   alignas(4) u32 sampler_index = 0;
   alignas(4) u32 albedo_image_index = 0;
@@ -67,8 +73,8 @@ struct Material {
   alignas(4) u32 emissive_image_index = 0;
   alignas(4) u32 metallic_roughness_image_index = 0;
   alignas(4) u32 occlusion_image_index = 0;
-  alignas(4) glm::vec2 uv_size = {};
-  alignas(4) glm::vec2 uv_offset = {};
+  alignas(2) glm::u16vec2 uv_size = {};
+  alignas(2) glm::u16vec2 uv_offset = {};
 };
 
 struct MeshletBounds {
@@ -137,7 +143,7 @@ struct Mesh {
   alignas(8) u64 texture_coords = 0;
   alignas(4) u32 vertex_count = 0;
   alignas(4) u32 lod_count = 0;
-  alignas(8) MeshLOD lods[MAX_LODS] = {};
+  alignas(8) u64 lods = 0;
   alignas(4) MeshBounds bounds = {};
 };
 

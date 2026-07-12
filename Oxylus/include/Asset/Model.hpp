@@ -42,6 +42,7 @@ struct Model {
   std::vector<UUID> materials = {};
   std::vector<MeshGroup> mesh_groups = {};
   std::vector<Light> lights = {};
+  std::vector<u32> lod0_meshlet_counts = {};
   std::vector<GPU::Mesh> gpu_meshes = {};
   std::vector<option<u32>> material_indices = {}; // these are per mesh, not per MeshGroup
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};

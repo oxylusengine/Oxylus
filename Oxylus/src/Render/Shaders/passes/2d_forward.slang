@@ -7,7 +7,7 @@ import scene;
 struct PushConstants {
   Material* materials;
   Camera* camera_buffer;
-  Transform* transforms;
+  TransformWorld* transforms;
 };
 [[vk::push_constant]] PushConstants C;
 
@@ -37,7 +37,7 @@ VOutput vs_main(VertexInput input, u32 vertex_id : SV_VertexID) {
 
   mat4 transform = C.transforms[input.transform_id].world;
 
-  f32x4 uv_size_offset = f32x4(material.uv_size, material.uv_offset);
+  f32x4 uv_size_offset = f32x4(material.get_uv_size(), material.get_uv_offset());
 
   const u32 vertex_index = vertex_id % 6;
 
@@ -70,7 +70,7 @@ f32x4 fs_main(VOutput input) : SV_Target0 {
 
   f32x4 color = material.sample_albedo_color(grad);
 
-  if (color.w <= material.alpha_cutoff) {
+  if (color.w <= material.get_alpha_cutoff()) {
     discard;
   }
 

@@ -19,6 +19,7 @@
 #include <RmlUi/Core.h>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <meshoptimizer.h>
 #include <simdjson.h>
 #include <sol/state.hpp>
 
@@ -1188,7 +1189,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         }
 
         auto lod0_index = 0;
-        const auto& lod0 = mesh.lods[lod0_index];
+        const auto lod0_meshlet_count = model->lod0_meshlet_counts[mesh_instance.mesh_node_index];
 
         auto& gpu_mesh_instance = gpu_mesh_instances.emplace_back();
         gpu_mesh_instance.mesh_index = mesh_index;
@@ -1199,8 +1200,8 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
         mesh_slot_to_gpu_index[static_cast<u32>(index)] = static_cast<u32>(gpu_mesh_instances.size() - 1);
 
-        meshlet_instance_visibility_offset += lod0.meshlet_count;
-        max_meshlet_instance_count += lod0.meshlet_count;
+        meshlet_instance_visibility_offset += lod0_meshlet_count;
+        max_meshlet_instance_count += lod0_meshlet_count;
       });
 
       self.gpu_mesh_instance_count = gpu_mesh_instances.size();
@@ -1291,11 +1292,22 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       flags |= occlusion_image_index.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
 
       auto gpu_material = GPU::Material{
-        .albedo_color = material->albedo_color,
-        .emissive_color = material->emissive_color,
-        .roughness_factor = material->roughness_factor,
-        .metallic_factor = material->metallic_factor,
-        .alpha_cutoff = material->alpha_cutoff,
+        .albedo_color =
+          glm::u16vec4{
+            meshopt_quantizeHalf(material->albedo_color.x),
+            meshopt_quantizeHalf(material->albedo_color.y),
+            meshopt_quantizeHalf(material->albedo_color.z),
+            meshopt_quantizeHalf(material->albedo_color.w),
+          },
+        .emissive_color =
+          glm::u16vec3{
+            meshopt_quantizeHalf(material->emissive_color.x),
+            meshopt_quantizeHalf(material->emissive_color.y),
+            meshopt_quantizeHalf(material->emissive_color.z),
+          },
+        .roughness_factor = meshopt_quantizeHalf(material->roughness_factor),
+        .metallic_factor = meshopt_quantizeHalf(material->metallic_factor),
+        .alpha_cutoff = meshopt_quantizeHalf(material->alpha_cutoff),
         .flags = flags,
         .sampler_index = sampler_index,
         .albedo_image_index = albedo_image_index.value_or(0_u32),
@@ -1303,8 +1315,15 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         .emissive_image_index = emissive_image_index.value_or(0_u32),
         .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
         .occlusion_image_index = occlusion_image_index.value_or(0_u32),
-        .uv_size = material->uv_size,
-        .uv_offset = material->uv_offset,
+        .uv_size =
+          glm::u16vec2{
+            meshopt_quantizeHalf(material->uv_size.x),
+            meshopt_quantizeHalf(material->uv_size.y),
+          },
+        .uv_offset = glm::u16vec2{
+          meshopt_quantizeHalf(material->uv_offset.x),
+          meshopt_quantizeHalf(material->uv_offset.y),
+        },
       };
 
       self.gpu_materials[dirty_index] = gpu_material;
@@ -1596,9 +1615,7 @@ auto Scene::set_dirty(this Scene& self, flecs::entity entity) -> void {
 
   auto transform_id = it->second;
   auto* gpu_transform = self.transforms.slot(transform_id);
-  gpu_transform->local = glm::mat4(1.0f);
   gpu_transform->world = visit_parent(self, entity);
-  gpu_transform->normal = glm::mat3(gpu_transform->world);
   self.dirty_transforms.push_back(transform_id);
 
   // Mark the entity's mesh instance (if any) as dirty so the VSM invalidate-pages

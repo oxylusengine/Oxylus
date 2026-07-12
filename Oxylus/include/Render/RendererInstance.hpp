@@ -143,7 +143,8 @@ struct RendererInstanceUpdateInfo {
 struct PreparedFrame {
   u32 mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
-  vuk::Value<vuk::Buffer> transforms_buffer = {};
+  vuk::Value<vuk::Buffer> transforms_world_buffer = {};
+  vuk::Value<vuk::Buffer> transforms_previous_buffer = {};
   vuk::Value<vuk::Buffer> meshes_buffer = {};
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
   vuk::Value<vuk::Buffer> meshlet_instances_buffer = {};
@@ -404,7 +405,8 @@ private:
   GPU::VBGTAOSettings vbgtao_info = {};
   GPU::PostProcessSettings post_proces_settings = {};
 
-  vuk::Unique<vuk::Buffer> transforms_buffer{};
+  vuk::Unique<vuk::Buffer> transforms_world_buffer{};
+  vuk::Unique<vuk::Buffer> transforms_previous_buffer{};
   vuk::Unique<vuk::Buffer> mesh_instances_buffer{};
   vuk::Unique<vuk::Buffer> meshes_buffer{};
   vuk::Unique<vuk::Buffer> materials_buffer{};
