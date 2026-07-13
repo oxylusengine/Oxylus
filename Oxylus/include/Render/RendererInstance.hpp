@@ -157,6 +157,9 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> lights_buffer = {};
   vuk::Value<vuk::Buffer> exposure_buffer = {};
 
+  u32 spot_light_count = 0;
+  u32 point_light_count = 0;
+
   vuk::Value<vuk::Buffer> dirty_mesh_instances_buffer = {};
   u32 dirty_mesh_instance_count = 0;
 

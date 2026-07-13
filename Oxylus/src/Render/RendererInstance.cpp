@@ -1243,9 +1243,9 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         return;
       }
 
-      const glm::mat4 world_transform = self.scene.get_world_transform(e);
-      const glm::vec3 world_position = world_transform[3];
-      const glm::vec3 world_forward = glm::normalize(glm::mat3(world_transform) * glm::vec3(0.0f, 0.0f, -1.0f));
+      const auto world_transform = self.scene.get_world_transform(e);
+      const auto world_position = world_transform[3];
+      const auto world_forward = glm::normalize(glm::mat3(world_transform) * glm::vec3(0.0f, 0.0f, -1.0f));
 
       if (lc.type == LightComponent::LightType::Directional) {
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
@@ -1439,6 +1439,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   {
     const auto lights_span = self.scene.lights.slots_unsafe();
+    for (const auto& light : lights_span) {
+      self.prepared_frame.spot_light_count += static_cast<u32>(light.kind == GPU::LightKind::Spot);
+      self.prepared_frame.point_light_count += static_cast<u32>(light.kind == GPU::LightKind::Point);
+    }
     const auto count = std::min<std::size_t>(lights_span.size(), GPU::MAX_LIGHTS);
     const auto size_bytes = count * sizeof(GPU::Light);
     if (count > 0) {
