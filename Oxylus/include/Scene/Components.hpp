@@ -279,7 +279,7 @@ struct RigidBodyComponent {
     Plane2D = TranslationX | TranslationY | RotationZ, ///< Body can only move in X and Y axis and rotate around Z axis
   };
   u32 allowed_dofs = AllowedDOFs::All;
-  u32 type = BodyType::Dynamic;
+  BodyType type = BodyType::Dynamic;
   f32 mass = 1.0f;
   f32 linear_drag = 0.05f;
   f32 angular_drag = 0.05f;
