@@ -47,7 +47,7 @@ public:
     };
 
     transform.pitch = glm::radians(-25.0f);
-    transform.yaw = glm::radians(-130.0f);
+    transform.yaw = glm::radians(-120.0f);
 
     const f32 cos_pitch = glm::cos(transform.pitch);
     const f32 sin_pitch = glm::sin(transform.pitch);

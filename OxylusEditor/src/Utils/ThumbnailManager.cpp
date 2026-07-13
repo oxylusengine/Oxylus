@@ -242,12 +242,11 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
   const auto sun = thumbnail_scene.create_entity("sun", true);
   sun
     .set<TransformComponent>({
-      .rotation = glm::quat(glm::vec3(glm::radians(45.f), glm::radians(90.f), 0.f)),
+      .rotation = glm::quat(glm::vec3(glm::radians(45.f), glm::radians(-145.f), 0.f)),
     })
-    .set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 10.f})
+    .set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 20.f})
     .add<AtmosphereComponent>()
-    .set<SkyComponent>(SkyComponent{.solid_color = glm::vec4(0.f, 0.f, 0.f, 1.0f), .texture = UUID(nullptr)})
-    .set<AutoExposureComponent>({});
+    .set<SkyComponent>(SkyComponent{.solid_color = glm::vec4(0.f, 0.f, 0.f, 1.0f), .texture = UUID(nullptr)});
 
   f32 cam_fov = 40.f;
 
