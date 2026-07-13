@@ -215,6 +215,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vk11_features.variablePointers = true;
   vk11_features.variablePointersStorageBuffer = true;
   vk11_features.uniformAndStorageBuffer16BitAccess = true;
+  vk11_features.storageBuffer16BitAccess = true;
 
   VkPhysicalDeviceVulkan12Features vk12_features{};
   vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
