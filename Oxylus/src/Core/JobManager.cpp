@@ -73,6 +73,12 @@ auto JobManager::set_thread_count(this JobManager& self, u32 count) -> void {
   self.desired_thread_count = count;
 }
 
+auto JobManager::get_thread_count(this JobManager& self) -> u32 {
+  ZoneScoped;
+
+  return self.num_threads;
+}
+
 auto JobManager::shutdown(this JobManager& self) -> void {
   ZoneScoped;
 

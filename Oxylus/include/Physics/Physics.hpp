@@ -31,10 +31,10 @@ public:
   auto new_debug_renderer(this const Physics& self) -> std::unique_ptr<PhysicsDebugRenderer>;
 
   auto get_temp_allocator(this const Physics& self) -> JPH::TempAllocatorImpl* { return self.temp_allocator.get(); }
-  auto get_job_system(this const Physics& self) -> JPH::JobSystemThreadPool* { return self.job_system.get(); }
+  auto get_job_system(this const Physics& self) -> JPH::JobSystemWithBarrier* { return self.job_system.get(); }
 
 private:
   std::unique_ptr<JPH::TempAllocatorImpl> temp_allocator = nullptr;
-  std::unique_ptr<JPH::JobSystemThreadPool> job_system = nullptr;
+  std::unique_ptr<JPH::JobSystemWithBarrier> job_system = nullptr;
 };
 } // namespace ox

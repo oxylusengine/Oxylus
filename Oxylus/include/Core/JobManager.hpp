@@ -141,6 +141,7 @@ public:
   static auto is_main_thread() noexcept -> bool { return std::this_thread::get_id() == main_thread_id; }
 
   auto set_thread_count(this JobManager& self, u32 count) -> void;
+  auto get_thread_count(this JobManager& self) -> u32;
 
   auto shutdown(this JobManager& self) -> void;
   auto worker(this JobManager& self, u32 id) -> void;
