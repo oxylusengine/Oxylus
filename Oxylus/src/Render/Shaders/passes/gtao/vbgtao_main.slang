@@ -14,8 +14,8 @@ struct ShaderParameters {
     Texture2D<f32> prefiltered_depth;
     Texture2D<float4> normals;
     Texture2D<u16> hilbert_noise;
-    RWTexture2D<f32> ambient_occlusion;
-    RWTexture2D<u32> depth_differences;
+    RWTexture2D<f32, 1, ImageFormat.R16F> ambient_occlusion;
+    RWTexture2D<u32, 1, ImageFormat.R32UI> depth_differences;
     SamplerState point_clamp_sampler;
     SamplerState linear_clamp_sampler;
 };
@@ -67,7 +67,7 @@ func calculate_edges(
     in f32x2 resolution,
     in Texture2D<f32> src_depth,
     in SamplerState sampler_point_clamp,
-    in RWTexture2D<u32> edges
+    in RWTexture2D<u32, 1, ImageFormat.R32UI> edges
 ) -> f32 {
     let uv = f32x2(pixel_coord) / resolution;
     let depths_upper_left = src_depth.GatherRed(sampler_point_clamp, uv);

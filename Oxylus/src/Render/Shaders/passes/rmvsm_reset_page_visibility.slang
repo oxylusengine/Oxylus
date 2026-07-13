@@ -3,7 +3,7 @@ import gpu;
 import rmvsm;
 
 struct ShaderParameters {
-    RWTexture2DArray<u32, ImageFormat::R32UI> page_tables;
+    RWTexture2DArray<u32, 1, ImageFormat::R32UI> page_tables;
 };
 
 [[shader("compute")]]
