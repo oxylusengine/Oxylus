@@ -895,8 +895,10 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
           mesh_bb_max = glm::max(mesh_bb_max, meshlet_bb_max);
         }
 
-        gpu_mesh.bounds.aabb_center = (mesh_bb_max + mesh_bb_min) * 0.5f;
-        gpu_mesh.bounds.aabb_extent = mesh_bb_max - mesh_bb_min;
+        if (lod_index == 0) {
+          gpu_mesh.bounds.aabb_center = (mesh_bb_max + mesh_bb_min) * 0.5f;
+          gpu_mesh.bounds.aabb_extent = mesh_bb_max - mesh_bb_min;
+        }
 
         auto lod_upload_size = compute_lod_upload_size(
           simplified_indices,

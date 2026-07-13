@@ -23,8 +23,8 @@ struct AABB {
   AABB(const AABB& other) = default;
   AABB(const glm::vec3 min_, const glm::vec3 max_) : min(min_), max(max_) {}
   AABB(const GPU::MeshBounds& bounds) {
-    min = bounds.aabb_center - bounds.aabb_extent;
-    max = bounds.aabb_center + bounds.aabb_extent;
+    min = bounds.aabb_center - bounds.aabb_extent * 0.5f;
+    max = bounds.aabb_center + bounds.aabb_extent * 0.5f;
   }
 
   glm::vec3 get_center() const { return (max + min) * 0.5f; }

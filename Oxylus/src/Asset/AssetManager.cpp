@@ -575,14 +575,11 @@ auto AssetManager::is_texture_loaded(this AssetManager& self, const UUID& uuid) 
 auto AssetManager::load_material(this AssetManager& self, const UUID& uuid, const Material& info) -> bool {
   ZoneScoped;
 
-  auto reg_lock = std::unique_lock(self.registry_mutex);
-  auto* asset = self.get_asset_ptr(uuid);
-  OX_CHECK_NULL(asset);
+  auto asset = self.get_asset(uuid);
   asset->acquire_ref();
 
   if (asset->is_loaded()) {
     auto* material = self.material_map.slot(asset->material_id);
-    reg_lock.unlock();
     self.acquire_ref(material->albedo_texture);
     self.acquire_ref(material->normal_texture);
     self.acquire_ref(material->emissive_texture);
