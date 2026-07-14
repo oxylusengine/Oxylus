@@ -223,7 +223,9 @@ struct CullCamera {
   u32 mesh_instance_count = {};
 };
 
-constexpr static u32 MAX_LIGHTS = 256;
+constexpr static u32 MAX_POINT_LIGHTS = 128;
+constexpr static u32 MAX_SPOT_LIGHTS = 128;
+constexpr static u32 MAX_LIGHTS = MAX_POINT_LIGHTS + MAX_SPOT_LIGHTS;
 
 struct DirectionalLight {
   alignas(4) glm::vec3 color = {0.02, 0.02, 0.02};
