@@ -4,10 +4,10 @@ local lua_version = "v5.4.7"
 
 packages = {
   ["stb 2024.06.01"] = {},
-  ["miniaudio 0.11.24"] = {},
+  ["miniaudio 0.11.25"] = {},
   ["fastgltf-ox v0.8.0"] = { system = false, debug = is_mode("debug") },
-  ["meshoptimizer v1.0.1"] = {},
-  ["libsdl3 3.4.4"] = { configs = { x11 = true, wayland = false } },
+  ["meshoptimizer v1.2"] = {},
+  ["libsdl3 3.4.12"] = { configs = { x11 = true, wayland = false } },
   ["ktx-ox v4.4.0"] = { system = false, debug = false },
   ["zstd v1.5.7"] = { system = false },
   ["shader-slang v2026.12.2"] = { configs = { shared = true }, system = false },
@@ -34,7 +34,7 @@ packages = {
     },
     system = false,
   },
-  ["vk-bootstrap v1.4.349"] = { system = false, debug = is_mode("debug") },
+  ["vk-bootstrap v1.4.354"] = { system = false, debug = is_mode("debug") },
   ["vuk 2026.07.2"] = {
     configs = {
       debug_allocations = false,
@@ -46,7 +46,7 @@ packages = {
       header_only = true,
     },
   },
-  ["simdjson v4.0.6"] = {},
+  ["simdjson v4.2.4"] = {},
   ["joltphysics v5.5.0"] = {
     configs = {
       debug_renderer = true,
@@ -59,7 +59,7 @@ packages = {
       tzcnt = true,
     },
   },
-  ["tracy v0.11.1"] = {
+  ["tracy v0.13.1"] = {
     configs = {
       tracy_enable = has_config("profile"),
       on_demand = true,
@@ -72,10 +72,10 @@ packages = {
   },
   ["lua " .. lua_version] = {},
   ["sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444"] = { configs = { includes_lua = false } },
-  ["unordered_dense v4.5.0"] = {},
+  ["unordered_dense v4.8.1"] = {},
   ["svector v1.0.3"] = {},
   ["plf_colony v7.41"] = {},
-  ["simdutf v6.2.0"] = {},
+  ["simdutf v8.2.0"] = {},
   ["rmlui f7b297e2c8fc44c5e85df498dbae91762c0769a5"] = {
     configs = {
       shared = false,
