@@ -168,6 +168,39 @@ auto parse_resource_config(const std::filesystem::path& config_path) -> option<R
     }
   }
 
+  // [[textures]] (optional)
+  if (auto* textures = root["textures"].as_array()) {
+    for (const auto& tex_elem : *textures) {
+      auto* tex_tbl = tex_elem.as_table();
+      if (!tex_tbl) {
+        continue;
+      }
+      const auto& tt = *tex_tbl;
+
+      auto texture = TextureConfig{};
+
+      if (auto node = tt["path"].as_string()) {
+        texture.path = node->get();
+      } else {
+        fmt::println("Error: texture entry missing 'path'.");
+        return nullopt;
+      }
+
+      if (auto node = tt["name"].as_string()) {
+        texture.name = node->get();
+      }
+      if (texture.name.empty()) {
+        texture.name = texture.path.stem().string();
+      }
+
+      if (auto node = tt["srgb"].as_boolean()) {
+        texture.srgb = node->get();
+      }
+
+      config.textures.push_back(std::move(texture));
+    }
+  }
+
   return config;
 }
 

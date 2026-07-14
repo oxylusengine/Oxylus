@@ -19,6 +19,7 @@ struct Handle<rc::Session>::Impl {
   Slang::ComPtr<slang::IGlobalSession> slang_global_session = {};
 
   std::vector<rc::ShaderCompileRequest> shader_requests = {};
+  std::vector<rc::TextureCompileRequest> texture_requests = {};
   AssetFile asset_file = {};
 };
 } // namespace ox

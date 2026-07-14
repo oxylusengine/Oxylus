@@ -30,10 +30,17 @@ struct ModelConfig {
   bool is_foliage = false;
 };
 
+struct TextureConfig {
+  std::filesystem::path path = {};
+  std::string name = {};
+  bool srgb = false;
+};
+
 struct ResourceConfig {
   i32 version = {};
   std::vector<ShaderSessionConfig> shader_sessions = {};
   std::vector<ModelConfig> models = {};
+  std::vector<TextureConfig> textures = {};
 };
 
 auto parse_resource_config(const std::filesystem::path& config_path) -> option<ResourceConfig>;

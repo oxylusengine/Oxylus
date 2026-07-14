@@ -15,6 +15,8 @@ target("ResourceCompiler")
     "shader-slang",
     "spirv-tools",
     "zpp_bits",
+    "ktx-ox",
+    "stb",
     { public = false })
 
 target_end()

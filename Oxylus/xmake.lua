@@ -77,12 +77,10 @@ target("Oxylus")
     end)
 
     add_packages(
-        "stb",
         "miniaudio",
         "fastgltf-ox",
         "meshoptimizer",
         "libsdl3",
-        "ktx-ox",
         "zpp_bits",
         "enet-ox",
         "flecs",

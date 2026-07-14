@@ -71,4 +71,8 @@ auto AssetFile::add_entry(this AssetFile& self, ShaderPipelineData&& entry) -> v
   );
 }
 
+auto AssetFile::add_entry(this AssetFile& self, TextureData&& entry) -> void {
+  self.entries.push_back(AssetFileEntry{.type = AssetType::Texture, .data = std::move(entry)});
+}
+
 } // namespace ox

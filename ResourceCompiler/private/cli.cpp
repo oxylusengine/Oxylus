@@ -90,6 +90,19 @@ auto main(i32 argc, c8** argv) -> i32 {
     session->add_request(request);
   }
 
+  if (!config->textures.empty()) {
+    auto texture_request = rc::TextureCompileRequest{};
+    texture_request.textures.reserve(config->textures.size());
+    for (const auto& tex : config->textures) {
+      texture_request.textures.push_back({
+        .path = (config_dir / tex.path).lexically_normal(),
+        .name = tex.name,
+        .srgb = tex.srgb,
+      });
+    }
+    session->add_request(texture_request);
+  }
+
   auto compile_success = session->compile();
 
   // Print collected errors
@@ -126,7 +139,8 @@ auto main(i32 argc, c8** argv) -> i32 {
     for (const auto& s : config->shader_sessions) {
       total += s.programs.size();
     }
-    log(fmt::format("Compiled {} program(s) -> {}", total, output_path.filename().string()));
+    total += config->textures.size();
+    log(fmt::format("Compiled {} program(s)/texture(s) -> {}", total, output_path.filename().string()));
   } else {
     for (const auto& shader_session : config->shader_sessions) {
       if (shader_session.output.empty()) {

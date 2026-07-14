@@ -3,6 +3,7 @@
 #include <zpp_bits.h>
 
 #include "ShaderSession.hpp"
+#include "TextureCompiler.hpp"
 
 namespace ox::rc {
 auto create_shader_session(slang::IGlobalSession* global_session, const ShaderSessionInfo& info)
@@ -95,6 +96,10 @@ auto Session::destroy() -> void {
 
 auto Session::add_request(const ShaderCompileRequest& request) -> void { impl->shader_requests.emplace_back(request); }
 
+auto Session::add_request(const TextureCompileRequest& request) -> void {
+  impl->texture_requests.emplace_back(request);
+}
+
 auto Session::push_error(std::string msg) -> void {
   auto lock = std::unique_lock(impl->messages_mutex);
   impl->errors.push_back(std::move(msg));
@@ -144,6 +149,19 @@ auto Session::compile() -> bool {
 
       pipeline.bindless = shader.bindless;
       impl->asset_file.add_entry(std::move(pipeline));
+    }
+  }
+
+  for (const auto& request : impl->texture_requests) {
+    for (const auto& texture_info : request.textures) {
+      auto texture_data = TextureCompiler::compile(texture_info);
+      if (!texture_data.has_value()) {
+        push_error(fmt::format("Failed to compile texture '{}'.", texture_info.path.string()));
+        success = false;
+        continue;
+      }
+
+      impl->asset_file.add_entry(std::move(texture_data.value()));
     }
   }
 

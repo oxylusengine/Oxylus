@@ -49,11 +49,22 @@ struct ShaderCompileRequest {
   std::vector<ShaderCompileInfo> shaders = {};
 };
 
+struct TextureCompileInfo {
+  std::filesystem::path path = {};
+  std::string name = {}; // defaults to path.stem() when empty
+  bool srgb = false;     // only affects generic (non block-compressed) sources
+};
+
+struct TextureCompileRequest {
+  std::vector<TextureCompileInfo> textures = {};
+};
+
 struct OXRC_API Session : Handle<Session> {
   static auto create() -> option<Session>;
   auto destroy() -> void;
 
   auto add_request(const ShaderCompileRequest& request) -> void;
+  auto add_request(const TextureCompileRequest& request) -> void;
   auto compile() -> bool;
   auto write_to_file(const std::filesystem::path& output_path) -> bool;
 

@@ -54,9 +54,26 @@ struct ShaderPipelineData {
   bool bindless = false;
 };
 
+struct TextureMipData {
+  u32 width = 0;
+  u32 height = 0;
+  std::vector<u8> pixels = {};
+};
+
+struct TextureData {
+  using serialize_id = zpp::bits::serialization_id<AssetType::Texture>;
+
+  std::string name = {};
+  vuk::Format format = {};
+  u32 width = 0;
+  u32 height = 0;
+  u32 layer_count = 1;
+  std::vector<TextureMipData> mips = {};
+};
+
 struct AssetFileEntry {
   AssetType type = AssetType::None;
-  std::variant<NoneAsset, ShaderPipelineData> data;
+  std::variant<NoneAsset, ShaderPipelineData, TextureData> data;
 
   constexpr static auto serialize(auto& archive, auto& self)
     requires(std::remove_cvref_t<decltype(archive)>::kind() == zpp::bits::kind::in)
@@ -95,5 +112,6 @@ struct AssetFile {
   static auto unpack(const std::filesystem::path& path) -> option<AssetFile>;
   auto pack(this AssetFile& self, const std::filesystem::path& path) -> bool;
   auto add_entry(this AssetFile& self, ShaderPipelineData&& entry) -> void;
+  auto add_entry(this AssetFile& self, TextureData&& entry) -> void;
 };
 } // namespace ox
