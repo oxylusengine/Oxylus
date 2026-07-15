@@ -28,13 +28,14 @@ static const char* get_level_icon(const loguru::Verbosity level) {
 
 RuntimeConsole::RuntimeConsole() {
   Log::add_callback(
-      "runtime_console",
-      [](void* user_data, const loguru::Message& message) {
-        const auto console = reinterpret_cast<RuntimeConsole*>(user_data);
-        console->add_log(message.message, message.verbosity);
-      },
-      this,
-      loguru::Verbosity_INFO);
+    "runtime_console",
+    [](void* user_data, const loguru::Message& message) {
+      const auto console = reinterpret_cast<RuntimeConsole*>(user_data);
+      console->add_log(message.message, message.verbosity);
+    },
+    this,
+    loguru::Verbosity_INFO
+  );
 
   // Default commands
   register_command("quit", "", [](const ParsedCommandValue&) { App::get()->stop(); });
@@ -46,9 +47,11 @@ RuntimeConsole::RuntimeConsole() {
 
 RuntimeConsole::~RuntimeConsole() { Log::remove_callback("runtime_console"); }
 
-void RuntimeConsole::register_command(const std::string& command,
-                                      const std::string& on_succes_log,
-                                      const std::function<void(const ParsedCommandValue& value)>& action) {
+void RuntimeConsole::register_command(
+  const std::string& command,
+  const std::string& on_succes_log,
+  const std::function<void(const ParsedCommandValue& value)>& action
+) {
   command_map.emplace(command, ConsoleCommand{nullptr, nullptr, nullptr, action, on_succes_log});
 }
 
@@ -56,8 +59,9 @@ void RuntimeConsole::register_command(const std::string& command, const std::str
   command_map.emplace(command, ConsoleCommand{value, nullptr, nullptr, nullptr, on_succes_log});
 }
 
-void
-RuntimeConsole::register_command(const std::string& command, const std::string& on_succes_log, std::string* value) {
+void RuntimeConsole::register_command(
+  const std::string& command, const std::string& on_succes_log, std::string* value
+) {
   command_map.emplace(command, ConsoleCommand{nullptr, value, nullptr, nullptr, on_succes_log});
 }
 
@@ -74,20 +78,20 @@ void RuntimeConsole::add_log(const char* fmt, loguru::Verbosity verb) {
 
 void RuntimeConsole::clear_log() { text_buffer.clear(); }
 
-void RuntimeConsole::on_imgui_render() {
+void RuntimeConsole::render(this RuntimeConsole& self) {
   if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false)) {
-    visible = !visible;
-    request_keyboard_focus = true;
+    self.visible = !self.visible;
+    self.request_keyboard_focus = true;
   }
-  if (visible) {
+  if (self.visible) {
     constexpr auto animation_duration = 0.5f;
     constexpr auto animation_speed = 3.0f;
 
-    animation_counter += (float)App::get_timestep().get_seconds() * animation_speed;
-    animation_counter = std::clamp(animation_counter, 0.0f, animation_duration);
+    self.animation_counter += (float)App::get_timestep().get_seconds() * animation_speed;
+    self.animation_counter = std::clamp(self.animation_counter, 0.0f, animation_duration);
 
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->WorkPos, ImGuiCond_Always);
-    ImVec2 size = {ImGui::GetMainViewport()->WorkSize.x, ImGui::GetMainViewport()->WorkSize.y * animation_counter};
+    ImVec2 size = {ImGui::GetMainViewport()->WorkSize.x, ImGui::GetMainViewport()->WorkSize.y * self.animation_counter};
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
 
     constexpr ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration |
@@ -97,21 +101,33 @@ void RuntimeConsole::on_imgui_render() {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.000f, 0.000f, 0.000f, 0.784f));
     // ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(0.100f, 0.100f, 0.100f, 1.000f));
 
-    id = fmt::format(" {} \t\t###", panel_name);
-    if (ImGui::Begin(id.c_str(), nullptr, windowFlags)) {
+    self.id = fmt::format(" {} \t\t###", self.panel_name);
+    if (ImGui::Begin(self.id.c_str(), nullptr, windowFlags)) {
       if (ImGui::BeginMenuBar()) {
         if (ImGui::MenuItem("Clear")) {
-          clear_log();
+          self.clear_log();
         }
-        if (ImGui::MenuItem(get_level_icon(loguru::Verbosity_INFO), nullptr, text_filter == loguru::Verbosity_INFO)) {
-          text_filter = text_filter == loguru::Verbosity_INFO ? loguru::Verbosity_OFF : loguru::Verbosity_INFO;
+        if (
+          ImGui::MenuItem(get_level_icon(loguru::Verbosity_INFO), nullptr, self.text_filter == loguru::Verbosity_INFO)
+        ) {
+          self.text_filter = self.text_filter == loguru::Verbosity_INFO ? loguru::Verbosity_OFF
+                                                                        : loguru::Verbosity_INFO;
         }
-        if (ImGui::MenuItem(
-                get_level_icon(loguru::Verbosity_WARNING), nullptr, text_filter == loguru::Verbosity_WARNING)) {
-          text_filter = text_filter == loguru::Verbosity_WARNING ? loguru::Verbosity_OFF : loguru::Verbosity_WARNING;
+        if (
+          ImGui::MenuItem(
+            get_level_icon(loguru::Verbosity_WARNING),
+            nullptr,
+            self.text_filter == loguru::Verbosity_WARNING
+          )
+        ) {
+          self.text_filter = self.text_filter == loguru::Verbosity_WARNING ? loguru::Verbosity_OFF
+                                                                           : loguru::Verbosity_WARNING;
         }
-        if (ImGui::MenuItem(get_level_icon(loguru::Verbosity_ERROR), nullptr, text_filter == loguru::Verbosity_ERROR)) {
-          text_filter = text_filter == loguru::Verbosity_ERROR ? loguru::Verbosity_OFF : loguru::Verbosity_ERROR;
+        if (
+          ImGui::MenuItem(get_level_icon(loguru::Verbosity_ERROR), nullptr, self.text_filter == loguru::Verbosity_ERROR)
+        ) {
+          self.text_filter = self.text_filter == loguru::Verbosity_ERROR ? loguru::Verbosity_OFF
+                                                                         : loguru::Verbosity_ERROR;
         }
 
         ImGui::EndMenuBar();
@@ -123,16 +139,16 @@ void RuntimeConsole::on_imgui_render() {
       if (ImGui::BeginChild("TextTable", ImVec2(0, -35))) {
         width = ImGui::GetWindowSize().x;
         // ImGui::PushFont(ImGuiLayer::bold_font);
-        for (int32_t i = 0; i < (int32_t)text_buffer.size(); i++) {
-          if (text_filter != loguru::Verbosity_OFF && text_filter != text_buffer[i].verbosity)
+        for (int32_t i = 0; i < (int32_t)self.text_buffer.size(); i++) {
+          if (self.text_filter != loguru::Verbosity_OFF && self.text_filter != self.text_buffer[i].verbosity)
             continue;
-          render_console_text(text_buffer[i].text, i, text_buffer[i].verbosity);
+          self.render_console_text(self.text_buffer[i].text, i, self.text_buffer[i].verbosity);
         }
 
         // ImGui::PopFont();
-        if (request_scroll_to_bottom || (auto_scroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())) {
+        if (self.request_scroll_to_bottom || (self.auto_scroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())) {
           ImGui::SetScrollHereY(1.0f);
-          request_scroll_to_bottom = false;
+          self.request_scroll_to_bottom = false;
         }
       }
       ImGui::EndChild();
@@ -150,16 +166,16 @@ void RuntimeConsole::on_imgui_render() {
         return panel->input_text_callback(data);
       };
 
-      if (request_keyboard_focus) {
+      if (self.request_keyboard_focus) {
         ImGui::SetKeyboardFocusHere();
-        request_keyboard_focus = false;
+        self.request_keyboard_focus = false;
       }
       std::string input_buf = {};
-      if (ImGui::InputText("##", &input_buf, input_flags, callback, this)) {
-        history_position = -1;
-        process_command(input_buf);
-        input_log.emplace_back(input_buf);
-        request_keyboard_focus = true;
+      if (ImGui::InputText("##", &input_buf, input_flags, callback, &self)) {
+        self.history_position = -1;
+        self.process_command(input_buf);
+        self.input_log.emplace_back(input_buf);
+        self.request_keyboard_focus = true;
       }
 
       // ImGui::PopFont();
@@ -170,7 +186,7 @@ void RuntimeConsole::on_imgui_render() {
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(1);
   } else {
-    animation_counter = 0.0f;
+    self.animation_counter = 0.0f;
   }
 }
 
@@ -196,16 +212,30 @@ void log_cvar_change(RuntimeConsole* console, const char* cvar_name, T current_v
   console->add_log(log_text.c_str(), loguru::Verbosity_INFO);
 }
 
-void RuntimeConsole::process_command(const std::string& command) {
-  const auto parsed_command = parse_command(command);
-  const auto value = parse_value(command);
+auto RuntimeConsole::process_command(this RuntimeConsole& self, const std::string& command) -> void {
+  const auto parsed_command = self.parse_command(command);
+  const auto value = self.parse_value(command);
 
   bool is_cvar_variable = false;
 
-  auto* cvar_system = CVarSystem::get();
+  const std::array cvar_systems = {
+    &App::get_rendercontext().context_cvar.system,
+    self.scene_cvar_system,
+  };
+
   const std::hash<std::string> hasher = {};
   const auto hashed = hasher(parsed_command);
-  const auto cvar = cvar_system->get_cvar(hashed);
+
+  CVarParameter* cvar = nullptr;
+  CVarSystem* cvar_system = nullptr;
+  for (auto* s : cvar_systems) {
+    cvar = s->get_cvar(hashed);
+    cvar_system = s;
+    if (cvar) {
+      break;
+    }
+  }
+
   if (cvar) {
     is_cvar_variable = true;
     switch (cvar->type) {
@@ -220,7 +250,7 @@ void RuntimeConsole::process_command(const std::string& command) {
             changed = true;
           }
         }
-        log_cvar_change<int32_t>(this, cvar->name.c_str(), current_value, changed);
+        log_cvar_change<int32_t>(&self, cvar->name.c_str(), current_value, changed);
         break;
       }
       case CVarType::FLOAT: {
@@ -234,7 +264,7 @@ void RuntimeConsole::process_command(const std::string& command) {
             changed = true;
           }
         }
-        log_cvar_change<float>(this, cvar->name.c_str(), current_value, changed);
+        log_cvar_change<float>(&self, cvar->name.c_str(), current_value, changed);
         break;
       }
       case CVarType::STRING: {
@@ -245,15 +275,15 @@ void RuntimeConsole::process_command(const std::string& command) {
           current_value = value.str_value;
           changed = true;
         }
-        log_cvar_change<std::string>(this, cvar->name.c_str(), current_value, changed);
+        log_cvar_change<std::string>(&self, cvar->name.c_str(), current_value, changed);
         break;
       }
     }
   }
 
   // commands registered with register_command()
-  if (command_map.contains(parsed_command)) {
-    const auto& c = command_map[parsed_command];
+  if (self.command_map.contains(parsed_command)) {
+    const auto& c = self.command_map[parsed_command];
     if (c.action != nullptr) {
       c.action(value);
     }
@@ -273,10 +303,10 @@ void RuntimeConsole::process_command(const std::string& command) {
       }
     }
     if (!c.on_succes_log.empty())
-      add_log(c.on_succes_log.c_str(), loguru::Verbosity_INFO);
+      self.add_log(c.on_succes_log.c_str(), loguru::Verbosity_INFO);
   } else {
     if (!is_cvar_variable)
-      add_log("Non existent command.", loguru::Verbosity_ERROR);
+      self.add_log("Non existent command.", loguru::Verbosity_ERROR);
   }
 }
 
@@ -390,39 +420,54 @@ int RuntimeConsole::input_text_callback(ImGuiInputTextCallbackData* data) {
   return 0;
 }
 
-void RuntimeConsole::help_command(const ParsedCommandValue& value) {
+auto RuntimeConsole::help_command(this RuntimeConsole& self, const ParsedCommandValue& value) -> void {
   if (!value.as_string().empty()) {
-    auto* cvar_system = CVarSystem::get();
+    const std::array cvar_systems = {
+      &App::get_rendercontext().context_cvar.system,
+      self.scene_cvar_system,
+    };
     const std::hash<std::string> hasher = {};
     const auto hashed = hasher(value.as_string());
-    const auto cvar = cvar_system->get_cvar(hashed);
+    CVarParameter* cvar = nullptr;
+    for (auto* s : cvar_systems) {
+      cvar = s->get_cvar(hashed);
+      if (cvar) {
+        break;
+      }
+    }
     if (cvar) {
       const auto cvar_description = fmt::format("CVar Description: {}", cvar->description);
-      add_log(cvar_description.c_str(), loguru::Verbosity_INFO);
+      self.add_log(cvar_description.c_str(), loguru::Verbosity_INFO);
     }
   } else {
-    const auto available_commands = get_available_commands();
+    const auto available_commands = self.get_available_commands();
     std::string t = "Available commands: \n";
     for (const auto& c : available_commands)
       t.append(fmt::format("\t {} \n", c));
 
-    add_log(t.c_str(), loguru::Verbosity_INFO);
+    self.add_log(t.c_str(), loguru::Verbosity_INFO);
   }
 }
 
-std::vector<std::string> RuntimeConsole::get_available_commands() {
-  std::vector<std::string> available_commands = {};
-  for (auto& [commandStr, command] : command_map) {
+auto RuntimeConsole::get_available_commands(this RuntimeConsole& self) -> std::vector<std::string> {
+  auto available_commands = std::vector<std::string>{};
+  for (auto& [commandStr, command] : self.command_map) {
     available_commands.emplace_back(commandStr);
   }
 
-  const auto system = CVarSystem::get();
-  for (const auto& var : system->int_cvars) {
-    available_commands.emplace_back(var.parameter->name);
-  }
+  const std::array cvar_systems = {
+    &App::get_rendercontext().context_cvar.system,
+    self.scene_cvar_system,
+  };
 
-  for (const auto& var : system->float_cvars) {
-    available_commands.emplace_back(var.parameter->name);
+  for (const auto* s : cvar_systems) {
+    for (const auto& var : s->int_cvars) {
+      available_commands.emplace_back(var.parameter->name);
+    }
+
+    for (const auto& var : s->float_cvars) {
+      available_commands.emplace_back(var.parameter->name);
+    }
   }
 
   return available_commands;

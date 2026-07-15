@@ -14,7 +14,6 @@
 
 #include "Core/App.hpp"
 #include "Render/Renderer.hpp"
-#include "Render/RendererConfig.hpp"
 #include "Render/Window.hpp"
 #include "Utils/Profiler.hpp"
 
@@ -326,7 +325,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     vuk::RuntimeCreateParameters{instance, self.device, self.physical_device, std::move(executors), fps}
   );
 
-  self.set_vsync(static_cast<bool>(RendererCVar::cvar_vsync.get()));
+  self.set_vsync(static_cast<bool>(self.context_cvar.cvar_vsync.get()));
 
   self.superframe_resource.emplace(*self.runtime, self.num_inflight_frames);
   self.superframe_allocator.emplace(*self.superframe_resource);
@@ -447,7 +446,7 @@ auto RenderContext::is_vsync() const -> bool { return present_mode == vuk::Prese
 auto RenderContext::new_frame(this RenderContext& self) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
-  auto vsync_cvar_enabled = static_cast<bool>(RendererCVar::cvar_vsync.get());
+  auto vsync_cvar_enabled = static_cast<bool>(self.context_cvar.cvar_vsync.get());
   auto wanted_vsync = vsync_cvar_enabled ? vuk::PresentModeKHR::eFifo : vuk::PresentModeKHR::eImmediate;
   auto present_mode_changed = wanted_vsync != self.present_mode;
   if (present_mode_changed) {

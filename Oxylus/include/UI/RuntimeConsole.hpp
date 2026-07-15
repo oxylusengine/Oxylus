@@ -5,6 +5,7 @@
 #include <functional>
 #include <imgui.h>
 
+#include "Utils/CVars.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
@@ -17,7 +18,7 @@ public:
 
     const std::string& as_string() const noexcept { return str_value; }
 
-    template <typename T = int32_t>
+    template <typename T = i32>
     [[nodiscard]]
     std::optional<T> as() const noexcept {
       if constexpr (std::is_same_v<T, std::string>) {
@@ -54,19 +55,21 @@ public:
   RuntimeConsole();
   ~RuntimeConsole();
 
-  void register_command(
+  auto register_command(
     const std::string& command,
     const std::string& on_succes_log,
     const std::function<void(const ParsedCommandValue& value)>& action
-  );
-  void register_command(const std::string& command, const std::string& on_succes_log, int32_t* value);
-  void register_command(const std::string& command, const std::string& on_succes_log, std::string* value);
-  void register_command(const std::string& command, const std::string& on_succes_log, bool* value);
+  ) -> void;
+  auto register_command(const std::string& command, const std::string& on_succes_log, i32* value) -> void;
+  auto register_command(const std::string& command, const std::string& on_succes_log, std::string* value) -> void;
+  auto register_command(const std::string& command, const std::string& on_succes_log, bool* value) -> void;
 
-  void add_log(const char* fmt, loguru::Verbosity verb);
-  void clear_log();
+  auto add_log(const char* fmt, loguru::Verbosity verb) -> void;
+  auto clear_log() -> void;
 
-  void on_imgui_render();
+  auto set_scene_cvar_system(this RuntimeConsole& self, CVarSystem* system) -> void { self.scene_cvar_system = system; }
+
+  auto render(this RuntimeConsole& self) -> void;
 
 private:
   struct ConsoleText {
@@ -74,37 +77,39 @@ private:
     loguru::Verbosity verbosity = {};
   };
 
-  void render_console_text(const std::string& text, int32_t id, loguru::Verbosity verb);
+  void render_console_text(const std::string& text, i32 id, loguru::Verbosity verb);
 
   struct ConsoleCommand {
-    int32_t* int_value = nullptr;
+    i32* int_value = nullptr;
     std::string* str_value = nullptr;
     bool* bool_value = nullptr;
     std::function<void(const ParsedCommandValue& value)> action = nullptr;
     std::string on_succes_log = {};
   };
 
+  CVarSystem* scene_cvar_system = nullptr;
+
   // Commands
   ankerl::unordered_dense::map<std::string, ConsoleCommand> command_map;
-  void process_command(const std::string& command);
+  auto process_command(this RuntimeConsole& self, const std::string& command) -> void;
 
-  void help_command(const ParsedCommandValue& value);
-  std::vector<std::string> get_available_commands();
+  auto help_command(this RuntimeConsole& self, const ParsedCommandValue& value) -> void;
+  auto get_available_commands(this RuntimeConsole& self) -> std::vector<std::string>;
 
-  ParsedCommandValue parse_value(const std::string& command);
-  std::string parse_command(const std::string& command);
+  auto parse_value(const std::string& command) -> ParsedCommandValue;
+  auto parse_command(const std::string& command) -> std::string;
 
   // Input field
   static constexpr uint32_t MAX_TEXT_BUFFER_SIZE = 32;
-  int32_t history_position = -1;
+  i32 history_position = -1;
   std::vector<ConsoleText> text_buffer = {};
   std::vector<std::string> input_log = {};
   bool request_scroll_to_bottom = true;
   bool request_keyboard_focus = true;
   bool auto_scroll = true;
-  int input_text_callback(ImGuiInputTextCallbackData* data);
+  i32 input_text_callback(ImGuiInputTextCallbackData* data);
 
   loguru::Verbosity text_filter = loguru::Verbosity_OFF;
-  float animation_counter = 0.0f;
+  f32 animation_counter = 0.0f;
 };
 } // namespace ox

@@ -3,6 +3,7 @@
 #include "EditorPanelState.hpp"
 #include "Scene/Scene.hpp"
 #include "SceneHierarchyPanel.hpp"
+#include "UI/RuntimeConsole.hpp"
 #include "Utils/SceneManager.hpp"
 
 namespace ox {
@@ -30,6 +31,8 @@ public:
 private:
   std::shared_ptr<EditorScene> editor_scene = nullptr;
   bool draw_scene_stats = false;
+
+  RuntimeConsole runtime_console = {};
 
   enum class AspectRatio : i32 {
     Auto = 0,

@@ -15,6 +15,7 @@
 #include "Core/UUID.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Render/DebugRenderer.hpp"
+#include "Render/RendererCVar.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Scripting/LuaSystem.hpp"
@@ -63,6 +64,8 @@ public:
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
   ankerl::unordered_dense::map<u32, flecs::entity> transform_index_entities_map = {};
+
+  RendererCVar renderer_cvar = {};
 
   SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};

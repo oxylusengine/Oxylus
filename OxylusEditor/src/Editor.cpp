@@ -20,9 +20,7 @@
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/RmlUI.hpp"
 #include "UI/UI.hpp"
-#include "Utils/CVars.hpp"
 #include "Utils/Command.hpp"
-#include "Utils/EditorConfig.hpp"
 
 namespace ox {
 auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
@@ -147,24 +145,6 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
     loguru::Verbosity_INFO
   );
 
-  self.runtime_console
-    .register_command("test_loading", "Test Loading.", [&self](const RuntimeConsole::ParsedCommandValue&) {
-      self.notification_system.add(Notification("Test Loading", true, Notification::Type::Loading));
-    });
-
-  self.runtime_console.register_command("test_info", "Test Info.", [&self](const RuntimeConsole::ParsedCommandValue&) {
-    self.notification_system.add(Notification("Test Info", true, Notification::Type::Info));
-  });
-
-  self.runtime_console
-    .register_command("test_warn", "Test Warning.", [&self](const RuntimeConsole::ParsedCommandValue&) {
-      self.notification_system.add(Notification("Test Warning", true, Notification::Type::Warn));
-    });
-
-  self.runtime_console.register_command("test_err", "Test Error.", [&self](const RuntimeConsole::ParsedCommandValue&) {
-    self.notification_system.add(Notification("Test Error", true, Notification::Type::Error));
-  });
-
   self.thumbnail_manager.init();
 
   return {};
@@ -245,9 +225,9 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
   job_man.get_tracker().cleanup_old();
   self.notification_system.draw();
 
-  if (EditorCVar::cvar_show_style_editor.get())
+  if (self.editor_cvar.cvar_show_style_editor.get())
     ImGui::ShowStyleEditor();
-  if (EditorCVar::cvar_show_imgui_demo.get())
+  if (self.editor_cvar.cvar_show_imgui_demo.get())
     ImGui::ShowDemoWindow();
 
   constexpr ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
@@ -279,8 +259,6 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
     if (!self.main_viewport_panel.is_fullscreen()) {
       self.editor_panel_registry.render_all(swapchain_attachment);
     }
-
-    self.runtime_console.on_imgui_render();
 
     self.draw_menubar();
 
@@ -523,7 +501,6 @@ void Editor::draw_menubar(this Editor& self) {
     if (ImGui::BeginMenu("Window")) {
       ImGui::MenuItem("Inspector", nullptr, &self.editor_panel_registry.get<InspectorPanel>().visible);
       ImGui::MenuItem("Scene hierarchy", nullptr, &self.editor_panel_registry.get<SceneHierarchyPanel>().visible);
-      ImGui::MenuItem("Console window", nullptr, &self.runtime_console.visible);
       ImGui::MenuItem("Text Editor", nullptr, &self.editor_panel_registry.get<TextEditorPanel>().visible);
       if (ImGui::BeginMenu("Layout")) {
         if (ImGui::MenuItem("Classic")) {
