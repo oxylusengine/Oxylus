@@ -1,9 +1,6 @@
 #include "ThumbnailManager.hpp"
 
 #include <imgui.h>
-#include <stb_image.h>
-#include <stb_image_resize2.h>
-#include <stb_image_write.h>
 #include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetManager.hpp"
@@ -41,25 +38,23 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
       auto& job_man = App::get_job_manager();
       job_man.push_job_name("ContentPanelThumbnail_WritePNG");
       job_man.submit(Job::create([expected_png = render_job.expected_png, pixel_bytes = *pixels]() {
-        stbi_write_png(
-          expected_png.string().c_str(),
-          THUMBNAIL_SIZE,
-          THUMBNAIL_SIZE,
-          4,
-          pixel_bytes.data(),
-          THUMBNAIL_SIZE * 4
-        );
+        // gg
+        // stbi_write_png(
+        //   expected_png.string().c_str(),
+        //   THUMBNAIL_SIZE,
+        //   THUMBNAIL_SIZE,
+        //   4,
+        //   pixel_bytes.data(),
+        //   THUMBNAIL_SIZE * 4
+        // );
       }));
       job_man.pop_job_name();
 
-      auto thumbnail_texture = std::make_shared<Texture>();
-      thumbnail_texture->create(
-        {},
-        TextureLoadInfo{.loaded_data = pixels->data(), .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}}
-      );
+      auto thumbnail_texture = Texture::create({.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}});
+      // TODO load data
 
       auto lock = std::unique_lock(self.thumbnail_mutex);
-      self.thumbnail_cache.insert_or_assign(render_job.asset_hash, thumbnail_texture);
+      self.thumbnail_cache.insert_or_assign(render_job.asset_hash, std::move(thumbnail_texture));
       self.active_jobs.erase(render_job.asset_hash);
     } else {
       auto lock = std::unique_lock(self.thumbnail_mutex);
@@ -82,11 +77,11 @@ auto ThumbnailManager::reset(this ThumbnailManager& self) -> void {
 }
 
 auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const std::filesystem::path& asset_path)
-  -> option<std::shared_ptr<Texture>> {
+  -> TextureView {
   ZoneScoped;
 
   if (!std::filesystem::exists(asset_path)) {
-    return nullopt;
+    return {};
   }
 
   auto asset_hash = self.get_asset_hash(asset_path);
@@ -94,14 +89,14 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
   {
     auto read_lock = std::shared_lock(self.thumbnail_mutex);
     if (self.thumbnail_cache.contains(asset_hash)) {
-      return self.thumbnail_cache[asset_hash];
+      return self.thumbnail_cache[asset_hash].view();
     }
   }
 
   {
     auto lock = std::unique_lock(self.thumbnail_mutex);
     if (self.active_jobs.contains(asset_hash)) {
-      return nullopt;
+      return {};
     }
     self.active_jobs.insert(asset_hash);
   }
@@ -109,30 +104,30 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
   auto& job_man = App::get_job_manager();
   job_man.push_job_name("ContentPanelThumbnail_TextureLoad");
   job_man.submit(Job::create([&self, asset_path, asset_hash]() {
-    auto thumbnail_texture = std::make_shared<Texture>();
-    thumbnail_texture->create(
-      asset_path.string(),
-      TextureLoadInfo{
-        .mime = Texture::path_to_mime(asset_path),
-        .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}
-      }
+    auto thumbnail_texture = Texture::create(
+      // asset_path.string(),
+      // TextureLoadInfo{
+      //   .mime = Texture::path_to_mime(asset_path),
+      //
+      // }
+      {.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}}
     );
 
     auto lock = std::unique_lock(self.thumbnail_mutex);
-    self.thumbnail_cache.insert_or_assign(asset_hash, thumbnail_texture);
+    self.thumbnail_cache.insert_or_assign(asset_hash, std::move(thumbnail_texture));
     self.active_jobs.erase(asset_hash);
   }));
   job_man.pop_job_name();
 
-  return nullopt;
+  return {};
 }
 
 auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const std::filesystem::path& asset_path)
-  -> option<std::shared_ptr<Texture>> {
+  -> TextureView {
   ZoneScoped;
 
   if (!std::filesystem::exists(asset_path)) {
-    return nullopt;
+    return {};
   }
 
   auto asset_hash = self.get_asset_hash(asset_path);
@@ -140,14 +135,14 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
   {
     auto read_lock = std::shared_lock(self.thumbnail_mutex);
     if (self.thumbnail_cache.contains(asset_hash)) {
-      return self.thumbnail_cache[asset_hash];
+      return self.thumbnail_cache[asset_hash].view();
     }
   }
 
   {
     auto lock = std::unique_lock(self.thumbnail_mutex);
     if (self.active_jobs.contains(asset_hash)) {
-      return nullopt;
+      return {};
     }
     self.active_jobs.insert(asset_hash);
   }
@@ -158,22 +153,20 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
     auto& job_man = App::get_job_manager();
     job_man.push_job_name("ContentPanelThumbnail_ModelCacheLoad");
     job_man.submit(Job::create([&self, expected_png, asset_hash]() {
-      auto thumbnail_texture = std::make_shared<Texture>();
-      thumbnail_texture->create(
-        expected_png.string(),
-        TextureLoadInfo{
-          .mime = Texture::path_to_mime(expected_png),
-          .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}
-        }
+      auto thumbnail_texture = Texture::create(
+        // expected_png.string(),
+        // TextureLoadInfo{
+        //   .mime = Texture::path_to_mime(expected_png),
+        {.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}}
       );
 
       auto lock = std::unique_lock(self.thumbnail_mutex);
-      self.thumbnail_cache.insert_or_assign(asset_hash, thumbnail_texture);
+      self.thumbnail_cache.insert_or_assign(asset_hash, std::move(thumbnail_texture));
       self.active_jobs.erase(asset_hash);
     }));
     job_man.pop_job_name();
 
-    return nullopt;
+    return {};
   }
 
   auto& am = App::mod<AssetManager>();
@@ -181,7 +174,7 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
   if (!model_uuid) {
     auto lock = std::unique_lock(self.thumbnail_mutex);
     self.active_jobs.erase(asset_hash);
-    return nullopt;
+    return {};
   }
 
   {
@@ -189,7 +182,7 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
     self.pending_mesh_renders.push({.asset_hash = asset_hash, .model_uuid = model_uuid, .expected_png = expected_png});
   }
 
-  return nullopt;
+  return {};
 }
 
 auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_uuid, u32 size)

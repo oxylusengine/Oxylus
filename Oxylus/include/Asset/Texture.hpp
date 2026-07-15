@@ -6,23 +6,25 @@
 #include <vuk/runtime/vk/PipelineInstance.hpp>
 #include <vuk/runtime/vk/Query.hpp>
 
-#include "Core/Option.hpp"
 #include "Core/Types.hpp"
 #include "Render/RenderContext.hpp"
 
 using Preset = vuk::ImageAttachment::Preset;
 
 namespace ox {
-struct TextureLoadInfo {
-  Preset preset = Preset::eMap2D;
+enum class TextureID : u64 { Invalid = std::numeric_limits<u64>::max() };
+
+struct TextureCreateInfo {
   vuk::Format format = vuk::Format::eR8G8B8A8Srgb;
-  enum class MimeType { Generic, KTX, DDS } mime = MimeType::Generic;
-  std::span<const u8> bytes = {};
-  option<void*> loaded_data = ox::nullopt;
-  option<vuk::Extent3D> extent = ox::nullopt;
+  vuk::Extent3D extent = {};
+  u32 layer_count = 1;
+  u32 level_count = 1;
   vuk::ImageCreateFlags image_flags = {};
-  option<uint32_t> layer_count = ox::nullopt;
-  option<vuk::ImageViewType> view_type = ox::nullopt;
+  vuk::ImageType image_type = vuk::ImageType::e2D;
+  vuk::ImageTiling tiling = vuk::ImageTiling::eOptimal;
+  vuk::ImageUsageFlags usage = {};
+  vuk::ImageViewCreateFlags image_view_flags = {};
+  vuk::ImageViewType view_type = vuk::ImageViewType::eInfer;
   vuk::SamplerCreateInfo sampler_info = {
     .magFilter = vuk::Filter::eLinear,
     .minFilter = vuk::Filter::eLinear,
@@ -33,99 +35,67 @@ struct TextureLoadInfo {
   };
 };
 
-enum class TextureID : u64 { Invalid = std::numeric_limits<u64>::max() };
+struct TextureView {
+  vuk::ImageAttachment attachment = {};
+  ImageViewID image_view_id = ImageViewID::Invalid;
+
+  operator bool() const { return image_view_id != ImageViewID::Invalid; }
+
+  auto acquire(this const TextureView& self, std::string_view name, vuk::Access last_access, OX_THISCALL)
+    -> vuk::Value<vuk::ImageAttachment>;
+  auto discard(this const TextureView& self, std::string_view name, OX_THISCALL) -> vuk::Value<vuk::ImageAttachment>;
+
+  auto get_extent() const -> const vuk::Extent3D& { return attachment.extent; }
+  auto get_format() const -> vuk::Format { return attachment.format; }
+  auto get_view_id() const -> ImageViewID { return image_view_id; }
+};
+
 class Texture {
+  vuk::ImageAttachment attachment = {};
+  ImageID image_id = ImageID::Invalid;
+  ImageViewID image_view_id = ImageViewID::Invalid;
+  SamplerID sampler_id = SamplerID::Invalid;
+
+  Texture(
+    vuk::ImageAttachment attachment_, ImageID image_id_, ImageViewID image_view_id_, SamplerID sampler_id_
+  ) noexcept;
+
+  auto get_name(OX_THISCALL) const -> vuk::Name;
+
 public:
   Texture() = default;
-  Texture(const std::string& name) : name_(name) {}
+  ~Texture() noexcept;
+  Texture(const Texture&) = delete;
+  Texture& operator=(const Texture&) = delete;
 
-  Texture& operator=(Texture&& other) noexcept {
-    if (this != &other) {
-      image_id = other.image_id;
-      image_view_id = other.image_view_id;
-      sampler_id = other.sampler_id;
-      attachment_ = std::move(other.attachment_);
-      name_ = std::move(other.name_);
-    }
-    return *this;
-  }
+  Texture(Texture&&) noexcept;
+  Texture& operator=(Texture&&) noexcept;
 
-  Texture(Texture&& other) noexcept { *this = std::move(other); }
+  static auto create(const TextureCreateInfo& info) -> Texture;
+  auto destroy(this Texture&) -> void;
 
-  ~Texture() = default;
-
-  auto create(
-    const std::filesystem::path& path,
-    TextureLoadInfo load_info,
-    const std::source_location& loc = std::source_location::current()
-  ) -> void;
-
-  auto disable_transition() -> Texture&;
-  auto release_as(vuk::Access access) -> Texture&;
-
-  auto destroy() -> void;
-
-  auto attachment() const -> vuk::ImageAttachment { return attachment_; }
-  auto acquire(
-    vuk::Name name = {},
-    vuk::Access last_access = vuk::Access::eFragmentSampled,
-    vuk::source_location LOC = VUK_HERE_AND_NOW()
-  ) const -> vuk::Value<vuk::ImageAttachment>;
-  auto discard(vuk::Name name = {}, vuk::source_location LOC = VUK_HERE_AND_NOW()) const
+  auto acquire(this const Texture&, std::string_view name, vuk::Access last_access, OX_THISCALL)
     -> vuk::Value<vuk::ImageAttachment>;
+  auto discard(this const Texture&, std::string_view name, OX_THISCALL) -> vuk::Value<vuk::ImageAttachment>;
 
+  auto set_name(std::string_view name, OX_THISCALL) -> void;
+
+  auto view(this const Texture& self) -> TextureView;
   auto get_image() const -> const vuk::Image;
-  auto get_view() const -> const vuk::ImageView;
-  auto get_extent() const -> const vuk::Extent3D& { return attachment_.extent; }
-  auto get_format() const -> vuk::Format { return attachment_.format; }
-
-  auto get_name() const -> const vuk::Name& { return name_; }
-  auto set_name(const vuk::Name& name, const std::source_location& loc = std::source_location::current()) -> void;
-
-  auto get_image_id() const -> ImageID { return image_id; }
-  auto get_view_id() const -> ImageViewID { return image_view_id; }
-  auto get_image_index() const -> u32 { return SlotMap_decode_id(image_id).index; }
-  auto get_view_index() const -> u32 { return SlotMap_decode_id(image_view_id).index; }
-  auto get_sampler_id() const -> SamplerID { return sampler_id; }
-  auto get_sampler_index() const -> u32 { return SlotMap_decode_id(sampler_id).index; }
+  auto get_image_view() const -> const vuk::ImageView;
+  auto get_extent() const -> const vuk::Extent3D&;
+  auto get_format() const -> vuk::Format;
+  auto get_image_id() const -> ImageID;
+  auto get_view_id() const -> ImageViewID;
+  auto get_image_index() const -> u32;
+  auto get_view_index() const -> u32;
+  auto get_sampler_id() const -> SamplerID;
+  auto get_sampler_index() const -> u32;
 
   operator bool() const { return image_id != ImageID::Invalid; }
 
-  static auto load_stb_image(
-    const std::filesystem::path& path,
-    u32* width = nullptr,
-    u32* height = nullptr,
-    u32* bits = nullptr,
-    bool srgb = true
-  ) -> std::unique_ptr<u8[]>;
-
-  static auto load_stb_image_from_memory(
-    void* buffer,
-    size_t len,
-    u32* width = nullptr,
-    u32* height = nullptr,
-    u32* bits = nullptr,
-    bool flipY = false,
-    bool srgb = true
-  ) -> std::unique_ptr<u8[]>;
-
-  static auto get_magenta_texture(u32 width, u32 height, u32 channels) -> u8*;
-
-  static auto convert_to_four_channels(u32 width, u32 height, const u8* three_channel_data) -> uint8_t*;
-
-  static auto get_mip_count(const vuk::Extent3D extent) -> u32 {
+  static auto calculate_mip_count(const vuk::Extent3D& extent) -> u32 {
     return static_cast<u32>(log2f(static_cast<f32>(std::max(std::max(extent.width, extent.height), extent.depth)))) + 1;
   }
-
-  static auto path_to_mime(const std::filesystem::path& path) -> TextureLoadInfo::MimeType;
-
-private:
-  vuk::ImageAttachment attachment_ = {};
-  ImageID image_id = ImageID::Invalid;
-  ImageViewID image_view_id = ImageViewID::Invalid;
-  SamplerID sampler_id;
-  vuk::Name name_ = {};
-  bool transition_ = true;
-  vuk::Access release_as_ = vuk::eNone;
 };
 } // namespace ox

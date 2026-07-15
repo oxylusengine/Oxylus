@@ -479,7 +479,7 @@ auto RendererInstance::render(
 
   const auto dst_extent = dst_attachment->extent;
   const auto final_half_extent = dst_extent / 2;
-  const auto final_half_mip_count = Texture::get_mip_count(final_half_extent);
+  const auto final_half_mip_count = Texture::calculate_mip_count(final_half_extent);
 
   OX_CHECK_GT(dst_extent.width, 0u);
   OX_CHECK_GT(dst_extent.height, 0u);
@@ -548,13 +548,19 @@ auto RendererInstance::render(
      .extent = hiz_extent,
      .format = vuk::Format::eR32Sfloat,
      .sample_count = vuk::SampleCountFlagBits::e1,
-     .level_count = std::min(Texture::get_mip_count(hiz_extent), 13u),
+     .level_count = std::min(Texture::calculate_mip_count(hiz_extent), 13u),
      .layer_count = 1}
   );
   hiz_attachment = vuk::clear_image(std::move(hiz_attachment), vuk::DepthZero);
 
-  auto sky_transmittance_lut_attachment = self.renderer.sky_transmittance_lut_attachment;
-  auto sky_multiscatter_lut_attachment = self.renderer.sky_multiscatter_lut_attachment;
+  auto sky_transmittance_lut_attachment = self.renderer.sky_transmittance_lut.acquire(
+    "sky transmittance lut",
+    vuk::eFragmentSampled
+  );
+  auto sky_multiscatter_lut_attachment = self.renderer.sky_multiscatter_lut.acquire(
+    "sky multiscatter lut",
+    vuk::eFragmentSampled
+  );
 
   auto sky_view_lut_attachment = vuk::declare_ia(
     "sky_view_lut",
@@ -582,9 +588,9 @@ auto RendererInstance::render(
   sky_aerial_perspective_attachment.same_format_as(sky_view_lut_attachment);
   sky_aerial_perspective_attachment = vuk::clear_image(std::move(sky_aerial_perspective_attachment), vuk::Black<f32>);
 
-  auto sky_cubemap_attachment = self.renderer.sky_cubemap_attachment;
+  auto sky_cubemap_attachment = self.renderer.sky_cubemap.acquire("sky cubemap", vuk::eFragmentSampled);
 
-  auto hilbert_noise_lut_attachment = self.renderer.hilbert_noise_lut_attachment;
+  auto hilbert_noise_lut_attachment = self.renderer.hilbert_noise_lut.acquire("hilbert noise", vuk::eFragmentSampled);
 
   auto visbuffer_attachment = vuk::declare_ia(
     "visbuffer",
@@ -1284,8 +1290,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.atmosphere.aerial_perspective_exposure = atmos_info->aerial_perspective_exposure;
         self.atmosphere.sky_view_lut_size = self.sky_view_lut_extent;
         self.atmosphere.aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
-        self.atmosphere.transmittance_lut_size = self.renderer.sky_transmittance_lut_view.get_extent();
-        self.atmosphere.multiscattering_lut_size = self.renderer.sky_multiscatter_lut_view.get_extent();
+        self.atmosphere.transmittance_lut_size = self.renderer.sky_transmittance_lut.get_extent();
+        self.atmosphere.multiscattering_lut_size = self.renderer.sky_multiscatter_lut.get_extent();
       }
 
       if (const auto* sky_info = e.try_get<SkyComponent>()) {

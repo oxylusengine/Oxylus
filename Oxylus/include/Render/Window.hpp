@@ -99,8 +99,6 @@ struct WindowInfo {
       u32 height = 0;
     };
     option<Loaded> loaded = nullopt;
-
-    option<std::string> path = nullopt;
   };
 
   constexpr static i32 USE_PRIMARY_MONITOR = 0;

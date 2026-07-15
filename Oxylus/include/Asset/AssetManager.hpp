@@ -85,7 +85,7 @@ public:
   auto load_model(this AssetManager& self, const UUID& uuid) -> bool;
   auto unload_model(this AssetManager& self, const UUID& uuid) -> bool;
 
-  auto load_texture(this AssetManager& self, const UUID& uuid, TextureLoadInfo info = {}) -> bool;
+  auto load_texture(this AssetManager& self, const UUID& uuid) -> bool;
   auto unload_texture(this AssetManager& self, const UUID& uuid) -> bool;
   auto is_texture_loaded(this AssetManager& self, const UUID& uuid) -> bool;
 

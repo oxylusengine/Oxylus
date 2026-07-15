@@ -66,7 +66,7 @@ private:
   SlotMap<RmlCompiledGeometry, RmlGeometryID> compiled_geometries;
   std::vector<RmlDrawCmd> draw_commands = {};
 
-  SlotMap<std::unique_ptr<Texture>, RmlTextureID> loaded_textures = {};
+  SlotMap<Texture, RmlTextureID> loaded_textures = {};
   Texture* white_texture = nullptr;
 
   bool current_scissor_enabled = false;

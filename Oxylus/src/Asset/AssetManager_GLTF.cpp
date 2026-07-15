@@ -62,15 +62,15 @@ auto gltf_mime_type_to_asset_file_type(fastgltf::MimeType mime) -> AssetFileType
   }
 }
 
-auto gltf_mime_type_to_texture_mime_type(fastgltf::MimeType mime) -> TextureLoadInfo::MimeType {
-  switch (mime) {
-    case fastgltf::MimeType::JPEG:
-    case fastgltf::MimeType::PNG : return TextureLoadInfo::MimeType::Generic;
-    case fastgltf::MimeType::KTX2: return TextureLoadInfo::MimeType::KTX;
-    case fastgltf::MimeType::DDS : return TextureLoadInfo::MimeType::DDS;
-    default                      : return TextureLoadInfo::MimeType::Generic;
-  }
-}
+// auto gltf_mime_type_to_texture_mime_type(fastgltf::MimeType mime) -> TextureLoadInfo::MimeType {
+//   switch (mime) {
+//     case fastgltf::MimeType::JPEG:
+//     case fastgltf::MimeType::PNG : return TextureLoadInfo::MimeType::Generic;
+//     case fastgltf::MimeType::KTX2: return TextureLoadInfo::MimeType::KTX;
+//     case fastgltf::MimeType::DDS : return TextureLoadInfo::MimeType::DDS;
+//     default                      : return TextureLoadInfo::MimeType::Generic;
+//   }
+// }
 
 auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::SamplerCreateInfo {
   auto get_address_mode = [](fastgltf::Wrap v) -> vuk::SamplerAddressMode {
@@ -376,52 +376,52 @@ auto load_gltf_texture(
   ZoneScoped;
 
   auto mapped_file = File{};
-  auto texture_load_info = TextureLoadInfo{
+  auto texture_load_info = TextureCreateInfo{
     .format = format,
   };
-  std::visit(
-    ox::match{
-      [](const auto&) {},
-      [&](const fastgltf::sources::BufferView& v) {
-        // Embedded buffer
-        auto& buffer_view = asset.bufferViews[v.bufferViewIndex];
-        auto& buffer = asset.buffers[buffer_view.bufferIndex];
-        std::visit(
-          ox::match{
-            [](const auto&) {},
-            [&](const fastgltf::sources::Array& array) {
-              texture_load_info.bytes = std::span(
-                reinterpret_cast<const u8*>(array.bytes.data() + buffer_view.byteOffset),
-                buffer_view.byteLength
-              );
-            },
-          },
-          buffer.data
-        );
+  // std::visit(
+  //   ox::match{
+  //     [](const auto&) {},
+  //     [&](const fastgltf::sources::BufferView& v) {
+  //       // Embedded buffer
+  //       auto& buffer_view = asset.bufferViews[v.bufferViewIndex];
+  //       auto& buffer = asset.buffers[buffer_view.bufferIndex];
+  //       std::visit(
+  //         ox::match{
+  //           [](const auto&) {},
+  //           [&](const fastgltf::sources::Array& array) {
+  //             texture_load_info.bytes = std::span(
+  //               reinterpret_cast<const u8*>(array.bytes.data() + buffer_view.byteOffset),
+  //               buffer_view.byteLength
+  //             );
+  //           },
+  //         },
+  //         buffer.data
+  //       );
 
-        texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
-      },
-      [&](const fastgltf::sources::Array& v) {
-        texture_load_info.bytes = std::span(
-          const_cast<u8*>(reinterpret_cast<const u8*>(v.bytes.data())),
-          v.bytes.size_bytes()
-        );
-        texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
-      },
-      [&](const fastgltf::sources::URI& uri) {
-        // External file
-        texture_load_info.mime = Texture::path_to_mime(uri.uri.fspath());
-      },
-    },
-    gltf_image.data
-  );
+  //       texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
+  //     },
+  //     [&](const fastgltf::sources::Array& v) {
+  //       texture_load_info.bytes = std::span(
+  //         const_cast<u8*>(reinterpret_cast<const u8*>(v.bytes.data())),
+  //         v.bytes.size_bytes()
+  //       );
+  //       texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
+  //     },
+  //     [&](const fastgltf::sources::URI& uri) {
+  //       // External file
+  //       texture_load_info.mime = Texture::path_to_mime(uri.uri.fspath());
+  //     },
+  //   },
+  //   gltf_image.data
+  // );
 
   if (gltf_texture.samplerIndex.has_value()) {
     const auto& sampler = asset.samplers[gltf_texture.samplerIndex.value()];
     texture_load_info.sampler_info = gltf_sampler_to_sampler(sampler);
   }
 
-  self.load_texture(texture_uuid, std::move(texture_load_info));
+  self.load_texture(texture_uuid);
 }
 
 auto register_gltf_materials(

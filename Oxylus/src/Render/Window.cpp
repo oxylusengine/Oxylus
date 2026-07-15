@@ -5,7 +5,6 @@
 #include <SDL3/SDL_vulkan.h>
 #include <array>
 #include <ranges>
-#include <stb_image.h>
 
 #include "Core/App.hpp"
 #include "Core/Base.hpp"
@@ -147,9 +146,7 @@ auto Window::create(const WindowInfo& info) -> Window {
 
   void* image_data = nullptr;
   int width = {}, height = {}, channels = {};
-  if (info.icon.path.has_value()) {
-    image_data = stbi_load(info.icon.path->c_str(), &width, &height, &channels, 4);
-  } else if (info.icon.loaded.has_value()) {
+  if (info.icon.loaded.has_value()) {
     OX_CHECK_GT(info.icon.loaded->width, 0u);
     OX_CHECK_GT(info.icon.loaded->height, 0u);
     image_data = info.icon.loaded->data;
@@ -162,8 +159,6 @@ auto Window::create(const WindowInfo& info) -> Window {
       LOG_SDL_ERROR(SDL_SetWindowIcon);
     }
     SDL_DestroySurface(surface);
-    if (!info.icon.loaded.has_value())
-      stbi_image_free(image_data);
   }
 
   i32 real_width;

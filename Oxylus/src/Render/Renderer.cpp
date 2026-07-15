@@ -6,8 +6,8 @@
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
-#include "Render/RendererInstance.hpp"
 #include "Render/RenderContext.hpp"
+#include "Render/RendererInstance.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
@@ -43,8 +43,8 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     return std::unexpected("Cannot initialize renderer shaders!");
   }
 
-  for (const auto &entry : shader_file->entries) {
-    const auto *pipeline_data = std::get_if<ShaderPipelineData>(&entry.data);
+  for (const auto& entry : shader_file->entries) {
+    const auto* pipeline_data = std::get_if<ShaderPipelineData>(&entry.data);
     if (!pipeline_data) {
       continue;
     }
@@ -52,21 +52,17 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     self.render_context->create_pipeline(*pipeline_data);
   }
 
-  self.sky_transmittance_lut_view = Texture("sky_transmittance_lut");
-  self.sky_transmittance_lut_view.create(
-    {},
-    {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
-     .format = vuk::Format::eR16G16B16A16Sfloat,
-     .extent = vuk::Extent3D{.width = 256u, .height = 64u, .depth = 1u}}
-  );
+  self.sky_transmittance_lut = Texture::create({
+    .format = vuk::Format::eR16G16B16A16Sfloat,
+    .extent = vuk::Extent3D{.width = 256u, .height = 64u, .depth = 1u},
+  });
+  OX_ASSERT(self.sky_transmittance_lut);
 
-  self.sky_multiscatter_lut_view = Texture("sky_multiscatter_lut");
-  self.sky_multiscatter_lut_view.create(
-    {},
-    {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
-     .format = vuk::Format::eR16G16B16A16Sfloat,
-     .extent = vuk::Extent3D{.width = 32u, .height = 32u, .depth = 1u}}
-  );
+  self.sky_multiscatter_lut = Texture::create({
+    .format = vuk::Format::eR16G16B16A16Sfloat,
+    .extent = vuk::Extent3D{.width = 32u, .height = 32u, .depth = 1u},
+  });
+  OX_ASSERT(self.sky_multiscatter_lut);
 
   constexpr auto HILBERT_NOISE_LUT_WIDTH = 64_u32;
   auto hilbert_index = [](u32 pos_x, u32 pos_y) -> u16 {
@@ -97,37 +93,32 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     }
   }
 
-  self.hilbert_noise_lut = Texture("hilbert_noise_lut");
-  self.hilbert_noise_lut.create(
-    {},
-    {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
-     .format = vuk::Format::eR16Uint,
-     .loaded_data = hilbert_noise,
+  self.hilbert_noise_lut = Texture::create(
+    {.format = vuk::Format::eR16Uint,
      .extent = vuk::Extent3D{.width = HILBERT_NOISE_LUT_WIDTH, .height = HILBERT_NOISE_LUT_WIDTH, .depth = 1u}}
   );
+  OX_ASSERT(self.hilbert_noise_lut);
 
-  self.sky_cubemap_view = Texture("sky_cubemap");
-  self.sky_cubemap_view.create(
-    {},
-    {.preset = vuk::ImageAttachment::Preset::eSTT2DUnmipped,
-     .format = vuk::Format::eR16G16B16A16Sfloat,
+  self.sky_cubemap = Texture::create(
+    {.format = vuk::Format::eR16G16B16A16Sfloat,
      .extent = vuk::Extent3D{.width = 32u, .height = 32u, .depth = 1u},
-     .image_flags = vuk::ImageCreateFlagBits::eCubeCompatible,
      .layer_count = 6u,
+     .image_flags = vuk::ImageCreateFlagBits::eCubeCompatible,
      .view_type = vuk::ImageViewType::eCube}
   );
+  OX_ASSERT(self.sky_cubemap);
 
-  auto sky_cubemap_init = self.sky_cubemap_view.discard("sky_cubemap_init");
+  auto sky_cubemap_init = self.sky_cubemap.discard("sky_cubemap_init");
   sky_cubemap_init = vuk::clear_image(std::move(sky_cubemap_init), vuk::Black<float>);
   sky_cubemap_init = sky_cubemap_init.as_released(vuk::eFragmentSampled);
   self.render_context->wait_on(std::move(sky_cubemap_init));
 
   auto temp_atmos_info = GPU::Atmosphere{};
-  temp_atmos_info.transmittance_lut_size = self.sky_transmittance_lut_view.get_extent();
-  temp_atmos_info.multiscattering_lut_size = self.sky_multiscatter_lut_view.get_extent();
+  temp_atmos_info.transmittance_lut_size = self.sky_transmittance_lut.get_extent();
+  temp_atmos_info.multiscattering_lut_size = self.sky_multiscatter_lut.get_extent();
   auto temp_atmos_buffer = self.render_context->scratch_buffer(temp_atmos_info);
 
-  auto transmittance_lut_attachment = self.sky_transmittance_lut_view.discard("sky_transmittance_lut");
+  auto transmittance_lut_attachment = self.sky_transmittance_lut.discard("sky_transmittance_lut");
 
   auto transmittance_lut_pass = vuk::make_pass(
     "transmittance_lut_pass",
@@ -147,7 +138,7 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     temp_atmos_buffer
   );
 
-  auto multiscatter_lut_attachment = self.sky_multiscatter_lut_view.discard("sky_multiscatter_lut");
+  auto multiscatter_lut_attachment = self.sky_multiscatter_lut.discard("sky_multiscatter_lut");
   auto sky_multiscatter_lut_pass = vuk::make_pass(
     "sky_multiscatter_lut_pass",
     [](
@@ -228,18 +219,5 @@ auto Renderer::deinit(this Renderer& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   return {};
-}
-
-auto Renderer::new_frame(this Renderer& self) -> void {
-  self.sky_transmittance_lut_attachment = self.sky_transmittance_lut_view.acquire(
-    "sky_transmittance_lut",
-    vuk::Access::eComputeSampled
-  );
-  self.sky_multiscatter_lut_attachment = self.sky_multiscatter_lut_view.acquire(
-    "sky_multiscatter_lut",
-    vuk::Access::eComputeSampled
-  );
-  self.hilbert_noise_lut_attachment = self.hilbert_noise_lut.acquire("hilbert noise", vuk::eComputeSampled);
-  self.sky_cubemap_attachment = self.sky_cubemap_view.acquire("sky_cubemap", vuk::Access::eFragmentSampled);
 }
 } // namespace ox

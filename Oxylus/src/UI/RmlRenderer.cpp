@@ -27,7 +27,7 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, RenderContext& context, vuk:
 
   std::unordered_map<RmlTextureID, uint32_t> acquired_texture_cache = {};
   std::vector<vuk::Value<vuk::ImageAttachment>> frame_textures = {};
-  frame_textures.emplace_back(self.white_texture->acquire());
+  frame_textures.emplace_back(self.white_texture->acquire("rml white", vuk::eFragmentSampled));
   for (auto& cmd : self.draw_commands) {
     if (!cmd.texture) {
       cmd.texture_array_index = 0;
@@ -41,10 +41,8 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, RenderContext& context, vuk:
       cmd.texture_array_index = it->second;
     } else {
       if (auto* texture_ptr = self.loaded_textures.slot(tex_id)) {
-        Texture* actual_texture = texture_ptr->get();
-
         uint32_t new_index = static_cast<uint32_t>(frame_textures.size());
-        frame_textures.push_back(actual_texture->acquire());
+        frame_textures.push_back(texture_ptr->acquire({}, vuk::eFragmentSampled));
 
         acquired_texture_cache[tex_id] = new_index;
         cmd.texture_array_index = new_index;
@@ -192,11 +190,12 @@ auto RmlRenderer::ReleaseGeometry(Rml::CompiledGeometryHandle geometry) -> void 
 auto RmlRenderer::LoadTexture(Rml::Vector2i& texture_dimensions, const Rml::String& source) -> Rml::TextureHandle {
   ZoneScoped;
 
-  auto texture = std::make_unique<Texture>();
-  texture->create(source, {});
+  // TODO FUCK
 
-  texture_dimensions.x = texture->get_extent().width;
-  texture_dimensions.y = texture->get_extent().height;
+  auto texture = Texture::create({});
+
+  texture_dimensions.x = texture.get_extent().width;
+  texture_dimensions.y = texture.get_extent().height;
 
   auto id = this->loaded_textures.create_slot(std::move(texture));
   return static_cast<Rml::TextureHandle>(id);
@@ -219,15 +218,12 @@ auto RmlRenderer::GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector
     }
   }
 
-  auto texture = std::make_unique<Texture>();
-  texture->create(
-    {},
-    TextureLoadInfo{
-      .format = vuk::Format::eR8G8B8A8Unorm,
-      .loaded_data = straight_alpha_data.data(),
-      .extent = vuk::Extent3D{static_cast<u32>(source_dimensions.x), static_cast<u32>(source_dimensions.y), 1u}
-    }
+  auto texture = Texture::create(
+    {.format = vuk::Format::eR8G8B8A8Unorm,
+     .extent = vuk::Extent3D{static_cast<u32>(source_dimensions.x), static_cast<u32>(source_dimensions.y), 1u}}
   );
+
+  // TODO LOAD DATA
 
   auto id = this->loaded_textures.create_slot(std::move(texture));
   return static_cast<Rml::TextureHandle>(id);

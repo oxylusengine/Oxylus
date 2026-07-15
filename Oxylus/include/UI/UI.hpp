@@ -191,7 +191,7 @@ public:
 
   // images
   static void image(
-    const Texture& texture,
+    const TextureView& texture_view,
     ImVec2 size,
     const ImVec2& uv0 = ImVec2(0, 0),
     const ImVec2& uv1 = ImVec2(1, 1),
@@ -201,7 +201,7 @@ public:
 
   static bool image_button(
     const char* id,
-    const Texture& view,
+    const TextureView& view,
     ImVec2 size,
     const ImVec2& uv0 = ImVec2(0, 0),
     const ImVec2& uv1 = ImVec2(1, 1),

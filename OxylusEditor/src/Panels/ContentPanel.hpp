@@ -9,6 +9,7 @@
 #include <vuk/Types.hpp>
 #include <vuk/Value.hpp>
 
+#include "Asset/Texture.hpp"
 #include "Core/Types.hpp"
 #include "EditorPanelState.hpp"
 
@@ -53,7 +54,7 @@ private:
   std::string new_asset_name_ = {};
   bool should_open_new_asset_popup = false;
 
-  std::shared_ptr<Texture> _white_texture;
+  Texture _white_texture;
   std::filesystem::path _directory_to_delete;
 
   std::unique_ptr<filewatch::FileWatch<std::string>> filewatch = nullptr;

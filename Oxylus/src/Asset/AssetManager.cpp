@@ -279,8 +279,7 @@ auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::
       write_gltf_meta(self, path, writer);
     } break;
     case AssetType::Texture: {
-      Texture texture = {};
-      write_texture_asset_meta(writer, &texture);
+      write_texture_asset_meta(writer, nullptr);
     } break;
     case AssetType::Script: {
       write_script_asset_meta(writer, nullptr);
@@ -510,7 +509,7 @@ auto AssetManager::unload_asset(this AssetManager& self, const UUID& uuid) -> bo
   return false;
 }
 
-auto AssetManager::load_texture(this AssetManager& self, const UUID& uuid, TextureLoadInfo info) -> bool {
+auto AssetManager::load_texture(this AssetManager& self, const UUID& uuid) -> bool {
   ZoneScoped;
 
   auto asset_path = std::filesystem::path{};
@@ -527,8 +526,10 @@ auto AssetManager::load_texture(this AssetManager& self, const UUID& uuid, Textu
     asset_path = asset->path;
   }
 
-  Texture texture{};
-  texture.create(asset_path, std::move(info));
+  auto texture = Texture::create({});
+  if (!texture)
+    return false;
+  // TODO load data
 
   auto asset = self.get_asset(uuid);
   if (!asset)

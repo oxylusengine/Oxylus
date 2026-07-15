@@ -17,7 +17,7 @@ public:
   constexpr static auto MODULE_NAME = "ImGuiRenderer";
   using module_dependencies = std::tuple<Input, Renderer>;
 
-  std::shared_ptr<Texture> font_texture = nullptr;
+  option<Texture> font_texture = nullopt;
   std::vector<vuk::Value<vuk::ImageAttachment>> rendering_images;
   ankerl::unordered_dense::map<ImageViewID, ImTextureID> acquired_images;
 
@@ -29,7 +29,7 @@ public:
   vuk::Value<vuk::ImageAttachment> end_frame(RenderContext& context, vuk::Value<vuk::ImageAttachment> target);
 
   ImTextureID add_image(vuk::Value<vuk::ImageAttachment>&& attachment);
-  ImTextureID add_image(const Texture& texture);
+  ImTextureID add_image(const TextureView& texture_view);
 
   ImFont* load_default_font();
   ImFont* load_font(const std::filesystem::path& path, f32 font_size = 0.f, option<ImFontConfig> font_config = nullopt);
