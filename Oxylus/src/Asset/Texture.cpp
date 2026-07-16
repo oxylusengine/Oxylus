@@ -103,7 +103,7 @@ auto Texture::create(const TextureCreateInfo& info, OX_CALLSTACK) -> Texture {
     return {};
   }
 
-#if 1
+#if OX_DEBUG
   auto debug_name = stack.format("{}:{}", LOC.file_name(), LOC.line());
   render_context.runtime->set_name(render_context.image(image_id).image, debug_name);
   render_context.runtime->set_name(render_context.image_view(image_view_id).payload, debug_name);
