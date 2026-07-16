@@ -1,5 +1,3 @@
-module histogram_average;
-
 import common;
 import gpu;
 
@@ -19,7 +17,7 @@ struct PushConstants {
 };
 [[vk::push_constant]] PushConstants C;
 
-groupshared f32 histogram_shared[HISTOGRAM_BIN_COUNT];
+groupshared u32 weighted_sum_shared;
 
 func ev100_from_luminance(f32 luminance) -> f32 {
     const f32 K = 12.5;
@@ -30,21 +28,19 @@ func ev100_from_luminance(f32 luminance) -> f32 {
 [[shader("compute")]]
 [[numthreads(HISTOGRAM_BIN_COUNT, 1, 1)]]
 func cs_main(u32 gid : SV_GroupIndex) -> void {
-    histogram_shared[gid] = f32(histogram_bin_indices[gid]) * f32(gid);
+    if (gid == 0) {
+        weighted_sum_shared = 0;
+    }
     GroupMemoryBarrierWithGroupSync();
 
-    [[unroll]]
-    for (u32 cutoff = (HISTOGRAM_BIN_COUNT >> 1); cutoff > 0; cutoff >>= 1) {
-        if (gid < cutoff) {
-            histogram_shared[gid] += histogram_shared[gid + cutoff];
-        }
+    const u32 bin_count = histogram_bin_indices[gid];
+    InterlockedAdd(weighted_sum_shared, bin_count * gid);
 
-        GroupMemoryBarrierWithGroupSync();
-    }
+    GroupMemoryBarrierWithGroupSync();
 
     if (gid == 0) {
         const f32 dark_pixel_count = f32(histogram_bin_indices[0]);
-        const f32 weighted_average_log2 = (histogram_shared[0] / max(C.pixel_count - dark_pixel_count, 1.0)) - 1.0;
+        const f32 weighted_average_log2 = (f32(weighted_sum_shared) / max(C.pixel_count - dark_pixel_count, 1.0)) - 1.0;
         const f32 desired_luminance = exp2(((weighted_average_log2 / (HISTOGRAM_BIN_COUNT - 2)) * C.exposure_range) + C.min_exposure);
         const f32 last_luminance = luminance[0].adapted_luminance;
         const f32 adapted_luminance = last_luminance + (desired_luminance - last_luminance) * C.time_coeff;
