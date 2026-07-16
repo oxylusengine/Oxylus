@@ -15,13 +15,12 @@
 
 namespace ox {
 ProjectPanel::ProjectPanel() : EditorPanelState("Projects", ICON_MDI_ACCOUNT_BADGE, true) {
-  engine_banner = Texture::create(
-    {.format = vuk::Format::eR8G8B8A8Srgb,
-     .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u}}
-  );
-
-  // TODO load data
-  // .loaded_data = editor_banner,
+  engine_banner = Texture::create({
+    .format = vuk::Format::eR8G8B8A8Srgb,
+    .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
+  engine_banner.upload(std::span(editor_banner), vuk::eFragmentSampled);
 }
 
 void ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) {

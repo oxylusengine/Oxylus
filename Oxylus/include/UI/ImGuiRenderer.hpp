@@ -17,7 +17,7 @@ public:
   constexpr static auto MODULE_NAME = "ImGuiRenderer";
   using module_dependencies = std::tuple<Input, Renderer>;
 
-  option<Texture> font_texture = nullopt;
+  Texture font_texture = {};
   std::vector<vuk::Value<vuk::ImageAttachment>> rendering_images;
   ankerl::unordered_dense::map<ImageViewID, ImTextureID> acquired_images;
 

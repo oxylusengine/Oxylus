@@ -456,6 +456,12 @@ auto RenderContext::new_frame(this RenderContext& self) -> vuk::Value<vuk::Image
   }
 
   if (self.frame_allocator) {
+    auto read_lock = std::shared_lock(self.work_queue_mutex);
+    vuk::wait_for_values_explicit(*self.frame_allocator, self.compiler, std::span(self.work_queue));
+    read_lock.unlock();
+
+    auto write_lock = std::unique_lock(self.work_queue_mutex);
+    self.work_queue.clear();
     self.frame_allocator.reset();
   }
 
@@ -545,6 +551,13 @@ auto RenderContext::wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool fram
 
   thread_local vuk::Compiler _compiler;
   return *fut.get(allocator, _compiler);
+}
+
+auto RenderContext::forget(this RenderContext& self, vuk::UntypedValue&& value) -> void {
+  ZoneScoped;
+
+  auto _ = std::unique_lock(self.work_queue_mutex);
+  self.work_queue.push_back(std::move(value));
 }
 
 auto RenderContext::create_persistent_descriptor_set(
@@ -868,7 +881,6 @@ auto RenderContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent,
   -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(pending_image_buffers_mutex);
   auto alignment = vuk::format_to_texel_block_size(format);
   auto size = vuk::compute_image_size(format, extent);
 
@@ -883,7 +895,11 @@ auto RenderContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent,
     runtime->get_executor(vuk::DomainFlagBits::eGraphicsQueue)
   );
   auto allocation_time_point = *graphics_executor->get_sync_value();
-  tracked_buffers.emplace(std::pair(allocation_time_point, buffer_handle));
+
+  {
+    auto write_lock = std::unique_lock(pending_image_buffers_mutex);
+    tracked_buffers.emplace(std::pair(allocation_time_point, buffer_handle));
+  }
 
   return vuk::acquire_buf("image buffer", buffer_handle, vuk::eNone, LOC);
 }

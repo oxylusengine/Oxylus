@@ -57,8 +57,9 @@ Texture& Texture::operator=(Texture&& other) noexcept {
 
 auto Texture::get_name(OX_CALLSTACK) const -> vuk::Name { return default_resource_name(LOC); }
 
-auto Texture::create(const TextureCreateInfo& info) -> Texture {
+auto Texture::create(const TextureCreateInfo& info, OX_CALLSTACK) -> Texture {
   ZoneScoped;
+  memory::ScopedStack stack;
 
   auto& render_context = App::get_rendercontext();
 
@@ -66,12 +67,15 @@ auto Texture::create(const TextureCreateInfo& info) -> Texture {
     .image_flags = info.image_flags,
     .image_type = info.image_type,
     .tiling = info.tiling,
-    .usage = info.usage,
+    .usage = info.usage | vuk::ImageUsageFlagBits::eTransferDst,
     .extent = info.extent,
     .format = info.format,
+    .sample_count = vuk::SampleCountFlagBits::e1,
     .image_view_flags = info.image_view_flags,
     .view_type = info.view_type,
+    .base_level = 0,
     .level_count = info.level_count,
+    .base_layer = 0,
     .layer_count = info.layer_count,
   };
 
@@ -98,6 +102,12 @@ auto Texture::create(const TextureCreateInfo& info) -> Texture {
     render_context.destroy_image_view(image_view_id);
     return {};
   }
+
+#if 1
+  auto debug_name = stack.format("{}:{}", LOC.file_name(), LOC.line());
+  render_context.runtime->set_name(render_context.image(image_id).image, debug_name);
+  render_context.runtime->set_name(render_context.image_view(image_view_id).payload, debug_name);
+#endif
 
   return Texture(attachment, image_id, image_view_id, sampler_id);
 }
@@ -132,6 +142,45 @@ auto Texture::discard(this const Texture& self, std::string_view name, OX_CALLST
   ZoneScoped;
 
   return self.view().discard(name, LOC);
+}
+
+auto Texture::upload_mips(
+  this Texture& self,
+  std::span<const std::span<const u8>> per_mip_pixels,
+  vuk::Access release_as,
+  bool generate_remaining
+) -> void {
+  ZoneScoped;
+
+  auto& render_context = App::get_rendercontext();
+  auto& allocator = render_context.superframe_allocator;
+  auto effective_level_count = std::min(static_cast<u32>(per_mip_pixels.size()), self.attachment.level_count);
+
+  auto base_extent = self.attachment.extent;
+  auto attachment = vuk::discard_ia("upload mips", self.attachment);
+  for (auto level = 0_u32; level < effective_level_count; level++) {
+    auto level_extent = vuk::Extent3D{
+      .width = base_extent.width >> level,
+      .height = base_extent.height >> level,
+      .depth = 1,
+    };
+
+    auto mip_pixels = per_mip_pixels[level];
+    auto mip = attachment.mip(level);
+    auto buffer = render_context.alloc_image_buffer(self.attachment.format, level_extent);
+    std::memcpy(buffer->mapped_ptr, mip_pixels.data(), mip_pixels.size_bytes());
+    vuk::copy(std::move(buffer), std::move(mip));
+  }
+
+  render_context.wait_on(std::move(attachment.as_released(release_as)));
+}
+
+auto Texture::upload(this Texture& self, std::span<const u8> pixels, vuk::Access release_as, bool generate_remaining)
+  -> void {
+  ZoneScoped;
+
+  const std::span<const u8> mip0_pixels[] = {pixels};
+  self.upload_mips(std::span(mip0_pixels), release_as, generate_remaining);
 }
 
 auto Texture::set_name(std::string_view name, OX_CALLSTACK) -> void {

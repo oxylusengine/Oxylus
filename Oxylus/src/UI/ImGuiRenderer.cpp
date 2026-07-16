@@ -37,16 +37,17 @@ void ImGuiRenderer::build_fonts() {
   ZoneScoped;
 
   ImGuiIO& io = ImGui::GetIO();
-  unsigned char* pixels;
+  unsigned char* pixels_data;
   int width, height;
   io.Fonts->Build();
-  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+  io.Fonts->GetTexDataAsRGBA32(&pixels_data, &width, &height);
   font_texture = Texture::create({
     .format = vuk::Format::eR8G8B8A8Srgb,
     .extent = vuk::Extent3D{static_cast<u32>(width), static_cast<u32>(height), 1u},
   });
 
-  // TODO load data
+  auto pixels = std::span{pixels_data, static_cast<usize>(width * height * 4)};
+  font_texture.upload(pixels, vuk::eFragmentSampled);
 }
 
 auto ImGuiRenderer::init() -> std::expected<void, std::string> {
@@ -162,20 +163,24 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
 #if 1
       if (texture->Status == ImTextureStatus_WantCreate || texture->Status == ImTextureStatus_WantUpdates) {
         if (font_texture) {
-          font_texture->destroy();
+          font_texture.destroy();
         }
 
-        font_texture = Texture::create(
-          {.format = vuk::Format::eR8G8B8A8Srgb,
-           .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u}}
+        font_texture = Texture::create({
+          .format = vuk::Format::eR8G8B8A8Srgb,
+          .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u},
+          .usage = vuk::ImageUsageFlagBits::eSampled,
+        });
+        font_texture.set_name("font_texture");
+        font_texture.upload(
+          {static_cast<u8*>(texture->GetPixels()), static_cast<usize>(texture->GetSizeInBytes())},
+          vuk::eFragmentSampled
         );
-        // TODO load data
-        font_texture->set_name("font_texture");
 
         texture->SetStatus(ImTextureStatus_OK);
       }
 
-      auto texture_id = this->add_image(font_texture->view());
+      auto texture_id = this->add_image(font_texture.view());
       OX_ASSERT(texture_id > 0);
       texture->SetTexID(texture_id);
 #else

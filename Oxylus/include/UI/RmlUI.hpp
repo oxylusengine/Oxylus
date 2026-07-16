@@ -31,6 +31,6 @@ public:
 private:
   RmlRenderer rml_renderer = {};
   RmlSystem rml_system = {};
-  option<Texture> white_texture = nullopt;
+  Texture white_texture = {};
 };
 } // namespace ox

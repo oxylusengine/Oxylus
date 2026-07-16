@@ -55,12 +55,14 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   self.sky_transmittance_lut = Texture::create({
     .format = vuk::Format::eR16G16B16A16Sfloat,
     .extent = vuk::Extent3D{.width = 256u, .height = 64u, .depth = 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
   });
   OX_ASSERT(self.sky_transmittance_lut);
 
   self.sky_multiscatter_lut = Texture::create({
     .format = vuk::Format::eR16G16B16A16Sfloat,
     .extent = vuk::Extent3D{.width = 32u, .height = 32u, .depth = 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
   });
   OX_ASSERT(self.sky_multiscatter_lut);
 
@@ -93,19 +95,25 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     }
   }
 
-  self.hilbert_noise_lut = Texture::create(
-    {.format = vuk::Format::eR16Uint,
-     .extent = vuk::Extent3D{.width = HILBERT_NOISE_LUT_WIDTH, .height = HILBERT_NOISE_LUT_WIDTH, .depth = 1u}}
-  );
+  self.hilbert_noise_lut = Texture::create({
+    .format = vuk::Format::eR16Uint,
+    .extent = vuk::Extent3D{.width = HILBERT_NOISE_LUT_WIDTH, .height = HILBERT_NOISE_LUT_WIDTH, .depth = 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
   OX_ASSERT(self.hilbert_noise_lut);
-
-  self.sky_cubemap = Texture::create(
-    {.format = vuk::Format::eR16G16B16A16Sfloat,
-     .extent = vuk::Extent3D{.width = 32u, .height = 32u, .depth = 1u},
-     .layer_count = 6u,
-     .image_flags = vuk::ImageCreateFlagBits::eCubeCompatible,
-     .view_type = vuk::ImageViewType::eCube}
+  self.hilbert_noise_lut.upload(
+    {reinterpret_cast<u8*>(hilbert_noise), std::size(hilbert_noise)},
+    vuk::eFragmentSampled
   );
+
+  self.sky_cubemap = Texture::create({
+    .format = vuk::Format::eR16G16B16A16Sfloat,
+    .extent = vuk::Extent3D{.width = 32u, .height = 32u, .depth = 1u},
+    .layer_count = 6u,
+    .image_flags = vuk::ImageCreateFlagBits::eCubeCompatible,
+    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+    .view_type = vuk::ImageViewType::eCube,
+  });
   OX_ASSERT(self.sky_cubemap);
 
   auto sky_cubemap_init = self.sky_cubemap.discard("sky_cubemap_init");

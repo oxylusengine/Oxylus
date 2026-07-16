@@ -236,14 +236,14 @@ auto ContentPanel::directory_tree_view_recursive(
 }
 
 ContentPanel::ContentPanel() : EditorPanelState("Contents", ICON_MDI_FOLDER_STAR, true) {
-  char white_texture_data[16 * 16 * 4];
+  u8 white_texture_data[16 * 16 * 4];
   memset(white_texture_data, 0xff, 16 * 16 * 4);
-  _white_texture = Texture::create(
-    {.format = vuk::Format::eR8G8B8A8Unorm, .extent = vuk::Extent3D{.width = 16u, .height = 16u, .depth = 1u}}
-  );
-
-  // TODO load data
-  // .loaded_data = white_texture_data,
+  _white_texture = Texture::create({
+    .format = vuk::Format::eR8G8B8A8Unorm,
+    .extent = vuk::Extent3D{.width = 16u, .height = 16u, .depth = 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
+  _white_texture.upload(std::span(white_texture_data), vuk::eFragmentSampled);
 }
 
 void ContentPanel::init(this ContentPanel& self) {

@@ -54,6 +54,8 @@ public:
   plf::colony<std::pair<u64, vuk::Buffer>> tracked_buffers = {};
   std::shared_mutex pending_image_buffers_mutex = {};
   std::shared_mutex queue_mutex = {};
+  std::shared_mutex work_queue_mutex = {};
+  std::vector<vuk::UntypedValue> work_queue = {};
 
   vuk::PresentModeKHR present_mode = vuk::PresentModeKHR::eFifo;
   std::optional<vuk::Swapchain> swapchain;
@@ -85,6 +87,7 @@ public:
   auto wait(this RenderContext& self) -> void;
   auto wait_on(vuk::UntypedValue&& fut) -> void;
   auto wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment;
+  auto forget(this RenderContext&, vuk::UntypedValue&& value) -> void;
 
   auto create_persistent_descriptor_set(
     this RenderContext&,

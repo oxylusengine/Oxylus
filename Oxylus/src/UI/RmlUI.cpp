@@ -37,15 +37,15 @@ auto RmlUI::init() -> std::expected<void, std::string> {
 
   Rml::Debugger::Initialise(main_context);
 
-  uint32_t white_pixel = 0xFFFFFFFF;
   white_texture = Texture::create({
     .format = vuk::Format::eR8G8B8A8Unorm,
     .extent = vuk::Extent3D{1, 1, 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
   });
+  constexpr static u8 WHITE_PIXEL[] = {0xFF, 0xFF, 0xFF, 0xFF};
+  white_texture.upload(WHITE_PIXEL, vuk::eFragmentSampled);
 
-  // TODO load data
-
-  this->rml_renderer.set_white_texture(&*white_texture);
+  this->rml_renderer.set_white_texture(&white_texture);
 
   return {};
 }

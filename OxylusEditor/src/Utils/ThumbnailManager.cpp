@@ -5,6 +5,8 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
+#include "Memory/Stack.hpp"
+#include "ResourceCompiler.hpp"
 #include "Utils/ThumbnailCamera.hpp"
 
 namespace ox {
@@ -35,6 +37,7 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
     auto pixels = self.render_thumbnail(render_job.model_uuid, THUMBNAIL_SIZE);
 
     if (pixels.has_value() && !pixels->empty()) {
+      memory::ScopedStack stack;
       auto& job_man = App::get_job_manager();
       job_man.push_job_name("ContentPanelThumbnail_WritePNG");
       job_man.submit(Job::create([expected_png = render_job.expected_png, pixel_bytes = *pixels]() {
@@ -51,7 +54,8 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
       job_man.pop_job_name();
 
       auto thumbnail_texture = Texture::create({.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}});
-      // TODO load data
+      thumbnail_texture.set_name(stack.format("thumbnail: {}", render_job.expected_png));
+      thumbnail_texture.upload(pixels.value(), vuk::eFragmentSampled);
 
       auto lock = std::unique_lock(self.thumbnail_mutex);
       self.thumbnail_cache.insert_or_assign(render_job.asset_hash, std::move(thumbnail_texture));
@@ -104,14 +108,13 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
   auto& job_man = App::get_job_manager();
   job_man.push_job_name("ContentPanelThumbnail_TextureLoad");
   job_man.submit(Job::create([&self, asset_path, asset_hash]() {
-    auto thumbnail_texture = Texture::create(
-      // asset_path.string(),
-      // TextureLoadInfo{
-      //   .mime = Texture::path_to_mime(asset_path),
-      //
-      // }
-      {.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}}
-    );
+    memory::ScopedStack stack;
+    auto thumbnail_texture = Texture::create({
+      .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1},
+      .usage = vuk::ImageUsageFlagBits::eSampled,
+    });
+    thumbnail_texture.set_name(stack.format("thumbnail: {}", asset_path));
+    thumbnail_texture.upload_mips({}, vuk::eFragmentSampled);
 
     auto lock = std::unique_lock(self.thumbnail_mutex);
     self.thumbnail_cache.insert_or_assign(asset_hash, std::move(thumbnail_texture));
@@ -153,12 +156,11 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
     auto& job_man = App::get_job_manager();
     job_man.push_job_name("ContentPanelThumbnail_ModelCacheLoad");
     job_man.submit(Job::create([&self, expected_png, asset_hash]() {
-      auto thumbnail_texture = Texture::create(
-        // expected_png.string(),
-        // TextureLoadInfo{
-        //   .mime = Texture::path_to_mime(expected_png),
-        {.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}}
-      );
+      auto thumbnail_texture = Texture::create({
+        .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1},
+        .usage = vuk::ImageUsageFlagBits::eSampled,
+      });
+      thumbnail_texture.upload({}, vuk::eFragmentSampled);
 
       auto lock = std::unique_lock(self.thumbnail_mutex);
       self.thumbnail_cache.insert_or_assign(asset_hash, std::move(thumbnail_texture));
