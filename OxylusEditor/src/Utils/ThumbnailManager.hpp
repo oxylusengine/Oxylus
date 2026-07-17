@@ -39,5 +39,8 @@ private:
 
   auto render_thumbnail(this ThumbnailManager& self, UUID model_uuid, u32 size) -> option<std::vector<u8>>;
   auto get_asset_hash(this const ThumbnailManager& self, const std::filesystem::path& path) -> std::string;
+
+  auto find_cached(this ThumbnailManager& self, const std::string& asset_hash) -> option<TextureView>;
+  auto try_claim_job(this ThumbnailManager& self, const std::string& asset_hash) -> bool;
 };
 } // namespace ox

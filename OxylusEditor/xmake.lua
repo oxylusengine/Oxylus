@@ -10,7 +10,7 @@ target("OxylusEditor")
     add_deps("Oxylus")
     add_deps("ResourceCompiler")
     add_deps("rcli")
-    add_packages("imguizmo")
+    add_packages("imguizmo", "stb")
 
     add_includedirs("./src")
     add_sysincludedirs("./vendor", { public = true })
