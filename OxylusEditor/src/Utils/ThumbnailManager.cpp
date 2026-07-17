@@ -130,7 +130,13 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
   job_man.submit(Job::create([&self, asset_path, asset_hash]() {
     memory::ScopedStack stack;
     auto& rc = App::mod<rc::ResourceCompiler>();
-    auto processed_texture = rc.process(rc::TextureCompileRequest{.path = asset_path});
+    auto processed_texture = rc.process(
+      rc::TextureCompileRequest{
+        .path = asset_path,
+        .target_width = THUMBNAIL_SIZE,
+        .target_height = THUMBNAIL_SIZE,
+      }
+    );
 
     auto lock = std::unique_lock(self.thumbnail_mutex);
     if (processed_texture.has_value()) {
@@ -178,7 +184,13 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
     job_man.push_job_name("ContentPanelThumbnail_ModelCacheLoad");
     job_man.submit(Job::create([&self, expected_png, asset_hash]() {
       auto& rc = App::mod<rc::ResourceCompiler>();
-      auto processed_texture = rc.process(rc::TextureCompileRequest{.path = expected_png});
+      auto processed_texture = rc.process(
+        rc::TextureCompileRequest{
+          .path = expected_png,
+          .target_width = THUMBNAIL_SIZE,
+          .target_height = THUMBNAIL_SIZE,
+        }
+      );
 
       auto lock = std::unique_lock(self.thumbnail_mutex);
       if (processed_texture.has_value()) {

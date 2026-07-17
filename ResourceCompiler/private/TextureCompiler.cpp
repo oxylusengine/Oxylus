@@ -34,21 +34,43 @@ auto compile_generic(const TextureCompileRequest& info) -> option<TextureData> {
     return nullopt;
   }
 
+  auto level_w = static_cast<u32>(width);
+  auto level_h = static_cast<u32>(height);
+  const auto source_size = static_cast<u64>(level_w) * level_h * 4;
+
+  auto src = std::vector<u8>(pixels, pixels + source_size);
+  stbi_image_free(pixels);
+
+  const auto target_w = info.target_width.value_or(level_w);
+  const auto target_h = info.target_height.value_or(level_h);
+  if (target_w != level_w || target_h != level_h) {
+    auto resized = std::vector<u8>(static_cast<usize>(target_w) * target_h * 4);
+    stbir_resize_uint8_linear(
+      src.data(),
+      static_cast<int>(level_w),
+      static_cast<int>(level_h),
+      0,
+      resized.data(),
+      static_cast<int>(target_w),
+      static_cast<int>(target_h),
+      0,
+      STBIR_RGBA
+    );
+
+    src = std::move(resized);
+    level_w = target_w;
+    level_h = target_h;
+  }
+
   auto result = TextureData{
     .name = info.name.empty() ? info.path.stem().string() : info.name,
     .format = info.srgb ? vuk::Format::eR8G8B8A8Srgb : vuk::Format::eR8G8B8A8Unorm,
-    .width = static_cast<u32>(width),
-    .height = static_cast<u32>(height),
+    .width = level_w,
+    .height = level_h,
     .layer_count = 1,
   };
 
-  auto level_w = static_cast<u32>(width);
-  auto level_h = static_cast<u32>(height);
-  const auto level0_size = static_cast<u64>(level_w) * level_h * 4;
-  append_level(result, level_w, level_h, pixels, level0_size);
-
-  auto src = std::vector<u8>(pixels, pixels + level0_size);
-  stbi_image_free(pixels);
+  append_level(result, level_w, level_h, src.data(), src.size());
 
   while (level_w > 1 || level_h > 1) {
     const auto next_w = std::max(level_w / 2, 1_u32);

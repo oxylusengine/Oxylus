@@ -54,6 +54,8 @@ struct TextureCompileRequest {
   std::filesystem::path path = {};
   std::string name = {}; // defaults to path.stem() when empty
   bool srgb = false;     // only affects generic (non block-compressed) sources
+  option<u32> target_width = nullopt;
+  option<u32> target_height = nullopt;
 };
 
 struct OXRC_API Packer : Handle<Packer> {
@@ -84,6 +86,5 @@ struct OXRC_API ResourceCompiler final : Session {
   auto init(this ResourceCompiler& self) -> std::expected<void, std::string>;
   auto deinit(this ResourceCompiler& self) -> std::expected<void, std::string>;
 };
-
 
 } // namespace ox::rc
