@@ -78,4 +78,12 @@ struct OXRC_API Session : Handle<Session> {
   auto get_messages() const -> const std::vector<std::string>&;
 };
 
+struct OXRC_API ResourceCompiler final : Session {
+  constexpr static auto MODULE_NAME = "Resource Compiler";
+
+  auto init(this ResourceCompiler& self) -> std::expected<void, std::string>;
+  auto deinit(this ResourceCompiler& self) -> std::expected<void, std::string>;
+};
+
+
 } // namespace ox::rc

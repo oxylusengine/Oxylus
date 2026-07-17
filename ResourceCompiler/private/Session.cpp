@@ -79,10 +79,8 @@ auto create_shader_session(slang::IGlobalSession* global_session, const ShaderSe
 
 auto Session::create() -> option<Session> {
   auto* self = new Session::Impl;
-  auto write_lock = std::unique_lock(self->session_mutex);
-  if (SLANG_FAILED(slang::createGlobalSession(self->slang_global_session.writeRef()))) {
+  if (!self->init_internal()) {
     delete self;
-    return nullopt;
   }
 
   return Session(self);

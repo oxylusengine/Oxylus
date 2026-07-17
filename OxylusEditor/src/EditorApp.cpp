@@ -2,6 +2,7 @@
 #include "Core/DefaultModules.hpp"
 #include "Core/EmbeddedLogo.hpp"
 #include "Editor.hpp"
+#include "ResourceCompiler.hpp"
 #include "Utils/EditorConfig.hpp"
 
 int main(int argc, char** argv) {
@@ -38,6 +39,7 @@ int main(int argc, char** argv) {
     .with(ox::DefaultModules{})
     .with<ox::EditorConfig>()
     .with<ox::Editor>()
+    .with<ox::rc::ResourceCompiler>()
     .run();
 
   return 0;
