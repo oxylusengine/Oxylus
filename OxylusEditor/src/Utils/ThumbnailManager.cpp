@@ -53,8 +53,10 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
       }));
       job_man.pop_job_name();
 
-      auto thumbnail_texture = Texture::create({.extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1}});
-      thumbnail_texture.set_name(stack.format("thumbnail: {}", render_job.expected_png));
+      auto thumbnail_texture = Texture::create({
+        .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1},
+        .usage = vuk::ImageUsageFlagBits::eSampled,
+      });
       thumbnail_texture.upload(pixels.value(), vuk::eFragmentSampled);
 
       auto lock = std::unique_lock(self.thumbnail_mutex);

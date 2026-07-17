@@ -1,7 +1,6 @@
 #include "Session.hpp"
 
-#include <zpp_bits.h>
-
+#include "Packer.hpp"
 #include "ShaderSession.hpp"
 #include "TextureCompiler.hpp"
 
@@ -94,10 +93,62 @@ auto Session::destroy() -> void {
   impl = nullptr;
 }
 
-auto Session::add_request(const ShaderCompileRequest& request) -> void { impl->shader_requests.emplace_back(request); }
+auto Session::new_packer() -> Packer {
+  auto packer_impl = std::make_unique<Packer::Impl>();
+  packer_impl->session = *this;
+  auto packer = Packer(packer_impl.get());
 
-auto Session::add_request(const TextureCompileRequest& request) -> void {
-  impl->texture_requests.emplace_back(request);
+  auto write_lock = std::unique_lock(impl->packers_mutex);
+  impl->packers.push_back(std::move(packer_impl));
+
+  return packer;
+}
+
+auto Session::process(const ShaderCompileRequest& request) -> option<std::vector<ShaderPipelineData>> {
+  auto result = std::vector<ShaderPipelineData>{};
+
+  auto slang_session = create_shader_session(impl->slang_global_session, request.session_info);
+  if (!slang_session) {
+    push_error(fmt::format("Failed to create shader session '{}'.", request.session_info.name));
+    return nullopt;
+  }
+
+  auto shader_session = ShaderSession{
+    .rc_session = *this,
+    .name = request.session_info.name,
+    .slang_session = slang_session.get(),
+    .root_directory = request.session_info.root_directory,
+  };
+
+  for (const auto& shader : request.shaders) {
+    auto entry_points = shader_session.compile_shader(shader);
+    if (!entry_points.has_value()) {
+      return nullopt;
+    }
+
+    auto pipeline = ShaderPipelineData{
+      .module_name = shader.module_name,
+    };
+    pipeline.entry_points.reserve(entry_points->size());
+    for (auto& ep : entry_points.value()) {
+      pipeline.entry_points.push_back(std::move(ep));
+    }
+
+    pipeline.bindless = shader.bindless;
+    result.push_back(std::move(pipeline));
+  }
+
+  return result;
+}
+
+auto Session::process(const TextureCompileRequest& request) -> option<TextureData> {
+  auto texture_data = TextureCompiler::compile(request);
+  if (!texture_data.has_value()) {
+    push_error(fmt::format("Failed to compile texture '{}'.", request.path.string()));
+    return nullopt;
+  }
+
+  return texture_data;
 }
 
 auto Session::push_error(std::string msg) -> void {
@@ -113,63 +164,5 @@ auto Session::push_message(std::string msg) -> void {
 auto Session::get_errors() const -> const std::vector<std::string>& { return impl->errors; }
 
 auto Session::get_messages() const -> const std::vector<std::string>& { return impl->messages; }
-
-auto Session::compile() -> bool {
-  bool success = true;
-
-  for (const auto& request : impl->shader_requests) {
-    auto slang_session = create_shader_session(impl->slang_global_session, request.session_info);
-    if (!slang_session) {
-      push_error(fmt::format("Failed to create shader session '{}'.", request.session_info.name));
-      success = false;
-      continue;
-    }
-
-    auto shader_session = ShaderSession{
-      .rc_session = *this,
-      .name = request.session_info.name,
-      .slang_session = slang_session.get(),
-      .root_directory = request.session_info.root_directory,
-    };
-
-    for (const auto& shader : request.shaders) {
-      auto entry_points = shader_session.compile_shader(shader);
-      if (!entry_points.has_value()) {
-        success = false;
-        continue;
-      }
-
-      auto pipeline = ShaderPipelineData{
-        .module_name = shader.module_name,
-      };
-      pipeline.entry_points.reserve(entry_points->size());
-      for (auto& ep : entry_points.value()) {
-        pipeline.entry_points.push_back(std::move(ep));
-      }
-
-      pipeline.bindless = shader.bindless;
-      impl->asset_file.add_entry(std::move(pipeline));
-    }
-  }
-
-  for (const auto& request : impl->texture_requests) {
-    for (const auto& texture_info : request.textures) {
-      auto texture_data = TextureCompiler::compile(texture_info);
-      if (!texture_data.has_value()) {
-        push_error(fmt::format("Failed to compile texture '{}'.", texture_info.path.string()));
-        success = false;
-        continue;
-      }
-
-      impl->asset_file.add_entry(std::move(texture_data.value()));
-    }
-  }
-
-  return success;
-}
-
-auto Session::write_to_file(const std::filesystem::path& output_path) -> bool {
-  return impl->asset_file.pack(output_path);
-}
 
 } // namespace ox::rc

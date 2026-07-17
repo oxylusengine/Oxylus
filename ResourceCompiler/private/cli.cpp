@@ -66,6 +66,8 @@ auto main(i32 argc, c8** argv) -> i32 {
 
   auto config_dir = std::filesystem::absolute(config_path).parent_path();
 
+  auto packer = session->new_packer();
+
   for (const auto& shader_session : config->shader_sessions) {
     auto root = (config_dir / shader_session.root_directory).lexically_normal();
 
@@ -87,23 +89,18 @@ auto main(i32 argc, c8** argv) -> i32 {
       });
     }
 
-    session->add_request(request);
+    packer.add_request(request);
   }
 
-  if (!config->textures.empty()) {
-    auto texture_request = rc::TextureCompileRequest{};
-    texture_request.textures.reserve(config->textures.size());
-    for (const auto& tex : config->textures) {
-      texture_request.textures.push_back({
-        .path = (config_dir / tex.path).lexically_normal(),
-        .name = tex.name,
-        .srgb = tex.srgb,
-      });
-    }
-    session->add_request(texture_request);
+  for (const auto& tex : config->textures) {
+    packer.add_request({
+      .path = (config_dir / tex.path).lexically_normal(),
+      .name = tex.name,
+      .srgb = tex.srgb,
+    });
   }
 
-  auto compile_success = session->compile();
+  auto compile_success = packer.pack();
 
   // Print collected errors
   for (const auto& error : session->get_errors()) {
@@ -128,7 +125,7 @@ auto main(i32 argc, c8** argv) -> i32 {
     }
 
     auto output_path = std::filesystem::path(output_arg->arg_str);
-    if (!session->write_to_file(output_path)) {
+    if (!packer.write_to_file(output_path)) {
       for (const auto& error : session->get_errors()) {
         fmt::println("Error: {}", error);
       }
@@ -146,17 +143,19 @@ auto main(i32 argc, c8** argv) -> i32 {
       if (shader_session.output.empty()) {
         continue;
       }
-      if (!session->write_to_file(shader_session.output)) {
+      if (!packer.write_to_file(shader_session.output)) {
         for (const auto& error : session->get_errors()) {
           fmt::println("Error: {}", error);
         }
         return 1;
       }
-      log(fmt::format(
-        "Compiled {} program(s) -> {}",
-        shader_session.programs.size(),
-        shader_session.output.filename().string()
-      ));
+      log(
+        fmt::format(
+          "Compiled {} program(s) -> {}",
+          shader_session.programs.size(),
+          shader_session.output.filename().string()
+        )
+      );
     }
   }
 

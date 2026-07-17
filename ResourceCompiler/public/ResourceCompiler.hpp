@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <vector>
 
+#include "Asset/AssetFile.hpp"
 #include "Core/Handle.hpp"
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
@@ -49,24 +50,27 @@ struct ShaderCompileRequest {
   std::vector<ShaderCompileInfo> shaders = {};
 };
 
-struct TextureCompileInfo {
+struct TextureCompileRequest {
   std::filesystem::path path = {};
   std::string name = {}; // defaults to path.stem() when empty
   bool srgb = false;     // only affects generic (non block-compressed) sources
 };
 
-struct TextureCompileRequest {
-  std::vector<TextureCompileInfo> textures = {};
+struct OXRC_API Packer : Handle<Packer> {
+  auto add_request(const ShaderCompileRequest& request) -> void;
+  auto add_request(const TextureCompileRequest& request) -> void;
+
+  auto pack() -> bool;
+  auto write_to_file(const std::filesystem::path& output_path) -> bool;
 };
 
 struct OXRC_API Session : Handle<Session> {
   static auto create() -> option<Session>;
   auto destroy() -> void;
 
-  auto add_request(const ShaderCompileRequest& request) -> void;
-  auto add_request(const TextureCompileRequest& request) -> void;
-  auto compile() -> bool;
-  auto write_to_file(const std::filesystem::path& output_path) -> bool;
+  auto new_packer() -> Packer;
+  auto process(const ShaderCompileRequest& request) -> option<std::vector<ShaderPipelineData>>;
+  auto process(const TextureCompileRequest& request) -> option<TextureData>;
 
   auto push_error(std::string msg) -> void;
   auto push_message(std::string msg) -> void;

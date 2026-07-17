@@ -526,7 +526,10 @@ auto AssetManager::load_texture(this AssetManager& self, const UUID& uuid) -> bo
     asset_path = asset->path;
   }
 
-  auto texture = Texture::create({});
+  auto texture = Texture::create({
+    .extent = {1, 1, 1},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
   if (!texture)
     return false;
   // TODO load data

@@ -4,7 +4,6 @@
 #include <slang-com-ptr.h>
 #include <string>
 
-#include "Asset/AssetFile.hpp"
 #include "ResourceCompiler.hpp"
 
 namespace ox {
@@ -15,11 +14,10 @@ struct Handle<rc::Session>::Impl {
   std::vector<std::string> errors = {};
   std::vector<std::string> messages = {};
 
+  std::shared_mutex packers_mutex = {};
+  std::vector<std::unique_ptr<rc::Packer::Impl>> packers = {};
+
   std::shared_mutex session_mutex = {};
   Slang::ComPtr<slang::IGlobalSession> slang_global_session = {};
-
-  std::vector<rc::ShaderCompileRequest> shader_requests = {};
-  std::vector<rc::TextureCompileRequest> texture_requests = {};
-  AssetFile asset_file = {};
 };
 } // namespace ox

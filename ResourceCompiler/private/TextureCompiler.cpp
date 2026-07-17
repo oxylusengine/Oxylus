@@ -26,7 +26,7 @@ auto append_level(TextureData& out, u32 width, u32 height, const void* pixels, u
   out.mips.push_back(std::move(mip));
 }
 
-auto compile_generic(const TextureCompileInfo& info) -> option<TextureData> {
+auto compile_generic(const TextureCompileRequest& info) -> option<TextureData> {
   int width = 0, height = 0, channels = 0;
   const auto path_str = info.path.string();
   auto* pixels = stbi_load(path_str.c_str(), &width, &height, &channels, STBI_rgb_alpha);
@@ -77,7 +77,7 @@ auto compile_generic(const TextureCompileInfo& info) -> option<TextureData> {
   return result;
 }
 
-auto compile_dds(const TextureCompileInfo& info) -> option<TextureData> {
+auto compile_dds(const TextureCompileRequest& info) -> option<TextureData> {
   auto dds_image = dds::Image{};
   const auto path_str = info.path.string();
   if (dds::readFile(path_str, &dds_image) != dds::ReadResult::Success) {
@@ -106,7 +106,7 @@ auto compile_dds(const TextureCompileInfo& info) -> option<TextureData> {
   return result;
 }
 
-auto compile_ktx(const TextureCompileInfo& info) -> option<TextureData> {
+auto compile_ktx(const TextureCompileRequest& info) -> option<TextureData> {
   ktxTexture2* ktx = nullptr;
   const auto path_str = info.path.string();
   if (ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx) != KTX_SUCCESS) {
@@ -174,7 +174,7 @@ auto detect_texture_source_type(const std::filesystem::path& path) -> TextureSou
   return TextureSourceType::Generic;
 }
 
-auto TextureCompiler::compile(const TextureCompileInfo& info) -> option<TextureData> {
+auto TextureCompiler::compile(const TextureCompileRequest& info) -> option<TextureData> {
   switch (detect_texture_source_type(info.path)) {
     case TextureSourceType::DDS    : return compile_dds(info);
     case TextureSourceType::KTX    : return compile_ktx(info);
