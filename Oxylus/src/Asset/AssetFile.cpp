@@ -4,6 +4,25 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
+auto AssetType_to_string_view(AssetType type) -> std::string_view {
+  ZoneScoped;
+
+  switch (type) {
+    case AssetType::None    : return "None";
+    case AssetType::Shader  : return "Shader";
+    case AssetType::Model   : return "Model";
+    case AssetType::Texture : return "Texture";
+    case AssetType::Material: return "Material";
+    case AssetType::Font    : return "Font";
+    case AssetType::Scene   : return "Scene";
+    case AssetType::Audio   : return "Audio";
+    case AssetType::Script  : return "Script";
+    default                 :;
+  }
+
+  return "Unknown";
+}
+
 auto AssetFile::unpack(const std::filesystem::path& path) -> option<AssetFile> {
   ZoneScoped;
 
@@ -25,7 +44,8 @@ auto AssetFile::unpack(const std::filesystem::path& path) -> option<AssetFile> {
     return nullopt;
   }
 
-  if (zpp::bits::failure(deser(entries))) {
+  entries.resize(header.entry_count);
+  if (zpp::bits::failure(deser(zpp::bits::unsized(entries)))) {
     OX_LOG_ERROR("Failed to deserialize Asset entries.");
     return nullopt;
   }
@@ -41,10 +61,11 @@ auto AssetFile::pack(this AssetFile& self, const std::filesystem::path& path) ->
 
   auto header = AssetFileHeader{
     .flags = self.flags,
+    .entry_count = static_cast<u32>(self.entries.size()),
   };
 
   auto [data, ser] = zpp::bits::data_out();
-  if (zpp::bits::failure(ser(header, self.entries))) {
+  if (zpp::bits::failure(ser(header, zpp::bits::unsized(self.entries)))) {
     OX_LOG_ERROR("Failed to serialize asset file.");
     return false;
   }
@@ -73,6 +94,10 @@ auto AssetFile::add_entry(this AssetFile& self, ShaderPipelineData&& entry) -> v
 
 auto AssetFile::add_entry(this AssetFile& self, TextureData&& entry) -> void {
   self.entries.push_back(AssetFileEntry{.type = AssetType::Texture, .data = std::move(entry)});
+}
+
+auto AssetFile::add_entry(this AssetFile& self, ModelData&& entry) -> void {
+  self.entries.push_back(AssetFileEntry{.type = AssetType::Model, .data = std::move(entry)});
 }
 
 } // namespace ox

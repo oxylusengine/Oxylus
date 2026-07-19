@@ -5,6 +5,8 @@ auto Packer::add_request(const ShaderCompileRequest& request) -> void { impl->sh
 
 auto Packer::add_request(const TextureCompileRequest& request) -> void { impl->texture_requests.emplace_back(request); }
 
+auto Packer::add_request(const ModelCompileRequest& request) -> void { impl->model_requests.emplace_back(request); }
+
 auto Packer::pack() -> bool {
   bool success = true;
 
@@ -29,6 +31,17 @@ auto Packer::pack() -> bool {
     }
 
     impl->asset_file.add_entry(std::move(texture_data.value()));
+  }
+
+  for (const auto& request : impl->model_requests) {
+    auto model_data = impl->session.process(request);
+    if (!model_data.has_value()) {
+      impl->session.push_error(fmt::format("Failed to compile model '{}'.", request.path.string()));
+      success = false;
+      continue;
+    }
+
+    impl->asset_file.add_entry(std::move(model_data.value()));
   }
 
   return success;

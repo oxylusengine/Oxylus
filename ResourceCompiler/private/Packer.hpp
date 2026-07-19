@@ -13,6 +13,7 @@ struct Handle<rc::Packer>::Impl {
 
   std::vector<rc::ShaderCompileRequest> shader_requests = {};
   std::vector<rc::TextureCompileRequest> texture_requests = {};
+  std::vector<rc::ModelCompileRequest> model_requests = {};
   AssetFile asset_file = {};
 };
 } // namespace ox

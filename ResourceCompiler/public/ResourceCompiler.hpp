@@ -51,16 +51,23 @@ struct ShaderCompileRequest {
 };
 
 struct TextureCompileRequest {
-  std::filesystem::path path = {};
-  std::string name = {}; // defaults to path.stem() when empty
-  bool srgb = false;     // only affects generic (non block-compressed) sources
+  std::filesystem::path path = {};   // ignored when source_bytes is non-empty
+  std::vector<u8> source_bytes = {}; // set for in-memory sources (images embedded in a glTF/GLB)
+  std::string name = {};             // defaults to path.stem() when empty, required when using source_bytes
+  bool srgb = false;                 // only affects generic (non block-compressed) sources
   option<u32> target_width = nullopt;
   option<u32> target_height = nullopt;
+};
+
+struct ModelCompileRequest {
+  std::filesystem::path path = {};
+  std::string name = {}; // defaults to path.stem() when empty
 };
 
 struct OXRC_API Packer : Handle<Packer> {
   auto add_request(const ShaderCompileRequest& request) -> void;
   auto add_request(const TextureCompileRequest& request) -> void;
+  auto add_request(const ModelCompileRequest& request) -> void;
 
   auto pack() -> bool;
   auto write_to_file(const std::filesystem::path& output_path) -> bool;
@@ -73,6 +80,7 @@ struct OXRC_API Session : Handle<Session> {
   auto new_packer() -> Packer;
   auto process(const ShaderCompileRequest& request) -> option<std::vector<ShaderPipelineData>>;
   auto process(const TextureCompileRequest& request) -> option<TextureData>;
+  auto process(const ModelCompileRequest& request) -> option<ModelData>;
 
   auto push_error(std::string msg) -> void;
   auto push_message(std::string msg) -> void;

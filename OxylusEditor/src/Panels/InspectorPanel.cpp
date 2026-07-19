@@ -334,7 +334,7 @@ InspectorPanel::InspectorPanel() : EditorPanelState("Inspector", ICON_MDI_INFORM
   });
 
   auto r2 = event_system.subscribe<DialogSaveEvent>([&asset_man](const DialogSaveEvent& e) {
-    asset_man.export_asset(e.asset_uuid, e.path);
+    // asset_man.export_asset(e.asset_uuid, e.path);
   });
 }
 
@@ -372,28 +372,28 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
 
     auto& asset_man = App::mod<AssetManager>();
 
-    auto path = std::filesystem::path(editor_context.str.value());
-    std::unique_ptr<AssetManager::AssetMetaFile> meta_file = nullptr;
+    // auto path = std::filesystem::path(editor_context.str.value());
+    // std::unique_ptr<AssetManager::AssetMetaFile> meta_file = nullptr;
 
-    if (path.extension() == ".oxasset") {
-      meta_file = asset_man.read_meta_file(path);
-    } else {
-      meta_file = asset_man.read_meta_file_from_asset(path);
-    }
+    // if (path.extension() == ".oxasset") {
+    //   meta_file = asset_man.read_meta_file(path);
+    // } else {
+    //   meta_file = asset_man.read_meta_file_from_asset(path);
+    // }
 
-    if (!meta_file) {
-      return;
-    }
+    // if (!meta_file) {
+    //   return;
+    // }
 
-    auto uuid_str_json = meta_file->doc["uuid"].get_string();
-    if (uuid_str_json.error())
-      return;
+    // auto uuid_str_json = meta_file->doc["uuid"].get_string();
+    // if (uuid_str_json.error())
+    //   return;
 
-    auto uuid_from_str = UUID::from_string(uuid_str_json.value_unsafe());
-    if (uuid_from_str.has_value()) {
-      if (auto asset = asset_man.get_asset(*uuid_from_str))
-        self.draw_asset_info(std::move(asset));
-    }
+    // auto uuid_from_str = UUID::from_string(uuid_str_json.value_unsafe());
+    // if (uuid_from_str.has_value()) {
+    //   if (auto asset = asset_man.get_asset(*uuid_from_str))
+    //     self.draw_asset_info(std::move(asset));
+    // }
   }
 }
 
@@ -715,7 +715,7 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
   ZoneScoped;
   auto& editor = App::mod<Editor>();
   auto& asset_man = App::mod<AssetManager>();
-  auto type_str = asset_man.to_asset_type_sv(asset->type);
+  auto type_str = AssetType_to_string_view(asset->type);
   auto uuid_str = asset->uuid.str();
   auto name = asset->path.filename().string();
   auto path_str = asset->path.string();

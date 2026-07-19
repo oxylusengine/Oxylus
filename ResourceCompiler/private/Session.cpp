@@ -1,5 +1,6 @@
 #include "Session.hpp"
 
+#include "ModelCompiler.hpp"
 #include "Packer.hpp"
 #include "ShaderSession.hpp"
 #include "TextureCompiler.hpp"
@@ -147,6 +148,16 @@ auto Session::process(const TextureCompileRequest& request) -> option<TextureDat
   }
 
   return texture_data;
+}
+
+auto Session::process(const ModelCompileRequest& request) -> option<ModelData> {
+  auto model_data = ModelCompiler::compile(request, *this);
+  if (!model_data.has_value()) {
+    push_error(fmt::format("Failed to compile model '{}'.", request.path.string()));
+    return nullopt;
+  }
+
+  return model_data;
 }
 
 auto Session::push_error(std::string msg) -> void {

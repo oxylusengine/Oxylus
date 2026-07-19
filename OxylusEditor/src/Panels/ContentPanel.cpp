@@ -92,8 +92,8 @@ static bool drag_drop_target(const std::filesystem::path& drop_path) {
         counter++;
       } while (std::filesystem::exists(file_path / ".oxasset"));
 
-      if (!asset_man.export_asset(asset->uuid, file_path))
-        OX_LOG_ERROR("Couldn't export asset!");
+      // if (!asset_man.export_asset(asset->uuid, file_path))
+      //   OX_LOG_ERROR("Couldn't export asset!");
       return true;
     }
 
@@ -798,12 +798,12 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
         auto& asset_man = App::mod<AssetManager>();
         auto asset = asset_man.create_asset(AssetType::Material, self.current_directory_.string());
         asset_man.load_asset(asset);
-        if (asset_man.export_asset(asset, (self.current_directory_ / self.new_asset_name_).string())) {
-          OX_LOG_INFO("Created new material asset {}", self.new_asset_name_);
-          self.refresh();
-        } else {
-          OX_LOG_ERROR("Couldn't create material asset {}", self.new_asset_name_);
-        }
+        // if (asset_man.export_asset(asset, (self.current_directory_ / self.new_asset_name_).string())) {
+        //   OX_LOG_INFO("Created new material asset {}", self.new_asset_name_);
+        //   self.refresh();
+        // } else {
+        //   OX_LOG_ERROR("Couldn't create material asset {}", self.new_asset_name_);
+        // }
         self.new_asset_name_.clear();
         self.should_open_new_asset_popup = false;
         ImGui::CloseCurrentPopup();
