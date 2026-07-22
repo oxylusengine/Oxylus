@@ -87,7 +87,7 @@ public:
 
   auto wait(this RenderContext& self) -> void;
   auto wait_on(vuk::UntypedValue&& fut) -> void;
-  auto wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment;
+  auto wait_on_multiple(std::span<vuk::UntypedValue> values) -> void;
 
   auto create_persistent_descriptor_set(
     this RenderContext&,

@@ -135,8 +135,6 @@ public:
   auto init(this Renderer& self) -> std::expected<void, std::string>;
   auto deinit(this Renderer& self) -> std::expected<void, std::string>;
 
-  auto new_frame(this Renderer& self) -> void;
-
   auto new_instance(Scene& scene) -> std::unique_ptr<RendererInstance>;
 
 private:
@@ -145,13 +143,9 @@ private:
   RenderContext* render_context = nullptr;
   bool initalized = false;
 
-  Texture sky_transmittance_lut_view;
-  vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment;
-  Texture sky_multiscatter_lut_view;
-  vuk::Value<vuk::ImageAttachment> sky_multiscatter_lut_attachment;
-  Texture hilbert_noise_lut;
-  vuk::Value<vuk::ImageAttachment> hilbert_noise_lut_attachment;
-  Texture sky_cubemap_view;
-  vuk::Value<vuk::ImageAttachment> sky_cubemap_attachment;
+  Texture sky_transmittance_lut = {};
+  Texture sky_multiscatter_lut = {};
+  Texture hilbert_noise_lut = {};
+  Texture sky_cubemap = {};
 };
 } // namespace ox

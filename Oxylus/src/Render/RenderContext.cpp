@@ -18,6 +18,8 @@
 #include "Utils/Profiler.hpp"
 
 namespace ox {
+thread_local vuk::Compiler this_thread_compiler;
+
 // i hate this
 PFN_vkCreateDescriptorPool vkCreateDescriptorPool;
 PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout;
@@ -499,9 +501,6 @@ auto RenderContext::new_frame(this RenderContext& self) -> vuk::Value<vuk::Image
 
   self.swapchain_extent = glm::vec2(acquired_image->extent.width, acquired_image->extent.height);
 
-  if (App::has_mod<Renderer>())
-    App::mod<Renderer>().new_frame();
-
   return acquired_image;
 }
 
@@ -534,19 +533,13 @@ auto RenderContext::wait(this RenderContext& self) -> void {
 auto RenderContext::wait_on(vuk::UntypedValue&& fut) -> void {
   ZoneScoped;
 
-  thread_local vuk::Compiler _compiler;
-  fut.wait(superframe_allocator.value(), _compiler);
+  fut.wait(superframe_allocator.value(), this_thread_compiler);
 }
 
-auto RenderContext::wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment {
+auto RenderContext::wait_on_multiple(std::span<vuk::UntypedValue> values) -> void {
   ZoneScoped;
 
-  auto& allocator = superframe_allocator.value();
-  if (frame && frame_allocator.has_value())
-    allocator = frame_allocator.value();
-
-  thread_local vuk::Compiler _compiler;
-  return *fut.get(allocator, _compiler);
+  vuk::wait_for_values_explicit(superframe_allocator.value(), this_thread_compiler, values);
 }
 
 auto RenderContext::create_persistent_descriptor_set(

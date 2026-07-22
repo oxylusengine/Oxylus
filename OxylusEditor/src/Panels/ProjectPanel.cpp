@@ -14,15 +14,12 @@
 
 namespace ox {
 ProjectPanel::ProjectPanel() : EditorPanelState("Projects", ICON_MDI_ACCOUNT_BADGE, true) {
-  engine_banner = std::make_shared<Texture>();
-  engine_banner->create(
-    {},
-    {.preset = Preset::eRTT2DUnmipped,
-     .format = vuk::Format::eR8G8B8A8Srgb,
-     .mime = {},
-     .loaded_data = editor_banner,
-     .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u}}
-  );
+  engine_banner = Texture::create({
+    .format = vuk::Format::eR8G8B8A8Srgb,
+    .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
+  engine_banner.upload(std::span(editor_banner), vuk::eFragmentSampled);
 }
 
 void ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) {
@@ -67,7 +64,7 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
                          ImGuiWindowFlags_NoBackground;
   static bool draw_new_project_panel = false;
 
-  const auto banner_size = self.engine_banner->get_extent();
+  const auto banner_size = self.engine_banner.get_extent();
 
   UI::center_next_window();
   ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.7f));
@@ -78,7 +75,7 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
 
     const auto& window = App::get_window();
 
-    UI::image(*self.engine_banner, {x, static_cast<float>(banner_size.height)});
+    UI::image(self.engine_banner.view(), {x, static_cast<float>(banner_size.height)});
     UI::spacing(2);
     ImGui::SeparatorText("Recent Projects");
     UI::spacing(2);

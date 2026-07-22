@@ -3,7 +3,6 @@
 #include <RmlUi/Core.h>
 #include <RmlUi/Debugger.h>
 
-#include "Asset/EmbedAsset.hpp"
 #include "Core/App.hpp"
 
 namespace ox {
@@ -38,18 +37,15 @@ auto RmlUI::init() -> std::expected<void, std::string> {
 
   Rml::Debugger::Initialise(main_context);
 
-  uint32_t white_pixel = 0xFFFFFFFF;
-  white_texture = std::make_unique<Texture>();
-  white_texture->create(
-    {},
-    TextureLoadInfo{
-      .format = vuk::Format::eR8G8B8A8Unorm,
-      .loaded_data = &white_pixel,
-      .extent = vuk::Extent3D{1, 1, 1u}
-    }
-  );
+  u8 white_pixel[] = {0xFF, 0xFF, 0xFF, 0xFF};
+  white_texture = Texture::create({
+    .format = vuk::Format::eR8G8B8A8Unorm,
+    .extent = vuk::Extent3D{1, 1, 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
+  white_texture.upload(white_pixel, vuk::eFragmentSampled);
 
-  this->rml_renderer.set_white_texture(white_texture.get());
+  this->rml_renderer.set_white_texture(white_texture.view());
 
   return {};
 }
