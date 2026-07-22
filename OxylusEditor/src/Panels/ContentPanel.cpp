@@ -236,17 +236,14 @@ auto ContentPanel::directory_tree_view_recursive(
 }
 
 ContentPanel::ContentPanel() : EditorPanelState("Contents", ICON_MDI_FOLDER_STAR, true) {
-  _white_texture = std::make_shared<Texture>();
-  char white_texture_data[16 * 16 * 4];
+  u8 white_texture_data[16 * 16 * 4];
   memset(white_texture_data, 0xff, 16 * 16 * 4);
-  _white_texture->create(
-    {},
-    {.preset = Preset::eRTT2DUnmipped,
-     .format = vuk::Format::eR8G8B8A8Unorm,
-     .mime = {},
-     .loaded_data = white_texture_data,
-     .extent = vuk::Extent3D{.width = 16u, .height = 16u, .depth = 1u}}
-  );
+  white_texture = Texture::create({
+    .format = vuk::Format::eR8G8B8A8Unorm,
+    .extent = vuk::Extent3D{.width = 16u, .height = 16u, .depth = 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
+  white_texture.upload(std::span(white_texture_data), vuk::eFragmentSampled);
 }
 
 void ContentPanel::init(this ContentPanel& self) {
@@ -615,7 +612,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
         ImGui::SetCursorPos({cursor_pos.x + padding, cursor_pos.y + padding});
         ImGui::SetNextItemAllowOverlap();
         UI::image(
-          *self._white_texture,
+          self.white_texture.view(),
           {background_thumbnail_size.x - padding * 2.f, background_thumbnail_size.y - padding * 2.f},
           {},
           {},
@@ -628,7 +625,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
         auto use_thumbnail_image = !is_dir && EditorCVar::cvar_file_thumbnails.get() &&
                                    (file.type == FileType::Texture || file.type == FileType::Model);
-        auto thumbnail_image = option<std::shared_ptr<Texture>>(nullopt);
+        auto thumbnail_image = TextureView{};
         if (use_thumbnail_image) {
           if (file.type == FileType::Texture) {
             thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(file_path_str);
@@ -637,8 +634,8 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           }
         }
         if (use_thumbnail_image) {
-          if (thumbnail_image.has_value()) {
-            UI::image(**thumbnail_image, {thumb_image_size, thumb_image_size});
+          if (thumbnail_image) {
+            UI::image(thumbnail_image, {thumb_image_size, thumb_image_size});
           } else {
             ImSpinner::detail::SpinnerConfig config{};
             config.setSpinnerType(ImSpinner::e_st_ang);
@@ -661,7 +658,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
         const ImVec2 type_color_frame_size = {scaled_thumbnail_size_x, scaled_thumbnail_size_x * 0.03f};
         ImGui::SetCursorPosX(cursor_pos.x + padding);
         UI::image(
-          *self._white_texture,
+          self.white_texture.view(),
           type_color_frame_size,
           {0, 0},
           {1, 1},

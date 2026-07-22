@@ -4,6 +4,7 @@
 
 #include "Asset/Texture.hpp"
 
+#include <ankerl/svector.h>
 #include <ktx.h>
 #include <stb_image.h>
 #include <stb_image_resize2.h>
@@ -13,307 +14,516 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Core/App.hpp"
-#include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
+#include "OS/File.hpp"
 #include "Render/Utils/DDS.hpp"
-#include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
-void Texture::create(const std::filesystem::path& path, TextureLoadInfo load_info, const std::source_location& loc) {
+struct ProcessedTexture {
+  vuk::Format format = {};
+  vuk::Extent3D extent = {};
+  ankerl::svector<vuk::Value<vuk::Buffer>, 12> buffers = {};
+};
+
+auto default_resource_name(OX_CALLSTACK) -> vuk::Name {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  auto file = LOC.file_name();
+  return vuk::Name(stack.format("{0}:{1}", file, LOC.line()));
+}
+
+auto to_srgb_format(vuk::Format format) -> vuk::Format {
+  switch (format) {
+    case vuk::Format::eR8G8B8A8Unorm    : return vuk::Format::eR8G8B8A8Srgb;
+    case vuk::Format::eB8G8R8A8Unorm    : return vuk::Format::eB8G8R8A8Srgb;
+    case vuk::Format::eR8G8B8Unorm      : return vuk::Format::eR8G8B8Srgb;
+    case vuk::Format::eB8G8R8Unorm      : return vuk::Format::eB8G8R8Srgb;
+    case vuk::Format::eBc1RgbUnormBlock : return vuk::Format::eBc1RgbSrgbBlock;
+    case vuk::Format::eBc1RgbaUnormBlock: return vuk::Format::eBc1RgbaSrgbBlock;
+    case vuk::Format::eBc2UnormBlock    : return vuk::Format::eBc2SrgbBlock;
+    case vuk::Format::eBc3UnormBlock    : return vuk::Format::eBc3SrgbBlock;
+    case vuk::Format::eBc7UnormBlock    : return vuk::Format::eBc7SrgbBlock;
+    default                             : return format;
+  }
+}
+
+auto to_unorm_format(vuk::Format format) -> vuk::Format {
+  switch (format) {
+    case vuk::Format::eR8G8B8A8Srgb    : return vuk::Format::eR8G8B8A8Unorm;
+    case vuk::Format::eB8G8R8A8Srgb    : return vuk::Format::eB8G8R8A8Unorm;
+    case vuk::Format::eR8G8B8Srgb      : return vuk::Format::eR8G8B8Unorm;
+    case vuk::Format::eB8G8R8Srgb      : return vuk::Format::eB8G8R8Unorm;
+    case vuk::Format::eBc1RgbSrgbBlock : return vuk::Format::eBc1RgbUnormBlock;
+    case vuk::Format::eBc1RgbaSrgbBlock: return vuk::Format::eBc1RgbaUnormBlock;
+    case vuk::Format::eBc2SrgbBlock    : return vuk::Format::eBc2UnormBlock;
+    case vuk::Format::eBc3SrgbBlock    : return vuk::Format::eBc3UnormBlock;
+    case vuk::Format::eBc7SrgbBlock    : return vuk::Format::eBc7UnormBlock;
+    default                            : return format;
+  }
+}
+
+auto apply_srgb_preference(vuk::Format format, bool is_srgb) -> vuk::Format {
+  return is_srgb ? to_srgb_format(format) : to_unorm_format(format);
+}
+
+auto detect_texture_source_type(std::span<const u8> bytes) -> TextureSourceType {
+  if (bytes.size() >= 4 && std::memcmp(bytes.data(), "DDS ", 4) == 0) {
+    return TextureSourceType::DDS;
+  }
+
+  constexpr static auto
+    KTX2_MAGIC = std::array<u8, 12>{0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
+  if (bytes.size() >= KTX2_MAGIC.size() && std::memcmp(bytes.data(), KTX2_MAGIC.data(), KTX2_MAGIC.size()) == 0) {
+    return TextureSourceType::KTX;
+  }
+
+  return TextureSourceType::Generic;
+}
+
+auto process_generic(std::span<const u8> bytes, bool is_srgb, vuk::Extent3D desired_extent = {~0_u32, ~0_u32, 1_u32})
+  -> option<ProcessedTexture> {
+  ZoneScoped;
+
+  auto result = ProcessedTexture{};
+
+  int width = 0, height = 0, channels = 0;
+  auto* raw_data =
+    stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height, &channels, STBI_rgb_alpha);
+  if (!raw_data) {
+    return nullopt;
+  }
+
+  OX_DEFER(&) {
+    if (raw_data)
+      stbi_image_free(raw_data);
+  };
+
+  auto level_w = static_cast<u32>(width);
+  auto level_h = static_cast<u32>(height);
+  const auto source_size = static_cast<u64>(level_w) * level_h * 4;
+  auto resized_pixels = std::vector<u8>();
+  auto pixels = std::span<u8>(raw_data, raw_data + source_size);
+
+  const auto target_w = ox::min(level_w, desired_extent.width);
+  const auto target_h = ox::min(level_h, desired_extent.height);
+  if (target_w != level_w || target_h != level_h) {
+    resized_pixels.resize(static_cast<usize>(target_w) * target_h * 4);
+    stbir_resize_uint8_linear(
+      pixels.data(),
+      static_cast<int>(level_w),
+      static_cast<int>(level_h),
+      0,
+      resized_pixels.data(),
+      static_cast<int>(target_w),
+      static_cast<int>(target_h),
+      0,
+      STBIR_RGBA
+    );
+
+    pixels = resized_pixels;
+    level_w = target_w;
+    level_h = target_h;
+  }
+
+  auto format = is_srgb ? vuk::Format::eR8G8B8A8Srgb : vuk::Format::eR8G8B8A8Unorm;
+  auto extent = vuk::Extent3D{level_w, level_h, 1_u32};
+
+  auto& render_context = App::get_rendercontext();
+  auto buffer = render_context.alloc_image_buffer(format, extent);
+  auto safe_size_bytes = ox::min(pixels.size_bytes(), buffer->size);
+  std::memcpy(buffer->mapped_ptr, pixels.data(), safe_size_bytes);
+
+  result.extent = extent;
+  result.format = format;
+  result.buffers.push_back(std::move(buffer));
+
+  return result;
+}
+
+auto process_dds(std::span<const u8> bytes) -> option<ProcessedTexture> {
+  ZoneScoped;
+
+  auto result = ProcessedTexture{};
+
+  auto dds_image = dds::Image{};
+  if (dds::readImage(const_cast<u8*>(bytes.data()), bytes.size(), &dds_image) != dds::ReadResult::Success) {
+    return nullopt;
+  }
+
+  auto& render_context = App::get_rendercontext();
+
+  result.format = static_cast<vuk::Format>(dds::getVulkanFormat(dds_image.format, dds_image.supportsAlpha));
+  result.extent = vuk::Extent3D{dds_image.width, dds_image.height, 1_u32};
+
+  for (auto level = 0_u32; level < dds_image.numMips; level++) {
+    const auto& mip = dds_image.mipmaps[level];
+    auto level_extent = vuk::Extent3D{
+      .width = ox::max(result.extent.width >> level, 1_u32),
+      .height = ox::max(result.extent.height >> level, 1_u32),
+      .depth = 1_u32,
+    };
+
+    auto buffer = render_context.alloc_image_buffer(result.format, level_extent);
+    auto safe_size_bytes = ox::min(buffer->size, mip.size_bytes());
+    std::memcpy(buffer->mapped_ptr, mip.data(), safe_size_bytes);
+
+    result.buffers.push_back(std::move(buffer));
+  }
+
+  return result;
+}
+
+auto process_ktx(std::span<const u8> bytes) -> option<ProcessedTexture> {
+  ZoneScoped;
+
+  auto result = ProcessedTexture{};
+
+  ktxTexture2* ktx = nullptr;
+  if (
+    ktxTexture2_CreateFromMemory(bytes.data(), bytes.size(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx) !=
+    KTX_SUCCESS
+  ) {
+    return nullopt;
+  }
+  std::unique_ptr<ktxTexture2, decltype([](ktxTexture2* p) { ktxTexture_Destroy(ktxTexture(p)); })> owned(ktx);
+
+  result.format = vuk::Format::eBc7UnormBlock;
+  if (ktxTexture2_NeedsTranscoding(ktx)) {
+    ZoneNamedN(z, "Transcode KTX2", true);
+    if (ktxTexture2_TranscodeBasis(ktx, KTX_TTF_BC7_RGBA, KTX_TF_HIGH_QUALITY) != KTX_SUCCESS) {
+      OX_LOG_ERROR("Couldn't transcode KTX2 texture.");
+      return nullopt;
+    }
+  } else {
+    result.format = static_cast<vuk::Format>(static_cast<VkFormat>(ktx->vkFormat));
+  }
+
+  result.extent = {ktx->baseWidth, ktx->baseHeight, ktx->baseDepth};
+
+  auto& render_context = App::get_rendercontext();
+  result.buffers.reserve(ktx->numLevels);
+
+  for (auto level = 0_u32; level < ktx->numLevels; level++) {
+    ktx_size_t offset = 0;
+    if (ktxTexture_GetImageOffset(ktxTexture(ktx), level, 0, 0, &offset) != KTX_SUCCESS) {
+      OX_LOG_ERROR("Failed to get KTX2 image offset for level {}.", level);
+      return nullopt;
+    }
+
+    auto level_extent = vuk::Extent3D{
+      .width = ox::max(result.extent.width >> level, 1_u32),
+      .height = ox::max(result.extent.height >> level, 1_u32),
+      .depth = 1_u32,
+    };
+
+    auto* level_data = ktxTexture_GetData(ktxTexture(ktx)) + offset;
+    auto level_size = ktxTexture_GetImageSize(ktxTexture(ktx), level);
+
+    auto buffer = render_context.alloc_image_buffer(result.format, level_extent);
+
+    OX_CHECK_EQ(
+      buffer->size,
+      level_size,
+      "KTX2 level {} size mismatch: buffer={} ktx={}",
+      level,
+      buffer->size,
+      level_size
+    );
+
+    std::memcpy(buffer->mapped_ptr, level_data, level_size);
+    result.buffers.push_back(std::move(buffer));
+  }
+
+  return result;
+}
+
+Texture::Texture(
+  vuk::ImageAttachment attachment_, ImageID image_id_, ImageViewID image_view_id_, SamplerID sampler_id_
+) noexcept
+    : attachment(attachment_),
+      image_id(image_id_),
+      image_view_id(image_view_id_),
+      sampler_id(sampler_id_) {}
+
+Texture::~Texture() noexcept { destroy(); }
+
+Texture::Texture(Texture&& other) noexcept
+    : attachment(other.attachment),
+      image_id(other.image_id),
+      image_view_id(other.image_view_id),
+      sampler_id(other.sampler_id) {
+  other.attachment = {};
+  other.image_id = ImageID::Invalid;
+  other.image_view_id = ImageViewID::Invalid;
+  other.sampler_id = SamplerID::Invalid;
+}
+
+Texture& Texture::operator=(Texture&& other) noexcept {
+  if (this != &other) {
+    destroy();
+
+    attachment = other.attachment;
+    image_id = other.image_id;
+    image_view_id = other.image_view_id;
+    sampler_id = other.sampler_id;
+
+    other.attachment = {};
+    other.image_id = ImageID::Invalid;
+    other.image_view_id = ImageViewID::Invalid;
+    other.sampler_id = SamplerID::Invalid;
+  }
+
+  return *this;
+}
+
+auto Texture::get_name(OX_CALLSTACK) const -> vuk::Name { return default_resource_name(LOC); }
+
+auto Texture::create(const TextureCreateInfo& info, OX_CALLSTACK) -> Texture {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  auto& render_context = App::get_rendercontext();
+
+  auto attachment = vuk::ImageAttachment{
+    .image_flags = info.image_flags,
+    .image_type = info.image_type,
+    .tiling = info.tiling,
+    .usage = info.usage | vuk::ImageUsageFlagBits::eTransferDst,
+    .extent = info.extent,
+    .format = info.format,
+    .sample_count = vuk::SampleCountFlagBits::e1,
+    .image_view_flags = info.image_view_flags,
+    .view_type = info.view_type,
+    .base_level = 0,
+    .level_count = info.level_count,
+    .base_layer = 0,
+    .layer_count = info.layer_count,
+  };
+
+  auto image_id = render_context.allocate_image(attachment);
+  if (image_id == ImageID::Invalid) {
+    return {};
+  }
+
+  auto image = render_context.image(image_id);
+  attachment.image = image;
+
+  auto image_view_id = render_context.allocate_image_view(attachment);
+  if (image_view_id == ImageViewID::Invalid) {
+    render_context.destroy_image(image_id);
+    return {};
+  }
+
+  auto image_view = render_context.image_view(image_view_id);
+  attachment.image_view = image_view;
+
+  auto sampler_id = render_context.allocate_sampler(info.sampler_info);
+  if (sampler_id == SamplerID::Invalid) {
+    render_context.destroy_image(image_id);
+    render_context.destroy_image_view(image_view_id);
+    return {};
+  }
+
+#if OX_DEBUG
+  auto debug_name = stack.format("{}:{}", LOC.file_name(), LOC.line());
+  render_context.runtime->set_name(render_context.image(image_id).image, debug_name);
+  render_context.runtime->set_name(render_context.image_view(image_view_id).payload, debug_name);
+#endif
+
+  return Texture(attachment, image_id, image_view_id, sampler_id);
+}
+
+auto Texture::create(const TextureLoadInfo& info, OX_CALLSTACK) -> Texture {
+  ZoneScoped;
+
+  auto bytes = std::span<const u8>{};
+  auto file = File();
+  if (auto* path = std::get_if<std::filesystem::path>(&info.source)) {
+    if (!std::filesystem::exists(*path)) {
+      OX_LOG_ERROR("Failed to create Texture({}). Specified path '{}' does not exist.", LOC, *path);
+      return {};
+    }
+
+    file = File(*path, FileAccess::Read);
+    const auto* mapped_data = file.map();
+    bytes = std::span{static_cast<const u8*>(mapped_data), file.size};
+  } else if (auto* span = std::get_if<std::span<const u8>>(&info.source)) {
+    bytes = *span;
+  }
+
+  auto processed_texture = option<ProcessedTexture>{nullopt};
+  auto source_type = detect_texture_source_type(bytes);
+  switch (source_type) {
+    case TextureSourceType::Generic: {
+      auto desired_extent = vuk::Extent3D{
+        .width = info.target_width.value_or(~0_u32),
+        .height = info.target_height.value_or(~0_u32),
+        .depth = 1_u32,
+      };
+      processed_texture = process_generic(bytes, info.is_srgb, desired_extent);
+    } break;
+    case TextureSourceType::DDS: processed_texture = process_dds(bytes); break;
+    case TextureSourceType::KTX: processed_texture = process_ktx(bytes); break;
+  }
+
+  if (!processed_texture) {
+    OX_LOG_ERROR("Failed to create Texture({}). Couldn't process the source data.", LOC);
+    return {};
+  }
+
+  processed_texture->format = apply_srgb_preference(processed_texture->format, info.is_srgb);
+
+  auto processed_level_count = static_cast<u32>(processed_texture->buffers.size());
+  auto can_generate_mips = source_type == TextureSourceType::Generic;
+  auto requested_level_count = info.level_count;
+
+  if (requested_level_count > processed_level_count && !can_generate_mips) {
+    OX_LOG_WARN(
+      "Requested {} mip levels but compressed source only has {}; clamping.",
+      requested_level_count,
+      processed_level_count
+    );
+    requested_level_count = processed_level_count;
+  }
+
+  auto result = create({
+    .format = processed_texture->format,
+    .extent = processed_texture->extent,
+    .level_count = ox::max(requested_level_count, processed_level_count),
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
+
+  auto generate_remaining_mips = can_generate_mips && requested_level_count > processed_level_count;
+  result.upload_mips(processed_texture->buffers, vuk::eFragmentSampled, generate_remaining_mips);
+
+  return result;
+}
+
+auto Texture::destroy(this Texture& self) -> void {
+  ZoneScoped;
+
+  auto& render_context = App::get_rendercontext();
+
+  if (self.image_id != ImageID::Invalid)
+    render_context.destroy_image(self.image_id);
+  if (self.image_view_id != ImageViewID::Invalid)
+    render_context.destroy_image_view(self.image_view_id);
+  if (self.sampler_id != SamplerID::Invalid)
+    render_context.destroy_sampler(self.sampler_id);
+
+  self.attachment = {};
+  self.image_id = ImageID::Invalid;
+  self.image_view_id = ImageViewID::Invalid;
+  self.sampler_id = SamplerID::Invalid;
+}
+
+auto Texture::acquire(this const Texture& self, std::string_view name, vuk::Access last_access, OX_CALLSTACK)
+  -> vuk::Value<vuk::ImageAttachment> {
+  ZoneScoped;
+
+  return self.view().acquire(name, last_access, LOC);
+}
+
+auto Texture::discard(this const Texture& self, std::string_view name, OX_CALLSTACK)
+  -> vuk::Value<vuk::ImageAttachment> {
+  ZoneScoped;
+
+  return self.view().discard(name, LOC);
+}
+
+auto Texture::upload_mips(
+  this Texture& self,
+  std::span<const std::span<const u8>> per_mip_pixels,
+  vuk::Access release_as,
+  bool generate_remaining
+) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 
   auto& render_context = App::get_rendercontext();
   auto& allocator = render_context.superframe_allocator;
+  auto effective_level_count = std::min(static_cast<u32>(per_mip_pixels.size()), self.attachment.level_count);
+  auto buffers = stack.alloc<vuk::Value<vuk::Buffer>>(effective_level_count);
 
-  const auto is_generic = load_info.mime == TextureLoadInfo::MimeType::Generic;
-  const auto is_dds = load_info.mime == TextureLoadInfo::MimeType::DDS;
-  const auto is_ktx = load_info.mime == TextureLoadInfo::MimeType::KTX;
+  auto base_extent = self.attachment.extent;
+  for (auto level = 0_u32; level < effective_level_count; level++) {
+    auto level_extent = vuk::Extent3D{
+      .width = base_extent.width >> level,
+      .height = base_extent.height >> level,
+      .depth = 1,
+    };
 
-  std::unique_ptr<u8[]> stb_data = nullptr;
-  std::unique_ptr<ktxTexture2, decltype([](ktxTexture2* p) { ktxTexture_Destroy(ktxTexture(p)); })> ktx_texture = {};
-  dds::Image dds_image = {};
+    auto mip_pixels = per_mip_pixels[level];
+    auto buffer = render_context.alloc_image_buffer(self.attachment.format, level_extent);
+    std::memcpy(buffer->mapped_ptr, mip_pixels.data(), mip_pixels.size_bytes());
 
-  auto extent = load_info.extent.value_or(vuk::Extent3D{0, 0, 1});
-  u32 chans = {};
-  vuk::Format format = load_info.format;
-
-  if (is_generic) {
-    if (!load_info.bytes.empty()) {
-      stb_data = load_stb_image_from_memory(
-        (void*)load_info.bytes.data(),
-        load_info.bytes.size(),
-        &extent.width,
-        &extent.height,
-        &chans
-      );
-    } else if (!path.empty()) {
-      u32 original_width, original_height;
-      stb_data = load_stb_image(stack.format_char("{}", path), &original_width, &original_height, &chans);
-
-      u32 target_width = original_width;
-      u32 target_height = original_height;
-
-      if (load_info.extent.has_value()) {
-        if (original_width > load_info.extent->width || original_height > load_info.extent->height) {
-          target_width = load_info.extent->width;
-          target_height = load_info.extent->height;
-        }
-      }
-
-      extent.width = target_width;
-      extent.height = target_height;
-
-      if (target_width != original_width || target_height != original_height) {
-        size_t resized_size = target_width * target_height * 4;
-
-        auto resized_data = std::make_unique<u8[]>(resized_size);
-
-        stbir_resize_uint8_linear(
-          stb_data.get(),
-          original_width,
-          original_height,
-          0,
-          resized_data.get(),
-          target_width,
-          target_height,
-          0,
-          STBIR_RGBA
-        );
-
-        stb_data = std::move(resized_data);
-      }
-    }
-  } else if (is_dds) {
-    if (!path.empty()) {
-      auto path_str = path.string();
-      auto result = dds::readFile(path_str, &dds_image);
-      if (result != dds::ReadResult::Success) {
-        OX_LOG_INFO("Error while loading dds. {}", path);
-      }
-    } else if (!load_info.bytes.empty()) {
-      auto result = dds::readImage(const_cast<u8*>(load_info.bytes.data()), load_info.bytes.size(), &dds_image);
-      if (result != dds::ReadResult::Success) {
-        OX_LOG_INFO("Error while loading dds. {}", path);
-      }
-    }
-
-    extent.width = dds_image.width;
-    extent.height = dds_image.height;
-    format = static_cast<vuk::Format>(dds::getVulkanFormat(dds_image.format, dds_image.supportsAlpha));
-  } else if (is_ktx) {
-    ktxTexture2* ktx{};
-    if (path.empty()) {
-      OX_CHECK_EQ(!load_info.bytes.empty(), true);
-      if (const auto result = ktxTexture2_CreateFromMemory(
-            load_info.bytes.data(), //
-            load_info.bytes.size(),
-            KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
-            &ktx
-          );
-          result != KTX_SUCCESS) {
-        OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
-      }
-    } else {
-      auto path_str = path.string();
-      if (const auto
-            result = ktxTexture2_CreateFromNamedFile(path_str.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx);
-          result != KTX_SUCCESS) {
-        OX_LOG_ERROR("Couldn't load KTX2 file {}", ktxErrorString(result));
-      }
-    }
-
-    OX_CHECK_NULL(ktx);
-
-    auto format_ktx = vuk::Format::eBc7UnormBlock;
-    constexpr ktx_transcode_fmt_e ktx_transcode_format = KTX_TTF_BC7_RGBA;
-
-    // If the image needs is in a supercompressed encoding, transcode it to a desired format
-    if (ktxTexture2_NeedsTranscoding(ktx)) {
-      ZoneNamedN(z, "Transcode KTX 2 Texture", true);
-      if (const auto result = ktxTexture2_TranscodeBasis(ktx, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
-          result != KTX_SUCCESS) {
-        OX_LOG_ERROR("Couldn't transcode KTX2 file {}", ktxErrorString(result));
-      }
-    } else {
-      // Use the format that the image is already in
-      format_ktx = static_cast<vuk::Format>(static_cast<VkFormat>(ktx->vkFormat));
-    }
-
-    extent.width = ktx->baseWidth;
-    extent.height = ktx->baseHeight;
-    format = format_ktx;
-
-    ktx_texture.reset(ktx);
+    buffers[level] = std::move(buffer);
   }
 
-  OX_CHECK_NE(extent.height, 0u, "Height can't be 0!");
-  OX_CHECK_NE(extent.width, 0u, "Width can't be 0!");
-  OX_CHECK_NE(extent.depth, 0u, "Depth can't be 0!");
-
-  auto ia = vuk::ImageAttachment::from_preset(
-    load_info.preset,
-    format,
-    {extent.width, extent.height, extent.depth},
-    vuk::Samples::e1
-  );
-  ia.usage |= vuk::ImageUsageFlagBits::eTransferDst | vuk::ImageUsageFlagBits::eTransferSrc;
-  ia.image_flags |= load_info.image_flags;
-  if (load_info.layer_count.has_value()) {
-    ia.layer_count = *load_info.layer_count;
-  }
-  if (load_info.view_type.has_value()) {
-    ia.view_type = *load_info.view_type;
-  }
-
-  image_id = render_context.allocate_image(ia);
-  ia.image = render_context.image(image_id);
-  image_view_id = render_context.allocate_image_view(ia);
-  ia.image_view = render_context.image_view(image_view_id);
-
-  std::vector<u8> ktx_data = {};
-  std::vector<usize> ktx_per_level_offsets = {};
-  const void* final_data =
-    load_info.loaded_data
-      .or_else([&ia, is_generic, is_dds, &stb_data, &ktx_data, &ktx_per_level_offsets, &ktx_texture, &dds_image] {
-        if (!is_generic && !is_dds) {
-          ia.level_count = ktx_texture->numLevels;
-
-          ktx_per_level_offsets.resize(ia.level_count);
-
-          for (u32 level = 0; level < ia.level_count; level++) {
-            ktx_size_t offset = 0;
-            auto offset_result = ktxTexture_GetImageOffset(ktxTexture(ktx_texture.get()), level, 0, 0, &offset);
-            if (offset_result != KTX_SUCCESS) {
-              OX_LOG_ERROR("Failed to get KTX2 offset.");
-              return option<void*>(nullptr);
-            }
-
-            auto* image_data = ktxTexture_GetData(ktxTexture(ktx_texture.get())) + offset;
-            auto image_size = ktxTexture_GetImageSize(ktxTexture(ktx_texture.get()), level);
-
-            auto output_offset = static_cast<usize>(ktx_data.size());
-            ktx_per_level_offsets[level] = output_offset;
-            ktx_data.resize(ktx_data.size() + image_size);
-            std::memcpy(ktx_data.data() + output_offset, image_data, image_size);
-          }
-
-          return option<void*>{ktx_data.data()};
-        } else if (is_dds) {
-          ia.level_count = dds_image.numMips;
-          ia.layer_count = dds_image.arraySize;
-
-          return option<void*>{dds_image.data.data()};
-        }
-
-        return option<void*>{stb_data.get()};
-      })
-      .value();
-
-  if (final_data != nullptr) {
-    vuk::Value<vuk::ImageAttachment> fut = {};
-
-    if (is_generic) {
-      fut = vuk::host_data_to_image(*allocator, vuk::DomainFlagBits::eTransferOnTransfer, ia, final_data);
-      if (ia.level_count > 1) {
-        fut = vuk::generate_mips(fut, ia.level_count);
-      }
-    } else if (is_dds) {
-      if (ia.level_count > 1) {
-        fut = vuk::discard_ia("iv", ia);
-
-        for (u32 level = 0; level < ia.level_count; level++) {
-          auto mip = dds_image.mipmaps[level];
-          auto buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, mip.size());
-          std::memcpy(buffer->mapped_ptr, mip.data(), mip.size());
-          auto dst_mip = fut.mip(level);
-          auto acquired_buf = vuk::acquire_buf("transient buffer", *buffer, vuk::Access::eNone);
-          vuk::copy(std::move(acquired_buf), std::move(dst_mip));
-        }
-      }
-    } else if (!ktx_data.empty()) {
-      if (ia.level_count > 1) {
-        fut = vuk::discard_ia("iv", ia);
-
-        for (u32 level = 0; level < ia.level_count; level++) {
-          auto mip_data_offset = ktx_per_level_offsets[level];
-          auto level_extent = vuk::Extent3D{
-            .width = extent.width >> level,
-            .height = extent.height >> level,
-            .depth = 1,
-          };
-          auto size = vuk::compute_image_size(format, level_extent);
-          auto buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, size, 16);
-
-          std::memcpy(buffer->mapped_ptr, ktx_data.data() + mip_data_offset, size);
-          auto dst_mip = fut.mip(level);
-          auto acquired_buf = vuk::acquire_buf("transient buffer", *buffer, vuk::Access::eNone);
-          vuk::copy(std::move(acquired_buf), std::move(dst_mip));
-        }
-      }
-    }
-
-    vuk::Compiler compiler{};
-
-    if (release_as_ != vuk::eNone) {
-      fut = fut.as_released(release_as_, vuk::DomainFlagBits::eGraphicsQueue);
-    } else if (transition_) {
-      if (ia.usage & vuk::ImageUsageFlagBits::eStorage && ia.usage & vuk::ImageUsageFlagBits::eSampled) {
-        fut = fut.as_released(vuk::eComputeSampled, vuk::DomainFlagBits::eGraphicsQueue);
-      } else {
-        fut = fut.as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue);
-      }
-    }
-
-    fut.wait(*allocator, compiler);
-  }
-
-  auto sampler_ci = load_info.sampler_info;
-  sampler_ci.maxLod = f32(ia.level_count);
-  sampler_id = render_context.allocate_sampler(sampler_ci);
-  attachment_ = ia;
-
-  set_name(name_, loc);
+  self.upload_mips(buffers, release_as, generate_remaining);
 }
 
-auto Texture::disable_transition() -> Texture& {
-  transition_ = false;
-  return *this;
-}
-
-auto Texture::release_as(vuk::Access access) -> Texture& {
-  release_as_ = access;
-  return *this;
-}
-
-auto Texture::destroy() -> void {
+auto Texture::upload_mips(
+  this Texture& self,
+  std::span<vuk::Value<vuk::Buffer>> per_mip_buffers,
+  vuk::Access release_as,
+  bool generate_remaining
+) -> void {
   ZoneScoped;
-  attachment_ = {};
-  name_ = {};
+  memory::ScopedStack stack;
 
   auto& render_context = App::get_rendercontext();
+  auto effective_level_count = std::min(static_cast<u32>(per_mip_buffers.size()), self.attachment.level_count);
+  auto waits = stack.alloc<vuk::UntypedValue>(effective_level_count + 1);
 
-  render_context.destroy_image(image_id);
-  image_id = {};
+  auto base_extent = self.attachment.extent;
+  auto attachment = vuk::discard_ia("upload mips", self.attachment);
+  for (auto level = 0_u32; level < effective_level_count; level++) {
+    auto level_extent = vuk::Extent3D{
+      .width = base_extent.width >> level,
+      .height = base_extent.height >> level,
+      .depth = 1,
+    };
 
-  render_context.destroy_image_view(image_view_id);
-  image_view_id = {};
+    auto mip_buffer = std::move(per_mip_buffers[level]);
+    auto mip = attachment.mip(level);
+    waits[level] = std::move(vuk::copy(std::move(mip_buffer), std::move(mip)).as_released(release_as));
+  }
 
-  render_context.destroy_sampler(sampler_id);
-  sampler_id = {};
+  if (generate_remaining && self.attachment.level_count > effective_level_count) {
+    auto base_mip = effective_level_count - 1;
+    auto num_mips = self.attachment.level_count - effective_level_count;
+    attachment = vuk::generate_mips(attachment, base_mip, num_mips);
+  }
+
+  waits[effective_level_count] = std::move(attachment.as_released(release_as));
+
+  render_context.wait_on_multiple(waits);
 }
 
-vuk::Value<vuk::ImageAttachment> Texture::acquire(
-  const vuk::Name name, const vuk::Access last_access, vuk::source_location LOC
-) const {
+auto Texture::upload(this Texture& self, std::span<const u8> pixels, vuk::Access release_as, bool generate_remaining)
+  -> void {
   ZoneScoped;
-  return vuk::acquire_ia(name.is_invalid() ? get_name() : name, attachment(), last_access, LOC);
+
+  const std::span<const u8> mip0_pixels[] = {pixels};
+  self.upload_mips(std::span(mip0_pixels), release_as, generate_remaining);
 }
 
-vuk::Value<vuk::ImageAttachment> Texture::discard(vuk::Name name, vuk::source_location LOC) const {
+auto Texture::set_name(std::string_view name, OX_CALLSTACK) -> void {
   ZoneScoped;
-  return vuk::discard_ia(name.is_invalid() ? get_name() : name, attachment(), LOC);
+
+  auto& render_context = App::get_rendercontext();
+  auto new_name = vuk::Name{name};
+  if (name.empty()) {
+    new_name = get_name();
+  }
+
+  render_context.runtime->set_name(render_context.image(image_id).image, new_name);
+  render_context.runtime->set_name(render_context.image_view(image_view_id).payload, new_name);
 }
+
+auto Texture::view(this const Texture& self) -> TextureView { return {self.attachment, self.image_view_id}; }
 
 auto Texture::get_image() const -> const vuk::Image {
   ZoneScoped;
@@ -323,7 +533,7 @@ auto Texture::get_image() const -> const vuk::Image {
   return render_context.image(image_id);
 }
 
-auto Texture::get_view() const -> const vuk::ImageView {
+auto Texture::get_image_view() const -> const vuk::ImageView {
   ZoneScoped;
 
   auto& render_context = App::get_rendercontext();
@@ -331,140 +541,39 @@ auto Texture::get_view() const -> const vuk::ImageView {
   return render_context.image_view(image_view_id);
 }
 
-void Texture::set_name(const vuk::Name& name, const std::source_location& loc) {
-  ZoneScoped;
-  auto& render_context = App::get_rendercontext();
-  vuk::Name new_name = name;
-  if (new_name.is_invalid()) {
-    auto file = loc.file_name();
-    const auto n = fmt::format("{0}:{1}", file, loc.line());
-    new_name = vuk::Name(n);
-  }
+auto Texture::get_extent() const -> const vuk::Extent3D& { return attachment.extent; }
 
-  render_context.runtime->set_name(render_context.image(image_id).image, new_name);
-  render_context.runtime->set_name(render_context.image_view(image_view_id).payload, new_name);
+auto Texture::get_format() const -> vuk::Format { return attachment.format; }
 
-  name_ = new_name;
-}
+auto Texture::get_image_id() const -> ImageID { return image_id; }
 
-auto Texture::load_stb_image(const std::filesystem::path& path, u32* width, u32* height, u32* bits, bool srgb)
-  -> std::unique_ptr<u8[]> {
-  ZoneScoped;
-  memory::ScopedStack stack;
+auto Texture::get_view_id() const -> ImageViewID { return image_view_id; }
 
-  if (!exists(path))
-    OX_LOG_ERROR("Couldn't load image, file doesn't exists. {}", path);
+auto Texture::get_image_index() const -> u32 { return SlotMap_decode_id(image_id).index; }
 
-  int tex_width = 0, tex_height = 0, tex_channels = 0;
-  constexpr int size_of_channel = 8;
+auto Texture::get_view_index() const -> u32 { return SlotMap_decode_id(image_view_id).index; }
 
-  const auto pixels = stbi_load(stack.format_char("{}", path), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
+auto Texture::get_sampler_id() const -> SamplerID { return sampler_id; }
 
-  if (tex_channels != 4)
-    tex_channels = 4;
+auto Texture::get_sampler_index() const -> u32 { return SlotMap_decode_id(sampler_id).index; }
 
-  if (width)
-    *width = tex_width;
-  if (height)
-    *height = tex_height;
-  if (bits)
-    *bits = tex_channels * size_of_channel;
-
-  const i32 size = tex_width * tex_height * tex_channels * size_of_channel / 8;
-  auto result = std::make_unique<u8[]>(size);
-  memcpy(result.get(), pixels, size);
-  stbi_image_free(pixels);
-
-  return result;
-}
-
-std::unique_ptr<u8[]> Texture::load_stb_image_from_memory(
-  void* buffer, size_t len, u32* width, u32* height, u32* bits, bool flipY, bool srgb
-) {
+auto TextureView::acquire(this const TextureView& self, std::string_view name, vuk::Access last_access, OX_CALLSTACK)
+  -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
-  int tex_width = 0, tex_height = 0, tex_channels = 0;
-  const auto pixels = stbi_load_from_memory(
-    static_cast<stbi_uc*>(buffer),
-    static_cast<int>(len),
-    &tex_width,
-    &tex_height,
-    &tex_channels,
-    STBI_rgb_alpha
+  return vuk::acquire_ia(
+    name.empty() ? default_resource_name(LOC) : vuk::Name{name},
+    self.attachment,
+    last_access,
+    LOC
   );
-
-  if (!pixels) {
-    OX_LOG_ERROR("Failed to load image from memory. STB Error: {}", stbi_failure_reason());
-    return nullptr;
-  }
-
-  if (width)
-    *width = tex_width;
-  if (height)
-    *height = tex_height;
-
-  // STBI_rgb_alpha is forced so the output is guaranteed to be 32-bit (4 channels * 8 bits)
-  if (bits)
-    *bits = 32;
-
-  const size_t size = static_cast<size_t>(tex_width) * static_cast<size_t>(tex_height) * 4;
-  auto result = std::make_unique<u8[]>(size);
-  memcpy(result.get(), pixels, size);
-
-  stbi_image_free(pixels);
-  return result;
 }
 
-u8* Texture::get_magenta_texture(u32 width, u32 height, u32 channels) {
+auto TextureView::discard(this const TextureView& self, std::string_view name, OX_CALLSTACK)
+  -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
-  const u32 size = width * height * channels;
-  const auto data = new u8[size];
-
-  const u8 magenta[16] = {255, 0, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 0, 255, 255};
-
-  memcpy(data, magenta, size);
-
-  return data;
+  return vuk::discard_ia(name.empty() ? default_resource_name(LOC) : vuk::Name{name}, self.attachment, LOC);
 }
 
-u8* Texture::convert_to_four_channels(u32 width, u32 height, const u8* three_channel_data) {
-  ZoneScoped;
-
-  const auto bufferSize = width * height * 4;
-  const auto buffer = new u8[bufferSize];
-  auto* rgba = buffer;
-  const auto* rgb = three_channel_data;
-  for (u32 i = 0; i < width * height; ++i) {
-    for (u32 j = 0; j < 3; ++j) {
-      rgba[j] = rgb[j];
-    }
-    rgba += 4;
-    rgb += 3;
-  }
-  return buffer;
-}
-
-auto Texture::path_to_mime(const std::filesystem::path& path) -> TextureLoadInfo::MimeType {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  if (!path.has_extension()) {
-    return TextureLoadInfo::MimeType::Generic;
-  }
-
-  auto extension = stack.to_upper(path.extension().string());
-  switch (fnv64_str(extension)) {
-    case fnv64_c(".KTX"):
-    case fnv64_c(".KTX2"): {
-      return TextureLoadInfo::MimeType::KTX;
-    }
-    case fnv64_c(".DDS"): {
-      return TextureLoadInfo::MimeType::DDS;
-    }
-    default:;
-  }
-
-  return TextureLoadInfo::MimeType::Generic;
-}
 } // namespace ox

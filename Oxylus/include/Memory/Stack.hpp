@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <fmt/core.h>
+#include <memory>
 #include <simdutf.h>
+#include <span>
+#include <string_view>
 
 #include "Core/Types.hpp"
 
@@ -30,17 +33,21 @@ struct ScopedStack {
   template <typename T>
   T* alloc() {
     auto& stack = get_thread_stack();
-    T* v = reinterpret_cast<T*>(stack.ptr);
+    auto* v = reinterpret_cast<T*>(stack.ptr);
     stack.ptr = ox::align_up(stack.ptr + sizeof(T), alignof(T));
+
+    std::uninitialized_default_construct(v);
 
     return v;
   }
 
   template <typename T>
-  std::span<T> alloc(usize count) {
+  auto alloc(usize count) -> std::span<T> {
     auto& stack = get_thread_stack();
-    T* v = reinterpret_cast<T*>(stack.ptr);
+    auto* v = reinterpret_cast<T*>(stack.ptr);
     stack.ptr = ox::align_up(stack.ptr + sizeof(T) * count, alignof(T));
+
+    std::uninitialized_default_construct_n(v, count);
 
     return {v, count};
   }
@@ -116,9 +123,7 @@ struct ScopedStack {
     return {begin, size};
   }
 
-  std::string_view to_utf8(c32 str) {
-    return to_utf8({&str, 1});
-  }
+  std::string_view to_utf8(c32 str) { return to_utf8({&str, 1}); }
 
   std::string_view to_upper(std::string_view str) {
     auto& stack = get_thread_stack();

@@ -3,6 +3,8 @@ import gpu;
 import scene;
 import visbuffer;
 
+#include <defines.slang>
+
 [[vk::binding(0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(2)]] StructuredBuffer<MeshInstance> mesh_instances;
@@ -49,8 +51,8 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> u32 {
 #if 1
-    let material = materials[input.material_index];
-    if (material.flags & MaterialFlag::HasAlbedoImage) {
+    let material = materials[NonUniformResourceIndex(input.material_index)];
+    if (HAS_FLAG(material.flags, MaterialFlag::HasAlbedoImage)) {
         UVGradient grad;
         grad.uv = input.tex_coord;
         grad.ddx = ddx(input.tex_coord);
@@ -58,7 +60,7 @@ func fs_main(VertexOutput input) -> u32 {
         let alpha_color = material.sample_albedo_color(grad).a;
 
         // We are doing deferred, blend alpha mode is not supported in this pass.
-        if (alpha_color < clamp(material.alpha_cutoff, 0.001, 1.0)) {
+        if (alpha_color < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
             discard;
         }
     }
