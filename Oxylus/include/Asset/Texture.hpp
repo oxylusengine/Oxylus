@@ -14,6 +14,8 @@ using Preset = vuk::ImageAttachment::Preset;
 namespace ox {
 enum class TextureID : u64 { Invalid = std::numeric_limits<u64>::max() };
 
+using TextureDataSource = std::variant<std::filesystem::path, std::span<const u8>>;
+
 enum class TextureSourceType : u32 {
   Generic = 0,
   DDS,
@@ -42,7 +44,7 @@ struct TextureCreateInfo {
 };
 
 struct TextureLoadInfo {
-  std::variant<std::filesystem::path, std::span<const u8>> source = {};
+  TextureDataSource source = {};
   u32 level_count = 1;
   bool is_srgb = true;
   option<u32> target_width = nullopt;
