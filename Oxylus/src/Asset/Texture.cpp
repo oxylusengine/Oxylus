@@ -189,11 +189,12 @@ auto process_ktx(std::span<const u8> bytes) -> option<ProcessedTexture> {
   std::unique_ptr<ktxTexture2, decltype([](ktxTexture2* p) { ktxTexture_Destroy(ktxTexture(p)); })> owned(ktx);
 
   result.format = vuk::Format::eBc7UnormBlock;
-  if (
-    ktxTexture2_NeedsTranscoding(ktx) &&
-    ktxTexture2_TranscodeBasis(ktx, KTX_TTF_BC7_RGBA, KTX_TF_HIGH_QUALITY) != KTX_SUCCESS
-  ) {
-    return nullopt;
+  if (ktxTexture2_NeedsTranscoding(ktx)) {
+    ZoneNamedN(z, "Transcode KTX2", true);
+    if (ktxTexture2_TranscodeBasis(ktx, KTX_TTF_BC7_RGBA, KTX_TF_HIGH_QUALITY) != KTX_SUCCESS) {
+      OX_LOG_ERROR("Couldn't transcode KTX2 texture.");
+      return nullopt;
+    }
   } else {
     result.format = static_cast<vuk::Format>(static_cast<VkFormat>(ktx->vkFormat));
   }
@@ -201,22 +202,36 @@ auto process_ktx(std::span<const u8> bytes) -> option<ProcessedTexture> {
   result.extent = {ktx->baseWidth, ktx->baseHeight, ktx->baseDepth};
 
   auto& render_context = App::get_rendercontext();
+  result.buffers.reserve(ktx->numLevels);
+
   for (auto level = 0_u32; level < ktx->numLevels; level++) {
+    ktx_size_t offset = 0;
+    if (ktxTexture_GetImageOffset(ktxTexture(ktx), level, 0, 0, &offset) != KTX_SUCCESS) {
+      OX_LOG_ERROR("Failed to get KTX2 image offset for level {}.", level);
+      return nullopt;
+    }
+
     auto level_extent = vuk::Extent3D{
       .width = ox::max(result.extent.width >> level, 1_u32),
       .height = ox::max(result.extent.height >> level, 1_u32),
       .depth = 1_u32,
     };
+
+    auto* level_data = ktxTexture_GetData(ktxTexture(ktx)) + offset;
+    auto level_size = ktxTexture_GetImageSize(ktxTexture(ktx), level);
+
     auto buffer = render_context.alloc_image_buffer(result.format, level_extent);
 
-    ktx_size_t offset = 0;
-    if (ktxTexture_GetImageOffset(ktxTexture(ktx), level, 0, 0, &offset) == KTX_SUCCESS) {
-      auto* level_data = ktxTexture_GetData(ktxTexture(ktx)) + offset;
-      auto level_size = ktxTexture_GetImageSize(ktxTexture(ktx), level);
-      auto safe_size_bytes = ox::min(buffer->size, level_size);
-      std::memcpy(buffer->mapped_ptr, level_data, safe_size_bytes);
-    }
+    OX_CHECK_EQ(
+      buffer->size,
+      level_size,
+      "KTX2 level {} size mismatch: buffer={} ktx={}",
+      level,
+      buffer->size,
+      level_size
+    );
 
+    std::memcpy(buffer->mapped_ptr, level_data, level_size);
     result.buffers.push_back(std::move(buffer));
   }
 
@@ -322,8 +337,6 @@ auto Texture::create(const TextureCreateInfo& info, OX_CALLSTACK) -> Texture {
 auto Texture::create(const TextureLoadInfo& info, OX_CALLSTACK) -> Texture {
   ZoneScoped;
 
-  auto result = Texture{};
-
   auto bytes = std::span<const u8>{};
   auto file = File();
   if (auto* path = std::get_if<std::filesystem::path>(&info.source)) {
@@ -350,12 +363,8 @@ auto Texture::create(const TextureLoadInfo& info, OX_CALLSTACK) -> Texture {
       };
       processed_texture = process_generic(bytes, info.is_srgb, desired_extent);
     } break;
-    case TextureSourceType::DDS: {
-      processed_texture = process_dds(bytes);
-    } break;
-    case TextureSourceType::KTX: {
-      processed_texture = process_ktx(bytes);
-    } break;
+    case TextureSourceType::DDS: processed_texture = process_dds(bytes); break;
+    case TextureSourceType::KTX: processed_texture = process_ktx(bytes); break;
   }
 
   if (!processed_texture) {
@@ -366,14 +375,26 @@ auto Texture::create(const TextureLoadInfo& info, OX_CALLSTACK) -> Texture {
   processed_texture->format = apply_srgb_preference(processed_texture->format, info.is_srgb);
 
   auto processed_level_count = static_cast<u32>(processed_texture->buffers.size());
-  result = create({
+  auto can_generate_mips = source_type == TextureSourceType::Generic;
+  auto requested_level_count = info.level_count;
+
+  if (requested_level_count > processed_level_count && !can_generate_mips) {
+    OX_LOG_WARN(
+      "Requested {} mip levels but compressed source only has {}; clamping.",
+      requested_level_count,
+      processed_level_count
+    );
+    requested_level_count = processed_level_count;
+  }
+
+  auto result = create({
     .format = processed_texture->format,
     .extent = processed_texture->extent,
-    .level_count = ox::max(info.level_count, processed_level_count),
+    .level_count = ox::max(requested_level_count, processed_level_count),
     .usage = vuk::ImageUsageFlagBits::eSampled,
   });
 
-  auto generate_remaining_mips = info.level_count > processed_level_count;
+  auto generate_remaining_mips = can_generate_mips && requested_level_count > processed_level_count;
   result.upload_mips(processed_texture->buffers, vuk::eFragmentSampled, generate_remaining_mips);
 
   return result;
@@ -468,6 +489,12 @@ auto Texture::upload_mips(
     auto mip_buffer = std::move(per_mip_buffers[level]);
     auto mip = attachment.mip(level);
     waits[level] = std::move(vuk::copy(std::move(mip_buffer), std::move(mip)).as_released(release_as));
+  }
+
+  if (generate_remaining && self.attachment.level_count > effective_level_count) {
+    auto base_mip = effective_level_count - 1;
+    auto num_mips = self.attachment.level_count - effective_level_count;
+    attachment = vuk::generate_mips(attachment, base_mip, num_mips);
   }
 
   waits[effective_level_count] = std::move(attachment.as_released(release_as));
