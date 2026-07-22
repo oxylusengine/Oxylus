@@ -536,7 +536,10 @@ auto AssetManager::load_texture(this AssetManager& self, const UUID& uuid, Textu
 
   auto texture = Texture::create({
     .source = data_source,
+    .level_count = info.level_count,
     .is_srgb = info.is_srgb,
+    .target_width = info.target_width,
+    .target_height = info.target_height,
     .sampler_info = info.sampler_info,
   });
   if (!texture)
