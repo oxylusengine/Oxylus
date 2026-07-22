@@ -1039,9 +1039,9 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
     "outlined_composite",
     {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eColorAttachment |
               vuk::ImageUsageFlagBits::eSampled,
+     .format = vuk::Format::eR8G8B8A8Unorm,
      .sample_count = vuk::Samples::e1}
   );
-  outline_composite_output.same_format_as(original_result_attachment);
   outline_composite_output.same_shape_as(original_result_attachment);
   outline_composite_output = vuk::clear_image(std::move(outline_composite_output), vuk::Black<f32>);
 
