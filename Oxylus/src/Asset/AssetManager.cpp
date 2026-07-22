@@ -527,8 +527,13 @@ auto AssetManager::load_texture(this AssetManager& self, const UUID& uuid, Textu
     asset_path = asset->path;
   }
 
-  Texture texture{};
-  texture.create(asset_path, std::move(info));
+  auto texture = Texture::create({
+    .source = asset_path,
+    .is_srgb = info.is_srgb,
+    .sampler_info = info.sampler_info,
+  });
+  if (!texture)
+    return false;
 
   auto asset = self.get_asset(uuid);
   if (!asset)

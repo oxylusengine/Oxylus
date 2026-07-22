@@ -62,13 +62,13 @@ auto gltf_mime_type_to_asset_file_type(fastgltf::MimeType mime) -> AssetFileType
   }
 }
 
-auto gltf_mime_type_to_texture_mime_type(fastgltf::MimeType mime) -> TextureLoadInfo::MimeType {
+auto gltf_mime_type_to_texture_mime_type(fastgltf::MimeType mime) -> TextureSourceType {
   switch (mime) {
+    case fastgltf::MimeType::KTX2: return TextureSourceType::KTX;
+    case fastgltf::MimeType::DDS : return TextureSourceType::DDS;
     case fastgltf::MimeType::JPEG:
-    case fastgltf::MimeType::PNG : return TextureLoadInfo::MimeType::Generic;
-    case fastgltf::MimeType::KTX2: return TextureLoadInfo::MimeType::KTX;
-    case fastgltf::MimeType::DDS : return TextureLoadInfo::MimeType::DDS;
-    default                      : return TextureLoadInfo::MimeType::Generic;
+    case fastgltf::MimeType::PNG :
+    default                      : return TextureSourceType::Generic;
   }
 }
 
@@ -368,17 +368,18 @@ auto extract_linear_texture_indices(const fastgltf::Asset& asset) -> ankerl::uno
 auto load_gltf_texture(
   AssetManager& self,
   const fastgltf::Asset& asset,
+  const std::filesystem::path& asset_path,
   const UUID& texture_uuid,
   const fastgltf::Image& gltf_image,
   const fastgltf::Texture& gltf_texture,
-  vuk::Format format
+  bool is_srgb
 ) -> void {
   ZoneScoped;
 
-  auto mapped_file = File{};
   auto texture_load_info = TextureLoadInfo{
-    .format = format,
+    .is_srgb = is_srgb,
   };
+
   std::visit(
     ox::match{
       [](const auto&) {},
@@ -390,7 +391,7 @@ auto load_gltf_texture(
           ox::match{
             [](const auto&) {},
             [&](const fastgltf::sources::Array& array) {
-              texture_load_info.bytes = std::span(
+              texture_load_info.source = std::span(
                 reinterpret_cast<const u8*>(array.bytes.data() + buffer_view.byteOffset),
                 buffer_view.byteLength
               );
@@ -398,19 +399,13 @@ auto load_gltf_texture(
           },
           buffer.data
         );
-
-        texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
       },
       [&](const fastgltf::sources::Array& v) {
-        texture_load_info.bytes = std::span(
-          const_cast<u8*>(reinterpret_cast<const u8*>(v.bytes.data())),
-          v.bytes.size_bytes()
-        );
-        texture_load_info.mime = gltf_mime_type_to_texture_mime_type(v.mimeType);
+        texture_load_info.source = std::span(reinterpret_cast<const u8*>(v.bytes.data()), v.bytes.size_bytes());
       },
       [&](const fastgltf::sources::URI& uri) {
-        // External file
-        texture_load_info.mime = Texture::path_to_mime(uri.uri.fspath());
+        // External file, resolved relative to the glTF's own directory.
+        texture_load_info.source = asset_path.parent_path() / uri.uri.fspath();
       },
     },
     gltf_image.data
@@ -514,13 +509,10 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
     const auto& gltf_image = gltf_asset.images[image_index.value()];
 
-    auto image_format = vuk::Format::eR8G8B8A8Srgb;
-    if (linear_texture_indices.contains(texture_index)) {
-      image_format = vuk::Format::eR8G8B8A8Unorm;
-    }
+    auto is_srgb = !linear_texture_indices.contains(texture_index);
 
-    auto work = [&asset_man = self, &gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format]() {
-      load_gltf_texture(asset_man, gltf_asset, texture_uuid, gltf_image, gltf_texture, image_format);
+    auto work = [&asset_man = self, &gltf_asset, &asset_path, texture_uuid, gltf_image, gltf_texture, is_srgb]() {
+      load_gltf_texture(asset_man, gltf_asset, asset_path, texture_uuid, gltf_image, gltf_texture, is_srgb);
     };
 
     if (run_async) {
