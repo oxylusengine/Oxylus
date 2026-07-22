@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <fmt/core.h>
+#include <memory>
 #include <simdutf.h>
+#include <span>
+#include <string_view>
 
 #include "Core/Types.hpp"
 
