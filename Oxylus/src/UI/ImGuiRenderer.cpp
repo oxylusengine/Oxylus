@@ -42,7 +42,7 @@ void ImGuiRenderer::build_fonts() {
   io.Fonts->Build();
   io.Fonts->GetTexDataAsRGBA32(&pixels_data, &width, &height);
   font_texture = Texture::create({
-    .format = vuk::Format::eR8G8B8A8Srgb,
+    .format = vuk::Format::eR8G8B8A8Unorm,
     .extent = vuk::Extent3D{static_cast<u32>(width), static_cast<u32>(height), 1u},
     .usage = vuk::ImageUsageFlagBits::eSampled,
   });
@@ -168,7 +168,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
         }
 
         font_texture = Texture::create({
-          .format = vuk::Format::eR8G8B8A8Srgb,
+          .format = vuk::Format::eR8G8B8A8Unorm,
           .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u},
           .usage = vuk::ImageUsageFlagBits::eSampled,
         });
@@ -195,7 +195,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
           font_texture->create(
             {},
             {.preset = Preset::eRTT2DUnmipped,
-             .format = vuk::Format::eR8G8B8A8Srgb,
+             .format = vuk::Format::eR8G8B8A8Unorm,
              .mime = {},
              .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u}}
           );
