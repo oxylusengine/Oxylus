@@ -81,8 +81,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   };
 
   GPU::VirtualClipmap directional_clipmaps[RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT] = {};
-  constexpr static auto directional_clipmaps_size_bytes = ox::count_of(directional_clipmaps) *
-                                                          sizeof(GPU::VirtualClipmap);
+  constexpr static auto directional_clipmaps_size_bytes = ox::size_bytes(directional_clipmaps);
   context.directional_clipmaps_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eCPUtoGPU,
     directional_clipmaps_size_bytes
@@ -123,9 +122,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     .y = RMVSMContext::PAGE_SIZE / 16,
   });
 
-  context.virtual_page_table_attachment = vuk::acquire_ia(
+  context.virtual_page_table_attachment = self.vsm_virtual_page_table.acquire(
     "vsm virtual page table",
-    self.vsm_virtual_page_table_attachment,
     vuk::eFragmentSampled
   );
 
@@ -135,7 +133,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vuk::eFragmentSampled
   );
 
-  auto hpb_attachment = vuk::acquire_ia("vsm hpb", self.vsm_hpb_attachment, vuk::eFragmentSampled);
+  auto hpb_attachment = self.vsm_hpb.acquire("vsm hpb", vuk::eFragmentSampled);
 
   if (context.sun_moved) {
     context.virtual_page_table_attachment = vuk::clear_image(
@@ -185,7 +183,15 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
         .dispatch_invocations(dirty_mesh_count, RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE, page_table->layer_count);
 
-      return std::make_tuple(page_table, dirty_mesh_indices, mesh_instances, meshes, transforms, transforms_previous, clipmaps);
+      return std::make_tuple(
+        page_table,
+        dirty_mesh_indices,
+        mesh_instances,
+        meshes,
+        transforms,
+        transforms_previous,
+        clipmaps
+      );
     }
   );
 

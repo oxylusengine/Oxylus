@@ -1,9 +1,7 @@
 #pragma once
 
-#include <algorithm>
 #include <fmt/core.h>
 #include <memory>
-#include <simdutf.h>
 #include <span>
 #include <string_view>
 
@@ -27,14 +25,16 @@ struct ScopedStack {
   ScopedStack(ScopedStack&&) = delete;
   ~ScopedStack();
 
-  auto operator=(const ScopedStack&) = delete;
-  auto operator=(ScopedStack&&) = delete;
+  auto operator=(const ScopedStack&) -> ScopedStack& = delete;
+  auto operator=(ScopedStack&&) -> ScopedStack& = delete;
 
   template <typename T>
-  T* alloc() {
+  auto alloc() -> T* {
     auto& stack = get_thread_stack();
+    stack.ptr = ox::align_up(stack.ptr, alignof(T));
+
     auto* v = reinterpret_cast<T*>(stack.ptr);
-    stack.ptr = ox::align_up(stack.ptr + sizeof(T), alignof(T));
+    stack.ptr += sizeof(T);
 
     std::uninitialized_default_construct(v);
 
@@ -44,8 +44,10 @@ struct ScopedStack {
   template <typename T>
   auto alloc(usize count) -> std::span<T> {
     auto& stack = get_thread_stack();
+    stack.ptr = ox::align_up(stack.ptr, alignof(T));
+
     auto* v = reinterpret_cast<T*>(stack.ptr);
-    stack.ptr = ox::align_up(stack.ptr + sizeof(T) * count, alignof(T));
+    stack.ptr += sizeof(T) * count;
 
     std::uninitialized_default_construct_n(v, count);
 
@@ -53,7 +55,7 @@ struct ScopedStack {
   }
 
   template <typename T, typename... ArgsT>
-  std::span<T> alloc_n(ArgsT&&... args) {
+  auto alloc_n(ArgsT&&... args) -> std::span<T> {
     usize count = sizeof...(ArgsT);
     std::span<T> spn = alloc<T>(count);
     std::construct_at(reinterpret_cast<T*>(spn.data()), std::forward<ArgsT>(args)...);
@@ -62,117 +64,35 @@ struct ScopedStack {
   }
 
   template <typename... ArgsT>
-  std::string_view format(const fmt::format_string<ArgsT...> fmt, ArgsT&&... args) {
+  auto format(const fmt::format_string<ArgsT...> fmt, ArgsT&&... args) -> std::string_view {
     auto& stack = get_thread_stack();
     c8* begin = reinterpret_cast<c8*>(stack.ptr);
     c8* end = fmt::vformat_to(begin, fmt.get(), fmt::make_format_args(args...));
     *end = '\0';
-    stack.ptr = ox::align_up(reinterpret_cast<u8*>(end + 1), 8);
+    stack.ptr = reinterpret_cast<u8*>(end + 1);
 
     return {begin, end};
   }
 
   template <typename... ArgsT>
-  const c8* format_char(const fmt::format_string<ArgsT...> fmt, ArgsT&&... args) {
+  auto format_char(const fmt::format_string<ArgsT...> fmt, ArgsT&&... args) -> const c8* {
     auto& stack = get_thread_stack();
     c8* begin = reinterpret_cast<c8*>(stack.ptr);
     c8* end = fmt::vformat_to(begin, fmt.get(), fmt::make_format_args(args...));
     *end = '\0';
-    stack.ptr = ox::align_up(reinterpret_cast<u8*>(end + 1), 8);
+    stack.ptr = reinterpret_cast<u8*>(end + 1);
 
     return begin;
   }
 
-  std::u32string_view to_utf32(std::string_view str) {
-    auto& stack = get_thread_stack();
-    auto* begin = reinterpret_cast<c32*>(stack.ptr);
-    usize size = simdutf::convert_utf8_to_utf32(str.data(), str.length(), begin);
-    begin[size] = L'\0';
-    stack.ptr = ox::align_up(stack.ptr + (size + 1) * sizeof(c32), 8);
-
-    return {reinterpret_cast<c32*>(begin), size};
-  }
-
-  std::u16string_view to_utf16(std::string_view str) {
-    auto& stack = get_thread_stack();
-    c16* begin = reinterpret_cast<c16*>(stack.ptr);
-    usize size = simdutf::convert_utf8_to_utf16(str.data(), str.length(), begin);
-    begin[size] = L'\0';
-    stack.ptr = ox::align_up(stack.ptr + (size + 1) * sizeof(c16), 8);
-
-    return {reinterpret_cast<c16*>(begin), size};
-  }
-
-  std::string_view to_utf8(std::u32string_view str) {
-    auto& stack = get_thread_stack();
-    auto* begin = reinterpret_cast<c8*>(stack.ptr);
-    usize size = simdutf::convert_utf32_to_utf8(str.data(), str.length(), begin);
-    begin[size] = '\0';
-    stack.ptr = ox::align_up(stack.ptr + size + 1, 8);
-
-    return {begin, size};
-  }
-
-  std::string_view to_utf8(std::u16string_view str) {
-    auto& stack = get_thread_stack();
-    auto* begin = reinterpret_cast<c8*>(stack.ptr);
-    usize size = simdutf::convert_utf16_to_utf8(str.data(), str.length(), begin);
-    begin[size] = '\0';
-    stack.ptr = ox::align_up(stack.ptr + size + 1, 8);
-
-    return {begin, size};
-  }
-
-  std::string_view to_utf8(c32 str) { return to_utf8({&str, 1}); }
-
-  std::string_view to_upper(std::string_view str) {
-    auto& stack = get_thread_stack();
-    auto* begin = reinterpret_cast<c8*>(stack.ptr);
-    std::ranges::copy(str, begin);
-    c8* end = reinterpret_cast<c8*>(stack.ptr + str.length());
-    stack.ptr = ox::align_up(reinterpret_cast<u8*>(end + 1), 8);
-
-    std::transform(begin, end, begin, ::toupper);
-    *end = '\0';
-
-    return {begin, end};
-  }
-
-  std::string_view to_lower(std::string_view str) {
-    auto& stack = get_thread_stack();
-    auto* begin = reinterpret_cast<c8*>(stack.ptr);
-    std::ranges::copy(str, begin);
-    auto* end = reinterpret_cast<c8*>(stack.ptr + str.length());
-    stack.ptr = ox::align_up(reinterpret_cast<u8*>(end + 1), 8);
-
-    std::transform(begin, end, begin, ::tolower);
-    *end = '\0';
-
-    return {begin, end};
-  }
-
-  std::string_view null_terminate(std::string_view str) {
-    auto& stack = get_thread_stack();
-    auto* begin = reinterpret_cast<c8*>(stack.ptr);
-    std::ranges::copy(str, begin);
-    auto* end = reinterpret_cast<c8*>(stack.ptr + str.length());
-    stack.ptr = ox::align_up(reinterpret_cast<u8*>(end + 1), 8);
-
-    *end = '\0';
-
-    return {begin, end};
-  }
-
-  const c8* null_terminate_cstr(std::string_view str) {
-    auto& stack = get_thread_stack();
-    auto* begin = reinterpret_cast<c8*>(stack.ptr);
-    std::ranges::copy(str, begin);
-    auto* end = reinterpret_cast<c8*>(stack.ptr + str.length());
-    stack.ptr = ox::align_up(reinterpret_cast<u8*>(end + 1), 8);
-
-    *end = '\0';
-
-    return begin;
-  }
+  auto to_utf32(std::string_view str) -> std::u32string_view;
+  auto to_utf16(std::string_view str) -> std::u16string_view;
+  auto to_utf8(std::u32string_view str) -> std::string_view;
+  auto to_utf8(std::u16string_view str) -> std::string_view;
+  auto to_utf8(c32 str) -> std::string_view;
+  auto to_upper(std::string_view str) -> std::string_view;
+  auto to_lower(std::string_view str) -> std::string_view;
+  auto null_terminate(std::string_view str) -> std::string_view;
+  auto null_terminate_cstr(std::string_view str) -> const c8*;
 };
 } // namespace ox::memory

@@ -102,7 +102,7 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
   });
   OX_ASSERT(self.hilbert_noise_lut);
   self.hilbert_noise_lut.upload(
-    {reinterpret_cast<u8*>(hilbert_noise), std::size(hilbert_noise)},
+    {reinterpret_cast<u8*>(hilbert_noise), ox::size_bytes(hilbert_noise)},
     vuk::eFragmentSampled
   );
 

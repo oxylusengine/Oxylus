@@ -243,52 +243,45 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   before_callbacks.resize(stage_count);
   after_callbacks.resize(stage_count);
 
-  vsm_virtual_page_table_attachment = vuk::ImageAttachment{
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
-             vuk::ImageUsageFlagBits::eTransferDst,
-    .extent =
-      {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-       .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-       .depth = 1},
+  vsm_virtual_page_table = Texture::create({
     .format = vuk::Format::eR32Uint,
-    .sample_count = vuk::Samples::e1,
-    .view_type = vuk::ImageViewType::e2DArray,
-    .base_level = 0,
-    .level_count = 1,
-    .base_layer = 0,
+    .extent =
+      {
+        .width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+        .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+        .depth = 1,
+      },
     .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
-  };
-  vsm_virtual_page_table = *vuk::allocate_image(*allocator, vsm_virtual_page_table_attachment);
-  vsm_virtual_page_table_attachment.image = *vsm_virtual_page_table;
-  vsm_virtual_page_table_view = *vuk::allocate_image_view(*allocator, vsm_virtual_page_table_attachment);
-  vsm_virtual_page_table_attachment.image_view = *vsm_virtual_page_table_view;
-  render_context.wait_on(
-    vuk::clear_image(vuk::discard_ia("vsm virtual page table", vsm_virtual_page_table_attachment), vuk::Black<u32>)
-      .as_released(vuk::eFragmentSampled)
-  );
+    .level_count = 1,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+    .view_type = vuk::ImageViewType::e2DArray,
 
-  vsm_hpb_attachment = vuk::ImageAttachment{
+  });
+
+  auto virtual_page_table_attachment = vsm_virtual_page_table.discard("vsm virtual page table");
+  virtual_page_table_attachment = vuk::clear_image(std::move(virtual_page_table_attachment), vuk::Black<u32>);
+  virtual_page_table_attachment = std::move(virtual_page_table_attachment).as_released(vuk::eFragmentSampled);
+  render_context.wait_on(std::move(virtual_page_table_attachment));
+
+  vsm_hpb = Texture::create({
+    .format = vuk::Format::eR8Uint,
+    .extent =
+      {
+        .width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+        .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+        .depth = 1,
+      },
+    .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
+    .level_count = 1 + static_cast<u32>(std::log2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE)),
     .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
              vuk::ImageUsageFlagBits::eTransferDst,
-    .extent =
-      {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-       .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-       .depth = 1},
-    .format = vuk::Format::eR8Uint,
-    .sample_count = vuk::Samples::e1,
     .view_type = vuk::ImageViewType::e2DArray,
-    .base_level = 0,
-    .level_count = 1 + static_cast<u32>(std::log2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE)),
-    .base_layer = 0,
-    .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
-  };
-  vsm_hpb = *vuk::allocate_image(*allocator, vsm_hpb_attachment);
-  vsm_hpb_attachment.image = *vsm_hpb;
-  vsm_hpb_view = *vuk::allocate_image_view(*allocator, vsm_hpb_attachment);
-  vsm_hpb_attachment.image_view = *vsm_hpb_view;
-  render_context.wait_on(
-    vuk::clear_image(vuk::discard_ia("vsm hpb", vsm_hpb_attachment), vuk::Black<u32>).as_released(vuk::eFragmentSampled)
-  );
+  });
+
+  auto vsm_hpb_attachment = vsm_hpb.discard("vsm hpb");
+  vsm_hpb_attachment = vuk::clear_image(std::move(vsm_hpb_attachment), vuk::Black<u32>);
+  vsm_hpb_attachment = std::move(vsm_hpb_attachment).as_released(vuk::eFragmentSampled);
+  render_context.wait_on(std::move(vsm_hpb_attachment));
 
   vsm_physical_page_table_attachment = vuk::ImageAttachment{
     .image_flags = vuk::ImageCreateFlagBits::eMutableFormat,

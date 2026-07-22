@@ -418,12 +418,8 @@ private:
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
   vuk::Unique<vuk::Buffer> exposure_buffer{};
 
-  vuk::Unique<vuk::Image> vsm_virtual_page_table{};
-  vuk::Unique<vuk::ImageView> vsm_virtual_page_table_view{};
-  vuk::ImageAttachment vsm_virtual_page_table_attachment = {};
-  vuk::Unique<vuk::Image> vsm_hpb{};
-  vuk::Unique<vuk::ImageView> vsm_hpb_view{};
-  vuk::ImageAttachment vsm_hpb_attachment = {};
+  Texture vsm_virtual_page_table = {};
+  Texture vsm_hpb = {};
   vuk::Unique<vuk::Image> vsm_physical_page_table{};
   vuk::Unique<vuk::ImageView> vsm_physical_page_table_f32_view{};
   vuk::Unique<vuk::ImageView> vsm_physical_page_table_u32_view{};

@@ -98,6 +98,11 @@ inline usize size_bytes(const T& v) {
   return v.size() * sizeof(typename T::value_type);
 }
 
+template <typename T, usize N>
+consteval usize size_bytes(T (&)[N]) {
+  return N * sizeof(T);
+}
+
 constexpr void hash_combine(usize& seed, const usize v) noexcept { seed ^= v + 0x9e3779b9 + (seed << 6) + (seed >> 2); }
 
 struct TypeIndexHash {
