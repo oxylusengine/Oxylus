@@ -11,6 +11,7 @@
 #include "Core/Base.hpp"
 #include "Core/Option.hpp"
 #include "Memory/SlotMap.hpp"
+#include "Render/ContextCVar.hpp"
 
 namespace ox {
 struct Window;
@@ -40,6 +41,8 @@ public:
   };
 
   Resources resources = {};
+
+  ContextCVar context_cvar = {};
 
   VkDevice device = nullptr;
   VkPhysicalDevice physical_device = nullptr;

@@ -8,7 +8,6 @@
 #include "Memory/Stack.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Render/RenderContext.hpp"
-#include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Utils/Log.hpp"
@@ -465,7 +464,8 @@ auto RendererInstance::add_stage_after(
 auto RendererInstance::render(
   this RendererInstance& self,
   vuk::Value<vuk::ImageAttachment>&& dst_attachment,
-  const Renderer::RenderInfo& render_info
+  const Renderer::RenderInfo& render_info,
+  const RendererCVar& cvar
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
@@ -501,16 +501,16 @@ auto RendererInstance::render(
   const auto scene_has_atmosphere = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
   const auto scene_has_directional_light = self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight;
 
-  if (RendererCVar::cvar_bloom_enable.as_bool())
+  if (cvar.cvar_bloom_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasBloom;
-  if (RendererCVar::cvar_fxaa_enable.as_bool())
+  if (cvar.cvar_fxaa_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasFXAA;
-  if (RendererCVar::cvar_vbgtao_enable.as_bool())
+  if (cvar.cvar_vbgtao_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
-  if (RendererCVar::cvar_contact_shadows.as_bool())
+  if (cvar.cvar_contact_shadows_enabled.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
 
-  const auto debug_view = static_cast<GPU::DebugView>(RendererCVar::cvar_debug_view.get());
+  const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
   const f32 debug_heatmap_scale = 5.0;
   const auto debugging = debug_view != GPU::DebugView::None;
 
@@ -830,15 +830,15 @@ auto RendererInstance::render(
 
     auto contact_shadows_pass = vuk::make_pass(
       "contact_shadows",
-      [sun_dir = self.directional_light.direction](
+      [sun_dir = self.directional_light.direction, &cvar](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eComputeRW) result,
         VUK_IA(vuk::eComputeSampled) src_depth,
         VUK_BA(vuk::eComputeRead) camera
       ) {
-        const u32 steps = static_cast<u32>(RendererCVar::cvar_contact_shadows_steps.get());
-        const f32 thickness = RendererCVar::cvar_contact_shadows_thickness.get();
-        const f32 length = RendererCVar::cvar_contact_shadows_length.get();
+        const u32 steps = static_cast<u32>(cvar.cvar_contact_shadows_steps.get());
+        const f32 thickness = cvar.cvar_contact_shadows_thickness.get();
+        const f32 length = cvar.cvar_contact_shadows_length.get();
 
         cmd_list //
           .bind_compute_pipeline("contact_shadows")
@@ -1117,7 +1117,7 @@ auto RendererInstance::render(
   }
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasBloom) {
-    self.apply_bloom(post_process_context);
+    self.apply_bloom(post_process_context, cvar);
   }
 
   dst_attachment = self.apply_tonemap(post_process_context);
@@ -1154,7 +1154,7 @@ auto RendererInstance::render(
     debug_context.vsm_clipmaps_buffer = std::move(rmvsm_virtual_clipmaps_buffer);
   }
 
-  auto debug_renderer_enabled = RendererCVar::cvar_enable_debug_renderer.as_bool();
+  auto debug_renderer_enabled = cvar.cvar_enable_debug_renderer.as_bool();
   if (debug_renderer_enabled) {
     return self.draw_for_debug(debug_context, std::move(dst_attachment));
   }
@@ -1166,7 +1166,8 @@ auto RendererInstance::render(
   return dst_attachment;
 }
 
-auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void {
+auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdateInfo& info, const RendererCVar& cvar)
+  -> void {
   ZoneScoped;
 
   self.update_ran_this_frame = true;
@@ -1179,7 +1180,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   CameraComponent current_camera = {};
   CameraComponent frozen_camera = {};
-  const auto freeze_culling = static_cast<bool>(RendererCVar::cvar_freeze_culling_frustum.get());
+  const auto freeze_culling = static_cast<bool>(cvar.cvar_freeze_culling_frustum.get());
 
   self.scene.world
     .query_builder<const TransformComponent, const CameraComponent>() //
@@ -1193,8 +1194,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       }
 
       if (
-        static_cast<bool>(RendererCVar::cvar_freeze_culling_frustum.get()) &&
-        static_cast<bool>(RendererCVar::cvar_draw_camera_frustum.get())
+        static_cast<bool>(cvar.cvar_freeze_culling_frustum.get()) &&
+        static_cast<bool>(cvar.cvar_draw_camera_frustum.get())
       ) {
         const auto proj = frozen_camera.get_projection_matrix() * frozen_camera.get_view_matrix();
         auto& debug_renderer = App::mod<ox::DebugRenderer>();
@@ -1534,7 +1535,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
   }
 
-  auto debug_renderer_enabled = (bool)RendererCVar::cvar_enable_debug_renderer.get();
+  auto debug_renderer_enabled = (bool)cvar.cvar_enable_debug_renderer.get();
 
   if (debug_renderer_enabled) {
     auto& debug_renderer = App::mod<ox::DebugRenderer>();
@@ -1576,7 +1577,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     debug_renderer.reset();
   }
 
-  self.update_vbgtao_info();
+  self.update_vbgtao_info(cvar);
 
   if (!self.exposure_buffer) {
     self.exposure_buffer = render_context.allocate_buffer_super(

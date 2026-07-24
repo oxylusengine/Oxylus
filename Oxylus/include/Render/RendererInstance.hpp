@@ -3,6 +3,7 @@
 #include <ankerl/unordered_dense.h>
 
 #include "Render/Renderer.hpp"
+#include "Render/RendererCVar.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
@@ -335,9 +336,10 @@ public:
   auto render(
     this RendererInstance& self,
     vuk::Value<vuk::ImageAttachment>&& dst_attachment,
-    const Renderer::RenderInfo& render_info
+    const Renderer::RenderInfo& render_info,
+    const RendererCVar& cvar
   ) -> vuk::Value<vuk::ImageAttachment>;
-  auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info) -> void;
+  auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info, const RendererCVar& cvar) -> void;
 
   auto get_viewport_size(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_size; }
   auto get_viewport_offset(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_offset; }
@@ -353,14 +355,14 @@ public:
   auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
     -> vuk::Value<vuk::ImageAttachment>;
   auto apply_eye_adaptation(this RendererInstance&, PostProcessContext& context) -> void;
-  auto apply_bloom(this RendererInstance&, PostProcessContext& context) -> void;
+  auto apply_bloom(this RendererInstance&, PostProcessContext& context, const RendererCVar& cvar) -> void;
   auto apply_tonemap(this RendererInstance&, PostProcessContext& context) -> vuk::Value<vuk::ImageAttachment>;
   auto apply_debug_view(this RendererInstance&, DebugContext& context, vuk::Extent3D extent)
     -> vuk::Value<vuk::ImageAttachment>;
   auto draw_for_debug(this RendererInstance&, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
     -> vuk::Value<vuk::ImageAttachment>;
 
-  auto update_vbgtao_info(this RendererInstance&) -> void;
+  auto update_vbgtao_info(this RendererInstance&, const RendererCVar& cvar) -> void;
 
 private:
   bool update_ran_this_frame = false; // Sanity Check

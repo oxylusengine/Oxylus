@@ -11,13 +11,11 @@
 #include "Editor.hpp"
 #include "Render/Camera.hpp"
 #include "Render/RenderContext.hpp"
-#include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
-#include "Utils/EditorConfig.hpp"
 #include "Utils/OxMath.hpp"
 
 namespace ox {
@@ -111,6 +109,11 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
 
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 1.f));
   if (self.on_begin(flags)) {
+    if (auto s = self.editor_scene->get_scene()) {
+      self.runtime_console.set_scene_cvar_system(reinterpret_cast<CVarSystem*>(&s->renderer_cvar));
+      self.runtime_console.render();
+    }
+
     if (ImGui::BeginPopupContextItem("viewport context")) {
       if (ImGui::MenuItem("Unload Scene")) {
         self.editor_scene = nullptr;
@@ -220,9 +223,11 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     }
 
     self.scaled_render_size = self.render_size;
-    const u32 scale = self.scale_viewport_size_with_content_scale
+    const u32 scale = editor.editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool()
                         ? static_cast<u32>(App::get_window().get_window_content_scale())
-                        : (1u << static_cast<u32>(self.viewport_scale_amount)); // 0->1, 1->2, 2->4, 3->8
+                        : (
+                            1u << static_cast<u32>(editor.editor_cvar.cvar_viewport_scale_amount.get())
+                          ); // 0->1, 1->2, 2->4, 3->8
 
     self.scaled_render_size.x *= scale;
     self.scaled_render_size.y *= scale;
@@ -302,7 +307,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         self.mouse_picking_stages(renderer_instance, picking_texel);
       }
 
-      if (EditorCVar::cvar_draw_grid.as_bool()) {
+      if (editor.editor_cvar.cvar_draw_grid.as_bool()) {
         self.grid_stage(renderer_instance);
       }
 
@@ -353,6 +358,8 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
     return;
   }
 
+  auto& editor = App::mod<Editor>();
+
   const f32 dt = static_cast<f32>(App::get_timestep().get_seconds());
 
   auto& cam = self.editor_camera.get_mut<CameraComponent>();
@@ -372,7 +379,7 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
 
   auto& input_sys = App::mod<Input>();
   if (input_sys.get_key_pressed(ScanCode::F)) {
-    auto& editor_context = App::mod<Editor>().get_context();
+    auto& editor_context = editor.get_context();
     if (editor_context.entity.has_value()) {
       const auto entity_tc = editor_context.entity->get<TransformComponent>();
       auto final_pos = entity_tc.position + cam.forward;
@@ -381,13 +388,13 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
     }
   }
 
-  const auto actual_sens = EditorCVar::cvar_camera_sens.get() / 10.f;
+  const auto actual_sens = editor.editor_cvar.cvar_camera_sens.get() / 10.f;
   const auto smoothed_sens = actual_sens * 100.f;
-  const auto camera_sens = EditorCVar::cvar_camera_smooth.get() ? smoothed_sens : actual_sens;
+  const auto camera_sens = editor.editor_cvar.cvar_camera_smooth.get() ? smoothed_sens : actual_sens;
 
-  const auto actual_speed = EditorCVar::cvar_camera_speed.get();
+  const auto actual_speed = editor.editor_cvar.cvar_camera_speed.get();
   const auto smoothed_speed = actual_speed * 100.f;
-  const auto camera_speed = EditorCVar::cvar_camera_smooth.get() ? smoothed_speed : actual_speed;
+  const auto camera_speed = editor.editor_cvar.cvar_camera_smooth.get() ? smoothed_speed : actual_speed;
 
   if ((input_sys.get_mouse_held(MouseCode::Middle) || input_sys.get_mouse_held(MouseCode::Right)) && !is_ortho) {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
@@ -435,13 +442,13 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
   const glm::vec2 damped_yaw_pitch =
     math::smooth_damp(yaw_pitch, final_yaw_pitch, self.rotation_velocity, self.rotation_dampening, 1000.0f, dt);
 
-  tc.position = EditorCVar::cvar_camera_smooth.as_bool() ? damped_position : final_position;
-  const float applied_pitch = EditorCVar::cvar_camera_smooth.as_bool() ? damped_yaw_pitch.y : final_yaw_pitch.y;
-  const float applied_yaw = EditorCVar::cvar_camera_smooth.as_bool() ? damped_yaw_pitch.x : final_yaw_pitch.x;
+  tc.position = editor.editor_cvar.cvar_camera_smooth.as_bool() ? damped_position : final_position;
+  const float applied_pitch = editor.editor_cvar.cvar_camera_smooth.as_bool() ? damped_yaw_pitch.y : final_yaw_pitch.y;
+  const float applied_yaw = editor.editor_cvar.cvar_camera_smooth.as_bool() ? damped_yaw_pitch.x : final_yaw_pitch.x;
   tc.rotation = glm::quat(glm::vec3(applied_pitch, applied_yaw, 0.0f));
   cam.pitch = applied_pitch;
   cam.yaw = applied_yaw;
-  cam.zoom = static_cast<float>(EditorCVar::cvar_camera_zoom.get());
+  cam.zoom = static_cast<float>(editor.editor_cvar.cvar_camera_zoom.get());
 }
 
 auto ViewportPanel::set_context(this ViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void {
@@ -525,6 +532,11 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
 
   i32 open_action = -1;
 
+  auto is_scene_valid = self.editor_scene->is_valid();
+
+  auto& context_cvar = App::get_rendercontext().context_cvar;
+  auto& editor_cvar = App::mod<Editor>().editor_cvar;
+
   if (UI::button("Expand All")) {
     open_action = 1;
   }
@@ -534,26 +546,29 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
   }
   ImGui::SameLine();
   if (UI::button("Reset to defaults")) {
-    RendererCVar::cvar_enable_debug_renderer.set_default();
-    RendererCVar::cvar_enable_physics_debug_renderer.set_default();
-    RendererCVar::cvar_draw_bounding_boxes.set_default();
-    RendererCVar::cvar_draw_camera_frustum.get_default();
-    RendererCVar::cvar_bloom_enable.set_default();
-    RendererCVar::cvar_bloom_threshold.set_default();
-    RendererCVar::cvar_bloom_soft_threshold.set_default();
-    RendererCVar::cvar_fxaa_enable.set_default();
-    RendererCVar::cvar_vbgtao_quality_level.set_default();
-    RendererCVar::cvar_vbgtao_radius.set_default();
-    RendererCVar::cvar_vbgtao_thickness.set_default();
-    RendererCVar::cvar_vbgtao_final_power.set_default();
-    RendererCVar::cvar_contact_shadows.set_default();
-    RendererCVar::cvar_contact_shadows_steps.set_default();
-    RendererCVar::cvar_contact_shadows_thickness.set_default();
-    RendererCVar::cvar_contact_shadows_length.set_default();
-    EditorCVar::cvar_camera_sens.set_default();
-    EditorCVar::cvar_camera_speed.set_default();
-    EditorCVar::cvar_camera_smooth.set_default();
-    EditorCVar::cvar_camera_zoom.set_default();
+    if (is_scene_valid) {
+      auto& cvar_sys = self.editor_scene->get_scene()->renderer_cvar;
+      cvar_sys.cvar_enable_debug_renderer.set_default();
+      cvar_sys.cvar_enable_physics_debug_renderer.set_default();
+      cvar_sys.cvar_draw_bounding_boxes.set_default();
+      cvar_sys.cvar_draw_camera_frustum.get_default();
+      cvar_sys.cvar_bloom_enable.set_default();
+      cvar_sys.cvar_bloom_threshold.set_default();
+      cvar_sys.cvar_bloom_soft_threshold.set_default();
+      cvar_sys.cvar_fxaa_enable.set_default();
+      cvar_sys.cvar_vbgtao_quality_level.set_default();
+      cvar_sys.cvar_vbgtao_radius.set_default();
+      cvar_sys.cvar_vbgtao_thickness.set_default();
+      cvar_sys.cvar_vbgtao_final_power.set_default();
+      cvar_sys.cvar_contact_shadows_enabled.set_default();
+      cvar_sys.cvar_contact_shadows_steps.set_default();
+      cvar_sys.cvar_contact_shadows_thickness.set_default();
+      cvar_sys.cvar_contact_shadows_length.set_default();
+    }
+    editor_cvar.cvar_camera_sens.set_default();
+    editor_cvar.cvar_camera_speed.set_default();
+    editor_cvar.cvar_camera_smooth.set_default();
+    editor_cvar.cvar_camera_zoom.set_default();
   }
 
   constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap |
@@ -578,101 +593,102 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       window.get_window_content_scale()
     );
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-      UI::property("VSync", (bool*)RendererCVar::cvar_vsync.get_ptr());
+      UI::property("VSync", (bool*)context_cvar.cvar_vsync.get_ptr());
       UI::end_properties();
     }
 
     if (open_action != -1)
       ImGui::SetNextItemOpen(open_action != 0);
-    if (ImGui::TreeNodeEx("Debug", TREE_FLAGS, "%s", "Debug")) {
-      if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-        UI::property("Enable debug renderer", (bool*)RendererCVar::cvar_enable_debug_renderer.get_ptr());
-        UI::property(
-          "Enable physics debug renderer",
-          (bool*)RendererCVar::cvar_enable_physics_debug_renderer.get_ptr()
-        );
-        UI::property("Draw bounding boxes", (bool*)RendererCVar::cvar_draw_bounding_boxes.get_ptr());
-        UI::property("Freeze culling frustum", (bool*)RendererCVar::cvar_freeze_culling_frustum.get_ptr());
-        UI::property("Draw camera frustum", (bool*)RendererCVar::cvar_draw_camera_frustum.get_ptr());
-        const char* debug_views[] = {
-          "None",
-          "Triangles",
-          "Meshlets",
-          "Overdraw",
-          "Materials",
-          "Mesh Instances",
-          "Mesh Lods",
-          "Albdeo",
-          "Normal",
-          "Emissive",
-          "Metallic",
-          "Roughness",
-          "Baked Occlusion",
-          "GTAO",
-          "Virtual Shadowmaps"
-        };
-        UI::property(
-          "Debug View",
-          RendererCVar::cvar_debug_view.get_ptr(),
-          debug_views,
-          static_cast<i32>(ox::count_of(debug_views))
-        );
-        UI::property("Enable frustum culling", (bool*)RendererCVar::cvar_culling_frustum.get_ptr());
-        UI::property("Enable occlusion culling", (bool*)RendererCVar::cvar_culling_occlusion.get_ptr());
-        UI::property("Enable triangle culling", (bool*)RendererCVar::cvar_culling_triangle.get_ptr());
-        UI::end_properties();
-      }
-      ImGui::TreePop();
-    }
+    if (is_scene_valid) {
+      auto& cvar_sys = self.editor_scene->get_scene()->renderer_cvar;
+      if (ImGui::TreeNodeEx("Debug", TREE_FLAGS, "%s", "Debug")) {
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          UI::property("Enable debug renderer", (bool*)cvar_sys.cvar_enable_debug_renderer.get_ptr());
+          UI::property("Enable physics debug renderer", (bool*)cvar_sys.cvar_enable_physics_debug_renderer.get_ptr());
+          UI::property("Draw bounding boxes", (bool*)cvar_sys.cvar_draw_bounding_boxes.get_ptr());
+          UI::property("Freeze culling frustum", (bool*)cvar_sys.cvar_freeze_culling_frustum.get_ptr());
+          UI::property("Draw camera frustum", (bool*)cvar_sys.cvar_draw_camera_frustum.get_ptr());
+          const char* debug_views[] = {
+            "None",
+            "Triangles",
+            "Meshlets",
+            "Overdraw",
+            "Materials",
+            "Mesh Instances",
+            "Mesh Lods",
+            "Albdeo",
+            "Normal",
+            "Emissive",
+            "Metallic",
+            "Roughness",
+            "Baked Occlusion",
+            "GTAO",
+            "Virtual Shadowmaps"
+          };
+          UI::property(
+            "Debug View",
+            cvar_sys.cvar_debug_view.get_ptr(),
+            debug_views,
+            static_cast<i32>(ox::count_of(debug_views))
+          );
+          UI::property("Enable frustum culling", (bool*)cvar_sys.cvar_culling_frustum.get_ptr());
+          UI::property("Enable occlusion culling", (bool*)cvar_sys.cvar_culling_occlusion.get_ptr());
+          UI::property("Enable triangle culling", (bool*)cvar_sys.cvar_culling_triangle.get_ptr());
+          UI::end_properties();
+        }
 
-    if (open_action != -1)
-      ImGui::SetNextItemOpen(open_action != 0);
-    if (ImGui::TreeNodeEx("Bloom", TREE_FLAGS, "%s", "Bloom")) {
-      if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-        UI::property("Enabled", (bool*)RendererCVar::cvar_bloom_enable.get_ptr());
-        UI::property<float>("Threshold", RendererCVar::cvar_bloom_threshold.get_ptr(), 0.0f, 100.0f);
-        UI::property<float>("Soft Threshold", RendererCVar::cvar_bloom_soft_threshold.get_ptr(), 0.0f, 1.0f);
-        UI::end_properties();
+        ImGui::TreePop();
       }
-      ImGui::TreePop();
-    }
 
-    if (open_action != -1)
-      ImGui::SetNextItemOpen(open_action != 0);
-    if (ImGui::TreeNodeEx("FXAA", TREE_FLAGS, "%s", "FXAA")) {
-      if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-        UI::property("Enabled", (bool*)RendererCVar::cvar_fxaa_enable.get_ptr());
-        UI::end_properties();
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      if (ImGui::TreeNodeEx("Bloom", TREE_FLAGS, "%s", "Bloom")) {
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          UI::property("Enabled", (bool*)cvar_sys.cvar_bloom_enable.get_ptr());
+          UI::property<float>("Threshold", cvar_sys.cvar_bloom_threshold.get_ptr(), 0.0f, 100.0f);
+          UI::property<float>("Soft Threshold", cvar_sys.cvar_bloom_soft_threshold.get_ptr(), 0.0f, 1.0f);
+          UI::end_properties();
+        }
+        ImGui::TreePop();
       }
-      ImGui::TreePop();
-    }
 
-    if (open_action != -1)
-      ImGui::SetNextItemOpen(open_action != 0);
-    if (ImGui::TreeNodeEx("GTAO", TREE_FLAGS, "%s", "GTAO")) {
-      if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-        UI::property("Enabled", (bool*)RendererCVar::cvar_vbgtao_enable.get_ptr());
-        const char* quality_levels[4] = {"Low", "Medium", "High", "Ultra"};
-        UI::property("Quality Level", RendererCVar::cvar_vbgtao_quality_level.get_ptr(), quality_levels, 4);
-        UI::property<float>("Radius", RendererCVar::cvar_vbgtao_radius.get_ptr(), 0.1f, 5.f);
-        UI::property<float>("Thickness", RendererCVar::cvar_vbgtao_thickness.get_ptr(), 0.0f, 5.f);
-        UI::property<float>("Final Power", RendererCVar::cvar_vbgtao_final_power.get_ptr(), 0.f, 10.f);
-        UI::end_properties();
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      if (ImGui::TreeNodeEx("FXAA", TREE_FLAGS, "%s", "FXAA")) {
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          UI::property("Enabled", (bool*)cvar_sys.cvar_fxaa_enable.get_ptr());
+          UI::end_properties();
+        }
+        ImGui::TreePop();
       }
-      ImGui::TreePop();
-    }
 
-    if (open_action != -1)
-      ImGui::SetNextItemOpen(open_action != 0);
-    if (ImGui::TreeNodeEx("Contact Shadows", TREE_FLAGS, "%s", "Contact Shadows")) {
-      if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-        UI::property("Enabled", (bool*)RendererCVar::cvar_contact_shadows.get_ptr());
-        UI::property("Steps", RendererCVar::cvar_contact_shadows_steps.get_ptr(), 1, 64);
-        UI::property<float>("Thickness", RendererCVar::cvar_contact_shadows_thickness.get_ptr(), 0.0, 5);
-        UI::property<float>("Length", RendererCVar::cvar_contact_shadows_length.get_ptr(), 0.0, 5);
-        UI::end_properties();
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      if (ImGui::TreeNodeEx("GTAO", TREE_FLAGS, "%s", "GTAO")) {
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          UI::property("Enabled", (bool*)cvar_sys.cvar_vbgtao_enable.get_ptr());
+          const char* quality_levels[4] = {"Low", "Medium", "High", "Ultra"};
+          UI::property("Quality Level", cvar_sys.cvar_vbgtao_quality_level.get_ptr(), quality_levels, 4);
+          UI::property<float>("Radius", cvar_sys.cvar_vbgtao_radius.get_ptr(), 0.1f, 5.f);
+          UI::property<float>("Thickness", cvar_sys.cvar_vbgtao_thickness.get_ptr(), 0.0f, 5.f);
+          UI::property<float>("Final Power", cvar_sys.cvar_vbgtao_final_power.get_ptr(), 0.f, 10.f);
+          UI::end_properties();
+        }
+        ImGui::TreePop();
       }
-      ImGui::TreePop();
+
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      if (ImGui::TreeNodeEx("Contact Shadows", TREE_FLAGS, "%s", "Contact Shadows")) {
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          UI::property("Enabled", (bool*)cvar_sys.cvar_contact_shadows_enabled.get_ptr());
+          UI::property("Steps", cvar_sys.cvar_contact_shadows_steps.get_ptr(), 1, 64);
+          UI::property<float>("Thickness", cvar_sys.cvar_contact_shadows_thickness.get_ptr(), 0.0, 5);
+          UI::property<float>("Length", cvar_sys.cvar_contact_shadows_length.get_ptr(), 0.0, 5);
+          UI::end_properties();
+        }
+        ImGui::TreePop();
+      }
     }
 
     ImGui::TreePop();
@@ -684,15 +700,18 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
     auto resolution = fmt::format("Viewport Resolution: {}x{}", self.scaled_render_size.x, self.scaled_render_size.y);
     ImGui::TextUnformatted(resolution.c_str());
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-      UI::property("Scale Viewport With Content Scale", &self.scale_viewport_size_with_content_scale);
+      UI::property(
+        "Scale Viewport With Content Scale",
+        (bool*)editor_cvar.cvar_scale_viewport_size_with_content_scale.get_ptr()
+      );
       const char* scale_amounts[4] = {
         "1x",
         "2x",
         "4x",
         "8x",
       };
-      ImGui::BeginDisabled(self.scale_viewport_size_with_content_scale);
-      UI::property("Scale Viewport", ((i32*)&self.viewport_scale_amount), scale_amounts, 4);
+      ImGui::BeginDisabled(editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool());
+      UI::property("Scale Viewport", (editor_cvar.cvar_viewport_scale_amount.get_ptr()), scale_amounts, 4);
       ImGui::EndDisabled();
       const char* aspect_ratios[8] = {
         "Auto",
@@ -712,10 +731,10 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       ImGui::SetNextItemOpen(open_action != 0);
     if (ImGui::TreeNodeEx("Camera", TREE_FLAGS, "%s", "Camera")) {
       if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-        UI::property<float>("Camera sensitivity", EditorCVar::cvar_camera_sens.get_ptr(), 0.01f, 20.0f);
-        UI::property<float>("Movement speed", EditorCVar::cvar_camera_speed.get_ptr(), 0.1f, 100.0f);
-        UI::property("Smooth camera", (bool*)EditorCVar::cvar_camera_smooth.get_ptr());
-        UI::property("Camera zoom", EditorCVar::cvar_camera_zoom.get_ptr(), 1, 100);
+        UI::property<float>("Camera sensitivity", editor_cvar.cvar_camera_sens.get_ptr(), 0.01f, 20.0f);
+        UI::property<float>("Movement speed", editor_cvar.cvar_camera_speed.get_ptr(), 0.1f, 100.0f);
+        UI::property("Smooth camera", (bool*)editor_cvar.cvar_camera_smooth.get_ptr());
+        UI::property("Camera zoom", editor_cvar.cvar_camera_zoom.get_ptr(), 1, 100);
         UI::end_properties();
       }
 
@@ -727,9 +746,11 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
 }
 
 auto ViewportPanel::draw_gizmo_settings_panel(this ViewportPanel& self) -> void {
+  auto& editor_cvar = App::mod<Editor>().editor_cvar;
+
   if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-    UI::property("Draw grid", (bool*)EditorCVar::cvar_draw_grid.get_ptr());
-    UI::property<f32>("Grid distance", EditorCVar::cvar_draw_grid_distance.get_ptr(), 10.f, 10000.0f);
+    UI::property("Draw grid", (bool*)editor_cvar.cvar_draw_grid.get_ptr());
+    UI::property<f32>("Grid distance", editor_cvar.cvar_draw_grid_distance.get_ptr(), 10.f, 10000.0f);
 
     UI::property("Draw Component Gizmos", &self.draw_component_gizmos);
     UI::property("Component Gizmos Size", &self.gizmo_icon_size);
@@ -1309,7 +1330,7 @@ auto ViewportPanel::grid_stage(this ViewportPanel& self, RendererInstance* rende
           vuk::Format::eR32G32Sfloat,
         };
 
-        const auto grid_distance = EditorCVar::cvar_draw_grid_distance.get();
+        const auto grid_distance = App::mod<Editor>().editor_cvar.cvar_draw_grid_distance.get();
         const auto position = glm::vec3(0.f, 0.f, 0.f);
         const auto rotation = glm::vec3(glm::radians(90.f), 0.f, 0.f);
         const auto scale = glm::floor(glm::vec3(grid_distance / 2.0f)) * 2.0f;
@@ -1467,8 +1488,10 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
       )
     )
       self.gizmo_mode = self.gizmo_mode == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
-    if (UI::toggle_button(ICON_MDI_GRID, EditorCVar::cvar_draw_grid.get(), button_size, alpha, alpha))
-      EditorCVar::cvar_draw_grid.toggle();
+    if (
+      UI::toggle_button(ICON_MDI_GRID, App::mod<Editor>().editor_cvar.cvar_draw_grid.get(), button_size, alpha, alpha)
+    )
+      App::mod<Editor>().editor_cvar.cvar_draw_grid.toggle();
 
     if (self.editor_camera.is_alive() && self.editor_camera.has<CameraComponent>()) {
       auto& cam = self.editor_camera.get_mut<CameraComponent>();

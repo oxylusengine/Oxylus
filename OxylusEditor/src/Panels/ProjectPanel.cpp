@@ -10,7 +10,6 @@
 #include "Editor.hpp"
 #include "Panels/ContentPanel.hpp"
 #include "UI/UI.hpp"
-#include "Utils/EditorConfig.hpp"
 #include "Utils/EmbeddedBanner.hpp"
 
 namespace ox {
@@ -29,7 +28,7 @@ void ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::f
 
   if (!std::filesystem::exists(filepath)) {
     OX_LOG_WARN("Couldn't find project. Removing from recent projects: {}", filepath);
-    App::mod<EditorConfig>().remove_recent_project(filepath);
+    editor.editor_cvar.remove_recent_project(filepath);
     return;
   }
 
@@ -41,7 +40,7 @@ void ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::f
       editor.new_scene();
     }
     editor.reset_current_docking_layout();
-    App::mod<EditorConfig>().add_recent_project(active_project.get());
+    editor.editor_cvar.add_recent_project(active_project.get());
     editor.editor_panel_registry.get<ContentPanel>().init();
     self.visible = false;
   }
@@ -54,7 +53,7 @@ void ProjectPanel::new_project(
 ) {
   const auto& active_project = App::mod<Editor>().active_project;
   if (active_project->new_project(project_dir, project_name, project_asset_dir))
-    App::mod<EditorConfig>().add_recent_project(active_project.get());
+    App::mod<Editor>().editor_cvar.add_recent_project(active_project.get());
 }
 
 void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapchain_attachment) {
@@ -140,7 +139,7 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
           draw_new_project_panel = false;
         }
       } else {
-        const auto projects = App::mod<EditorConfig>().get_recent_projects();
+        const auto projects = App::mod<Editor>().editor_cvar.get_recent_projects();
         for (auto& project : projects) {
           auto project_name = project.stem().string();
           auto cursor_pos_y = ImGui::GetCursorPosY();

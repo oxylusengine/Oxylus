@@ -3,6 +3,7 @@
 #include "EditorPanelState.hpp"
 #include "Scene/Scene.hpp"
 #include "SceneHierarchyPanel.hpp"
+#include "UI/RuntimeConsole.hpp"
 #include "Utils/SceneManager.hpp"
 
 namespace ox {
@@ -31,6 +32,8 @@ private:
   std::shared_ptr<EditorScene> editor_scene = nullptr;
   bool draw_scene_stats = false;
 
+  RuntimeConsole runtime_console = {};
+
   enum class AspectRatio : i32 {
     Auto = 0,
     _16x9,
@@ -43,15 +46,6 @@ private:
   };
   AspectRatio viewport_aspect_ratio = AspectRatio::Auto;
 
-  enum class ScaleAmount : i32 {
-    _1x = 0,
-    _2x = 1,
-    _4x = 2,
-    _8x = 3,
-  };
-  ScaleAmount viewport_scale_amount = ScaleAmount::_1x;
-
-  bool scale_viewport_size_with_content_scale = true;
   ImVec2 render_size = {};
   ImVec2 scaled_render_size = {};
   ImVec2 viewport_bounds_[2] = {};

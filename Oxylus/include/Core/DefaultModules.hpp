@@ -9,7 +9,6 @@
 #include "Physics/Physics.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Render/Renderer.hpp"
-#include "Render/RendererConfig.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/RmlUI.hpp"
@@ -22,7 +21,6 @@ using DefaultModules = std::tuple<
   Physics,
   Input,
   NetworkManager,
-  RendererConfig,
   Renderer,
   DebugRenderer,
   ImGuiRenderer,

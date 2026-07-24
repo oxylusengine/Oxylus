@@ -44,49 +44,60 @@ struct CVarStorage {
 
 class CVarSystem {
 public:
-  constexpr static int MAX_INT_CVARS = 1000;
-  constexpr static int MAX_FLOAT_CVARS = 1000;
-  constexpr static int MAX_STRING_CVARS = 200;
-
   std::vector<CVarStorage<i32>> int_cvars = {};
   std::vector<CVarStorage<f32>> float_cvars = {};
   std::vector<CVarStorage<std::string>> string_cvars = {};
 
   CVarSystem() = default;
 
-  static CVarSystem* get();
-  CVarParameter* get_cvar(usize hash);
+  auto get_cvar(usize hash) -> CVarParameter*;
 
-  CVarParameter* create_float_cvar(const char* name, const char* description, f32 default_value, f32 current_value);
-  CVarParameter* create_int_cvar(const char* name, const char* description, i32 default_value, i32 current_value);
-  CVarParameter*
-  create_string_cvar(const char* name, const char* description, const char* default_value, const char* current_value);
+  auto create_float_cvar(std::string_view name, std::string_view description, f32 default_value, f32 current_value)
+    -> CVarParameter*;
+  auto create_int_cvar(std::string_view name, std::string_view description, i32 default_value, i32 current_value)
+    -> CVarParameter*;
+  auto create_string_cvar(
+    std::string_view name, std::string_view description, std::string_view default_value, std::string_view current_value
+  ) -> CVarParameter*;
 
-  f32* get_float_cvar(usize hash);
-  i32* get_int_cvar(usize hash);
-  std::string* get_string_cvar(usize hash);
+  auto get_float_cvar(usize hash) -> f32*;
+  auto get_int_cvar(usize hash) -> i32*;
+  auto get_string_cvar(usize hash) -> std::string*;
 
-  void set_float_cvar(usize hash, f32 value);
-  void set_int_cvar(usize hash, i32 value);
-  void set_string_cvar(usize hash, const char* value);
+  auto set_float_cvar(usize hash, f32 value) -> void;
+  auto set_int_cvar(usize hash, i32 value) -> void;
+  auto set_string_cvar(usize hash, std::string_view value) -> void;
 
 private:
   std::shared_mutex mutex_;
   ankerl::unordered_dense::map<usize, std::unique_ptr<CVarParameter>> saved_cvars;
   std::vector<CVarParameter*> cached_edit_parameters;
 
-  CVarParameter* init_cvar(const char* name, const char* description);
+  auto init_cvar(std::string_view name, std::string_view description) -> CVarParameter*;
+};
+
+class CVarInterface {
+public:
+  CVarSystem system = {};
 };
 
 template <typename T>
 struct AutoCVar {
 protected:
+  CVarSystem* system = nullptr;
   u32 index;
   using CVarType = T;
 };
 
 struct AutoCVar_Float : AutoCVar<f32> {
-  AutoCVar_Float(const char* name, const char* description, f32 default_value, CVarFlags flags = CVarFlags::None);
+  AutoCVar_Float() = default;
+  auto init(
+    CVarSystem& cvar_system,
+    const char* name,
+    const char* description,
+    const f32 default_value,
+    const CVarFlags flags = CVarFlags::None
+  ) -> void;
 
   auto get() const -> f32;
   auto get_default() const -> f32;
@@ -97,7 +108,14 @@ struct AutoCVar_Float : AutoCVar<f32> {
 };
 
 struct AutoCVar_Int : AutoCVar<i32> {
-  AutoCVar_Int(const char* name, const char* description, i32 default_value, CVarFlags flags = CVarFlags::None);
+  AutoCVar_Int() = default;
+  auto init(
+    CVarSystem& cvar_system,
+    const char* name,
+    const char* description,
+    i32 default_value,
+    CVarFlags flags = CVarFlags::None
+  ) -> void;
 
   auto get() const -> i32;
   auto get_default() const -> i32;
@@ -112,9 +130,13 @@ struct AutoCVar_Int : AutoCVar<i32> {
 };
 
 struct AutoCVar_String : AutoCVar<std::string> {
-  AutoCVar_String(
-    const char* name, const char* description, const char* default_value, CVarFlags flags = CVarFlags::None
-  );
+  auto init(
+    CVarSystem& cvar_system,
+    const char* name,
+    const char* description,
+    const char* default_value,
+    CVarFlags flags = CVarFlags::None
+  ) -> void;
 
   auto get() const -> std::string;
   auto set(std::string&& val) const -> void;
