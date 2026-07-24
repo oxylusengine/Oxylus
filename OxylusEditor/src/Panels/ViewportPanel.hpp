@@ -1,8 +1,6 @@
 #pragma once
 
 #include "EditorPanelState.hpp"
-#include "Scene/Scene.hpp"
-#include "SceneHierarchyPanel.hpp"
 #include "UI/RuntimeConsole.hpp"
 #include "Utils/SceneManager.hpp"
 

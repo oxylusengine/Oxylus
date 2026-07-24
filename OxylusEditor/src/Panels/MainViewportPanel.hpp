@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Panels/EditorPanelState.hpp"
+#include "Panels/SceneHierarchyPanel.hpp"
 #include "ViewportPanel.hpp"
 
 namespace ox {
@@ -20,7 +21,7 @@ public:
   auto add_new_play_scene(this MainViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void;
   auto add_viewport(this MainViewportPanel& self) -> ViewportPanel*;
 
-  auto on_update(this MainViewportPanel& self) -> void{}
+  auto on_update(this MainViewportPanel& self) -> void {}
   auto on_render(this MainViewportPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
 
   void update(this MainViewportPanel& self, const Timestep& timestep, SceneHierarchyPanel* sh);
