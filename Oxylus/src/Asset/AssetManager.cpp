@@ -528,7 +528,9 @@ auto AssetManager::load_texture(this AssetManager& self, const UUID& uuid, Textu
   }
 
   auto data_source = TextureDataSource{};
-  if (std::get_if<std::span<const u8>>(&info.source) || std::get_if<std::filesystem::path>(&info.source)) {
+  auto source_bytes = std::get_if<std::span<const u8>>(&info.source);
+  auto source_path = std::get_if<std::filesystem::path>(&info.source);
+  if (source_bytes || (source_path && !source_path->empty())) {
     data_source = info.source;
   } else {
     data_source = asset_path;
