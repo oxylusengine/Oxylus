@@ -32,6 +32,9 @@ public:
   AutoCVar_Int cvar_camera_smooth;
   AutoCVar_Int cvar_camera_zoom;
 
+  AutoCVar_Int cvar_scale_viewport_size_with_content_scale;
+  AutoCVar_Int cvar_viewport_scale_amount;
+
   AutoCVar_Int cvar_file_thumbnails;
   AutoCVar_Float cvar_file_thumbnail_size;
   AutoCVar_Int cvar_show_meta_files;

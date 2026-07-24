@@ -223,9 +223,11 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     }
 
     self.scaled_render_size = self.render_size;
-    const u32 scale = self.scale_viewport_size_with_content_scale
+    const u32 scale = editor.editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool()
                         ? static_cast<u32>(App::get_window().get_window_content_scale())
-                        : (1u << static_cast<u32>(self.viewport_scale_amount)); // 0->1, 1->2, 2->4, 3->8
+                        : (
+                            1u << static_cast<u32>(editor.editor_cvar.cvar_viewport_scale_amount.get())
+                          ); // 0->1, 1->2, 2->4, 3->8
 
     self.scaled_render_size.x *= scale;
     self.scaled_render_size.y *= scale;
@@ -305,7 +307,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         self.mouse_picking_stages(renderer_instance, picking_texel);
       }
 
-      if (App::mod<Editor>().editor_cvar.cvar_draw_grid.as_bool()) {
+      if (editor.editor_cvar.cvar_draw_grid.as_bool()) {
         self.grid_stage(renderer_instance);
       }
 
@@ -698,15 +700,18 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
     auto resolution = fmt::format("Viewport Resolution: {}x{}", self.scaled_render_size.x, self.scaled_render_size.y);
     ImGui::TextUnformatted(resolution.c_str());
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-      UI::property("Scale Viewport With Content Scale", &self.scale_viewport_size_with_content_scale);
+      UI::property(
+        "Scale Viewport With Content Scale",
+        (bool*)editor_cvar.cvar_scale_viewport_size_with_content_scale.get_ptr()
+      );
       const char* scale_amounts[4] = {
         "1x",
         "2x",
         "4x",
         "8x",
       };
-      ImGui::BeginDisabled(self.scale_viewport_size_with_content_scale);
-      UI::property("Scale Viewport", ((i32*)&self.viewport_scale_amount), scale_amounts, 4);
+      ImGui::BeginDisabled(editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool());
+      UI::property("Scale Viewport", (editor_cvar.cvar_viewport_scale_amount.get_ptr()), scale_amounts, 4);
       ImGui::EndDisabled();
       const char* aspect_ratios[8] = {
         "Auto",
