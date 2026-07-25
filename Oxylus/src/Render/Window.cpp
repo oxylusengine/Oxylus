@@ -65,10 +65,6 @@ auto load_vulkan_library() -> void {
 auto Window::create(const WindowInfo& info) -> Window {
   ZoneScoped;
 
-#ifdef OX_PLATFORM_WINDOWS
-  SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
-#endif
-
   if (!SDL_Init(SDL_INIT_EVENTS | SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     OX_LOG_ERROR("Failed to initialize SDL! {}", SDL_GetError());
     return Handle(nullptr);
