@@ -6,6 +6,7 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Core/App.hpp"
+#include "Core/Enum.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Networking/NetworkManager.hpp"

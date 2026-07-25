@@ -34,7 +34,6 @@ struct Handle<Window>::Impl {
   SDL_Window* handle = nullptr;
   u32 monitor_id = {};
   std::array<SDL_Cursor*, static_cast<usize>(WindowCursor::Count)> cursors = {};
-  f32 window_content_scale = {};
   f32 window_dpi_scale = {};
   f32 refresh_rate = {};
 
@@ -65,6 +64,10 @@ auto load_vulkan_library() -> void {
 
 auto Window::create(const WindowInfo& info) -> Window {
   ZoneScoped;
+
+#ifdef OX_PLATFORM_WINDOWS
+  SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+#endif
 
   if (!SDL_Init(SDL_INIT_EVENTS | SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     OX_LOG_ERROR("Failed to initialize SDL! {}", SDL_GetError());
@@ -112,7 +115,6 @@ auto Window::create(const WindowInfo& info) -> Window {
   impl->height = static_cast<u32>(new_height);
   impl->monitor_id = info.monitor;
   impl->refresh_rate = display->refresh_rate;
-  impl->window_content_scale = display->content_scale;
 
   const auto window_properties = SDL_CreateProperties();
   SDL_SetStringProperty(window_properties, SDL_PROP_WINDOW_CREATE_TITLE_STRING, info.title.c_str());
@@ -401,7 +403,7 @@ auto Window::poll(const WindowCallbacks& callbacks) const -> void {
       case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED: {
         const f32 new_scale = SDL_GetWindowDisplayScale(impl->handle);
         if (new_scale > 0.0f) {
-          impl->window_content_scale = new_scale;
+          impl->window_dpi_scale = new_scale;
         }
       } break;
       case SDL_EVENT_WINDOW_RESTORED: {
@@ -625,7 +627,6 @@ auto Window::get_real_height() const -> u32 { return impl->height; }
 auto Window::get_handle() const -> void* { return impl->handle; }
 
 auto Window::get_dpi_scale() const -> f32 { return impl->window_dpi_scale; }
-auto Window::get_window_content_scale() const -> f32 { return impl->window_content_scale; }
 
 auto Window::get_refresh_rate() const -> f32 { return impl->refresh_rate; }
 } // namespace ox

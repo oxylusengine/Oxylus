@@ -407,6 +407,11 @@ private:
   GPU::VBGTAOSettings vbgtao_info = {};
   GPU::PostProcessSettings post_proces_settings = {};
 
+  Texture sky_transmittance_lut = {};
+  Texture sky_multiscatter_lut = {};
+  Texture hilbert_noise_lut = {};
+  Texture sky_cubemap = {};
+
   vuk::Unique<vuk::Buffer> transforms_world_buffer{};
   vuk::Unique<vuk::Buffer> transforms_previous_buffer{};
   vuk::Unique<vuk::Buffer> mesh_instances_buffer{};

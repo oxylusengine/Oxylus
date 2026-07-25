@@ -6,7 +6,6 @@
 #include <span>
 #include <vulkan/vulkan_core.h>
 
-#include "Core/Enum.hpp"
 #include "Core/Handle.hpp"
 #include "Core/Option.hpp"
 #include "Utils/Timestep.hpp"
@@ -142,7 +141,6 @@ struct Window : Handle<Window> {
   auto get_handle() const -> void*;
 
   auto get_dpi_scale() const -> f32;
-  auto get_window_content_scale() const -> f32;
 
   auto get_refresh_rate() const -> f32;
 };

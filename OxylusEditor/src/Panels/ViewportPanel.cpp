@@ -224,7 +224,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
 
     self.scaled_render_size = self.render_size;
     const u32 scale = editor.editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool()
-                        ? static_cast<u32>(App::get_window().get_window_content_scale())
+                        ? static_cast<u32>(App::get_window().get_dpi_scale())
                         : (
                             1u << static_cast<u32>(editor.editor_cvar.cvar_viewport_scale_amount.get())
                           ); // 0->1, 1->2, 2->4, 3->8
@@ -590,7 +590,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       window.get_logical_width(),
       window.get_logical_height(),
       window.get_refresh_rate(),
-      window.get_window_content_scale()
+      window.get_dpi_scale()
     );
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
       UI::property("VSync", (bool*)context_cvar.cvar_vsync.get_ptr());

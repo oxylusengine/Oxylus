@@ -142,10 +142,5 @@ private:
 
   RenderContext* render_context = nullptr;
   bool initalized = false;
-
-  Texture sky_transmittance_lut = {};
-  Texture sky_multiscatter_lut = {};
-  Texture hilbert_noise_lut = {};
-  Texture sky_cubemap = {};
 };
 } // namespace ox
