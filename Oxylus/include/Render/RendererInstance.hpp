@@ -2,6 +2,7 @@
 
 #include <ankerl/unordered_dense.h>
 
+#include "Asset/Texture.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Scene/SceneGPU.hpp"
@@ -378,7 +379,7 @@ private:
 
   Scene& scene;
   Renderer& renderer;
-  Renderer::RenderQueue2D render_queue_2d = {};
+  GPU::RenderQueue2D render_queue_2d = {};
   bool saved_camera = false;
 
   glm::uvec2 viewport_size = {};

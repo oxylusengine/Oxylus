@@ -1482,7 +1482,8 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   auto& root_node = model->mesh_groups.front();
   auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
 
-  auto model_base_aabb = model->get_base_aabb();
+  auto mesh_bounds = model->get_mesh_bounds();
+  auto model_aabb = AABB::from_bounds(mesh_bounds.aabb_center, mesh_bounds.aabb_extent);
 
   struct ProcessingNode {
     flecs::entity parent = {};
@@ -1526,7 +1527,7 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
         .model_uuid = asset_uuid,
         .mesh_index = static_cast<u32>(mesh_index),
         .material_uuid = material_uuid,
-        .baked_aabb = model_base_aabb,
+        .baked_aabb = model_aabb,
       });
       mesh_entity.child_of(node_entity);
       mesh_entity.modified<TransformComponent>();
