@@ -6,6 +6,8 @@
 #include "Utils/CVars.hpp"
 
 namespace ox {
+static u32 console_id = 0;
+
 static ImVec4 get_color(const loguru::Verbosity verb) {
   switch (verb) {
     case loguru::Verbosity_INFO   : return {0, 1, 0, 1};
@@ -26,9 +28,9 @@ static const char* get_level_icon(const loguru::Verbosity level) {
   return "?";
 }
 
-RuntimeConsole::RuntimeConsole() {
+RuntimeConsole::RuntimeConsole() : id(fmt::format("runtime_console_{}", ++console_id)) {
   Log::add_callback(
-    "runtime_console",
+    id.c_str(),
     [](void* user_data, const loguru::Message& message) {
       const auto console = reinterpret_cast<RuntimeConsole*>(user_data);
       console->add_log(message.message, message.verbosity);
@@ -45,7 +47,7 @@ RuntimeConsole::RuntimeConsole() {
   request_scroll_to_bottom = true;
 }
 
-RuntimeConsole::~RuntimeConsole() { Log::remove_callback("runtime_console"); }
+RuntimeConsole::~RuntimeConsole() { Log::remove_callback(id.c_str()); }
 
 void RuntimeConsole::register_command(
   const std::string& command,
@@ -101,7 +103,6 @@ void RuntimeConsole::render(this RuntimeConsole& self) {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.000f, 0.000f, 0.000f, 0.784f));
     // ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(0.100f, 0.100f, 0.100f, 1.000f));
 
-    self.id = fmt::format(" {} \t\t###", self.panel_name);
     if (ImGui::Begin(self.id.c_str(), nullptr, windowFlags)) {
       if (ImGui::BeginMenuBar()) {
         if (ImGui::MenuItem("Clear")) {
