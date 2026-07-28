@@ -412,12 +412,15 @@ struct RenderQueue2D {
     clear();
     batches.reserve(last_batches_size);
     sprite_data.reserve(last_sprite_data_size);
-    batches.emplace_back(
-      DrawBatch2D{.pipeline_name = "2d_forward", .offset = previous_offset, .count = num_sprites - previous_offset}
-    );
+    batches.emplace_back(DrawBatch2D{.pipeline_name = "2d_forward", .offset = previous_offset, .count = 0});
   }
 
-  void update() { previous_offset = num_sprites; }
+  void update() {
+    if (!batches.empty()) {
+      batches.back().count = num_sprites - batches.back().offset;
+    }
+    previous_offset = num_sprites;
+  }
 
   void add(u16 render_flags, f32 position_y, u32 transform_id, u32 material_id, f32 distance) {
     const u32 flags_and_distance = math::pack_u16(render_flags, glm::packHalf1x16(distance));
