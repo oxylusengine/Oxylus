@@ -48,9 +48,8 @@ public:
   };
 
   bool set_focus_to_keyboard_always = false;
-  const char* panel_name = "RuntimeConsole";
+  std::string id = "RuntimeConsole";
   bool visible = false;
-  std::string id = {};
 
   RuntimeConsole();
   ~RuntimeConsole();
