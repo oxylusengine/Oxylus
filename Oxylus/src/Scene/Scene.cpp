@@ -498,17 +498,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     }
   });
 
-  self.world.observer<SpriteComponent>()
-    .event(flecs::OnRemove)
-    .with<AssetOwner>()
-    .each([](flecs::iter& it, usize i, SpriteComponent& c) {
-      auto& asset_man = App::mod<AssetManager>();
-      if (it.event() == flecs::OnRemove) {
-        if (auto material_asset = asset_man.get_asset(c.material)) {
-          asset_man.unload_asset(material_asset->uuid);
-        }
+  self.world.observer<SpriteComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, SpriteComponent& c) {
+    auto& asset_man = App::mod<AssetManager>();
+    if (it.event() == flecs::OnRemove) {
+      if (auto material_asset = asset_man.get_asset(c.material)) {
+        asset_man.unload_asset(material_asset->uuid);
       }
-    });
+    }
+  });
 
   self.world.observer<AudioListenerComponent>()
     .event(flecs::OnSet)
@@ -549,20 +546,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnAdd)
     .each([](flecs::iter& it, usize i, SpriteAnimationComponent& c) { c.reset(); });
 
-  self.world.observer<MeshComponent>()
-    .with<AssetOwner>()
-    .event(flecs::OnRemove)
-    .each([](flecs::iter& it, usize i, MeshComponent& c) {
-      ZoneScopedN("MeshComponent AssetOwner handling");
-      auto& asset_man = App::mod<AssetManager>();
-      asset_man.unload_asset(c.model_uuid);
-    });
+  self.world.observer<MeshComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, MeshComponent& c) {
+    auto& asset_man = App::mod<AssetManager>();
+    asset_man.unload_asset(c.model_uuid);
+  });
 
   self.world.observer<AudioSourceComponent>()
-    .with<AssetOwner>()
     .event(flecs::OnRemove)
     .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
-      ZoneScopedN("AudioSourceComponent AssetOwner handling");
       auto& asset_man = App::mod<AssetManager>();
       asset_man.unload_asset(c.audio_source);
     });
@@ -654,7 +645,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.observer<ParticleSystemComponent>()
     .event(flecs::OnRemove)
-    .with<AssetOwner>()
     .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
       auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {

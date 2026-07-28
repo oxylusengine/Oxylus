@@ -415,7 +415,7 @@ auto load_gltf_texture(
     texture_load_info.sampler_info = gltf_sampler_to_sampler(sampler);
   }
 
-  self.load_asset(texture_uuid, std::move(texture_load_info));
+  self.load_asset(texture_uuid, std::move(texture_load_info), false);
 }
 
 auto register_gltf_materials(
@@ -520,7 +520,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
   auto materials = std::move(materials_result.value());
 
   for (const auto& [material_uuid, gltf_material] : std::views::zip(materials, gltf_asset.materials)) {
-    self.load_asset(material_uuid, gltf_material_to_material(gltf_material, textures));
+    self.load_asset(material_uuid, gltf_material_to_material(gltf_material, textures), false);
   }
 
   auto lights = std::vector<Model::Light>();
@@ -1015,11 +1015,6 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
 
 auto AssetManager::unload_model(this AssetManager& self, ReadGuard<Asset> asset) -> bool {
   ZoneScoped;
-
-  auto model = self.get_model(asset->model_id);
-  for (auto& v : model->materials) {
-    self.unload_asset(v);
-  }
 
   auto write_lock = std::unique_lock(self.models_mutex);
   self.model_map.destroy_slot(asset->model_id);

@@ -72,7 +72,7 @@ public:
   auto register_asset(this AssetManager& self, const UUID& uuid, AssetType type, const std::filesystem::path& path)
     -> bool;
   auto acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void;
-  auto unload(this AssetManager& self, const UUID& uuid) -> void;
+  auto release_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void;
 
   auto export_asset(this AssetManager& self, const UUID& uuid, const std::filesystem::path& path) -> bool;
   auto export_scene(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
@@ -82,8 +82,8 @@ public:
   auto export_script(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
     -> bool;
 
-  auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}) -> bool;
-  auto unload_asset(this AssetManager& self, const UUID& uuid) -> bool;
+  auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true) -> bool;
+  auto unload_asset(this AssetManager& self, const UUID& uuid) -> void;
 
   auto is_loaded(this AssetManager& self, const UUID& uuid) -> bool;
 

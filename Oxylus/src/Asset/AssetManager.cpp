@@ -1,5 +1,6 @@
 #include "Asset/AssetManager.hpp"
 
+#include <ankerl/svector.h>
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
 #include <zpp_bits.h>
@@ -384,13 +385,93 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     return;
   }
 
+  // acquire self first
   asset->acquire_ref();
+
+  // then children
+  switch (asset->type) {
+    case AssetType::None:
+    case AssetType::Shader:
+    case AssetType::Font:
+    case AssetType::Scene:
+    case AssetType::Audio:
+    case AssetType::Texture:
+    case AssetType::Script : break;
+    case AssetType::Model  : {
+      auto model = self.get_model(asset->model_id);
+      for (const auto& material : model->materials) {
+        self.acquire_ref(self.get_asset(material));
+      }
+    } break;
+    case AssetType::Material: {
+      auto material = self.get_material(asset->material_id);
+      self.acquire_ref(self.get_asset(material->albedo_texture));
+      self.acquire_ref(self.get_asset(material->normal_texture));
+      self.acquire_ref(self.get_asset(material->emissive_texture));
+      self.acquire_ref(self.get_asset(material->metallic_roughness_texture));
+      self.acquire_ref(self.get_asset(material->occlusion_texture));
+    } break;
+  }
 }
 
-auto AssetManager::unload(this AssetManager& self, const UUID& uuid) -> void {
+auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void {
   ZoneScoped;
 
-  self.unload_asset(uuid);
+  if (!asset || !asset->is_loaded()) {
+    return;
+  }
+
+  const auto uuid = asset->uuid;
+  const auto type = asset->type;
+
+  // release children first
+  auto children = ankerl::svector<UUID, 8>{};
+  switch (type) {
+    case AssetType::None:
+    case AssetType::Shader:
+    case AssetType::Font:
+    case AssetType::Scene:
+    case AssetType::Audio:
+    case AssetType::Texture:
+    case AssetType::Script : break;
+    case AssetType::Model  : {
+      auto model = self.get_model(asset->model_id);
+      if (model) {
+        children.assign(model->materials.begin(), model->materials.end());
+      }
+    } break;
+    case AssetType::Material: {
+      auto material = self.get_material(asset->material_id);
+      if (material) {
+        children = {
+          material->albedo_texture,
+          material->normal_texture,
+          material->emissive_texture,
+          material->metallic_roughness_texture,
+          material->occlusion_texture,
+        };
+      }
+    } break;
+  }
+
+  // then release self
+  auto should_unload = false;
+  if (asset->ref_count > 0) {
+    should_unload = asset->release_ref();
+  }
+
+  asset.reset();
+
+  for (auto& child : children) {
+    self.release_ref(self.get_asset(child));
+  }
+
+  if (should_unload) {
+    self.unload_asset(uuid);
+
+    auto write_lock = std::unique_lock(self.registry_mutex);
+    self.asset_registry.erase(uuid);
+  }
 }
 
 auto AssetManager::export_asset(this AssetManager& self, const UUID& uuid, const std::filesystem::path& path) -> bool {
@@ -455,7 +536,8 @@ auto AssetManager::export_script(
   return write_script_asset_meta(writer, nullptr);
 }
 
-auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load) -> bool {
+auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire)
+  -> bool {
   ZoneScoped;
 
   auto asset = self.get_asset(uuid);
@@ -464,7 +546,10 @@ auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInf
   }
 
   if (asset->is_loaded()) {
-    self.acquire_ref(std::move(asset));
+    if (should_acquire) {
+      self.acquire_ref(std::move(asset));
+    }
+
     return true;
   }
 
@@ -508,30 +593,17 @@ auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInf
   }
 
   asset->model_id = static_cast<ModelID>(asset_id);
-  self.acquire_ref(std::move(asset));
+  if (should_acquire) {
+    self.acquire_ref(std::move(asset));
+  }
 
   return true;
 }
 
-auto AssetManager::unload_asset(this AssetManager& self, const UUID& uuid) -> bool {
+auto AssetManager::unload_asset(this AssetManager& self, const UUID& uuid) -> void {
   ZoneScoped;
 
-  auto asset = self.get_asset(uuid);
-  if (!asset) {
-    return false;
-  }
-
-  switch (asset->type) {
-    case AssetType::Model   : return self.unload_model(std::move(asset));
-    case AssetType::Texture : return self.unload_texture(std::move(asset));
-    case AssetType::Scene   : return self.unload_scene(std::move(asset));
-    case AssetType::Audio   : return self.unload_audio(std::move(asset));
-    case AssetType::Script  : return self.unload_script(std::move(asset));
-    case AssetType::Material: return self.unload_material(std::move(asset));
-    default                 :;
-  }
-
-  return false;
+  self.release_ref(self.get_asset(uuid));
 }
 
 auto AssetManager::load_texture(this AssetManager& self, const std::filesystem::path& path, TextureLoadInfo info)
@@ -612,18 +684,7 @@ auto AssetManager::load_material(this AssetManager& self, const std::filesystem:
 auto AssetManager::unload_material(this AssetManager& self, ReadGuard<Asset> asset) -> bool {
   ZoneScoped;
 
-  auto read_lock = std::shared_lock(self.materials_mutex);
-  const auto* material = self.material_map.slot(asset->material_id);
-
-  self.unload_asset(material->albedo_texture);
-  self.unload_asset(material->normal_texture);
-  self.unload_asset(material->emissive_texture);
-  self.unload_asset(material->metallic_roughness_texture);
-  self.unload_asset(material->occlusion_texture);
-
-  read_lock.unlock();
   auto write_lock = std::unique_lock(self.materials_mutex);
-
   self.material_map.destroy_slot(asset->material_id);
   asset->material_id = MaterialID::Invalid;
 
