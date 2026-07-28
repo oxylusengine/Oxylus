@@ -44,6 +44,8 @@ class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
+  using LoadInfo = std::variant<TextureLoadInfo, Material>;
+
   static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
   static auto write_gltf_meta(AssetManager& self, const std::filesystem::path& path, JsonWriter& json) -> bool;
@@ -60,7 +62,8 @@ public:
   auto registry(this const AssetManager& self) -> const AssetRegistry&;
 
   auto read_meta_file(this AssetManager& self, const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
-  auto read_meta_file_from_asset(this AssetManager& self, const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
+  auto read_meta_file_from_asset(this AssetManager& self, const std::filesystem::path& path)
+    -> std::unique_ptr<AssetMetaFile>;
 
   auto create_asset(this AssetManager& self, AssetType type, const std::filesystem::path& path = {}) -> UUID;
   auto import_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID;
@@ -68,8 +71,8 @@ public:
   auto register_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID;
   auto register_asset(this AssetManager& self, const UUID& uuid, AssetType type, const std::filesystem::path& path)
     -> bool;
-  auto acquire_ref(this AssetManager& self, const UUID& uuid) -> void;
-  auto unload(this AssetManager& self, const UUID& uuid) -> void;
+  auto acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void;
+  auto release_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void;
 
   auto export_asset(this AssetManager& self, const UUID& uuid, const std::filesystem::path& path) -> bool;
   auto export_scene(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
@@ -79,27 +82,10 @@ public:
   auto export_script(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
     -> bool;
 
-  auto load_asset(this AssetManager& self, const UUID& uuid) -> bool;
-  auto unload_asset(this AssetManager& self, const UUID& uuid) -> bool;
+  auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true) -> bool;
+  auto unload_asset(this AssetManager& self, const UUID& uuid) -> void;
 
-  auto load_model(this AssetManager& self, const UUID& uuid) -> bool;
-  auto unload_model(this AssetManager& self, const UUID& uuid) -> bool;
-
-  auto load_texture(this AssetManager& self, const UUID& uuid, TextureLoadInfo info = {}) -> bool;
-  auto unload_texture(this AssetManager& self, const UUID& uuid) -> bool;
-  auto is_texture_loaded(this AssetManager& self, const UUID& uuid) -> bool;
-
-  auto load_material(this AssetManager& self, const UUID& uuid, const Material& material_info) -> bool;
-  auto unload_material(this AssetManager& self, const UUID& uuid) -> bool;
-
-  auto load_scene(this AssetManager& self, const UUID& uuid) -> bool;
-  auto unload_scene(this AssetManager& self, const UUID& uuid) -> bool;
-
-  auto load_audio(this AssetManager& self, const UUID& uuid) -> bool;
-  auto unload_audio(this AssetManager& self, const UUID& uuid) -> bool;
-
-  auto load_script(this AssetManager& self, const UUID& uuid) -> bool;
-  auto unload_script(this AssetManager& self, const UUID& uuid) -> bool;
+  auto is_loaded(this AssetManager& self, const UUID& uuid) -> bool;
 
   auto get_asset(this AssetManager& self, const UUID& uuid) -> ReadGuard<Asset>;
 
@@ -127,7 +113,23 @@ public:
   auto get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaSystem>;
 
 private:
-  auto get_asset_ptr(this AssetManager& self, const UUID& uuid) -> Asset*;
+  auto load_model(this AssetManager& self, const std::filesystem::path& path) -> ModelID;
+  auto unload_model(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+
+  auto load_texture(this AssetManager& self, const std::filesystem::path& path, TextureLoadInfo info = {}) -> TextureID;
+  auto unload_texture(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+
+  auto load_material(this AssetManager& self, const std::filesystem::path& path, const Material &info = {}) -> MaterialID;
+  auto unload_material(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+
+  auto load_scene(this AssetManager& self, const std::filesystem::path& path) -> SceneID;
+  auto unload_scene(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+
+  auto load_audio(this AssetManager& self, const std::filesystem::path& path) -> AudioID;
+  auto unload_audio(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+
+  auto load_script(this AssetManager& self, const std::filesystem::path& path) -> ScriptID;
+  auto unload_script(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
 
   AssetRegistry asset_registry = {};
 

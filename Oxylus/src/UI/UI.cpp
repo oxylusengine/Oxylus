@@ -221,7 +221,7 @@ bool UI::texture_property(
       const auto* p = PayloadData::from_payload(payload);
       const auto path = p->get_str();
       if (auto new_texture = asset_man.import_asset(path)) {
-        if (asset_man.load_texture(new_texture))
+        if (asset_man.load_asset(new_texture))
           texture_uuid = new_texture;
       }
       changed = true;

@@ -493,22 +493,19 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     if (it.event() == flecs::OnAdd) {
       if (!c.material) {
         c.material = asset_man.create_asset(AssetType::Material, {});
-        asset_man.load_material(c.material, Material{});
+        asset_man.load_asset(c.material);
       }
     }
   });
 
-  self.world.observer<SpriteComponent>()
-    .event(flecs::OnRemove)
-    .with<AssetOwner>()
-    .each([](flecs::iter& it, usize i, SpriteComponent& c) {
-      auto& asset_man = App::mod<AssetManager>();
-      if (it.event() == flecs::OnRemove) {
-        if (auto material_asset = asset_man.get_asset(c.material)) {
-          asset_man.unload_asset(material_asset->uuid);
-        }
+  self.world.observer<SpriteComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, SpriteComponent& c) {
+    auto& asset_man = App::mod<AssetManager>();
+    if (it.event() == flecs::OnRemove) {
+      if (auto material_asset = asset_man.get_asset(c.material)) {
+        asset_man.unload_asset(material_asset->uuid);
       }
-    });
+    }
+  });
 
   self.world.observer<AudioListenerComponent>()
     .event(flecs::OnSet)
@@ -549,20 +546,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnAdd)
     .each([](flecs::iter& it, usize i, SpriteAnimationComponent& c) { c.reset(); });
 
-  self.world.observer<MeshComponent>()
-    .with<AssetOwner>()
-    .event(flecs::OnRemove)
-    .each([](flecs::iter& it, usize i, MeshComponent& c) {
-      ZoneScopedN("MeshComponent AssetOwner handling");
-      auto& asset_man = App::mod<AssetManager>();
-      asset_man.unload_asset(c.model_uuid);
-    });
+  self.world.observer<MeshComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, MeshComponent& c) {
+    auto& asset_man = App::mod<AssetManager>();
+    asset_man.unload_asset(c.model_uuid);
+  });
 
   self.world.observer<AudioSourceComponent>()
-    .with<AssetOwner>()
     .event(flecs::OnRemove)
     .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
-      ZoneScopedN("AudioSourceComponent AssetOwner handling");
       auto& asset_man = App::mod<AssetManager>();
       asset_man.unload_asset(c.audio_source);
     });
@@ -627,7 +618,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         }
         if (!c.material)
           c.material = asset_man.create_asset(AssetType::Material, {});
-        asset_man.load_material(c.material, Material{});
+        asset_man.load_asset(c.material);
 
         auto parent = it.entity(i);
         for (u32 k = 0; k < c.max_particles; k++) {
@@ -644,7 +635,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       } else if (it.event() == flecs::OnSet) {
         if (auto asset = asset_man.get_asset(c.material)) {
           if (!asset->is_loaded()) {
-            asset_man.load_material(c.material, Material{});
+            asset_man.load_asset(c.material);
           }
         }
 
@@ -654,7 +645,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.observer<ParticleSystemComponent>()
     .event(flecs::OnRemove)
-    .with<AssetOwner>()
     .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
       auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {
@@ -1222,7 +1212,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     }
 
     auto uuid_to_image_index = [&](const UUID& uuid) -> option<u32> {
-      if (!uuid || !asset_man.is_texture_loaded(uuid)) {
+      if (!uuid || !asset_man.is_loaded(uuid)) {
         return nullopt;
       }
 
@@ -1474,7 +1464,7 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   }
 
   // acquire model
-  if (!asset_man.load_model(asset_uuid)) {
+  if (!asset_man.load_asset(asset_uuid)) {
     return {};
   }
 
