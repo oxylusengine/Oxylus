@@ -11,7 +11,6 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Memory/Stack.hpp"
-#include "OS/File.hpp"
 
 template <>
 struct fastgltf::ElementTraits<glm::vec4> : fastgltf::ElementTraitsBase<glm::vec4, AccessorType::Vec4, float> {};
@@ -416,7 +415,7 @@ auto load_gltf_texture(
     texture_load_info.sampler_info = gltf_sampler_to_sampler(sampler);
   }
 
-  self.load_texture(texture_uuid, std::move(texture_load_info));
+  self.load_asset(texture_uuid, std::move(texture_load_info), false);
 }
 
 auto register_gltf_materials(
@@ -445,59 +444,47 @@ auto register_gltf_materials(
   return result;
 }
 
-auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool {
+auto AssetManager::load_model(this AssetManager& self, const std::filesystem::path& path) -> ModelID {
   ZoneScoped;
   memory::ScopedStack stack;
-
-  auto asset_path = std::filesystem::path{};
-  {
-    auto asset = self.get_asset(uuid);
-    if (asset->is_loaded()) {
-      asset->acquire_ref();
-      return true;
-    }
-
-    asset_path = asset->path;
-    asset->acquire_ref();
-  }
 
   auto& job_man = App::get_job_manager();
   auto run_async = job_man.is_main_thread();
 
-  auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(asset_path);
+  auto gltf_buffer = fastgltf::GltfDataBuffer::FromPath(path);
   auto gltf_type = fastgltf::determineGltfFileType(gltf_buffer.get());
   if (gltf_type == fastgltf::GltfType::Invalid) {
     OX_LOG_ERROR("GLTF model type is invalid!");
-    return false;
+    return ModelID::Invalid;
   }
 
   auto gltf_parser = fastgltf::Parser(get_default_gltf_extensions());
-  auto gltf_result = gltf_parser.loadGltf(gltf_buffer.get(), asset_path.parent_path(), get_default_gltf_options());
+  auto gltf_result = gltf_parser.loadGltf(gltf_buffer.get(), path.parent_path(), get_default_gltf_options());
   if (!gltf_result) {
     OX_LOG_ERROR("Failed to load GLTF! {}", fastgltf::getErrorMessage(gltf_result.error()));
-    return false;
+    return ModelID::Invalid;
   }
 
   auto gltf_asset = std::move(gltf_result.get());
   if (gltf_asset.scenes.size() != 1) {
-    OX_LOG_ERROR("Error loading {}. The GLTF scene can only contain one scene.", asset_path);
-    return false;
+    OX_LOG_ERROR("Error loading {}. The GLTF scene can only contain one scene.", path);
+    return ModelID::Invalid;
   }
 
-  auto meta_path = std::filesystem::path(asset_path.string() + ".oxasset");
+  auto meta_path = std::filesystem::path(path.string() + ".oxasset");
   auto meta_json = self.read_meta_file(meta_path);
   if (!meta_json) {
-    return false;
+    return ModelID::Invalid;
   }
 
   auto embedded_texture_uuids_result = extract_embedded_texture_uuids(*meta_json->doc);
   if (!embedded_texture_uuids_result.has_value()) {
-    return false;
+    return ModelID::Invalid;
   }
   auto embedded_texture_uuids = std::move(embedded_texture_uuids_result.value());
 
   auto linear_texture_indices = extract_linear_texture_indices(gltf_asset);
-  auto textures = import_gltf_textures(self, gltf_asset, asset_path, embedded_texture_uuids);
+  auto textures = import_gltf_textures(self, gltf_asset, path, embedded_texture_uuids);
 
   OX_ASSERT(gltf_asset.textures.size() == textures.size());
   for (const auto& [gltf_texture, texture_uuid, texture_index] :
@@ -511,8 +498,8 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
 
     auto is_srgb = !linear_texture_indices.contains(texture_index);
 
-    auto work = [&asset_man = self, &gltf_asset, &asset_path, texture_uuid, gltf_image, gltf_texture, is_srgb]() {
-      load_gltf_texture(asset_man, gltf_asset, asset_path, texture_uuid, gltf_image, gltf_texture, is_srgb);
+    auto work = [&asset_man = self, &gltf_asset, &path, texture_uuid, gltf_image, gltf_texture, is_srgb]() {
+      load_gltf_texture(asset_man, gltf_asset, path, texture_uuid, gltf_image, gltf_texture, is_srgb);
     };
 
     if (run_async) {
@@ -526,14 +513,14 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
     job_man.wait();
   }
 
-  auto materials_result = register_gltf_materials(self, *meta_json->doc, asset_path);
+  auto materials_result = register_gltf_materials(self, *meta_json->doc, path);
   if (!materials_result.has_value()) {
-    return false;
+    return ModelID::Invalid;
   }
   auto materials = std::move(materials_result.value());
 
   for (const auto& [material_uuid, gltf_material] : std::views::zip(materials, gltf_asset.materials)) {
-    self.load_material(material_uuid, gltf_material_to_material(gltf_material, textures));
+    self.load_asset(material_uuid, gltf_material_to_material(gltf_material, textures), false);
   }
 
   auto lights = std::vector<Model::Light>();
@@ -1022,32 +1009,16 @@ auto AssetManager::load_model(this AssetManager& self, const UUID& uuid) -> bool
     }
   }
 
-  {
-    auto asset = self.get_asset(uuid);
-    asset->model_id = self.model_map.create_slot(std::move(model));
-    OX_LOG_INFO("Loaded model {} {}.", asset->uuid.str(), SlotMap_decode_id(asset->model_id).index);
-  }
-
-  return true;
+  auto write_lock = std::unique_lock(self.models_mutex);
+  return self.model_map.create_slot(std::move(model));
 }
 
-auto AssetManager::unload_model(this AssetManager& self, const UUID& uuid) -> bool {
+auto AssetManager::unload_model(this AssetManager& self, ReadGuard<Asset> asset) -> bool {
   ZoneScoped;
 
-  auto asset = self.get_asset(uuid);
-  if (!(asset->is_loaded() && asset->release_ref())) {
-    return false;
-  }
-
-  auto model = self.get_model(asset->model_id);
-  for (auto& v : model->materials) {
-    self.unload_material(v);
-  }
-
+  auto write_lock = std::unique_lock(self.models_mutex);
   self.model_map.destroy_slot(asset->model_id);
   asset->model_id = ModelID::Invalid;
-
-  OX_LOG_INFO("Unloaded model {}", uuid.str());
 
   return true;
 }

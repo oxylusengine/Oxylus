@@ -225,17 +225,6 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
 
   auto thumbnail_scene = Scene("ThumbnailScene");
   auto model_entity = thumbnail_scene.create_model_entity(model_uuid);
-  model_entity.add<AssetOwner>();
-
-  auto mark_mesh_children_owned = [](this auto&& self_fn, flecs::entity entity) -> void {
-    entity.children([&self_fn](flecs::entity child) {
-      if (child.has<MeshComponent>()) {
-        child.add<AssetOwner>();
-      }
-      self_fn(child);
-    });
-  };
-  mark_mesh_children_owned(model_entity);
 
   auto& asset_man = App::mod<AssetManager>();
   auto model_asset = asset_man.get_model(model_uuid);
@@ -272,9 +261,11 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
   auto& ts = App::get_timestep();
   thumbnail_scene.runtime_update(ts);
 
+  thumbnail_scene.renderer_cvar.cvar_enable_debug_renderer.set(false);
+
   const Renderer::RenderInfo render_info = {};
   auto renderer_instance = thumbnail_scene.get_renderer_instance();
-  auto scene_view_image = renderer_instance->render(std::move(thumbnail_image), render_info);
+  auto scene_view_image = renderer_instance->render(std::move(thumbnail_image), render_info, thumbnail_scene.renderer_cvar);
 
   usize buffer_size = size * size * 4; // RGBA8
   auto readback_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, buffer_size);

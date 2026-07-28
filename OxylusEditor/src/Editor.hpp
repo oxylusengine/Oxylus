@@ -4,8 +4,8 @@
 #include "Panels/EditorPanelRegistry.hpp"
 #include "Panels/MainViewportPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
-#include "UI/RuntimeConsole.hpp"
 #include "Utils/Command.hpp"
+#include "Utils/EditorCVar.hpp"
 #include "Utils/EditorContext.hpp"
 #include "Utils/EditorTheme.hpp"
 #include "Utils/Notification.hpp"
@@ -32,6 +32,8 @@ public:
   };
 
   enum class EditorLayout { Classic = 0, BigViewport };
+
+  EditorCVar editor_cvar;
 
   // Panels
   MainViewportPanel main_viewport_panel = {};
@@ -86,8 +88,6 @@ public:
   auto reset_current_docking_layout() -> void;
 
 private:
-  RuntimeConsole runtime_console = {};
-
   // Context
   EditorContext editor_context = {};
 

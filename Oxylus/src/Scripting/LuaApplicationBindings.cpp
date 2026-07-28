@@ -7,7 +7,6 @@
 #include "Core/Input.hpp"
 #include "Networking/NetworkManager.hpp"
 #include "Physics/Physics.hpp"
-#include "Render/RendererConfig.hpp"
 #include "Scripting/LuaHelpers.hpp"
 #include "Scripting/LuaManager.hpp"
 
@@ -112,7 +111,6 @@ auto AppBinding::bind(sol::state* state) -> void {
   APP_MOD(AudioEngine);
   APP_MOD(LuaManager);
   APP_MOD(Renderer);
-  APP_MOD(RendererConfig);
   APP_MOD(Physics);
   APP_MOD(Input);
   APP_MOD(NetworkManager);

@@ -1,6 +1,5 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
-#include "Render/RendererConfig.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/Scene.hpp"
@@ -140,13 +139,13 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
     );
 }
 
-auto RendererInstance::update_vbgtao_info(this RendererInstance& self) -> void {
-  auto gtao_enabled = (bool)RendererCVar::cvar_vbgtao_enable.get();
+auto RendererInstance::update_vbgtao_info(this RendererInstance& self, const RendererCVar& cvar) -> void {
+  auto gtao_enabled = cvar.cvar_vbgtao_enable.as_bool();
   if (gtao_enabled && self.viewport_size.x > 0) {
-    self.vbgtao_info.thickness = RendererCVar::cvar_vbgtao_thickness.get();
-    self.vbgtao_info.effect_radius = RendererCVar::cvar_vbgtao_radius.get();
+    self.vbgtao_info.thickness = cvar.cvar_vbgtao_thickness.get();
+    self.vbgtao_info.effect_radius = cvar.cvar_vbgtao_radius.get();
 
-    switch (RendererCVar::cvar_vbgtao_quality_level.get()) {
+    switch (cvar.cvar_vbgtao_quality_level.get()) {
       case 0: { // low
         self.vbgtao_info.slice_count = 1;
         self.vbgtao_info.samples_per_slice_side = 2;
@@ -172,7 +171,7 @@ auto RendererInstance::update_vbgtao_info(this RendererInstance& self) -> void {
     // vbgtao_info.noise_index = (RendererCVar::cvar_gtao_denoise_passes.get() > 0) ? (frameCounter % 64) : (0); //
     // TODO: If we have TAA
     self.vbgtao_info.noise_index = 0;
-    self.vbgtao_info.final_power = RendererCVar::cvar_vbgtao_final_power.get();
+    self.vbgtao_info.final_power = cvar.cvar_vbgtao_final_power.get();
   }
 }
 

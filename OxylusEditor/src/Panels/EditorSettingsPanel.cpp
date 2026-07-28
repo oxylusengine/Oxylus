@@ -4,6 +4,7 @@
 #include <imgui.h>
 
 #include "Core/App.hpp"
+#include "Core/Enum.hpp"
 #include "Core/Input.hpp"
 #include "Editor.hpp"
 #include "UI/UI.hpp"

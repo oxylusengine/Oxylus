@@ -14,7 +14,6 @@
 #include "OS/OS.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
-#include "Utils/EditorConfig.hpp"
 
 namespace ox {
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_STRING = {
@@ -288,7 +287,7 @@ void ContentPanel::on_render(this ContentPanel& self, vuk::ImageAttachment swapc
       ImGui::TableNextColumn();
       self.render_side_view();
       ImGui::TableNextColumn();
-      self.render_body(EditorCVar::cvar_file_thumbnail_size.get() >= self.thumbnail_size_grid_limit);
+      self.render_body(App::mod<Editor>().editor_cvar.cvar_file_thumbnail_size.get() >= self.thumbnail_size_grid_limit);
 
       ImGui::EndTable();
     }
@@ -304,19 +303,21 @@ void ContentPanel::render_header(this ContentPanel& self) {
     self.refresh();
   }
 
+  auto& editor_cvar = App::mod<Editor>().editor_cvar;
+
   if (ImGui::BeginPopup("SettingsPopup")) {
     UI::begin_properties(ImGuiTableFlags_SizingStretchSame);
-    UI::property("Show meta files", reinterpret_cast<bool*>(EditorCVar::cvar_show_meta_files.get_ptr()));
+    UI::property("Show meta files", reinterpret_cast<bool*>(editor_cvar.cvar_show_meta_files.get_ptr()));
     UI::end_properties();
     ImGui::SeparatorText("Thumbnails");
     UI::begin_properties(ImGuiTableFlags_SizingStretchSame);
     UI::property(
       "Thumbnail Size",
-      EditorCVar::cvar_file_thumbnail_size.get_ptr(),
+      editor_cvar.cvar_file_thumbnail_size.get_ptr(),
       self.thumbnail_size_grid_limit - 0.1f,
       self.thumbnail_max_limit
     );
-    UI::property("Show file thumbnails", reinterpret_cast<bool*>(EditorCVar::cvar_file_thumbnails.get_ptr()));
+    UI::property("Show file thumbnails", reinterpret_cast<bool*>(editor_cvar.cvar_file_thumbnails.get_ptr()));
     UI::end_properties();
     if (UI::button("Reset thumbnail cache"))
       App::mod<Editor>().thumbnail_manager.reset();
@@ -494,8 +495,10 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
   std::filesystem::path directory_to_open;
 
+  auto& editor_cvar = App::mod<Editor>().editor_cvar;
+
   constexpr float padding = 2.0f;
-  const float scaled_thumbnail_size = EditorCVar::cvar_file_thumbnail_size.get() * ImGui::GetIO().FontGlobalScale;
+  const float scaled_thumbnail_size = editor_cvar.cvar_file_thumbnail_size.get() * ImGui::GetIO().FontGlobalScale;
   const float scaled_thumbnail_size_x = scaled_thumbnail_size * 0.55f;
   const float cell_size = scaled_thumbnail_size_x + 2 * padding + scaled_thumbnail_size_x * 0.1f;
 
@@ -539,7 +542,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
       if (!self.filter_.PassFilter(file.name.c_str()))
         continue;
 
-      if (!(bool)EditorCVar::cvar_show_meta_files.get()) {
+      if (!editor_cvar.cvar_show_meta_files.as_bool()) {
         if (file.type == FileType::Meta)
           continue;
       }
@@ -623,7 +626,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
         ImGui::SetCursorPos({cursor_pos.x + thumbnail_padding * 0.75f, cursor_pos.y + thumbnail_padding});
         ImGui::SetNextItemAllowOverlap();
 
-        auto use_thumbnail_image = !is_dir && EditorCVar::cvar_file_thumbnails.get() &&
+        auto use_thumbnail_image = !is_dir && editor_cvar.cvar_file_thumbnails.get() &&
                                    (file.type == FileType::Texture || file.type == FileType::Model);
         auto thumbnail_image = TextureView{};
         if (use_thumbnail_image) {
