@@ -425,8 +425,6 @@ struct AudioListenerComponent {
 
 struct Hidden {};
 
-struct AssetOwner {};
-
 struct Networked {};
 
 struct CoreComponentsModule {

@@ -339,18 +339,18 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
     "sky_multiscatter_lut_pass",
     [](
       vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
-      VUK_IA(vuk::eComputeRW) sky_multiscatter_lut,
+      VUK_IA(vuk::eComputeSampled) sky_transmittance_lut_,
+      VUK_IA(vuk::eComputeRW) sky_multiscatter_lut_,
       VUK_BA(vuk::eComputeRead) atmos
     ) {
       cmd_list.bind_compute_pipeline("sky_multiscatter")
         .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
-        .bind_image(0, 1, sky_transmittance_lut)
-        .bind_image(0, 2, sky_multiscatter_lut)
+        .bind_image(0, 1, sky_transmittance_lut_)
+        .bind_image(0, 2, sky_multiscatter_lut_)
         .bind_buffer(0, 3, atmos)
-        .dispatch_invocations_per_pixel(sky_multiscatter_lut);
+        .dispatch_invocations_per_pixel(sky_multiscatter_lut_);
 
-      return std::make_tuple(sky_transmittance_lut, sky_multiscatter_lut, atmos);
+      return std::make_tuple(sky_transmittance_lut_, sky_multiscatter_lut_, atmos);
     }
   );
 

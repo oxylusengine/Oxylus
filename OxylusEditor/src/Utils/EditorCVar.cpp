@@ -1,6 +1,6 @@
 #include "EditorCVar.hpp"
 
-#include <Tracy.hpp>
+#include <tracy/Tracy.hpp>
 #include <toml++/toml.hpp>
 
 #include "Core/Project.hpp"
