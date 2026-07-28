@@ -24,8 +24,9 @@ public:
   static void push_frame_style(bool on = true);
   static void pop_frame_style();
 
-  static bool
-  begin_properties(ImGuiTableFlags flags = default_properties_flags, bool fixed_width = false, float width = 0.4f);
+  static bool begin_properties(
+    ImGuiTableFlags flags = default_properties_flags, bool fixed_width = false, float width = 0.4f
+  );
   static void end_properties();
 
   static void begin_property_grid(const char* label, const char* tooltip, const bool align_text_right = false);
@@ -49,13 +50,15 @@ public:
   static bool property(const char* label, bool* flag, const char* tooltip = nullptr);
 
   // Dropdown
-  static bool
-  property(const char* label, int* value, const char** dropdown_strings, int count, const char* tooltip = nullptr);
+  static bool property(
+    const char* label, int* value, const char** dropdown_strings, int count, const char* tooltip = nullptr
+  );
 
   // Drag
   template <std::integral T>
-  static bool
-  property(const char* label, T* value, T min = 0, T max = 0, float speed = 1.0f, const char* tooltip = nullptr) {
+  static bool property(
+    const char* label, T* value, T min = 0, T max = 0, float speed = 1.0f, const char* tooltip = nullptr
+  ) {
     begin_property_grid(label, tooltip);
     bool modified;
 
@@ -173,8 +176,9 @@ public:
   );
 
   // Vec3 with reset button
-  static bool
-  draw_vec3_control(const char* label, glm::vec3& values, const char* tooltip = nullptr, float reset_value = 0.0f);
+  static bool draw_vec3_control(
+    const char* label, glm::vec3& values, const char* tooltip = nullptr, float reset_value = 0.0f
+  );
 
   static bool draw_vec2_control(
     const char* label, glm::vec2& values, const char* tooltip = nullptr, const float reset_value = 0.0f
@@ -191,7 +195,7 @@ public:
 
   // images
   static void image(
-    const Texture& texture,
+    const TextureView& texture_view,
     ImVec2 size,
     const ImVec2& uv0 = ImVec2(0, 0),
     const ImVec2& uv1 = ImVec2(1, 1),
@@ -201,7 +205,7 @@ public:
 
   static bool image_button(
     const char* id,
-    const Texture& view,
+    const TextureView& texture_view,
     ImVec2 size,
     const ImVec2& uv0 = ImVec2(0, 0),
     const ImVec2& uv1 = ImVec2(1, 1),
@@ -233,7 +237,8 @@ public:
     float wrap_width
   );
 
-  static void
-  draw_framerate_overlay(ImVec2 work_pos = {}, ImVec2 work_size = {}, ImVec2 padding = {}, bool* visible = nullptr);
+  static void draw_framerate_overlay(
+    ImVec2 work_pos = {}, ImVec2 work_size = {}, ImVec2 padding = {}, bool* visible = nullptr
+  );
 };
 } // namespace ox

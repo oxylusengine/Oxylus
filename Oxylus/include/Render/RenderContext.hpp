@@ -11,6 +11,7 @@
 #include "Core/Base.hpp"
 #include "Core/Option.hpp"
 #include "Memory/SlotMap.hpp"
+#include "Render/ContextCVar.hpp"
 
 namespace ox {
 struct Window;
@@ -40,6 +41,8 @@ public:
   };
 
   Resources resources = {};
+
+  ContextCVar context_cvar = {};
 
   VkDevice device = nullptr;
   VkPhysicalDevice physical_device = nullptr;
@@ -84,7 +87,7 @@ public:
 
   auto wait(this RenderContext& self) -> void;
   auto wait_on(vuk::UntypedValue&& fut) -> void;
-  auto wait_on_rg(vuk::Value<vuk::ImageAttachment>&& fut, bool frame) -> vuk::ImageAttachment;
+  auto wait_on_multiple(std::span<vuk::UntypedValue> values) -> void;
 
   auto create_persistent_descriptor_set(
     this RenderContext&,

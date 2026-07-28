@@ -63,12 +63,13 @@ func cs_main(
     GroupMemoryBarrierWithGroupSync();
 
     // MIP 2
+    float depth_mip2 = 0.0;
     if ((local_id.x % 2 == 0) && (local_id.y % 2 == 0)) {
-        float d0 = previous_mip_depth[local_id.x + 0][local_id.y + 0];
+        float d0 = depth_mip1;
         float d1 = previous_mip_depth[local_id.x + 1][local_id.y + 0];
         float d2 = previous_mip_depth[local_id.x + 0][local_id.y + 1];
         float d3 = previous_mip_depth[local_id.x + 1][local_id.y + 1];
-        float depth_mip2 = weighted_average(d0, d1, d2, d3);
+        depth_mip2 = weighted_average(d0, d1, d2, d3);
         params.dst_depth_mip2[base_coordinates / 2] = depth_mip2;
         previous_mip_depth[local_id.x][local_id.y] = depth_mip2;
     }
@@ -76,12 +77,13 @@ func cs_main(
     GroupMemoryBarrierWithGroupSync();
 
     // MIP 3
+    float depth_mip3 = 0.0;
     if ((local_id.x % 4 == 0) && (local_id.y % 4 == 0)) {
-        float d0 = previous_mip_depth[local_id.x + 0][local_id.y + 0];
+        float d0 = depth_mip2;
         float d1 = previous_mip_depth[local_id.x + 2][local_id.y + 0];
         float d2 = previous_mip_depth[local_id.x + 0][local_id.y + 2];
         float d3 = previous_mip_depth[local_id.x + 2][local_id.y + 2];
-        float depth_mip3 = weighted_average(d0, d1, d2, d3);
+        depth_mip3 = weighted_average(d0, d1, d2, d3);
         params.dst_depth_mip3[base_coordinates / 4] = depth_mip3;
         previous_mip_depth[local_id.x][local_id.y] = depth_mip3;
     }
@@ -90,7 +92,7 @@ func cs_main(
 
     // MIP 4
     if ((local_id.x % 8 == 0) && (local_id.y % 8 == 0)) {
-        float d0 = previous_mip_depth[local_id.x + 0][local_id.y + 0];
+        float d0 = depth_mip3;
         float d1 = previous_mip_depth[local_id.x + 4][local_id.y + 0];
         float d2 = previous_mip_depth[local_id.x + 0][local_id.y + 4];
         float d3 = previous_mip_depth[local_id.x + 4][local_id.y + 4];

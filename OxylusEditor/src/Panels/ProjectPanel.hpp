@@ -16,7 +16,7 @@ public:
   auto load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) -> void;
 
 private:
-  std::shared_ptr<Texture> engine_banner = nullptr;
+  Texture engine_banner = {};
 
   std::filesystem::path new_project_dir = {};
   std::string new_project_name = "NewProject";

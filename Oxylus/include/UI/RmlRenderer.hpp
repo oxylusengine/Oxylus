@@ -41,7 +41,7 @@ public:
     const Rml::Vector2f& translation
   ) -> void;
 
-  auto set_white_texture(this RmlRenderer& self, Texture* texture) -> void;
+  auto set_white_texture(this RmlRenderer& self, const TextureView &view) -> void;
 
   // --- Derived functions ---
   auto CompileGeometry(Rml::Span<const Rml::Vertex> vertices, Rml::Span<const int> indices)
@@ -66,8 +66,8 @@ private:
   SlotMap<RmlCompiledGeometry, RmlGeometryID> compiled_geometries;
   std::vector<RmlDrawCmd> draw_commands = {};
 
-  SlotMap<std::unique_ptr<Texture>, RmlTextureID> loaded_textures = {};
-  Texture* white_texture = nullptr;
+  SlotMap<Texture, RmlTextureID> loaded_textures = {};
+  TextureView white_texture = {};
 
   bool current_scissor_enabled = false;
   glm::ivec4 current_scissor; // x, y, w, h

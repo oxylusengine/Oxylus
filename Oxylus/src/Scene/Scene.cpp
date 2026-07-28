@@ -32,7 +32,6 @@
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Physics/PhysicsMaterial.hpp"
 #include "Render/Camera.hpp"
-#include "Render/RendererConfig.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
@@ -960,8 +959,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.system<SpriteComponent>("sprite_aabb")
     .kind(flecs::PostUpdate)
-    .each([](const flecs::entity entity, SpriteComponent& sprite) {
-      if (RendererCVar::cvar_draw_bounding_boxes.get()) {
+    .each([cvar = &self.renderer_cvar](const flecs::entity entity, SpriteComponent& sprite) {
+      if (cvar->cvar_draw_bounding_boxes.get()) {
         auto& debug_renderer = App::mod<DebugRenderer>();
         debug_renderer.draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
       }
@@ -969,8 +968,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.system<MeshComponent>("mesh_aabb")
     .kind(flecs::PostUpdate)
-    .each([](const flecs::entity entity, MeshComponent& mc) {
-      if (RendererCVar::cvar_draw_bounding_boxes.get()) {
+    .each([cvar = &self.renderer_cvar](const flecs::entity entity, MeshComponent& mc) {
+      if (cvar->cvar_draw_bounding_boxes.get()) {
         auto& debug_renderer = App::mod<DebugRenderer>();
         debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.f, 1.f, 0.f, 1.0f));
       }
@@ -1151,7 +1150,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   // TODO: Pass our delta_time?
   self.world.progress();
 
-  if (RendererCVar::cvar_enable_physics_debug_renderer.get()) {
+  if (self.renderer_cvar.cvar_enable_physics_debug_renderer.get()) {
     JPH::BodyManager::DrawSettings settings{};
     settings.mDrawShape = true;
     settings.mDrawShapeWireframe = true;
@@ -1340,7 +1339,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       .gpu_mesh_instances = gpu_mesh_instances,
       .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices,
     };
-    self.renderer_instance->update(update_info);
+    self.renderer_instance->update(update_info, self.renderer_cvar);
 
     for (const auto transform_id : self.dirty_transforms) {
       if (auto* gpu_transform = self.transforms.slot(transform_id)) {
@@ -1984,7 +1983,7 @@ auto Scene::render(
     system->on_scene_render(&self, dst_attachment->extent);
   }
 
-  return ri->render(std::move(dst_attachment), render_info);
+  return ri->render(std::move(dst_attachment), render_info, self.renderer_cvar);
 }
 
 auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
@@ -2106,6 +2105,8 @@ auto Scene::to_json(this const Scene& self) -> JsonWriter {
 
   writer["name"] = self.scene_name;
 
+  self.renderer_cvar.to_json(writer);
+
   writer["scripts"].begin_array();
   for (auto& [uuid, system] : self.lua_systems) {
     writer.begin_obj();
@@ -2162,6 +2163,11 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   }
 
   self.scene_name = name_json.get_string().value_unsafe();
+
+  auto config_json = doc["config"];
+  if (!config_json.error()) {
+    self.renderer_cvar.from_json(config_json.value());
+  }
 
   std::vector<UUID> requested_assets = {};
 

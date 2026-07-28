@@ -527,8 +527,25 @@ auto AssetManager::load_texture(this AssetManager& self, const UUID& uuid, Textu
     asset_path = asset->path;
   }
 
-  Texture texture{};
-  texture.create(asset_path, std::move(info));
+  auto data_source = TextureDataSource{};
+  auto source_bytes = std::get_if<std::span<const u8>>(&info.source);
+  auto source_path = std::get_if<std::filesystem::path>(&info.source);
+  if (source_bytes || (source_path && !source_path->empty())) {
+    data_source = info.source;
+  } else {
+    data_source = asset_path;
+  }
+
+  auto texture = Texture::create({
+    .source = data_source,
+    .level_count = info.level_count,
+    .is_srgb = info.is_srgb,
+    .target_width = info.target_width,
+    .target_height = info.target_height,
+    .sampler_info = info.sampler_info,
+  });
+  if (!texture)
+    return false;
 
   auto asset = self.get_asset(uuid);
   if (!asset)

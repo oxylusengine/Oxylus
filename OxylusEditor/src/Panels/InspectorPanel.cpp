@@ -723,7 +723,7 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
   ImGui::SeparatorText("Asset");
   ImGui::Indent();
 
-  auto thumbnail_image = option<std::shared_ptr<Texture>>(nullopt);
+  auto thumbnail_image = TextureView{};
   if (asset->type == AssetType::Texture) {
     thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(path_str);
   } else if (asset->type == AssetType::Model) {
@@ -732,8 +732,8 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
   const auto indent_spacing = ImGui::GetStyle().IndentSpacing;
   const auto region = ImGui::GetContentRegionAvail();
   auto content_width = region.x - ImGui::GetStyle().IndentSpacing;
-  if (thumbnail_image.has_value()) {
-    UI::image(**thumbnail_image, {content_width, content_width});
+  if (thumbnail_image) {
+    UI::image(thumbnail_image, {content_width, content_width});
   } else {
     ImGui::PushFont(nullptr, 32.f);
     ImGui::Text("No thumbnail");

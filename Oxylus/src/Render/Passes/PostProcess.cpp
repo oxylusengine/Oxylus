@@ -1,6 +1,5 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
-#include "Render/RendererConfig.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/VukCommon.hpp"
 
@@ -77,11 +76,11 @@ auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostPro
   );
 }
 
-auto RendererInstance::apply_bloom(this RendererInstance&, PostProcessContext& context) -> void {
+auto RendererInstance::apply_bloom(this RendererInstance&, PostProcessContext& context, const RendererCVar& cvar) -> void {
   ZoneScoped;
 
-  const auto threshold = RendererCVar::cvar_bloom_threshold.get();
-  const auto soft_threshold = RendererCVar::cvar_bloom_soft_threshold.get();
+  const auto threshold = cvar.cvar_bloom_threshold.get();
+  const auto soft_threshold = cvar.cvar_bloom_soft_threshold.get();
 
   auto bloom_downsampled_attachment = vuk::declare_ia(
     "bloom downsampled",

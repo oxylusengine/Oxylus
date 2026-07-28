@@ -37,21 +37,18 @@ void ImGuiRenderer::build_fonts() {
   ZoneScoped;
 
   ImGuiIO& io = ImGui::GetIO();
-  unsigned char* pixels;
+  unsigned char* pixels_data;
   int width, height;
   io.Fonts->Build();
-  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
-  font_texture = std::make_shared<Texture>();
-  font_texture->create(
-    {},
-    {
-      .preset = Preset::eRTT2DUnmipped,
-      .format = vuk::Format::eR8G8B8A8Srgb,
-      .mime = {},
-      .loaded_data = pixels,
-      .extent = vuk::Extent3D{static_cast<u32>(width), static_cast<u32>(height), 1u},
-    }
-  );
+  io.Fonts->GetTexDataAsRGBA32(&pixels_data, &width, &height);
+  font_texture = Texture::create({
+    .format = vuk::Format::eR8G8B8A8Unorm,
+    .extent = vuk::Extent3D{static_cast<u32>(width), static_cast<u32>(height), 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
+
+  auto pixels = std::span{pixels_data, static_cast<usize>(width * height * 4)};
+  font_texture.upload(pixels, vuk::eFragmentSampled);
 }
 
 auto ImGuiRenderer::init() -> std::expected<void, std::string> {
@@ -124,7 +121,9 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size, gl
   ImGui::NewFrame();
 }
 
-vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(RenderContext& context, vuk::Value<vuk::ImageAttachment> target) {
+vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
+  RenderContext& context, vuk::Value<vuk::ImageAttachment> target
+) {
   ZoneScoped;
 
   ImGui::Render();
@@ -165,24 +164,24 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(RenderContext& context
 #if 1
       if (texture->Status == ImTextureStatus_WantCreate || texture->Status == ImTextureStatus_WantUpdates) {
         if (font_texture) {
-          font_texture->destroy();
+          font_texture.destroy();
         }
 
-        font_texture = std::make_shared<Texture>();
-        font_texture->create(
-          {},
-          {.preset = Preset::eRTT2DUnmipped,
-           .format = vuk::Format::eR8G8B8A8Srgb,
-           .mime = {},
-           .loaded_data = texture->GetPixels(),
-           .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u}}
+        font_texture = Texture::create({
+          .format = vuk::Format::eR8G8B8A8Unorm,
+          .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u},
+          .usage = vuk::ImageUsageFlagBits::eSampled,
+        });
+        font_texture.set_name("imgui font texture");
+        font_texture.upload(
+          {static_cast<u8*>(texture->GetPixels()), static_cast<usize>(texture->GetSizeInBytes())},
+          vuk::eFragmentSampled
         );
-        font_texture->set_name("font_texture");
 
         texture->SetStatus(ImTextureStatus_OK);
       }
 
-      auto texture_id = this->add_image(*font_texture);
+      auto texture_id = this->add_image(font_texture.view());
       OX_ASSERT(texture_id > 0);
       texture->SetTexID(texture_id);
 #else
@@ -196,7 +195,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(RenderContext& context
           font_texture->create(
             {},
             {.preset = Preset::eRTT2DUnmipped,
-             .format = vuk::Format::eR8G8B8A8Srgb,
+             .format = vuk::Format::eR8G8B8A8Unorm,
              .mime = {},
              .extent = vuk::Extent3D{static_cast<u32>(texture->Width), static_cast<u32>(texture->Height), 1u}}
           );
@@ -405,14 +404,14 @@ ImTextureID ImGuiRenderer::add_image(vuk::Value<vuk::ImageAttachment>&& attachme
   return rendering_images.size();
 }
 
-ImTextureID ImGuiRenderer::add_image(const Texture& texture) {
-  if (this->acquired_images.contains(texture.get_view_id())) {
-    return this->acquired_images[texture.get_view_id()];
+ImTextureID ImGuiRenderer::add_image(const TextureView& texture_view) {
+  if (this->acquired_images.contains(texture_view.image_view_id)) {
+    return this->acquired_images[texture_view.image_view_id];
   }
 
-  auto attachment = texture.acquire();
+  auto attachment = texture_view.acquire({}, vuk::eFragmentSampled);
   const auto texture_id = this->add_image(std::move(attachment));
-  this->acquired_images.emplace(texture.get_view_id(), texture_id);
+  this->acquired_images.emplace(texture_view.get_view_id(), texture_id);
 
   return texture_id;
 }

@@ -2,7 +2,6 @@
 
 #include <RmlUi/Core/Types.h>
 #include <expected>
-#include <span>
 #include <string>
 
 #include "UI/RmlRenderer.hpp"
@@ -32,6 +31,6 @@ public:
 private:
   RmlRenderer rml_renderer = {};
   RmlSystem rml_system = {};
-  std::unique_ptr<Texture> white_texture = nullptr;
+  Texture white_texture = {};
 };
 } // namespace ox

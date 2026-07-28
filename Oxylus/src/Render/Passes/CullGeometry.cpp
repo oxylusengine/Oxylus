@@ -1,6 +1,7 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
 #include "Core/App.hpp"
+#include "Core/Enum.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/VukCommon.hpp"

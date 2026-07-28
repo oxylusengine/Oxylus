@@ -10,20 +10,16 @@
 #include "Editor.hpp"
 #include "Panels/ContentPanel.hpp"
 #include "UI/UI.hpp"
-#include "Utils/EditorConfig.hpp"
 #include "Utils/EmbeddedBanner.hpp"
 
 namespace ox {
 ProjectPanel::ProjectPanel() : EditorPanelState("Projects", ICON_MDI_ACCOUNT_BADGE, true) {
-  engine_banner = std::make_shared<Texture>();
-  engine_banner->create(
-    {},
-    {.preset = Preset::eRTT2DUnmipped,
-     .format = vuk::Format::eR8G8B8A8Srgb,
-     .mime = {},
-     .loaded_data = editor_banner,
-     .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u}}
-  );
+  engine_banner = Texture::create({
+    .format = vuk::Format::eR8G8B8A8Srgb,
+    .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
+  engine_banner.upload(std::span(editor_banner), vuk::eFragmentSampled);
 }
 
 void ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) {
@@ -32,7 +28,7 @@ void ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::f
 
   if (!std::filesystem::exists(filepath)) {
     OX_LOG_WARN("Couldn't find project. Removing from recent projects: {}", filepath);
-    App::mod<EditorConfig>().remove_recent_project(filepath);
+    editor.editor_cvar.remove_recent_project(filepath);
     return;
   }
 
@@ -44,7 +40,7 @@ void ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::f
       editor.new_scene();
     }
     editor.reset_current_docking_layout();
-    App::mod<EditorConfig>().add_recent_project(active_project.get());
+    editor.editor_cvar.add_recent_project(active_project.get());
     editor.editor_panel_registry.get<ContentPanel>().init();
     self.visible = false;
   }
@@ -57,7 +53,7 @@ void ProjectPanel::new_project(
 ) {
   const auto& active_project = App::mod<Editor>().active_project;
   if (active_project->new_project(project_dir, project_name, project_asset_dir))
-    App::mod<EditorConfig>().add_recent_project(active_project.get());
+    App::mod<Editor>().editor_cvar.add_recent_project(active_project.get());
 }
 
 void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapchain_attachment) {
@@ -68,7 +64,7 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
                          ImGuiWindowFlags_NoBackground;
   static bool draw_new_project_panel = false;
 
-  const auto banner_size = self.engine_banner->get_extent();
+  const auto banner_size = self.engine_banner.get_extent();
 
   UI::center_next_window();
   ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.7f));
@@ -79,7 +75,7 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
 
     const auto& window = App::get_window();
 
-    UI::image(*self.engine_banner, {x, static_cast<float>(banner_size.height)});
+    UI::image(self.engine_banner.view(), {x, static_cast<float>(banner_size.height)});
     UI::spacing(2);
     ImGui::SeparatorText("Recent Projects");
     UI::spacing(2);
@@ -143,7 +139,7 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
           draw_new_project_panel = false;
         }
       } else {
-        const auto projects = App::mod<EditorConfig>().get_recent_projects();
+        const auto projects = App::mod<Editor>().editor_cvar.get_recent_projects();
         for (auto& project : projects) {
           auto project_name = project.stem().string();
           auto cursor_pos_y = ImGui::GetCursorPosY();
