@@ -105,10 +105,10 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
 
   auto& asset_man = App::mod<AssetManager>();
 
-  const auto& registry = asset_man.registry();
+  const auto registry = asset_man.get_registry_snapshot();
 
-  for (const auto& [uuid, asset] : registry) {
-    if (uuid) {
+  for (const auto& asset : registry) {
+    if (asset.uuid) {
       if (default_filter != AssetType::None && asset.type != default_filter) {
         continue;
       }

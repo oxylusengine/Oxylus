@@ -501,9 +501,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.observer<SpriteComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, SpriteComponent& c) {
     auto& asset_man = App::mod<AssetManager>();
     if (it.event() == flecs::OnRemove) {
-      if (auto material_asset = asset_man.get_asset(c.material)) {
-        asset_man.unload_asset(material_asset->uuid);
-      }
+      // Must not hold a registry read guard across unload_asset(): it takes the registry
+      // write lock (self-deadlock otherwise). unload_asset() no-ops on missing/unloaded.
+      asset_man.unload_asset(c.material);
     }
   });
 
@@ -633,10 +633,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           e.destruct();
         }
       } else if (it.event() == flecs::OnSet) {
-        if (auto asset = asset_man.get_asset(c.material)) {
-          if (!asset->is_loaded()) {
-            asset_man.load_asset(c.material);
-          }
+        // is_loaded() takes and releases the read guard internally; don't hold one across
+        // load_asset() (which re-locks the registry).
+        if (!asset_man.is_loaded(c.material)) {
+          asset_man.load_asset(c.material);
         }
 
         asset_man.set_material_dirty(c.material);
@@ -648,9 +648,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
       auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {
-        if (auto material_asset = asset_man.get_asset(c.material)) {
-          asset_man.unload_asset(material_asset->uuid);
-        }
+        // See note in SpriteComponent OnRemove: never hold a read guard across unload_asset().
+        asset_man.unload_asset(c.material);
       }
     });
 
@@ -2195,8 +2194,16 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
 
   for (const auto& uuid : requested_assets) {
     auto& asset_man = App::mod<AssetManager>();
-    if (auto asset = asset_man.get_asset(uuid); asset) {
-      if (asset->type == AssetType::Script) {
+    // Snapshot the type and release the read guard before load_asset()/add_lua_system(),
+    // which re-lock the registry.
+    auto asset_type = AssetType::None;
+    auto exists = false;
+    if (auto asset = asset_man.get_asset(uuid)) {
+      exists = true;
+      asset_type = asset->type;
+    }
+    if (exists) {
+      if (asset_type == AssetType::Script) {
         self.add_lua_system(uuid);
       } else {
         asset_man.load_asset(uuid);

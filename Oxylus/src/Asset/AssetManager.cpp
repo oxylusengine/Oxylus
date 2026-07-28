@@ -115,10 +115,17 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   return {};
 }
 
-auto AssetManager::registry(this const AssetManager& self) -> const AssetRegistry& {
+auto AssetManager::get_registry_snapshot(this AssetManager& self) -> std::vector<Asset> {
   ZoneScoped;
 
-  return self.asset_registry;
+  auto read_lock = std::shared_lock(self.registry_mutex);
+  auto snapshot = std::vector<Asset>{};
+  snapshot.reserve(self.asset_registry.size());
+  for (const auto& [uuid, asset] : self.asset_registry) {
+    snapshot.emplace_back(asset);
+  }
+
+  return snapshot;
 }
 
 auto AssetManager::read_meta_file(this AssetManager& self, const std::filesystem::path& path)
@@ -203,6 +210,7 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
 auto AssetManager::create_asset(this AssetManager& self, const AssetType type, const std::filesystem::path& path)
   -> UUID {
   const auto uuid = UUID::generate_random();
+  auto write_lock = std::unique_lock(self.registry_mutex);
   auto [asset_it, inserted] = self.asset_registry.try_emplace(uuid);
   if (!inserted) {
     OX_LOG_ERROR("Can't create asset {}!", uuid.str());
@@ -388,7 +396,7 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
   // acquire self first
   asset->acquire_ref();
 
-  // then children
+  auto children = ankerl::svector<UUID, 8>{};
   switch (asset->type) {
     case AssetType::None:
     case AssetType::Shader:
@@ -399,18 +407,28 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Script : break;
     case AssetType::Model  : {
       auto model = self.get_model(asset->model_id);
-      for (const auto& material : model->materials) {
-        self.acquire_ref(self.get_asset(material));
+      if (model) {
+        children.assign(model->materials.begin(), model->materials.end());
       }
     } break;
     case AssetType::Material: {
       auto material = self.get_material(asset->material_id);
-      self.acquire_ref(self.get_asset(material->albedo_texture));
-      self.acquire_ref(self.get_asset(material->normal_texture));
-      self.acquire_ref(self.get_asset(material->emissive_texture));
-      self.acquire_ref(self.get_asset(material->metallic_roughness_texture));
-      self.acquire_ref(self.get_asset(material->occlusion_texture));
+      if (material) {
+        children = {
+          material->albedo_texture,
+          material->normal_texture,
+          material->emissive_texture,
+          material->metallic_roughness_texture,
+          material->occlusion_texture,
+        };
+      }
     } break;
+  }
+
+  asset.reset();
+
+  for (auto& child : children) {
+    self.acquire_ref(self.get_asset(child));
   }
 }
 

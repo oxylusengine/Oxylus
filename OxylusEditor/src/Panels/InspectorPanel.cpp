@@ -217,9 +217,12 @@ struct EntityInspector : IEntitySerializer {
         // NOTE: We don't allow model assets to be loaded this way yet(or ever).
         if (selected.type != AssetType::None && selected.type != AssetType::Model) {
           // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
-          auto existing_asset = asset_man.get_asset(*uuid);
+          auto existing_type = AssetType::None;
+          if (auto existing_asset = asset_man.get_asset(*uuid)) {
+            existing_type = existing_asset->type;
+          }
           const bool is_same_asset = selected.uuid == *uuid;
-          const bool is_same_type = existing_asset->type == selected.type;
+          const bool is_same_type = existing_type == selected.type;
           const bool is_loaded = asset_man.load_asset(selected.uuid);
           if (!is_same_asset && is_same_type && is_loaded) {
             if (*uuid) {
@@ -245,8 +248,10 @@ struct EntityInspector : IEntitySerializer {
           if (payload->get_str().empty())
             return;
           if (auto imported_asset = asset_man.import_asset(payload->str)) {
-            if (auto existing_asset = asset_man.get_asset(*uuid)) {
-              asset_man.unload_asset(existing_asset->uuid);
+            // Must not hold a registry read guard while unloading: unload_asset() takes the
+            // registry write lock. unload_asset() no-ops on missing/unloaded assets.
+            if (*uuid) {
+              asset_man.unload_asset(*uuid);
             }
             if (asset_man.load_asset(imported_asset)) {
               *uuid = imported_asset;
@@ -260,50 +265,44 @@ struct EntityInspector : IEntitySerializer {
       ImGui::Separator();
 
       if (auto asset = asset_man.get_asset(*uuid)) {
-        switch (asset->type) {
-          case ox::AssetType::None: {
+        const auto asset_type = asset->type;
+        const auto asset_uuid = asset->uuid;
+        const auto asset_path = asset->path;
+        const auto model_id = asset_type == AssetType::Model ? asset->model_id : ModelID::Invalid;
+        const auto material_id = asset_type == AssetType::Material ? asset->material_id : MaterialID::Invalid;
+        const auto audio_id = asset_type == AssetType::Audio ? asset->audio_id : AudioID::Invalid;
+        const auto script_id = asset_type == AssetType::Script ? asset->script_id : ScriptID::Invalid;
+        asset.reset();
+
+        switch (asset_type) {
+          case ox::AssetType::None:
+          case AssetType::Shader:  // TODO: Shaders
+          case AssetType::Texture: // TODO: Textures
+          case AssetType::Font:    // TODO: Fonts
+          case AssetType::Scene:   // TODO: Scenes
             break;
-          }
-          case AssetType::Shader: {
-            // TODO: Shaders
-            break;
-          }
           case AssetType::Model: {
-            auto model = asset_man.get_model(asset->model_id);
-            inspector_panel.draw_model_asset(std::move(asset), std::move(model));
-            break;
-          }
-          case AssetType::Texture: {
-            // TODO: Textures
+            auto model = asset_man.get_model(model_id);
+            inspector_panel.draw_model_asset(std::move(model));
             break;
           }
           case AssetType::Material: {
-            auto material_id = asset->material_id;
             auto material = asset_man.get_material(material_id);
-            auto material_dirty = inspector_panel.draw_material_asset(std::move(asset), std::move(material));
+            auto material_dirty = inspector_panel.draw_material_asset(asset_uuid, asset_path, std::move(material));
             material.reset();
             if (material_dirty) {
-              material.reset();
               asset_man.set_material_dirty(material_id);
             }
             break;
           }
-          case AssetType::Font: {
-            // TODO: Fonts
-            break;
-          }
-          case AssetType::Scene: {
-            // TODO: Scenes
-            break;
-          }
           case AssetType::Audio: {
-            auto audio = asset_man.get_audio(asset->audio_id);
-            inspector_panel.draw_audio_asset(std::move(asset), std::move(audio));
+            auto audio = asset_man.get_audio(audio_id);
+            inspector_panel.draw_audio_asset(std::move(audio));
             break;
           }
           case AssetType::Script: {
-            auto script = asset_man.get_script(asset->script_id);
-            if (inspector_panel.draw_script_asset(std::move(asset), std::move(script))) {
+            auto script = asset_man.get_script(script_id);
+            if (inspector_panel.draw_script_asset(asset_uuid, std::move(script))) {
               modified = true;
             }
             break;
@@ -529,10 +528,10 @@ auto InspectorPanel::draw_material_properties(
 
     if (selected.type == AssetType::Texture) {
       auto& asset_man = App::mod<AssetManager>();
-      auto existing_asset = asset_man.get_asset(uuid);
       const bool is_loaded = asset_man.load_asset(selected.uuid);
       if (is_loaded) {
-        if (existing_asset) {
+        // unload previous asset
+        if (uuid) {
           asset_man.unload_asset(uuid);
         }
         return selected.uuid;
@@ -715,18 +714,24 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
   ZoneScoped;
   auto& editor = App::mod<Editor>();
   auto& asset_man = App::mod<AssetManager>();
-  auto type_str = asset_man.to_asset_type_sv(asset->type);
-  auto uuid_str = asset->uuid.str();
-  auto name = asset->path.filename().string();
-  auto path_str = asset->path.string();
+
+  const auto asset_type = asset->type;
+  const auto asset_uuid = asset->uuid;
+  const auto asset_path = asset->path;
+  asset.reset();
+
+  auto type_str = asset_man.to_asset_type_sv(asset_type);
+  auto uuid_str = asset_uuid.str();
+  auto name = asset_path.filename().string();
+  auto path_str = asset_path.string();
 
   ImGui::SeparatorText("Asset");
   ImGui::Indent();
 
   auto thumbnail_image = TextureView{};
-  if (asset->type == AssetType::Texture) {
+  if (asset_type == AssetType::Texture) {
     thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(path_str);
-  } else if (asset->type == AssetType::Model) {
+  } else if (asset_type == AssetType::Model) {
     thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(path_str);
   }
   const auto indent_spacing = ImGui::GetStyle().IndentSpacing;
@@ -749,16 +754,15 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
 
   ImGui::Unindent();
 
-  if (asset->type == AssetType::Material) {
-    if (auto mat = asset_man.get_material(asset->uuid)) {
+  if (asset_type == AssetType::Material) {
+    if (auto mat = asset_man.get_material(asset_uuid)) {
       ImGui::SeparatorText("Material");
-      draw_material_properties(std::move(mat), asset->uuid, asset->path);
+      draw_material_properties(std::move(mat), asset_uuid, asset_path);
     }
   }
 }
 
-auto InspectorPanel::draw_model_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Model> model)
-  -> void {
+auto InspectorPanel::draw_model_asset(this InspectorPanel& self, ReadGuard<Model> model) -> void {
   ZoneScoped;
 
   if (!model) {
@@ -767,14 +771,14 @@ auto InspectorPanel::draw_model_asset(this InspectorPanel& self, ReadGuard<Asset
 }
 
 auto InspectorPanel::draw_material_asset(
-  this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Material> material
+  this InspectorPanel& self, const UUID& uuid, const std::filesystem::path& path, ReadGuard<Material> material
 ) -> bool {
   ZoneScoped;
 
   ImGui::SeparatorText("Material");
 
   if (material) {
-    return draw_material_properties(std::move(material), asset->uuid, asset->path);
+    return draw_material_properties(std::move(material), uuid, path);
   } else {
     ImGui::Text("No Material");
   }
@@ -782,7 +786,7 @@ auto InspectorPanel::draw_material_asset(
   return false;
 }
 
-void InspectorPanel::draw_audio_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<AudioSource> audio) {
+void InspectorPanel::draw_audio_asset(this InspectorPanel& self, ReadGuard<AudioSource> audio) {
   ZoneScoped;
 
   auto& audio_engine = App::mod<AudioEngine>();
@@ -800,7 +804,7 @@ void InspectorPanel::draw_audio_asset(this InspectorPanel& self, ReadGuard<Asset
 }
 
 bool InspectorPanel::draw_script_asset(
-  this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<LuaSystem> lua_system
+  this InspectorPanel& self, const UUID& uuid, ReadGuard<LuaSystem> lua_system
 ) {
   ZoneScoped;
   memory::ScopedStack stack;
@@ -825,8 +829,8 @@ bool InspectorPanel::draw_script_asset(
   ImGui::SameLine();
   auto* rmv_str = stack.format_char("{} Remove", ICON_MDI_TRASH_CAN);
   if (UI::button(rmv_str)) {
-    if (asset)
-      asset_man.unload_asset(asset->uuid);
+    if (uuid)
+      asset_man.unload_asset(uuid);
   }
 
   return false;
