@@ -225,17 +225,6 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
 
   auto thumbnail_scene = Scene("ThumbnailScene");
   auto model_entity = thumbnail_scene.create_model_entity(model_uuid);
-  model_entity.add<AssetOwner>();
-
-  auto mark_mesh_children_owned = [](this auto&& self_fn, flecs::entity entity) -> void {
-    entity.children([&self_fn](flecs::entity child) {
-      if (child.has<MeshComponent>()) {
-        child.add<AssetOwner>();
-      }
-      self_fn(child);
-    });
-  };
-  mark_mesh_children_owned(model_entity);
 
   auto& asset_man = App::mod<AssetManager>();
   auto model_asset = asset_man.get_model(model_uuid);
