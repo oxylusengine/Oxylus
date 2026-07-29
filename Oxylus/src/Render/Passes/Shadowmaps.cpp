@@ -3,8 +3,85 @@
 
 #include "Memory/Stack.hpp"
 #include "Render/RendererInstance.hpp"
+#include "Render/Utils/VukCommon.hpp"
+#include "Scene/Scene.hpp"
 
 namespace ox {
+// Cube face order {+X, -X, +Y, -Y, +Z, -Z}; must match `vsm_point_face_index` in rmvsm.slang.
+constexpr static glm::vec3 VSM_POINT_FACE_DIRS[6] = {
+  {1.0f, 0.0f, 0.0f},
+  {-1.0f, 0.0f, 0.0f},
+  {0.0f, 1.0f, 0.0f},
+  {0.0f, -1.0f, 0.0f},
+  {0.0f, 0.0f, 1.0f},
+  {0.0f, 0.0f, -1.0f},
+};
+constexpr static glm::vec3 VSM_POINT_FACE_UPS[6] = {
+  {0.0f, 0.0f, 1.0f},
+  {0.0f, 0.0f, 1.0f},
+  {0.0f, 0.0f, 1.0f},
+  {0.0f, 0.0f, 1.0f},
+  {0.0f, 1.0f, 0.0f},
+  {0.0f, 1.0f, 0.0f},
+};
+
+auto calculate_pointspot_shadow_views(std::span<const GPU::Light> lights, std::span<GPU::VSMPointSpotView> views)
+  -> void {
+  ZoneScoped;
+
+  for (auto light_index = 0_u32; light_index < lights.size(); light_index++) {
+    const auto& light = lights[light_index];
+    if (light.shadow_map_index < 0 || light.range <= 0.0f) {
+      continue;
+    }
+
+    if (light.kind == GPU::LightKind::Point) {
+      auto projection = glm::perspectiveRH_ZO(
+        glm::radians(RMVSMContext::POINT_LIGHT_FOV_DEG),
+        1.0f,
+        RMVSMContext::POINT_LIGHT_NEAR,
+        light.range
+      );
+      projection[1][1] *= -1.0f;
+
+      for (auto face = 0_u32; face < 6; face++) {
+        const auto view_mat = glm::lookAtRH(
+          light.position,
+          light.position + VSM_POINT_FACE_DIRS[face],
+          VSM_POINT_FACE_UPS[face]
+        );
+        views[light.shadow_map_index * 6 + face] = GPU::VSMPointSpotView{
+          .projection_view = projection * view_mat,
+          .light_position = light.position,
+          .range = light.range,
+          .light_index = light_index,
+          .z_near = RMVSMContext::POINT_LIGHT_NEAR,
+          .texel_world_scale = glm::tan(glm::radians(RMVSMContext::POINT_LIGHT_FOV_DEG * 0.5f)),
+        };
+      }
+    } else if (light.kind == GPU::LightKind::Spot) {
+      const auto fov = glm::clamp(light.outer_cone_angle * 2.0f, glm::radians(1.0f), glm::radians(170.0f));
+      auto projection = glm::perspectiveRH_ZO(fov, 1.0f, RMVSMContext::SPOT_LIGHT_NEAR, light.range);
+      projection[1][1] *= -1.0f;
+
+      auto up = glm::vec3(0.0f, 1.0f, 0.0f);
+      if (1.0f - glm::abs(glm::dot(light.direction, up)) < 1e-5f) {
+        up = glm::vec3(0.0f, 0.0f, 1.0f);
+      }
+      const auto view_mat = glm::lookAtRH(light.position, light.position + light.direction, up);
+
+      views[RMVSMContext::POINT_SPOT_SPOT_LAYER_OFFSET + light.shadow_map_index] = GPU::VSMPointSpotView{
+        .projection_view = projection * view_mat,
+        .light_position = light.position,
+        .range = light.range,
+        .light_index = light_index,
+        .z_near = RMVSMContext::SPOT_LIGHT_NEAR,
+        .texel_world_scale = glm::tan(fov * 0.5f),
+      };
+    }
+  }
+}
+
 auto calculate_virtual_shadow_matrices(
   GPU::VSMContext& ctx,
   const glm::vec3& camera_position,
@@ -70,14 +147,27 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   auto vsm_ctx = GPU::VSMContext{
     .page_size = RMVSMContext::PAGE_SIZE,
     .page_table_size = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-    .physcial_page_table_size = RMVSMContext::DIRECTIONAL_IMAGE_SIZE,
+    .physcial_page_table_size = RMVSMContext::PHYSICAL_PAGE_TABLE_SIZE,
     .clipmap_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
     .depth_extent = glm::ivec2(context.depth_extent.width, context.depth_extent.height),
     .first_clipmap_width = self.first_clipmap_width,
     .clipmap_selection_bias = self.clipmap_selection_bias,
-    .virtual_extent = RMVSMContext::DIRECTIONAL_IMAGE_SIZE,
+    .virtual_extent = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION,
     .z_length = context.max_shadow_dist * 2.0f,
     .directional_light_dir = self.directional_light.direction,
+  };
+
+  const auto has_directional = self.directional_light_cast_shadows;
+  const auto has_pointspot = (self.prepared_frame.shadow_point_light_count +
+                              self.prepared_frame.shadow_spot_light_count) > 0;
+
+  auto ps_ctx = GPU::VSMPointSpotContext{
+    .layer_count = RMVSMContext::POINT_SPOT_LAYER_COUNT,
+    .mesh_instance_count = self.prepared_frame.mesh_instance_count,
+    .depth_extent = glm::ivec2(context.depth_extent.width, context.depth_extent.height),
+    .mip_bias_min = 0,
+    .shadow_point_light_count = self.prepared_frame.shadow_point_light_count,
+    .shadow_spot_light_count = self.prepared_frame.shadow_spot_light_count,
   };
 
   GPU::VirtualClipmap directional_clipmaps[RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT] = {};
@@ -95,24 +185,34 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   );
   std::memcpy(context.directional_clipmaps_buffer->mapped_ptr, directional_clipmaps, directional_clipmaps_size_bytes);
 
-  constexpr static auto max_physical_page_count = RMVSMContext::DIRECTIONAL_PAGE_MASK_COUNT * 32u;
+  GPU::VSMPointSpotView pointspot_views[RMVSMContext::POINT_SPOT_LAYER_COUNT] = {};
+  constexpr static auto pointspot_views_size_bytes = ox::size_bytes(pointspot_views);
+  context.pointspot_views_buffer = render_context->alloc_transient_buffer(
+    vuk::MemoryUsage::eCPUtoGPU,
+    pointspot_views_size_bytes
+  );
+  calculate_pointspot_shadow_views(self.scene.lights.slots_unsafe(), pointspot_views);
+  std::memcpy(context.pointspot_views_buffer->mapped_ptr, pointspot_views, pointspot_views_size_bytes);
+
+  constexpr static auto max_physical_page_count = RMVSMContext::PHYSICAL_PAGE_COUNT;
   auto page_occupancy_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
     max_physical_page_count * sizeof(u32)
   );
   auto allocation_requests_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
-    RMVSMContext::DIRECTIONAL_MAX_PAGE_COUNT * sizeof(GPU::VSMAllocRequest)
+    RMVSMContext::MAX_ALLOC_REQUEST_COUNT * sizeof(GPU::VSMAllocRequest)
   );
   auto dirty_physical_page_addresses_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
-    RMVSMContext::DIRECTIONAL_MAX_PAGE_COUNT * sizeof(glm::uvec2)
+    RMVSMContext::PHYSICAL_PAGE_COUNT * sizeof(glm::uvec2)
   );
   auto free_page_list_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
     max_physical_page_count * sizeof(u32)
   );
   auto page_allocator_buffer = render_context->scratch_buffer<GPU::VSMPageAllocator>({
+    .request_capacity = RMVSMContext::MAX_ALLOC_REQUEST_COUNT,
     .requests = allocation_requests_buffer->device_address,
     .dirty_physical_page_coords = dirty_physical_page_addresses_buffer->device_address,
     .free_page_list = free_page_list_buffer->device_address,
@@ -121,6 +221,33 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     .x = RMVSMContext::PAGE_SIZE / 16,
     .y = RMVSMContext::PAGE_SIZE / 16,
   });
+  context.pointspot_layer_dirty_mask_buffer = render_context->alloc_transient_buffer(
+    vuk::MemoryUsage::eGPUonly,
+    RMVSMContext::POINT_SPOT_LAYER_COUNT * sizeof(u32)
+  );
+
+  // The occupancy and dirty mask buffers are consumed by both the directional
+  // and the point/spot chains, either of which can be inactive, so they get
+  // cleared up front instead of inside a marking pass.
+  auto clear_frame_buffers_pass = vuk::make_pass(
+    "vsm clear frame buffers",
+    [](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eTransferWrite) page_occupancy,
+      VUK_BA(vuk::eTransferWrite) layer_dirty_mask
+    ) {
+      cmd_list //
+        .fill_buffer(page_occupancy, 0_u32)
+        .fill_buffer(layer_dirty_mask, 0_u32);
+
+      return std::make_tuple(page_occupancy, layer_dirty_mask);
+    }
+  );
+
+  std::tie(page_occupancy_buffer, context.pointspot_layer_dirty_mask_buffer) = clear_frame_buffers_pass(
+    std::move(page_occupancy_buffer),
+    std::move(context.pointspot_layer_dirty_mask_buffer)
+  );
 
   context.virtual_page_table_attachment = self.vsm_virtual_page_table.acquire(
     "vsm virtual page table",
@@ -130,6 +257,11 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   context.physical_page_table_attachment = vuk::acquire_ia(
     "vsm physical page table",
     self.vsm_physical_page_table_attachment,
+    vuk::eFragmentSampled
+  );
+
+  context.pointspot_page_table_attachment = self.vsm_pointspot_virtual_page_table.acquire(
+    "vsm pointspot page table",
     vuk::eFragmentSampled
   );
 
@@ -155,9 +287,108 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     }
   );
 
-  context.virtual_page_table_attachment = reset_page_visibility_pass(std::move(context.virtual_page_table_attachment));
+  if (has_directional) {
+    context.virtual_page_table_attachment = reset_page_visibility_pass(
+      std::move(context.virtual_page_table_attachment)
+    );
+  }
+
+  auto pointspot_reset_pass = vuk::make_pass(
+    "vsm pointspot reset page visibility",
+    [moved_point = self.prepared_frame.moved_point_light_mask,
+     moved_spot = self.prepared_frame.moved_spot_light_mask](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eComputeRW) page_table
+    ) {
+      cmd_list.bind_compute_pipeline("rmvsm_pointspot_reset_page_visibility");
+      bind_vsm_pointspot_spec_constants(cmd_list);
+      for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
+        cmd_list.bind_image(0, mip, page_table->mip(mip));
+      }
+      cmd_list //
+        .push_constants(
+          vuk::ShaderStageFlagBits::eCompute,
+          0,
+          PushConstants(
+            glm::uvec2(static_cast<u32>(moved_point), static_cast<u32>(moved_point >> 32)),
+            glm::uvec2(static_cast<u32>(moved_spot), static_cast<u32>(moved_spot >> 32))
+          )
+        )
+        .dispatch_invocations(
+          RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+          RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+          RMVSMContext::POINT_SPOT_LAYER_COUNT
+        );
+
+      return page_table;
+    }
+  );
+
+  if (has_pointspot) {
+    context.pointspot_page_table_attachment = pointspot_reset_pass(std::move(context.pointspot_page_table_attachment));
+  }
 
   const auto dirty_mesh_count = self.prepared_frame.dirty_mesh_instance_count;
+
+  auto pointspot_invalidate_pass = vuk::make_pass(
+    "vsm pointspot invalidate pages",
+    [ps_ctx, dirty_mesh_count](
+      vuk::CommandBuffer& cmd_list,
+      VUK_IA(vuk::eComputeRW) page_table,
+      VUK_BA(vuk::eComputeRead) dirty_mesh_indices,
+      VUK_BA(vuk::eComputeRead) mesh_instances,
+      VUK_BA(vuk::eComputeRead) meshes,
+      VUK_BA(vuk::eComputeRead) transforms,
+      VUK_BA(vuk::eComputeRead) transforms_previous,
+      VUK_BA(vuk::eComputeRead) views
+    ) {
+      cmd_list.bind_compute_pipeline("rmvsm_pointspot_invalidate_pages");
+      bind_vsm_pointspot_spec_constants(cmd_list);
+      for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
+        cmd_list.bind_image(0, mip, page_table->mip(mip));
+      }
+      cmd_list //
+        .bind_buffer(0, 6, dirty_mesh_indices)
+        .bind_buffer(0, 7, mesh_instances)
+        .bind_buffer(0, 8, meshes)
+        .bind_buffer(0, 9, transforms)
+        .bind_buffer(0, 10, transforms_previous)
+        .bind_buffer(0, 11, views)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, ps_ctx)
+        .dispatch_invocations(dirty_mesh_count, 16, RMVSMContext::POINT_SPOT_LAYER_COUNT);
+
+      return std::make_tuple(
+        page_table,
+        dirty_mesh_indices,
+        mesh_instances,
+        meshes,
+        transforms,
+        transforms_previous,
+        views
+      );
+    }
+  );
+
+  if (has_pointspot && dirty_mesh_count > 0) {
+    std::tie(
+      context.pointspot_page_table_attachment,
+      self.prepared_frame.dirty_mesh_instances_buffer,
+      self.prepared_frame.mesh_instances_buffer,
+      self.prepared_frame.meshes_buffer,
+      self.prepared_frame.transforms_world_buffer,
+      self.prepared_frame.transforms_previous_buffer,
+      context.pointspot_views_buffer
+    ) =
+      pointspot_invalidate_pass(
+        std::move(context.pointspot_page_table_attachment),
+        std::move(self.prepared_frame.dirty_mesh_instances_buffer),
+        std::move(self.prepared_frame.mesh_instances_buffer),
+        std::move(self.prepared_frame.meshes_buffer),
+        std::move(self.prepared_frame.transforms_world_buffer),
+        std::move(self.prepared_frame.transforms_previous_buffer),
+        std::move(context.pointspot_views_buffer)
+      );
+  }
 
   auto invalidate_pages_pass = vuk::make_pass(
     "vsm invalidate pages",
@@ -195,7 +426,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     }
   );
 
-  if (!context.sun_moved && self.prepared_frame.dirty_mesh_instance_count > 0) {
+  if (has_directional && !context.sun_moved && self.prepared_frame.dirty_mesh_instance_count > 0) {
     std::tie(
       context.virtual_page_table_attachment,
       self.prepared_frame.dirty_mesh_instances_buffer,
@@ -224,11 +455,10 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       VUK_BA(vuk::eComputeRead) clipmaps,
       VUK_IA(vuk::eComputeSampled) depth,
       VUK_IA(vuk::eComputeRW) page_table,
-      VUK_BA(vuk::eComputeRW | vuk::eTransferRW) page_occupancy,
+      VUK_BA(vuk::eComputeRW) page_occupancy,
       VUK_BA(vuk::eComputeRW) allocator
     ) {
       cmd_list //
-        .fill_buffer(page_occupancy, 0_u32)
         .bind_compute_pipeline("rmvsm_mark_visible_pages")
         .bind_buffer(0, 0, camera)
         .bind_buffer(0, 1, clipmaps)
@@ -243,22 +473,110 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     }
   );
 
-  std::tie(
-    self.prepared_frame.camera_buffer,
-    context.directional_clipmaps_buffer,
-    context.depth_attachment,
-    context.virtual_page_table_attachment,
-    page_occupancy_buffer,
-    page_allocator_buffer
-  ) =
-    mark_visible_pages_pass(
-      std::move(self.prepared_frame.camera_buffer),
-      std::move(context.directional_clipmaps_buffer),
-      std::move(context.depth_attachment),
-      std::move(context.virtual_page_table_attachment),
-      std::move(page_occupancy_buffer),
-      std::move(page_allocator_buffer)
-    );
+  if (has_directional) {
+    std::tie(
+      self.prepared_frame.camera_buffer,
+      context.directional_clipmaps_buffer,
+      context.depth_attachment,
+      context.virtual_page_table_attachment,
+      page_occupancy_buffer,
+      page_allocator_buffer
+    ) =
+      mark_visible_pages_pass(
+        std::move(self.prepared_frame.camera_buffer),
+        std::move(context.directional_clipmaps_buffer),
+        std::move(context.depth_attachment),
+        std::move(context.virtual_page_table_attachment),
+        std::move(page_occupancy_buffer),
+        std::move(page_allocator_buffer)
+      );
+  }
+
+  auto mark_visible_pointspot_pass = vuk::make_pass(
+    "vsm pointspot mark visible pages",
+    [ps_ctx, light_grid_origin = context.light_grid_origin](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eComputeUniformRead) camera,
+      VUK_BA(vuk::eComputeRead) views,
+      VUK_BA(vuk::eComputeRead) light_grid,
+      VUK_IA(vuk::eComputeSampled) depth,
+      VUK_IA(vuk::eComputeRW) page_table,
+      VUK_BA(vuk::eComputeRW) page_occupancy,
+      VUK_BA(vuk::eComputeRW) allocator
+    ) {
+      bind_vsm_pointspot_spec_constants(cmd_list.bind_compute_pipeline("rmvsm_mark_visible_pages_pointspot"))
+        .bind_buffer(0, 0, camera)
+        .bind_buffer(0, 1, views)
+        .bind_buffer(0, 2, light_grid)
+        .bind_image(0, 3, depth);
+      for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
+        cmd_list.bind_image(0, 4 + mip, page_table->mip(mip));
+      }
+      cmd_list //
+        .bind_buffer(0, 10, page_occupancy)
+        .bind_buffer(0, 11, allocator)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(ps_ctx, light_grid_origin))
+        .dispatch_invocations_per_pixel(depth);
+
+      return std::make_tuple(camera, views, light_grid, depth, page_table, page_occupancy, allocator);
+    }
+  );
+
+  auto mark_coarse_pages_pass = vuk::make_pass(
+    "vsm pointspot mark coarse pages",
+    [](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eComputeRead) views,
+      VUK_IA(vuk::eComputeRW) page_table,
+      VUK_BA(vuk::eComputeRW) page_occupancy,
+      VUK_BA(vuk::eComputeRW) allocator
+    ) {
+      cmd_list.bind_compute_pipeline("rmvsm_pointspot_mark_coarse_pages");
+      bind_vsm_pointspot_spec_constants(cmd_list);
+      cmd_list //
+        .bind_buffer(0, 0, views)
+        .bind_image(0, 1, page_table->mip(RMVSMContext::POINT_SPOT_MIP_COUNT - 1))
+        .bind_buffer(0, 2, page_occupancy)
+        .bind_buffer(0, 3, allocator)
+        .dispatch_invocations(RMVSMContext::POINT_SPOT_LAYER_COUNT);
+
+      return std::make_tuple(views, page_table, page_occupancy, allocator);
+    }
+  );
+
+  if (has_pointspot) {
+    std::tie(
+      self.prepared_frame.camera_buffer,
+      context.pointspot_views_buffer,
+      context.light_grid_buffer,
+      context.depth_attachment,
+      context.pointspot_page_table_attachment,
+      page_occupancy_buffer,
+      page_allocator_buffer
+    ) =
+      mark_visible_pointspot_pass(
+        std::move(self.prepared_frame.camera_buffer),
+        std::move(context.pointspot_views_buffer),
+        std::move(context.light_grid_buffer),
+        std::move(context.depth_attachment),
+        std::move(context.pointspot_page_table_attachment),
+        std::move(page_occupancy_buffer),
+        std::move(page_allocator_buffer)
+      );
+
+    std::tie(
+      context.pointspot_views_buffer,
+      context.pointspot_page_table_attachment,
+      page_occupancy_buffer,
+      page_allocator_buffer
+    ) =
+      mark_coarse_pages_pass(
+        std::move(context.pointspot_views_buffer),
+        std::move(context.pointspot_page_table_attachment),
+        std::move(page_occupancy_buffer),
+        std::move(page_allocator_buffer)
+      );
+  }
 
   auto free_invisible_pages_pass = vuk::make_pass(
     "vsm free invisible pages",
@@ -273,12 +591,38 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     }
   );
 
-  context.virtual_page_table_attachment = free_invisible_pages_pass(std::move(context.virtual_page_table_attachment));
+  if (has_directional) {
+    context.virtual_page_table_attachment = free_invisible_pages_pass(std::move(context.virtual_page_table_attachment));
+  }
+
+  auto pointspot_free_invisible_pass = vuk::make_pass(
+    "vsm pointspot free invisible pages",
+    [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) page_table) {
+      cmd_list.bind_compute_pipeline("rmvsm_pointspot_free_invisible_pages");
+      bind_vsm_pointspot_spec_constants(cmd_list);
+      for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
+        cmd_list.bind_image(0, mip, page_table->mip(mip));
+      }
+      cmd_list.dispatch_invocations(
+        RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+        RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+        RMVSMContext::POINT_SPOT_LAYER_COUNT
+      );
+
+      return page_table;
+    }
+  );
+
+  if (has_pointspot) {
+    context.pointspot_page_table_attachment = pointspot_free_invisible_pass(
+      std::move(context.pointspot_page_table_attachment)
+    );
+  }
 
   auto build_free_page_list_pass = vuk::make_pass(
     "vsm build free page list",
     [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eComputeRW) allocator, VUK_BA(vuk::eComputeRead) page_occupancy) {
-      constexpr auto physical_page_count = RMVSMContext::DIRECTIONAL_PAGE_MASK_COUNT * 32u;
+      constexpr auto physical_page_count = RMVSMContext::PHYSICAL_PAGE_COUNT;
       cmd_list //
         .bind_compute_pipeline("rmvsm_build_free_page_list")
         .bind_buffer(0, 0, allocator)
@@ -297,22 +641,34 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
   auto allocate_pages_pass = vuk::make_pass(
     "vsm allocate pages",
-    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eComputeRW) allocator, VUK_IA(vuk::eComputeRW) page_table) {
-      constexpr auto max_request_count = RMVSMContext::DIRECTIONAL_MAX_PAGE_COUNT;
+    [](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eComputeRW) allocator,
+      VUK_IA(vuk::eComputeRW) page_table,
+      VUK_IA(vuk::eComputeRW) pointspot_page_table
+    ) {
+      constexpr auto max_request_count = RMVSMContext::MAX_ALLOC_REQUEST_COUNT;
       cmd_list //
         .bind_compute_pipeline("rmvsm_allocate_pages")
         .bind_buffer(0, 0, allocator)
-        .bind_image(0, 1, page_table)
-        .dispatch_invocations(max_request_count);
+        .bind_image(0, 1, page_table);
 
-      return std::make_tuple(page_table, allocator);
+      for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
+        cmd_list.bind_image(0, 2 + mip, pointspot_page_table->mip(mip));
+      }
+
+      cmd_list.dispatch_invocations(max_request_count);
+
+      return std::make_tuple(page_table, pointspot_page_table, allocator);
     }
   );
 
-  std::tie(context.virtual_page_table_attachment, page_allocator_buffer) = allocate_pages_pass(
-    std::move(page_allocator_buffer),
-    std::move(context.virtual_page_table_attachment)
-  );
+  std::tie(context.virtual_page_table_attachment, context.pointspot_page_table_attachment, page_allocator_buffer) =
+    allocate_pages_pass(
+      std::move(page_allocator_buffer),
+      std::move(context.virtual_page_table_attachment),
+      std::move(context.pointspot_page_table_attachment)
+    );
 
   auto downsample_hpb_pass = vuk::make_pass(
     "vsm downsample hpb",
@@ -351,10 +707,12 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     }
   );
 
-  std::tie(context.virtual_page_table_attachment, hpb_attachment) = downsample_hpb_pass(
-    std::move(context.virtual_page_table_attachment),
-    std::move(hpb_attachment)
-  );
+  if (has_directional) {
+    std::tie(context.virtual_page_table_attachment, hpb_attachment) = downsample_hpb_pass(
+      std::move(context.virtual_page_table_attachment),
+      std::move(hpb_attachment)
+    );
+  }
 
   auto mark_dirty_pages_pass = vuk::make_pass(
     "vsm mark dirty pages",
@@ -376,12 +734,54 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     }
   );
 
-  std::tie(context.virtual_page_table_attachment, page_allocator_buffer, clear_dirty_pages_cmd_buffer) =
-    mark_dirty_pages_pass(
-      std::move(context.virtual_page_table_attachment),
-      std::move(page_allocator_buffer),
-      std::move(clear_dirty_pages_cmd_buffer)
-    );
+  if (has_directional) {
+    std::tie(context.virtual_page_table_attachment, page_allocator_buffer, clear_dirty_pages_cmd_buffer) =
+      mark_dirty_pages_pass(
+        std::move(context.virtual_page_table_attachment),
+        std::move(page_allocator_buffer),
+        std::move(clear_dirty_pages_cmd_buffer)
+      );
+  }
+
+  auto pointspot_mark_dirty_pass = vuk::make_pass(
+    "vsm pointspot mark dirty pages",
+    [ps_ctx](
+      vuk::CommandBuffer& cmd_list,
+      VUK_IA(vuk::eComputeSampled) page_table,
+      VUK_BA(vuk::eComputeRW) clear_cmd,
+      VUK_BA(vuk::eComputeRW) allocator,
+      VUK_BA(vuk::eComputeRW) layer_dirty_mask
+    ) {
+      bind_vsm_pointspot_spec_constants(cmd_list.bind_compute_pipeline("rmvsm_pointspot_mark_dirty_pages"))
+        .bind_image(0, 0, page_table)
+        .bind_buffer(0, 1, clear_cmd)
+        .bind_buffer(0, 2, allocator)
+        .bind_buffer(0, 3, layer_dirty_mask)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, ps_ctx)
+        .dispatch_invocations(
+          RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+          RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+          RMVSMContext::POINT_SPOT_LAYER_COUNT
+        );
+
+      return std::make_tuple(page_table, clear_cmd, allocator, layer_dirty_mask);
+    }
+  );
+
+  if (has_pointspot) {
+    std::tie(
+      context.pointspot_page_table_attachment,
+      clear_dirty_pages_cmd_buffer,
+      page_allocator_buffer,
+      context.pointspot_layer_dirty_mask_buffer
+    ) =
+      pointspot_mark_dirty_pass(
+        std::move(context.pointspot_page_table_attachment),
+        std::move(clear_dirty_pages_cmd_buffer),
+        std::move(page_allocator_buffer),
+        std::move(context.pointspot_layer_dirty_mask_buffer)
+      );
+  }
 
   auto clear_dirty_pages_pass = vuk::make_pass(
     "vsm clear dirty pages",
@@ -434,18 +834,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     .hpb_attachment = std::move(hpb_attachment),
   };
 
-  auto physical_depth_attachment = vuk::declare_ia(
-    "vsm depth",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eDepthStencilAttachment,
-     .extent =
-       {.width = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .height = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .depth = 1},
-     .format = vuk::Format::eD32Sfloat,
-     .sample_count = vuk::Samples::e1,
-     .level_count = 1,
-     .layer_count = 1}
-  );
-
-  for (auto reverse_index = 0_u32; reverse_index < RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT; reverse_index++) {
+  for (auto reverse_index = 0_u32; has_directional && reverse_index < RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT;
+       reverse_index++) {
     const auto clipmap_index = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT - 1 - reverse_index;
     const auto& clipmap = directional_clipmaps[clipmap_index];
     clipmap_camera.projection_view = clipmap.projection_view_mat;
@@ -475,15 +865,15 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         VUK_BA(vuk::eFragmentRead) materials,
         VUK_BA(vuk::eVertexRead | vuk::eFragmentRead) clipmaps,
         VUK_IA(vuk::eFragmentSampled) page_tables,
-        VUK_IA(vuk::eFragmentRW) physical_pages,
-        VUK_IA(vuk::eDepthStencilRW) dummy_depth
+        VUK_IA(vuk::eFragmentRW) physical_pages
       ) {
         auto viewport_rect = vuk::Rect2D{
           .offset = {.x = 0, .y = 0},
-          .extent = {.width = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .height = RMVSMContext::DIRECTIONAL_IMAGE_SIZE},
+          .extent = {.width = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION, .height = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION},
           ._relative = {},
         };
         cmd_list //
+          .set_attachmentless_framebuffer(viewport_rect.extent, vuk::SampleCountFlagBits::e1)
           .bind_graphics_pipeline("rmvsm_draw_physical_pages")
           .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
           .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
@@ -512,8 +902,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
           materials,
           clipmaps,
           page_tables,
-          physical_pages,
-          dummy_depth
+          physical_pages
         );
       }
     );
@@ -527,8 +916,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       self.prepared_frame.materials_buffer,
       context.directional_clipmaps_buffer,
       context.virtual_page_table_attachment,
-      context.physical_page_table_attachment,
-      physical_depth_attachment
+      context.physical_page_table_attachment
     ) =
       draw_physical_pages_pass(
         std::move(draw_geometry_cmd_buffer),
@@ -540,9 +928,117 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         std::move(self.prepared_frame.materials_buffer),
         std::move(context.directional_clipmaps_buffer),
         std::move(context.virtual_page_table_attachment),
-        std::move(context.physical_page_table_attachment),
-        std::move(physical_depth_attachment)
+        std::move(context.physical_page_table_attachment)
       );
+  }
+
+  if (has_pointspot) {
+    auto ps_cull_context = CullGeometryPointSpotContext{
+      .ps_ctx = ps_ctx,
+      .views_buffer = std::move(context.pointspot_views_buffer),
+      .layer_dirty_mask_buffer = std::move(context.pointspot_layer_dirty_mask_buffer),
+      .page_table_attachment = std::move(context.pointspot_page_table_attachment),
+    };
+
+    for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
+      ps_cull_context.init = (mip == 0);
+      ps_cull_context.ps_ctx.curr_mip = static_cast<i32>(mip);
+      self.cull_geometry_pointspot(ps_cull_context);
+
+      auto mip_ps_ctx = ps_ctx;
+      mip_ps_ctx.curr_mip = static_cast<i32>(mip);
+
+      auto draw_pointspot_pages_pass = vuk::make_pass(
+        stack.format("vsm pointspot draw mip {}", mip),
+        [&descriptor_set = *context.bindless_set,
+         mip_ps_ctx,
+         vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eIndirectRead) draw_cmd,
+          VUK_BA(vuk::eIndexRead) index_buffer,
+          VUK_BA(vuk::eVertexRead) meshes,
+          VUK_BA(vuk::eVertexRead) mesh_instances,
+          VUK_BA(vuk::eVertexRead) transforms,
+          VUK_BA(vuk::eFragmentRead) materials,
+          VUK_BA(vuk::eVertexRead) views,
+          VUK_BA(vuk::eVertexRead) vsm_meshlet_instances,
+          VUK_IA(vuk::eFragmentSampled) page_tables,
+          VUK_IA(vuk::eFragmentRW) physical_pages
+        ) {
+          const auto mip_extent = static_cast<u32>(RMVSMContext::POINT_SPOT_IMAGE_RESOLUTION) >> mip_ps_ctx.curr_mip;
+          auto viewport_rect = vuk::Rect2D{
+            .offset = {.x = 0, .y = 0},
+            .extent = {.width = mip_extent, .height = mip_extent},
+            ._relative = {},
+          };
+
+          cmd_list.set_attachmentless_framebuffer(viewport_rect.extent, vuk::SampleCountFlagBits::e1);
+
+          bind_vsm_pointspot_spec_constants(cmd_list)
+            .bind_graphics_pipeline("rmvsm_pointspot_draw_pages")
+            .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
+            .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
+            .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+            .set_viewport(0, viewport_rect)
+            .set_scissor(0, vuk::Rect2D::framebuffer())
+            .bind_persistent(1, descriptor_set)
+            .bind_buffer(0, 0, meshes)
+            .bind_buffer(0, 1, mesh_instances)
+            .bind_buffer(0, 2, transforms)
+            .bind_buffer(0, 3, materials)
+            .bind_buffer(0, 4, views)
+            .bind_buffer(0, 5, vsm_meshlet_instances)
+            .bind_image(0, 6, page_tables)
+            .bind_image(0, 7, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
+            .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
+            // Only the fragment stage reads ctx (the VS uses per-layer view
+            // matrices from the views buffer), so the reflected push-constant
+            // range is fragment-only.
+            .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, mip_ps_ctx)
+            .draw_indexed_indirect(1, draw_cmd);
+
+          return std::make_tuple(
+            index_buffer, //
+            meshes,
+            mesh_instances,
+            transforms,
+            materials,
+            views,
+            vsm_meshlet_instances,
+            page_tables,
+            physical_pages
+          );
+        }
+      );
+
+      std::tie(
+        ps_cull_context.reordered_indices_buffer,
+        self.prepared_frame.meshes_buffer,
+        self.prepared_frame.mesh_instances_buffer,
+        self.prepared_frame.transforms_world_buffer,
+        self.prepared_frame.materials_buffer,
+        ps_cull_context.views_buffer,
+        ps_cull_context.vsm_meshlet_instances_buffer,
+        ps_cull_context.page_table_attachment,
+        context.physical_page_table_attachment
+      ) =
+        draw_pointspot_pages_pass(
+          std::move(ps_cull_context.draw_cmd_buffer),
+          std::move(ps_cull_context.reordered_indices_buffer),
+          std::move(self.prepared_frame.meshes_buffer),
+          std::move(self.prepared_frame.mesh_instances_buffer),
+          std::move(self.prepared_frame.transforms_world_buffer),
+          std::move(self.prepared_frame.materials_buffer),
+          std::move(ps_cull_context.views_buffer),
+          std::move(ps_cull_context.vsm_meshlet_instances_buffer),
+          std::move(ps_cull_context.page_table_attachment),
+          std::move(context.physical_page_table_attachment)
+        );
+    }
+
+    context.pointspot_views_buffer = std::move(ps_cull_context.views_buffer);
+    context.pointspot_layer_dirty_mask_buffer = std::move(ps_cull_context.layer_dirty_mask_buffer);
+    context.pointspot_page_table_attachment = std::move(ps_cull_context.page_table_attachment);
   }
 }
 
@@ -552,11 +1048,11 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
   auto vsm_ctx = GPU::VSMContext{
     .page_size = RMVSMContext::PAGE_SIZE,
     .page_table_size = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-    .physcial_page_table_size = RMVSMContext::DIRECTIONAL_IMAGE_SIZE,
+    .physcial_page_table_size = RMVSMContext::PHYSICAL_PAGE_TABLE_SIZE,
     .clipmap_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
     .first_clipmap_width = self.first_clipmap_width,
     .clipmap_selection_bias = self.clipmap_selection_bias,
-    .virtual_extent = RMVSMContext::DIRECTIONAL_IMAGE_SIZE,
+    .virtual_extent = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION,
     .z_length = context.max_shadow_dist * 2.0f,
     .directional_light_dir = self.directional_light.direction,
   };

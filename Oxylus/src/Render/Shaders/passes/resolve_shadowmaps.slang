@@ -8,9 +8,6 @@ import rmvsm;
 [[vk::binding(0, 0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1, 0)]] Texture2D<f32> depth_image;
 [[vk::binding(2, 0)]] Texture2D<f32x4> normal_image;
-// CSM
-// [[vk::binding(0, 1)]] Texture2DArray<f32> csm_cascades;
-// VSM
 [[vk::binding(0, 2)]] StructuredBuffer<VirtualClipmap> clipmaps;
 [[vk::binding(1, 2)]] Texture2DArray<u32> vsm_page_table;
 [[vk::binding(2, 2)]] Texture2D<f32> vsm_physical_pages;
@@ -53,7 +50,7 @@ func sample_vsm_shadow_depth(
     }
 
     let physical_page_coords = i32x2(page.get_physical_coords(vsm_ctx.physcial_page_table_size, vsm_ctx.page_size));
-    let phys_texel = clipmap_info.get_virt_coords(vsm_ctx.get_physical_page_table_extent().xy);
+    let phys_texel = clipmap_info.get_virt_coords(i32x2(i32(vsm_ctx.virtual_extent)));
     let in_page_texel = i32x2(com::mod(f32x2(phys_texel), f32x2(vsm_ctx.page_size)));
     let physical_texel_coord = physical_page_coords * vsm_ctx.page_size + in_page_texel;
 

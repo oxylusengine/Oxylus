@@ -16,7 +16,6 @@ struct ShaderParameters {
 
 groupshared VirtualClipmap shared_clipmaps[10];
 
-
 [[shader("compute")]]
 [[numthreads(16, 16, 1)]]
 func cs_main(
@@ -76,7 +75,7 @@ func cs_main(
                 let physical_address = prev_page.get_physical_address();
                 params.page_occupancy[physical_address] = 1u;
             } else {
-                let alloc_request = VSMAllocRequest(page_table_address);
+                let alloc_request = VSMAllocRequest(page_table_address, -1);
                 push_page_alloc_request(params.allocator[0], alloc_request);
             }
         }

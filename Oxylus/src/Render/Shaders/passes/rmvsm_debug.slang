@@ -42,7 +42,7 @@ func fs_main(
     let wrapped_coords = vsm_ctx.page_coords_virtual_to_wrapped(virt_coords, clipmap.page_offset);
     let page = VSMPageMetadata(vsm_page_table.Load(i32x4(wrapped_coords, clipmap_index, 0)));
     let physical_page_coords = i32x2(page.get_physical_coords(vsm_ctx.physcial_page_table_size, vsm_ctx.page_size));
-    let phys_texel = clipmap_info.get_virt_coords(vsm_ctx.get_physical_page_table_extent().xy);
+    let phys_texel = clipmap_info.get_virt_coords(i32x2(i32(vsm_ctx.virtual_extent)));
     let in_page_texel = i32x2(com::mod(f32x2(phys_texel), f32x2(vsm_ctx.page_size)));
     let physical_texel_coord = physical_page_coords * vsm_ctx.page_size + in_page_texel;
     let near_border = any(in_page_texel < 2) || any(in_page_texel > vsm_ctx.page_size - 2);

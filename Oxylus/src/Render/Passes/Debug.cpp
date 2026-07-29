@@ -13,11 +13,11 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
   auto vsm_ctx = GPU::VSMContext{
     .page_size = RMVSMContext::PAGE_SIZE,
     .page_table_size = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-    .physcial_page_table_size = RMVSMContext::DIRECTIONAL_IMAGE_SIZE,
+    .physcial_page_table_size = RMVSMContext::PHYSICAL_PAGE_TABLE_SIZE,
     .clipmap_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
     .first_clipmap_width = self.first_clipmap_width,
     .clipmap_selection_bias = self.clipmap_selection_bias,
-    .virtual_extent = RMVSMContext::DIRECTIONAL_IMAGE_SIZE,
+    .virtual_extent = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION,
     .z_length = 1.0f,
     .directional_light_dir = self.directional_light.direction,
   };
@@ -46,6 +46,47 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
       }
       default:;
     }
+  }
+
+  if (context.debug_view == GPU::DebugView::RMVSMPointSpot) {
+    auto debug_view_pass = vuk::make_pass(
+      "rmvsm pointspot debug pass",
+      [light_grid_origin = context.light_grid_origin](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eColorWrite) dst,
+        VUK_IA(vuk::eFragmentSampled) depth,
+        VUK_IA(vuk::eFragmentSampled) page_table,
+        VUK_BA(vuk::eFragmentUniformRead) camera,
+        VUK_BA(vuk::eFragmentRead) views,
+        VUK_BA(vuk::eFragmentRead) light_grid
+      ) {
+        cmd_list.bind_graphics_pipeline("rmvsm_debug_pointspot");
+        bind_vsm_pointspot_spec_constants(cmd_list)
+          .set_rasterization({})
+          .set_color_blend(dst, vuk::BlendPreset::eOff)
+          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+          .set_viewport(0, vuk::Rect2D::framebuffer())
+          .set_scissor(0, vuk::Rect2D::framebuffer())
+          .bind_buffer(0, 0, camera)
+          .bind_buffer(0, 1, views)
+          .bind_buffer(0, 2, light_grid)
+          .bind_image(0, 3, depth)
+          .bind_image(0, 4, page_table)
+          .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(0_u32, light_grid_origin))
+          .draw(3, 1, 0, 0);
+
+        return dst;
+      }
+    );
+
+    return debug_view_pass(
+      std::move(debug_attachment),
+      std::move(context.depth_attachment),
+      std::move(context.vsm_pointspot_page_table_attachment),
+      std::move(self.prepared_frame.camera_buffer),
+      std::move(context.pointspot_views_buffer),
+      std::move(context.light_grid_buffer)
+    );
   }
 
   if (context.debug_view != GPU::DebugView::RMVSM) {

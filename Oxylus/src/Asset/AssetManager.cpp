@@ -84,6 +84,7 @@ auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::str
   ZoneScoped;
 
   self.null_material = self.create_asset(AssetType::Material);
+  self.load_asset(self.null_material, {});
 
   return {};
 }

@@ -623,7 +623,8 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "Roughness",
             "Baked Occlusion",
             "GTAO",
-            "Virtual Shadowmaps"
+            "Virtual Shadowmaps",
+            "Virtual Shadowmaps (Point/Spot)"
           };
           UI::property(
             "Debug View",
