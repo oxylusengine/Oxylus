@@ -2,13 +2,17 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <expected>
 #include <functional>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <tracy/Tracy.hpp>
 #include <typeindex>
+#include <unordered_map>
+#include <vector>
 
 #include "Core/Option.hpp"
 #include "Utils/Log.hpp"
@@ -19,18 +23,9 @@ using HandlerId = u64;
 struct EventError {
   enum Error { HandlerNotFound, EventSystemShutdown, InvalidHandler, NoHandlers };
 
-  EventError(Error e) : error(e) {}
+  EventError(Error e);
 
-  auto message() -> std::string_view {
-    switch (error) {
-      case Error::HandlerNotFound    : return "HandlerNotFound";
-      case Error::EventSystemShutdown: return "EventSystemShutdown";
-      case Error::InvalidHandler     : return "InvalidHandler";
-      case Error::NoHandlers         : return "NoHandlers";
-    }
-
-    OX_ASSERT(false, "Invalid EventError");
-  }
+  auto message() -> std::string_view;
 
   Error error;
 };
@@ -40,7 +35,7 @@ concept Event = std::is_object_v<T> && std::copyable<T>;
 
 class RegistryBase {
 public:
-  virtual ~RegistryBase() = default;
+  virtual ~RegistryBase();
 };
 
 template <Event EventType>
@@ -151,11 +146,8 @@ private:
 
 class EventSystem {
 public:
-  auto init() -> std::expected<void, std::string> { return {}; }
-  auto deinit() -> std::expected<void, std::string> {
-    shutdown();
-    return {};
-  }
+  auto init() -> std::expected<void, std::string>;
+  auto deinit() -> std::expected<void, std::string>;
 
   template <Event EventType>
   std::expected<HandlerId, EventError> subscribe(std::function<void(const EventType&)> handler) {
@@ -227,15 +219,9 @@ public:
     return 0;
   }
 
-  void shutdown() {
-    ZoneScoped;
-    shutdown_.store(true);
+  void shutdown();
 
-    std::unique_lock lock(registries_mutex_);
-    registries_.clear();
-  }
-
-  bool is_shutdown() const { return shutdown_.load(); }
+  bool is_shutdown() const;
 
 private:
   mutable std::shared_mutex registries_mutex_;

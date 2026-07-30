@@ -1,112 +1,33 @@
 #include "Scene/Components.hpp"
 
-#include "Core/App.hpp"
-#include "Scripting/LuaManager.hpp"
+#include "Scene/ComponentRegistry.hpp"
+
+#ifdef OX_LUA_BINDINGS
+  #include "Core/App.hpp"
+  #include "Scripting/LuaManager.hpp"
+#endif
 
 namespace ox {
-template <typename T>
-struct ComponentBinder {
-  ComponentBinder(flecs::world& world_, sol::state* state_, sol::table& module_table_, const char* name)
-      : world(world_),
-        state(state_),
-        module_table(module_table_),
-        component(world_.component<T>(name)) {
-    if (state) {
-      usertype = state->create_named_table(name);
-      usertype["component_id"] = static_cast<u64>(component.id());
-    }
-  }
-
-  auto member(this ComponentBinder&& self, const char* name, auto member_pointer) -> ComponentBinder&& {
-    self.component.member(name, member_pointer);
-    if (self.state) {
-      self.usertype[name] = member_pointer;
-    }
-
-    return std::move(self);
-  }
-
-  template <typename Tag>
-  auto add(this ComponentBinder&& self) -> ComponentBinder&& {
-    self.component.add<Tag>();
-    return std::move(self);
-  }
-
-  auto add(this ComponentBinder&& self, flecs::entity e) -> ComponentBinder&& {
-    self.component.add(e);
-    return std::move(self);
-  }
-
-  auto finalize(this ComponentBinder&& self) -> flecs::entity {
-    if (self.state) {
-      self.module_table[self.component.name().c_str()] = self.usertype;
-    }
-    return self.component;
-  }
-
-  operator flecs::entity() const { return component; }
-
-private:
-  flecs::world& world;
-  sol::state* state;
-  sol::table& module_table;
-  flecs::untyped_component component;
-  sol::table usertype;
-};
-
-template <typename T>
-auto bind_component(flecs::world& world, sol::state* state, sol::table& module_table, const char* name) {
-  return ComponentBinder<T>(world, state, module_table, name);
-}
-
 CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   ZoneScoped;
 
-#ifdef OX_LUA_BINDINGS
-  auto& lua_manager = App::mod<LuaManager>();
-  const auto state = lua_manager.get_state();
-  auto core_table = state->create_named_table("Core");
-#endif
-
-  auto cur_component = flecs::entity{};
-
   world.module<CoreComponentsModule>("Core");
 
-  world.component<glm::vec2>("glm::vec2")
-    .member("x", &glm::vec2::x) //
-    .member("y", &glm::vec2::y);
+#ifdef OX_LUA_BINDINGS
+  auto* state = App::mod<LuaManager>().get_state();
+  auto registry = ComponentRegistry{world, state, state->create_named_table("Core")};
+#else
+  auto registry = ComponentRegistry{world};
+#endif
 
-  world.component<glm::ivec2>("glm::ivec2")
-    .member("x", &glm::ivec2::x) //
-    .member("y", &glm::ivec2::y);
-
-  world.component<glm::vec3>("glm::vec3")
-    .member("x", &glm::vec3::x) //
-    .member("y", &glm::vec3::y)
-    .member("z", &glm::vec3::z);
-
-  world.component<glm::vec4>("glm::vec4")
-    .member("x", &glm::vec4::x) //
-    .member("y", &glm::vec4::y)
-    .member("z", &glm::vec4::z)
-    .member("w", &glm::vec4::w);
-
-  world.component<glm::mat3>("glm::mat3")
-    .member<glm::vec3>("col0") //
-    .member<glm::vec3>("col1")
-    .member<glm::vec3>("col2");
-
-  world.component<glm::mat4>("glm::mat4")
-    .member<glm::vec4>("col0")
-    .member<glm::vec4>("col1")
-    .member<glm::vec4>("col2")
-    .member<glm::vec4>("col3");
-
-  world.component<glm::quat>("glm::quat")
-    .member("x", &glm::quat::x) //
-    .member("y", &glm::quat::y)
-    .member("z", &glm::quat::z)
-    .member("w", &glm::quat::w);
+  // Math types
+  registry.bind_value<&glm::vec2::x, &glm::vec2::y>("glm::vec2");
+  registry.bind_value<&glm::ivec2::x, &glm::ivec2::y>("glm::ivec2");
+  registry.bind_value<&glm::vec3::x, &glm::vec3::y, &glm::vec3::z>("glm::vec3");
+  registry.bind_value<&glm::vec4::x, &glm::vec4::y, &glm::vec4::z, &glm::vec4::w>("glm::vec4");
+  registry.bind_matrix<glm::mat3, glm::vec3, 3>("glm::mat3");
+  registry.bind_matrix<glm::mat4, glm::vec4, 4>("glm::mat4");
+  registry.bind_value<&glm::quat::x, &glm::quat::y, &glm::quat::z, &glm::quat::w>("glm::quat");
 
   world.component<std::string>("std::string")
     .opaque(flecs::String)
@@ -125,284 +46,267 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
     })
     .assign_string([](UUID* data, const char* value) { *data = UUID::from_string(std::string_view(value)).value(); });
 
-  bind_component<TransformComponent>(world, state, core_table, "TransformComponent")
-    .member("position", &TransformComponent::position)
-    .member("rotation", &TransformComponent::rotation)
-    .member("scale", &TransformComponent::scale)
-    .add<Networked>()
-    .finalize();
+  // Enums, bound before the components that use them so flecs registers their constants under these names
+  // instead of implicitly deriving a name from the C++ path at first use.
+  registry.bind_enum<CameraComponent::Projection>("CameraProjection");
+  registry.bind_enum<LightComponent::LightType>("LightType");
+  registry.bind_enum<RigidBodyComponent::BodyType>("RigidBodyType");
+  registry.bind_enum<GPU::TonemapType>("TonemapType");
+
+  {
+    using C = TransformComponent;
+    registry.bind<&C::position, &C::rotation, &C::scale>().tags<Networked>();
+  }
 
   // Layer
-  bind_component<LayerComponent>(world, state, core_table, "LayerComponent")
-    .member("layer", &LayerComponent::layer)
-    .finalize();
+  {
+    using C = LayerComponent;
+    registry.bind<&C::layer>();
+  }
 
   // Rendering Components
-  bind_component<MeshComponent>(world, state, core_table, "MeshComponent")
-    .member("model_uuid", &MeshComponent::model_uuid)
-    .member("mesh_index", &MeshComponent::mesh_index)
-    .member("material_uuid", &MeshComponent::material_uuid)
-    .member("cast_shadows", &MeshComponent::cast_shadows)
-    .finalize();
+  {
+    using C = MeshComponent;
+    registry.bind<&C::model_uuid, &C::mesh_index, &C::material_uuid, &C::cast_shadows>();
+  }
 
-  bind_component<SpriteComponent>(world, state, core_table, "SpriteComponent")
-    .member("layer", &SpriteComponent::layer)
-    .member("sort_y", &SpriteComponent::sort_y)
-    .member("flip_x", &SpriteComponent::flip_x)
-    .member("material", &SpriteComponent::material)
-    .add<Networked>()
-    .finalize();
+  {
+    using C = SpriteComponent;
+    registry.bind<&C::layer, &C::sort_y, &C::flip_x, &C::material>().tags<Networked>();
+  }
 
-  bind_component<SpriteAnimationComponent>(world, state, core_table, "SpriteAnimationComponent")
-    .member("num_frames", &SpriteAnimationComponent::num_frames)
-    .member("loop", &SpriteAnimationComponent::loop)
-    .member("inverted", &SpriteAnimationComponent::inverted)
-    .member("fps", &SpriteAnimationComponent::fps)
-    .member("columns", &SpriteAnimationComponent::columns)
-    .member("frame_size", &SpriteAnimationComponent::frame_size)
-    .finalize();
+  {
+    using C = SpriteAnimationComponent;
+    registry.bind<&C::num_frames, &C::loop, &C::inverted, &C::fps, &C::columns, &C::frame_size>();
+  }
 
-  bind_component<CameraComponent>(world, state, core_table, "CameraComponent")
-    .member("projection", &CameraComponent::projection)
-    .member("fov", &CameraComponent::fov)
-    .member("aspect", &CameraComponent::aspect)
-    .member("far_clip", &CameraComponent::far_clip)
-    .member("near_clip", &CameraComponent::near_clip)
-    .member("tilt", &CameraComponent::tilt)
-    .member("zoom", &CameraComponent::zoom)
-    .finalize();
+  {
+    using C = CameraComponent;
+    registry.bind<&C::projection, &C::fov, &C::aspect, &C::far_clip, &C::near_clip, &C::tilt, &C::zoom>();
+  }
 
-  bind_component<ParticleSystemComponent>(world, state, core_table, "ParticleSystemComponent")
-    .member("material", &ParticleSystemComponent::material)
-    .member("duration", &ParticleSystemComponent::duration)
-    .member("looping", &ParticleSystemComponent::looping)
-    .member("start_delay", &ParticleSystemComponent::start_delay)
-    .member("start_lifetime", &ParticleSystemComponent::start_lifetime)
-    .member("start_velocity", &ParticleSystemComponent::start_velocity)
-    .member("start_color", &ParticleSystemComponent::start_color)
-    .member("start_size", &ParticleSystemComponent::start_size)
-    .member("start_rotation", &ParticleSystemComponent::start_rotation)
-    .member("gravity_modifier", &ParticleSystemComponent::gravity_modifier)
-    .member("simulation_speed", &ParticleSystemComponent::simulation_speed)
-    .member("play_on_awake", &ParticleSystemComponent::play_on_awake)
-    .member("max_particles", &ParticleSystemComponent::max_particles)
-    .member("rate_over_time", &ParticleSystemComponent::rate_over_time)
-    .member("rate_over_distance", &ParticleSystemComponent::rate_over_distance)
-    .member("burst_count", &ParticleSystemComponent::burst_count)
-    .member("position_start", &ParticleSystemComponent::position_start)
-    .member("position_end", &ParticleSystemComponent::position_end)
-    .member("velocity_over_lifetime_enabled", &ParticleSystemComponent::velocity_over_lifetime_enabled)
-    .member("velocity_over_lifetime_start", &ParticleSystemComponent::velocity_over_lifetime_start)
-    .member("velocity_over_lifetime_end", &ParticleSystemComponent::velocity_over_lifetime_end)
-    .member("force_over_lifetime_enabled", &ParticleSystemComponent::force_over_lifetime_enabled)
-    .member("force_over_lifetime_start", &ParticleSystemComponent::force_over_lifetime_start)
-    .member("force_over_lifetime_end", &ParticleSystemComponent::force_over_lifetime_end)
-    .member("color_over_lifetime_enabled", &ParticleSystemComponent::color_over_lifetime_enabled)
-    .member("color_over_lifetime_start", &ParticleSystemComponent::color_over_lifetime_start)
-    .member("color_over_lifetime_end", &ParticleSystemComponent::color_over_lifetime_end)
-    .member("color_by_speed_enabled", &ParticleSystemComponent::color_by_speed_enabled)
-    .member("color_by_speed_start", &ParticleSystemComponent::color_by_speed_start)
-    .member("color_by_speed_end", &ParticleSystemComponent::color_by_speed_end)
-    .member("color_by_speed_min_speed", &ParticleSystemComponent::color_by_speed_min_speed)
-    .member("color_by_speed_max_speed", &ParticleSystemComponent::color_by_speed_max_speed)
-    .member("size_over_lifetime_enabled", &ParticleSystemComponent::size_over_lifetime_enabled)
-    .member("size_over_lifetime_start", &ParticleSystemComponent::size_over_lifetime_start)
-    .member("size_over_lifetime_end", &ParticleSystemComponent::size_over_lifetime_end)
-    .member("size_by_speed_enabled", &ParticleSystemComponent::size_by_speed_enabled)
-    .member("size_by_speed_start", &ParticleSystemComponent::size_by_speed_start)
-    .member("size_by_speed_end", &ParticleSystemComponent::size_by_speed_end)
-    .member("size_by_speed_min_speed", &ParticleSystemComponent::size_by_speed_min_speed)
-    .member("size_by_speed_max_speed", &ParticleSystemComponent::size_by_speed_max_speed)
-    .member("rotation_over_lifetime_enabled", &ParticleSystemComponent::rotation_over_lifetime_enabled)
-    .member("rotation_over_lifetime_start", &ParticleSystemComponent::rotation_over_lifetime_start)
-    .member("rotation_over_lifetime_end", &ParticleSystemComponent::rotation_over_lifetime_end)
-    .member("rotation_by_speed_enabled", &ParticleSystemComponent::rotation_by_speed_enabled)
-    .member("rotation_by_speed_start", &ParticleSystemComponent::rotation_by_speed_start)
-    .member("rotation_by_speed_end", &ParticleSystemComponent::rotation_by_speed_end)
-    .member("rotation_by_speed_min_speed", &ParticleSystemComponent::rotation_by_speed_min_speed)
-    .member("rotation_by_speed_max_speed", &ParticleSystemComponent::rotation_by_speed_max_speed)
-    .finalize();
+  {
+    using C = ParticleSystemComponent;
+    registry.bind<
+      &C::material,
+      &C::duration,
+      &C::looping,
+      &C::start_delay,
+      &C::start_lifetime,
+      &C::start_velocity,
+      &C::start_color,
+      &C::start_size,
+      &C::start_rotation,
+      &C::gravity_modifier,
+      &C::simulation_speed,
+      &C::play_on_awake,
+      &C::max_particles,
+      &C::rate_over_time,
+      &C::rate_over_distance,
+      &C::burst_count,
+      &C::position_start,
+      &C::position_end,
+      &C::velocity_over_lifetime_enabled,
+      &C::velocity_over_lifetime_start,
+      &C::velocity_over_lifetime_end,
+      &C::force_over_lifetime_enabled,
+      &C::force_over_lifetime_start,
+      &C::force_over_lifetime_end,
+      &C::color_over_lifetime_enabled,
+      &C::color_over_lifetime_start,
+      &C::color_over_lifetime_end,
+      &C::color_by_speed_enabled,
+      &C::color_by_speed_start,
+      &C::color_by_speed_end,
+      &C::color_by_speed_min_speed,
+      &C::color_by_speed_max_speed,
+      &C::size_over_lifetime_enabled,
+      &C::size_over_lifetime_start,
+      &C::size_over_lifetime_end,
+      &C::size_by_speed_enabled,
+      &C::size_by_speed_start,
+      &C::size_by_speed_end,
+      &C::size_by_speed_min_speed,
+      &C::size_by_speed_max_speed,
+      &C::rotation_over_lifetime_enabled,
+      &C::rotation_over_lifetime_start,
+      &C::rotation_over_lifetime_end,
+      &C::rotation_by_speed_enabled,
+      &C::rotation_by_speed_start,
+      &C::rotation_by_speed_end,
+      &C::rotation_by_speed_min_speed,
+      &C::rotation_by_speed_max_speed>();
+  }
 
-  bind_component<ParticleComponent>(world, state, core_table, "ParticleComponent")
-    .member("color", &ParticleComponent::color)
-    .member("life_remaining", &ParticleComponent::life_remaining)
-    .finalize();
+  {
+    using C = ParticleComponent;
+    registry.bind<&C::color, &C::life_remaining>();
+  }
 
-  bind_component<LightComponent>(world, state, core_table, "LightComponent")
-    .member("type", &LightComponent::type)
-    .member("color", &LightComponent::color)
-    .member("intensity", &LightComponent::intensity)
-    .member("radius", &LightComponent::radius)
-    .member("outer_cone_angle", &LightComponent::outer_cone_angle)
-    .member("inner_cone_angle", &LightComponent::inner_cone_angle)
-    .member("cast_shadows", &LightComponent::cast_shadows)
-    .member("first_cascade_far_bound", &LightComponent::first_cascade_far_bound)
-    .member("maximum_shadow_distance", &LightComponent::maximum_shadow_distance)
-    .member("minimum_shadow_distance", &LightComponent::minimum_shadow_distance)
-    .member("first_clipmap_width", &LightComponent::first_clipmap_width)
-    .member("clipmap_selection_bias", &LightComponent::clipmap_selection_bias)
-    .finalize();
+  {
+    using C = LightComponent;
+    registry.bind<
+      &C::type,
+      &C::color,
+      &C::intensity,
+      &C::radius,
+      &C::outer_cone_angle,
+      &C::inner_cone_angle,
+      &C::cast_shadows,
+      &C::first_cascade_far_bound,
+      &C::maximum_shadow_distance,
+      &C::minimum_shadow_distance,
+      &C::first_clipmap_width,
+      &C::clipmap_selection_bias>();
+  }
 
-  bind_component<SkyComponent>(world, state, core_table, "SkyComponent")
-    .member("solid_color", &SkyComponent::solid_color)
-    .member("texture", &SkyComponent::texture)
-    .finalize();
+  {
+    using C = SkyComponent;
+    registry.bind<&C::solid_color, &C::texture>();
+  }
 
-  bind_component<AtmosphereComponent>(world, state, core_table, "AtmosphereComponent")
-    .member("rayleigh_scattering", &AtmosphereComponent::rayleigh_scattering)
-    .member("rayleigh_density", &AtmosphereComponent::rayleigh_density)
-    .member("mie_scattering", &AtmosphereComponent::mie_scattering)
-    .member("mie_density", &AtmosphereComponent::mie_density)
-    .member("mie_extinction", &AtmosphereComponent::mie_extinction)
-    .member("mie_asymmetry", &AtmosphereComponent::mie_asymmetry)
-    .member("ozone_absorption", &AtmosphereComponent::ozone_absorption)
-    .member("ozone_height", &AtmosphereComponent::ozone_height)
-    .member("ozone_thickness", &AtmosphereComponent::ozone_thickness)
-    .member("aerial_perspective_start_km", &AtmosphereComponent::aerial_perspective_start_km)
-    .member("aerial_perspective_exposure", &AtmosphereComponent::aerial_perspective_exposure)
-    .finalize();
+  {
+    using C = AtmosphereComponent;
+    registry.bind<
+      &C::rayleigh_scattering,
+      &C::rayleigh_density,
+      &C::mie_scattering,
+      &C::mie_density,
+      &C::mie_extinction,
+      &C::mie_asymmetry,
+      &C::ozone_absorption,
+      &C::ozone_height,
+      &C::ozone_thickness,
+      &C::aerial_perspective_start_km,
+      &C::aerial_perspective_exposure>();
+  }
 
-  bind_component<AutoExposureComponent>(world, state, core_table, "AutoExposureComponent")
-    .member("min_exposure", &AutoExposureComponent::min_exposure)
-    .member("max_exposure", &AutoExposureComponent::max_exposure)
-    .member("adaptation_speed", &AutoExposureComponent::adaptation_speed)
-    .member("ev100_bias", &AutoExposureComponent::ev100_bias)
-    .finalize();
+  {
+    using C = AutoExposureComponent;
+    registry.bind<&C::min_exposure, &C::max_exposure, &C::adaptation_speed, &C::ev100_bias>();
+  }
 
-  bind_component<VignetteComponent>(world, state, core_table, "VignetteComponent")
-    .member("amount", &VignetteComponent::amount)
-    .finalize();
+  {
+    using C = VignetteComponent;
+    registry.bind<&C::amount>();
+  }
 
-  bind_component<ChromaticAberrationComponent>(world, state, core_table, "ChromaticAberrationComponent")
-    .member("amount", &ChromaticAberrationComponent::amount)
-    .finalize();
+  {
+    using C = ChromaticAberrationComponent;
+    registry.bind<&C::amount>();
+  }
 
-  bind_component<FilmGrainComponent>(world, state, core_table, "FilmGrainComponent")
-    .member("amount", &FilmGrainComponent::amount)
-    .member("scale", &FilmGrainComponent::scale)
-    .finalize();
+  {
+    using C = FilmGrainComponent;
+    registry.bind<&C::amount, &C::scale>();
+  }
 
   // Physics Components
-  bind_component<RigidBodyComponent>(world, state, core_table, "RigidBodyComponent")
-    .member("allowed_dofs", &RigidBodyComponent::allowed_dofs)
-    .member("type", &RigidBodyComponent::type)
-    .member("mass", &RigidBodyComponent::mass)
-    .member("linear_drag", &RigidBodyComponent::linear_drag)
-    .member("angular_drag", &RigidBodyComponent::angular_drag)
-    .member("gravity_factor", &RigidBodyComponent::gravity_factor)
-    .member("friction", &RigidBodyComponent::friction)
-    .member("restitution", &RigidBodyComponent::restitution)
-    .member("allow_sleep", &RigidBodyComponent::allow_sleep)
-    .member("awake", &RigidBodyComponent::awake)
-    .member("continuous", &RigidBodyComponent::continuous)
-    .member("interpolation", &RigidBodyComponent::interpolation)
-    .member("is_sensor", &RigidBodyComponent::is_sensor)
-    .finalize();
+  {
+    using C = RigidBodyComponent;
+    registry.bind<
+      &C::allowed_dofs,
+      &C::type,
+      &C::mass,
+      &C::linear_drag,
+      &C::angular_drag,
+      &C::gravity_factor,
+      &C::friction,
+      &C::restitution,
+      &C::allow_sleep,
+      &C::awake,
+      &C::continuous,
+      &C::interpolation,
+      &C::is_sensor>();
+  }
 
-  bind_component<BoxColliderComponent>(world, state, core_table, "BoxColliderComponent")
-    .member("size", &BoxColliderComponent::size)
-    .member("offset", &BoxColliderComponent::offset)
-    .member("density", &BoxColliderComponent::density)
-    .member("friction", &BoxColliderComponent::friction)
-    .member("restitution", &BoxColliderComponent::restitution)
-    .finalize();
+  {
+    using C = BoxColliderComponent;
+    registry.bind<&C::size, &C::offset, &C::density, &C::friction, &C::restitution>();
+  }
 
-  bind_component<SphereColliderComponent>(world, state, core_table, "SphereColliderComponent")
-    .member("radius", &SphereColliderComponent::radius)
-    .member("offset", &SphereColliderComponent::offset)
-    .member("density", &SphereColliderComponent::density)
-    .member("friction", &SphereColliderComponent::friction)
-    .member("restitution", &SphereColliderComponent::restitution)
-    .finalize();
+  {
+    using C = SphereColliderComponent;
+    registry.bind<&C::radius, &C::offset, &C::density, &C::friction, &C::restitution>();
+  }
 
-  bind_component<CapsuleColliderComponent>(world, state, core_table, "CapsuleColliderComponent")
-    .member("height", &CapsuleColliderComponent::height)
-    .member("radius", &CapsuleColliderComponent::radius)
-    .member("offset", &CapsuleColliderComponent::offset)
-    .member("density", &CapsuleColliderComponent::density)
-    .member("friction", &CapsuleColliderComponent::friction)
-    .member("restitution", &CapsuleColliderComponent::restitution)
-    .finalize();
+  {
+    using C = CapsuleColliderComponent;
+    registry.bind<&C::height, &C::radius, &C::offset, &C::density, &C::friction, &C::restitution>();
+  }
 
-  bind_component<TaperedCapsuleColliderComponent>(world, state, core_table, "TaperedCapsuleColliderComponent")
-    .member("height", &TaperedCapsuleColliderComponent::height)
-    .member("top_radius", &TaperedCapsuleColliderComponent::top_radius)
-    .member("bottom_radius", &TaperedCapsuleColliderComponent::bottom_radius)
-    .member("offset", &TaperedCapsuleColliderComponent::offset)
-    .member("density", &TaperedCapsuleColliderComponent::density)
-    .member("friction", &TaperedCapsuleColliderComponent::friction)
-    .member("restitution", &TaperedCapsuleColliderComponent::restitution)
-    .finalize();
+  {
+    using C = TaperedCapsuleColliderComponent;
+    registry
+      .bind<&C::height, &C::top_radius, &C::bottom_radius, &C::offset, &C::density, &C::friction, &C::restitution>();
+  }
 
-  bind_component<CylinderColliderComponent>(world, state, core_table, "CylinderColliderComponent")
-    .member("height", &CylinderColliderComponent::height)
-    .member("radius", &CylinderColliderComponent::radius)
-    .member("offset", &CylinderColliderComponent::offset)
-    .member("density", &CylinderColliderComponent::density)
-    .member("friction", &CylinderColliderComponent::friction)
-    .member("restitution", &CylinderColliderComponent::restitution)
-    .finalize();
+  {
+    using C = CylinderColliderComponent;
+    registry.bind<&C::height, &C::radius, &C::offset, &C::density, &C::friction, &C::restitution>();
+  }
 
-  bind_component<MeshColliderComponent>(world, state, core_table, "MeshColliderComponent")
-    .member("offset", &MeshColliderComponent::offset)
-    .member("friction", &MeshColliderComponent::friction)
-    .member("restitution", &MeshColliderComponent::restitution)
-    .finalize();
+  {
+    using C = MeshColliderComponent;
+    registry.bind<&C::offset, &C::friction, &C::restitution>();
+  }
 
-  bind_component<CharacterControllerComponent>(world, state, core_table, "CharacterControllerComponent")
-    .member("character_height_standing", &CharacterControllerComponent::character_height_standing)
-    .member("character_radius_standing", &CharacterControllerComponent::character_radius_standing)
-    .member("character_height_crouching", &CharacterControllerComponent::character_height_crouching)
-    .member("character_radius_crouching", &CharacterControllerComponent::character_radius_crouching)
-    .member("interpolation", &CharacterControllerComponent::interpolation)
-    .member("control_movement_during_jump", &CharacterControllerComponent::control_movement_during_jump)
-    .member("jump_force", &CharacterControllerComponent::jump_force)
-    .member("auto_bunny_hop", &CharacterControllerComponent::auto_bunny_hop)
-    .member("air_control", &CharacterControllerComponent::air_control)
-    .member("max_ground_speed", &CharacterControllerComponent::max_ground_speed)
-    .member("ground_acceleration", &CharacterControllerComponent::ground_acceleration)
-    .member("ground_deceleration", &CharacterControllerComponent::ground_deceleration)
-    .member("max_air_speed", &CharacterControllerComponent::max_air_speed)
-    .member("air_acceleration", &CharacterControllerComponent::air_acceleration)
-    .member("air_deceleration", &CharacterControllerComponent::air_deceleration)
-    .member("max_strafe_speed", &CharacterControllerComponent::max_strafe_speed)
-    .member("strafe_acceleration", &CharacterControllerComponent::strafe_acceleration)
-    .member("strafe_deceleration", &CharacterControllerComponent::strafe_deceleration)
-    .member("friction", &CharacterControllerComponent::friction)
-    .member("gravity", &CharacterControllerComponent::gravity)
-    .member("collision_tolerance", &CharacterControllerComponent::collision_tolerance)
-    .finalize();
+  {
+    using C = CharacterControllerComponent;
+    registry.bind<
+      &C::character_height_standing,
+      &C::character_radius_standing,
+      &C::character_height_crouching,
+      &C::character_radius_crouching,
+      &C::interpolation,
+      &C::control_movement_during_jump,
+      &C::jump_force,
+      &C::auto_bunny_hop,
+      &C::air_control,
+      &C::max_ground_speed,
+      &C::ground_acceleration,
+      &C::ground_deceleration,
+      &C::max_air_speed,
+      &C::air_acceleration,
+      &C::air_deceleration,
+      &C::max_strafe_speed,
+      &C::strafe_acceleration,
+      &C::strafe_deceleration,
+      &C::friction,
+      &C::gravity,
+      &C::collision_tolerance>();
+  }
 
   // Audio Components
-  bind_component<AudioSourceComponent>(world, state, core_table, "AudioSourceComponent")
-    .member("audio_source", &AudioSourceComponent::audio_source)
-    .member("attenuation_model", &AudioSourceComponent::attenuation_model)
-    .member("volume", &AudioSourceComponent::volume)
-    .member("pitch", &AudioSourceComponent::pitch)
-    .member("play_on_awake", &AudioSourceComponent::play_on_awake)
-    .member("looping", &AudioSourceComponent::looping)
-    .member("spatialization", &AudioSourceComponent::spatialization)
-    .member("roll_off", &AudioSourceComponent::roll_off)
-    .member("min_gain", &AudioSourceComponent::min_gain)
-    .member("max_gain", &AudioSourceComponent::max_gain)
-    .member("min_distance", &AudioSourceComponent::min_distance)
-    .member("max_distance", &AudioSourceComponent::max_distance)
-    .member("cone_inner_angle", &AudioSourceComponent::cone_inner_angle)
-    .member("cone_outer_angle", &AudioSourceComponent::cone_outer_angle)
-    .member("cone_outer_gain", &AudioSourceComponent::cone_outer_gain)
-    .member("doppler_factor", &AudioSourceComponent::doppler_factor)
-    .finalize();
+  {
+    using C = AudioSourceComponent;
+    registry.bind<
+      &C::audio_source,
+      &C::attenuation_model,
+      &C::volume,
+      &C::pitch,
+      &C::play_on_awake,
+      &C::looping,
+      &C::spatialization,
+      &C::roll_off,
+      &C::min_gain,
+      &C::max_gain,
+      &C::min_distance,
+      &C::max_distance,
+      &C::cone_inner_angle,
+      &C::cone_outer_angle,
+      &C::cone_outer_gain,
+      &C::doppler_factor>();
+  }
 
-  bind_component<AudioListenerComponent>(world, state, core_table, "AudioListenerComponent")
-    .member("active", &AudioListenerComponent::active)
-    .member("listener_index", &AudioListenerComponent::listener_index)
-    .member("cone_inner_angle", &AudioListenerComponent::cone_inner_angle)
-    .member("cone_outer_angle", &AudioListenerComponent::cone_outer_angle)
-    .member("cone_outer_gain", &AudioListenerComponent::cone_outer_gain)
-    .finalize();
+  {
+    using C = AudioListenerComponent;
+    registry.bind<&C::active, &C::listener_index, &C::cone_inner_angle, &C::cone_outer_angle, &C::cone_outer_gain>();
+  }
 
-  bind_component<TonemappingComponent>(world, state, core_table, "TonemappingComponent")
-    .member("tonemap_type", &TonemappingComponent::tonemap_type)
-    .finalize();
+  {
+    using C = TonemappingComponent;
+    registry.bind<&C::tonemap_type>();
+  }
 }
 } // namespace ox

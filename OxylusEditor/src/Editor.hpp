@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/EventSystem.hpp"
 #include "Core/Project.hpp"
 #include "Panels/EditorPanelRegistry.hpp"
 #include "Panels/MainViewportPanel.hpp"
@@ -54,6 +55,9 @@ public:
   std::unique_ptr<UndoRedoSystem> undo_redo_system = nullptr;
 
   NotificationSystem notification_system = {};
+
+  HandlerId scene_play_handler = {};
+  HandlerId scene_stop_handler = {};
 
   auto init(this Editor& self) -> std::expected<void, std::string>;
   auto deinit(this Editor& self) -> std::expected<void, std::string>;
