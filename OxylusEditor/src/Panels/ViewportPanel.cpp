@@ -75,7 +75,7 @@ ViewportPanel::ViewportPanel() : EditorPanelState("Viewport", ICON_MDI_TERRAIN, 
 
   auto& render_context = App::get_rendercontext();
   auto& runtime = *render_context.runtime;
-  if (!runtime.is_pipeline_available("mouse_picking")) {
+  if (!runtime.is_pipeline_available("entity_mouse_picking")) {
     auto& vfs = App::get_vfs();
     auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
     auto shader_file = AssetFile::unpack(shaders_dir / "editor.oxpack");
