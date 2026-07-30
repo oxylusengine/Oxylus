@@ -14,6 +14,12 @@ struct ShaderParameters {
 
 groupshared float previous_mip_depth[8][8];
 
+// Reversed-Z device depth -> positive linear view space depth (-view_z).
+// `mul_add` is (projection[2][3], projection[2][2]), which inverts ndc_z = (m22 * z + m23) / -z.
+float linearize_depth(float device_depth, float2 mul_add) {
+    return mul_add.x / (device_depth + mul_add.y);
+}
+
 float weighted_average(float depth0, float depth1, float depth2, float depth3) {
     float depth_range_scale_factor = 0.75;
     float effect_radius = depth_range_scale_factor * 0.5 * 1.457;
@@ -37,7 +43,8 @@ func cs_main(
     uint3 global_id : SV_DispatchThreadID,
     uint3 local_id  : SV_GroupThreadID,
     uniform ParameterBlock<ShaderParameters> params,
-    uniform i32x3 depth_extent
+    uniform i32x3 depth_extent,
+    uniform f32x2 depth_linearize_mul_add
 ) -> void {
     int2 base_coordinates = int2(global_id.xy);
 
@@ -48,7 +55,14 @@ func cs_main(
     int2 pixel_coordinates3 = pixel_coordinates0 + int2(1, 1);
 
     float2 depths_uv = float2(pixel_coordinates0) / f32x2(depth_extent.xy);
-    float4 depths = params.src_depth.Gather(params.point_clamp_sampler, depths_uv, int2(1,1));
+    float4 device_depths = params.src_depth.Gather(params.point_clamp_sampler, depths_uv, int2(1,1));
+    // Everything downstream (mip weighting, edge detection, horizon search) needs linear depth.
+    float4 depths = float4(
+        linearize_depth(device_depths.x, depth_linearize_mul_add),
+        linearize_depth(device_depths.y, depth_linearize_mul_add),
+        linearize_depth(device_depths.z, depth_linearize_mul_add),
+        linearize_depth(device_depths.w, depth_linearize_mul_add)
+    );
 
     params.dst_depth_mip0[pixel_coordinates0] = depths.w;
     params.dst_depth_mip0[pixel_coordinates1] = depths.z;
