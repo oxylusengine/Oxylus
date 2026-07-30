@@ -71,8 +71,25 @@ public func henyey_greenstein_draine_phase(f32 g, f32 cos_theta) -> f32 {
 }
 
 /// GENERAL MATH
+// Largest finite value representable in a 16 bit float, and the smallest normal one. Values
+// outside of this range turn into Inf / flush to zero when written to an RGBA16F target.
+public static constexpr f32 HALF_MAX = 65504.0;
+public static constexpr f32 HALF_MIN_NORMAL = 6.103515625e-5;
+
 public func safe_sqrt(f32 x) -> f32 {
     return sqrt(max(0, x));
+}
+
+// Replaces NaN / Inf components with `fallback`. Cheap insurance for values that get fed into
+// a feedback loop, where a single bad frame would otherwise poison the history forever.
+public func sanitize(f32x3 v, f32x3 fallback = 0.0) -> f32x3 {
+    return select(isfinite(v), v, fallback);
+}
+
+// normalize() of a zero-length vector is 0/0. Falls back when the input is degenerate.
+public func safe_normalize(f32x2 v, f32x2 fallback) -> f32x2 {
+    const f32 len_sq = dot(v, v);
+    return len_sq > 1e-20 ? v * rsqrt(len_sq) : fallback;
 }
 
 public func mod(f32x3 x, f32x3 y) -> f32x3 {

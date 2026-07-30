@@ -226,8 +226,8 @@ public struct Atmosphere {
     public i32x3 aerial_perspective_lut_size;
 
     public func get_eye_pos(f32x3 position) -> f32x3 {
-        var altitude = position.y * CAMERA_SCALE_UNIT;
-        altitude += this.planet_radius + PLANET_RADIUS_OFFSET;
+        let min_altitude = this.planet_radius + PLANET_RADIUS_OFFSET;
+        let altitude = max(position.y * CAMERA_SCALE_UNIT + min_altitude, min_altitude);
         return f32x3(0.0, altitude, 0.0);
     }
 };

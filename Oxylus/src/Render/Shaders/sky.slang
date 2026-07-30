@@ -310,13 +310,15 @@ public func get_atmosphere_illuminance_along_ray(
     let forward_vec = normalize(cross(side_vec, up_vec));
 
     let sun_dir = normalize(sun_dir);
-    let light_on_plane = normalize(f32x2(dot(sun_dir, forward_vec), dot(sun_dir, side_vec)));
+    let light_on_plane = com::safe_normalize(
+        f32x2(dot(sun_dir, forward_vec), dot(sun_dir, side_vec)),
+        f32x2(1.0, 0.0));
 
     let intersect_planet = com::ray_sphere_intersect_nearest(eye_pos, eye_dir, atmosphere.planet_radius).hasValue;
     let uv = sky_view_params_to_lut_uv(atmosphere, intersect_planet, height, view_zenith_cos_angle, light_on_plane);
 
     let result = sky_view_image.SampleLevel(sampler, uv, 0.0);
-    return result.rgb * result.a;
+    return com::sanitize(result.rgb * result.a);
 }
 
 public func get_direct_sun_lighting(
