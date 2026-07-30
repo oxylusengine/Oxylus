@@ -277,19 +277,19 @@ preference:
   GPU mirrors, `RenderStageContext`, ...) is written this way. Reach for `class` only when the type
   is actually OOP-shaped: it owns a resource with a non-trivial invariant, or callers must not touch
   the raw state.
-- **When a `class` is warranted, private comes first**, public after:
+- **When a `class` is warranted, public comes first**, private after:
 
   ```cpp
   class Foo {
-  private:
-    // private member variables
-
   public:
     // public methods
+
+  private:
+    // private member variables
   };
   ```
 
-  (Some older headers still put `public:` first — follow the layout above for new types and when
+  (Some older headers still put `private:` first — follow the layout above for new types and when
   restructuring an existing one.)
 - **Every ID is a strong enum**, exactly like the asset IDs. Never identify something with a bare
   `u64`/`u32`, an index, a `usize`, or a type alias — those silently interconvert and get passed to
