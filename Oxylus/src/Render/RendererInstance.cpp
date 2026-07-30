@@ -642,7 +642,7 @@ auto RendererInstance::render(
 
   const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
   const f32 debug_heatmap_scale = 5.0;
-  const auto debugging = debug_view != GPU::DebugView::None;
+  const auto debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool();
 
   auto final_attachment = vuk::declare_ia(
     "final_attachment",
@@ -1266,11 +1266,13 @@ auto RendererInstance::render(
     dst_attachment = ctx.get_image_resource("result_attachment");
   }
 
+
   auto debug_context = DebugContext{
     .overdraw_heatmap_scale = debug_heatmap_scale,
     .debug_view = debug_view,
     .visbuffer_attachment = std::move(visbuffer_attachment),
-    .depth_attachment = std::move(depth_attachment),
+    // The bounding-box pass also consumes depth after the debug view is composed.
+    .depth_attachment = depth_attachment,
     .overdraw_attachment = std::move(overdraw_attachment),
     .albedo_attachment = std::move(albedo_attachment),
     .normal_attachment = std::move(normal_attachment),
@@ -1284,13 +1286,13 @@ auto RendererInstance::render(
     debug_context.vsm_clipmaps_buffer = std::move(rmvsm_virtual_clipmaps_buffer);
   }
 
-  auto debug_renderer_enabled = cvar.cvar_enable_debug_renderer.as_bool();
-  if (debug_renderer_enabled) {
-    return self.draw_for_debug(debug_context, std::move(dst_attachment));
+  if (debugging) {
+    dst_attachment = self.apply_debug_view(debug_context, dst_extent);
   }
 
-  if (debugging) {
-    return self.apply_debug_view(debug_context, dst_extent);
+  const auto draw_bounding_boxes = cvar.cvar_draw_bounding_boxes.as_bool() || debugging;
+  if (draw_bounding_boxes) {
+    dst_attachment = self.draw_bounding_boxes(std::move(depth_attachment), std::move(dst_attachment));
   }
 
   return dst_attachment;
