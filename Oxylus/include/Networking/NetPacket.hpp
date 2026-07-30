@@ -1,11 +1,18 @@
 #pragma once
 
 #include <ankerl/svector.h>
+#include <array>
+#include <functional>
 #include <span>
+#include <string>
+#include <string_view>
+#include <variant>
+#include <vector>
+#include <zpp_bits.h>
 
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
-#include "Memory/Buffer.hpp"
+#include "Core/UUID.hpp"
 #include "Networking/Fwd.hpp"
 #include "Scene/SceneSnapshot.hpp"
 
@@ -26,8 +33,7 @@ struct NetHandshakePacket {
 
 struct NetSceneSnapshotPacket {
   u8 sequence = 0;
-  u32 entitiy_count = 0;
-  u32 removed_entity_count = 0;
+  SceneState state = {};
 };
 
 struct NetClientAckPacket {
@@ -35,33 +41,33 @@ struct NetClientAckPacket {
 };
 
 struct RPCParameter {
-  enum class Type : u8 {
-    None = 0,
-    Byte,
-    Short,
-    Int,
-    Int64,
-    Float,
-    Double,
-    String,
-    UUID,
-    ByteArray,
-  };
+  // The alternative index is what goes over the wire, only ever append to this list.
+  using Value = std::variant<
+    std::monostate,     // none
+    u8,                 // byte
+    u16,                // short
+    i32,                // int
+    i64,                // int64
+    f32,                // float
+    f64,                // double
+    std::string,        // string
+    std::array<u8, 16>, // uuid
+    std::vector<u8>>;   // byte array
 
-  Type type = Type::Byte;
-  u32 data_size = 0;
-  const void* data = nullptr;
+  Value value = {};
 
-  auto as_f32() -> option<const f32>;
-  auto as_int64() -> option<const i64>;
-  auto as_str() -> std::string_view;
+  auto as_f32(this const RPCParameter&) -> option<const f32>;
+  auto as_int64(this const RPCParameter&) -> option<const i64>;
+  auto as_str(this const RPCParameter&) -> std::string_view;
+  auto as_uuid(this const RPCParameter&) -> option<UUID>;
   template <typename T>
-  auto as_span() -> std::span<const T> {
-    if (type != Type::ByteArray) {
+  auto as_span(this const RPCParameter& self) -> std::span<const T> {
+    const auto* bytes = std::get_if<std::vector<u8>>(&self.value);
+    if (!bytes) {
       return {};
     }
 
-    return std::span{static_cast<const T*>(data), data_size / sizeof(T)};
+    return std::span{reinterpret_cast<const T*>(bytes->data()), bytes->size() / sizeof(T)};
   }
 };
 
@@ -77,9 +83,9 @@ struct NetPacket {
   ENetPacket* inner = nullptr;
 
   static auto handshake(const NetHandshakePacket& info) -> option<NetPacket>;
-  static auto scene_snapshot(SceneState& state, u8 sequence) -> option<NetPacket>;
+  static auto scene_snapshot(const SceneState& state, u8 sequence) -> option<NetPacket>;
   static auto client_ack(const NetClientAckPacket& info) -> option<NetPacket>;
-  static auto rpc(std::string_view proc, std::span<RPCParameter> params) -> option<NetPacket>;
+  static auto rpc(std::string_view proc, std::span<const RPCParameter> params) -> option<NetPacket>;
 
   static auto from_packet(ENetPacket* packet) -> option<NetPacket>;
 
@@ -87,11 +93,9 @@ struct NetPacket {
 
   auto decr_ref(this NetPacket&) -> usize;
   auto can_destroy(this NetPacket&) -> bool;
-  auto reader(this NetPacket&) -> BufferReader;
-  auto writer(this NetPacket&) -> BufferWriter;
 
   auto get_handshake(this NetPacket&) -> option<NetHandshakePacket>;
-  auto get_scene_snapshot(this NetPacket&) -> option<std::pair<u8, SceneState>>;
+  auto get_scene_snapshot(this NetPacket&) -> option<NetSceneSnapshotPacket>;
   auto get_client_ack(this NetPacket&) -> option<NetClientAckPacket>;
   auto get_rpc(this NetPacket&) -> option<NetRPCPacket>;
 

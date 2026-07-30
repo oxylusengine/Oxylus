@@ -115,17 +115,21 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.main_viewport_panel.init();
 
   auto& event_system = App::get_event_system();
-  std::ignore = event_system.subscribe<ScenePlayEvent>([&self](const ScenePlayEvent& e) {
-    self.editor_context.reset();
-    auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
-    sh.set_scene(nullptr);
-  });
-  std::ignore = event_system.subscribe<SceneStopEvent>([&self](const SceneStopEvent& e) {
-    self.scene_manager.remove_scene(e.scene_id);
-    self.editor_context.reset();
-    auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
-    sh.set_scene(nullptr);
-  });
+  self.scene_play_handler = event_system
+                              .subscribe<ScenePlayEvent>([&self](const ScenePlayEvent& e) {
+                                self.editor_context.reset();
+                                auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
+                                sh.set_scene(nullptr);
+                              })
+                              .value_or(0);
+  self.scene_stop_handler = event_system
+                              .subscribe<SceneStopEvent>([&self](const SceneStopEvent& e) {
+                                self.scene_manager.remove_scene(e.scene_id);
+                                self.editor_context.reset();
+                                auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
+                                sh.set_scene(nullptr);
+                              })
+                              .value_or(0);
 
   Log::add_callback(
     "editor_notifications",
@@ -157,6 +161,13 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   auto& job_man = App::get_job_manager();
   auto& net = App::mod<NetworkManager>();
   job_man.get_tracker().stop_tracking();
+
+  self.main_viewport_panel.deinit();
+  self.main_viewport_panel.reset();
+
+  auto& event_system = App::get_event_system();
+  std::ignore = event_system.unsubscribe<ScenePlayEvent>(self.scene_play_handler);
+  std::ignore = event_system.unsubscribe<SceneStopEvent>(self.scene_stop_handler);
 
   Log::remove_callback("editor_notifications");
 

@@ -359,8 +359,11 @@ public:
   auto apply_tonemap(this RendererInstance&, PostProcessContext& context) -> vuk::Value<vuk::ImageAttachment>;
   auto apply_debug_view(this RendererInstance&, DebugContext& context, vuk::Extent3D extent)
     -> vuk::Value<vuk::ImageAttachment>;
-  auto draw_for_debug(this RendererInstance&, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
-    -> vuk::Value<vuk::ImageAttachment>;
+  auto draw_bounding_boxes(
+    this RendererInstance&,
+    vuk::Value<vuk::ImageAttachment>&& depth_attachment,
+    vuk::Value<vuk::ImageAttachment>&& dst_attachment
+  ) -> vuk::Value<vuk::ImageAttachment>;
 
   auto update_vbgtao_info(this RendererInstance&, const RendererCVar& cvar) -> void;
 

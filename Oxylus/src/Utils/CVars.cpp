@@ -131,6 +131,7 @@ auto AutoCVar_Int::init(
 auto AutoCVar_Int::get() const -> i32 { return system->int_cvars.at(index).current; }
 auto AutoCVar_Int::get_default() const -> i32 { return system->int_cvars.at(index).initial; }
 auto AutoCVar_Int::get_ptr() const -> i32* { return &system->int_cvars.at(index).current; }
+auto AutoCVar_Int::get_ptr_bool() const -> bool* { return (bool*)(&system->int_cvars.at(index).current); }
 auto AutoCVar_Int::as_bool() const -> bool { return static_cast<bool>(get()); }
 auto AutoCVar_Int::set(const i32 val) const -> void { system->int_cvars.at(index).current = val; }
 auto AutoCVar_Int::set_default() const -> void {
