@@ -393,22 +393,25 @@ Scene::~Scene() {
   if (running)
     runtime_stop();
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_remove(this);
   }
 
   // world.release();
 
   lua_systems.clear();
-
-  if (App::has_mod<LuaManager>()) {
-    auto& lua_manager = App::mod<LuaManager>();
-    lua_manager.get_state()->collect_gc();
+  if (App::has_mod<RmlUI>()) {
+    App::mod<RmlUI>().remove_context(rml_context);
   }
+  auto& lua_manager = App::mod<LuaManager>();
+  lua_manager.get_state()->collect_gc();
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {
   ZoneScoped;
+
+  self.uuid = UUID::generate_random();
+
   self.scene_name = name;
 
   self.component_db.import_module(self.world.import<CoreComponentsModule>());
@@ -416,6 +419,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   if (App::has_mod<Renderer>()) {
     auto& renderer = App::mod<Renderer>();
     self.renderer_instance = renderer.new_instance(self);
+  }
+
+  if (App::has_mod<RmlUI>()) {
+    self.rml_context = App::mod<RmlUI>().create_context(fmt::format("scene_{}", self.uuid.str()));
   }
 
   auto& physics = App::mod<Physics>();
@@ -1098,7 +1105,7 @@ auto Scene::runtime_start(this Scene& self) -> void {
   self.physics_init();
 
   // Scripting
-  for (auto& [uuid, system] : self.lua_systems) {
+  for (auto& [_, system] : self.lua_systems) {
     system->on_scene_start(&self);
   }
 }
@@ -1111,20 +1118,16 @@ auto Scene::runtime_stop(this Scene& self) -> void {
   self.physics_deinit();
 
   // Scripting
-  for (auto& [uuid, system] : self.lua_systems) {
+  for (auto& [_, system] : self.lua_systems) {
     system->on_scene_stop(&self);
   }
 
-  if (App::has_mod<RmlUI>()) {
-    auto& rmlui = App::mod<RmlUI>();
-    auto rml_ctxs = rmlui.get_contexts();
-    for (auto* ctx : rml_ctxs) {
-      auto doc_count = ctx->GetNumDocuments();
-      for (i32 i = 0; i < doc_count; i++) {
-        auto doc = ctx->GetDocument(i);
-        if (doc) {
-          doc->Hide();
-        }
+  if (self.rml_context) {
+    auto doc_count = self.rml_context->GetNumDocuments();
+    for (i32 i = 0; i < doc_count; i++) {
+      auto doc = self.rml_context->GetDocument(i);
+      if (doc) {
+        doc->Hide();
       }
     }
   }
@@ -1140,10 +1143,14 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
   self.run_deferred_functions();
 
+  if (self.rml_context) {
+    self.rml_context->Update();
+  }
+
   auto pre_update_phase_enabled = !self.world.entity(flecs::PreUpdate).has(flecs::Disabled);
   auto on_update_phase_enabled = !self.world.entity(flecs::OnUpdate).has(flecs::Disabled);
   if (pre_update_phase_enabled && on_update_phase_enabled) {
-    for (auto& [uuid, system] : self.lua_systems) {
+    for (auto& [_, system] : self.lua_systems) {
       system->on_scene_update(&self, static_cast<f32>(delta_time.get_seconds()));
     }
   }
@@ -1642,7 +1649,7 @@ auto Scene::on_contact_added(
 
   auto write_lock = std::unique_lock(physics_mutex);
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_contact_added(this, body1, body2, manifold, settings);
   }
 }
@@ -1657,7 +1664,7 @@ auto Scene::on_contact_persisted(
 
   auto write_lock = std::unique_lock(physics_mutex);
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_contact_persisted(this, body1, body2, manifold, settings);
   }
 }
@@ -1667,7 +1674,7 @@ auto Scene::on_contact_removed(const JPH::SubShapeIDPair& sub_shape_pair) -> voi
 
   auto write_lock = std::unique_lock(physics_mutex);
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_contact_removed(this, sub_shape_pair);
   }
 }
@@ -1677,7 +1684,7 @@ auto Scene::on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_
 
   auto write_lock = std::unique_lock(physics_mutex);
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_body_activated(this, body_id, (u64)body_user_data);
   }
 }
@@ -1687,7 +1694,7 @@ auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_use
 
   auto write_lock = std::unique_lock(physics_mutex);
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_body_deactivated(this, body_id, (u64)body_user_data);
   }
 }
@@ -1871,11 +1878,29 @@ auto Scene::render(
   auto ri = self.get_renderer_instance();
   OX_CHECK_NULL(ri);
 
-  for (auto& [uuid, system] : self.lua_systems) {
+  if (self.rml_context) {
+    App::mod<RmlUI>().render_context(
+      *self.rml_context,
+      Rml::Vector2i(static_cast<i32>(dst_attachment->extent.width), static_cast<i32>(dst_attachment->extent.height))
+    );
+  }
+
+  for (auto& [_, system] : self.lua_systems) {
     system->on_scene_render(&self, dst_attachment->extent);
   }
 
-  return ri->render(std::move(dst_attachment), render_info, self.renderer_cvar);
+  auto surface = ri->render(std::move(dst_attachment), render_info, self.renderer_cvar);
+  if (!self.rml_context) {
+    return surface;
+  }
+
+  return App::mod<RmlUI>().get_renderer().end_frame(App::get_rendercontext(), std::move(surface));
+}
+
+auto Scene::get_rml_context_name(this const Scene& self) -> std::string_view {
+  ZoneScoped;
+
+  return self.rml_context->GetName();
 }
 
 auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
@@ -2003,9 +2028,9 @@ auto Scene::to_json(this const Scene& self) -> JsonWriter {
   self.renderer_cvar.to_json(writer);
 
   writer["scripts"].begin_array();
-  for (auto& [uuid, system] : self.lua_systems) {
+  for (auto& [script_uuid, system] : self.lua_systems) {
     writer.begin_obj();
-    writer["uuid"] = uuid.str();
+    writer["uuid"] = script_uuid.str();
     writer.end_obj();
   }
   writer.end_array();
@@ -2097,27 +2122,27 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
 
   OX_LOG_INFO("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
 
-  for (const auto& uuid : requested_assets) {
+  for (const auto& asset_uuid : requested_assets) {
     auto& asset_man = App::mod<AssetManager>();
     // Snapshot the type and release the read guard before load_asset()/add_lua_system(),
     // which re-lock the registry.
     auto asset_type = AssetType::None;
     auto exists = false;
-    if (auto asset = asset_man.get_asset(uuid)) {
+    if (auto asset = asset_man.get_asset(asset_uuid)) {
       exists = true;
       asset_type = asset->type;
     }
     if (exists) {
       if (asset_type == AssetType::Script) {
-        self.add_lua_system(uuid);
+        self.add_lua_system(asset_uuid);
       } else {
-        asset_man.load_asset(uuid);
+        asset_man.load_asset(asset_uuid);
       }
     } else {
       // Not an imported/physical asset
       // Most likely was created on runtime and never written to a file, these should never exist.
       // Otherwise component will be left with an unloaded asset.
-      OX_LOG_WARN("Ghost asset found! {}", uuid.str());
+      OX_LOG_WARN("Ghost asset found! {}", asset_uuid.str());
     }
   }
 

@@ -2,6 +2,7 @@
 
 #include <RmlUi/Core/RenderInterface.h>
 #include <ankerl/unordered_dense.h>
+#include <unordered_map>
 #include <vuk/Value.hpp>
 
 #include "Asset/Texture.hpp"
@@ -41,7 +42,7 @@ public:
     const Rml::Vector2f& translation
   ) -> void;
 
-  auto set_white_texture(this RmlRenderer& self, const TextureView &view) -> void;
+  auto set_white_texture(this RmlRenderer& self, const TextureView& view) -> void;
 
   // --- Derived functions ---
   auto CompileGeometry(Rml::Span<const Rml::Vertex> vertices, Rml::Span<const int> indices)
@@ -68,6 +69,8 @@ private:
 
   SlotMap<Texture, RmlTextureID> loaded_textures = {};
   TextureView white_texture = {};
+  std::vector<vuk::Value<vuk::ImageAttachment>> frame_textures = {};
+  std::unordered_map<RmlTextureID, u32> frame_texture_indices = {};
 
   bool current_scissor_enabled = false;
   glm::ivec4 current_scissor; // x, y, w, h
