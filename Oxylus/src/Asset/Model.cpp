@@ -1,7 +1,7 @@
 #include "Asset/Model.hpp"
 
 namespace ox {
-auto Model::get_base_aabb(this const Model& self) -> GPU::MeshBounds {
+auto Model::get_mesh_bounds(this const Model& self) -> GPU::MeshBounds {
   ZoneScoped;
 
   if (self.gpu_meshes.empty()) {

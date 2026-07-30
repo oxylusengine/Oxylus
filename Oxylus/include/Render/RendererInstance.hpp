@@ -2,6 +2,7 @@
 
 #include <ankerl/unordered_dense.h>
 
+#include "Asset/Texture.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Scene/SceneGPU.hpp"
@@ -132,9 +133,6 @@ struct RendererInstanceUpdateInfo {
 
   std::span<GPU::TransformID> dirty_transform_ids = {};
   std::span<GPU::Transforms> gpu_transforms = {};
-
-  std::span<u32> dirty_material_indices = {};
-  std::span<GPU::Material> gpu_materials = {};
 
   std::span<GPU::Mesh> gpu_meshes = {};
   std::span<GPU::MeshInstance> gpu_mesh_instances = {};
@@ -302,9 +300,6 @@ struct PostProcessContext {
 
 class RendererInstance {
 public:
-  template <typename T>
-  struct BufferTraits;
-
   explicit RendererInstance(Scene& owner_scene, Renderer& parent_renderer);
   ~RendererInstance();
 
@@ -381,7 +376,7 @@ private:
 
   Scene& scene;
   Renderer& renderer;
-  Renderer::RenderQueue2D render_queue_2d = {};
+  GPU::RenderQueue2D render_queue_2d = {};
   bool saved_camera = false;
 
   glm::uvec2 viewport_size = {};
@@ -419,7 +414,6 @@ private:
   vuk::Unique<vuk::Buffer> transforms_previous_buffer{};
   vuk::Unique<vuk::Buffer> mesh_instances_buffer{};
   vuk::Unique<vuk::Buffer> meshes_buffer{};
-  vuk::Unique<vuk::Buffer> materials_buffer{};
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
   vuk::Unique<vuk::Buffer> lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};

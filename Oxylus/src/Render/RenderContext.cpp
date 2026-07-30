@@ -536,6 +536,13 @@ auto RenderContext::wait_on(vuk::UntypedValue&& fut) -> void {
   fut.wait(superframe_allocator.value(), this_thread_compiler);
 }
 
+auto RenderContext::submit_now(vuk::UntypedValue&& fut) -> void {
+  ZoneScoped;
+
+  auto lock = std::scoped_lock(queue_mutex);
+  fut.submit(frame_allocator.value(), this_thread_compiler);
+}
+
 auto RenderContext::wait_on_multiple(std::span<vuk::UntypedValue> values) -> void {
   ZoneScoped;
 

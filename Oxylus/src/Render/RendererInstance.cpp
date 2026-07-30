@@ -108,115 +108,6 @@ auto update_projected_transform_buffer(
   prepared_buffer = update_pass(std::move(upload_buffer), std::move(buffer_handle));
 }
 
-template <>
-struct RendererInstance::BufferTraits<GPU::Material> {
-  using offset_type = u32;
-  static constexpr std::string_view buffer_name = "materials";
-  static constexpr std::string_view pass_name = "update scene materials";
-
-  static auto get_buffer_ref(auto& self) -> auto& { return self.materials_buffer; }
-  static auto& get_prepared_buffer_ref(auto& self) { return self.prepared_frame.materials_buffer; }
-
-  static auto get_index(const auto& dirty_id) -> usize { return static_cast<usize>(dirty_id); }
-
-  static auto get_element(const auto& gpu_data, usize index) -> const auto& { return gpu_data[index]; }
-};
-
-template <typename T>
-auto update_gpu_buffer(auto& self, auto& render_context, const auto& gpu_data, const auto& dirty_ids) -> void {
-  using traits = RendererInstance::BufferTraits<T>;
-
-  const auto data_size_bytes = gpu_data.size_bytes();
-  constexpr auto element_size = sizeof(T);
-
-  auto& buffer_ref = traits::get_buffer_ref(self);
-
-  const auto rebuild_needed = !buffer_ref || buffer_ref->size < data_size_bytes;
-  buffer_ref = render_context.resize_buffer(std::move(buffer_ref), vuk::MemoryUsage::eGPUonly, data_size_bytes);
-
-  if (rebuild_needed) {
-    traits::get_prepared_buffer_ref(self) = render_context.upload_staging(gpu_data, *buffer_ref);
-    return;
-  }
-
-  auto unique_indices = std::vector<usize>{};
-  unique_indices.reserve(dirty_ids.size());
-  for (const auto& dirty_id : dirty_ids) {
-    unique_indices.push_back(traits::get_index(dirty_id));
-  }
-  std::sort(unique_indices.begin(), unique_indices.end());
-  unique_indices.erase(std::unique(unique_indices.begin(), unique_indices.end()), unique_indices.end());
-
-  const auto element_count = data_size_bytes / element_size;
-  if (unique_indices.size() * 5 >= element_count * 2) {
-    traits::get_prepared_buffer_ref(self) = render_context.upload_staging(gpu_data, *buffer_ref);
-    return;
-  }
-
-  struct CopyRange {
-    usize src_offset = 0;
-    usize dst_offset = 0;
-    usize size_bytes = 0;
-  };
-
-  const auto dirty_count = unique_indices.size();
-  const auto dirty_size_bytes = dirty_count * element_size;
-
-  auto upload_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_size_bytes);
-  auto* dst_ptr = reinterpret_cast<T*>(upload_buffer->mapped_ptr);
-  for (usize i = 0; i < dirty_count; ++i) {
-    const auto& element = traits::get_element(gpu_data, unique_indices[i]);
-    std::memcpy(dst_ptr + i, &element, element_size);
-  }
-
-  std::vector<CopyRange> ranges;
-  ranges.reserve(dirty_count);
-  for (usize i = 0; i < dirty_count;) {
-    const auto start_index = unique_indices[i];
-    auto run_length = usize{1};
-    while (i + run_length < dirty_count && unique_indices[i + run_length] == start_index + run_length) {
-      ++run_length;
-    }
-    ranges.push_back({i * element_size, start_index * element_size, run_length * element_size});
-    i += run_length;
-  }
-
-  auto update_pass = vuk::make_pass(
-    traits::pass_name,
-    [copy_ranges = std::move(ranges)](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::Access::eTransferRead) src_buffer,
-      VUK_BA(vuk::Access::eTransferWrite) dst_buffer
-    ) {
-      for (const auto& r : copy_ranges) {
-        const auto src_subrange = src_buffer->subrange(r.src_offset, r.size_bytes);
-        const auto dst_subrange = dst_buffer->subrange(r.dst_offset, r.size_bytes);
-        cmd_list.copy_buffer(src_subrange, dst_subrange);
-      }
-      return dst_buffer;
-    }
-  );
-
-  auto buffer_handle = vuk::acquire_buf(traits::buffer_name, *buffer_ref, vuk::Access::eMemoryRead);
-  traits::get_prepared_buffer_ref(self) = update_pass(std::move(upload_buffer), std::move(buffer_handle));
-}
-
-template <typename T>
-auto update_buffer_if_dirty(auto& self, auto& render_context, const auto& gpu_data, const auto& dirty_ids) -> void {
-  using traits = RendererInstance::BufferTraits<T>;
-
-  if (!dirty_ids.empty()) {
-    update_gpu_buffer<T>(self, render_context, gpu_data, dirty_ids);
-  } else {
-    auto& buffer_ref = traits::get_buffer_ref(self);
-    if (buffer_ref) {
-      traits::get_prepared_buffer_ref(
-        self
-      ) = vuk::acquire_buf(traits::buffer_name, *buffer_ref, vuk::Access::eMemoryRead);
-    }
-  }
-}
-
 RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer)
     : scene(owner_scene),
       renderer(parent_renderer) {
@@ -1446,9 +1337,15 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
            &rq2d = self.render_queue_2d](flecs::entity e, const TransformComponent& tc, const SpriteComponent& comp) {
       const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
       if (auto material = asset_man.get_asset(comp.material)) {
+        u16 flags = 0;
+        if (comp.sort_y)
+          flags |= GPU::RENDER_FLAGS_2D_SORT_Y;
+        if (comp.flip_x)
+          flags |= GPU::RENDER_FLAGS_2D_FLIP_X;
+
         if (auto transform_id = s.get_entity_transform_id(e)) {
           rq2d.add(
-            comp,
+            flags,
             tc.position.y,
             SlotMap_decode_id(*transform_id).index,
             SlotMap_decode_id(material->material_id).index,
@@ -1476,10 +1373,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       if (particle_system_component) {
         if (auto material = asset_man.get_asset(particle_system_component->material)) {
           if (auto transform_id = s.get_entity_transform_id(e)) {
-            SpriteComponent sprite_comp = {.sort_y = true};
-
             rq2d.add(
-              sprite_comp,
+              GPU::RENDER_FLAGS_2D_SORT_Y,
               tc.position.y,
               SlotMap_decode_id(*transform_id).index,
               SlotMap_decode_id(material->material_id).index,
@@ -1568,7 +1463,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     "transforms_previous",
     "update transform previous"
   );
-  update_buffer_if_dirty<GPU::Material>(self, render_context, info.gpu_materials, info.dirty_material_indices);
+  // Materials are global and already synced by the renderer; this instance only reads them.
+  self.prepared_frame.materials_buffer = self.renderer.get_materials_buffer();
 
   {
     const auto lights_span = self.scene.lights.slots_unsafe();

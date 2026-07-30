@@ -59,7 +59,7 @@ public:
   auto init(this AssetManager& self) -> std::expected<void, std::string>;
   auto deinit(this AssetManager& self) -> std::expected<void, std::string>;
 
-  auto registry(this const AssetManager& self) -> const AssetRegistry&;
+  auto get_registry_snapshot(this AssetManager& self) -> std::vector<Asset>;
 
   auto read_meta_file(this AssetManager& self, const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
   auto read_meta_file_from_asset(this AssetManager& self, const std::filesystem::path& path)

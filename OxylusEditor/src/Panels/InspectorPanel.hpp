@@ -38,10 +38,12 @@ public:
   auto draw_components(this InspectorPanel& self, flecs::entity entity) -> void;
   auto draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset) -> void;
 
-  auto draw_model_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Model> model) -> void;
-  auto draw_material_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<Material> material) -> bool;
-  auto draw_audio_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<AudioSource> audio) -> void;
-  auto draw_script_asset(this InspectorPanel& self, ReadGuard<Asset> asset, ReadGuard<LuaSystem> lua_system) -> bool;
+  auto draw_model_asset(this InspectorPanel& self, ReadGuard<Model> model) -> void;
+  auto draw_material_asset(
+    this InspectorPanel& self, const UUID& uuid, const std::filesystem::path& path, ReadGuard<Material> material
+  ) -> bool;
+  auto draw_audio_asset(this InspectorPanel& self, ReadGuard<AudioSource> audio) -> void;
+  auto draw_script_asset(this InspectorPanel& self, const UUID& uuid, ReadGuard<LuaSystem> lua_system) -> bool;
 
 private:
   struct ComponentClipboard {
