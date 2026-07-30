@@ -605,9 +605,9 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       if (ImGui::TreeNodeEx("Debug", TREE_FLAGS, "%s", "Debug")) {
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
           UI::property("Enable debug renderer", cvar_sys.cvar_enable_debug_renderer.get_ptr_bool());
-          UI::property("Enable physics debug renderer", cvar_sys.cvar_enable_physics_debug_renderer.get_ptr_bool());
+          ImGui::Indent();
+          ImGui::BeginDisabled(!cvar_sys.cvar_enable_debug_renderer.as_bool());
           UI::property("Draw bounding boxes", cvar_sys.cvar_draw_bounding_boxes.get_ptr_bool());
-          UI::property("Freeze culling frustum", cvar_sys.cvar_freeze_culling_frustum.get_ptr_bool());
           UI::property("Draw camera frustum", cvar_sys.cvar_draw_camera_frustum.get_ptr_bool());
           const char* debug_views[] = {
             "None",
@@ -632,6 +632,11 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             debug_views,
             static_cast<i32>(ox::count_of(debug_views))
           );
+          ImGui::EndDisabled();
+          ImGui::Unindent();
+
+          UI::property("Enable physics debug renderer", cvar_sys.cvar_enable_physics_debug_renderer.get_ptr_bool());
+          UI::property("Freeze culling frustum", cvar_sys.cvar_freeze_culling_frustum.get_ptr_bool());
           UI::property("Enable frustum culling", cvar_sys.cvar_culling_frustum.get_ptr_bool());
           UI::property("Enable occlusion culling", cvar_sys.cvar_culling_occlusion.get_ptr_bool());
           UI::property("Enable triangle culling", cvar_sys.cvar_culling_triangle.get_ptr_bool());

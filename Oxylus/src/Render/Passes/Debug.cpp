@@ -149,14 +149,16 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
       std::move(context.depth_attachment),
       std::move(context.normal_attachment),
       std::move(context.vsm_page_table_attachment),
-      std::move(self.prepared_frame.camera_buffer),
+      self.prepared_frame.camera_buffer,
       std::move(context.vsm_clipmaps_buffer)
     );
   }
 }
 
-auto RendererInstance::draw_for_debug(
-  this RendererInstance& self, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
+auto RendererInstance::draw_bounding_boxes(
+  this RendererInstance& self,
+  vuk::Value<vuk::ImageAttachment>&& depth_attachment,
+  vuk::Value<vuk::ImageAttachment>&& dst_attachment
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
@@ -201,9 +203,9 @@ auto RendererInstance::draw_for_debug(
     }
   );
 
-  std::tie(dst_attachment, self.prepared_frame.camera_buffer, context.depth_attachment) = debug_mesh_pass(
+  std::tie(dst_attachment, self.prepared_frame.camera_buffer, depth_attachment) = debug_mesh_pass(
     dst_attachment,
-    context.depth_attachment,
+    depth_attachment,
     self.prepared_frame.debug_renderer_verticies_buffer,
     self.prepared_frame.camera_buffer
   );
