@@ -74,7 +74,7 @@ func cs_main(
     let bitangent = cross(output_dir, tangent);
 
     let history = params.ibl_cube.Load(i32x3(pixel, face));
-    let has_history = history.a > 0.0;
+    let has_history = history.a > 0.0 && all(isfinite(history.rgb));
 
     let base_rotation = interleaved_gradient_noise(f32x2(pixel) + f32(face) * f32x2(37.0, 17.0));
     let rotation = has_history
@@ -94,7 +94,7 @@ func cs_main(
             input_dir
         );
 
-        frame_sum += sample;
+        frame_sum += com::sanitize(sample);
     }
     let frame_estimate = frame_sum / f32(IBL_SAMPLES_PER_FRAME);
 
@@ -107,7 +107,7 @@ func cs_main(
     let sun_facing = saturate(dot(output_dir, sun_dir));
     let sun_term = sun_ambient_strength * sun_color * sun_intensity * sun_facing / PI;
 
-    let frame_result = frame_estimate + sun_term;
+    let frame_result = clamp(com::sanitize(frame_estimate + sun_term), 0.0, com::HALF_MAX);
 
     let alpha = 0.02;
     let accumulated = has_history ? lerp(history.rgb, frame_result, alpha) : frame_result;

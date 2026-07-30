@@ -22,7 +22,7 @@ func cs_main(
     uniform f32 sun_intensity,
     uniform f32x3 camera_pos,
 ) {
-    let uv = f32x2(thread_id.xy) / f32x2(params.atmosphere.sky_view_lut_size.xy);
+    let uv = (f32x2(thread_id.xy) + 0.5) / f32x2(params.atmosphere.sky_view_lut_size.xy);
     var eye_pos = params.atmosphere.get_eye_pos(camera_pos);
 
     let h = length(eye_pos);
@@ -45,8 +45,10 @@ func cs_main(
     info.step_count = 48;
 
     let result = integrate_single_scattered_luminance(info, params.atmosphere, params.sampler, params.sky_transmittance_lut, params.sky_multiscattering_lut);
-    let inv_luminance = 1.0 / max(result.luminance, float3(1.0 / 1048576.0));
-    let inv_mult = min(1048576.0, max(inv_luminance.x, max(inv_luminance.y, inv_luminance.z)));
 
-    params.sky_view_lut.Store(thread_id.xy, f32x4(result.luminance * inv_mult, 1.0 / inv_mult));
+    let luminance = com::sanitize(max(result.luminance, 0.0));
+    let max_luminance = max(luminance.x, max(luminance.y, luminance.z));
+    let mult = clamp(max_luminance, com::HALF_MIN_NORMAL, com::HALF_MAX);
+
+    params.sky_view_lut.Store(thread_id.xy, f32x4(luminance / mult, mult));
 }
