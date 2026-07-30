@@ -6,6 +6,7 @@
 #include "Core/App.hpp"
 #include "Editor.hpp"
 #include "UI/PayloadData.hpp"
+#include "UI/RmlUI.hpp"
 #include "UI/UI.hpp"
 
 namespace ox {
@@ -182,6 +183,7 @@ void MainViewportPanel::on_render(this MainViewportPanel& self, vuk::ImageAttach
       self.dock_should_update = false;
     }
 
+    App::mod<RmlUI>().clear_input_context();
     for (const auto& panel : self.viewport_panels) {
       panel->on_render(swapchain_attachment);
     }

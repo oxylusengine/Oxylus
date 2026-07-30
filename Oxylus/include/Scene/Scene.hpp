@@ -22,6 +22,10 @@
 #include "Scripting/LuaSystem.hpp"
 #include "Utils/Timestep.hpp"
 
+namespace Rml {
+class Context;
+}
+
 template <>
 struct ankerl::unordered_dense::hash<flecs::id> {
   using is_avalanching = void;
@@ -160,6 +164,8 @@ public:
     this Scene& self, vuk::Value<vuk::ImageAttachment>&& dst_attachment, const Renderer::RenderInfo& render_info
   ) -> vuk::Value<vuk::ImageAttachment>;
   auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
+  auto get_rml_context(this const Scene& self) -> Rml::Context* { return self.rml_context; }
+  auto get_rml_context_name(this const Scene& self) -> std::string_view;
 
   static auto entity_to_json(JsonWriter& writer, flecs::entity e) -> void;
   static auto json_to_entity(
@@ -174,7 +180,11 @@ public:
   auto save_to_file(this const Scene& self, const std::filesystem::path& path) -> bool;
   auto load_from_file(this Scene& self, const std::filesystem::path& path) -> bool;
 
+  auto get_uuid(this const Scene& self) -> const UUID& { return self.uuid; }
+
 private:
+  UUID uuid = {};
+
   bool running = false;
   bool deserializing_entity = false;
 
@@ -185,6 +195,7 @@ private:
 
   // Renderer
   std::unique_ptr<RendererInstance> renderer_instance = nullptr;
+  Rml::Context* rml_context = nullptr;
 
   // Physics
   f32 physics_accumulator = 0.f;
