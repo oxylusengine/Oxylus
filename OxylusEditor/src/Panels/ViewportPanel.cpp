@@ -96,8 +96,9 @@ ViewportPanel::ViewportPanel() : EditorPanelState("Viewport", ICON_MDI_TERRAIN, 
 
 ViewportPanel::~ViewportPanel() {
   auto& event_system = App::get_event_system();
-  if (editor_scene && editor_scene->is_playing())
+  if (editor_scene) {
     std::ignore = event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene->get_id()));
+  }
 }
 
 void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swapchain_attachment) {
