@@ -176,6 +176,7 @@ public:
 
 private:
   bool running = false;
+  bool deserializing_entity = false;
 
   std::vector<std::function<void(Scene* scene)>> deferred_functions_ = {};
 

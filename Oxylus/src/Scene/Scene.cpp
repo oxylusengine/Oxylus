@@ -486,15 +486,25 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
-  self.world.observer<SpriteComponent>().event(flecs::OnAdd).each([](flecs::iter& it, usize i, SpriteComponent& c) {
-    auto& asset_man = App::mod<AssetManager>();
-    if (it.event() == flecs::OnAdd) {
-      if (!c.material) {
-        c.material = asset_man.create_asset(AssetType::Material, {});
-        asset_man.load_asset(c.material);
+  self.world.observer<SpriteComponent>()
+    .event(flecs::OnAdd)
+    .event(flecs::OnSet)
+    .each([&self](flecs::iter& it, usize i, SpriteComponent& c) {
+      // Deserialization adds the component first and writes its fields (including the material
+      // UUID) right after, so creating a material on OnAdd would orphan it. Wait for the OnSet
+      // that follows instead; it only gets here if the entity really came without a material.
+      if (it.event() == flecs::OnAdd && self.deserializing_entity) {
+        return;
       }
-    }
-  });
+
+      if (c.material) {
+        return;
+      }
+
+      auto& asset_man = App::mod<AssetManager>();
+      c.material = asset_man.create_asset(AssetType::Material, {});
+      asset_man.load_asset(c.material);
+    });
 
   self.world.observer<SpriteComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, SpriteComponent& c) {
     auto& asset_man = App::mod<AssetManager>();
@@ -1954,11 +1964,14 @@ auto Scene::json_to_entity(
         continue;
       }
 
+      // Observers must not fill in defaults for fields this loop is about to write.
+      const auto was_deserializing = std::exchange(self.deserializing_entity, true);
       e.add(component_id);
       auto* component = e.get_mut(component_id);
       auto deserializer = JsonEntityDeserializer(self.world, field_json.value());
       deserializer.serialize(component_id, component);
       requested_assets.insert_range(requested_assets.end(), std::move(deserializer.requested_assets));
+      self.deserializing_entity = was_deserializing;
       e.modified(component_id);
     }
   }
