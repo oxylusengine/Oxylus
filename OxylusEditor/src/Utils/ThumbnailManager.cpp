@@ -239,7 +239,8 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
     })
     .set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 20.f})
     .add<AtmosphereComponent>()
-    .set<SkyComponent>(SkyComponent{.solid_color = glm::vec4(0.f, 0.f, 0.f, 1.0f), .texture = UUID(nullptr)});
+    .set<SkyComponent>(SkyComponent{.solid_color = glm::vec4(0.f, 0.f, 0.f, 1.0f), .texture = UUID(nullptr)})
+    .set<AutoExposureComponent>({.adaptation_speed = 1.0e6f});
 
   f32 cam_fov = 40.f;
   auto transform = ThumbnailCamera::calculate_from_model(*model_asset.value, cam_fov, 1.0f);
