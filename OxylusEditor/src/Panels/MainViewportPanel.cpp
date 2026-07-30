@@ -13,47 +13,67 @@ MainViewportPanel::MainViewportPanel() : EditorPanelState("Scenes", ICON_MDI_VID
 
 auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
   auto& event_system = App::get_event_system();
-  std::ignore = event_system.subscribe<AppCloseEvent>([&self](const AppCloseEvent& e) {
-    for (auto& v : self.viewport_panels) {
-      if (v->get_scene()->is_playing()) {
-        v->get_scene()->stop();
-      }
-    }
-  });
-  std::ignore = event_system.subscribe<Editor::ViewportSceneLoadEvent>(
-    [&self](const Editor::ViewportSceneLoadEvent& e) { self.update_dockspace(); }
-  );
-  std::ignore = event_system.subscribe<Editor::ScenePlayEvent>([&self](const Editor::ScenePlayEvent& e) {
-    auto& editor = App::mod<Editor>();
-    auto play_scene_id = editor.scene_manager.new_play_scene(e.scene_id);
-    auto copy_scene = editor.scene_manager.get_scene(play_scene_id);
-    self.add_new_play_scene(copy_scene);
-  });
-  std::ignore = event_system.subscribe<Editor::SceneStopEvent>([&self](const Editor::SceneStopEvent& e) {
-    auto should_stop_and_remove = [e, &self](const std::unique_ptr<ViewportPanel>& panel) {
-      if (!panel) {
-        return true;
-      }
+  self.app_close_handler = event_system
+                             .subscribe<AppCloseEvent>([&self](const AppCloseEvent& e) {
+                               for (auto& v : self.viewport_panels) {
+                                 if (v->get_scene()->is_playing()) {
+                                   v->get_scene()->stop();
+                                 }
+                               }
+                             })
+                             .value_or(0);
+  self.scene_load_handler = event_system
+                              .subscribe<Editor::ViewportSceneLoadEvent>(
+                                [&self](const Editor::ViewportSceneLoadEvent& e) { self.update_dockspace(); }
+                              )
+                              .value_or(0);
+  self.scene_play_handler = event_system
+                              .subscribe<Editor::ScenePlayEvent>([&self](const Editor::ScenePlayEvent& e) {
+                                auto& editor = App::mod<Editor>();
+                                auto play_scene_id = editor.scene_manager.new_play_scene(e.scene_id);
+                                auto copy_scene = editor.scene_manager.get_scene(play_scene_id);
+                                self.add_new_play_scene(copy_scene);
+                              })
+                              .value_or(0);
+  self.scene_stop_handler =
+    event_system
+      .subscribe<Editor::SceneStopEvent>([&self](const Editor::SceneStopEvent& e) {
+        auto should_stop_and_remove = [e, &self](const std::unique_ptr<ViewportPanel>& panel) {
+          if (!panel) {
+            return true;
+          }
 
-      auto* editor_scene = panel->get_scene();
+          auto* editor_scene = panel->get_scene();
 
-      if (editor_scene && editor_scene->get_id() == e.scene_id && editor_scene->is_playing()) {
-        editor_scene->stop();
-        auto& editor = App::mod<Editor>();
-        editor.scene_manager.remove_scene(e.scene_id);
-        self.update_dockspace();
-        return true;
-      }
+          if (editor_scene && editor_scene->get_id() == e.scene_id && editor_scene->is_playing()) {
+            editor_scene->stop();
+            auto& editor = App::mod<Editor>();
+            editor.scene_manager.remove_scene(e.scene_id);
+            self.update_dockspace();
+            return true;
+          }
 
-      return false;
-    };
+          return false;
+        };
 
-    // We need this since we can't erase while iterating in on_render
-    App::defer_to_next_frame([&self, should_stop_and_remove] {
-      std::erase_if(self.viewport_panels, should_stop_and_remove);
-      std::erase_if(self.pending_viewports, should_stop_and_remove);
-    });
-  });
+        // We need this since we can't erase while iterating in on_render
+        App::defer_to_next_frame([&self, should_stop_and_remove] {
+          std::erase_if(self.viewport_panels, should_stop_and_remove);
+          std::erase_if(self.pending_viewports, should_stop_and_remove);
+        });
+      })
+      .value_or(0);
+}
+
+auto MainViewportPanel::deinit(this MainViewportPanel& self) -> void {
+  ZoneScoped;
+
+  // Every handler above captures `self`, and the event system outlives this panel.
+  auto& event_system = App::get_event_system();
+  std::ignore = event_system.unsubscribe<AppCloseEvent>(self.app_close_handler);
+  std::ignore = event_system.unsubscribe<Editor::ViewportSceneLoadEvent>(self.scene_load_handler);
+  std::ignore = event_system.unsubscribe<Editor::ScenePlayEvent>(self.scene_play_handler);
+  std::ignore = event_system.unsubscribe<Editor::SceneStopEvent>(self.scene_stop_handler);
 }
 
 auto MainViewportPanel::reset(this MainViewportPanel& self) -> void {
