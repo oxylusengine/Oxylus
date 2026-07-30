@@ -291,7 +291,7 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
     .usage = vuk::ImageUsageFlagBits::eSampled,
   });
   OX_ASSERT(hilbert_noise_lut);
-  hilbert_noise_lut.upload({reinterpret_cast<u8*>(hilbert_noise), std::size(hilbert_noise)}, vuk::eFragmentSampled);
+  hilbert_noise_lut.upload({reinterpret_cast<u8*>(hilbert_noise), sizeof(hilbert_noise)}, vuk::eFragmentSampled);
 
   sky_cubemap = Texture::create({
     .format = vuk::Format::eR16G16B16A16Sfloat,
