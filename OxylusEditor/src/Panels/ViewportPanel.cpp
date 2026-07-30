@@ -594,7 +594,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       window.get_dpi_scale()
     );
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-      UI::property("VSync", (bool*)context_cvar.cvar_vsync.get_ptr());
+      UI::property("VSync", context_cvar.cvar_vsync.get_ptr_bool());
       UI::end_properties();
     }
 
@@ -604,11 +604,11 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       auto& cvar_sys = self.editor_scene->get_scene()->renderer_cvar;
       if (ImGui::TreeNodeEx("Debug", TREE_FLAGS, "%s", "Debug")) {
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property("Enable debug renderer", (bool*)cvar_sys.cvar_enable_debug_renderer.get_ptr());
-          UI::property("Enable physics debug renderer", (bool*)cvar_sys.cvar_enable_physics_debug_renderer.get_ptr());
-          UI::property("Draw bounding boxes", (bool*)cvar_sys.cvar_draw_bounding_boxes.get_ptr());
-          UI::property("Freeze culling frustum", (bool*)cvar_sys.cvar_freeze_culling_frustum.get_ptr());
-          UI::property("Draw camera frustum", (bool*)cvar_sys.cvar_draw_camera_frustum.get_ptr());
+          UI::property("Enable debug renderer", cvar_sys.cvar_enable_debug_renderer.get_ptr_bool());
+          UI::property("Enable physics debug renderer", cvar_sys.cvar_enable_physics_debug_renderer.get_ptr_bool());
+          UI::property("Draw bounding boxes", cvar_sys.cvar_draw_bounding_boxes.get_ptr_bool());
+          UI::property("Freeze culling frustum", cvar_sys.cvar_freeze_culling_frustum.get_ptr_bool());
+          UI::property("Draw camera frustum", cvar_sys.cvar_draw_camera_frustum.get_ptr_bool());
           const char* debug_views[] = {
             "None",
             "Triangles",
@@ -632,9 +632,9 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             debug_views,
             static_cast<i32>(ox::count_of(debug_views))
           );
-          UI::property("Enable frustum culling", (bool*)cvar_sys.cvar_culling_frustum.get_ptr());
-          UI::property("Enable occlusion culling", (bool*)cvar_sys.cvar_culling_occlusion.get_ptr());
-          UI::property("Enable triangle culling", (bool*)cvar_sys.cvar_culling_triangle.get_ptr());
+          UI::property("Enable frustum culling", cvar_sys.cvar_culling_frustum.get_ptr_bool());
+          UI::property("Enable occlusion culling", cvar_sys.cvar_culling_occlusion.get_ptr_bool());
+          UI::property("Enable triangle culling", cvar_sys.cvar_culling_triangle.get_ptr_bool());
           UI::end_properties();
         }
 
@@ -645,7 +645,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
         ImGui::SetNextItemOpen(open_action != 0);
       if (ImGui::TreeNodeEx("Bloom", TREE_FLAGS, "%s", "Bloom")) {
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property("Enabled", (bool*)cvar_sys.cvar_bloom_enable.get_ptr());
+          UI::property("Enabled", cvar_sys.cvar_bloom_enable.get_ptr_bool());
           UI::property<float>("Threshold", cvar_sys.cvar_bloom_threshold.get_ptr(), 0.0f, 100.0f);
           UI::property<float>("Soft Threshold", cvar_sys.cvar_bloom_soft_threshold.get_ptr(), 0.0f, 1.0f);
           UI::end_properties();
@@ -657,7 +657,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
         ImGui::SetNextItemOpen(open_action != 0);
       if (ImGui::TreeNodeEx("FXAA", TREE_FLAGS, "%s", "FXAA")) {
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property("Enabled", (bool*)cvar_sys.cvar_fxaa_enable.get_ptr());
+          UI::property("Enabled", cvar_sys.cvar_fxaa_enable.get_ptr_bool());
           UI::end_properties();
         }
         ImGui::TreePop();
@@ -667,7 +667,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
         ImGui::SetNextItemOpen(open_action != 0);
       if (ImGui::TreeNodeEx("GTAO", TREE_FLAGS, "%s", "GTAO")) {
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property("Enabled", (bool*)cvar_sys.cvar_vbgtao_enable.get_ptr());
+          UI::property("Enabled", cvar_sys.cvar_vbgtao_enable.get_ptr_bool());
           const char* quality_levels[4] = {"Low", "Medium", "High", "Ultra"};
           UI::property("Quality Level", cvar_sys.cvar_vbgtao_quality_level.get_ptr(), quality_levels, 4);
           UI::property<float>("Radius", cvar_sys.cvar_vbgtao_radius.get_ptr(), 0.1f, 5.f);
@@ -682,7 +682,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
         ImGui::SetNextItemOpen(open_action != 0);
       if (ImGui::TreeNodeEx("Contact Shadows", TREE_FLAGS, "%s", "Contact Shadows")) {
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property("Enabled", (bool*)cvar_sys.cvar_contact_shadows_enabled.get_ptr());
+          UI::property("Enabled", cvar_sys.cvar_contact_shadows_enabled.get_ptr_bool());
           UI::property("Steps", cvar_sys.cvar_contact_shadows_steps.get_ptr(), 1, 64);
           UI::property<float>("Thickness", cvar_sys.cvar_contact_shadows_thickness.get_ptr(), 0.0, 5);
           UI::property<float>("Length", cvar_sys.cvar_contact_shadows_length.get_ptr(), 0.0, 5);
@@ -703,7 +703,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
       UI::property(
         "Scale Viewport With Content Scale",
-        (bool*)editor_cvar.cvar_scale_viewport_size_with_content_scale.get_ptr()
+        editor_cvar.cvar_scale_viewport_size_with_content_scale.get_ptr_bool()
       );
       const char* scale_amounts[4] = {
         "1x",
@@ -734,7 +734,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
         UI::property<float>("Camera sensitivity", editor_cvar.cvar_camera_sens.get_ptr(), 0.01f, 20.0f);
         UI::property<float>("Movement speed", editor_cvar.cvar_camera_speed.get_ptr(), 0.1f, 100.0f);
-        UI::property("Smooth camera", (bool*)editor_cvar.cvar_camera_smooth.get_ptr());
+        UI::property("Smooth camera", editor_cvar.cvar_camera_smooth.get_ptr_bool());
         UI::property("Camera zoom", editor_cvar.cvar_camera_zoom.get_ptr(), 1, 100);
         UI::end_properties();
       }
@@ -750,7 +750,7 @@ auto ViewportPanel::draw_gizmo_settings_panel(this ViewportPanel& self) -> void 
   auto& editor_cvar = App::mod<Editor>().editor_cvar;
 
   if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-    UI::property("Draw grid", (bool*)editor_cvar.cvar_draw_grid.get_ptr());
+    UI::property("Draw grid", editor_cvar.cvar_draw_grid.get_ptr_bool());
     UI::property<f32>("Grid distance", editor_cvar.cvar_draw_grid_distance.get_ptr(), 10.f, 10000.0f);
 
     UI::property("Draw Component Gizmos", &self.draw_component_gizmos);
