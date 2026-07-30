@@ -1,15 +1,20 @@
 import common;
 import gpu;
+import scene;
 
-struct ShaderParameters {
-  StorageImage2D<f32x4, ImageFormat::R11F_G11F_B10F> result_image;
-  Image2D<f32x4> source_image;
-  SamplerState sampler;
-};
+#include <passes/histogram.slang>
+
+[[vk::constant_id(0)]] const u32 scene_flags = 0;
+
+[[vk::binding(0, 0)]] StorageImage2D<f32x4, ImageFormat::R11F_G11F_B10F> result_image;
+[[vk::binding(1, 0)]] Image2D<f32x4> source_image;
+[[vk::binding(2, 0)]] SamplerState sampler;
+[[vk::binding(3, 0)]] ConstantBuffer<HistogramLuminance> histogram_luminance;
 
 struct PushConstants {
   f32 threshold;
   f32 soft_threshold;
+  f32 clamp_value;
   u32x3 img_size;
 };
 
@@ -35,11 +40,7 @@ func prefilter(f32x3 color, f32 threshold, f32 soft_threshold) -> f32x3 {
 
 [[shader("compute")]]
 [[numthreads(16, 16, 1)]]
-func cs_main(
-  u32x3 thread_id : SV_DispatchThreadID,
-  uniform ParameterBlock<ShaderParameters> params,
-  uniform PushConstants pc
-) {
+func cs_main(u32x3 thread_id : SV_DispatchThreadID, uniform PushConstants pc) {
   let texel = thread_id.xy;
   if (any(texel >= pc.img_size.xy))
     return;
@@ -47,36 +48,40 @@ func cs_main(
   let uv = (texel + 0.5) / f32x2(pc.img_size.xy);
   let texel_size = 1.0 / f32x2(pc.img_size.xy);
 
-  let a = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2(-2.0,  2.0));
-  let b = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2( 0.0,  2.0));
-  let c = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2( 2.0,  2.0));
-  let d = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2(-2.0,  0.0));
-  let e = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2( 0.0,  0.0));
-  let f = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2( 2.0,  0.0));
-  let g = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2(-2.0, -2.0));
-  let h = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2( 0.0, -2.0));
-  let i = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2( 2.0, -2.0));
-  let j = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2(-1.0,  1.0));
-  let k = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2( 1.0,  1.0));
-  let l = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2(-1.0, -1.0));
-  let m = sample_color(params.source_image, params.sampler, uv, texel_size * f32x2( 1.0, -1.0));
+  let a = sample_color(source_image, sampler, uv, texel_size * f32x2(-2.0,  2.0));
+  let b = sample_color(source_image, sampler, uv, texel_size * f32x2( 0.0,  2.0));
+  let c = sample_color(source_image, sampler, uv, texel_size * f32x2( 2.0,  2.0));
+  let d = sample_color(source_image, sampler, uv, texel_size * f32x2(-2.0,  0.0));
+  let e = sample_color(source_image, sampler, uv, texel_size * f32x2( 0.0,  0.0));
+  let f = sample_color(source_image, sampler, uv, texel_size * f32x2( 2.0,  0.0));
+  let g = sample_color(source_image, sampler, uv, texel_size * f32x2(-2.0, -2.0));
+  let h = sample_color(source_image, sampler, uv, texel_size * f32x2( 0.0, -2.0));
+  let i = sample_color(source_image, sampler, uv, texel_size * f32x2( 2.0, -2.0));
+  let j = sample_color(source_image, sampler, uv, texel_size * f32x2(-1.0,  1.0));
+  let k = sample_color(source_image, sampler, uv, texel_size * f32x2( 1.0,  1.0));
+  let l = sample_color(source_image, sampler, uv, texel_size * f32x2(-1.0, -1.0));
+  let m = sample_color(source_image, sampler, uv, texel_size * f32x2( 1.0, -1.0));
+
+  var exposure = 1.0;
+  if ((scene_flags & SceneFlags::HasEyeAdaptation) != 0)
+    exposure = histogram_luminance.exposure;
 
   let groups = Array<f32x3, 5>(
-    (a + b + d + e) * 0.25,
-    (b + c + e + f) * 0.25,
-    (d + e + g + h) * 0.25,
-    (e + f + h + i) * 0.25,
-    (j + k + l + m) * 0.25
+    (a + b + d + e) * 0.25 * exposure,
+    (b + c + e + f) * 0.25 * exposure,
+    (d + e + g + h) * 0.25 * exposure,
+    (e + f + h + i) * 0.25 * exposure,
+    (j + k + l + m) * 0.25 * exposure
   );
 
   var color_sum = f32x3(0.0);
   var weight_sum = 0.0;
   for (u32 gid = 0; gid < 5; gid++) {
-    let weight = karis_average(groups[gid]);
-    color_sum += groups[gid] * weight;
+    let group = min(groups[gid], f32x3(pc.clamp_value));
+    let weight = karis_average(group);
+    color_sum += prefilter(group, pc.threshold, pc.soft_threshold) * weight;
     weight_sum += weight;
   }
 
-  let result = prefilter(color_sum / (weight_sum + 1.0e-5), pc.threshold, pc.soft_threshold);
-  params.result_image.Store(texel, f32x4(result, 1.0));
+  result_image.Store(texel, f32x4(color_sum / (weight_sum + 1.0e-5), 1.0));
 }

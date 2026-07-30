@@ -42,6 +42,8 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_bloom_threshold.init(self.system, "pp.bloom_threshold", "bloom threshold", 1.0f);
   self.cvar_bloom_soft_threshold.init(self.system, "pp.bloom_soft_threshold", "bloom soft threshold", 0.125f);
   self.cvar_bloom_radius.init(self.system, "pp.bloom_radius", "bloom radius", 0.75f);
+  self.cvar_bloom_intensity.init(self.system, "pp.bloom_intensity", "bloom intensity", 0.1f);
+  self.cvar_bloom_clamp.init(self.system, "pp.bloom_clamp", "bloom source clamp", 4.0f);
 
   self.cvar_fxaa_enable.init(self.system, "pp.fxaa", "use fxaa", 1);
 
@@ -80,6 +82,8 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["threshold"] = self.cvar_bloom_threshold.get();
   writer["soft_threshold"] = self.cvar_bloom_soft_threshold.get();
   writer["radius"] = self.cvar_bloom_radius.get();
+  writer["intensity"] = self.cvar_bloom_intensity.get();
+  writer["clamp"] = self.cvar_bloom_clamp.get();
   writer.end_obj();
 
   writer["fxaa"].begin_obj();
@@ -128,6 +132,13 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_bloom_threshold.set(bloom_obj["threshold"].get_double());
     self.cvar_bloom_soft_threshold.set(bloom_obj["soft_threshold"].get_double());
     self.cvar_bloom_radius.set(bloom_obj["radius"].get_double());
+    // Newer keys than the rest of the block; scenes serialized before they exist keep the defaults.
+    auto intensity_obj = bloom_obj["intensity"];
+    if (!intensity_obj.error())
+      self.cvar_bloom_intensity.set(intensity_obj.get_double());
+    auto clamp_obj = bloom_obj["clamp"];
+    if (!clamp_obj.error())
+      self.cvar_bloom_clamp.set(clamp_obj.get_double());
   }
 
   auto fxaa_obj = json["fxaa"];

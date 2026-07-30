@@ -556,6 +556,9 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       cvar_sys.cvar_bloom_enable.set_default();
       cvar_sys.cvar_bloom_threshold.set_default();
       cvar_sys.cvar_bloom_soft_threshold.set_default();
+      cvar_sys.cvar_bloom_radius.set_default();
+      cvar_sys.cvar_bloom_intensity.set_default();
+      cvar_sys.cvar_bloom_clamp.set_default();
       cvar_sys.cvar_fxaa_enable.set_default();
       cvar_sys.cvar_vbgtao_quality_level.set_default();
       cvar_sys.cvar_vbgtao_radius.set_default();
@@ -653,6 +656,9 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
           UI::property("Enabled", cvar_sys.cvar_bloom_enable.get_ptr_bool());
           UI::property<float>("Threshold", cvar_sys.cvar_bloom_threshold.get_ptr(), 0.0f, 100.0f);
           UI::property<float>("Soft Threshold", cvar_sys.cvar_bloom_soft_threshold.get_ptr(), 0.0f, 1.0f);
+          UI::property<float>("Radius", cvar_sys.cvar_bloom_radius.get_ptr(), 0.0f, 1.0f);
+          UI::property<float>("Intensity", cvar_sys.cvar_bloom_intensity.get_ptr(), 0.0f, 1.0f);
+          UI::property<float>("Clamp", cvar_sys.cvar_bloom_clamp.get_ptr(), 1.0f, 64.0f);
           UI::end_properties();
         }
         ImGui::TreePop();
