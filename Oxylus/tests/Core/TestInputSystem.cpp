@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include "Core/App.hpp"
+#include "Core/Enum.hpp"
 #include "Core/Input.hpp"
 #include "Core/VirtualController.hpp"
 #include "Core/VirtualKeyboard.hpp"
