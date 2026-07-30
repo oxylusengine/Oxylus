@@ -1,5 +1,6 @@
 #include "Core/ProjectSerializer.hpp"
 
+#include <fmt/std.h>
 #include <toml++/toml.hpp>
 
 #include "OS/File.hpp"

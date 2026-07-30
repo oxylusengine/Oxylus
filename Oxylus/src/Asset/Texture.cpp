@@ -5,6 +5,7 @@
 #include "Asset/Texture.hpp"
 
 #include <ankerl/svector.h>
+#include <fmt/std.h>
 #include <ktx.h>
 #include <stb_image.h>
 #include <stb_image_resize2.h>

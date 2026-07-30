@@ -3,8 +3,6 @@
 #include "Utils/CVars.hpp"
 #include "Utils/JsonWriter.hpp"
 
-#include <simdjson.h>
-
 namespace ox {
 struct RendererCVar {
   CVarSystem system;
@@ -14,7 +12,9 @@ struct RendererCVar {
   auto init(this RendererCVar& self) -> void;
 
   auto to_json(this const RendererCVar& self, JsonWriter& writer) -> void;
-  auto from_json(this const RendererCVar& self, simdjson::ondemand::value& json) -> void;
+
+  template <typename JsonValue>
+  auto from_json(this const RendererCVar& self, JsonValue& json) -> void;
 
   AutoCVar_Int cvar_enable_debug_renderer;
   AutoCVar_Int cvar_draw_bounding_boxes;

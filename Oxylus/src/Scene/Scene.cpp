@@ -1,5 +1,8 @@
 #include "Scene/Scene.hpp"
 
+#include <fmt/std.h>
+#include <fstream>
+
 // clang-format off
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/AllowedDOFs.h>
@@ -2019,8 +2022,9 @@ auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   writer.end_obj();
 }
 
+template <typename JsonValue>
 auto Scene::json_to_entity(
-  Scene& self, flecs::entity root, simdjson::ondemand::value& json, std::vector<UUID>& requested_assets
+  Scene& self, flecs::entity root, JsonValue& json, std::vector<UUID>& requested_assets
 ) -> flecs::entity {
   ZoneScoped;
   memory::ScopedStack stack;
@@ -2235,4 +2239,8 @@ auto Scene::load_from_file(this Scene& self, const std::filesystem::path& path) 
 
   return self.from_json(content);
 }
+
+template auto Scene::json_to_entity(
+  Scene& self, flecs::entity root, simdjson::ondemand::value& json, std::vector<UUID>& requested_assets
+) -> flecs::entity;
 } // namespace ox

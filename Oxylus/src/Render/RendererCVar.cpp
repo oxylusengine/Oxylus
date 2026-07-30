@@ -1,5 +1,7 @@
 #include "Render/RendererCVar.hpp"
 
+#include <simdjson.h>
+
 namespace ox {
 
 RendererCVar::RendererCVar() { init(); }
@@ -96,7 +98,8 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer.end_obj(); // config obj
 }
 
-auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::value& json) -> void {
+template <typename JsonValue>
+auto RendererCVar::from_json(this const RendererCVar& self, JsonValue& json) -> void {
   ZoneScoped;
 
   auto debug_obj = json["debug"];
@@ -143,4 +146,6 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_contact_shadows_length.set(cs_obj["length"].get_double());
   }
 }
+
+template auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::value& json) -> void;
 } // namespace ox

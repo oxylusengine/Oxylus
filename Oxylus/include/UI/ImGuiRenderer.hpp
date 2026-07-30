@@ -2,11 +2,13 @@
 
 #include <ankerl/unordered_dense.h>
 #include <expected>
+#include <filesystem>
 #include <glm/vec2.hpp>
 #include <imgui.h>
 #include <vuk/Value.hpp>
 
 #include "Asset/Texture.hpp"
+#include "Core/Option.hpp"
 
 namespace ox {
 class RenderContext;

@@ -1,5 +1,7 @@
 #include "Asset/AssetFile.hpp"
 
+#include <fmt/std.h>
+
 #include "OS/File.hpp"
 #include "Utils/Log.hpp"
 

@@ -9,16 +9,15 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 // clang-format on
 
-#include <simdjson.h>
-
 #include "Asset/Model.hpp"
 #include "Core/UUID.hpp"
+#include "Memory/SlotMap.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Scene/SceneGPU.hpp"
-#include "Scripting/LuaSystem.hpp"
+#include "Scene/SceneID.hpp"
 #include "Utils/Timestep.hpp"
 
 template <>
@@ -39,6 +38,7 @@ struct ankerl::unordered_dense::hash<flecs::entity> {
 
 namespace ox {
 struct JsonWriter;
+class LuaSystem;
 
 struct ComponentDB {
   std::vector<flecs::id> components = {};
@@ -49,7 +49,6 @@ struct ComponentDB {
   auto get_components(this ComponentDB&) -> std::span<flecs::id>;
 };
 
-enum class SceneID : u64 { Invalid = std::numeric_limits<u64>::max() };
 class Scene {
 public:
   std::string scene_name = "Untitled";
@@ -164,10 +163,11 @@ public:
   auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
 
   static auto entity_to_json(JsonWriter& writer, flecs::entity e) -> void;
+  template <typename JsonValue>
   static auto json_to_entity(
     Scene& self, //
     flecs::entity root,
-    simdjson::ondemand::value& json,
+    JsonValue& json,
     std::vector<UUID>& requested_assets
   ) -> flecs::entity;
 

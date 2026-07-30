@@ -1,6 +1,6 @@
 #pragma once
 
-#include <simdjson.h>
+#include <expected>
 
 #include "Asset/AssetFile.hpp"
 #include "Asset/AudioSource.hpp"
@@ -10,11 +10,12 @@
 #include "Core/UUID.hpp"
 #include "Memory/ReadGuard.hpp"
 #include "Memory/SlotMap.hpp"
-#include "Scene/Scene.hpp"
+#include "Scene/SceneID.hpp"
 #include "Scripting/LuaSystem.hpp"
 #include "Utils/JsonWriter.hpp"
 
 namespace ox {
+class Scene;
 struct Asset {
   UUID uuid = {};
   std::filesystem::path path = {};
@@ -44,17 +45,16 @@ class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
+  AssetManager();
+  ~AssetManager();
+
   using LoadInfo = std::variant<TextureLoadInfo, Material>;
 
   static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
   static auto write_gltf_meta(AssetManager& self, const std::filesystem::path& path, JsonWriter& json) -> bool;
 
-  struct AssetMetaFile {
-    simdjson::padded_string contents;
-    simdjson::ondemand::parser parser;
-    simdjson::simdjson_result<simdjson::ondemand::document> doc;
-  };
+  struct AssetMetaFile;
 
   auto init(this AssetManager& self) -> std::expected<void, std::string>;
   auto deinit(this AssetManager& self) -> std::expected<void, std::string>;
@@ -143,12 +143,12 @@ private:
 
   std::vector<MaterialID> dirty_materials = {};
 
-  SlotMap<Model, ModelID> model_map = {};
-  SlotMap<Texture, TextureID> texture_map = {};
-  SlotMap<Material, MaterialID> material_map = {};
-  SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};
-  SlotMap<AudioSource, AudioID> audio_map = {};
-  SlotMap<std::unique_ptr<LuaSystem>, ScriptID> script_map = {};
+  SlotMap<Model, ModelID> model_map;
+  SlotMap<Texture, TextureID> texture_map;
+  SlotMap<Material, MaterialID> material_map;
+  SlotMap<std::unique_ptr<Scene>, SceneID> scene_map;
+  SlotMap<AudioSource, AudioID> audio_map;
+  SlotMap<std::unique_ptr<LuaSystem>, ScriptID> script_map;
 
   UUID null_material = {};
 };

@@ -3,10 +3,12 @@
 #include <sol/state.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
 #include "Networking/NetworkManager.hpp"
 #include "Physics/Physics.hpp"
+#include "Render/Renderer.hpp"
 #include "Scripting/LuaHelpers.hpp"
 #include "Scripting/LuaManager.hpp"
 

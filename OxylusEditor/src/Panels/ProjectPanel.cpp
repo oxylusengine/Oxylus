@@ -1,5 +1,6 @@
 #include "ProjectPanel.hpp"
 
+#include <fmt/std.h>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>

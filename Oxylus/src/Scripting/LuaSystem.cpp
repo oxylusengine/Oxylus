@@ -3,6 +3,7 @@
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <fmt/std.h>
 #include <sol/state.hpp>
 
 #include "Core/App.hpp"

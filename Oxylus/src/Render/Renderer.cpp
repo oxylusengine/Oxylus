@@ -3,6 +3,7 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 #include <vuk/vsl/Core.hpp>
 
+#include "Asset/AssetFile.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Render/RenderContext.hpp"

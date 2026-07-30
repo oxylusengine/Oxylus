@@ -12,6 +12,7 @@
 #include <vuk/runtime/vk/Query.hpp>
 #include <zpp_bits.h>
 
+#include "Asset/AssetFile.hpp"
 #include "Core/App.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/Window.hpp"

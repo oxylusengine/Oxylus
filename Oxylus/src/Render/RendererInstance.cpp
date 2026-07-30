@@ -9,6 +9,7 @@
 #include "Render/DebugRenderer.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/Utils/VukCommon.hpp"
+#include "Scene/Scene.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Utils/Log.hpp"
 

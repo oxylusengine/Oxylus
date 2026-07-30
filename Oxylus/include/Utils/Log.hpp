@@ -1,6 +1,5 @@
 #pragma once
 
-#include <fmt/std.h>
 #include <loguru.hpp>
 
 namespace ox {

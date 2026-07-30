@@ -1,5 +1,6 @@
 #include "InspectorPanel.hpp"
 
+#include <fmt/std.h>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -7,6 +8,7 @@
 
 #include "Asset/AssetFile.hpp"
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMetaFile.hpp"
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
 #include "Editor.hpp"

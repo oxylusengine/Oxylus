@@ -1,5 +1,6 @@
 #include "Asset/AudioSource.hpp"
 
+#include <fmt/std.h>
 #include <miniaudio.h>
 
 #include "Audio/AudioEngine.hpp"

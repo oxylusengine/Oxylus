@@ -1,5 +1,6 @@
 #include "UI/UI.hpp"
 
+#include <fmt/std.h>
 #include <imgui_stdlib.h>
 
 #include "Asset/AssetManager.hpp"

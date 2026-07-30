@@ -2,6 +2,7 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Memory/Stack.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
 
 namespace ox {

@@ -1,13 +1,16 @@
 #include "Asset/AssetManager.hpp"
 
 #include <ankerl/svector.h>
+#include <fmt/std.h>
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
 #include <zpp_bits.h>
 
+#include "Asset/AssetMetaFile.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
+#include "Scene/Scene.hpp"
 #include "Scripting/LuaSystem.hpp"
 #include "Utils/Log.hpp"
 
@@ -79,6 +82,9 @@ auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bo
   file.close();
   return true;
 }
+
+AssetManager::AssetManager() = default;
+AssetManager::~AssetManager() = default;
 
 auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::string> {
   ZoneScoped;

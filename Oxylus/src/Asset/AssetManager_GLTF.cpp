@@ -1,6 +1,7 @@
 #include <fastgltf/core.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
+#include <fmt/std.h>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <meshoptimizer.h>
@@ -9,6 +10,7 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMetaFile.hpp"
 #include "Core/App.hpp"
 #include "Memory/Stack.hpp"
 

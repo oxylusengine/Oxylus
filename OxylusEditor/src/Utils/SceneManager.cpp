@@ -1,5 +1,7 @@
 #include "SceneManager.hpp"
 
+#include <fmt/std.h>
+
 #include "Core/App.hpp"
 
 namespace ox {

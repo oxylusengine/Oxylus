@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Memory/SlotMap.hpp"
 #include "Scene/Scene.hpp"
 
 namespace ox {

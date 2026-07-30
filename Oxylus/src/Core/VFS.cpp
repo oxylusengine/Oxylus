@@ -1,5 +1,7 @@
 #include "Core/VFS.hpp"
 
+#include <fmt/std.h>
+
 #include "Utils/Log.hpp"
 
 namespace ox {

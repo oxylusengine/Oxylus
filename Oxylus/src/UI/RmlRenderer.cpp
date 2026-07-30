@@ -1,5 +1,7 @@
 #include "UI/RmlRenderer.hpp"
 
+#include <filesystem>
+
 #include "vuk/runtime/CommandBuffer.hpp"
 
 namespace ox {

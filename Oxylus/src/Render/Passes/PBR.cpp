@@ -1,5 +1,6 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
+#include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/Scene.hpp"
