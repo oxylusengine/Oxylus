@@ -101,14 +101,7 @@ public:
   auto set_material_dirty(this AssetManager& self, MaterialID material_id) -> void;
   auto set_material_dirty(this AssetManager& self, const UUID& uuid) -> void;
   auto set_all_materials_dirty(this AssetManager& self) -> void;
-
-  // Materials are uploaded into a GPU buffer owned by each Scene, so every scene needs to see
-  // every material change. A dirty list can't be shared: draining it in one scene would hide
-  // the change from all the others (e.g. an edit scene stealing the updates of a play scene).
-  // Each consumer registers once and drains only its own list.
-  auto register_material_consumer(this AssetManager& self) -> MaterialConsumerID;
-  auto unregister_material_consumer(this AssetManager& self, MaterialConsumerID consumer_id) -> void;
-  auto get_dirty_material_ids(this AssetManager& self, MaterialConsumerID consumer_id) -> std::vector<MaterialID>;
+  auto get_dirty_material_ids(this AssetManager& self) -> std::vector<MaterialID>;
 
   auto get_scene(this AssetManager& self, const UUID& uuid) -> ReadGuard<Scene>;
   auto get_scene(this AssetManager& self, SceneID scene_id) -> ReadGuard<Scene>;
@@ -148,8 +141,7 @@ private:
   std::shared_mutex audio_mutex = {};
   std::shared_mutex scripts_mutex = {};
 
-  ankerl::unordered_dense::map<MaterialConsumerID, std::vector<MaterialID>> dirty_materials = {};
-  u64 material_consumer_counter = 0;
+  std::vector<MaterialID> dirty_materials = {};
 
   SlotMap<Model, ModelID> model_map = {};
   SlotMap<Texture, TextureID> texture_map = {};

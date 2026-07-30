@@ -11,7 +11,6 @@
 
 #include <simdjson.h>
 
-#include "Asset/Material.hpp"
 #include "Asset/Model.hpp"
 #include "Core/UUID.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
@@ -74,11 +73,7 @@ public:
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};
 
-  std::vector<GPU::Material> gpu_materials = {};
-  MaterialConsumerID material_consumer_id = MaterialConsumerID::Invalid;
-
   bool meshes_dirty = false;
-  bool force_material_update = true;
   u32 gpu_mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
 

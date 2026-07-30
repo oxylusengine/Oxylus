@@ -25,14 +25,12 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
-#include "Core/Enum.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
 #include "Physics/Physics.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Physics/PhysicsMaterial.hpp"
 #include "Render/Camera.hpp"
-#include "Render/Utils/VukCommon.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "UI/RmlUI.hpp"
@@ -395,11 +393,6 @@ Scene::~Scene() {
   if (running)
     runtime_stop();
 
-  if (material_consumer_id != MaterialConsumerID::Invalid && App::has_mod<AssetManager>()) {
-    App::mod<AssetManager>().unregister_material_consumer(material_consumer_id);
-    material_consumer_id = MaterialConsumerID::Invalid;
-  }
-
   for (auto& [uuid, system] : lua_systems) {
     system->on_remove(this);
   }
@@ -420,11 +413,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   if (App::has_mod<Renderer>()) {
     auto& renderer = App::mod<Renderer>();
     self.renderer_instance = renderer.new_instance(self);
-  }
-
-  // Every scene keeps its own GPU material buffer, so it needs its own dirty material list.
-  if (App::has_mod<AssetManager>()) {
-    self.material_consumer_id = App::mod<AssetManager>().register_material_consumer();
   }
 
   auto& physics = App::mod<Physics>();
@@ -1220,120 +1208,11 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       }
     }
 
-    auto uuid_to_image_index = [&](const UUID& uuid) -> option<u32> {
-      if (!uuid || !asset_man.is_loaded(uuid)) {
-        return nullopt;
-      }
-
-      auto texture = asset_man.get_texture(uuid);
-      return texture->get_view_index();
-    };
-
-    if (self.force_material_update) {
-      asset_man.set_all_materials_dirty();
-      self.force_material_update = false;
-    }
-
-    auto dirty_material_ids = asset_man.get_dirty_material_ids(self.material_consumer_id);
-    auto dirty_material_indices = std::vector<u32>();
-    for (const auto dirty_id : dirty_material_ids) {
-      const auto material = asset_man.get_material(dirty_id);
-      if (!material)
-        continue;
-
-      auto dirty_index = SlotMap_decode_id(dirty_id).index;
-      dirty_material_indices.push_back(dirty_index);
-      if (dirty_index >= self.gpu_materials.size()) {
-        self.gpu_materials.resize(dirty_index + 1, {});
-      }
-
-      auto albedo_image_index = uuid_to_image_index(material->albedo_texture);
-      auto normal_image_index = uuid_to_image_index(material->normal_texture);
-      auto emissive_image_index = uuid_to_image_index(material->emissive_texture);
-      auto metallic_roughness_image_index = uuid_to_image_index(material->metallic_roughness_texture);
-      auto occlusion_image_index = uuid_to_image_index(material->occlusion_texture);
-      auto sampler_index = 0_u32;
-
-      auto flags = GPU::MaterialFlag::None;
-      if (albedo_image_index.has_value()) {
-        flags |= GPU::MaterialFlag::HasAlbedoImage;
-
-        // Incase we wanted to change a material's sampler after it's creation
-        // we should prefer material's sampler over texture's default sampler.
-        auto& render_context = App::get_rendercontext();
-
-        auto texture = asset_man.get_texture(material->albedo_texture);
-        sampler_index = texture->get_sampler_index();
-
-        auto texture_sampler = render_context.resources.samplers.slot(texture->get_sampler_id());
-
-        vuk::SamplerCreateInfo sampler_ci = {};
-        switch (material->sampling_mode) {
-          case SamplingMode::LinearRepeated          : sampler_ci = vuk::LinearSamplerRepeated; break;
-          case SamplingMode::LinearClamped           : sampler_ci = vuk::LinearSamplerClamped; break;
-          case SamplingMode::NearestRepeated         : sampler_ci = vuk::NearestSamplerRepeated; break;
-          case SamplingMode::NearestClamped          : sampler_ci = vuk::NearestSamplerClamped; break;
-          case SamplingMode::LinearRepeatedAnisotropy: sampler_ci = vuk::LinearSamplerRepeatedAnisotropy; break;
-        }
-        auto material_sampler = render_context.runtime->acquire_sampler(sampler_ci, render_context.num_frames);
-        if (texture_sampler->id != material_sampler.id) {
-          auto sampler_id = render_context.allocate_sampler(sampler_ci);
-          auto sampler_index_from_material = SlotMap_decode_id(sampler_id).index;
-          sampler_index = sampler_index_from_material;
-        }
-      }
-
-      flags |= normal_image_index.has_value() ? GPU::MaterialFlag::HasNormalImage : GPU::MaterialFlag::None;
-      flags |= emissive_image_index.has_value() ? GPU::MaterialFlag::HasEmissiveImage : GPU::MaterialFlag::None;
-      flags |= metallic_roughness_image_index.has_value() ? GPU::MaterialFlag::HasMetallicRoughnessImage
-                                                          : GPU::MaterialFlag::None;
-      flags |= occlusion_image_index.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
-
-      auto gpu_material = GPU::Material{
-        .albedo_color =
-          glm::u16vec4{
-            meshopt_quantizeHalf(material->albedo_color.x),
-            meshopt_quantizeHalf(material->albedo_color.y),
-            meshopt_quantizeHalf(material->albedo_color.z),
-            meshopt_quantizeHalf(material->albedo_color.w),
-          },
-        .emissive_color =
-          glm::u16vec3{
-            meshopt_quantizeHalf(material->emissive_color.x),
-            meshopt_quantizeHalf(material->emissive_color.y),
-            meshopt_quantizeHalf(material->emissive_color.z),
-          },
-        .roughness_factor = meshopt_quantizeHalf(material->roughness_factor),
-        .metallic_factor = meshopt_quantizeHalf(material->metallic_factor),
-        .alpha_cutoff = meshopt_quantizeHalf(material->alpha_cutoff),
-        .flags = flags,
-        .sampler_index = sampler_index,
-        .albedo_image_index = albedo_image_index.value_or(0_u32),
-        .normal_image_index = normal_image_index.value_or(0_u32),
-        .emissive_image_index = emissive_image_index.value_or(0_u32),
-        .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
-        .occlusion_image_index = occlusion_image_index.value_or(0_u32),
-        .uv_size =
-          glm::u16vec2{
-            meshopt_quantizeHalf(material->uv_size.x),
-            meshopt_quantizeHalf(material->uv_size.y),
-          },
-        .uv_offset = glm::u16vec2{
-          meshopt_quantizeHalf(material->uv_offset.x),
-          meshopt_quantizeHalf(material->uv_offset.y),
-        },
-      };
-
-      self.gpu_materials[dirty_index] = gpu_material;
-    }
-
     auto update_info = RendererInstanceUpdateInfo{
       .mesh_instance_count = self.gpu_mesh_instance_count,
       .max_meshlet_instance_count = self.max_meshlet_instance_count,
       .dirty_transform_ids = self.dirty_transforms,
       .gpu_transforms = self.transforms.slots_unsafe(),
-      .dirty_material_indices = dirty_material_indices,
-      .gpu_materials = self.gpu_materials,
       .gpu_meshes = gpu_meshes,
       .gpu_mesh_instances = gpu_mesh_instances,
       .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices,

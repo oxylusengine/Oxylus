@@ -5,6 +5,9 @@
 #include <vuk/Value.hpp>
 #include <vuk/runtime/vk/Descriptor.hpp>
 
+#include "Scene/SceneGPU.hpp"
+#include "Utils/Timestep.hpp"
+
 namespace ox {
 class RendererInstance;
 class Scene;
@@ -23,13 +26,22 @@ public:
 
   auto init(this Renderer& self) -> std::expected<void, std::string>;
   auto deinit(this Renderer& self) -> std::expected<void, std::string>;
+  auto update(this Renderer& self, const Timestep& delta_time) -> void;
 
   auto new_instance(Scene& scene) -> std::unique_ptr<RendererInstance>;
+
+  auto get_materials_buffer(this Renderer& self) -> vuk::Value<vuk::Buffer>;
 
 private:
   friend RendererInstance;
 
+  auto sync_materials(this Renderer& self) -> void;
+
   RenderContext* render_context = nullptr;
   bool initalized = false;
+
+  std::vector<GPU::Material> gpu_materials = {};
+  std::vector<usize> pending_material_indices = {};
+  vuk::Unique<vuk::Buffer> materials_buffer = vuk::Unique<vuk::Buffer>();
 };
 } // namespace ox
