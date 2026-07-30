@@ -148,16 +148,16 @@ auto NetClient::handle_packet(this NetClient& self, NetPacket& packet) -> void {
       self.net_id = handshake->net_id;
     } break;
     case NetPacketType::SceneSnapshot: {
-      auto state = packet.get_scene_snapshot();
-      if (!state.has_value()) {
+      auto snapshot = packet.get_scene_snapshot();
+      if (!snapshot.has_value()) {
         return;
       }
 
       // TODO: Copying the whole scene snapshot...
       auto& es = App::get_event_system();
-      std::ignore = es.emit<ClientSceneSnapshotEvent>(ClientSceneSnapshotEvent(state->first, state->second));
+      std::ignore = es.emit<ClientSceneSnapshotEvent>(ClientSceneSnapshotEvent(snapshot->sequence, snapshot->state));
 
-      self.on_scene_snapshot(state->first, std::move(state->second));
+      self.on_scene_snapshot(snapshot->sequence, std::move(snapshot->state));
     } break;
     case NetPacketType::ClientAck: {
       // Not our job
