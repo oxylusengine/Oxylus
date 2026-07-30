@@ -395,6 +395,11 @@ Scene::~Scene() {
   if (running)
     runtime_stop();
 
+  if (material_consumer_id != MaterialConsumerID::Invalid && App::has_mod<AssetManager>()) {
+    App::mod<AssetManager>().unregister_material_consumer(material_consumer_id);
+    material_consumer_id = MaterialConsumerID::Invalid;
+  }
+
   for (auto& [uuid, system] : lua_systems) {
     system->on_remove(this);
   }
@@ -415,6 +420,11 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   if (App::has_mod<Renderer>()) {
     auto& renderer = App::mod<Renderer>();
     self.renderer_instance = renderer.new_instance(self);
+  }
+
+  // Every scene keeps its own GPU material buffer, so it needs its own dirty material list.
+  if (App::has_mod<AssetManager>()) {
+    self.material_consumer_id = App::mod<AssetManager>().register_material_consumer();
   }
 
   auto& physics = App::mod<Physics>();
@@ -1224,7 +1234,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       self.force_material_update = false;
     }
 
-    auto dirty_material_ids = asset_man.get_dirty_material_ids();
+    auto dirty_material_ids = asset_man.get_dirty_material_ids(self.material_consumer_id);
     auto dirty_material_indices = std::vector<u32>();
     for (const auto dirty_id : dirty_material_ids) {
       const auto material = asset_man.get_material(dirty_id);

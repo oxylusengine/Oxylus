@@ -891,11 +891,13 @@ auto AssetManager::set_material_dirty(this AssetManager& self, MaterialID materi
   ZoneScoped;
 
   auto lock = std::unique_lock(self.materials_mutex);
-  if (std::ranges::find(self.dirty_materials, material_id) != self.dirty_materials.end()) {
-    return;
-  }
+  for (auto& [consumer_id, dirty_list] : self.dirty_materials) {
+    if (std::ranges::find(dirty_list, material_id) != dirty_list.end()) {
+      continue;
+    }
 
-  self.dirty_materials.emplace_back(material_id);
+    dirty_list.emplace_back(material_id);
+  }
 }
 
 auto AssetManager::set_material_dirty(this AssetManager& self, const UUID& uuid) -> void {
@@ -919,12 +921,38 @@ auto AssetManager::set_all_materials_dirty(this AssetManager& self) -> void {
   }
 }
 
-auto AssetManager::get_dirty_material_ids(this AssetManager& self) -> std::vector<MaterialID> {
+auto AssetManager::register_material_consumer(this AssetManager& self) -> MaterialConsumerID {
   ZoneScoped;
 
   auto write_lock = std::unique_lock(self.materials_mutex);
-  auto dirty_copy = std::vector(self.dirty_materials);
-  self.dirty_materials.clear();
+  const auto consumer_id = static_cast<MaterialConsumerID>(self.material_consumer_counter++);
+  self.dirty_materials.emplace(consumer_id, std::vector<MaterialID>{});
+
+  // The list starts empty: a fresh consumer knows nothing about the materials that already
+  // exist, so it is expected to seed itself with set_all_materials_dirty() (Scene does this
+  // through force_material_update on its first update).
+  return consumer_id;
+}
+
+auto AssetManager::unregister_material_consumer(this AssetManager& self, const MaterialConsumerID consumer_id) -> void {
+  ZoneScoped;
+
+  auto write_lock = std::unique_lock(self.materials_mutex);
+  self.dirty_materials.erase(consumer_id);
+}
+
+auto AssetManager::get_dirty_material_ids(this AssetManager& self, const MaterialConsumerID consumer_id)
+  -> std::vector<MaterialID> {
+  ZoneScoped;
+
+  auto write_lock = std::unique_lock(self.materials_mutex);
+  const auto it = self.dirty_materials.find(consumer_id);
+  if (it == self.dirty_materials.end()) {
+    return {};
+  }
+
+  auto dirty_copy = std::move(it->second);
+  it->second.clear();
 
   return dirty_copy;
 }

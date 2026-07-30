@@ -23,6 +23,11 @@ enum class SamplingMode : u32 {
 };
 
 enum class MaterialID : u64 { Invalid = std::numeric_limits<u64>::max() };
+
+// Identifies something that keeps its own copy of the material data (a Scene's GPU buffer)
+// and therefore needs its own dirty material list. See AssetManager::register_material_consumer.
+enum class MaterialConsumerID : u64 { Invalid = std::numeric_limits<u64>::max() };
+
 struct Material {
   glm::vec4 albedo_color = {1.0f, 1.0f, 1.0f, 1.0f};
   glm::vec2 uv_size = {1.0f, 1.0f};
