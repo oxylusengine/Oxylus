@@ -53,6 +53,10 @@ auto EditorScene::play(this EditorScene& self) -> void {
 auto EditorScene::stop(this EditorScene& self) -> void {
   ZoneScoped;
 
+  if (self.scene != nullptr && self.scene->is_running()) {
+    self.scene->runtime_stop();
+  }
+
   self.scene_state = SceneState::Edit;
 }
 

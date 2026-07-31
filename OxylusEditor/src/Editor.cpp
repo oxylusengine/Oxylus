@@ -162,12 +162,16 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   auto& net = App::mod<NetworkManager>();
   job_man.get_tracker().stop_tracking();
 
-  self.main_viewport_panel.deinit();
-  self.main_viewport_panel.reset();
-
   auto& event_system = App::get_event_system();
   std::ignore = event_system.unsubscribe<ScenePlayEvent>(self.scene_play_handler);
   std::ignore = event_system.unsubscribe<SceneStopEvent>(self.scene_stop_handler);
+
+  self.main_viewport_panel.deinit();
+  self.main_viewport_panel.reset();
+
+  self.editor_panel_registry.get<SceneHierarchyPanel>().set_scene(nullptr);
+  self.editor_context.reset();
+  self.scene_manager.reset();
 
   Log::remove_callback("editor_notifications");
 
