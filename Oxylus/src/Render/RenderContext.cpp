@@ -458,6 +458,7 @@ auto RenderContext::new_frame(this RenderContext& self) -> vuk::Value<vuk::Image
 
   {
     auto write_lock = std::unique_lock(self.frame_allocator_mutex);
+    auto queue_lock = std::unique_lock(self.queue_mutex);
     if (self.frame_allocator) {
       self.frame_allocator.reset();
     }
@@ -493,6 +494,7 @@ auto RenderContext::end_frame(this RenderContext& self, vuk::Value<vuk::ImageAtt
   auto entire_thing = vuk::enqueue_presentation(std::move(target_));
   vuk::ProfilingCallbacks cbs = self.tracy_profiler->setup_vuk_callback();
   try {
+    auto queue_lock = std::unique_lock(self.queue_mutex);
     entire_thing.submit(*self.frame_allocator, self.compiler, {.graph_label = {}, .callbacks = cbs});
   } catch (vuk::VkException& exception) {
     // Actions such as minimizing the window will report a VK_ERROR_OUT_OF_DATE_KHR error,
@@ -516,6 +518,7 @@ auto RenderContext::wait(this RenderContext& self) -> void {
 auto RenderContext::wait_on(vuk::UntypedValue&& fut) -> void {
   ZoneScoped;
 
+  auto queue_lock = std::unique_lock(queue_mutex);
   fut.wait(superframe_allocator.value(), this_thread_compiler);
 }
 
@@ -530,6 +533,7 @@ auto RenderContext::submit_now(vuk::UntypedValue&& fut) -> void {
 auto RenderContext::wait_on_multiple(std::span<vuk::UntypedValue> values) -> void {
   ZoneScoped;
 
+  auto queue_lock = std::unique_lock(queue_mutex);
   vuk::wait_for_values_explicit(superframe_allocator.value(), this_thread_compiler, values);
 }
 

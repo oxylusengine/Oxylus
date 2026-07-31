@@ -29,8 +29,7 @@ auto DebugRenderer::init() -> std::expected<void, std::string> {
     std::span(indices)
   );
 
-  auto compiler = vuk::Compiler{};
-  i_buff_fut.wait(*App::get_rendercontext().superframe_allocator, compiler);
+  App::get_rendercontext().wait_on(std::move(i_buff_fut));
 
   debug_renderer_context.index_buffer = std::move(i_buff);
 
@@ -251,8 +250,9 @@ void DebugRenderer::draw_cone(
   }
 }
 
-void
-DebugRenderer::draw_aabb(const AABB& aabb, const glm::vec4& color, bool corners_only, float width, bool depth_tested) {
+void DebugRenderer::draw_aabb(
+  const AABB& aabb, const glm::vec4& color, bool corners_only, float width, bool depth_tested
+) {
   glm::vec3 uuu = aabb.max;
   glm::vec3 lll = aabb.min;
 
@@ -374,13 +374,15 @@ void DebugRenderer::draw_frustum(const glm::mat4& frustum, const glm::vec4& colo
   draw_line(brn, brf, 1.0f, color, false);
 }
 
-void
-DebugRenderer::draw_ray(const RayCast& ray, const glm::vec4& color, const float distance, const bool depth_tested) {
+void DebugRenderer::draw_ray(
+  const RayCast& ray, const glm::vec4& color, const float distance, const bool depth_tested
+) {
   draw_line(ray.get_origin(), ray.get_origin() + ray.get_direction() * distance, 1.0f, color, depth_tested);
 }
 
-std::pair<std::vector<DebugRenderer::Vertex>, uint32_t>
-DebugRenderer::get_vertices_from_lines(const std::vector<Line>& lines) {
+std::pair<std::vector<DebugRenderer::Vertex>, uint32_t> DebugRenderer::get_vertices_from_lines(
+  const std::vector<Line>& lines
+) {
   std::vector<DebugRenderer::Vertex> vertices = {};
   vertices.reserve(lines.size() * 2);
   uint32_t indices = 0;
@@ -395,8 +397,9 @@ DebugRenderer::get_vertices_from_lines(const std::vector<Line>& lines) {
   return {vertices, indices};
 }
 
-std::pair<std::vector<DebugRenderer::Vertex>, uint32_t>
-DebugRenderer::get_vertices_from_triangles(const std::vector<Triangle>& triangles) {
+std::pair<std::vector<DebugRenderer::Vertex>, uint32_t> DebugRenderer::get_vertices_from_triangles(
+  const std::vector<Triangle>& triangles
+) {
   std::vector<Vertex> vertices = {};
   vertices.reserve(triangles.size() * 3);
   uint32_t indices = 0;
@@ -517,8 +520,9 @@ void PhysicsDebugRenderer::DrawGeometry(
       }
     }
 
-    if (inCullMode == JPH::DebugRenderer::ECullMode::CullFrontFace ||
-        inCullMode == JPH::DebugRenderer::ECullMode::Off) {
+    if (
+      inCullMode == JPH::DebugRenderer::ECullMode::CullFrontFace || inCullMode == JPH::DebugRenderer::ECullMode::Off
+    ) {
       for (u32 t = 0; t < pBatch->triangles.size(); ++t) {
         auto& tri = debug_renderer.draw_list.debug_triangles.emplace_back();
         tri.col = pBatch->triangles[t].col * color;

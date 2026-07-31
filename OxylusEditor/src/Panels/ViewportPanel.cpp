@@ -1206,7 +1206,10 @@ auto ViewportPanel::mouse_picking_stages(
         );
 
         auto temp_compiler = vuk::Compiler{};
-        readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
+        {
+          auto queue_lock = std::unique_lock(ctx.render_context.queue_mutex);
+          readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
+        }
 
         u32 texel_data = ~0_u32;
         std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
@@ -1261,7 +1264,10 @@ auto ViewportPanel::mouse_picking_stages(
         );
 
         auto temp_compiler = vuk::Compiler{};
-        readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
+        {
+          auto queue_lock = std::unique_lock(ctx.render_context.queue_mutex);
+          readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
+        }
 
         u32 texel_data = ~0_u32;
         std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
