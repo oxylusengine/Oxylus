@@ -199,6 +199,8 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   rml_renderer.begin_frame();
 
+  imgui_renderer.keyboard_input_enabled = !self.main_viewport_panel.is_any_scene_playing();
+
   imgui_renderer.begin_frame(timestep.get_seconds(), window.get_logical_size(), window.get_real_size());
   ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
   ImGuizmo::BeginFrame();
