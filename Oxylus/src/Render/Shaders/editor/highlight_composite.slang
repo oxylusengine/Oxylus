@@ -48,7 +48,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<CompositeParameters> par
 
   if (edge_intensity > 0.01) {
     f32 pixel_depth = params.scene_depth.Load(i32x3(pixel_coords, 0)).r;
-    f32x4 final_outline = config.outline_color;
+    f32x4 final_outline = f32x4(com::srgb_to_linear(config.outline_color.rgb), config.outline_color.a);
 
     bool is_occluded = (pixel_depth > 0.00001f);
 

@@ -400,8 +400,11 @@ Scene::~Scene() {
   // world.release();
 
   lua_systems.clear();
-  auto& lua_manager = App::mod<LuaManager>();
-  lua_manager.get_state()->collect_gc();
+
+  if (App::has_mod<LuaManager>()) {
+    auto& lua_manager = App::mod<LuaManager>();
+    lua_manager.get_state()->collect_gc();
+  }
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {
@@ -1112,15 +1115,16 @@ auto Scene::runtime_stop(this Scene& self) -> void {
     system->on_scene_stop(&self);
   }
 
-  // RmlUI
-  auto& rmlui = App::mod<RmlUI>();
-  auto rml_ctxs = rmlui.get_contexts();
-  for (auto* ctx : rml_ctxs) {
-    auto doc_count = ctx->GetNumDocuments();
-    for (i32 i = 0; i < doc_count; i++) {
-      auto doc = ctx->GetDocument(i);
-      if (doc) {
-        doc->Hide();
+  if (App::has_mod<RmlUI>()) {
+    auto& rmlui = App::mod<RmlUI>();
+    auto rml_ctxs = rmlui.get_contexts();
+    for (auto* ctx : rml_ctxs) {
+      auto doc_count = ctx->GetNumDocuments();
+      for (i32 i = 0; i < doc_count; i++) {
+        auto doc = ctx->GetDocument(i);
+        if (doc) {
+          doc->Hide();
+        }
       }
     }
   }
