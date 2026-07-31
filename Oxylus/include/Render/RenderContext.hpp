@@ -54,8 +54,8 @@ public:
   option<vuk::DeviceSuperFrameResource> superframe_resource;
   option<vuk::Allocator> superframe_allocator = nullopt;
   option<vuk::Allocator> frame_allocator = nullopt;
-  plf::colony<std::pair<u64, vuk::Buffer>> tracked_buffers = {};
-  std::shared_mutex pending_image_buffers_mutex = {};
+  std::shared_mutex frame_allocator_mutex = {};
+  std::shared_mutex descriptor_mutex = {};
   std::shared_mutex queue_mutex = {};
 
   vuk::PresentModeKHR present_mode = vuk::PresentModeKHR::eFifo;
@@ -122,7 +122,7 @@ public:
   auto allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;
 
   [[nodiscard]]
-  auto alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, OX_THISCALL) noexcept -> vuk::Value<vuk::Buffer>;
+  auto alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, OX_THISCALL) noexcept -> vuk::Unique<vuk::Buffer>;
 
   [[nodiscard]]
   auto alloc_transient_buffer_raw(vuk::MemoryUsage usage, usize size, usize alignment = 8, OX_THISCALL) -> vuk::Buffer;
@@ -179,7 +179,5 @@ public:
 private:
   [[nodiscard]]
   auto scratch_buffer(const void* data, u64 size, usize alignment, OX_THISCALL) -> vuk::Value<vuk::Buffer>;
-
-  mutable std::shared_mutex mutex = {};
 };
 } // namespace ox

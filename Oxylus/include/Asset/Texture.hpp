@@ -111,7 +111,7 @@ public:
   ) -> void;
   auto upload_mips(
     this Texture&,
-    std::span<vuk::Value<vuk::Buffer>> per_mip_buffers,
+    std::span<const vuk::Unique<vuk::Buffer>> per_mip_buffers,
     vuk::Access release_as,
     bool generate_remaining = false
   ) -> void;

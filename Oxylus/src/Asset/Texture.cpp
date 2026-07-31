@@ -22,7 +22,7 @@ namespace ox {
 struct ProcessedTexture {
   vuk::Format format = {};
   vuk::Extent3D extent = {};
-  ankerl::svector<vuk::Value<vuk::Buffer>, 12> buffers = {};
+  ankerl::svector<vuk::Unique<vuk::Buffer>, 12> buffers = {};
 };
 
 auto default_resource_name(OX_CALLSTACK) -> vuk::Name {
@@ -439,12 +439,11 @@ auto Texture::upload_mips(
   bool generate_remaining
 ) -> void {
   ZoneScoped;
-  memory::ScopedStack stack;
 
   auto& render_context = App::get_rendercontext();
-  auto& allocator = render_context.superframe_allocator;
   auto effective_level_count = std::min(static_cast<u32>(per_mip_pixels.size()), self.attachment.level_count);
-  auto buffers = stack.alloc<vuk::Value<vuk::Buffer>>(effective_level_count);
+  auto buffers = ankerl::svector<vuk::Unique<vuk::Buffer>, 12>();
+  buffers.reserve(effective_level_count);
 
   auto base_extent = self.attachment.extent;
   for (auto level = 0_u32; level < effective_level_count; level++) {
@@ -458,7 +457,7 @@ auto Texture::upload_mips(
     auto buffer = render_context.alloc_image_buffer(self.attachment.format, level_extent);
     std::memcpy(buffer->mapped_ptr, mip_pixels.data(), mip_pixels.size_bytes());
 
-    buffers[level] = std::move(buffer);
+    buffers.push_back(std::move(buffer));
   }
 
   self.upload_mips(buffers, release_as, generate_remaining);
@@ -466,7 +465,7 @@ auto Texture::upload_mips(
 
 auto Texture::upload_mips(
   this Texture& self,
-  std::span<vuk::Value<vuk::Buffer>> per_mip_buffers,
+  std::span<const vuk::Unique<vuk::Buffer>> per_mip_buffers,
   vuk::Access release_as,
   bool generate_remaining
 ) -> void {
@@ -486,7 +485,7 @@ auto Texture::upload_mips(
       .depth = 1,
     };
 
-    auto mip_buffer = std::move(per_mip_buffers[level]);
+    auto mip_buffer = vuk::acquire_buf("mip staging", *per_mip_buffers[level], vuk::Access::eNone);
     auto mip = attachment.mip(level);
     waits[level] = std::move(vuk::copy(std::move(mip_buffer), std::move(mip)).as_released(release_as));
   }

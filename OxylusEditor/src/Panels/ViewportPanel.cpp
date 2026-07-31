@@ -474,8 +474,18 @@ auto ViewportPanel::drag_drop(this const ViewportPanel& self) -> void {
       const auto* payload = PayloadData::from_payload(imgui_payload);
       const auto path = payload->get_path();
       if (path.extension() == ".gltf" || path.extension() == ".glb") {
-        if (auto asset = App::mod<AssetManager>().import_asset(path))
-          self.editor_scene->get_scene()->create_model_entity(asset);
+        // Importing parses the glTF to write the meta file, so it stays off the main thread too.
+        auto& job_man = App::get_job_manager();
+        job_man.push_job_name("ViewportPanel_ImportModel");
+        job_man.submit(Job::create([path, scene = self.editor_scene->get_scene()]() {
+          auto asset = App::mod<AssetManager>().import_asset(path);
+          if (!asset) {
+            return;
+          }
+
+          App::defer_to_next_frame([scene, asset]() { scene->create_model_entity_async(asset); });
+        }));
+        job_man.pop_job_name();
       }
     }
 

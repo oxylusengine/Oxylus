@@ -1,6 +1,28 @@
 #include "Asset/Model.hpp"
 
 namespace ox {
+auto Model::is_mesh_ready(this const Model& self, usize mesh_index) -> bool {
+  if (mesh_index >= self.mesh_ready.size()) {
+    return false;
+  }
+
+  return self.mesh_ready[mesh_index].load(std::memory_order_acquire) != 0;
+}
+
+auto Model::is_fully_loaded(this const Model& self) -> bool {
+  return self.pending_meshes.load(std::memory_order_acquire) == 0;
+}
+
+auto Model::wait_until_loaded(this const Model& self) -> void {
+  ZoneScoped;
+
+  auto remaining = self.pending_meshes.load(std::memory_order_acquire);
+  while (remaining != 0) {
+    self.pending_meshes.wait(remaining, std::memory_order_acquire);
+    remaining = self.pending_meshes.load(std::memory_order_acquire);
+  }
+}
+
 auto Model::get_mesh_bounds(this const Model& self) -> GPU::MeshBounds {
   ZoneScoped;
 
@@ -11,12 +33,23 @@ auto Model::get_mesh_bounds(this const Model& self) -> GPU::MeshBounds {
   auto global_min = glm::vec3(std::numeric_limits<f32>::max());
   auto global_max = glm::vec3(std::numeric_limits<f32>::lowest());
 
-  for (const auto& mesh : self.gpu_meshes) {
+  auto any_ready = false;
+  for (auto mesh_index = 0_sz; mesh_index < self.gpu_meshes.size(); mesh_index++) {
+    if (!self.is_mesh_ready(mesh_index)) {
+      continue;
+    }
+
+    const auto& mesh = self.gpu_meshes[mesh_index];
+    any_ready = true;
     auto mesh_min = mesh.bounds.aabb_center - mesh.bounds.aabb_extent * 0.5f;
     auto mesh_max = mesh.bounds.aabb_center + mesh.bounds.aabb_extent * 0.5f;
 
     global_min = glm::min(global_min, mesh_min);
     global_max = glm::max(global_max, mesh_max);
+  }
+
+  if (!any_ready) {
+    return GPU::MeshBounds{};
   }
 
   auto base_bounds = GPU::MeshBounds{};

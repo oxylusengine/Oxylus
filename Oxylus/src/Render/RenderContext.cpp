@@ -456,33 +456,16 @@ auto RenderContext::new_frame(this RenderContext& self) -> vuk::Value<vuk::Image
     self.handle_resize(1, 1);
   }
 
-  if (self.frame_allocator) {
-    self.frame_allocator.reset();
-  }
-
-  auto& frame_resource = self.superframe_resource->get_next_frame();
-  self.frame_allocator.emplace(frame_resource);
-  self.runtime->next_frame();
-
   {
-    // Just lock the entire thing instead of demoting/promoting it at each iter
-    auto write_lock = std::unique_lock(self.pending_image_buffers_mutex);
-    auto* graphics_executor = static_cast<vuk::QueueExecutor*>(
-      self.runtime->get_executor(vuk::DomainFlagBits::eGraphicsQueue)
-    );
-    auto current_time_point = *graphics_executor->get_sync_value();
-
-    for (auto it = self.tracked_buffers.begin(); it != self.tracked_buffers.end();) {
-      auto& [allocation_time_point, tracked_buffer] = *it;
-      if (current_time_point > allocation_time_point) {
-        self.superframe_allocator->deallocate({&tracked_buffer, 1});
-        it = self.tracked_buffers.erase(it);
-        continue;
-      }
-
-      ++it;
+    auto write_lock = std::unique_lock(self.frame_allocator_mutex);
+    if (self.frame_allocator) {
+      self.frame_allocator.reset();
     }
+
+    auto& frame_resource = self.superframe_resource->get_next_frame();
+    self.frame_allocator.emplace(frame_resource);
   }
+  self.runtime->next_frame();
 
   if (!self.swapchain.has_value()) {
     self.swapchain = make_swapchain(
@@ -539,7 +522,8 @@ auto RenderContext::wait_on(vuk::UntypedValue&& fut) -> void {
 auto RenderContext::submit_now(vuk::UntypedValue&& fut) -> void {
   ZoneScoped;
 
-  auto lock = std::scoped_lock(queue_mutex);
+  auto read_lock = std::shared_lock(frame_allocator_mutex);
+  auto queue_lock = std::unique_lock(queue_mutex);
   fut.submit(frame_allocator.value(), this_thread_compiler);
 }
 
@@ -623,6 +607,7 @@ auto RenderContext::create_persistent_descriptor_set(
 auto RenderContext::commit_descriptor_set(this RenderContext& self, std::span<VkWriteDescriptorSet> writes) -> void {
   ZoneScoped;
 
+  auto write_lock = std::unique_lock(self.descriptor_mutex);
   vkUpdateDescriptorSets(self.device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
 }
 
@@ -867,27 +852,17 @@ auto RenderContext::allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 
 }
 
 auto RenderContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, vuk::source_location LOC) noexcept
-  -> vuk::Value<vuk::Buffer> {
+  -> vuk::Unique<vuk::Buffer> {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(pending_image_buffers_mutex);
   auto alignment = vuk::format_to_texel_block_size(format);
   auto size = vuk::compute_image_size(format, extent);
 
-  auto buffer_handle = vuk::Buffer{};
-  auto buffer_info = vuk::BufferCreateInfo{
-    .mem_usage = vuk::MemoryUsage::eCPUtoGPU,
-    .size = size,
-    .alignment = alignment
-  };
-  superframe_allocator->allocate_buffers({&buffer_handle, 1}, {&buffer_info, 1}, LOC);
-  auto* graphics_executor = static_cast<vuk::QueueExecutor*>(
-    runtime->get_executor(vuk::DomainFlagBits::eGraphicsQueue)
+  return *vuk::allocate_buffer(
+    superframe_allocator.value(),
+    {.mem_usage = vuk::MemoryUsage::eCPUtoGPU, .size = size, .alignment = alignment},
+    LOC
   );
-  auto allocation_time_point = *graphics_executor->get_sync_value();
-  tracked_buffers.emplace(std::pair(allocation_time_point, buffer_handle));
-
-  return vuk::acquire_buf("image buffer", buffer_handle, vuk::eNone, LOC);
 }
 
 auto RenderContext::alloc_transient_buffer_raw(
@@ -895,7 +870,7 @@ auto RenderContext::alloc_transient_buffer_raw(
 ) -> vuk::Buffer {
   ZoneScoped;
 
-  std::shared_lock _(mutex);
+  auto read_lock = std::shared_lock(frame_allocator_mutex);
 
   auto buffer = *vuk::allocate_buffer(
     frame_allocator.value(),

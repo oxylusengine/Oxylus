@@ -242,7 +242,11 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
             acquired_image = font_texture->acquire({}, vuk::eNone);
           }
 
-          acquired_image = upload_pass(std::move(upload_buffer), std::move(acquired_image));
+          // Freed into this frame's list, which is recycled only after its submission completes.
+          acquired_image = upload_pass(
+            vuk::acquire_buf("imgui font staging", *upload_buffer, vuk::Access::eNone),
+            std::move(acquired_image)
+          );
           auto texture_id = this->add_image(std::move(acquired_image));
           texture->SetTexID(texture_id);
           texture->SetStatus(ImTextureStatus_OK);

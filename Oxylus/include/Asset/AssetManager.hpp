@@ -82,7 +82,12 @@ public:
   auto export_script(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
     -> bool;
 
-  auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true) -> bool;
+  auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true)
+    -> bool;
+
+  auto load_asset_async(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}) -> bool;
+  auto is_loading(this AssetManager& self, const UUID& uuid) -> bool;
+
   auto unload_asset(this AssetManager& self, const UUID& uuid) -> void;
 
   auto is_loaded(this AssetManager& self, const UUID& uuid) -> bool;
@@ -113,13 +118,18 @@ public:
   auto get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaSystem>;
 
 private:
-  auto load_model(this AssetManager& self, const std::filesystem::path& path) -> ModelID;
+  auto load_asset_impl(
+    this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire, bool async
+  ) -> bool;
+
+  auto load_model(this AssetManager& self, const std::filesystem::path& path, bool async) -> ModelID;
   auto unload_model(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
 
   auto load_texture(this AssetManager& self, const std::filesystem::path& path, TextureLoadInfo info = {}) -> TextureID;
   auto unload_texture(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
 
-  auto load_material(this AssetManager& self, const std::filesystem::path& path, const Material &info = {}) -> MaterialID;
+  auto load_material(this AssetManager& self, const std::filesystem::path& path, const Material& info = {})
+    -> MaterialID;
   auto unload_material(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
 
   auto load_scene(this AssetManager& self, const std::filesystem::path& path) -> SceneID;
@@ -143,7 +153,10 @@ private:
 
   std::vector<MaterialID> dirty_materials = {};
 
-  SlotMap<Model, ModelID> model_map = {};
+  std::shared_mutex loading_mutex = {};
+  ankerl::unordered_dense::set<UUID> loading_assets = {};
+
+  SlotMap<std::unique_ptr<Model>, ModelID> model_map = {};
   SlotMap<Texture, TextureID> texture_map = {};
   SlotMap<Material, MaterialID> material_map = {};
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};

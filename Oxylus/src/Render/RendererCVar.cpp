@@ -132,7 +132,6 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_bloom_threshold.set(bloom_obj["threshold"].get_double());
     self.cvar_bloom_soft_threshold.set(bloom_obj["soft_threshold"].get_double());
     self.cvar_bloom_radius.set(bloom_obj["radius"].get_double());
-    // Newer keys than the rest of the block; scenes serialized before they exist keep the defaults.
     auto intensity_obj = bloom_obj["intensity"];
     if (!intensity_obj.error())
       self.cvar_bloom_intensity.set(intensity_obj.get_double());

@@ -5,6 +5,7 @@
 #include <vuk/vsl/Core.hpp>
 #include <zpp_bits.h>
 
+#include "Core/App.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
@@ -557,6 +558,47 @@ auto AssetManager::export_script(
 
 auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire)
   -> bool {
+  return self.load_asset_impl(uuid, std::move(explicit_load), should_acquire, false);
+}
+
+auto AssetManager::load_asset_async(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load) -> bool {
+  ZoneScoped;
+
+  if (!self.get_asset(uuid)) {
+    OX_LOG_ERROR("Trying to asynchronously load an asset that isn't registered.");
+    return false;
+  }
+
+  {
+    auto lock = std::unique_lock(self.loading_mutex);
+    if (!self.loading_assets.emplace(uuid).second) {
+      return true;
+    }
+  }
+
+  auto& job_man = App::get_job_manager();
+  job_man.push_job_name("AssetManager_LoadAssetAsync");
+  job_man.submit(Job::create([&self, uuid, load_info = std::move(explicit_load)]() {
+    OX_DEFER(&) {
+      auto lock = std::unique_lock(self.loading_mutex);
+      self.loading_assets.erase(uuid);
+    };
+
+    std::ignore = self.load_asset_impl(uuid, load_info, false, true);
+  }));
+  job_man.pop_job_name();
+
+  return true;
+}
+
+auto AssetManager::is_loading(this AssetManager& self, const UUID& uuid) -> bool {
+  auto lock = std::shared_lock(self.loading_mutex);
+  return self.loading_assets.contains(uuid);
+}
+
+auto AssetManager::load_asset_impl(
+  this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire, bool async
+) -> bool {
   ZoneScoped;
 
   auto asset = self.get_asset(uuid);
@@ -565,8 +607,17 @@ auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInf
   }
 
   if (asset->is_loaded()) {
+    const auto loaded_model_id = asset->type == AssetType::Model ? asset->model_id : ModelID::Invalid;
     if (should_acquire) {
       self.acquire_ref(std::move(asset));
+    }
+    asset.reset();
+
+    if (!async && loaded_model_id != ModelID::Invalid) {
+      auto* model = self.get_model(loaded_model_id).value;
+      if (model) {
+        model->wait_until_loaded();
+      }
     }
 
     return true;
@@ -579,7 +630,7 @@ auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInf
 
   auto asset_id = [&]() -> u64 {
     switch (asset_type) {
-      case AssetType::Model  : return static_cast<u64>(self.load_model(asset_path));
+      case AssetType::Model  : return static_cast<u64>(self.load_model(asset_path, async));
       case AssetType::Texture: {
         auto info = std::get_if<TextureLoadInfo>(&explicit_load);
         return static_cast<u64>(self.load_texture(asset_path, info ? *info : TextureLoadInfo{}));
@@ -822,11 +873,11 @@ auto AssetManager::get_model(this AssetManager& self, const ModelID model_id) ->
     return {};
   self.models_mutex.lock_shared();
   auto* model = self.model_map.slot(model_id);
-  if (!model) {
+  if (!model || !*model) {
     self.models_mutex.unlock_shared();
     return {};
   }
-  return ReadGuard<Model>(self.models_mutex, model, adopt_lock);
+  return ReadGuard<Model>(self.models_mutex, model->get(), adopt_lock);
 }
 
 auto AssetManager::get_texture(this AssetManager& self, const UUID& uuid) -> ReadGuard<Texture> {
