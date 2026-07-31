@@ -6,21 +6,11 @@ auto Model::is_mesh_ready(this const Model& self, usize mesh_index) -> bool {
     return false;
   }
 
-  return self.mesh_ready[mesh_index].load(std::memory_order_acquire) != 0;
+  return self.mesh_ready[mesh_index].test(std::memory_order_acquire);
 }
 
-auto Model::is_fully_loaded(this const Model& self) -> bool {
-  return self.pending_meshes.load(std::memory_order_acquire) == 0;
-}
-
-auto Model::wait_until_loaded(this const Model& self) -> void {
-  ZoneScoped;
-
-  auto remaining = self.pending_meshes.load(std::memory_order_acquire);
-  while (remaining != 0) {
-    self.pending_meshes.wait(remaining, std::memory_order_acquire);
-    remaining = self.pending_meshes.load(std::memory_order_acquire);
-  }
+auto Model::is_fully_loaded(this Model& self) -> bool {
+  return std::atomic_ref(self.pending_meshes).load(std::memory_order_acquire) == 0;
 }
 
 auto Model::get_mesh_bounds(this const Model& self) -> GPU::MeshBounds {

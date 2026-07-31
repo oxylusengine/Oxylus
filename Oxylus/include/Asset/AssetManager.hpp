@@ -1,5 +1,6 @@
 #pragma once
 
+#include <condition_variable>
 #include <simdjson.h>
 
 #include "Asset/AssetFile.hpp"
@@ -124,6 +125,10 @@ private:
 
   auto load_model(this AssetManager& self, const std::filesystem::path& path, bool async) -> ModelID;
   auto unload_model(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  // Blocks until every mesh job of the model has finished. Takes no lock while waiting: mesh jobs
+  // need `models_mutex` themselves to publish into the model.
+  auto wait_until_model_loaded(this AssetManager& self, ModelID model_id) -> void;
+  auto notify_model_loaded(this AssetManager& self) -> void;
 
   auto load_texture(this AssetManager& self, const std::filesystem::path& path, TextureLoadInfo info = {}) -> TextureID;
   auto unload_texture(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
@@ -156,7 +161,10 @@ private:
   std::shared_mutex loading_mutex = {};
   ankerl::unordered_dense::set<UUID> loading_assets = {};
 
-  SlotMap<std::unique_ptr<Model>, ModelID> model_map = {};
+  std::mutex model_load_mutex = {};
+  std::condition_variable model_load_cv = {};
+
+  SlotMap<Model, ModelID> model_map = {};
   SlotMap<Texture, TextureID> texture_map = {};
   SlotMap<Material, MaterialID> material_map = {};
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};

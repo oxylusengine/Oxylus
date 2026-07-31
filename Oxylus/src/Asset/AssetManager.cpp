@@ -614,10 +614,7 @@ auto AssetManager::load_asset_impl(
     asset.reset();
 
     if (!async && loaded_model_id != ModelID::Invalid) {
-      auto* model = self.get_model(loaded_model_id).value;
-      if (model) {
-        model->wait_until_loaded();
-      }
+      self.wait_until_model_loaded(loaded_model_id);
     }
 
     return true;
@@ -873,11 +870,29 @@ auto AssetManager::get_model(this AssetManager& self, const ModelID model_id) ->
     return {};
   self.models_mutex.lock_shared();
   auto* model = self.model_map.slot(model_id);
-  if (!model || !*model) {
+  if (!model) {
     self.models_mutex.unlock_shared();
     return {};
   }
-  return ReadGuard<Model>(self.models_mutex, model->get(), adopt_lock);
+  return ReadGuard<Model>(self.models_mutex, model, adopt_lock);
+}
+
+auto AssetManager::wait_until_model_loaded(this AssetManager& self, const ModelID model_id) -> void {
+  ZoneScoped;
+
+  auto lock = std::unique_lock(self.model_load_mutex);
+  self.model_load_cv.wait(lock, [&self, model_id] {
+    auto model = self.get_model(model_id);
+    return !model || model->is_fully_loaded();
+  });
+}
+
+auto AssetManager::notify_model_loaded(this AssetManager& self) -> void {
+  ZoneScoped;
+
+  auto lock = std::unique_lock(self.model_load_mutex);
+  lock.unlock();
+  self.model_load_cv.notify_all();
 }
 
 auto AssetManager::get_texture(this AssetManager& self, const UUID& uuid) -> ReadGuard<Texture> {

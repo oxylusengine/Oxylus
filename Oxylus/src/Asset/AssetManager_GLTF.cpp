@@ -910,10 +910,10 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
     });
   }
 
-  auto model = std::make_unique<Model>();
-  model->textures = std::move(textures);
-  model->materials = std::move(materials);
-  model->lights = std::move(lights);
+  auto model = Model{};
+  model.textures = std::move(textures);
+  model.materials = std::move(materials);
+  model.lights = std::move(lights);
 
   auto& gltf_default_scene = gltf_asset.scenes[gltf_asset.defaultScene.value_or(0_sz)];
   struct ProcessingNode {
@@ -922,7 +922,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
   };
   auto processing_gltf_nodes = std::queue<ProcessingNode>();
 
-  auto& root_mesh_group = model->mesh_groups.emplace_back();
+  auto& root_mesh_group = model.mesh_groups.emplace_back();
   root_mesh_group.name = gltf_default_scene.name;
   for (auto node_index : gltf_default_scene.nodeIndices) {
     processing_gltf_nodes.push({node_index, 0});
@@ -937,13 +937,13 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
   while (!processing_gltf_nodes.empty()) {
     auto [gltf_node_index, parent_mesh_group_index] = processing_gltf_nodes.front();
     const auto& node = gltf_asset.nodes[gltf_node_index];
-    auto& parent_mesh_group = model->mesh_groups[parent_mesh_group_index];
+    auto& parent_mesh_group = model.mesh_groups[parent_mesh_group_index];
     processing_gltf_nodes.pop();
 
-    auto mesh_group_index = model->mesh_groups.size();
+    auto mesh_group_index = model.mesh_groups.size();
     parent_mesh_group.child_indices.push_back(mesh_group_index);
 
-    auto& mesh_group = model->mesh_groups.emplace_back();
+    auto& mesh_group = model.mesh_groups.emplace_back();
     mesh_group.name = node.name;
 
     for (auto child_node_index : node.children) {
@@ -984,7 +984,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
         continue;
       }
 
-      auto mesh_index = model->gpu_meshes.size();
+      auto mesh_index = model.gpu_meshes.size();
       mesh_group.mesh_indices.push_back(mesh_index);
 
       auto mesh_material_index = option<u32>(nullopt);
@@ -992,18 +992,17 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
         mesh_material_index = gltf_primitive.materialIndex.value();
       }
 
-      model->material_indices.push_back(mesh_material_index);
-      model->gpu_meshes.emplace_back();
-      model->lod0_meshlet_counts.push_back(0_u32);
-      model->gpu_mesh_buffers.emplace_back();
+      model.material_indices.push_back(mesh_material_index);
+      model.gpu_meshes.emplace_back();
+      model.lod0_meshlet_counts.push_back(0_u32);
+      model.gpu_mesh_buffers.emplace_back();
       pending_meshes.push_back({gltf_mesh_index, gltf_primitive_index});
     }
   }
 
-  model->mesh_ready = std::vector<std::atomic<u8>>(pending_meshes.size());
-  model->pending_meshes.store(static_cast<u32>(pending_meshes.size()), std::memory_order_relaxed);
+  model.mesh_ready = std::vector<std::atomic_flag>(pending_meshes.size());
+  model.pending_meshes = static_cast<u32>(pending_meshes.size());
 
-  auto* model_ptr = model.get();
   auto model_id = ModelID::Invalid;
   {
     auto write_lock = std::unique_lock(self.models_mutex);
@@ -1013,21 +1012,36 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
   auto& render_context = App::get_rendercontext();
   auto mesh_barrier = Barrier::create();
   for (const auto& [pending_mesh, mesh_index] : std::views::zip(pending_meshes, std::views::iota(0_sz))) {
-    dispatch(mesh_barrier, [model_ptr, gltf_asset_ref, &render_context, pending_mesh, mesh_index]() {
+    dispatch(mesh_barrier, [&asset_man = self, model_id, gltf_asset_ref, &render_context, pending_mesh, mesh_index]() {
       ZoneScopedN("GLTF Mesh Build");
 
       const auto& gltf_primitive = gltf_asset_ref->meshes[pending_mesh.gltf_mesh_index]
                                      .primitives[pending_mesh.gltf_primitive_index];
-      if (auto build = build_gltf_mesh(*gltf_asset_ref, gltf_primitive)) {
-        model_ptr->gpu_mesh_buffers[mesh_index] = upload_gltf_mesh(render_context, *build);
-        model_ptr->gpu_meshes[mesh_index] = build->gpu_mesh;
-        model_ptr->lod0_meshlet_counts[mesh_index] = build->lods[0].meshlet_count;
-
-        model_ptr->mesh_ready[mesh_index].store(1, std::memory_order_release);
+      auto build = build_gltf_mesh(*gltf_asset_ref, gltf_primitive);
+      auto mesh_buffer = vuk::Unique<vuk::Buffer>();
+      if (build) {
+        mesh_buffer = upload_gltf_mesh(render_context, *build);
       }
 
-      if (model_ptr->pending_meshes.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        model_ptr->pending_meshes.notify_all();
+      auto loaded_model = asset_man.get_model(model_id);
+      if (!loaded_model) {
+        return;
+      }
+
+      if (build) {
+        loaded_model->gpu_mesh_buffers[mesh_index] = std::move(mesh_buffer);
+        loaded_model->gpu_meshes[mesh_index] = build->gpu_mesh;
+        loaded_model->lod0_meshlet_counts[mesh_index] = build->lods[0].meshlet_count;
+
+        loaded_model->mesh_ready[mesh_index].test_and_set(std::memory_order_release);
+      }
+
+      auto pending = std::atomic_ref(loaded_model->pending_meshes);
+      const auto was_last = pending.fetch_sub(1, std::memory_order_acq_rel) == 1;
+      loaded_model.reset();
+
+      if (was_last) {
+        asset_man.notify_model_loaded();
       }
     });
   }
@@ -1044,13 +1058,11 @@ auto AssetManager::unload_model(this AssetManager& self, ReadGuard<Asset> asset)
 
   const auto model_id = asset->model_id;
 
-  if (auto* model = self.get_model(model_id).value) {
-    model->wait_until_loaded();
-  }
+  self.wait_until_model_loaded(model_id);
 
   auto write_lock = std::unique_lock(self.models_mutex);
   if (auto* model = self.model_map.slot(model_id)) {
-    model->reset();
+    *model = Model{};
   }
   self.model_map.destroy_slot(model_id);
   asset->model_id = ModelID::Invalid;
