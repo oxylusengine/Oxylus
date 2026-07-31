@@ -181,6 +181,7 @@ struct Atmosphere {
 
 struct SkyData {
   alignas(4) glm::vec4 solid_color = {0.f, 0.f, 0.f, 1.f};
+  alignas(4) glm::vec3 ambient_color = {0.03f, 0.03f, 0.03f};
   alignas(4) u32 has_texture = false;
 };
 

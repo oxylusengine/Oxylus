@@ -162,7 +162,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = SkyComponent;
-    registry.bind<&C::solid_color, &C::texture>();
+    registry.bind<&C::solid_color, &C::ambient_color, &C::texture>();
   }
 
   {

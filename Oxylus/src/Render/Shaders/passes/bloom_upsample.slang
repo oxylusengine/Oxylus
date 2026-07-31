@@ -8,7 +8,7 @@ import gpu;
 
 struct PushConstants {
   u32x2 img_size;
-  f32 intensity;
+  f32 radius;
 };
 
 func sample_color(Image2D<f32x4> src, SamplerState s, f32x2 uv, f32x2 offset) -> f32x3 {
@@ -43,5 +43,5 @@ func cs_main(
                 + (a + c + g + i) * 0.0625;
 
   let source_color = source_image_downsample.SampleLevel(sampler, uv, 0).rgb;
-  result_image.Store(img_coords, f32x4(source_color + color_sum, 1.0));
+  result_image.Store(img_coords, f32x4(lerp(source_color, color_sum, pc.radius), 1.0));
 }

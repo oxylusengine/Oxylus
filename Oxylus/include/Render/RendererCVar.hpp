@@ -1,9 +1,9 @@
 #pragma once
 
+#include <simdjson.h>
+
 #include "Utils/CVars.hpp"
 #include "Utils/JsonWriter.hpp"
-
-#include <simdjson.h>
 
 namespace ox {
 struct RendererCVar {
@@ -41,6 +41,8 @@ struct RendererCVar {
   AutoCVar_Float cvar_bloom_threshold;
   AutoCVar_Float cvar_bloom_soft_threshold;
   AutoCVar_Float cvar_bloom_radius;
+  AutoCVar_Float cvar_bloom_intensity;
+  AutoCVar_Float cvar_bloom_clamp;
 
   AutoCVar_Int cvar_fxaa_enable;
 

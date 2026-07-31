@@ -234,6 +234,7 @@ public struct Atmosphere {
 
 public struct Sky {
     public f32x4 solid_color;
+    public f32x3 ambient_color;
     public bool has_texture;
 };
 
