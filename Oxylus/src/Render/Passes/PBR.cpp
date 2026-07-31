@@ -367,7 +367,7 @@ auto RendererInstance::apply_pbr(
           PushConstants(
             sun_dir,
             sun_intensity,
-            glm::vec3(0.02f, 0.03f, 0.04f),
+            glm::vec3(0.03f),
             light_count,
             atmosphere_address,
             lights->device_address,

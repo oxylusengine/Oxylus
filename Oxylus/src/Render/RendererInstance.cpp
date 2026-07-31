@@ -682,7 +682,7 @@ auto RendererInstance::render(
      .sample_count = vuk::SampleCountFlagBits::e1}
   );
   resolved_shadows_attachment.same_shape_as(final_attachment);
-  resolved_shadows_attachment = vuk::clear_image(std::move(resolved_shadows_attachment), vuk::Black<f32>);
+  resolved_shadows_attachment = vuk::clear_image(std::move(resolved_shadows_attachment), vuk::White<f32>);
 
   auto albedo_attachment = vuk::declare_ia(
     "albedo",
@@ -1157,7 +1157,6 @@ auto RendererInstance::render(
     dst_attachment = ctx.get_image_resource("result_attachment");
   }
 
-
   auto debug_context = DebugContext{
     .overdraw_heatmap_scale = debug_heatmap_scale,
     .debug_view = debug_view,
@@ -1322,6 +1321,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.gpu_scene_flags |= GPU::SceneFlags::HasSky;
 
         self.sky_data.solid_color = sky_info->solid_color;
+        self.sky_data.ambient_color = sky_info->ambient_color;
         self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
       }
     });

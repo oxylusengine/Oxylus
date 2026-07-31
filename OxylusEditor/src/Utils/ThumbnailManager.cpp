@@ -226,6 +226,8 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
   auto thumbnail_scene = Scene("ThumbnailScene");
   auto model_entity = thumbnail_scene.create_model_entity(model_uuid);
 
+  App::mod<Renderer>().sync_materials();
+
   auto& asset_man = App::mod<AssetManager>();
   auto model_asset = asset_man.get_model(model_uuid);
   if (!model_asset) {
@@ -237,9 +239,17 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
     .set<TransformComponent>({
       .rotation = glm::quat(glm::vec3(glm::radians(45.f), glm::radians(-145.f), 0.f)),
     })
-    .set<LightComponent>({.type = LightComponent::LightType::Directional, .intensity = 20.f})
+    .set<LightComponent>({
+      .type = LightComponent::LightType::Directional,
+      .intensity = 20.f,
+      .cast_shadows = false,
+    })
     .add<AtmosphereComponent>()
-    .set<SkyComponent>(SkyComponent{.solid_color = glm::vec4(0.f, 0.f, 0.f, 1.0f), .texture = UUID(nullptr)})
+    .set<SkyComponent>(SkyComponent{
+      .solid_color = glm::vec4(0.f, 0.f, 0.f, 1.0f),
+      .ambient_color = glm::vec3(0.25f),
+      .texture = UUID(nullptr),
+    })
     .set<AutoExposureComponent>({.adaptation_speed = 1.0e6f});
 
   f32 cam_fov = 40.f;
@@ -266,7 +276,8 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
 
   const Renderer::RenderInfo render_info = {};
   auto renderer_instance = thumbnail_scene.get_renderer_instance();
-  auto scene_view_image = renderer_instance->render(std::move(thumbnail_image), render_info, thumbnail_scene.renderer_cvar);
+  auto scene_view_image = renderer_instance
+                            ->render(std::move(thumbnail_image), render_info, thumbnail_scene.renderer_cvar);
 
   usize buffer_size = size * size * 4; // RGBA8
   auto readback_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, buffer_size);

@@ -32,10 +32,10 @@ public:
 
   auto get_materials_buffer(this Renderer& self) -> vuk::Value<vuk::Buffer>;
 
+  auto sync_materials(this Renderer& self) -> void;
+
 private:
   friend RendererInstance;
-
-  auto sync_materials(this Renderer& self) -> void;
 
   RenderContext* render_context = nullptr;
   bool initalized = false;
