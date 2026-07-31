@@ -99,13 +99,13 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
     auto current_sent_packets = self.remote_peer->packetsSent;
 
     self.stats.ping = self.remote_peer->pingInterval;
-    self.stats.sent_bytes = current_sent_bytes - self.stats.last_sent_bytes;
-    self.stats.received_bytes = current_received_bytes - self.stats.last_received_bytes;
+    self.stats.sent_bytes = static_cast<u32>(current_sent_bytes - self.stats.last_sent_bytes);
+    self.stats.received_bytes = static_cast<u32>(current_received_bytes - self.stats.last_received_bytes);
     self.stats.sent_packets = current_sent_packets - self.stats.last_sent_packets;
     self.stats.packets_lost = self.remote_peer->packetsLost;
     self.stats.rtt = self.remote_peer->lastRoundTripTime;
-    self.stats.last_sent_bytes = current_sent_bytes;
-    self.stats.last_received_bytes = current_received_bytes;
+    self.stats.last_sent_bytes = static_cast<u32>(current_sent_bytes);
+    self.stats.last_received_bytes = static_cast<u32>(current_received_bytes);
     self.stats.last_sent_packets = current_sent_packets;
   }
 

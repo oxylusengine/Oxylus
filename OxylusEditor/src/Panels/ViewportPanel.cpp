@@ -129,8 +129,6 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     bool snap_settings_popup = false;
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
-    auto& style = ImGui::GetStyle();
-
     if (ImGui::BeginMenuBar()) {
       if (!self.editor_scene->is_playing()) {
         if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE)) {
@@ -813,31 +811,33 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
       gizmo_info,
       "LightComponent",
       self.editor_scene->get_scene().get(),
-      [](const char* icon, const LightComponent& c) {
+      [](const char* component_icon, const LightComponent& c) {
         switch (c.type) {
           case LightComponent::Directional: return ICON_MDI_WEATHER_SUNNY;
           case LightComponent::Spot       : return ICON_MDI_SPOTLIGHT;
-          case LightComponent::Point      : return icon;
+          case LightComponent::Point      : return component_icon;
         }
+
+        return component_icon;
       }
     );
     show_component_gizmo<AudioSourceComponent>(
       gizmo_info,
       "AudioSourceComponent",
       self.editor_scene->get_scene().get(),
-      [](const char* icon, const AudioSourceComponent& c) { return icon; }
+      [](const char* component_icon, const AudioSourceComponent& c) { return component_icon; }
     );
     show_component_gizmo<AudioListenerComponent>(
       gizmo_info,
       "AudioListenerComponent",
       self.editor_scene->get_scene().get(),
-      [](const char* icon, const AudioListenerComponent& c) { return icon; }
+      [](const char* component_icon, const AudioListenerComponent& c) { return component_icon; }
     );
     show_component_gizmo<CameraComponent>(
       gizmo_info,
       "CameraComponent",
       self.editor_scene->get_scene().get(),
-      [](const char* icon, const CameraComponent& c) { return icon; }
+      [](const char* component_icon, const CameraComponent& c) { return component_icon; }
     );
   }
 

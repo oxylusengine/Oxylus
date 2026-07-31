@@ -69,7 +69,7 @@ struct AssetFileEntry {
   constexpr static auto serialize(auto& archive, auto& self)
     requires(std::remove_cvref_t<decltype(archive)>::kind() == zpp::bits::kind::out)
   {
-    auto _ = archive(self.type);
+    [[maybe_unused]] auto _ = archive(self.type);
     return std::visit([&](auto& v) { return archive(v); }, self.data);
   }
 };

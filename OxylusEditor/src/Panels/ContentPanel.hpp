@@ -62,7 +62,7 @@ private:
   auto draw_context_menu_items(this ContentPanel& self, const std::filesystem::path& context, bool isDir)
     -> std::filesystem::path;
   auto directory_tree_view_recursive(
-    const std::filesystem::path& path, u32* count, i32* selectionMask, ImGuiTreeNodeFlags flags
+    const std::filesystem::path& path, u32* node_count, i32* selectionMask, ImGuiTreeNodeFlags flags
   ) -> std::pair<bool, u32>;
   auto render_header(this ContentPanel& self) -> void;
   auto render_side_view(this ContentPanel& self) -> void;

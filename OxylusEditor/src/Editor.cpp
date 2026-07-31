@@ -159,7 +159,6 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   auto& job_man = App::get_job_manager();
-  auto& net = App::mod<NetworkManager>();
   job_man.get_tracker().stop_tracking();
 
   auto& event_system = App::get_event_system();

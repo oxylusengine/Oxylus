@@ -116,8 +116,16 @@ auto Window::create(const WindowInfo& info) -> Window {
   SDL_SetStringProperty(window_properties, SDL_PROP_WINDOW_CREATE_TITLE_STRING, info.title.c_str());
   SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_X_NUMBER, new_pos_x);
   SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_Y_NUMBER, new_pos_y);
-  SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, new_width * display->content_scale);
-  SDL_SetNumberProperty(window_properties, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, new_height * display->content_scale);
+  SDL_SetNumberProperty(
+    window_properties,
+    SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER,
+    static_cast<Sint64>(new_width * display->content_scale)
+  );
+  SDL_SetNumberProperty(
+    window_properties,
+    SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER,
+    static_cast<Sint64>(new_height * display->content_scale)
+  );
   if (info.flags & WindowFlag::HighPixelDensity) {
     SDL_SetBooleanProperty(window_properties, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
     window_flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
@@ -277,7 +285,7 @@ auto Window::update(const Timestep& timestep) const -> void {
         auto& window = App::get_window();
         const f32 dpi_scale = window.get_dpi_scale();
         auto scaled_pos = position * dpi_scale;
-        ctx->ProcessMouseMove(scaled_pos.x, scaled_pos.y, 0);
+        ctx->ProcessMouseMove(static_cast<int>(scaled_pos.x), static_cast<int>(scaled_pos.y), 0);
       }
     }
 

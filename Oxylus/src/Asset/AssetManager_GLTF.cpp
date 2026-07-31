@@ -78,6 +78,8 @@ auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::Samp
       case fastgltf::Wrap::MirroredRepeat: return vuk::SamplerAddressMode::eMirroredRepeat;
       case fastgltf::Wrap::Repeat        : return vuk::SamplerAddressMode::eRepeat;
     }
+
+    return vuk::SamplerAddressMode::eRepeat;
   };
 
   auto get_filter_mode = [](fastgltf::Filter v) -> vuk::Filter {
@@ -89,6 +91,8 @@ auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::Samp
       case fastgltf::Filter::LinearMipMapNearest :
       case fastgltf::Filter::LinearMipMapLinear  : return vuk::Filter::eLinear;
     }
+
+    return vuk::Filter::eLinear;
   };
 
   auto get_mip_filter_mode = [](fastgltf::Filter v) -> vuk::SamplerMipmapMode {
@@ -100,6 +104,8 @@ auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::Samp
       case fastgltf::Filter::LinearMipMapNearest :
       case fastgltf::Filter::LinearMipMapLinear  : return vuk::SamplerMipmapMode::eLinear;
     }
+
+    return vuk::SamplerMipmapMode::eLinear;
   };
 
   return vuk::SamplerCreateInfo{
@@ -142,6 +148,8 @@ auto gltf_alpha_mode_to_alpha_mode(fastgltf::AlphaMode mode) -> AlphaMode {
     case fastgltf::AlphaMode::Mask  : return AlphaMode::Mask;
     case fastgltf::AlphaMode::Blend : return AlphaMode::Blend;
   }
+
+  return AlphaMode::Opaque;
 }
 
 auto gltf_material_to_material(const fastgltf::Material& gltf_material, std::span<UUID> textures) -> Material {
@@ -248,7 +256,7 @@ auto AssetManager::write_gltf_meta(AssetManager& self, const std::filesystem::pa
   json.end_array();
 
   json["materials"].begin_array();
-  for (const auto& v : gltf_asset.materials) {
+  for (auto i = 0_sz; i < gltf_asset.materials.size(); i++) {
     json << UUID::generate_random().str();
   }
   json.end_array();
@@ -650,12 +658,12 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
           raw_positions[i] = pos;
         });
 
-        vertex_count = meshopt_optimizeVertexFetchRemap(
+        vertex_count = static_cast<u32>(meshopt_optimizeVertexFetchRemap(
           vertex_remap.data(),
           raw_indices.data(),
           raw_indices.size(),
           raw_positions.size()
-        );
+        ));
 
         positions.resize(vertex_count);
         meshopt_remapVertexBuffer(
@@ -919,11 +927,11 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
           ox::size_bytes(indirect_vertex_indices)
         );
 
-        cur_lod.indices_count = simplified_indices.size();
-        cur_lod.meshlet_count = meshlet_count;
-        cur_lod.meshlet_bounds_count = gpu_meshlet_bounds.size();
-        cur_lod.local_triangle_indices_count = local_triangle_indices.size();
-        cur_lod.indirect_vertex_indices_count = indirect_vertex_indices.size();
+        cur_lod.indices_count = static_cast<u32>(simplified_indices.size());
+        cur_lod.meshlet_count = static_cast<u32>(meshlet_count);
+        cur_lod.meshlet_bounds_count = static_cast<u32>(gpu_meshlet_bounds.size());
+        cur_lod.local_triangle_indices_count = static_cast<u32>(local_triangle_indices.size());
+        cur_lod.indirect_vertex_indices_count = static_cast<u32>(indirect_vertex_indices.size());
 
         lod_cpu_buffers[lod_index] = std::pair(cpu_lod_buffer, lod_upload_size);
         upload_size += lod_upload_size;
@@ -1001,7 +1009,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
       model.lod0_meshlet_counts.push_back(gpu_mesh_lods[0].meshlet_count);
       auto mesh_material_index = option<u32>(nullopt);
       if (gltf_primitive.materialIndex.has_value()) {
-        mesh_material_index = gltf_primitive.materialIndex.value();
+        mesh_material_index = static_cast<u32>(gltf_primitive.materialIndex.value());
       }
       model.material_indices.push_back(mesh_material_index);
       model.gpu_meshes.push_back(gpu_mesh);
