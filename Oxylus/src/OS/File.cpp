@@ -18,6 +18,8 @@ static auto file_error_to_str(FileError error) -> std::string_view {
     case FileError::MapFailed        : return "MapFailed";
     case FileError::Unknown          : return "Unknown";
   }
+
+  return "Unknown";
 }
 
 static auto file_access_to_str(FileAccess access) -> std::string_view {
@@ -28,6 +30,8 @@ static auto file_access_to_str(FileAccess access) -> std::string_view {
     case FileAccess::Write    : return "Write";
     case FileAccess::ReadWrite: return "ReadWrite";
   }
+
+  return "Read";
 }
 
 File::File(const std::filesystem::path& path, FileAccess access) noexcept : file_path(path) {

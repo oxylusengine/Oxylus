@@ -25,7 +25,7 @@ auto VirtualMouse::push_key_event(this const VirtualMouse& self, MouseCode code,
   event.common.timestamp = SDL_GetTicksNS();
 
   event.button.type = static_cast<SDL_EventType>(event.type);
-  event.button.button = static_cast<SDL_Keycode>(code);
+  event.button.button = static_cast<Uint8>(code);
   event.button.down = down;
   event.button.which = 0;
   auto& window = App::get_window();

@@ -166,11 +166,15 @@ auto Input::get_action_pressed(this const Input& self, std::string_view action_i
   }
 
   for (const auto& input : binding->primary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Pressed);
+    if (self.check_input_active(input, instance_id, InputState::Pressed)) {
+      return true;
+    }
   }
 
   for (const auto& input : binding->secondary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Pressed);
+    if (self.check_input_active(input, instance_id, InputState::Pressed)) {
+      return true;
+    }
   }
 
   return false;
@@ -185,11 +189,15 @@ auto Input::get_action_released(this const Input& self, std::string_view action_
   }
 
   for (const auto& input : binding->primary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Released);
+    if (self.check_input_active(input, instance_id, InputState::Released)) {
+      return true;
+    }
   }
 
   for (const auto& input : binding->secondary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Released);
+    if (self.check_input_active(input, instance_id, InputState::Released)) {
+      return true;
+    }
   }
 
   return false;
@@ -204,11 +212,15 @@ auto Input::get_action_held(this const Input& self, std::string_view action_id, 
   }
 
   for (const auto& input : binding->primary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Held);
+    if (self.check_input_active(input, instance_id, InputState::Held)) {
+      return true;
+    }
   }
 
   for (const auto& input : binding->secondary_inputs) {
-    return self.check_input_active(input, instance_id, InputState::Held);
+    if (self.check_input_active(input, instance_id, InputState::Held)) {
+      return true;
+    }
   }
 
   return false;
@@ -824,8 +836,6 @@ auto Input::check_input_axis(
     case InputType::GamepadAxis: return glm::vec2(self.get_gamepad_axis(instance_id, input.gamepad_axis_code));
     default                    : return nullopt;
   }
-
-  return nullopt;
 }
 
 auto Input::find_conflicts(this const Input& self, const ActionBinding& binding) -> std::vector<std::string> {

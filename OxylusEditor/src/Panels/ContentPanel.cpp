@@ -139,7 +139,7 @@ static void open_file(const std::filesystem::path& path) {
 }
 
 auto ContentPanel::directory_tree_view_recursive(
-  const std::filesystem::path& path, u32* count, i32* selectionMask, ImGuiTreeNodeFlags flags
+  const std::filesystem::path& path, u32* node_count, i32* selectionMask, ImGuiTreeNodeFlags flags
 ) -> std::pair<bool, u32> {
   ZoneScoped;
 
@@ -167,7 +167,7 @@ auto ContentPanel::directory_tree_view_recursive(
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
 
-    const bool selected = (*selectionMask & BIT(*count)) != 0;
+    const bool selected = (*selectionMask & BIT(*node_count)) != 0;
     if (selected) {
       nodeFlags |= ImGuiTreeNodeFlags_Selected;
       ImGui::PushStyleColor(ImGuiCol_Header, editor_theme.header_selected_color);
@@ -176,15 +176,15 @@ auto ContentPanel::directory_tree_view_recursive(
       ImGui::PushStyleColor(ImGuiCol_HeaderHovered, editor_theme.header_hovered_color);
     }
 
-    const u64 id = *count;
-    const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(id), nodeFlags, "");
+    const u64 node_id = *node_count;
+    const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(node_id), nodeFlags, "");
     ImGui::PopStyleColor(selected ? 2 : 1);
 
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
       if (!entry_is_file)
         update_directory_entries(entry_path);
 
-      node_clicked = *count;
+      node_clicked = *node_count;
       any_node_clicked = true;
     }
 
@@ -211,15 +211,20 @@ auto ContentPanel::directory_tree_view_recursive(
     ImGui::TextUnformatted(folder_icon);
     ImGui::PopStyleColor();
     ImGui::SameLine();
-    auto name = entry_path.filename().string();
-    ImGui::TextUnformatted(name.c_str());
+    auto entry_name = entry_path.filename().string();
+    ImGui::TextUnformatted(entry_name.c_str());
     currently_visible_items_tree_view_++;
 
-    (*count)--;
+    (*node_count)--;
 
     if (!entry_is_file) {
       if (open) {
-        const auto [isClicked, clickedNode] = directory_tree_view_recursive(entry_path, count, selectionMask, flags);
+        const auto [isClicked, clickedNode] = directory_tree_view_recursive(
+          entry_path,
+          node_count,
+          selectionMask,
+          flags
+        );
 
         if (!any_node_clicked) {
           any_node_clicked = isClicked;
@@ -461,10 +466,10 @@ void ContentPanel::render_side_view(this ContentPanel& self) {
     ImGui::TextUnformatted("Assets");
 
     if (opened) {
-      u32 count = 0;
+      u32 node_count = 0;
       const auto [is_clicked, clicked_node] = self.directory_tree_view_recursive(
         self.assets_directory_,
-        &count,
+        &node_count,
         &selection_mask,
         tree_node_flags
       );
@@ -491,7 +496,6 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
   auto& editor = App::mod<Editor>();
   const auto& editor_theme = editor.editor_theme;
   auto& editor_context = editor.get_context();
-  auto& render_context = App::get_rendercontext();
 
   std::filesystem::path directory_to_open;
 

@@ -25,7 +25,7 @@ auto SceneSnapshotBuilder::find_last_acked(this SceneSnapshotBuilder& self) -> o
   ZoneScoped;
 
   for (auto i = 1_u8; i < MAX_SEQUENCES; i++) {
-    auto seq = (self.current_sequence + MAX_SEQUENCES - 1) % MAX_SEQUENCES;
+    auto seq = static_cast<u8>((self.current_sequence + MAX_SEQUENCES - 1) % MAX_SEQUENCES);
     if (self.acks[seq]) {
       return seq;
     }

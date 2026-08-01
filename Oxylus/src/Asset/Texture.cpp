@@ -442,7 +442,6 @@ auto Texture::upload_mips(
   memory::ScopedStack stack;
 
   auto& render_context = App::get_rendercontext();
-  auto& allocator = render_context.superframe_allocator;
   auto effective_level_count = std::min(static_cast<u32>(per_mip_pixels.size()), self.attachment.level_count);
   auto buffers = stack.alloc<vuk::Value<vuk::Buffer>>(effective_level_count);
 
