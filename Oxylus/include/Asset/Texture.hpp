@@ -12,6 +12,8 @@
 using Preset = vuk::ImageAttachment::Preset;
 
 namespace ox {
+struct UploadBatch;
+
 enum class TextureID : u64 { Invalid = std::numeric_limits<u64>::max() };
 
 using TextureDataSource = std::variant<std::filesystem::path, std::span<const u8>>;
@@ -41,6 +43,7 @@ struct TextureCreateInfo {
     .addressModeV = vuk::SamplerAddressMode::eRepeat,
     .addressModeW = vuk::SamplerAddressMode::eRepeat,
   };
+  UploadBatch* batch = nullptr;
 };
 
 struct TextureLoadInfo {
@@ -57,6 +60,7 @@ struct TextureLoadInfo {
     .addressModeV = vuk::SamplerAddressMode::eRepeat,
     .addressModeW = vuk::SamplerAddressMode::eRepeat,
   };
+  UploadBatch* batch = nullptr;
 };
 
 struct TextureView {
@@ -107,17 +111,17 @@ public:
     this Texture&,
     std::span<const std::span<const u8>> per_mip_pixels,
     vuk::Access release_as,
-    bool generate_remaining = false
+    bool generate_remaining = false,
+    UploadBatch* batch = nullptr
   ) -> void;
   auto upload_mips(
     this Texture&,
     std::span<const vuk::Unique<vuk::Buffer>> per_mip_buffers,
     vuk::Access release_as,
-    bool generate_remaining = false
+    bool generate_remaining = false,
+    UploadBatch* batch = nullptr
   ) -> void;
   auto upload(this Texture&, std::span<const u8> pixels, vuk::Access release_as, bool generate_remaining = false)
-    -> void;
-  auto upload(this Texture&, const std::filesystem::path& path, vuk::Access release_as, bool generate_remaining = false)
     -> void;
 
   auto set_name(std::string_view name, OX_THISCALL) -> void;

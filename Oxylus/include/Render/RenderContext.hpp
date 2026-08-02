@@ -15,6 +15,7 @@
 
 namespace ox {
 struct Window;
+struct UploadBatch;
 class TracyProfiler;
 
 enum class BufferID : u64 { Invalid = ~0_u64 };
@@ -89,6 +90,10 @@ public:
   auto wait_on(vuk::UntypedValue&& fut) -> void;
   auto submit_now(vuk::UntypedValue&& fut) -> void;
   auto wait_on_multiple(std::span<vuk::UntypedValue> values) -> void;
+  // Submits without waiting. The values stay synchronizable, so a later `wait_on_multiple` over them
+  // costs only the fence wait. Backed by the superframe allocator, so the caller may keep the
+  // staging buffers alive across frames.
+  auto submit_multiple(std::span<vuk::UntypedValue> values) -> void;
 
   auto create_persistent_descriptor_set(
     this RenderContext&,
@@ -104,11 +109,13 @@ public:
   auto destroy_image(const ImageID id) -> void;
   auto image(const ImageID id) -> vuk::Image;
 
-  auto allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID;
+  // `batch`, when given, collects the bindless write instead of committing it immediately; the
+  // descriptor is not live until that batch is flushed.
+  auto allocate_image_view(const vuk::ImageAttachment& image_attachment, UploadBatch* batch = nullptr) -> ImageViewID;
   auto destroy_image_view(const ImageViewID id) -> void;
   auto image_view(const ImageViewID id) -> vuk::ImageView;
 
-  auto allocate_sampler(const vuk::SamplerCreateInfo& sampler_info) -> SamplerID;
+  auto allocate_sampler(const vuk::SamplerCreateInfo& sampler_info, UploadBatch* batch = nullptr) -> SamplerID;
   auto destroy_sampler(const SamplerID id) -> void;
   auto sampler(const SamplerID id) -> vuk::Sampler;
 

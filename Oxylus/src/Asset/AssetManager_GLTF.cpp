@@ -11,6 +11,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/UploadBatch.hpp"
 
 template <>
 struct fastgltf::ElementTraits<glm::vec4> : fastgltf::ElementTraitsBase<glm::vec4, AccessorType::Vec4, float> {};
@@ -371,24 +372,26 @@ auto load_gltf_texture(
   const UUID& texture_uuid,
   const fastgltf::Image& gltf_image,
   const fastgltf::Texture& gltf_texture,
-  bool is_srgb
+  bool is_srgb,
+  UploadBatch* batch
 ) -> void {
   ZoneScoped;
 
   auto texture_load_info = TextureLoadInfo{
     .is_srgb = is_srgb,
+    .batch = batch,
   };
 
   std::visit(
     ox::match{
-      [](const auto&) {},
+      [](const auto&) { OX_LOG_ERROR("Unsupported glTF image data source; the texture will not be loaded."); },
       [&](const fastgltf::sources::BufferView& v) {
         // Embedded buffer
         auto& buffer_view = asset.bufferViews[v.bufferViewIndex];
         auto& buffer = asset.buffers[buffer_view.bufferIndex];
         std::visit(
           ox::match{
-            [](const auto&) {},
+            [](const auto&) { OX_LOG_ERROR("Unsupported glTF buffer data source; the texture will not be loaded."); },
             [&](const fastgltf::sources::Array& array) {
               texture_load_info.source = std::span(
                 reinterpret_cast<const u8*>(array.bytes.data() + buffer_view.byteOffset),
@@ -759,7 +762,8 @@ auto build_gltf_mesh(const fastgltf::Asset& gltf_asset, const fastgltf::Primitiv
   return build;
 }
 
-auto upload_gltf_mesh(RenderContext& render_context, MeshBuildData& build) -> vuk::Unique<vuk::Buffer> {
+auto upload_gltf_mesh(RenderContext& render_context, MeshBuildData& build, UploadBatch* batch)
+  -> vuk::Unique<vuk::Buffer> {
   ZoneScoped;
 
   auto gpu_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, build.blob.size());
@@ -792,7 +796,16 @@ auto upload_gltf_mesh(RenderContext& render_context, MeshBuildData& build) -> vu
 
   auto gpu_mesh_value = vuk::discard_buf("mesh", *gpu_buffer);
   auto staging_value = vuk::acquire_buf("mesh staging", *staging_buffer, vuk::Access::eNone);
-  render_context.wait_on(render_context.upload_staging(std::move(staging_value), std::move(gpu_mesh_value)));
+  auto upload = render_context.upload_staging(std::move(staging_value), std::move(gpu_mesh_value));
+
+  if (batch) {
+    auto values = std::array<vuk::UntypedValue, 1>{std::move(upload)};
+    render_context.submit_multiple(values);
+    batch->add_upload(values);
+    batch->take_staging({&staging_buffer, 1});
+  } else {
+    render_context.wait_on(std::move(upload));
+  }
 
   return gpu_buffer;
 }
@@ -846,14 +859,16 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
       return;
     }
 
-    barrier->acquire();
     auto job = Job::create(std::forward<decltype(work)>(work));
     job->signal(barrier);
     job_man.submit(std::move(job));
   };
 
+  auto& render_context = App::get_rendercontext();
+
   OX_ASSERT(gltf_asset.textures.size() == textures.size());
   auto texture_barrier = Barrier::create();
+  auto texture_batch = UploadBatch::create();
   for (const auto& [gltf_texture, texture_uuid, texture_index] :
        std::views::zip(gltf_asset.textures, textures, std::views::iota(0_sz))) {
     auto image_index = get_effective_image_index(gltf_texture);
@@ -871,7 +886,8 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
        texture_uuid,
        texture_index,
        gltf_image_index = *image_index,
-       is_srgb]() {
+       is_srgb,
+       texture_batch]() {
         load_gltf_texture(
           asset_man,
           *gltf_asset_ref,
@@ -879,13 +895,17 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
           texture_uuid,
           gltf_asset_ref->images[gltf_image_index],
           gltf_asset_ref->textures[texture_index],
-          is_srgb
+          is_srgb,
+          texture_batch.get()
         );
       }
     );
   }
 
-  texture_barrier->wait();
+  texture_barrier->wait(job_man);
+  // One fence wait and one vkUpdateDescriptorSets for every texture in the model. Has to happen
+  // before the materials below reach the GPU, since they index the slots written here.
+  texture_batch->flush(render_context);
 
   auto materials_result = register_gltf_materials(self, *meta_json->doc, path);
   if (!materials_result.has_value()) {
@@ -1009,54 +1029,62 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
     model_id = self.model_map.create_slot(std::move(model));
   }
 
-  auto& render_context = App::get_rendercontext();
   auto mesh_barrier = Barrier::create();
+  auto mesh_batch = UploadBatch::create();
   for (const auto& [pending_mesh, mesh_index] : std::views::zip(pending_meshes, std::views::iota(0_sz))) {
-    dispatch(mesh_barrier, [&asset_man = self, model_id, gltf_asset_ref, &render_context, pending_mesh, mesh_index]() {
-      ZoneScopedN("GLTF Mesh Build");
+    dispatch(
+      mesh_barrier,
+      [&asset_man = self, model_id, gltf_asset_ref, &render_context, pending_mesh, mesh_index, mesh_batch]() {
+        ZoneScopedN("GLTF Mesh Build");
 
-      const auto& gltf_primitive = gltf_asset_ref->meshes[pending_mesh.gltf_mesh_index]
-                                     .primitives[pending_mesh.gltf_primitive_index];
-      auto build = build_gltf_mesh(*gltf_asset_ref, gltf_primitive);
-      auto mesh_buffer = vuk::Unique<vuk::Buffer>();
-      if (build) {
-        mesh_buffer = upload_gltf_mesh(render_context, *build);
+        const auto& gltf_primitive = gltf_asset_ref->meshes[pending_mesh.gltf_mesh_index]
+                                       .primitives[pending_mesh.gltf_primitive_index];
+        auto build = build_gltf_mesh(*gltf_asset_ref, gltf_primitive);
+        auto mesh_buffer = vuk::Unique<vuk::Buffer>();
+        if (build) {
+          mesh_buffer = upload_gltf_mesh(render_context, *build, mesh_batch.get());
+        }
+
+        auto loaded_model = asset_man.get_model(model_id);
+        if (!loaded_model) {
+          // Still notify, or every waiter on this id blocks forever.
+          mesh_batch->flush(render_context);
+          asset_man.notify_model_loaded();
+          return;
+        }
+
+        if (build) {
+          loaded_model->gpu_mesh_buffers[mesh_index] = std::move(mesh_buffer);
+          loaded_model->gpu_meshes[mesh_index] = build->gpu_mesh;
+          loaded_model->lod0_meshlet_counts[mesh_index] = build->lods[0].meshlet_count;
+
+          loaded_model->mesh_ready[mesh_index].test_and_set(std::memory_order_release);
+        }
+
+        auto pending = std::atomic_ref(loaded_model->pending_meshes);
+        const auto was_last = pending.fetch_sub(1, std::memory_order_acq_rel) == 1;
+        // Lock order is model_load -> models, so drop `models_mutex` before notifying.
+        loaded_model.reset();
+
+        if (was_last) {
+          // Nothing waits on `mesh_barrier` when async, so the last mesh in has to settle the batch
+          // before the model is announced as loaded.
+          mesh_batch->flush(render_context);
+          asset_man.notify_model_loaded();
+        }
       }
-
-      auto loaded_model = asset_man.get_model(model_id);
-      if (!loaded_model) {
-        return;
-      }
-
-      if (build) {
-        loaded_model->gpu_mesh_buffers[mesh_index] = std::move(mesh_buffer);
-        loaded_model->gpu_meshes[mesh_index] = build->gpu_mesh;
-        loaded_model->lod0_meshlet_counts[mesh_index] = build->lods[0].meshlet_count;
-
-        loaded_model->mesh_ready[mesh_index].test_and_set(std::memory_order_release);
-      }
-
-      auto pending = std::atomic_ref(loaded_model->pending_meshes);
-      const auto was_last = pending.fetch_sub(1, std::memory_order_acq_rel) == 1;
-      loaded_model.reset();
-
-      if (was_last) {
-        asset_man.notify_model_loaded();
-      }
-    });
+    );
   }
 
   if (!async) {
-    mesh_barrier->wait();
+    mesh_barrier->wait(job_man);
   }
 
   return model_id;
 }
 
-auto AssetManager::unload_model(this AssetManager& self, ReadGuard<Asset> asset) -> bool {
+auto AssetManager::unload_model(this AssetManager& self, const ModelID model_id) -> bool {
   ZoneScoped;
-
-  const auto model_id = asset->model_id;
 
   self.wait_until_model_loaded(model_id);
 
@@ -1065,7 +1093,6 @@ auto AssetManager::unload_model(this AssetManager& self, ReadGuard<Asset> asset)
     *model = Model{};
   }
   self.model_map.destroy_slot(model_id);
-  asset->model_id = ModelID::Invalid;
 
   return true;
 }

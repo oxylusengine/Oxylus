@@ -1547,6 +1547,7 @@ auto Scene::update_pending_model_spawns(this Scene& self) -> void {
         continue;
       }
 
+      // Must be read before the ready flags below, never after.
       fully_loaded = model->is_fully_loaded();
 
       if (!spawn.hierarchy_spawned) {

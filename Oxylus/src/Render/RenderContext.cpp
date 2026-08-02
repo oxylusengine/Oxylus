@@ -14,6 +14,7 @@
 
 #include "Core/App.hpp"
 #include "Render/Renderer.hpp"
+#include "Render/UploadBatch.hpp"
 #include "Render/Window.hpp"
 #include "Utils/Profiler.hpp"
 
@@ -537,6 +538,13 @@ auto RenderContext::wait_on_multiple(std::span<vuk::UntypedValue> values) -> voi
   vuk::wait_for_values_explicit(superframe_allocator.value(), this_thread_compiler, values);
 }
 
+auto RenderContext::submit_multiple(std::span<vuk::UntypedValue> values) -> void {
+  ZoneScoped;
+
+  auto queue_lock = std::unique_lock(queue_mutex);
+  vuk::submit(superframe_allocator.value(), this_thread_compiler, values, {});
+}
+
 auto RenderContext::create_persistent_descriptor_set(
   this RenderContext& self,
   u32 set_index,
@@ -687,19 +695,23 @@ auto RenderContext::allocate_image(const vuk::ImageAttachment& image_attachment)
 auto RenderContext::destroy_image(const ImageID id) -> void {
   ZoneScoped;
 
-  auto image = *resources.images.slot(id);
-  superframe_allocator->deallocate({&image, 1});
+  auto image = resources.images.copy_slot(id);
+  if (!image) {
+    return;
+  }
+
+  superframe_allocator->deallocate({&image.value(), 1});
   resources.images.destroy_slot(id);
 }
 
 auto RenderContext::image(const ImageID id) -> vuk::Image {
   ZoneScoped;
 
-  auto image = resources.images.slot(id);
-  return *image;
+  return resources.images.copy_slot(id).value_or(vuk::Image{});
 }
 
-auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID {
+auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attachment, UploadBatch* batch)
+  -> ImageViewID {
   ZoneScoped;
 
   vuk::ImageViewCreateInfo ivci;
@@ -741,6 +753,28 @@ auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attach
     .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
   };
 
+  const auto array_element = SlotMap_decode_id(image_view_id).index;
+  if (batch) {
+    if (image_attachment.usage & vuk::ImageUsageFlagBits::eSampled) {
+      batch->add_descriptor_write({
+        .binding = DescriptorTable_SampledImageIndex,
+        .array_element = array_element,
+        .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .image_info = sampled_image_descriptor,
+      });
+    }
+    if (image_attachment.usage & vuk::ImageUsageFlagBits::eStorage) {
+      batch->add_descriptor_write({
+        .binding = DescriptorTable_StorageImageIndex,
+        .array_element = array_element,
+        .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .image_info = storage_image_descriptor,
+      });
+    }
+
+    return image_view_id;
+  }
+
   auto descriptor_count = 0_sz;
   auto descriptor_writes = std::array<VkWriteDescriptorSet, 2>();
   if (image_attachment.usage & vuk::ImageUsageFlagBits::eSampled) {
@@ -779,19 +813,22 @@ auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attach
 auto RenderContext::destroy_image_view(const ImageViewID id) -> void {
   ZoneScoped;
 
-  auto view = *resources.image_views.slot(id);
-  superframe_allocator->deallocate({&view, 1});
+  auto view = resources.image_views.copy_slot(id);
+  if (!view) {
+    return;
+  }
+
+  superframe_allocator->deallocate({&view.value(), 1});
   resources.image_views.destroy_slot(id);
 }
 
 auto RenderContext::image_view(const ImageViewID id) -> vuk::ImageView {
   ZoneScoped;
 
-  auto view = resources.image_views.slot(id);
-  return *view;
+  return resources.image_views.copy_slot(id).value_or(vuk::ImageView{});
 }
 
-auto RenderContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info) -> SamplerID {
+auto RenderContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info, UploadBatch* batch) -> SamplerID {
   ZoneScoped;
 
   auto sampler = runtime->acquire_sampler(sampler_info, num_frames);
@@ -803,6 +840,18 @@ auto RenderContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info)
     .imageView = nullptr,
     .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
   };
+
+  if (batch) {
+    batch->add_descriptor_write({
+      .binding = DescriptorTable_SamplerIndex,
+      .array_element = SlotMap_decode_id(sampler_id).index,
+      .type = VK_DESCRIPTOR_TYPE_SAMPLER,
+      .image_info = sampler_descriptor,
+    });
+
+    return sampler_id;
+  }
+
   auto& bindless_set = get_descriptor_set();
   auto descriptor_write = VkWriteDescriptorSet{
     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, //
@@ -830,7 +879,7 @@ auto RenderContext::destroy_sampler(const SamplerID id) -> void {
 auto RenderContext::sampler(const SamplerID id) -> vuk::Sampler {
   ZoneScoped;
 
-  return *resources.samplers.slot(id);
+  return resources.samplers.copy_slot(id).value_or(vuk::Sampler{});
 }
 
 auto RenderContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)

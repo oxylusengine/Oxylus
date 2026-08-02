@@ -123,28 +123,29 @@ private:
     this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire, bool async
   ) -> bool;
 
+  auto unload_asset_impl(this AssetManager& self, AssetType type, u64 id) -> bool;
+
   auto load_model(this AssetManager& self, const std::filesystem::path& path, bool async) -> ModelID;
-  auto unload_model(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
-  // Blocks until every mesh job of the model has finished. Takes no lock while waiting: mesh jobs
-  // need `models_mutex` themselves to publish into the model.
+  auto unload_model(this AssetManager& self, ModelID model_id) -> bool;
+  // Blocks until every mesh job of the model has finished.
   auto wait_until_model_loaded(this AssetManager& self, ModelID model_id) -> void;
   auto notify_model_loaded(this AssetManager& self) -> void;
 
   auto load_texture(this AssetManager& self, const std::filesystem::path& path, TextureLoadInfo info = {}) -> TextureID;
-  auto unload_texture(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_texture(this AssetManager& self, TextureID texture_id) -> bool;
 
   auto load_material(this AssetManager& self, const std::filesystem::path& path, const Material& info = {})
     -> MaterialID;
-  auto unload_material(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_material(this AssetManager& self, MaterialID material_id) -> bool;
 
   auto load_scene(this AssetManager& self, const std::filesystem::path& path) -> SceneID;
-  auto unload_scene(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_scene(this AssetManager& self, SceneID scene_id) -> bool;
 
   auto load_audio(this AssetManager& self, const std::filesystem::path& path) -> AudioID;
-  auto unload_audio(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_audio(this AssetManager& self, AudioID audio_id) -> bool;
 
   auto load_script(this AssetManager& self, const std::filesystem::path& path) -> ScriptID;
-  auto unload_script(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_script(this AssetManager& self, ScriptID script_id) -> bool;
 
   AssetRegistry asset_registry = {};
 

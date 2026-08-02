@@ -1,10 +1,12 @@
 #pragma once
 
+#include <concepts>
 #include <shared_mutex>
 #include <span>
 #include <tracy/Tracy.hpp>
 #include <vector>
 
+#include "Core/Option.hpp"
 #include "Core/Types.hpp"
 
 namespace ox {
@@ -120,6 +122,20 @@ public:
     }
 
     return nullptr;
+  }
+
+  auto copy_slot(this const Self& self, ID id) -> option<T>
+    requires std::copy_constructible<T>
+  {
+    ZoneScoped;
+
+    std::shared_lock _(self.mutex);
+    auto [version, index] = SlotMap_decode_id(id);
+    if (index >= self.slots.size() || self.versions[index] != version) {
+      return nullopt;
+    }
+
+    return self.slots[index];
   }
 
   auto slotc(this const Self& self, ID id) -> const T* {
