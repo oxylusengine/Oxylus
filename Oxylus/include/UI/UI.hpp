@@ -132,14 +132,19 @@ public:
     f32 max = 1.f
   ) {
     begin_property_grid(label, tooltip);
-    bool modified;
-    const int component_count = value.length();
-    if (component_count >= 3 && color) {
-      if (show_alpha)
-        modified = ImGui::ColorEdit4(id_buffer, glm::value_ptr(value));
-      else
-        modified = ImGui::ColorEdit3(id_buffer, glm::value_ptr(value));
-    } else {
+    constexpr int component_count = T::length();
+    bool modified = false;
+    bool drawn = false;
+    if constexpr (component_count >= 3) {
+      if (color) {
+        if (show_alpha)
+          modified = ImGui::ColorEdit4(id_buffer, glm::value_ptr(value));
+        else
+          modified = ImGui::ColorEdit3(id_buffer, glm::value_ptr(value));
+        drawn = true;
+      }
+    }
+    if (!drawn) {
       modified =
         ImGui::DragScalarN(id_buffer, ImGuiDataType_Float, glm::value_ptr(value), component_count, delta, &min, &max);
     }

@@ -115,17 +115,21 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.main_viewport_panel.init();
 
   auto& event_system = App::get_event_system();
-  std::ignore = event_system.subscribe<ScenePlayEvent>([&self](const ScenePlayEvent& e) {
-    self.editor_context.reset();
-    auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
-    sh.set_scene(nullptr);
-  });
-  std::ignore = event_system.subscribe<SceneStopEvent>([&self](const SceneStopEvent& e) {
-    self.scene_manager.remove_scene(e.scene_id);
-    self.editor_context.reset();
-    auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
-    sh.set_scene(nullptr);
-  });
+  self.scene_play_handler = event_system
+                              .subscribe<ScenePlayEvent>([&self](const ScenePlayEvent& e) {
+                                self.editor_context.reset();
+                                auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
+                                sh.set_scene(nullptr);
+                              })
+                              .value_or(0);
+  self.scene_stop_handler = event_system
+                              .subscribe<SceneStopEvent>([&self](const SceneStopEvent& e) {
+                                self.scene_manager.remove_scene(e.scene_id);
+                                self.editor_context.reset();
+                                auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
+                                sh.set_scene(nullptr);
+                              })
+                              .value_or(0);
 
   Log::add_callback(
     "editor_notifications",
@@ -155,8 +159,18 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   auto& job_man = App::get_job_manager();
-  auto& net = App::mod<NetworkManager>();
   job_man.get_tracker().stop_tracking();
+
+  auto& event_system = App::get_event_system();
+  std::ignore = event_system.unsubscribe<ScenePlayEvent>(self.scene_play_handler);
+  std::ignore = event_system.unsubscribe<SceneStopEvent>(self.scene_stop_handler);
+
+  self.main_viewport_panel.deinit();
+  self.main_viewport_panel.reset();
+
+  self.editor_panel_registry.get<SceneHierarchyPanel>().set_scene(nullptr);
+  self.editor_context.reset();
+  self.scene_manager.reset();
 
   Log::remove_callback("editor_notifications");
 
@@ -183,6 +197,8 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
 
   rml_renderer.begin_frame();
+
+  imgui_renderer.keyboard_input_enabled = !self.main_viewport_panel.is_any_scene_playing();
 
   imgui_renderer.begin_frame(timestep.get_seconds(), window.get_logical_size(), window.get_real_size());
   ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());

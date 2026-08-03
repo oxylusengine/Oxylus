@@ -25,14 +25,12 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
-#include "Core/Enum.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
 #include "Physics/Physics.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Physics/PhysicsMaterial.hpp"
 #include "Render/Camera.hpp"
-#include "Render/Utils/VukCommon.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "UI/RmlUI.hpp"
@@ -402,8 +400,11 @@ Scene::~Scene() {
   // world.release();
 
   lua_systems.clear();
-  auto& lua_manager = App::mod<LuaManager>();
-  lua_manager.get_state()->collect_gc();
+
+  if (App::has_mod<LuaManager>()) {
+    auto& lua_manager = App::mod<LuaManager>();
+    lua_manager.get_state()->collect_gc();
+  }
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {
@@ -488,22 +489,32 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
-  self.world.observer<SpriteComponent>().event(flecs::OnAdd).each([](flecs::iter& it, usize i, SpriteComponent& c) {
-    auto& asset_man = App::mod<AssetManager>();
-    if (it.event() == flecs::OnAdd) {
-      if (!c.material) {
-        c.material = asset_man.create_asset(AssetType::Material, {});
-        asset_man.load_asset(c.material);
+  self.world.observer<SpriteComponent>()
+    .event(flecs::OnAdd)
+    .event(flecs::OnSet)
+    .each([&self](flecs::iter& it, usize i, SpriteComponent& c) {
+      // Deserialization adds the component first and writes its fields (including the material
+      // UUID) right after, so creating a material on OnAdd would orphan it. Wait for the OnSet
+      // that follows instead; it only gets here if the entity really came without a material.
+      if (it.event() == flecs::OnAdd && self.deserializing_entity) {
+        return;
       }
-    }
-  });
+
+      if (c.material) {
+        return;
+      }
+
+      auto& asset_man = App::mod<AssetManager>();
+      c.material = asset_man.create_asset(AssetType::Material, {});
+      asset_man.load_asset(c.material);
+    });
 
   self.world.observer<SpriteComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, SpriteComponent& c) {
     auto& asset_man = App::mod<AssetManager>();
     if (it.event() == flecs::OnRemove) {
-      if (auto material_asset = asset_man.get_asset(c.material)) {
-        asset_man.unload_asset(material_asset->uuid);
-      }
+      // Must not hold a registry read guard across unload_asset(): it takes the registry
+      // write lock (self-deadlock otherwise). unload_asset() no-ops on missing/unloaded.
+      asset_man.unload_asset(c.material);
     }
   });
 
@@ -633,10 +644,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           e.destruct();
         }
       } else if (it.event() == flecs::OnSet) {
-        if (auto asset = asset_man.get_asset(c.material)) {
-          if (!asset->is_loaded()) {
-            asset_man.load_asset(c.material);
-          }
+        // is_loaded() takes and releases the read guard internally; don't hold one across
+        // load_asset() (which re-locks the registry).
+        if (!asset_man.is_loaded(c.material)) {
+          asset_man.load_asset(c.material);
         }
 
         asset_man.set_material_dirty(c.material);
@@ -648,9 +659,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
       auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {
-        if (auto material_asset = asset_man.get_asset(c.material)) {
-          asset_man.unload_asset(material_asset->uuid);
-        }
+        // See note in SpriteComponent OnRemove: never hold a read guard across unload_asset().
+        asset_man.unload_asset(c.material);
       }
     });
 
@@ -1105,15 +1115,16 @@ auto Scene::runtime_stop(this Scene& self) -> void {
     system->on_scene_stop(&self);
   }
 
-  // RmlUI
-  auto& rmlui = App::mod<RmlUI>();
-  auto rml_ctxs = rmlui.get_contexts();
-  for (auto* ctx : rml_ctxs) {
-    auto doc_count = ctx->GetNumDocuments();
-    for (i32 i = 0; i < doc_count; i++) {
-      auto doc = ctx->GetDocument(i);
-      if (doc) {
-        doc->Hide();
+  if (App::has_mod<RmlUI>()) {
+    auto& rmlui = App::mod<RmlUI>();
+    auto rml_ctxs = rmlui.get_contexts();
+    for (auto* ctx : rml_ctxs) {
+      auto doc_count = ctx->GetNumDocuments();
+      for (i32 i = 0; i < doc_count; i++) {
+        auto doc = ctx->GetDocument(i);
+        if (doc) {
+          doc->Hide();
+        }
       }
     }
   }
@@ -1122,7 +1133,7 @@ auto Scene::runtime_stop(this Scene& self) -> void {
 auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void {
   ZoneScoped;
 
-  self.physics_accumulator += delta_time.get_millis();
+  self.physics_accumulator += static_cast<f32>(delta_time.get_millis());
   while (self.physics_accumulator >= self.physics_interval) {
     self.physics_accumulator -= self.physics_interval;
   }
@@ -1158,7 +1169,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
     if (self.meshes_dirty) {
       auto mesh_instances = self.mesh_instances.slots_unsafe();
-      auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, usize>();
+      auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, u32>();
 
       self.mesh_instances.for_each_active([&](usize index, const MeshInstance& mesh_instance) {
         const auto model = asset_man.get_model(mesh_instance.model_uuid);
@@ -1193,7 +1204,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         max_meshlet_instance_count += lod0_meshlet_count;
       });
 
-      self.gpu_mesh_instance_count = gpu_mesh_instances.size();
+      self.gpu_mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
       self.max_meshlet_instance_count = max_meshlet_instance_count;
     } else if (!self.dirty_mesh_instances.empty()) {
       u32 gpu_idx = 0;
@@ -1211,120 +1222,11 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       }
     }
 
-    auto uuid_to_image_index = [&](const UUID& uuid) -> option<u32> {
-      if (!uuid || !asset_man.is_loaded(uuid)) {
-        return nullopt;
-      }
-
-      auto texture = asset_man.get_texture(uuid);
-      return texture->get_view_index();
-    };
-
-    if (self.force_material_update) {
-      asset_man.set_all_materials_dirty();
-      self.force_material_update = false;
-    }
-
-    auto dirty_material_ids = asset_man.get_dirty_material_ids();
-    auto dirty_material_indices = std::vector<u32>();
-    for (const auto dirty_id : dirty_material_ids) {
-      const auto material = asset_man.get_material(dirty_id);
-      if (!material)
-        continue;
-
-      auto dirty_index = SlotMap_decode_id(dirty_id).index;
-      dirty_material_indices.push_back(dirty_index);
-      if (dirty_index >= self.gpu_materials.size()) {
-        self.gpu_materials.resize(dirty_index + 1, {});
-      }
-
-      auto albedo_image_index = uuid_to_image_index(material->albedo_texture);
-      auto normal_image_index = uuid_to_image_index(material->normal_texture);
-      auto emissive_image_index = uuid_to_image_index(material->emissive_texture);
-      auto metallic_roughness_image_index = uuid_to_image_index(material->metallic_roughness_texture);
-      auto occlusion_image_index = uuid_to_image_index(material->occlusion_texture);
-      auto sampler_index = 0_u32;
-
-      auto flags = GPU::MaterialFlag::None;
-      if (albedo_image_index.has_value()) {
-        flags |= GPU::MaterialFlag::HasAlbedoImage;
-
-        // Incase we wanted to change a material's sampler after it's creation
-        // we should prefer material's sampler over texture's default sampler.
-        auto& render_context = App::get_rendercontext();
-
-        auto texture = asset_man.get_texture(material->albedo_texture);
-        sampler_index = texture->get_sampler_index();
-
-        auto texture_sampler = render_context.resources.samplers.slot(texture->get_sampler_id());
-
-        vuk::SamplerCreateInfo sampler_ci = {};
-        switch (material->sampling_mode) {
-          case SamplingMode::LinearRepeated          : sampler_ci = vuk::LinearSamplerRepeated; break;
-          case SamplingMode::LinearClamped           : sampler_ci = vuk::LinearSamplerClamped; break;
-          case SamplingMode::NearestRepeated         : sampler_ci = vuk::NearestSamplerRepeated; break;
-          case SamplingMode::NearestClamped          : sampler_ci = vuk::NearestSamplerClamped; break;
-          case SamplingMode::LinearRepeatedAnisotropy: sampler_ci = vuk::LinearSamplerRepeatedAnisotropy; break;
-        }
-        auto material_sampler = render_context.runtime->acquire_sampler(sampler_ci, render_context.num_frames);
-        if (texture_sampler->id != material_sampler.id) {
-          auto sampler_id = render_context.allocate_sampler(sampler_ci);
-          auto sampler_index_from_material = SlotMap_decode_id(sampler_id).index;
-          sampler_index = sampler_index_from_material;
-        }
-      }
-
-      flags |= normal_image_index.has_value() ? GPU::MaterialFlag::HasNormalImage : GPU::MaterialFlag::None;
-      flags |= emissive_image_index.has_value() ? GPU::MaterialFlag::HasEmissiveImage : GPU::MaterialFlag::None;
-      flags |= metallic_roughness_image_index.has_value() ? GPU::MaterialFlag::HasMetallicRoughnessImage
-                                                          : GPU::MaterialFlag::None;
-      flags |= occlusion_image_index.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
-
-      auto gpu_material = GPU::Material{
-        .albedo_color =
-          glm::u16vec4{
-            meshopt_quantizeHalf(material->albedo_color.x),
-            meshopt_quantizeHalf(material->albedo_color.y),
-            meshopt_quantizeHalf(material->albedo_color.z),
-            meshopt_quantizeHalf(material->albedo_color.w),
-          },
-        .emissive_color =
-          glm::u16vec3{
-            meshopt_quantizeHalf(material->emissive_color.x),
-            meshopt_quantizeHalf(material->emissive_color.y),
-            meshopt_quantizeHalf(material->emissive_color.z),
-          },
-        .roughness_factor = meshopt_quantizeHalf(material->roughness_factor),
-        .metallic_factor = meshopt_quantizeHalf(material->metallic_factor),
-        .alpha_cutoff = meshopt_quantizeHalf(material->alpha_cutoff),
-        .flags = flags,
-        .sampler_index = sampler_index,
-        .albedo_image_index = albedo_image_index.value_or(0_u32),
-        .normal_image_index = normal_image_index.value_or(0_u32),
-        .emissive_image_index = emissive_image_index.value_or(0_u32),
-        .metallic_roughness_image_index = metallic_roughness_image_index.value_or(0_u32),
-        .occlusion_image_index = occlusion_image_index.value_or(0_u32),
-        .uv_size =
-          glm::u16vec2{
-            meshopt_quantizeHalf(material->uv_size.x),
-            meshopt_quantizeHalf(material->uv_size.y),
-          },
-        .uv_offset = glm::u16vec2{
-          meshopt_quantizeHalf(material->uv_offset.x),
-          meshopt_quantizeHalf(material->uv_offset.y),
-        },
-      };
-
-      self.gpu_materials[dirty_index] = gpu_material;
-    }
-
     auto update_info = RendererInstanceUpdateInfo{
       .mesh_instance_count = self.gpu_mesh_instance_count,
       .max_meshlet_instance_count = self.max_meshlet_instance_count,
       .dirty_transform_ids = self.dirty_transforms,
       .gpu_transforms = self.transforms.slots_unsafe(),
-      .dirty_material_indices = dirty_material_indices,
-      .gpu_materials = self.gpu_materials,
       .gpu_meshes = gpu_meshes,
       .gpu_mesh_instances = gpu_mesh_instances,
       .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices,
@@ -1472,7 +1374,8 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   auto& root_node = model->mesh_groups.front();
   auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
 
-  auto model_base_aabb = model->get_base_aabb();
+  auto mesh_bounds = model->get_mesh_bounds();
+  auto model_aabb = AABB::from_bounds(mesh_bounds.aabb_center, mesh_bounds.aabb_extent);
 
   struct ProcessingNode {
     flecs::entity parent = {};
@@ -1516,7 +1419,7 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
         .model_uuid = asset_uuid,
         .mesh_index = static_cast<u32>(mesh_index),
         .material_uuid = material_uuid,
-        .baked_aabb = model_base_aabb,
+        .baked_aabb = model_aabb,
       });
       mesh_entity.child_of(node_entity);
       mesh_entity.modified<TransformComponent>();
@@ -1716,7 +1619,6 @@ auto Scene::detach_mesh(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
-  const auto transform_id = transforms_it->second;
   const auto instance_id = instances_it->second;
   if (!self.mesh_instances.slot(instance_id)) {
     return false;
@@ -2065,11 +1967,14 @@ auto Scene::json_to_entity(
         continue;
       }
 
+      // Observers must not fill in defaults for fields this loop is about to write.
+      const auto was_deserializing = std::exchange(self.deserializing_entity, true);
       e.add(component_id);
       auto* component = e.get_mut(component_id);
       auto deserializer = JsonEntityDeserializer(self.world, field_json.value());
       deserializer.serialize(component_id, component);
       requested_assets.insert_range(requested_assets.end(), std::move(deserializer.requested_assets));
+      self.deserializing_entity = was_deserializing;
       e.modified(component_id);
     }
   }
@@ -2194,8 +2099,16 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
 
   for (const auto& uuid : requested_assets) {
     auto& asset_man = App::mod<AssetManager>();
-    if (auto asset = asset_man.get_asset(uuid); asset) {
-      if (asset->type == AssetType::Script) {
+    // Snapshot the type and release the read guard before load_asset()/add_lua_system(),
+    // which re-lock the registry.
+    auto asset_type = AssetType::None;
+    auto exists = false;
+    if (auto asset = asset_man.get_asset(uuid)) {
+      exists = true;
+      asset_type = asset->type;
+    }
+    if (exists) {
+      if (asset_type == AssetType::Script) {
         self.add_lua_system(uuid);
       } else {
         asset_man.load_asset(uuid);

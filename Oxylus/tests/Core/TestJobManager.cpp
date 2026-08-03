@@ -5,7 +5,7 @@
 
 class JobManagerTest : public ::testing::Test {
 protected:
-  void SetUp() override { manager = std::make_unique<ox::JobManager>(2); }
+  void SetUp() override { manager = std::make_unique<ox::JobManager>(); }
 
   void TearDown() override { manager->shutdown(); }
 

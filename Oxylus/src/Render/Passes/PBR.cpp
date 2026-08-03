@@ -73,7 +73,7 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
           0,
           PushConstants(atmosphere_address, sun_dir, sun_intensity, sun_ambient_strength, frame_index)
         )
-        .dispatch_invocations_per_pixel(sky_cubemap, 1.0f, 1.0f, sky_cubemap->layer_count);
+        .dispatch_invocations_per_pixel(sky_cubemap, 1.0f, 1.0f, static_cast<f32>(sky_cubemap->layer_count));
 
       return std::make_tuple(sky_view_lut, sky_transmittance_lut, camera, sky_cubemap);
     }
@@ -179,9 +179,14 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
   -> void {
   ZoneScoped;
 
+  // Inverts ndc_z = (m[2][2] * view_z + m[2][3]) / -view_z, giving linear_depth = mul / (ndc_z + add).
+  // glm is column major, so m[2][3] lives at projection[3][2].
+  const auto& projection = self.camera_data.projection;
+  const auto depth_linearize_mul_add = glm::vec2(projection[3][2], projection[2][2]);
+
   auto vbgtao_prefilter_pass = vuk::make_pass(
     "vbgtao prefilter",
-    [](
+    [depth_linearize_mul_add](
       vuk::CommandBuffer& command_buffer, //
       VUK_IA(vuk::eComputeSampled) depth_input,
       VUK_IA(vuk::eComputeRW) dst_image
@@ -195,7 +200,11 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
         .bind_image(0, 4, dst_image->mip(3))
         .bind_image(0, 5, dst_image->mip(4))
         .bind_sampler(0, 6, vuk::NearestSamplerClamped)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, depth_input->extent)
+        .push_constants(
+          vuk::ShaderStageFlagBits::eCompute,
+          0,
+          PushConstants(depth_input->extent, depth_linearize_mul_add)
+        )
         .dispatch((depth_input->extent.width + 16 - 1) / 16, (depth_input->extent.height + 16 - 1) / 16);
 
       return std::make_tuple(depth_input, dst_image);
@@ -353,8 +362,6 @@ auto RendererInstance::apply_pbr(
         .push_constants(
           vuk::ShaderStageFlagBits::eFragment,
           0,
-          // The u32 pad keeps the following u64 addresses 8-byte aligned, matching
-          // slang's scalar layout (PushConstants itself only aligns to 4).
           PushConstants(sun_dir, sun_intensity, glm::vec3(0.02f, 0.03f, 0.04f), 0_u32, atmosphere_address, sky_address)
         )
         .specialize_constants(0, std::to_underlying(scene_flags))

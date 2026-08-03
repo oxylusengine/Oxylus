@@ -406,6 +406,19 @@ auto RenderContext::destroy_context(this RenderContext& self) -> void {
   ZoneScoped;
   self.runtime->wait_idle();
 
+  {
+    auto write_lock = std::unique_lock(self.pending_image_buffers_mutex);
+    if (!self.tracked_buffers.empty()) {
+      OX_LOG_TRACE("Releasing {} tracked image buffer(s) on shutdown.", self.tracked_buffers.size());
+    }
+
+    for (auto& [allocation_time_point, tracked_buffer] : self.tracked_buffers) {
+      self.superframe_allocator->deallocate({&tracked_buffer, 1});
+    }
+
+    self.tracked_buffers.clear();
+  }
+
   auto destroy_resource_pool = [&self](auto& pool) -> void {
     for (auto i = 0_sz; i < pool.size(); i++) {
       auto* v = pool.slot_from_index(i);
@@ -422,6 +435,22 @@ auto RenderContext::destroy_context(this RenderContext& self) -> void {
   destroy_resource_pool(self.resources.image_views);
   self.resources.samplers.reset();
   self.resources.pipelines.reset();
+
+  self.superframe_allocator->deallocate(std::span(&self.resources.descriptor_set, 1));
+  self.resources.descriptor_set = {};
+
+  self.tracy_profiler.reset();
+  self.swapchain.reset();
+  self.frame_allocator.reset();
+  self.superframe_allocator.reset();
+  self.superframe_resource.reset();
+  self.runtime.reset();
+
+  vkb::destroy_surface(self.vkb_instance, self.surface);
+  self.surface = VK_NULL_HANDLE;
+  vkb::destroy_device(self.vkb_device);
+  self.device = VK_NULL_HANDLE;
+  vkb::destroy_instance(self.vkb_instance);
 }
 
 auto RenderContext::handle_resize(u32 width, u32 height) -> void {
@@ -534,6 +563,13 @@ auto RenderContext::wait_on(vuk::UntypedValue&& fut) -> void {
   ZoneScoped;
 
   fut.wait(superframe_allocator.value(), this_thread_compiler);
+}
+
+auto RenderContext::submit_now(vuk::UntypedValue&& fut) -> void {
+  ZoneScoped;
+
+  auto lock = std::scoped_lock(queue_mutex);
+  fut.submit(frame_allocator.value(), this_thread_compiler);
 }
 
 auto RenderContext::wait_on_multiple(std::span<vuk::UntypedValue> values) -> void {
@@ -691,8 +727,12 @@ auto RenderContext::allocate_image(const vuk::ImageAttachment& image_attachment)
 auto RenderContext::destroy_image(const ImageID id) -> void {
   ZoneScoped;
 
-  auto image = *resources.images.slot(id);
-  superframe_allocator->deallocate({&image, 1});
+  auto* image = resources.images.slot(id);
+  if (!image) {
+    return;
+  }
+
+  superframe_allocator->deallocate({image, 1});
   resources.images.destroy_slot(id);
 }
 
@@ -783,8 +823,12 @@ auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attach
 auto RenderContext::destroy_image_view(const ImageViewID id) -> void {
   ZoneScoped;
 
-  auto view = *resources.image_views.slot(id);
-  superframe_allocator->deallocate({&view, 1});
+  auto* view = resources.image_views.slot(id);
+  if (!view) {
+    return;
+  }
+
+  superframe_allocator->deallocate({view, 1});
   resources.image_views.destroy_slot(id);
 }
 

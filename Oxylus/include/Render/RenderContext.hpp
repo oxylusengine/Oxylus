@@ -87,6 +87,7 @@ public:
 
   auto wait(this RenderContext& self) -> void;
   auto wait_on(vuk::UntypedValue&& fut) -> void;
+  auto submit_now(vuk::UntypedValue&& fut) -> void;
   auto wait_on_multiple(std::span<vuk::UntypedValue> values) -> void;
 
   auto create_persistent_descriptor_set(

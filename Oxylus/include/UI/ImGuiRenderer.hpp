@@ -21,8 +21,12 @@ public:
   std::vector<vuk::Value<vuk::ImageAttachment>> rendering_images;
   ankerl::unordered_dense::map<ImageViewID, ImTextureID> acquired_images;
 
+  bool keyboard_input_enabled = true;
+
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
+
+  auto wants_keyboard(this const ImGuiRenderer& self) -> bool;
 
   void begin_frame(f64 delta_time, glm::vec2 logical_size, glm::vec2 real_size);
   [[nodiscard]]
@@ -40,5 +44,8 @@ public:
   void on_mouse_scroll(glm::vec2 offset);
   void on_key(u32 key_code, u32 scan_code, u16 mods, bool down);
   void on_text_input(const c8* text);
+
+private:
+  bool keyboard_routed_last_frame = true;
 };
 } // namespace ox

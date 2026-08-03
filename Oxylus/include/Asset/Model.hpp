@@ -49,7 +49,7 @@ struct Model {
 
   usize default_scene_index = 0;
 
-  auto get_base_aabb(this const Model& self) -> GPU::MeshBounds;
+  auto get_mesh_bounds(this const Model& self) -> GPU::MeshBounds;
 };
 
 enum struct MeshInstanceID : u64 { Invalid = ~0_u64 };

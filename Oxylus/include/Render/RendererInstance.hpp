@@ -3,6 +3,7 @@
 #include <ankerl/unordered_dense.h>
 #include <array>
 
+#include "Asset/Texture.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Scene/SceneGPU.hpp"
@@ -137,9 +138,6 @@ struct RendererInstanceUpdateInfo {
 
   std::span<GPU::TransformID> dirty_transform_ids = {};
   std::span<GPU::Transforms> gpu_transforms = {};
-
-  std::span<u32> dirty_material_indices = {};
-  std::span<GPU::Material> gpu_materials = {};
 
   std::span<GPU::Mesh> gpu_meshes = {};
   std::span<GPU::MeshInstance> gpu_mesh_instances = {};
@@ -370,6 +368,7 @@ struct DebugContext {
 struct PostProcessContext {
   f32 delta_time = 0.0f;
   vuk::Extent3D extent = {};
+  f32 bloom_intensity = 0.0f;
 
   vuk::Value<vuk::ImageAttachment> dst_attachment = {};
   vuk::Value<vuk::ImageAttachment> final_attachment = {};
@@ -378,9 +377,6 @@ struct PostProcessContext {
 
 class RendererInstance {
 public:
-  template <typename T>
-  struct BufferTraits;
-
   explicit RendererInstance(Scene& owner_scene, Renderer& parent_renderer);
   ~RendererInstance();
 
@@ -433,12 +429,15 @@ public:
   auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
     -> vuk::Value<vuk::ImageAttachment>;
   auto apply_eye_adaptation(this RendererInstance&, PostProcessContext& context) -> void;
-  auto apply_bloom(this RendererInstance&, PostProcessContext& context, const RendererCVar& cvar) -> void;
+  auto apply_bloom(this RendererInstance& self, PostProcessContext& context, const RendererCVar& cvar) -> void;
   auto apply_tonemap(this RendererInstance&, PostProcessContext& context) -> vuk::Value<vuk::ImageAttachment>;
   auto apply_debug_view(this RendererInstance&, DebugContext& context, vuk::Extent3D extent)
     -> vuk::Value<vuk::ImageAttachment>;
-  auto draw_for_debug(this RendererInstance&, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
-    -> vuk::Value<vuk::ImageAttachment>;
+  auto draw_bounding_boxes(
+    this RendererInstance&,
+    vuk::Value<vuk::ImageAttachment>&& depth_attachment,
+    vuk::Value<vuk::ImageAttachment>&& dst_attachment
+  ) -> vuk::Value<vuk::ImageAttachment>;
 
   auto update_vbgtao_info(this RendererInstance&, const RendererCVar& cvar) -> void;
 
@@ -456,7 +455,7 @@ private:
 
   Scene& scene;
   Renderer& renderer;
-  Renderer::RenderQueue2D render_queue_2d = {};
+  GPU::RenderQueue2D render_queue_2d = {};
   bool saved_camera = false;
 
   glm::uvec2 viewport_size = {};
@@ -495,7 +494,6 @@ private:
   vuk::Unique<vuk::Buffer> transforms_previous_buffer{};
   vuk::Unique<vuk::Buffer> mesh_instances_buffer{};
   vuk::Unique<vuk::Buffer> meshes_buffer{};
-  vuk::Unique<vuk::Buffer> materials_buffer{};
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
   vuk::Unique<vuk::Buffer> lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};

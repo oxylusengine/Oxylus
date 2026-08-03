@@ -17,6 +17,7 @@
 #include "Render/DebugRenderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Render/RendererInstance.hpp"
+#include "Scene/Components.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Scripting/LuaSystem.hpp"
 #include "Utils/Timestep.hpp"
@@ -72,10 +73,7 @@ public:
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};
 
-  std::vector<GPU::Material> gpu_materials = {};
-
   bool meshes_dirty = false;
-  bool force_material_update = true;
   u32 gpu_mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
 
@@ -178,6 +176,7 @@ public:
 
 private:
   bool running = false;
+  bool deserializing_entity = false;
 
   std::vector<std::function<void(Scene* scene)>> deferred_functions_ = {};
 

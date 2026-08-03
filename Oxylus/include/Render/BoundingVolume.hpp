@@ -3,8 +3,6 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 
-#include "Scene/SceneGPU.hpp"
-
 namespace ox {
 class RayCast;
 }
@@ -22,9 +20,9 @@ struct AABB {
   ~AABB() = default;
   AABB(const AABB& other) = default;
   AABB(const glm::vec3 min_, const glm::vec3 max_) : min(min_), max(max_) {}
-  AABB(const GPU::MeshBounds& bounds) {
-    min = bounds.aabb_center - bounds.aabb_extent * 0.5f;
-    max = bounds.aabb_center + bounds.aabb_extent * 0.5f;
+
+  static auto from_bounds(glm::vec3 center, glm::vec3 extent) -> AABB {
+    return AABB(center - extent * 0.5f, center + extent * 0.5f);
   }
 
   glm::vec3 get_center() const { return (max + min) * 0.5f; }

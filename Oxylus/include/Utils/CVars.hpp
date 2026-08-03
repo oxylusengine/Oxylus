@@ -120,6 +120,7 @@ struct AutoCVar_Int : AutoCVar<i32> {
   auto get() const -> i32;
   auto get_default() const -> i32;
   auto get_ptr() const -> i32*;
+  auto get_ptr_bool() const -> bool*;
 
   auto as_bool() const -> bool;
 

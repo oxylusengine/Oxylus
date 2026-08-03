@@ -222,6 +222,7 @@ struct LightComponent {
 
 struct SkyComponent {
   glm::vec4 solid_color = glm::vec4{0.f, 0.f, 0.f, 1.0f};
+  glm::vec3 ambient_color = glm::vec3{0.03f};
   UUID texture = {};
 };
 

@@ -99,13 +99,13 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
     auto current_sent_packets = self.remote_peer->packetsSent;
 
     self.stats.ping = self.remote_peer->pingInterval;
-    self.stats.sent_bytes = current_sent_bytes - self.stats.last_sent_bytes;
-    self.stats.received_bytes = current_received_bytes - self.stats.last_received_bytes;
+    self.stats.sent_bytes = static_cast<u32>(current_sent_bytes - self.stats.last_sent_bytes);
+    self.stats.received_bytes = static_cast<u32>(current_received_bytes - self.stats.last_received_bytes);
     self.stats.sent_packets = current_sent_packets - self.stats.last_sent_packets;
     self.stats.packets_lost = self.remote_peer->packetsLost;
     self.stats.rtt = self.remote_peer->lastRoundTripTime;
-    self.stats.last_sent_bytes = current_sent_bytes;
-    self.stats.last_received_bytes = current_received_bytes;
+    self.stats.last_sent_bytes = static_cast<u32>(current_sent_bytes);
+    self.stats.last_received_bytes = static_cast<u32>(current_received_bytes);
     self.stats.last_sent_packets = current_sent_packets;
   }
 
@@ -148,16 +148,16 @@ auto NetClient::handle_packet(this NetClient& self, NetPacket& packet) -> void {
       self.net_id = handshake->net_id;
     } break;
     case NetPacketType::SceneSnapshot: {
-      auto state = packet.get_scene_snapshot();
-      if (!state.has_value()) {
+      auto snapshot = packet.get_scene_snapshot();
+      if (!snapshot.has_value()) {
         return;
       }
 
       // TODO: Copying the whole scene snapshot...
       auto& es = App::get_event_system();
-      std::ignore = es.emit<ClientSceneSnapshotEvent>(ClientSceneSnapshotEvent(state->first, state->second));
+      std::ignore = es.emit<ClientSceneSnapshotEvent>(ClientSceneSnapshotEvent(snapshot->sequence, snapshot->state));
 
-      self.on_scene_snapshot(state->first, std::move(state->second));
+      self.on_scene_snapshot(snapshot->sequence, std::move(snapshot->state));
     } break;
     case NetPacketType::ClientAck: {
       // Not our job

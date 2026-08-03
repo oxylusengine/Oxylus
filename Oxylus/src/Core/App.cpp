@@ -2,7 +2,6 @@
 
 #include <vuk/vsl/Core.hpp>
 
-#include "Asset/AssetManager.hpp"
 #include "Core/EventSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
@@ -94,6 +93,9 @@ auto App::step(this App& self) -> void {
   if (self.window.has_value())
     self.window->update(self.timestep);
 
+  if (!self.is_running)
+    return;
+
   self.registry.update(self.timestep);
 
   if (self.registry.has<Input>())
@@ -118,9 +120,23 @@ void App::stop(this App& self) {
 
   self.is_running = false;
 
+  // Single point where the close is announced, so it fires no matter how the loop was left.
+  std::ignore = self.event_system.emit<AppCloseEvent>(AppCloseEvent{});
+
+  // Anything queued for "next frame" never got one. Run it while every module is still alive,
+  // since those callbacks are how deferred destruction is expressed.
+  self.run_deferred_tasks();
+
   self.job_manager.wait();
+
+  // Modules release GPU resources in their deinit/destructor, so nothing may still be in flight.
+  if (self.render_context != nullptr) {
+    self.render_context->wait();
+  }
+
   self.registry.deinit();
   self.job_manager.wait();
+  self.run_deferred_tasks();
 
   auto job_manager_deinit_result = self.job_manager.deinit();
   if (job_manager_deinit_result.has_value())
@@ -134,17 +150,17 @@ void App::stop(this App& self) {
   else
     OX_LOG_ERROR("Failed to deinitalize EventSystem: {}", event_system_deinit_result.error());
 
-  if (self.window.has_value()) {
-    self.window->destroy();
-  }
+  // The surface outlives the swapchain, and both outlive the window they were created from.
   if (self.render_context != nullptr) {
     self.render_context->destroy_context();
+  }
+  if (self.window.has_value()) {
+    self.window->destroy();
   }
 }
 
 auto App::should_stop(this App& self) -> void {
-  std::ignore = self.event_system.emit<AppCloseEvent>(AppCloseEvent{});
-  self.is_running = false;
+  self.is_running = false; //
 }
 
 auto App::with_name(this App& self, std::string name) -> App& {

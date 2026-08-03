@@ -42,6 +42,8 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_bloom_threshold.init(self.system, "pp.bloom_threshold", "bloom threshold", 1.0f);
   self.cvar_bloom_soft_threshold.init(self.system, "pp.bloom_soft_threshold", "bloom soft threshold", 0.125f);
   self.cvar_bloom_radius.init(self.system, "pp.bloom_radius", "bloom radius", 0.75f);
+  self.cvar_bloom_intensity.init(self.system, "pp.bloom_intensity", "bloom intensity", 0.1f);
+  self.cvar_bloom_clamp.init(self.system, "pp.bloom_clamp", "bloom source clamp", 4.0f);
 
   self.cvar_fxaa_enable.init(self.system, "pp.fxaa", "use fxaa", 1);
 
@@ -80,6 +82,8 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["threshold"] = self.cvar_bloom_threshold.get();
   writer["soft_threshold"] = self.cvar_bloom_soft_threshold.get();
   writer["radius"] = self.cvar_bloom_radius.get();
+  writer["intensity"] = self.cvar_bloom_intensity.get();
+  writer["clamp"] = self.cvar_bloom_clamp.get();
   writer.end_obj();
 
   writer["fxaa"].begin_obj();
@@ -108,26 +112,33 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
 
   auto color_obj = json["color"];
   if (!color_obj.error()) {
-    self.cvar_tonemapper.set(color_obj["tonemapper"].get_int64());
-    self.cvar_exposure.set(color_obj["exposure"].get_double());
-    self.cvar_gamma.set(color_obj["gamma"].get_double());
+    self.cvar_tonemapper.set(static_cast<i32>(color_obj["tonemapper"].get_int64()));
+    self.cvar_exposure.set(static_cast<f32>(color_obj["exposure"].get_double()));
+    self.cvar_gamma.set(static_cast<f32>(color_obj["gamma"].get_double()));
   }
 
   auto gtao_obj = json["gtao"];
   if (!gtao_obj.error()) {
     self.cvar_vbgtao_enable.set(gtao_obj["enabled"].get_bool());
-    self.cvar_vbgtao_quality_level.set(gtao_obj["quality_level"].get_int64());
-    self.cvar_vbgtao_thickness.set(gtao_obj["thickness"]->get_double());
-    self.cvar_vbgtao_radius.set(gtao_obj["radius"].get_double());
-    self.cvar_vbgtao_final_power.set(gtao_obj["final_power"].get_double());
+    self.cvar_vbgtao_quality_level.set(static_cast<i32>(gtao_obj["quality_level"].get_int64()));
+    self.cvar_vbgtao_thickness.set(static_cast<f32>(gtao_obj["thickness"]->get_double()));
+    self.cvar_vbgtao_radius.set(static_cast<f32>(gtao_obj["radius"].get_double()));
+    self.cvar_vbgtao_final_power.set(static_cast<f32>(gtao_obj["final_power"].get_double()));
   }
 
   auto bloom_obj = json["bloom"];
   if (!bloom_obj.error()) {
     self.cvar_bloom_enable.set(bloom_obj["enabled"].get_bool());
-    self.cvar_bloom_threshold.set(bloom_obj["threshold"].get_double());
-    self.cvar_bloom_soft_threshold.set(bloom_obj["soft_threshold"].get_double());
-    self.cvar_bloom_radius.set(bloom_obj["radius"].get_double());
+    self.cvar_bloom_threshold.set(static_cast<f32>(bloom_obj["threshold"].get_double()));
+    self.cvar_bloom_soft_threshold.set(static_cast<f32>(bloom_obj["soft_threshold"].get_double()));
+    self.cvar_bloom_radius.set(static_cast<f32>(bloom_obj["radius"].get_double()));
+    // Newer keys than the rest of the block; scenes serialized before they exist keep the defaults.
+    auto intensity_obj = bloom_obj["intensity"];
+    if (!intensity_obj.error())
+      self.cvar_bloom_intensity.set(static_cast<f32>(intensity_obj.get_double()));
+    auto clamp_obj = bloom_obj["clamp"];
+    if (!clamp_obj.error())
+      self.cvar_bloom_clamp.set(static_cast<f32>(clamp_obj.get_double()));
   }
 
   auto fxaa_obj = json["fxaa"];
@@ -138,9 +149,9 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
   auto cs_obj = json["contact_shadows"];
   if (!cs_obj.error()) {
     self.cvar_contact_shadows_enabled.set(cs_obj["enabled"].get_bool());
-    self.cvar_contact_shadows_steps.set(cs_obj["steps"].get_int64());
-    self.cvar_contact_shadows_thickness.set(cs_obj["thickness"].get_double());
-    self.cvar_contact_shadows_length.set(cs_obj["length"].get_double());
+    self.cvar_contact_shadows_steps.set(static_cast<i32>(cs_obj["steps"].get_int64()));
+    self.cvar_contact_shadows_thickness.set(static_cast<f32>(cs_obj["thickness"].get_double()));
+    self.cvar_contact_shadows_length.set(static_cast<f32>(cs_obj["length"].get_double()));
   }
 }
 } // namespace ox

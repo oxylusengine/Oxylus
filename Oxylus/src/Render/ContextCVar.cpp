@@ -58,7 +58,7 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
     if (auto v = display_config["vsync"].as_boolean())
       self.cvar_vsync.set(v->get());
     if (auto v = display_config["frame_limit"].as_integer())
-      self.cvar_frame_limit.set(v->get());
+      self.cvar_frame_limit.set(static_cast<i32>(v->get()));
   }
 
   return true;

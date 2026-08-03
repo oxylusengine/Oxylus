@@ -76,11 +76,15 @@ auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostPro
   );
 }
 
-auto RendererInstance::apply_bloom(this RendererInstance&, PostProcessContext& context, const RendererCVar& cvar) -> void {
+auto RendererInstance::apply_bloom(this RendererInstance& self, PostProcessContext& context, const RendererCVar& cvar)
+  -> void {
   ZoneScoped;
 
   const auto threshold = cvar.cvar_bloom_threshold.get();
   const auto soft_threshold = cvar.cvar_bloom_soft_threshold.get();
+  const auto radius = cvar.cvar_bloom_radius.get();
+  const auto clamp_value = cvar.cvar_bloom_clamp.get();
+  context.bloom_intensity = cvar.cvar_bloom_intensity.get();
 
   auto bloom_downsampled_attachment = vuk::declare_ia(
     "bloom downsampled",
@@ -94,27 +98,36 @@ auto RendererInstance::apply_bloom(this RendererInstance&, PostProcessContext& c
 
   auto bloom_prefilter_pass = vuk::make_pass(
     "bloom prefilter",
-    [threshold, soft_threshold](
+    [threshold, soft_threshold, clamp_value, scene_flags = self.gpu_scene_flags](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeSampled) src,
-      VUK_IA(vuk::eComputeRW) out
+      VUK_IA(vuk::eComputeRW) out,
+      VUK_BA(vuk::eComputeUniformRead) exposure
     ) {
       cmd_list //
         .bind_compute_pipeline("bloom_prefilter")
         .bind_image(0, 0, out)
         .bind_image(0, 1, src)
         .bind_sampler(0, 2, vuk::LinearSamplerBorder)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(threshold, soft_threshold, out->extent))
+        .bind_buffer(0, 3, exposure)
+        .specialize_constants(0, std::to_underlying(scene_flags))
+        .push_constants(
+          vuk::ShaderStageFlagBits::eCompute,
+          0,
+          PushConstants(threshold, soft_threshold, clamp_value, out->extent)
+        )
         .dispatch_invocations_per_pixel(out);
 
-      return std::make_tuple(src, out);
+      return std::make_tuple(src, out, exposure);
     }
   );
 
-  std::tie(context.final_attachment, bloom_downsampled_attachment) = bloom_prefilter_pass(
-    std::move(context.final_attachment),
-    std::move(bloom_downsampled_attachment)
-  );
+  std::tie(context.final_attachment, bloom_downsampled_attachment, self.prepared_frame.exposure_buffer) =
+    bloom_prefilter_pass(
+      std::move(context.final_attachment),
+      std::move(bloom_downsampled_attachment),
+      std::move(self.prepared_frame.exposure_buffer)
+    );
 
   auto bloom_downsample_pass = vuk::make_pass(
     "bloom downsample",
@@ -150,7 +163,7 @@ auto RendererInstance::apply_bloom(this RendererInstance&, PostProcessContext& c
 
   auto bloom_upsample_pass = vuk::make_pass(
     "bloom_upsample",
-    [](
+    [radius](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eComputeRW) bloom_upsampled,
       VUK_IA(vuk::eComputeSampled) bloom_downsampled
@@ -176,7 +189,7 @@ auto RendererInstance::apply_bloom(this RendererInstance&, PostProcessContext& c
         cmd_list.image_barrier(bloom_upsampled->mip(i - 1), vuk::eComputeWrite, vuk::eComputeWrite);
         cmd_list.bind_image(0, 0, bloom_upsampled->mip(i - 1));
         cmd_list.bind_image(0, 2, bloom_downsampled->mip(i - 1));
-        cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height));
+        cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height, radius));
         cmd_list.dispatch_invocations(mip_width, mip_height);
       }
 
@@ -196,7 +209,10 @@ auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessCon
 
   auto tonemap_pass = vuk::make_pass(
     "tonemap",
-    [scene_flags = self.gpu_scene_flags, pp = self.post_proces_settings, tt = self.tonemap_type](
+    [scene_flags = self.gpu_scene_flags,
+     pp = self.post_proces_settings,
+     tt = self.tonemap_type,
+     bloom_intensity = context.bloom_intensity](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eColorWrite) dst,
       VUK_IA(vuk::eFragmentSampled) src,
@@ -216,7 +232,7 @@ auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessCon
         .bind_buffer(0, 3, exposure)
         .specialize_constants(0, std::to_underlying(scene_flags))
         .specialize_constants(1, std::to_underlying(tt))
-        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(pp, size))
+        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(pp, size, bloom_intensity))
         .draw(3, 1, 0, 0);
 
       return dst;

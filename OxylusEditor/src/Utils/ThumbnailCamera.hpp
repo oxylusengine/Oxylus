@@ -136,7 +136,8 @@ public:
       final_aabb.min = world_aabb.min;
       final_aabb.max = world_aabb.max;
     } else {
-      auto base_aabb = AABB(model.get_base_aabb());
+      auto mesh_bounds = model.get_mesh_bounds();
+      auto base_aabb = AABB::from_bounds(mesh_bounds.aabb_center, mesh_bounds.aabb_extent);
       final_aabb.min = base_aabb.min;
       final_aabb.max = base_aabb.max;
 

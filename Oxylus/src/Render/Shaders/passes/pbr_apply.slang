@@ -91,6 +91,13 @@ func fs_main(
     var indirect_illuminance = f32x3(0.0);
     var direct_illuminance = f32x3(0.0);
     var aerial_perspective_contribution = f32x3(0.0);
+
+    let has_sky = (scene_flags & SceneFlags::HasSky) != 0;
+    let has_solid_sky = has_sky && !sky.has_texture;
+    let environment_radiance = has_sky ? sky.ambient_color : base_ambient_color;
+    var diffuse_sky = environment_radiance;
+    var specular_sky = environment_radiance;
+
     if (has_atmosphere) {
         let planet_radius = atmosphere.planet_radius;
         let atmos_radius = atmosphere.atmos_radius;
@@ -121,21 +128,25 @@ func fs_main(
             return f32x4(sky_view.rgb * sky_view.a, 1.0);
         }
 
-        let aerial_perspective = sample_aerial_perspective(
-            atmosphere,
-            sky_aerial_perspective_lut,
-            linear_clamp_sampler,
-            input.tex_coord,
-            (world_position - camera.position.xyz) * CAMERA_SCALE_UNIT);
-        aerial_perspective_contribution = aerial_perspective.rgb * aerial_perspective.a;
+        if (!has_solid_sky) {
+            let aerial_perspective = sample_aerial_perspective(
+                atmosphere,
+                sky_aerial_perspective_lut,
+                linear_clamp_sampler,
+                input.tex_coord,
+                (world_position - camera.position.xyz) * CAMERA_SCALE_UNIT);
+            aerial_perspective_contribution = aerial_perspective.rgb * aerial_perspective.a;
 
-        let reflection_dir = normalize(lerp(N, R, 1.0 - roughness));
-        let specular_sample = sky_cubemap.SampleLevel(linear_clamp_sampler, reflection_dir, 0.0);
-        let diffuse_sample = sky_cubemap.SampleLevel(linear_clamp_sampler, N, 0.0);
+            let reflection_dir = normalize(lerp(N, R, 1.0 - roughness));
+            let specular_sample = sky_cubemap.SampleLevel(linear_clamp_sampler, reflection_dir, 0.0);
+            let diffuse_sample = sky_cubemap.SampleLevel(linear_clamp_sampler, N, 0.0);
 
-        let specular_sky = specular_sample.rgb * specular_sample.a;
-        let diffuse_sky = diffuse_sample.rgb * diffuse_sample.a;
+            specular_sky = specular_sample.rgb * specular_sample.a * horizon_darkening;
+            diffuse_sky = diffuse_sample.rgb * diffuse_sample.a * horizon_darkening;
+        }
+    }
 
+    {
         let dielectric_F0 = f32x3(0.04);
         let F0 = lerp(dielectric_F0, albedo_color, metallic);
 
@@ -148,7 +159,7 @@ func fs_main(
 
         let ibl_diffuse = kD * diffuse_sky * albedo_color * Fd_Lambert();
         let ibl_specular = kS * specular_sky * spec_occlusion;
-        indirect_illuminance = ((ibl_diffuse * occlusion) + ibl_specular) * horizon_darkening;
+        indirect_illuminance = (ibl_diffuse * occlusion) + ibl_specular;
     }
 
     // https://marmosetco.tumblr.com/post/81245981087

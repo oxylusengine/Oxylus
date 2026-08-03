@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/EventSystem.hpp"
 #include "Panels/EditorPanelState.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "ViewportPanel.hpp"
@@ -10,10 +11,12 @@ public:
   MainViewportPanel();
 
   auto init(this MainViewportPanel& self) -> void;
+  auto deinit(this MainViewportPanel& self) -> void;
   auto reset(this MainViewportPanel& self) -> void;
 
   auto get_focused_viewport(this const MainViewportPanel& self) -> ViewportPanel*;
   auto get_visible_viwports(this const MainViewportPanel& self) -> std::vector<ViewportPanel*>;
+  auto is_any_scene_playing(this const MainViewportPanel& self) -> bool;
   auto is_fullscreen(this const MainViewportPanel& self) -> bool;
   auto toggle_fullscreen(this MainViewportPanel& self) -> void;
 
@@ -32,6 +35,10 @@ public:
 private:
   std::vector<std::unique_ptr<ViewportPanel>> viewport_panels = {};
   std::vector<std::unique_ptr<ViewportPanel>> pending_viewports = {};
+  HandlerId app_close_handler = {};
+  HandlerId scene_load_handler = {};
+  HandlerId scene_play_handler = {};
+  HandlerId scene_stop_handler = {};
   bool dock_should_update = false;
   bool fullscreen_viewport = false;
 
