@@ -14,6 +14,7 @@
 
 #include "Core/App.hpp"
 #include "Render/Renderer.hpp"
+#include "Render/UploadBatch.hpp"
 #include "Render/Window.hpp"
 #include "Utils/Profiler.hpp"
 
@@ -406,19 +407,6 @@ auto RenderContext::destroy_context(this RenderContext& self) -> void {
   ZoneScoped;
   self.runtime->wait_idle();
 
-  {
-    auto write_lock = std::unique_lock(self.pending_image_buffers_mutex);
-    if (!self.tracked_buffers.empty()) {
-      OX_LOG_TRACE("Releasing {} tracked image buffer(s) on shutdown.", self.tracked_buffers.size());
-    }
-
-    for (auto& [allocation_time_point, tracked_buffer] : self.tracked_buffers) {
-      self.superframe_allocator->deallocate({&tracked_buffer, 1});
-    }
-
-    self.tracked_buffers.clear();
-  }
-
   auto destroy_resource_pool = [&self](auto& pool) -> void {
     for (auto i = 0_sz; i < pool.size(); i++) {
       auto* v = pool.slot_from_index(i);
@@ -485,33 +473,17 @@ auto RenderContext::new_frame(this RenderContext& self) -> vuk::Value<vuk::Image
     self.handle_resize(1, 1);
   }
 
-  if (self.frame_allocator) {
-    self.frame_allocator.reset();
-  }
-
-  auto& frame_resource = self.superframe_resource->get_next_frame();
-  self.frame_allocator.emplace(frame_resource);
-  self.runtime->next_frame();
-
   {
-    // Just lock the entire thing instead of demoting/promoting it at each iter
-    auto write_lock = std::unique_lock(self.pending_image_buffers_mutex);
-    auto* graphics_executor = static_cast<vuk::QueueExecutor*>(
-      self.runtime->get_executor(vuk::DomainFlagBits::eGraphicsQueue)
-    );
-    auto current_time_point = *graphics_executor->get_sync_value();
-
-    for (auto it = self.tracked_buffers.begin(); it != self.tracked_buffers.end();) {
-      auto& [allocation_time_point, tracked_buffer] = *it;
-      if (current_time_point > allocation_time_point) {
-        self.superframe_allocator->deallocate({&tracked_buffer, 1});
-        it = self.tracked_buffers.erase(it);
-        continue;
-      }
-
-      ++it;
+    auto write_lock = std::unique_lock(self.frame_allocator_mutex);
+    auto queue_lock = std::unique_lock(self.queue_mutex);
+    if (self.frame_allocator) {
+      self.frame_allocator.reset();
     }
+
+    auto& frame_resource = self.superframe_resource->get_next_frame();
+    self.frame_allocator.emplace(frame_resource);
   }
+  self.runtime->next_frame();
 
   if (!self.swapchain.has_value()) {
     self.swapchain = make_swapchain(
@@ -539,6 +511,7 @@ auto RenderContext::end_frame(this RenderContext& self, vuk::Value<vuk::ImageAtt
   auto entire_thing = vuk::enqueue_presentation(std::move(target_));
   vuk::ProfilingCallbacks cbs = self.tracy_profiler->setup_vuk_callback();
   try {
+    auto queue_lock = std::unique_lock(self.queue_mutex);
     entire_thing.submit(*self.frame_allocator, self.compiler, {.graph_label = {}, .callbacks = cbs});
   } catch (vuk::VkException& exception) {
     // Actions such as minimizing the window will report a VK_ERROR_OUT_OF_DATE_KHR error,
@@ -562,20 +535,30 @@ auto RenderContext::wait(this RenderContext& self) -> void {
 auto RenderContext::wait_on(vuk::UntypedValue&& fut) -> void {
   ZoneScoped;
 
+  auto queue_lock = std::unique_lock(queue_mutex);
   fut.wait(superframe_allocator.value(), this_thread_compiler);
 }
 
 auto RenderContext::submit_now(vuk::UntypedValue&& fut) -> void {
   ZoneScoped;
 
-  auto lock = std::scoped_lock(queue_mutex);
+  auto read_lock = std::shared_lock(frame_allocator_mutex);
+  auto queue_lock = std::unique_lock(queue_mutex);
   fut.submit(frame_allocator.value(), this_thread_compiler);
 }
 
 auto RenderContext::wait_on_multiple(std::span<vuk::UntypedValue> values) -> void {
   ZoneScoped;
 
+  auto queue_lock = std::unique_lock(queue_mutex);
   vuk::wait_for_values_explicit(superframe_allocator.value(), this_thread_compiler, values);
+}
+
+auto RenderContext::submit_multiple(std::span<vuk::UntypedValue> values) -> void {
+  ZoneScoped;
+
+  auto queue_lock = std::unique_lock(queue_mutex);
+  vuk::submit(superframe_allocator.value(), this_thread_compiler, values, {});
 }
 
 auto RenderContext::create_persistent_descriptor_set(
@@ -652,6 +635,7 @@ auto RenderContext::create_persistent_descriptor_set(
 auto RenderContext::commit_descriptor_set(this RenderContext& self, std::span<VkWriteDescriptorSet> writes) -> void {
   ZoneScoped;
 
+  auto write_lock = std::unique_lock(self.descriptor_mutex);
   vkUpdateDescriptorSets(self.device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
 }
 
@@ -727,23 +711,23 @@ auto RenderContext::allocate_image(const vuk::ImageAttachment& image_attachment)
 auto RenderContext::destroy_image(const ImageID id) -> void {
   ZoneScoped;
 
-  auto* image = resources.images.slot(id);
+  auto image = resources.images.copy_slot(id);
   if (!image) {
     return;
   }
 
-  superframe_allocator->deallocate({image, 1});
+  superframe_allocator->deallocate({&image.value(), 1});
   resources.images.destroy_slot(id);
 }
 
 auto RenderContext::image(const ImageID id) -> vuk::Image {
   ZoneScoped;
 
-  auto image = resources.images.slot(id);
-  return *image;
+  return resources.images.copy_slot(id).value_or(vuk::Image{});
 }
 
-auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID {
+auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attachment, UploadBatch* batch)
+  -> ImageViewID {
   ZoneScoped;
 
   vuk::ImageViewCreateInfo ivci;
@@ -785,6 +769,28 @@ auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attach
     .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
   };
 
+  const auto array_element = SlotMap_decode_id(image_view_id).index;
+  if (batch) {
+    if (image_attachment.usage & vuk::ImageUsageFlagBits::eSampled) {
+      batch->add_descriptor_write({
+        .binding = DescriptorTable_SampledImageIndex,
+        .array_element = array_element,
+        .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .image_info = sampled_image_descriptor,
+      });
+    }
+    if (image_attachment.usage & vuk::ImageUsageFlagBits::eStorage) {
+      batch->add_descriptor_write({
+        .binding = DescriptorTable_StorageImageIndex,
+        .array_element = array_element,
+        .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .image_info = storage_image_descriptor,
+      });
+    }
+
+    return image_view_id;
+  }
+
   auto descriptor_count = 0_sz;
   auto descriptor_writes = std::array<VkWriteDescriptorSet, 2>();
   if (image_attachment.usage & vuk::ImageUsageFlagBits::eSampled) {
@@ -823,23 +829,22 @@ auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attach
 auto RenderContext::destroy_image_view(const ImageViewID id) -> void {
   ZoneScoped;
 
-  auto* view = resources.image_views.slot(id);
+  auto view = resources.image_views.copy_slot(id);
   if (!view) {
     return;
   }
 
-  superframe_allocator->deallocate({view, 1});
+  superframe_allocator->deallocate({&view.value(), 1});
   resources.image_views.destroy_slot(id);
 }
 
 auto RenderContext::image_view(const ImageViewID id) -> vuk::ImageView {
   ZoneScoped;
 
-  auto view = resources.image_views.slot(id);
-  return *view;
+  return resources.image_views.copy_slot(id).value_or(vuk::ImageView{});
 }
 
-auto RenderContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info) -> SamplerID {
+auto RenderContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info, UploadBatch* batch) -> SamplerID {
   ZoneScoped;
 
   auto sampler = runtime->acquire_sampler(sampler_info, num_frames);
@@ -851,6 +856,18 @@ auto RenderContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info)
     .imageView = nullptr,
     .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
   };
+
+  if (batch) {
+    batch->add_descriptor_write({
+      .binding = DescriptorTable_SamplerIndex,
+      .array_element = SlotMap_decode_id(sampler_id).index,
+      .type = VK_DESCRIPTOR_TYPE_SAMPLER,
+      .image_info = sampler_descriptor,
+    });
+
+    return sampler_id;
+  }
+
   auto& bindless_set = get_descriptor_set();
   auto descriptor_write = VkWriteDescriptorSet{
     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, //
@@ -878,7 +895,7 @@ auto RenderContext::destroy_sampler(const SamplerID id) -> void {
 auto RenderContext::sampler(const SamplerID id) -> vuk::Sampler {
   ZoneScoped;
 
-  return *resources.samplers.slot(id);
+  return resources.samplers.copy_slot(id).value_or(vuk::Sampler{});
 }
 
 auto RenderContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
@@ -904,27 +921,17 @@ auto RenderContext::allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 
 }
 
 auto RenderContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, vuk::source_location LOC) noexcept
-  -> vuk::Value<vuk::Buffer> {
+  -> vuk::Unique<vuk::Buffer> {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(pending_image_buffers_mutex);
   auto alignment = vuk::format_to_texel_block_size(format);
   auto size = vuk::compute_image_size(format, extent);
 
-  auto buffer_handle = vuk::Buffer{};
-  auto buffer_info = vuk::BufferCreateInfo{
-    .mem_usage = vuk::MemoryUsage::eCPUtoGPU,
-    .size = size,
-    .alignment = alignment
-  };
-  superframe_allocator->allocate_buffers({&buffer_handle, 1}, {&buffer_info, 1}, LOC);
-  auto* graphics_executor = static_cast<vuk::QueueExecutor*>(
-    runtime->get_executor(vuk::DomainFlagBits::eGraphicsQueue)
+  return *vuk::allocate_buffer(
+    superframe_allocator.value(),
+    {.mem_usage = vuk::MemoryUsage::eCPUtoGPU, .size = size, .alignment = alignment},
+    LOC
   );
-  auto allocation_time_point = *graphics_executor->get_sync_value();
-  tracked_buffers.emplace(std::pair(allocation_time_point, buffer_handle));
-
-  return vuk::acquire_buf("image buffer", buffer_handle, vuk::eNone, LOC);
 }
 
 auto RenderContext::alloc_transient_buffer_raw(
@@ -932,7 +939,7 @@ auto RenderContext::alloc_transient_buffer_raw(
 ) -> vuk::Buffer {
   ZoneScoped;
 
-  std::shared_lock _(mutex);
+  auto read_lock = std::shared_lock(frame_allocator_mutex);
 
   auto buffer = *vuk::allocate_buffer(
     frame_allocator.value(),

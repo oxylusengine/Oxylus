@@ -27,7 +27,7 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
   PendingMeshRender render_job;
   bool has_render_job = false;
   {
-    std::lock_guard lock(self.queue_mutex);
+    auto lock = std::unique_lock(self.queue_mutex);
     if (!self.pending_mesh_renders.empty()) {
       render_job = self.pending_mesh_renders.front();
       self.pending_mesh_renders.pop();
@@ -192,7 +192,7 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
     return {};
   }
 
-  std::lock_guard lock(self.queue_mutex);
+  auto lock = std::unique_lock(self.queue_mutex);
   self.pending_mesh_renders.push({.asset_hash = asset_hash, .model_uuid = model_uuid, .expected_png = expected_png});
 
   return {};
@@ -285,7 +285,7 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
 
   auto temp_compiler = vuk::Compiler{};
   {
-    std::scoped_lock lock(render_context.queue_mutex);
+    auto lock = std::unique_lock(render_context.queue_mutex);
     readback_buffer.wait(*render_context.frame_allocator, temp_compiler);
   }
 

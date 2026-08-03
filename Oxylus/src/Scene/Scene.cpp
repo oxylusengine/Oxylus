@@ -1139,6 +1139,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   }
 
   self.run_deferred_functions();
+  self.update_pending_model_spawns();
 
   auto pre_update_phase_enabled = !self.world.entity(flecs::PreUpdate).has(flecs::Disabled);
   auto on_update_phase_enabled = !self.world.entity(flecs::OnUpdate).has(flecs::Disabled);
@@ -1354,28 +1355,11 @@ auto Scene::create_entity(const std::string& name, bool safe_naming) const -> fl
   return e.add<TransformComponent>().add<LayerComponent>();
 }
 
-auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity {
+auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSpawn& spawn) -> flecs::entity {
   ZoneScoped;
 
-  auto& asset_man = App::mod<AssetManager>();
-
-  // sanity check
-  if (!asset_man.get_asset(asset_uuid)) {
-    OX_LOG_ERROR("Cannot import an invalid model '{}' into the scene!", asset_uuid.str());
-    return {};
-  }
-
-  // acquire model
-  if (!asset_man.load_asset(asset_uuid)) {
-    return {};
-  }
-
-  auto model = asset_man.get_model(asset_uuid);
-  auto& root_node = model->mesh_groups.front();
+  const auto& root_node = model.mesh_groups.front();
   auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
-
-  auto mesh_bounds = model->get_mesh_bounds();
-  auto model_aabb = AABB::from_bounds(mesh_bounds.aabb_center, mesh_bounds.aabb_extent);
 
   struct ProcessingNode {
     flecs::entity parent = {};
@@ -1389,7 +1373,7 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
 
   while (!processing_nodes.empty()) {
     const auto [parent_entity, mesh_group_index] = processing_nodes.top();
-    const auto& mesh_group = model->mesh_groups[mesh_group_index];
+    const auto& mesh_group = model.mesh_groups[mesh_group_index];
     processing_nodes.pop();
 
     // Resolve a name that's unique both at the world root and under
@@ -1408,25 +1392,15 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
     node_entity.modified<TransformComponent>();
 
     for (const auto mesh_index : mesh_group.mesh_indices) {
-      memory::ScopedStack stack;
-      auto mesh_entity_name = !mesh_group.name.empty() ? stack.format("{} Mesh {}", mesh_group.name, mesh_index) : "";
-      const auto safe_mesh_name = self.safe_entity_name(std::string{mesh_entity_name}, node_entity);
-      auto mesh_entity = self.create_entity(safe_mesh_name, false);
-      auto material_index = model->material_indices[mesh_index];
-      auto material_uuid = material_index.has_value() ? model->materials[material_index.value()] : UUID(nullptr);
-      mesh_entity.set<TransformComponent>({});
-      mesh_entity.set<MeshComponent>({
-        .model_uuid = asset_uuid,
-        .mesh_index = static_cast<u32>(mesh_index),
-        .material_uuid = material_uuid,
-        .baked_aabb = model_aabb,
+      spawn.mesh_entities.push_back({
+        .mesh_index = mesh_index,
+        .mesh_group_index = mesh_group_index,
+        .parent = node_entity,
       });
-      mesh_entity.child_of(node_entity);
-      mesh_entity.modified<TransformComponent>();
     }
 
     for (const auto light_index : mesh_group.light_indices) {
-      auto& node_light = model->lights[light_index];
+      auto& node_light = model.lights[light_index];
 
       auto lc = LightComponent{
         .type = static_cast<LightComponent::LightType>(node_light.type),
@@ -1453,6 +1427,165 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   }
 
   return root_entity;
+}
+
+auto Scene::resolve_mesh_spawn(this Scene& self, Model& model, const PendingModelSpawn::MeshEntity& mesh_entity)
+  -> MeshSpawnInfo {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  const auto& mesh_group = model.mesh_groups[mesh_entity.mesh_group_index];
+  const auto mesh_index = mesh_entity.mesh_index;
+
+  auto mesh_entity_name = !mesh_group.name.empty() ? stack.format("{} Mesh {}", mesh_group.name, mesh_index) : "";
+  auto material_index = model.material_indices[mesh_index];
+  const auto& mesh_bounds = model.gpu_meshes[mesh_index].bounds;
+
+  return MeshSpawnInfo{
+    .mesh_index = mesh_index,
+    .parent = mesh_entity.parent,
+    .name = std::string{mesh_entity_name},
+    .material_uuid = material_index.has_value() ? model.materials[material_index.value()] : UUID(nullptr),
+    .aabb = AABB::from_bounds(mesh_bounds.aabb_center, mesh_bounds.aabb_extent),
+  };
+}
+
+auto Scene::spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, const MeshSpawnInfo& info) -> void {
+  ZoneScoped;
+
+  auto entity = self.create_entity(self.safe_entity_name(info.name, info.parent), false);
+  entity.set<TransformComponent>({});
+  entity.set<MeshComponent>({
+    .model_uuid = model_uuid,
+    .mesh_index = static_cast<u32>(info.mesh_index),
+    .material_uuid = info.material_uuid,
+    .baked_aabb = info.aabb,
+  });
+  entity.child_of(info.parent);
+  entity.modified<TransformComponent>();
+}
+
+auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
+
+  // sanity check
+  if (!asset_man.get_asset(asset_uuid)) {
+    OX_LOG_ERROR("Cannot import an invalid model '{}' into the scene!", asset_uuid.str());
+    return {};
+  }
+
+  // acquire model
+  if (!asset_man.load_asset(asset_uuid)) {
+    return {};
+  }
+
+  auto root_entity = flecs::entity();
+  auto mesh_spawns = std::vector<MeshSpawnInfo>();
+  {
+    auto model = asset_man.get_model(asset_uuid);
+    if (!model) {
+      return {};
+    }
+
+    auto spawn = PendingModelSpawn{.model_uuid = asset_uuid};
+    root_entity = self.spawn_model_hierarchy(*model.value, spawn);
+
+    for (const auto& mesh_entity : spawn.mesh_entities) {
+      if (!model->is_mesh_ready(mesh_entity.mesh_index)) {
+        continue;
+      }
+
+      mesh_spawns.emplace_back(self.resolve_mesh_spawn(*model.value, mesh_entity));
+    }
+  }
+
+  for (const auto& mesh_spawn : mesh_spawns) {
+    self.spawn_model_mesh_entity(asset_uuid, mesh_spawn);
+  }
+
+  return root_entity;
+}
+
+auto Scene::create_model_entity_async(this Scene& self, const UUID& asset_uuid) -> void {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
+  if (!asset_man.get_asset(asset_uuid)) {
+    OX_LOG_ERROR("Cannot import an invalid model '{}' into the scene!", asset_uuid.str());
+    return;
+  }
+
+  if (!asset_man.load_asset_async(asset_uuid)) {
+    return;
+  }
+
+  self.pending_model_spawns.push_back(PendingModelSpawn{.model_uuid = asset_uuid});
+}
+
+auto Scene::update_pending_model_spawns(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.pending_model_spawns.empty()) {
+    return;
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+
+  for (auto it = self.pending_model_spawns.begin(); it != self.pending_model_spawns.end();) {
+    auto& spawn = *it;
+    auto mesh_spawns = std::vector<MeshSpawnInfo>();
+    auto fully_loaded = false;
+    auto hierarchy_just_spawned = false;
+
+    {
+      auto model = asset_man.get_model(spawn.model_uuid);
+      if (!model) {
+        if (asset_man.is_loading(spawn.model_uuid)) {
+          ++it;
+        } else {
+          it = self.pending_model_spawns.erase(it);
+        }
+
+        continue;
+      }
+
+      // Must be read before the ready flags below, never after.
+      fully_loaded = model->is_fully_loaded();
+
+      if (!spawn.hierarchy_spawned) {
+        std::ignore = self.spawn_model_hierarchy(*model.value, spawn);
+        spawn.hierarchy_spawned = true;
+        hierarchy_just_spawned = true;
+      }
+
+      for (auto mesh_it = spawn.mesh_entities.begin(); mesh_it != spawn.mesh_entities.end();) {
+        if (!model->is_mesh_ready(mesh_it->mesh_index)) {
+          ++mesh_it;
+          continue;
+        }
+
+        mesh_spawns.emplace_back(self.resolve_mesh_spawn(*model.value, *mesh_it));
+        mesh_it = spawn.mesh_entities.erase(mesh_it);
+      }
+    }
+
+    if (hierarchy_just_spawned) {
+      asset_man.acquire_ref(asset_man.get_asset(spawn.model_uuid));
+    }
+
+    for (const auto& mesh_spawn : mesh_spawns) {
+      self.spawn_model_mesh_entity(spawn.model_uuid, mesh_spawn);
+    }
+
+    // Anything still listed once the model is done failed to build.
+    if (fully_loaded) {
+      it = self.pending_model_spawns.erase(it);
+    } else {
+      ++it;
+    }
+  }
 }
 
 auto Scene::get_world_position(const flecs::entity entity) -> glm::vec3 {

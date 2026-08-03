@@ -42,7 +42,7 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
     auto texture = asset_man.get_texture(material.albedo_texture);
     sampler_index = texture->get_sampler_index();
 
-    auto texture_sampler = render_context.resources.samplers.slot(texture->get_sampler_id());
+    auto texture_sampler = render_context.resources.samplers.copy_slot(texture->get_sampler_id());
 
     vuk::SamplerCreateInfo sampler_ci = {};
     switch (material.sampling_mode) {
@@ -53,7 +53,7 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
       case SamplingMode::LinearRepeatedAnisotropy: sampler_ci = vuk::LinearSamplerRepeatedAnisotropy; break;
     }
     auto material_sampler = render_context.runtime->acquire_sampler(sampler_ci, render_context.num_frames);
-    if (texture_sampler->id != material_sampler.id) {
+    if (!texture_sampler || texture_sampler->id != material_sampler.id) {
       auto sampler_id = render_context.allocate_sampler(sampler_ci);
       sampler_index = SlotMap_decode_id(sampler_id).index;
     }
