@@ -1,11 +1,16 @@
 #pragma once
 
 #include <ankerl/unordered_dense.h>
+#include <array>
 
 #include "Asset/Texture.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Scene/SceneGPU.hpp"
+
+namespace vuk {
+class CommandBuffer;
+}
 
 namespace ox {
 enum class RenderStage {
@@ -156,6 +161,13 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> lights_buffer = {};
   vuk::Value<vuk::Buffer> exposure_buffer = {};
 
+  u32 spot_light_count = 0;
+  u32 point_light_count = 0;
+  u32 shadow_point_light_count = 0;
+  u32 shadow_spot_light_count = 0;
+  u64 moved_point_light_mask = 0;
+  u64 moved_spot_light_mask = 0;
+
   vuk::Value<vuk::Buffer> dirty_mesh_instances_buffer = {};
   u32 dirty_mesh_instance_count = 0;
 
@@ -190,6 +202,23 @@ struct CullGeometryContext {
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
 };
 
+struct CullGeometryPointSpotContext {
+  bool init = false;
+
+  // curr_mip is set by the caller per iteration.
+  GPU::VSMPointSpotContext ps_ctx = {};
+
+  vuk::Value<vuk::Buffer> views_buffer = {};
+  vuk::Value<vuk::Buffer> layer_dirty_mask_buffer = {};
+  vuk::Value<vuk::ImageAttachment> page_table_attachment = {};
+
+  vuk::Value<vuk::Buffer> vsm_meshlet_instances_buffer = {};
+  vuk::Value<vuk::Buffer> visible_indices_buffer = {};
+  vuk::Value<vuk::Buffer> reordered_indices_buffer = {};
+
+  vuk::Value<vuk::Buffer> draw_cmd_buffer = {};
+};
+
 struct MainGeometryContext {
   bool draw_overdraw = false;
 
@@ -206,13 +235,36 @@ struct MainGeometryContext {
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
 };
 
+struct LightGridContext {
+  glm::vec3 grid_origin = {};
+
+  vuk::Value<vuk::Buffer> light_grid_buffer = {};
+};
+
 struct RMVSMContext {
-  constexpr static u32 PAGE_SIZE = 128;
+  constexpr static u32 PAGE_SIZE = 64;
   constexpr static u32 MAX_DIRECTIONAL_CLIPMAP_COUNT = 10;
-  constexpr static u32 DIRECTIONAL_IMAGE_SIZE = 1 << 13;
-  constexpr static u32 DIRECTIONAL_PAGE_TABLE_SIZE = DIRECTIONAL_IMAGE_SIZE / PAGE_SIZE;
+  constexpr static u32 DIRECTIONAL_IMAGE_RESOLUTION = 1 << 12;
+  constexpr static u32 DIRECTIONAL_PAGE_TABLE_SIZE = DIRECTIONAL_IMAGE_RESOLUTION / PAGE_SIZE;
   constexpr static u32 DIRECTIONAL_MAX_PAGE_COUNT = DIRECTIONAL_PAGE_TABLE_SIZE * DIRECTIONAL_PAGE_TABLE_SIZE;
   constexpr static u32 DIRECTIONAL_PAGE_MASK_COUNT = (DIRECTIONAL_MAX_PAGE_COUNT + 31) / 32;
+
+  constexpr static u32 POINT_SPOT_IMAGE_RESOLUTION = 1 << 12;
+  constexpr static u32 POINT_SPOT_PAGE_TABLE_SIZE = POINT_SPOT_IMAGE_RESOLUTION / PAGE_SIZE;
+  constexpr static u32 POINT_SPOT_MIP_COUNT = 6;
+  constexpr static u32 POINT_SPOT_SPOT_LAYER_OFFSET = GPU::MAX_SHADOW_POINT_LIGHTS * 6;
+  constexpr static u32 POINT_SPOT_LAYER_COUNT = POINT_SPOT_SPOT_LAYER_OFFSET + GPU::MAX_SHADOW_SPOT_LIGHTS;
+  constexpr static u32 POINT_SPOT_MAX_MESHLET_INSTANCES = 1u << 18;
+  constexpr static u32 POINT_SPOT_MAX_INDEX_COUNT = 1u << 23;
+
+  constexpr static u32 PHYSICAL_PAGE_TABLE_SIZE = DIRECTIONAL_IMAGE_RESOLUTION + POINT_SPOT_IMAGE_RESOLUTION;
+  constexpr static u32 PHYSICAL_PAGES_PER_DIM = PHYSICAL_PAGE_TABLE_SIZE / PAGE_SIZE;
+  constexpr static u32 PHYSICAL_PAGE_COUNT = PHYSICAL_PAGES_PER_DIM * PHYSICAL_PAGES_PER_DIM;
+
+  constexpr static u32 MAX_ALLOC_REQUEST_COUNT = 2 * PHYSICAL_PAGE_COUNT;
+  constexpr static f32 POINT_LIGHT_FOV_DEG = 95.0f;
+  constexpr static f32 POINT_LIGHT_NEAR = 0.05f;
+  constexpr static f32 SPOT_LIGHT_NEAR = 0.05f;
 
   vuk::PersistentDescriptorSet* bindless_set = nullptr;
   bool sun_moved = false;
@@ -224,7 +276,18 @@ struct RMVSMContext {
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
   vuk::Value<vuk::ImageAttachment> virtual_page_table_attachment = {};
   vuk::Value<vuk::ImageAttachment> physical_page_table_attachment = {};
+
+  glm::vec3 light_grid_origin = {};
+  vuk::Value<vuk::Buffer> light_grid_buffer = {};
+  vuk::Value<vuk::Buffer> pointspot_views_buffer = {};
+  vuk::Value<vuk::Buffer> pointspot_layer_dirty_mask_buffer = {};
+  vuk::Value<vuk::ImageAttachment> pointspot_page_table_attachment = {};
 };
+
+// Bakes the point/spot virtualization sizes (specialization constants 50-54, see
+// rmvsm.slang) into the currently-bound pipeline from RMVSMContext. Shared by
+// every point/spot pass so the values are driven from a single source.
+auto bind_vsm_pointspot_spec_constants(vuk::CommandBuffer& cmd) -> vuk::CommandBuffer&;
 
 struct ShadowResolveContext {
   // TODO: Add shadowmap kind enum
@@ -270,6 +333,14 @@ struct PBRContext {
   vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> contact_shadows_attachment = {};
   vuk::Value<vuk::ImageAttachment> resolved_shadows_attachment = {};
+
+  glm::vec3 light_grid_origin = {};
+  vuk::Value<vuk::Buffer> light_grid_buffer = {};
+
+  vuk::Value<vuk::Buffer> pointspot_views_buffer = {};
+  vuk::Value<vuk::ImageAttachment> pointspot_page_table_attachment = {};
+  vuk::Value<vuk::ImageAttachment> vsm_physical_pages_attachment = {};
+  vuk::Value<vuk::ImageAttachment> vsm_page_table_attachment = {};
 };
 
 struct DebugContext {
@@ -287,6 +358,11 @@ struct DebugContext {
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> vsm_page_table_attachment = {};
+
+  glm::vec3 light_grid_origin = {};
+  vuk::Value<vuk::Buffer> pointspot_views_buffer = {};
+  vuk::Value<vuk::Buffer> light_grid_buffer = {};
+  vuk::Value<vuk::ImageAttachment> vsm_pointspot_page_table_attachment = {};
 };
 
 struct PostProcessContext {
@@ -342,6 +418,8 @@ public:
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
   auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
+  auto cull_geometry_pointspot(this RendererInstance& self, CullGeometryPointSpotContext& context) -> void;
+  auto build_light_grid(this RendererInstance&, LightGridContext& context) -> void;
   auto draw_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto decode_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto draw_virtual_shadowmap(this RendererInstance&, RMVSMContext& context) -> void;
@@ -396,6 +474,7 @@ private:
 
   bool directional_light_cast_shadows = true;
   bool sun_direction_changed = false;
+  glm::vec3 light_grid_origin = {};
   glm::vec3 previous_sun_direction = {};
   GPU::DirectionalLight directional_light = {};
   f32 first_clipmap_width = 1.0f;
@@ -420,12 +499,11 @@ private:
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
   vuk::Unique<vuk::Buffer> exposure_buffer{};
 
-  vuk::Unique<vuk::Image> vsm_virtual_page_table{};
-  vuk::Unique<vuk::ImageView> vsm_virtual_page_table_view{};
-  vuk::ImageAttachment vsm_virtual_page_table_attachment = {};
-  vuk::Unique<vuk::Image> vsm_hpb{};
-  vuk::Unique<vuk::ImageView> vsm_hpb_view{};
-  vuk::ImageAttachment vsm_hpb_attachment = {};
+  Texture vsm_virtual_page_table = {};
+  Texture vsm_pointspot_virtual_page_table = {};
+  Texture vsm_hpb = {};
+  std::array<GPU::Light, GPU::MAX_SHADOW_POINT_LIGHTS> previous_shadow_point_lights = {};
+  std::array<GPU::Light, GPU::MAX_SHADOW_SPOT_LIGHTS> previous_shadow_spot_lights = {};
   vuk::Unique<vuk::Image> vsm_physical_page_table{};
   vuk::Unique<vuk::ImageView> vsm_physical_page_table_f32_view{};
   vuk::Unique<vuk::ImageView> vsm_physical_page_table_u32_view{};

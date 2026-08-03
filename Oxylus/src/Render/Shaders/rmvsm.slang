@@ -221,8 +221,79 @@ public struct VirtualClipmap {
     }
 };
 
+// * Point / spot light virtualization *
+// Each point light occupies 6 consecutive VPT array layers (one per cube face),
+// spot lights are packed after all point lights with a single layer each.
+// Mips of the point/spot VPT are the LOD levels (32x32 pages down to 1x1).
+
+public constexpr static u32 VSM_SPOT_LAYER_OFFSET = MAX_SHADOW_POINT_LIGHTS * 6;
+public constexpr static u32 VSM_POINT_SPOT_LAYER_COUNT = VSM_SPOT_LAYER_OFFSET + MAX_SHADOW_SPOT_LIGHTS;
+
+public func vsm_point_layer(i32 point_shadow_index, i32 face_index) -> i32 {
+    return point_shadow_index * 6 + face_index;
+}
+
+public func vsm_spot_layer(i32 spot_shadow_index) -> i32 {
+    return i32(VSM_SPOT_LAYER_OFFSET) + spot_shadow_index;
+}
+
+// Cube face order {+X, -X, +Y, -Y, +Z, -Z}; must match the CPU-side face view matrices.
+// `dir` points from the light towards the shaded position.
+public func vsm_point_face_index(f32x3 dir) -> i32 {
+    let a = abs(dir);
+    let coord_index = a.x < a.y ? (a.y < a.z ? 2 : 1) : (a.x < a.z ? 2 : 0);
+    return coord_index * 2 + (dir[coord_index] < 0.0 ? 1 : 0);
+}
+
+public struct VSMPointSpotProjection {
+    public f32x2 uv;
+    public f32 depth;
+    public bool valid;
+};
+
+public struct VSMPointSpotView {
+    public f32x4x4 projection_view;
+    public f32x3 light_position;
+    public f32 range; // 0 means the layer is inactive
+    public u32 light_index;
+    public f32 z_near;
+    public f32 texel_world_scale;
+    public u32 _pad_0;
+
+    public func project(f32x3 world_pos) -> VSMPointSpotProjection {
+        let clip_pos = mul(this.projection_view, f32x4(world_pos, 1.0));
+        VSMPointSpotProjection result;
+        result.valid = clip_pos.w > 0.0;
+        let ndc = clip_pos.xyz / max(clip_pos.w, 1e-20);
+        result.uv = (ndc.xy + 1.0) * 0.5;
+        result.depth = ndc.z;
+        result.valid = result.valid && all(result.uv >= 0.0) && all(result.uv <= 1.0);
+        return result;
+    }
+};
+
+public constexpr static u32 VSM_POINT_SPOT_MAX_MESHLET_INSTANCES = 1u << 18;
+public constexpr static u32 VSM_POINT_SPOT_MAX_INDEX_COUNT = 1u << 23;
+
+public struct VSMMeshletInstance {
+    public u32 mesh_instance_index;
+    public u32 meshlet_index;
+    public u32 layer;
+};
+
+public struct VSMPointSpotContext {
+    public i32 curr_mip;
+    public u32 layer_count;
+    public u32 mesh_instance_count;
+    public i32x2 depth_extent;
+    public u32 mip_bias_min;
+    public u32 shadow_point_light_count;
+    public u32 shadow_spot_light_count;
+};
+
 public struct VSMAllocRequest {
     public i32x3 page_table_address;
+    public i32 mip;
 };
 
 public struct VSMPageAllocator {
@@ -230,6 +301,8 @@ public struct VSMPageAllocator {
     public u32 dirty_physical_page_count;
     public u32 free_page_count;
     public u32 alloc_cursor;
+    public u32 request_capacity;
+    public u32 _pad_0;
     public VSMAllocRequest *requests;
     public u32x2 *dirty_physical_page_coords;
     public u32 *free_page_list;
@@ -237,6 +310,9 @@ public struct VSMPageAllocator {
 
 public func push_page_alloc_request(__ref VSMPageAllocator allocator, in VSMAllocRequest request) -> void {
     let index = __atomic_add(allocator.active_request_count, 1, MemoryOrder::AcquireRelease);
+    if (index >= allocator.request_capacity) {
+        return;
+    }
     allocator.requests[index] = request;
 }
 
