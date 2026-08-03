@@ -185,8 +185,6 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   self.render_context = &App::get_rendercontext();
 
-  auto& bindless_set = self.render_context->get_descriptor_set();
-
   self.render_context->wait();
 
   // --- Shaders ---

@@ -79,6 +79,8 @@ auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::Samp
       case fastgltf::Wrap::MirroredRepeat: return vuk::SamplerAddressMode::eMirroredRepeat;
       case fastgltf::Wrap::Repeat        : return vuk::SamplerAddressMode::eRepeat;
     }
+
+    return vuk::SamplerAddressMode::eRepeat;
   };
 
   auto get_filter_mode = [](fastgltf::Filter v) -> vuk::Filter {
@@ -90,6 +92,8 @@ auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::Samp
       case fastgltf::Filter::LinearMipMapNearest :
       case fastgltf::Filter::LinearMipMapLinear  : return vuk::Filter::eLinear;
     }
+
+    return vuk::Filter::eLinear;
   };
 
   auto get_mip_filter_mode = [](fastgltf::Filter v) -> vuk::SamplerMipmapMode {
@@ -101,6 +105,8 @@ auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::Samp
       case fastgltf::Filter::LinearMipMapNearest :
       case fastgltf::Filter::LinearMipMapLinear  : return vuk::SamplerMipmapMode::eLinear;
     }
+
+    return vuk::SamplerMipmapMode::eLinear;
   };
 
   return vuk::SamplerCreateInfo{
@@ -143,6 +149,8 @@ auto gltf_alpha_mode_to_alpha_mode(fastgltf::AlphaMode mode) -> AlphaMode {
     case fastgltf::AlphaMode::Mask  : return AlphaMode::Mask;
     case fastgltf::AlphaMode::Blend : return AlphaMode::Blend;
   }
+
+  return AlphaMode::Opaque;
 }
 
 auto gltf_material_to_material(const fastgltf::Material& gltf_material, std::span<UUID> textures) -> Material {
@@ -249,7 +257,7 @@ auto AssetManager::write_gltf_meta(AssetManager& self, const std::filesystem::pa
   json.end_array();
 
   json["materials"].begin_array();
-  for (const auto& v : gltf_asset.materials) {
+  for (auto i = 0_sz; i < gltf_asset.materials.size(); i++) {
     json << UUID::generate_random().str();
   }
   json.end_array();
@@ -1009,7 +1017,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
 
       auto mesh_material_index = option<u32>(nullopt);
       if (gltf_primitive.materialIndex.has_value()) {
-        mesh_material_index = gltf_primitive.materialIndex.value();
+        mesh_material_index = static_cast<u32>(gltf_primitive.materialIndex.value());
       }
 
       model.material_indices.push_back(mesh_material_index);

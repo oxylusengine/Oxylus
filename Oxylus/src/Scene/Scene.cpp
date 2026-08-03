@@ -400,8 +400,11 @@ Scene::~Scene() {
   // world.release();
 
   lua_systems.clear();
-  auto& lua_manager = App::mod<LuaManager>();
-  lua_manager.get_state()->collect_gc();
+
+  if (App::has_mod<LuaManager>()) {
+    auto& lua_manager = App::mod<LuaManager>();
+    lua_manager.get_state()->collect_gc();
+  }
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {
@@ -1112,15 +1115,16 @@ auto Scene::runtime_stop(this Scene& self) -> void {
     system->on_scene_stop(&self);
   }
 
-  // RmlUI
-  auto& rmlui = App::mod<RmlUI>();
-  auto rml_ctxs = rmlui.get_contexts();
-  for (auto* ctx : rml_ctxs) {
-    auto doc_count = ctx->GetNumDocuments();
-    for (i32 i = 0; i < doc_count; i++) {
-      auto doc = ctx->GetDocument(i);
-      if (doc) {
-        doc->Hide();
+  if (App::has_mod<RmlUI>()) {
+    auto& rmlui = App::mod<RmlUI>();
+    auto rml_ctxs = rmlui.get_contexts();
+    for (auto* ctx : rml_ctxs) {
+      auto doc_count = ctx->GetNumDocuments();
+      for (i32 i = 0; i < doc_count; i++) {
+        auto doc = ctx->GetDocument(i);
+        if (doc) {
+          doc->Hide();
+        }
       }
     }
   }
@@ -1129,7 +1133,7 @@ auto Scene::runtime_stop(this Scene& self) -> void {
 auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void {
   ZoneScoped;
 
-  self.physics_accumulator += delta_time.get_millis();
+  self.physics_accumulator += static_cast<f32>(delta_time.get_millis());
   while (self.physics_accumulator >= self.physics_interval) {
     self.physics_accumulator -= self.physics_interval;
   }
@@ -1166,7 +1170,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
     if (self.meshes_dirty) {
       auto mesh_instances = self.mesh_instances.slots_unsafe();
-      auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, usize>();
+      auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, u32>();
 
       self.mesh_instances.for_each_active([&](usize index, const MeshInstance& mesh_instance) {
         const auto model = asset_man.get_model(mesh_instance.model_uuid);
@@ -1201,7 +1205,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         max_meshlet_instance_count += lod0_meshlet_count;
       });
 
-      self.gpu_mesh_instance_count = gpu_mesh_instances.size();
+      self.gpu_mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
       self.max_meshlet_instance_count = max_meshlet_instance_count;
     } else if (!self.dirty_mesh_instances.empty()) {
       u32 gpu_idx = 0;
@@ -1748,7 +1752,6 @@ auto Scene::detach_mesh(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
-  const auto transform_id = transforms_it->second;
   const auto instance_id = instances_it->second;
   if (!self.mesh_instances.slot(instance_id)) {
     return false;

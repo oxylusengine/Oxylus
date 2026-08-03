@@ -73,7 +73,7 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
           0,
           PushConstants(atmosphere_address, sun_dir, sun_intensity, sun_ambient_strength, frame_index)
         )
-        .dispatch_invocations_per_pixel(sky_cubemap, 1.0f, 1.0f, sky_cubemap->layer_count);
+        .dispatch_invocations_per_pixel(sky_cubemap, 1.0f, 1.0f, static_cast<f32>(sky_cubemap->layer_count));
 
       return std::make_tuple(sky_view_lut, sky_transmittance_lut, camera, sky_cubemap);
     }

@@ -129,8 +129,6 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     bool snap_settings_popup = false;
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
-    auto& style = ImGui::GetStyle();
-
     if (ImGui::BeginMenuBar()) {
       if (!self.editor_scene->is_playing()) {
         if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE)) {
@@ -345,6 +343,12 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     }
 
     self.scene_button_group(start_cursor_pos);
+
+    self.is_ui_capturing_mouse = ImGui::IsAnyItemHovered() || ImGui::IsAnyItemActive() ||
+                                 ImGui::IsPopupOpen(
+                                   nullptr,
+                                   ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel
+                                 );
   }
   ImGui::PopStyleColor();
 
@@ -817,31 +821,33 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
       gizmo_info,
       "LightComponent",
       self.editor_scene->get_scene().get(),
-      [](const char* icon, const LightComponent& c) {
+      [](const char* component_icon, const LightComponent& c) {
         switch (c.type) {
           case LightComponent::Directional: return ICON_MDI_WEATHER_SUNNY;
           case LightComponent::Spot       : return ICON_MDI_SPOTLIGHT;
-          case LightComponent::Point      : return icon;
+          case LightComponent::Point      : return component_icon;
         }
+
+        return component_icon;
       }
     );
     show_component_gizmo<AudioSourceComponent>(
       gizmo_info,
       "AudioSourceComponent",
       self.editor_scene->get_scene().get(),
-      [](const char* icon, const AudioSourceComponent& c) { return icon; }
+      [](const char* component_icon, const AudioSourceComponent& c) { return component_icon; }
     );
     show_component_gizmo<AudioListenerComponent>(
       gizmo_info,
       "AudioListenerComponent",
       self.editor_scene->get_scene().get(),
-      [](const char* icon, const AudioListenerComponent& c) { return icon; }
+      [](const char* component_icon, const AudioListenerComponent& c) { return component_icon; }
     );
     show_component_gizmo<CameraComponent>(
       gizmo_info,
       "CameraComponent",
       self.editor_scene->get_scene().get(),
-      [](const char* icon, const CameraComponent& c) { return icon; }
+      [](const char* component_icon, const CameraComponent& c) { return component_icon; }
     );
   }
 
@@ -1064,11 +1070,10 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
 
   auto outline_composite_output = vuk::declare_ia(
     "outlined_composite",
-    {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eColorAttachment |
-              vuk::ImageUsageFlagBits::eSampled,
-     .format = vuk::Format::eR8G8B8A8Unorm,
+    {.usage = vuk::ImageUsageFlagBits::eColorAttachment | vuk::ImageUsageFlagBits::eSampled,
      .sample_count = vuk::Samples::e1}
   );
+  outline_composite_output.same_format_as(original_result_attachment);
   outline_composite_output.same_shape_as(original_result_attachment);
   outline_composite_output = vuk::clear_image(std::move(outline_composite_output), vuk::Black<f32>);
 
@@ -1164,9 +1169,9 @@ auto ViewportPanel::mouse_picking_stages(
 ) -> void {
   ZoneScoped;
 
-  auto using_gizmo = ImGuizmo::IsOver();
-  bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
-                     !self.is_widgets_hovered && !self.is_menubar_hovered;
+  const auto using_gizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
+  const bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
+                           !self.is_ui_capturing_mouse && !self.is_menubar_hovered;
 
   if (should_pick) {
     renderer_instance->add_stage_after(
@@ -1542,8 +1547,6 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
     ImGui::PopStyleVar(2);
   }
   ImGui::EndGroup();
-
-  self.is_widgets_hovered = ImGui::IsItemHovered();
 }
 
 void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) {

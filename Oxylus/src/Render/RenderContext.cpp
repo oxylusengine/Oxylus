@@ -423,6 +423,22 @@ auto RenderContext::destroy_context(this RenderContext& self) -> void {
   destroy_resource_pool(self.resources.image_views);
   self.resources.samplers.reset();
   self.resources.pipelines.reset();
+
+  self.superframe_allocator->deallocate(std::span(&self.resources.descriptor_set, 1));
+  self.resources.descriptor_set = {};
+
+  self.tracy_profiler.reset();
+  self.swapchain.reset();
+  self.frame_allocator.reset();
+  self.superframe_allocator.reset();
+  self.superframe_resource.reset();
+  self.runtime.reset();
+
+  vkb::destroy_surface(self.vkb_instance, self.surface);
+  self.surface = VK_NULL_HANDLE;
+  vkb::destroy_device(self.vkb_device);
+  self.device = VK_NULL_HANDLE;
+  vkb::destroy_instance(self.vkb_instance);
 }
 
 auto RenderContext::handle_resize(u32 width, u32 height) -> void {

@@ -15,7 +15,7 @@ auto EditorPanelRegistry::render_all(this EditorPanelRegistry& self, vuk::ImageA
 }
 auto EditorPanelRegistry::draw_window_menu(this EditorPanelRegistry& self) -> void {
   ZoneScoped;
-  for (auto& meta : self.panel_metadata) {
+  for ([[maybe_unused]] auto& meta : self.panel_metadata) {
     // ImGui::MenuItem(meta.name, nullptr, meta.visible);
   }
 }

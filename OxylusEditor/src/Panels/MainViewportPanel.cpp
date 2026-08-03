@@ -1,5 +1,6 @@
 #include "MainViewportPanel.hpp"
 
+#include <algorithm>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <vuk/ImageAttachment.hpp>
 
@@ -107,6 +108,17 @@ auto MainViewportPanel::get_visible_viwports(this const MainViewportPanel& self)
   }
 
   return v;
+}
+
+auto MainViewportPanel::is_any_scene_playing(this const MainViewportPanel& self) -> bool {
+  ZoneScoped;
+
+  const auto playing = [](const std::unique_ptr<ViewportPanel>& panel) {
+    const auto* scene = panel ? panel->get_scene() : nullptr;
+    return scene != nullptr && scene->is_playing();
+  };
+
+  return std::ranges::any_of(self.viewport_panels, playing) || std::ranges::any_of(self.pending_viewports, playing);
 }
 
 auto MainViewportPanel::is_fullscreen(this const MainViewportPanel& self) -> bool {

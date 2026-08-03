@@ -133,7 +133,7 @@ struct EntityInspector : IEntitySerializer {
     auto field_names = std::vector<const char*>{};
     world.entity(type).children([&](flecs::entity e) { field_names.push_back(e.name()); });
     auto current = static_cast<i32*>(ptr);
-    ImGui::Combo("##enum_field", current, field_names.data(), field_names.size());
+    ImGui::Combo("##enum_field", current, field_names.data(), static_cast<int>(field_names.size()));
     UI::end_property_grid();
   }
 
@@ -339,7 +339,6 @@ InspectorPanel::InspectorPanel() : EditorPanelState("Inspector", ICON_MDI_INFORM
 
 void InspectorPanel::on_render(this InspectorPanel& self, vuk::ImageAttachment swapchain_attachment) {
   auto& editor = App::mod<Editor>();
-  auto& editor_context = editor.get_context();
   self.scene_ = editor.get_selected_scene();
 
   self.on_begin();
@@ -738,7 +737,6 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
   } else if (asset_type == AssetType::Model) {
     thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(path_str);
   }
-  const auto indent_spacing = ImGui::GetStyle().IndentSpacing;
   const auto region = ImGui::GetContentRegionAvail();
   auto content_width = region.x - ImGui::GetStyle().IndentSpacing;
   if (thumbnail_image) {

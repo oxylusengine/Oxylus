@@ -159,15 +159,18 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   auto& job_man = App::get_job_manager();
-  auto& net = App::mod<NetworkManager>();
   job_man.get_tracker().stop_tracking();
-
-  self.main_viewport_panel.deinit();
-  self.main_viewport_panel.reset();
 
   auto& event_system = App::get_event_system();
   std::ignore = event_system.unsubscribe<ScenePlayEvent>(self.scene_play_handler);
   std::ignore = event_system.unsubscribe<SceneStopEvent>(self.scene_stop_handler);
+
+  self.main_viewport_panel.deinit();
+  self.main_viewport_panel.reset();
+
+  self.editor_panel_registry.get<SceneHierarchyPanel>().set_scene(nullptr);
+  self.editor_context.reset();
+  self.scene_manager.reset();
 
   Log::remove_callback("editor_notifications");
 
@@ -194,6 +197,8 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
 
   rml_renderer.begin_frame();
+
+  imgui_renderer.keyboard_input_enabled = !self.main_viewport_panel.is_any_scene_playing();
 
   imgui_renderer.begin_frame(timestep.get_seconds(), window.get_logical_size(), window.get_real_size());
   ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());

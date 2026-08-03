@@ -172,9 +172,9 @@ auto RmlRenderer::RenderGeometry(
   if (auto* geo = this->compiled_geometries.slot(id)) {
     this->render_geometry(
       geo->vertices.data(),
-      geo->vertices.size(),
+      static_cast<int>(geo->vertices.size()),
       geo->indices.data(),
-      geo->indices.size(),
+      static_cast<int>(geo->indices.size()),
       texture_handle,
       translation
     );

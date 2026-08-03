@@ -53,9 +53,9 @@ auto EditorSettingsPanel::draw_keybinds_tab() -> void {
 
     UI::begin_properties(UI::default_properties_flags | ImGuiTableFlags_BordersInnerH, true, 0.4f);
 
-    for (auto& [id, binding] : bindings) {
+    for (auto& [binding_id, binding] : bindings) {
       if (binding.context == "editor") {
-        ImGui::PushID(id.c_str());
+        ImGui::PushID(binding_id.c_str());
 
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
@@ -64,7 +64,7 @@ auto EditorSettingsPanel::draw_keybinds_tab() -> void {
 
         ImGui::TableNextColumn();
 
-        if (waiting_for_bind == id) {
+        if (waiting_for_bind == binding_id) {
           // --- LISTENING STATE ---
           ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.6f, 0.0f, 1.0f));
           ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
@@ -89,7 +89,7 @@ auto EditorSettingsPanel::draw_keybinds_tab() -> void {
               auto scan_code = static_cast<ScanCode>(i);
 
               if (key_state[i] && scan_code != mod_code_as_scan_code) {
-                std::ignore = input.rebind_action(id, {InputCode(scan_code, mod_code)});
+                std::ignore = input.rebind_action(binding_id, {InputCode(scan_code, mod_code)});
 
                 waiting_for_bind = "";
                 break;
@@ -117,7 +117,7 @@ auto EditorSettingsPanel::draw_keybinds_tab() -> void {
               button_name = fmt::format("{} + {}", current_mod_name, current_key_name);
             }
             if (ImGui::Button(button_name.c_str(), ImVec2(-FLT_MIN, 0))) {
-              waiting_for_bind = id;
+              waiting_for_bind = binding_id;
             }
           }
         }

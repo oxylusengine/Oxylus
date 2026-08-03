@@ -71,7 +71,7 @@ auto EditorCVar::load(this EditorCVar& self) -> void {
   if (auto v = config["scale_viewport_size_with_content_scale"].as_boolean())
     self.cvar_scale_viewport_size_with_content_scale.set(v->get());
   if (auto v = config["viewport_scale_amount"].as_integer())
-    self.cvar_viewport_scale_amount.set(v->get());
+    self.cvar_viewport_scale_amount.set(static_cast<i32>(v->get()));
   if (auto v = config["file_thumbnails"].as_boolean())
     self.cvar_file_thumbnails.set(v->get());
   if (auto v = config["file_thumbnail_size"].as_floating_point())

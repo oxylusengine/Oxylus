@@ -3,6 +3,7 @@
 #include <misc/cpp/imgui_stdlib.h>
 
 #include "Core/App.hpp"
+#include "Core/Input.hpp"
 #include "Utils/CVars.hpp"
 
 namespace ox {
@@ -81,7 +82,7 @@ void RuntimeConsole::add_log(const char* fmt, loguru::Verbosity verb) {
 void RuntimeConsole::clear_log() { text_buffer.clear(); }
 
 void RuntimeConsole::render(this RuntimeConsole& self) {
-  if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false)) {
+  if (App::mod<Input>().get_key_pressed(ScanCode::Grave)) {
     self.visible = !self.visible;
     self.request_keyboard_focus = true;
   }

@@ -118,6 +118,12 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size, gl
   rendering_images.clear();
   acquired_images.clear();
 
+  const auto routed = wants_keyboard();
+  if (keyboard_routed_last_frame && !routed) {
+    imgui.ClearInputKeys();
+  }
+  keyboard_routed_last_frame = routed;
+
   ImGui::NewFrame();
 }
 
@@ -452,9 +458,17 @@ void ImGuiRenderer::on_mouse_scroll(glm::vec2 offset) {
   imgui.AddMouseWheelEvent(offset.x, offset.y);
 }
 
+auto ImGuiRenderer::wants_keyboard(this const ImGuiRenderer& self) -> bool {
+  return self.keyboard_input_enabled || ImGui::GetIO().WantTextInput;
+}
+
 ImGuiKey to_imgui_key(SDL_Keycode keycode, SDL_Scancode scancode);
 void ImGuiRenderer::on_key(u32 key_code, u32 scan_code, u16 mods, bool down) {
   ZoneScoped;
+
+  if (!wants_keyboard()) {
+    return;
+  }
 
   auto& imgui = ImGui::GetIO();
   imgui.AddKeyEvent(ImGuiMod_Ctrl, (mods & SDL_KMOD_CTRL) != 0);
@@ -470,6 +484,10 @@ void ImGuiRenderer::on_key(u32 key_code, u32 scan_code, u16 mods, bool down) {
 
 void ImGuiRenderer::on_text_input(const c8* text) {
   ZoneScoped;
+
+  if (!wants_keyboard()) {
+    return;
+  }
 
   auto& imgui = ImGui::GetIO();
   imgui.AddInputCharactersUTF8(text);

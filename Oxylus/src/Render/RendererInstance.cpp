@@ -151,8 +151,8 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   auto hilbert_index = [](u32 pos_x, u32 pos_y) -> u16 {
     auto index = 0_u32;
     for (auto cur_level = HILBERT_NOISE_LUT_WIDTH / 2; cur_level > 0_u32; cur_level /= 2_u32) {
-      auto region_x = (pos_x & cur_level) > 0_u32;
-      auto region_y = (pos_y & cur_level) > 0_u32;
+      auto region_x = static_cast<u32>((pos_x & cur_level) > 0_u32);
+      auto region_y = static_cast<u32>((pos_y & cur_level) > 0_u32);
       index += cur_level * cur_level * ((3_u32 * region_x) ^ region_y);
       if (region_y == 0_u32) {
         if (region_x == 1_u32) {
@@ -1284,7 +1284,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       } else {
         const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
         const auto direction = lc.type == LightComponent::LightType::Spot ? world_forward : glm::vec3(0.0f);
-        const auto light_id = self.scene.lights.create_slot(
+        self.scene.lights.create_slot(
           GPU::Light{
             .position = world_position,
             .intensity = lc.intensity,
