@@ -3,10 +3,26 @@
 #include "vuk/runtime/CommandBuffer.hpp"
 
 namespace ox {
+RmlRenderer::RmlRenderer() {
+  ZoneScoped;
+
+  const u8 white_pixel[] = {0xFF, 0xFF, 0xFF, 0xFF};
+  this->white_texture = Texture::create({
+    .format = vuk::Format::eR8G8B8A8Unorm,
+    .extent = vuk::Extent3D{1, 1, 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
+  this->white_texture.upload(white_pixel, vuk::eFragmentSampled);
+}
+
+RmlRenderer::~RmlRenderer() = default;
+
 auto RmlRenderer::begin_frame(this RmlRenderer& self) -> void {
   self.frame_indices.clear();
   self.frame_vertices.clear();
   self.draw_commands.clear();
+  self.frame_textures.clear();
+  self.frame_texture_indices.clear();
   self.current_scissor_enabled = false;
 }
 
@@ -25,9 +41,10 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, RenderContext& context, vuk:
   std::memcpy(vertex_buffer->mapped_ptr, self.frame_vertices.data(), vertex_size);
   std::memcpy(index_buffer->mapped_ptr, self.frame_indices.data(), index_size);
 
-  std::unordered_map<RmlTextureID, uint32_t> acquired_texture_cache = {};
-  std::vector<vuk::Value<vuk::ImageAttachment>> frame_textures = {};
-  frame_textures.emplace_back(self.white_texture.acquire("rmlui white", vuk::eFragmentSampled));
+  if (self.frame_textures.empty()) {
+    self.frame_textures.emplace_back(self.white_texture.acquire("rmlui white", vuk::eFragmentSampled));
+  }
+
   for (auto& cmd : self.draw_commands) {
     if (!cmd.texture) {
       cmd.texture_array_index = 0;
@@ -36,15 +53,15 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, RenderContext& context, vuk:
 
     auto tex_id = static_cast<RmlTextureID>(cmd.texture);
 
-    auto it = acquired_texture_cache.find(tex_id);
-    if (it != acquired_texture_cache.end()) {
+    auto it = self.frame_texture_indices.find(tex_id);
+    if (it != self.frame_texture_indices.end()) {
       cmd.texture_array_index = it->second;
     } else {
       if (auto* texture_ptr = self.loaded_textures.slot(tex_id)) {
-        uint32_t new_index = static_cast<uint32_t>(frame_textures.size());
-        frame_textures.push_back(texture_ptr->acquire({}, vuk::eFragmentSampled));
+        u32 new_index = static_cast<u32>(self.frame_textures.size());
+        self.frame_textures.push_back(texture_ptr->acquire({}, vuk::eFragmentSampled));
 
-        acquired_texture_cache[tex_id] = new_index;
+        self.frame_texture_indices[tex_id] = new_index;
         cmd.texture_array_index = new_index;
       } else {
         cmd.texture_array_index = 0;
@@ -52,10 +69,13 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, RenderContext& context, vuk:
     }
   }
 
-  auto textures_array = vuk::declare_array("rml_sampled_textures", std::span(frame_textures));
+  auto textures_array = vuk::declare_array("rml_sampled_textures", std::span(self.frame_textures));
+  auto draw_commands = std::move(self.draw_commands);
+  self.frame_vertices.clear();
+  self.frame_indices.clear();
 
   return vuk::make_pass("rmlui", //
-    [dc = self.draw_commands](vuk::CommandBuffer& command_buffer,
+    [dc = std::move(draw_commands)](vuk::CommandBuffer& command_buffer,
       VUK_BA(vuk::Access::eVertexRead) vertex_buf,
       VUK_BA(vuk::Access::eIndexRead) index_buf,
       VUK_IA(vuk::eColorWrite) color_rt,
@@ -156,12 +176,6 @@ auto RmlRenderer::render_geometry(
   self.frame_indices.insert(self.frame_indices.end(), indices, indices + num_indices);
 
   self.draw_commands.push_back(draw_cmd);
-}
-
-auto RmlRenderer::set_white_texture(this RmlRenderer& self, const TextureView& texture) -> void {
-  ZoneScoped;
-
-  self.white_texture = texture;
 }
 
 auto RmlRenderer::RenderGeometry(

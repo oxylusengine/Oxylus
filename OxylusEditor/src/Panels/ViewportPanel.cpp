@@ -15,6 +15,7 @@
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
+#include "UI/RmlUI.hpp"
 #include "UI/UI.hpp"
 #include "Utils/OxMath.hpp"
 
@@ -252,6 +253,18 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       self.on_end();
 
       return;
+    }
+
+    if (self.is_viewport_focused || self.is_viewport_hovered) {
+      auto* rml_context = self.editor_scene->get_scene()->get_rml_context();
+      if (rml_context) {
+        App::mod<RmlUI>().set_input_context(
+          rml_context,
+          {self.viewport_bounds_[0].x, self.viewport_bounds_[0].y},
+          {self.render_size.x, self.render_size.y},
+          {static_cast<i32>(self.scaled_render_size.x), static_cast<i32>(self.scaled_render_size.y)}
+        );
+      }
     }
 
     auto renderer_instance = self.editor_scene->get_scene()->get_renderer_instance();

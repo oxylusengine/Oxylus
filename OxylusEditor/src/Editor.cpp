@@ -19,7 +19,6 @@
 #include "Panels/TextEditorPanel.hpp"
 #include "Render/Window.hpp"
 #include "UI/ImGuiRenderer.hpp"
-#include "UI/RmlUI.hpp"
 #include "UI/UI.hpp"
 #include "Utils/Command.hpp"
 
@@ -189,14 +188,10 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   auto& render_context = App::get_rendercontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
-  auto& rml = App::mod<RmlUI>();
-  auto& rml_renderer = rml.get_renderer();
   auto& window = App::get_window();
 
   auto swapchain_attachment = render_context.new_frame();
   swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
-
-  rml_renderer.begin_frame();
 
   imgui_renderer.keyboard_input_enabled = !self.main_viewport_panel.is_any_scene_playing();
 
@@ -217,10 +212,7 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   self.render(sc_info);
 
-  rml.render_contexts();
-
   swapchain_attachment = imgui_renderer.end_frame(render_context, std::move(swapchain_attachment));
-  swapchain_attachment = rml_renderer.end_frame(render_context, std::move(swapchain_attachment));
 
   render_context.end_frame(swapchain_attachment);
 }
