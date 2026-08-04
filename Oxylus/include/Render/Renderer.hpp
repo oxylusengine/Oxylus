@@ -21,12 +21,6 @@ public:
   vuk::Unique<vuk::Buffer> quad_vertex_buffer = vuk::Unique<vuk::Buffer>();
   vuk::Unique<vuk::Buffer> quad_index_buffer = vuk::Unique<vuk::Buffer>();
 
-  struct RenderInfo {
-    option<glm::ivec2> viewport_origin = nullopt;
-    option<glm::ivec2> viewport_size = nullopt;
-    option<glm::ivec2> surface_size = nullopt;
-  };
-
   auto init(this Renderer& self) -> std::expected<void, std::string>;
   auto deinit(this Renderer& self) -> std::expected<void, std::string>;
   auto update(this Renderer& self, const Timestep& delta_time) -> void;

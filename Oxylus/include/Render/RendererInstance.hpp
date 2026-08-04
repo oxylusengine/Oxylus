@@ -332,12 +332,15 @@ public:
   auto render(
     this RendererInstance& self,
     vuk::Value<vuk::ImageAttachment>&& dst_attachment,
-    const Renderer::RenderInfo& render_info,
+    glm::ivec2 viewport_origin,
+    glm::ivec2 viewport_size,
+    glm::ivec2 surface_size,
     const RendererCVar& cvar
   ) -> vuk::Value<vuk::ImageAttachment>;
+
   auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info, const RendererCVar& cvar) -> void;
 
-  auto get_viewport_size(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_size; }
+  auto get_viewport_size(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_size_; }
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
   auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
@@ -379,8 +382,9 @@ private:
   GPU::RenderQueue2D render_queue_2d = {};
   bool saved_camera = false;
 
-  glm::uvec2 viewport_size = {};
-  glm::uvec2 viewport_offset = {};
+  glm::uvec2 viewport_size_ = {};
+  glm::uvec2 viewport_origin_ = {};
+  glm::uvec2 surface_size_ = {};
 
   vuk::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
   vuk::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};

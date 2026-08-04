@@ -141,7 +141,7 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
 
 auto RendererInstance::update_vbgtao_info(this RendererInstance& self, const RendererCVar& cvar) -> void {
   auto gtao_enabled = cvar.cvar_vbgtao_enable.as_bool();
-  if (gtao_enabled && self.viewport_size.x > 0) {
+  if (gtao_enabled && self.viewport_size_.x > 0) {
     self.vbgtao_info.thickness = cvar.cvar_vbgtao_thickness.get();
     self.vbgtao_info.effect_radius = cvar.cvar_vbgtao_radius.get();
 

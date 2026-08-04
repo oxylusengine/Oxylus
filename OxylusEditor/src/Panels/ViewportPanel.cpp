@@ -311,16 +311,6 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         self.grid_stage(renderer_instance);
       }
 
-      const Renderer::RenderInfo render_info = {
-        .viewport_origin =
-          glm::ivec2{static_cast<i32>(self.viewport_bounds_[0].x), static_cast<i32>(self.viewport_bounds_[0].y)},
-        .viewport_size = glm::ivec2{static_cast<i32>(self.render_size.x), static_cast<i32>(self.render_size.y)},
-        .surface_size = glm::ivec2{
-          static_cast<i32>(self.scaled_render_size.x),
-          static_cast<i32>(self.scaled_render_size.y)
-        },
-      };
-
       auto viewport_attachment_info = swapchain_attachment;
       viewport_attachment_info.extent = vuk::Extent3D{
         static_cast<u32>(self.scaled_render_size.x),
@@ -330,7 +320,12 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       auto viewport_attachment = vuk::declare_ia("viewport", viewport_attachment_info);
       viewport_attachment = vuk::clear_image(std::move(viewport_attachment), vuk::Black<f32>);
 
-      auto scene_view_image = self.editor_scene->get_scene()->render(std::move(viewport_attachment), render_info);
+      auto scene_view_image = self.editor_scene->get_scene()->render(
+        std::move(viewport_attachment),
+        glm::ivec2{static_cast<i32>(self.viewport_bounds_[0].x), static_cast<i32>(self.viewport_bounds_[0].y)},
+        glm::ivec2{static_cast<i32>(self.render_size.x), static_cast<i32>(self.render_size.y)},
+        glm::ivec2{static_cast<i32>(self.scaled_render_size.x), static_cast<i32>(self.scaled_render_size.y)}
+      );
 
       ImGui::SetCursorPos(
         {ImGui::GetCursorPosX() + self.viewport_offset.x, ImGui::GetCursorPosY() + self.viewport_offset.y}

@@ -485,10 +485,16 @@ auto RendererInstance::add_stage_after(
 auto RendererInstance::render(
   this RendererInstance& self,
   vuk::Value<vuk::ImageAttachment>&& dst_attachment,
-  const Renderer::RenderInfo& render_info,
+  glm::ivec2 viewport_origin,
+  glm::ivec2 viewport_size,
+  glm::ivec2 surface_size,
   const RendererCVar& cvar
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
+
+  self.viewport_origin_ = viewport_origin;
+  self.viewport_size_ = viewport_size;
+  self.surface_size_ = surface_size;
 
   OX_ASSERT(self.update_ran_this_frame);
   self.update_ran_this_frame = false;
@@ -504,8 +510,6 @@ auto RendererInstance::render(
 
   OX_CHECK_GT(dst_extent.width, 0u);
   OX_CHECK_GT(dst_extent.height, 0u);
-
-  self.viewport_size = {dst_extent.width, dst_extent.height};
 
   auto& bindless_set = self.renderer.render_context->get_descriptor_set();
 
@@ -798,7 +802,7 @@ auto RendererInstance::render(
 
     {
       RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, *self.renderer.render_context);
-      ctx.set_viewport_size(self.viewport_size)
+      ctx.set_viewport_size(viewport_size)
         .set_image_resource("visbuffer_attachment", std::move(main_geometry_context.visbuffer_attachment))
         .set_image_resource("depth_attachment", std::move(main_geometry_context.depth_attachment))
         .set_buffer_resource("meshlet_instances_buffer", std::move(self.prepared_frame.meshlet_instances_buffer))
@@ -1069,7 +1073,7 @@ auto RendererInstance::render(
       );
 
     RenderStageContext ctx(self, self.shared_resources, RenderStage::Forward2D, *self.renderer.render_context);
-    ctx.set_viewport_size(self.viewport_size)
+    ctx.set_viewport_size(viewport_size)
       .set_image_resource("final_attachment", final_attachment)
       .set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attachment_2d));
 
@@ -1144,7 +1148,7 @@ auto RendererInstance::render(
 
   {
     RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, *self.renderer.render_context);
-    ctx.set_viewport_size(self.viewport_size)
+    ctx.set_viewport_size(viewport_size)
       .set_buffer_resource("camera_buffer", std::move(self.prepared_frame.camera_buffer))
       .set_image_resource("depth_attachment", std::move(depth_attachment))
       .set_image_resource("result_attachment", std::move(dst_attachment));

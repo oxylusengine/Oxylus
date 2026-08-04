@@ -162,7 +162,11 @@ public:
   ) const -> void;
 
   auto render(
-    this Scene& self, vuk::Value<vuk::ImageAttachment>&& dst_attachment, const Renderer::RenderInfo& render_info
+    this Scene& self,
+    vuk::Value<vuk::ImageAttachment>&& dst_attachment,
+    glm::ivec2 viewport_origin,
+    glm::ivec2 viewport_size,
+    glm::ivec2 surface_size
   ) -> vuk::Value<vuk::ImageAttachment>;
   auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
   auto get_rml_context(this const Scene& self) -> Rml::Context* { return self.rml_context; }

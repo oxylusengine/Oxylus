@@ -274,10 +274,14 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
 
   thumbnail_scene.renderer_cvar.cvar_enable_debug_renderer.set(false);
 
-  const Renderer::RenderInfo render_info = {};
   auto renderer_instance = thumbnail_scene.get_renderer_instance();
-  auto scene_view_image = renderer_instance
-                            ->render(std::move(thumbnail_image), render_info, thumbnail_scene.renderer_cvar);
+  auto scene_view_image = renderer_instance->render(
+    std::move(thumbnail_image),
+    {},
+    glm::ivec2(size),
+    glm::ivec2(size),
+    thumbnail_scene.renderer_cvar
+  );
 
   usize buffer_size = size * size * 4; // RGBA8
   auto readback_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, buffer_size);

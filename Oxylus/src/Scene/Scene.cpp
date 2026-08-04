@@ -1883,7 +1883,11 @@ void Scene::create_character_controller(
 }
 
 auto Scene::render(
-  this Scene& self, vuk::Value<vuk::ImageAttachment>&& dst_attachment, const Renderer::RenderInfo& render_info
+  this Scene& self,
+  vuk::Value<vuk::ImageAttachment>&& dst_attachment,
+  glm::ivec2 viewport_origin,
+  glm::ivec2 viewport_size,
+  glm::ivec2 surface_size
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
@@ -1900,15 +1904,16 @@ auto Scene::render(
       Rml::Vector2i(static_cast<i32>(dst_attachment->extent.width), static_cast<i32>(dst_attachment->extent.height))
     );
 
-    OX_CHECK_EQ(render_info.viewport_origin.has_value(), true, "render_info.viewport_origin is not set");
-    OX_CHECK_EQ(render_info.viewport_size.has_value(), true, "render_info.viewport_size is not set");
-    OX_CHECK_EQ(render_info.surface_size.has_value(), true, "render_info.surface_size is not set");
+    OX_CHECK_GT(viewport_size.x, 0, "viewport_size.x is not set");
+    OX_CHECK_GT(viewport_size.y, 0, "viewport_size.y is not set");
+    OX_CHECK_GT(surface_size.x, 0, "surface_size.x is not set");
+    OX_CHECK_GT(surface_size.y, 0, "surface_size.y is not set");
 
     rml_ui_mod.set_input_context(
       self.rml_context,
-      {static_cast<f32>(render_info.viewport_origin->x), static_cast<f32>(render_info.viewport_origin->y)},
-      {static_cast<f32>(render_info.viewport_size->x), static_cast<f32>(render_info.viewport_size->y)},
-      {render_info.surface_size->x, render_info.surface_size->y}
+      {static_cast<f32>(viewport_origin.x), static_cast<f32>(viewport_origin.y)},
+      {static_cast<f32>(viewport_size.x), static_cast<f32>(viewport_size.y)},
+      {surface_size.x, surface_size.y}
     );
   }
 
@@ -1916,12 +1921,19 @@ auto Scene::render(
     system->on_scene_render(&self, dst_attachment->extent);
   }
 
-  auto surface = ri->render(std::move(dst_attachment), render_info, self.renderer_cvar);
+  auto scene_surface = ri->render(
+    std::move(dst_attachment),
+    viewport_origin,
+    viewport_size,
+    surface_size,
+    self.renderer_cvar
+  );
+
   if (!self.rml_context) {
-    return surface;
+    return scene_surface;
   }
 
-  return self.rml_renderer->end_frame(App::get_rendercontext(), std::move(surface));
+  return self.rml_renderer->end_frame(App::get_rendercontext(), std::move(scene_surface));
 }
 
 auto Scene::get_rml_context_name(this const Scene& self) -> std::string_view {
