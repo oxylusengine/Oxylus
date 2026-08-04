@@ -168,6 +168,11 @@ path = "passes/pbr_apply.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
+name = "pbr_apply_no_atmos"
+path = "passes/pbr_apply_no_atmos.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
 name = "hiz"
 path = "passes/hiz.slang"
 entry_points = ["cs_main"]
