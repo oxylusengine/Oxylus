@@ -17,6 +17,7 @@ struct ShaderProgramConfig {
 
 struct ShaderSessionConfig {
   std::filesystem::path root_directory = {};
+  std::vector<std::filesystem::path> include_directories = {};
   std::string session_name = {};
   bool debug_symbols = false;
   i32 optimization_level = 3;
