@@ -58,6 +58,8 @@ struct NetClient {
   auto send_reliable(this NetClient&, NetPacket& packet) -> void;
   auto send_unreliable(this NetClient&, NetPacket& packet) -> void;
 
+  auto call_server(this NetClient&, std::string_view proc, std::span<const RPCParameter> params, bool reliable) -> bool;
+
   virtual auto on_scene_snapshot(u8 sequence, SceneState&& state) -> void {};
 };
 } // namespace ox

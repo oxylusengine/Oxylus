@@ -206,6 +206,14 @@ auto NetClient::register_proc(this NetClient& self, std::string_view identifier,
 auto NetClient::send_reliable(this NetClient& self, NetPacket& packet) -> void {
   ZoneScoped;
 
+  // Sends can outlive the peer, the connection may have dropped since the packet was built.
+  if (!self.remote_peer) {
+    if (packet.can_destroy()) {
+      packet.destroy();
+    }
+    return;
+  }
+
   packet.inner->flags = ENET_PACKET_FLAG_RELIABLE;
   if (enet_peer_send(self.remote_peer, NET_CHANNEL_RELIABLE, packet) < 0) {
     if (packet.can_destroy()) {
@@ -217,11 +225,41 @@ auto NetClient::send_reliable(this NetClient& self, NetPacket& packet) -> void {
 auto NetClient::send_unreliable(this NetClient& self, NetPacket& packet) -> void {
   ZoneScoped;
 
+  if (!self.remote_peer) {
+    if (packet.can_destroy()) {
+      packet.destroy();
+    }
+    return;
+  }
+
   packet.inner->flags = 0;
   if (enet_peer_send(self.remote_peer, NET_CHANNEL_UNRELIABLE, packet) < 0) {
     if (packet.can_destroy()) {
       packet.destroy();
     }
   }
+}
+
+auto NetClient::call_server(
+  this NetClient& self, std::string_view proc, std::span<const RPCParameter> params, bool reliable
+) -> bool {
+  ZoneScoped;
+
+  if (!self.remote_peer) {
+    return false;
+  }
+
+  auto packet = NetPacket::rpc(proc, params);
+  if (!packet.has_value()) {
+    return false;
+  }
+
+  if (reliable) {
+    self.send_reliable(packet.value());
+  } else {
+    self.send_unreliable(packet.value());
+  }
+
+  return true;
 }
 } // namespace ox

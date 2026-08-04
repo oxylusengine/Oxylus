@@ -35,6 +35,15 @@ struct NetServer {
 
   auto register_proc(this NetServer&, std::string_view identifier, NetRPCPacket::Callback&& cb) -> void;
 
+  auto send_to_client(this NetServer&, NetClientID client_id, NetPacket& packet, bool reliable) -> bool;
+  auto broadcast(this NetServer&, NetPacket& packet, bool reliable) -> void;
+
+  auto call_client(
+    this NetServer&, NetClientID client_id, std::string_view proc, std::span<const RPCParameter> params, bool reliable
+  ) -> bool;
+  auto broadcast_call(this NetServer&, std::string_view proc, std::span<const RPCParameter> params, bool reliable)
+    -> bool;
+
   virtual auto on_client_connect(NetClientID client_id) -> void {};
   virtual auto on_client_disconnect(NetClientID client_id) -> void {};
 
