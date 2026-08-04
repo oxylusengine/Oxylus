@@ -6,27 +6,18 @@
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
 #include "Core/Keycodes.hpp"
+#include "UI/RmlRenderer.hpp"
 
 namespace ox {
 auto RmlUI::init(this RmlUI& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   Rml::SetSystemInterface(&self.rml_system);
-  Rml::SetRenderInterface(&self.rml_renderer);
 
+  // No `Rml::SetRenderInterface`: every context brings its own.
   if (!Rml::Initialise()) {
     return std::unexpected("Failed to initalize RmlUI!");
   }
-
-  u8 white_pixel[] = {0xFF, 0xFF, 0xFF, 0xFF};
-  self.white_texture = Texture::create({
-    .format = vuk::Format::eR8G8B8A8Unorm,
-    .extent = vuk::Extent3D{1, 1, 1u},
-    .usage = vuk::ImageUsageFlagBits::eSampled,
-  });
-  self.white_texture.upload(white_pixel, vuk::eFragmentSampled);
-
-  self.rml_renderer.set_white_texture(self.white_texture.view());
 
   return {};
 }
@@ -39,24 +30,27 @@ auto RmlUI::deinit(this RmlUI& self) -> std::expected<void, std::string> {
   return {};
 }
 
-auto RmlUI::begin_frame(this RmlUI& self) -> void { self.rml_renderer.begin_frame(); }
+auto RmlUI::create_context(this RmlUI& self, std::string_view name, RmlRenderer* renderer) -> Rml::Context* {
+  ZoneScoped;
 
-auto RmlUI::create_context(this RmlUI& self, std::string_view name) -> Rml::Context* {
-  auto* context = Rml::CreateContext(Rml::String(name), {1, 1});
+  OX_CHECK_NULL(renderer);
+
+  auto* context = Rml::CreateContext(Rml::String(name), {1, 1}, renderer);
   if (!context) {
     return nullptr;
   }
 
   context->SetDensityIndependentPixelRatio(App::get_window().get_dpi_scale());
-  if (!self.debugger_initialized) {
-    Rml::Debugger::Initialise(context);
-    self.debugger_initialized = true;
+  if (!self.debugger_host_context && Rml::Debugger::Initialise(context)) {
+    self.debugger_host_context = context;
   }
 
   return context;
 }
 
 auto RmlUI::remove_context(this RmlUI& self, Rml::Context* context) -> void {
+  ZoneScoped;
+
   if (!context) {
     return;
   }
@@ -65,7 +59,16 @@ auto RmlUI::remove_context(this RmlUI& self, Rml::Context* context) -> void {
     self.clear_input_context();
   }
 
+  // The debugger draws through its host context, so it cannot outlive it.
+  if (self.debugger_host_context == context) {
+    Rml::Debugger::Shutdown();
+    self.debugger_host_context = nullptr;
+  }
+
   Rml::RemoveContext(context->GetName());
+
+  // Frees the render manager holding this interface, so the caller can destroy it before `Rml::Shutdown`.
+  Rml::ReleaseRenderManagers();
 }
 
 auto RmlUI::render_context(this RmlUI& self, Rml::Context& context, Rml::Vector2i dimensions) -> void {
@@ -158,12 +161,6 @@ auto RmlUI::process_mouse_scroll(this RmlUI& self, f32 offset) -> void {
   if (self.input_context && self.input_mouse_inside) {
     self.input_context->ProcessMouseWheel(-offset, 0);
   }
-}
-
-auto RmlUI::get_renderer(this RmlUI& self) -> RmlRenderer& {
-  ZoneScoped;
-
-  return self.rml_renderer;
 }
 
 } // namespace ox

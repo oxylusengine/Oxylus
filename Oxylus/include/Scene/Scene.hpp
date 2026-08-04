@@ -44,6 +44,7 @@ struct ankerl::unordered_dense::hash<flecs::entity> {
 
 namespace ox {
 struct JsonWriter;
+class RmlRenderer;
 
 struct ComponentDB {
   std::vector<flecs::id> components = {};
@@ -195,6 +196,7 @@ private:
 
   // Renderer
   std::unique_ptr<RendererInstance> renderer_instance = nullptr;
+  std::unique_ptr<RmlRenderer> rml_renderer;
   Rml::Context* rml_context = nullptr;
 
   // Physics

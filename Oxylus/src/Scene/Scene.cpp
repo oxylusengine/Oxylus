@@ -33,6 +33,7 @@
 #include "Render/Camera.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
+#include "UI/RmlRenderer.hpp"
 #include "UI/RmlUI.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Random.hpp"
@@ -401,7 +402,10 @@ Scene::~Scene() {
 
   lua_systems.clear();
   if (App::has_mod<RmlUI>()) {
+    // Before the renderer dies: it is the context's render interface.
     App::mod<RmlUI>().remove_context(rml_context);
+    rml_context = nullptr;
+    rml_renderer.reset();
   }
   auto& lua_manager = App::mod<LuaManager>();
   lua_manager.get_state()->collect_gc();
@@ -422,7 +426,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   }
 
   if (App::has_mod<RmlUI>()) {
-    self.rml_context = App::mod<RmlUI>().create_context(fmt::format("scene_{}", self.uuid.str()));
+    self.rml_renderer = std::make_unique<RmlRenderer>();
+    self.rml_context = App::mod<RmlUI>().create_context(
+      fmt::format("scene_{}", self.uuid.str()),
+      self.rml_renderer.get()
+    );
+    if (!self.rml_context) {
+      self.rml_renderer.reset();
+    }
   }
 
   auto& physics = App::mod<Physics>();
@@ -1879,6 +1890,7 @@ auto Scene::render(
   OX_CHECK_NULL(ri);
 
   if (self.rml_context) {
+    self.rml_renderer->begin_frame();
     App::mod<RmlUI>().render_context(
       *self.rml_context,
       Rml::Vector2i(static_cast<i32>(dst_attachment->extent.width), static_cast<i32>(dst_attachment->extent.height))
@@ -1894,7 +1906,7 @@ auto Scene::render(
     return surface;
   }
 
-  return App::mod<RmlUI>().get_renderer().end_frame(App::get_rendercontext(), std::move(surface));
+  return self.rml_renderer->end_frame(App::get_rendercontext(), std::move(surface));
 }
 
 auto Scene::get_rml_context_name(this const Scene& self) -> std::string_view {

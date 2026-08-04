@@ -5,12 +5,12 @@
 #include <string>
 #include <string_view>
 
-#include "UI/RmlRenderer.hpp"
 #include "UI/RmlSystem.hpp"
 
 namespace ox {
 class Renderer;
 class Input;
+class RmlRenderer;
 
 class RmlUI {
 public:
@@ -20,9 +20,8 @@ public:
   auto init(this RmlUI& self) -> std::expected<void, std::string>;
   auto deinit(this RmlUI& self) -> std::expected<void, std::string>;
 
-  auto begin_frame(this RmlUI& self) -> void;
-
-  auto create_context(this RmlUI& self, std::string_view name) -> Rml::Context*;
+  // `renderer` must outlive the context. Required: there is no global render interface.
+  auto create_context(this RmlUI& self, std::string_view name, RmlRenderer* renderer) -> Rml::Context*;
   auto remove_context(this RmlUI& self, Rml::Context* context) -> void;
   auto render_context(this RmlUI& self, Rml::Context& context, Rml::Vector2i dimensions) -> void;
 
@@ -40,17 +39,13 @@ public:
   auto process_mouse_button(this RmlUI& self, u8 button, bool down) -> void;
   auto process_mouse_scroll(this RmlUI& self, f32 offset) -> void;
 
-  auto get_renderer(this RmlUI& self) -> RmlRenderer&;
-
 private:
-  RmlRenderer rml_renderer = {};
   RmlSystem rml_system = {};
-  Texture white_texture = {};
   Rml::Context* input_context = nullptr;
   Rml::Vector2f input_viewport_origin = {};
   Rml::Vector2f input_viewport_size = {};
   Rml::Vector2i input_surface_size = {};
   bool input_mouse_inside = false;
-  bool debugger_initialized = false;
+  Rml::Context* debugger_host_context = nullptr;
 };
 } // namespace ox

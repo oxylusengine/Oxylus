@@ -3,6 +3,20 @@
 #include "vuk/runtime/CommandBuffer.hpp"
 
 namespace ox {
+RmlRenderer::RmlRenderer() {
+  ZoneScoped;
+
+  const u8 white_pixel[] = {0xFF, 0xFF, 0xFF, 0xFF};
+  this->white_texture = Texture::create({
+    .format = vuk::Format::eR8G8B8A8Unorm,
+    .extent = vuk::Extent3D{1, 1, 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  });
+  this->white_texture.upload(white_pixel, vuk::eFragmentSampled);
+}
+
+RmlRenderer::~RmlRenderer() = default;
+
 auto RmlRenderer::begin_frame(this RmlRenderer& self) -> void {
   self.frame_indices.clear();
   self.frame_vertices.clear();
@@ -162,12 +176,6 @@ auto RmlRenderer::render_geometry(
   self.frame_indices.insert(self.frame_indices.end(), indices, indices + num_indices);
 
   self.draw_commands.push_back(draw_cmd);
-}
-
-auto RmlRenderer::set_white_texture(this RmlRenderer& self, const TextureView& texture) -> void {
-  ZoneScoped;
-
-  self.white_texture = texture;
 }
 
 auto RmlRenderer::RenderGeometry(
