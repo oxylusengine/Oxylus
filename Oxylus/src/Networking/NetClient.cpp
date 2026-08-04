@@ -18,6 +18,28 @@ auto NetClient::set_tick_rate(this NetClient& self, f64 tick_rate) -> void {
   self.tick_accum = 0.0f;
 }
 
+auto NetClient::update_stats(this NetClient& self) -> void {
+  ZoneScoped;
+
+  if (!self.remote_peer) {
+    return;
+  }
+
+  auto current_sent_bytes = self.remote_peer->totalDataSent;
+  auto current_received_bytes = self.remote_peer->totalDataReceived;
+  auto current_sent_packets = self.remote_peer->packetsSent;
+
+  self.stats.ping = self.remote_peer->pingInterval;
+  self.stats.sent_bytes = static_cast<u32>(current_sent_bytes - self.stats.last_sent_bytes);
+  self.stats.received_bytes = static_cast<u32>(current_received_bytes - self.stats.last_received_bytes);
+  self.stats.sent_packets = current_sent_packets - self.stats.last_sent_packets;
+  self.stats.packets_lost = self.remote_peer->packetsLost;
+  self.stats.rtt = self.remote_peer->lastRoundTripTime;
+  self.stats.last_sent_bytes = static_cast<u32>(current_sent_bytes);
+  self.stats.last_received_bytes = static_cast<u32>(current_received_bytes);
+  self.stats.last_sent_packets = current_sent_packets;
+}
+
 auto NetClient::connect(this NetClient& self, std::string_view host_name, u16 port, f64 timeout) -> bool {
   ZoneScoped;
 
@@ -98,21 +120,7 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
     }
   }
 
-  if (self.remote_peer) {
-    auto current_sent_bytes = self.remote_peer->totalDataSent;
-    auto current_received_bytes = self.remote_peer->totalDataReceived;
-    auto current_sent_packets = self.remote_peer->packetsSent;
-
-    self.stats.ping = self.remote_peer->pingInterval;
-    self.stats.sent_bytes = static_cast<u32>(current_sent_bytes - self.stats.last_sent_bytes);
-    self.stats.received_bytes = static_cast<u32>(current_received_bytes - self.stats.last_received_bytes);
-    self.stats.sent_packets = current_sent_packets - self.stats.last_sent_packets;
-    self.stats.packets_lost = self.remote_peer->packetsLost;
-    self.stats.rtt = self.remote_peer->lastRoundTripTime;
-    self.stats.last_sent_bytes = static_cast<u32>(current_sent_bytes);
-    self.stats.last_received_bytes = static_cast<u32>(current_received_bytes);
-    self.stats.last_sent_packets = current_sent_packets;
-  }
+  self.update_stats();
 
   if (self.status == NetClientStatus::Connecting) {
     self.timeout_elapsed += ts.get_millis();

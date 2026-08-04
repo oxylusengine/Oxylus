@@ -179,6 +179,19 @@ public:
     }
   }
 
+  template <typename Func>
+  auto for_each_active_id(this Self& self, Func&& func) -> void {
+    ZoneScoped;
+
+    std::shared_lock _(self.mutex);
+
+    for (usize i = 0; i < self.slots.size(); ++i) {
+      if (self.states[i]) {
+        func(SlotMap_encode_id<ID>(self.versions[i], static_cast<u32>(i)), self.slots[i]);
+      }
+    }
+  }
+
   auto get_mutex(this Self& self) -> std::shared_mutex& {
     ZoneScoped;
 
