@@ -179,6 +179,8 @@ auto AppBinding::bind(sol::state* state) -> void {
     "packet",
     &ClientAckEvent::packet
   );
+  state->new_usertype<ServerConnectEvent>("ServerConnectEvent", "net_id", &ServerConnectEvent::net_id);
+  state->new_usertype<ServerDisconnectEvent>("ServerDisconnectEvent", "reason", &ServerDisconnectEvent::reason);
   state->new_usertype<ClientSceneSnapshotEvent>(
     "ClientSceneSnapshotEvent",
     &ClientSceneSnapshotEvent::sequence,
@@ -201,7 +203,13 @@ auto AppBinding::bind(sol::state* state) -> void {
     &lua_subscribe_helper<ClientAckEvent>,
 
     "subscribe_client_scene_snapshot_event",
-    &lua_subscribe_helper<ClientSceneSnapshotEvent>
+    &lua_subscribe_helper<ClientSceneSnapshotEvent>,
+
+    "subscribe_server_connect_event",
+    &lua_subscribe_helper<ServerConnectEvent>,
+
+    "subscribe_server_disconnect_event",
+    &lua_subscribe_helper<ServerDisconnectEvent>
   );
 }
 } // namespace ox

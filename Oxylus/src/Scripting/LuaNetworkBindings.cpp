@@ -39,6 +39,17 @@ auto NetworkBinding::bind(sol::state* state) -> void {
     &NetStats::last_sent_packets
   );
 
+  state->new_enum<NetClientStatus>(
+    "NetClientStatus",
+    {
+      {"None", NetClientStatus::None},
+      {"Connecting", NetClientStatus::Connecting},
+      {"Connected", NetClientStatus::Connected},
+      {"Disconnected", NetClientStatus::Disconnected},
+      {"TimedOut", NetClientStatus::TimedOut},
+    }
+  );
+
   state->new_usertype<NetworkManager>(
     "NetworkManager",
 
@@ -78,6 +89,12 @@ auto NetworkBinding::bind(sol::state* state) -> void {
 
     "stats",
     &NetClient::stats,
+
+    "status",
+    sol::readonly(&NetClient::status),
+
+    "net_id",
+    sol::readonly(&NetClient::net_id),
 
     "set_tick_rate",
     &NetClient::set_tick_rate,

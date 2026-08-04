@@ -21,6 +21,14 @@ struct ClientSceneSnapshotEvent {
   SceneState scene_state;
 };
 
+struct ServerConnectEvent {
+  u64 net_id;
+};
+
+struct ServerDisconnectEvent {
+  NetClientStatus reason;
+};
+
 struct NetClient {
   NetClientStatus status = NetClientStatus::None;
   NetStats stats = {};

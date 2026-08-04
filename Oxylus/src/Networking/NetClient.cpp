@@ -74,7 +74,12 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
         ZoneScopedN("ENET_EVENT_TYPE_DISCONNECT");
         OX_LOG_INFO("NetClient disconnected.");
 
+        self.status = NetClientStatus::Disconnected;
+        self.remote_peer = nullptr;
         event.peer->data = nullptr;
+
+        auto& es = App::get_event_system();
+        std::ignore = es.emit<ServerDisconnectEvent>({.reason = NetClientStatus::Disconnected});
       } break;
       case ENET_EVENT_TYPE_RECEIVE: {
         ZoneScopedN("ENET_EVENT_TYPE_RECEIVE");
@@ -122,6 +127,10 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
 
       self.status = NetClientStatus::TimedOut;
       self.timeout_elapsed = 0.0;
+
+      auto& es = App::get_event_system();
+      std::ignore = es.emit<ServerDisconnectEvent>({.reason = NetClientStatus::TimedOut});
+
       return false;
     }
   }
@@ -146,6 +155,10 @@ auto NetClient::handle_packet(this NetClient& self, NetPacket& packet) -> void {
       }
 
       self.net_id = handshake->net_id;
+      self.status = NetClientStatus::Connected;
+
+      auto& es = App::get_event_system();
+      std::ignore = es.emit<ServerConnectEvent>({.net_id = self.net_id});
     } break;
     case NetPacketType::SceneSnapshot: {
       auto snapshot = packet.get_scene_snapshot();
