@@ -338,7 +338,6 @@ public:
   auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info, const RendererCVar& cvar) -> void;
 
   auto get_viewport_size(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_size; }
-  auto get_viewport_offset(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_offset; }
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
   auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;

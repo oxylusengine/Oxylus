@@ -36,6 +36,7 @@
 #include "UI/RmlRenderer.hpp"
 #include "UI/RmlUI.hpp"
 #include "Utils/JsonWriter.hpp"
+#include "Utils/Log.hpp"
 #include "Utils/Random.hpp"
 #include "Utils/Timestep.hpp"
 
@@ -1891,9 +1892,23 @@ auto Scene::render(
 
   if (self.rml_context) {
     self.rml_renderer->begin_frame();
-    App::mod<RmlUI>().render_context(
+
+    auto& rml_ui_mod = App::mod<RmlUI>();
+
+    rml_ui_mod.render_context(
       *self.rml_context,
       Rml::Vector2i(static_cast<i32>(dst_attachment->extent.width), static_cast<i32>(dst_attachment->extent.height))
+    );
+
+    OX_CHECK_EQ(render_info.viewport_origin.has_value(), true, "render_info.viewport_origin is not set");
+    OX_CHECK_EQ(render_info.viewport_size.has_value(), true, "render_info.viewport_size is not set");
+    OX_CHECK_EQ(render_info.surface_size.has_value(), true, "render_info.surface_size is not set");
+
+    rml_ui_mod.set_input_context(
+      self.rml_context,
+      {static_cast<f32>(render_info.viewport_origin->x), static_cast<f32>(render_info.viewport_origin->y)},
+      {static_cast<f32>(render_info.viewport_size->x), static_cast<f32>(render_info.viewport_size->y)},
+      {render_info.surface_size->x, render_info.surface_size->y}
     );
   }
 

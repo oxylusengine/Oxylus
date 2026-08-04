@@ -506,7 +506,6 @@ auto RendererInstance::render(
   OX_CHECK_GT(dst_extent.height, 0u);
 
   self.viewport_size = {dst_extent.width, dst_extent.height};
-  self.viewport_offset = render_info.viewport_offset;
 
   auto& bindless_set = self.renderer.render_context->get_descriptor_set();
 

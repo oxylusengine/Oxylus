@@ -255,18 +255,6 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       return;
     }
 
-    if (self.is_viewport_focused || self.is_viewport_hovered) {
-      auto* rml_context = self.editor_scene->get_scene()->get_rml_context();
-      if (rml_context) {
-        App::mod<RmlUI>().set_input_context(
-          rml_context,
-          {self.viewport_bounds_[0].x, self.viewport_bounds_[0].y},
-          {self.render_size.x, self.render_size.y},
-          {static_cast<i32>(self.scaled_render_size.x), static_cast<i32>(self.scaled_render_size.y)}
-        );
-      }
-    }
-
     auto renderer_instance = self.editor_scene->get_scene()->get_renderer_instance();
     if (!renderer_instance) {
       const auto warning_text = "No scene render output!";
@@ -324,7 +312,13 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       }
 
       const Renderer::RenderInfo render_info = {
-        .viewport_offset = {self.viewport_position.x, self.viewport_position.y},
+        .viewport_origin =
+          glm::ivec2{static_cast<i32>(self.viewport_bounds_[0].x), static_cast<i32>(self.viewport_bounds_[0].y)},
+        .viewport_size = glm::ivec2{static_cast<i32>(self.render_size.x), static_cast<i32>(self.render_size.y)},
+        .surface_size = glm::ivec2{
+          static_cast<i32>(self.scaled_render_size.x),
+          static_cast<i32>(self.scaled_render_size.y)
+        },
       };
 
       auto viewport_attachment_info = swapchain_attachment;

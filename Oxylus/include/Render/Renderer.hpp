@@ -5,6 +5,7 @@
 #include <vuk/Value.hpp>
 #include <vuk/runtime/vk/Descriptor.hpp>
 
+#include "Core/Option.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Utils/Timestep.hpp"
 
@@ -21,7 +22,9 @@ public:
   vuk::Unique<vuk::Buffer> quad_index_buffer = vuk::Unique<vuk::Buffer>();
 
   struct RenderInfo {
-    glm::uvec2 viewport_offset = {};
+    option<glm::ivec2> viewport_origin = nullopt;
+    option<glm::ivec2> viewport_size = nullopt;
+    option<glm::ivec2> surface_size = nullopt;
   };
 
   auto init(this Renderer& self) -> std::expected<void, std::string>;
