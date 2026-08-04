@@ -1915,6 +1915,14 @@ auto Scene::get_rml_context_name(this const Scene& self) -> std::string_view {
   return self.rml_context->GetName();
 }
 
+auto Scene::set_rml_dpi_ratio(this const Scene& self, f32 ratio) -> void {
+  ZoneScoped;
+
+  if (self.rml_context) {
+    self.rml_context->SetDensityIndependentPixelRatio(ratio);
+  }
+}
+
 auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   ZoneScoped;
 

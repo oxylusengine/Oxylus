@@ -40,7 +40,6 @@ auto RmlUI::create_context(this RmlUI& self, std::string_view name, RmlRenderer*
     return nullptr;
   }
 
-  context->SetDensityIndependentPixelRatio(App::get_window().get_dpi_scale());
   if (!self.debugger_host_context && Rml::Debugger::Initialise(context)) {
     self.debugger_host_context = context;
   }
@@ -162,5 +161,4 @@ auto RmlUI::process_mouse_scroll(this RmlUI& self, f32 offset) -> void {
     self.input_context->ProcessMouseWheel(-offset, 0);
   }
 }
-
 } // namespace ox
