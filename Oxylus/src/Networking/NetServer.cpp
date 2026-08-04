@@ -149,4 +149,66 @@ auto NetServer::register_proc(this NetServer& self, std::string_view identifier,
   self.rpcs.emplace(hash, std::move(cb));
 }
 
+auto NetServer::send_to_client(this NetServer& self, NetClientID client_id, NetPacket& packet, bool reliable) -> bool {
+  ZoneScoped;
+
+  auto* client = self.remote_clients.slot(client_id);
+  if (!client) {
+    return false;
+  }
+
+  if (reliable) {
+    client->send_reliable(packet);
+  } else {
+    client->send_unreliable(packet);
+  }
+
+  return true;
+}
+
+auto NetServer::broadcast(this NetServer& self, NetPacket& packet, bool reliable) -> void {
+  ZoneScoped;
+
+  packet.inner->flags = reliable ? ENET_PACKET_FLAG_RELIABLE : 0;
+  // enet_host_broadcast owns the packet from here on, including destroying it when there are no peers.
+  enet_host_broadcast(self.local_host, reliable ? NET_CHANNEL_RELIABLE : NET_CHANNEL_UNRELIABLE, packet);
+}
+
+auto NetServer::call_client(
+  this NetServer& self,
+  NetClientID client_id,
+  std::string_view proc,
+  std::span<const RPCParameter> params,
+  bool reliable
+) -> bool {
+  ZoneScoped;
+
+  auto packet = NetPacket::rpc(proc, params);
+  if (!packet.has_value()) {
+    return false;
+  }
+
+  if (!self.send_to_client(client_id, packet.value(), reliable)) {
+    packet->destroy();
+    return false;
+  }
+
+  return true;
+}
+
+auto NetServer::broadcast_call(
+  this NetServer& self, std::string_view proc, std::span<const RPCParameter> params, bool reliable
+) -> bool {
+  ZoneScoped;
+
+  auto packet = NetPacket::rpc(proc, params);
+  if (!packet.has_value()) {
+    return false;
+  }
+
+  self.broadcast(packet.value(), reliable);
+
+  return true;
+}
+
 } // namespace ox
