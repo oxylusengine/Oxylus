@@ -13,6 +13,12 @@ auto UIBinding::bind(sol::state* state) -> void {
   auto ui = state->create_named_table("OxUI");
   ui.set_function("center_next_window", &UI::center_next_window);
 
-  ui.set_function("draw_network_stats", &NetStatsViewer::draw_network_stats);
+  ui.set_function(
+    "draw_network_stats",
+    sol::overload(
+      static_cast<void (*)(const NetClient&)>(&NetStatsViewer::draw_network_stats),
+      static_cast<void (*)(NetServer&)>(&NetStatsViewer::draw_network_stats)
+    )
+  );
 }
 } // namespace ox

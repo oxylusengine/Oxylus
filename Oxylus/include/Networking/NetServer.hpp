@@ -35,6 +35,9 @@ struct NetServer {
 
   auto register_proc(this NetServer&, std::string_view identifier, NetRPCPacket::Callback&& cb) -> void;
 
+  auto client(this NetServer&, NetClientID client_id) -> NetClient*;
+  auto client_ids(this NetServer&) -> std::vector<NetClientID>;
+
   auto send_to_client(this NetServer&, NetClientID client_id, NetPacket& packet, bool reliable) -> bool;
   auto broadcast(this NetServer&, NetPacket& packet, bool reliable) -> void;
 

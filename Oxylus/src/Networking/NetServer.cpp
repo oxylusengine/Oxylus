@@ -60,6 +60,8 @@ auto NetServer::tick(this NetServer& self, const Timestep& ts) -> bool {
     }
   }
 
+  self.remote_clients.for_each_active([](usize, NetClient& client) { client.update_stats(); });
+
   self.tick_accum += ts.get_millis();
   if (self.tick_accum >= self.tick_interval) {
     self.tick_accum -= self.tick_interval;
@@ -147,6 +149,22 @@ auto NetServer::register_proc(this NetServer& self, std::string_view identifier,
 
   auto hash = ankerl::unordered_dense::detail::wyhash::hash(identifier.data(), identifier.size());
   self.rpcs.emplace(hash, std::move(cb));
+}
+
+auto NetServer::client(this NetServer& self, NetClientID client_id) -> NetClient* {
+  ZoneScoped;
+
+  return self.remote_clients.slot(client_id);
+}
+
+auto NetServer::client_ids(this NetServer& self) -> std::vector<NetClientID> {
+  ZoneScoped;
+
+  auto ids = std::vector<NetClientID>{};
+  ids.reserve(self.remote_clients.size());
+  self.remote_clients.for_each_active_id([&ids](NetClientID id, NetClient&) { ids.emplace_back(id); });
+
+  return ids;
 }
 
 auto NetServer::send_to_client(this NetServer& self, NetClientID client_id, NetPacket& packet, bool reliable) -> bool {

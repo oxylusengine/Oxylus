@@ -172,6 +172,21 @@ auto NetworkBinding::bind(sol::state* state) -> void {
       self->register_proc(proc, make_rpc_callback(std::move(fn)));
     },
 
+    "get_client",
+    [](NetServer* self, u64 client_id) -> NetClient* { return self->client(static_cast<NetClientID>(client_id)); },
+
+    "get_client_ids",
+    [](NetServer* self, sol::this_state lua_state) -> sol::table {
+      const auto ids = self->client_ids();
+      auto lua = sol::state_view(lua_state);
+      auto table = lua.create_table(static_cast<int>(ids.size()), 0);
+      for (usize i = 0; i < ids.size(); i++) {
+        table[i + 1] = static_cast<u64>(ids[i]);
+      }
+
+      return table;
+    },
+
     "call_client",
     [](
       NetServer* self,

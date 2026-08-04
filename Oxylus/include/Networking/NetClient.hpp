@@ -47,6 +47,7 @@ struct NetClient {
   virtual ~NetClient() = default;
 
   auto set_tick_rate(this NetClient&, f64 tick_rate) -> void;
+  auto update_stats(this NetClient&) -> void;
   auto connect(this NetClient&, std::string_view host_name, u16 port, f64 timeout) -> bool;
   auto disconnect(this NetClient&, bool immediate, u32 data = 0) -> void;
   auto tick(this NetClient&, const Timestep& ts) -> bool;
