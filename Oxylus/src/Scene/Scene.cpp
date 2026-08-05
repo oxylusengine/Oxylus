@@ -1261,6 +1261,10 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   self.dirty_transforms.clear();
   self.dirty_mesh_instances.clear();
   self.meshes_dirty = false;
+
+  // Last, so the document reflects this tick's script changes. Sized from the previous render, which
+  // is why callers get one frame of no UI before the first render establishes a size.
+  self.update_rml(self.rml_surface_size);
 }
 
 auto Scene::get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem* {
@@ -1893,6 +1897,17 @@ void Scene::create_character_controller(
   ch_body->SetUserData(static_cast<u64>(entity.id()));
 }
 
+auto Scene::update_rml(this Scene& self, glm::ivec2 surface_size) -> void {
+  ZoneScoped;
+
+  if (!self.rml_context || surface_size.x <= 0 || surface_size.y <= 0) {
+    return;
+  }
+
+  self.rml_renderer->begin_frame();
+  App::mod<RmlUI>().render_context(*self.rml_context, Rml::Vector2i(surface_size.x, surface_size.y));
+}
+
 auto Scene::render(
   this Scene& self,
   vuk::Value<vuk::ImageAttachment>&& dst_attachment,
@@ -1907,21 +1922,14 @@ auto Scene::render(
   OX_CHECK_NULL(ri);
 
   if (self.rml_context) {
-    self.rml_renderer->begin_frame();
-
-    auto& rml_ui_mod = App::mod<RmlUI>();
-
-    rml_ui_mod.render_context(
-      *self.rml_context,
-      Rml::Vector2i(static_cast<i32>(dst_attachment->extent.width), static_cast<i32>(dst_attachment->extent.height))
-    );
+    self.rml_surface_size = surface_size;
 
     OX_CHECK_GT(viewport_size.x, 0, "viewport_size.x is not set");
     OX_CHECK_GT(viewport_size.y, 0, "viewport_size.y is not set");
     OX_CHECK_GT(surface_size.x, 0, "surface_size.x is not set");
     OX_CHECK_GT(surface_size.y, 0, "surface_size.y is not set");
 
-    rml_ui_mod.set_input_context(
+    App::mod<RmlUI>().set_input_context(
       self.rml_context,
       {static_cast<f32>(viewport_origin.x), static_cast<f32>(viewport_origin.y)},
       {static_cast<f32>(viewport_size.x), static_cast<f32>(viewport_size.y)},

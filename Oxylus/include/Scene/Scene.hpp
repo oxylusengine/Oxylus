@@ -206,6 +206,9 @@ private:
   std::unique_ptr<RendererInstance> renderer_instance = nullptr;
   std::unique_ptr<RmlRenderer> rml_renderer;
   Rml::Context* rml_context = nullptr;
+  glm::ivec2 rml_surface_size = {};
+
+  auto update_rml(this Scene& self, glm::ivec2 surface_size) -> void;
 
   // Physics
   f32 physics_accumulator = 0.f;

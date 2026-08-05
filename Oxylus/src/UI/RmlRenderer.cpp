@@ -73,6 +73,8 @@ auto RmlRenderer::end_frame(this RmlRenderer& self, RenderContext& context, vuk:
   auto draw_commands = std::move(self.draw_commands);
   self.frame_vertices.clear();
   self.frame_indices.clear();
+  self.frame_textures.clear();
+  self.frame_texture_indices.clear();
 
   return vuk::make_pass("rmlui", //
     [dc = std::move(draw_commands)](vuk::CommandBuffer& command_buffer,
