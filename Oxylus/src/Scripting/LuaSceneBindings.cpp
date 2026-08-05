@@ -16,6 +16,8 @@ auto SceneBinding::bind(sol::state* state) -> void {
 
   scene_type.set_function("world", [](Scene* scene) -> ecs_world_t* { return scene->world.world_; });
 
+  scene_type["input_focused"] = &Scene::input_focused;
+
   SET_TYPE_FUNCTION(scene_type, Scene, runtime_start);
   SET_TYPE_FUNCTION(scene_type, Scene, runtime_stop);
   SET_TYPE_FUNCTION(scene_type, Scene, runtime_update);

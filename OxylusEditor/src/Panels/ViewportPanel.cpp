@@ -351,6 +351,9 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
                                    nullptr,
                                    ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel
                                  );
+  } else {
+    self.is_viewport_focused = false;
+    self.is_viewport_hovered = false;
   }
   ImGui::PopStyleColor();
 

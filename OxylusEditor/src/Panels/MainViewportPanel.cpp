@@ -232,6 +232,8 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
     }
 
     if (panel_scene) {
+      panel_scene->get_scene()->input_focused = panel->is_viewport_focused;
+
       if (panel_scene->is_playing()) {
         panel_scene->get_scene()->enable_all_phases();
         panel_scene->get_scene()->runtime_update(timestep);

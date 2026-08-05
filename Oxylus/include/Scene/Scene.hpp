@@ -71,6 +71,8 @@ public:
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
   ankerl::unordered_dense::map<u32, flecs::entity> transform_index_entities_map = {};
 
+  bool input_focused = true;
+
   RendererCVar renderer_cvar = {};
 
   SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
