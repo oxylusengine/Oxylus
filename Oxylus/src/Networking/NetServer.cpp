@@ -35,7 +35,7 @@ auto NetServer::tick(this NetServer& self, const Timestep& ts) -> bool {
         }
 
         auto& es = App::get_event_system();
-        std::ignore = es.emit<ClientDisconnectEvent>({.client_id = client_id});
+        std::ignore = es.emit<ClientDisconnectEvent>({.server = &self, .client_id = client_id});
 
         self.on_client_disconnect(client_id);
         self.remote_clients.destroy_slot(client_id);
@@ -99,7 +99,7 @@ auto NetServer::handle_packet(this NetServer& self, ENetPeer* remote_peer, NetPa
       }
 
       auto& es = App::get_event_system();
-      std::ignore = es.emit<ClientConnectEvent>({.client_id = client_id});
+      std::ignore = es.emit<ClientConnectEvent>({.server = &self, .client_id = client_id});
 
       self.on_client_connect(client_id);
 
@@ -120,7 +120,7 @@ auto NetServer::handle_packet(this NetServer& self, ENetPeer* remote_peer, NetPa
       }
 
       auto& es = App::get_event_system();
-      std::ignore = es.emit<ClientAckEvent>(ClientAckEvent(client_id, client_ack.value()));
+      std::ignore = es.emit<ClientAckEvent>(ClientAckEvent(&self, client_id, client_ack.value()));
 
       self.on_client_ack(client_id, client_ack.value());
     } break;

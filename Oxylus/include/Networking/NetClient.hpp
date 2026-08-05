@@ -16,16 +16,21 @@ enum class NetClientStatus : u32 {
   TimedOut,
 };
 
+// `client` is the instance that raised the event. The bus is global, so a handler serving one scene
+// has to compare it against its own client before acting.
 struct ClientSceneSnapshotEvent {
+  NetClient* client;
   u8 sequence;
   SceneState scene_state;
 };
 
 struct ServerConnectEvent {
+  NetClient* client;
   u64 net_id;
 };
 
 struct ServerDisconnectEvent {
+  NetClient* client;
   NetClientStatus reason;
 };
 

@@ -1898,7 +1898,8 @@ auto Scene::render(
   vuk::Value<vuk::ImageAttachment>&& dst_attachment,
   glm::ivec2 viewport_origin,
   glm::ivec2 viewport_size,
-  glm::ivec2 surface_size
+  glm::ivec2 surface_size,
+  bool keyboard_focused
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 

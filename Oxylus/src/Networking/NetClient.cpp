@@ -101,7 +101,7 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
         event.peer->data = nullptr;
 
         auto& es = App::get_event_system();
-        std::ignore = es.emit<ServerDisconnectEvent>({.reason = NetClientStatus::Disconnected});
+        std::ignore = es.emit<ServerDisconnectEvent>({.client = &self, .reason = NetClientStatus::Disconnected});
       } break;
       case ENET_EVENT_TYPE_RECEIVE: {
         ZoneScopedN("ENET_EVENT_TYPE_RECEIVE");
@@ -137,7 +137,7 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
       self.timeout_elapsed = 0.0;
 
       auto& es = App::get_event_system();
-      std::ignore = es.emit<ServerDisconnectEvent>({.reason = NetClientStatus::TimedOut});
+      std::ignore = es.emit<ServerDisconnectEvent>({.client = &self, .reason = NetClientStatus::TimedOut});
 
       return false;
     }
@@ -166,7 +166,7 @@ auto NetClient::handle_packet(this NetClient& self, NetPacket& packet) -> void {
       self.status = NetClientStatus::Connected;
 
       auto& es = App::get_event_system();
-      std::ignore = es.emit<ServerConnectEvent>({.net_id = self.net_id});
+      std::ignore = es.emit<ServerConnectEvent>({.client = &self, .net_id = self.net_id});
     } break;
     case NetPacketType::SceneSnapshot: {
       auto snapshot = packet.get_scene_snapshot();
@@ -176,7 +176,9 @@ auto NetClient::handle_packet(this NetClient& self, NetPacket& packet) -> void {
 
       // TODO: Copying the whole scene snapshot...
       auto& es = App::get_event_system();
-      std::ignore = es.emit<ClientSceneSnapshotEvent>(ClientSceneSnapshotEvent(snapshot->sequence, snapshot->state));
+      std::ignore = es.emit<ClientSceneSnapshotEvent>(
+        ClientSceneSnapshotEvent(&self, snapshot->sequence, snapshot->state)
+      );
 
       self.on_scene_snapshot(snapshot->sequence, std::move(snapshot->state));
     } break;

@@ -6,13 +6,18 @@
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+// `server` is the instance that raised the event. The bus is global, so a handler serving one scene
+// has to compare it against its own server before acting.
 struct ClientConnectEvent {
+  NetServer* server;
   NetClientID client_id;
 };
 struct ClientDisconnectEvent {
+  NetServer* server;
   NetClientID client_id;
 };
 struct ClientAckEvent {
+  NetServer* server;
   NetClientID client_id;
   NetClientAckPacket packet;
 };
