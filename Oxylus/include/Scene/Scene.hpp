@@ -44,7 +44,7 @@ struct ankerl::unordered_dense::hash<flecs::entity> {
 
 namespace ox {
 struct JsonWriter;
-class RmlRenderer;
+class RmlView;
 
 struct ComponentDB {
   std::vector<flecs::id> components = {};
@@ -172,7 +172,7 @@ public:
     bool keyboard_focused = true
   ) -> vuk::Value<vuk::ImageAttachment>;
   auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
-  auto get_rml_context(this const Scene& self) -> Rml::Context* { return self.rml_context; }
+  auto get_rml_context(this const Scene& self) -> Rml::Context*;
   auto get_rml_context_name(this const Scene& self) -> std::string_view;
   auto set_rml_dpi_ratio(this const Scene& self, f32 ratio) -> void;
 
@@ -204,11 +204,8 @@ private:
 
   // Renderer
   std::unique_ptr<RendererInstance> renderer_instance = nullptr;
-  std::unique_ptr<RmlRenderer> rml_renderer;
-  Rml::Context* rml_context = nullptr;
+  std::unique_ptr<RmlView> rml_view;
   glm::ivec2 rml_surface_size = {};
-
-  auto update_rml(this Scene& self, glm::ivec2 surface_size) -> void;
 
   // Physics
   f32 physics_accumulator = 0.f;

@@ -324,7 +324,8 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         std::move(viewport_attachment),
         glm::ivec2{static_cast<i32>(self.viewport_bounds_[0].x), static_cast<i32>(self.viewport_bounds_[0].y)},
         glm::ivec2{static_cast<i32>(self.render_size.x), static_cast<i32>(self.render_size.y)},
-        glm::ivec2{static_cast<i32>(self.scaled_render_size.x), static_cast<i32>(self.scaled_render_size.y)}
+        glm::ivec2{static_cast<i32>(self.scaled_render_size.x), static_cast<i32>(self.scaled_render_size.y)},
+        self.is_viewport_focused
       );
 
       ImGui::SetCursorPos(

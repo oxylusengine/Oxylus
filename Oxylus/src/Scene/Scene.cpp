@@ -33,8 +33,8 @@
 #include "Render/Camera.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
-#include "UI/RmlRenderer.hpp"
 #include "UI/RmlUI.hpp"
+#include "UI/RmlView.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Log.hpp"
 #include "Utils/Random.hpp"
@@ -402,12 +402,7 @@ Scene::~Scene() {
   // world.release();
 
   lua_systems.clear();
-  if (App::has_mod<RmlUI>()) {
-    // Before the renderer dies: it is the context's render interface.
-    App::mod<RmlUI>().remove_context(rml_context);
-    rml_context = nullptr;
-    rml_renderer.reset();
-  }
+  rml_view.reset();
   auto& lua_manager = App::mod<LuaManager>();
   lua_manager.get_state()->collect_gc();
 }
@@ -427,14 +422,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   }
 
   if (App::has_mod<RmlUI>()) {
-    self.rml_renderer = std::make_unique<RmlRenderer>();
-    self.rml_context = App::mod<RmlUI>().create_context(
-      fmt::format("scene_{}", self.uuid.str()),
-      self.rml_renderer.get()
-    );
-    if (!self.rml_context) {
-      self.rml_renderer.reset();
-    }
+    self.rml_view = std::make_unique<RmlView>(fmt::format("scene_{}", self.uuid.str()));
   }
 
   auto& physics = App::mod<Physics>();
@@ -1134,10 +1122,10 @@ auto Scene::runtime_stop(this Scene& self) -> void {
     system->on_scene_stop(&self);
   }
 
-  if (self.rml_context) {
-    auto doc_count = self.rml_context->GetNumDocuments();
+  if (auto* rml_context = self.get_rml_context()) {
+    auto doc_count = rml_context->GetNumDocuments();
     for (i32 i = 0; i < doc_count; i++) {
-      auto doc = self.rml_context->GetDocument(i);
+      auto doc = rml_context->GetDocument(i);
       if (doc) {
         doc->Hide();
       }
@@ -1155,8 +1143,8 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
   self.run_deferred_functions();
 
-  if (self.rml_context) {
-    self.rml_context->Update();
+  if (auto* rml_context = self.get_rml_context()) {
+    rml_context->Update();
   }
 
   auto pre_update_phase_enabled = !self.world.entity(flecs::PreUpdate).has(flecs::Disabled);
@@ -1264,7 +1252,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
   // Last, so the document reflects this tick's script changes. Sized from the previous render, which
   // is why callers get one frame of no UI before the first render establishes a size.
-  self.update_rml(self.rml_surface_size);
+  if (self.rml_view) {
+    self.rml_view->update(self.rml_surface_size);
+  }
 }
 
 auto Scene::get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem* {
@@ -1897,17 +1887,6 @@ void Scene::create_character_controller(
   ch_body->SetUserData(static_cast<u64>(entity.id()));
 }
 
-auto Scene::update_rml(this Scene& self, glm::ivec2 surface_size) -> void {
-  ZoneScoped;
-
-  if (!self.rml_context || surface_size.x <= 0 || surface_size.y <= 0) {
-    return;
-  }
-
-  self.rml_renderer->begin_frame();
-  App::mod<RmlUI>().render_context(*self.rml_context, Rml::Vector2i(surface_size.x, surface_size.y));
-}
-
 auto Scene::render(
   this Scene& self,
   vuk::Value<vuk::ImageAttachment>&& dst_attachment,
@@ -1921,20 +1900,15 @@ auto Scene::render(
   auto ri = self.get_renderer_instance();
   OX_CHECK_NULL(ri);
 
-  if (self.rml_context) {
-    self.rml_surface_size = surface_size;
-
+  if (self.rml_view) {
     OX_CHECK_GT(viewport_size.x, 0, "viewport_size.x is not set");
     OX_CHECK_GT(viewport_size.y, 0, "viewport_size.y is not set");
     OX_CHECK_GT(surface_size.x, 0, "surface_size.x is not set");
     OX_CHECK_GT(surface_size.y, 0, "surface_size.y is not set");
 
-    App::mod<RmlUI>().set_input_context(
-      self.rml_context,
-      {static_cast<f32>(viewport_origin.x), static_cast<f32>(viewport_origin.y)},
-      {static_cast<f32>(viewport_size.x), static_cast<f32>(viewport_size.y)},
-      {surface_size.x, surface_size.y}
-    );
+    // Picked up by the next runtime_update, which is where the geometry is actually collected.
+    self.rml_surface_size = surface_size;
+    self.rml_view->set_viewport(viewport_origin, viewport_size, keyboard_focused);
   }
 
   for (auto& [_, system] : self.lua_systems) {
@@ -1949,24 +1923,28 @@ auto Scene::render(
     self.renderer_cvar
   );
 
-  if (!self.rml_context) {
+  if (!self.rml_view) {
     return scene_surface;
   }
 
-  return self.rml_renderer->end_frame(App::get_rendercontext(), std::move(scene_surface));
+  return self.rml_view->draw(App::get_rendercontext(), std::move(scene_surface));
+}
+
+auto Scene::get_rml_context(this const Scene& self) -> Rml::Context* {
+  return self.rml_view ? self.rml_view->context() : nullptr;
 }
 
 auto Scene::get_rml_context_name(this const Scene& self) -> std::string_view {
   ZoneScoped;
 
-  return self.rml_context->GetName();
+  return self.rml_view ? self.rml_view->name() : std::string_view{};
 }
 
 auto Scene::set_rml_dpi_ratio(this const Scene& self, f32 ratio) -> void {
   ZoneScoped;
 
-  if (self.rml_context) {
-    self.rml_context->SetDensityIndependentPixelRatio(ratio);
+  if (self.rml_view) {
+    self.rml_view->set_dpi_ratio(ratio);
   }
 }
 
