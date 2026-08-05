@@ -43,7 +43,7 @@ public:
     this InspectorPanel& self, const UUID& uuid, const std::filesystem::path& path, ReadGuard<Material> material
   ) -> bool;
   auto draw_audio_asset(this InspectorPanel& self, ReadGuard<AudioSource> audio) -> void;
-  auto draw_script_asset(this InspectorPanel& self, const UUID& uuid, ReadGuard<LuaSystem> lua_system) -> bool;
+  auto draw_script_asset(this InspectorPanel& self, const UUID& uuid, ReadGuard<LuaScript> script) -> bool;
 
 private:
   struct ComponentClipboard {

@@ -805,30 +805,21 @@ void InspectorPanel::draw_audio_asset(this InspectorPanel& self, ReadGuard<Audio
   ImGui::Spacing();
 }
 
-bool InspectorPanel::draw_script_asset(
-  this InspectorPanel& self, const UUID& uuid, ReadGuard<LuaSystem> lua_system
-) {
+bool InspectorPanel::draw_script_asset(this InspectorPanel& self, const UUID& uuid, ReadGuard<LuaScript> script) {
   ZoneScoped;
   memory::ScopedStack stack;
 
   auto& asset_man = App::mod<AssetManager>();
 
-  if (!lua_system)
+  if (!script)
     return false;
 
-  auto script_path = lua_system->get_path();
-  auto script_path_filename = stack.format("{}", script_path.filename());
-  auto script_path_str = script_path.string();
+  auto script_path_filename = stack.format("{}", script->path.filename());
+  auto script_path_str = script->path.string();
   UI::begin_properties(ImGuiTableFlags_SizingFixedFit);
   UI::text("File Name:", script_path_filename);
   UI::input_text("Path:", &script_path_str, ImGuiInputTextFlags_ReadOnly);
   UI::end_properties();
-  auto* rld_str = stack.format_char("{} Reload", ICON_MDI_REFRESH);
-  if (UI::button(rld_str)) {
-    lua_system->reload();
-    return true;
-  }
-  ImGui::SameLine();
   auto* rmv_str = stack.format_char("{} Remove", ICON_MDI_TRASH_CAN);
   if (UI::button(rmv_str)) {
     if (uuid)

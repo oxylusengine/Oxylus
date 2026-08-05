@@ -129,7 +129,7 @@ public:
   auto safe_entity_name(this const Scene& self, std::string prefix, flecs::entity parent = {}) -> std::string;
 
   auto get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem*;
-  auto get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, LuaSystem*>&;
+  auto get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, std::unique_ptr<LuaSystem>>&;
   auto add_lua_system(this Scene& self, const UUID& lua_script) -> void;
   auto remove_lua_system(this Scene& self, const UUID& lua_script) -> void;
 
@@ -166,7 +166,8 @@ public:
     vuk::Value<vuk::ImageAttachment>&& dst_attachment,
     glm::ivec2 viewport_origin,
     glm::ivec2 viewport_size,
-    glm::ivec2 surface_size
+    glm::ivec2 surface_size,
+    bool keyboard_focused = true
   ) -> vuk::Value<vuk::ImageAttachment>;
   auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
   auto get_rml_context(this const Scene& self) -> Rml::Context* { return self.rml_context; }
@@ -196,8 +197,8 @@ private:
 
   std::vector<std::function<void(Scene* scene)>> deferred_functions_ = {};
 
-  // Lua
-  ankerl::unordered_dense::map<UUID, LuaSystem*> lua_systems = {};
+  // Lua. Owned per scene, not borrowed from the asset: a shared instance means two scenes share one environment.
+  ankerl::unordered_dense::map<UUID, std::unique_ptr<LuaSystem>> lua_systems = {};
 
   // Renderer
   std::unique_ptr<RendererInstance> renderer_instance = nullptr;

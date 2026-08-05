@@ -11,7 +11,7 @@
 #include "Memory/ReadGuard.hpp"
 #include "Memory/SlotMap.hpp"
 #include "Scene/Scene.hpp"
-#include "Scripting/LuaSystem.hpp"
+#include "Scripting/LuaScript.hpp"
 #include "Utils/JsonWriter.hpp"
 
 namespace ox {
@@ -82,7 +82,8 @@ public:
   auto export_script(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
     -> bool;
 
-  auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true) -> bool;
+  auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true)
+    -> bool;
   auto unload_asset(this AssetManager& self, const UUID& uuid) -> void;
 
   auto is_loaded(this AssetManager& self, const UUID& uuid) -> bool;
@@ -109,8 +110,8 @@ public:
   auto get_audio(this AssetManager& self, const UUID& uuid) -> ReadGuard<AudioSource>;
   auto get_audio(this AssetManager& self, AudioID audio_id) -> ReadGuard<AudioSource>;
 
-  auto get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaSystem>;
-  auto get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaSystem>;
+  auto get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaScript>;
+  auto get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaScript>;
 
 private:
   auto load_model(this AssetManager& self, const std::filesystem::path& path) -> ModelID;
@@ -119,7 +120,8 @@ private:
   auto load_texture(this AssetManager& self, const std::filesystem::path& path, TextureLoadInfo info = {}) -> TextureID;
   auto unload_texture(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
 
-  auto load_material(this AssetManager& self, const std::filesystem::path& path, const Material &info = {}) -> MaterialID;
+  auto load_material(this AssetManager& self, const std::filesystem::path& path, const Material& info = {})
+    -> MaterialID;
   auto unload_material(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
 
   auto load_scene(this AssetManager& self, const std::filesystem::path& path) -> SceneID;
@@ -148,7 +150,7 @@ private:
   SlotMap<Material, MaterialID> material_map = {};
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};
   SlotMap<AudioSource, AudioID> audio_map = {};
-  SlotMap<std::unique_ptr<LuaSystem>, ScriptID> script_map = {};
+  SlotMap<std::unique_ptr<LuaScript>, ScriptID> script_map = {};
 
   UUID null_material = {};
 };

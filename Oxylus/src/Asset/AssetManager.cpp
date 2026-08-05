@@ -8,7 +8,7 @@
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
-#include "Scripting/LuaSystem.hpp"
+#include "Scripting/LuaScript.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
@@ -58,7 +58,7 @@ auto write_scene_asset_meta(JsonWriter& writer, const Scene* scene) -> bool {
   return true;
 }
 
-auto write_script_asset_meta(JsonWriter&, LuaSystem*) -> bool {
+auto write_script_asset_meta(JsonWriter&, LuaScript*) -> bool {
   ZoneScoped;
 
   return true;
@@ -765,11 +765,11 @@ auto AssetManager::unload_audio(this AssetManager& self, ReadGuard<Asset> asset)
 auto AssetManager::load_script(this AssetManager& self, const std::filesystem::path& path) -> ScriptID {
   ZoneScoped;
 
-  auto lua_system = std::make_unique<LuaSystem>();
-  lua_system->load(path);
+  auto script = std::make_unique<LuaScript>();
+  script->path = path;
 
   auto write_lock = std::unique_lock(self.scripts_mutex);
-  return self.script_map.create_slot(std::move(lua_system));
+  return self.script_map.create_slot(std::move(script));
 }
 
 auto AssetManager::unload_script(this AssetManager& self, const ReadGuard<Asset> asset) -> bool {
@@ -983,7 +983,7 @@ auto AssetManager::get_audio(this AssetManager& self, const AudioID audio_id) ->
   return ReadGuard<AudioSource>(self.audio_mutex, audio, adopt_lock);
 }
 
-auto AssetManager::get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaSystem> {
+auto AssetManager::get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaScript> {
   ZoneScoped;
 
   ScriptID script_id;
@@ -996,7 +996,7 @@ auto AssetManager::get_script(this AssetManager& self, const UUID& uuid) -> Read
   return self.get_script(script_id);
 }
 
-auto AssetManager::get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaSystem> {
+auto AssetManager::get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaScript> {
   ZoneScoped;
 
   if (script_id == ScriptID::Invalid)
@@ -1007,7 +1007,7 @@ auto AssetManager::get_script(this AssetManager& self, ScriptID script_id) -> Re
     self.scripts_mutex.unlock_shared();
     return {};
   }
-  return ReadGuard<LuaSystem>(self.scripts_mutex, script->get(), adopt_lock);
+  return ReadGuard<LuaScript>(self.scripts_mutex, script->get(), adopt_lock);
 }
 
 } // namespace ox

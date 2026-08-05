@@ -1266,14 +1266,13 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 auto Scene::get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem* {
   ZoneScoped;
 
-  if (self.lua_systems.contains(lua_script)) {
-    return self.lua_systems.at(lua_script);
-  }
+  const auto it = self.lua_systems.find(lua_script);
 
-  return nullptr;
+  return it == self.lua_systems.end() ? nullptr : it->second.get();
 }
 
-auto Scene::get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, LuaSystem*>& {
+auto Scene::get_lua_systems(this const Scene& self)
+  -> const ankerl::unordered_dense::map<UUID, std::unique_ptr<LuaSystem>>& {
   ZoneScoped;
 
   return self.lua_systems;
@@ -1286,29 +1285,41 @@ auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> void {
   if (!asset_man.get_asset(lua_script)->is_loaded()) {
     asset_man.load_asset(lua_script);
   }
-  auto script_system = asset_man.get_script(lua_script);
 
-  script_system->reload();
+  // Copy the source out and drop the guard before running any Lua, which can reach back into the asset registry.
+  auto script = LuaScript{};
+  {
+    auto guard = asset_man.get_script(lua_script);
+    if (!guard) {
+      OX_LOG_ERROR("Failed to add lua system {}, script asset is not loaded.", lua_script.str());
+      return;
+    }
+    script = guard.copy();
+  }
 
-  // TODO: This is so unsafe
-  self.lua_systems.emplace(lua_script, script_system.value);
+  auto [it, inserted] = self.lua_systems.try_emplace(lua_script, std::make_unique<LuaSystem>(script));
+  if (!inserted) {
+    return;
+  }
 
-  script_system->on_add(&self);
+  it->second->on_add(&self);
 
-  OX_LOG_TRACE("Added lua system to the scene {}", script_system->get_path());
+  OX_LOG_TRACE("Added lua system to the scene {}", script.path);
 }
 
 auto Scene::remove_lua_system(this Scene& self, const UUID& lua_script) -> void {
   ZoneScoped;
 
-  auto& asset_man = App::mod<AssetManager>();
-  auto script_system = asset_man.get_script(lua_script);
+  const auto it = self.lua_systems.find(lua_script);
+  if (it == self.lua_systems.end()) {
+    return;
+  }
 
-  script_system->on_remove(&self);
+  it->second->on_remove(&self);
 
-  OX_LOG_TRACE("Removed lua system from the scene {}", script_system->get_path());
+  OX_LOG_TRACE("Removed lua system from the scene {}", it->second->get_path());
 
-  self.lua_systems.erase(lua_script);
+  self.lua_systems.erase(it);
 }
 
 auto Scene::get_physics_system(this const Scene& self) -> JPH::PhysicsSystem* {
