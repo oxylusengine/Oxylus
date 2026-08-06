@@ -1,5 +1,8 @@
 #pragma once
 
+#include <vuk/Buffer.hpp>
+#include <vuk/runtime/vk/Allocator.hpp>
+
 #include "EditorPanelState.hpp"
 #include "UI/RuntimeConsole.hpp"
 #include "Utils/SceneManager.hpp"
@@ -27,6 +30,17 @@ public:
   void drag_drop(this const ViewportPanel& self);
 
 private:
+  struct PendingPick {
+    vuk::Unique<vuk::Buffer> buffer;
+    u64 submitted_frame = 0;
+    bool pending = false;
+  };
+
+  auto resolve_pending_pick(this ViewportPanel& self, PendingPick& pick, bool skip_invalid) -> void;
+
+  PendingPick pending_pick_2d;
+  PendingPick pending_pick_3d;
+
   std::shared_ptr<EditorScene> editor_scene = nullptr;
   bool draw_scene_stats = false;
 

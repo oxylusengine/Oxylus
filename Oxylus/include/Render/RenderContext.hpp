@@ -90,6 +90,8 @@ public:
   auto submit_now(vuk::UntypedValue&& fut) -> void;
   auto wait_on_multiple(std::span<vuk::UntypedValue> values) -> void;
 
+  auto get_compiler(this RenderContext& self) -> vuk::Compiler&;
+
   auto create_persistent_descriptor_set(
     this RenderContext&,
     u32 set_index,

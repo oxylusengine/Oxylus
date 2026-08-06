@@ -18,6 +18,10 @@
 #include "Utils/Profiler.hpp"
 
 namespace ox {
+// Must outlive every graph it compiles. `allocate_node_links` puts `node->links` in the compiler's
+// pool while the nodes themselves live in the process-global IRModule, so a temporary compiler leaves
+// them pointing at freed memory and the next compile trips vuk's SSA assert. Reach it through
+// `get_compiler` rather than declaring a local one.
 thread_local vuk::Compiler this_thread_compiler;
 
 // i hate this
@@ -571,6 +575,8 @@ auto RenderContext::submit_now(vuk::UntypedValue&& fut) -> void {
   auto lock = std::scoped_lock(queue_mutex);
   fut.submit(frame_allocator.value(), this_thread_compiler);
 }
+
+auto RenderContext::get_compiler(this RenderContext&) -> vuk::Compiler& { return this_thread_compiler; }
 
 auto RenderContext::wait_on_multiple(std::span<vuk::UntypedValue> values) -> void {
   ZoneScoped;

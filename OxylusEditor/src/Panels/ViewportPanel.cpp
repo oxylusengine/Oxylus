@@ -1160,24 +1160,60 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
   return outline_composite_output;
 }
 
+auto ViewportPanel::resolve_pending_pick(this ViewportPanel& self, PendingPick& pick, bool skip_invalid) -> void {
+  ZoneScoped;
+
+  if (!pick.pending || !pick.buffer) {
+    return;
+  }
+
+  // Let the submission clear its full inflight depth before reading the mapping.
+  auto& render_context = App::get_rendercontext();
+  if (render_context.num_frames - pick.submitted_frame < render_context.num_inflight_frames) {
+    return;
+  }
+
+  pick.pending = false;
+
+  if (!self.editor_scene) {
+    return;
+  }
+
+  u32 texel_data = ~0_u32;
+  std::memcpy(&texel_data, pick.buffer->mapped_ptr, sizeof(u32));
+
+  // The 3D pass reports a miss as an invalid index, which deselects. The 2D pass shares the frame
+  // with it, so a miss there must not clobber what 3D picked.
+  if (skip_invalid && texel_data == ~0_u32) {
+    return;
+  }
+
+  pick_entity(self.editor_scene.get(), texel_data);
+}
+
 auto ViewportPanel::mouse_picking_stages(
   this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel
 ) -> void {
   ZoneScoped;
+
+  self.resolve_pending_pick(self.pending_pick_3d, false);
+  self.resolve_pending_pick(self.pending_pick_2d, true);
 
   const auto using_gizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
   const bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
                            !self.is_ui_capturing_mouse && !self.is_menubar_hovered;
 
   if (should_pick) {
-    renderer_instance->add_stage_after(
-      RenderStage::Forward2D,
-      "mouse_picking_2d",
-      [s = self.editor_scene.get(), picking_texel](RenderStageContext& ctx) {
+    renderer_instance
+      ->add_stage_after(RenderStage::Forward2D, "mouse_picking_2d", [&self, picking_texel](RenderStageContext& ctx) {
         auto visbuffer_attach = ctx.get_image_resource("visbuffer_attachment_2d");
         auto final_attach = ctx.get_image_resource("final_attachment");
 
-        auto readback_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+        auto& pick = self.pending_pick_2d;
+        if (!pick.buffer) {
+          pick.buffer = ctx.render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+        }
+        auto readback_buffer = vuk::acquire_buf("pick readback 2d", *pick.buffer, vuk::Access::eNone);
 
         auto pick_pass = vuk::make_pass(
           "mouse_picking_2d_pass",
@@ -1206,29 +1242,26 @@ auto ViewportPanel::mouse_picking_stages(
           std::move(final_attach)
         );
 
-        auto temp_compiler = vuk::Compiler{};
-        readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
-
-        u32 texel_data = ~0_u32;
-        std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
-        if (texel_data != ~0_u32) {
-          pick_entity(s, texel_data);
-        }
+        // The attachments below carry the pass into the frame, so dropping the buffer value here
+        // does not cull it. The contents are read once this frame has certainly completed.
+        pick.submitted_frame = ctx.render_context.num_frames;
+        pick.pending = true;
 
         ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attach))
           .set_image_resource("final_attachment", std::move(final_attach));
-      }
-    );
+      });
 
-    renderer_instance->add_stage_after(
-      RenderStage::VisBufferEncode,
-      "mouse_picking",
-      [picking_texel, s = self.editor_scene.get()](RenderStageContext& ctx) {
+    renderer_instance
+      ->add_stage_after(RenderStage::VisBufferEncode, "mouse_picking", [&self, picking_texel](RenderStageContext& ctx) {
         auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
         auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
         auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
 
-        auto readback_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+        auto& pick = self.pending_pick_3d;
+        if (!pick.buffer) {
+          pick.buffer = ctx.render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+        }
+        auto readback_buffer = vuk::acquire_buf("pick readback", *pick.buffer, vuk::Access::eNone);
 
         auto write_pass = vuk::make_pass(
           "mouse_picking_write_pass",
@@ -1261,18 +1294,13 @@ auto ViewportPanel::mouse_picking_stages(
           std::move(mesh_instances)
         );
 
-        auto temp_compiler = vuk::Compiler{};
-        readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
-
-        u32 texel_data = ~0_u32;
-        std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
-        pick_entity(s, texel_data);
+        pick.submitted_frame = ctx.render_context.num_frames;
+        pick.pending = true;
 
         ctx.set_image_resource("visbuffer_attachment", std::move(visbuffer))
           .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
           .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
-      }
-    );
+      });
   }
 
   if (!self.draw_entity_highlighting) {

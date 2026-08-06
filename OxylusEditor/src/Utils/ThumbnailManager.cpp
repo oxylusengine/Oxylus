@@ -287,10 +287,9 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
   auto readback_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, buffer_size);
   readback_buffer = vuk::copy(scene_view_image, readback_buffer);
 
-  auto temp_compiler = vuk::Compiler{};
   {
     std::scoped_lock lock(render_context.queue_mutex);
-    readback_buffer.wait(*render_context.frame_allocator, temp_compiler);
+    readback_buffer.wait(*render_context.frame_allocator, render_context.get_compiler());
   }
 
   std::vector<u8> pixel_data(buffer_size);
