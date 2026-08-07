@@ -368,6 +368,10 @@ struct SpriteGPUData {
   alignas(4) u32 flags16_distance16 = 0;
   alignas(4) u32 transform_id = 0;
 
+  // A half's raw bits only compare correctly while it is positive: the sign bit makes every negative
+  // value look larger than every positive one. Flip so negatives order below positives.
+  static auto half_sort_key(u32 bits) -> u32 { return (bits & 0x8000u) ? (~bits & 0xFFFFu) : (bits | 0x8000u); }
+
   bool operator>(const SpriteGPUData& other) const {
     union SortKey {
       struct {
@@ -382,7 +386,7 @@ struct SpriteGPUData {
     const SortKey a = {
       .bits = {
         .distance_y = math::unpack_u32_low(flags16_distance16) & RENDER_FLAGS_2D_SORT_Y
-                        ? math::unpack_u32_high(material_id16_ypos16)
+                        ? half_sort_key(math::unpack_u32_high(material_id16_ypos16))
                         : 0u,
         .distance_z = math::unpack_u32_high(flags16_distance16),
       },
@@ -390,7 +394,7 @@ struct SpriteGPUData {
     const SortKey b = {
       .bits = {
         .distance_y = math::unpack_u32_low(other.flags16_distance16) & RENDER_FLAGS_2D_SORT_Y
-                        ? math::unpack_u32_high(other.material_id16_ypos16)
+                        ? half_sort_key(math::unpack_u32_high(other.material_id16_ypos16))
                         : 0u,
         .distance_z = math::unpack_u32_high(other.flags16_distance16),
       },

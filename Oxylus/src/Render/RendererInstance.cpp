@@ -948,11 +948,12 @@ auto RendererInstance::render(
 
     auto forward_2d_vis_pass = vuk::make_pass(
       "2d_forward_vis_pass",
-      [rq2d = self.render_queue_2d](
+      [rq2d = self.render_queue_2d, &descriptor_set = bindless_set](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) target,
         VUK_IA(vuk::eDepthStencilRW) depth,
         VUK_BA(vuk::eAttributeRead) vertex_buffer,
+        VUK_BA(vuk::eVertexRead) materials,
         VUK_BA(vuk::eVertexRead) camera,
         VUK_BA(vuk::eVertexRead) transforms_
       ) {
@@ -981,14 +982,15 @@ auto RendererInstance::render(
             .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
             .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack_2d, vuk::VertexInputRate::eInstance)
             .push_constants(
-              vuk::ShaderStageFlagBits::eVertex,
+              vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
               0,
-              PushConstants(camera->device_address, transforms_->device_address)
+              PushConstants(materials->device_address, camera->device_address, transforms_->device_address)
             )
+            .bind_persistent(1, descriptor_set)
             .draw(6, batch.count, 0, batch.offset);
         }
 
-        return std::make_tuple(target, depth, camera, vertex_buffer, transforms_);
+        return std::make_tuple(target, depth, camera, vertex_buffer, materials, transforms_);
       }
     );
 
@@ -997,12 +999,14 @@ auto RendererInstance::render(
       depth_attachment,
       self.prepared_frame.camera_buffer,
       vertex_buffer_2d,
+      self.prepared_frame.materials_buffer,
       self.prepared_frame.transforms_world_buffer
     ) =
       forward_2d_vis_pass(
         std::move(visbuffer_attachment_2d),
         std::move(depth_attachment),
         std::move(vertex_buffer_2d),
+        std::move(self.prepared_frame.materials_buffer),
         std::move(self.prepared_frame.camera_buffer),
         std::move(self.prepared_frame.transforms_world_buffer)
       );
