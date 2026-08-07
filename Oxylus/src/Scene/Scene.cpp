@@ -752,11 +752,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.system<TransformComponent, const RigidBodyComponent>("physics_interpolate")
     .kind(flecs::OnUpdate)
-    .each([&self](const flecs::entity& e, TransformComponent& tc, const RigidBodyComponent& rb) {
+    .each([physics_tick_source](const flecs::entity& e, TransformComponent& tc, const RigidBodyComponent& rb) {
       if (!rb.runtime_body)
         return;
 
-      f32 alpha = std::clamp(self.physics_accumulator / self.physics_interval, 0.0f, 1.0f);
+      const auto* timer = physics_tick_source.try_get<flecs::Timer>();
+      const f32 alpha = (timer && timer->timeout > 0.f)
+                          ? std::clamp(static_cast<f32>(timer->time / timer->timeout), 0.0f, 1.0f)
+                          : 1.0f;
 
       tc.position = glm::mix(rb.previous_translation, rb.translation, alpha);
       tc.rotation = glm::slerp(rb.previous_rotation, rb.rotation, alpha);
@@ -1135,11 +1138,6 @@ auto Scene::runtime_stop(this Scene& self) -> void {
 
 auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void {
   ZoneScoped;
-
-  self.physics_accumulator += static_cast<f32>(delta_time.get_millis());
-  while (self.physics_accumulator >= self.physics_interval) {
-    self.physics_accumulator -= self.physics_interval;
-  }
 
   self.run_deferred_functions();
 

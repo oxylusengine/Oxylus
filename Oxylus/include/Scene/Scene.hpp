@@ -208,7 +208,6 @@ private:
   glm::ivec2 rml_surface_size = {};
 
   // Physics
-  f32 physics_accumulator = 0.f;
   std::shared_mutex physics_mutex = {};
   std::unique_ptr<JPH::PhysicsSystem> physics_system = nullptr;
   std::unique_ptr<PhysicsDebugRenderer> physics_debug_renderer = nullptr;
