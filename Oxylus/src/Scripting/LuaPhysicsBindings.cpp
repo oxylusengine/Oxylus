@@ -9,6 +9,8 @@
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseQuery.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Character/Character.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 #include <sol/state.hpp>
 
 #include "Physics/RayCast.hpp"
@@ -85,6 +87,41 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     auto* character = reinterpret_cast<JPH::Character*>(cc->character);
     OX_CHECK_NULL(character);
     return character;
+  });
+
+  // Driver input lives on VehicleComponent and is settable through the usual component bindings.
+  // These expose the runtime state a game needs to read back: gearing, engine load, wheel contact.
+  physics_table.set_function("get_vehicle_engine_rpm", [](flecs::entity* e) -> f32 {
+    auto* vc = e->try_get<VehicleComponent>();
+    if (!vc || !vc->runtime_constraint)
+      return 0.f;
+    auto* constraint = static_cast<JPH::VehicleConstraint*>(vc->runtime_constraint);
+    return static_cast<JPH::WheeledVehicleController*>(constraint->GetController())->GetEngine().GetCurrentRPM();
+  });
+
+  physics_table.set_function("get_vehicle_gear", [](flecs::entity* e) -> i32 {
+    auto* vc = e->try_get<VehicleComponent>();
+    if (!vc || !vc->runtime_constraint)
+      return 0;
+    auto* constraint = static_cast<JPH::VehicleConstraint*>(vc->runtime_constraint);
+    return static_cast<JPH::WheeledVehicleController*>(constraint->GetController())->GetTransmission().GetCurrentGear();
+  });
+
+  // True while the wheel is touching something, for traction loss and skid effects.
+  physics_table.set_function("is_vehicle_wheel_contacting", [](flecs::entity* wheel_entity) -> bool {
+    auto* wc = wheel_entity->try_get<VehicleWheelComponent>();
+    if (!wc)
+      return false;
+    auto parent = wheel_entity->parent();
+    if (!parent || !parent.has<VehicleComponent>())
+      return false;
+    const auto& vc = parent.get<VehicleComponent>();
+    if (!vc.runtime_constraint)
+      return false;
+    auto* constraint = static_cast<JPH::VehicleConstraint*>(vc.runtime_constraint);
+    if (wc->runtime_wheel_index >= constraint->GetWheels().size())
+      return false;
+    return constraint->GetWheel(wc->runtime_wheel_index)->HasContact();
   });
 
   physics_table.set_function(

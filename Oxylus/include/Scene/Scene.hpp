@@ -163,6 +163,11 @@ public:
     flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
   ) const -> void;
 
+  // Needs the chassis rigidbody to exist already, so it runs after create_rigidbody. Wheels are read
+  // from child entities carrying VehicleWheelComponent, in hierarchy order.
+  auto create_vehicle(this Scene& self, flecs::entity entity, VehicleComponent& component) -> void;
+  auto destroy_vehicle(this Scene& self, VehicleComponent& component) -> void;
+
   auto render(
     this Scene& self,
     vuk::Value<vuk::ImageAttachment>&& dst_attachment,

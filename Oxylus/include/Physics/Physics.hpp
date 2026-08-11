@@ -17,9 +17,14 @@ class Physics {
 public:
   constexpr static auto MODULE_NAME = "Physics";
 
-  static constexpr uint32_t MAX_BODIES = 1024;
-  static constexpr uint32_t MAX_BODY_PAIRS = 1024;
-  static constexpr uint32_t MAX_CONTACT_CONSTRAINS = 1024;
+  // Jolt preallocates from these, so they are hard caps: exceeding max_bodies fatals in
+  // create_rigidbody. Raise them before creating a scene if the world is dense.
+  struct SystemLimits {
+    u32 max_bodies = 10240;
+    u32 max_body_pairs = 10240;
+    u32 max_contact_constraints = 10240;
+  };
+  SystemLimits limits = {};
   BPLayerInterfaceImpl layer_interface;
   ObjectVsBroadPhaseLayerFilterImpl object_vs_broad_phase_layer_filter_interface;
   ObjectLayerPairFilterImpl object_layer_pair_filter_interface;

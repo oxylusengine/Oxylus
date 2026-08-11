@@ -103,10 +103,10 @@ auto Physics::new_system(this const Physics& self) -> std::unique_ptr<JPH::Physi
 
   auto sys = std::make_unique<JPH::PhysicsSystem>();
   sys->Init(
-    MAX_BODIES,
+    self.limits.max_bodies,
     0,
-    MAX_BODY_PAIRS,
-    MAX_CONTACT_CONSTRAINS,
+    self.limits.max_body_pairs,
+    self.limits.max_contact_constraints,
     self.layer_interface,
     self.object_vs_broad_phase_layer_filter_interface,
     self.object_layer_pair_filter_interface
