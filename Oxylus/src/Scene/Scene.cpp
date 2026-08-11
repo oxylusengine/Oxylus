@@ -1599,22 +1599,32 @@ auto Scene::attach_mesh(
 
   const auto transform_id = transforms_it->second;
 
+  // Resolve everything that needs the model before touching scene state. Deserialization sets
+  // components before it requests their assets, so the model can legitimately still be unloaded
+  // here; from_json attaches those meshes once the assets are in. Rendering assumes every mesh
+  // instance has a loaded model, so don't create one until it does.
+  auto overriden_material = material_uuid;
+  {
+    auto model = asset_man.get_model(model_uuid);
+    if (!model) {
+      return false;
+    }
+
+    if (!material_uuid && mesh_index < model->material_indices.size()) {
+      // No material override, use original one
+      auto material_index = model->material_indices[mesh_index];
+      if (material_index.has_value() && material_index.value() < model->materials.size()) {
+        overriden_material = model->materials[material_index.value()];
+      }
+    }
+  }
+
   // Find the old model UUID and detach it from entity.
   auto mesh_instances_it = self.entity_to_mesh_instance_map.find(entity);
   if (mesh_instances_it != self.entity_to_mesh_instance_map.end()) {
     const auto old_mesh_instance_id = mesh_instances_it->second;
     self.mesh_instances.destroy_slot(old_mesh_instance_id);
     self.meshes_dirty = true;
-  }
-
-  auto overriden_material = material_uuid;
-  if (!material_uuid) {
-    // No material override, use original one
-    auto model = asset_man.get_model(model_uuid);
-    auto material_index = model->material_indices[mesh_index];
-    if (material_index.has_value()) {
-      overriden_material = model->materials[mesh_index];
-    }
   }
 
   auto instance_id = self.mesh_instances.create_slot(
@@ -2188,6 +2198,14 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
       OX_LOG_WARN("Ghost asset found! {}", asset_uuid.str());
     }
   }
+
+  // Assets are only requested after every entity exists, so meshes whose model was still unloaded
+  // when their component was set could not be attached. Attach them now that the models are in.
+  self.world.query_builder<MeshComponent>().build().each([&self](flecs::entity e, MeshComponent& mc) {
+    if (mc.model_uuid && !self.entity_to_mesh_instance_map.contains(e)) {
+      self.attach_mesh(e, mc.model_uuid, mc.mesh_index, mc.material_uuid);
+    }
+  });
 
   return true;
 }

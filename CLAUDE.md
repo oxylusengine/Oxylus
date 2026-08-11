@@ -136,6 +136,25 @@ per-type `std::shared_mutex`, and accessors return `ReadGuard<T>` (`Memory/ReadG
 holds the lock — don't store a `ReadGuard` past its use site. Loading is reference-counted
 (`acquire_ref`/`release_ref`, atomic `ref_count`); `load_asset` acquires by default.
 
+**Reference counts must balance, and they are transitive.** Every path that starts referencing an
+asset takes exactly one ref — `load_asset` does it for you unless you pass `should_acquire = false`,
+and it still acquires when the asset is already loaded — and every path that stops referencing it
+gives exactly one back (`unload_asset` is just `release_ref`; it destroys the payload and erases the
+registry entry only when the count reaches zero). Component observers are where this usually goes
+wrong: if `OnAdd` loads a UUID then `OnRemove` must unload it, and code that swaps a component's
+asset UUID for another has to release the old one *and* acquire the new one. Never call the
+payload-level `unload_*` helpers or erase from `asset_registry` to force an unload — that strands
+every other holder on a freed slot.
+
+**Children count too.** `acquire_ref`/`release_ref` walk the asset's sub-assets: a `Model` refs its
+materials, a `Material` refs its five textures. So acquiring a model transitively acquires every
+texture beneath it, and holders never ref sub-assets themselves — doing so double-counts. Both
+functions carry their own `switch` over `AssetType`, so **an asset type that references other assets
+must be handled in both**, or its children leak (or get freed out from under it). Keep the existing
+ordering when you do: acquire takes its own ref first and releases collect children before dropping
+self, and both `reset()` the `ReadGuard` before recursing so the registry lock isn't held down the
+chain.
+
 ### Rendering
 
 vuk-based, with a bindless descriptor set held by `RenderContext`. `Renderer` is the module (owns
