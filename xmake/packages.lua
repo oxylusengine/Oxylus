@@ -47,7 +47,7 @@ packages = {
     },
   },
   ["simdjson v4.2.4"] = {},
-  ["joltphysics v5.5.0"] = {
+  ["joltphysics v5.6.0"] = {
     configs = {
       debug_renderer = true,
       rtti = true,

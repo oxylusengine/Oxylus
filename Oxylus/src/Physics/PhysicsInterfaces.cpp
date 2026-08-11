@@ -93,7 +93,7 @@ void Physics3DContactListener::OverrideContactSettings(
   GetFrictionAndRestitution(inBody2, inManifold.mSubShapeID2, friction2, restitution2);
 
   // Use the default formulas for combining friction and restitution
-  ioSettings.mCombinedFriction = JPH::sqrt(friction1 * friction2);
+  ioSettings.mCombinedFriction = std::sqrt(friction1 * friction2);
   ioSettings.mCombinedRestitution = JPH::max(restitution1, restitution2);
 }
 

@@ -1,5 +1,6 @@
 #include "Physics/Physics.hpp"
 
+#include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemWithBarrier.h>
 #include <Jolt/Physics/Body/BodyManager.h>
 #include <Jolt/Physics/Collision/CastResult.h>
