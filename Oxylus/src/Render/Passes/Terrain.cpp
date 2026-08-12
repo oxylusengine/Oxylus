@@ -13,15 +13,13 @@ auto RendererInstance::build_terrain_buffer(this RendererInstance& self, const T
   -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
-  const auto half_size = terrain.world_size * 0.5f;
-
   auto data = GPU::TerrainData{
-    .world_min = glm::vec2(terrain.world_origin.x, terrain.world_origin.z) - half_size,
+    .world_min = terrain.world_min(),
     .world_size = terrain.world_size,
     .inv_world_size = 1.0f / terrain.world_size,
     .patch_count = terrain.patch_count,
-    .base_height = terrain.world_origin.y + terrain.height_range.x,
-    .height_scale = terrain.height_range.y - terrain.height_range.x,
+    .base_height = terrain.base_height(),
+    .height_scale = terrain.height_scale(),
     .target_edge_pixels = terrain.target_edge_pixels,
     .max_tessellation = terrain.max_tessellation,
     .layer_tiling = terrain.layer_tiling,
@@ -40,7 +38,6 @@ auto RendererInstance::apply_terrain_brush(this RendererInstance& self, TerrainB
   const auto& brush = terrain.brush;
   auto& render_context = *self.renderer.render_context;
 
-  const auto half_size = terrain.world_size * 0.5f;
   const auto texel_size = terrain.texel_world_size();
   // The maps are square in practice; taking the coarser axis keeps the footprint from clipping the
   // stroke on a non-square one.
@@ -52,12 +49,12 @@ auto RendererInstance::apply_terrain_brush(this RendererInstance& self, TerrainB
     .ray_direction = brush.ray_direction,
     .strength = brush.invert ? -brush.strength : brush.strength,
     .resolution = terrain.resolution,
-    .world_min = glm::vec2(terrain.world_origin.x, terrain.world_origin.z) - half_size,
+    .world_min = terrain.world_min(),
     .world_size = terrain.world_size,
     .inv_world_size = 1.0f / terrain.world_size,
     .patch_count = terrain.patch_count,
-    .base_height = terrain.world_origin.y + terrain.height_range.x,
-    .height_scale = terrain.height_range.y - terrain.height_range.x,
+    .base_height = terrain.base_height(),
+    .height_scale = terrain.height_scale(),
     .falloff = brush.falloff,
     .flatten_height = brush.flatten_height,
     .mode = std::to_underlying(brush.mode),

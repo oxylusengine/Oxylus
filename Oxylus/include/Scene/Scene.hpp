@@ -168,6 +168,11 @@ public:
     flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
   ) const -> void;
 
+  // Replaces the terrain's height field body with one built from the current heightmap. Downloads
+  // the heightmap from the GPU, so it stalls; call it when the terrain changes, not per frame.
+  auto create_terrain_collision(this Scene& self) -> void;
+  auto destroy_terrain_collision(this Scene& self) -> void;
+
   auto render(
     this Scene& self,
     vuk::Value<vuk::ImageAttachment>&& dst_attachment,
@@ -218,6 +223,7 @@ private:
   std::unique_ptr<PhysicsDebugRenderer> physics_debug_renderer = nullptr;
   std::unique_ptr<Physics3DContactListener> contact_listener_3d = nullptr;
   std::unique_ptr<Physics3DBodyActivationListener> body_activation_listener_3d = nullptr;
+  JPH::BodyID terrain_body_id = {};
 
   auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
   auto remove_transform(this Scene& self, flecs::entity entity) -> void;

@@ -1,5 +1,7 @@
 #include "Scene/Terrain.hpp"
 
+#include <algorithm>
+#include <bit>
 #include <vuk/runtime/CommandBuffer.hpp>
 #include <vuk/vsl/Core.hpp>
 
@@ -16,6 +18,10 @@ static_assert(sizeof(GPU::TerrainBrushHit) == 16, "TerrainBrushHit layout drifte
 static_assert(sizeof(GPU::TerrainBrushParams) == 96, "TerrainBrushParams layout drifted from scene.slang");
 static_assert(sizeof(GPU::TerrainGenerate) <= 128, "push constant blocks must fit the guaranteed 128 bytes");
 static_assert(sizeof(GPU::TerrainBrushParams) <= 128, "push constant blocks must fit the guaranteed 128 bytes");
+
+auto terrain_collision_sample_count(u32 requested) -> u32 {
+  return std::bit_ceil(std::clamp(requested, TERRAIN_COLLISION_MIN_SAMPLES, TERRAIN_COLLISION_MAX_SAMPLES));
+}
 
 auto terrain_derive_pass(TerrainMaps& maps, const GPU::TerrainDerive& settings, glm::uvec2 dispatch_texels) -> void {
   ZoneScoped;
@@ -275,5 +281,95 @@ auto Terrain::bake(this Terrain& self, RenderContext& render_context) -> void {
     vuk::UntypedValue(std::move(maps.splat_edit).as_released(vuk::eComputeRW, vuk::DomainFlagBits::eGraphicsQueue)),
   };
   render_context.wait_on_multiple(waits);
+}
+
+auto Terrain::download_collision_heights(this Terrain& self, RenderContext& render_context) -> void {
+  ZoneScoped;
+
+  self.collision_heights.clear();
+  self.collision_sample_count = 0;
+
+  if (!self.is_baked()) {
+    return;
+  }
+
+  const auto extent = self.heightmap.get_extent();
+  const auto format = self.heightmap.get_format();
+  auto staging = render_context.alloc_transient_buffer_raw(
+    vuk::MemoryUsage::eGPUtoCPU,
+    vuk::compute_image_size(format, extent),
+    vuk::format_to_texel_block_size(format)
+  );
+
+  auto download_pass = vuk::make_pass(
+    "terrain heightmap readback",
+    [](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eCopyRead) heightmap,
+      VUK_BA(vuk::eCopyWrite) dst
+    ) {
+      const auto region = vuk::BufferImageCopy{
+        .bufferOffset = dst->offset,
+        .imageSubresource =
+          {.aspectMask = vuk::format_to_aspect(heightmap->format),
+           .mipLevel = heightmap->base_level,
+           .baseArrayLayer = heightmap->base_layer,
+           .layerCount = heightmap->layer_count},
+        .imageExtent = heightmap->base_mip_extent(),
+      };
+      cmd_list.copy_image_to_buffer(heightmap, dst, region);
+
+      return std::make_tuple(heightmap, dst);
+    }
+  );
+
+  auto [heightmap, downloaded] = download_pass(
+    self.heightmap.acquire("terrain heightmap", vuk::eComputeSampled),
+    vuk::acquire_buf("terrain heightmap readback", staging, vuk::eNone)
+  );
+
+  // The heightmap goes straight back to the access every other pass acquires it with; the readback
+  // is a detour, not a change of ownership.
+  auto waits = std::array{
+    vuk::UntypedValue(std::move(heightmap).as_released(vuk::eComputeSampled, vuk::DomainFlagBits::eGraphicsQueue)),
+    vuk::UntypedValue(std::move(downloaded).as_released(vuk::eHostRead, vuk::DomainFlagBits::eGraphicsQueue)),
+  };
+  render_context.wait_on_multiple(waits);
+
+  const auto sample_count = terrain_collision_sample_count(self.collision_resolution);
+  const auto* texels = reinterpret_cast<const u16*>(staging.mapped_ptr);
+  const auto width = static_cast<i32>(extent.width);
+  const auto height = static_cast<i32>(extent.height);
+
+  const auto texel = [texels, width, height](i32 x, i32 y) -> f32 {
+    const auto cx = std::clamp(x, 0, width - 1);
+    const auto cy = std::clamp(y, 0, height - 1);
+    return static_cast<f32>(texels[static_cast<usize>(cy) * static_cast<usize>(width) + static_cast<usize>(cx)]) /
+           65535.0f;
+  };
+
+  self.collision_heights.resize(static_cast<usize>(sample_count) * sample_count);
+  self.collision_sample_count = sample_count;
+
+  const auto base = self.base_height();
+  const auto scale = self.height_scale();
+  const auto map_size = glm::vec2(extent.width, extent.height);
+  const auto inv_last_sample = 1.0f / static_cast<f32>(sample_count - 1);
+
+  for (auto y = 0_u32; y < sample_count; y++) {
+    for (auto x = 0_u32; x < sample_count; x++) {
+      // The domain shader reads the heightmap bilinearly with clamp-to-edge, so walking the same uv
+      // grid puts every collider vertex exactly on the rendered surface.
+      const auto uv = glm::vec2(x, y) * inv_last_sample;
+      const auto coord = uv * map_size - 0.5f;
+      const auto lo = glm::ivec2(glm::floor(coord));
+      const auto frac = coord - glm::vec2(lo);
+
+      const auto top = glm::mix(texel(lo.x, lo.y), texel(lo.x + 1, lo.y), frac.x);
+      const auto bottom = glm::mix(texel(lo.x, lo.y + 1), texel(lo.x + 1, lo.y + 1), frac.x);
+
+      self.collision_heights[static_cast<usize>(y) * sample_count + x] = base + glm::mix(top, bottom, frac.y) * scale;
+    }
+  }
 }
 } // namespace ox

@@ -265,6 +265,11 @@ struct TerrainComponent {
   f32 layer_tiling = 8.0f;
   // Slope above which triplanar projection takes over, so cliffs do not stretch.
   f32 triplanar_begin = 0.5f;
+
+  bool collision_enabled = true;
+  u32 collision_resolution = 256;
+  f32 collision_friction = 0.5f;
+  f32 collision_restitution = 0.0f;
 };
 
 struct AtmosphereComponent {

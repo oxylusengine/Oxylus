@@ -197,7 +197,11 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::layer_drainage,
       &C::layer_snow,
       &C::layer_tiling,
-      &C::triplanar_begin>();
+      &C::triplanar_begin,
+      &C::collision_enabled,
+      &C::collision_resolution,
+      &C::collision_friction,
+      &C::collision_restitution>();
   }
 
   {

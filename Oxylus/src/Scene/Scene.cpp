@@ -10,6 +10,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -505,6 +506,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
       if (it.event() == flecs::OnRemove) {
         if (self.terrain_entity == entity) {
+          self.destroy_terrain_collision();
           self.terrain.reset();
           self.terrain_entity = {};
           self.terrain_dirty = false;
@@ -1097,11 +1099,15 @@ auto Scene::physics_init(this Scene& self) -> void {
     }
   );
 
+  self.create_terrain_collision();
+
   self.physics_system->OptimizeBroadPhase();
 }
 
 auto Scene::physics_deinit(this Scene& self) -> void {
   ZoneScoped;
+
+  self.destroy_terrain_collision();
 
   self.world.query_builder<RigidBodyComponent>().build().each([&self](const flecs::entity& e, RigidBodyComponent& rb) {
     if (rb.runtime_body) {
@@ -1133,6 +1139,13 @@ auto Scene::runtime_start(this Scene& self) -> void {
   self.running = true;
 
   self.run_deferred_functions();
+
+  // Baked up front rather than on the first update: `physics_init` builds the terrain collider out
+  // of the heightmap, and a scene that just came out of deserialization has not baked one yet.
+  if (self.terrain_dirty) {
+    self.terrain_dirty = false;
+    self.bake_terrain();
+  }
 
   self.physics_init();
 
@@ -1196,6 +1209,12 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   if (self.terrain_dirty) {
     self.terrain_dirty = false;
     self.bake_terrain();
+  }
+
+  // Only while running: outside play mode there is no body to keep in sync, and the readback the
+  // rebuild needs is expensive enough that sculpting should not pay for it.
+  if (self.running && self.terrain != nullptr && self.terrain->collision_dirty) {
+    self.create_terrain_collision();
   }
 
   if (self.renderer_instance) {
@@ -1652,6 +1671,10 @@ auto Scene::bake_terrain(this Scene& self) -> void {
   terrain->max_tessellation = c.max_tessellation;
   terrain->layer_tiling = c.layer_tiling;
   terrain->triplanar_begin = c.triplanar_begin;
+  terrain->collision_enabled = c.collision_enabled;
+  terrain->collision_resolution = c.collision_resolution;
+  terrain->collision_friction = c.collision_friction;
+  terrain->collision_restitution = c.collision_restitution;
 
   // Terrain layers are ordinary materials, so they share the material buffer and bindless textures
   // with meshes. An unset or unloaded layer falls back to material 0.
@@ -1697,11 +1720,13 @@ auto Scene::bake_terrain(this Scene& self) -> void {
 
   if (const auto result = terrain->create(); !result.has_value()) {
     OX_LOG_ERROR("Failed to create terrain: {}", result.error());
+    self.destroy_terrain_collision();
     self.terrain.reset();
     return;
   }
 
   terrain->bake(App::get_rendercontext());
+  terrain->collision_dirty = true;
 }
 
 auto Scene::attach_mesh(
@@ -1967,6 +1992,89 @@ auto Scene::create_rigidbody(
   body->SetUserData(static_cast<u64>(entity.id()));
 
   component.runtime_body = body;
+}
+
+auto Scene::create_terrain_collision(this Scene& self) -> void {
+  ZoneScoped;
+
+  self.destroy_terrain_collision();
+
+  auto* terrain = self.terrain.get();
+  if (terrain == nullptr) {
+    return;
+  }
+
+  // Cleared even when no body comes out of it, so a terrain that cannot collide (disabled, not baked
+  // yet, degenerate) does not retry the download every frame.
+  terrain->collision_dirty = false;
+  if (!terrain->collision_enabled || !terrain->is_baked()) {
+    return;
+  }
+
+  terrain->download_collision_heights(App::get_rendercontext());
+
+  const auto sample_count = terrain->collision_sample_count;
+  if (
+    sample_count < TERRAIN_COLLISION_MIN_SAMPLES ||
+    terrain->collision_heights.size() != static_cast<usize>(sample_count) * sample_count
+  ) {
+    OX_LOG_ERROR("Terrain heightmap readback produced no samples; terrain will not collide.");
+    return;
+  }
+
+  // Jolt spans `sample_count - 1` cells between the outer samples, which is exactly the world rect
+  // the renderer maps the heightmap onto.
+  const auto world_min = terrain->world_min();
+  const auto cell_size = terrain->world_size / static_cast<f32>(sample_count - 1);
+
+  auto shape_settings = JPH::HeightFieldShapeSettings(
+    terrain->collision_heights.data(),
+    JPH::Vec3(world_min.x, 0.0f, world_min.y),
+    JPH::Vec3(cell_size.x, 1.0f, cell_size.y),
+    sample_count
+  );
+  shape_settings.mBlockSize = TERRAIN_COLLISION_BLOCK_SIZE;
+  // Quantization is relative to the terrain's own height range rather than to whatever the current
+  // samples happen to span, so re-baking a flatter terrain does not change the encoding.
+  shape_settings.mMinHeightValue = terrain->base_height();
+  shape_settings.mMaxHeightValue = terrain->base_height() + terrain->height_scale();
+
+  const auto shape_result = shape_settings.Create();
+  if (shape_result.HasError()) {
+    OX_LOG_ERROR("Jolt terrain shape error: {}", shape_result.GetError().c_str());
+    return;
+  }
+
+  auto body_settings = JPH::BodyCreationSettings(
+    shape_result.Get(),
+    JPH::Vec3::sZero(),
+    JPH::Quat::sIdentity(),
+    JPH::EMotionType::Static,
+    PhysicsLayers::NON_MOVING
+  );
+  body_settings.mFriction = terrain->collision_friction;
+  body_settings.mRestitution = terrain->collision_restitution;
+
+  auto& body_interface = self.physics_system->GetBodyInterface();
+  auto* body = body_interface.CreateBody(body_settings);
+  OX_CHECK_NULL(body, "Jolt is out of bodies!");
+
+  body->SetUserData(static_cast<u64>(self.terrain_entity.id()));
+  body_interface.AddBody(body->GetID(), JPH::EActivation::DontActivate);
+  self.terrain_body_id = body->GetID();
+}
+
+auto Scene::destroy_terrain_collision(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.terrain_body_id.IsInvalid()) {
+    return;
+  }
+
+  auto& body_interface = self.physics_system->GetBodyInterface();
+  body_interface.RemoveBody(self.terrain_body_id);
+  body_interface.DestroyBody(self.terrain_body_id);
+  self.terrain_body_id = JPH::BodyID();
 }
 
 void Scene::create_character_controller(

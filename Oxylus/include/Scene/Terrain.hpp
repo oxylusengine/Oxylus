@@ -1,12 +1,22 @@
 #pragma once
 
 #include <expected>
+#include <vector>
 
 #include "Asset/Texture.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
 class RenderContext;
+
+// Jolt culls the height field one block of `block * block` quads at a time, and wants at least two
+// blocks per side.
+constexpr u32 TERRAIN_COLLISION_BLOCK_SIZE = 4;
+constexpr u32 TERRAIN_COLLISION_MIN_SAMPLES = 2 * TERRAIN_COLLISION_BLOCK_SIZE;
+constexpr u32 TERRAIN_COLLISION_MAX_SAMPLES = 4096;
+
+// Rounds a requested collider resolution to a sample count Jolt accepts.
+auto terrain_collision_sample_count(u32 requested) -> u32;
 
 struct TerrainMaps {
   vuk::Value<vuk::ImageAttachment> heightmap = {};
@@ -66,15 +76,38 @@ struct Terrain {
 
   TerrainBrush brush = {};
 
+  // Collision. The heightmap only ever exists on the GPU, so the collider is built from a CPU mirror
+  // of it, resampled down to `collision_resolution`. `Scene` owns the Jolt body made out of it.
+  bool collision_enabled = true;
+  u32 collision_resolution = 256;
+  f32 collision_friction = 0.5f;
+  f32 collision_restitution = 0.0f;
+
+  // World-space heights in row major order, `collision_sample_count` per side.
+  std::vector<f32> collision_heights = {};
+  u32 collision_sample_count = 0;
+  bool collision_dirty = true;
+
   auto create(this Terrain& self) -> std::expected<void, std::string>;
   auto destroy(this Terrain& self) -> void;
 
   auto bake(this Terrain& self, RenderContext& render_context) -> void;
+
+  // Stalls on the GPU: it submits a copy of the whole heightmap and waits for it.
+  auto download_collision_heights(this Terrain& self, RenderContext& render_context) -> void;
 
   auto clear_edits(this Terrain& self) -> void { self.edits_uninitialized = true; }
 
   auto is_baked(this const Terrain& self) -> bool { return static_cast<bool>(self.heightmap); }
 
   auto texel_world_size(this const Terrain& self) -> glm::vec2 { return self.world_size / glm::vec2(self.resolution); }
+
+  auto world_min(this const Terrain& self) -> glm::vec2 {
+    return glm::vec2(self.world_origin.x, self.world_origin.z) - self.world_size * 0.5f;
+  }
+
+  auto base_height(this const Terrain& self) -> f32 { return self.world_origin.y + self.height_range.x; }
+
+  auto height_scale(this const Terrain& self) -> f32 { return self.height_range.y - self.height_range.x; }
 };
 } // namespace ox
