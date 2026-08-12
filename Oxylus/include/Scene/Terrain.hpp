@@ -59,7 +59,7 @@ struct Terrain {
   f32 max_tessellation = 64.0f;
   f32 layer_tiling = 8.0f;
   f32 triplanar_begin = 0.5f;
-  glm::uvec4 layer_material_indices = {};
+  glm::uvec4 layer_material_indices = glm::uvec4(GPU::TERRAIN_INVALID_LAYER_MATERIAL);
 
   GPU::TerrainGenerate generate_settings = {};
   GPU::TerrainDerive derive_settings = {};

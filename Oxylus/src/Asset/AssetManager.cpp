@@ -41,6 +41,7 @@ auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Mater
   writer["metallic_factor"] = material.metallic_factor;
   writer["alpha_mode"] = std::to_underlying(material.alpha_mode);
   writer["alpha_cutoff"] = material.alpha_cutoff;
+  writer["flip_normal_y"] = material.flip_normal_y;
   writer["albedo_texture"] = material.albedo_texture.str().c_str();
   writer["normal_texture"] = material.normal_texture.str().c_str();
   writer["emissive_texture"] = material.emissive_texture.str().c_str();
@@ -66,6 +67,13 @@ auto read_material_asset_meta(simdjson::ondemand::value json, Material& material
     auto result = json[key].get_uint64();
     if (!result.error()) {
       value = static_cast<T>(result.value_unsafe());
+    }
+  };
+
+  const auto read_bool = [&json](std::string_view key, bool& value) {
+    auto result = json[key].get_bool();
+    if (!result.error()) {
+      value = result.value_unsafe();
     }
   };
 
@@ -104,6 +112,7 @@ auto read_material_asset_meta(simdjson::ondemand::value json, Material& material
   read_f32("roughness_factor", material.roughness_factor);
   read_f32("metallic_factor", material.metallic_factor);
   read_f32("alpha_cutoff", material.alpha_cutoff);
+  read_bool("flip_normal_y", material.flip_normal_y);
   read_uuid("albedo_texture", material.albedo_texture);
   read_uuid("normal_texture", material.normal_texture);
   read_uuid("emissive_texture", material.emissive_texture);
@@ -751,18 +760,17 @@ auto AssetManager::load_material(this AssetManager& self, const std::filesystem:
   -> MaterialID {
   ZoneScoped;
 
-  const UUID referenced_textures[] = {
-    info.albedo_texture,
-    info.normal_texture,
-    info.emissive_texture,
-    info.metallic_roughness_texture,
-    info.occlusion_texture,
-  };
-  for (const auto& texture_uuid : referenced_textures) {
+  const auto load_texture_slot = [&self](const UUID& texture_uuid, bool is_srgb) -> void {
     if (texture_uuid) {
-      self.load_asset(texture_uuid, {}, false);
+      self.load_asset(texture_uuid, TextureLoadInfo{.is_srgb = is_srgb}, false);
     }
-  }
+  };
+
+  load_texture_slot(info.albedo_texture, true);
+  load_texture_slot(info.normal_texture, false);
+  load_texture_slot(info.emissive_texture, true);
+  load_texture_slot(info.metallic_roughness_texture, false);
+  load_texture_slot(info.occlusion_texture, false);
 
   auto write_lock = std::unique_lock(self.materials_mutex);
   auto material_id = self.material_map.create_slot(Material(info));

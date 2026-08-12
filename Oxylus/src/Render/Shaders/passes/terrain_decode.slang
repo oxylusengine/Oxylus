@@ -48,7 +48,16 @@ func sample_terrain_layers(f32x2 uv, f32x2 ddx_uv, f32x2 ddy_uv, f32x4 weights) 
             continue;
         }
 
-        let material = params.materials[NonUniformResourceIndex(params.terrain.layer_material_indices[i])];
+        let material_index = params.terrain.layer_material_indices[i];
+        if (material_index == TERRAIN_INVALID_LAYER_MATERIAL) {
+            result.albedo += f32x4(1.0) * weight;
+            result.metallic_roughness += f32x2(0.0, 1.0) * weight;
+            result.occlusion += weight;
+            result.tangent_normal += f32x3(0.0, 0.0, 1.0) * weight;
+            continue;
+        }
+
+        let material = params.materials[NonUniformResourceIndex(material_index)];
         result.albedo += material.sample_albedo_color(grad) * weight;
         result.emissive += material.sample_emissive_color(grad) * weight;
         result.metallic_roughness += material.sample_metallic_roughness(grad) * weight;
@@ -94,7 +103,8 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
     let ddy_world = neighbour_offsets[1] - ray_center;
 
     var weights = params.terrain_splatmap.SampleLevel(params.terrain_sampler, terrain_uv, 0.0);
-    weights /= max(dot(weights, 1.0), 1e-4);
+    let weight_sum = dot(weights, 1.0);
+    weights = weight_sum > 1e-4 ? weights / weight_sum : f32x4(1.0, 0.0, 0.0, 0.0);
 
     let inv_tiling = 1.0 / params.terrain.layer_tiling;
     let slope = saturate(1.0 - geometric_normal.y);
@@ -104,7 +114,7 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
         world_position.xz * inv_tiling, ddx_world.xz * inv_tiling, ddy_world.xz * inv_tiling, weights
     );
     var tangent = f32x3(1.0, 0.0, 0.0);
-    var bitangent = f32x3(0.0, 0.0, 1.0);
+    var bitangent = f32x3(0.0, 0.0, -1.0);
 
     if (triplanar_amount > 0.0) {
         let use_zy = abs(geometric_normal.x) > abs(geometric_normal.z);
@@ -122,14 +132,25 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
         surface.occlusion = lerp(surface.occlusion, side.occlusion, triplanar_amount);
         surface.tangent_normal = lerp(surface.tangent_normal, side.tangent_normal, triplanar_amount);
 
+        // Side projections are (z, y) and (x, y), so +u is +Z or +X and -v is -Y for both.
         let side_tangent = use_zy ? f32x3(0.0, 0.0, 1.0) : f32x3(1.0, 0.0, 0.0);
-        tangent = normalize(lerp(tangent, side_tangent, triplanar_amount));
+        tangent = lerp(tangent, side_tangent, triplanar_amount);
+        bitangent = lerp(bitangent, f32x3(0.0, -1.0, 0.0), triplanar_amount);
     }
 
+    if (abs(dot(normalize(tangent), geometric_normal)) > 0.999) {
+        tangent = f32x3(0.0, 0.0, 1.0);
+    }
     tangent = normalize(tangent - geometric_normal * dot(tangent, geometric_normal));
-    bitangent = cross(geometric_normal, tangent);
 
-    let tangent_normal = normalize(surface.tangent_normal);
+    bitangent -= geometric_normal * dot(bitangent, geometric_normal);
+    bitangent -= tangent * dot(bitangent, tangent);
+    let bitangent_length = length(bitangent);
+    bitangent = bitangent_length > 1e-6 ? bitangent / bitangent_length : cross(geometric_normal, tangent);
+
+    let tangent_normal_length = length(surface.tangent_normal);
+    let tangent_normal = tangent_normal_length > 1e-6 ? surface.tangent_normal / tangent_normal_length
+                                                      : f32x3(0.0, 0.0, 1.0);
     let shading_normal = normalize(
         tangent_normal.x * tangent + tangent_normal.y * bitangent + tangent_normal.z * geometric_normal
     );

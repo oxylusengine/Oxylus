@@ -22,6 +22,7 @@ public enum DebugView : i32 {
   Roughness,
   BakedOcclusion,
   GTAO,
+  GeometricNormal,
 };
 
 public struct UVGradient {
@@ -617,6 +618,8 @@ public struct TerrainBrushParams {
         return this.base_height + normalized * this.height_scale;
     }
 };
+
+public constexpr static u32 TERRAIN_INVALID_LAYER_MATERIAL = ~0u;
 
 public struct TerrainData {
     public f32x2 world_min;

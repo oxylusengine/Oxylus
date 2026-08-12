@@ -485,36 +485,41 @@ auto InspectorPanel::draw_material_properties(
 
   dirty |= UI::property_vector("Color", material->albedo_color, true, true);
 
-  const auto load_callback = [](const char* label, const UUID& uuid, bool& active) -> UUID {
-    Asset selected = {};
-    AssetType filter = AssetType::Texture;
-    auto name = fmt::format("Asset Picker: {}", label);
-    static AssetManagerViewer am;
-    am.render(name.c_str(), &active, filter, &selected);
+  // `is_srgb` is a property of the slot: only albedo and emissive carry color. Loading a
+  // normal/metallic-roughness/occlusion map into an `_SRGB` format lets the sampler gamma-decode it.
+  const auto load_callback = [](bool is_srgb) {
+    return [is_srgb](const char* label, const UUID& uuid, bool& active) -> UUID {
+      Asset selected = {};
+      AssetType filter = AssetType::Texture;
+      auto name = fmt::format("Asset Picker: {}", label);
+      static AssetManagerViewer am;
+      am.render(name.c_str(), &active, filter, &selected);
 
-    if (selected.type == AssetType::Texture) {
-      auto& asset_man = App::mod<AssetManager>();
-      const bool is_loaded = asset_man.load_asset(selected.uuid);
-      if (is_loaded) {
-        // unload previous asset
-        if (uuid) {
-          asset_man.unload_asset(uuid);
+      if (selected.type == AssetType::Texture) {
+        auto& asset_man = App::mod<AssetManager>();
+        const bool is_loaded = asset_man.load_asset(selected.uuid, TextureLoadInfo{.is_srgb = is_srgb});
+        if (is_loaded) {
+          // unload previous asset
+          if (uuid) {
+            asset_man.unload_asset(uuid);
+          }
+          return selected.uuid;
         }
-        return selected.uuid;
       }
-    }
 
-    return UUID(nullptr);
+      return UUID(nullptr);
+    };
   };
 
-  dirty |= UI::texture_property("Albedo", material->albedo_texture, load_callback);
-  dirty |= UI::texture_property("Normal", material->normal_texture, load_callback);
-  dirty |= UI::texture_property("Emissive", material->emissive_texture, load_callback);
+  dirty |= UI::texture_property("Albedo", material->albedo_texture, load_callback(true));
+  dirty |= UI::texture_property("Normal", material->normal_texture, load_callback(false));
+  dirty |= UI::property("Flip Normal Y", &material->flip_normal_y, "Enable for DirectX-convention normal maps.");
+  dirty |= UI::texture_property("Emissive", material->emissive_texture, load_callback(true));
   dirty |= UI::property_vector("Emissive Color", material->emissive_color, true, false);
-  dirty |= UI::texture_property("Metallic Roughness", material->metallic_roughness_texture, load_callback);
+  dirty |= UI::texture_property("Metallic Roughness", material->metallic_roughness_texture, load_callback(false));
   dirty |= UI::property("Roughness Factor", &material->roughness_factor, 0.0f, 1.0f);
   dirty |= UI::property("Metallic Factor", &material->metallic_factor, 0.0f, 1.0f);
-  dirty |= UI::texture_property("Occlusion", material->occlusion_texture, load_callback);
+  dirty |= UI::texture_property("Occlusion", material->occlusion_texture, load_callback(false));
 
   UI::end_properties();
 

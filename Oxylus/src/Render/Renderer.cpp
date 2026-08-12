@@ -60,6 +60,7 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
   }
 
   flags |= normal_image_index.has_value() ? GPU::MaterialFlag::HasNormalImage : GPU::MaterialFlag::None;
+  flags |= material.flip_normal_y ? GPU::MaterialFlag::NormalFlipY : GPU::MaterialFlag::None;
   flags |= emissive_image_index.has_value() ? GPU::MaterialFlag::HasEmissiveImage : GPU::MaterialFlag::None;
   flags |= metallic_roughness_image_index.has_value() ? GPU::MaterialFlag::HasMetallicRoughnessImage
                                                       : GPU::MaterialFlag::None;

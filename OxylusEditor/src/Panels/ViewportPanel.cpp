@@ -657,6 +657,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "Roughness",
             "Baked Occlusion",
             "GTAO",
+            "Geometric Normal",
             "Virtual Shadowmaps"
           };
           UI::property(

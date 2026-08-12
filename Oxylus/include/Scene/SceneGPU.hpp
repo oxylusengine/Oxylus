@@ -40,6 +40,7 @@ enum class DebugView : i32 {
   Roughness,
   BakedOcclusion,
   GTAO,
+  GeometricNormal,
   RMVSM,
 
   Count,
@@ -432,6 +433,8 @@ struct TerrainBrushParams {
   u32 layer = 0;
 };
 
+constexpr u32 TERRAIN_INVALID_LAYER_MATERIAL = ~0_u32;
+
 struct TerrainData {
   glm::vec2 world_min = {};
   glm::vec2 world_size = {};
@@ -443,7 +446,7 @@ struct TerrainData {
   f32 max_tessellation = 64.0f;
   f32 layer_tiling = 8.0f;
   f32 triplanar_begin = 0.5f;
-  glm::uvec4 layer_material_indices = {};
+  glm::uvec4 layer_material_indices = glm::uvec4(TERRAIN_INVALID_LAYER_MATERIAL);
   f32 brush_radius = 0.0f;
 };
 

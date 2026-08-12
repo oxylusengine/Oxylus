@@ -1666,15 +1666,13 @@ auto Scene::bake_terrain(this Scene& self) -> void {
   terrain->collision_friction = c.collision_friction;
   terrain->collision_restitution = c.collision_restitution;
 
-  // Terrain layers are ordinary materials, so they share the material buffer and bindless textures
-  // with meshes. An unset or unloaded layer falls back to material 0.
   auto& asset_man = App::mod<AssetManager>();
   const auto material_index = [&asset_man](const UUID& uuid) -> u32 {
     if (!uuid || !asset_man.is_loaded(uuid)) {
-      return 0u;
+      return GPU::TERRAIN_INVALID_LAYER_MATERIAL;
     }
     const auto asset = asset_man.get_asset(uuid);
-    return asset ? SlotMap_decode_id(asset->material_id).index : 0u;
+    return asset ? SlotMap_decode_id(asset->material_id).index : GPU::TERRAIN_INVALID_LAYER_MATERIAL;
   };
   terrain->layer_material_indices = {
     material_index(c.layer_grass),
