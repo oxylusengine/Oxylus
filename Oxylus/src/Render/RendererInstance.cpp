@@ -790,6 +790,7 @@ auto RendererInstance::render(
     };
 
     auto terrain_context = TerrainContext{.terrain = terrain};
+    auto terrain_brush_context = TerrainBrushContext{.terrain = terrain};
     if (terrain != nullptr) {
       terrain_context.terrain_buffer = self.build_terrain_buffer(*terrain);
       terrain_context.visible_patches_buffer = self.renderer.render_context->alloc_transient_buffer(
@@ -799,11 +800,31 @@ auto RendererInstance::render(
       terrain_context.patch_visibility_mask_buffer = std::move(
         self.prepared_frame.terrain_patch_visibility_mask_buffer
       );
-      terrain_context.heightmap_attachment = terrain->heightmap.acquire("terrain heightmap", vuk::eComputeSampled);
-      terrain_context.patch_minmax_attachment = terrain->patch_minmax.acquire(
-        "terrain patch minmax",
-        vuk::eComputeSampled
-      );
+
+      terrain_brush_context.maps = TerrainMaps{
+        .heightmap = terrain->heightmap.acquire("terrain heightmap", vuk::eComputeSampled),
+        .normalmap = terrain->normalmap.acquire("terrain normalmap", vuk::eFragmentSampled),
+        .splatmap = terrain->splatmap.acquire("terrain splatmap", vuk::eFragmentSampled),
+        .patch_minmax = terrain->patch_minmax.acquire("terrain patch minmax", vuk::eComputeSampled),
+      };
+
+      if (terrain->brush.active && terrain->brush.painting) {
+        terrain_brush_context.maps.ridgemap = terrain->ridgemap.acquire("terrain ridgemap", vuk::eFragmentSampled);
+        terrain_brush_context.maps.height_edit = terrain->height_edit.acquire("terrain height edit", vuk::eComputeRW);
+        terrain_brush_context.maps.splat_edit = terrain->splat_edit.acquire("terrain splat edit", vuk::eComputeRW);
+      }
+
+      if (terrain->brush.active) {
+        self.apply_terrain_brush(terrain_brush_context);
+      } else {
+        terrain_brush_context.hit_buffer = self.renderer.render_context->scratch_buffer(GPU::TerrainBrushHit{});
+      }
+
+      self.scene.terrain->brush.active = false;
+      self.scene.terrain->brush.painting = false;
+
+      terrain_context.heightmap_attachment = std::move(terrain_brush_context.maps.heightmap);
+      terrain_context.patch_minmax_attachment = std::move(terrain_brush_context.maps.patch_minmax);
     }
 
     const auto run_geometry_pass = [&](bool late) {
@@ -889,8 +910,9 @@ auto RendererInstance::render(
       auto terrain_decode_context = TerrainDecodeContext{
         .bindless_set = &bindless_set,
         .terrain_buffer = std::move(terrain_context.terrain_buffer),
-        .normalmap_attachment = terrain->normalmap.acquire("terrain normalmap", vuk::eFragmentSampled),
-        .splatmap_attachment = terrain->splatmap.acquire("terrain splatmap", vuk::eFragmentSampled),
+        .brush_hit_buffer = std::move(terrain_brush_context.hit_buffer),
+        .normalmap_attachment = std::move(terrain_brush_context.maps.normalmap),
+        .splatmap_attachment = std::move(terrain_brush_context.maps.splatmap),
         .visbuffer_attachment = std::move(main_geometry_context.visbuffer_attachment),
         .depth_attachment = std::move(main_geometry_context.depth_attachment),
         .albedo_attachment = std::move(main_geometry_context.albedo_attachment),

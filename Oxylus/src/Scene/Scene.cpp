@@ -1636,7 +1636,13 @@ auto Scene::bake_terrain(this Scene& self) -> void {
     }
   }
 
-  auto terrain = std::make_unique<Terrain>();
+  // Updated in place rather than rebuilt: `Terrain::create` carries the brush edit maps across a
+  // re-bake, so tweaking a noise parameter reshapes the procedural base without erasing sculpting.
+  if (self.terrain == nullptr) {
+    self.terrain = std::make_unique<Terrain>();
+  }
+
+  auto* terrain = self.terrain.get();
   terrain->world_origin = origin;
   terrain->world_size = c.world_size;
   terrain->height_range = c.height_range;
@@ -1691,11 +1697,11 @@ auto Scene::bake_terrain(this Scene& self) -> void {
 
   if (const auto result = terrain->create(); !result.has_value()) {
     OX_LOG_ERROR("Failed to create terrain: {}", result.error());
+    self.terrain.reset();
     return;
   }
 
   terrain->bake(App::get_rendercontext());
-  self.terrain = std::move(terrain);
 }
 
 auto Scene::attach_mesh(

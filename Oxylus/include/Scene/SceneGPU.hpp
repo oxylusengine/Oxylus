@@ -396,6 +396,42 @@ struct TerrainMinMax {
   glm::uvec2 patch_count = {};
 };
 
+struct TerrainRegion {
+  glm::uvec2 texel_origin = {};
+  glm::uvec2 patch_origin = {};
+};
+
+enum struct TerrainBrushMode : u32 {
+  Raise = 0,
+  Smooth,
+  Flatten,
+  Noise,
+  PaintLayer,
+};
+
+struct TerrainBrushHit {
+  glm::vec3 world_position = {};
+  u32 valid = 0;
+};
+
+struct TerrainBrushParams {
+  glm::vec3 ray_origin = {};
+  f32 radius_texels = 0.0f;
+  glm::vec3 ray_direction = {};
+  f32 strength = 0.0f;
+  glm::uvec2 resolution = {};
+  glm::vec2 world_min = {};
+  glm::vec2 world_size = {};
+  glm::vec2 inv_world_size = {};
+  glm::uvec2 patch_count = {};
+  f32 base_height = 0.0f;
+  f32 height_scale = 0.0f;
+  f32 falloff = 1.0f;
+  f32 flatten_height = 0.0f;
+  u32 mode = 0;
+  u32 layer = 0;
+};
+
 struct TerrainData {
   glm::vec2 world_min = {};
   glm::vec2 world_size = {};
@@ -408,6 +444,7 @@ struct TerrainData {
   f32 layer_tiling = 8.0f;
   f32 triplanar_begin = 0.5f;
   glm::uvec4 layer_material_indices = {};
+  f32 brush_radius = 0.0f;
 };
 
 enum RenderFlags2D : u32 {

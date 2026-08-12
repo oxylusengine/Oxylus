@@ -1,5 +1,6 @@
 #include "Scene/Terrain.hpp"
 
+#include <cmath>
 #include <vuk/runtime/CommandBuffer.hpp>
 
 #include "Core/Enum.hpp"
@@ -26,9 +27,129 @@ auto RendererInstance::build_terrain_buffer(this RendererInstance& self, const T
     .layer_tiling = terrain.layer_tiling,
     .triplanar_begin = terrain.triplanar_begin,
     .layer_material_indices = terrain.layer_material_indices,
+    .brush_radius = terrain.brush.active ? terrain.brush.radius_world : 0.0f,
   };
 
   return self.renderer.render_context->scratch_buffer(data);
+}
+
+auto RendererInstance::apply_terrain_brush(this RendererInstance& self, TerrainBrushContext& context) -> void {
+  ZoneScoped;
+
+  const auto& terrain = *context.terrain;
+  const auto& brush = terrain.brush;
+  auto& render_context = *self.renderer.render_context;
+
+  const auto half_size = terrain.world_size * 0.5f;
+  const auto texel_size = terrain.texel_world_size();
+  // The maps are square in practice; taking the coarser axis keeps the footprint from clipping the
+  // stroke on a non-square one.
+  const auto radius_texels = brush.radius_world / glm::max(texel_size.x, texel_size.y);
+
+  auto params = GPU::TerrainBrushParams{
+    .ray_origin = brush.ray_origin,
+    .radius_texels = radius_texels,
+    .ray_direction = brush.ray_direction,
+    .strength = brush.invert ? -brush.strength : brush.strength,
+    .resolution = terrain.resolution,
+    .world_min = glm::vec2(terrain.world_origin.x, terrain.world_origin.z) - half_size,
+    .world_size = terrain.world_size,
+    .inv_world_size = 1.0f / terrain.world_size,
+    .patch_count = terrain.patch_count,
+    .base_height = terrain.world_origin.y + terrain.height_range.x,
+    .height_scale = terrain.height_range.y - terrain.height_range.x,
+    .falloff = brush.falloff,
+    .flatten_height = brush.flatten_height,
+    .mode = std::to_underlying(brush.mode),
+    .layer = brush.layer,
+  };
+
+  context.hit_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUonly, sizeof(GPU::TerrainBrushHit));
+  context.maps.region = render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUonly, sizeof(GPU::TerrainRegion));
+
+  auto trace_pass = vuk::make_pass(
+    "terrain brush trace",
+    [params](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eComputeSampled) heightmap,
+      VUK_BA(vuk::eComputeWrite) hit,
+      VUK_BA(vuk::eComputeWrite) region
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("terrain_brush_trace")
+        .bind_image(0, 0, heightmap)
+        .bind_sampler(0, 1, vuk::LinearSamplerClamped)
+        .bind_buffer(0, 2, hit)
+        .bind_buffer(0, 3, region)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, params)
+        .dispatch(1, 1, 1);
+
+      return std::make_tuple(heightmap, hit, region);
+    }
+  );
+
+  std::tie(context.maps.heightmap, context.hit_buffer, context.maps.region) = trace_pass(
+    std::move(context.maps.heightmap),
+    std::move(context.hit_buffer),
+    std::move(context.maps.region)
+  );
+
+  if (!brush.painting) {
+    return;
+  }
+
+  auto apply_pass = vuk::make_pass(
+    "terrain brush apply",
+    [params, radius_texels](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eComputeRW) heightmap,
+      VUK_IA(vuk::eComputeRW) height_edit,
+      VUK_IA(vuk::eComputeRW) splat_edit,
+      VUK_BA(vuk::eComputeRead) hit
+    ) {
+      const auto footprint = 2_u32 * static_cast<u32>(std::ceil(radius_texels)) + 1_u32;
+
+      cmd_list //
+        .bind_compute_pipeline("terrain_brush_apply")
+        .bind_image(0, 0, heightmap)
+        .bind_image(0, 1, height_edit)
+        .bind_image(0, 2, splat_edit)
+        .bind_buffer(0, 3, hit)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, params)
+        .dispatch((footprint + 15) / 16, (footprint + 15) / 16, 1);
+
+      return std::make_tuple(heightmap, height_edit, splat_edit, hit);
+    }
+  );
+
+  std::tie(context.maps.heightmap, context.maps.height_edit, context.maps.splat_edit, context.hit_buffer) = apply_pass(
+    std::move(context.maps.heightmap),
+    std::move(context.maps.height_edit),
+    std::move(context.maps.splat_edit),
+    std::move(context.hit_buffer)
+  );
+
+  auto derive_settings = terrain.derive_settings;
+  derive_settings.resolution = terrain.resolution;
+  derive_settings.texel_world_size = texel_size;
+  derive_settings.height_range = terrain.height_range.y - terrain.height_range.x;
+
+  const auto minmax_settings = GPU::TerrainMinMax{
+    .resolution = terrain.resolution,
+    .patch_count = terrain.patch_count,
+  };
+
+  // Derive covers the stroke dilated by one texel on each side, because its Sobel reads a 3x3
+  // neighbourhood; the trace pass already biased the region origin to match.
+  const auto derive_texels = 2_u32 * static_cast<u32>(std::ceil(radius_texels + 1.0f)) + 1_u32;
+  terrain_derive_pass(context.maps, derive_settings, glm::uvec2(derive_texels));
+
+  const auto patch_texels = glm::vec2(terrain.resolution) / glm::vec2(terrain.patch_count);
+  const auto derive_patches = static_cast<u32>(
+                                std::ceil(static_cast<f32>(derive_texels) / glm::min(patch_texels.x, patch_texels.y))
+                              ) +
+                              1_u32;
+  terrain_minmax_pass(context.maps, minmax_settings, glm::uvec2(derive_patches));
 }
 
 auto RendererInstance::cull_terrain(this RendererInstance& self, TerrainContext& context) -> void {
@@ -161,6 +282,7 @@ auto RendererInstance::decode_terrain(this RendererInstance& self, TerrainDecode
       VUK_BA(vuk::eFragmentRead) camera,
       VUK_BA(vuk::eFragmentRead) materials,
       VUK_BA(vuk::eFragmentRead) terrain,
+      VUK_BA(vuk::eFragmentRead) brush_hit,
       VUK_IA(vuk::eFragmentSampled) visbuffer,
       VUK_IA(vuk::eFragmentSampled) depth,
       VUK_IA(vuk::eFragmentSampled) normalmap,
@@ -190,12 +312,14 @@ auto RendererInstance::decode_terrain(this RendererInstance& self, TerrainDecode
         .bind_image(0, 5, normalmap)
         .bind_image(0, 6, splatmap)
         .bind_sampler(0, 7, vuk::LinearSamplerClamped)
+        .bind_buffer(0, 8, brush_hit)
         .draw(3, 1, 0, 1);
 
       return std::make_tuple(
         camera,
         materials,
         terrain,
+        brush_hit,
         visbuffer,
         depth,
         normalmap,
@@ -212,6 +336,7 @@ auto RendererInstance::decode_terrain(this RendererInstance& self, TerrainDecode
     self.prepared_frame.camera_buffer,
     self.prepared_frame.materials_buffer,
     context.terrain_buffer,
+    context.brush_hit_buffer,
     context.visbuffer_attachment,
     context.depth_attachment,
     context.normalmap_attachment,
@@ -225,6 +350,7 @@ auto RendererInstance::decode_terrain(this RendererInstance& self, TerrainDecode
       std::move(self.prepared_frame.camera_buffer),
       std::move(self.prepared_frame.materials_buffer),
       std::move(context.terrain_buffer),
+      std::move(context.brush_hit_buffer),
       std::move(context.visbuffer_attachment),
       std::move(context.depth_attachment),
       std::move(context.normalmap_attachment),

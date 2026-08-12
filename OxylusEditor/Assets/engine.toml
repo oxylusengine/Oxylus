@@ -247,6 +247,16 @@ path = "passes/terrain_minmax.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "terrain_brush_trace"
+path = "passes/terrain_brush_trace.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "terrain_brush_apply"
+path = "passes/terrain_brush_apply.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "terrain_cull"
 path = "passes/terrain_cull.slang"
 entry_points = ["cs_main"]

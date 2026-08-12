@@ -9,6 +9,8 @@ struct ShaderParameters {
     Image2D<f32> ridgemap;
     StorageImage2D<f32x2, ImageFormat::RG16F> normalmap;
     StorageImage2D<f32x4, ImageFormat::RGBA8> splatmap;
+    Image2D<f32x4> splat_edit;
+    StructuredBuffer<TerrainRegion> region;
 };
 
 func load_height(in ShaderParameters params, i32x2 coord, u32x2 resolution) -> f32 {
@@ -20,11 +22,12 @@ func load_height(in ShaderParameters params, i32x2 coord, u32x2 resolution) -> f
 [[numthreads(16, 16, 1)]]
 func cs_main(u32x3 thread_id: SV_DispatchThreadID, uniform ParameterBlock<ShaderParameters> params,
              uniform TerrainDerive settings) -> void {
-    if (any(thread_id.xy >= settings.resolution)) {
+    let texel = params.region[0].texel_origin + thread_id.xy;
+    if (any(texel >= settings.resolution)) {
         return;
     }
 
-    let coord = i32x2(thread_id.xy);
+    let coord = i32x2(texel);
 
     // Sobel over the normalized heightmap, scaled back into world units.
     let h00 = load_height(params, coord + i32x2(-1, -1), settings.resolution);
@@ -43,7 +46,7 @@ func cs_main(u32x3 thread_id: SV_DispatchThreadID, uniform ParameterBlock<Shader
 
     // Y is always positive for a heightfield, so store XZ and reconstruct Y on read.
     let normal = normalize(f32x3(-dhdx, 1.0, -dhdz));
-    params.normalmap.Store(thread_id.xy, normal.xz);
+    params.normalmap.Store(texel, normal.xz);
 
     let height = load_height(params, coord, settings.resolution);
     let ridge = params.ridgemap.Load(i32x3(coord, 0));
@@ -56,5 +59,12 @@ func cs_main(u32x3 thread_id: SV_DispatchThreadID, uniform ParameterBlock<Shader
     let drainage = saturate(-ridge * settings.ridge_drainage_scale) * (1.0 - rock) * (1.0 - snow);
     let grass = saturate(1.0 - rock - snow - drainage);
 
-    params.splatmap.Store(thread_id.xy, f32x4(grass, rock, drainage, snow));
+    let procedural = f32x4(grass, rock, drainage, snow);
+
+    let painted = params.splat_edit.Load(i32x3(coord, 0));
+    let painted_weights = f32x4(
+        saturate(1.0 - painted.x - painted.y - painted.z), painted.x, painted.y, painted.z
+    );
+
+    params.splatmap.Store(texel, lerp(procedural, painted_weights, painted.w));
 }

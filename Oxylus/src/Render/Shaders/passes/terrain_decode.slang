@@ -15,6 +15,7 @@ struct ShaderParameters {
     Image2D<f32x2> terrain_normalmap;
     Image2D<f32x4> terrain_splatmap;
     SamplerState terrain_sampler;
+    StructuredBuffer<TerrainBrushHit> brush_hit;
 };
 ParameterBlock<ShaderParameters> params;
 
@@ -132,6 +133,14 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
     let shading_normal = normalize(
         tangent_normal.x * tangent + tangent_normal.y * bitangent + tangent_normal.z * geometric_normal
     );
+
+    if (params.terrain.brush_radius > 0.0 && params.brush_hit[0].valid != 0u) {
+        let ring_distance = distance(world_position.xz, params.brush_hit[0].world_position.xz);
+        let ring_width = max(params.terrain.brush_radius * 0.02, 0.05);
+        let ring = 1.0 - smoothstep(0.0, ring_width, abs(ring_distance - params.terrain.brush_radius));
+
+        surface.albedo.rgb = lerp(surface.albedo.rgb, f32x3(1.0, 0.55, 0.1), ring);
+    }
 
     FragmentOutput output = {};
     output.albedo_color = surface.albedo;

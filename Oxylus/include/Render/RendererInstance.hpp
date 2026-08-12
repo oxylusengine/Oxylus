@@ -6,10 +6,9 @@
 #include "Render/Renderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Scene/SceneGPU.hpp"
+#include "Scene/Terrain.hpp"
 
 namespace ox {
-struct Terrain;
-
 enum class RenderStage {
   Initialization,
   Culling,
@@ -230,10 +229,18 @@ struct TerrainContext {
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
 };
 
+struct TerrainBrushContext {
+  const Terrain* terrain = nullptr;
+
+  TerrainMaps maps = {};
+  vuk::Value<vuk::Buffer> hit_buffer = {};
+};
+
 struct TerrainDecodeContext {
   vuk::PersistentDescriptorSet* bindless_set = nullptr;
 
   vuk::Value<vuk::Buffer> terrain_buffer = {};
+  vuk::Value<vuk::Buffer> brush_hit_buffer = {};
   vuk::Value<vuk::ImageAttachment> normalmap_attachment = {};
   vuk::Value<vuk::ImageAttachment> splatmap_attachment = {};
 
@@ -383,6 +390,7 @@ public:
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
   auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
+  auto apply_terrain_brush(this RendererInstance& self, TerrainBrushContext& context) -> void;
   auto cull_terrain(this RendererInstance& self, TerrainContext& context) -> void;
   auto draw_terrain_for_visbuffer(this RendererInstance& self, TerrainContext& context) -> void;
   auto decode_terrain(this RendererInstance& self, TerrainDecodeContext& context) -> void;

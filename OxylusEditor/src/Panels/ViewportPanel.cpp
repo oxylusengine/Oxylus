@@ -128,6 +128,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     bool viewport_settings_popup = false;
     bool gizmo_settings_popup = false;
     bool snap_settings_popup = false;
+    bool terrain_brush_settings_popup = false;
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
     if (ImGui::BeginMenuBar()) {
@@ -152,6 +153,9 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       }
       if (ImGui::MenuItem(ICON_MDI_MAGNET, nullptr, snap_settings_popup)) {
         snap_settings_popup = true;
+      }
+      if (ImGui::MenuItem(ICON_MDI_BRUSH, nullptr, self.terrain_brush_enabled)) {
+        terrain_brush_settings_popup = true;
       }
       ImGui::EndMenuBar();
     }
@@ -186,6 +190,15 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     ImGui::SetNextWindowSize(ImVec2(325, 0));
     if (ImGui::BeginPopup("snap_settings")) {
       self.draw_snap_settings_panel();
+      ImGui::EndPopup();
+    }
+
+    if (terrain_brush_settings_popup)
+      ImGui::OpenPopup("terrain_brush_settings");
+
+    ImGui::SetNextWindowSize(ImVec2(345, 0));
+    if (ImGui::BeginPopup("terrain_brush_settings")) {
+      self.draw_terrain_brush_settings_panel();
       ImGui::EndPopup();
     }
 
@@ -303,9 +316,16 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         corrected_max_region,
         mouse_pos
       );
-      if (self.mouse_picking_enabled) {
+      // A left-drag belongs to the brush while it is on, so picking and the gizmo stand down.
+      if (self.mouse_picking_enabled && !self.terrain_brush_enabled) {
         self.mouse_picking_stages(renderer_instance, picking_texel);
       }
+
+      self.update_terrain_brush(
+        picking_texel.x == ~0_u32
+          ? glm::vec2(-1.0f)
+          : glm::vec2(picking_texel) / glm::vec2(self.scaled_render_size.x, self.scaled_render_size.y)
+      );
 
       if (editor.editor_cvar.cvar_draw_grid.as_bool()) {
         self.grid_stage(renderer_instance);
@@ -340,7 +360,9 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       if (self.editor_camera.is_alive() && self.editor_camera.has<CameraComponent>()) {
         self.editor_camera.enable();
 
-        self.draw_gizmos();
+        if (!self.terrain_brush_enabled) {
+          self.draw_gizmos();
+        }
       }
       self.transform_gizmos_button_group(start_cursor_pos);
     }
@@ -788,6 +810,98 @@ auto ViewportPanel::draw_snap_settings_panel(this ViewportPanel& self) -> void {
     UI::property<f32>("Rotate Snap Step", &self.snap_amount, 45.f, 360.0f, nullptr, 0.5f, "%.1f");
     UI::end_properties();
   }
+}
+
+auto ViewportPanel::draw_terrain_brush_settings_panel(this ViewportPanel& self) -> void {
+  auto& brush = self.terrain_brush;
+
+  if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+    UI::property("Enabled", &self.terrain_brush_enabled);
+
+    const char* modes[] = {"Raise", "Smooth", "Flatten", "Noise", "Paint Layer"};
+    UI::property("Mode", reinterpret_cast<int*>(&brush.mode), modes, 5);
+
+    UI::property<f32>("Radius", &brush.radius_world, 0.5f, 4096.0f, nullptr, 0.5f, "%.1f");
+    UI::property<f32>("Strength", &brush.strength, 0.0f, 1.0f);
+    UI::property<f32>("Falloff", &brush.falloff, 1.0f, 8.0f);
+
+    if (brush.mode == GPU::TerrainBrushMode::Flatten) {
+      UI::property<f32>("Target Height", &brush.flatten_height, 0.0f, 1.0f);
+    }
+
+    if (brush.mode == GPU::TerrainBrushMode::PaintLayer) {
+      const char* layers[] = {"Grass", "Rock", "Drainage", "Snow"};
+      UI::property("Layer", reinterpret_cast<int*>(&brush.layer), layers, 4);
+    }
+
+    UI::end_properties();
+  }
+
+  ImGui::TextWrapped("Left click to paint, hold Shift to invert a Raise stroke.");
+
+  auto* scene = self.editor_scene ? self.editor_scene->get_scene().get() : nullptr;
+  ImGui::BeginDisabled(scene == nullptr || scene->terrain == nullptr);
+  if (ImGui::Button("Reset Sculpt & Paint")) {
+    scene->terrain->clear_edits();
+    scene->terrain_dirty = true;
+  }
+  ImGui::EndDisabled();
+  UI::tooltip_hover("Discards every brush stroke and rebuilds the terrain from its parameters alone.");
+}
+
+auto ViewportPanel::update_terrain_brush(this ViewportPanel& self, glm::vec2 viewport_uv) -> void {
+  ZoneScoped;
+
+  auto* scene = self.editor_scene ? self.editor_scene->get_scene().get() : nullptr;
+  if (scene == nullptr || scene->terrain == nullptr) {
+    return;
+  }
+
+  // The tunables live on the panel; only the per-frame cursor state is filled in here.
+  auto& brush = scene->terrain->brush;
+  brush = self.terrain_brush;
+  brush.active = false;
+  brush.painting = false;
+
+  if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    self.terrain_stroke_active = false;
+  }
+
+  const auto tool_ready = self.terrain_brush_enabled && !self.editor_scene->is_playing() &&
+                          self.editor_camera.is_alive() && self.editor_camera.has<CameraComponent>();
+  if (!tool_ready) {
+    self.terrain_stroke_active = false;
+    return;
+  }
+
+  // Dragging on the viewport hands ImGui an active id, which flips `IsWindowHovered` off and
+  // `IsAnyItemActive` on for every frame after the click. So the hover gate only decides whether a
+  // stroke may *begin*; once begun it runs until the button comes back up.
+  const auto can_begin = self.is_viewport_hovered && !self.is_ui_capturing_mouse && !self.is_menubar_hovered &&
+                         !ImGuizmo::IsUsing() && !ImGuizmo::IsOver();
+  if (can_begin && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    self.terrain_stroke_active = true;
+  }
+
+  // Leaving the rendered area gives us no ray to trace, but the stroke stays latched so coming back
+  // resumes it rather than forcing another click.
+  if (viewport_uv.x < 0.0f || viewport_uv.x > 1.0f || viewport_uv.y < 0.0f || viewport_uv.y > 1.0f) {
+    return;
+  }
+
+  const auto& camera = self.editor_camera.get<CameraComponent>();
+
+  // The projection is reversed-Z and already carries the Vulkan Y flip, so the near plane is at
+  // ndc z = 1 and ndc y follows the cursor directly.
+  const auto ndc = viewport_uv * 2.0f - 1.0f;
+  auto near_point = camera.get_inverse_projection_view() * glm::vec4(ndc, 1.0f, 1.0f);
+  near_point /= near_point.w;
+
+  brush.ray_origin = camera.position;
+  brush.ray_direction = glm::normalize(glm::vec3(near_point) - camera.position);
+  brush.active = can_begin || self.terrain_stroke_active;
+  brush.painting = self.terrain_stroke_active;
+  brush.invert = ImGui::GetIO().KeyShift;
 }
 
 void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
@@ -1508,7 +1622,7 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
   const float frame_height = 1.3f * ImGui::GetFrameHeight();
   const ImVec2 frame_padding = ImGui::GetStyle().FramePadding;
   const ImVec2 button_size = {frame_height, frame_height};
-  constexpr float button_count = 8.0f;
+  constexpr float button_count = 9.0f;
   const ImVec2 window_pos = ImGui::GetWindowPos();
   const ImVec2 content_min = ImGui::GetWindowContentRegionMin();
   const ImVec2 panel_top_left = {window_pos.x + content_min.x, window_pos.y + content_min.y};
@@ -1573,6 +1687,9 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
       UI::toggle_button(ICON_MDI_GRID, App::mod<Editor>().editor_cvar.cvar_draw_grid.get(), button_size, alpha, alpha)
     )
       App::mod<Editor>().editor_cvar.cvar_draw_grid.toggle();
+
+    if (UI::toggle_button(ICON_MDI_BRUSH, self.terrain_brush_enabled, button_size, alpha, alpha))
+      self.terrain_brush_enabled = !self.terrain_brush_enabled;
 
     if (self.editor_camera.is_alive() && self.editor_camera.has<CameraComponent>()) {
       auto& cam = self.editor_camera.get_mut<CameraComponent>();

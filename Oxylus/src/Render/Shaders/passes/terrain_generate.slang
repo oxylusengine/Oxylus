@@ -8,6 +8,7 @@ import terrain;
 struct ShaderParameters {
     StorageImage2D<f32, ImageFormat::R16> heightmap;
     StorageImage2D<f32, ImageFormat::R16F> ridgemap;
+    Image2D<f32> height_edit;
 };
 
 [[shader("compute")]]
@@ -37,6 +38,8 @@ func cs_main(u32x3 thread_id: SV_DispatchThreadID, uniform ParameterBlock<Shader
                        erosion.height_slope_delta.w;
     let height = base.x + erosion.height_slope_delta.x + offset;
 
-    params.heightmap.Store(thread_id.xy, saturate(height));
+    let edit = params.height_edit.Load(i32x3(i32x2(thread_id.xy), 0));
+
+    params.heightmap.Store(thread_id.xy, saturate(height + edit));
     params.ridgemap.Store(thread_id.xy, erosion.ridge_map);
 }

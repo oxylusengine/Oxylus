@@ -574,6 +574,50 @@ public struct TerrainMinMax {
     public u32x2 patch_count;
 };
 
+public struct TerrainRegion {
+    public u32x2 texel_origin;
+    public u32x2 patch_origin;
+};
+
+public enum TerrainBrushMode : u32 {
+    Raise = 0,
+    Smooth,
+    Flatten,
+    Noise,
+    PaintLayer,
+};
+
+public struct TerrainBrushHit {
+    public f32x3 world_position;
+    public u32 valid;
+};
+
+public struct TerrainBrushParams {
+    public f32x3 ray_origin;
+    public f32 radius_texels;
+    public f32x3 ray_direction;
+    public f32 strength;
+    public u32x2 resolution;
+    public f32x2 world_min;
+    public f32x2 world_size;
+    public f32x2 inv_world_size;
+    public u32x2 patch_count;
+    public f32 base_height;
+    public f32 height_scale;
+    public f32 falloff;
+    public f32 flatten_height;
+    public u32 mode;
+    public u32 layer;
+
+    public func world_to_uv(f32x2 world_xz) -> f32x2 {
+        return (world_xz - this.world_min) * this.inv_world_size;
+    }
+
+    public func decode_height(f32 normalized) -> f32 {
+        return this.base_height + normalized * this.height_scale;
+    }
+};
+
 public struct TerrainData {
     public f32x2 world_min;
     public f32x2 world_size;
@@ -586,6 +630,7 @@ public struct TerrainData {
     public f32 layer_tiling;
     public f32 triplanar_begin;
     public u32x4 layer_material_indices;
+    public f32 brush_radius;
 
     // XZ world position of a patch corner, given the patch's grid coordinate.
     public func patch_corner(u32x2 patch, u32x2 corner) -> f32x2 {
