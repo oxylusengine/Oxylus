@@ -16,8 +16,6 @@ public:
   struct CameraTransform {
     glm::vec3 position;
     glm::quat rotation;
-    f32 pitch;
-    f32 yaw;
     f32 near_clip;
     f32 far_clip;
   };
@@ -46,13 +44,13 @@ public:
       glm::vec3(max.x, max.y, max.z)
     };
 
-    transform.pitch = glm::radians(-25.0f);
-    transform.yaw = glm::radians(-120.0f);
+    const f32 pitch = glm::radians(-25.0f);
+    const f32 yaw = glm::radians(-120.0f);
 
-    const f32 cos_pitch = glm::cos(transform.pitch);
-    const f32 sin_pitch = glm::sin(transform.pitch);
-    const f32 cos_yaw = glm::cos(transform.yaw);
-    const f32 sin_yaw = glm::sin(transform.yaw);
+    const f32 cos_pitch = glm::cos(pitch);
+    const f32 sin_pitch = glm::sin(pitch);
+    const f32 cos_yaw = glm::cos(yaw);
+    const f32 sin_yaw = glm::sin(yaw);
 
     glm::vec3 forward;
     forward.x = cos_yaw * cos_pitch;

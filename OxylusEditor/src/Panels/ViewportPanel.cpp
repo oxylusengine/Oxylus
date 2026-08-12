@@ -375,8 +375,8 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
 
   auto& cam = self.editor_camera.get_mut<CameraComponent>();
   auto& tc = self.editor_camera.get_mut<TransformComponent>();
-  const glm::vec3& position = cam.position;
-  const glm::vec2 yaw_pitch = glm::vec2(cam.yaw, cam.pitch);
+  const glm::vec3 position = tc.position;
+  const glm::vec2 yaw_pitch = self.camera_yaw_pitch;
   glm::vec3 final_position = position;
   glm::vec2 final_yaw_pitch = yaw_pitch;
 
@@ -394,8 +394,8 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
     if (editor_context.entity.has_value()) {
       const auto entity_tc = editor_context.entity->get<TransformComponent>();
       auto final_pos = entity_tc.position + cam.forward;
-      final_pos += -5.0f * cam.forward * glm::vec3(1.0f);
-      cam.position = final_pos;
+      final_pos += -5.0f * cam.forward;
+      final_position = final_pos;
     }
   }
 
@@ -413,7 +413,7 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
 
     if (input_sys.get_mouse_moved()) {
       const glm::vec2 change = new_mouse_position * camera_sens;
-      final_yaw_pitch.x += change.x;
+      final_yaw_pitch.x -= change.x;
       final_yaw_pitch.y = glm::clamp(final_yaw_pitch.y - change.y, glm::radians(-89.9f), glm::radians(89.9f));
     }
 
@@ -453,12 +453,10 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
   const glm::vec2 damped_yaw_pitch =
     math::smooth_damp(yaw_pitch, final_yaw_pitch, self.rotation_velocity, self.rotation_dampening, 1000.0f, dt);
 
-  tc.position = editor.editor_cvar.cvar_camera_smooth.as_bool() ? damped_position : final_position;
-  const float applied_pitch = editor.editor_cvar.cvar_camera_smooth.as_bool() ? damped_yaw_pitch.y : final_yaw_pitch.y;
-  const float applied_yaw = editor.editor_cvar.cvar_camera_smooth.as_bool() ? damped_yaw_pitch.x : final_yaw_pitch.x;
-  tc.rotation = glm::quat(glm::vec3(applied_pitch, applied_yaw, 0.0f));
-  cam.pitch = applied_pitch;
-  cam.yaw = applied_yaw;
+  const bool smooth = editor.editor_cvar.cvar_camera_smooth.as_bool();
+  tc.position = smooth ? damped_position : final_position;
+  self.camera_yaw_pitch = smooth ? damped_yaw_pitch : final_yaw_pitch;
+  tc.rotation = glm::quat(glm::vec3(self.camera_yaw_pitch.y, self.camera_yaw_pitch.x, 0.0f));
   cam.zoom = static_cast<float>(editor.editor_cvar.cvar_camera_zoom.get());
 }
 

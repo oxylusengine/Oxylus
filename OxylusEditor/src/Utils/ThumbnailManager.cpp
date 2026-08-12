@@ -555,8 +555,6 @@ auto ThumbnailManager::render_model_thumbnail(this ThumbnailManager& self, const
     .fov = MODEL_PREVIEW_FOV,
     .far_clip = camera_transform.far_clip,
     .near_clip = camera_transform.near_clip,
-    .yaw = camera_transform.yaw,
-    .pitch = camera_transform.pitch,
     .position = camera_transform.position,
   });
   camera.set<TransformComponent>(TransformComponent{
@@ -651,17 +649,18 @@ auto ThumbnailManager::ensure_material_preview(this ThumbnailManager& self) -> b
   const auto camera_distance = PREVIEW_SPHERE_RADIUS / std::sin(glm::radians(PREVIEW_FOV * 0.5f)) *
                                PREVIEW_FRAMING_PADDING;
   const auto camera_position = glm::vec3(-camera_distance, 0.f, 0.f);
-
+  const auto camera_direction = glm::normalize(-camera_position);
   const auto camera = scene.create_entity("preview_camera", true);
   camera.set<CameraComponent>({
     .fov = PREVIEW_FOV,
     .far_clip = camera_distance + PREVIEW_SPHERE_RADIUS * 4.f,
     .near_clip = 0.01f,
-    .yaw = 0.f,
-    .pitch = 0.f,
     .position = camera_position,
   });
-  camera.set<TransformComponent>({.position = camera_position});
+  camera.set<TransformComponent>({
+    .position = camera_position,
+    .rotation = glm::quatLookAt(camera_direction, glm::vec3(0.f, 1.f, 0.f)),
+  });
 
   scene.renderer_cvar.cvar_enable_debug_renderer.set(false);
   scene.renderer_cvar.cvar_draw_bounding_boxes.set(false);
