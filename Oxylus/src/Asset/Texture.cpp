@@ -285,11 +285,16 @@ auto Texture::create(const TextureCreateInfo& info, OX_CALLSTACK) -> Texture {
 
   auto& render_context = App::get_rendercontext();
 
+  auto usage = info.usage | vuk::ImageUsageFlagBits::eTransferDst;
+  if (info.level_count > 1) {
+    usage |= vuk::ImageUsageFlagBits::eTransferSrc;
+  }
+
   auto attachment = vuk::ImageAttachment{
     .image_flags = info.image_flags,
     .image_type = info.image_type,
     .tiling = info.tiling,
-    .usage = info.usage | vuk::ImageUsageFlagBits::eTransferDst,
+    .usage = usage,
     .extent = info.extent,
     .format = info.format,
     .sample_count = vuk::SampleCountFlagBits::e1,
@@ -376,7 +381,9 @@ auto Texture::create(const TextureLoadInfo& info, OX_CALLSTACK) -> Texture {
 
   auto processed_level_count = static_cast<u32>(processed_texture->buffers.size());
   auto can_generate_mips = source_type == TextureSourceType::Generic;
-  auto requested_level_count = info.level_count;
+  auto requested_level_count = info.level_count.value_or(
+    can_generate_mips ? calculate_mip_count(processed_texture->extent) : processed_level_count
+  );
 
   if (requested_level_count > processed_level_count && !can_generate_mips) {
     OX_LOG_WARN(
@@ -474,29 +481,25 @@ auto Texture::upload_mips(
 
   auto& render_context = App::get_rendercontext();
   auto effective_level_count = std::min(static_cast<u32>(per_mip_buffers.size()), self.attachment.level_count);
-  auto waits = stack.alloc<vuk::UntypedValue>(effective_level_count + 1);
+  auto should_generate = generate_remaining && self.attachment.level_count > effective_level_count;
+  auto waits = stack.alloc<vuk::UntypedValue>(should_generate ? 1_u32 : effective_level_count + 1);
 
-  auto base_extent = self.attachment.extent;
   auto attachment = vuk::discard_ia("upload mips", self.attachment);
   for (auto level = 0_u32; level < effective_level_count; level++) {
-    auto level_extent = vuk::Extent3D{
-      .width = base_extent.width >> level,
-      .height = base_extent.height >> level,
-      .depth = 1,
-    };
-
     auto mip_buffer = std::move(per_mip_buffers[level]);
-    auto mip = attachment.mip(level);
-    waits[level] = std::move(vuk::copy(std::move(mip_buffer), std::move(mip)).as_released(release_as));
+    auto uploaded = vuk::copy(std::move(mip_buffer), attachment.mip(level));
+    if (!should_generate) {
+      waits[level] = std::move(uploaded.as_released(release_as));
+    }
   }
 
-  if (generate_remaining && self.attachment.level_count > effective_level_count) {
+  if (should_generate) {
     auto base_mip = effective_level_count - 1;
     auto num_mips = self.attachment.level_count - effective_level_count;
     attachment = vuk::generate_mips(attachment, base_mip, num_mips);
   }
 
-  waits[effective_level_count] = std::move(attachment.as_released(release_as));
+  waits[waits.size() - 1] = std::move(attachment.as_released(release_as));
 
   render_context.wait_on_multiple(waits);
 }

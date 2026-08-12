@@ -45,7 +45,7 @@ struct TextureCreateInfo {
 
 struct TextureLoadInfo {
   TextureDataSource source = {};
-  u32 level_count = 1;
+  option<u32> level_count = nullopt;
   bool is_srgb = true;
   option<u32> target_width = nullopt;
   option<u32> target_height = nullopt;
