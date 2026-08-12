@@ -1323,9 +1323,6 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       }
     }
   }
-  self.dirty_transforms.clear();
-  self.dirty_mesh_instances.clear();
-  self.meshes_dirty = false;
 
   // Last, so the document reflects this tick's script changes. Sized from the previous render, which
   // is why callers get one frame of no UI before the first render establishes a size.
@@ -2163,6 +2160,11 @@ auto Scene::render(
     system->on_scene_render(&self, dst_attachment->extent);
   }
 
+  // The prepared frame is consumed here, so the dirty state it covers has now really been submitted.
+  self.dirty_transforms.clear();
+  self.dirty_mesh_instances.clear();
+  self.meshes_dirty = false;
+
   auto scene_surface = ri->render(
     std::move(dst_attachment),
     viewport_origin,
@@ -2295,6 +2297,14 @@ auto Scene::json_to_entity(
       self.deserializing_entity = was_deserializing;
       e.modified(component_id);
     }
+  }
+
+  // Components are notified one at a time in JSON order, so an observer keyed on a pair such as
+  // (TransformComponent, MeshComponent) never sees both terms: the transform is notified before the
+  // mesh exists, and notifying the mesh does not re-trigger it. Re-notify once the whole set is in
+  // place, the same way create_model_entity does after setting its components.
+  if (e.has<TransformComponent>()) {
+    e.modified<TransformComponent>();
   }
 
   auto children_json = json["children"];
