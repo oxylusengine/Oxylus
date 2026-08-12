@@ -2332,6 +2332,14 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
   new_scene->scene_name = new_name;
   new_scene->meshes_dirty = true;
 
+  // Brush strokes live only in the terrain's GPU edit maps, which the scene JSON does not carry, so
+  // the copy would otherwise come up as the freshly generated terrain. `bake_terrain` reuses this
+  // instance and `Terrain::create` carries the edits across.
+  if (src_scene->terrain != nullptr && !src_scene->terrain->edits_uninitialized) {
+    new_scene->terrain = std::make_unique<Terrain>();
+    new_scene->terrain->clone_edits_from(*src_scene->terrain, App::get_rendercontext());
+  }
+
   OX_LOG_TRACE("Copied scene {} to {}", src_scene->scene_name, new_scene->scene_name);
 
   return new_scene;

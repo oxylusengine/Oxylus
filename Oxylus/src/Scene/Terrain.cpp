@@ -19,6 +19,35 @@ static_assert(sizeof(GPU::TerrainBrushParams) == 96, "TerrainBrushParams layout 
 static_assert(sizeof(GPU::TerrainGenerate) <= 128, "push constant blocks must fit the guaranteed 128 bytes");
 static_assert(sizeof(GPU::TerrainBrushParams) <= 128, "push constant blocks must fit the guaranteed 128 bytes");
 
+// Terrain maps are addressed by a bounded world rect; repeating would wrap the far edge onto the
+// near one and produce a seam across the whole tile.
+constexpr auto TERRAIN_MAP_SAMPLER = vuk::SamplerCreateInfo{
+  .magFilter = vuk::Filter::eLinear,
+  .minFilter = vuk::Filter::eLinear,
+  .mipmapMode = vuk::SamplerMipmapMode::eLinear,
+  .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+  .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+  .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+};
+
+auto create_terrain_edit_maps(Terrain& terrain, const vuk::Extent3D& extent) -> void {
+  terrain.height_edit = Texture::create(
+    {.format = vuk::Format::eR16Snorm,
+     .extent = extent,
+     .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+     .sampler_info = TERRAIN_MAP_SAMPLER}
+  );
+  terrain.splat_edit = Texture::create(
+    {.format = vuk::Format::eR8G8B8A8Unorm,
+     .extent = extent,
+     .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+     .sampler_info = TERRAIN_MAP_SAMPLER}
+  );
+
+  terrain.height_edit.set_name("terrain height edit");
+  terrain.splat_edit.set_name("terrain splat edit");
+}
+
 auto terrain_collision_sample_count(u32 requested) -> u32 {
   return std::bit_ceil(std::clamp(requested, TERRAIN_COLLISION_MIN_SAMPLES, TERRAIN_COLLISION_MAX_SAMPLES));
 }
@@ -113,58 +142,42 @@ auto Terrain::create(this Terrain& self) -> std::expected<void, std::string> {
   self.destroy();
 
   const auto map_extent = vuk::Extent3D{.width = self.resolution.x, .height = self.resolution.y, .depth = 1};
-  constexpr auto storage_usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage;
-  // Terrain maps are addressed by a bounded world rect; repeating would wrap the far edge onto the
-  // near one and produce a seam across the whole tile.
-  constexpr auto clamped_sampler = vuk::SamplerCreateInfo{
-    .magFilter = vuk::Filter::eLinear,
-    .minFilter = vuk::Filter::eLinear,
-    .mipmapMode = vuk::SamplerMipmapMode::eLinear,
-    .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-    .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-    .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
-  };
-
-  // 16 bits of normalized range beats fp16 here: over a 2 km altitude span fp16 quantizes to
-  // roughly a metre near the top, unorm16 to about 3 cm everywhere.
-  self.heightmap = Texture::create(
-    {.format = vuk::Format::eR16Unorm, .extent = map_extent, .usage = storage_usage, .sampler_info = clamped_sampler}
-  );
-  self.ridgemap = Texture::create(
-    {.format = vuk::Format::eR16Sfloat, .extent = map_extent, .usage = storage_usage, .sampler_info = clamped_sampler}
-  );
-  self.normalmap = Texture::create(
-    {.format = vuk::Format::eR16G16Sfloat,
-     .extent = map_extent,
-     .usage = storage_usage,
-     .sampler_info = clamped_sampler}
-  );
-  self.splatmap = Texture::create(
-    {.format = vuk::Format::eR8G8B8A8Unorm,
-     .extent = map_extent,
-     .usage = storage_usage,
-     .sampler_info = clamped_sampler}
-  );
-  self.patch_minmax = Texture::create(
-    {.format = vuk::Format::eR16G16Unorm,
-     .extent = {.width = self.patch_count.x, .height = self.patch_count.y, .depth = 1},
-     .usage = storage_usage,
-     .sampler_info = clamped_sampler}
-  );
+  self.heightmap = Texture::create({
+    .format = vuk::Format::eR16Unorm,
+    .extent = map_extent,
+    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+    .sampler_info = TERRAIN_MAP_SAMPLER,
+  });
+  self.ridgemap = Texture::create({
+    .format = vuk::Format::eR16Sfloat,
+    .extent = map_extent,
+    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+    .sampler_info = TERRAIN_MAP_SAMPLER,
+  });
+  self.normalmap = Texture::create({
+    .format = vuk::Format::eR16G16Sfloat,
+    .extent = map_extent,
+    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+    .sampler_info = TERRAIN_MAP_SAMPLER,
+  });
+  self.splatmap = Texture::create({
+    .format = vuk::Format::eR8G8B8A8Unorm,
+    .extent = map_extent,
+    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+    .sampler_info = TERRAIN_MAP_SAMPLER,
+  });
+  self.patch_minmax = Texture::create({
+    .format = vuk::Format::eR16G16Unorm,
+    .extent = {.width = self.patch_count.x, .height = self.patch_count.y, .depth = 1},
+    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+    .sampler_info = TERRAIN_MAP_SAMPLER,
+  });
 
   if (keep_edits) {
     self.height_edit = std::move(height_edit);
     self.splat_edit = std::move(splat_edit);
   } else {
-    self.height_edit = Texture::create(
-      {.format = vuk::Format::eR16Snorm, .extent = map_extent, .usage = storage_usage, .sampler_info = clamped_sampler}
-    );
-    self.splat_edit = Texture::create(
-      {.format = vuk::Format::eR8G8B8A8Unorm,
-       .extent = map_extent,
-       .usage = storage_usage,
-       .sampler_info = clamped_sampler}
-    );
+    create_terrain_edit_maps(self, map_extent);
     self.edits_uninitialized = true;
   }
 
@@ -181,8 +194,6 @@ auto Terrain::create(this Terrain& self) -> std::expected<void, std::string> {
   self.normalmap.set_name("terrain normalmap");
   self.splatmap.set_name("terrain splatmap");
   self.patch_minmax.set_name("terrain patch minmax");
-  self.height_edit.set_name("terrain height edit");
-  self.splat_edit.set_name("terrain splat edit");
 
   return {};
 }
@@ -197,6 +208,69 @@ auto Terrain::destroy(this Terrain& self) -> void {
   self.patch_minmax.destroy();
   self.height_edit.destroy();
   self.splat_edit.destroy();
+}
+
+auto Terrain::clone_edits_from(this Terrain& self, const Terrain& src, RenderContext& render_context) -> void {
+  ZoneScoped;
+
+  if (src.edits_uninitialized || !src.height_edit || !src.splat_edit) {
+    return;
+  }
+
+  const auto extent = src.height_edit.get_extent();
+  if (!self.height_edit || !self.splat_edit || self.height_edit.get_extent() != extent) {
+    create_terrain_edit_maps(self, extent);
+  }
+
+  if (!self.height_edit || !self.splat_edit) {
+    OX_LOG_ERROR("Failed to allocate terrain edit maps to clone into.");
+    return;
+  }
+
+  auto copy_pass = vuk::make_pass(
+    "terrain edit copy",
+    [](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eCopyRead) src_map,
+      VUK_IA(vuk::eCopyWrite) dst_map
+    ) {
+      const auto region = vuk::ImageCopy{
+        .srcSubresource =
+          {.aspectMask = vuk::format_to_aspect(src_map->format),
+           .mipLevel = src_map->base_level,
+           .baseArrayLayer = src_map->base_layer,
+           .layerCount = src_map->layer_count},
+        .dstSubresource =
+          {.aspectMask = vuk::format_to_aspect(dst_map->format),
+           .mipLevel = dst_map->base_level,
+           .baseArrayLayer = dst_map->base_layer,
+           .layerCount = dst_map->layer_count},
+        .imageExtent = dst_map->base_mip_extent(),
+      };
+      cmd_list.copy_image(src_map, dst_map, region);
+
+      return std::make_tuple(src_map, dst_map);
+    }
+  );
+
+  auto [src_height, dst_height] = copy_pass(
+    src.height_edit.acquire("terrain height edit", vuk::eComputeRW),
+    self.height_edit.discard("terrain height edit")
+  );
+  auto [src_splat, dst_splat] = copy_pass(
+    src.splat_edit.acquire("terrain splat edit", vuk::eComputeRW),
+    self.splat_edit.discard("terrain splat edit")
+  );
+
+  auto waits = std::array{
+    vuk::UntypedValue(std::move(src_height).as_released(vuk::eComputeRW, vuk::DomainFlagBits::eGraphicsQueue)),
+    vuk::UntypedValue(std::move(dst_height).as_released(vuk::eComputeRW, vuk::DomainFlagBits::eGraphicsQueue)),
+    vuk::UntypedValue(std::move(src_splat).as_released(vuk::eComputeRW, vuk::DomainFlagBits::eGraphicsQueue)),
+    vuk::UntypedValue(std::move(dst_splat).as_released(vuk::eComputeRW, vuk::DomainFlagBits::eGraphicsQueue)),
+  };
+  render_context.wait_on_multiple(waits);
+
+  self.edits_uninitialized = false;
 }
 
 auto Terrain::bake(this Terrain& self, RenderContext& render_context) -> void {

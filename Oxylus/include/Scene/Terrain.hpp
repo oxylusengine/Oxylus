@@ -93,6 +93,8 @@ struct Terrain {
 
   auto bake(this Terrain& self, RenderContext& render_context) -> void;
 
+  auto clone_edits_from(this Terrain& self, const Terrain& src, RenderContext& render_context) -> void;
+
   // Stalls on the GPU: it submits a copy of the whole heightmap and waits for it.
   auto download_collision_heights(this Terrain& self, RenderContext& render_context) -> void;
 
