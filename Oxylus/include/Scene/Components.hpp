@@ -97,8 +97,6 @@ struct CameraComponent {
 
   glm::vec2 jitter = {};
   glm::vec2 jitter_prev = {};
-  f32 yaw = -1.5708f;
-  f32 pitch = 0.f;
 
   struct Matrices {
     glm::mat4 view_matrix = {};

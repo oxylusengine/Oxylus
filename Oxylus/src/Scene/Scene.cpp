@@ -979,10 +979,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<const TransformComponent, CameraComponent>("camera_update")
     .kind(flecs::PostUpdate)
     .each([&self](const TransformComponent& tc, CameraComponent& cc) {
-      cc.position = tc.position;
       auto ri = self.get_renderer_instance();
       if (ri)
-        Camera::update(cc, ri->get_viewport_size());
+        Camera::update(cc, tc, ri->get_viewport_size());
     });
 
   self.world.system<SpriteComponent>("sprite_aabb")

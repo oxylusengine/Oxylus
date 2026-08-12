@@ -86,6 +86,8 @@ private:
   // Camera
   f32 translation_dampening = 0.3f;
   f32 rotation_dampening = 0.3f;
+  // Editor camera orientation state; the scene camera derives its basis from the transform rotation.
+  glm::vec2 camera_yaw_pitch = glm::vec2(0.0f);
   glm::vec2 locked_mouse_position = glm::vec2(0.0f);
   glm::vec3 translation_velocity = glm::vec3(0);
   glm::vec2 rotation_velocity = glm::vec2(0);

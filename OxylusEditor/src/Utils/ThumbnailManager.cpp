@@ -260,8 +260,6 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
     .fov = cam_fov,
     .far_clip = transform.far_clip,
     .near_clip = transform.near_clip,
-    .yaw = transform.yaw,
-    .pitch = transform.pitch,
     .position = transform.position,
   }});
   camera.set<TransformComponent>(TransformComponent{
