@@ -496,6 +496,35 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
+  self.world.observer<TerrainComponent>()
+    .event(flecs::OnAdd)
+    .event(flecs::OnSet)
+    .event(flecs::OnRemove)
+    .each([&self](flecs::iter& it, usize i, TerrainComponent& c) {
+      const auto entity = it.entity(i);
+
+      if (it.event() == flecs::OnRemove) {
+        if (self.terrain_entity == entity) {
+          self.terrain.reset();
+          self.terrain_entity = {};
+          self.terrain_dirty = false;
+        }
+        return;
+      }
+
+      if (it.event() == flecs::OnAdd && self.deserializing_entity) {
+        return;
+      }
+
+      if (self.terrain_entity && self.terrain_entity != entity) {
+        OX_LOG_WARN("Scene already has a terrain; ignoring the one on entity '{}'.", entity.name().c_str());
+        return;
+      }
+
+      self.terrain_entity = entity;
+      self.terrain_dirty = true;
+    });
+
   self.world.observer<SpriteComponent>()
     .event(flecs::OnAdd)
     .event(flecs::OnSet)
@@ -1164,6 +1193,11 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     self.physics_system->DrawBodies(settings, self.physics_debug_renderer.get());
   }
 
+  if (self.terrain_dirty) {
+    self.terrain_dirty = false;
+    self.bake_terrain();
+  }
+
   if (self.renderer_instance) {
     auto& asset_man = App::mod<AssetManager>();
     auto meshlet_instance_visibility_offset = 0_u32;
@@ -1582,6 +1616,86 @@ auto Scene::remove_transform(this Scene& self, flecs::entity entity) -> void {
   self.transform_index_entities_map.erase(SlotMap_decode_id(it->second).index);
   self.transforms.destroy_slot(it->second);
   self.entity_transforms_map.erase(it);
+}
+
+auto Scene::bake_terrain(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (!self.terrain_entity || !self.terrain_entity.has<TerrainComponent>()) {
+    self.terrain.reset();
+    self.terrain_entity = {};
+    return;
+  }
+
+  const auto& c = self.terrain_entity.get<TerrainComponent>();
+
+  auto origin = glm::vec3(0.0f);
+  if (auto id = self.get_entity_transform_id(self.terrain_entity)) {
+    if (const auto* transform = self.get_entity_transform(*id)) {
+      origin = glm::vec3(transform->world[3]);
+    }
+  }
+
+  auto terrain = std::make_unique<Terrain>();
+  terrain->world_origin = origin;
+  terrain->world_size = c.world_size;
+  terrain->height_range = c.height_range;
+  terrain->resolution = {c.resolution, c.resolution};
+  terrain->patch_count = {c.patch_count, c.patch_count};
+  terrain->target_edge_pixels = c.target_edge_pixels;
+  terrain->max_tessellation = c.max_tessellation;
+  terrain->layer_tiling = c.layer_tiling;
+  terrain->triplanar_begin = c.triplanar_begin;
+
+  // Terrain layers are ordinary materials, so they share the material buffer and bindless textures
+  // with meshes. An unset or unloaded layer falls back to material 0.
+  auto& asset_man = App::mod<AssetManager>();
+  const auto material_index = [&asset_man](const UUID& uuid) -> u32 {
+    if (!uuid || !asset_man.is_loaded(uuid)) {
+      return 0u;
+    }
+    const auto asset = asset_man.get_asset(uuid);
+    return asset ? SlotMap_decode_id(asset->material_id).index : 0u;
+  };
+  terrain->layer_material_indices = {
+    material_index(c.layer_grass),
+    material_index(c.layer_rock),
+    material_index(c.layer_drainage),
+    material_index(c.layer_snow),
+  };
+
+  terrain->generate_settings = GPU::TerrainGenerate{
+    .erosion =
+      {.scale = c.erosion_scale,
+       .strength = c.erosion_strength,
+       .gully_weight = c.gully_weight,
+       .detail = c.detail,
+       // `rounding.w` must track the lacunarity so rounding keeps a constant world-space size.
+       .rounding = {c.ridge_rounding, c.crease_rounding, 0.1f, 2.0f},
+       .octaves = c.erosion_octaves,
+       .seed = c.seed},
+    .domain_size = c.domain_size,
+    .height_frequency = c.height_frequency,
+    .height_amplitude = c.height_amplitude,
+    .height_lacunarity = c.height_lacunarity,
+    .height_gain = c.height_gain,
+    .height_octaves = c.height_octaves,
+  };
+
+  terrain->derive_settings = GPU::TerrainDerive{
+    .slope_rock_begin = c.slope_rock_begin,
+    .slope_rock_end = c.slope_rock_end,
+    .altitude_snow_begin = c.altitude_snow_begin,
+    .altitude_snow_end = c.altitude_snow_end,
+  };
+
+  if (const auto result = terrain->create(); !result.has_value()) {
+    OX_LOG_ERROR("Failed to create terrain: {}", result.error());
+    return;
+  }
+
+  terrain->bake(App::get_rendercontext());
+  self.terrain = std::move(terrain);
 }
 
 auto Scene::attach_mesh(

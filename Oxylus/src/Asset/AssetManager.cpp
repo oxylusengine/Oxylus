@@ -34,6 +34,8 @@ auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Mater
   writer["uuid"] = uuid.str();
   writer["sampling_mode"] = static_cast<u32>(material.sampling_mode);
   writer["albedo_color"] = material.albedo_color;
+  writer["uv_size"] = material.uv_size;
+  writer["uv_offset"] = material.uv_offset;
   writer["emissive_color"] = material.emissive_color;
   writer["roughness_factor"] = material.roughness_factor;
   writer["metallic_factor"] = material.metallic_factor;
@@ -46,6 +48,67 @@ auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Mater
   writer["occlusion_texture"] = material.occlusion_texture.str().c_str();
 
   writer.end_obj();
+
+  return true;
+}
+
+auto read_material_asset_meta(simdjson::ondemand::value json, Material& material) -> bool {
+  ZoneScoped;
+
+  const auto read_f32 = [&json](std::string_view key, f32& value) {
+    auto result = json[key].get_double();
+    if (!result.error()) {
+      value = static_cast<f32>(result.value_unsafe());
+    }
+  };
+
+  const auto read_enum = [&json]<typename T>(std::string_view key, T& value) {
+    auto result = json[key].get_uint64();
+    if (!result.error()) {
+      value = static_cast<T>(result.value_unsafe());
+    }
+  };
+
+  const auto read_uuid = [&json](std::string_view key, UUID& value) {
+    auto result = json[key].get_string();
+    if (result.error()) {
+      return;
+    }
+
+    if (auto uuid = UUID::from_string(result.value_unsafe()); uuid.has_value()) {
+      value = uuid.value();
+    }
+  };
+
+  const auto read_vec = [&json]<glm::length_t N>(std::string_view key, glm::vec<N, f32>& value) {
+    constexpr static std::string_view components[] = {"x", "y", "z", "w"};
+    auto field = json[key];
+    if (field.error()) {
+      return;
+    }
+
+    for (glm::length_t i = 0; i < N; i++) {
+      auto result = field[components[i]].get_double();
+      if (!result.error()) {
+        value[i] = static_cast<f32>(result.value_unsafe());
+      }
+    }
+  };
+
+  read_enum("sampling_mode", material.sampling_mode);
+  read_enum("alpha_mode", material.alpha_mode);
+  read_vec("albedo_color", material.albedo_color);
+  read_vec("uv_size", material.uv_size);
+  read_vec("uv_offset", material.uv_offset);
+  read_vec("emissive_color", material.emissive_color);
+  read_f32("roughness_factor", material.roughness_factor);
+  read_f32("metallic_factor", material.metallic_factor);
+  read_f32("alpha_cutoff", material.alpha_cutoff);
+  read_uuid("albedo_texture", material.albedo_texture);
+  read_uuid("normal_texture", material.normal_texture);
+  read_uuid("emissive_texture", material.emissive_texture);
+  read_uuid("metallic_roughness_texture", material.metallic_roughness_texture);
+  read_uuid("occlusion_texture", material.occlusion_texture);
 
   return true;
 }
@@ -70,7 +133,7 @@ auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bo
   writer.end_obj();
 
   auto meta_path = path;
-  if (path.has_extension() && path.extension() != ".oxasset") {
+  if (path.extension() != ".oxasset") {
     meta_path += ".oxasset";
   }
 
@@ -588,8 +651,18 @@ auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInf
       case AssetType::Audio   : return static_cast<u64>(self.load_audio(asset_path));
       case AssetType::Script  : return static_cast<u64>(self.load_script(asset_path));
       case AssetType::Material: {
-        auto info = std::get_if<Material>(&explicit_load);
-        return static_cast<u64>(self.load_material(asset_path, info ? *info : Material{}));
+        if (auto* info = std::get_if<Material>(&explicit_load)) {
+          return static_cast<u64>(self.load_material(asset_path, *info));
+        }
+
+        auto material = Material{};
+        if (auto meta_file = self.read_meta_file_from_asset(asset_path)) {
+          if (auto material_json = meta_file->doc["material"]; !material_json.error()) {
+            read_material_asset_meta(material_json.value_unsafe(), material);
+          }
+        }
+
+        return static_cast<u64>(self.load_material(asset_path, material));
       }
       default:;
     }
@@ -678,20 +751,21 @@ auto AssetManager::load_material(this AssetManager& self, const std::filesystem:
   -> MaterialID {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(self.textures_mutex);
-  auto material_id = self.material_map.create_slot({
-    .albedo_color = info.albedo_color,
-    .emissive_color = info.emissive_color,
-    .roughness_factor = info.roughness_factor,
-    .metallic_factor = info.metallic_factor,
-    .alpha_mode = info.alpha_mode,
-    .alpha_cutoff = info.alpha_cutoff,
-    .albedo_texture = info.albedo_texture,
-    .normal_texture = info.normal_texture,
-    .emissive_texture = info.emissive_texture,
-    .metallic_roughness_texture = info.metallic_roughness_texture,
-    .occlusion_texture = info.occlusion_texture,
-  });
+  const UUID referenced_textures[] = {
+    info.albedo_texture,
+    info.normal_texture,
+    info.emissive_texture,
+    info.metallic_roughness_texture,
+    info.occlusion_texture,
+  };
+  for (const auto& texture_uuid : referenced_textures) {
+    if (texture_uuid) {
+      self.load_asset(texture_uuid, {}, false);
+    }
+  }
+
+  auto write_lock = std::unique_lock(self.materials_mutex);
+  auto material_id = self.material_map.create_slot(Material(info));
 
   write_lock.unlock();
 

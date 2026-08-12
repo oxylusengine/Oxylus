@@ -953,6 +953,21 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
   }
 }
 
+// The visbuffer stores terrain as a single reserved instance id with no meshlet behind it, so the
+// transform of the entity owning the terrain has to be supplied to the shaders separately.
+static auto get_terrain_transform_index(const Scene* scene) -> u32 {
+  if (scene == nullptr || !scene->terrain_entity) {
+    return ~0_u32;
+  }
+
+  auto transform_id = scene->get_entity_transform_id(scene->terrain_entity);
+  if (!transform_id.has_value()) {
+    return ~0_u32;
+  }
+
+  return SlotMap_decode_id(*transform_id).index;
+}
+
 static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
   ZoneScoped;
 
@@ -981,14 +996,16 @@ static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
   }
 }
 
-auto highlight_mask_stage(RenderStageContext& ctx, const std::vector<u32>& transform_indices) -> void {
+auto highlight_mask_stage(
+  RenderStageContext& ctx, const std::vector<u32>& transform_indices, u32 terrain_transform_index
+) -> void {
   ZoneScoped;
 
   auto selected_count = static_cast<u32>(transform_indices.size());
 
   auto mask_generation_pass = vuk::make_pass(
     "stencil_mask",
-    [selected_count](
+    [selected_count, terrain_transform_index](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eComputeWrite) mask,
       VUK_IA(vuk::eComputeSampled) visbuffer,
@@ -1002,7 +1019,7 @@ auto highlight_mask_stage(RenderStageContext& ctx, const std::vector<u32>& trans
         .bind_image(0, 2, visbuffer)
         .bind_image(0, 3, mask)
         .bind_buffer(0, 4, transform_indices_buffer_)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(selected_count))
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(selected_count, terrain_transform_index))
         .dispatch_invocations_per_pixel(mask);
 
       return std::make_tuple(mask, visbuffer, meshlet_instances, mesh_instances, transform_indices_buffer_);
@@ -1263,9 +1280,13 @@ auto ViewportPanel::mouse_picking_stages(
         }
         auto readback_buffer = vuk::acquire_buf("pick readback", *pick.buffer, vuk::Access::eNone);
 
+        const auto terrain_transform_index = get_terrain_transform_index(
+          self.editor_scene ? self.editor_scene->get_scene().get() : nullptr
+        );
+
         auto write_pass = vuk::make_pass(
           "mouse_picking_write_pass",
-          [picking_texel](
+          [picking_texel, terrain_transform_index](
             vuk::CommandBuffer& cmd_list,
             VUK_BA(vuk::eComputeWrite) buffer,
             VUK_IA(vuk::eComputeSampled) visbuffer_,
@@ -1279,7 +1300,7 @@ auto ViewportPanel::mouse_picking_stages(
               .push_constants(
                 vuk::ShaderStageFlagBits::eCompute,
                 0,
-                PushConstants(picking_texel, buffer->device_address)
+                PushConstants(picking_texel, buffer->device_address, terrain_transform_index)
               )
               .dispatch(1, 1, 1);
 
@@ -1330,6 +1351,15 @@ auto ViewportPanel::mouse_picking_stages(
             });
           };
 
+          // Terrain carries no MeshComponent and no mesh children, so the hierarchy walk finds
+          // nothing; its own transform is what the mask has to match against.
+          if (editor_context.entity->has<TerrainComponent>()) {
+            auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
+            if (transform_id.has_value()) {
+              transform_indices.emplace_back(SlotMap_decode_id(*transform_id).index);
+            }
+          }
+
           traverse_hierarchy(*editor_context.entity);
         } else {
           auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
@@ -1344,7 +1374,7 @@ auto ViewportPanel::mouse_picking_stages(
         return;
       }
 
-      highlight_mask_stage(ctx, transform_indices);
+      highlight_mask_stage(ctx, transform_indices, get_terrain_transform_index(s->get_scene().get()));
     }
   );
 

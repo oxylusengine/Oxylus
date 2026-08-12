@@ -8,6 +8,8 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
+struct Terrain;
+
 enum class RenderStage {
   Initialization,
   Culling,
@@ -159,6 +161,8 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> dirty_mesh_instances_buffer = {};
   u32 dirty_mesh_instance_count = 0;
 
+  vuk::Value<vuk::Buffer> terrain_patch_visibility_mask_buffer = {};
+
   u32 line_index_count = 0;
   u32 triangle_index_count = 0;
   vuk::Value<vuk::Buffer> debug_renderer_verticies_buffer = {};
@@ -204,6 +208,41 @@ struct MainGeometryContext {
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
 
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
+};
+
+struct TerrainContext {
+  const Terrain* terrain = nullptr;
+
+  GPU::CullFlag cull_flags = GPU::CullFlag::TestFrustum;
+  GPU::CullCamera cull_camera = {};
+
+  vuk::Value<vuk::Buffer> terrain_buffer = {};
+  // Compacted list of patch indices that survived culling, plus its indirect draw.
+  vuk::Value<vuk::Buffer> visible_patches_buffer = {};
+  vuk::Value<vuk::Buffer> draw_cmd_buffer = {};
+  // One persistent bit per patch, so the early pass can draw last frame's visible set.
+  vuk::Value<vuk::Buffer> patch_visibility_mask_buffer = {};
+
+  vuk::Value<vuk::ImageAttachment> heightmap_attachment = {};
+  vuk::Value<vuk::ImageAttachment> patch_minmax_attachment = {};
+  vuk::Value<vuk::ImageAttachment> hiz_attachment = {};
+  vuk::Value<vuk::ImageAttachment> visbuffer_attachment = {};
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+};
+
+struct TerrainDecodeContext {
+  vuk::PersistentDescriptorSet* bindless_set = nullptr;
+
+  vuk::Value<vuk::Buffer> terrain_buffer = {};
+  vuk::Value<vuk::ImageAttachment> normalmap_attachment = {};
+  vuk::Value<vuk::ImageAttachment> splatmap_attachment = {};
+
+  vuk::Value<vuk::ImageAttachment> visbuffer_attachment = {};
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
+  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
+  vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
+  vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
 };
 
 struct RMVSMContext {
@@ -344,6 +383,10 @@ public:
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
   auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
+  auto cull_terrain(this RendererInstance& self, TerrainContext& context) -> void;
+  auto draw_terrain_for_visbuffer(this RendererInstance& self, TerrainContext& context) -> void;
+  auto decode_terrain(this RendererInstance& self, TerrainDecodeContext& context) -> void;
+  auto build_terrain_buffer(this RendererInstance& self, const Terrain& terrain) -> vuk::Value<vuk::Buffer>;
   auto draw_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto decode_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto draw_virtual_shadowmap(this RendererInstance&, RMVSMContext& context) -> void;
@@ -421,6 +464,8 @@ private:
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
   vuk::Unique<vuk::Buffer> lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
+  vuk::Unique<vuk::Buffer> terrain_patch_visibility_mask_buffer{};
+  u32 terrain_patch_visibility_patch_count = 0;
   vuk::Unique<vuk::Buffer> exposure_buffer{};
 
   vuk::Unique<vuk::Image> vsm_virtual_page_table{};

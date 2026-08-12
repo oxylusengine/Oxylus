@@ -107,9 +107,9 @@ public struct Material {
   }
 
   public func sample_albedo_color(in UVGradient grad) -> f32x4 {
-    const let albedo = this.get_albedo_color();
+    let albedo = this.get_albedo_color();
     if (this.flags & MaterialFlag::HasAlbedoImage) {
-        const let color = global_images[NonUniformResourceIndex(this.albedo_image_index)]
+        let color = global_images[NonUniformResourceIndex(this.albedo_image_index)]
             .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy);
         return albedo * color;
     }
@@ -127,9 +127,9 @@ public struct Material {
   }
 
   public func sample_emissive_color(in UVGradient grad) -> f32x3 {
-    const let emissive = this.get_emissive_color();
+    let emissive = this.get_emissive_color();
     if (this.flags & MaterialFlag::HasEmissiveImage) {
-        const let color = global_images[NonUniformResourceIndex(this.emissive_image_index)]
+        let color = global_images[NonUniformResourceIndex(this.emissive_image_index)]
             .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy).rgb;
         return emissive * color;
     }
@@ -138,9 +138,9 @@ public struct Material {
   }
 
   public func sample_metallic_roughness(in UVGradient grad) -> f32x2 {
-    const let metallic_roughness = f32x2(this.get_metallic_factor(), this.get_roughness_factor());
+    let metallic_roughness = f32x2(this.get_metallic_factor(), this.get_roughness_factor());
     if (this.flags & MaterialFlag::HasMetallicRoughnessImage) {
-        const let color = global_images[NonUniformResourceIndex(this.metallic_rougness_image_index)]
+        let color = global_images[NonUniformResourceIndex(this.metallic_rougness_image_index)]
             .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy).bg;
         return metallic_roughness * color;
     }
@@ -523,6 +523,83 @@ public enum CullFlag : u32 {
     SelectLOD,
     TestOcclusion,
     LatePass,
+};
+
+// --- Terrain ---
+
+public struct TerrainErosion {
+    public f32 scale;
+    public f32 strength;
+    public f32 gully_weight;
+    public f32 detail;
+    // x: ridge rounding, y: crease rounding, z: input height rounding, w: per-octave multiplier
+    public f32x4 rounding;
+    // x: input slope -> mask, y: octave slope -> mask, z: input slope -> ridge mask, w: octave -> ridge mask
+    public f32x4 onset;
+    // x: the pretended input slope magnitude, y: blend between real and assumed slope
+    public f32x2 assumed_slope;
+    public f32 cell_scale;
+    public f32 gain;
+    public f32 lacunarity;
+    public f32 normalization;
+    public u32 octaves;
+    public u32 seed;
+};
+
+public struct TerrainGenerate {
+    public TerrainErosion erosion;
+    public u32x2 resolution;
+    public f32x2 height_offset;
+    public f32 domain_size;
+    public f32 height_frequency;
+    public f32 height_amplitude;
+    public f32 height_lacunarity;
+    public f32 height_gain;
+    public u32 height_octaves;
+};
+
+public struct TerrainDerive {
+    public u32x2 resolution;
+    public f32x2 texel_world_size;
+    public f32 height_range;
+    public f32 slope_rock_begin;
+    public f32 slope_rock_end;
+    public f32 altitude_snow_begin;
+    public f32 altitude_snow_end;
+    public f32 ridge_drainage_scale;
+};
+
+public struct TerrainMinMax {
+    public u32x2 resolution;
+    public u32x2 patch_count;
+};
+
+public struct TerrainData {
+    public f32x2 world_min;
+    public f32x2 world_size;
+    public f32x2 inv_world_size;
+    public u32x2 patch_count;
+    public f32 base_height;
+    public f32 height_scale;
+    public f32 target_edge_pixels;
+    public f32 max_tessellation;
+    public f32 layer_tiling;
+    public f32 triplanar_begin;
+    public u32x4 layer_material_indices;
+
+    // XZ world position of a patch corner, given the patch's grid coordinate.
+    public func patch_corner(u32x2 patch, u32x2 corner) -> f32x2 {
+        let grid = f32x2(patch + corner) / f32x2(this.patch_count);
+        return this.world_min + grid * this.world_size;
+    }
+
+    public func world_to_uv(f32x2 world_xz) -> f32x2 {
+        return (world_xz - this.world_min) * this.inv_world_size;
+    }
+
+    public func decode_height(f32 normalized) -> f32 {
+        return this.base_height + normalized * this.height_scale;
+    }
 };
 
 // --- Bindings ---

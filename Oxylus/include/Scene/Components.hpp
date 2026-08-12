@@ -226,6 +226,47 @@ struct SkyComponent {
   UUID texture = {};
 };
 
+struct TerrainComponent {
+  glm::vec2 world_size = {1024.0f, 1024.0f};
+  glm::vec2 height_range = {0.0f, 400.0f};
+  u32 resolution = 2048;
+  u32 patch_count = 64;
+
+  f32 target_edge_pixels = 16.0f;
+  f32 max_tessellation = 64.0f;
+
+  f32 domain_size = 2.0f;
+  f32 height_frequency = 3.0f;
+  f32 height_amplitude = 0.125f;
+  f32 height_lacunarity = 2.0f;
+  f32 height_gain = 0.1f;
+  u32 height_octaves = 3;
+  u32 seed = 0;
+
+  f32 erosion_scale = 0.15f;
+  f32 erosion_strength = 0.22f;
+  f32 gully_weight = 0.5f;
+  f32 detail = 1.5f;
+  f32 ridge_rounding = 0.1f;
+  f32 crease_rounding = 0.0f;
+  u32 erosion_octaves = 5;
+
+  // Splat thresholds.
+  f32 slope_rock_begin = 0.55f;
+  f32 slope_rock_end = 0.8f;
+  f32 altitude_snow_begin = 0.7f;
+  f32 altitude_snow_end = 0.85f;
+
+  UUID layer_grass = {};
+  UUID layer_rock = {};
+  UUID layer_drainage = {};
+  UUID layer_snow = {};
+  // World-space size, in metres, of one tile of each layer texture.
+  f32 layer_tiling = 8.0f;
+  // Slope above which triplanar projection takes over, so cliffs do not stretch.
+  f32 triplanar_begin = 0.5f;
+};
+
 struct AtmosphereComponent {
   glm::vec3 rayleigh_scattering = {5.802f, 13.558f, 33.100f};
   f32 rayleigh_density = 8.0;

@@ -19,6 +19,7 @@
 #include "Render/RendererInstance.hpp"
 #include "Scene/Components.hpp"
 #include "Scene/SceneGPU.hpp"
+#include "Scene/Terrain.hpp"
 #include "Scripting/LuaSystem.hpp"
 #include "Utils/Timestep.hpp"
 
@@ -79,6 +80,10 @@ public:
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};
+
+  std::unique_ptr<Terrain> terrain = nullptr;
+  flecs::entity terrain_entity = {};
+  bool terrain_dirty = false;
 
   bool meshes_dirty = false;
   u32 gpu_mesh_instance_count = 0;
@@ -216,6 +221,8 @@ private:
 
   auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
   auto remove_transform(this Scene& self, flecs::entity entity) -> void;
+
+  auto bake_terrain(this Scene& self) -> void;
 
   auto run_deferred_functions(this Scene& self) -> void;
 };
