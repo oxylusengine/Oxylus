@@ -58,6 +58,7 @@ public:
 
   auto start_tracking(this JobTracker& self) -> void { self.tracking_enabled.store(true); }
   auto stop_tracking(this JobTracker& self) -> void { self.tracking_enabled.store(false); }
+  auto is_tracking(this const JobTracker& self) -> bool { return self.tracking_enabled.load(); }
   auto clear_tracked(this JobTracker& self) -> void {
     std::unique_lock lock(self.mutex);
     self.jobs.clear();
@@ -148,8 +149,15 @@ public:
   auto submit(this JobManager& self, Arc<Job> job, bool prioritize = false) -> void;
   auto wait(this JobManager& self) -> void;
 
-  auto push_job_name(this JobManager& self, const std::string& name) { self.job_name_stack.push(name); }
-  auto pop_job_name(this JobManager& self) { self.job_name_stack.pop(); }
+  auto push_job_name(this JobManager& self, std::string_view name) -> void {
+    auto lock = std::unique_lock(self.job_name_mutex);
+    self.job_name_stack.emplace(name);
+  }
+
+  auto pop_job_name(this JobManager& self) -> void {
+    auto lock = std::unique_lock(self.job_name_mutex);
+    self.job_name_stack.pop();
+  }
 
   auto get_tracker(this JobManager& self) -> JobTracker& { return self.tracker; }
 
@@ -239,6 +247,7 @@ private:
   JobTracker tracker = {};
 
   std::stack<std::string> job_name_stack = {};
+  std::shared_mutex job_name_mutex = {};
 
   static constexpr u32 auto_thread_count = 0;
   u32 desired_thread_count = auto_thread_count;
