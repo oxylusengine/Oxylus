@@ -10,6 +10,10 @@ set_version("1.0.0")
 set_encodings("utf-8")
 add_cxxflags("clang::-fexperimental-library")
 
+if is_plat("linux") and not is_mode("dist") then
+  add_ldflags("-rdynamic", { force = true })
+end
+
 -- WARNINGS --
 set_warnings("allextra", "pedantic")
 add_cxxflags(

@@ -434,7 +434,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .event(flecs::OnRemove)
-    .without<MeshComponent>()
     .each([&self](flecs::iter& it, usize i, TransformComponent&) {
       auto entity = it.entity(i);
       if (it.event() == flecs::OnSet) {
@@ -448,19 +447,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     });
 
   self.world.observer<TransformComponent, MeshComponent>()
-    .event(flecs::OnAdd)
-    .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
-      auto entity = it.entity(i);
-      self.add_transform(entity);
-      self.set_dirty(entity);
-    });
-
-  self.world.observer<TransformComponent, MeshComponent>()
     .event(flecs::OnSet)
-    .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
+    .each([&self](flecs::iter& it, usize i, TransformComponent&, MeshComponent& mc) {
       auto entity = it.entity(i);
-      if (!self.entity_transforms_map.contains(entity))
-        self.add_transform(entity);
       self.set_dirty(entity);
 
       if (mc.model_uuid)
@@ -475,12 +464,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.observer<TransformComponent, MeshComponent>()
     .event(flecs::OnRemove)
-    .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
-      auto entity = it.entity(i);
+    .each([&self](flecs::iter& it, usize i, TransformComponent&, MeshComponent& mc) {
       if (mc.model_uuid) {
-        self.detach_mesh(entity);
+        self.detach_mesh(it.entity(i));
       }
-      self.remove_transform(entity);
     });
 
   self.world.observer<TransformComponent, SpriteComponent>()
@@ -1617,6 +1604,10 @@ auto Scene::get_entity_transform(GPU::TransformID transform_id) const -> const G
 auto Scene::add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID {
   ZoneScoped;
 
+  if (auto it = self.entity_transforms_map.find(entity); it != self.entity_transforms_map.end()) {
+    return it->second;
+  }
+
   auto id = self.transforms.create_slot();
   self.entity_transforms_map.emplace(entity, id);
   self.transform_index_entities_map.emplace(SlotMap_decode_id(id).index, entity);
@@ -1737,12 +1728,32 @@ auto Scene::attach_mesh(
   auto& asset_man = App::mod<AssetManager>();
 
   auto transforms_it = self.entity_transforms_map.find(entity);
-  if (!self.entity_transforms_map.contains(entity)) {
+  if (transforms_it == self.entity_transforms_map.end()) {
     OX_LOG_FATAL("Target entity must have a transform component!");
     return false;
   }
 
   const auto transform_id = transforms_it->second;
+
+  // Resolve everything that needs the model before touching scene state. Deserialization sets
+  // components before it requests their assets, so the model can legitimately still be unloaded
+  // here; from_json attaches those meshes once the assets are in. Rendering assumes every mesh
+  // instance has a loaded model, so don't create one until it does.
+  auto overriden_material = material_uuid;
+  {
+    auto model = asset_man.get_model(model_uuid);
+    if (!model) {
+      return false;
+    }
+
+    if (!material_uuid && mesh_index < model->material_indices.size()) {
+      // No material override, use original one
+      auto material_index = model->material_indices[mesh_index];
+      if (material_index.has_value() && material_index.value() < model->materials.size()) {
+        overriden_material = model->materials[material_index.value()];
+      }
+    }
+  }
 
   // Find the old model UUID and detach it from entity.
   auto mesh_instances_it = self.entity_to_mesh_instance_map.find(entity);
@@ -1750,16 +1761,6 @@ auto Scene::attach_mesh(
     const auto old_mesh_instance_id = mesh_instances_it->second;
     self.mesh_instances.destroy_slot(old_mesh_instance_id);
     self.meshes_dirty = true;
-  }
-
-  auto overriden_material = material_uuid;
-  if (!material_uuid) {
-    // No material override, use original one
-    auto model = asset_man.get_model(model_uuid);
-    auto material_index = model->material_indices[mesh_index];
-    if (material_index.has_value()) {
-      overriden_material = model->materials[mesh_index];
-    }
   }
 
   auto instance_id = self.mesh_instances.create_slot(
@@ -1781,8 +1782,7 @@ auto Scene::detach_mesh(this Scene& self, flecs::entity entity) -> bool {
   ZoneScoped;
 
   auto instances_it = self.entity_to_mesh_instance_map.find(entity);
-  auto transforms_it = self.entity_transforms_map.find(entity);
-  if (instances_it == self.entity_to_mesh_instance_map.end() || transforms_it == self.entity_transforms_map.end()) {
+  if (instances_it == self.entity_to_mesh_instance_map.end()) {
     return false;
   }
 
@@ -2416,6 +2416,14 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
       OX_LOG_WARN("Ghost asset found! {}", asset_uuid.str());
     }
   }
+
+  // Assets are only requested after every entity exists, so meshes whose model was still unloaded
+  // when their component was set could not be attached. Attach them now that the models are in.
+  self.world.query_builder<MeshComponent>().build().each([&self](flecs::entity e, MeshComponent& mc) {
+    if (mc.model_uuid && !self.entity_to_mesh_instance_map.contains(e)) {
+      self.attach_mesh(e, mc.model_uuid, mc.mesh_index, mc.material_uuid);
+    }
+  });
 
   return true;
 }
