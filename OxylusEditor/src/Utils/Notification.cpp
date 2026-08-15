@@ -46,7 +46,7 @@ auto NotificationSystem::draw() -> void {
   ImGui::Begin(
     "##Notifications",
     nullptr,
-    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav
+    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs
   );
   ImGui::PopStyleColor();
 
