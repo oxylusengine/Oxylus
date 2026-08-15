@@ -294,6 +294,7 @@ struct EntityInspector : IEntitySerializer {
             material.reset();
             if (material_dirty) {
               asset_man.set_material_dirty(material_id);
+              App::mod<Editor>().thumbnail_manager.invalidate_material(asset_uuid);
             }
             break;
           }
@@ -758,6 +759,7 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
       mat.reset();
       if (material_dirty) {
         asset_man.set_material_dirty(asset_uuid);
+        editor.thumbnail_manager.invalidate_material(asset_uuid);
       }
     } else {
       ImGui::SeparatorText("Material");

@@ -61,6 +61,14 @@ private:
   std::shared_mutex material_uuids_mutex = {};
 
   ankerl::unordered_dense::set<UUID> owned_asset_refs = {};
+
+  // Materials edited in memory but not written to disk yet, mapped to the file's mtime at the time
+  // they were marked. The on-disk cache key is derived from the file, so persisting a preview of
+  // unsaved state would serve it for the saved state on the next launch. Entries retire themselves
+  // once the mtime moves on, which is what saving does.
+  ankerl::unordered_dense::map<UUID, i64> unsaved_materials = {};
+
+  ankerl::unordered_dense::set<std::string> superseded_jobs = {};
   std::mutex owned_refs_mutex = {};
 
   std::unique_ptr<MaterialPreview> material_preview = {};
@@ -72,6 +80,8 @@ private:
   auto ensure_material_preview(this ThumbnailManager& self) -> bool;
 
   auto get_asset_hash(this const ThumbnailManager& self, const std::filesystem::path& path) -> std::string;
+  auto has_unsaved_edits(this ThumbnailManager& self, const UUID& material_uuid, const std::filesystem::path& meta_path)
+    -> bool;
 
   auto resolve_material_uuid(this ThumbnailManager& self, const std::filesystem::path& path) -> UUID;
 
