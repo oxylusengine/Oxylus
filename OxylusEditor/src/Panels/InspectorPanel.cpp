@@ -17,6 +17,8 @@
 #include "Utils/EditorTheme.hpp"
 
 namespace ox {
+static UUID pending_save_material_uuid = {};
+
 struct EntityInspector : IEntitySerializer {
   UndoRedoSystem& undo_redo_system;
   InspectorPanel& inspector_panel;
@@ -322,18 +324,13 @@ InspectorPanel::InspectorPanel() : EditorPanelState("Inspector", ICON_MDI_INFORM
   auto& event_system = App::get_event_system();
   auto& asset_man = App::mod<AssetManager>();
 
-  auto r1 = event_system.subscribe<DialogLoadEvent>([&asset_man](const DialogLoadEvent& e) {
-    if (auto imported = asset_man.import_asset(e.path)) {
-      if (e.asset_uuid) {
-        if (*e.asset_uuid)
-          asset_man.unload_asset(*e.asset_uuid);
-        *e.asset_uuid = imported;
-      }
+  auto r = event_system.subscribe<DialogSaveEvent>([&asset_man](const DialogSaveEvent& e) {
+    if (!asset_man.export_asset(e.asset_uuid, e.path)) {
+      OX_LOG_ERROR("Couldn't save asset {} to {}!", e.asset_uuid.str(), e.path);
+      return;
     }
-  });
 
-  auto r2 = event_system.subscribe<DialogSaveEvent>([&asset_man](const DialogSaveEvent& e) {
-    asset_man.export_asset(e.asset_uuid, e.path);
+    App::mod<Editor>().thumbnail_manager.invalidate_material(e.asset_uuid);
   });
 }
 
@@ -400,68 +397,25 @@ auto InspectorPanel::draw_material_properties(
 ) -> bool {
   if (material_uuid) {
     const auto& window = App::get_window();
-    static auto uuid_copy = material_uuid;
 
     auto uuid_str = fmt::format("UUID: {}", material_uuid.str());
     ImGui::TextUnformatted(uuid_str.c_str());
 
-    auto load_str = fmt::format("{} Load", ICON_MDI_FILE_UPLOAD);
-
     const float x = ImGui::GetContentRegionAvail().x / 2;
     const float y = ImGui::GetFrameHeight();
-    if (UI::button(load_str.c_str(), {x, y})) {
-      FileDialogFilter dialog_filters[] = {{.name = "Asset (.oxasset)", .pattern = "oxasset"}};
-      window.show_dialog({
-        .kind = DialogKind::OpenFile,
-        .user_data = nullptr,
-        .callback =
-          [](void* user_data, const c8* const* files, i32) {
-            if (!files || !*files) {
-              return;
-            }
 
-            const auto first_path_cstr = *files;
-            const auto first_path_len = std::strlen(first_path_cstr);
-            auto path = std::string(first_path_cstr, first_path_len);
+    const auto has_own_file = AssetManager::owns_meta_file(default_path);
 
-            auto& event_system = App::get_event_system();
-            auto r = event_system.emit(DialogLoadEvent{&uuid_copy, path});
-          },
-        .title = "Open material asset file...",
-        .default_path = default_path,
-        .filters = dialog_filters,
-        .multi_select = false,
-      });
-    }
-    if (ImGui::BeginDragDropTarget()) {
-      if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
-        const auto* payload = PayloadData::from_payload(imgui_payload);
-        auto payload_path = std::filesystem::path(payload->str);
-        if (payload_path.extension() == "oxasset") {
-          auto& event_system = App::get_event_system();
-          auto r = event_system.emit(DialogLoadEvent{&uuid_copy, payload->str});
-        }
-      }
-      ImGui::EndDragDropTarget();
-    }
+    const auto open_save_as_dialog = [&window, &material_uuid, &default_path] {
+      pending_save_material_uuid = material_uuid;
 
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
-      ImGui::BeginTooltip();
-      ImGui::Text("You can drag&drop here to load a material.");
-      ImGui::EndTooltip();
-    }
-
-    ImGui::SameLine();
-
-    auto save_str = fmt::format("{} Save", ICON_MDI_FILE_DOWNLOAD);
-    if (UI::button(save_str.c_str(), {x, y})) {
       FileDialogFilter dialog_filters[] = {{.name = "Asset (.oxasset)", .pattern = "oxasset"}};
       window.show_dialog({
         .kind = DialogKind::SaveFile,
         .user_data = nullptr,
         .callback =
-          [](void* user_data, const c8* const* files, i32) {
-            if (!files || !*files || !uuid_copy) {
+          [](void*, const c8* const* files, i32) {
+            if (!files || !*files || !pending_save_material_uuid) {
               return;
             }
 
@@ -470,20 +424,33 @@ auto InspectorPanel::draw_material_properties(
             auto path = std::string(first_path_cstr, first_path_len);
 
             auto& event_system = App::get_event_system();
-            auto r = event_system.emit(DialogSaveEvent{uuid_copy, path});
+            auto r = event_system.emit(DialogSaveEvent{pending_save_material_uuid, path});
             if (!r.has_value()) {
               OX_LOG_ERROR("{}", r.error().message());
             }
           },
-        .title = "Open material asset file...",
+        .title = "Save material asset file...",
         .default_path = default_path,
         .filters = dialog_filters,
         .multi_select = false,
       });
+    };
+
+    auto save_str = fmt::format("{} Save", ICON_MDI_CONTENT_SAVE);
+    if (UI::button(save_str.c_str(), {x, y})) {
+      if (has_own_file) {
+        auto& event_system = App::get_event_system();
+        auto r = event_system.emit(DialogSaveEvent{material_uuid, default_path});
+        if (!r.has_value()) {
+          OX_LOG_ERROR("{}", r.error().message());
+        }
+      } else {
+        open_save_as_dialog();
+      }
     }
 
     if (ImGui::BeginDragDropSource()) {
-      std::string path_str = fmt::format("new_material");
+      std::string path_str = default_path.empty() ? "new_material" : default_path.filename().string();
       auto payload = PayloadData(path_str, material_uuid);
       ImGui::SetDragDropPayload(PayloadData::DRAG_DROP_TARGET, &payload, payload.size());
       ImGui::TextUnformatted(path_str.c_str());
@@ -492,8 +459,20 @@ auto InspectorPanel::draw_material_properties(
 
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
       ImGui::BeginTooltip();
-      ImGui::Text("You can drag&drop this into content window to save the material.");
+      if (has_own_file) {
+        ImGui::Text("Writes the material back to its own asset file.");
+      } else {
+        ImGui::Text("This material lives inside another asset and asks where to write a copy.");
+      }
+      ImGui::Text("You can drag&drop this into content window to save a copy.");
       ImGui::EndTooltip();
+    }
+
+    ImGui::SameLine();
+
+    auto save_as_str = fmt::format("{} Save As", ICON_MDI_CONTENT_SAVE_EDIT);
+    if (UI::button(save_as_str.c_str(), {x, y})) {
+      open_save_as_dialog();
     }
   }
 
@@ -501,8 +480,11 @@ auto InspectorPanel::draw_material_properties(
 
   UI::begin_properties(UI::default_properties_flags);
 
-  const char* alpha_modes[] = {"Opaque", "Mash", "Blend"};
+  const char* alpha_modes[] = {"Opaque", "Mask", "Blend"};
   dirty |= UI::property("Alpha mode", reinterpret_cast<int*>(&material->alpha_mode), alpha_modes, 3);
+  if (material->alpha_mode == AlphaMode::Mask) {
+    dirty |= UI::property("Alpha cutoff", &material->alpha_cutoff, 0.0f, 1.0f);
+  }
 
   const char* samplers[] = {
     "LinearRepeated",
@@ -518,36 +500,42 @@ auto InspectorPanel::draw_material_properties(
 
   dirty |= UI::property_vector("Color", material->albedo_color, true, true);
 
-  const auto load_callback = [](const char* label, const UUID& uuid, bool& active) -> UUID {
-    Asset selected = {};
-    AssetType filter = AssetType::Texture;
-    auto name = fmt::format("Asset Picker: {}", label);
-    static AssetManagerViewer am;
-    am.render(name.c_str(), &active, filter, &selected);
+  const auto load_callback = [](bool is_srgb) {
+    return [is_srgb](const char* label, const UUID& uuid, bool& active) -> UUID {
+      Asset selected = {};
+      AssetType filter = AssetType::Texture;
+      auto name = fmt::format("Asset Picker: {}", label);
+      static AssetManagerViewer am;
+      am.render(name.c_str(), &active, filter, &selected);
 
-    if (selected.type == AssetType::Texture) {
-      auto& asset_man = App::mod<AssetManager>();
-      const bool is_loaded = asset_man.load_asset(selected.uuid);
-      if (is_loaded) {
-        // unload previous asset
-        if (uuid) {
-          asset_man.unload_asset(uuid);
+      if (selected.type == AssetType::Texture) {
+        auto& asset_man = App::mod<AssetManager>();
+        const bool is_loaded = asset_man.load_asset(selected.uuid, TextureLoadInfo{.is_srgb = is_srgb});
+        if (is_loaded) {
+          if (uuid) {
+            asset_man.unload_asset(uuid);
+          }
+          return selected.uuid;
         }
-        return selected.uuid;
       }
-    }
 
-    return UUID(nullptr);
+      return UUID(nullptr);
+    };
   };
 
-  dirty |= UI::texture_property("Albedo", material->albedo_texture, load_callback);
-  dirty |= UI::texture_property("Normal", material->normal_texture, load_callback);
-  dirty |= UI::texture_property("Emissive", material->emissive_texture, load_callback);
+  const auto texture_slot = [&load_callback](const char* label, UUID& uuid, bool is_srgb) -> bool {
+    return UI::texture_property(label, uuid, is_srgb, load_callback(is_srgb));
+  };
+
+  dirty |= texture_slot("Albedo", material->albedo_texture, true);
+  dirty |= texture_slot("Normal", material->normal_texture, false);
+  dirty |= UI::property("Flip Normal Y", &material->flip_normal_y, "Enable for DirectX-convention normal maps.");
+  dirty |= texture_slot("Emissive", material->emissive_texture, true);
   dirty |= UI::property_vector("Emissive Color", material->emissive_color, true, false);
-  dirty |= UI::texture_property("Metallic Roughness", material->metallic_roughness_texture, load_callback);
+  dirty |= texture_slot("Metallic Roughness", material->metallic_roughness_texture, false);
   dirty |= UI::property("Roughness Factor", &material->roughness_factor, 0.0f, 1.0f);
   dirty |= UI::property("Metallic Factor", &material->metallic_factor, 0.0f, 1.0f);
-  dirty |= UI::texture_property("Occlusion", material->occlusion_texture, load_callback);
+  dirty |= texture_slot("Occlusion", material->occlusion_texture, false);
 
   UI::end_properties();
 
@@ -736,6 +724,8 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
     thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(path_str);
   } else if (asset_type == AssetType::Model) {
     thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(path_str);
+  } else if (asset_type == AssetType::Material) {
+    thumbnail_image = editor.thumbnail_manager.get_thumbnail_material(asset_uuid);
   }
   const auto region = ImGui::GetContentRegionAvail();
   auto content_width = region.x - ImGui::GetStyle().IndentSpacing;
@@ -757,9 +747,21 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
   ImGui::Unindent();
 
   if (asset_type == AssetType::Material) {
-    if (auto mat = asset_man.get_material(asset_uuid)) {
+    if (!asset_man.is_loaded(asset_uuid)) {
+      asset_man.load_asset(asset_uuid);
+    }
+
+    auto mat = asset_man.get_material(asset_uuid);
+    if (mat) {
       ImGui::SeparatorText("Material");
-      draw_material_properties(std::move(mat), asset_uuid, asset_path);
+      const auto material_dirty = draw_material_properties(std::move(mat), asset_uuid, asset_path);
+      mat.reset();
+      if (material_dirty) {
+        asset_man.set_material_dirty(asset_uuid);
+      }
+    } else {
+      ImGui::SeparatorText("Material");
+      ImGui::TextUnformatted("Couldn't load material.");
     }
   }
 }

@@ -10,11 +10,6 @@ struct Material;
 class Scene;
 class InspectorPanel : public EditorPanelState {
 public:
-  struct DialogLoadEvent {
-    UUID* asset_uuid = {};
-    std::filesystem::path path = {};
-  };
-
   struct DialogSaveEvent {
     UUID asset_uuid = {};
     std::filesystem::path path = {};

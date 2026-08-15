@@ -44,10 +44,12 @@ class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
-  using LoadInfo = std::variant<TextureLoadInfo, Material>;
+  using LoadInfo = std::variant<TextureLoadInfo, Material, ModelLoadInfo>;
 
   static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
+  static auto meta_file_path(const std::filesystem::path& path) -> std::filesystem::path;
+  static auto owns_meta_file(const std::filesystem::path& path) -> bool;
   static auto write_gltf_meta(AssetManager& self, const std::filesystem::path& path, JsonWriter& json) -> bool;
 
   struct AssetMetaFile {
@@ -115,6 +117,7 @@ public:
 
 private:
   auto load_model(this AssetManager& self, const std::filesystem::path& path) -> ModelID;
+  auto load_model(this AssetManager& self, const ModelLoadInfo& info) -> ModelID;
   auto unload_model(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
 
   auto load_texture(this AssetManager& self, const std::filesystem::path& path, TextureLoadInfo info = {}) -> TextureID;

@@ -20,10 +20,11 @@ f32 rgb2luma(f32x3 rgb) { return sqrt(dot(rgb, f32x3(0.299, 0.587, 0.114))); }
 
 [[shader("fragment")]]
 func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params, uniform f32x2 inverse_screen_size) -> f32x4 {
-  f32x3 color_center = params.source_image_upsample.Sample(params.sampler, input.tex_coord).rgb;
+  // Alpha is untouched by the luma work below, so a transparent background survives.
+  f32x4 color_center = params.source_image_upsample.Sample(params.sampler, input.tex_coord);
 
   // Luma at the current fragment
-  f32 luma_center = rgb2luma(color_center);
+  f32 luma_center = rgb2luma(color_center.rgb);
 
   // Luma at the four direct neighbours of the current fragment.
   f32 luma_down = rgb2luma(params.source_image_upsample.Sample(params.sampler, input.tex_coord, i32x2(0, -1)).rgb);
@@ -40,7 +41,7 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
 
   // If the luma variation is lower that a threshold (or if we are in a really dark area), we are not on an edge, don't perform any AA.
   if (luma_range < max(EDGE_THRESHOLD_MIN, luma_max * EDGE_THRESHOLD_MAX)) {
-    return f32x4(color_center, 1.0);
+    return color_center;
   }
 
   // Query the 4 remaining corners lumas.
@@ -207,6 +208,5 @@ func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params
   }
 
   // Read the color at the new UV coordinates, and use it.
-  f32x3 final_color = params.source_image_upsample.Sample(params.sampler, final_uv).rgb;
-  return f32x4(final_color, 1.0);
+  return params.source_image_upsample.Sample(params.sampler, final_uv);
 }

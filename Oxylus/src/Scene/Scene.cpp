@@ -1391,35 +1391,13 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
     usize mesh_group_index = 0;
   };
 
-  auto processing_nodes = std::stack<ProcessingNode>();
-  for (const auto child_index : root_node.child_indices) {
-    processing_nodes.push({root_entity, child_index});
-  }
-
-  while (!processing_nodes.empty()) {
-    const auto [parent_entity, mesh_group_index] = processing_nodes.top();
-    const auto& mesh_group = model->mesh_groups[mesh_group_index];
-    processing_nodes.pop();
-
-    // Resolve a name that's unique both at the world root and under
-    // `parent_entity`'s child scope BEFORE creating the entity. `create_entity`
-    // would only deduplicate against the root, which still triggers flecs's
-    // `flecs_reparent_name_index` abort when `child_of` finds the name already
-    // registered under the parent.
-    const auto safe_node_name = self.safe_entity_name(std::string{mesh_group.name}, parent_entity);
-    auto node_entity = self.create_entity(safe_node_name, false);
-    node_entity.set<TransformComponent>({
-      .position = mesh_group.translation,
-      .rotation = mesh_group.rotation,
-      .scale = mesh_group.scale,
-    });
-    node_entity.child_of(parent_entity);
-    node_entity.modified<TransformComponent>();
-
+  // Used for the root group too: a model built in code has its mesh on the root and no children,
+  // so walking only child_indices would drop it.
+  auto emit_group_contents = [&](flecs::entity target, const Model::MeshGroup& mesh_group) {
     for (const auto mesh_index : mesh_group.mesh_indices) {
       memory::ScopedStack stack;
       auto mesh_entity_name = !mesh_group.name.empty() ? stack.format("{} Mesh {}", mesh_group.name, mesh_index) : "";
-      const auto safe_mesh_name = self.safe_entity_name(std::string{mesh_entity_name}, node_entity);
+      const auto safe_mesh_name = self.safe_entity_name(std::string{mesh_entity_name}, target);
       auto mesh_entity = self.create_entity(safe_mesh_name, false);
       auto material_index = model->material_indices[mesh_index];
       auto material_uuid = material_index.has_value() ? model->materials[material_index.value()] : UUID(nullptr);
@@ -1430,7 +1408,7 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
         .material_uuid = material_uuid,
         .baked_aabb = model_aabb,
       });
-      mesh_entity.child_of(node_entity);
+      mesh_entity.child_of(target);
       mesh_entity.modified<TransformComponent>();
     }
 
@@ -1453,8 +1431,36 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
         lc.outer_cone_angle = *node_light.outer_cone_angle;
       }
 
-      node_entity.set<LightComponent>(lc);
+      target.set<LightComponent>(lc);
     }
+  };
+
+  emit_group_contents(root_entity, root_node);
+
+  auto processing_nodes = std::stack<ProcessingNode>();
+  for (const auto child_index : root_node.child_indices) {
+    processing_nodes.push({root_entity, child_index});
+  }
+
+  while (!processing_nodes.empty()) {
+    const auto [parent_entity, mesh_group_index] = processing_nodes.top();
+    const auto& mesh_group = model->mesh_groups[mesh_group_index];
+    processing_nodes.pop();
+
+    // Must be unique under `parent_entity` as well as at the root before the entity exists:
+    // `create_entity` only deduplicates against the root, and `child_of` then aborts inside
+    // `flecs_reparent_name_index` on a name already registered under the parent.
+    const auto safe_node_name = self.safe_entity_name(std::string{mesh_group.name}, parent_entity);
+    auto node_entity = self.create_entity(safe_node_name, false);
+    node_entity.set<TransformComponent>({
+      .position = mesh_group.translation,
+      .rotation = mesh_group.rotation,
+      .scale = mesh_group.scale,
+    });
+    node_entity.child_of(parent_entity);
+    node_entity.modified<TransformComponent>();
+
+    emit_group_contents(node_entity, mesh_group);
 
     for (const auto child_node_indices : mesh_group.child_indices) {
       processing_nodes.push({node_entity, child_node_indices});

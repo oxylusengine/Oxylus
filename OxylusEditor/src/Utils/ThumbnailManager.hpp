@@ -2,7 +2,10 @@
 
 #include <ankerl/unordered_dense.h>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <queue>
+#include <shared_mutex>
 #include <vector>
 
 #include "Asset/Texture.hpp"
@@ -10,37 +13,79 @@
 #include "Core/UUID.hpp"
 
 namespace ox {
+class Scene;
+struct MaterialPreview;
+
 class ThumbnailManager {
 public:
+  ThumbnailManager();
+  ~ThumbnailManager();
+
+  ThumbnailManager(const ThumbnailManager&) = delete;
+  auto operator=(const ThumbnailManager&) -> ThumbnailManager& = delete;
+
   auto init(this ThumbnailManager& self) -> void;
+  auto deinit(this ThumbnailManager& self) -> void;
   auto update(this ThumbnailManager& self) -> void;
   auto reset(this ThumbnailManager& self) -> void;
 
   auto get_thumbnail_texture(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> TextureView;
   auto get_thumbnail_model(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> TextureView;
 
+  auto get_thumbnail_material(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> TextureView;
+  auto get_thumbnail_material(this ThumbnailManager& self, const UUID& material_uuid) -> TextureView;
+  auto invalidate_material(this ThumbnailManager& self, const UUID& material_uuid) -> void;
+
 private:
-  struct PendingMeshRender {
-    std::string asset_hash;
-    UUID model_uuid;
-    std::filesystem::path expected_png;
+  enum class RenderKind : u8 { Model, Material };
+
+  struct PendingRender {
+    std::string cache_key = {};
+    RenderKind kind = RenderKind::Model;
+    UUID asset_uuid = UUID(nullptr);
+    std::filesystem::path expected_png = {};
   };
 
-  std::filesystem::path cache_dir = {};
-
   static constexpr u32 THUMBNAIL_SIZE = 256;
+
+  std::filesystem::path cache_dir = {};
 
   ankerl::unordered_dense::map<std::string, Texture> thumbnail_cache = {};
   ankerl::unordered_dense::set<std::string> active_jobs = {};
   std::shared_mutex thumbnail_mutex = {};
 
-  std::mutex queue_mutex;
-  std::queue<PendingMeshRender> pending_mesh_renders = {};
+  std::mutex queue_mutex = {};
+  std::queue<PendingRender> pending_renders = {};
 
-  auto render_thumbnail(this ThumbnailManager& self, UUID model_uuid, u32 size) -> option<std::vector<u8>>;
+  ankerl::unordered_dense::map<std::filesystem::path, UUID> material_uuids = {};
+  std::shared_mutex material_uuids_mutex = {};
+
+  ankerl::unordered_dense::set<UUID> owned_asset_refs = {};
+  std::mutex owned_refs_mutex = {};
+
+  std::unique_ptr<MaterialPreview> material_preview = {};
+
+  auto render_model_thumbnail(this ThumbnailManager& self, const UUID& model_uuid, u32 size) -> option<std::vector<u8>>;
+  auto render_material_thumbnail(this ThumbnailManager& self, const UUID& material_uuid, u32 size)
+    -> option<std::vector<u8>>;
+  auto render_scene(this ThumbnailManager& self, Scene& scene, u32 size) -> option<std::vector<u8>>;
+  auto ensure_material_preview(this ThumbnailManager& self) -> bool;
+
   auto get_asset_hash(this const ThumbnailManager& self, const std::filesystem::path& path) -> std::string;
 
-  auto find_cached(this ThumbnailManager& self, const std::string& asset_hash) -> option<TextureView>;
-  auto try_claim_job(this ThumbnailManager& self, const std::string& asset_hash) -> bool;
+  auto resolve_material_uuid(this ThumbnailManager& self, const std::filesystem::path& path) -> UUID;
+
+  auto material_thumbnail_for(
+    this ThumbnailManager& self, const UUID& material_uuid, const std::filesystem::path& asset_path
+  ) -> TextureView;
+
+  auto acquire_asset(this ThumbnailManager& self, const UUID& uuid) -> bool;
+
+  auto find_cached(this ThumbnailManager& self, const std::string& cache_key) -> option<TextureView>;
+  auto try_claim_job(this ThumbnailManager& self, const std::string& cache_key) -> bool;
+  auto release_job(this ThumbnailManager& self, const std::string& cache_key) -> void;
+  auto submit_cached_png_load(
+    this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& png_path
+  ) -> void;
 };
 } // namespace ox
