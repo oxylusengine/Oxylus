@@ -25,6 +25,8 @@ struct RendererCVar {
   AutoCVar_Int cvar_culling_frustum;
   AutoCVar_Int cvar_culling_occlusion;
   AutoCVar_Int cvar_culling_triangle;
+  // Not serialized: describes the target being rendered into, not the scene.
+  AutoCVar_Int cvar_transparent_background;
 
   AutoCVar_Int cvar_contact_shadows_enabled;
   AutoCVar_Int cvar_contact_shadows_steps;

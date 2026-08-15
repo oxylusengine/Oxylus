@@ -502,6 +502,7 @@ auto RendererInstance::render(
   OX_DEFER(&) {
     self.clear_stages();
     self.shared_resources.clear();
+    self.prepared_frame = {};
   };
 
   const auto dst_extent = dst_attachment->extent;
@@ -533,21 +534,30 @@ auto RendererInstance::render(
     self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
   if (cvar.cvar_contact_shadows_enabled.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
+  if (cvar.cvar_transparent_background.as_bool())
+    self.gpu_scene_flags |= GPU::SceneFlags::TransparentBackground;
 
   const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
   const f32 debug_heatmap_scale = 5.0;
   const auto debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool();
 
+  const auto transparent_background = static_cast<bool>(self.gpu_scene_flags & GPU::SceneFlags::TransparentBackground);
+  const auto hdr_format = transparent_background ? vuk::Format::eR16G16B16A16Sfloat
+                                                 : vuk::Format::eB10G11R11UfloatPack32;
+
   auto final_attachment = vuk::declare_ia(
     "final_attachment",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
      .extent = dst_extent,
-     .format = vuk::Format::eB10G11R11UfloatPack32,
+     .format = hdr_format,
      .sample_count = vuk::Samples::e1,
      .level_count = 1,
      .layer_count = 1}
   );
-  final_attachment = vuk::clear_image(std::move(final_attachment), vuk::Black<float>);
+  final_attachment = vuk::clear_image(
+    std::move(final_attachment),
+    transparent_background ? vuk::Transparent<f32> : vuk::Black<f32>
+  );
 
   auto depth_attachment = vuk::declare_ia(
     "depth_image",
@@ -1332,6 +1342,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
       }
     });
+
+  self.post_proces_settings.exposure = cvar.cvar_exposure.get();
 
   self.render_queue_2d.init();
 
