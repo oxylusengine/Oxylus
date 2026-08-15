@@ -263,6 +263,7 @@ enum class SceneFlags : u32 {
   HasVignette = 1 << 8,
   HasContactShadows = 1 << 9,
   HasSky = 1 << 10,
+  TransparentBackground = 1 << 11,
 };
 consteval void enable_bitmask(SceneFlags);
 
@@ -292,6 +293,7 @@ struct VBGTAOSettings {
 };
 
 struct PostProcessSettings {
+  alignas(4) f32 exposure = 1.0f;
   alignas(4) f32 chromatic_aberration_amount = 0.5f;
   alignas(4) f32 vignette_amount = 0.5f;
   alignas(4) f32 film_grain_scale = 1.0f;

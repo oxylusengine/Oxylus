@@ -141,12 +141,7 @@ auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bo
 
   writer.end_obj();
 
-  auto meta_path = path;
-  if (path.extension() != ".oxasset") {
-    meta_path += ".oxasset";
-  }
-
-  auto file = File(meta_path, FileAccess::Write);
+  auto file = File(AssetManager::meta_file_path(path), FileAccess::Write);
   file.write(writer.stream.view());
   file.close();
   return true;
@@ -225,14 +220,8 @@ auto AssetManager::read_meta_file_from_asset(this AssetManager& self, const std:
   -> std::unique_ptr<AssetMetaFile> {
   ZoneScoped;
 
-  if (!std::filesystem::exists(path)) {
-    return nullptr;
-  }
-
-  memory::ScopedStack stack;
-
-  auto meta_path = stack.format("{}.oxasset", path);
-  if (!std::filesystem::exists(meta_path)) {
+  auto meta_path = meta_file_path(path);
+  if (meta_path.empty() || !std::filesystem::exists(meta_path)) {
     return nullptr;
   }
 
@@ -261,6 +250,35 @@ auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> Asse
     case fnv64_c(".LUA")    : return AssetFileType::LUA;
     default                 : return AssetFileType::None;
   }
+}
+
+auto AssetManager::meta_file_path(const std::filesystem::path& path) -> std::filesystem::path {
+  ZoneScoped;
+
+  if (path.empty()) {
+    return {};
+  }
+
+  if (to_asset_file_type(path) == AssetFileType::Meta) {
+    return path;
+  }
+
+  auto meta_path = path;
+  meta_path += ".oxasset";
+
+  return meta_path;
+}
+
+auto AssetManager::owns_meta_file(const std::filesystem::path& path) -> bool {
+  ZoneScoped;
+
+  if (path.empty()) {
+    return false;
+  }
+
+  const auto file_type = to_asset_file_type(path);
+
+  return file_type == AssetFileType::None || file_type == AssetFileType::Meta;
 }
 
 auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
@@ -300,7 +318,6 @@ auto AssetManager::create_asset(this AssetManager& self, const AssetType type, c
 
 auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID {
   ZoneScoped;
-  memory::ScopedStack stack;
 
   if (!std::filesystem::exists(path)) {
     OX_LOG_ERROR("Trying to import an asset '{}' that doesn't exist.", path);
@@ -333,7 +350,7 @@ auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::
     }
   }
 
-  auto meta_path = stack.format("{}.oxasset", path);
+  auto meta_path = meta_file_path(path);
   if (std::filesystem::exists(meta_path)) {
     return self.register_asset(meta_path);
   }
@@ -570,6 +587,17 @@ auto AssetManager::export_asset(this AssetManager& self, const UUID& uuid, const
   if (!asset)
     return false;
 
+  const auto meta_path = meta_file_path(path);
+  if (std::filesystem::exists(meta_path)) {
+    if (auto existing_meta = self.read_meta_file(meta_path)) {
+      auto existing_uuid = existing_meta->doc["uuid"].get_string();
+      if (!existing_uuid.error() && existing_uuid.value_unsafe() != uuid.str()) {
+        OX_LOG_ERROR("Refusing to overwrite {}, which belongs to another asset.", meta_path);
+        return false;
+      }
+    }
+  }
+
   JsonWriter writer{};
   begin_asset_meta(writer, uuid, asset->type);
 
@@ -637,8 +665,28 @@ auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInf
   }
 
   if (asset->is_loaded()) {
+    const auto* texture_info = asset->type == AssetType::Texture ? std::get_if<TextureLoadInfo>(&explicit_load)
+                                                                 : nullptr;
+    const auto loaded_texture_id = asset->texture_id;
+    const auto loaded_path = texture_info ? asset->path : std::filesystem::path{};
+
     if (should_acquire) {
       self.acquire_ref(std::move(asset));
+    } else {
+      asset.reset();
+    }
+
+    if (texture_info) {
+      auto texture = self.get_texture(loaded_texture_id);
+      if (texture && texture->is_srgb() != texture_info->is_srgb) {
+        OX_LOG_WARN(
+          "Texture '{}' is already loaded as {}; the request for {} is ignored. Whichever slot "
+          "loaded it first won. Use a separate asset per color space.",
+          loaded_path.string(),
+          texture->is_srgb() ? "sRGB" : "linear",
+          texture_info->is_srgb ? "sRGB" : "linear"
+        );
+      }
     }
 
     return true;
@@ -651,7 +699,13 @@ auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInf
 
   auto asset_id = [&]() -> u64 {
     switch (asset_type) {
-      case AssetType::Model  : return static_cast<u64>(self.load_model(asset_path));
+      case AssetType::Model: {
+        if (auto* info = std::get_if<ModelLoadInfo>(&explicit_load)) {
+          return static_cast<u64>(self.load_model(*info));
+        }
+
+        return static_cast<u64>(self.load_model(asset_path));
+      }
       case AssetType::Texture: {
         auto info = std::get_if<TextureLoadInfo>(&explicit_load);
         return static_cast<u64>(self.load_texture(asset_path, info ? *info : TextureLoadInfo{}));

@@ -1021,6 +1021,260 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
   return self.model_map.create_slot(std::move(model));
 }
 
+auto AssetManager::load_model(this AssetManager& self, const ModelLoadInfo& info) -> ModelID {
+  ZoneScoped;
+
+  const auto vertex_count = static_cast<u32>(info.vertices.size());
+  if (vertex_count == 0 || info.indices.empty()) {
+    OX_LOG_ERROR("Cannot load a model from empty vertices or indices!");
+    return ModelID::Invalid;
+  }
+
+  auto& render_context = App::get_rendercontext();
+
+  auto model = Model{.materials = info.materials};
+
+  for (const auto& material_uuid : model.materials) {
+    self.load_asset(material_uuid, {}, false);
+  }
+
+  auto quantized_positions = std::vector<glm::u16vec4>(vertex_count);
+  auto quantized_normals = std::vector<u32>(vertex_count);
+  auto quantized_texcoords = std::vector<glm::u16vec2>(vertex_count);
+  // meshopt wants a tightly packed float stream to build and bound meshlets from.
+  auto position_floats = std::vector<f32>(vertex_count * 3);
+
+  for (u32 i = 0; i < vertex_count; ++i) {
+    const auto& vertex = info.vertices[i];
+
+    quantized_positions[i] = glm::u16vec4(
+      meshopt_quantizeHalf(vertex.position.x),
+      meshopt_quantizeHalf(vertex.position.y),
+      meshopt_quantizeHalf(vertex.position.z),
+      0
+    );
+    quantized_normals[i] = ((meshopt_quantizeSnorm(vertex.normal.x, 10) + 511) << 20) |
+                           ((meshopt_quantizeSnorm(vertex.normal.y, 10) + 511) << 10) |
+                           (meshopt_quantizeSnorm(vertex.normal.z, 10) + 511);
+    quantized_texcoords[i] = glm::u16vec2(meshopt_quantizeHalf(vertex.uv.x), meshopt_quantizeHalf(vertex.uv.y));
+
+    position_floats[i * 3 + 0] = vertex.position.x;
+    position_floats[i * 3 + 1] = vertex.position.y;
+    position_floats[i * 3 + 2] = vertex.position.z;
+  }
+
+  const auto max_meshlets = meshopt_buildMeshletsBound(
+    info.indices.size(),
+    Model::MAX_MESHLET_INDICES,
+    Model::MAX_MESHLET_PRIMITIVES
+  );
+
+  auto raw_meshlets = std::vector<meshopt_Meshlet>(max_meshlets);
+  auto indirect_vertex_indices = std::vector<u32>(max_meshlets * Model::MAX_MESHLET_INDICES);
+  auto local_triangle_indices = std::vector<u8>(max_meshlets * Model::MAX_MESHLET_PRIMITIVES * 3);
+
+  const auto meshlet_count = meshopt_buildMeshlets(
+    raw_meshlets.data(),
+    indirect_vertex_indices.data(),
+    local_triangle_indices.data(),
+    info.indices.data(),
+    info.indices.size(),
+    position_floats.data(),
+    vertex_count,
+    sizeof(glm::vec3),
+    Model::MAX_MESHLET_INDICES,
+    Model::MAX_MESHLET_PRIMITIVES,
+    0.0f
+  );
+
+  if (meshlet_count == 0) {
+    OX_LOG_ERROR("Failed to build meshlets for a procedural model!");
+    return ModelID::Invalid;
+  }
+
+  raw_meshlets.resize(meshlet_count);
+  auto meshlets = std::vector<GPU::Meshlet>(meshlet_count);
+  auto gpu_meshlet_bounds = std::vector<GPU::MeshletBounds>(meshlet_count);
+
+  const auto& last_meshlet = raw_meshlets[meshlet_count - 1];
+  indirect_vertex_indices.resize(last_meshlet.vertex_offset + last_meshlet.vertex_count);
+  local_triangle_indices.resize(last_meshlet.triangle_offset + ((last_meshlet.triangle_count * 3 + 3) & ~3_u32));
+
+  auto mesh_bb_min = glm::vec3(std::numeric_limits<f32>::max());
+  auto mesh_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
+
+  for (usize i = 0; i < meshlet_count; ++i) {
+    const auto& raw_meshlet = raw_meshlets[i];
+    auto& meshlet = meshlets[i];
+    auto& bounds = gpu_meshlet_bounds[i];
+
+    auto meshlet_bb_min = glm::vec3(std::numeric_limits<f32>::max());
+    auto meshlet_bb_max = glm::vec3(std::numeric_limits<f32>::lowest());
+
+    for (u32 tri_index = 0; tri_index < raw_meshlet.triangle_count * 3; ++tri_index) {
+      const auto local_index = local_triangle_indices[raw_meshlet.triangle_offset + tri_index];
+      const auto indirect_index = indirect_vertex_indices[raw_meshlet.vertex_offset + local_index];
+      const auto& position = info.vertices[indirect_index].position;
+
+      meshlet_bb_min = glm::min(meshlet_bb_min, position);
+      meshlet_bb_max = glm::max(meshlet_bb_max, position);
+    }
+
+    const auto meshopt_bounds = meshopt_computeMeshletBounds(
+      &indirect_vertex_indices[raw_meshlet.vertex_offset],
+      &local_triangle_indices[raw_meshlet.triangle_offset],
+      raw_meshlet.triangle_count,
+      position_floats.data(),
+      vertex_count,
+      sizeof(glm::vec3)
+    );
+
+    const auto meshlet_center = (meshlet_bb_max + meshlet_bb_min) * 0.5f;
+    const auto meshlet_extent = meshlet_bb_max - meshlet_bb_min;
+
+    meshlet.indirect_vertex_index_offset = raw_meshlet.vertex_offset;
+    meshlet.local_triangle_index_offset = raw_meshlet.triangle_offset;
+    meshlet.vertex_count = raw_meshlet.vertex_count;
+    meshlet.triangle_count = raw_meshlet.triangle_count;
+
+    bounds.aabb_center = {
+      meshopt_quantizeHalf(meshlet_center.x),
+      meshopt_quantizeHalf(meshlet_center.y),
+      meshopt_quantizeHalf(meshlet_center.z)
+    };
+    bounds.aabb_extent = {
+      meshopt_quantizeHalf(meshlet_extent.x),
+      meshopt_quantizeHalf(meshlet_extent.y),
+      meshopt_quantizeHalf(meshlet_extent.z)
+    };
+    bounds.cone_axis_xy = {meshopt_bounds.cone_axis_s8[0], meshopt_bounds.cone_axis_s8[1]};
+    bounds.cone_axis_z = meshopt_bounds.cone_axis_s8[2];
+    bounds.cone_cutoff = meshopt_bounds.cone_cutoff_s8;
+
+    mesh_bb_min = glm::min(mesh_bb_min, meshlet_bb_min);
+    mesh_bb_max = glm::max(mesh_bb_max, meshlet_bb_max);
+  }
+
+  const auto mesh_vertices_size = ox::align_up(
+    ox::size_bytes(quantized_positions) + ox::size_bytes(quantized_normals) + ox::size_bytes(quantized_texcoords),
+    8
+  );
+
+  auto lod0_size = 0_u64;
+  lod0_size += ox::size_bytes(info.indices);
+  lod0_size = ox::align_up(lod0_size, 8);
+  lod0_size += ox::size_bytes(meshlets);
+  lod0_size = ox::align_up(lod0_size, 8);
+  lod0_size += ox::size_bytes(gpu_meshlet_bounds);
+  lod0_size = ox::align_up(lod0_size, 8);
+  lod0_size += ox::size_bytes(local_triangle_indices);
+  lod0_size = ox::align_up(lod0_size, 4);
+  lod0_size += ox::size_bytes(indirect_vertex_indices);
+  lod0_size = ox::align_up(lod0_size, 8); // pad end so the LOD metadata base stays 8-aligned
+
+  const auto lod_metadata_size = ox::align_up(sizeof(GPU::MeshLOD), 8);
+  const auto total_gpu_size = mesh_vertices_size + lod0_size + lod_metadata_size;
+
+  auto gpu_mesh_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, total_gpu_size);
+  const auto gpu_bda = gpu_mesh_buffer->device_address;
+
+  auto gpu_mesh = GPU::Mesh{};
+  gpu_mesh.vertex_count = vertex_count;
+  gpu_mesh.lod_count = 1;
+  gpu_mesh.bounds = {
+    .aabb_center = (mesh_bb_max + mesh_bb_min) * 0.5f,
+    .aabb_extent = mesh_bb_max - mesh_bb_min,
+  };
+
+  auto cpu_vertex_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, mesh_vertices_size);
+  auto* cpu_vertex_ptr = reinterpret_cast<u8*>(cpu_vertex_buffer->mapped_ptr);
+
+  auto vertex_offset = 0_u64;
+
+  gpu_mesh.vertex_positions = gpu_bda + vertex_offset;
+  std::memcpy(cpu_vertex_ptr + vertex_offset, quantized_positions.data(), ox::size_bytes(quantized_positions));
+  vertex_offset += ox::size_bytes(quantized_positions);
+
+  gpu_mesh.vertex_normals = gpu_bda + vertex_offset;
+  std::memcpy(cpu_vertex_ptr + vertex_offset, quantized_normals.data(), ox::size_bytes(quantized_normals));
+  vertex_offset += ox::size_bytes(quantized_normals);
+
+  gpu_mesh.texture_coords = gpu_bda + vertex_offset;
+  std::memcpy(cpu_vertex_ptr + vertex_offset, quantized_texcoords.data(), ox::size_bytes(quantized_texcoords));
+
+  auto vertex_subrange = vuk::discard_buf("mesh vertices", gpu_mesh_buffer->subrange(0, mesh_vertices_size));
+  render_context.wait_on(render_context.upload_staging(std::move(cpu_vertex_buffer), std::move(vertex_subrange)));
+
+  auto cpu_lod0_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, lod0_size);
+  auto* cpu_lod0_ptr = reinterpret_cast<u8*>(cpu_lod0_buffer->mapped_ptr);
+
+  auto lod0 = GPU::MeshLOD{};
+  auto write_offset = 0_u64;
+
+  lod0.indices = write_offset;
+  std::memcpy(cpu_lod0_ptr + write_offset, info.indices.data(), ox::size_bytes(info.indices));
+  write_offset += ox::size_bytes(info.indices);
+  write_offset = ox::align_up(write_offset, 8);
+
+  lod0.meshlets = write_offset;
+  std::memcpy(cpu_lod0_ptr + write_offset, meshlets.data(), ox::size_bytes(meshlets));
+  write_offset += ox::size_bytes(meshlets);
+  write_offset = ox::align_up(write_offset, 8);
+
+  lod0.meshlet_bounds = write_offset;
+  std::memcpy(cpu_lod0_ptr + write_offset, gpu_meshlet_bounds.data(), ox::size_bytes(gpu_meshlet_bounds));
+  write_offset += ox::size_bytes(gpu_meshlet_bounds);
+  write_offset = ox::align_up(write_offset, 8);
+
+  lod0.local_triangle_indices = write_offset;
+  std::memcpy(cpu_lod0_ptr + write_offset, local_triangle_indices.data(), ox::size_bytes(local_triangle_indices));
+  write_offset += ox::size_bytes(local_triangle_indices);
+  write_offset = ox::align_up(write_offset, 4);
+
+  lod0.indirect_vertex_indices = write_offset;
+  std::memcpy(cpu_lod0_ptr + write_offset, indirect_vertex_indices.data(), ox::size_bytes(indirect_vertex_indices));
+
+  lod0.indices_count = static_cast<u32>(info.indices.size());
+  lod0.meshlet_count = static_cast<u32>(meshlet_count);
+  lod0.meshlet_bounds_count = static_cast<u32>(gpu_meshlet_bounds.size());
+  lod0.local_triangle_indices_count = static_cast<u32>(local_triangle_indices.size());
+  lod0.indirect_vertex_indices_count = static_cast<u32>(indirect_vertex_indices.size());
+
+  const auto lod0_bda = gpu_bda + mesh_vertices_size;
+  lod0.indices += lod0_bda;
+  lod0.meshlets += lod0_bda;
+  lod0.meshlet_bounds += lod0_bda;
+  lod0.local_triangle_indices += lod0_bda;
+  lod0.indirect_vertex_indices += lod0_bda;
+
+  auto lod0_subrange = vuk::discard_buf("mesh lod0", gpu_mesh_buffer->subrange(mesh_vertices_size, lod0_size));
+  render_context.wait_on(render_context.upload_staging(std::move(cpu_lod0_buffer), std::move(lod0_subrange)));
+
+  const auto metadata_offset = mesh_vertices_size + lod0_size;
+  gpu_mesh.lods = gpu_bda + metadata_offset;
+
+  auto cpu_metadata_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, lod_metadata_size);
+  std::memcpy(cpu_metadata_buffer->mapped_ptr, &lod0, sizeof(GPU::MeshLOD));
+
+  auto metadata_subrange = vuk::discard_buf(
+    "mesh lod metadata",
+    gpu_mesh_buffer->subrange(metadata_offset, lod_metadata_size)
+  );
+  render_context.wait_on(render_context.upload_staging(std::move(cpu_metadata_buffer), std::move(metadata_subrange)));
+
+  auto& root_group = model.mesh_groups.emplace_back();
+  root_group.name = "Root";
+  root_group.mesh_indices.push_back(0);
+
+  model.gpu_meshes.push_back(gpu_mesh);
+  model.gpu_mesh_buffers.push_back(std::move(gpu_mesh_buffer));
+  model.lod0_meshlet_counts.push_back(lod0.meshlet_count);
+  model.material_indices.push_back(info.materials.empty() ? option<u32>(nullopt) : option<u32>(0));
+
+  auto write_lock = std::unique_lock(self.models_mutex);
+  return self.model_map.create_slot(std::move(model));
+}
+
 auto AssetManager::unload_model(this AssetManager& self, ReadGuard<Asset> asset) -> bool {
   ZoneScoped;
 

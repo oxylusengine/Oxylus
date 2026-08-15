@@ -164,6 +164,8 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = event_system.unsubscribe<ScenePlayEvent>(self.scene_play_handler);
   std::ignore = event_system.unsubscribe<SceneStopEvent>(self.scene_stop_handler);
 
+  self.thumbnail_manager.deinit();
+
   self.main_viewport_panel.deinit();
   self.main_viewport_panel.reset();
 

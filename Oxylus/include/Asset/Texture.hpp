@@ -127,6 +127,7 @@ public:
   auto get_image_view() const -> const vuk::ImageView;
   auto get_extent() const -> const vuk::Extent3D&;
   auto get_format() const -> vuk::Format;
+  auto is_srgb() const -> bool;
   auto get_image_id() const -> ImageID;
   auto get_view_id() const -> ImageViewID;
   auto get_image_index() const -> u32;

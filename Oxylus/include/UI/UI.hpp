@@ -152,10 +152,11 @@ public:
     return modified;
   }
 
-  // Texture
+  // `is_srgb` is the color space of the slot, not the file; it decides the loaded image format.
   static bool texture_property(
     const char* label,
     UUID& texture_uuid,
+    bool is_srgb,
     const std::function<UUID(const char*, const UUID&, bool&)>& load_callback,
     const char* tooltip = nullptr
   );

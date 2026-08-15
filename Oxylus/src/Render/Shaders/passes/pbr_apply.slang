@@ -50,6 +50,10 @@ func fs_main(
     let pixel_pos = u32x3(u32x2(input.position.xy), 0);
     let depth = depth_image.Load(pixel_pos);
 
+    if ((scene_flags & SceneFlags::TransparentBackground) != 0 && depth == 0.0) {
+        return f32x4(0.0);
+    }
+
     let albedo_color = albedo_image.SampleLevel(linear_repeat_sampler, input.tex_coord, 0).rgb;
 
     let mapped_smooth_normal = normal_image.Load(pixel_pos);

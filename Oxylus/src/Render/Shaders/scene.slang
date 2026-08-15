@@ -252,6 +252,7 @@ public enum SceneFlags : u32 {
   HasVignette = 1 << 8,
   HasContactShadows = 1 << 9,
   HasSky = 1 << 10,
+  TransparentBackground = 1 << 11,
 };
 
 public struct DirectionalLightCascade {
@@ -288,9 +289,17 @@ public struct TransformWorld {
     return mul(this.world, f32x4(position, 1.0));
   }
 
-  // Normal matrix derived from world (matches CPU-side mat3(world)).
+  public func normal_matrix() -> mat3 {
+    let basis = transpose(mat3(this.world));
+    return transpose(mat3(
+      cross(basis[1], basis[2]),
+      cross(basis[2], basis[0]),
+      cross(basis[0], basis[1])
+    ));
+  }
+
   public func to_world_normal(in f32x3 normal) -> f32x3 {
-    return mul(mat3(this.world), normal);
+    return mul(this.normal_matrix(), normal);
   }
 
   public func to_world_radius(in f32 radius) -> f32 {
@@ -309,7 +318,7 @@ public struct TransformWorld {
   }
 
   public func to_world_normals(in f32x3x3 normals) -> f32x3x3 {
-    let n = mat3(this.world);
+    let n = this.normal_matrix();
     return { mul(n, normals[0]), mul(n, normals[1]), mul(n, normals[2]) };
   }
 };
@@ -504,6 +513,7 @@ public struct VBGTAOSettings {
 };
 
 public struct PostProcessSettings {
+    public f32 exposure;
     public f32 chromatic_aberration_amount;
     public f32 vignette_amount;
     public f32 film_grain_scale;

@@ -77,8 +77,6 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Material, ICON_MDI_PALETTE_SWATCH},
 };
 
-// A `.oxasset` sitting next to the file it describes is a sidecar and stays hidden behind the meta
-// file filter. One with no companion file *is* the asset, so it browses as its own type.
 static auto standalone_asset_file_type(const std::filesystem::path& path) -> option<FileType> {
   auto companion_path = path;
   companion_path.replace_extension("");
@@ -661,13 +659,16 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
         ImGui::SetNextItemAllowOverlap();
 
         auto use_thumbnail_image = !is_dir && editor_cvar.cvar_file_thumbnails.get() &&
-                                   (file.type == FileType::Texture || file.type == FileType::Model);
+                                   (file.type == FileType::Texture || file.type == FileType::Model ||
+                                    file.type == FileType::Material);
         auto thumbnail_image = TextureView{};
         if (use_thumbnail_image) {
           if (file.type == FileType::Texture) {
             thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(file_path_str);
           } else if (file.type == FileType::Model) {
             thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(file_path_str);
+          } else if (file.type == FileType::Material) {
+            thumbnail_image = editor.thumbnail_manager.get_thumbnail_material(file_path_str);
           }
         }
         if (use_thumbnail_image) {
@@ -833,8 +834,6 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     if (ImGui::Button("Create", ImVec2(120, 0))) {
       if (!self.new_asset_name_.empty()) {
         auto& asset_man = App::mod<AssetManager>();
-        // The registered path is the meta path without its `.oxasset` extension, matching what
-        // `register_asset` derives when the project is re-scanned.
         auto asset_path = self.current_directory_ / self.new_asset_name_;
         if (asset_path.extension() == ".oxasset") {
           asset_path.replace_extension("");

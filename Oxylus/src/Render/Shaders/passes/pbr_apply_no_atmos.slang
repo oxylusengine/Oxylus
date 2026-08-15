@@ -33,6 +33,10 @@ func fs_main(
     let pixel_pos = u32x3(u32x2(input.position.xy), 0);
     let depth = depth_image.Load(pixel_pos);
 
+    if ((scene_flags & SceneFlags::TransparentBackground) != 0 && depth == 0.0) {
+        return f32x4(0.0);
+    }
+
     let albedo_color = albedo_image.SampleLevel(linear_repeat_sampler, input.tex_coord, 0).rgb;
 
     let mapped_smooth_normal = normal_image.Load(pixel_pos);
@@ -70,8 +74,9 @@ func fs_main(
     let contact_shadow = ((scene_flags & SceneFlags::HasContactShadows) != 0) ? contact_shadows.Load(pixel_pos) : 1.0f;
     let visibility = directional_shadow * contact_shadow;
 
-    var indirect_illuminance = has_directional_light ? Li : f32x3(0.0);
-    var direct_illuminance = f32x3(0.0);
+    // No atmosphere, so no transmittance to attenuate the sun.
+    var indirect_illuminance = f32x3(0.0);
+    var direct_illuminance = has_directional_light ? f32x3(Li) : f32x3(0.0);
 
     let has_sky = (scene_flags & SceneFlags::HasSky) != 0;
     let environment_radiance = has_sky ? sky.ambient_color : base_ambient_color;

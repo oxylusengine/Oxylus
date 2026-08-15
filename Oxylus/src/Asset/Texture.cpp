@@ -547,6 +547,8 @@ auto Texture::get_extent() const -> const vuk::Extent3D& { return attachment.ext
 
 auto Texture::get_format() const -> vuk::Format { return attachment.format; }
 
+auto Texture::is_srgb() const -> bool { return to_unorm_format(attachment.format) != attachment.format; }
+
 auto Texture::get_image_id() const -> ImageID { return image_id; }
 
 auto Texture::get_view_id() const -> ImageViewID { return image_view_id; }

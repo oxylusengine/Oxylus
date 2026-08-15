@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include "Asset/AssetManager.hpp"
+#include "Utils/Log.hpp"
 
 class MaterialAssetTest : public ::testing::Test {
 protected:
@@ -64,8 +65,7 @@ TEST_F(MaterialAssetTest, EditedPropertiesSurviveAReload) {
 
   ASSERT_TRUE(asset_man->export_asset(uuid, asset_path));
 
-  // A fresh manager stands in for restarting the editor: the material is only known through the
-  // meta file that was just written.
+  // A fresh manager stands in for an editor restart: only the meta file is known.
   auto reloaded_man = std::make_unique<ox::AssetManager>();
   ASSERT_TRUE(reloaded_man->init().has_value());
 
