@@ -1,12 +1,18 @@
 #include "ThumbnailManager.hpp"
 
+#include <algorithm>
+#include <array>
+#include <glm/common.hpp>
+#include <glm/geometric.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <limits>
 #include <numbers>
 #include <stb_image_write.h>
 #include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetManager.hpp"
 #include "Asset/Model.hpp"
+#include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/JobManager.hpp"
@@ -31,6 +37,28 @@ constexpr auto PREVIEW_EXPOSURE = 1.0f;
 constexpr auto PREVIEW_AMBIENT = 0.25f;
 
 constexpr auto MODEL_PREVIEW_FOV = 40.0f;
+
+// The terrain asset only holds the brush strokes, not the procedural base they sit on, so the
+// preview is a shaded relief of the height deltas tinted by the painted splat rather than a render.
+constexpr auto TERRAIN_PREVIEW_RELIEF = 25.0f;
+constexpr auto TERRAIN_PREVIEW_AMBIENT = 0.3f;
+// Height deltas are normalized heightmap units, so an almost untouched map would otherwise be
+// stretched into a full range of relief.
+constexpr auto TERRAIN_PREVIEW_MIN_RANGE = 0.05f;
+
+// The splat override tints, it does not replace: a map painted end to end is common, and it would
+// otherwise flatten the preview into one colour and hide the sculpting.
+constexpr auto TERRAIN_PREVIEW_UNPAINTED = glm::vec3(0.72f, 0.74f, 0.78f);
+// Zero delta is untouched ground, so it sits mid tone with cuts below it and raises above.
+constexpr auto TERRAIN_PREVIEW_CUT_TONE = 0.55f;
+constexpr auto TERRAIN_PREVIEW_RAISE_TONE = 1.2f;
+
+constexpr auto TERRAIN_LAYER_COLORS = std::array{
+  glm::vec3(0.45f, 0.62f, 0.32f),
+  glm::vec3(0.62f, 0.60f, 0.56f),
+  glm::vec3(0.55f, 0.45f, 0.32f),
+  glm::vec3(0.95f, 0.96f, 1.00f),
+};
 
 struct MaterialPreview {
   std::unique_ptr<Scene> scene = {};
@@ -88,6 +116,169 @@ static auto generate_uv_sphere(f32 radius, u32 rings, u32 sectors) -> ModelLoadI
   }
 
   return model;
+}
+
+struct TerrainEditSample {
+  f32 height = 0.f;
+  glm::vec4 splat = {};
+};
+
+static auto load_terrain_edit(const TerrainEdits& edits, u32 x, u32 y) -> TerrainEditSample {
+  const auto index = static_cast<usize>(y) * edits.resolution.x + x;
+  const auto* splat = edits.splat.data() + index * 4;
+
+  return {
+    .height = reinterpret_cast<const f32*>(edits.height.data())[index],
+    .splat = glm::vec4(splat[0], splat[1], splat[2], splat[3]) / 255.f,
+  };
+}
+
+static auto box_terrain_sample(const TerrainEdits& edits, glm::uvec2 begin, glm::uvec2 end) -> TerrainEditSample {
+  auto accumulated = TerrainEditSample{};
+  for (auto y = begin.y; y < end.y; ++y) {
+    for (auto x = begin.x; x < end.x; ++x) {
+      const auto sample = load_terrain_edit(edits, x, y);
+
+      accumulated.height += sample.height;
+      accumulated.splat += sample.splat;
+    }
+  }
+
+  const auto count = static_cast<f32>((end.y - begin.y) * (end.x - begin.x));
+
+  return {.height = accumulated.height / count, .splat = accumulated.splat / count};
+}
+
+static auto bilinear_terrain_sample(const TerrainEdits& edits, glm::vec2 coord) -> TerrainEditSample {
+  const auto limit = glm::vec2(edits.resolution) - 1.f;
+  const auto clamped = glm::clamp(coord, glm::vec2(0.f), limit);
+  const auto floored = glm::floor(clamped);
+  const auto next = glm::min(floored + 1.f, limit);
+  const auto blend = clamped - floored;
+
+  const auto x0 = static_cast<u32>(floored.x);
+  const auto y0 = static_cast<u32>(floored.y);
+  const auto x1 = static_cast<u32>(next.x);
+  const auto y1 = static_cast<u32>(next.y);
+
+  const auto top_left = load_terrain_edit(edits, x0, y0);
+  const auto top_right = load_terrain_edit(edits, x1, y0);
+  const auto bottom_left = load_terrain_edit(edits, x0, y1);
+  const auto bottom_right = load_terrain_edit(edits, x1, y1);
+
+  const auto top = TerrainEditSample{
+    .height = glm::mix(top_left.height, top_right.height, blend.x),
+    .splat = glm::mix(top_left.splat, top_right.splat, blend.x),
+  };
+  const auto bottom = TerrainEditSample{
+    .height = glm::mix(bottom_left.height, bottom_right.height, blend.x),
+    .splat = glm::mix(bottom_left.splat, bottom_right.splat, blend.x),
+  };
+
+  return {
+    .height = glm::mix(top.height, bottom.height, blend.y),
+    .splat = glm::mix(top.splat, bottom.splat, blend.y),
+  };
+}
+
+static auto resample_terrain_edits(
+  const TerrainEdits& edits, u32 size, std::span<f32> out_height, std::span<glm::vec4> out_splat
+) -> void {
+  const auto resolution = edits.resolution;
+  const auto upsampling = resolution.x < size || resolution.y < size;
+
+  for (auto dst_y = 0_u32; dst_y < size; ++dst_y) {
+    for (auto dst_x = 0_u32; dst_x < size; ++dst_x) {
+      const auto begin = glm::uvec2(dst_x * resolution.x / size, dst_y * resolution.y / size);
+      const auto end = glm::uvec2(
+        ox::max((dst_x + 1) * resolution.x / size, begin.x + 1),
+        ox::max((dst_y + 1) * resolution.y / size, begin.y + 1)
+      );
+      const auto center = (glm::vec2(dst_x, dst_y) + 0.5f) / static_cast<f32>(size) * glm::vec2(resolution) - 0.5f;
+
+      const auto sample = upsampling ? bilinear_terrain_sample(edits, center) : box_terrain_sample(edits, begin, end);
+
+      const auto dst = static_cast<usize>(dst_y) * size + dst_x;
+      out_height[dst] = sample.height;
+      out_splat[dst] = sample.splat;
+    }
+  }
+}
+
+static auto render_terrain_preview(const TerrainEdits& edits, u32 size) -> std::vector<u8> {
+  ZoneScoped;
+
+  const auto texel_count = static_cast<usize>(edits.resolution.x) * edits.resolution.y;
+  if (texel_count == 0 || edits.height.size() < texel_count * sizeof(f32) || edits.splat.size() < texel_count * 4) {
+    return {};
+  }
+
+  const auto grid_size = static_cast<usize>(size) * size;
+  auto height_grid = std::vector<f32>(grid_size);
+  auto splat_grid = std::vector<glm::vec4>(grid_size);
+  resample_terrain_edits(edits, size, height_grid, splat_grid);
+
+  auto min_height = std::numeric_limits<f32>::max();
+  auto max_height = std::numeric_limits<f32>::lowest();
+  for (const auto height : height_grid) {
+    min_height = ox::min(min_height, height);
+    max_height = ox::max(max_height, height);
+  }
+
+  const auto height_range = ox::max(ox::max(-min_height, max_height), TERRAIN_PREVIEW_MIN_RANGE);
+
+  const auto sample = [&](i32 x, i32 y) {
+    const auto cx = std::clamp(x, 0, static_cast<i32>(size) - 1);
+    const auto cy = std::clamp(y, 0, static_cast<i32>(size) - 1);
+
+    return height_grid[static_cast<usize>(cy) * size + cx];
+  };
+
+  const auto light_direction = glm::normalize(glm::vec3(-0.45f, 0.82f, -0.45f));
+
+  auto pixels = std::vector<u8>(grid_size * 4);
+  for (auto y = 0_u32; y < size; ++y) {
+    for (auto x = 0_u32; x < size; ++x) {
+      const auto ix = static_cast<i32>(x);
+      const auto iy = static_cast<i32>(y);
+
+      const auto dhdx = (sample(ix + 1, iy) - sample(ix - 1, iy)) * 0.5f / height_range * TERRAIN_PREVIEW_RELIEF;
+      const auto dhdy = (sample(ix, iy + 1) - sample(ix, iy - 1)) * 0.5f / height_range * TERRAIN_PREVIEW_RELIEF;
+      const auto normal = glm::normalize(glm::vec3(-dhdx, 1.f, -dhdy));
+      const auto shade = TERRAIN_PREVIEW_AMBIENT +
+                         (1.f - TERRAIN_PREVIEW_AMBIENT) * ox::max(glm::dot(normal, light_direction), 0.f);
+
+      const auto index = static_cast<usize>(y) * size + x;
+      const auto altitude = std::clamp(0.5f + height_grid[index] * 0.5f / height_range, 0.f, 1.f);
+
+      const auto painted = splat_grid[index];
+      const auto weights = glm::vec4(
+        std::clamp(1.f - painted.x - painted.y - painted.z, 0.f, 1.f),
+        painted.x,
+        painted.y,
+        painted.z
+      );
+      const auto layer_color = weights.x * TERRAIN_LAYER_COLORS[0] + weights.y * TERRAIN_LAYER_COLORS[1] +
+                               weights.z * TERRAIN_LAYER_COLORS[2] + weights.w * TERRAIN_LAYER_COLORS[3];
+
+      const auto tone = glm::mix(TERRAIN_PREVIEW_CUT_TONE, TERRAIN_PREVIEW_RAISE_TONE, altitude);
+      const auto color = glm::mix(TERRAIN_PREVIEW_UNPAINTED, layer_color, painted.w) * tone * shade;
+
+      pixels[index * 4] = static_cast<u8>(std::clamp(color.r, 0.f, 1.f) * 255.f);
+      pixels[index * 4 + 1] = static_cast<u8>(std::clamp(color.g, 0.f, 1.f) * 255.f);
+      pixels[index * 4 + 2] = static_cast<u8>(std::clamp(color.b, 0.f, 1.f) * 255.f);
+      pixels[index * 4 + 3] = 255;
+    }
+  }
+
+  return pixels;
+}
+
+static auto write_thumbnail_png(const std::filesystem::path& path, std::span<const u8> pixels, u32 size) -> void {
+  ZoneScoped;
+
+  const auto isize = static_cast<i32>(size);
+  stbi_write_png(path.string().c_str(), isize, isize, 4, pixels.data(), isize * 4);
 }
 
 static auto material_meta_path(const std::filesystem::path& asset_path) -> std::filesystem::path {
@@ -168,6 +359,8 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
     return;
   }
 
+  self.drain_pending_upload();
+
   auto render_job = option<PendingRender>(nullopt);
   {
     auto lock = std::unique_lock(self.queue_mutex);
@@ -194,28 +387,48 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
     auto& job_man = App::get_job_manager();
     job_man.push_job_name("ContentPanelThumbnail_WritePNG");
     job_man.submit(Job::create([expected_png = render_job->expected_png, pixel_bytes = *pixels]() {
-      stbi_write_png(
-        expected_png.string().c_str(),
-        THUMBNAIL_SIZE,
-        THUMBNAIL_SIZE,
-        4,
-        pixel_bytes.data(),
-        THUMBNAIL_SIZE * 4
-      );
+      write_thumbnail_png(expected_png, pixel_bytes, THUMBNAIL_SIZE);
     }));
     job_man.pop_job_name();
   }
+
+  self.store_thumbnail(render_job->cache_key, *pixels);
+}
+
+auto ThumbnailManager::store_thumbnail(
+  this ThumbnailManager& self, const std::string& cache_key, std::span<const u8> pixels
+) -> void {
+  ZoneScoped;
 
   auto thumbnail_texture = Texture::create({
     .format = vuk::Format::eR8G8B8A8Srgb,
     .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1},
     .usage = vuk::ImageUsageFlagBits::eSampled,
   });
-  thumbnail_texture.upload(pixels.value(), vuk::eFragmentSampled);
+  thumbnail_texture.upload(pixels, vuk::eFragmentSampled);
 
   auto lock = std::unique_lock(self.thumbnail_mutex);
-  self.thumbnail_cache.insert_or_assign(render_job->cache_key, std::move(thumbnail_texture));
-  self.active_jobs.erase(render_job->cache_key);
+  self.thumbnail_cache.insert_or_assign(cache_key, std::move(thumbnail_texture));
+  self.active_jobs.erase(cache_key);
+}
+
+auto ThumbnailManager::drain_pending_upload(this ThumbnailManager& self) -> void {
+  ZoneScoped;
+
+  auto upload = option<PendingUpload>(nullopt);
+  {
+    auto lock = std::unique_lock(self.queue_mutex);
+    if (!self.pending_uploads.empty()) {
+      upload = std::move(self.pending_uploads.front());
+      self.pending_uploads.pop();
+    }
+  }
+
+  if (!upload) {
+    return;
+  }
+
+  self.store_thumbnail(upload->cache_key, upload->pixels);
 }
 
 auto ThumbnailManager::reset(this ThumbnailManager& self) -> void {
@@ -234,6 +447,7 @@ auto ThumbnailManager::reset(this ThumbnailManager& self) -> void {
 
   auto lock = std::unique_lock(self.thumbnail_mutex);
   self.thumbnail_cache.clear();
+  self.failed_jobs.clear();
 }
 
 auto ThumbnailManager::find_cached(this ThumbnailManager& self, const std::string& cache_key) -> option<TextureView> {
@@ -248,7 +462,7 @@ auto ThumbnailManager::find_cached(this ThumbnailManager& self, const std::strin
 
 auto ThumbnailManager::try_claim_job(this ThumbnailManager& self, const std::string& cache_key) -> bool {
   auto lock = std::unique_lock(self.thumbnail_mutex);
-  if (self.active_jobs.contains(cache_key)) {
+  if (self.active_jobs.contains(cache_key) || self.failed_jobs.contains(cache_key)) {
     return false;
   }
   self.active_jobs.insert(cache_key);
@@ -259,6 +473,12 @@ auto ThumbnailManager::try_claim_job(this ThumbnailManager& self, const std::str
 auto ThumbnailManager::release_job(this ThumbnailManager& self, const std::string& cache_key) -> void {
   auto lock = std::unique_lock(self.thumbnail_mutex);
   self.active_jobs.erase(cache_key);
+}
+
+auto ThumbnailManager::mark_job_failed(this ThumbnailManager& self, const std::string& cache_key) -> void {
+  auto lock = std::unique_lock(self.thumbnail_mutex);
+  self.active_jobs.erase(cache_key);
+  self.failed_jobs.insert(cache_key);
 }
 
 auto ThumbnailManager::submit_cached_png_load(
@@ -425,6 +645,68 @@ auto ThumbnailManager::material_thumbnail_for(
   });
 
   return {};
+}
+
+auto ThumbnailManager::get_thumbnail_terrain(this ThumbnailManager& self, const std::filesystem::path& asset_path)
+  -> TextureView {
+  ZoneScoped;
+
+  if (!std::filesystem::exists(asset_path)) {
+    return {};
+  }
+
+  auto asset_hash = self.get_asset_hash(asset_path);
+
+  if (auto cached = self.find_cached(asset_hash)) {
+    return *cached;
+  }
+
+  if (!self.try_claim_job(asset_hash)) {
+    return {};
+  }
+
+  auto expected_png = self.cache_dir / (asset_hash + ".png");
+  if (std::filesystem::exists(expected_png)) {
+    self.submit_cached_png_load(asset_hash, expected_png);
+    return {};
+  }
+
+  auto& job_man = App::get_job_manager();
+  job_man.push_job_name("ContentPanelThumbnail_TerrainRelief");
+  job_man.submit(Job::create([&self, asset_path, asset_hash, expected_png]() {
+    auto edits = TerrainEdits::read(asset_path);
+    if (!edits) {
+      self.mark_job_failed(asset_hash);
+      return;
+    }
+
+    auto pixels = render_terrain_preview(*edits, THUMBNAIL_SIZE);
+    if (pixels.empty()) {
+      self.mark_job_failed(asset_hash);
+      return;
+    }
+
+    write_thumbnail_png(expected_png, pixels, THUMBNAIL_SIZE);
+
+    auto lock = std::unique_lock(self.queue_mutex);
+    self.pending_uploads.push({.cache_key = asset_hash, .pixels = std::move(pixels)});
+  }));
+  job_man.pop_job_name();
+
+  return {};
+}
+
+auto ThumbnailManager::thumbnail_unavailable(this ThumbnailManager& self, const std::filesystem::path& asset_path)
+  -> bool {
+  ZoneScoped;
+
+  if (!std::filesystem::exists(asset_path)) {
+    return true;
+  }
+
+  auto lock = std::shared_lock(self.thumbnail_mutex);
+
+  return self.failed_jobs.contains(self.get_asset_hash(asset_path));
 }
 
 auto ThumbnailManager::invalidate_material(this ThumbnailManager& self, const UUID& material_uuid) -> void {

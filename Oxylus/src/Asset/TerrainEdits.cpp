@@ -6,7 +6,6 @@
 namespace ox {
 constexpr u32 TERRAIN_EDITS_MAGIC = 0x5254584f; // "OXTR"
 
-// The maps are a f32 height delta and an RGBA8 splat override, so both are four bytes per texel.
 constexpr u64 TERRAIN_EDITS_TEXEL_SIZE = 4;
 
 struct TerrainEditsHeader {
@@ -35,9 +34,13 @@ auto TerrainEdits::read(const std::filesystem::path& path) -> option<TerrainEdit
   }
 
   const auto map_bytes = static_cast<u64>(header.width) * header.height * TERRAIN_EDITS_TEXEL_SIZE;
-  if (map_bytes == 0 || file.size != sizeof(header) + 2 * map_bytes) {
+  if (file.size != sizeof(header) + 2 * map_bytes) {
     OX_LOG_ERROR("Terrain edits file '{}' does not hold a {}x{} pair of maps.", path, header.width, header.height);
     return nullopt;
+  }
+
+  if (map_bytes == 0) {
+    return TerrainEdits{};
   }
 
   auto edits = TerrainEdits{

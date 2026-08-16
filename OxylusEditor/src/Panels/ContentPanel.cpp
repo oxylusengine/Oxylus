@@ -664,7 +664,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
         auto use_thumbnail_image = !is_dir && editor_cvar.cvar_file_thumbnails.get() &&
                                    (file.type == FileType::Texture || file.type == FileType::Model ||
-                                    file.type == FileType::Material);
+                                    file.type == FileType::Material || file.type == FileType::Terrain);
         auto thumbnail_image = TextureView{};
         if (use_thumbnail_image) {
           if (file.type == FileType::Texture) {
@@ -673,6 +673,13 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
             thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(file_path_str);
           } else if (file.type == FileType::Material) {
             thumbnail_image = editor.thumbnail_manager.get_thumbnail_material(file_path_str);
+          } else if (file.type == FileType::Terrain) {
+            thumbnail_image = editor.thumbnail_manager.get_thumbnail_terrain(file_path_str);
+          }
+
+          // Otherwise the spinner below waits on a thumbnail that will never arrive.
+          if (!thumbnail_image && editor.thumbnail_manager.thumbnail_unavailable(file_path_str)) {
+            use_thumbnail_image = false;
           }
         }
         if (use_thumbnail_image) {
