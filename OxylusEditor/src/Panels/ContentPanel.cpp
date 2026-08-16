@@ -70,7 +70,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Unknown, ICON_MDI_FILE},
   {FileType::Directory, ICON_MDI_FOLDER},
   {FileType::Meta, ICON_MDI_FILE_DOCUMENT},
-  {FileType::Scene, ICON_MDI_IMAGE_FILTER_HDR},
+  {FileType::Scene, ICON_MDI_FILE_TREE},
   {FileType::Prefab, ICON_MDI_FILE},
   {FileType::Shader, ICON_MDI_IMAGE_FILTER_BLACK_WHITE},
   {FileType::Texture, ICON_MDI_FILE_IMAGE},
