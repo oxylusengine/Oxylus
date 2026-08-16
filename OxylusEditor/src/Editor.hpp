@@ -106,6 +106,7 @@ private:
   static auto sync_terrain_edits_asset(Scene& scene, const std::filesystem::path& scene_path) -> std::filesystem::path;
 
   auto draw_menubar(this Editor& self) -> void;
+  void draw_bottom_toolbar(this Editor& self, float height);
 
   auto undo() const -> void;
   auto redo() const -> void;

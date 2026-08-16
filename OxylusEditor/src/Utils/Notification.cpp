@@ -11,31 +11,52 @@
 
 namespace ox {
 static constexpr auto notification_window_size = ImVec2(400.f, 60.f);
-static constexpr auto root_window_size = ImVec2(420.f, 300.f);
-static constexpr f32 padding = 40.f;
+static constexpr auto root_window_size = ImVec2(420.f, 80.f);
+static constexpr f32 padding = 10.f;
+static constexpr u32 history_max = 50;
 
-auto NotificationSystem::add(Notification&& notif) -> void {
+auto NotificationSystem::add(this NotificationSystem& self, Notification&& notif) -> void {
   ZoneScoped;
 
-  if (active_notifications.contains(notif.title)) {
+  if (notif.title.empty()) {
+    OX_LOG_WARN("Unnamed activity found!");
+    return;
+  }
+
+  if (self.active_notifications.contains(notif.title)) {
     if (notif.completed) {
-      active_notifications.insert_or_assign(notif.title, std::move(notif));
+      self.active_notifications.insert_or_assign(notif.title, std::move(notif));
       return;
     }
   }
 
-  active_notifications.emplace(notif.title, std::move(notif));
+  self.notification_history.emplace_back(notif);
+  self.active_notifications.emplace(notif.title, std::move(notif));
+
+  // cleanup history
+  while (self.notification_history.size() >= history_max) {
+    self.notification_history.erase(self.notification_history.begin());
+  }
 }
 
-auto NotificationSystem::draw() -> void {
+auto NotificationSystem::get_last_notification(this NotificationSystem& self) -> option<Notification> {
+  ZoneScoped;
+
+  if (!self.notification_history.empty())
+    return self.notification_history.back();
+
+  return nullopt;
+}
+
+auto NotificationSystem::draw(this NotificationSystem& self) -> void {
   ZoneScoped;
 
   // Bottom right
   ImVec2 root_screen_pos = ImGui::GetMainViewport()->Size;
   root_screen_pos.x -= root_window_size.x + padding;
-  root_screen_pos.y -= root_window_size.y + padding;
+  root_screen_pos.y -= root_window_size.y + padding + 25;
 
-  if (active_notifications.empty())
+  if (self.active_notifications.empty())
     return;
 
   App::get_window().set_cursor_override(WindowCursor::Progress);
@@ -46,12 +67,12 @@ auto NotificationSystem::draw() -> void {
   ImGui::Begin(
     "##Notifications",
     nullptr,
-    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs
+    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav
   );
   ImGui::PopStyleColor();
 
-  for (auto& [name, notif] : active_notifications) {
-    draw_single(notif);
+  for (auto& [name, notif] : self.active_notifications) {
+    self.draw_single(notif);
   }
 
   ImGui::End();
@@ -59,12 +80,12 @@ auto NotificationSystem::draw() -> void {
   // Cleanup
   const auto now = std::chrono::steady_clock::now();
   constexpr auto delay = std::chrono::seconds(2); // so that really fast notifications don't flash
-  std::erase_if(active_notifications, [&](const auto& n) {
-    return n.second.completed && now - n.second.created_at > delay;
+  std::erase_if(self.active_notifications, [&](const auto& notif) {
+    return notif.second.completed && now - notif.second.created_at > delay;
   });
 }
 
-auto NotificationSystem::draw_single(Notification& notif) -> void {
+auto NotificationSystem::draw_single(this NotificationSystem& self, Notification& notif) -> void {
   ZoneScoped;
 
   ImGui::SetNextWindowBgAlpha(0.8f);
@@ -79,7 +100,7 @@ auto NotificationSystem::draw_single(Notification& notif) -> void {
       {},
       ImGuiChildFlags_Borders | ImGuiChildFlags_FrameStyle,
       ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoFocusOnAppearing
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoInputs
     )
   ) {
     ImSpinner::detail::SpinnerConfig config{};
