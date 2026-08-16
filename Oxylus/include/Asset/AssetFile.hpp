@@ -19,6 +19,7 @@ enum class AssetType : u32 {
   Scene,
   Audio,
   Script,
+  Terrain,
 };
 
 // List of file extensions supported by Engine.
@@ -34,6 +35,7 @@ enum class AssetFileType : u32 {
   JSON,
   KTX2,
   LUA,
+  OXTERRAIN,
 };
 
 struct NoneAsset {
@@ -69,7 +71,8 @@ struct AssetFileEntry {
   constexpr static auto serialize(auto& archive, auto& self)
     requires(std::remove_cvref_t<decltype(archive)>::kind() == zpp::bits::kind::out)
   {
-    [[maybe_unused]] auto _ = archive(self.type);
+    [[maybe_unused]]
+    auto _ = archive(self.type);
     return std::visit([&](auto& v) { return archive(v); }, self.data);
   }
 };

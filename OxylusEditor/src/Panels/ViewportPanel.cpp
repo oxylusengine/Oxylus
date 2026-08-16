@@ -876,8 +876,7 @@ auto ViewportPanel::draw_terrain_brush_settings_panel(this ViewportPanel& self) 
 
   ImGui::BeginDisabled(terrain == nullptr);
   if (ImGui::Button("Reset Sculpt & Paint")) {
-    scene->terrain->clear_edits();
-    scene->terrain_dirty = true;
+    scene->clear_terrain_edits();
   }
   ImGui::EndDisabled();
   UI::tooltip_hover("Discards every brush stroke and rebuilds the terrain from its parameters alone.");

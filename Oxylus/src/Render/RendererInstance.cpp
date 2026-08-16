@@ -822,6 +822,8 @@ auto RendererInstance::render(
         terrain_brush_context.maps.ridgemap = terrain->ridgemap.acquire("terrain ridgemap", vuk::eFragmentSampled);
         terrain_brush_context.maps.height_edit = terrain->height_edit.acquire("terrain height edit", vuk::eComputeRW);
         terrain_brush_context.maps.splat_edit = terrain->splat_edit.acquire("terrain splat edit", vuk::eComputeRW);
+
+        self.scene.terrain->edits_dirty = true;
       }
 
       if (terrain->brush.active) {

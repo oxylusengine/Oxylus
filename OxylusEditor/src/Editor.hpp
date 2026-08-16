@@ -97,6 +97,14 @@ private:
 
   auto save_project(const std::string& path) -> void;
 
+  // Terrain brush edits have to come back off the GPU before the save job can write them, so the
+  // whole save is deferred to the main thread and only the file write runs on a worker.
+  static auto submit_scene_save(EditorScene* scene, std::filesystem::path path) -> void;
+
+  // Points the terrain at an edits asset (creating one next to the scene the first time it is
+  // painted) and refreshes its payload from the GPU. Returns the file the asset exports to.
+  static auto sync_terrain_edits_asset(Scene& scene, const std::filesystem::path& scene_path) -> std::filesystem::path;
+
   auto draw_menubar(this Editor& self) -> void;
 
   auto undo() const -> void;

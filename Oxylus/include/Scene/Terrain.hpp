@@ -3,6 +3,7 @@
 #include <expected>
 #include <vector>
 
+#include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
 #include "Scene/SceneGPU.hpp"
 
@@ -79,6 +80,9 @@ struct Terrain {
   Texture splat_edit = {};
   bool edits_uninitialized = true;
 
+  // Set when a stroke paints into the maps, cleared when the edits asset catches up.
+  bool edits_dirty = false;
+
   TerrainBrush brush = {};
 
   // The heightmap only ever exists on the GPU, so the collider is built from a CPU mirror
@@ -100,10 +104,18 @@ struct Terrain {
 
   auto clone_edits_from(this Terrain& self, const Terrain& src, RenderContext& render_context) -> void;
 
-  // Stalls on the GPU: it submits a copy of the whole heightmap and waits for it.
   auto download_collision_heights(this Terrain& self, RenderContext& render_context) -> void;
 
-  auto clear_edits(this Terrain& self) -> void { self.edits_uninitialized = true; }
+  auto download_edits(this const Terrain& self, RenderContext& render_context) -> TerrainEdits;
+
+  // Seeds the edit maps from an asset payload. Ignores one authored against a different texel grid,
+  // since the strokes would land somewhere else on it.
+  auto upload_edits(this Terrain& self, const TerrainEdits& edits) -> void;
+
+  auto clear_edits(this Terrain& self) -> void {
+    self.edits_uninitialized = true;
+    self.edits_dirty = false;
+  }
 
   auto is_baked(this const Terrain& self) -> bool { return static_cast<bool>(self.heightmap); }
 

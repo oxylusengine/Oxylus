@@ -396,11 +396,14 @@ Scene::~Scene() {
   if (running)
     runtime_stop();
 
+  tearing_down = true;
+  destroy_terrain_collision();
+  set_terrain_edits_ref({});
+  terrain.reset();
+
   for (auto& [_, system] : lua_systems) {
     system->on_remove(this);
   }
-
-  // world.release();
 
   lua_systems.clear();
   rml_view.reset();
@@ -492,11 +495,18 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       const auto entity = it.entity(i);
 
       if (it.event() == flecs::OnRemove) {
+        // ~Scene already did this, and the members it touches are gone by the time the world's own
+        // teardown gets here.
+        if (self.tearing_down) {
+          return;
+        }
+
         if (self.terrain_entity == entity) {
           self.destroy_terrain_collision();
           self.terrain.reset();
           self.terrain_entity = {};
           self.terrain_dirty = false;
+          self.set_terrain_edits_ref({});
         }
         return;
       }
@@ -512,6 +522,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
       self.terrain_entity = entity;
       self.terrain_dirty = true;
+      self.set_terrain_edits_ref(c.terrain_edits);
     });
 
   self.world.observer<SpriteComponent>()
@@ -1719,6 +1730,15 @@ auto Scene::bake_terrain(this Scene& self) -> void {
     return;
   }
 
+  // `create` only leaves the maps uninitialized when it had to allocate new ones, which is exactly
+  // when the strokes have to come back off the asset.
+  self.set_terrain_edits_ref(c.terrain_edits);
+  if (terrain->edits_uninitialized && self.terrain_edits_ref) {
+    if (auto edits = App::mod<AssetManager>().get_terrain_edits(self.terrain_edits_ref)) {
+      terrain->upload_edits(*edits.value);
+    }
+  }
+
   terrain->bake(App::get_rendercontext());
   terrain->collision_dirty = true;
 }
@@ -2078,6 +2098,60 @@ auto Scene::destroy_terrain_collision(this Scene& self) -> void {
   body_interface.RemoveBody(self.terrain_body_id);
   body_interface.DestroyBody(self.terrain_body_id);
   self.terrain_body_id = JPH::BodyID();
+}
+
+auto Scene::sync_terrain_edits(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.terrain == nullptr || !self.terrain->edits_dirty || !self.terrain_edits_ref) {
+    return;
+  }
+
+  self.terrain->edits_dirty = false;
+  App::mod<AssetManager>().set_terrain_edits(
+    self.terrain_edits_ref,
+    self.terrain->download_edits(App::get_rendercontext())
+  );
+}
+
+auto Scene::clear_terrain_edits(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.terrain == nullptr) {
+    return;
+  }
+
+  self.terrain->clear_edits();
+  self.terrain_dirty = true;
+
+  if (self.terrain_edits_ref) {
+    App::mod<AssetManager>().set_terrain_edits(self.terrain_edits_ref, {});
+  }
+}
+
+auto Scene::set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void {
+  ZoneScoped;
+
+  if (self.terrain_edits_ref == uuid) {
+    return;
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+  const auto previous = std::exchange(self.terrain_edits_ref, uuid);
+
+  // The scene holds exactly one ref, matched by the release below and by the OnRemove observer.
+  // `from_json` already took it for a UUID that came out of the scene file, so only an asset
+  // nothing has loaded yet is acquired here. is_loaded() takes and drops its own read guard; don't
+  // hold one across load_asset().
+  if (uuid && !asset_man.is_loaded(uuid)) {
+    asset_man.load_asset(uuid);
+  }
+
+  // Released after the acquire so re-pointing at the same underlying asset does not drop it to zero
+  // in between.
+  if (previous) {
+    asset_man.unload_asset(previous);
+  }
 }
 
 void Scene::create_character_controller(

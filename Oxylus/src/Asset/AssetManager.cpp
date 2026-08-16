@@ -136,6 +136,12 @@ auto write_script_asset_meta(JsonWriter&, LuaScript*) -> bool {
   return true;
 }
 
+auto write_terrain_asset_meta(JsonWriter&, const TerrainEdits*) -> bool {
+  ZoneScoped;
+
+  return true;
+}
+
 auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
@@ -179,6 +185,7 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   self.scene_map.reset();
   self.audio_map.reset();
   self.script_map.reset();
+  self.terrain_edits_map.reset();
 
   return {};
 }
@@ -238,17 +245,18 @@ auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> Asse
 
   auto extension = stack.to_upper(path.extension().string());
   switch (fnv64_str(extension)) {
-    case fnv64_c(".GLB")    : return AssetFileType::GLB;
-    case fnv64_c(".GLTF")   : return AssetFileType::GLTF;
-    case fnv64_c(".PNG")    : return AssetFileType::PNG;
-    case fnv64_c(".JPG")    :
-    case fnv64_c(".JPEG")   : return AssetFileType::JPEG;
-    case fnv64_c(".DDS")    : return AssetFileType::DDS;
-    case fnv64_c(".JSON")   : return AssetFileType::JSON;
-    case fnv64_c(".OXASSET"): return AssetFileType::Meta;
-    case fnv64_c(".KTX2")   : return AssetFileType::KTX2;
-    case fnv64_c(".LUA")    : return AssetFileType::LUA;
-    default                 : return AssetFileType::None;
+    case fnv64_c(".GLB")      : return AssetFileType::GLB;
+    case fnv64_c(".GLTF")     : return AssetFileType::GLTF;
+    case fnv64_c(".PNG")      : return AssetFileType::PNG;
+    case fnv64_c(".JPG")      :
+    case fnv64_c(".JPEG")     : return AssetFileType::JPEG;
+    case fnv64_c(".DDS")      : return AssetFileType::DDS;
+    case fnv64_c(".JSON")     : return AssetFileType::JSON;
+    case fnv64_c(".OXASSET")  : return AssetFileType::Meta;
+    case fnv64_c(".KTX2")     : return AssetFileType::KTX2;
+    case fnv64_c(".LUA")      : return AssetFileType::LUA;
+    case fnv64_c(".OXTERRAIN"): return AssetFileType::OXTERRAIN;
+    default                   : return AssetFileType::None;
   }
 }
 
@@ -294,6 +302,7 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
     case AssetType::Scene   : return "Scene";
     case AssetType::Audio   : return "Audio";
     case AssetType::Script  : return "Script";
+    case AssetType::Terrain : return "Terrain";
     default                 : return {};
   }
 }
@@ -343,6 +352,10 @@ auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::
     }
     case AssetFileType::LUA: {
       asset_type = AssetType::Script;
+      break;
+    }
+    case AssetFileType::OXTERRAIN: {
+      asset_type = AssetType::Terrain;
       break;
     }
     default: {
@@ -494,6 +507,7 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Scene:
     case AssetType::Audio:
     case AssetType::Texture:
+    case AssetType::Terrain:
     case AssetType::Script : break;
     case AssetType::Model  : {
       auto model = self.get_model(asset->model_id);
@@ -541,6 +555,7 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Scene:
     case AssetType::Audio:
     case AssetType::Texture:
+    case AssetType::Terrain:
     case AssetType::Script : break;
     case AssetType::Model  : {
       auto model = self.get_model(asset->model_id);
@@ -619,6 +634,10 @@ auto AssetManager::export_asset(this AssetManager& self, const UUID& uuid, const
       if (!self.export_script(asset->uuid, writer, path))
         return false;
     } break;
+    case AssetType::Terrain: {
+      if (!self.export_terrain_edits(asset->uuid, writer, path))
+        return false;
+    } break;
     default: return false;
   }
 
@@ -653,6 +672,23 @@ auto AssetManager::export_script(
   ZoneScoped;
 
   return write_script_asset_meta(writer, nullptr);
+}
+
+auto AssetManager::export_terrain_edits(
+  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+) -> bool {
+  ZoneScoped;
+
+  auto edits = self.get_terrain_edits(uuid);
+  if (!edits) {
+    return false;
+  }
+
+  if (!edits->write(path)) {
+    return false;
+  }
+
+  return write_terrain_asset_meta(writer, edits.value);
 }
 
 auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire)
@@ -713,6 +749,7 @@ auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInf
       case AssetType::Scene   : return static_cast<u64>(self.load_scene(asset_path));
       case AssetType::Audio   : return static_cast<u64>(self.load_audio(asset_path));
       case AssetType::Script  : return static_cast<u64>(self.load_script(asset_path));
+      case AssetType::Terrain : return static_cast<u64>(self.load_terrain_edits(asset_path));
       case AssetType::Material: {
         if (auto* info = std::get_if<Material>(&explicit_load)) {
           return static_cast<u64>(self.load_material(asset_path, *info));
@@ -914,6 +951,25 @@ auto AssetManager::unload_script(this AssetManager& self, const ReadGuard<Asset>
   auto write_lock = std::unique_lock(self.scripts_mutex);
   self.script_map.destroy_slot(asset->script_id);
   asset->script_id = ScriptID::Invalid;
+
+  return true;
+}
+
+auto AssetManager::load_terrain_edits(this AssetManager& self, const std::filesystem::path& path) -> TerrainEditsID {
+  ZoneScoped;
+
+  auto edits = TerrainEdits::read(path).value_or(TerrainEdits{});
+
+  auto write_lock = std::unique_lock(self.terrain_edits_mutex);
+  return self.terrain_edits_map.create_slot(std::move(edits));
+}
+
+auto AssetManager::unload_terrain_edits(this AssetManager& self, ReadGuard<Asset> asset) -> bool {
+  ZoneScoped;
+
+  auto write_lock = std::unique_lock(self.terrain_edits_mutex);
+  self.terrain_edits_map.destroy_slot(asset->terrain_edits_id);
+  asset->terrain_edits_id = TerrainEditsID::Invalid;
 
   return true;
 }
@@ -1144,6 +1200,51 @@ auto AssetManager::get_script(this AssetManager& self, ScriptID script_id) -> Re
     return {};
   }
   return ReadGuard<LuaScript>(self.scripts_mutex, script->get(), adopt_lock);
+}
+
+auto AssetManager::get_terrain_edits(this AssetManager& self, const UUID& uuid) -> ReadGuard<TerrainEdits> {
+  ZoneScoped;
+
+  TerrainEditsID terrain_edits_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Terrain || guard->terrain_edits_id == TerrainEditsID::Invalid)
+      return {};
+    terrain_edits_id = guard->terrain_edits_id;
+  }
+  return self.get_terrain_edits(terrain_edits_id);
+}
+
+auto AssetManager::get_terrain_edits(this AssetManager& self, const TerrainEditsID terrain_edits_id)
+  -> ReadGuard<TerrainEdits> {
+  ZoneScoped;
+
+  if (terrain_edits_id == TerrainEditsID::Invalid)
+    return {};
+  self.terrain_edits_mutex.lock_shared();
+  auto* edits = self.terrain_edits_map.slot(terrain_edits_id);
+  if (!edits) {
+    self.terrain_edits_mutex.unlock_shared();
+    return {};
+  }
+  return ReadGuard<TerrainEdits>(self.terrain_edits_mutex, edits, adopt_lock);
+}
+
+auto AssetManager::set_terrain_edits(this AssetManager& self, const UUID& uuid, TerrainEdits&& edits) -> void {
+  ZoneScoped;
+
+  TerrainEditsID terrain_edits_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Terrain || guard->terrain_edits_id == TerrainEditsID::Invalid)
+      return;
+    terrain_edits_id = guard->terrain_edits_id;
+  }
+
+  auto write_lock = std::unique_lock(self.terrain_edits_mutex);
+  if (auto* slot = self.terrain_edits_map.slot(terrain_edits_id)) {
+    *slot = std::move(edits);
+  }
 }
 
 } // namespace ox

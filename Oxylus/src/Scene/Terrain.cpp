@@ -19,8 +19,6 @@ static_assert(sizeof(GPU::TerrainBrushParams) == 96, "TerrainBrushParams layout 
 static_assert(sizeof(GPU::TerrainGenerate) <= 128, "push constant blocks must fit the guaranteed 128 bytes");
 static_assert(sizeof(GPU::TerrainBrushParams) <= 128, "push constant blocks must fit the guaranteed 128 bytes");
 
-// Terrain maps are addressed by a bounded world rect; repeating would wrap the far edge onto the
-// near one and produce a seam across the whole tile.
 constexpr auto TERRAIN_MAP_SAMPLER = vuk::SamplerCreateInfo{
   .magFilter = vuk::Filter::eLinear,
   .minFilter = vuk::Filter::eLinear,
@@ -30,21 +28,19 @@ constexpr auto TERRAIN_MAP_SAMPLER = vuk::SamplerCreateInfo{
   .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
 };
 
-// A stroke lands one small delta per frame, so the height accumulator is f32: at 16 bits a delta
-// under half a quantum rounds away entirely and the brush falloff terraces into rings.
-constexpr auto TERRAIN_HEIGHT_EDIT_FORMAT = vuk::Format::eR32Sfloat;
-
 auto create_terrain_edit_maps(Terrain& terrain, const vuk::Extent3D& extent) -> void {
   terrain.height_edit = Texture::create(
-    {.format = TERRAIN_HEIGHT_EDIT_FORMAT,
+    {.format = vuk::Format::eR32Sfloat,
      .extent = extent,
-     .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+     .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage |
+              vuk::ImageUsageFlagBits::eTransferSrc,
      .sampler_info = TERRAIN_MAP_SAMPLER}
   );
   terrain.splat_edit = Texture::create(
     {.format = vuk::Format::eR8G8B8A8Unorm,
      .extent = extent,
-     .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+     .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage |
+              vuk::ImageUsageFlagBits::eTransferSrc,
      .sampler_info = TERRAIN_MAP_SAMPLER}
   );
 
@@ -172,7 +168,7 @@ auto Terrain::create(this Terrain& self) -> std::expected<void, std::string> {
   // Brush edits are keyed to the texel grid, so they survive every parameter change except one that
   // moves the grid under them.
   const auto keep_edits = self.height_edit && self.splat_edit &&
-                          self.height_edit.get_format() == TERRAIN_HEIGHT_EDIT_FORMAT &&
+                          self.height_edit.get_format() == vuk::Format::eR32Sfloat &&
                           self.height_edit.get_extent().width == self.resolution.x &&
                           self.height_edit.get_extent().height == self.resolution.y;
   auto height_edit = keep_edits ? std::move(self.height_edit) : Texture{};
@@ -184,7 +180,8 @@ auto Terrain::create(this Terrain& self) -> std::expected<void, std::string> {
   self.heightmap = Texture::create({
     .format = vuk::Format::eR16Unorm,
     .extent = map_extent,
-    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage |
+             vuk::ImageUsageFlagBits::eTransferSrc,
     .sampler_info = TERRAIN_MAP_SAMPLER,
   });
   self.ridgemap = Texture::create({
@@ -312,6 +309,100 @@ auto Terrain::clone_edits_from(this Terrain& self, const Terrain& src, RenderCon
   self.edits_uninitialized = false;
 }
 
+auto download_terrain_map(const Texture& map, vuk::Access last_access, RenderContext& render_context)
+  -> std::vector<u8> {
+  const auto extent = map.get_extent();
+  const auto format = map.get_format();
+  const auto byte_size = vuk::compute_image_size(format, extent);
+
+  auto staging = render_context.allocate_buffer_super(
+    vuk::MemoryUsage::eGPUtoCPU,
+    byte_size,
+    vuk::format_to_texel_block_size(format)
+  );
+
+  auto download_pass = vuk::make_pass(
+    "terrain map readback",
+    [](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eCopyRead) src,
+      VUK_BA(vuk::eCopyWrite) dst
+    ) {
+      const auto region = vuk::BufferImageCopy{
+        .bufferOffset = dst->offset,
+        .imageSubresource =
+          {.aspectMask = vuk::format_to_aspect(src->format),
+           .mipLevel = src->base_level,
+           .baseArrayLayer = src->base_layer,
+           .layerCount = src->layer_count},
+        .imageExtent = src->base_mip_extent(),
+      };
+      cmd_list.copy_image_to_buffer(src, dst, region);
+
+      return std::make_tuple(src, dst);
+    }
+  );
+
+  auto [src, downloaded] = download_pass(
+    map.acquire("terrain map readback source", last_access),
+    vuk::acquire_buf("terrain map readback", *staging, vuk::eNone)
+  );
+
+  auto waits = std::array{
+    vuk::UntypedValue(std::move(src).as_released(last_access, vuk::DomainFlagBits::eGraphicsQueue)),
+    vuk::UntypedValue(std::move(downloaded).as_released(vuk::eHostRead, vuk::DomainFlagBits::eGraphicsQueue)),
+  };
+  render_context.wait_on_multiple(waits);
+
+  const auto* bytes = reinterpret_cast<const u8*>(staging->mapped_ptr);
+  if (bytes == nullptr) {
+    OX_LOG_ERROR("Terrain map readback buffer came back unmapped.");
+    return {};
+  }
+
+  return std::vector<u8>(bytes, bytes + byte_size);
+}
+
+auto Terrain::download_edits(this const Terrain& self, RenderContext& render_context) -> TerrainEdits {
+  ZoneScoped;
+
+  if (self.edits_uninitialized || !self.height_edit || !self.splat_edit) {
+    return {};
+  }
+
+  const auto extent = self.height_edit.get_extent();
+
+  return TerrainEdits{
+    .resolution = {extent.width, extent.height},
+    .height = download_terrain_map(self.height_edit, vuk::eComputeRW, render_context),
+    .splat = download_terrain_map(self.splat_edit, vuk::eComputeRW, render_context),
+  };
+}
+
+auto Terrain::upload_edits(this Terrain& self, const TerrainEdits& edits) -> void {
+  ZoneScoped;
+
+  if (edits.is_empty() || !self.height_edit || !self.splat_edit) {
+    return;
+  }
+
+  const auto extent = self.height_edit.get_extent();
+  if (edits.resolution.x != extent.width || edits.resolution.y != extent.height) {
+    OX_LOG_WARN(
+      "Terrain edits were authored at {}x{} but the terrain is {}x{}; discarding them.",
+      edits.resolution.x,
+      edits.resolution.y,
+      extent.width,
+      extent.height
+    );
+    return;
+  }
+
+  self.height_edit.upload(edits.height, vuk::eComputeRW);
+  self.splat_edit.upload(edits.splat, vuk::eComputeRW);
+  self.edits_uninitialized = false;
+}
+
 auto Terrain::bake(this Terrain& self, RenderContext& render_context) -> void {
   ZoneScoped;
 
@@ -353,8 +444,6 @@ auto Terrain::bake(this Terrain& self, RenderContext& render_context) -> void {
   terrain_derive_pass(maps, derive_settings, self.resolution);
   terrain_minmax_pass(maps, minmax_settings, self.patch_count);
 
-  // The maps are sampled by the domain shader (heightmap), the patch cull compute pass
-  // (patch_minmax) and the visbuffer decode fragment shader (the rest).
   auto waits = std::array{
     vuk::UntypedValue(std::move(maps.heightmap).as_released(vuk::eComputeSampled, vuk::DomainFlagBits::eGraphicsQueue)),
     vuk::UntypedValue(std::move(maps.ridgemap).as_released(vuk::eFragmentSampled, vuk::DomainFlagBits::eGraphicsQueue)),
@@ -383,7 +472,7 @@ auto Terrain::download_collision_heights(this Terrain& self, RenderContext& rend
 
   const auto extent = self.heightmap.get_extent();
   const auto format = self.heightmap.get_format();
-  auto staging = render_context.alloc_transient_buffer_raw(
+  auto staging = render_context.allocate_buffer_super(
     vuk::MemoryUsage::eGPUtoCPU,
     vuk::compute_image_size(format, extent),
     vuk::format_to_texel_block_size(format)
@@ -413,19 +502,22 @@ auto Terrain::download_collision_heights(this Terrain& self, RenderContext& rend
 
   auto [heightmap, downloaded] = download_pass(
     self.heightmap.acquire("terrain heightmap", vuk::eComputeSampled),
-    vuk::acquire_buf("terrain heightmap readback", staging, vuk::eNone)
+    vuk::acquire_buf("terrain heightmap readback", *staging, vuk::eNone)
   );
 
-  // The heightmap goes straight back to the access every other pass acquires it with; the readback
-  // is a detour, not a change of ownership.
   auto waits = std::array{
     vuk::UntypedValue(std::move(heightmap).as_released(vuk::eComputeSampled, vuk::DomainFlagBits::eGraphicsQueue)),
     vuk::UntypedValue(std::move(downloaded).as_released(vuk::eHostRead, vuk::DomainFlagBits::eGraphicsQueue)),
   };
   render_context.wait_on_multiple(waits);
 
+  const auto* texels = reinterpret_cast<const u16*>(staging->mapped_ptr);
+  if (texels == nullptr) {
+    OX_LOG_ERROR("Terrain heightmap readback buffer came back unmapped.");
+    return;
+  }
+
   const auto sample_count = terrain_collision_sample_count(self.collision_resolution);
-  const auto* texels = reinterpret_cast<const u16*>(staging.mapped_ptr);
   const auto width = static_cast<i32>(extent.width);
   const auto height = static_cast<i32>(extent.height);
 
@@ -446,8 +538,6 @@ auto Terrain::download_collision_heights(this Terrain& self, RenderContext& rend
 
   for (auto y = 0_u32; y < sample_count; y++) {
     for (auto x = 0_u32; x < sample_count; x++) {
-      // The domain shader reads the heightmap bilinearly with clamp-to-edge, so walking the same uv
-      // grid puts every collider vertex exactly on the rendered surface.
       const auto uv = glm::vec2(x, y) * inv_last_sample;
       const auto coord = uv * map_size - 0.5f;
       const auto lo = glm::ivec2(glm::floor(coord));

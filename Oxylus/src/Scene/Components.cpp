@@ -192,6 +192,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::slope_rock_end,
       &C::altitude_snow_begin,
       &C::altitude_snow_end,
+      &C::terrain_edits,
       &C::layer_grass,
       &C::layer_rock,
       &C::layer_drainage,

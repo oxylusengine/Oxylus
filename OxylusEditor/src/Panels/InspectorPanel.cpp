@@ -282,6 +282,7 @@ struct EntityInspector : IEntitySerializer {
           case AssetType::Texture: // TODO: Textures
           case AssetType::Font:    // TODO: Fonts
           case AssetType::Scene:   // TODO: Scenes
+          case AssetType::Terrain: // TODO: Terrain edits
             break;
           case AssetType::Model: {
             auto model = asset_man.get_model(model_id);

@@ -255,6 +255,8 @@ struct TerrainComponent {
   f32 altitude_snow_begin = 0.7f;
   f32 altitude_snow_end = 0.85f;
 
+  UUID terrain_edits = {};
+
   UUID layer_grass = {};
   UUID layer_rock = {};
   UUID layer_drainage = {};
