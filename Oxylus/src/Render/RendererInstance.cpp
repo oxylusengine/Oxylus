@@ -200,6 +200,31 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   sky_cubemap_init = sky_cubemap_init.as_released(vuk::eFragmentSampled);
   render_context.wait_on(std::move(sky_cubemap_init));
 
+  sky_reflection_cubemap = Texture::create({
+    .format = vuk::Format::eR16G16B16A16Sfloat,
+    .extent = vuk::Extent3D{.width = SKY_REFLECTION_CUBE_RES, .height = SKY_REFLECTION_CUBE_RES, .depth = 1u},
+    .layer_count = 6u,
+    .level_count = SKY_REFLECTION_MIP_COUNT,
+    .image_flags = vuk::ImageCreateFlagBits::eCubeCompatible,
+    .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+    .view_type = vuk::ImageViewType::eCube,
+    .sampler_info = {
+      .magFilter = vuk::Filter::eLinear,
+      .minFilter = vuk::Filter::eLinear,
+      .mipmapMode = vuk::SamplerMipmapMode::eLinear,
+      .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
+      .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
+      .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
+    },
+  });
+  OX_ASSERT(sky_reflection_cubemap);
+
+  auto sky_reflection_cubemap_init = sky_reflection_cubemap.discard("sky_reflection_cubemap_init");
+
+  sky_reflection_cubemap_init = vuk::clear_image(std::move(sky_reflection_cubemap_init), vuk::Black<float>);
+  sky_reflection_cubemap_init = sky_reflection_cubemap_init.as_released(vuk::eFragmentSampled);
+  render_context.wait_on(std::move(sky_reflection_cubemap_init));
+
   auto temp_atmos_info = GPU::Atmosphere{};
   temp_atmos_info.transmittance_lut_size = sky_transmittance_lut.get_extent();
   temp_atmos_info.multiscattering_lut_size = sky_multiscatter_lut.get_extent();
@@ -624,6 +649,11 @@ auto RendererInstance::render(
 
   auto sky_cubemap_attachment = self.sky_cubemap.acquire("sky cubemap", vuk::eFragmentSampled);
 
+  auto sky_reflection_cubemap_attachment = self.sky_reflection_cubemap.acquire(
+    "sky reflection cubemap",
+    vuk::eFragmentSampled
+  );
+
   auto hilbert_noise_lut_attachment = self.hilbert_noise_lut.acquire("hilbert noise", vuk::eFragmentSampled);
 
   auto visbuffer_attachment = vuk::declare_ia(
@@ -1019,6 +1049,7 @@ auto RendererInstance::render(
       .sky_multiscatter_lut_attachment = sky_multiscatter_lut_attachment,
       .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
       .sky_cubemap_attachment = std::move(sky_cubemap_attachment),
+      .sky_reflection_cubemap_attachment = std::move(sky_reflection_cubemap_attachment),
       .sky_aerial_perspective_lut_attachment = std::move(sky_aerial_perspective_attachment),
     };
     self.draw_atmosphere(atmos_context);
@@ -1027,6 +1058,7 @@ auto RendererInstance::render(
     sky_multiscatter_lut_attachment = std::move(atmos_context.sky_multiscatter_lut_attachment);
     sky_view_lut_attachment = std::move(atmos_context.sky_view_lut_attachment);
     sky_cubemap_attachment = std::move(atmos_context.sky_cubemap_attachment);
+    sky_reflection_cubemap_attachment = std::move(atmos_context.sky_reflection_cubemap_attachment);
     sky_aerial_perspective_attachment = std::move(atmos_context.sky_aerial_perspective_lut_attachment);
   }
 
@@ -1053,6 +1085,7 @@ auto RendererInstance::render(
     .sky_aerial_perspective_lut_attachment = std::move(sky_aerial_perspective_attachment),
     .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
     .sky_cubemap_attachment = std::move(sky_cubemap_attachment),
+    .sky_reflection_cubemap_attachment = std::move(sky_reflection_cubemap_attachment),
     .depth_attachment = std::move(depth_attachment),
     .albedo_attachment = std::move(albedo_attachment),
     .normal_attachment = std::move(normal_attachment),

@@ -53,6 +53,30 @@ public f32 specular_occlusion_horizon(f32 NoV, f32 ao, f32 perceptual_roughness)
     return saturate(pow(NoV + ao, exp2(-16.0 * perceptual_roughness - 1.0)) - 1.0 + ao);
 }
 
+public struct EnvBRDF {
+    public f32x3 single_scatter; // FssEss
+    public f32x3 multi_scatter;  // FmsEms
+};
+
+public func env_brdf(f32 NoV, f32 perceptual_roughness, f32x3 F0) -> EnvBRDF {
+    let alpha = perceptual_roughness_to_alpha(perceptual_roughness);
+    let AB = GGX_directional_albedo(NoV, alpha);
+
+    let FssEss = F0 * AB.x + AB.y;
+    let Ess = saturate(AB.x + AB.y);
+    let Ems = 1.0 - Ess;
+    let Favg = F0 + (1.0 - F0) / 21.0;
+
+    EnvBRDF result;
+    result.single_scatter = FssEss;
+    result.multi_scatter = Ems * FssEss * Favg / max(1.0 - Favg * Ems, 1e-4);
+    return result;
+}
+
+public func reflection_roughness_to_mip(f32 perceptual_roughness, f32 mip_count) -> f32 {
+    return saturate(perceptual_roughness) * (mip_count - 1.0);
+}
+
 public struct BRDFResult {
     public f32x3 diffuse;
     public f32x3 specular;

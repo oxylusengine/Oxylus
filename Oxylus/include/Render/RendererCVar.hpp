@@ -38,6 +38,8 @@ struct RendererCVar {
   AutoCVar_Float cvar_vbgtao_thickness;
   AutoCVar_Float cvar_vbgtao_radius;
   AutoCVar_Float cvar_vbgtao_final_power;
+  AutoCVar_Float cvar_ao_direct_diffuse;
+  AutoCVar_Float cvar_ao_direct_specular;
 
   AutoCVar_Int cvar_bloom_enable;
   AutoCVar_Float cvar_bloom_threshold;

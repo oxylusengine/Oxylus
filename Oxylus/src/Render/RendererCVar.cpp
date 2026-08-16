@@ -39,6 +39,8 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_vbgtao_thickness.init(self.system, "pp.vbgtao_thickness", "vbgtao thickness", 0.25f);
   self.cvar_vbgtao_radius.init(self.system, "pp.vbgtao_radius", "vbgtao radius", 0.5f);
   self.cvar_vbgtao_final_power.init(self.system, "pp.vbgtao_final_power", "vbgtao final power", 1.2f);
+  self.cvar_ao_direct_diffuse.init(self.system, "pp.ao_direct_diffuse", "occlusion on direct diffuse", 0.35f);
+  self.cvar_ao_direct_specular.init(self.system, "pp.ao_direct_specular", "occlusion on direct specular", 0.2f);
 
   self.cvar_bloom_enable.init(self.system, "pp.bloom", "use bloom", 1);
   self.cvar_bloom_threshold.init(self.system, "pp.bloom_threshold", "bloom threshold", 1.0f);
@@ -77,6 +79,8 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["thickness"] = self.cvar_vbgtao_thickness.get();
   writer["radius"] = self.cvar_vbgtao_radius.get();
   writer["final_power"] = self.cvar_vbgtao_final_power.get();
+  writer["direct_diffuse"] = self.cvar_ao_direct_diffuse.get();
+  writer["direct_specular"] = self.cvar_ao_direct_specular.get();
   writer.end_obj();
 
   writer["bloom"].begin_obj();
@@ -126,6 +130,13 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_vbgtao_thickness.set(static_cast<f32>(gtao_obj["thickness"]->get_double()));
     self.cvar_vbgtao_radius.set(static_cast<f32>(gtao_obj["radius"].get_double()));
     self.cvar_vbgtao_final_power.set(static_cast<f32>(gtao_obj["final_power"].get_double()));
+
+    if (auto direct_diffuse = gtao_obj["direct_diffuse"].get_double(); !direct_diffuse.error()) {
+      self.cvar_ao_direct_diffuse.set(static_cast<f32>(direct_diffuse.value_unsafe()));
+    }
+    if (auto direct_specular = gtao_obj["direct_specular"].get_double(); !direct_specular.error()) {
+      self.cvar_ao_direct_specular.set(static_cast<f32>(direct_specular.value_unsafe()));
+    }
   }
 
   auto bloom_obj = json["bloom"];

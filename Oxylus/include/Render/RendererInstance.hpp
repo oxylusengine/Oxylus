@@ -9,6 +9,9 @@
 #include "Scene/Terrain.hpp"
 
 namespace ox {
+constexpr auto SKY_REFLECTION_CUBE_RES = 128_u32;
+constexpr auto SKY_REFLECTION_MIP_COUNT = 6_u32;
+
 enum class RenderStage {
   Initialization,
   Culling,
@@ -290,6 +293,7 @@ struct AtmosphereContext {
   vuk::Value<vuk::ImageAttachment> sky_multiscatter_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_cubemap_attachment = {};
+  vuk::Value<vuk::ImageAttachment> sky_reflection_cubemap_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_aerial_perspective_lut_attachment = {};
 };
 
@@ -308,6 +312,7 @@ struct PBRContext {
   vuk::Value<vuk::ImageAttachment> sky_aerial_perspective_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_cubemap_attachment = {};
+  vuk::Value<vuk::ImageAttachment> sky_reflection_cubemap_attachment = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
   vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
   vuk::Value<vuk::ImageAttachment> normal_attachment = {};
@@ -464,6 +469,7 @@ private:
   Texture sky_multiscatter_lut = {};
   Texture hilbert_noise_lut = {};
   Texture sky_cubemap = {};
+  Texture sky_reflection_cubemap = {};
 
   vuk::Unique<vuk::Buffer> transforms_world_buffer{};
   vuk::Unique<vuk::Buffer> transforms_previous_buffer{};

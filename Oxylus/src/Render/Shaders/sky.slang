@@ -335,3 +335,17 @@ public func get_direct_sun_lighting(
 
     return transmittance_lut.SampleLevel(sampler, transmittance_uv, 0.0).rgb;
 }
+
+public func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
+    let min_cos_theta = cos(radius * PI / 180.0);
+
+    let cos_theta = dot(world_dir, sun_dir);
+    if (cos_theta >= min_cos_theta) {
+        return 1.0;
+    }
+
+    let offset = min_cos_theta - cos_theta;
+    let gaussian_bloom = exp(-offset * 50000.0) * 0.5;
+    let inv_bloom = 1.0 / (0.02 + offset * 300.0) * 0.01;
+    return f32x3(gaussian_bloom + inv_bloom);
+}

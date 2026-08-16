@@ -29,6 +29,8 @@ func fs_main(
   uniform u32 light_count,
   uniform Light *lights,
   uniform Sky *sky,
+  uniform f32 ao_direct_diffuse,
+  uniform f32 ao_direct_specular,
 ) -> f32x4 {
     let pixel_pos = u32x3(u32x2(input.position.xy), 0);
     let depth = depth_image.Load(pixel_pos);
@@ -87,16 +89,16 @@ func fs_main(
         let dielectric_F0 = f32x3(0.04);
         let F0 = lerp(dielectric_F0, albedo_color, metallic);
 
-        let alpha = perceptual_roughness_to_alpha(roughness);
-        let AB = GGX_directional_albedo(NoV, alpha);
-        let kS = F0 * AB.x + AB.y;
-        let kD = (1.0 - metallic) * (1.0 - kS);
+        let brdf = env_brdf(NoV, roughness, F0);
+        let diffuse_albedo = albedo_color * (1.0 - metallic);
+        let kD = diffuse_albedo * saturate(1.0 - brdf.single_scatter - brdf.multi_scatter);
 
         let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-        let ibl_diffuse = kD * diffuse_sky * albedo_color * Fd_Lambert();
-        let ibl_specular = kS * specular_sky * spec_occlusion;
-        indirect_illuminance = (ibl_diffuse * occlusion) + ibl_specular;
+        let ibl_diffuse = kD * diffuse_sky * occlusion;
+        let ibl_specular = (brdf.single_scatter * specular_sky * spec_occlusion)
+            + (brdf.multi_scatter * diffuse_sky * spec_occlusion);
+        indirect_illuminance = ibl_diffuse + ibl_specular;
     }
 
     var total_lighting = f32x3(0.0, 0.0, 0.0);
@@ -116,12 +118,20 @@ func fs_main(
     var horizon = saturate(1.0 + horizon_fade * dot(R, smooth_normal));
     horizon *= horizon;
 
+    let direct_diffuse_ao = lerp(1.0, occlusion, saturate(ao_direct_diffuse));
+    let direct_specular_ao = lerp(
+        1.0, specular_occlusion_horizon(NoV, occlusion, roughness), saturate(ao_direct_specular));
+
     var material_surface_color = f32x3(0.0);
     if (NoL > 0.0) {
         let result = BRDF(V, N, L, albedo_color, roughness, metallic);
-        material_surface_color = (result.diffuse + result.specular * horizon) * direct_illuminance * NoL * visibility;
+        let diffuse_term = result.diffuse * direct_diffuse_ao;
+        let specular_term = result.specular * horizon * direct_specular_ao;
+        material_surface_color = (diffuse_term + specular_term) * direct_illuminance * NoL * visibility;
     }
 
-    let final_color = material_surface_color + total_lighting + indirect_illuminance + emission;
+    let punctual_lighting = total_lighting * direct_diffuse_ao;
+
+    let final_color = material_surface_color + punctual_lighting + indirect_illuminance + emission;
     return f32x4(final_color, 1.0);
 }

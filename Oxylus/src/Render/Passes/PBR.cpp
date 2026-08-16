@@ -93,6 +93,71 @@ auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereCo
       std::move(context.sky_cubemap_attachment)
     );
 
+  auto sky_reflection_pass = vuk::make_pass(
+    "sky reflection",
+    [sun_dir = self.directional_light.direction,
+     sun_intensity = self.directional_light.intensity,
+     frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+     atmosphere_address = self.prepared_frame.atmosphere_buffer->device_address](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eComputeSampled) sky_view_lut,
+      VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
+      VUK_BA(vuk::eComputeRead) camera,
+      VUK_IA(vuk::eComputeRW) sky_reflection_cubemap
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("sky_reflection")
+        .bind_sampler(0, 0, vuk::LinearSamplerClamped)
+        .bind_image(0, 1, sky_view_lut)
+        .bind_image(0, 2, sky_transmittance_lut)
+        .bind_buffer(0, 3, camera);
+
+      for (auto mip = 0_u32; mip < SKY_REFLECTION_MIP_COUNT; mip++) {
+        cmd_list.bind_image(0, 4 + mip, sky_reflection_cubemap->mip(mip));
+      }
+
+      for (auto mip = 0_u32; mip < SKY_REFLECTION_MIP_COUNT; mip++) {
+        const auto mip_resolution = std::max(SKY_REFLECTION_CUBE_RES >> mip, 1_u32);
+        const auto perceptual_roughness = static_cast<f32>(mip) / static_cast<f32>(SKY_REFLECTION_MIP_COUNT - 1);
+
+        const auto sample_count = mip == 0 ? 1_u32 : std::min(16_u32 << mip, 64_u32);
+
+        const auto group_count = (mip_resolution + 7_u32) / 8_u32;
+        cmd_list //
+          .push_constants(
+            vuk::ShaderStageFlagBits::eCompute,
+            0,
+            PushConstants(
+              atmosphere_address,
+              sun_dir,
+              sun_intensity,
+              frame_index,
+              mip,
+              mip_resolution,
+              perceptual_roughness,
+              sample_count
+            )
+          )
+          .dispatch(group_count, group_count, sky_reflection_cubemap->layer_count);
+      }
+
+      return std::make_tuple(sky_view_lut, sky_transmittance_lut, camera, sky_reflection_cubemap);
+    }
+  );
+
+  std::tie(
+    context.sky_view_lut_attachment,
+    context.sky_transmittance_lut_attachment,
+    self.prepared_frame.camera_buffer,
+    context.sky_reflection_cubemap_attachment
+  ) =
+    sky_reflection_pass(
+      std::move(context.sky_view_lut_attachment),
+      std::move(context.sky_transmittance_lut_attachment),
+      std::move(self.prepared_frame.camera_buffer),
+      std::move(context.sky_reflection_cubemap_attachment)
+    );
+
   auto sky_aerial_perspective_pass = vuk::make_pass(
     "sky aerial perspective",
     [sun_dir = self.directional_light.direction, sun_intensity = self.directional_light.intensity](
@@ -323,6 +388,8 @@ auto RendererInstance::apply_pbr(
        sun_dir = self.directional_light.direction,
        sun_intensity = self.directional_light.intensity,
        light_count = static_cast<u32>(self.scene.lights.size()),
+       ao_direct_diffuse = self.scene.renderer_cvar.cvar_ao_direct_diffuse.get(),
+       ao_direct_specular = self.scene.renderer_cvar.cvar_ao_direct_specular.get(),
        atmosphere_address = self.prepared_frame.atmosphere_buffer->device_address](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) dst,
@@ -330,6 +397,7 @@ auto RendererInstance::apply_pbr(
         VUK_IA(vuk::eFragmentSampled) sky_aerial_perspective_lut_attachment,
         VUK_IA(vuk::eFragmentSampled) sky_view_lut,
         VUK_IA(vuk::eFragmentSampled) sky_cubemap,
+        VUK_IA(vuk::eFragmentSampled) sky_reflection_cubemap,
         VUK_IA(vuk::eFragmentSampled) depth,
         VUK_IA(vuk::eFragmentSampled) albedo,
         VUK_IA(vuk::eFragmentSampled) normal,
@@ -363,6 +431,7 @@ auto RendererInstance::apply_pbr(
           .bind_image(0, 12, resolved_shadows)
           .bind_image(0, 13, contact_shadows)
           .bind_buffer(0, 14, camera)
+          .bind_image(0, 15, sky_reflection_cubemap)
           .push_constants(
             vuk::ShaderStageFlagBits::eFragment,
             0,
@@ -372,7 +441,10 @@ auto RendererInstance::apply_pbr(
               glm::vec3(0.03f),
               light_count,
               atmosphere_address,
-              lights->device_address
+              lights->device_address,
+              static_cast<f32>(SKY_REFLECTION_MIP_COUNT),
+              ao_direct_diffuse,
+              ao_direct_specular
             )
           )
           .specialize_constants(0, std::to_underlying(scene_flags))
@@ -384,6 +456,7 @@ auto RendererInstance::apply_pbr(
           sky_aerial_perspective_lut_attachment,
           sky_view_lut,
           sky_cubemap,
+          sky_reflection_cubemap,
           depth,
           albedo,
           normal,
@@ -404,6 +477,7 @@ auto RendererInstance::apply_pbr(
       context.sky_aerial_perspective_lut_attachment,
       context.sky_view_lut_attachment,
       context.sky_cubemap_attachment,
+      context.sky_reflection_cubemap_attachment,
       context.depth_attachment,
       context.albedo_attachment,
       context.normal_attachment,
@@ -421,6 +495,7 @@ auto RendererInstance::apply_pbr(
         std::move(context.sky_aerial_perspective_lut_attachment),
         std::move(context.sky_view_lut_attachment),
         std::move(context.sky_cubemap_attachment),
+        std::move(context.sky_reflection_cubemap_attachment),
         std::move(context.depth_attachment),
         std::move(context.albedo_attachment),
         std::move(context.normal_attachment),
@@ -439,6 +514,8 @@ auto RendererInstance::apply_pbr(
        sun_dir = self.directional_light.direction,
        sun_intensity = self.directional_light.intensity,
        light_count = static_cast<u32>(self.scene.lights.size()),
+       ao_direct_diffuse = self.scene.renderer_cvar.cvar_ao_direct_diffuse.get(),
+       ao_direct_specular = self.scene.renderer_cvar.cvar_ao_direct_specular.get(),
        sky_address = self.renderer.render_context->scratch_buffer(self.sky_data)->device_address](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) dst,
@@ -480,7 +557,9 @@ auto RendererInstance::apply_pbr(
               glm::vec3(0.03f),
               light_count,
               lights->device_address,
-              sky_address
+              sky_address,
+              ao_direct_diffuse,
+              ao_direct_specular
             )
           )
           .specialize_constants(0, std::to_underlying(scene_flags))
