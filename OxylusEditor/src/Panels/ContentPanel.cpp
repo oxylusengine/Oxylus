@@ -29,26 +29,28 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_S
   {FileType::Script, "Script"},
   {FileType::Audio, "Audio"},
   {FileType::Material, "Material"},
+  {FileType::Terrain, "Terrain"},
 };
 
 static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
-  {"", FileType::Unknown},                                                                     //
-  {".oxasset", FileType::Meta},                                                                //
-  {".oxscene", FileType::Scene},                                                               //
-  {".oxprefab", FileType::Prefab},                                                             //
-  {".hlsl", FileType::Shader},     {".hlsli", FileType::Shader}, {".glsl", FileType::Shader},  //
-  {".frag", FileType::Shader},     {".vert", FileType::Shader},  {".slang", FileType::Shader}, //
+  {"", FileType::Unknown},                                                                       //
+  {".oxasset", FileType::Meta},                                                                  //
+  {".oxscene", FileType::Scene},                                                                 //
+  {".oxprefab", FileType::Prefab},                                                               //
+  {".oxterrain", FileType::Terrain},                                                             //
+  {".hlsl", FileType::Shader},       {".hlsli", FileType::Shader}, {".glsl", FileType::Shader},  //
+  {".frag", FileType::Shader},       {".vert", FileType::Shader},  {".slang", FileType::Shader}, //
 
-  {".png", FileType::Texture},     {".jpg", FileType::Texture},  {".jpeg", FileType::Texture}, //
-  {".bmp", FileType::Texture},     {".gif", FileType::Texture},  {".ktx", FileType::Texture},  //
-  {".ktx2", FileType::Texture},    {".tiff", FileType::Texture},                               //
+  {".png", FileType::Texture},       {".jpg", FileType::Texture},  {".jpeg", FileType::Texture}, //
+  {".bmp", FileType::Texture},       {".gif", FileType::Texture},  {".ktx", FileType::Texture},  //
+  {".ktx2", FileType::Texture},      {".tiff", FileType::Texture},                               //
 
-  {".gltf", FileType::Model},      {".glb", FileType::Model},                                  //
+  {".gltf", FileType::Model},        {".glb", FileType::Model},                                  //
 
-  {".mp3", FileType::Audio},       {".m4a", FileType::Audio},    {".wav", FileType::Audio},    //
-  {".ogg", FileType::Audio},                                                                   //
+  {".mp3", FileType::Audio},         {".m4a", FileType::Audio},    {".wav", FileType::Audio},    //
+  {".ogg", FileType::Audio},                                                                     //
 
-  {".lua", FileType::Script},                                                                  //
+  {".lua", FileType::Script},                                                                    //
 };
 
 static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
@@ -61,6 +63,7 @@ static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
   {FileType::Audio, {0.20f, 0.80f, 0.50f, 1.00f}},
   {FileType::Script, {0.0f, 16.0f, 121.0f, 1.00f}},
   {FileType::Material, {0.85f, 0.60f, 0.15f, 1.00f}},
+  {FileType::Terrain, {0.45f, 0.70f, 0.30f, 1.00f}},
 };
 
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_ICON = {
@@ -75,6 +78,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Audio, ICON_MDI_MICROPHONE},
   {FileType::Script, ICON_MDI_LANGUAGE_LUA},
   {FileType::Material, ICON_MDI_PALETTE_SWATCH},
+  {FileType::Terrain, ICON_MDI_TERRAIN},
 };
 
 static auto standalone_asset_file_type(const std::filesystem::path& path) -> option<FileType> {
@@ -660,7 +664,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
         auto use_thumbnail_image = !is_dir && editor_cvar.cvar_file_thumbnails.get() &&
                                    (file.type == FileType::Texture || file.type == FileType::Model ||
-                                    file.type == FileType::Material);
+                                    file.type == FileType::Material || file.type == FileType::Terrain);
         auto thumbnail_image = TextureView{};
         if (use_thumbnail_image) {
           if (file.type == FileType::Texture) {
@@ -669,6 +673,13 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
             thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(file_path_str);
           } else if (file.type == FileType::Material) {
             thumbnail_image = editor.thumbnail_manager.get_thumbnail_material(file_path_str);
+          } else if (file.type == FileType::Terrain) {
+            thumbnail_image = editor.thumbnail_manager.get_thumbnail_terrain(file_path_str);
+          }
+
+          // Otherwise the spinner below waits on a thumbnail that will never arrive.
+          if (!thumbnail_image && editor.thumbnail_manager.thumbnail_unavailable(file_path_str)) {
+            use_thumbnail_image = false;
           }
         }
         if (use_thumbnail_image) {

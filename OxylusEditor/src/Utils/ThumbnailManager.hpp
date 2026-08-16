@@ -6,6 +6,7 @@
 #include <mutex>
 #include <queue>
 #include <shared_mutex>
+#include <span>
 #include <vector>
 
 #include "Asset/Texture.hpp"
@@ -36,6 +37,10 @@ public:
   auto get_thumbnail_material(this ThumbnailManager& self, const UUID& material_uuid) -> TextureView;
   auto invalidate_material(this ThumbnailManager& self, const UUID& material_uuid) -> void;
 
+  auto get_thumbnail_terrain(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> TextureView;
+
+  auto thumbnail_unavailable(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> bool;
+
 private:
   enum class RenderKind : u8 { Model, Material };
 
@@ -46,16 +51,23 @@ private:
     std::filesystem::path expected_png = {};
   };
 
+  struct PendingUpload {
+    std::string cache_key = {};
+    std::vector<u8> pixels = {};
+  };
+
   static constexpr u32 THUMBNAIL_SIZE = 256;
 
   std::filesystem::path cache_dir = {};
 
   ankerl::unordered_dense::map<std::string, Texture> thumbnail_cache = {};
   ankerl::unordered_dense::set<std::string> active_jobs = {};
+  ankerl::unordered_dense::set<std::string> failed_jobs = {};
   std::shared_mutex thumbnail_mutex = {};
 
   std::mutex queue_mutex = {};
   std::queue<PendingRender> pending_renders = {};
+  std::queue<PendingUpload> pending_uploads = {};
 
   ankerl::unordered_dense::map<std::filesystem::path, UUID> material_uuids = {};
   std::shared_mutex material_uuids_mutex = {};
@@ -79,6 +91,9 @@ private:
   auto render_scene(this ThumbnailManager& self, Scene& scene, u32 size) -> option<std::vector<u8>>;
   auto ensure_material_preview(this ThumbnailManager& self) -> bool;
 
+  auto store_thumbnail(this ThumbnailManager& self, const std::string& cache_key, std::span<const u8> pixels) -> void;
+  auto drain_pending_upload(this ThumbnailManager& self) -> void;
+
   auto get_asset_hash(this const ThumbnailManager& self, const std::filesystem::path& path) -> std::string;
   auto has_unsaved_edits(this ThumbnailManager& self, const UUID& material_uuid, const std::filesystem::path& meta_path)
     -> bool;
@@ -94,6 +109,7 @@ private:
   auto find_cached(this ThumbnailManager& self, const std::string& cache_key) -> option<TextureView>;
   auto try_claim_job(this ThumbnailManager& self, const std::string& cache_key) -> bool;
   auto release_job(this ThumbnailManager& self, const std::string& cache_key) -> void;
+  auto mark_job_failed(this ThumbnailManager& self, const std::string& cache_key) -> void;
   auto submit_cached_png_load(
     this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& png_path
   ) -> void;

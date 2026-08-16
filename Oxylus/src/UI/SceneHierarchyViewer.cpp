@@ -477,6 +477,25 @@ auto SceneHierarchyViewer::draw_entities_context_menu() -> void {
       to_select.add<CameraComponent>().get_mut<TransformComponent>().rotation.y = glm::radians(-90.f);
     }
 
+    if (ImGui::MenuItem("Terrain")) {
+      to_select = scene_->create_entity("terrain", true);
+      to_select //
+        .add<TransformComponent>()
+        .set<TerrainComponent>({
+          .domain_size = 0.7f,
+          .height_frequency = 1.1f,
+          .height_amplitude = 3.335f,
+          .height_lacunarity = 0.4f,
+          .height_octaves = 6,
+          .seed = 246,
+          .erosion_scale = 0.450f,
+          .erosion_strength = 0.220f,
+          .ridge_rounding = 0.2f,
+          .crease_rounding = -0.2f,
+          .erosion_octaves = 16,
+        });
+    }
+
     if (ImGui::BeginMenu("Light")) {
       if (ImGui::MenuItem("Light")) {
         to_select = scene_->create_entity("light", true).add<LightComponent>();

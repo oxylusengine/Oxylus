@@ -28,10 +28,9 @@ repo declared in the root `xmake.lua` (`oxylus https://github.com/oxylusengine/x
 # Configure (pick toolchain from xmake/toolchains.lua: clang, clang-cl, nix-clang, mac-clang, ...)
 xmake f --toolchain=nix-clang --runtimes=c++_static -m debug
 
-# Build — ALWAYS cap parallelism at 8; unbounded -j has crashed this machine
-xmake b -j 8
-xmake b -j 8 Oxylus          # single target
-xmake b -j 8 -a              # all targets, including non-default ones (tests)
+xmake b -j
+xmake b -j Oxylus          # single target
+xmake b -j -a              # all targets, including non-default ones (tests)
 
 xmake r OxylusEditor         # run the editor
 ```

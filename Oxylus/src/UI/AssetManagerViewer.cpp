@@ -146,6 +146,10 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
           script_assets.emplace_back(asset);
           break;
         }
+        case AssetType::Terrain: {
+          terrain_assets.emplace_back(asset);
+          break;
+        }
       }
     }
   }
@@ -304,6 +308,20 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
       );
     }
 
+    if (asset_type_filter_flags[AssetType::Terrain]) {
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      draw_asset_table(
+        "Terrain Assets",
+        "terrain_table",
+        terrain_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
+    }
+
     if (asset_type_filter_flags[AssetType::Shader]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
@@ -347,5 +365,6 @@ auto AssetManagerViewer::clear_vectors(this AssetManagerViewer& self) -> void {
   self.script_assets.clear();
   self.shader_assets.clear();
   self.font_assets.clear();
+  self.terrain_assets.clear();
 }
 } // namespace ox

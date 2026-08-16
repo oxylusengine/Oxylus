@@ -10,6 +10,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -398,11 +399,14 @@ Scene::~Scene() {
   if (running)
     runtime_stop();
 
+  tearing_down = true;
+  destroy_terrain_collision();
+  set_terrain_edits_ref({});
+  terrain.reset();
+
   for (auto& [_, system] : lua_systems) {
     system->on_remove(this);
   }
-
-  // world.release();
 
   lua_systems.clear();
   rml_view.reset();
@@ -484,6 +488,44 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           sprite.rect = sprite.rect.get_transformed(transform->world);
         }
       }
+    });
+
+  self.world.observer<TerrainComponent>()
+    .event(flecs::OnAdd)
+    .event(flecs::OnSet)
+    .event(flecs::OnRemove)
+    .each([&self](flecs::iter& it, usize i, TerrainComponent& c) {
+      const auto entity = it.entity(i);
+
+      if (it.event() == flecs::OnRemove) {
+        // ~Scene already did this, and the members it touches are gone by the time the world's own
+        // teardown gets here.
+        if (self.tearing_down) {
+          return;
+        }
+
+        if (self.terrain_entity == entity) {
+          self.destroy_terrain_collision();
+          self.terrain.reset();
+          self.terrain_entity = {};
+          self.terrain_dirty = false;
+          self.set_terrain_edits_ref({});
+        }
+        return;
+      }
+
+      if (it.event() == flecs::OnAdd && self.deserializing_entity) {
+        return;
+      }
+
+      if (self.terrain_entity && self.terrain_entity != entity) {
+        OX_LOG_WARN("Scene already has a terrain; ignoring the one on entity '{}'.", entity.name().c_str());
+        return;
+      }
+
+      self.terrain_entity = entity;
+      self.terrain_dirty = true;
+      self.set_terrain_edits_ref(c.terrain_edits);
     });
 
   self.world.observer<SpriteComponent>()
@@ -1132,6 +1174,8 @@ auto Scene::physics_init(this Scene& self) -> void {
     }
   );
 
+  self.create_terrain_collision();
+
   // Vehicles last: the constraint attaches to the chassis body the rigidbody pass just created.
   self.world.query_builder<VehicleComponent>().build().each([&self](flecs::entity e, VehicleComponent& vehicle) {
     if (vehicle.runtime_constraint == nullptr) {
@@ -1144,6 +1188,8 @@ auto Scene::physics_init(this Scene& self) -> void {
 
 auto Scene::physics_deinit(this Scene& self) -> void {
   ZoneScoped;
+
+  self.destroy_terrain_collision();
 
   // Vehicles first: the constraint references the chassis body that the rigidbody pass destroys.
   self.world.query_builder<VehicleComponent>().build().each([&self](const flecs::entity& e, VehicleComponent& vehicle) {
@@ -1182,6 +1228,13 @@ auto Scene::runtime_start(this Scene& self) -> void {
   self.running = true;
 
   self.run_deferred_functions();
+
+  // Baked up front rather than on the first update: `physics_init` builds the terrain collider out
+  // of the heightmap, and a scene that just came out of deserialization has not baked one yet.
+  if (self.terrain_dirty) {
+    self.terrain_dirty = false;
+    self.bake_terrain();
+  }
 
   self.physics_init();
 
@@ -1240,6 +1293,17 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     settings.mDrawShapeWireframe = true;
 
     self.physics_system->DrawBodies(settings, self.physics_debug_renderer.get());
+  }
+
+  if (self.terrain_dirty) {
+    self.terrain_dirty = false;
+    self.bake_terrain();
+  }
+
+  // Only while running: outside play mode there is no body to keep in sync, and the readback the
+  // rebuild needs is expensive enough that sculpting should not pay for it.
+  if (self.running && self.terrain != nullptr && self.terrain->collision_dirty) {
+    self.create_terrain_collision();
   }
 
   if (self.renderer_instance) {
@@ -1669,6 +1733,105 @@ auto Scene::remove_transform(this Scene& self, flecs::entity entity) -> void {
   self.entity_transforms_map.erase(it);
 }
 
+auto Scene::bake_terrain(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (!self.terrain_entity || !self.terrain_entity.has<TerrainComponent>()) {
+    self.terrain.reset();
+    self.terrain_entity = {};
+    return;
+  }
+
+  const auto& c = self.terrain_entity.get<TerrainComponent>();
+
+  auto origin = glm::vec3(0.0f);
+  if (auto id = self.get_entity_transform_id(self.terrain_entity)) {
+    if (const auto* transform = self.get_entity_transform(*id)) {
+      origin = glm::vec3(transform->world[3]);
+    }
+  }
+
+  // Updated in place rather than rebuilt: `Terrain::create` carries the brush edit maps across a
+  // re-bake, so tweaking a noise parameter reshapes the procedural base without erasing sculpting.
+  if (self.terrain == nullptr) {
+    self.terrain = std::make_unique<Terrain>();
+  }
+
+  auto* terrain = self.terrain.get();
+  terrain->world_origin = origin;
+  terrain->world_size = c.world_size;
+  terrain->height_range = c.height_range;
+  terrain->resolution = {c.resolution, c.resolution};
+  terrain->patch_count = {c.patch_count, c.patch_count};
+  terrain->target_edge_pixels = c.target_edge_pixels;
+  terrain->max_tessellation = c.max_tessellation;
+  terrain->layer_tiling = c.layer_tiling;
+  terrain->triplanar_begin = c.triplanar_begin;
+  terrain->collision_enabled = c.collision_enabled;
+  terrain->collision_resolution = c.collision_resolution;
+  terrain->collision_friction = c.collision_friction;
+  terrain->collision_restitution = c.collision_restitution;
+
+  auto& asset_man = App::mod<AssetManager>();
+  const auto material_index = [&asset_man](const UUID& uuid) -> u32 {
+    if (!uuid || !asset_man.is_loaded(uuid)) {
+      return GPU::TERRAIN_INVALID_LAYER_MATERIAL;
+    }
+    const auto asset = asset_man.get_asset(uuid);
+    return asset ? SlotMap_decode_id(asset->material_id).index : GPU::TERRAIN_INVALID_LAYER_MATERIAL;
+  };
+  terrain->layer_material_indices = {
+    material_index(c.layer_grass),
+    material_index(c.layer_rock),
+    material_index(c.layer_drainage),
+    material_index(c.layer_snow),
+  };
+
+  terrain->generate_settings = GPU::TerrainGenerate{
+    .erosion =
+      {.scale = c.erosion_scale,
+       .strength = c.erosion_strength,
+       .gully_weight = c.gully_weight,
+       .detail = c.detail,
+       // `rounding.w` must track the lacunarity so rounding keeps a constant world-space size.
+       .rounding = {c.ridge_rounding, c.crease_rounding, 0.1f, 2.0f},
+       .octaves = c.erosion_octaves,
+       .seed = c.seed},
+    .domain_size = c.domain_size,
+    .height_frequency = c.height_frequency,
+    .height_amplitude = c.height_amplitude,
+    .height_lacunarity = c.height_lacunarity,
+    .height_gain = c.height_gain,
+    .height_octaves = c.height_octaves,
+  };
+
+  terrain->derive_settings = GPU::TerrainDerive{
+    .slope_rock_begin = c.slope_rock_begin,
+    .slope_rock_end = c.slope_rock_end,
+    .altitude_snow_begin = c.altitude_snow_begin,
+    .altitude_snow_end = c.altitude_snow_end,
+  };
+
+  if (const auto result = terrain->create(); !result.has_value()) {
+    OX_LOG_ERROR("Failed to create terrain: {}", result.error());
+    self.destroy_terrain_collision();
+    self.terrain.reset();
+    return;
+  }
+
+  // `create` only leaves the maps uninitialized when it had to allocate new ones, which is exactly
+  // when the strokes have to come back off the asset.
+  self.set_terrain_edits_ref(c.terrain_edits);
+  if (terrain->edits_uninitialized && self.terrain_edits_ref) {
+    if (auto edits = App::mod<AssetManager>().get_terrain_edits(self.terrain_edits_ref)) {
+      terrain->upload_edits(*edits.value);
+    }
+  }
+
+  terrain->bake(App::get_rendercontext());
+  terrain->collision_dirty = true;
+}
+
 auto Scene::attach_mesh(
   this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid
 ) -> bool {
@@ -1941,6 +2104,143 @@ auto Scene::create_rigidbody(
   body->SetUserData(static_cast<u64>(entity.id()));
 
   component.runtime_body = body;
+}
+
+auto Scene::create_terrain_collision(this Scene& self) -> void {
+  ZoneScoped;
+
+  self.destroy_terrain_collision();
+
+  auto* terrain = self.terrain.get();
+  if (terrain == nullptr) {
+    return;
+  }
+
+  // Cleared even when no body comes out of it, so a terrain that cannot collide (disabled, not baked
+  // yet, degenerate) does not retry the download every frame.
+  terrain->collision_dirty = false;
+  if (!terrain->collision_enabled || !terrain->is_baked()) {
+    return;
+  }
+
+  terrain->download_collision_heights(App::get_rendercontext());
+
+  const auto sample_count = terrain->collision_sample_count;
+  if (
+    sample_count < TERRAIN_COLLISION_MIN_SAMPLES ||
+    terrain->collision_heights.size() != static_cast<usize>(sample_count) * sample_count
+  ) {
+    OX_LOG_ERROR("Terrain heightmap readback produced no samples; terrain will not collide.");
+    return;
+  }
+
+  // Jolt spans `sample_count - 1` cells between the outer samples, which is exactly the world rect
+  // the renderer maps the heightmap onto.
+  const auto world_min = terrain->world_min();
+  const auto cell_size = terrain->world_size / static_cast<f32>(sample_count - 1);
+
+  auto shape_settings = JPH::HeightFieldShapeSettings(
+    terrain->collision_heights.data(),
+    JPH::Vec3(world_min.x, 0.0f, world_min.y),
+    JPH::Vec3(cell_size.x, 1.0f, cell_size.y),
+    sample_count
+  );
+  shape_settings.mBlockSize = TERRAIN_COLLISION_BLOCK_SIZE;
+  // Quantization is relative to the terrain's own height range rather than to whatever the current
+  // samples happen to span, so re-baking a flatter terrain does not change the encoding.
+  shape_settings.mMinHeightValue = terrain->base_height();
+  shape_settings.mMaxHeightValue = terrain->base_height() + terrain->height_scale();
+
+  const auto shape_result = shape_settings.Create();
+  if (shape_result.HasError()) {
+    OX_LOG_ERROR("Jolt terrain shape error: {}", shape_result.GetError().c_str());
+    return;
+  }
+
+  auto body_settings = JPH::BodyCreationSettings(
+    shape_result.Get(),
+    JPH::Vec3::sZero(),
+    JPH::Quat::sIdentity(),
+    JPH::EMotionType::Static,
+    PhysicsLayers::NON_MOVING
+  );
+  body_settings.mFriction = terrain->collision_friction;
+  body_settings.mRestitution = terrain->collision_restitution;
+
+  auto& body_interface = self.physics_system->GetBodyInterface();
+  auto* body = body_interface.CreateBody(body_settings);
+  OX_CHECK_NULL(body, "Jolt is out of bodies!");
+
+  body->SetUserData(static_cast<u64>(self.terrain_entity.id()));
+  body_interface.AddBody(body->GetID(), JPH::EActivation::DontActivate);
+  self.terrain_body_id = body->GetID();
+}
+
+auto Scene::destroy_terrain_collision(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.terrain_body_id.IsInvalid()) {
+    return;
+  }
+
+  auto& body_interface = self.physics_system->GetBodyInterface();
+  body_interface.RemoveBody(self.terrain_body_id);
+  body_interface.DestroyBody(self.terrain_body_id);
+  self.terrain_body_id = JPH::BodyID();
+}
+
+auto Scene::sync_terrain_edits(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.terrain == nullptr || !self.terrain->edits_dirty || !self.terrain_edits_ref) {
+    return;
+  }
+
+  self.terrain->edits_dirty = false;
+  App::mod<AssetManager>().set_terrain_edits(
+    self.terrain_edits_ref,
+    self.terrain->download_edits(App::get_rendercontext())
+  );
+}
+
+auto Scene::clear_terrain_edits(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.terrain == nullptr) {
+    return;
+  }
+
+  self.terrain->clear_edits();
+  self.terrain_dirty = true;
+
+  if (self.terrain_edits_ref) {
+    App::mod<AssetManager>().set_terrain_edits(self.terrain_edits_ref, {});
+  }
+}
+
+auto Scene::set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void {
+  ZoneScoped;
+
+  if (self.terrain_edits_ref == uuid) {
+    return;
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+  const auto previous = std::exchange(self.terrain_edits_ref, uuid);
+
+  // The scene holds exactly one ref, matched by the release below and by the OnRemove observer.
+  // `from_json` already took it for a UUID that came out of the scene file, so only an asset
+  // nothing has loaded yet is acquired here. is_loaded() takes and drops its own read guard; don't
+  // hold one across load_asset().
+  if (uuid && !asset_man.is_loaded(uuid)) {
+    asset_man.load_asset(uuid);
+  }
+
+  // Released after the acquire so re-pointing at the same underlying asset does not drop it to zero
+  // in between.
+  if (previous) {
+    asset_man.unload_asset(previous);
+  }
 }
 
 void Scene::create_character_controller(
@@ -2363,6 +2663,14 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
   new_scene->from_json(writer.stream.str());
   new_scene->scene_name = new_name;
   new_scene->meshes_dirty = true;
+
+  // Brush strokes live only in the terrain's GPU edit maps, which the scene JSON does not carry, so
+  // the copy would otherwise come up as the freshly generated terrain. `bake_terrain` reuses this
+  // instance and `Terrain::create` carries the edits across.
+  if (src_scene->terrain != nullptr && !src_scene->terrain->edits_uninitialized) {
+    new_scene->terrain = std::make_unique<Terrain>();
+    new_scene->terrain->clone_edits_from(*src_scene->terrain, App::get_rendercontext());
+  }
 
   OX_LOG_TRACE("Copied scene {} to {}", src_scene->scene_name, new_scene->scene_name);
 

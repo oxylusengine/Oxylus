@@ -88,7 +88,7 @@ func compute_partial_derivatives(in f32x4x3 world_positions, in f32x2 uv, in f32
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> FragmentOutput {
     let texel = params.visbuffer.Load(u32x3(u32x2(input.position.xy), 0));
-    if (texel == ~0u) {
+    if (texel == ~0u || is_terrain(texel)) {
         discard;
     }
 

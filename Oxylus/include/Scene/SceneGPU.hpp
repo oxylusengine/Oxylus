@@ -40,6 +40,7 @@ enum class DebugView : i32 {
   Roughness,
   BakedOcclusion,
   GTAO,
+  GeometricNormal,
   RMVSM,
 
   Count,
@@ -351,6 +352,105 @@ enum struct CullFlag : u32 {
   TestAll = TestFrustum | SelectLOD | TestOcclusion,
 };
 consteval void enable_bitmask(CullFlag);
+
+constexpr static u32 TERRAIN_MAX_LAYERS = 4;
+
+struct TerrainErosion {
+  f32 scale = 0.15f;
+  f32 strength = 0.22f;
+  f32 gully_weight = 0.5f;
+  f32 detail = 1.5f;
+  glm::vec4 rounding = {0.1f, 0.0f, 0.1f, 2.0f};
+  glm::vec4 onset = {1.25f, 1.25f, 2.8f, 1.5f};
+  glm::vec2 assumed_slope = {0.7f, 1.0f};
+  f32 cell_scale = 0.7f;
+  f32 gain = 0.5f;
+  f32 lacunarity = 2.0f;
+  f32 normalization = 0.5f;
+  u32 octaves = 5;
+  u32 seed = 0;
+};
+
+struct TerrainGenerate {
+  TerrainErosion erosion = {};
+  glm::uvec2 resolution = {};
+  glm::vec2 height_offset = {-0.65f, 0.0f};
+  f32 domain_size = 2.0f;
+  f32 height_frequency = 3.0f;
+  f32 height_amplitude = 0.125f;
+  f32 height_lacunarity = 2.0f;
+  f32 height_gain = 0.1f;
+  u32 height_octaves = 3;
+};
+
+struct TerrainDerive {
+  glm::uvec2 resolution = {};
+  glm::vec2 texel_world_size = {};
+  f32 height_range = 0.0f;
+  f32 slope_rock_begin = 0.55f;
+  f32 slope_rock_end = 0.8f;
+  f32 altitude_snow_begin = 0.7f;
+  f32 altitude_snow_end = 0.85f;
+  f32 ridge_drainage_scale = 1.0f;
+};
+
+struct TerrainMinMax {
+  glm::uvec2 resolution = {};
+  glm::uvec2 patch_count = {};
+};
+
+struct TerrainRegion {
+  glm::uvec2 texel_origin = {};
+  glm::uvec2 patch_origin = {};
+};
+
+enum struct TerrainBrushMode : u32 {
+  Raise = 0,
+  Smooth,
+  Flatten,
+  Noise,
+  PaintLayer,
+};
+
+struct TerrainBrushHit {
+  glm::vec3 world_position = {};
+  u32 valid = 0;
+};
+
+struct TerrainBrushParams {
+  glm::vec3 ray_origin = {};
+  f32 radius_texels = 0.0f;
+  glm::vec3 ray_direction = {};
+  f32 strength = 0.0f;
+  glm::uvec2 resolution = {};
+  glm::vec2 world_min = {};
+  glm::vec2 world_size = {};
+  glm::vec2 inv_world_size = {};
+  glm::uvec2 patch_count = {};
+  f32 base_height = 0.0f;
+  f32 height_scale = 0.0f;
+  f32 falloff = 1.0f;
+  f32 flatten_height = 0.0f;
+  u32 mode = 0;
+  u32 layer = 0;
+};
+
+constexpr u32 TERRAIN_INVALID_LAYER_MATERIAL = ~0_u32;
+
+struct TerrainData {
+  glm::vec2 world_min = {};
+  glm::vec2 world_size = {};
+  glm::vec2 inv_world_size = {};
+  glm::uvec2 patch_count = {};
+  f32 base_height = 0.0f;
+  f32 height_scale = 0.0f;
+  f32 target_edge_pixels = 16.0f;
+  f32 max_tessellation = 64.0f;
+  f32 layer_tiling = 8.0f;
+  f32 triplanar_begin = 0.5f;
+  glm::uvec4 layer_material_indices = glm::uvec4(TERRAIN_INVALID_LAYER_MATERIAL);
+  f32 brush_radius = 0.0f;
+};
 
 enum RenderFlags2D : u32 {
   RENDER_FLAGS_2D_NONE = 0,

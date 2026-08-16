@@ -72,6 +72,10 @@ private:
   f32 snap_amount = 1.f;
   f32 rotate_snap_amount = 45.f;
 
+  bool terrain_brush_enabled = false;
+  bool terrain_stroke_active = false;
+  TerrainBrush terrain_brush = {};
+
   bool draw_component_gizmos = true;
   f32 gizmo_icon_size = 32.f;
   bool draw_entity_highlighting = true;
@@ -91,6 +95,8 @@ private:
   auto draw_settings_panel(this ViewportPanel& self) -> void;
   auto draw_gizmo_settings_panel(this ViewportPanel& self) -> void;
   auto draw_snap_settings_panel(this ViewportPanel& self) -> void;
+  auto draw_terrain_brush_settings_panel(this ViewportPanel& self) -> void;
+  auto update_terrain_brush(this ViewportPanel& self, glm::vec2 viewport_uv) -> void;
   auto draw_stats_overlay(this const ViewportPanel& self, bool draw_scene_stats) -> void;
   auto draw_gizmos(this ViewportPanel& self) -> void;
   auto mouse_picking_stages(this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel)

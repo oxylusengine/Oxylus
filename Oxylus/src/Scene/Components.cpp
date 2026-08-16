@@ -168,6 +168,46 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   }
 
   {
+    using C = TerrainComponent;
+    registry.bind<
+      &C::world_size,
+      &C::height_range,
+      &C::resolution,
+      &C::patch_count,
+      &C::target_edge_pixels,
+      &C::max_tessellation,
+      &C::domain_size,
+      &C::height_frequency,
+      &C::height_amplitude,
+      &C::height_lacunarity,
+      &C::height_gain,
+      &C::height_octaves,
+      &C::seed,
+      &C::erosion_scale,
+      &C::erosion_strength,
+      &C::gully_weight,
+      &C::detail,
+      &C::ridge_rounding,
+      &C::crease_rounding,
+      &C::erosion_octaves,
+      &C::slope_rock_begin,
+      &C::slope_rock_end,
+      &C::altitude_snow_begin,
+      &C::altitude_snow_end,
+      &C::terrain_edits,
+      &C::layer_grass,
+      &C::layer_rock,
+      &C::layer_drainage,
+      &C::layer_snow,
+      &C::layer_tiling,
+      &C::triplanar_begin,
+      &C::collision_enabled,
+      &C::collision_resolution,
+      &C::collision_friction,
+      &C::collision_restitution>();
+  }
+
+  {
     using C = AtmosphereComponent;
     registry.bind<
       &C::rayleigh_scattering,

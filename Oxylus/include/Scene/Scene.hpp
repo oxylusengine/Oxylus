@@ -19,6 +19,7 @@
 #include "Render/RendererInstance.hpp"
 #include "Scene/Components.hpp"
 #include "Scene/SceneGPU.hpp"
+#include "Scene/Terrain.hpp"
 #include "Scripting/LuaSystem.hpp"
 #include "Utils/Timestep.hpp"
 
@@ -60,6 +61,8 @@ class Scene {
 public:
   std::string scene_name = "Untitled";
 
+  bool tearing_down = false;
+
   flecs::world world;
   ComponentDB component_db = {};
 
@@ -79,6 +82,11 @@ public:
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};
+
+  std::unique_ptr<Terrain> terrain = nullptr;
+  flecs::entity terrain_entity = {};
+  bool terrain_dirty = false;
+  UUID terrain_edits_ref = {};
 
   bool meshes_dirty = false;
   u32 gpu_mesh_instance_count = 0;
@@ -123,11 +131,6 @@ public:
 
   auto set_dirty(this Scene& self, flecs::entity entity) -> void;
 
-  // Returns `prefix` (or a non-conflicting variant) that is free both at the
-  // world root and under `parent`'s child scope. Pass an invalid `parent` to
-  // only check the world root. This is needed because flecs registers child
-  // names in the parent's own name index when `child_of` is added, so a name
-  // that's free at the root can still conflict under a parent.
   auto safe_entity_name(this const Scene& self, std::string prefix, flecs::entity parent = {}) -> std::string;
 
   auto get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem*;
@@ -162,6 +165,12 @@ public:
   auto create_character_controller(
     flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
   ) const -> void;
+
+  auto create_terrain_collision(this Scene& self) -> void;
+  auto destroy_terrain_collision(this Scene& self) -> void;
+  auto sync_terrain_edits(this Scene& self) -> void;
+  auto set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void;
+  auto clear_terrain_edits(this Scene& self) -> void;
 
   // Needs the chassis rigidbody to exist already, so it runs after create_rigidbody. Wheels are read
   // from child entities carrying VehicleWheelComponent, in hierarchy order.
@@ -218,9 +227,12 @@ private:
   std::unique_ptr<PhysicsDebugRenderer> physics_debug_renderer = nullptr;
   std::unique_ptr<Physics3DContactListener> contact_listener_3d = nullptr;
   std::unique_ptr<Physics3DBodyActivationListener> body_activation_listener_3d = nullptr;
+  JPH::BodyID terrain_body_id = {};
 
   auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
   auto remove_transform(this Scene& self, flecs::entity entity) -> void;
+
+  auto bake_terrain(this Scene& self) -> void;
 
   auto run_deferred_functions(this Scene& self) -> void;
 };

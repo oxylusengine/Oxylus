@@ -282,6 +282,7 @@ struct EntityInspector : IEntitySerializer {
           case AssetType::Texture: // TODO: Textures
           case AssetType::Font:    // TODO: Fonts
           case AssetType::Scene:   // TODO: Scenes
+          case AssetType::Terrain: // TODO: Terrain edits
             break;
           case AssetType::Model: {
             auto model = asset_man.get_model(model_id);
@@ -727,6 +728,8 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
     thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(path_str);
   } else if (asset_type == AssetType::Material) {
     thumbnail_image = editor.thumbnail_manager.get_thumbnail_material(asset_uuid);
+  } else if (asset_type == AssetType::Terrain) {
+    thumbnail_image = editor.thumbnail_manager.get_thumbnail_terrain(path_str);
   }
   const auto region = ImGui::GetContentRegionAvail();
   auto content_width = region.x - ImGui::GetStyle().IndentSpacing;

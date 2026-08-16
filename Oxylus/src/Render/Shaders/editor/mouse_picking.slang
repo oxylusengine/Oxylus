@@ -15,11 +15,17 @@ struct ShaderParameters {
 func cs_main(
   uniform ParameterBlock<ShaderParameters> params,
   uniform u32x2 texel,
-  uniform u32 *transform_id
+  uniform u32 *transform_id,
+  uniform u32 terrain_transform_index
 ) -> void {
     let texel = params.visbuffer.Load(u32x3(texel, 0));
     if (texel == ~0u) {
         *transform_id = ~0u;
+        return;
+    }
+
+    if (is_terrain(texel)) {
+        *transform_id = terrain_transform_index;
         return;
     }
 

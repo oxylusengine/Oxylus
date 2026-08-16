@@ -129,18 +129,19 @@ auto JobManager::worker(this JobManager& self, u32 id) -> void {
 auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) -> void {
   ZoneScoped;
 
-  {
-    auto lock = std::shared_lock(self.mutex);
+  if (self.tracker.is_tracking()) {
+    auto lock = std::shared_lock(self.job_name_mutex);
     if (!self.job_name_stack.empty())
       job->name = self.job_name_stack.top();
   }
 
-  self.tracker.register_job(job);
-
-  job->task = [original_task = std::move(job->task), job_ptr = job.get(), &t = self.tracker]() {
-    original_task();
-    t.mark_completed(job_ptr);
-  };
+  if (!job->name.empty()) {
+    self.tracker.register_job(job);
+    job->task = [original_task = std::move(job->task), job_ptr = job.get(), &t = self.tracker]() {
+      original_task();
+      t.mark_completed(job_ptr);
+    };
+  }
 
   {
     auto lock = std::unique_lock(self.mutex);
@@ -152,7 +153,8 @@ auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) ->
   }
 
   self.job_count.fetch_add(1);
-  self.condition_var.notify_all();
+
+  self.condition_var.notify_one();
 }
 
 auto JobManager::wait(this JobManager& self) -> void {
