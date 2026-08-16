@@ -29,6 +29,7 @@ struct TerrainMaps {
   vuk::Value<vuk::Buffer> region = {};
 };
 
+auto terrain_generate_pass(TerrainMaps& maps, const GPU::TerrainGenerate& settings, glm::uvec2 dispatch_texels) -> void;
 auto terrain_derive_pass(TerrainMaps& maps, const GPU::TerrainDerive& settings, glm::uvec2 dispatch_texels) -> void;
 auto terrain_minmax_pass(TerrainMaps& maps, const GPU::TerrainMinMax& settings, glm::uvec2 dispatch_patches) -> void;
 
@@ -42,9 +43,13 @@ struct TerrainBrush {
 
   GPU::TerrainBrushMode mode = GPU::TerrainBrushMode::Raise;
   f32 radius_world = 32.0f;
-  f32 strength = 0.25f;
-  f32 falloff = 2.0f;
-  f32 flatten_height = 0.5f;
+  // Raise and Noise displace the surface by this many world units per second under the cursor.
+  f32 height_rate = 4.0f;
+  // Smooth, Flatten and Paint Layer converge on their target by this fraction per second.
+  f32 blend_rate = 3.0f;
+  f32 falloff = 1.0f;
+  // World-space height Flatten pulls toward.
+  f32 flatten_height_world = 0.0f;
   u32 layer = 0;
 };
 
@@ -76,7 +81,7 @@ struct Terrain {
 
   TerrainBrush brush = {};
 
-  // Collision. The heightmap only ever exists on the GPU, so the collider is built from a CPU mirror
+  // The heightmap only ever exists on the GPU, so the collider is built from a CPU mirror
   // of it, resampled down to `collision_resolution`. `Scene` owns the Jolt body made out of it.
   bool collision_enabled = true;
   u32 collision_resolution = 256;

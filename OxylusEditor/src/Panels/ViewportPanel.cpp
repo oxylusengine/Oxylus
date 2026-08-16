@@ -813,6 +813,8 @@ auto ViewportPanel::draw_snap_settings_panel(this ViewportPanel& self) -> void {
 
 auto ViewportPanel::draw_terrain_brush_settings_panel(this ViewportPanel& self) -> void {
   auto& brush = self.terrain_brush;
+  auto* scene = self.editor_scene ? self.editor_scene->get_scene().get() : nullptr;
+  const auto* terrain = scene ? scene->terrain.get() : nullptr;
 
   if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
     UI::property("Enabled", &self.terrain_brush_enabled);
@@ -820,12 +822,46 @@ auto ViewportPanel::draw_terrain_brush_settings_panel(this ViewportPanel& self) 
     const char* modes[] = {"Raise", "Smooth", "Flatten", "Noise", "Paint Layer"};
     UI::property("Mode", reinterpret_cast<int*>(&brush.mode), modes, 5);
 
-    UI::property<f32>("Radius", &brush.radius_world, 0.5f, 4096.0f, nullptr, 0.5f, "%.1f");
-    UI::property<f32>("Strength", &brush.strength, 0.0f, 1.0f);
-    UI::property<f32>("Falloff", &brush.falloff, 1.0f, 8.0f);
+    UI::property<f32>("Radius", &brush.radius_world, 0.5f, 4096.0f, "Brush footprint in world units.", 0.5f, "%.1f m");
+
+    const auto displaces = brush.mode == GPU::TerrainBrushMode::Raise || brush.mode == GPU::TerrainBrushMode::Noise;
+    if (displaces) {
+      UI::property<f32>(
+        "Rate",
+        &brush.height_rate,
+        0.05f,
+        64.0f,
+        "How far the surface moves per second of stroke, in world units.",
+        0.05f,
+        "%.2f m/s"
+      );
+    } else {
+      UI::property<f32>(
+        "Rate",
+        &brush.blend_rate,
+        0.05f,
+        16.0f,
+        "How fast the stroke converges on its target, per second.",
+        0.05f,
+        "%.2f /s"
+      );
+    }
+
+    UI::property<
+      f32>("Falloff", &brush.falloff, 1.0f, 8.0f, "Higher values tighten the brush toward its center.", 0.02f, "%.2f");
 
     if (brush.mode == GPU::TerrainBrushMode::Flatten) {
-      UI::property<f32>("Target Height", &brush.flatten_height, 0.0f, 1.0f);
+      const auto min_height = terrain ? terrain->base_height() : 0.0f;
+      const auto max_height = terrain ? min_height + terrain->height_scale() : 1.0f;
+      UI::property<f32>(
+        "Target Height",
+        &brush.flatten_height_world,
+        min_height,
+        max_height,
+        "World-space height the stroke flattens toward.",
+        0.25f,
+        "%.2f m"
+      );
     }
 
     if (brush.mode == GPU::TerrainBrushMode::PaintLayer) {
@@ -838,8 +874,7 @@ auto ViewportPanel::draw_terrain_brush_settings_panel(this ViewportPanel& self) 
 
   ImGui::TextWrapped("Left click to paint, hold Shift to invert a Raise stroke.");
 
-  auto* scene = self.editor_scene ? self.editor_scene->get_scene().get() : nullptr;
-  ImGui::BeginDisabled(scene == nullptr || scene->terrain == nullptr);
+  ImGui::BeginDisabled(terrain == nullptr);
   if (ImGui::Button("Reset Sculpt & Paint")) {
     scene->terrain->clear_edits();
     scene->terrain_dirty = true;

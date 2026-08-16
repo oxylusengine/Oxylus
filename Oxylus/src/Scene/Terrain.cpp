@@ -30,9 +30,13 @@ constexpr auto TERRAIN_MAP_SAMPLER = vuk::SamplerCreateInfo{
   .addressModeW = vuk::SamplerAddressMode::eClampToEdge,
 };
 
+// A stroke lands one small delta per frame, so the height accumulator is f32: at 16 bits a delta
+// under half a quantum rounds away entirely and the brush falloff terraces into rings.
+constexpr auto TERRAIN_HEIGHT_EDIT_FORMAT = vuk::Format::eR32Sfloat;
+
 auto create_terrain_edit_maps(Terrain& terrain, const vuk::Extent3D& extent) -> void {
   terrain.height_edit = Texture::create(
-    {.format = vuk::Format::eR16Snorm,
+    {.format = TERRAIN_HEIGHT_EDIT_FORMAT,
      .extent = extent,
      .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
      .sampler_info = TERRAIN_MAP_SAMPLER}
@@ -50,6 +54,40 @@ auto create_terrain_edit_maps(Terrain& terrain, const vuk::Extent3D& extent) -> 
 
 auto terrain_collision_sample_count(u32 requested) -> u32 {
   return std::bit_ceil(std::clamp(requested, TERRAIN_COLLISION_MIN_SAMPLES, TERRAIN_COLLISION_MAX_SAMPLES));
+}
+
+auto terrain_generate_pass(TerrainMaps& maps, const GPU::TerrainGenerate& settings, glm::uvec2 dispatch_texels)
+  -> void {
+  ZoneScoped;
+
+  auto pass = vuk::make_pass(
+    "terrain generate",
+    [settings, dispatch_texels](
+      vuk::CommandBuffer& cmd_list, //
+      VUK_IA(vuk::eComputeRW) heightmap,
+      VUK_IA(vuk::eComputeRW) ridgemap,
+      VUK_IA(vuk::eComputeSampled) height_edit,
+      VUK_BA(vuk::eComputeRead) region
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("terrain_generate")
+        .bind_image(0, 0, heightmap)
+        .bind_image(0, 1, ridgemap)
+        .bind_image(0, 2, height_edit)
+        .bind_buffer(0, 3, region)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, settings)
+        .dispatch((dispatch_texels.x + 15) / 16, (dispatch_texels.y + 15) / 16, 1);
+
+      return std::make_tuple(heightmap, ridgemap, height_edit, region);
+    }
+  );
+
+  std::tie(maps.heightmap, maps.ridgemap, maps.height_edit, maps.region) = pass(
+    std::move(maps.heightmap),
+    std::move(maps.ridgemap),
+    std::move(maps.height_edit),
+    std::move(maps.region)
+  );
 }
 
 auto terrain_derive_pass(TerrainMaps& maps, const GPU::TerrainDerive& settings, glm::uvec2 dispatch_texels) -> void {
@@ -134,6 +172,7 @@ auto Terrain::create(this Terrain& self) -> std::expected<void, std::string> {
   // Brush edits are keyed to the texel grid, so they survive every parameter change except one that
   // moves the grid under them.
   const auto keep_edits = self.height_edit && self.splat_edit &&
+                          self.height_edit.get_format() == TERRAIN_HEIGHT_EDIT_FORMAT &&
                           self.height_edit.get_extent().width == self.resolution.x &&
                           self.height_edit.get_extent().height == self.resolution.y;
   auto height_edit = keep_edits ? std::move(self.height_edit) : Texture{};
@@ -310,32 +349,7 @@ auto Terrain::bake(this Terrain& self, RenderContext& render_context) -> void {
   };
   self.edits_uninitialized = false;
 
-  auto generate_pass = vuk::make_pass(
-    "terrain generate",
-    [generate_settings](
-      vuk::CommandBuffer& cmd_list, //
-      VUK_IA(vuk::eComputeRW) heightmap,
-      VUK_IA(vuk::eComputeRW) ridgemap,
-      VUK_IA(vuk::eComputeSampled) height_edit
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("terrain_generate")
-        .bind_image(0, 0, heightmap)
-        .bind_image(0, 1, ridgemap)
-        .bind_image(0, 2, height_edit)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, generate_settings)
-        .dispatch_invocations_per_pixel(heightmap);
-
-      return std::make_tuple(heightmap, ridgemap, height_edit);
-    }
-  );
-
-  std::tie(maps.heightmap, maps.ridgemap, maps.height_edit) = generate_pass(
-    std::move(maps.heightmap),
-    std::move(maps.ridgemap),
-    std::move(maps.height_edit)
-  );
-
+  terrain_generate_pass(maps, generate_settings, self.resolution);
   terrain_derive_pass(maps, derive_settings, self.resolution);
   terrain_minmax_pass(maps, minmax_settings, self.patch_count);
 

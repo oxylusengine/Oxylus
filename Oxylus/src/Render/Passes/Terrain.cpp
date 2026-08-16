@@ -3,6 +3,7 @@
 #include <cmath>
 #include <vuk/runtime/CommandBuffer.hpp>
 
+#include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/RendererInstance.hpp"
@@ -39,15 +40,19 @@ auto RendererInstance::apply_terrain_brush(this RendererInstance& self, TerrainB
   auto& render_context = *self.renderer.render_context;
 
   const auto texel_size = terrain.texel_world_size();
-  // The maps are square in practice; taking the coarser axis keeps the footprint from clipping the
-  // stroke on a non-square one.
   const auto radius_texels = brush.radius_world / glm::max(texel_size.x, texel_size.y);
+
+  const auto height_scale = glm::max(terrain.height_scale(), 1e-3f);
+  const auto delta_time = glm::clamp(static_cast<f32>(App::get_timestep().get_seconds()), 0.0f, 1.0f / 30.0f);
+  const auto displaces = brush.mode == GPU::TerrainBrushMode::Raise || brush.mode == GPU::TerrainBrushMode::Noise;
+  const auto strength = displaces ? brush.height_rate * delta_time / height_scale
+                                  : glm::clamp(brush.blend_rate * delta_time, 0.0f, 1.0f);
 
   auto params = GPU::TerrainBrushParams{
     .ray_origin = brush.ray_origin,
     .radius_texels = radius_texels,
     .ray_direction = brush.ray_direction,
-    .strength = brush.invert ? -brush.strength : brush.strength,
+    .strength = brush.invert ? -strength : strength,
     .resolution = terrain.resolution,
     .world_min = terrain.world_min(),
     .world_size = terrain.world_size,
@@ -56,7 +61,7 @@ auto RendererInstance::apply_terrain_brush(this RendererInstance& self, TerrainB
     .base_height = terrain.base_height(),
     .height_scale = terrain.height_scale(),
     .falloff = brush.falloff,
-    .flatten_height = brush.flatten_height,
+    .flatten_height = glm::clamp((brush.flatten_height_world - terrain.base_height()) / height_scale, 0.0f, 1.0f),
     .mode = std::to_underlying(brush.mode),
     .layer = brush.layer,
   };
@@ -99,7 +104,7 @@ auto RendererInstance::apply_terrain_brush(this RendererInstance& self, TerrainB
     "terrain brush apply",
     [params, radius_texels](
       vuk::CommandBuffer& cmd_list, //
-      VUK_IA(vuk::eComputeRW) heightmap,
+      VUK_IA(vuk::eComputeSampled) heightmap,
       VUK_IA(vuk::eComputeRW) height_edit,
       VUK_IA(vuk::eComputeRW) splat_edit,
       VUK_BA(vuk::eComputeRead) hit
@@ -126,6 +131,9 @@ auto RendererInstance::apply_terrain_brush(this RendererInstance& self, TerrainB
     std::move(context.hit_buffer)
   );
 
+  auto generate_settings = terrain.generate_settings;
+  generate_settings.resolution = terrain.resolution;
+
   auto derive_settings = terrain.derive_settings;
   derive_settings.resolution = terrain.resolution;
   derive_settings.texel_world_size = texel_size;
@@ -136,9 +144,8 @@ auto RendererInstance::apply_terrain_brush(this RendererInstance& self, TerrainB
     .patch_count = terrain.patch_count,
   };
 
-  // Derive covers the stroke dilated by one texel on each side, because its Sobel reads a 3x3
-  // neighbourhood; the trace pass already biased the region origin to match.
   const auto derive_texels = 2_u32 * static_cast<u32>(std::ceil(radius_texels + 1.0f)) + 1_u32;
+  terrain_generate_pass(context.maps, generate_settings, glm::uvec2(derive_texels));
   terrain_derive_pass(context.maps, derive_settings, glm::uvec2(derive_texels));
 
   const auto patch_texels = glm::vec2(terrain.resolution) / glm::vec2(terrain.patch_count);

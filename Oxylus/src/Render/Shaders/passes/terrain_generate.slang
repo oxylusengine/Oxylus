@@ -6,20 +6,22 @@ import scene;
 import terrain;
 
 struct ShaderParameters {
-    StorageImage2D<f32, ImageFormat::R16> heightmap;
-    StorageImage2D<f32, ImageFormat::R16F> ridgemap;
-    Image2D<f32> height_edit;
+    [[format("r16")]] RWTexture2D<f32> heightmap;
+    [[format("r16f")]] RWTexture2D<f32> ridgemap;
+    Texture2D<f32> height_edit;
+    StructuredBuffer<TerrainRegion> region;
 };
 
 [[shader("compute")]]
 [[numthreads(16, 16, 1)]]
 func cs_main(u32x3 thread_id: SV_DispatchThreadID, uniform ParameterBlock<ShaderParameters> params,
              uniform TerrainGenerate settings) -> void {
-    if (any(thread_id.xy >= settings.resolution)) {
+    let texel = params.region[0].texel_origin + thread_id.xy;
+    if (any(texel >= settings.resolution)) {
         return;
     }
 
-    let uv = (f32x2(thread_id.xy) + 0.5) / f32x2(settings.resolution);
+    let uv = (f32x2(texel) + 0.5) / f32x2(settings.resolution);
     let p = uv * settings.domain_size;
 
     var base = fractal_noise(
@@ -38,8 +40,8 @@ func cs_main(u32x3 thread_id: SV_DispatchThreadID, uniform ParameterBlock<Shader
                        erosion.height_slope_delta.w;
     let height = base.x + erosion.height_slope_delta.x + offset;
 
-    let edit = params.height_edit.Load(i32x3(i32x2(thread_id.xy), 0));
+    let edit = params.height_edit.Load(i32x3(i32x2(texel), 0));
 
-    params.heightmap.Store(thread_id.xy, saturate(height + edit));
-    params.ridgemap.Store(thread_id.xy, erosion.ridge_map);
+    params.heightmap.Store(texel, saturate(height + edit));
+    params.ridgemap.Store(texel, erosion.ridge_map);
 }
