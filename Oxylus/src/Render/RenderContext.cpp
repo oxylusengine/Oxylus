@@ -213,6 +213,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vk10_features.features.fragmentStoresAndAtomics = true;
   vk10_features.features.shaderImageGatherExtended = true;
   vk10_features.features.shaderInt16 = true;
+  vk10_features.features.tessellationShader = true;
 
   VkPhysicalDeviceVulkan11Features vk11_features{};
   vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;

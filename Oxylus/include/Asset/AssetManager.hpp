@@ -6,6 +6,7 @@
 #include "Asset/AudioSource.hpp"
 #include "Asset/Material.hpp"
 #include "Asset/Model.hpp"
+#include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/UUID.hpp"
 #include "Memory/ReadGuard.hpp"
@@ -26,6 +27,7 @@ struct Asset {
     SceneID scene_id;
     AudioID audio_id;
     ScriptID script_id;
+    TerrainEditsID terrain_edits_id;
   };
 
   // Reference count of loads
@@ -83,6 +85,9 @@ public:
     -> bool;
   auto export_script(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
     -> bool;
+  auto export_terrain_edits(
+    this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+  ) -> bool;
 
   auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true)
     -> bool;
@@ -115,6 +120,11 @@ public:
   auto get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaScript>;
   auto get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaScript>;
 
+  auto get_terrain_edits(this AssetManager& self, const UUID& uuid) -> ReadGuard<TerrainEdits>;
+  auto get_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> ReadGuard<TerrainEdits>;
+  // Replaces the payload wholesale; the brush authors into GPU maps and hands back the readback.
+  auto set_terrain_edits(this AssetManager& self, const UUID& uuid, TerrainEdits&& edits) -> void;
+
 private:
   auto load_model(this AssetManager& self, const std::filesystem::path& path) -> ModelID;
   auto load_model(this AssetManager& self, const ModelLoadInfo& info) -> ModelID;
@@ -136,6 +146,9 @@ private:
   auto load_script(this AssetManager& self, const std::filesystem::path& path) -> ScriptID;
   auto unload_script(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
 
+  auto load_terrain_edits(this AssetManager& self, const std::filesystem::path& path) -> TerrainEditsID;
+  auto unload_terrain_edits(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+
   AssetRegistry asset_registry = {};
 
   std::shared_mutex registry_mutex = {};
@@ -145,6 +158,7 @@ private:
   std::shared_mutex scenes_mutex = {};
   std::shared_mutex audio_mutex = {};
   std::shared_mutex scripts_mutex = {};
+  std::shared_mutex terrain_edits_mutex = {};
 
   std::vector<MaterialID> dirty_materials = {};
 
@@ -154,6 +168,7 @@ private:
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};
   SlotMap<AudioSource, AudioID> audio_map = {};
   SlotMap<std::unique_ptr<LuaScript>, ScriptID> script_map = {};
+  SlotMap<TerrainEdits, TerrainEditsID> terrain_edits_map = {};
 
   UUID null_material = {};
 };

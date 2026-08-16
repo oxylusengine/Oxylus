@@ -3,25 +3,26 @@
 #include "Scene/Components.hpp"
 
 namespace ox {
-void Camera::update(CameraComponent& component, const glm::vec2& screen_size) {
+auto Camera::update(CameraComponent& component, const TransformComponent& transform, const glm::vec2& screen_size)
+  -> void {
   ZoneScoped;
 
   component.jitter_prev = component.jitter;
   component.matrices_prev.projection_matrix = component.matrices.projection_matrix;
   component.matrices_prev.view_matrix = component.matrices.view_matrix;
 
-  const float cos_pitch = glm::cos(component.pitch); // x
-  const float sin_pitch = glm::sin(component.pitch); // x
-  const float cos_yaw = glm::cos(component.yaw);     // y
-  const float sin_yaw = glm::sin(component.yaw);     // y
+  component.position = transform.position;
 
-  component.forward.x = cos_yaw * cos_pitch;
-  component.forward.y = sin_pitch;
-  component.forward.z = sin_yaw * cos_pitch;
+  const auto rotation = glm::normalize(transform.rotation);
+  component.forward = glm::normalize(rotation * glm::vec3(0.f, 0.f, -1.f));
+  component.right = glm::normalize(rotation * glm::vec3(1.f, 0.f, 0.f));
+  component.up = glm::normalize(rotation * glm::vec3(0.f, 1.f, 0.f));
 
-  component.forward = glm::normalize(component.forward);
-  component.right = glm::normalize(glm::cross(component.forward, {component.tilt, 1, component.tilt}));
-  component.up = glm::normalize(glm::cross(component.right, component.forward));
+  if (component.tilt != 0.f) {
+    const auto roll = glm::angleAxis(component.tilt, component.forward);
+    component.right = glm::normalize(roll * component.right);
+    component.up = glm::normalize(roll * component.up);
+  }
 
   component.matrices
     .view_matrix = glm::lookAt(component.position, component.position + component.forward, component.up);
@@ -53,7 +54,7 @@ void Camera::update(CameraComponent& component, const glm::vec2& screen_size) {
   component.matrices.projection_matrix[1][1] *= -1.0f;
 }
 
-Frustum Camera::get_frustum(const CameraComponent& component, const glm::vec3& position) {
+auto Camera::get_frustum(const CameraComponent& component, const glm::vec3& position) -> Frustum {
   const float half_v_side = component.far_clip * tanf(glm::radians(component.fov) * .5f);
   const float half_h_side = half_v_side * component.aspect;
   const glm::vec3 forward_far = component.far_clip * component.forward;
@@ -72,9 +73,8 @@ Frustum Camera::get_frustum(const CameraComponent& component, const glm::vec3& p
   return frustum;
 }
 
-RayCast Camera::get_screen_ray(
-  const CameraComponent& component, const glm::vec2& screen_pos, const glm::vec2& screen_size
-) {
+auto Camera::get_screen_ray(const CameraComponent& component, const glm::vec2& screen_pos, const glm::vec2& screen_size)
+  -> RayCast {
   const glm::mat4 view_inverse = inverse(component.matrices.view_matrix);
   const glm::mat4 proj_inverse = inverse(component.matrices.projection_matrix);
 

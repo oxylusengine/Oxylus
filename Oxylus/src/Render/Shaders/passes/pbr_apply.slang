@@ -176,7 +176,7 @@ func fs_main(
     var material_surface_color = f32x3(0.0);
     if (NoL > 0.0) {
         let result = BRDF(V, N, L, albedo_color, roughness, metallic);
-        material_surface_color = (result.diffuse + result.specular) * horizon * direct_illuminance * NoL * visibility;
+        material_surface_color = (result.diffuse + result.specular * horizon) * direct_illuminance * NoL * visibility;
     }
 
     let final_color = material_surface_color + total_lighting + indirect_illuminance + emission + aerial_perspective_contribution;

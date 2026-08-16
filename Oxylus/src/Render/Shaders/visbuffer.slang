@@ -13,6 +13,12 @@ constexpr static u32 MESHLET_INSTANCE_ID_MASK = (1u << MESHLET_INSTANCE_ID_BITS)
 public constexpr static u32 MESHLET_PRIMITIVE_BITS = 8u;
 public constexpr static u32 MESHLET_PRIMITIVE_MASK = (1u << MESHLET_PRIMITIVE_BITS) - 1u;
 
+public constexpr static u32 TERRAIN_INSTANCE_ID = MESHLET_INSTANCE_ID_MASK - 1u;
+
+public func is_terrain(u32 data) -> bool {
+    return (data >> MESHLET_PRIMITIVE_BITS) == TERRAIN_INSTANCE_ID;
+}
+
 public struct VisBufferData {
     public u32 meshlet_instance_index;
     public u32 triangle_index;
@@ -46,7 +52,7 @@ public struct VisBuffer {
 
     [[mutating]]
     public __init(u32 meshlet_instance_index, u32 triangle_index, f32 depth) {
-        const let data = VisBufferData(meshlet_instance_index, triangle_index);
+        let data = VisBufferData(meshlet_instance_index, triangle_index);
         this.data = data.encode();
         this.depth = depth;
     }
