@@ -307,7 +307,7 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   vsm_hpb_view = *vuk::allocate_image_view(*allocator, vsm_hpb_attachment);
   vsm_hpb_attachment.image_view = *vsm_hpb_view;
   render_context.wait_on(
-    vuk::clear_image(vuk::discard_ia("vsm hpb", vsm_hpb_attachment), vuk::Black<u32>).as_released(vuk::eFragmentSampled)
+    vuk::clear_image(vuk::discard_ia("vsm hpb", vsm_hpb_attachment), vuk::Black<u32>).as_released(vuk::eComputeSampled)
   );
 
   vsm_physical_page_table_attachment = vuk::ImageAttachment{

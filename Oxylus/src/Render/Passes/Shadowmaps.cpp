@@ -135,7 +135,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vuk::eFragmentSampled
   );
 
-  auto hpb_attachment = vuk::acquire_ia("vsm hpb", self.vsm_hpb_attachment, vuk::eFragmentSampled);
+  auto hpb_attachment = vuk::acquire_ia("vsm hpb", self.vsm_hpb_attachment, vuk::eComputeSampled);
 
   if (context.sun_moved) {
     context.virtual_page_table_attachment = vuk::clear_image(
@@ -185,7 +185,15 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
         .dispatch_invocations(dirty_mesh_count, RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE, page_table->layer_count);
 
-      return std::make_tuple(page_table, dirty_mesh_indices, mesh_instances, meshes, transforms, transforms_previous, clipmaps);
+      return std::make_tuple(
+        page_table,
+        dirty_mesh_indices,
+        mesh_instances,
+        meshes,
+        transforms,
+        transforms_previous,
+        clipmaps
+      );
     }
   );
 
@@ -210,6 +218,16 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       );
   }
 
+  auto zero_fill_pass = vuk::make_pass(
+    "vsm zero fill page occupancy",
+    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eTransferWrite) dst) {
+      cmd_list.fill_buffer(dst, 0_u32);
+      return dst;
+    }
+  );
+
+  page_occupancy_buffer = zero_fill_pass(std::move(page_occupancy_buffer));
+
   auto mark_visible_pages_pass = vuk::make_pass(
     "vsm mark visible pages",
     [vsm_ctx](
@@ -218,11 +236,10 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       VUK_BA(vuk::eComputeRead) clipmaps,
       VUK_IA(vuk::eComputeSampled) depth,
       VUK_IA(vuk::eComputeRW) page_table,
-      VUK_BA(vuk::eComputeRW | vuk::eTransferRW) page_occupancy,
+      VUK_BA(vuk::eComputeRW) page_occupancy,
       VUK_BA(vuk::eComputeRW) allocator
     ) {
       cmd_list //
-        .fill_buffer(page_occupancy, 0_u32)
         .bind_compute_pipeline("rmvsm_mark_visible_pages")
         .bind_buffer(0, 0, camera)
         .bind_buffer(0, 1, clipmaps)
@@ -313,7 +330,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     [](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeSampled) page_table,
-      VUK_IA(vuk::eComputeRW) hpb
+      VUK_IA(vuk::eComputeRW | vuk::eComputeSampled) hpb
     ) {
       for (auto i = 0_u32; i < hpb->level_count; i++) {
         auto src = i == 0 ? hpb->mip(0) : hpb->mip(i - 1);

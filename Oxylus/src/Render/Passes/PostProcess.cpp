@@ -131,10 +131,9 @@ auto RendererInstance::apply_bloom(this RendererInstance& self, PostProcessConte
 
   auto bloom_downsample_pass = vuk::make_pass(
     "bloom downsample",
-    [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) bloom) {
+    [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW | vuk::eComputeSampled) bloom) {
       cmd_list //
         .bind_compute_pipeline("bloom_downsample")
-        // ClampToBorder kills edge-bleed propagation through the mip chain.
         .bind_sampler(0, 2, vuk::LinearSamplerBorder);
 
       auto extent = bloom->extent;
@@ -165,7 +164,7 @@ auto RendererInstance::apply_bloom(this RendererInstance& self, PostProcessConte
     "bloom_upsample",
     [radius](
       vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eComputeRW) bloom_upsampled,
+      VUK_IA(vuk::eComputeRW | vuk::eComputeSampled) bloom_upsampled,
       VUK_IA(vuk::eComputeSampled) bloom_downsampled
     ) {
       auto extent = bloom_upsampled->extent;
