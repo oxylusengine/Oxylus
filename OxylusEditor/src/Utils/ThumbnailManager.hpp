@@ -42,11 +42,8 @@ public:
   auto thumbnail_unavailable(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> bool;
 
 private:
-  enum class RenderKind : u8 { Model, Material };
-
   struct PendingRender {
     std::string cache_key = {};
-    RenderKind kind = RenderKind::Model;
     UUID asset_uuid = UUID(nullptr);
     std::filesystem::path expected_png = {};
   };
