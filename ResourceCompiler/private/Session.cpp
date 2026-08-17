@@ -57,15 +57,26 @@ auto create_shader_session(slang::IGlobalSession* global_session, const ShaderSe
     .compilerOptionEntryCount = static_cast<u32>(count_of(entries)),
   };
 
-  const auto search_path = info.root_directory.string();
-  const auto* search_path_cstr = search_path.c_str();
-  const c8* search_paths[] = {search_path_cstr};
+  // `root_directory` first so a project's own shaders shadow same-named engine ones.
+  std::vector<std::string> search_path_storage;
+  search_path_storage.reserve(info.include_directories.size() + 1);
+  search_path_storage.emplace_back(info.root_directory.string());
+  for (const auto& include_directory : info.include_directories) {
+    search_path_storage.emplace_back(include_directory.string());
+  }
+
+  std::vector<const c8*> search_paths;
+  search_paths.reserve(search_path_storage.size());
+  for (const auto& stored_path : search_path_storage) {
+    search_paths.emplace_back(stored_path.c_str());
+  }
+
   const slang::SessionDesc session_desc = {
     .targets = &target_desc,
     .targetCount = 1,
     .defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR,
-    .searchPaths = search_paths,
-    .searchPathCount = count_of(search_paths),
+    .searchPaths = search_paths.data(),
+    .searchPathCount = static_cast<SlangInt>(search_paths.size()),
     .preprocessorMacros = macros.data(),
     .preprocessorMacroCount = static_cast<u32>(macros.size()),
   };

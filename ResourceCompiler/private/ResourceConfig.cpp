@@ -50,6 +50,14 @@ auto parse_resource_config(const std::filesystem::path& config_path) -> option<R
       return nullopt;
     }
 
+    if (auto* include_dirs = st["include_directories"].as_array()) {
+      for (const auto& include_dir : *include_dirs) {
+        if (auto node = include_dir.as_string()) {
+          session.include_directories.emplace_back(node->get());
+        }
+      }
+    }
+
     if (auto node = st["session_name"].as_string()) {
       session.session_name = node->get();
     }

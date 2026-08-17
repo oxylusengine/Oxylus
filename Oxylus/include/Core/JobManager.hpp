@@ -58,6 +58,7 @@ public:
 
   auto start_tracking(this JobTracker& self) -> void { self.tracking_enabled.store(true); }
   auto stop_tracking(this JobTracker& self) -> void { self.tracking_enabled.store(false); }
+  auto is_tracking(this const JobTracker& self) -> bool { return self.tracking_enabled.load(); }
   auto clear_tracked(this JobTracker& self) -> void {
     std::unique_lock lock(self.mutex);
     self.jobs.clear();
@@ -152,7 +153,7 @@ public:
 
   inline static thread_local std::stack<std::string> job_name_stack = {};
 
-  auto push_job_name(this JobManager&, const std::string& name) -> void { job_name_stack.push(name); }
+  auto push_job_name(this JobManager&, std::string_view name) -> void { job_name_stack.emplace(name); }
   auto pop_job_name(this JobManager&) -> void {
     if (!job_name_stack.empty()) {
       job_name_stack.pop();

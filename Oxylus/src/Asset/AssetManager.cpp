@@ -9,7 +9,7 @@
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
-#include "Scripting/LuaSystem.hpp"
+#include "Scripting/LuaScript.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
@@ -35,11 +35,14 @@ auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Mater
   writer["uuid"] = uuid.str();
   writer["sampling_mode"] = static_cast<u32>(material.sampling_mode);
   writer["albedo_color"] = material.albedo_color;
+  writer["uv_size"] = material.uv_size;
+  writer["uv_offset"] = material.uv_offset;
   writer["emissive_color"] = material.emissive_color;
   writer["roughness_factor"] = material.roughness_factor;
   writer["metallic_factor"] = material.metallic_factor;
   writer["alpha_mode"] = std::to_underlying(material.alpha_mode);
   writer["alpha_cutoff"] = material.alpha_cutoff;
+  writer["flip_normal_y"] = material.flip_normal_y;
   writer["albedo_texture"] = material.albedo_texture.str().c_str();
   writer["normal_texture"] = material.normal_texture.str().c_str();
   writer["emissive_texture"] = material.emissive_texture.str().c_str();
@@ -47,6 +50,75 @@ auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Mater
   writer["occlusion_texture"] = material.occlusion_texture.str().c_str();
 
   writer.end_obj();
+
+  return true;
+}
+
+auto read_material_asset_meta(simdjson::ondemand::value json, Material& material) -> bool {
+  ZoneScoped;
+
+  const auto read_f32 = [&json](std::string_view key, f32& value) {
+    auto result = json[key].get_double();
+    if (!result.error()) {
+      value = static_cast<f32>(result.value_unsafe());
+    }
+  };
+
+  const auto read_enum = [&json]<typename T>(std::string_view key, T& value) {
+    auto result = json[key].get_uint64();
+    if (!result.error()) {
+      value = static_cast<T>(result.value_unsafe());
+    }
+  };
+
+  const auto read_bool = [&json](std::string_view key, bool& value) {
+    auto result = json[key].get_bool();
+    if (!result.error()) {
+      value = result.value_unsafe();
+    }
+  };
+
+  const auto read_uuid = [&json](std::string_view key, UUID& value) {
+    auto result = json[key].get_string();
+    if (result.error()) {
+      return;
+    }
+
+    if (auto uuid = UUID::from_string(result.value_unsafe()); uuid.has_value()) {
+      value = uuid.value();
+    }
+  };
+
+  const auto read_vec = [&json]<glm::length_t N>(std::string_view key, glm::vec<N, f32>& value) {
+    constexpr static std::string_view components[] = {"x", "y", "z", "w"};
+    auto field = json[key];
+    if (field.error()) {
+      return;
+    }
+
+    for (glm::length_t i = 0; i < N; i++) {
+      auto result = field[components[i]].get_double();
+      if (!result.error()) {
+        value[i] = static_cast<f32>(result.value_unsafe());
+      }
+    }
+  };
+
+  read_enum("sampling_mode", material.sampling_mode);
+  read_enum("alpha_mode", material.alpha_mode);
+  read_vec("albedo_color", material.albedo_color);
+  read_vec("uv_size", material.uv_size);
+  read_vec("uv_offset", material.uv_offset);
+  read_vec("emissive_color", material.emissive_color);
+  read_f32("roughness_factor", material.roughness_factor);
+  read_f32("metallic_factor", material.metallic_factor);
+  read_f32("alpha_cutoff", material.alpha_cutoff);
+  read_bool("flip_normal_y", material.flip_normal_y);
+  read_uuid("albedo_texture", material.albedo_texture);
+  read_uuid("normal_texture", material.normal_texture);
+  read_uuid("emissive_texture", material.emissive_texture);
+  read_uuid("metallic_roughness_texture", material.metallic_roughness_texture);
+  read_uuid("occlusion_texture", material.occlusion_texture);
 
   return true;
 }
@@ -59,7 +131,13 @@ auto write_scene_asset_meta(JsonWriter& writer, const Scene* scene) -> bool {
   return true;
 }
 
-auto write_script_asset_meta(JsonWriter&, LuaSystem*) -> bool {
+auto write_script_asset_meta(JsonWriter&, LuaScript*) -> bool {
+  ZoneScoped;
+
+  return true;
+}
+
+auto write_terrain_asset_meta(JsonWriter&, const TerrainEdits*) -> bool {
   ZoneScoped;
 
   return true;
@@ -70,12 +148,7 @@ auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bo
 
   writer.end_obj();
 
-  auto meta_path = path;
-  if (path.has_extension() && path.extension() != ".oxasset") {
-    meta_path += ".oxasset";
-  }
-
-  auto file = File(meta_path, FileAccess::Write);
+  auto file = File(AssetManager::meta_file_path(path), FileAccess::Write);
   file.write(writer.stream.view());
   file.close();
   return true;
@@ -113,6 +186,7 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   self.scene_map.reset();
   self.audio_map.reset();
   self.script_map.reset();
+  self.terrain_edits_map.reset();
 
   return {};
 }
@@ -154,14 +228,8 @@ auto AssetManager::read_meta_file_from_asset(this AssetManager& self, const std:
   -> std::unique_ptr<AssetMetaFile> {
   ZoneScoped;
 
-  if (!std::filesystem::exists(path)) {
-    return nullptr;
-  }
-
-  memory::ScopedStack stack;
-
-  auto meta_path = stack.format("{}.oxasset", path);
-  if (!std::filesystem::exists(meta_path)) {
+  auto meta_path = meta_file_path(path);
+  if (meta_path.empty() || !std::filesystem::exists(meta_path)) {
     return nullptr;
   }
 
@@ -178,18 +246,48 @@ auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> Asse
 
   auto extension = stack.to_upper(path.extension().string());
   switch (fnv64_str(extension)) {
-    case fnv64_c(".GLB")    : return AssetFileType::GLB;
-    case fnv64_c(".GLTF")   : return AssetFileType::GLTF;
-    case fnv64_c(".PNG")    : return AssetFileType::PNG;
-    case fnv64_c(".JPG")    :
-    case fnv64_c(".JPEG")   : return AssetFileType::JPEG;
-    case fnv64_c(".DDS")    : return AssetFileType::DDS;
-    case fnv64_c(".JSON")   : return AssetFileType::JSON;
-    case fnv64_c(".OXASSET"): return AssetFileType::Meta;
-    case fnv64_c(".KTX2")   : return AssetFileType::KTX2;
-    case fnv64_c(".LUA")    : return AssetFileType::LUA;
-    default                 : return AssetFileType::None;
+    case fnv64_c(".GLB")      : return AssetFileType::GLB;
+    case fnv64_c(".GLTF")     : return AssetFileType::GLTF;
+    case fnv64_c(".PNG")      : return AssetFileType::PNG;
+    case fnv64_c(".JPG")      :
+    case fnv64_c(".JPEG")     : return AssetFileType::JPEG;
+    case fnv64_c(".DDS")      : return AssetFileType::DDS;
+    case fnv64_c(".JSON")     : return AssetFileType::JSON;
+    case fnv64_c(".OXASSET")  : return AssetFileType::Meta;
+    case fnv64_c(".KTX2")     : return AssetFileType::KTX2;
+    case fnv64_c(".LUA")      : return AssetFileType::LUA;
+    case fnv64_c(".OXTERRAIN"): return AssetFileType::OXTERRAIN;
+    default                   : return AssetFileType::None;
   }
+}
+
+auto AssetManager::meta_file_path(const std::filesystem::path& path) -> std::filesystem::path {
+  ZoneScoped;
+
+  if (path.empty()) {
+    return {};
+  }
+
+  if (to_asset_file_type(path) == AssetFileType::Meta) {
+    return path;
+  }
+
+  auto meta_path = path;
+  meta_path += ".oxasset";
+
+  return meta_path;
+}
+
+auto AssetManager::owns_meta_file(const std::filesystem::path& path) -> bool {
+  ZoneScoped;
+
+  if (path.empty()) {
+    return false;
+  }
+
+  const auto file_type = to_asset_file_type(path);
+
+  return file_type == AssetFileType::None || file_type == AssetFileType::Meta;
 }
 
 auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
@@ -205,6 +303,7 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
     case AssetType::Scene   : return "Scene";
     case AssetType::Audio   : return "Audio";
     case AssetType::Script  : return "Script";
+    case AssetType::Terrain : return "Terrain";
     default                 : return {};
   }
 }
@@ -229,7 +328,6 @@ auto AssetManager::create_asset(this AssetManager& self, const AssetType type, c
 
 auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID {
   ZoneScoped;
-  memory::ScopedStack stack;
 
   if (!std::filesystem::exists(path)) {
     OX_LOG_ERROR("Trying to import an asset '{}' that doesn't exist.", path);
@@ -257,12 +355,16 @@ auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::
       asset_type = AssetType::Script;
       break;
     }
+    case AssetFileType::OXTERRAIN: {
+      asset_type = AssetType::Terrain;
+      break;
+    }
     default: {
       return UUID(nullptr);
     }
   }
 
-  auto meta_path = stack.format("{}.oxasset", path);
+  auto meta_path = meta_file_path(path);
   if (std::filesystem::exists(meta_path)) {
     return self.register_asset(meta_path);
   }
@@ -406,6 +508,7 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Scene:
     case AssetType::Audio:
     case AssetType::Texture:
+    case AssetType::Terrain:
     case AssetType::Script : break;
     case AssetType::Model  : {
       auto model = self.get_model(asset->model_id);
@@ -453,6 +556,7 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Scene:
     case AssetType::Audio:
     case AssetType::Texture:
+    case AssetType::Terrain:
     case AssetType::Script : break;
     case AssetType::Model  : {
       auto model = self.get_model(asset->model_id);
@@ -519,6 +623,7 @@ auto AssetManager::unload_asset_impl(this AssetManager& self, const AssetType ty
     case AssetType::Scene   : return self.unload_scene(static_cast<SceneID>(id));
     case AssetType::Audio   : return self.unload_audio(static_cast<AudioID>(id));
     case AssetType::Script  : return self.unload_script(static_cast<ScriptID>(id));
+    case AssetType::Terrain : return self.unload_terrain_edits(static_cast<TerrainEditsID>(id));
     case AssetType::None    :
     case AssetType::Shader  :
     case AssetType::Font    : return false;
@@ -531,6 +636,17 @@ auto AssetManager::export_asset(this AssetManager& self, const UUID& uuid, const
   auto asset = self.get_asset(uuid);
   if (!asset)
     return false;
+
+  const auto meta_path = meta_file_path(path);
+  if (std::filesystem::exists(meta_path)) {
+    if (auto existing_meta = self.read_meta_file(meta_path)) {
+      auto existing_uuid = existing_meta->doc["uuid"].get_string();
+      if (!existing_uuid.error() && existing_uuid.value_unsafe() != uuid.str()) {
+        OX_LOG_ERROR("Refusing to overwrite {}, which belongs to another asset.", meta_path);
+        return false;
+      }
+    }
+  }
 
   JsonWriter writer{};
   begin_asset_meta(writer, uuid, asset->type);
@@ -551,6 +667,10 @@ auto AssetManager::export_asset(this AssetManager& self, const UUID& uuid, const
     } break;
     case AssetType::Script: {
       if (!self.export_script(asset->uuid, writer, path))
+        return false;
+    } break;
+    case AssetType::Terrain: {
+      if (!self.export_terrain_edits(asset->uuid, writer, path))
         return false;
     } break;
     default: return false;
@@ -587,6 +707,23 @@ auto AssetManager::export_script(
   ZoneScoped;
 
   return write_script_asset_meta(writer, nullptr);
+}
+
+auto AssetManager::export_terrain_edits(
+  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+) -> bool {
+  ZoneScoped;
+
+  auto edits = self.get_terrain_edits(uuid);
+  if (!edits) {
+    return false;
+  }
+
+  if (!edits->write(path)) {
+    return false;
+  }
+
+  return write_terrain_asset_meta(writer, edits.value);
 }
 
 auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire)
@@ -641,10 +778,28 @@ auto AssetManager::load_asset_impl(
 
   if (asset->is_loaded()) {
     const auto loaded_model_id = asset->type == AssetType::Model ? asset->model_id : ModelID::Invalid;
+    const auto* texture_info = asset->type == AssetType::Texture ? std::get_if<TextureLoadInfo>(&explicit_load)
+                                                                 : nullptr;
+    const auto loaded_texture_id = texture_info ? asset->texture_id : TextureID::Invalid;
+    const auto loaded_path = texture_info ? asset->path : std::filesystem::path{};
+
     if (should_acquire) {
       self.acquire_ref(std::move(asset));
     }
     asset.reset();
+
+    if (texture_info) {
+      auto texture = self.get_texture(loaded_texture_id);
+      if (texture && texture->is_srgb() != texture_info->is_srgb) {
+        OX_LOG_WARN(
+          "Texture '{}' is already loaded as {}; the request for {} is ignored. Whichever slot "
+          "loaded it first won. Use a separate asset per color space.",
+          loaded_path.string(),
+          texture->is_srgb() ? "sRGB" : "linear",
+          texture_info->is_srgb ? "sRGB" : "linear"
+        );
+      }
+    }
 
     if (!async && loaded_model_id != ModelID::Invalid) {
       self.wait_until_model_loaded(loaded_model_id);
@@ -660,7 +815,13 @@ auto AssetManager::load_asset_impl(
 
   auto asset_id = [&]() -> u64 {
     switch (asset_type) {
-      case AssetType::Model  : return static_cast<u64>(self.load_model(asset_path, async));
+      case AssetType::Model: {
+        if (auto* info = std::get_if<ModelLoadInfo>(&explicit_load)) {
+          return static_cast<u64>(self.load_model(*info));
+        }
+
+        return static_cast<u64>(self.load_model(asset_path, async));
+      }
       case AssetType::Texture: {
         auto info = std::get_if<TextureLoadInfo>(&explicit_load);
         return static_cast<u64>(self.load_texture(asset_path, info ? *info : TextureLoadInfo{}));
@@ -668,9 +829,20 @@ auto AssetManager::load_asset_impl(
       case AssetType::Scene   : return static_cast<u64>(self.load_scene(asset_path));
       case AssetType::Audio   : return static_cast<u64>(self.load_audio(asset_path));
       case AssetType::Script  : return static_cast<u64>(self.load_script(asset_path));
+      case AssetType::Terrain : return static_cast<u64>(self.load_terrain_edits(asset_path));
       case AssetType::Material: {
-        auto info = std::get_if<Material>(&explicit_load);
-        return static_cast<u64>(self.load_material(asset_path, info ? *info : Material{}));
+        if (auto* info = std::get_if<Material>(&explicit_load)) {
+          return static_cast<u64>(self.load_material(asset_path, *info));
+        }
+
+        auto material = Material{};
+        if (auto meta_file = self.read_meta_file_from_asset(asset_path)) {
+          if (auto material_json = meta_file->doc["material"]; !material_json.error()) {
+            read_material_asset_meta(material_json.value_unsafe(), material);
+          }
+        }
+
+        return static_cast<u64>(self.load_material(asset_path, material));
       }
       default:;
     }
@@ -761,20 +933,20 @@ auto AssetManager::load_material(this AssetManager& self, const std::filesystem:
   -> MaterialID {
   ZoneScoped;
 
+  const auto load_texture_slot = [&self](const UUID& texture_uuid, bool is_srgb) -> void {
+    if (texture_uuid) {
+      self.load_asset(texture_uuid, TextureLoadInfo{.is_srgb = is_srgb}, false);
+    }
+  };
+
+  load_texture_slot(info.albedo_texture, true);
+  load_texture_slot(info.normal_texture, false);
+  load_texture_slot(info.emissive_texture, true);
+  load_texture_slot(info.metallic_roughness_texture, false);
+  load_texture_slot(info.occlusion_texture, false);
+
   auto write_lock = std::unique_lock(self.materials_mutex);
-  auto material_id = self.material_map.create_slot({
-    .albedo_color = info.albedo_color,
-    .emissive_color = info.emissive_color,
-    .roughness_factor = info.roughness_factor,
-    .metallic_factor = info.metallic_factor,
-    .alpha_mode = info.alpha_mode,
-    .alpha_cutoff = info.alpha_cutoff,
-    .albedo_texture = info.albedo_texture,
-    .normal_texture = info.normal_texture,
-    .emissive_texture = info.emissive_texture,
-    .metallic_roughness_texture = info.metallic_roughness_texture,
-    .occlusion_texture = info.occlusion_texture,
-  });
+  auto material_id = self.material_map.create_slot(Material(info));
 
   write_lock.unlock();
 
@@ -843,11 +1015,11 @@ auto AssetManager::unload_audio(this AssetManager& self, const AudioID audio_id)
 auto AssetManager::load_script(this AssetManager& self, const std::filesystem::path& path) -> ScriptID {
   ZoneScoped;
 
-  auto lua_system = std::make_unique<LuaSystem>();
-  lua_system->load(path);
+  auto script = std::make_unique<LuaScript>();
+  script->path = path;
 
   auto write_lock = std::unique_lock(self.scripts_mutex);
-  return self.script_map.create_slot(std::move(lua_system));
+  return self.script_map.create_slot(std::move(script));
 }
 
 auto AssetManager::unload_script(this AssetManager& self, const ScriptID script_id) -> bool {
@@ -855,6 +1027,24 @@ auto AssetManager::unload_script(this AssetManager& self, const ScriptID script_
 
   auto write_lock = std::unique_lock(self.scripts_mutex);
   self.script_map.destroy_slot(script_id);
+
+  return true;
+}
+
+auto AssetManager::load_terrain_edits(this AssetManager& self, const std::filesystem::path& path) -> TerrainEditsID {
+  ZoneScoped;
+
+  auto edits = TerrainEdits::read(path).value_or(TerrainEdits{});
+
+  auto write_lock = std::unique_lock(self.terrain_edits_mutex);
+  return self.terrain_edits_map.create_slot(std::move(edits));
+}
+
+auto AssetManager::unload_terrain_edits(this AssetManager& self, const TerrainEditsID terrain_edits_id) -> bool {
+  ZoneScoped;
+
+  auto write_lock = std::unique_lock(self.terrain_edits_mutex);
+  self.terrain_edits_map.destroy_slot(terrain_edits_id);
 
   return true;
 }
@@ -1088,7 +1278,7 @@ auto AssetManager::get_audio(this AssetManager& self, const AudioID audio_id) ->
   return ReadGuard<AudioSource>(self.audio_mutex, audio, adopt_lock);
 }
 
-auto AssetManager::get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaSystem> {
+auto AssetManager::get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaScript> {
   ZoneScoped;
 
   ScriptID script_id;
@@ -1101,7 +1291,7 @@ auto AssetManager::get_script(this AssetManager& self, const UUID& uuid) -> Read
   return self.get_script(script_id);
 }
 
-auto AssetManager::get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaSystem> {
+auto AssetManager::get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaScript> {
   ZoneScoped;
 
   if (script_id == ScriptID::Invalid)
@@ -1112,7 +1302,52 @@ auto AssetManager::get_script(this AssetManager& self, ScriptID script_id) -> Re
     self.scripts_mutex.unlock_shared();
     return {};
   }
-  return ReadGuard<LuaSystem>(self.scripts_mutex, script->get(), adopt_lock);
+  return ReadGuard<LuaScript>(self.scripts_mutex, script->get(), adopt_lock);
+}
+
+auto AssetManager::get_terrain_edits(this AssetManager& self, const UUID& uuid) -> ReadGuard<TerrainEdits> {
+  ZoneScoped;
+
+  TerrainEditsID terrain_edits_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Terrain || guard->terrain_edits_id == TerrainEditsID::Invalid)
+      return {};
+    terrain_edits_id = guard->terrain_edits_id;
+  }
+  return self.get_terrain_edits(terrain_edits_id);
+}
+
+auto AssetManager::get_terrain_edits(this AssetManager& self, const TerrainEditsID terrain_edits_id)
+  -> ReadGuard<TerrainEdits> {
+  ZoneScoped;
+
+  if (terrain_edits_id == TerrainEditsID::Invalid)
+    return {};
+  self.terrain_edits_mutex.lock_shared();
+  auto* edits = self.terrain_edits_map.slot(terrain_edits_id);
+  if (!edits) {
+    self.terrain_edits_mutex.unlock_shared();
+    return {};
+  }
+  return ReadGuard<TerrainEdits>(self.terrain_edits_mutex, edits, adopt_lock);
+}
+
+auto AssetManager::set_terrain_edits(this AssetManager& self, const UUID& uuid, TerrainEdits&& edits) -> void {
+  ZoneScoped;
+
+  TerrainEditsID terrain_edits_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Terrain || guard->terrain_edits_id == TerrainEditsID::Invalid)
+      return;
+    terrain_edits_id = guard->terrain_edits_id;
+  }
+
+  auto write_lock = std::unique_lock(self.terrain_edits_mutex);
+  if (auto* slot = self.terrain_edits_map.slot(terrain_edits_id)) {
+    *slot = std::move(edits);
+  }
 }
 
 } // namespace ox

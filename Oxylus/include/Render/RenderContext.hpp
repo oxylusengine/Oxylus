@@ -95,6 +95,8 @@ public:
   // staging buffers alive across frames.
   auto submit_multiple(std::span<vuk::UntypedValue> values) -> void;
 
+  auto get_compiler(this RenderContext& self) -> vuk::Compiler&;
+
   auto create_persistent_descriptor_set(
     this RenderContext&,
     u32 set_index,

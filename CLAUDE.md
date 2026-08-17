@@ -28,10 +28,9 @@ repo declared in the root `xmake.lua` (`oxylus https://github.com/oxylusengine/x
 # Configure (pick toolchain from xmake/toolchains.lua: clang, clang-cl, nix-clang, mac-clang, ...)
 xmake f --toolchain=nix-clang --runtimes=c++_static -m debug
 
-# Build — ALWAYS cap parallelism at 8; unbounded -j has crashed this machine
-xmake b -j 8
-xmake b -j 8 Oxylus          # single target
-xmake b -j 8 -a              # all targets, including non-default ones (tests)
+xmake b -j
+xmake b -j Oxylus          # single target
+xmake b -j -a              # all targets, including non-default ones (tests)
 
 xmake r OxylusEditor         # run the editor
 ```
@@ -101,7 +100,7 @@ Physics, Input, NetworkManager, Renderer, DebugRenderer, ImGuiRenderer, RmlUI.
 are plain copyable structs (`WindowResizeEvent`, `AppCloseEvent`, `Editor::ScenePlayEvent`, ...).
 
 `VFS` (`Core/VFS.hpp`) maps virtual dirs to physical ones. `App::init` mounts `VFS::APP_DIR` to the
-assets path (`Resources` by default, override with `with_assets_directory`); `VFS::PROJECT_DIR` is
+assets path (`Assets` by default, override with `with_assets_directory`); `VFS::PROJECT_DIR` is
 editor-only. Runtime asset paths go through `resolve_physical_dir`.
 
 ### Scene / ECS
@@ -136,6 +135,25 @@ per-type `std::shared_mutex`, and accessors return `ReadGuard<T>` (`Memory/ReadG
 holds the lock — don't store a `ReadGuard` past its use site. Loading is reference-counted
 (`acquire_ref`/`release_ref`, atomic `ref_count`); `load_asset` acquires by default.
 
+**Reference counts must balance, and they are transitive.** Every path that starts referencing an
+asset takes exactly one ref — `load_asset` does it for you unless you pass `should_acquire = false`,
+and it still acquires when the asset is already loaded — and every path that stops referencing it
+gives exactly one back (`unload_asset` is just `release_ref`; it destroys the payload and erases the
+registry entry only when the count reaches zero). Component observers are where this usually goes
+wrong: if `OnAdd` loads a UUID then `OnRemove` must unload it, and code that swaps a component's
+asset UUID for another has to release the old one *and* acquire the new one. Never call the
+payload-level `unload_*` helpers or erase from `asset_registry` to force an unload — that strands
+every other holder on a freed slot.
+
+**Children count too.** `acquire_ref`/`release_ref` walk the asset's sub-assets: a `Model` refs its
+materials, a `Material` refs its five textures. So acquiring a model transitively acquires every
+texture beneath it, and holders never ref sub-assets themselves — doing so double-counts. Both
+functions carry their own `switch` over `AssetType`, so **an asset type that references other assets
+must be handled in both**, or its children leak (or get freed out from under it). Keep the existing
+ordering when you do: acquire takes its own ref first and releases collect children before dropping
+self, and both `reset()` the `ReadGuard` before recursing so the registry lock isn't held down the
+chain.
+
 ### Rendering
 
 vuk-based, with a bindless descriptor set held by `RenderContext`. `Renderer` is the module (owns
@@ -143,7 +161,7 @@ shared resources and pipelines); `RendererInstance` is per-scene and builds the 
 
 Shaders are Slang (`Oxylus/src/Render/Shaders/`, editor-only ones under `Shaders/editor/`). They are
 **not** compiled by name discovery: every shader program must be declared in a TOML manifest —
-`OxylusEditor/Resources/engine.toml` and `editor.toml` — listing `name`, `path`, `entry_points`, and
+`OxylusEditor/Assets/engine.toml` and `editor.toml` — listing `name`, `path`, `entry_points`, and
 `bindless`. The `ox.compile_shaders` xmake rule (`xmake/rules.lua`) feeds each TOML to `rcli`, which
 produces `engine.oxpack` / `editor.oxpack` next to the binary. At runtime `Renderer::init` unpacks
 `engine.oxpack` and calls `RenderContext::create_pipeline` for each entry. **Adding a shader means

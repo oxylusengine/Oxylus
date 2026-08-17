@@ -1,5 +1,3 @@
-module visbuffer_decode;
-
 import common;
 import gpu;
 import scene;
@@ -90,7 +88,7 @@ func compute_partial_derivatives(in f32x4x3 world_positions, in f32x2 uv, in f32
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> FragmentOutput {
     let texel = params.visbuffer.Load(u32x3(u32x2(input.position.xy), 0));
-    if (texel == ~0u) {
+    if (texel == ~0u || is_terrain(texel)) {
         discard;
     }
 
@@ -116,7 +114,12 @@ func fs_main(VertexOutput input) -> FragmentOutput {
     let world_positions = transform.to_world_positions(positions);
     let NDC = f32x3(input.tex_coord * 2.0 - 1.0, 1.0);
     let deriv = compute_partial_derivatives(world_positions, NDC.xy, params.camera.resolution);
-    let tex_coord_grad = deriv.gradient_of(tex_coords);
+    var tex_coord_grad = deriv.gradient_of(tex_coords);
+
+    let uv_size = material.get_uv_size();
+    tex_coord_grad.uv = tex_coord_grad.uv * uv_size + material.get_uv_offset();
+    tex_coord_grad.ddx *= uv_size;
+    tex_coord_grad.ddy *= uv_size;
 
     // ALBEDO
     output.albedo_color = material.sample_albedo_color(tex_coord_grad);
@@ -147,29 +150,15 @@ func fs_main(VertexOutput input) -> FragmentOutput {
     f32x3 bitangent = -w * cross(world_normal, tangent);
     f32x3 normal = world_normal;
 
-#if 1
-    const f32 inv_len_N = 1.0 / length(normal);
-    tangent *= inv_len_N;
-    bitangent *= inv_len_N;
-    normal *= inv_len_N;
-#endif
-
     if (material.flags & MaterialFlag::HasNormalImage) {
-        f32x3 sampled_normal = material.sample_normal_color(tex_coord_grad);
-        // NOTE: This is here to convert tangent spaces to our correct spaces.
-        // for example, normal map's R component is +Y for our world. @grok is this true?
-        // sampled_normal = f32x3(sampled_normal.y, sampled_normal.x, sampled_normal.z);
+        f32x3 sampled_normal = material.sample_normal_color(tex_coord_grad) * 2.0 - 1.0;
 
-        if (material.flags & MaterialFlag::NormalTwoComponent) {
-            sampled_normal = f32x3(sampled_normal.yx * 2.0 - 1.0, 0.0);
-            sampled_normal.z = sqrt(1.0 - sampled_normal.x * sampled_normal.x - sampled_normal.y * sampled_normal.y);
-        } else {
-            sampled_normal = sampled_normal * 2.0 - 1.0;
-        }
+        let two_component = (material.flags & MaterialFlag::NormalTwoComponent) != MaterialFlag::None;
+        let flip_y = (material.flags & MaterialFlag::NormalFlipY) != MaterialFlag::None;
 
-        if (material.flags & MaterialFlag::NormalFlipY) {
-            sampled_normal.y = -sampled_normal.y;
-        }
+        sampled_normal.y = flip_y ? -sampled_normal.y : sampled_normal.y;
+        sampled_normal.z = two_component ? sqrt(saturate(1.0 - dot(sampled_normal.xy, sampled_normal.xy)))
+                                         : sampled_normal.z;
 
         normal = sampled_normal.x * tangent
                + sampled_normal.y * bitangent

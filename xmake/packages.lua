@@ -35,7 +35,7 @@ packages = {
     system = false,
   },
   ["vk-bootstrap v1.4.354"] = { system = false, debug = is_mode("debug") },
-  ["vuk 2026.07.2"] = {
+  ["vuk 2026.08.17"] = {
     configs = {
       debug_allocations = false,
     },
@@ -47,7 +47,7 @@ packages = {
     },
   },
   ["simdjson v4.2.4"] = {},
-  ["joltphysics v5.5.0"] = {
+  ["joltphysics v5.6.0"] = {
     configs = {
       debug_renderer = true,
       rtti = true,

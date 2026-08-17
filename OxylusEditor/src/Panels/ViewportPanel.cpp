@@ -15,6 +15,7 @@
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
+#include "UI/RmlUI.hpp"
 #include "UI/UI.hpp"
 #include "Utils/OxMath.hpp"
 
@@ -127,6 +128,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     bool viewport_settings_popup = false;
     bool gizmo_settings_popup = false;
     bool snap_settings_popup = false;
+    bool terrain_brush_settings_popup = false;
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
     if (ImGui::BeginMenuBar()) {
@@ -151,6 +153,9 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       }
       if (ImGui::MenuItem(ICON_MDI_MAGNET, nullptr, snap_settings_popup)) {
         snap_settings_popup = true;
+      }
+      if (ImGui::MenuItem(ICON_MDI_BRUSH, nullptr, self.terrain_brush_enabled)) {
+        terrain_brush_settings_popup = true;
       }
       ImGui::EndMenuBar();
     }
@@ -185,6 +190,15 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     ImGui::SetNextWindowSize(ImVec2(325, 0));
     if (ImGui::BeginPopup("snap_settings")) {
       self.draw_snap_settings_panel();
+      ImGui::EndPopup();
+    }
+
+    if (terrain_brush_settings_popup)
+      ImGui::OpenPopup("terrain_brush_settings");
+
+    ImGui::SetNextWindowSize(ImVec2(345, 0));
+    if (ImGui::BeginPopup("terrain_brush_settings")) {
+      self.draw_terrain_brush_settings_panel();
       ImGui::EndPopup();
     }
 
@@ -302,17 +316,20 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         corrected_max_region,
         mouse_pos
       );
-      if (self.mouse_picking_enabled) {
+      // A left-drag belongs to the brush while it is on, so picking and the gizmo stand down.
+      if (self.mouse_picking_enabled && !self.terrain_brush_enabled) {
         self.mouse_picking_stages(renderer_instance, picking_texel);
       }
+
+      self.update_terrain_brush(
+        picking_texel.x == ~0_u32
+          ? glm::vec2(-1.0f)
+          : glm::vec2(picking_texel) / glm::vec2(self.scaled_render_size.x, self.scaled_render_size.y)
+      );
 
       if (editor.editor_cvar.cvar_draw_grid.as_bool()) {
         self.grid_stage(renderer_instance);
       }
-
-      const Renderer::RenderInfo render_info = {
-        .viewport_offset = {self.viewport_position.x, self.viewport_position.y},
-      };
 
       auto viewport_attachment_info = swapchain_attachment;
       viewport_attachment_info.extent = vuk::Extent3D{
@@ -323,7 +340,13 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       auto viewport_attachment = vuk::declare_ia("viewport", viewport_attachment_info);
       viewport_attachment = vuk::clear_image(std::move(viewport_attachment), vuk::Black<f32>);
 
-      auto scene_view_image = self.editor_scene->get_scene()->render(std::move(viewport_attachment), render_info);
+      auto scene_view_image = self.editor_scene->get_scene()->render(
+        std::move(viewport_attachment),
+        glm::ivec2{static_cast<i32>(self.viewport_bounds_[0].x), static_cast<i32>(self.viewport_bounds_[0].y)},
+        glm::ivec2{static_cast<i32>(self.render_size.x), static_cast<i32>(self.render_size.y)},
+        glm::ivec2{static_cast<i32>(self.scaled_render_size.x), static_cast<i32>(self.scaled_render_size.y)},
+        self.is_viewport_focused
+      );
 
       ImGui::SetCursorPos(
         {ImGui::GetCursorPosX() + self.viewport_offset.x, ImGui::GetCursorPosY() + self.viewport_offset.y}
@@ -337,7 +360,9 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       if (self.editor_camera.is_alive() && self.editor_camera.has<CameraComponent>()) {
         self.editor_camera.enable();
 
-        self.draw_gizmos();
+        if (!self.terrain_brush_enabled) {
+          self.draw_gizmos();
+        }
       }
       self.transform_gizmos_button_group(start_cursor_pos);
     }
@@ -349,6 +374,9 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
                                    nullptr,
                                    ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel
                                  );
+  } else {
+    self.is_viewport_focused = false;
+    self.is_viewport_hovered = false;
   }
   ImGui::PopStyleColor();
 
@@ -369,8 +397,8 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
 
   auto& cam = self.editor_camera.get_mut<CameraComponent>();
   auto& tc = self.editor_camera.get_mut<TransformComponent>();
-  const glm::vec3& position = cam.position;
-  const glm::vec2 yaw_pitch = glm::vec2(cam.yaw, cam.pitch);
+  const glm::vec3 position = tc.position;
+  const glm::vec2 yaw_pitch = self.camera_yaw_pitch;
   glm::vec3 final_position = position;
   glm::vec2 final_yaw_pitch = yaw_pitch;
 
@@ -388,8 +416,8 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
     if (editor_context.entity.has_value()) {
       const auto entity_tc = editor_context.entity->get<TransformComponent>();
       auto final_pos = entity_tc.position + cam.forward;
-      final_pos += -5.0f * cam.forward * glm::vec3(1.0f);
-      cam.position = final_pos;
+      final_pos += -5.0f * cam.forward;
+      final_position = final_pos;
     }
   }
 
@@ -407,7 +435,7 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
 
     if (input_sys.get_mouse_moved()) {
       const glm::vec2 change = new_mouse_position * camera_sens;
-      final_yaw_pitch.x += change.x;
+      final_yaw_pitch.x -= change.x;
       final_yaw_pitch.y = glm::clamp(final_yaw_pitch.y - change.y, glm::radians(-89.9f), glm::radians(89.9f));
     }
 
@@ -447,12 +475,10 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
   const glm::vec2 damped_yaw_pitch =
     math::smooth_damp(yaw_pitch, final_yaw_pitch, self.rotation_velocity, self.rotation_dampening, 1000.0f, dt);
 
-  tc.position = editor.editor_cvar.cvar_camera_smooth.as_bool() ? damped_position : final_position;
-  const float applied_pitch = editor.editor_cvar.cvar_camera_smooth.as_bool() ? damped_yaw_pitch.y : final_yaw_pitch.y;
-  const float applied_yaw = editor.editor_cvar.cvar_camera_smooth.as_bool() ? damped_yaw_pitch.x : final_yaw_pitch.x;
-  tc.rotation = glm::quat(glm::vec3(applied_pitch, applied_yaw, 0.0f));
-  cam.pitch = applied_pitch;
-  cam.yaw = applied_yaw;
+  const bool smooth = editor.editor_cvar.cvar_camera_smooth.as_bool();
+  tc.position = smooth ? damped_position : final_position;
+  self.camera_yaw_pitch = smooth ? damped_yaw_pitch : final_yaw_pitch;
+  tc.rotation = glm::quat(glm::vec3(self.camera_yaw_pitch.y, self.camera_yaw_pitch.x, 0.0f));
   cam.zoom = static_cast<float>(editor.editor_cvar.cvar_camera_zoom.get());
 }
 
@@ -641,6 +667,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "Roughness",
             "Baked Occlusion",
             "GTAO",
+            "Geometric Normal",
             "Virtual Shadowmaps"
           };
           UI::property(
@@ -792,6 +819,132 @@ auto ViewportPanel::draw_snap_settings_panel(this ViewportPanel& self) -> void {
     UI::property<f32>("Rotate Snap Step", &self.snap_amount, 45.f, 360.0f, nullptr, 0.5f, "%.1f");
     UI::end_properties();
   }
+}
+
+auto ViewportPanel::draw_terrain_brush_settings_panel(this ViewportPanel& self) -> void {
+  auto& brush = self.terrain_brush;
+  auto* scene = self.editor_scene ? self.editor_scene->get_scene().get() : nullptr;
+  const auto* terrain = scene ? scene->terrain.get() : nullptr;
+
+  if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+    UI::property("Enabled", &self.terrain_brush_enabled);
+
+    const char* modes[] = {"Raise", "Smooth", "Flatten", "Noise", "Paint Layer"};
+    UI::property("Mode", reinterpret_cast<int*>(&brush.mode), modes, 5);
+
+    UI::property<f32>("Radius", &brush.radius_world, 0.5f, 4096.0f, "Brush footprint in world units.", 0.5f, "%.1f m");
+
+    const auto displaces = brush.mode == GPU::TerrainBrushMode::Raise || brush.mode == GPU::TerrainBrushMode::Noise;
+    if (displaces) {
+      UI::property<f32>(
+        "Rate",
+        &brush.height_rate,
+        0.05f,
+        64.0f,
+        "How far the surface moves per second of stroke, in world units.",
+        0.05f,
+        "%.2f m/s"
+      );
+    } else {
+      UI::property<f32>(
+        "Rate",
+        &brush.blend_rate,
+        0.05f,
+        16.0f,
+        "How fast the stroke converges on its target, per second.",
+        0.05f,
+        "%.2f /s"
+      );
+    }
+
+    UI::property<
+      f32>("Falloff", &brush.falloff, 1.0f, 8.0f, "Higher values tighten the brush toward its center.", 0.02f, "%.2f");
+
+    if (brush.mode == GPU::TerrainBrushMode::Flatten) {
+      const auto min_height = terrain ? terrain->base_height() : 0.0f;
+      const auto max_height = terrain ? min_height + terrain->height_scale() : 1.0f;
+      UI::property<f32>(
+        "Target Height",
+        &brush.flatten_height_world,
+        min_height,
+        max_height,
+        "World-space height the stroke flattens toward.",
+        0.25f,
+        "%.2f m"
+      );
+    }
+
+    if (brush.mode == GPU::TerrainBrushMode::PaintLayer) {
+      const char* layers[] = {"Grass", "Rock", "Drainage", "Snow"};
+      UI::property("Layer", reinterpret_cast<int*>(&brush.layer), layers, 4);
+    }
+
+    UI::end_properties();
+  }
+
+  ImGui::TextWrapped("Left click to paint, hold Shift to invert a Raise stroke.");
+
+  ImGui::BeginDisabled(terrain == nullptr);
+  if (ImGui::Button("Reset Sculpt & Paint")) {
+    scene->clear_terrain_edits();
+  }
+  ImGui::EndDisabled();
+  UI::tooltip_hover("Discards every brush stroke and rebuilds the terrain from its parameters alone.");
+}
+
+auto ViewportPanel::update_terrain_brush(this ViewportPanel& self, glm::vec2 viewport_uv) -> void {
+  ZoneScoped;
+
+  auto* scene = self.editor_scene ? self.editor_scene->get_scene().get() : nullptr;
+  if (scene == nullptr || scene->terrain == nullptr) {
+    return;
+  }
+
+  // The tunables live on the panel; only the per-frame cursor state is filled in here.
+  auto& brush = scene->terrain->brush;
+  brush = self.terrain_brush;
+  brush.active = false;
+  brush.painting = false;
+
+  if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    self.terrain_stroke_active = false;
+  }
+
+  const auto tool_ready = self.terrain_brush_enabled && !self.editor_scene->is_playing() &&
+                          self.editor_camera.is_alive() && self.editor_camera.has<CameraComponent>();
+  if (!tool_ready) {
+    self.terrain_stroke_active = false;
+    return;
+  }
+
+  // Dragging on the viewport hands ImGui an active id, which flips `IsWindowHovered` off and
+  // `IsAnyItemActive` on for every frame after the click. So the hover gate only decides whether a
+  // stroke may *begin*; once begun it runs until the button comes back up.
+  const auto can_begin = self.is_viewport_hovered && !self.is_ui_capturing_mouse && !self.is_menubar_hovered &&
+                         !ImGuizmo::IsUsing() && !ImGuizmo::IsOver();
+  if (can_begin && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    self.terrain_stroke_active = true;
+  }
+
+  // Leaving the rendered area gives us no ray to trace, but the stroke stays latched so coming back
+  // resumes it rather than forcing another click.
+  if (viewport_uv.x < 0.0f || viewport_uv.x > 1.0f || viewport_uv.y < 0.0f || viewport_uv.y > 1.0f) {
+    return;
+  }
+
+  const auto& camera = self.editor_camera.get<CameraComponent>();
+
+  // The projection is reversed-Z and already carries the Vulkan Y flip, so the near plane is at
+  // ndc z = 1 and ndc y follows the cursor directly.
+  const auto ndc = viewport_uv * 2.0f - 1.0f;
+  auto near_point = camera.get_inverse_projection_view() * glm::vec4(ndc, 1.0f, 1.0f);
+  near_point /= near_point.w;
+
+  brush.ray_origin = camera.position;
+  brush.ray_direction = glm::normalize(glm::vec3(near_point) - camera.position);
+  brush.active = can_begin || self.terrain_stroke_active;
+  brush.painting = self.terrain_stroke_active;
+  brush.invert = ImGui::GetIO().KeyShift;
 }
 
 void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
@@ -957,6 +1110,21 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
   }
 }
 
+// The visbuffer stores terrain as a single reserved instance id with no meshlet behind it, so the
+// transform of the entity owning the terrain has to be supplied to the shaders separately.
+static auto get_terrain_transform_index(const Scene* scene) -> u32 {
+  if (scene == nullptr || !scene->terrain_entity) {
+    return ~0_u32;
+  }
+
+  auto transform_id = scene->get_entity_transform_id(scene->terrain_entity);
+  if (!transform_id.has_value()) {
+    return ~0_u32;
+  }
+
+  return SlotMap_decode_id(*transform_id).index;
+}
+
 static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
   ZoneScoped;
 
@@ -985,14 +1153,16 @@ static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
   }
 }
 
-auto highlight_mask_stage(RenderStageContext& ctx, const std::vector<u32>& transform_indices) -> void {
+auto highlight_mask_stage(
+  RenderStageContext& ctx, const std::vector<u32>& transform_indices, u32 terrain_transform_index
+) -> void {
   ZoneScoped;
 
   auto selected_count = static_cast<u32>(transform_indices.size());
 
   auto mask_generation_pass = vuk::make_pass(
     "stencil_mask",
-    [selected_count](
+    [selected_count, terrain_transform_index](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eComputeWrite) mask,
       VUK_IA(vuk::eComputeSampled) visbuffer,
@@ -1006,7 +1176,7 @@ auto highlight_mask_stage(RenderStageContext& ctx, const std::vector<u32>& trans
         .bind_image(0, 2, visbuffer)
         .bind_image(0, 3, mask)
         .bind_buffer(0, 4, transform_indices_buffer_)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(selected_count))
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(selected_count, terrain_transform_index))
         .dispatch_invocations_per_pixel(mask);
 
       return std::make_tuple(mask, visbuffer, meshlet_instances, mesh_instances, transform_indices_buffer_);
@@ -1164,24 +1334,60 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
   return outline_composite_output;
 }
 
+auto ViewportPanel::resolve_pending_pick(this ViewportPanel& self, PendingPick& pick, bool skip_invalid) -> void {
+  ZoneScoped;
+
+  if (!pick.pending || !pick.buffer) {
+    return;
+  }
+
+  // Let the submission clear its full inflight depth before reading the mapping.
+  auto& render_context = App::get_rendercontext();
+  if (render_context.num_frames - pick.submitted_frame < render_context.num_inflight_frames) {
+    return;
+  }
+
+  pick.pending = false;
+
+  if (!self.editor_scene) {
+    return;
+  }
+
+  u32 texel_data = ~0_u32;
+  std::memcpy(&texel_data, pick.buffer->mapped_ptr, sizeof(u32));
+
+  // The 3D pass reports a miss as an invalid index, which deselects. The 2D pass shares the frame
+  // with it, so a miss there must not clobber what 3D picked.
+  if (skip_invalid && texel_data == ~0_u32) {
+    return;
+  }
+
+  pick_entity(self.editor_scene.get(), texel_data);
+}
+
 auto ViewportPanel::mouse_picking_stages(
   this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel
 ) -> void {
   ZoneScoped;
+
+  self.resolve_pending_pick(self.pending_pick_3d, false);
+  self.resolve_pending_pick(self.pending_pick_2d, true);
 
   const auto using_gizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
   const bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
                            !self.is_ui_capturing_mouse && !self.is_menubar_hovered;
 
   if (should_pick) {
-    renderer_instance->add_stage_after(
-      RenderStage::Forward2D,
-      "mouse_picking_2d",
-      [s = self.editor_scene.get(), picking_texel](RenderStageContext& ctx) {
+    renderer_instance
+      ->add_stage_after(RenderStage::Forward2D, "mouse_picking_2d", [&self, picking_texel](RenderStageContext& ctx) {
         auto visbuffer_attach = ctx.get_image_resource("visbuffer_attachment_2d");
         auto final_attach = ctx.get_image_resource("final_attachment");
 
-        auto readback_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+        auto& pick = self.pending_pick_2d;
+        if (!pick.buffer) {
+          pick.buffer = ctx.render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+        }
+        auto readback_buffer = vuk::acquire_buf("pick readback 2d", *pick.buffer, vuk::Access::eNone);
 
         auto pick_pass = vuk::make_pass(
           "mouse_picking_2d_pass",
@@ -1210,36 +1416,34 @@ auto ViewportPanel::mouse_picking_stages(
           std::move(final_attach)
         );
 
-        auto temp_compiler = vuk::Compiler{};
-        {
-          auto queue_lock = std::unique_lock(ctx.render_context.queue_mutex);
-          readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
-        }
-
-        u32 texel_data = ~0_u32;
-        std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
-        if (texel_data != ~0_u32) {
-          pick_entity(s, texel_data);
-        }
+        // The attachments below carry the pass into the frame, so dropping the buffer value here
+        // does not cull it. The contents are read once this frame has certainly completed.
+        pick.submitted_frame = ctx.render_context.num_frames;
+        pick.pending = true;
 
         ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attach))
           .set_image_resource("final_attachment", std::move(final_attach));
-      }
-    );
+      });
 
-    renderer_instance->add_stage_after(
-      RenderStage::VisBufferEncode,
-      "mouse_picking",
-      [picking_texel, s = self.editor_scene.get()](RenderStageContext& ctx) {
+    renderer_instance
+      ->add_stage_after(RenderStage::VisBufferEncode, "mouse_picking", [&self, picking_texel](RenderStageContext& ctx) {
         auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
         auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
         auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
 
-        auto readback_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+        auto& pick = self.pending_pick_3d;
+        if (!pick.buffer) {
+          pick.buffer = ctx.render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+        }
+        auto readback_buffer = vuk::acquire_buf("pick readback", *pick.buffer, vuk::Access::eNone);
+
+        const auto terrain_transform_index = get_terrain_transform_index(
+          self.editor_scene ? self.editor_scene->get_scene().get() : nullptr
+        );
 
         auto write_pass = vuk::make_pass(
           "mouse_picking_write_pass",
-          [picking_texel](
+          [picking_texel, terrain_transform_index](
             vuk::CommandBuffer& cmd_list,
             VUK_BA(vuk::eComputeWrite) buffer,
             VUK_IA(vuk::eComputeSampled) visbuffer_,
@@ -1253,7 +1457,7 @@ auto ViewportPanel::mouse_picking_stages(
               .push_constants(
                 vuk::ShaderStageFlagBits::eCompute,
                 0,
-                PushConstants(picking_texel, buffer->device_address)
+                PushConstants(picking_texel, buffer->device_address, terrain_transform_index)
               )
               .dispatch(1, 1, 1);
 
@@ -1268,21 +1472,13 @@ auto ViewportPanel::mouse_picking_stages(
           std::move(mesh_instances)
         );
 
-        auto temp_compiler = vuk::Compiler{};
-        {
-          auto queue_lock = std::unique_lock(ctx.render_context.queue_mutex);
-          readback_buffer.wait(*ctx.render_context.superframe_allocator, temp_compiler);
-        }
-
-        u32 texel_data = ~0_u32;
-        std::memcpy(&texel_data, readback_buffer->mapped_ptr, sizeof(u32));
-        pick_entity(s, texel_data);
+        pick.submitted_frame = ctx.render_context.num_frames;
+        pick.pending = true;
 
         ctx.set_image_resource("visbuffer_attachment", std::move(visbuffer))
           .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
           .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
-      }
-    );
+      });
   }
 
   if (!self.draw_entity_highlighting) {
@@ -1312,6 +1508,15 @@ auto ViewportPanel::mouse_picking_stages(
             });
           };
 
+          // Terrain carries no MeshComponent and no mesh children, so the hierarchy walk finds
+          // nothing; its own transform is what the mask has to match against.
+          if (editor_context.entity->has<TerrainComponent>()) {
+            auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
+            if (transform_id.has_value()) {
+              transform_indices.emplace_back(SlotMap_decode_id(*transform_id).index);
+            }
+          }
+
           traverse_hierarchy(*editor_context.entity);
         } else {
           auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
@@ -1326,7 +1531,7 @@ auto ViewportPanel::mouse_picking_stages(
         return;
       }
 
-      highlight_mask_stage(ctx, transform_indices);
+      highlight_mask_stage(ctx, transform_indices, get_terrain_transform_index(s->get_scene().get()));
     }
   );
 
@@ -1460,7 +1665,7 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
   const float frame_height = 1.3f * ImGui::GetFrameHeight();
   const ImVec2 frame_padding = ImGui::GetStyle().FramePadding;
   const ImVec2 button_size = {frame_height, frame_height};
-  constexpr float button_count = 8.0f;
+  constexpr float button_count = 9.0f;
   const ImVec2 window_pos = ImGui::GetWindowPos();
   const ImVec2 content_min = ImGui::GetWindowContentRegionMin();
   const ImVec2 panel_top_left = {window_pos.x + content_min.x, window_pos.y + content_min.y};
@@ -1525,6 +1730,9 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
       UI::toggle_button(ICON_MDI_GRID, App::mod<Editor>().editor_cvar.cvar_draw_grid.get(), button_size, alpha, alpha)
     )
       App::mod<Editor>().editor_cvar.cvar_draw_grid.toggle();
+
+    if (UI::toggle_button(ICON_MDI_BRUSH, self.terrain_brush_enabled, button_size, alpha, alpha))
+      self.terrain_brush_enabled = !self.terrain_brush_enabled;
 
     if (self.editor_camera.is_alive() && self.editor_camera.has<CameraComponent>()) {
       auto& cam = self.editor_camera.get_mut<CameraComponent>();

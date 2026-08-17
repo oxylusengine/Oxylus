@@ -29,12 +29,6 @@ path = "passes/sky_transmittance.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
-name = "2d_forward_vis"
-path = "passes/2d_forward_vis.slang"
-entry_points = ["vs_main", "fs_main"]
-bindless = true
-
-[[shader_sessions.programs]]
 name = "sky_multiscatter"
 path = "passes/sky_multiscattering.slang"
 entry_points = ["cs_main"]
@@ -168,6 +162,11 @@ path = "passes/pbr_apply.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
+name = "pbr_apply_no_atmos"
+path = "passes/pbr_apply_no_atmos.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
 name = "hiz"
 path = "passes/hiz.slang"
 entry_points = ["cs_main"]
@@ -231,3 +230,44 @@ entry_points = ["vs_main", "fs_main"]
 name = "contact_shadows"
 path = "passes/contact_shadows.slang"
 entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "terrain_generate"
+path = "passes/terrain_generate.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "terrain_derive"
+path = "passes/terrain_derive.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "terrain_minmax"
+path = "passes/terrain_minmax.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "terrain_brush_trace"
+path = "passes/terrain_brush_trace.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "terrain_brush_apply"
+path = "passes/terrain_brush_apply.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "terrain_cull"
+path = "passes/terrain_cull.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "terrain_visbuffer"
+path = "passes/terrain_visbuffer.slang"
+entry_points = ["vs_main", "hs_main", "ds_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "terrain_decode"
+path = "passes/terrain_decode.slang"
+entry_points = ["vs_main", "fs_main"]
+bindless = true

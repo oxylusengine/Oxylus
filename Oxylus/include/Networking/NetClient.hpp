@@ -16,9 +16,22 @@ enum class NetClientStatus : u32 {
   TimedOut,
 };
 
+// `client` is the instance that raised the event. The bus is global, so a handler serving one scene
+// has to compare it against its own client before acting.
 struct ClientSceneSnapshotEvent {
+  NetClient* client;
   u8 sequence;
   SceneState scene_state;
+};
+
+struct ServerConnectEvent {
+  NetClient* client;
+  u64 net_id;
+};
+
+struct ServerDisconnectEvent {
+  NetClient* client;
+  NetClientStatus reason;
 };
 
 struct NetClient {
@@ -39,6 +52,7 @@ struct NetClient {
   virtual ~NetClient() = default;
 
   auto set_tick_rate(this NetClient&, f64 tick_rate) -> void;
+  auto update_stats(this NetClient&) -> void;
   auto connect(this NetClient&, std::string_view host_name, u16 port, f64 timeout) -> bool;
   auto disconnect(this NetClient&, bool immediate, u32 data = 0) -> void;
   auto tick(this NetClient&, const Timestep& ts) -> bool;
@@ -49,6 +63,8 @@ struct NetClient {
 
   auto send_reliable(this NetClient&, NetPacket& packet) -> void;
   auto send_unreliable(this NetClient&, NetPacket& packet) -> void;
+
+  auto call_server(this NetClient&, std::string_view proc, std::span<const RPCParameter> params, bool reliable) -> bool;
 
   virtual auto on_scene_snapshot(u8 sequence, SceneState&& state) -> void {};
 };

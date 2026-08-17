@@ -165,6 +165,7 @@ bool UI::property(const char* label, int* value, const char** dropdown_strings, 
 bool UI::texture_property(
   const char* label,
   UUID& texture_uuid,
+  bool is_srgb,
   const std::function<UUID(const char*, const UUID&, bool&)>& load_callback,
   const char* tooltip
 ) {
@@ -221,8 +222,12 @@ bool UI::texture_property(
       const auto* p = PayloadData::from_payload(payload);
       const auto path = p->get_str();
       if (auto new_texture = asset_man.import_asset(path)) {
-        if (asset_man.load_asset(new_texture))
+        if (asset_man.load_asset(new_texture, TextureLoadInfo{.is_srgb = is_srgb})) {
+          if (texture_uuid) {
+            asset_man.unload_asset(texture_uuid);
+          }
           texture_uuid = new_texture;
+        }
       }
       changed = true;
     }

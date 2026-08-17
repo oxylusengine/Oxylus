@@ -1,6 +1,5 @@
 #include "Render/Window.hpp"
 
-#include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <array>
@@ -236,14 +235,7 @@ auto Window::update(const Timestep& timestep) const -> void {
     }
 
     if (App::has_mod<RmlUI>()) {
-      auto& rml = App::mod<RmlUI>();
-      for (auto& ctx : rml.get_contexts()) {
-        if (down) {
-          ctx->ProcessKeyDown(RmlSystem::convert_key(key_code), RmlSystem::convert_mod(mods));
-        } else {
-          ctx->ProcessKeyUp(RmlSystem::convert_key(key_code), RmlSystem::convert_mod(mods));
-        }
-      }
+      App::mod<RmlUI>().process_key(key_code, mods, down);
     }
 
     auto& input_system = App::mod<Input>();
@@ -266,10 +258,7 @@ auto Window::update(const Timestep& timestep) const -> void {
       imgui_renderer.on_text_input(text);
     }
     if (App::has_mod<RmlUI>()) {
-      auto& rml = App::mod<RmlUI>();
-      for (auto& ctx : rml.get_contexts()) {
-        ctx->ProcessTextInput(text);
-      }
+      App::mod<RmlUI>().process_text(text);
     }
   };
 
@@ -280,13 +269,7 @@ auto Window::update(const Timestep& timestep) const -> void {
     }
 
     if (App::has_mod<RmlUI>()) {
-      auto& rml = App::mod<RmlUI>();
-      for (auto& ctx : rml.get_contexts()) {
-        auto& window = App::get_window();
-        const f32 dpi_scale = window.get_dpi_scale();
-        auto scaled_pos = position * dpi_scale;
-        ctx->ProcessMouseMove(static_cast<int>(scaled_pos.x), static_cast<int>(scaled_pos.y), 0);
-      }
+      App::mod<RmlUI>().process_mouse_move({position.x, position.y});
     }
 
     auto& input_system = App::mod<Input>();
@@ -304,21 +287,7 @@ auto Window::update(const Timestep& timestep) const -> void {
     }
 
     if (App::has_mod<RmlUI>()) {
-      auto& rml = App::mod<RmlUI>();
-      for (auto& ctx : rml.get_contexts()) {
-        auto rml_code = 0;
-        switch (ox_mouse_button) {
-          case MouseCode::Left  : rml_code = 0; break;
-          case MouseCode::Middle: rml_code = 2; break;
-          case MouseCode::Right : rml_code = 1; break;
-          default               : break;
-        }
-        if (down) {
-          ctx->ProcessMouseButtonDown(rml_code, 0);
-        } else {
-          ctx->ProcessMouseButtonUp(rml_code, 0);
-        }
-      }
+      App::mod<RmlUI>().process_mouse_button(button, down);
     }
 
     auto& input_system = App::mod<Input>();
@@ -339,10 +308,7 @@ auto Window::update(const Timestep& timestep) const -> void {
     }
 
     if (App::has_mod<RmlUI>()) {
-      auto& rml = App::mod<RmlUI>();
-      for (auto& ctx : rml.get_contexts()) {
-        ctx->ProcessMouseWheel(offset.y * -1.f, 0);
-      }
+      App::mod<RmlUI>().process_mouse_scroll(offset.y);
     }
 
     auto& input_system = App::mod<Input>();

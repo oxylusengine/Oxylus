@@ -15,6 +15,22 @@
 
 namespace ox {
 static_assert(ModuleHasUpdate<Renderer>, "Renderer::update must be registered as a module update");
+
+static auto is_two_component_format(vuk::Format format) -> bool {
+  switch (format) {
+    case vuk::Format::eBc5UnormBlock:
+    case vuk::Format::eBc5SnormBlock:
+    case vuk::Format::eEacR11G11UnormBlock:
+    case vuk::Format::eEacR11G11SnormBlock:
+    case vuk::Format::eR8G8Unorm:
+    case vuk::Format::eR8G8Snorm:
+    case vuk::Format::eR16G16Unorm:
+    case vuk::Format::eR16G16Snorm:
+    case vuk::Format::eR16G16Sfloat       : return true;
+    default                               : return false;
+  }
+}
+
 auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, const Material& material)
   -> GPU::Material {
   ZoneScoped;
@@ -59,7 +75,15 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
     }
   }
 
-  flags |= normal_image_index.has_value() ? GPU::MaterialFlag::HasNormalImage : GPU::MaterialFlag::None;
+  if (normal_image_index.has_value()) {
+    flags |= GPU::MaterialFlag::HasNormalImage;
+
+    auto texture = asset_man.get_texture(material.normal_texture);
+    if (texture && is_two_component_format(texture->get_format())) {
+      flags |= GPU::MaterialFlag::NormalTwoComponent;
+    }
+  }
+  flags |= material.flip_normal_y ? GPU::MaterialFlag::NormalFlipY : GPU::MaterialFlag::None;
   flags |= emissive_image_index.has_value() ? GPU::MaterialFlag::HasEmissiveImage : GPU::MaterialFlag::None;
   flags |= metallic_roughness_image_index.has_value() ? GPU::MaterialFlag::HasMetallicRoughnessImage
                                                       : GPU::MaterialFlag::None;

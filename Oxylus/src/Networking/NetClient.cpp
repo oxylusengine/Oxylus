@@ -18,6 +18,28 @@ auto NetClient::set_tick_rate(this NetClient& self, f64 tick_rate) -> void {
   self.tick_accum = 0.0f;
 }
 
+auto NetClient::update_stats(this NetClient& self) -> void {
+  ZoneScoped;
+
+  if (!self.remote_peer) {
+    return;
+  }
+
+  auto current_sent_bytes = self.remote_peer->totalDataSent;
+  auto current_received_bytes = self.remote_peer->totalDataReceived;
+  auto current_sent_packets = self.remote_peer->packetsSent;
+
+  self.stats.ping = self.remote_peer->pingInterval;
+  self.stats.sent_bytes = static_cast<u32>(current_sent_bytes - self.stats.last_sent_bytes);
+  self.stats.received_bytes = static_cast<u32>(current_received_bytes - self.stats.last_received_bytes);
+  self.stats.sent_packets = current_sent_packets - self.stats.last_sent_packets;
+  self.stats.packets_lost = self.remote_peer->packetsLost;
+  self.stats.rtt = self.remote_peer->lastRoundTripTime;
+  self.stats.last_sent_bytes = static_cast<u32>(current_sent_bytes);
+  self.stats.last_received_bytes = static_cast<u32>(current_received_bytes);
+  self.stats.last_sent_packets = current_sent_packets;
+}
+
 auto NetClient::connect(this NetClient& self, std::string_view host_name, u16 port, f64 timeout) -> bool {
   ZoneScoped;
 
@@ -74,7 +96,12 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
         ZoneScopedN("ENET_EVENT_TYPE_DISCONNECT");
         OX_LOG_INFO("NetClient disconnected.");
 
+        self.status = NetClientStatus::Disconnected;
+        self.remote_peer = nullptr;
         event.peer->data = nullptr;
+
+        auto& es = App::get_event_system();
+        std::ignore = es.emit<ServerDisconnectEvent>({.client = &self, .reason = NetClientStatus::Disconnected});
       } break;
       case ENET_EVENT_TYPE_RECEIVE: {
         ZoneScopedN("ENET_EVENT_TYPE_RECEIVE");
@@ -93,21 +120,7 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
     }
   }
 
-  if (self.remote_peer) {
-    auto current_sent_bytes = self.remote_peer->totalDataSent;
-    auto current_received_bytes = self.remote_peer->totalDataReceived;
-    auto current_sent_packets = self.remote_peer->packetsSent;
-
-    self.stats.ping = self.remote_peer->pingInterval;
-    self.stats.sent_bytes = static_cast<u32>(current_sent_bytes - self.stats.last_sent_bytes);
-    self.stats.received_bytes = static_cast<u32>(current_received_bytes - self.stats.last_received_bytes);
-    self.stats.sent_packets = current_sent_packets - self.stats.last_sent_packets;
-    self.stats.packets_lost = self.remote_peer->packetsLost;
-    self.stats.rtt = self.remote_peer->lastRoundTripTime;
-    self.stats.last_sent_bytes = static_cast<u32>(current_sent_bytes);
-    self.stats.last_received_bytes = static_cast<u32>(current_received_bytes);
-    self.stats.last_sent_packets = current_sent_packets;
-  }
+  self.update_stats();
 
   if (self.status == NetClientStatus::Connecting) {
     self.timeout_elapsed += ts.get_millis();
@@ -122,6 +135,10 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
 
       self.status = NetClientStatus::TimedOut;
       self.timeout_elapsed = 0.0;
+
+      auto& es = App::get_event_system();
+      std::ignore = es.emit<ServerDisconnectEvent>({.client = &self, .reason = NetClientStatus::TimedOut});
+
       return false;
     }
   }
@@ -146,6 +163,10 @@ auto NetClient::handle_packet(this NetClient& self, NetPacket& packet) -> void {
       }
 
       self.net_id = handshake->net_id;
+      self.status = NetClientStatus::Connected;
+
+      auto& es = App::get_event_system();
+      std::ignore = es.emit<ServerConnectEvent>({.client = &self, .net_id = self.net_id});
     } break;
     case NetPacketType::SceneSnapshot: {
       auto snapshot = packet.get_scene_snapshot();
@@ -155,7 +176,9 @@ auto NetClient::handle_packet(this NetClient& self, NetPacket& packet) -> void {
 
       // TODO: Copying the whole scene snapshot...
       auto& es = App::get_event_system();
-      std::ignore = es.emit<ClientSceneSnapshotEvent>(ClientSceneSnapshotEvent(snapshot->sequence, snapshot->state));
+      std::ignore = es.emit<ClientSceneSnapshotEvent>(
+        ClientSceneSnapshotEvent(&self, snapshot->sequence, snapshot->state)
+      );
 
       self.on_scene_snapshot(snapshot->sequence, std::move(snapshot->state));
     } break;
@@ -193,6 +216,14 @@ auto NetClient::register_proc(this NetClient& self, std::string_view identifier,
 auto NetClient::send_reliable(this NetClient& self, NetPacket& packet) -> void {
   ZoneScoped;
 
+  // Sends can outlive the peer, the connection may have dropped since the packet was built.
+  if (!self.remote_peer) {
+    if (packet.can_destroy()) {
+      packet.destroy();
+    }
+    return;
+  }
+
   packet.inner->flags = ENET_PACKET_FLAG_RELIABLE;
   if (enet_peer_send(self.remote_peer, NET_CHANNEL_RELIABLE, packet) < 0) {
     if (packet.can_destroy()) {
@@ -204,11 +235,41 @@ auto NetClient::send_reliable(this NetClient& self, NetPacket& packet) -> void {
 auto NetClient::send_unreliable(this NetClient& self, NetPacket& packet) -> void {
   ZoneScoped;
 
+  if (!self.remote_peer) {
+    if (packet.can_destroy()) {
+      packet.destroy();
+    }
+    return;
+  }
+
   packet.inner->flags = 0;
   if (enet_peer_send(self.remote_peer, NET_CHANNEL_UNRELIABLE, packet) < 0) {
     if (packet.can_destroy()) {
       packet.destroy();
     }
   }
+}
+
+auto NetClient::call_server(
+  this NetClient& self, std::string_view proc, std::span<const RPCParameter> params, bool reliable
+) -> bool {
+  ZoneScoped;
+
+  if (!self.remote_peer) {
+    return false;
+  }
+
+  auto packet = NetPacket::rpc(proc, params);
+  if (!packet.has_value()) {
+    return false;
+  }
+
+  if (reliable) {
+    self.send_reliable(packet.value());
+  } else {
+    self.send_unreliable(packet.value());
+  }
+
+  return true;
 }
 } // namespace ox

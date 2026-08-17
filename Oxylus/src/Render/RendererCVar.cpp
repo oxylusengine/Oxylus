@@ -24,6 +24,8 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_culling_frustum.init(self.system, "rr.culling_frustum", "Frustum Culling", 1);
   self.cvar_culling_occlusion.init(self.system, "rr.culling_occlusion", "Occlusion culling", 1);
   self.cvar_culling_triangle.init(self.system, "rr.culling_triangle", "Triangle culling", 1);
+  self.cvar_transparent_background
+    .init(self.system, "rr.transparent_background", "skip the sky and leave the background transparent", 0);
 
   self.cvar_contact_shadows_enabled.init(self.system, "pp.contact_shadows", "enable contact shadows", 1);
   self.cvar_contact_shadows_steps.init(self.system, "pp.contact_shadows_steps", "contact shadows steps", 8);

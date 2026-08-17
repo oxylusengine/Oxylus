@@ -10,10 +10,10 @@
 #include "Scripting/LuaManager.hpp"
 
 namespace ox {
-LuaSystem::LuaSystem(std::string path) : file_path(std::move(path)) {
+LuaSystem::LuaSystem(const LuaScript& script) {
   ZoneScoped;
 
-  init_script(file_path);
+  init_script(script.path, script.source);
 }
 
 auto LuaSystem::check_result(const sol::protected_function_result& result, const char* func_name) -> void {
@@ -125,7 +125,8 @@ auto LuaSystem::reload(this LuaSystem& self) -> void {
 
   self.reset_functions();
 
-  self.init_script(self.file_path);
+  // Pass the source back so an in-memory script survives a reload.
+  self.init_script(self.file_path, self.script_);
 }
 
 auto LuaSystem::reset_functions(this LuaSystem& self) -> void {

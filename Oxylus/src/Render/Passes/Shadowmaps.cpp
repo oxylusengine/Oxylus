@@ -135,7 +135,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vuk::eFragmentSampled
   );
 
-  auto hpb_attachment = vuk::acquire_ia("vsm hpb", self.vsm_hpb_attachment, vuk::eFragmentSampled);
+  auto hpb_attachment = vuk::acquire_ia("vsm hpb", self.vsm_hpb_attachment, vuk::eComputeSampled);
 
   if (context.sun_moved) {
     context.virtual_page_table_attachment = vuk::clear_image(
@@ -185,7 +185,15 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
         .dispatch_invocations(dirty_mesh_count, RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE, page_table->layer_count);
 
-      return std::make_tuple(page_table, dirty_mesh_indices, mesh_instances, meshes, transforms, transforms_previous, clipmaps);
+      return std::make_tuple(
+        page_table,
+        dirty_mesh_indices,
+        mesh_instances,
+        meshes,
+        transforms,
+        transforms_previous,
+        clipmaps
+      );
     }
   );
 
@@ -210,6 +218,16 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       );
   }
 
+  auto zero_fill_pass = vuk::make_pass(
+    "vsm zero fill page occupancy",
+    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eTransferWrite) dst) {
+      cmd_list.fill_buffer(dst, 0_u32);
+      return dst;
+    }
+  );
+
+  page_occupancy_buffer = zero_fill_pass(std::move(page_occupancy_buffer));
+
   auto mark_visible_pages_pass = vuk::make_pass(
     "vsm mark visible pages",
     [vsm_ctx](
@@ -218,11 +236,10 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       VUK_BA(vuk::eComputeRead) clipmaps,
       VUK_IA(vuk::eComputeSampled) depth,
       VUK_IA(vuk::eComputeRW) page_table,
-      VUK_BA(vuk::eComputeRW | vuk::eTransferRW) page_occupancy,
+      VUK_BA(vuk::eComputeRW) page_occupancy,
       VUK_BA(vuk::eComputeRW) allocator
     ) {
       cmd_list //
-        .fill_buffer(page_occupancy, 0_u32)
         .bind_compute_pipeline("rmvsm_mark_visible_pages")
         .bind_buffer(0, 0, camera)
         .bind_buffer(0, 1, clipmaps)
@@ -313,7 +330,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     [](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeSampled) page_table,
-      VUK_IA(vuk::eComputeRW) hpb
+      VUK_IA(vuk::eComputeRW | vuk::eComputeSampled) hpb
     ) {
       for (auto i = 0_u32; i < hpb->level_count; i++) {
         auto src = i == 0 ? hpb->mip(0) : hpb->mip(i - 1);
@@ -428,17 +445,6 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     .hpb_attachment = std::move(hpb_attachment),
   };
 
-  auto physical_depth_attachment = vuk::declare_ia(
-    "vsm depth",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eDepthStencilAttachment,
-     .extent =
-       {.width = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .height = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .depth = 1},
-     .format = vuk::Format::eD32Sfloat,
-     .sample_count = vuk::Samples::e1,
-     .level_count = 1,
-     .layer_count = 1}
-  );
-
   for (auto reverse_index = 0_u32; reverse_index < RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT; reverse_index++) {
     const auto clipmap_index = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT - 1 - reverse_index;
     const auto& clipmap = directional_clipmaps[clipmap_index];
@@ -469,8 +475,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         VUK_BA(vuk::eFragmentRead) materials,
         VUK_BA(vuk::eVertexRead | vuk::eFragmentRead) clipmaps,
         VUK_IA(vuk::eFragmentSampled) page_tables,
-        VUK_IA(vuk::eFragmentRW) physical_pages,
-        VUK_IA(vuk::eDepthStencilRW) dummy_depth
+        VUK_IA(vuk::eFragmentRW) physical_pages
       ) {
         auto viewport_rect = vuk::Rect2D{
           .offset = {.x = 0, .y = 0},
@@ -478,6 +483,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
           ._relative = {},
         };
         cmd_list //
+          .set_attachmentless_framebuffer(viewport_rect.extent, vuk::SampleCountFlagBits::e1)
           .bind_graphics_pipeline("rmvsm_draw_physical_pages")
           .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
           .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
@@ -506,8 +512,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
           materials,
           clipmaps,
           page_tables,
-          physical_pages,
-          dummy_depth
+          physical_pages
         );
       }
     );
@@ -521,8 +526,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       self.prepared_frame.materials_buffer,
       context.directional_clipmaps_buffer,
       context.virtual_page_table_attachment,
-      context.physical_page_table_attachment,
-      physical_depth_attachment
+      context.physical_page_table_attachment
     ) =
       draw_physical_pages_pass(
         std::move(draw_geometry_cmd_buffer),
@@ -534,8 +538,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         std::move(self.prepared_frame.materials_buffer),
         std::move(context.directional_clipmaps_buffer),
         std::move(context.virtual_page_table_attachment),
-        std::move(context.physical_page_table_attachment),
-        std::move(physical_depth_attachment)
+        std::move(context.physical_page_table_attachment)
       );
   }
 }

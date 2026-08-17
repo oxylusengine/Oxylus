@@ -5,12 +5,15 @@
 
 namespace ox {
 struct CameraComponent;
+struct TransformComponent;
 
 class Camera {
 public:
-  static void update(CameraComponent& component, const glm::vec2& screen_size);
-  static Frustum get_frustum(const CameraComponent& component, const glm::vec3& position);
-  static RayCast
-  get_screen_ray(const CameraComponent& component, const glm::vec2& screen_pos, const glm::vec2& screen_size);
+  static auto update(CameraComponent& component, const TransformComponent& transform, const glm::vec2& screen_size)
+    -> void;
+  static auto get_frustum(const CameraComponent& component, const glm::vec3& position) -> Frustum;
+  static auto get_screen_ray(
+    const CameraComponent& component, const glm::vec2& screen_pos, const glm::vec2& screen_size
+  ) -> RayCast;
 };
 } // namespace ox

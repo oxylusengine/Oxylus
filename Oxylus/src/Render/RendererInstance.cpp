@@ -307,7 +307,7 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   vsm_hpb_view = *vuk::allocate_image_view(*allocator, vsm_hpb_attachment);
   vsm_hpb_attachment.image_view = *vsm_hpb_view;
   render_context.wait_on(
-    vuk::clear_image(vuk::discard_ia("vsm hpb", vsm_hpb_attachment), vuk::Black<u32>).as_released(vuk::eFragmentSampled)
+    vuk::clear_image(vuk::discard_ia("vsm hpb", vsm_hpb_attachment), vuk::Black<u32>).as_released(vuk::eComputeSampled)
   );
 
   vsm_physical_page_table_attachment = vuk::ImageAttachment{
@@ -485,10 +485,16 @@ auto RendererInstance::add_stage_after(
 auto RendererInstance::render(
   this RendererInstance& self,
   vuk::Value<vuk::ImageAttachment>&& dst_attachment,
-  const Renderer::RenderInfo& render_info,
+  glm::ivec2 viewport_origin,
+  glm::ivec2 viewport_size,
+  glm::ivec2 surface_size,
   const RendererCVar& cvar
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
+
+  self.viewport_origin_ = viewport_origin;
+  self.viewport_size_ = viewport_size;
+  self.surface_size_ = surface_size;
 
   OX_ASSERT(self.update_ran_this_frame);
   self.update_ran_this_frame = false;
@@ -496,6 +502,7 @@ auto RendererInstance::render(
   OX_DEFER(&) {
     self.clear_stages();
     self.shared_resources.clear();
+    self.prepared_frame = {};
   };
 
   const auto dst_extent = dst_attachment->extent;
@@ -504,9 +511,6 @@ auto RendererInstance::render(
 
   OX_CHECK_GT(dst_extent.width, 0u);
   OX_CHECK_GT(dst_extent.height, 0u);
-
-  self.viewport_size = {dst_extent.width, dst_extent.height};
-  self.viewport_offset = render_info.viewport_offset;
 
   auto& bindless_set = self.renderer.render_context->get_descriptor_set();
 
@@ -530,21 +534,30 @@ auto RendererInstance::render(
     self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
   if (cvar.cvar_contact_shadows_enabled.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
+  if (cvar.cvar_transparent_background.as_bool())
+    self.gpu_scene_flags |= GPU::SceneFlags::TransparentBackground;
 
   const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
   const f32 debug_heatmap_scale = 5.0;
   const auto debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool();
 
+  const auto transparent_background = static_cast<bool>(self.gpu_scene_flags & GPU::SceneFlags::TransparentBackground);
+  const auto hdr_format = transparent_background ? vuk::Format::eR16G16B16A16Sfloat
+                                                 : vuk::Format::eB10G11R11UfloatPack32;
+
   auto final_attachment = vuk::declare_ia(
     "final_attachment",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
      .extent = dst_extent,
-     .format = vuk::Format::eB10G11R11UfloatPack32,
+     .format = hdr_format,
      .sample_count = vuk::Samples::e1,
      .level_count = 1,
      .layer_count = 1}
   );
-  final_attachment = vuk::clear_image(std::move(final_attachment), vuk::Black<float>);
+  final_attachment = vuk::clear_image(
+    std::move(final_attachment),
+    transparent_background ? vuk::Transparent<f32> : vuk::Black<f32>
+  );
 
   auto depth_attachment = vuk::declare_ia(
     "depth_image",
@@ -749,8 +762,11 @@ auto RendererInstance::render(
   auto rmvsm_virtual_page_table_attachment = vuk::Value<vuk::ImageAttachment>{};
   auto rmvsm_virtual_clipmaps_buffer = vuk::Value<vuk::Buffer>{};
 
+  const auto* terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked() ? self.scene.terrain.get()
+                                                                                        : nullptr;
+
   // --- 3D Pass ---
-  if (self.prepared_frame.mesh_instance_count > 0) {
+  if (self.prepared_frame.mesh_instance_count > 0 || terrain != nullptr) {
     auto main_geometry_context = MainGeometryContext{
       .draw_overdraw = (std::to_underlying(debug_view) & std::to_underlying(GPU::DebugView::Overdraw)) == 1,
       .bindless_set = &bindless_set,
@@ -772,6 +788,8 @@ auto RendererInstance::render(
       .near_clip = self.camera_data.near_clip,
       .mesh_instance_count = self.prepared_frame.mesh_instance_count,
     };
+    const auto has_meshes = self.prepared_frame.mesh_instance_count > 0;
+
     // The CullGeometryContext is hoisted outside both passes so the visibility /
     // dispatch-command buffers allocated by the early pass's `cull_meshes`
     // pre-pass persist into the late pass (which runs with `init_cull_meshes = false`).
@@ -779,41 +797,154 @@ auto RendererInstance::render(
       .use_hiz = true,
       .init_cull_meshes = true,
       .cull_camera = cull_camera,
-      .hiz_attachment = std::move(main_geometry_context.hiz_attachment),
     };
-    self.cull_geometry(cull_geometry_context);
-    main_geometry_context.hiz_attachment = std::move(cull_geometry_context.hiz_attachment);
-    main_geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
-    self.draw_for_visbuffer(main_geometry_context);
 
-    self.generate_hiz(main_geometry_context);
+    auto terrain_context = TerrainContext{.terrain = terrain};
+    auto terrain_brush_context = TerrainBrushContext{.terrain = terrain};
+    if (terrain != nullptr) {
+      terrain_context.terrain_buffer = self.build_terrain_buffer(*terrain);
+      terrain_context.visible_patches_buffer = self.renderer.render_context->alloc_transient_buffer(
+        vuk::MemoryUsage::eGPUonly,
+        static_cast<usize>(terrain->patch_count.x) * terrain->patch_count.y * sizeof(u32)
+      );
+      terrain_context.patch_visibility_mask_buffer = std::move(
+        self.prepared_frame.terrain_patch_visibility_mask_buffer
+      );
 
-    cull_geometry_context.cull_flags |= GPU::CullFlag::LatePass;
-    cull_geometry_context.init_cull_meshes = false;
-    cull_geometry_context.cull_camera = cull_camera;
-    cull_geometry_context.hiz_attachment = std::move(main_geometry_context.hiz_attachment);
-    self.cull_geometry(cull_geometry_context);
-    main_geometry_context.hiz_attachment = std::move(cull_geometry_context.hiz_attachment);
-    main_geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
-    self.draw_for_visbuffer(main_geometry_context);
+      terrain_brush_context.maps = TerrainMaps{
+        .heightmap = terrain->heightmap.acquire("terrain heightmap", vuk::eComputeSampled),
+        .normalmap = terrain->normalmap.acquire("terrain normalmap", vuk::eFragmentSampled),
+        .splatmap = terrain->splatmap.acquire("terrain splatmap", vuk::eFragmentSampled),
+        .patch_minmax = terrain->patch_minmax.acquire("terrain patch minmax", vuk::eComputeSampled),
+      };
 
-    {
-      RenderStageContext ctx(self, self.shared_resources, RenderStage::VisBufferEncode, *self.renderer.render_context);
-      ctx.set_viewport_size(self.viewport_size)
-        .set_image_resource("visbuffer_attachment", std::move(main_geometry_context.visbuffer_attachment))
-        .set_image_resource("depth_attachment", std::move(main_geometry_context.depth_attachment))
-        .set_buffer_resource("meshlet_instances_buffer", std::move(self.prepared_frame.meshlet_instances_buffer))
-        .set_buffer_resource("mesh_instances_buffer", std::move(self.prepared_frame.mesh_instances_buffer));
+      if (terrain->brush.active && terrain->brush.painting) {
+        terrain_brush_context.maps.ridgemap = terrain->ridgemap.acquire("terrain ridgemap", vuk::eFragmentSampled);
+        terrain_brush_context.maps.height_edit = terrain->height_edit.acquire("terrain height edit", vuk::eComputeRW);
+        terrain_brush_context.maps.splat_edit = terrain->splat_edit.acquire("terrain splat edit", vuk::eComputeRW);
 
-      self.execute_stages_after(RenderStage::VisBufferEncode, ctx);
+        self.scene.terrain->edits_dirty = true;
+      }
 
-      main_geometry_context.visbuffer_attachment = ctx.get_image_resource("visbuffer_attachment");
-      main_geometry_context.depth_attachment = ctx.get_image_resource("depth_attachment");
-      self.prepared_frame.meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
-      self.prepared_frame.mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
+      if (terrain->brush.active) {
+        self.apply_terrain_brush(terrain_brush_context);
+      } else {
+        terrain_brush_context.hit_buffer = self.renderer.render_context->scratch_buffer(GPU::TerrainBrushHit{});
+      }
+
+      self.scene.terrain->brush.active = false;
+      self.scene.terrain->brush.painting = false;
+
+      terrain_context.heightmap_attachment = std::move(terrain_brush_context.maps.heightmap);
+      terrain_context.patch_minmax_attachment = std::move(terrain_brush_context.maps.patch_minmax);
     }
 
-    self.decode_visbuffer(main_geometry_context);
+    const auto run_geometry_pass = [&](bool late) {
+      if (late) {
+        cull_geometry_context.cull_flags |= GPU::CullFlag::LatePass;
+        cull_geometry_context.init_cull_meshes = false;
+        cull_geometry_context.cull_camera = cull_camera;
+      }
+
+      if (has_meshes) {
+        cull_geometry_context.hiz_attachment = std::move(main_geometry_context.hiz_attachment);
+        self.cull_geometry(cull_geometry_context);
+        main_geometry_context.hiz_attachment = std::move(cull_geometry_context.hiz_attachment);
+        main_geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
+        self.draw_for_visbuffer(main_geometry_context);
+      }
+
+      if (terrain != nullptr) {
+        terrain_context.cull_flags = GPU::CullFlag::TestFrustum | GPU::CullFlag::TestOcclusion;
+        if (late) {
+          terrain_context.cull_flags |= GPU::CullFlag::LatePass;
+        }
+        terrain_context.cull_camera = cull_camera;
+        terrain_context.hiz_attachment = std::move(main_geometry_context.hiz_attachment);
+        self.cull_terrain(terrain_context);
+        main_geometry_context.hiz_attachment = std::move(terrain_context.hiz_attachment);
+
+        terrain_context.visbuffer_attachment = std::move(main_geometry_context.visbuffer_attachment);
+        terrain_context.depth_attachment = std::move(main_geometry_context.depth_attachment);
+        self.draw_terrain_for_visbuffer(terrain_context);
+        main_geometry_context.visbuffer_attachment = std::move(terrain_context.visbuffer_attachment);
+        main_geometry_context.depth_attachment = std::move(terrain_context.depth_attachment);
+      }
+    };
+
+    run_geometry_pass(false);
+    self.generate_hiz(main_geometry_context);
+    run_geometry_pass(true);
+
+    if (terrain != nullptr) {
+      self.prepared_frame.terrain_patch_visibility_mask_buffer = std::move(
+        terrain_context.patch_visibility_mask_buffer
+      );
+    }
+
+    if (has_meshes || terrain != nullptr) {
+      {
+        auto meshlet_instances_buffer = has_meshes ? std::move(self.prepared_frame.meshlet_instances_buffer)
+                                                   : self.renderer.render_context->alloc_transient_buffer(
+                                                       vuk::MemoryUsage::eGPUonly,
+                                                       sizeof(GPU::MeshletInstance)
+                                                     );
+        auto mesh_instances_buffer = has_meshes ? std::move(self.prepared_frame.mesh_instances_buffer)
+                                                : self.renderer.render_context->alloc_transient_buffer(
+                                                    vuk::MemoryUsage::eGPUonly,
+                                                    sizeof(GPU::MeshInstance)
+                                                  );
+
+        RenderStageContext
+          ctx(self, self.shared_resources, RenderStage::VisBufferEncode, *self.renderer.render_context);
+        ctx.set_viewport_size(viewport_size)
+          .set_image_resource("visbuffer_attachment", std::move(main_geometry_context.visbuffer_attachment))
+          .set_image_resource("depth_attachment", std::move(main_geometry_context.depth_attachment))
+          .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances_buffer))
+          .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances_buffer));
+
+        self.execute_stages_after(RenderStage::VisBufferEncode, ctx);
+
+        main_geometry_context.visbuffer_attachment = ctx.get_image_resource("visbuffer_attachment");
+        main_geometry_context.depth_attachment = ctx.get_image_resource("depth_attachment");
+        if (has_meshes) {
+          self.prepared_frame.meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
+          self.prepared_frame.mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
+        }
+      }
+
+      if (has_meshes) {
+        self.decode_visbuffer(main_geometry_context);
+      }
+    }
+
+    if (terrain != nullptr) {
+      auto terrain_decode_context = TerrainDecodeContext{
+        .bindless_set = &bindless_set,
+        .terrain_buffer = std::move(terrain_context.terrain_buffer),
+        .brush_hit_buffer = std::move(terrain_brush_context.hit_buffer),
+        .normalmap_attachment = std::move(terrain_brush_context.maps.normalmap),
+        .splatmap_attachment = std::move(terrain_brush_context.maps.splatmap),
+        .visbuffer_attachment = std::move(main_geometry_context.visbuffer_attachment),
+        .depth_attachment = std::move(main_geometry_context.depth_attachment),
+        .albedo_attachment = std::move(main_geometry_context.albedo_attachment),
+        .normal_attachment = std::move(main_geometry_context.normal_attachment),
+        .emissive_attachment = std::move(main_geometry_context.emissive_attachment),
+        .metallic_roughness_occlusion_attachment = std::move(
+          main_geometry_context.metallic_roughness_occlusion_attachment
+        ),
+      };
+      self.decode_terrain(terrain_decode_context);
+
+      main_geometry_context.visbuffer_attachment = std::move(terrain_decode_context.visbuffer_attachment);
+      main_geometry_context.depth_attachment = std::move(terrain_decode_context.depth_attachment);
+      main_geometry_context.albedo_attachment = std::move(terrain_decode_context.albedo_attachment);
+      main_geometry_context.normal_attachment = std::move(terrain_decode_context.normal_attachment);
+      main_geometry_context.emissive_attachment = std::move(terrain_decode_context.emissive_attachment);
+      main_geometry_context.metallic_roughness_occlusion_attachment = std::move(
+        terrain_decode_context.metallic_roughness_occlusion_attachment
+      );
+    }
 
     visbuffer_attachment = std::move(main_geometry_context.visbuffer_attachment);
     depth_attachment = std::move(main_geometry_context.depth_attachment);
@@ -823,7 +954,7 @@ auto RendererInstance::render(
     emissive_attachment = std::move(main_geometry_context.emissive_attachment);
     metallic_roughness_occlusion_attachment = std::move(main_geometry_context.metallic_roughness_occlusion_attachment);
 
-    if (self.directional_light_cast_shadows) {
+    if (self.directional_light_cast_shadows && has_meshes) {
       auto rmvsm_context = RMVSMContext{
         .bindless_set = &bindless_set,
         .sun_moved = self.sun_direction_changed,
@@ -945,11 +1076,12 @@ auto RendererInstance::render(
 
     auto forward_2d_vis_pass = vuk::make_pass(
       "2d_forward_vis_pass",
-      [rq2d = self.render_queue_2d](
+      [rq2d = self.render_queue_2d, &descriptor_set = bindless_set](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) target,
         VUK_IA(vuk::eDepthStencilRW) depth,
         VUK_BA(vuk::eAttributeRead) vertex_buffer,
+        VUK_BA(vuk::eVertexRead) materials,
         VUK_BA(vuk::eVertexRead) camera,
         VUK_BA(vuk::eVertexRead) transforms_
       ) {
@@ -978,14 +1110,15 @@ auto RendererInstance::render(
             .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
             .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack_2d, vuk::VertexInputRate::eInstance)
             .push_constants(
-              vuk::ShaderStageFlagBits::eVertex,
+              vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
               0,
-              PushConstants(camera->device_address, transforms_->device_address)
+              PushConstants(materials->device_address, camera->device_address, transforms_->device_address)
             )
+            .bind_persistent(1, descriptor_set)
             .draw(6, batch.count, 0, batch.offset);
         }
 
-        return std::make_tuple(target, depth, camera, vertex_buffer, transforms_);
+        return std::make_tuple(target, depth, camera, vertex_buffer, materials, transforms_);
       }
     );
 
@@ -994,12 +1127,14 @@ auto RendererInstance::render(
       depth_attachment,
       self.prepared_frame.camera_buffer,
       vertex_buffer_2d,
+      self.prepared_frame.materials_buffer,
       self.prepared_frame.transforms_world_buffer
     ) =
       forward_2d_vis_pass(
         std::move(visbuffer_attachment_2d),
         std::move(depth_attachment),
         std::move(vertex_buffer_2d),
+        std::move(self.prepared_frame.materials_buffer),
         std::move(self.prepared_frame.camera_buffer),
         std::move(self.prepared_frame.transforms_world_buffer)
       );
@@ -1070,7 +1205,7 @@ auto RendererInstance::render(
       );
 
     RenderStageContext ctx(self, self.shared_resources, RenderStage::Forward2D, *self.renderer.render_context);
-    ctx.set_viewport_size(self.viewport_size)
+    ctx.set_viewport_size(viewport_size)
       .set_image_resource("final_attachment", final_attachment)
       .set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attachment_2d));
 
@@ -1145,7 +1280,7 @@ auto RendererInstance::render(
 
   {
     RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, *self.renderer.render_context);
-    ctx.set_viewport_size(self.viewport_size)
+    ctx.set_viewport_size(viewport_size)
       .set_buffer_resource("camera_buffer", std::move(self.prepared_frame.camera_buffer))
       .set_image_resource("depth_attachment", std::move(depth_attachment))
       .set_image_resource("result_attachment", std::move(dst_attachment));
@@ -1176,7 +1311,7 @@ auto RendererInstance::render(
     debug_context.vsm_clipmaps_buffer = std::move(rmvsm_virtual_clipmaps_buffer);
   }
 
-  if (debugging) {
+  if (debugging && self.prepared_frame.mesh_instance_count > 0) {
     dst_attachment = self.apply_debug_view(debug_context, dst_extent);
   }
 
@@ -1325,6 +1460,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
       }
     });
+
+  self.post_proces_settings.exposure = cvar.cvar_exposure.get();
 
   self.render_queue_2d.init();
 
@@ -1530,6 +1667,27 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       *self.meshlet_instance_visibility_mask_buffer,
       vuk::eMemoryRead
     );
+  }
+
+  if (self.scene.terrain != nullptr && self.scene.terrain->is_baked()) {
+    const auto patch_count = self.scene.terrain->patch_count.x * self.scene.terrain->patch_count.y;
+    const auto mask_size_bytes = (patch_count + 31) / 32 * sizeof(u32);
+
+    const auto needs_reset = self.terrain_patch_visibility_patch_count != patch_count;
+    self.terrain_patch_visibility_patch_count = patch_count;
+
+    self.terrain_patch_visibility_mask_buffer = render_context.resize_buffer(
+      std::move(self.terrain_patch_visibility_mask_buffer),
+      vuk::MemoryUsage::eGPUonly,
+      mask_size_bytes
+    );
+    auto mask_buffer = vuk::acquire_buf(
+      "terrain patch visibility mask",
+      *self.terrain_patch_visibility_mask_buffer,
+      needs_reset ? vuk::eNone : vuk::eMemoryRead
+    );
+    self.prepared_frame.terrain_patch_visibility_mask_buffer = needs_reset ? zero_fill_pass(std::move(mask_buffer))
+                                                                           : std::move(mask_buffer);
   }
 
   self.prepared_frame.mesh_instance_count = info.mesh_instance_count;

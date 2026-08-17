@@ -33,6 +33,7 @@ namespace ox::rc {
 struct ShaderSessionInfo {
   std::string name = {};
   std::filesystem::path root_directory = {};
+  std::vector<std::filesystem::path> include_directories = {};
   i32 optimization_level = 3;
   std::vector<std::pair<std::string, std::string>> definitions = {};
 };

@@ -7,12 +7,13 @@
 #include "Asset/AudioSource.hpp"
 #include "Asset/Material.hpp"
 #include "Asset/Model.hpp"
+#include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/UUID.hpp"
 #include "Memory/ReadGuard.hpp"
 #include "Memory/SlotMap.hpp"
 #include "Scene/Scene.hpp"
-#include "Scripting/LuaSystem.hpp"
+#include "Scripting/LuaScript.hpp"
 #include "Utils/JsonWriter.hpp"
 
 namespace ox {
@@ -27,6 +28,7 @@ struct Asset {
     SceneID scene_id;
     AudioID audio_id;
     ScriptID script_id;
+    TerrainEditsID terrain_edits_id;
   };
 
   // Reference count of loads
@@ -45,10 +47,12 @@ class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
-  using LoadInfo = std::variant<TextureLoadInfo, Material>;
+  using LoadInfo = std::variant<TextureLoadInfo, Material, ModelLoadInfo>;
 
   static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
+  static auto meta_file_path(const std::filesystem::path& path) -> std::filesystem::path;
+  static auto owns_meta_file(const std::filesystem::path& path) -> bool;
   static auto write_gltf_meta(AssetManager& self, const std::filesystem::path& path, JsonWriter& json) -> bool;
 
   struct AssetMetaFile {
@@ -82,6 +86,9 @@ public:
     -> bool;
   auto export_script(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
     -> bool;
+  auto export_terrain_edits(
+    this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+  ) -> bool;
 
   auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true)
     -> bool;
@@ -115,8 +122,12 @@ public:
   auto get_audio(this AssetManager& self, const UUID& uuid) -> ReadGuard<AudioSource>;
   auto get_audio(this AssetManager& self, AudioID audio_id) -> ReadGuard<AudioSource>;
 
-  auto get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaSystem>;
-  auto get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaSystem>;
+  auto get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaScript>;
+  auto get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaScript>;
+
+  auto get_terrain_edits(this AssetManager& self, const UUID& uuid) -> ReadGuard<TerrainEdits>;
+  auto get_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> ReadGuard<TerrainEdits>;
+  auto set_terrain_edits(this AssetManager& self, const UUID& uuid, TerrainEdits&& edits) -> void;
 
 private:
   auto load_asset_impl(
@@ -126,6 +137,7 @@ private:
   auto unload_asset_impl(this AssetManager& self, AssetType type, u64 id) -> bool;
 
   auto load_model(this AssetManager& self, const std::filesystem::path& path, bool async) -> ModelID;
+  auto load_model(this AssetManager& self, const ModelLoadInfo& info) -> ModelID;
   auto unload_model(this AssetManager& self, ModelID model_id) -> bool;
   // Blocks until every mesh job of the model has finished.
   auto wait_until_model_loaded(this AssetManager& self, ModelID model_id) -> void;
@@ -147,6 +159,9 @@ private:
   auto load_script(this AssetManager& self, const std::filesystem::path& path) -> ScriptID;
   auto unload_script(this AssetManager& self, ScriptID script_id) -> bool;
 
+  auto load_terrain_edits(this AssetManager& self, const std::filesystem::path& path) -> TerrainEditsID;
+  auto unload_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> bool;
+
   AssetRegistry asset_registry = {};
 
   std::shared_mutex registry_mutex = {};
@@ -156,6 +171,7 @@ private:
   std::shared_mutex scenes_mutex = {};
   std::shared_mutex audio_mutex = {};
   std::shared_mutex scripts_mutex = {};
+  std::shared_mutex terrain_edits_mutex = {};
 
   std::vector<MaterialID> dirty_materials = {};
 
@@ -170,7 +186,8 @@ private:
   SlotMap<Material, MaterialID> material_map = {};
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};
   SlotMap<AudioSource, AudioID> audio_map = {};
-  SlotMap<std::unique_ptr<LuaSystem>, ScriptID> script_map = {};
+  SlotMap<std::unique_ptr<LuaScript>, ScriptID> script_map = {};
+  SlotMap<TerrainEdits, TerrainEditsID> terrain_edits_map = {};
 
   UUID null_material = {};
 };

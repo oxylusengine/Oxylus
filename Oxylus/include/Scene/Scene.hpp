@@ -19,8 +19,13 @@
 #include "Render/RendererInstance.hpp"
 #include "Scene/Components.hpp"
 #include "Scene/SceneGPU.hpp"
+#include "Scene/Terrain.hpp"
 #include "Scripting/LuaSystem.hpp"
 #include "Utils/Timestep.hpp"
+
+namespace Rml {
+class Context;
+}
 
 template <>
 struct ankerl::unordered_dense::hash<flecs::id> {
@@ -40,6 +45,7 @@ struct ankerl::unordered_dense::hash<flecs::entity> {
 
 namespace ox {
 struct JsonWriter;
+class RmlView;
 
 struct ComponentDB {
   std::vector<flecs::id> components = {};
@@ -55,6 +61,8 @@ class Scene {
 public:
   std::string scene_name = "Untitled";
 
+  bool tearing_down = false;
+
   flecs::world world;
   ComponentDB component_db = {};
 
@@ -66,12 +74,19 @@ public:
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
   ankerl::unordered_dense::map<u32, flecs::entity> transform_index_entities_map = {};
 
+  bool input_focused = true;
+
   RendererCVar renderer_cvar = {};
 
   SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};
+
+  std::unique_ptr<Terrain> terrain = nullptr;
+  flecs::entity terrain_entity = {};
+  bool terrain_dirty = false;
+  UUID terrain_edits_ref = {};
 
   bool meshes_dirty = false;
   u32 gpu_mesh_instance_count = 0;
@@ -119,15 +134,10 @@ public:
 
   auto set_dirty(this Scene& self, flecs::entity entity) -> void;
 
-  // Returns `prefix` (or a non-conflicting variant) that is free both at the
-  // world root and under `parent`'s child scope. Pass an invalid `parent` to
-  // only check the world root. This is needed because flecs registers child
-  // names in the parent's own name index when `child_of` is added, so a name
-  // that's free at the root can still conflict under a parent.
   auto safe_entity_name(this const Scene& self, std::string prefix, flecs::entity parent = {}) -> std::string;
 
   auto get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem*;
-  auto get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, LuaSystem*>&;
+  auto get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, std::unique_ptr<LuaSystem>>&;
   auto add_lua_system(this Scene& self, const UUID& lua_script) -> void;
   auto remove_lua_system(this Scene& self, const UUID& lua_script) -> void;
 
@@ -159,10 +169,24 @@ public:
     flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
   ) const -> void;
 
+  auto create_terrain_collision(this Scene& self) -> void;
+  auto destroy_terrain_collision(this Scene& self) -> void;
+  auto sync_terrain_edits(this Scene& self) -> void;
+  auto set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void;
+  auto clear_terrain_edits(this Scene& self) -> void;
+
   auto render(
-    this Scene& self, vuk::Value<vuk::ImageAttachment>&& dst_attachment, const Renderer::RenderInfo& render_info
+    this Scene& self,
+    vuk::Value<vuk::ImageAttachment>&& dst_attachment,
+    glm::ivec2 viewport_origin,
+    glm::ivec2 viewport_size,
+    glm::ivec2 surface_size,
+    bool keyboard_focused = true
   ) -> vuk::Value<vuk::ImageAttachment>;
   auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
+  auto get_rml_context(this const Scene& self) -> Rml::Context*;
+  auto get_rml_context_name(this const Scene& self) -> std::string_view;
+  auto set_rml_dpi_ratio(this const Scene& self, f32 ratio) -> void;
 
   static auto entity_to_json(JsonWriter& writer, flecs::entity e) -> void;
   static auto json_to_entity(
@@ -177,7 +201,11 @@ public:
   auto save_to_file(this const Scene& self, const std::filesystem::path& path) -> bool;
   auto load_from_file(this Scene& self, const std::filesystem::path& path) -> bool;
 
+  auto get_uuid(this const Scene& self) -> const UUID& { return self.uuid; }
+
 private:
+  UUID uuid = {};
+
   struct PendingModelSpawn {
     struct MeshEntity {
       usize mesh_index = 0;
@@ -197,19 +225,21 @@ private:
 
   std::vector<std::function<void(Scene* scene)>> deferred_functions_ = {};
 
-  // Lua
-  ankerl::unordered_dense::map<UUID, LuaSystem*> lua_systems = {};
+  // Lua. Owned per scene, not borrowed from the asset: a shared instance means two scenes share one environment.
+  ankerl::unordered_dense::map<UUID, std::unique_ptr<LuaSystem>> lua_systems = {};
 
   // Renderer
   std::unique_ptr<RendererInstance> renderer_instance = nullptr;
+  std::unique_ptr<RmlView> rml_view;
+  glm::ivec2 rml_surface_size = {};
 
   // Physics
-  f32 physics_accumulator = 0.f;
   std::shared_mutex physics_mutex = {};
   std::unique_ptr<JPH::PhysicsSystem> physics_system = nullptr;
   std::unique_ptr<PhysicsDebugRenderer> physics_debug_renderer = nullptr;
   std::unique_ptr<Physics3DContactListener> contact_listener_3d = nullptr;
   std::unique_ptr<Physics3DBodyActivationListener> body_activation_listener_3d = nullptr;
+  JPH::BodyID terrain_body_id = {};
 
   auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
   auto remove_transform(this Scene& self, flecs::entity entity) -> void;
@@ -228,6 +258,8 @@ private:
     -> MeshSpawnInfo;
   auto spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, const MeshSpawnInfo& info) -> void;
   auto update_pending_model_spawns(this Scene& self) -> void;
+
+  auto bake_terrain(this Scene& self) -> void;
 
   auto run_deferred_functions(this Scene& self) -> void;
 };

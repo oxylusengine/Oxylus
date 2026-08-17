@@ -11,6 +11,18 @@ namespace ox {
 
 enum class ModelID : u64 { Invalid = std::numeric_limits<u64>::max() };
 
+struct ModelLoadInfo {
+  struct Vertex {
+    glm::vec3 position = {};
+    glm::vec3 normal = {};
+    glm::vec2 uv = {};
+  };
+
+  std::vector<Vertex> vertices = {};
+  std::vector<u32> indices = {};
+  std::vector<UUID> materials = {};
+};
+
 struct Model {
   constexpr static auto MAX_MESHLET_INDICES = 64_sz;
   constexpr static auto MAX_MESHLET_PRIMITIVES = 64_sz;
@@ -22,9 +34,9 @@ struct Model {
     std::vector<usize> child_indices = {};
     std::vector<usize> mesh_indices = {};
     std::vector<usize> light_indices = {};
-    glm::vec3 translation = {};
-    glm::quat rotation = {};
-    glm::vec3 scale = {};
+    glm::vec3 translation = {0.f, 0.f, 0.f};
+    glm::quat rotation = glm::quat::wxyz(1.f, 0.f, 0.f, 0.f);
+    glm::vec3 scale = {1.f, 1.f, 1.f};
   };
 
   enum class LightType { Directional, Spot, Point };
