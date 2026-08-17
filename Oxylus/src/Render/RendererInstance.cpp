@@ -1,5 +1,7 @@
 #include "Render/RendererInstance.hpp"
 
+#include <algorithm>
+#include <ankerl/svector.h>
 #include <vuk/runtime/CommandBuffer.hpp>
 
 #include "Asset/AssetManager.hpp"
@@ -15,6 +17,178 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
+// A light gathered from the ECS, held until shadow slots have been handed out.
+struct PendingLight {
+  GPU::Light light = {};
+  u64 entity_id = 0;
+  bool cast_shadows = false;
+};
+
+struct ShadowSlotCandidate {
+  u32 light_index = 0;
+  f32 priority = 0.0f;
+};
+
+// Both outcomes reset every page of the slot's layers, so they are the CPU-side
+// measure of how much the point/spot VSM chain has to re-render this frame.
+struct ShadowSlotStats {
+  u32 reassigned = 0;
+  u32 invalidated = 0;
+};
+
+// Slack given to a light that already holds a slot, both on the frustum test and
+// on its score. Without it a light grazing the frustum edge, or one tied with a
+// contender, would trade its slot back and forth every frame and drop its cached
+// pages each time.
+constexpr static f32 SHADOW_SLOT_HYSTERESIS = 1.25f;
+
+static auto sphere_intersects_frustum(std::span<const glm::vec4> planes, const glm::vec3& center, f32 radius) -> bool {
+  for (const auto& plane : planes) {
+    if (glm::dot(glm::vec3(plane), center) - plane.w < -radius) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static auto shadow_light_priority(const GPU::Light& light, const GPU::CameraData& camera_data, bool holds_slot) -> f32 {
+  if (light.range <= 0.0f) {
+    return -1.0f;
+  }
+
+  const auto hysteresis = holds_slot ? SHADOW_SLOT_HYSTERESIS : 1.0f;
+
+  // Shading only ever applies a light to pixels that are inside the camera
+  // frustum and within its range, so an influence sphere missing the frustum
+  // cannot contribute to the image and never earns a slot.
+  if (!sphere_intersects_frustum(camera_data.frustum_planes, light.position, light.range * hysteresis)) {
+    return -1.0f;
+  }
+
+  const auto distance = glm::distance(glm::vec3(camera_data.position), light.position);
+  const auto screen_radius = light.range / glm::max(distance, 0.001f);
+
+  return screen_radius * glm::sqrt(glm::max(light.intensity, 0.0f)) * hysteresis;
+}
+
+static auto assign_shadow_slots(
+  std::span<PendingLight> lights,
+  GPU::LightKind kind,
+  const GPU::CameraData& camera_data,
+  std::span<ShadowSlotState> slots,
+  u32& slot_high_water,
+  u64& moved_mask
+) -> ShadowSlotStats {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  auto stats = ShadowSlotStats{};
+
+  // Lights past `MAX_LIGHTS` never reach the GPU buffer, so a slot spent on one
+  // would render a layer nothing can sample.
+  const auto uploaded_light_count = glm::min(lights.size(), static_cast<usize>(GPU::MAX_LIGHTS));
+
+  auto candidates = stack.alloc<ShadowSlotCandidate>(uploaded_light_count);
+  auto candidate_count = 0_sz;
+  for (auto light_index = 0_u32; light_index < uploaded_light_count; light_index++) {
+    const auto& pending = lights[light_index];
+    if (!pending.cast_shadows || pending.light.kind != kind) {
+      continue;
+    }
+
+    auto holds_slot = false;
+    for (const auto& slot : slots) {
+      if (slot.entity_id == pending.entity_id) {
+        holds_slot = true;
+        break;
+      }
+    }
+
+    const auto priority = shadow_light_priority(pending.light, camera_data, holds_slot);
+    if (priority <= 0.0f) {
+      continue;
+    }
+
+    candidates[candidate_count++] = ShadowSlotCandidate{.light_index = light_index, .priority = priority};
+  }
+
+  auto selected = candidates.subspan(0, candidate_count);
+  std::ranges::sort(selected, std::ranges::greater{}, &ShadowSlotCandidate::priority);
+  selected = selected.subspan(0, glm::min(selected.size(), slots.size()));
+
+  // Slots are reclaimed in two passes: every light that held one last frame
+  // keeps it, and only the leftovers are packed into what remains. Moving a
+  // light between slots is what forces its cached pages to be dropped.
+  auto assigned_slots = stack.alloc<i32>(selected.size());
+  auto claimed_mask = 0_u64;
+
+  for (auto i = 0_sz; i < selected.size(); i++) {
+    assigned_slots[i] = -1;
+    const auto entity_id = lights[selected[i].light_index].entity_id;
+    for (auto slot_index = 0_u32; slot_index < slots.size(); slot_index++) {
+      if (slots[slot_index].entity_id == entity_id) {
+        assigned_slots[i] = static_cast<i32>(slot_index);
+        claimed_mask |= 1_u64 << slot_index;
+        break;
+      }
+    }
+  }
+
+  auto next_free_slot = 0_u32;
+  for (auto i = 0_sz; i < selected.size(); i++) {
+    if (assigned_slots[i] >= 0) {
+      continue;
+    }
+
+    while (next_free_slot < slots.size() && (claimed_mask & (1_u64 << next_free_slot)) != 0) {
+      next_free_slot++;
+    }
+
+    assigned_slots[i] = static_cast<i32>(next_free_slot);
+    claimed_mask |= 1_u64 << next_free_slot;
+  }
+
+  for (auto i = 0_sz; i < selected.size(); i++) {
+    auto& pending = lights[selected[i].light_index];
+    const auto slot_index = static_cast<u32>(assigned_slots[i]);
+    auto& slot = slots[slot_index];
+
+    const auto occupant_changed = slot.entity_id != pending.entity_id;
+    const auto view_changed = slot.position != pending.light.position ||   //
+                              slot.direction != pending.light.direction || //
+                              slot.range != pending.light.range ||         //
+                              slot.outer_cone_angle != pending.light.outer_cone_angle;
+    if (occupant_changed || view_changed) {
+      moved_mask |= 1_u64 << slot_index;
+      stats.reassigned += static_cast<u32>(occupant_changed);
+      stats.invalidated += static_cast<u32>(!occupant_changed);
+    }
+
+    slot = ShadowSlotState{
+      .entity_id = pending.entity_id,
+      .position = pending.light.position,
+      .direction = pending.light.direction,
+      .range = pending.light.range,
+      .outer_cone_angle = pending.light.outer_cone_angle,
+    };
+
+    pending.light.shadow_map_index = static_cast<i32>(slot_index);
+    slot_high_water = glm::max(slot_high_water, slot_index + 1);
+  }
+
+  // Vacated slots are wiped so a light that comes back to one always compares
+  // as changed and re-renders instead of trusting pages that were freed while
+  // it had no slot.
+  for (auto slot_index = 0_u32; slot_index < slots.size(); slot_index++) {
+    if ((claimed_mask & (1_u64 << slot_index)) == 0) {
+      slots[slot_index] = {};
+    }
+  }
+
+  return stats;
+}
+
 auto bind_vsm_pointspot_spec_constants(vuk::CommandBuffer& cmd) -> vuk::CommandBuffer& {
   return cmd.specialize_constants(50, RMVSMContext::POINT_SPOT_IMAGE_RESOLUTION)
     .specialize_constants(51, RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE)
@@ -331,6 +505,26 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   vsm_hpb_attachment = vuk::clear_image(std::move(vsm_hpb_attachment), vuk::Black<u32>);
   vsm_hpb_attachment = std::move(vsm_hpb_attachment).as_released(vuk::eComputeSampled);
   render_context.wait_on(std::move(vsm_hpb_attachment));
+
+  vsm_pointspot_hpb = Texture::create({
+    .format = vuk::Format::eR8Uint,
+    .extent =
+      {
+        .width = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+        .height = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+        .depth = 1,
+      },
+    .layer_count = RMVSMContext::POINT_SPOT_LAYER_COUNT,
+    .level_count = RMVSMContext::POINT_SPOT_HPB_LEVEL_COUNT,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
+    .view_type = vuk::ImageViewType::e2DArray,
+  });
+
+  auto vsm_pointspot_hpb_attachment = vsm_pointspot_hpb.discard("vsm pointspot hpb");
+  vsm_pointspot_hpb_attachment = vuk::clear_image(std::move(vsm_pointspot_hpb_attachment), vuk::Black<u32>);
+  vsm_pointspot_hpb_attachment = std::move(vsm_pointspot_hpb_attachment).as_released(vuk::eComputeSampled);
+  render_context.wait_on(std::move(vsm_pointspot_hpb_attachment));
 
   vsm_physical_page_table_attachment = vuk::ImageAttachment{
     .image_flags = vuk::ImageCreateFlagBits::eMutableFormat,
@@ -1488,10 +1682,16 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   self.scene.lights.reset();
 
+  // Lights are gathered first and only then given shadow slots: there are far
+  // fewer slots than a scene can hold lights, so they go to the lights that
+  // matter most to this camera instead of to whichever ones the ECS happens to
+  // visit first.
+  ankerl::svector<PendingLight, 32> pending_lights = {};
+
   self.scene.world
     .query_builder<const TransformComponent, const LightComponent>() //
     .build()
-    .each([&self](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
+    .each([&self, &pending_lights](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
       if (!e.enabled()) {
         return;
       }
@@ -1514,46 +1714,23 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       } else {
         const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
         const auto direction = lc.type == LightComponent::LightType::Spot ? world_forward : glm::vec3(0.0f);
-        auto shadow_map_index = -1;
-        if (lc.cast_shadows) {
-          if (
-            kind == GPU::LightKind::Point && self.prepared_frame.shadow_point_light_count < GPU::MAX_SHADOW_POINT_LIGHTS
-          ) {
-            shadow_map_index = static_cast<i32>(self.prepared_frame.shadow_point_light_count++);
-          } else if (
-            kind == GPU::LightKind::Spot && self.prepared_frame.shadow_spot_light_count < GPU::MAX_SHADOW_SPOT_LIGHTS
-          ) {
-            shadow_map_index = static_cast<i32>(self.prepared_frame.shadow_spot_light_count++);
-          }
-        }
-        if (shadow_map_index >= 0) {
-          auto& previous = kind == GPU::LightKind::Point ? self.previous_shadow_point_lights[shadow_map_index]
-                                                         : self.previous_shadow_spot_lights[shadow_map_index];
-          const auto shadow_view_changed = previous.position != glm::vec3(world_position) || //
-                                           previous.range != lc.radius || previous.direction != direction ||
-                                           previous.outer_cone_angle != lc.outer_cone_angle || previous.kind != kind;
-          if (shadow_view_changed) {
-            auto& moved_mask = kind == GPU::LightKind::Point ? self.prepared_frame.moved_point_light_mask
-                                                             : self.prepared_frame.moved_spot_light_mask;
-            moved_mask |= u64(1) << shadow_map_index;
-          }
-          previous.position = glm::vec3(world_position);
-          previous.range = lc.radius;
-          previous.direction = direction;
-          previous.outer_cone_angle = lc.outer_cone_angle;
-          previous.kind = kind;
-        }
-        const auto light_id = self.scene.lights.create_slot(
-          GPU::Light{
-            .position = world_position,
-            .intensity = lc.intensity,
-            .color = lc.color,
-            .range = lc.radius,
-            .direction = direction,
-            .inner_cone_angle = lc.inner_cone_angle,
-            .outer_cone_angle = lc.outer_cone_angle,
-            .kind = kind,
-            .shadow_map_index = shadow_map_index,
+
+        pending_lights.emplace_back(
+          PendingLight{
+            .light =
+              GPU::Light{
+                .position = world_position,
+                .intensity = lc.intensity,
+                .color = lc.color,
+                .range = lc.radius,
+                .direction = direction,
+                .inner_cone_angle = lc.inner_cone_angle,
+                .outer_cone_angle = lc.outer_cone_angle,
+                .kind = kind,
+                .shadow_map_index = -1,
+              },
+            .entity_id = static_cast<u64>(e.id()),
+            .cast_shadows = lc.cast_shadows,
           }
         );
       }
@@ -1585,6 +1762,44 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
       }
     });
+
+  const auto point_slot_stats = assign_shadow_slots(
+    pending_lights,
+    GPU::LightKind::Point,
+    self.camera_data,
+    self.shadow_point_slots,
+    self.prepared_frame.shadow_point_light_count,
+    self.prepared_frame.moved_point_light_mask
+  );
+  const auto spot_slot_stats = assign_shadow_slots(
+    pending_lights,
+    GPU::LightKind::Spot,
+    self.camera_data,
+    self.shadow_spot_slots,
+    self.prepared_frame.shadow_spot_light_count,
+    self.prepared_frame.moved_spot_light_mask
+  );
+
+  self.prepared_frame.shadow_slots_reassigned = point_slot_stats.reassigned + spot_slot_stats.reassigned;
+  self.prepared_frame.shadow_slots_invalidated = point_slot_stats.invalidated + spot_slot_stats.invalidated;
+
+  // Profiling aid: shadow caching makes the expensive frames exactly the ones
+  // that are hardest to capture, because they only happen while the camera is
+  // moving. Marking every light moved (and the sun with it) drops the whole page
+  // cache each frame, so a stationary camera keeps rebuilding the shadows it can
+  // currently see and every captured frame is a worst-case rebuild.
+  if (cvar.cvar_vsm_force_invalidate.as_bool()) {
+    self.prepared_frame.moved_point_light_mask = ~0_u64;
+    self.prepared_frame.moved_spot_light_mask = ~0_u64;
+    self.sun_direction_changed = true;
+  }
+
+  TracyPlot("vsm shadow slots reassigned", static_cast<i64>(self.prepared_frame.shadow_slots_reassigned));
+  TracyPlot("vsm shadow slots invalidated", static_cast<i64>(self.prepared_frame.shadow_slots_invalidated));
+
+  for (auto& pending : pending_lights) {
+    self.scene.lights.create_slot(std::move(pending.light));
+  }
 
   self.post_proces_settings.exposure = cvar.cvar_exposure.get();
 

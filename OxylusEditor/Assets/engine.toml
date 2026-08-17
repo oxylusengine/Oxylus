@@ -182,8 +182,18 @@ path = "passes/rmvsm_pointspot_invalidate_pages.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "rmvsm_pointspot_build_active_layers"
+path = "passes/rmvsm_pointspot_build_active_layers.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "rmvsm_pointspot_cull_meshes"
 path = "passes/rmvsm_pointspot_cull_meshes.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_downsample_hpb"
+path = "passes/rmvsm_pointspot_downsample_hpb.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]

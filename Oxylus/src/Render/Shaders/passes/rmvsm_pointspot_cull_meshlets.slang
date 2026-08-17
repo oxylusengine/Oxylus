@@ -13,7 +13,7 @@ import rmvsm;
 [[vk::binding(3)]] StructuredBuffer<VSMPointSpotView> views;
 [[vk::binding(4)]] StructuredBuffer<VSMMeshletInstance> vsm_meshlet_instances;
 [[vk::binding(5)]] StructuredBuffer<u32> vsm_meshlet_instance_count;
-[[vk::binding(6)]] Texture2DArray<u32> page_tables;
+[[vk::binding(6)]] Texture2DArray<u8> hpb;
 [[vk::binding(7)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
 [[vk::binding(8)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
 
@@ -26,15 +26,21 @@ func test_pointspot_pages(in ScreenAabb screen_aabb, u32 layer, i32 mip) -> bool
     let min_page = clamp(i32x2(screen_aabb.min.xy * f32(mip_table_size)), 0, mip_table_size - 1);
     let max_page = clamp(i32x2(screen_aabb.max.xy * f32(mip_table_size)), 0, mip_table_size - 1);
 
-    let page_area = (max_page.x - min_page.x + 1) * (max_page.y - min_page.y + 1);
-    if (page_area > 64) {
-        return true;
-    }
+    // Climb the occupancy pyramid until the AABB spans at most two texels per
+    // axis, so the walk below is bounded at 3x3 regardless of how much of the
+    // page table a meshlet covers. Meshlets big enough to blanket the shadow map
+    // used to skip this test entirely, which is exactly what left the rasterizer
+    // shading pages that were never resident.
+    // `page_span` can never exceed `mip_table_size`, so this level is always
+    // inside the pyramid built for this mip and needs no upper clamp.
+    let page_span = max(max_page.x - min_page.x, max_page.y - min_page.y) + 1;
+    let level = max(i32(ceil(log2(f32(page_span)))) - 1, 0);
 
-    for (var y = min_page.y; y <= max_page.y; y++) {
-        for (var x = min_page.x; x <= max_page.x; x++) {
-            let page = VSMPageMetadata(page_tables.Load(i32x4(x, y, layer, mip)));
-            if (page.is_backed() && page.is_dirty()) {
+    let level_min = min_page >> level;
+    let level_max = max_page >> level;
+    for (var y = level_min.y; y <= level_max.y; y++) {
+        for (var x = level_min.x; x <= level_max.x; x++) {
+            if (hpb.Load(i32x4(x, y, i32(layer), level)) != 0) {
                 return true;
             }
         }

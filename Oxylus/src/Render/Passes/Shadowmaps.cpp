@@ -939,6 +939,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       .views_buffer = std::move(context.pointspot_views_buffer),
       .layer_dirty_mask_buffer = std::move(context.pointspot_layer_dirty_mask_buffer),
       .page_table_attachment = std::move(context.pointspot_page_table_attachment),
+      .hpb_attachment = self.vsm_pointspot_hpb.acquire("vsm pointspot hpb", vuk::eComputeSampled),
     };
 
     for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {

@@ -27,6 +27,8 @@ struct RendererCVar {
   AutoCVar_Int cvar_culling_triangle;
   // Not serialized: describes the target being rendered into, not the scene.
   AutoCVar_Int cvar_transparent_background;
+  // Not serialized: profiling aid, see `RendererInstance::update`.
+  AutoCVar_Int cvar_vsm_force_invalidate;
 
   AutoCVar_Int cvar_contact_shadows_enabled;
   AutoCVar_Int cvar_contact_shadows_steps;
