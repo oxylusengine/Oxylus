@@ -16,18 +16,18 @@ namespace ox {
 using JobFn = std::function<void()>;
 
 struct Job;
+class JobManager;
+
 struct Barrier : ManagedObj {
-  u32 acquired = 0;
-  std::atomic<u32> counter = 0;
-  std::vector<Arc<Job>> pending = {};
+  // Pinned at 1 until the first `wait`, so the counter cannot transiently hit zero while jobs are
+  // still being fanned out.
+  std::atomic<u32> counter = 1;
+  std::atomic_flag sealed = {};
 
   static auto create() -> Arc<Barrier>;
-  auto wait(this Barrier& self) -> void;
-  auto acquire(this Barrier& self, u32 count = 1) -> Arc<Barrier>;
-  auto add(this Barrier& self, Arc<Job> job) -> Arc<Barrier>;
+  auto wait(this Barrier& self, JobManager& job_manager) -> void;
 };
 
-class JobManager;
 struct Job : ManagedObj {
   std::vector<Arc<Barrier>> barriers = {};
   JobFn task = {};
@@ -58,6 +58,7 @@ public:
 
   auto start_tracking(this JobTracker& self) -> void { self.tracking_enabled.store(true); }
   auto stop_tracking(this JobTracker& self) -> void { self.tracking_enabled.store(false); }
+  auto is_tracking(this const JobTracker& self) -> bool { return self.tracking_enabled.load(); }
   auto clear_tracked(this JobTracker& self) -> void {
     std::unique_lock lock(self.mutex);
     self.jobs.clear();
@@ -148,8 +149,17 @@ public:
   auto submit(this JobManager& self, Arc<Job> job, bool prioritize = false) -> void;
   auto wait(this JobManager& self) -> void;
 
-  auto push_job_name(this JobManager& self, const std::string& name) { self.job_name_stack.push(name); }
-  auto pop_job_name(this JobManager& self) { self.job_name_stack.pop(); }
+  auto try_execute_one(this JobManager& self) -> bool;
+
+  static auto job_name_stack() -> std::stack<std::string>&;
+
+  auto push_job_name(this JobManager&, std::string_view name) -> void { job_name_stack().emplace(name); }
+  auto pop_job_name(this JobManager&) -> void {
+    auto& stack = job_name_stack();
+    if (!stack.empty()) {
+      stack.pop();
+    }
+  }
 
   auto get_tracker(this JobManager& self) -> JobTracker& { return self.tracker; }
 
@@ -236,9 +246,9 @@ public:
   }
 
 private:
-  JobTracker tracker = {};
+  auto execute(this JobManager& self, Arc<Job> job) -> void;
 
-  std::stack<std::string> job_name_stack = {};
+  JobTracker tracker = {};
 
   static constexpr u32 auto_thread_count = 0;
   u32 desired_thread_count = auto_thread_count;

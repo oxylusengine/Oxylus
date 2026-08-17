@@ -157,6 +157,10 @@ func fs_main(
         case DebugView::GTAO: {
             color = params.ambient_occlusion.Load(u32x3(pixel_pos, 0)).rrr;
         } break;
+        case DebugView::GeometricNormal: {
+            let sampled_normal = params.normal.Load(u32x3(pixel_pos, 0));
+            color = com::oct_to_vec3(sampled_normal.zw) * 0.5 + 0.5;
+        } break;
         default:;
     }
 

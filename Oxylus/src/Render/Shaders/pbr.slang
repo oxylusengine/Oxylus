@@ -1,4 +1,5 @@
 import common;
+import scene;
 
 public static constexpr f32 MIN_ALPHA = 0.0025;
 
@@ -83,4 +84,89 @@ public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 perceptual_roughne
     result.diffuse = kd * albedo * Fd_Lambert();
 
     return result;
+}
+
+public func lights_attenuate_point(f32 to_light_dist, f32 cutoff) -> f32 {
+    if (cutoff <= 0.0) {
+        return 1.0 / (to_light_dist * to_light_dist + 0.1f);
+    }
+
+    f32 win = (to_light_dist / cutoff);
+    win = win * win * win * win;
+    win = max(0.0, 1.0 - win);
+    win = win * win;
+    f32 attenuation = win / (to_light_dist * to_light_dist + 0.1);
+    return attenuation;
+}
+
+public f32x3 point_light_contribution(
+    f32x3 world_position,
+    f32x3 N,
+    f32x3 V,
+    f32x3 albedo_color,
+    f32 roughness,
+    f32 metallic,
+    f32x3 light_position,
+    Light light
+) {
+    f32x3 light_vector = light_position - world_position;
+    f32 light_distance = length(light_vector);
+    f32x3 L = light_vector / light_distance;
+
+    f32 attenuation = lights_attenuate_point(light_distance, light.range);
+    if (attenuation <= 0.0 || light.intensity <= 0.0) {
+        return f32x3(0.0, 0.0, 0.0);
+    }
+
+    f32 NdotL = saturate(dot(N, L));
+    if (NdotL <= 0.0) {
+        return f32x3(0.0, 0.0, 0.0);
+    }
+
+    let result = BRDF(V, N, L, albedo_color, roughness, metallic);
+    f32x3 radiance = light.color * attenuation * light.intensity;
+
+    return (result.diffuse + result.specular) * radiance * NdotL;
+}
+
+public f32 calculate_spot_light_attenuation(f32x3 light_direction, f32x3 spot_direction, f32 inner_cone_angle, f32 outer_cone_angle) {
+    f32 cos_angle = dot(-light_direction, normalize(spot_direction));
+    f32 cos_inner = cos(inner_cone_angle);
+    f32 cos_outer = cos(outer_cone_angle);
+    f32 spot_attenuation = smoothstep(cos_outer, cos_inner, cos_angle);
+    return spot_attenuation;
+}
+
+public f32x3 calculate_spot_light_contribution(
+    f32x3 world_position,
+    f32x3 N,
+    f32x3 V,
+    f32x3 albedo_color,
+    f32 roughness,
+    f32 metallic,
+    f32x3 light_position,
+    f32x3 light_direction,
+    Light light
+) {
+    f32x3 light_vector = light_position - world_position;
+    f32 light_distance = length(light_vector);
+    f32x3 L = light_vector / light_distance;
+
+    f32 distance_attenuation = lights_attenuate_point(light_distance, light.range);
+    f32 spot_attenuation = calculate_spot_light_attenuation(L, light_direction, light.inner_cone_angle, light.outer_cone_angle);
+    f32 total_attenuation = distance_attenuation * spot_attenuation;
+
+    if (total_attenuation <= 0.0 || light.intensity <= 0.0) {
+        return f32x3(0.0, 0.0, 0.0);
+    }
+
+    f32 NdotL = saturate(dot(N, L));
+    if (NdotL <= 0.0) {
+        return f32x3(0.0, 0.0, 0.0);
+    }
+
+    let result = BRDF(V, N, L, albedo_color, roughness, metallic);
+    f32x3 radiance = light.color * total_attenuation * light.intensity;
+
+    return (result.diffuse + result.specular) * radiance * NdotL;
 }

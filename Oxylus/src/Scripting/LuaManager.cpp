@@ -5,6 +5,7 @@
 #include "Core/App.hpp"
 #include "OS/File.hpp"
 #include "Scripting/LuaNetworkBindings.hpp"
+#include "Utils/Log.hpp"
 
 #ifdef OX_LUA_BINDINGS
   #include "Scripting/LuaApplicationBindings.hpp"  // IWYU pragma: export
@@ -41,6 +42,16 @@ auto LuaManager::init(this LuaManager& self) -> std::expected<void, std::string>
       ZoneScopedN("LuaRequire");
       auto& vfs = App::get_vfs();
       auto physical_path = vfs.resolve_physical_dir(virtual_dir, path);
+      // Without this, a missing file requires an empty chunk and only fails much later, at the use site.
+      if (!std::filesystem::exists(physical_path)) {
+        OX_LOG_ERROR(
+          "require_script('{}', '{}') resolved to '{}', which does not exist.",
+          virtual_dir,
+          path,
+          physical_path.string()
+        );
+        return sol::make_object(*s, sol::lua_nil);
+      }
       auto script = File::to_string(physical_path);
       return s->require_script(path, script);
     }

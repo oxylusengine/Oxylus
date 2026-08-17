@@ -16,13 +16,14 @@
 #include "Core/App.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
+#include "Render/UploadBatch.hpp"
 #include "Render/Utils/DDS.hpp"
 
 namespace ox {
 struct ProcessedTexture {
   vuk::Format format = {};
   vuk::Extent3D extent = {};
-  ankerl::svector<vuk::Value<vuk::Buffer>, 12> buffers = {};
+  ankerl::svector<vuk::Unique<vuk::Buffer>, 12> buffers = {};
 };
 
 auto default_resource_name(OX_CALLSTACK) -> vuk::Name {
@@ -285,11 +286,16 @@ auto Texture::create(const TextureCreateInfo& info, OX_CALLSTACK) -> Texture {
 
   auto& render_context = App::get_rendercontext();
 
+  auto usage = info.usage | vuk::ImageUsageFlagBits::eTransferDst;
+  if (info.level_count > 1) {
+    usage |= vuk::ImageUsageFlagBits::eTransferSrc;
+  }
+
   auto attachment = vuk::ImageAttachment{
     .image_flags = info.image_flags,
     .image_type = info.image_type,
     .tiling = info.tiling,
-    .usage = info.usage | vuk::ImageUsageFlagBits::eTransferDst,
+    .usage = usage,
     .extent = info.extent,
     .format = info.format,
     .sample_count = vuk::SampleCountFlagBits::e1,
@@ -309,7 +315,7 @@ auto Texture::create(const TextureCreateInfo& info, OX_CALLSTACK) -> Texture {
   auto image = render_context.image(image_id);
   attachment.image = image;
 
-  auto image_view_id = render_context.allocate_image_view(attachment);
+  auto image_view_id = render_context.allocate_image_view(attachment, info.batch);
   if (image_view_id == ImageViewID::Invalid) {
     render_context.destroy_image(image_id);
     return {};
@@ -318,7 +324,7 @@ auto Texture::create(const TextureCreateInfo& info, OX_CALLSTACK) -> Texture {
   auto image_view = render_context.image_view(image_view_id);
   attachment.image_view = image_view;
 
-  auto sampler_id = render_context.allocate_sampler(info.sampler_info);
+  auto sampler_id = render_context.allocate_sampler(info.sampler_info, info.batch);
   if (sampler_id == SamplerID::Invalid) {
     render_context.destroy_image(image_id);
     render_context.destroy_image_view(image_view_id);
@@ -376,7 +382,9 @@ auto Texture::create(const TextureLoadInfo& info, OX_CALLSTACK) -> Texture {
 
   auto processed_level_count = static_cast<u32>(processed_texture->buffers.size());
   auto can_generate_mips = source_type == TextureSourceType::Generic;
-  auto requested_level_count = info.level_count;
+  auto requested_level_count = info.level_count.value_or(
+    can_generate_mips ? calculate_mip_count(processed_texture->extent) : processed_level_count
+  );
 
   if (requested_level_count > processed_level_count && !can_generate_mips) {
     OX_LOG_WARN(
@@ -392,10 +400,15 @@ auto Texture::create(const TextureLoadInfo& info, OX_CALLSTACK) -> Texture {
     .extent = processed_texture->extent,
     .level_count = ox::max(requested_level_count, processed_level_count),
     .usage = vuk::ImageUsageFlagBits::eSampled,
+    .batch = info.batch,
   });
 
   auto generate_remaining_mips = can_generate_mips && requested_level_count > processed_level_count;
-  result.upload_mips(processed_texture->buffers, vuk::eFragmentSampled, generate_remaining_mips);
+  result.upload_mips(processed_texture->buffers, vuk::eFragmentSampled, generate_remaining_mips, info.batch);
+
+  if (info.batch) {
+    info.batch->take_staging(processed_texture->buffers);
+  }
 
   return result;
 }
@@ -436,69 +449,77 @@ auto Texture::upload_mips(
   this Texture& self,
   std::span<const std::span<const u8>> per_mip_pixels,
   vuk::Access release_as,
-  bool generate_remaining
+  bool generate_remaining,
+  UploadBatch* batch
 ) -> void {
   ZoneScoped;
-  memory::ScopedStack stack;
 
   auto& render_context = App::get_rendercontext();
   auto effective_level_count = std::min(static_cast<u32>(per_mip_pixels.size()), self.attachment.level_count);
-  auto buffers = stack.alloc<vuk::Value<vuk::Buffer>>(effective_level_count);
+  auto buffers = ankerl::svector<vuk::Unique<vuk::Buffer>, 12>();
+  buffers.reserve(effective_level_count);
 
   auto base_extent = self.attachment.extent;
   for (auto level = 0_u32; level < effective_level_count; level++) {
     auto level_extent = vuk::Extent3D{
-      .width = base_extent.width >> level,
-      .height = base_extent.height >> level,
+      .width = ox::max(base_extent.width >> level, 1_u32),
+      .height = ox::max(base_extent.height >> level, 1_u32),
       .depth = 1,
     };
 
     auto mip_pixels = per_mip_pixels[level];
     auto buffer = render_context.alloc_image_buffer(self.attachment.format, level_extent);
-    std::memcpy(buffer->mapped_ptr, mip_pixels.data(), mip_pixels.size_bytes());
+    const auto safe_size_bytes = ox::min(buffer->size, mip_pixels.size_bytes());
+    std::memcpy(buffer->mapped_ptr, mip_pixels.data(), safe_size_bytes);
 
-    buffers[level] = std::move(buffer);
+    buffers.push_back(std::move(buffer));
   }
 
-  self.upload_mips(buffers, release_as, generate_remaining);
+  self.upload_mips(buffers, release_as, generate_remaining, batch);
+
+  if (batch) {
+    batch->take_staging(buffers);
+  }
 }
 
 auto Texture::upload_mips(
   this Texture& self,
-  std::span<vuk::Value<vuk::Buffer>> per_mip_buffers,
+  std::span<const vuk::Unique<vuk::Buffer>> per_mip_buffers,
   vuk::Access release_as,
-  bool generate_remaining
+  bool generate_remaining,
+  UploadBatch* batch
 ) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 
   auto& render_context = App::get_rendercontext();
   auto effective_level_count = std::min(static_cast<u32>(per_mip_buffers.size()), self.attachment.level_count);
-  auto waits = stack.alloc<vuk::UntypedValue>(effective_level_count + 1);
+  auto should_generate = generate_remaining && self.attachment.level_count > effective_level_count;
+  auto waits = stack.alloc<vuk::UntypedValue>(should_generate ? 1_u32 : effective_level_count + 1);
 
-  auto base_extent = self.attachment.extent;
   auto attachment = vuk::discard_ia("upload mips", self.attachment);
   for (auto level = 0_u32; level < effective_level_count; level++) {
-    auto level_extent = vuk::Extent3D{
-      .width = base_extent.width >> level,
-      .height = base_extent.height >> level,
-      .depth = 1,
-    };
-
-    auto mip_buffer = std::move(per_mip_buffers[level]);
-    auto mip = attachment.mip(level);
-    waits[level] = std::move(vuk::copy(std::move(mip_buffer), std::move(mip)).as_released(release_as));
+    auto mip_buffer = vuk::acquire_buf("mip staging", *per_mip_buffers[level], vuk::Access::eNone);
+    auto uploaded = vuk::copy(std::move(mip_buffer), attachment.mip(level));
+    if (!should_generate) {
+      waits[level] = std::move(uploaded.as_released(release_as));
+    }
   }
 
-  if (generate_remaining && self.attachment.level_count > effective_level_count) {
+  if (should_generate) {
     auto base_mip = effective_level_count - 1;
     auto num_mips = self.attachment.level_count - effective_level_count;
     attachment = vuk::generate_mips(attachment, base_mip, num_mips);
   }
 
-  waits[effective_level_count] = std::move(attachment.as_released(release_as));
+  waits[waits.size() - 1] = std::move(attachment.as_released(release_as));
 
-  render_context.wait_on_multiple(waits);
+  if (batch) {
+    render_context.submit_multiple(waits);
+    batch->add_upload(waits);
+  } else {
+    render_context.wait_on_multiple(waits);
+  }
 }
 
 auto Texture::upload(this Texture& self, std::span<const u8> pixels, vuk::Access release_as, bool generate_remaining)
@@ -543,6 +564,8 @@ auto Texture::get_image_view() const -> const vuk::ImageView {
 auto Texture::get_extent() const -> const vuk::Extent3D& { return attachment.extent; }
 
 auto Texture::get_format() const -> vuk::Format { return attachment.format; }
+
+auto Texture::is_srgb() const -> bool { return to_unorm_format(attachment.format) != attachment.format; }
 
 auto Texture::get_image_id() const -> ImageID { return image_id; }
 

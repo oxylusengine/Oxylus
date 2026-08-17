@@ -10,6 +10,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -34,7 +35,9 @@
 #include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "UI/RmlUI.hpp"
+#include "UI/RmlView.hpp"
 #include "Utils/JsonWriter.hpp"
+#include "Utils/Log.hpp"
 #include "Utils/Random.hpp"
 #include "Utils/Timestep.hpp"
 
@@ -393,22 +396,26 @@ Scene::~Scene() {
   if (running)
     runtime_stop();
 
-  for (auto& [uuid, system] : lua_systems) {
+  tearing_down = true;
+  destroy_terrain_collision();
+  set_terrain_edits_ref({});
+  terrain.reset();
+
+  for (auto& [_, system] : lua_systems) {
     system->on_remove(this);
   }
 
-  // world.release();
-
   lua_systems.clear();
-
-  if (App::has_mod<LuaManager>()) {
-    auto& lua_manager = App::mod<LuaManager>();
-    lua_manager.get_state()->collect_gc();
-  }
+  rml_view.reset();
+  auto& lua_manager = App::mod<LuaManager>();
+  lua_manager.get_state()->collect_gc();
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {
   ZoneScoped;
+
+  self.uuid = UUID::generate_random();
+
   self.scene_name = name;
 
   self.component_db.import_module(self.world.import<CoreComponentsModule>());
@@ -416,6 +423,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   if (App::has_mod<Renderer>()) {
     auto& renderer = App::mod<Renderer>();
     self.renderer_instance = renderer.new_instance(self);
+  }
+
+  if (App::has_mod<RmlUI>()) {
+    self.rml_view = std::make_unique<RmlView>(fmt::format("scene_{}", self.uuid.str()));
   }
 
   auto& physics = App::mod<Physics>();
@@ -426,7 +437,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .event(flecs::OnRemove)
-    .without<MeshComponent>()
     .each([&self](flecs::iter& it, usize i, TransformComponent&) {
       auto entity = it.entity(i);
       if (it.event() == flecs::OnSet) {
@@ -440,19 +450,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     });
 
   self.world.observer<TransformComponent, MeshComponent>()
-    .event(flecs::OnAdd)
-    .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
-      auto entity = it.entity(i);
-      self.add_transform(entity);
-      self.set_dirty(entity);
-    });
-
-  self.world.observer<TransformComponent, MeshComponent>()
     .event(flecs::OnSet)
-    .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
+    .each([&self](flecs::iter& it, usize i, TransformComponent&, MeshComponent& mc) {
       auto entity = it.entity(i);
-      if (!self.entity_transforms_map.contains(entity))
-        self.add_transform(entity);
       self.set_dirty(entity);
 
       if (mc.model_uuid)
@@ -467,12 +467,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.observer<TransformComponent, MeshComponent>()
     .event(flecs::OnRemove)
-    .each([&self](flecs::iter& it, usize i, TransformComponent& tc, MeshComponent& mc) {
-      auto entity = it.entity(i);
+    .each([&self](flecs::iter& it, usize i, TransformComponent&, MeshComponent& mc) {
       if (mc.model_uuid) {
-        self.detach_mesh(entity);
+        self.detach_mesh(it.entity(i));
       }
-      self.remove_transform(entity);
     });
 
   self.world.observer<TransformComponent, SpriteComponent>()
@@ -487,6 +485,44 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           sprite.rect = sprite.rect.get_transformed(transform->world);
         }
       }
+    });
+
+  self.world.observer<TerrainComponent>()
+    .event(flecs::OnAdd)
+    .event(flecs::OnSet)
+    .event(flecs::OnRemove)
+    .each([&self](flecs::iter& it, usize i, TerrainComponent& c) {
+      const auto entity = it.entity(i);
+
+      if (it.event() == flecs::OnRemove) {
+        // ~Scene already did this, and the members it touches are gone by the time the world's own
+        // teardown gets here.
+        if (self.tearing_down) {
+          return;
+        }
+
+        if (self.terrain_entity == entity) {
+          self.destroy_terrain_collision();
+          self.terrain.reset();
+          self.terrain_entity = {};
+          self.terrain_dirty = false;
+          self.set_terrain_edits_ref({});
+        }
+        return;
+      }
+
+      if (it.event() == flecs::OnAdd && self.deserializing_entity) {
+        return;
+      }
+
+      if (self.terrain_entity && self.terrain_entity != entity) {
+        OX_LOG_WARN("Scene already has a terrain; ignoring the one on entity '{}'.", entity.name().c_str());
+        return;
+      }
+
+      self.terrain_entity = entity;
+      self.terrain_dirty = true;
+      self.set_terrain_edits_ref(c.terrain_edits);
     });
 
   self.world.observer<SpriteComponent>()
@@ -745,11 +781,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.system<TransformComponent, const RigidBodyComponent>("physics_interpolate")
     .kind(flecs::OnUpdate)
-    .each([&self](const flecs::entity& e, TransformComponent& tc, const RigidBodyComponent& rb) {
+    .each([physics_tick_source](const flecs::entity& e, TransformComponent& tc, const RigidBodyComponent& rb) {
       if (!rb.runtime_body)
         return;
 
-      f32 alpha = std::clamp(self.physics_accumulator / self.physics_interval, 0.0f, 1.0f);
+      const auto* timer = physics_tick_source.try_get<flecs::Timer>();
+      const f32 alpha = (timer && timer->timeout > 0.f)
+                          ? std::clamp(static_cast<f32>(timer->time / timer->timeout), 0.0f, 1.0f)
+                          : 1.0f;
 
       tc.position = glm::mix(rb.previous_translation, rb.translation, alpha);
       tc.rotation = glm::slerp(rb.previous_rotation, rb.rotation, alpha);
@@ -951,10 +990,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<const TransformComponent, CameraComponent>("camera_update")
     .kind(flecs::PostUpdate)
     .each([&self](const TransformComponent& tc, CameraComponent& cc) {
-      cc.position = tc.position;
       auto ri = self.get_renderer_instance();
       if (ri)
-        Camera::update(cc, ri->get_viewport_size());
+        Camera::update(cc, tc, ri->get_viewport_size());
     });
 
   self.world.system<SpriteComponent>("sprite_aabb")
@@ -1058,11 +1096,15 @@ auto Scene::physics_init(this Scene& self) -> void {
     }
   );
 
+  self.create_terrain_collision();
+
   self.physics_system->OptimizeBroadPhase();
 }
 
 auto Scene::physics_deinit(this Scene& self) -> void {
   ZoneScoped;
+
+  self.destroy_terrain_collision();
 
   self.world.query_builder<RigidBodyComponent>().build().each([&self](const flecs::entity& e, RigidBodyComponent& rb) {
     if (rb.runtime_body) {
@@ -1095,10 +1137,17 @@ auto Scene::runtime_start(this Scene& self) -> void {
 
   self.run_deferred_functions();
 
+  // Baked up front rather than on the first update: `physics_init` builds the terrain collider out
+  // of the heightmap, and a scene that just came out of deserialization has not baked one yet.
+  if (self.terrain_dirty) {
+    self.terrain_dirty = false;
+    self.bake_terrain();
+  }
+
   self.physics_init();
 
   // Scripting
-  for (auto& [uuid, system] : self.lua_systems) {
+  for (auto& [_, system] : self.lua_systems) {
     system->on_scene_start(&self);
   }
 }
@@ -1111,20 +1160,16 @@ auto Scene::runtime_stop(this Scene& self) -> void {
   self.physics_deinit();
 
   // Scripting
-  for (auto& [uuid, system] : self.lua_systems) {
+  for (auto& [_, system] : self.lua_systems) {
     system->on_scene_stop(&self);
   }
 
-  if (App::has_mod<RmlUI>()) {
-    auto& rmlui = App::mod<RmlUI>();
-    auto rml_ctxs = rmlui.get_contexts();
-    for (auto* ctx : rml_ctxs) {
-      auto doc_count = ctx->GetNumDocuments();
-      for (i32 i = 0; i < doc_count; i++) {
-        auto doc = ctx->GetDocument(i);
-        if (doc) {
-          doc->Hide();
-        }
+  if (auto* rml_context = self.get_rml_context()) {
+    auto doc_count = rml_context->GetNumDocuments();
+    for (i32 i = 0; i < doc_count; i++) {
+      auto doc = rml_context->GetDocument(i);
+      if (doc) {
+        doc->Hide();
       }
     }
   }
@@ -1133,17 +1178,17 @@ auto Scene::runtime_stop(this Scene& self) -> void {
 auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void {
   ZoneScoped;
 
-  self.physics_accumulator += static_cast<f32>(delta_time.get_millis());
-  while (self.physics_accumulator >= self.physics_interval) {
-    self.physics_accumulator -= self.physics_interval;
-  }
-
   self.run_deferred_functions();
+  self.update_pending_model_spawns();
+
+  if (auto* rml_context = self.get_rml_context()) {
+    rml_context->Update();
+  }
 
   auto pre_update_phase_enabled = !self.world.entity(flecs::PreUpdate).has(flecs::Disabled);
   auto on_update_phase_enabled = !self.world.entity(flecs::OnUpdate).has(flecs::Disabled);
   if (pre_update_phase_enabled && on_update_phase_enabled) {
-    for (auto& [uuid, system] : self.lua_systems) {
+    for (auto& [_, system] : self.lua_systems) {
       system->on_scene_update(&self, static_cast<f32>(delta_time.get_seconds()));
     }
   }
@@ -1157,6 +1202,17 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     settings.mDrawShapeWireframe = true;
 
     self.physics_system->DrawBodies(settings, self.physics_debug_renderer.get());
+  }
+
+  if (self.terrain_dirty) {
+    self.terrain_dirty = false;
+    self.bake_terrain();
+  }
+
+  // Only while running: outside play mode there is no body to keep in sync, and the readback the
+  // rebuild needs is expensive enough that sculpting should not pay for it.
+  if (self.running && self.terrain != nullptr && self.terrain->collision_dirty) {
+    self.create_terrain_collision();
   }
 
   if (self.renderer_instance) {
@@ -1242,19 +1298,24 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   self.dirty_transforms.clear();
   self.dirty_mesh_instances.clear();
   self.meshes_dirty = false;
+
+  // Last, so the document reflects this tick's script changes. Sized from the previous render, which
+  // is why callers get one frame of no UI before the first render establishes a size.
+  if (self.rml_view) {
+    self.rml_view->update(self.rml_surface_size);
+  }
 }
 
 auto Scene::get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem* {
   ZoneScoped;
 
-  if (self.lua_systems.contains(lua_script)) {
-    return self.lua_systems.at(lua_script);
-  }
+  const auto it = self.lua_systems.find(lua_script);
 
-  return nullptr;
+  return it == self.lua_systems.end() ? nullptr : it->second.get();
 }
 
-auto Scene::get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, LuaSystem*>& {
+auto Scene::get_lua_systems(this const Scene& self)
+  -> const ankerl::unordered_dense::map<UUID, std::unique_ptr<LuaSystem>>& {
   ZoneScoped;
 
   return self.lua_systems;
@@ -1267,29 +1328,41 @@ auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> void {
   if (!asset_man.get_asset(lua_script)->is_loaded()) {
     asset_man.load_asset(lua_script);
   }
-  auto script_system = asset_man.get_script(lua_script);
 
-  script_system->reload();
+  // Copy the source out and drop the guard before running any Lua, which can reach back into the asset registry.
+  auto script = LuaScript{};
+  {
+    auto guard = asset_man.get_script(lua_script);
+    if (!guard) {
+      OX_LOG_ERROR("Failed to add lua system {}, script asset is not loaded.", lua_script.str());
+      return;
+    }
+    script = guard.copy();
+  }
 
-  // TODO: This is so unsafe
-  self.lua_systems.emplace(lua_script, script_system.value);
+  auto [it, inserted] = self.lua_systems.try_emplace(lua_script, std::make_unique<LuaSystem>(script));
+  if (!inserted) {
+    return;
+  }
 
-  script_system->on_add(&self);
+  it->second->on_add(&self);
 
-  OX_LOG_TRACE("Added lua system to the scene {}", script_system->get_path());
+  OX_LOG_TRACE("Added lua system to the scene {}", script.path);
 }
 
 auto Scene::remove_lua_system(this Scene& self, const UUID& lua_script) -> void {
   ZoneScoped;
 
-  auto& asset_man = App::mod<AssetManager>();
-  auto script_system = asset_man.get_script(lua_script);
+  const auto it = self.lua_systems.find(lua_script);
+  if (it == self.lua_systems.end()) {
+    return;
+  }
 
-  script_system->on_remove(&self);
+  it->second->on_remove(&self);
 
-  OX_LOG_TRACE("Removed lua system from the scene {}", script_system->get_path());
+  OX_LOG_TRACE("Removed lua system from the scene {}", it->second->get_path());
 
-  self.lua_systems.erase(lua_script);
+  self.lua_systems.erase(it);
 }
 
 auto Scene::get_physics_system(this const Scene& self) -> JPH::PhysicsSystem* {
@@ -1354,79 +1427,30 @@ auto Scene::create_entity(const std::string& name, bool safe_naming) const -> fl
   return e.add<TransformComponent>().add<LayerComponent>();
 }
 
-auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity {
+auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSpawn& spawn) -> flecs::entity {
   ZoneScoped;
 
-  auto& asset_man = App::mod<AssetManager>();
-
-  // sanity check
-  if (!asset_man.get_asset(asset_uuid)) {
-    OX_LOG_ERROR("Cannot import an invalid model '{}' into the scene!", asset_uuid.str());
-    return {};
-  }
-
-  // acquire model
-  if (!asset_man.load_asset(asset_uuid)) {
-    return {};
-  }
-
-  auto model = asset_man.get_model(asset_uuid);
-  auto& root_node = model->mesh_groups.front();
+  const auto& root_node = model.mesh_groups.front();
   auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
-
-  auto mesh_bounds = model->get_mesh_bounds();
-  auto model_aabb = AABB::from_bounds(mesh_bounds.aabb_center, mesh_bounds.aabb_extent);
 
   struct ProcessingNode {
     flecs::entity parent = {};
     usize mesh_group_index = 0;
   };
 
-  auto processing_nodes = std::stack<ProcessingNode>();
-  for (const auto child_index : root_node.child_indices) {
-    processing_nodes.push({root_entity, child_index});
-  }
-
-  while (!processing_nodes.empty()) {
-    const auto [parent_entity, mesh_group_index] = processing_nodes.top();
-    const auto& mesh_group = model->mesh_groups[mesh_group_index];
-    processing_nodes.pop();
-
-    // Resolve a name that's unique both at the world root and under
-    // `parent_entity`'s child scope BEFORE creating the entity. `create_entity`
-    // would only deduplicate against the root, which still triggers flecs's
-    // `flecs_reparent_name_index` abort when `child_of` finds the name already
-    // registered under the parent.
-    const auto safe_node_name = self.safe_entity_name(std::string{mesh_group.name}, parent_entity);
-    auto node_entity = self.create_entity(safe_node_name, false);
-    node_entity.set<TransformComponent>({
-      .position = mesh_group.translation,
-      .rotation = mesh_group.rotation,
-      .scale = mesh_group.scale,
-    });
-    node_entity.child_of(parent_entity);
-    node_entity.modified<TransformComponent>();
-
+  // Used for the root group too: a model built in code has its mesh on the root and no children,
+  // so walking only child_indices would drop it.
+  auto emit_group_contents = [&](flecs::entity target, const Model::MeshGroup& mesh_group, usize mesh_group_index) {
     for (const auto mesh_index : mesh_group.mesh_indices) {
-      memory::ScopedStack stack;
-      auto mesh_entity_name = !mesh_group.name.empty() ? stack.format("{} Mesh {}", mesh_group.name, mesh_index) : "";
-      const auto safe_mesh_name = self.safe_entity_name(std::string{mesh_entity_name}, node_entity);
-      auto mesh_entity = self.create_entity(safe_mesh_name, false);
-      auto material_index = model->material_indices[mesh_index];
-      auto material_uuid = material_index.has_value() ? model->materials[material_index.value()] : UUID(nullptr);
-      mesh_entity.set<TransformComponent>({});
-      mesh_entity.set<MeshComponent>({
-        .model_uuid = asset_uuid,
-        .mesh_index = static_cast<u32>(mesh_index),
-        .material_uuid = material_uuid,
-        .baked_aabb = model_aabb,
+      spawn.mesh_entities.push_back({
+        .mesh_index = mesh_index,
+        .mesh_group_index = mesh_group_index,
+        .parent = target,
       });
-      mesh_entity.child_of(node_entity);
-      mesh_entity.modified<TransformComponent>();
     }
 
     for (const auto light_index : mesh_group.light_indices) {
-      auto& node_light = model->lights[light_index];
+      auto& node_light = model.lights[light_index];
 
       auto lc = LightComponent{
         .type = static_cast<LightComponent::LightType>(node_light.type),
@@ -1444,8 +1468,36 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
         lc.outer_cone_angle = *node_light.outer_cone_angle;
       }
 
-      node_entity.set<LightComponent>(lc);
+      target.set<LightComponent>(lc);
     }
+  };
+
+  emit_group_contents(root_entity, root_node, 0);
+
+  auto processing_nodes = std::stack<ProcessingNode>();
+  for (const auto child_index : root_node.child_indices) {
+    processing_nodes.push({root_entity, child_index});
+  }
+
+  while (!processing_nodes.empty()) {
+    const auto [parent_entity, mesh_group_index] = processing_nodes.top();
+    const auto& mesh_group = model.mesh_groups[mesh_group_index];
+    processing_nodes.pop();
+
+    // Must be unique under `parent_entity` as well as at the root before the entity exists:
+    // `create_entity` only deduplicates against the root, and `child_of` then aborts inside
+    // `flecs_reparent_name_index` on a name already registered under the parent.
+    const auto safe_node_name = self.safe_entity_name(std::string{mesh_group.name}, parent_entity);
+    auto node_entity = self.create_entity(safe_node_name, false);
+    node_entity.set<TransformComponent>({
+      .position = mesh_group.translation,
+      .rotation = mesh_group.rotation,
+      .scale = mesh_group.scale,
+    });
+    node_entity.child_of(parent_entity);
+    node_entity.modified<TransformComponent>();
+
+    emit_group_contents(node_entity, mesh_group, mesh_group_index);
 
     for (const auto child_node_indices : mesh_group.child_indices) {
       processing_nodes.push({node_entity, child_node_indices});
@@ -1453,6 +1505,165 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   }
 
   return root_entity;
+}
+
+auto Scene::resolve_mesh_spawn(this Scene& self, Model& model, const PendingModelSpawn::MeshEntity& mesh_entity)
+  -> MeshSpawnInfo {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  const auto& mesh_group = model.mesh_groups[mesh_entity.mesh_group_index];
+  const auto mesh_index = mesh_entity.mesh_index;
+
+  auto mesh_entity_name = !mesh_group.name.empty() ? stack.format("{} Mesh {}", mesh_group.name, mesh_index) : "";
+  auto material_index = model.material_indices[mesh_index];
+  const auto& mesh_bounds = model.gpu_meshes[mesh_index].bounds;
+
+  return MeshSpawnInfo{
+    .mesh_index = mesh_index,
+    .parent = mesh_entity.parent,
+    .name = std::string{mesh_entity_name},
+    .material_uuid = material_index.has_value() ? model.materials[material_index.value()] : UUID(nullptr),
+    .aabb = AABB::from_bounds(mesh_bounds.aabb_center, mesh_bounds.aabb_extent),
+  };
+}
+
+auto Scene::spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, const MeshSpawnInfo& info) -> void {
+  ZoneScoped;
+
+  auto entity = self.create_entity(self.safe_entity_name(info.name, info.parent), false);
+  entity.set<TransformComponent>({});
+  entity.set<MeshComponent>({
+    .model_uuid = model_uuid,
+    .mesh_index = static_cast<u32>(info.mesh_index),
+    .material_uuid = info.material_uuid,
+    .baked_aabb = info.aabb,
+  });
+  entity.child_of(info.parent);
+  entity.modified<TransformComponent>();
+}
+
+auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
+
+  // sanity check
+  if (!asset_man.get_asset(asset_uuid)) {
+    OX_LOG_ERROR("Cannot import an invalid model '{}' into the scene!", asset_uuid.str());
+    return {};
+  }
+
+  // acquire model
+  if (!asset_man.load_asset(asset_uuid)) {
+    return {};
+  }
+
+  auto root_entity = flecs::entity();
+  auto mesh_spawns = std::vector<MeshSpawnInfo>();
+  {
+    auto model = asset_man.get_model(asset_uuid);
+    if (!model) {
+      return {};
+    }
+
+    auto spawn = PendingModelSpawn{.model_uuid = asset_uuid};
+    root_entity = self.spawn_model_hierarchy(*model.value, spawn);
+
+    for (const auto& mesh_entity : spawn.mesh_entities) {
+      if (!model->is_mesh_ready(mesh_entity.mesh_index)) {
+        continue;
+      }
+
+      mesh_spawns.emplace_back(self.resolve_mesh_spawn(*model.value, mesh_entity));
+    }
+  }
+
+  for (const auto& mesh_spawn : mesh_spawns) {
+    self.spawn_model_mesh_entity(asset_uuid, mesh_spawn);
+  }
+
+  return root_entity;
+}
+
+auto Scene::create_model_entity_async(this Scene& self, const UUID& asset_uuid) -> void {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
+  if (!asset_man.get_asset(asset_uuid)) {
+    OX_LOG_ERROR("Cannot import an invalid model '{}' into the scene!", asset_uuid.str());
+    return;
+  }
+
+  if (!asset_man.load_asset_async(asset_uuid)) {
+    return;
+  }
+
+  self.pending_model_spawns.push_back(PendingModelSpawn{.model_uuid = asset_uuid});
+}
+
+auto Scene::update_pending_model_spawns(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.pending_model_spawns.empty()) {
+    return;
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+
+  for (auto it = self.pending_model_spawns.begin(); it != self.pending_model_spawns.end();) {
+    auto& spawn = *it;
+    auto mesh_spawns = std::vector<MeshSpawnInfo>();
+    auto fully_loaded = false;
+    auto hierarchy_just_spawned = false;
+
+    {
+      auto model = asset_man.get_model(spawn.model_uuid);
+      if (!model) {
+        if (asset_man.is_loading(spawn.model_uuid)) {
+          ++it;
+        } else {
+          it = self.pending_model_spawns.erase(it);
+        }
+
+        continue;
+      }
+
+      // Must be read before the ready flags below, never after.
+      fully_loaded = model->is_fully_loaded();
+
+      if (!spawn.hierarchy_spawned) {
+        std::ignore = self.spawn_model_hierarchy(*model.value, spawn);
+        spawn.hierarchy_spawned = true;
+        hierarchy_just_spawned = true;
+      }
+
+      for (auto mesh_it = spawn.mesh_entities.begin(); mesh_it != spawn.mesh_entities.end();) {
+        if (!model->is_mesh_ready(mesh_it->mesh_index)) {
+          ++mesh_it;
+          continue;
+        }
+
+        mesh_spawns.emplace_back(self.resolve_mesh_spawn(*model.value, *mesh_it));
+        mesh_it = spawn.mesh_entities.erase(mesh_it);
+      }
+    }
+
+    if (hierarchy_just_spawned) {
+      asset_man.acquire_ref(asset_man.get_asset(spawn.model_uuid));
+    }
+
+    for (const auto& mesh_spawn : mesh_spawns) {
+      self.spawn_model_mesh_entity(spawn.model_uuid, mesh_spawn);
+    }
+
+    // Anything still listed once the model is done failed to build.
+    if (fully_loaded) {
+      it = self.pending_model_spawns.erase(it);
+    } else {
+      ++it;
+    }
+  }
 }
 
 auto Scene::get_world_position(const flecs::entity entity) -> glm::vec3 {
@@ -1542,6 +1753,10 @@ auto Scene::get_entity_transform(GPU::TransformID transform_id) const -> const G
 auto Scene::add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID {
   ZoneScoped;
 
+  if (auto it = self.entity_transforms_map.find(entity); it != self.entity_transforms_map.end()) {
+    return it->second;
+  }
+
   auto id = self.transforms.create_slot();
   self.entity_transforms_map.emplace(entity, id);
   self.transform_index_entities_map.emplace(SlotMap_decode_id(id).index, entity);
@@ -1562,6 +1777,105 @@ auto Scene::remove_transform(this Scene& self, flecs::entity entity) -> void {
   self.entity_transforms_map.erase(it);
 }
 
+auto Scene::bake_terrain(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (!self.terrain_entity || !self.terrain_entity.has<TerrainComponent>()) {
+    self.terrain.reset();
+    self.terrain_entity = {};
+    return;
+  }
+
+  const auto& c = self.terrain_entity.get<TerrainComponent>();
+
+  auto origin = glm::vec3(0.0f);
+  if (auto id = self.get_entity_transform_id(self.terrain_entity)) {
+    if (const auto* transform = self.get_entity_transform(*id)) {
+      origin = glm::vec3(transform->world[3]);
+    }
+  }
+
+  // Updated in place rather than rebuilt: `Terrain::create` carries the brush edit maps across a
+  // re-bake, so tweaking a noise parameter reshapes the procedural base without erasing sculpting.
+  if (self.terrain == nullptr) {
+    self.terrain = std::make_unique<Terrain>();
+  }
+
+  auto* terrain = self.terrain.get();
+  terrain->world_origin = origin;
+  terrain->world_size = c.world_size;
+  terrain->height_range = c.height_range;
+  terrain->resolution = {c.resolution, c.resolution};
+  terrain->patch_count = {c.patch_count, c.patch_count};
+  terrain->target_edge_pixels = c.target_edge_pixels;
+  terrain->max_tessellation = c.max_tessellation;
+  terrain->layer_tiling = c.layer_tiling;
+  terrain->triplanar_begin = c.triplanar_begin;
+  terrain->collision_enabled = c.collision_enabled;
+  terrain->collision_resolution = c.collision_resolution;
+  terrain->collision_friction = c.collision_friction;
+  terrain->collision_restitution = c.collision_restitution;
+
+  auto& asset_man = App::mod<AssetManager>();
+  const auto material_index = [&asset_man](const UUID& uuid) -> u32 {
+    if (!uuid || !asset_man.is_loaded(uuid)) {
+      return GPU::TERRAIN_INVALID_LAYER_MATERIAL;
+    }
+    const auto asset = asset_man.get_asset(uuid);
+    return asset ? SlotMap_decode_id(asset->material_id).index : GPU::TERRAIN_INVALID_LAYER_MATERIAL;
+  };
+  terrain->layer_material_indices = {
+    material_index(c.layer_grass),
+    material_index(c.layer_rock),
+    material_index(c.layer_drainage),
+    material_index(c.layer_snow),
+  };
+
+  terrain->generate_settings = GPU::TerrainGenerate{
+    .erosion =
+      {.scale = c.erosion_scale,
+       .strength = c.erosion_strength,
+       .gully_weight = c.gully_weight,
+       .detail = c.detail,
+       // `rounding.w` must track the lacunarity so rounding keeps a constant world-space size.
+       .rounding = {c.ridge_rounding, c.crease_rounding, 0.1f, 2.0f},
+       .octaves = c.erosion_octaves,
+       .seed = c.seed},
+    .domain_size = c.domain_size,
+    .height_frequency = c.height_frequency,
+    .height_amplitude = c.height_amplitude,
+    .height_lacunarity = c.height_lacunarity,
+    .height_gain = c.height_gain,
+    .height_octaves = c.height_octaves,
+  };
+
+  terrain->derive_settings = GPU::TerrainDerive{
+    .slope_rock_begin = c.slope_rock_begin,
+    .slope_rock_end = c.slope_rock_end,
+    .altitude_snow_begin = c.altitude_snow_begin,
+    .altitude_snow_end = c.altitude_snow_end,
+  };
+
+  if (const auto result = terrain->create(); !result.has_value()) {
+    OX_LOG_ERROR("Failed to create terrain: {}", result.error());
+    self.destroy_terrain_collision();
+    self.terrain.reset();
+    return;
+  }
+
+  // `create` only leaves the maps uninitialized when it had to allocate new ones, which is exactly
+  // when the strokes have to come back off the asset.
+  self.set_terrain_edits_ref(c.terrain_edits);
+  if (terrain->edits_uninitialized && self.terrain_edits_ref) {
+    if (auto edits = App::mod<AssetManager>().get_terrain_edits(self.terrain_edits_ref)) {
+      terrain->upload_edits(*edits.value);
+    }
+  }
+
+  terrain->bake(App::get_rendercontext());
+  terrain->collision_dirty = true;
+}
+
 auto Scene::attach_mesh(
   this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid
 ) -> bool {
@@ -1570,12 +1884,32 @@ auto Scene::attach_mesh(
   auto& asset_man = App::mod<AssetManager>();
 
   auto transforms_it = self.entity_transforms_map.find(entity);
-  if (!self.entity_transforms_map.contains(entity)) {
+  if (transforms_it == self.entity_transforms_map.end()) {
     OX_LOG_FATAL("Target entity must have a transform component!");
     return false;
   }
 
   const auto transform_id = transforms_it->second;
+
+  // Resolve everything that needs the model before touching scene state. Deserialization sets
+  // components before it requests their assets, so the model can legitimately still be unloaded
+  // here; from_json attaches those meshes once the assets are in. Rendering assumes every mesh
+  // instance has a loaded model, so don't create one until it does.
+  auto overriden_material = material_uuid;
+  {
+    auto model = asset_man.get_model(model_uuid);
+    if (!model) {
+      return false;
+    }
+
+    if (!material_uuid && mesh_index < model->material_indices.size()) {
+      // No material override, use original one
+      auto material_index = model->material_indices[mesh_index];
+      if (material_index.has_value() && material_index.value() < model->materials.size()) {
+        overriden_material = model->materials[material_index.value()];
+      }
+    }
+  }
 
   // Find the old model UUID and detach it from entity.
   auto mesh_instances_it = self.entity_to_mesh_instance_map.find(entity);
@@ -1583,16 +1917,6 @@ auto Scene::attach_mesh(
     const auto old_mesh_instance_id = mesh_instances_it->second;
     self.mesh_instances.destroy_slot(old_mesh_instance_id);
     self.meshes_dirty = true;
-  }
-
-  auto overriden_material = material_uuid;
-  if (!material_uuid) {
-    // No material override, use original one
-    auto model = asset_man.get_model(model_uuid);
-    auto material_index = model->material_indices[mesh_index];
-    if (material_index.has_value()) {
-      overriden_material = model->materials[mesh_index];
-    }
   }
 
   auto instance_id = self.mesh_instances.create_slot(
@@ -1614,8 +1938,7 @@ auto Scene::detach_mesh(this Scene& self, flecs::entity entity) -> bool {
   ZoneScoped;
 
   auto instances_it = self.entity_to_mesh_instance_map.find(entity);
-  auto transforms_it = self.entity_transforms_map.find(entity);
-  if (instances_it == self.entity_to_mesh_instance_map.end() || transforms_it == self.entity_transforms_map.end()) {
+  if (instances_it == self.entity_to_mesh_instance_map.end()) {
     return false;
   }
 
@@ -1642,7 +1965,7 @@ auto Scene::on_contact_added(
 
   auto write_lock = std::unique_lock(physics_mutex);
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_contact_added(this, body1, body2, manifold, settings);
   }
 }
@@ -1657,7 +1980,7 @@ auto Scene::on_contact_persisted(
 
   auto write_lock = std::unique_lock(physics_mutex);
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_contact_persisted(this, body1, body2, manifold, settings);
   }
 }
@@ -1667,7 +1990,7 @@ auto Scene::on_contact_removed(const JPH::SubShapeIDPair& sub_shape_pair) -> voi
 
   auto write_lock = std::unique_lock(physics_mutex);
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_contact_removed(this, sub_shape_pair);
   }
 }
@@ -1677,7 +2000,7 @@ auto Scene::on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_
 
   auto write_lock = std::unique_lock(physics_mutex);
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_body_activated(this, body_id, (u64)body_user_data);
   }
 }
@@ -1687,7 +2010,7 @@ auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_use
 
   auto write_lock = std::unique_lock(physics_mutex);
 
-  for (auto& [uuid, system] : lua_systems) {
+  for (auto& [_, system] : lua_systems) {
     system->on_body_deactivated(this, body_id, (u64)body_user_data);
   }
 }
@@ -1827,6 +2150,143 @@ auto Scene::create_rigidbody(
   component.runtime_body = body;
 }
 
+auto Scene::create_terrain_collision(this Scene& self) -> void {
+  ZoneScoped;
+
+  self.destroy_terrain_collision();
+
+  auto* terrain = self.terrain.get();
+  if (terrain == nullptr) {
+    return;
+  }
+
+  // Cleared even when no body comes out of it, so a terrain that cannot collide (disabled, not baked
+  // yet, degenerate) does not retry the download every frame.
+  terrain->collision_dirty = false;
+  if (!terrain->collision_enabled || !terrain->is_baked()) {
+    return;
+  }
+
+  terrain->download_collision_heights(App::get_rendercontext());
+
+  const auto sample_count = terrain->collision_sample_count;
+  if (
+    sample_count < TERRAIN_COLLISION_MIN_SAMPLES ||
+    terrain->collision_heights.size() != static_cast<usize>(sample_count) * sample_count
+  ) {
+    OX_LOG_ERROR("Terrain heightmap readback produced no samples; terrain will not collide.");
+    return;
+  }
+
+  // Jolt spans `sample_count - 1` cells between the outer samples, which is exactly the world rect
+  // the renderer maps the heightmap onto.
+  const auto world_min = terrain->world_min();
+  const auto cell_size = terrain->world_size / static_cast<f32>(sample_count - 1);
+
+  auto shape_settings = JPH::HeightFieldShapeSettings(
+    terrain->collision_heights.data(),
+    JPH::Vec3(world_min.x, 0.0f, world_min.y),
+    JPH::Vec3(cell_size.x, 1.0f, cell_size.y),
+    sample_count
+  );
+  shape_settings.mBlockSize = TERRAIN_COLLISION_BLOCK_SIZE;
+  // Quantization is relative to the terrain's own height range rather than to whatever the current
+  // samples happen to span, so re-baking a flatter terrain does not change the encoding.
+  shape_settings.mMinHeightValue = terrain->base_height();
+  shape_settings.mMaxHeightValue = terrain->base_height() + terrain->height_scale();
+
+  const auto shape_result = shape_settings.Create();
+  if (shape_result.HasError()) {
+    OX_LOG_ERROR("Jolt terrain shape error: {}", shape_result.GetError().c_str());
+    return;
+  }
+
+  auto body_settings = JPH::BodyCreationSettings(
+    shape_result.Get(),
+    JPH::Vec3::sZero(),
+    JPH::Quat::sIdentity(),
+    JPH::EMotionType::Static,
+    PhysicsLayers::NON_MOVING
+  );
+  body_settings.mFriction = terrain->collision_friction;
+  body_settings.mRestitution = terrain->collision_restitution;
+
+  auto& body_interface = self.physics_system->GetBodyInterface();
+  auto* body = body_interface.CreateBody(body_settings);
+  OX_CHECK_NULL(body, "Jolt is out of bodies!");
+
+  body->SetUserData(static_cast<u64>(self.terrain_entity.id()));
+  body_interface.AddBody(body->GetID(), JPH::EActivation::DontActivate);
+  self.terrain_body_id = body->GetID();
+}
+
+auto Scene::destroy_terrain_collision(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.terrain_body_id.IsInvalid()) {
+    return;
+  }
+
+  auto& body_interface = self.physics_system->GetBodyInterface();
+  body_interface.RemoveBody(self.terrain_body_id);
+  body_interface.DestroyBody(self.terrain_body_id);
+  self.terrain_body_id = JPH::BodyID();
+}
+
+auto Scene::sync_terrain_edits(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.terrain == nullptr || !self.terrain->edits_dirty || !self.terrain_edits_ref) {
+    return;
+  }
+
+  self.terrain->edits_dirty = false;
+  App::mod<AssetManager>().set_terrain_edits(
+    self.terrain_edits_ref,
+    self.terrain->download_edits(App::get_rendercontext())
+  );
+}
+
+auto Scene::clear_terrain_edits(this Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.terrain == nullptr) {
+    return;
+  }
+
+  self.terrain->clear_edits();
+  self.terrain_dirty = true;
+
+  if (self.terrain_edits_ref) {
+    App::mod<AssetManager>().set_terrain_edits(self.terrain_edits_ref, {});
+  }
+}
+
+auto Scene::set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void {
+  ZoneScoped;
+
+  if (self.terrain_edits_ref == uuid) {
+    return;
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+  const auto previous = std::exchange(self.terrain_edits_ref, uuid);
+
+  // The scene holds exactly one ref, matched by the release below and by the OnRemove observer.
+  // `from_json` already took it for a UUID that came out of the scene file, so only an asset
+  // nothing has loaded yet is acquired here. is_loaded() takes and drops its own read guard; don't
+  // hold one across load_asset().
+  if (uuid && !asset_man.is_loaded(uuid)) {
+    asset_man.load_asset(uuid);
+  }
+
+  // Released after the acquire so re-pointing at the same underlying asset does not drop it to zero
+  // in between.
+  if (previous) {
+    asset_man.unload_asset(previous);
+  }
+}
+
 void Scene::create_character_controller(
   flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
 ) const {
@@ -1864,18 +2324,64 @@ void Scene::create_character_controller(
 }
 
 auto Scene::render(
-  this Scene& self, vuk::Value<vuk::ImageAttachment>&& dst_attachment, const Renderer::RenderInfo& render_info
+  this Scene& self,
+  vuk::Value<vuk::ImageAttachment>&& dst_attachment,
+  glm::ivec2 viewport_origin,
+  glm::ivec2 viewport_size,
+  glm::ivec2 surface_size,
+  bool keyboard_focused
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
   auto ri = self.get_renderer_instance();
   OX_CHECK_NULL(ri);
 
-  for (auto& [uuid, system] : self.lua_systems) {
+  if (self.rml_view) {
+    OX_CHECK_GT(viewport_size.x, 0, "viewport_size.x is not set");
+    OX_CHECK_GT(viewport_size.y, 0, "viewport_size.y is not set");
+    OX_CHECK_GT(surface_size.x, 0, "surface_size.x is not set");
+    OX_CHECK_GT(surface_size.y, 0, "surface_size.y is not set");
+
+    // Picked up by the next runtime_update, which is where the geometry is actually collected.
+    self.rml_surface_size = surface_size;
+    self.rml_view->set_viewport(viewport_origin, viewport_size, keyboard_focused);
+  }
+
+  for (auto& [_, system] : self.lua_systems) {
     system->on_scene_render(&self, dst_attachment->extent);
   }
 
-  return ri->render(std::move(dst_attachment), render_info, self.renderer_cvar);
+  auto scene_surface = ri->render(
+    std::move(dst_attachment),
+    viewport_origin,
+    viewport_size,
+    surface_size,
+    self.renderer_cvar
+  );
+
+  if (!self.rml_view) {
+    return scene_surface;
+  }
+
+  return self.rml_view->draw(App::get_rendercontext(), std::move(scene_surface));
+}
+
+auto Scene::get_rml_context(this const Scene& self) -> Rml::Context* {
+  return self.rml_view ? self.rml_view->context() : nullptr;
+}
+
+auto Scene::get_rml_context_name(this const Scene& self) -> std::string_view {
+  ZoneScoped;
+
+  return self.rml_view ? self.rml_view->name() : std::string_view{};
+}
+
+auto Scene::set_rml_dpi_ratio(this const Scene& self, f32 ratio) -> void {
+  ZoneScoped;
+
+  if (self.rml_view) {
+    self.rml_view->set_dpi_ratio(ratio);
+  }
 }
 
 auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
@@ -2003,9 +2509,9 @@ auto Scene::to_json(this const Scene& self) -> JsonWriter {
   self.renderer_cvar.to_json(writer);
 
   writer["scripts"].begin_array();
-  for (auto& [uuid, system] : self.lua_systems) {
+  for (auto& [script_uuid, system] : self.lua_systems) {
     writer.begin_obj();
-    writer["uuid"] = uuid.str();
+    writer["uuid"] = script_uuid.str();
     writer.end_obj();
   }
   writer.end_array();
@@ -2036,6 +2542,14 @@ auto Scene::copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Sce
   new_scene->from_json(writer.stream.str());
   new_scene->scene_name = new_name;
   new_scene->meshes_dirty = true;
+
+  // Brush strokes live only in the terrain's GPU edit maps, which the scene JSON does not carry, so
+  // the copy would otherwise come up as the freshly generated terrain. `bake_terrain` reuses this
+  // instance and `Terrain::create` carries the edits across.
+  if (src_scene->terrain != nullptr && !src_scene->terrain->edits_uninitialized) {
+    new_scene->terrain = std::make_unique<Terrain>();
+    new_scene->terrain->clone_edits_from(*src_scene->terrain, App::get_rendercontext());
+  }
 
   OX_LOG_TRACE("Copied scene {} to {}", src_scene->scene_name, new_scene->scene_name);
 
@@ -2097,29 +2611,37 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
 
   OX_LOG_INFO("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
 
-  for (const auto& uuid : requested_assets) {
+  for (const auto& asset_uuid : requested_assets) {
     auto& asset_man = App::mod<AssetManager>();
     // Snapshot the type and release the read guard before load_asset()/add_lua_system(),
     // which re-lock the registry.
     auto asset_type = AssetType::None;
     auto exists = false;
-    if (auto asset = asset_man.get_asset(uuid)) {
+    if (auto asset = asset_man.get_asset(asset_uuid)) {
       exists = true;
       asset_type = asset->type;
     }
     if (exists) {
       if (asset_type == AssetType::Script) {
-        self.add_lua_system(uuid);
+        self.add_lua_system(asset_uuid);
       } else {
-        asset_man.load_asset(uuid);
+        asset_man.load_asset(asset_uuid);
       }
     } else {
       // Not an imported/physical asset
       // Most likely was created on runtime and never written to a file, these should never exist.
       // Otherwise component will be left with an unloaded asset.
-      OX_LOG_WARN("Ghost asset found! {}", uuid.str());
+      OX_LOG_WARN("Ghost asset found! {}", asset_uuid.str());
     }
   }
+
+  // Assets are only requested after every entity exists, so meshes whose model was still unloaded
+  // when their component was set could not be attached. Attach them now that the models are in.
+  self.world.query_builder<MeshComponent>().build().each([&self](flecs::entity e, MeshComponent& mc) {
+    if (mc.model_uuid && !self.entity_to_mesh_instance_map.contains(e)) {
+      self.attach_mesh(e, mc.model_uuid, mc.mesh_index, mc.material_uuid);
+    }
+  });
 
   return true;
 }

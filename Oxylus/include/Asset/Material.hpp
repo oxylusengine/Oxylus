@@ -28,11 +28,12 @@ struct Material {
   glm::vec2 uv_size = {1.0f, 1.0f};
   glm::vec2 uv_offset = {0.0f, 0.0f};
   glm::vec3 emissive_color = {0.0f, 0.0f, 0.0f};
-  f32 roughness_factor = 0.0f;
+  f32 roughness_factor = 1.0f;
   f32 metallic_factor = 0.0f;
   AlphaMode alpha_mode = AlphaMode::Opaque;
   f32 alpha_cutoff = 0.1f;
   SamplingMode sampling_mode = SamplingMode::LinearRepeated;
+  bool flip_normal_y = false;
   UUID albedo_texture = {};
   UUID normal_texture = {};
   UUID emissive_texture = {};

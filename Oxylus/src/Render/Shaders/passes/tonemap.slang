@@ -667,15 +667,17 @@ struct GT7ToneMapping
 
 [[shader("fragment")]]
 f32x4 fs_main(VertexOutput input) {
-    var color = input_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
+    let source = input_image.SampleLevel(sampler, input.tex_coord, 0.0);
+    var color = source.rgb;
 
     if ((scene_flags & SceneFlags::HasEyeAdaptation) != 0) {
         let exposure = histogram_luminance.exposure;
         color *= exposure;
+    } else {
+        color *= C.post_process_settings.exposure;
     }
 
     if ((scene_flags & SceneFlags::HasBloom) != 0) {
-        // The bloom chain already ran in exposed space, so it composites after the exposure above.
         let bloom = bloom_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
         color += bloom * C.bloom_intensity;
     }
@@ -716,5 +718,6 @@ f32x4 fs_main(VertexOutput input) {
         C.post_process_settings.film_grain_seed);
     }
 
-    return f32x4(color, 1.0);
+    let alpha = ((scene_flags & SceneFlags::TransparentBackground) != 0) ? source.a : 1.0;
+    return f32x4(color, alpha);
 }

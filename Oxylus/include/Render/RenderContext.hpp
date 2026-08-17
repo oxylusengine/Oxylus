@@ -15,6 +15,7 @@
 
 namespace ox {
 struct Window;
+struct UploadBatch;
 class TracyProfiler;
 
 enum class BufferID : u64 { Invalid = ~0_u64 };
@@ -54,8 +55,8 @@ public:
   option<vuk::DeviceSuperFrameResource> superframe_resource;
   option<vuk::Allocator> superframe_allocator = nullopt;
   option<vuk::Allocator> frame_allocator = nullopt;
-  plf::colony<std::pair<u64, vuk::Buffer>> tracked_buffers = {};
-  std::shared_mutex pending_image_buffers_mutex = {};
+  std::shared_mutex frame_allocator_mutex = {};
+  std::shared_mutex descriptor_mutex = {};
   std::shared_mutex queue_mutex = {};
 
   vuk::PresentModeKHR present_mode = vuk::PresentModeKHR::eFifo;
@@ -89,6 +90,12 @@ public:
   auto wait_on(vuk::UntypedValue&& fut) -> void;
   auto submit_now(vuk::UntypedValue&& fut) -> void;
   auto wait_on_multiple(std::span<vuk::UntypedValue> values) -> void;
+  // Submits without waiting. The values stay synchronizable, so a later `wait_on_multiple` over them
+  // costs only the fence wait. Backed by the superframe allocator, so the caller may keep the
+  // staging buffers alive across frames.
+  auto submit_multiple(std::span<vuk::UntypedValue> values) -> void;
+
+  auto get_compiler(this RenderContext& self) -> vuk::Compiler&;
 
   auto create_persistent_descriptor_set(
     this RenderContext&,
@@ -104,11 +111,13 @@ public:
   auto destroy_image(const ImageID id) -> void;
   auto image(const ImageID id) -> vuk::Image;
 
-  auto allocate_image_view(const vuk::ImageAttachment& image_attachment) -> ImageViewID;
+  // `batch`, when given, collects the bindless write instead of committing it immediately; the
+  // descriptor is not live until that batch is flushed.
+  auto allocate_image_view(const vuk::ImageAttachment& image_attachment, UploadBatch* batch = nullptr) -> ImageViewID;
   auto destroy_image_view(const ImageViewID id) -> void;
   auto image_view(const ImageViewID id) -> vuk::ImageView;
 
-  auto allocate_sampler(const vuk::SamplerCreateInfo& sampler_info) -> SamplerID;
+  auto allocate_sampler(const vuk::SamplerCreateInfo& sampler_info, UploadBatch* batch = nullptr) -> SamplerID;
   auto destroy_sampler(const SamplerID id) -> void;
   auto sampler(const SamplerID id) -> vuk::Sampler;
 
@@ -122,7 +131,7 @@ public:
   auto allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;
 
   [[nodiscard]]
-  auto alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, OX_THISCALL) noexcept -> vuk::Value<vuk::Buffer>;
+  auto alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, OX_THISCALL) noexcept -> vuk::Unique<vuk::Buffer>;
 
   [[nodiscard]]
   auto alloc_transient_buffer_raw(vuk::MemoryUsage usage, usize size, usize alignment = 8, OX_THISCALL) -> vuk::Buffer;
@@ -179,7 +188,5 @@ public:
 private:
   [[nodiscard]]
   auto scratch_buffer(const void* data, u64 size, usize alignment, OX_THISCALL) -> vuk::Value<vuk::Buffer>;
-
-  mutable std::shared_mutex mutex = {};
 };
 } // namespace ox

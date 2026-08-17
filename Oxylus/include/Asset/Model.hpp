@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <glm/gtx/quaternion.hpp>
 #include <vuk/Buffer.hpp>
 
@@ -9,6 +10,18 @@
 namespace ox {
 
 enum class ModelID : u64 { Invalid = std::numeric_limits<u64>::max() };
+
+struct ModelLoadInfo {
+  struct Vertex {
+    glm::vec3 position = {};
+    glm::vec3 normal = {};
+    glm::vec2 uv = {};
+  };
+
+  std::vector<Vertex> vertices = {};
+  std::vector<u32> indices = {};
+  std::vector<UUID> materials = {};
+};
 
 struct Model {
   constexpr static auto MAX_MESHLET_INDICES = 64_sz;
@@ -21,9 +34,9 @@ struct Model {
     std::vector<usize> child_indices = {};
     std::vector<usize> mesh_indices = {};
     std::vector<usize> light_indices = {};
-    glm::vec3 translation = {};
-    glm::quat rotation = {};
-    glm::vec3 scale = {};
+    glm::vec3 translation = {0.f, 0.f, 0.f};
+    glm::quat rotation = glm::quat::wxyz(1.f, 0.f, 0.f, 0.f);
+    glm::vec3 scale = {1.f, 1.f, 1.f};
   };
 
   enum class LightType { Directional, Spot, Point };
@@ -47,7 +60,13 @@ struct Model {
   std::vector<option<u32>> material_indices = {}; // these are per mesh, not per MeshGroup
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};
 
+  std::vector<std::atomic_flag> mesh_ready = {};
+  u32 pending_meshes = 0;
+
   usize default_scene_index = 0;
+
+  auto is_mesh_ready(this const Model& self, usize mesh_index) -> bool;
+  auto is_fully_loaded(this Model& self) -> bool;
 
   auto get_mesh_bounds(this const Model& self) -> GPU::MeshBounds;
 };

@@ -3,6 +3,9 @@
 #include "Core/Types.hpp"
 
 namespace ox {
+struct NetServer;
+struct NetClient;
+
 enum class NetClientID : u64 { Invalid = ~0_u64 };
 enum : u32 {
   NET_CHANNEL_UNRELIABLE = 0,

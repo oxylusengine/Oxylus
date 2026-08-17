@@ -19,7 +19,6 @@
 #include "Panels/TextEditorPanel.hpp"
 #include "Render/Window.hpp"
 #include "UI/ImGuiRenderer.hpp"
-#include "UI/RmlUI.hpp"
 #include "UI/UI.hpp"
 #include "Utils/Command.hpp"
 
@@ -165,6 +164,8 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   std::ignore = event_system.unsubscribe<ScenePlayEvent>(self.scene_play_handler);
   std::ignore = event_system.unsubscribe<SceneStopEvent>(self.scene_stop_handler);
 
+  self.thumbnail_manager.deinit();
+
   self.main_viewport_panel.deinit();
   self.main_viewport_panel.reset();
 
@@ -189,14 +190,10 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   auto& render_context = App::get_rendercontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
-  auto& rml = App::mod<RmlUI>();
-  auto& rml_renderer = rml.get_renderer();
   auto& window = App::get_window();
 
   auto swapchain_attachment = render_context.new_frame();
   swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
-
-  rml_renderer.begin_frame();
 
   imgui_renderer.keyboard_input_enabled = !self.main_viewport_panel.is_any_scene_playing();
 
@@ -217,10 +214,7 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   self.render(sc_info);
 
-  rml.render_contexts();
-
   swapchain_attachment = imgui_renderer.end_frame(render_context, std::move(swapchain_attachment));
-  swapchain_attachment = rml_renderer.end_frame(render_context, std::move(swapchain_attachment));
 
   render_context.end_frame(swapchain_attachment);
 }
@@ -367,16 +361,63 @@ void Editor::save_scene() {
   }
 
   if (!scene->get_path().empty()) {
-    auto& job_man = App::get_job_manager();
-    job_man.push_job_name("Saving scene");
-    job_man.submit(Job::create([scene] {
-      auto last_saved_path = scene->get_path();
-      scene->get_scene()->save_to_file(last_saved_path);
-    }));
-    job_man.pop_job_name();
+    submit_scene_save(scene, scene->get_path());
   } else {
     save_scene_as();
   }
+}
+
+auto Editor::sync_terrain_edits_asset(Scene& scene, const std::filesystem::path& scene_path) -> std::filesystem::path {
+  ZoneScoped;
+
+  if (scene.terrain == nullptr || !scene.terrain_entity || !scene.terrain_entity.has<TerrainComponent>()) {
+    return {};
+  }
+
+  auto& c = scene.terrain_entity.get_mut<TerrainComponent>();
+  auto& asset_man = App::mod<AssetManager>();
+
+  if (!c.terrain_edits) {
+    if (!scene.terrain->edits_dirty) {
+      return {};
+    }
+
+    auto edits_path = scene_path;
+    edits_path.replace_extension(".oxterrain");
+
+    c.terrain_edits = asset_man.create_asset(AssetType::Terrain, edits_path);
+    // Takes the scene's one ref and loads the (still empty) payload the readback fills in.
+    scene.set_terrain_edits_ref(c.terrain_edits);
+  }
+
+  scene.sync_terrain_edits();
+
+  auto asset = asset_man.get_asset(c.terrain_edits);
+
+  return asset ? asset->path : std::filesystem::path{};
+}
+
+auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -> void {
+  App::defer_to_next_frame([scene, scene_path = std::move(path)] {
+    // The readback records GPU work, so it has to finish here on the main thread; the job below
+    // only writes files.
+    auto edits_path = sync_terrain_edits_asset(*scene->get_scene(), scene_path);
+    auto edits_uuid = UUID{};
+    if (!edits_path.empty()) {
+      edits_uuid = scene->get_scene()->terrain_edits_ref;
+    }
+
+    auto& job_man = App::get_job_manager();
+    job_man.push_job_name("Saving scene");
+    job_man.submit(Job::create([scene, scene_path, edits_path, edits_uuid] {
+      scene->get_scene()->save_to_file(scene_path);
+      if (edits_uuid) {
+        App::mod<AssetManager>().export_asset(edits_uuid, edits_path);
+      }
+      scene->set_path(scene_path);
+    }));
+    job_man.pop_job_name();
+  });
 }
 
 void Editor::save_scene_as() {
@@ -416,13 +457,7 @@ void Editor::save_scene_as() {
         const auto path = std::string(first_path_cstr, first_path_len);
 
         if (!path.empty()) {
-          auto& job_man = App::get_job_manager();
-          job_man.push_job_name("Saving scene");
-          job_man.submit(Job::create([s = udata->scene, path] {
-            s->get_scene()->save_to_file(path);
-            s->set_path(path);
-          }));
-          job_man.pop_job_name();
+          submit_scene_save(udata->scene, path);
         }
 
         delete udata;

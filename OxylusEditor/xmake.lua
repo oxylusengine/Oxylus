@@ -16,14 +16,14 @@ target("OxylusEditor")
     add_sysincludedirs("./vendor", { public = true })
     add_files("./src/**.cpp")
 
-    add_files("./Resources/**")
+    add_files("./Assets/**")
     add_rules("ox.install_resources", {
-        root_dir = os.scriptdir() .. "/Resources",
-        output_dir = "Resources",
+        root_dir = os.scriptdir() .. "/Assets",
+        output_dir = "Assets",
     })
-    add_files("./Resources/*.toml")
+    add_files("./Assets/*.toml")
     add_rules("ox.compile_shaders", {
-        output_dir = "Resources/Shaders",
+        output_dir = "Assets/Shaders",
     })
 
 target_end()

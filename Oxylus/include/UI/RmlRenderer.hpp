@@ -2,6 +2,7 @@
 
 #include <RmlUi/Core/RenderInterface.h>
 #include <ankerl/unordered_dense.h>
+#include <unordered_map>
 #include <vuk/Value.hpp>
 
 #include "Asset/Texture.hpp"
@@ -25,8 +26,12 @@ struct RmlCompiledGeometry {
   std::vector<int> indices;
 };
 
+// One per context. Sharing an instance makes two contexts acquire the same attachments in a single frame.
 class RmlRenderer : public Rml::RenderInterface {
 public:
+  RmlRenderer();
+  ~RmlRenderer() override;
+
   auto begin_frame(this RmlRenderer& self) -> void;
   auto end_frame(this RmlRenderer& self, RenderContext& context, vuk::Value<vuk::ImageAttachment> target)
     -> vuk::Value<vuk::ImageAttachment>;
@@ -40,8 +45,6 @@ public:
     Rml::TextureHandle texture,
     const Rml::Vector2f& translation
   ) -> void;
-
-  auto set_white_texture(this RmlRenderer& self, const TextureView &view) -> void;
 
   // --- Derived functions ---
   auto CompileGeometry(Rml::Span<const Rml::Vertex> vertices, Rml::Span<const int> indices)
@@ -67,7 +70,9 @@ private:
   std::vector<RmlDrawCmd> draw_commands = {};
 
   SlotMap<Texture, RmlTextureID> loaded_textures = {};
-  TextureView white_texture = {};
+  Texture white_texture = {};
+  std::vector<vuk::Value<vuk::ImageAttachment>> frame_textures = {};
+  std::unordered_map<RmlTextureID, u32> frame_texture_indices = {};
 
   bool current_scissor_enabled = false;
   glm::ivec4 current_scissor; // x, y, w, h

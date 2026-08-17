@@ -214,7 +214,7 @@ public struct VirtualClipmap {
     public func get_clipmap_info(f32x3 world_pos) -> VirtualClipmapInfo {
         let light_pos_h = mul(this.projection_view_mat, f32x4(world_pos, 1.0));
         let light_pos = light_pos_h.xyz / light_pos_h.w;
-        let clip_uv = fract((light_pos.xy + 1.0) * 0.5);
+        let clip_uv = (light_pos.xy + 1.0) * 0.5;
         let projected_depth = light_pos_h.z / light_pos_h.w;
 
         return VirtualClipmapInfo(clip_uv, projected_depth);

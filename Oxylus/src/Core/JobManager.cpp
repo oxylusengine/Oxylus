@@ -8,37 +8,36 @@
 namespace ox {
 auto Barrier::create() -> Arc<Barrier> { return Arc<Barrier>::create(); }
 
-auto Barrier::wait(this Barrier& self) -> void {
-  auto v = self.counter.load();
-  while (v != 0) {
-    self.counter.wait(v);
-    v = self.counter.load();
+auto Barrier::wait(this Barrier& self, JobManager& job_manager) -> void {
+  ZoneScoped;
+
+  if (!self.sealed.test_and_set(std::memory_order_acq_rel)) {
+    if (self.counter.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+      self.counter.notify_all();
+    }
   }
-}
 
-auto Barrier::acquire(this Barrier& self, u32 count) -> Arc<Barrier> {
-  self.counter += count;
-  self.acquired += count;
+  const auto on_worker = this_thread_worker.id != ~0_u32;
+  auto v = self.counter.load(std::memory_order_acquire);
+  while (v != 0) {
+    if (on_worker) {
+      if (!job_manager.try_execute_one()) {
+        std::this_thread::yield();
+      }
+    } else {
+      self.counter.wait(v, std::memory_order_acquire);
+    }
 
-  return &self;
-}
-
-auto Barrier::add(this Barrier& self, Arc<Job> job) -> Arc<Barrier> {
-  self.pending.push_back(std::move(job));
-
-  return &self;
+    v = self.counter.load(std::memory_order_acquire);
+  }
 }
 
 auto Job::signal(this Job& self, Arc<Barrier> barrier) -> Arc<Job> {
   ZoneScoped;
 
-  if (barrier->acquired > 0) {
-    barrier->acquired--;
-  } else {
-    barrier->acquired++;
-  }
-
+  barrier->counter.fetch_add(1, std::memory_order_relaxed);
   self.barriers.emplace_back(std::move(barrier));
+
   return &self;
 }
 
@@ -98,49 +97,80 @@ auto JobManager::worker(this JobManager& self, u32 id) -> void {
   OX_DEFER() { this_thread_worker.id = ~0_u32; };
 
   while (true) {
-    std::unique_lock lock(self.mutex);
-    while (self.jobs.empty()) {
-      if (!self.running) {
-        return;
-      }
-
-      self.condition_var.wait(lock);
-    }
-
-    auto job = self.jobs.front();
-    self.jobs.pop_front();
-    lock.unlock();
-
-    job->task();
-    self.job_count.fetch_sub(1);
-
-    for (auto& barrier : job->barriers) {
-      if (--barrier->counter == 0) {
-        for (auto& task : barrier->pending) {
-          self.submit(task, true);
+    auto job = Arc<Job>();
+    {
+      std::unique_lock lock(self.mutex);
+      while (self.jobs.empty()) {
+        if (!self.running) {
+          return;
         }
 
+        self.condition_var.wait(lock);
+      }
+
+      job = std::move(self.jobs.front());
+      self.jobs.pop_front();
+    }
+
+    self.execute(std::move(job));
+  }
+}
+
+auto JobManager::execute(this JobManager& self, Arc<Job> job) -> void {
+  ZoneScoped;
+
+  OX_DEFER(&) {
+    for (auto& barrier : job->barriers) {
+      if (barrier->counter.fetch_sub(1, std::memory_order_acq_rel) == 1) {
         barrier->counter.notify_all();
       }
     }
+
+    // Last, so `wait` cannot observe an idle pool while barriers are still being signalled.
+    self.job_count.fetch_sub(1, std::memory_order_release);
+  };
+
+  job->task();
+}
+
+auto JobManager::try_execute_one(this JobManager& self) -> bool {
+  ZoneScoped;
+
+  auto job = Arc<Job>();
+  {
+    auto lock = std::unique_lock(self.mutex);
+    if (self.jobs.empty()) {
+      return false;
+    }
+
+    job = std::move(self.jobs.front());
+    self.jobs.pop_front();
   }
+
+  self.execute(std::move(job));
+
+  return true;
+}
+
+auto JobManager::job_name_stack() -> std::stack<std::string>& {
+  static thread_local std::stack<std::string> stack = {};
+  return stack;
 }
 
 auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) -> void {
   ZoneScoped;
 
-  {
-    auto lock = std::shared_lock(self.mutex);
-    if (!self.job_name_stack.empty())
-      job->name = self.job_name_stack.top();
+  auto& name_stack = job_name_stack();
+  if (self.tracker.is_tracking() && !name_stack.empty())
+    job->name = name_stack.top();
+
+  if (!job->name.empty()) {
+    self.tracker.register_job(job);
+    job->task = [original_task = std::move(job->task), job_ptr = job.get(), &t = self.tracker]() {
+      original_task();
+      t.mark_completed(job_ptr);
+    };
   }
-
-  self.tracker.register_job(job);
-
-  job->task = [original_task = std::move(job->task), job_ptr = job.get(), &t = self.tracker]() {
-    original_task();
-    t.mark_completed(job_ptr);
-  };
 
   {
     auto lock = std::unique_lock(self.mutex);
@@ -152,13 +182,18 @@ auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) ->
   }
 
   self.job_count.fetch_add(1);
-  self.condition_var.notify_all();
+
+  self.condition_var.notify_one();
 }
 
 auto JobManager::wait(this JobManager& self) -> void {
   ZoneScoped;
 
-  while (self.job_count.load(std::memory_order_relaxed) != 0)
-    ;
+  const auto on_worker = this_thread_worker.id != ~0_u32;
+  while (self.job_count.load(std::memory_order_acquire) != 0) {
+    if (!on_worker || !self.try_execute_one()) {
+      std::this_thread::yield();
+    }
+  }
 }
 } // namespace ox

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <icons/IconsMaterialDesignIcons.h>
+#include <imgui_internal.h>
 #include <vuk/ImageAttachment.hpp>
 
 #include "Core/App.hpp"
@@ -30,10 +31,12 @@ auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
                               .value_or(0);
   self.scene_play_handler = event_system
                               .subscribe<Editor::ScenePlayEvent>([&self](const Editor::ScenePlayEvent& e) {
-                                auto& editor = App::mod<Editor>();
-                                auto play_scene_id = editor.scene_manager.new_play_scene(e.scene_id);
-                                auto copy_scene = editor.scene_manager.get_scene(play_scene_id);
-                                self.add_new_play_scene(copy_scene);
+                                App::defer_to_next_frame([&self, scene_id = e.scene_id] {
+                                  auto& editor = App::mod<Editor>();
+                                  auto play_scene_id = editor.scene_manager.new_play_scene(scene_id);
+                                  auto copy_scene = editor.scene_manager.get_scene(play_scene_id);
+                                  self.add_new_play_scene(copy_scene);
+                                });
                               })
                               .value_or(0);
   self.scene_stop_handler =
@@ -168,11 +171,11 @@ void MainViewportPanel::on_render(this MainViewportPanel& self, vuk::ImageAttach
     auto& style = ImGui::GetStyle();
     if (ImGui::BeginMenuBar()) {
       if (ImGui::MenuItem(ICON_MDI_PLUS_THICK)) {
-        App::mod<Editor>().new_scene();
+        App::defer_to_next_frame([] { App::mod<Editor>().new_scene(); });
       }
       UI::tooltip_hover("New scene");
       if (ImGui::MenuItem(ICON_MDI_FOLDER_OPEN)) {
-        App::mod<Editor>().open_scene_file_dialog();
+        App::defer_to_next_frame([] { App::mod<Editor>().open_scene_file_dialog(); });
       }
       UI::tooltip_hover("Open scene");
       auto button_width = ImGui::CalcTextSize(ICON_MDI_ARROW_EXPAND_ALL, nullptr, true);
@@ -230,6 +233,8 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
     }
 
     if (panel_scene) {
+      panel_scene->get_scene()->input_focused = panel->is_viewport_focused;
+
       if (panel_scene->is_playing()) {
         panel_scene->get_scene()->enable_all_phases();
         panel_scene->get_scene()->runtime_update(timestep);
@@ -258,6 +263,11 @@ auto MainViewportPanel::set_dockspace(this const MainViewportPanel& self) -> voi
   auto dock_id = ImGui::GetID("ViewportDockspace");
 
   for (auto& panel : self.viewport_panels) {
+    const auto* window = ImGui::FindWindowByName(panel->get_id());
+    if (window && window->DockId != 0) {
+      continue;
+    }
+
     ImGui::DockBuilderDockWindow(panel->get_id(), dock_id);
   }
 
@@ -265,17 +275,18 @@ auto MainViewportPanel::set_dockspace(this const MainViewportPanel& self) -> voi
 }
 
 void MainViewportPanel::drag_drop(this MainViewportPanel& self) {
-  auto& editor = App::mod<Editor>();
-
   if (ImGui::BeginDragDropTarget()) {
     if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
       const auto* payload = PayloadData::from_payload(imgui_payload);
       const auto path = payload->get_path();
       if (path.extension() == ".oxscene") {
-        auto scene_id = editor.scene_manager.load_scene(path);
-        if (scene_id.has_value()) {
-          self.add_new_scene(App::mod<Editor>().scene_manager.get_scene(scene_id.value()));
-        }
+        App::defer_to_next_frame([&self, path] {
+          auto& editor = App::mod<Editor>();
+          auto scene_id = editor.scene_manager.load_scene(path);
+          if (scene_id.has_value()) {
+            self.add_new_scene(editor.scene_manager.get_scene(scene_id.value()));
+          }
+        });
       }
     }
 

@@ -1,17 +1,303 @@
 #include "ThumbnailManager.hpp"
 
-#include <imgui.h>
+#include <algorithm>
+#include <array>
+#include <glm/common.hpp>
+#include <glm/geometric.hpp>
+#include <glm/gtx/quaternion.hpp>
+#include <limits>
+#include <numbers>
 #include <stb_image_write.h>
 #include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/Model.hpp"
+#include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
+#include "Core/JobManager.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/RenderContext.hpp"
+#include "Render/Renderer.hpp"
+#include "Scene/Components.hpp"
+#include "Scene/Scene.hpp"
 #include "Utils/ThumbnailCamera.hpp"
 
 namespace ox {
+constexpr auto PREVIEW_SPHERE_RADIUS = 1.0f;
+constexpr auto PREVIEW_SPHERE_RINGS = 48_u32;
+constexpr auto PREVIEW_SPHERE_SECTORS = 96_u32;
+
+constexpr auto PREVIEW_FOV = 30.0f;
+constexpr auto PREVIEW_FRAMING_PADDING = 1.08f;
+
+constexpr auto PREVIEW_SUN_INTENSITY = 6.0f;
+constexpr auto PREVIEW_EXPOSURE = 1.0f;
+constexpr auto PREVIEW_AMBIENT = 0.25f;
+
+constexpr auto MODEL_PREVIEW_FOV = 40.0f;
+
+// The terrain asset only holds the brush strokes, not the procedural base they sit on, so the
+// preview is a shaded relief of the height deltas tinted by the painted splat rather than a render.
+constexpr auto TERRAIN_PREVIEW_RELIEF = 25.0f;
+constexpr auto TERRAIN_PREVIEW_AMBIENT = 0.3f;
+// Height deltas are normalized heightmap units, so an almost untouched map would otherwise be
+// stretched into a full range of relief.
+constexpr auto TERRAIN_PREVIEW_MIN_RANGE = 0.05f;
+
+// The splat override tints, it does not replace: a map painted end to end is common, and it would
+// otherwise flatten the preview into one colour and hide the sculpting.
+constexpr auto TERRAIN_PREVIEW_UNPAINTED = glm::vec3(0.72f, 0.74f, 0.78f);
+// Zero delta is untouched ground, so it sits mid tone with cuts below it and raises above.
+constexpr auto TERRAIN_PREVIEW_CUT_TONE = 0.55f;
+constexpr auto TERRAIN_PREVIEW_RAISE_TONE = 1.2f;
+
+constexpr auto TERRAIN_LAYER_COLORS = std::array{
+  glm::vec3(0.45f, 0.62f, 0.32f),
+  glm::vec3(0.62f, 0.60f, 0.56f),
+  glm::vec3(0.55f, 0.45f, 0.32f),
+  glm::vec3(0.95f, 0.96f, 1.00f),
+};
+
+struct MaterialPreview {
+  std::unique_ptr<Scene> scene = {};
+  flecs::entity sphere = {};
+  UUID sphere_model_uuid = UUID(nullptr);
+};
+
+static auto generate_uv_sphere(f32 radius, u32 rings, u32 sectors) -> ModelLoadInfo {
+  auto model = ModelLoadInfo{};
+
+  const auto inv_rings = 1.0f / static_cast<f32>(rings);
+  const auto inv_sectors = 1.0f / static_cast<f32>(sectors);
+
+  model.vertices.reserve((rings + 1) * (sectors + 1));
+  for (u32 ring = 0; ring <= rings; ++ring) {
+    const auto v = static_cast<f32>(ring) * inv_rings;
+    const auto phi = v * std::numbers::pi_v<f32>;
+    const auto cos_phi = std::cos(phi);
+    const auto sin_phi = std::sin(phi);
+
+    for (u32 sector = 0; sector <= sectors; ++sector) {
+      const auto u = static_cast<f32>(sector) * inv_sectors;
+      const auto theta = u * 2.0f * std::numbers::pi_v<f32>;
+      const auto normal = glm::vec3(sin_phi * std::cos(theta), cos_phi, sin_phi * std::sin(theta));
+
+      model.vertices.emplace_back(
+        ModelLoadInfo::Vertex{
+          .position = normal * radius,
+          .normal = normal,
+          .uv = glm::vec2(u, v),
+        }
+      );
+    }
+  }
+
+  model.indices.reserve(rings * sectors * 6);
+  for (u32 ring = 0; ring < rings; ++ring) {
+    for (u32 sector = 0; sector < sectors; ++sector) {
+      const auto current_row = ring * (sectors + 1);
+      const auto next_row = (ring + 1) * (sectors + 1);
+
+      const auto top_left = current_row + sector;
+      const auto top_right = current_row + sector + 1;
+      const auto bottom_left = next_row + sector;
+      const auto bottom_right = next_row + sector + 1;
+
+      model.indices.emplace_back(top_left);
+      model.indices.emplace_back(top_right);
+      model.indices.emplace_back(bottom_left);
+
+      model.indices.emplace_back(top_right);
+      model.indices.emplace_back(bottom_right);
+      model.indices.emplace_back(bottom_left);
+    }
+  }
+
+  return model;
+}
+
+struct TerrainEditSample {
+  f32 height = 0.f;
+  glm::vec4 splat = {};
+};
+
+static auto load_terrain_edit(const TerrainEdits& edits, u32 x, u32 y) -> TerrainEditSample {
+  const auto index = static_cast<usize>(y) * edits.resolution.x + x;
+  const auto* splat = edits.splat.data() + index * 4;
+
+  return {
+    .height = reinterpret_cast<const f32*>(edits.height.data())[index],
+    .splat = glm::vec4(splat[0], splat[1], splat[2], splat[3]) / 255.f,
+  };
+}
+
+static auto box_terrain_sample(const TerrainEdits& edits, glm::uvec2 begin, glm::uvec2 end) -> TerrainEditSample {
+  auto accumulated = TerrainEditSample{};
+  for (auto y = begin.y; y < end.y; ++y) {
+    for (auto x = begin.x; x < end.x; ++x) {
+      const auto sample = load_terrain_edit(edits, x, y);
+
+      accumulated.height += sample.height;
+      accumulated.splat += sample.splat;
+    }
+  }
+
+  const auto count = static_cast<f32>((end.y - begin.y) * (end.x - begin.x));
+
+  return {.height = accumulated.height / count, .splat = accumulated.splat / count};
+}
+
+static auto bilinear_terrain_sample(const TerrainEdits& edits, glm::vec2 coord) -> TerrainEditSample {
+  const auto limit = glm::vec2(edits.resolution) - 1.f;
+  const auto clamped = glm::clamp(coord, glm::vec2(0.f), limit);
+  const auto floored = glm::floor(clamped);
+  const auto next = glm::min(floored + 1.f, limit);
+  const auto blend = clamped - floored;
+
+  const auto x0 = static_cast<u32>(floored.x);
+  const auto y0 = static_cast<u32>(floored.y);
+  const auto x1 = static_cast<u32>(next.x);
+  const auto y1 = static_cast<u32>(next.y);
+
+  const auto top_left = load_terrain_edit(edits, x0, y0);
+  const auto top_right = load_terrain_edit(edits, x1, y0);
+  const auto bottom_left = load_terrain_edit(edits, x0, y1);
+  const auto bottom_right = load_terrain_edit(edits, x1, y1);
+
+  const auto top = TerrainEditSample{
+    .height = glm::mix(top_left.height, top_right.height, blend.x),
+    .splat = glm::mix(top_left.splat, top_right.splat, blend.x),
+  };
+  const auto bottom = TerrainEditSample{
+    .height = glm::mix(bottom_left.height, bottom_right.height, blend.x),
+    .splat = glm::mix(bottom_left.splat, bottom_right.splat, blend.x),
+  };
+
+  return {
+    .height = glm::mix(top.height, bottom.height, blend.y),
+    .splat = glm::mix(top.splat, bottom.splat, blend.y),
+  };
+}
+
+static auto resample_terrain_edits(
+  const TerrainEdits& edits, u32 size, std::span<f32> out_height, std::span<glm::vec4> out_splat
+) -> void {
+  const auto resolution = edits.resolution;
+  const auto upsampling = resolution.x < size || resolution.y < size;
+
+  for (auto dst_y = 0_u32; dst_y < size; ++dst_y) {
+    for (auto dst_x = 0_u32; dst_x < size; ++dst_x) {
+      const auto begin = glm::uvec2(dst_x * resolution.x / size, dst_y * resolution.y / size);
+      const auto end = glm::uvec2(
+        ox::max((dst_x + 1) * resolution.x / size, begin.x + 1),
+        ox::max((dst_y + 1) * resolution.y / size, begin.y + 1)
+      );
+      const auto center = (glm::vec2(dst_x, dst_y) + 0.5f) / static_cast<f32>(size) * glm::vec2(resolution) - 0.5f;
+
+      const auto sample = upsampling ? bilinear_terrain_sample(edits, center) : box_terrain_sample(edits, begin, end);
+
+      const auto dst = static_cast<usize>(dst_y) * size + dst_x;
+      out_height[dst] = sample.height;
+      out_splat[dst] = sample.splat;
+    }
+  }
+}
+
+static auto render_terrain_preview(const TerrainEdits& edits, u32 size) -> std::vector<u8> {
+  ZoneScoped;
+
+  const auto texel_count = static_cast<usize>(edits.resolution.x) * edits.resolution.y;
+  if (texel_count == 0 || edits.height.size() < texel_count * sizeof(f32) || edits.splat.size() < texel_count * 4) {
+    return {};
+  }
+
+  const auto grid_size = static_cast<usize>(size) * size;
+  auto height_grid = std::vector<f32>(grid_size);
+  auto splat_grid = std::vector<glm::vec4>(grid_size);
+  resample_terrain_edits(edits, size, height_grid, splat_grid);
+
+  auto min_height = std::numeric_limits<f32>::max();
+  auto max_height = std::numeric_limits<f32>::lowest();
+  for (const auto height : height_grid) {
+    min_height = ox::min(min_height, height);
+    max_height = ox::max(max_height, height);
+  }
+
+  const auto height_range = ox::max(ox::max(-min_height, max_height), TERRAIN_PREVIEW_MIN_RANGE);
+
+  const auto sample = [&](i32 x, i32 y) {
+    const auto cx = std::clamp(x, 0, static_cast<i32>(size) - 1);
+    const auto cy = std::clamp(y, 0, static_cast<i32>(size) - 1);
+
+    return height_grid[static_cast<usize>(cy) * size + cx];
+  };
+
+  const auto light_direction = glm::normalize(glm::vec3(-0.45f, 0.82f, -0.45f));
+
+  auto pixels = std::vector<u8>(grid_size * 4);
+  for (auto y = 0_u32; y < size; ++y) {
+    for (auto x = 0_u32; x < size; ++x) {
+      const auto ix = static_cast<i32>(x);
+      const auto iy = static_cast<i32>(y);
+
+      const auto dhdx = (sample(ix + 1, iy) - sample(ix - 1, iy)) * 0.5f / height_range * TERRAIN_PREVIEW_RELIEF;
+      const auto dhdy = (sample(ix, iy + 1) - sample(ix, iy - 1)) * 0.5f / height_range * TERRAIN_PREVIEW_RELIEF;
+      const auto normal = glm::normalize(glm::vec3(-dhdx, 1.f, -dhdy));
+      const auto shade = TERRAIN_PREVIEW_AMBIENT +
+                         (1.f - TERRAIN_PREVIEW_AMBIENT) * ox::max(glm::dot(normal, light_direction), 0.f);
+
+      const auto index = static_cast<usize>(y) * size + x;
+      const auto altitude = std::clamp(0.5f + height_grid[index] * 0.5f / height_range, 0.f, 1.f);
+
+      const auto painted = splat_grid[index];
+      const auto weights = glm::vec4(
+        std::clamp(1.f - painted.x - painted.y - painted.z, 0.f, 1.f),
+        painted.x,
+        painted.y,
+        painted.z
+      );
+      const auto layer_color = weights.x * TERRAIN_LAYER_COLORS[0] + weights.y * TERRAIN_LAYER_COLORS[1] +
+                               weights.z * TERRAIN_LAYER_COLORS[2] + weights.w * TERRAIN_LAYER_COLORS[3];
+
+      const auto tone = glm::mix(TERRAIN_PREVIEW_CUT_TONE, TERRAIN_PREVIEW_RAISE_TONE, altitude);
+      const auto color = glm::mix(TERRAIN_PREVIEW_UNPAINTED, layer_color, painted.w) * tone * shade;
+
+      pixels[index * 4] = static_cast<u8>(std::clamp(color.r, 0.f, 1.f) * 255.f);
+      pixels[index * 4 + 1] = static_cast<u8>(std::clamp(color.g, 0.f, 1.f) * 255.f);
+      pixels[index * 4 + 2] = static_cast<u8>(std::clamp(color.b, 0.f, 1.f) * 255.f);
+      pixels[index * 4 + 3] = 255;
+    }
+  }
+
+  return pixels;
+}
+
+static auto write_thumbnail_png(const std::filesystem::path& path, std::span<const u8> pixels, u32 size) -> void {
+  ZoneScoped;
+
+  const auto isize = static_cast<i32>(size);
+  stbi_write_png(path.string().c_str(), isize, isize, 4, pixels.data(), isize * 4);
+}
+
+static auto material_meta_path(const std::filesystem::path& asset_path) -> std::filesystem::path {
+  if (!AssetManager::owns_meta_file(asset_path)) {
+    return {};
+  }
+
+  return AssetManager::meta_file_path(asset_path);
+}
+
+static auto live_cache_key(const UUID& material_uuid) -> std::string {
+  memory::ScopedStack stack;
+
+  return std::string(stack.format("live_{}", material_uuid.str()));
+}
+
+ThumbnailManager::ThumbnailManager() = default;
+ThumbnailManager::~ThumbnailManager() = default;
+
 auto ThumbnailManager::init(this ThumbnailManager& self) -> void {
   ZoneScoped;
 
@@ -21,57 +307,144 @@ auto ThumbnailManager::init(this ThumbnailManager& self) -> void {
   }
 }
 
+auto ThumbnailManager::deinit(this ThumbnailManager& self) -> void {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
+
+  {
+    auto lock = std::unique_lock(self.owned_refs_mutex);
+    for (const auto& uuid : self.owned_asset_refs) {
+      asset_man.unload_asset(uuid);
+    }
+    self.owned_asset_refs.clear();
+  }
+
+  if (!self.material_preview) {
+    return;
+  }
+
+  self.material_preview->scene.reset();
+
+  if (self.material_preview->sphere_model_uuid) {
+    asset_man.delete_asset(self.material_preview->sphere_model_uuid);
+  }
+
+  self.material_preview.reset();
+}
+
+auto ThumbnailManager::acquire_asset(this ThumbnailManager& self, const UUID& uuid) -> bool {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
+
+  auto lock = std::unique_lock(self.owned_refs_mutex);
+  if (self.owned_asset_refs.contains(uuid)) {
+    return asset_man.is_loaded(uuid);
+  }
+
+  if (!asset_man.load_asset(uuid)) {
+    return false;
+  }
+
+  self.owned_asset_refs.insert(uuid);
+
+  return true;
+}
+
 auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
   ZoneScoped;
 
-  PendingMeshRender render_job;
-  bool has_render_job = false;
+  if (!App::get_rendercontext().frame_allocator.has_value()) {
+    return;
+  }
+
+  self.drain_pending_upload();
+
+  auto render_job = option<PendingRender>(nullopt);
   {
-    std::lock_guard lock(self.queue_mutex);
-    if (!self.pending_mesh_renders.empty()) {
-      render_job = self.pending_mesh_renders.front();
-      self.pending_mesh_renders.pop();
-      has_render_job = true;
+    auto lock = std::unique_lock(self.queue_mutex);
+    if (!self.pending_renders.empty()) {
+      render_job = self.pending_renders.front();
+      self.pending_renders.pop();
     }
   }
 
-  if (!has_render_job) {
+  if (!render_job) {
     return;
   }
 
-  auto pixels = self.render_thumbnail(render_job.model_uuid, THUMBNAIL_SIZE);
+  auto asset_type = AssetType::None;
+  if (auto asset = App::mod<AssetManager>().get_asset(render_job->asset_uuid)) {
+    asset_type = asset->type;
+  }
+
+  auto pixels = option<std::vector<u8>>(nullopt);
+  switch (asset_type) {
+    case AssetType::Model   : pixels = self.render_model_thumbnail(render_job->asset_uuid, THUMBNAIL_SIZE); break;
+    case AssetType::Material: pixels = self.render_material_thumbnail(render_job->asset_uuid, THUMBNAIL_SIZE); break;
+    default                 : {
+      OX_LOG_ERROR(
+        "Can't render a thumbnail for asset {} of type {}.",
+        render_job->asset_uuid.str(),
+        AssetManager::to_asset_type_sv(asset_type)
+      );
+      self.mark_job_failed(render_job->cache_key);
+      return;
+    }
+  }
 
   if (!pixels.has_value() || pixels->empty()) {
-    auto lock = std::unique_lock(self.thumbnail_mutex);
-    self.active_jobs.erase(render_job.asset_hash);
+    self.release_job(render_job->cache_key);
     return;
   }
 
-  memory::ScopedStack stack;
-  auto& job_man = App::get_job_manager();
-  job_man.push_job_name("ContentPanelThumbnail_WritePNG");
-  job_man.submit(Job::create([expected_png = render_job.expected_png, pixel_bytes = *pixels]() {
-    stbi_write_png(
-      expected_png.string().c_str(),
-      THUMBNAIL_SIZE,
-      THUMBNAIL_SIZE,
-      4,
-      pixel_bytes.data(),
-      THUMBNAIL_SIZE * 4
-    );
-  }));
-  job_man.pop_job_name();
+  if (!render_job->expected_png.empty()) {
+    auto& job_man = App::get_job_manager();
+    job_man.push_job_name("ContentPanelThumbnail_WritePNG");
+    job_man.submit(Job::create([expected_png = render_job->expected_png, pixel_bytes = *pixels]() {
+      write_thumbnail_png(expected_png, pixel_bytes, THUMBNAIL_SIZE);
+    }));
+    job_man.pop_job_name();
+  }
+
+  self.store_thumbnail(render_job->cache_key, *pixels);
+}
+
+auto ThumbnailManager::store_thumbnail(
+  this ThumbnailManager& self, const std::string& cache_key, std::span<const u8> pixels
+) -> void {
+  ZoneScoped;
 
   auto thumbnail_texture = Texture::create({
     .format = vuk::Format::eR8G8B8A8Srgb,
     .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1},
     .usage = vuk::ImageUsageFlagBits::eSampled,
   });
-  thumbnail_texture.upload(pixels.value(), vuk::eFragmentSampled);
+  thumbnail_texture.upload(pixels, vuk::eFragmentSampled);
 
   auto lock = std::unique_lock(self.thumbnail_mutex);
-  self.thumbnail_cache.insert_or_assign(render_job.asset_hash, std::move(thumbnail_texture));
-  self.active_jobs.erase(render_job.asset_hash);
+  self.thumbnail_cache.insert_or_assign(cache_key, std::move(thumbnail_texture));
+  self.active_jobs.erase(cache_key);
+}
+
+auto ThumbnailManager::drain_pending_upload(this ThumbnailManager& self) -> void {
+  ZoneScoped;
+
+  auto upload = option<PendingUpload>(nullopt);
+  {
+    auto lock = std::unique_lock(self.queue_mutex);
+    if (!self.pending_uploads.empty()) {
+      upload = std::move(self.pending_uploads.front());
+      self.pending_uploads.pop();
+    }
+  }
+
+  if (!upload) {
+    return;
+  }
+
+  self.store_thumbnail(upload->cache_key, upload->pixels);
 }
 
 auto ThumbnailManager::reset(this ThumbnailManager& self) -> void {
@@ -83,26 +456,66 @@ auto ThumbnailManager::reset(this ThumbnailManager& self) -> void {
 
   self.init();
 
+  {
+    auto lock = std::unique_lock(self.material_uuids_mutex);
+    self.material_uuids.clear();
+  }
+
   auto lock = std::unique_lock(self.thumbnail_mutex);
   self.thumbnail_cache.clear();
+  self.failed_jobs.clear();
 }
 
-auto ThumbnailManager::find_cached(this ThumbnailManager& self, const std::string& asset_hash) -> option<TextureView> {
+auto ThumbnailManager::find_cached(this ThumbnailManager& self, const std::string& cache_key) -> option<TextureView> {
   auto lock = std::shared_lock(self.thumbnail_mutex);
-  auto it = self.thumbnail_cache.find(asset_hash);
+  auto it = self.thumbnail_cache.find(cache_key);
   if (it != self.thumbnail_cache.end()) {
     return it->second.view();
   }
+
   return nullopt;
 }
 
-auto ThumbnailManager::try_claim_job(this ThumbnailManager& self, const std::string& asset_hash) -> bool {
+auto ThumbnailManager::try_claim_job(this ThumbnailManager& self, const std::string& cache_key) -> bool {
   auto lock = std::unique_lock(self.thumbnail_mutex);
-  if (self.active_jobs.contains(asset_hash)) {
+  if (self.active_jobs.contains(cache_key) || self.failed_jobs.contains(cache_key)) {
     return false;
   }
-  self.active_jobs.insert(asset_hash);
+  self.active_jobs.insert(cache_key);
+
   return true;
+}
+
+auto ThumbnailManager::release_job(this ThumbnailManager& self, const std::string& cache_key) -> void {
+  auto lock = std::unique_lock(self.thumbnail_mutex);
+  self.active_jobs.erase(cache_key);
+}
+
+auto ThumbnailManager::mark_job_failed(this ThumbnailManager& self, const std::string& cache_key) -> void {
+  auto lock = std::unique_lock(self.thumbnail_mutex);
+  self.active_jobs.erase(cache_key);
+  self.failed_jobs.insert(cache_key);
+}
+
+auto ThumbnailManager::submit_cached_png_load(
+  this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& png_path
+) -> void {
+  auto& job_man = App::get_job_manager();
+  job_man.push_job_name("ContentPanelThumbnail_CacheLoad");
+  job_man.submit(Job::create([&self, png_path, cache_key]() {
+    auto thumbnail_texture = Texture::create({
+      .source = png_path,
+      .target_width = THUMBNAIL_SIZE,
+      .target_height = THUMBNAIL_SIZE,
+    });
+
+    auto lock = std::unique_lock(self.thumbnail_mutex);
+    if (thumbnail_texture) {
+      self.thumbnail_cache.insert_or_assign(cache_key, std::move(thumbnail_texture));
+    }
+    self.active_jobs.erase(cache_key);
+  }));
+  job_man.pop_job_name();
 }
 
 auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const std::filesystem::path& asset_path)
@@ -162,47 +575,339 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
   }
 
   auto expected_png = self.cache_dir / (asset_hash + ".png");
-
   if (std::filesystem::exists(expected_png)) {
-    auto& job_man = App::get_job_manager();
-    job_man.push_job_name("ContentPanelThumbnail_ModelCacheLoad");
-    job_man.submit(Job::create([&self, expected_png, asset_hash]() {
-      auto thumbnail_texture = Texture::create({
-        .source = expected_png,
-        .target_width = THUMBNAIL_SIZE,
-        .target_height = THUMBNAIL_SIZE,
-      });
-
-      auto lock = std::unique_lock(self.thumbnail_mutex);
-      if (thumbnail_texture) {
-        self.thumbnail_cache.insert_or_assign(asset_hash, std::move(thumbnail_texture));
-      }
-      self.active_jobs.erase(asset_hash);
-    }));
-    job_man.pop_job_name();
-
+    self.submit_cached_png_load(asset_hash, expected_png);
     return {};
   }
 
-  auto& am = App::mod<AssetManager>();
-  auto model_uuid = am.import_asset(asset_path);
+  auto& asset_man = App::mod<AssetManager>();
+  auto model_uuid = asset_man.import_asset(asset_path);
   if (!model_uuid) {
-    auto lock = std::unique_lock(self.thumbnail_mutex);
-    self.active_jobs.erase(asset_hash);
+    self.release_job(asset_hash);
     return {};
   }
 
-  std::lock_guard lock(self.queue_mutex);
-  self.pending_mesh_renders.push({.asset_hash = asset_hash, .model_uuid = model_uuid, .expected_png = expected_png});
+  auto lock = std::unique_lock(self.queue_mutex);
+  self.pending_renders.push({
+    .cache_key = asset_hash,
+    .asset_uuid = model_uuid,
+    .expected_png = expected_png,
+  });
 
   return {};
 }
 
-auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_uuid, u32 size)
+auto ThumbnailManager::get_thumbnail_material(this ThumbnailManager& self, const std::filesystem::path& asset_path)
+  -> TextureView {
+  ZoneScoped;
+
+  if (!std::filesystem::exists(asset_path)) {
+    return {};
+  }
+
+  return self.material_thumbnail_for(self.resolve_material_uuid(asset_path), asset_path);
+}
+
+auto ThumbnailManager::get_thumbnail_material(this ThumbnailManager& self, const UUID& material_uuid) -> TextureView {
+  ZoneScoped;
+
+  auto asset_path = std::filesystem::path{};
+  if (auto asset = App::mod<AssetManager>().get_asset(material_uuid)) {
+    asset_path = asset->path;
+  }
+
+  return self.material_thumbnail_for(material_uuid, asset_path);
+}
+
+auto ThumbnailManager::material_thumbnail_for(
+  this ThumbnailManager& self, const UUID& material_uuid, const std::filesystem::path& asset_path
+) -> TextureView {
+  ZoneScoped;
+
+  if (!material_uuid) {
+    return {};
+  }
+
+  const auto meta_path = material_meta_path(asset_path);
+  const auto has_file = !meta_path.empty() && std::filesystem::exists(meta_path);
+  const auto cache_key = has_file ? self.get_asset_hash(meta_path) : live_cache_key(material_uuid);
+
+  if (auto cached = self.find_cached(cache_key)) {
+    return *cached;
+  }
+
+  if (!self.try_claim_job(cache_key)) {
+    return {};
+  }
+
+  auto expected_png = has_file ? self.cache_dir / (cache_key + ".png") : std::filesystem::path{};
+  if (has_file && std::filesystem::exists(expected_png)) {
+    self.submit_cached_png_load(cache_key, expected_png);
+    return {};
+  }
+
+  if (!self.acquire_asset(material_uuid)) {
+    self.release_job(cache_key);
+    return {};
+  }
+
+  auto lock = std::unique_lock(self.queue_mutex);
+  self.pending_renders.push({
+    .cache_key = cache_key,
+    .asset_uuid = material_uuid,
+    .expected_png = expected_png,
+  });
+
+  return {};
+}
+
+auto ThumbnailManager::get_thumbnail_terrain(this ThumbnailManager& self, const std::filesystem::path& asset_path)
+  -> TextureView {
+  ZoneScoped;
+
+  if (!std::filesystem::exists(asset_path)) {
+    return {};
+  }
+
+  auto asset_hash = self.get_asset_hash(asset_path);
+
+  if (auto cached = self.find_cached(asset_hash)) {
+    return *cached;
+  }
+
+  if (!self.try_claim_job(asset_hash)) {
+    return {};
+  }
+
+  auto expected_png = self.cache_dir / (asset_hash + ".png");
+  if (std::filesystem::exists(expected_png)) {
+    self.submit_cached_png_load(asset_hash, expected_png);
+    return {};
+  }
+
+  auto& job_man = App::get_job_manager();
+  job_man.push_job_name("ContentPanelThumbnail_TerrainRelief");
+  job_man.submit(Job::create([&self, asset_path, asset_hash, expected_png]() {
+    auto edits = TerrainEdits::read(asset_path);
+    if (!edits) {
+      self.mark_job_failed(asset_hash);
+      return;
+    }
+
+    auto pixels = render_terrain_preview(*edits, THUMBNAIL_SIZE);
+    if (pixels.empty()) {
+      self.mark_job_failed(asset_hash);
+      return;
+    }
+
+    write_thumbnail_png(expected_png, pixels, THUMBNAIL_SIZE);
+
+    auto lock = std::unique_lock(self.queue_mutex);
+    self.pending_uploads.push({.cache_key = asset_hash, .pixels = std::move(pixels)});
+  }));
+  job_man.pop_job_name();
+
+  return {};
+}
+
+auto ThumbnailManager::thumbnail_unavailable(this ThumbnailManager& self, const std::filesystem::path& asset_path)
+  -> bool {
+  ZoneScoped;
+
+  if (!std::filesystem::exists(asset_path)) {
+    return true;
+  }
+
+  auto lock = std::shared_lock(self.thumbnail_mutex);
+
+  return self.failed_jobs.contains(self.get_asset_hash(asset_path));
+}
+
+auto ThumbnailManager::invalidate_material(this ThumbnailManager& self, const UUID& material_uuid) -> void {
+  ZoneScoped;
+
+  if (!material_uuid) {
+    return;
+  }
+
+  auto lock = std::unique_lock(self.thumbnail_mutex);
+  self.thumbnail_cache.erase(live_cache_key(material_uuid));
+}
+
+auto ThumbnailManager::render_model_thumbnail(this ThumbnailManager& self, const UUID& model_uuid, u32 size)
   -> option<std::vector<u8>> {
   ZoneScoped;
 
   if (!model_uuid) {
+    return nullopt;
+  }
+
+  if (!self.acquire_asset(model_uuid)) {
+    return nullopt;
+  }
+
+  auto thumbnail_scene = Scene("ThumbnailScene");
+  thumbnail_scene.create_model_entity(model_uuid);
+
+  App::mod<Renderer>().sync_materials();
+
+  auto& asset_man = App::mod<AssetManager>();
+  auto model_asset = asset_man.get_model(model_uuid);
+  if (!model_asset) {
+    return nullopt;
+  }
+
+  const auto camera_transform = ThumbnailCamera::calculate_from_model(*model_asset.value, MODEL_PREVIEW_FOV, 1.0f);
+  model_asset.reset();
+
+  const auto sun = thumbnail_scene.create_entity("sun", true);
+  sun
+    .set<TransformComponent>({
+      .rotation = glm::quat(glm::vec3(glm::radians(45.f), glm::radians(-145.f), 0.f)),
+    })
+    .set<LightComponent>({
+      .type = LightComponent::LightType::Directional,
+      .intensity = 20.f,
+      .cast_shadows = false,
+    })
+    .set<SkyComponent>(SkyComponent{
+      .solid_color = glm::vec4(0.f, 0.f, 0.f, 1.0f),
+      .ambient_color = glm::vec3(0.25f),
+      .texture = UUID(nullptr),
+    })
+    .set<AutoExposureComponent>({.adaptation_speed = 1.0e6f});
+
+  const auto camera = thumbnail_scene.create_entity("camera", true);
+  camera.set<CameraComponent>({
+    .fov = MODEL_PREVIEW_FOV,
+    .far_clip = camera_transform.far_clip,
+    .near_clip = camera_transform.near_clip,
+    .position = camera_transform.position,
+  });
+  camera.set<TransformComponent>({
+    .position = camera_transform.position,
+    .rotation = camera_transform.rotation,
+  });
+
+  thumbnail_scene.renderer_cvar.cvar_enable_debug_renderer.set(false);
+
+  return self.render_scene(thumbnail_scene, size);
+}
+
+auto ThumbnailManager::render_material_thumbnail(this ThumbnailManager& self, const UUID& material_uuid, u32 size)
+  -> option<std::vector<u8>> {
+  ZoneScoped;
+
+  if (!material_uuid) {
+    return nullopt;
+  }
+
+  if (!self.ensure_material_preview()) {
+    return nullopt;
+  }
+
+  auto& sphere = self.material_preview->sphere;
+  auto& mesh_component = sphere.ensure<MeshComponent>();
+  mesh_component.material_uuid = material_uuid;
+  sphere.modified<MeshComponent>();
+
+  App::mod<Renderer>().sync_materials();
+
+  return self.render_scene(*self.material_preview->scene, size);
+}
+
+auto ThumbnailManager::ensure_material_preview(this ThumbnailManager& self) -> bool {
+  ZoneScoped;
+
+  if (self.material_preview) {
+    return true;
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+
+  auto sphere_model_uuid = asset_man.create_asset(AssetType::Model);
+  if (!sphere_model_uuid) {
+    OX_LOG_ERROR("Couldn't create the material preview sphere asset!");
+    return false;
+  }
+
+  auto sphere_data = generate_uv_sphere(PREVIEW_SPHERE_RADIUS, PREVIEW_SPHERE_RINGS, PREVIEW_SPHERE_SECTORS);
+  if (!asset_man.load_asset(sphere_model_uuid, std::move(sphere_data))) {
+    OX_LOG_ERROR("Couldn't build the material preview sphere mesh!");
+    asset_man.delete_asset(sphere_model_uuid);
+    return false;
+  }
+
+  auto preview = std::make_unique<MaterialPreview>();
+  preview->sphere_model_uuid = sphere_model_uuid;
+  preview->scene = std::make_unique<Scene>("MaterialPreviewScene");
+
+  auto& scene = *preview->scene;
+
+  const auto sphere_aabb = AABB(glm::vec3(-PREVIEW_SPHERE_RADIUS), glm::vec3(PREVIEW_SPHERE_RADIUS));
+  preview->sphere = scene.create_entity("preview_sphere", true);
+  preview->sphere.set<TransformComponent>({});
+  preview->sphere.set<MeshComponent>({
+    .model_uuid = sphere_model_uuid,
+    .mesh_index = 0,
+    .material_uuid = UUID(nullptr),
+    .cast_shadows = false,
+    .baked_aabb = sphere_aabb,
+  });
+
+  const auto sun_direction = glm::normalize(glm::vec3(-0.45f, 0.78f, -0.44f));
+  const auto sun = scene.create_entity("preview_sun", true);
+  sun
+    .set<TransformComponent>({
+      .rotation = glm::quatLookAt(sun_direction, glm::vec3(0.f, 1.f, 0.f)),
+    })
+    .set<LightComponent>({
+      .type = LightComponent::LightType::Directional,
+      .intensity = PREVIEW_SUN_INTENSITY,
+      .cast_shadows = false,
+    })
+    .set<SkyComponent>({
+      .solid_color = glm::vec4(0.f),
+      .ambient_color = glm::vec3(PREVIEW_AMBIENT),
+      .texture = UUID(nullptr),
+    });
+
+  const auto camera_distance = PREVIEW_SPHERE_RADIUS / std::sin(glm::radians(PREVIEW_FOV * 0.5f)) *
+                               PREVIEW_FRAMING_PADDING;
+  const auto camera_position = glm::vec3(-camera_distance, 0.f, 0.f);
+  const auto camera_direction = glm::normalize(-camera_position);
+
+  const auto camera = scene.create_entity("preview_camera", true);
+  camera.set<CameraComponent>({
+    .fov = PREVIEW_FOV,
+    .far_clip = camera_distance + PREVIEW_SPHERE_RADIUS * 4.f,
+    .near_clip = 0.01f,
+    .position = camera_position,
+  });
+  camera.set<TransformComponent>({
+    .position = camera_position,
+    .rotation = glm::quatLookAt(camera_direction, glm::vec3(0.f, 1.f, 0.f)),
+  });
+
+  scene.renderer_cvar.cvar_enable_debug_renderer.set(false);
+  scene.renderer_cvar.cvar_draw_bounding_boxes.set(false);
+  scene.renderer_cvar.cvar_bloom_enable.set(false);
+  scene.renderer_cvar.cvar_vbgtao_enable.set(false);
+  scene.renderer_cvar.cvar_contact_shadows_enabled.set(false);
+  scene.renderer_cvar.cvar_transparent_background.set(true);
+  scene.renderer_cvar.cvar_tonemapper.set(static_cast<i32>(GPU::TonemapType::AgX));
+  scene.renderer_cvar.cvar_exposure.set(PREVIEW_EXPOSURE);
+
+  self.material_preview = std::move(preview);
+
+  return true;
+}
+
+auto ThumbnailManager::render_scene(this ThumbnailManager& self, Scene& scene, u32 size) -> option<std::vector<u8>> {
+  ZoneScoped;
+
+  auto* renderer_instance = scene.get_renderer_instance();
+  if (!renderer_instance) {
     return nullopt;
   }
 
@@ -223,76 +928,49 @@ auto ThumbnailManager::render_thumbnail(this ThumbnailManager& self, UUID model_
   );
   thumbnail_image = vuk::clear_image(std::move(thumbnail_image), vuk::Transparent<f32>);
 
-  auto thumbnail_scene = Scene("ThumbnailScene");
-  auto model_entity = thumbnail_scene.create_model_entity(model_uuid);
+  // Builds this tick's uploads; `render` below submits them.
+  scene.runtime_update(App::get_timestep());
 
-  App::mod<Renderer>().sync_materials();
+  auto scene_view_image = renderer_instance->render(
+    std::move(thumbnail_image),
+    {},
+    glm::ivec2(size),
+    glm::ivec2(size),
+    scene.renderer_cvar
+  );
 
-  auto& asset_man = App::mod<AssetManager>();
-  auto model_asset = asset_man.get_model(model_uuid);
-  if (!model_asset) {
-    return nullopt;
-  }
-
-  const auto sun = thumbnail_scene.create_entity("sun", true);
-  sun
-    .set<TransformComponent>({
-      .rotation = glm::quat(glm::vec3(glm::radians(45.f), glm::radians(-145.f), 0.f)),
-    })
-    .set<LightComponent>({
-      .type = LightComponent::LightType::Directional,
-      .intensity = 20.f,
-      .cast_shadows = false,
-    })
-    .add<AtmosphereComponent>()
-    .set<SkyComponent>(SkyComponent{
-      .solid_color = glm::vec4(0.f, 0.f, 0.f, 1.0f),
-      .ambient_color = glm::vec3(0.25f),
-      .texture = UUID(nullptr),
-    })
-    .set<AutoExposureComponent>({.adaptation_speed = 1.0e6f});
-
-  f32 cam_fov = 40.f;
-  auto transform = ThumbnailCamera::calculate_from_model(*model_asset.value, cam_fov, 1.0f);
-
-  const auto camera = thumbnail_scene.create_entity("camera", true);
-  camera.set<CameraComponent>({CameraComponent{
-    .fov = cam_fov,
-    .far_clip = transform.far_clip,
-    .near_clip = transform.near_clip,
-    .yaw = transform.yaw,
-    .pitch = transform.pitch,
-    .position = transform.position,
-  }});
-  camera.set<TransformComponent>(TransformComponent{
-    .position = transform.position,
-    .rotation = transform.rotation,
-  });
-
-  auto& ts = App::get_timestep();
-  thumbnail_scene.runtime_update(ts);
-
-  thumbnail_scene.renderer_cvar.cvar_enable_debug_renderer.set(false);
-
-  const Renderer::RenderInfo render_info = {};
-  auto renderer_instance = thumbnail_scene.get_renderer_instance();
-  auto scene_view_image = renderer_instance
-                            ->render(std::move(thumbnail_image), render_info, thumbnail_scene.renderer_cvar);
-
-  usize buffer_size = size * size * 4; // RGBA8
+  const auto buffer_size = static_cast<usize>(size) * size * 4; // RGBA8
   auto readback_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, buffer_size);
   readback_buffer = vuk::copy(scene_view_image, readback_buffer);
 
-  auto temp_compiler = vuk::Compiler{};
   {
-    std::scoped_lock lock(render_context.queue_mutex);
-    readback_buffer.wait(*render_context.frame_allocator, temp_compiler);
+    auto lock = std::unique_lock(render_context.queue_mutex);
+    readback_buffer.wait(*render_context.frame_allocator, render_context.get_compiler());
   }
 
-  std::vector<u8> pixel_data(buffer_size);
+  auto pixel_data = std::vector<u8>(buffer_size);
   std::memcpy(pixel_data.data(), readback_buffer->mapped_ptr, buffer_size);
 
   return pixel_data;
+}
+
+auto ThumbnailManager::resolve_material_uuid(this ThumbnailManager& self, const std::filesystem::path& path) -> UUID {
+  ZoneScoped;
+
+  {
+    auto lock = std::shared_lock(self.material_uuids_mutex);
+    const auto it = self.material_uuids.find(path);
+    if (it != self.material_uuids.end()) {
+      return it->second;
+    }
+  }
+
+  const auto uuid = App::mod<AssetManager>().import_asset(path);
+
+  auto lock = std::unique_lock(self.material_uuids_mutex);
+  self.material_uuids.insert_or_assign(path, uuid);
+
+  return uuid;
 }
 
 auto ThumbnailManager::get_asset_hash(this const ThumbnailManager& self, const std::filesystem::path& path)

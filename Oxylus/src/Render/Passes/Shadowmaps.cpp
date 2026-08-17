@@ -265,7 +265,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vuk::eFragmentSampled
   );
 
-  auto hpb_attachment = self.vsm_hpb.acquire("vsm hpb", vuk::eFragmentSampled);
+  auto hpb_attachment = self.vsm_hpb.acquire("vsm hpb", vuk::eComputeSampled);
 
   if (context.sun_moved) {
     context.virtual_page_table_attachment = vuk::clear_image(
@@ -675,7 +675,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     [](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeSampled) page_table,
-      VUK_IA(vuk::eComputeRW) hpb
+      VUK_IA(vuk::eComputeRW | vuk::eComputeSampled) hpb
     ) {
       for (auto i = 0_u32; i < hpb->level_count; i++) {
         auto src = i == 0 ? hpb->mip(0) : hpb->mip(i - 1);
@@ -869,7 +869,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       ) {
         auto viewport_rect = vuk::Rect2D{
           .offset = {.x = 0, .y = 0},
-          .extent = {.width = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION, .height = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION},
+          .extent =
+            {.width = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION, .height = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION},
           ._relative = {},
         };
         cmd_list //

@@ -8,6 +8,7 @@
 
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
+#include "Scripting/LuaScript.hpp"
 
 namespace JPH {
 class ContactSettings;
@@ -20,11 +21,12 @@ class SubShapeIDPair;
 namespace ox {
 class Scene;
 
-enum class ScriptID : u64 { Invalid = std::numeric_limits<u64>::max() };
+// One scene's live instance of a LuaScript: its own environment and its own resolved callbacks. Never share one
+// between scenes, that is what makes two scenes fight over the script's state.
 class LuaSystem {
 public:
   LuaSystem() = default;
-  explicit LuaSystem(std::string path);
+  explicit LuaSystem(const LuaScript& script);
   ~LuaSystem() = default;
 
   // Either use a path to load it from a lua file or pass in the lua

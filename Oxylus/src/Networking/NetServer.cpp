@@ -35,7 +35,7 @@ auto NetServer::tick(this NetServer& self, const Timestep& ts) -> bool {
         }
 
         auto& es = App::get_event_system();
-        std::ignore = es.emit<ClientDisconnectEvent>({.client_id = client_id});
+        std::ignore = es.emit<ClientDisconnectEvent>({.server = &self, .client_id = client_id});
 
         self.on_client_disconnect(client_id);
         self.remote_clients.destroy_slot(client_id);
@@ -59,6 +59,8 @@ auto NetServer::tick(this NetServer& self, const Timestep& ts) -> bool {
       } break;
     }
   }
+
+  self.remote_clients.for_each_active([](usize, NetClient& client) { client.update_stats(); });
 
   self.tick_accum += ts.get_millis();
   if (self.tick_accum >= self.tick_interval) {
@@ -97,7 +99,7 @@ auto NetServer::handle_packet(this NetServer& self, ENetPeer* remote_peer, NetPa
       }
 
       auto& es = App::get_event_system();
-      std::ignore = es.emit<ClientConnectEvent>({.client_id = client_id});
+      std::ignore = es.emit<ClientConnectEvent>({.server = &self, .client_id = client_id});
 
       self.on_client_connect(client_id);
 
@@ -118,7 +120,7 @@ auto NetServer::handle_packet(this NetServer& self, ENetPeer* remote_peer, NetPa
       }
 
       auto& es = App::get_event_system();
-      std::ignore = es.emit<ClientAckEvent>(ClientAckEvent(client_id, client_ack.value()));
+      std::ignore = es.emit<ClientAckEvent>(ClientAckEvent(&self, client_id, client_ack.value()));
 
       self.on_client_ack(client_id, client_ack.value());
     } break;
@@ -147,6 +149,84 @@ auto NetServer::register_proc(this NetServer& self, std::string_view identifier,
 
   auto hash = ankerl::unordered_dense::detail::wyhash::hash(identifier.data(), identifier.size());
   self.rpcs.emplace(hash, std::move(cb));
+}
+
+auto NetServer::client(this NetServer& self, NetClientID client_id) -> NetClient* {
+  ZoneScoped;
+
+  return self.remote_clients.slot(client_id);
+}
+
+auto NetServer::client_ids(this NetServer& self) -> std::vector<NetClientID> {
+  ZoneScoped;
+
+  auto ids = std::vector<NetClientID>{};
+  ids.reserve(self.remote_clients.size());
+  self.remote_clients.for_each_active_id([&ids](NetClientID id, NetClient&) { ids.emplace_back(id); });
+
+  return ids;
+}
+
+auto NetServer::send_to_client(this NetServer& self, NetClientID client_id, NetPacket& packet, bool reliable) -> bool {
+  ZoneScoped;
+
+  auto* client = self.remote_clients.slot(client_id);
+  if (!client) {
+    return false;
+  }
+
+  if (reliable) {
+    client->send_reliable(packet);
+  } else {
+    client->send_unreliable(packet);
+  }
+
+  return true;
+}
+
+auto NetServer::broadcast(this NetServer& self, NetPacket& packet, bool reliable) -> void {
+  ZoneScoped;
+
+  packet.inner->flags = reliable ? ENET_PACKET_FLAG_RELIABLE : 0;
+  // enet_host_broadcast owns the packet from here on, including destroying it when there are no peers.
+  enet_host_broadcast(self.local_host, reliable ? NET_CHANNEL_RELIABLE : NET_CHANNEL_UNRELIABLE, packet);
+}
+
+auto NetServer::call_client(
+  this NetServer& self,
+  NetClientID client_id,
+  std::string_view proc,
+  std::span<const RPCParameter> params,
+  bool reliable
+) -> bool {
+  ZoneScoped;
+
+  auto packet = NetPacket::rpc(proc, params);
+  if (!packet.has_value()) {
+    return false;
+  }
+
+  if (!self.send_to_client(client_id, packet.value(), reliable)) {
+    packet->destroy();
+    return false;
+  }
+
+  return true;
+}
+
+auto NetServer::broadcast_call(
+  this NetServer& self, std::string_view proc, std::span<const RPCParameter> params, bool reliable
+) -> bool {
+  ZoneScoped;
+
+  auto packet = NetPacket::rpc(proc, params);
+  if (!packet.has_value()) {
+    return false;
+  }
+
+  self.broadcast(packet.value(), reliable);
+
+  return true;
 }
 
 } // namespace ox

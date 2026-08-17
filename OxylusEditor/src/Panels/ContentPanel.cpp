@@ -28,26 +28,29 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_S
   {FileType::Model, "Model"},
   {FileType::Script, "Script"},
   {FileType::Audio, "Audio"},
+  {FileType::Material, "Material"},
+  {FileType::Terrain, "Terrain"},
 };
 
 static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
-  {"", FileType::Unknown},                                                                     //
-  {".oxasset", FileType::Meta},                                                                //
-  {".oxscene", FileType::Scene},                                                               //
-  {".oxprefab", FileType::Prefab},                                                             //
-  {".hlsl", FileType::Shader},     {".hlsli", FileType::Shader}, {".glsl", FileType::Shader},  //
-  {".frag", FileType::Shader},     {".vert", FileType::Shader},  {".slang", FileType::Shader}, //
+  {"", FileType::Unknown},                                                                       //
+  {".oxasset", FileType::Meta},                                                                  //
+  {".oxscene", FileType::Scene},                                                                 //
+  {".oxprefab", FileType::Prefab},                                                               //
+  {".oxterrain", FileType::Terrain},                                                             //
+  {".hlsl", FileType::Shader},       {".hlsli", FileType::Shader}, {".glsl", FileType::Shader},  //
+  {".frag", FileType::Shader},       {".vert", FileType::Shader},  {".slang", FileType::Shader}, //
 
-  {".png", FileType::Texture},     {".jpg", FileType::Texture},  {".jpeg", FileType::Texture}, //
-  {".bmp", FileType::Texture},     {".gif", FileType::Texture},  {".ktx", FileType::Texture},  //
-  {".ktx2", FileType::Texture},    {".tiff", FileType::Texture},                               //
+  {".png", FileType::Texture},       {".jpg", FileType::Texture},  {".jpeg", FileType::Texture}, //
+  {".bmp", FileType::Texture},       {".gif", FileType::Texture},  {".ktx", FileType::Texture},  //
+  {".ktx2", FileType::Texture},      {".tiff", FileType::Texture},                               //
 
-  {".gltf", FileType::Model},      {".glb", FileType::Model},                                  //
+  {".gltf", FileType::Model},        {".glb", FileType::Model},                                  //
 
-  {".mp3", FileType::Audio},       {".m4a", FileType::Audio},    {".wav", FileType::Audio},    //
-  {".ogg", FileType::Audio},                                                                   //
+  {".mp3", FileType::Audio},         {".m4a", FileType::Audio},    {".wav", FileType::Audio},    //
+  {".ogg", FileType::Audio},                                                                     //
 
-  {".lua", FileType::Script},                                                                  //
+  {".lua", FileType::Script},                                                                    //
 };
 
 static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
@@ -59,6 +62,8 @@ static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
   {FileType::Model, {0.20f, 0.80f, 0.75f, 1.00f}},
   {FileType::Audio, {0.20f, 0.80f, 0.50f, 1.00f}},
   {FileType::Script, {0.0f, 16.0f, 121.0f, 1.00f}},
+  {FileType::Material, {0.85f, 0.60f, 0.15f, 1.00f}},
+  {FileType::Terrain, {0.45f, 0.70f, 0.30f, 1.00f}},
 };
 
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_ICON = {
@@ -73,7 +78,32 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Audio, ICON_MDI_MICROPHONE},
   {FileType::Script, ICON_MDI_LANGUAGE_LUA},
   {FileType::Material, ICON_MDI_PALETTE_SWATCH},
+  {FileType::Terrain, ICON_MDI_TERRAIN},
 };
+
+static auto standalone_asset_file_type(const std::filesystem::path& path) -> option<FileType> {
+  auto companion_path = path;
+  companion_path.replace_extension("");
+  if (std::filesystem::exists(companion_path)) {
+    return nullopt;
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+  auto meta_file = asset_man.read_meta_file(path);
+  if (!meta_file) {
+    return nullopt;
+  }
+
+  auto type_json = meta_file->doc["type"].get_number();
+  if (type_json.error()) {
+    return nullopt;
+  }
+
+  switch (static_cast<AssetType>(type_json.value_unsafe().get_uint64())) {
+    case AssetType::Material: return FileType::Material;
+    default                 : return nullopt;
+  }
+}
 
 static bool drag_drop_target(const std::filesystem::path& drop_path) {
   if (ImGui::BeginDragDropTarget()) {
@@ -89,10 +119,12 @@ static bool drag_drop_target(const std::filesystem::path& drop_path) {
         file_path = drop_path /
                     fmt::format("{}{}", asset->get_str(), (counter > 0 ? "_" + std::to_string(counter) : ""));
         counter++;
-      } while (std::filesystem::exists(file_path / ".oxasset"));
+      } while (std::filesystem::exists(fmt::format("{}.oxasset", file_path)));
 
       if (!asset_man.export_asset(asset->uuid, file_path))
         OX_LOG_ERROR("Couldn't export asset!");
+
+      ImGui::EndDragDropTarget();
       return true;
     }
 
@@ -631,13 +663,23 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
         ImGui::SetNextItemAllowOverlap();
 
         auto use_thumbnail_image = !is_dir && editor_cvar.cvar_file_thumbnails.get() &&
-                                   (file.type == FileType::Texture || file.type == FileType::Model);
+                                   (file.type == FileType::Texture || file.type == FileType::Model ||
+                                    file.type == FileType::Material || file.type == FileType::Terrain);
         auto thumbnail_image = TextureView{};
         if (use_thumbnail_image) {
           if (file.type == FileType::Texture) {
             thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(file_path_str);
           } else if (file.type == FileType::Model) {
             thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(file_path_str);
+          } else if (file.type == FileType::Material) {
+            thumbnail_image = editor.thumbnail_manager.get_thumbnail_material(file_path_str);
+          } else if (file.type == FileType::Terrain) {
+            thumbnail_image = editor.thumbnail_manager.get_thumbnail_terrain(file_path_str);
+          }
+
+          // Otherwise the spinner below waits on a thumbnail that will never arrive.
+          if (!thumbnail_image && editor.thumbnail_manager.thumbnail_unavailable(file_path_str)) {
+            use_thumbnail_image = false;
           }
         }
         if (use_thumbnail_image) {
@@ -803,9 +845,14 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     if (ImGui::Button("Create", ImVec2(120, 0))) {
       if (!self.new_asset_name_.empty()) {
         auto& asset_man = App::mod<AssetManager>();
-        auto asset = asset_man.create_asset(AssetType::Material, self.current_directory_.string());
+        auto asset_path = self.current_directory_ / self.new_asset_name_;
+        if (asset_path.extension() == ".oxasset") {
+          asset_path.replace_extension("");
+        }
+
+        auto asset = asset_man.create_asset(AssetType::Material, asset_path);
         asset_man.load_asset(asset);
-        if (asset_man.export_asset(asset, (self.current_directory_ / self.new_asset_name_).string())) {
+        if (asset_man.export_asset(asset, asset_path)) {
           OX_LOG_INFO("Created new material asset {}", self.new_asset_name_);
           self.refresh();
         } else {
@@ -855,6 +902,12 @@ void ContentPanel::update_directory_entries(this ContentPanel& self, const std::
     const auto& file_type_it = FILE_TYPES.find(extension_str);
     if (file_type_it != FILE_TYPES.end())
       file_type = file_type_it->second;
+
+    if (file_type == FileType::Meta) {
+      if (auto standalone_type = standalone_asset_file_type(path)) {
+        file_type = standalone_type.value();
+      }
+    }
 
     std::string_view file_type_string = FILE_TYPES_TO_STRING.at(FileType::Unknown);
     const auto& file_string_type_it = FILE_TYPES_TO_STRING.find(file_type);

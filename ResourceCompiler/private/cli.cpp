@@ -20,6 +20,7 @@ auto print_help() -> void {
   print_command("silent", "Do not output anything to the console.");
   print_command("config \"path\"", "TOML config file with resources to compile.");
   print_command("output \"path\"", "Output path for compiled resources. Overrides config file output.");
+  print_command("include-dir \"path\"", "Extra shader search path, appended to every session. Repeatable.");
 }
 
 auto main(i32 argc, c8** argv) -> i32 {
@@ -66,13 +67,39 @@ auto main(i32 argc, c8** argv) -> i32 {
 
   auto config_dir = std::filesystem::absolute(config_path).parent_path();
 
+  // Repeatable. The `compile_shaders` xmake rule uses this to hand downstream projects the engine
+  // shader tree without baking an absolute path into their config.
+  auto cli_include_dirs = std::vector<std::filesystem::path>{};
+  for (const auto& arg : args.args) {
+    if (arg.arg_str != "--include-dir") {
+      continue;
+    }
+
+    auto include_arg = args.get(arg.arg_index + 1);
+    if (!include_arg.has_value()) {
+      log("Specify a path after `--include-dir`.");
+      return 1;
+    }
+
+    cli_include_dirs.emplace_back(std::filesystem::absolute(include_arg->arg_str).lexically_normal());
+  }
+
   for (const auto& shader_session : config->shader_sessions) {
     auto root = (config_dir / shader_session.root_directory).lexically_normal();
+
+    // Config-declared paths win over the ones the build system injected.
+    auto include_dirs = std::vector<std::filesystem::path>{};
+    include_dirs.reserve(shader_session.include_directories.size() + cli_include_dirs.size());
+    for (const auto& include_dir : shader_session.include_directories) {
+      include_dirs.emplace_back((config_dir / include_dir).lexically_normal());
+    }
+    include_dirs.insert(include_dirs.end(), cli_include_dirs.begin(), cli_include_dirs.end());
 
     auto request = rc::ShaderCompileRequest{
       .session_info = {
         .name = shader_session.session_name,
         .root_directory = root,
+        .include_directories = std::move(include_dirs),
         .optimization_level = shader_session.optimization_level,
         .definitions = shader_session.definitions,
       },

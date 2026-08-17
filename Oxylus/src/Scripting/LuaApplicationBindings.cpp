@@ -170,18 +170,52 @@ auto AppBinding::bind(sol::state* state) -> void {
     &WindowResizeEvent::height
   );
 
-  state->new_usertype<ClientConnectEvent>("ClientConnectEvent", "client_id", &ClientConnectEvent::client_id);
-  state->new_usertype<ClientDisconnectEvent>("ClientDisconnectEvent", "client_id", &ClientDisconnectEvent::client_id);
+  // `server` / `client` identify the instance that raised the event. Comparing them against the
+  // caller's own is the only way to tell two scenes' sessions apart on this shared bus.
+  state->new_usertype<ClientConnectEvent>(
+    "ClientConnectEvent",
+    "server",
+    &ClientConnectEvent::server,
+    "client_id",
+    &ClientConnectEvent::client_id
+  );
+  state->new_usertype<ClientDisconnectEvent>(
+    "ClientDisconnectEvent",
+    "server",
+    &ClientDisconnectEvent::server,
+    "client_id",
+    &ClientDisconnectEvent::client_id
+  );
   state->new_usertype<ClientAckEvent>(
     "ClientAckEvent",
+    "server",
+    &ClientAckEvent::server,
     "client_id",
     &ClientAckEvent::client_id,
     "packet",
     &ClientAckEvent::packet
   );
+  state->new_usertype<ServerConnectEvent>(
+    "ServerConnectEvent",
+    "client",
+    &ServerConnectEvent::client,
+    "net_id",
+    &ServerConnectEvent::net_id
+  );
+  state->new_usertype<ServerDisconnectEvent>(
+    "ServerDisconnectEvent",
+    "client",
+    &ServerDisconnectEvent::client,
+    "reason",
+    &ServerDisconnectEvent::reason
+  );
   state->new_usertype<ClientSceneSnapshotEvent>(
     "ClientSceneSnapshotEvent",
+    "client",
+    &ClientSceneSnapshotEvent::client,
+    "sequence",
     &ClientSceneSnapshotEvent::sequence,
+    "scene_state",
     &ClientSceneSnapshotEvent::scene_state
   );
 
@@ -201,7 +235,13 @@ auto AppBinding::bind(sol::state* state) -> void {
     &lua_subscribe_helper<ClientAckEvent>,
 
     "subscribe_client_scene_snapshot_event",
-    &lua_subscribe_helper<ClientSceneSnapshotEvent>
+    &lua_subscribe_helper<ClientSceneSnapshotEvent>,
+
+    "subscribe_server_connect_event",
+    &lua_subscribe_helper<ServerConnectEvent>,
+
+    "subscribe_server_disconnect_event",
+    &lua_subscribe_helper<ServerDisconnectEvent>
   );
 }
 } // namespace ox
