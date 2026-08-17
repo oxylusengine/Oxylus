@@ -137,7 +137,4 @@ inline vuk::Extent3D operator/(const vuk::Extent3D& ext,
   return {unsigned((float)ext.width / rhs), unsigned((float)ext.height / rhs), 1u};
 }
 
-vuk::Value<vuk::ImageAttachment> generate_mips(vuk::Value<vuk::ImageAttachment> image,
-                                               uint32_t mip_count);
-
 } // namespace vuk

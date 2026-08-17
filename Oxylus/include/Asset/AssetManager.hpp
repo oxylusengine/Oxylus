@@ -1,5 +1,6 @@
 #pragma once
 
+#include <condition_variable>
 #include <simdjson.h>
 
 #include "Asset/AssetFile.hpp"
@@ -91,6 +92,10 @@ public:
 
   auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true)
     -> bool;
+
+  auto load_asset_async(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}) -> bool;
+  auto is_loading(this AssetManager& self, const UUID& uuid) -> bool;
+
   auto unload_asset(this AssetManager& self, const UUID& uuid) -> void;
 
   auto is_loaded(this AssetManager& self, const UUID& uuid) -> bool;
@@ -122,32 +127,40 @@ public:
 
   auto get_terrain_edits(this AssetManager& self, const UUID& uuid) -> ReadGuard<TerrainEdits>;
   auto get_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> ReadGuard<TerrainEdits>;
-  // Replaces the payload wholesale; the brush authors into GPU maps and hands back the readback.
   auto set_terrain_edits(this AssetManager& self, const UUID& uuid, TerrainEdits&& edits) -> void;
 
 private:
-  auto load_model(this AssetManager& self, const std::filesystem::path& path) -> ModelID;
+  auto load_asset_impl(
+    this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire, bool async
+  ) -> bool;
+
+  auto unload_asset_impl(this AssetManager& self, AssetType type, u64 id) -> bool;
+
+  auto load_model(this AssetManager& self, const std::filesystem::path& path, bool async) -> ModelID;
   auto load_model(this AssetManager& self, const ModelLoadInfo& info) -> ModelID;
-  auto unload_model(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_model(this AssetManager& self, ModelID model_id) -> bool;
+  // Blocks until every mesh job of the model has finished.
+  auto wait_until_model_loaded(this AssetManager& self, ModelID model_id) -> void;
+  auto notify_model_loaded(this AssetManager& self) -> void;
 
   auto load_texture(this AssetManager& self, const std::filesystem::path& path, TextureLoadInfo info = {}) -> TextureID;
-  auto unload_texture(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_texture(this AssetManager& self, TextureID texture_id) -> bool;
 
   auto load_material(this AssetManager& self, const std::filesystem::path& path, const Material& info = {})
     -> MaterialID;
-  auto unload_material(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_material(this AssetManager& self, MaterialID material_id) -> bool;
 
   auto load_scene(this AssetManager& self, const std::filesystem::path& path) -> SceneID;
-  auto unload_scene(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_scene(this AssetManager& self, SceneID scene_id) -> bool;
 
   auto load_audio(this AssetManager& self, const std::filesystem::path& path) -> AudioID;
-  auto unload_audio(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_audio(this AssetManager& self, AudioID audio_id) -> bool;
 
   auto load_script(this AssetManager& self, const std::filesystem::path& path) -> ScriptID;
-  auto unload_script(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_script(this AssetManager& self, ScriptID script_id) -> bool;
 
   auto load_terrain_edits(this AssetManager& self, const std::filesystem::path& path) -> TerrainEditsID;
-  auto unload_terrain_edits(this AssetManager& self, ReadGuard<Asset> asset) -> bool;
+  auto unload_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> bool;
 
   AssetRegistry asset_registry = {};
 
@@ -161,6 +174,12 @@ private:
   std::shared_mutex terrain_edits_mutex = {};
 
   std::vector<MaterialID> dirty_materials = {};
+
+  std::shared_mutex loading_mutex = {};
+  ankerl::unordered_dense::set<UUID> loading_assets = {};
+
+  std::mutex model_load_mutex = {};
+  std::condition_variable model_load_cv = {};
 
   SlotMap<Model, ModelID> model_map = {};
   SlotMap<Texture, TextureID> texture_map = {};

@@ -29,7 +29,7 @@ auto DebugRenderer::init() -> std::expected<void, std::string> {
     std::span(indices)
   );
 
-  i_buff_fut.wait(*App::get_rendercontext().superframe_allocator, App::get_rendercontext().get_compiler());
+  App::get_rendercontext().wait_on(std::move(i_buff_fut));
 
   debug_renderer_context.index_buffer = std::move(i_buff);
 
