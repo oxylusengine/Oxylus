@@ -151,12 +151,13 @@ public:
 
   auto try_execute_one(this JobManager& self) -> bool;
 
-  inline static thread_local std::stack<std::string> job_name_stack = {};
+  static auto job_name_stack() -> std::stack<std::string>&;
 
-  auto push_job_name(this JobManager&, std::string_view name) -> void { job_name_stack.emplace(name); }
+  auto push_job_name(this JobManager&, std::string_view name) -> void { job_name_stack().emplace(name); }
   auto pop_job_name(this JobManager&) -> void {
-    if (!job_name_stack.empty()) {
-      job_name_stack.pop();
+    auto& stack = job_name_stack();
+    if (!stack.empty()) {
+      stack.pop();
     }
   }
 

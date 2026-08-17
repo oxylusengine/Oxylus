@@ -152,11 +152,17 @@ auto JobManager::try_execute_one(this JobManager& self) -> bool {
   return true;
 }
 
+auto JobManager::job_name_stack() -> std::stack<std::string>& {
+  static thread_local std::stack<std::string> stack = {};
+  return stack;
+}
+
 auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) -> void {
   ZoneScoped;
 
-  if (self.tracker.is_tracking() && !job_name_stack.empty())
-    job->name = job_name_stack.top();
+  auto& name_stack = job_name_stack();
+  if (self.tracker.is_tracking() && !name_stack.empty())
+    job->name = name_stack.top();
 
   if (!job->name.empty()) {
     self.tracker.register_job(job);
