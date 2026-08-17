@@ -32,6 +32,11 @@ enum : u32 {
 
 class RenderContext {
 public:
+  enum class Feature : u32 {
+    None = 0,
+    MeshShaders = 1 << 0,
+  };
+
   struct Resources {
     SlotMap<vuk::Buffer, BufferID> buffers = {};
     SlotMap<vuk::Image, ImageID> images = {};
@@ -41,6 +46,7 @@ public:
     vuk::PersistentDescriptorSet descriptor_set = {};
   };
 
+  Feature features = {};
   Resources resources = {};
 
   ContextCVar context_cvar = {};
@@ -189,4 +195,6 @@ private:
   [[nodiscard]]
   auto scratch_buffer(const void* data, u64 size, usize alignment, OX_THISCALL) -> vuk::Value<vuk::Buffer>;
 };
+
+consteval void enable_bitmask(RenderContext::Feature);
 } // namespace ox

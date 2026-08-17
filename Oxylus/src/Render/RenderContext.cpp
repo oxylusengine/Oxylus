@@ -13,6 +13,7 @@
 #include <zpp_bits.h>
 
 #include "Core/App.hpp"
+#include "Core/Enum.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/UploadBatch.hpp"
 #include "Render/Window.hpp"
@@ -30,6 +31,27 @@ PFN_vkCreateDescriptorPool vkCreateDescriptorPool;
 PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout;
 PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets;
 PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
+
+template <typename T>
+static auto query_device_feature(const vkb::Instance& instance, VkPhysicalDevice physical_device, VkStructureType type)
+  -> T {
+  T feature = {};
+  feature.sType = type;
+
+  const auto get_features_2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(
+    instance.fp_vkGetInstanceProcAddr(instance.instance, "vkGetPhysicalDeviceFeatures2")
+  );
+  if (!get_features_2) {
+    return feature;
+  }
+
+  VkPhysicalDeviceFeatures2 features_2 = {};
+  features_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+  features_2.pNext = &feature;
+  get_features_2(physical_device, &features_2);
+
+  return feature;
+}
 
 static VkBool32 debug_callback(
   const VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -198,6 +220,30 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   }
 
   self.physical_device = self.vkbphysical_device.physical_device;
+
+  VkPhysicalDeviceMeshShaderFeaturesEXT mesh_shader_features = {};
+  mesh_shader_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
+  if (self.vkbphysical_device.is_extension_present(VK_EXT_MESH_SHADER_EXTENSION_NAME)) {
+    const auto supported = query_device_feature<VkPhysicalDeviceMeshShaderFeaturesEXT>(
+      self.vkb_instance,
+      self.physical_device,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT
+    );
+    if (supported.meshShader && supported.taskShader) {
+      self.vkbphysical_device.enable_extension_if_present(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+      mesh_shader_features.meshShader = true;
+      mesh_shader_features.taskShader = true;
+      self.features |= RenderContext::Feature::MeshShaders;
+    } else {
+      OX_LOG_WARN(
+        "{} is present but meshShader({}) taskShader({}) are not both supported, mesh shading is disabled.",
+        VK_EXT_MESH_SHADER_EXTENSION_NAME,
+        static_cast<bool>(supported.meshShader),
+        static_cast<bool>(supported.taskShader)
+      );
+    }
+  }
+
   vkb::DeviceBuilder device_builder{self.vkbphysical_device};
 
   VkPhysicalDeviceFeatures2 vk10_features{};
@@ -274,10 +320,20 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
 #endif
     .add_pNext(&vk10_features);
 
+  if (self.features & RenderContext::Feature::MeshShaders) {
+    device_builder.add_pNext(&mesh_shader_features);
+  }
+
   auto dev_ret = device_builder.build();
   if (!dev_ret) {
     OX_LOG_ERROR("Couldn't create device");
   }
+
+  OX_LOG_INFO(
+    "Device '{}' features: mesh shaders({})",
+    self.device_name,
+    self.features & RenderContext::Feature::MeshShaders
+  );
 
   self.vkb_device = dev_ret.value();
   self.device = self.vkb_device.device;
