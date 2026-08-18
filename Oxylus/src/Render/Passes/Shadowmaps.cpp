@@ -3,6 +3,7 @@
 
 #include "Memory/Stack.hpp"
 #include "Render/RendererInstance.hpp"
+#include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
 auto calculate_virtual_shadow_matrices(
@@ -459,6 +460,104 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     cull_geometry_context.vsm_page_offset = clipmap.page_offset;
     self.cull_geometry(cull_geometry_context);
     auto draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
+
+    if (self.prepared_frame.use_mesh_shaders) {
+      auto draw_physical_pages_ms_pass = vuk::make_pass(
+        stack.format("vsm draw clipmap {} ms", clipmap_index),
+        [&descriptor_set = *context.bindless_set,
+         vsm_ctx,
+         vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eIndirectRead) mesh_tasks_indirect,
+          VUK_BA(vuk::eMeshRead) meshes,
+          VUK_BA(vuk::eMeshRead) mesh_instances,
+          VUK_BA(vuk::eMeshRead) meshlet_instances,
+          VUK_BA(vuk::eMeshRead) transforms,
+          VUK_BA(vuk::eMeshRead) visibility,
+          VUK_BA(vuk::eFragmentRead) materials,
+          VUK_BA(vuk::eMeshRead | vuk::eFragmentRead) clipmaps,
+          VUK_IA(vuk::eMeshSampled) hpb,
+          VUK_IA(vuk::eFragmentSampled) page_tables,
+          VUK_IA(vuk::eFragmentRW) physical_pages
+        ) {
+          auto viewport_rect = vuk::Rect2D{
+            .offset = {.x = 0, .y = 0},
+            .extent = {.width = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .height = RMVSMContext::DIRECTIONAL_IMAGE_SIZE},
+            ._relative = {},
+          };
+          cmd_list //
+            .set_attachmentless_framebuffer(viewport_rect.extent, vuk::SampleCountFlagBits::e1)
+            .bind_graphics_pipeline("rmvsm_draw_physical_pages_ms")
+            .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
+            .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
+            .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+            .set_viewport(0, viewport_rect)
+            .set_scissor(0, vuk::Rect2D::framebuffer())
+            .bind_persistent(1, descriptor_set)
+            .bind_buffer(0, 0, meshes)
+            .bind_buffer(0, 1, mesh_instances)
+            .bind_buffer(0, 2, meshlet_instances)
+            .bind_buffer(0, 3, transforms)
+            .bind_buffer(0, 4, materials)
+            .bind_buffer(0, 5, clipmaps)
+            .bind_image(0, 6, page_tables)
+            .bind_image(0, 7, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
+            .bind_buffer(0, 8, visibility)
+            .bind_image(0, 9, hpb)
+            .bind_sampler(0, 10, vuk::NearestSamplerClamped)
+            .push_constants(
+              vuk::ShaderStageFlagBits::eTaskEXT | vuk::ShaderStageFlagBits::eMeshEXT |
+                vuk::ShaderStageFlagBits::eFragment,
+              0,
+              vsm_ctx
+            )
+            .draw_mesh_tasks_indirect(mesh_tasks_indirect);
+
+          return std::make_tuple(
+            mesh_tasks_indirect, //
+            meshes,
+            mesh_instances,
+            meshlet_instances,
+            transforms,
+            visibility,
+            materials,
+            clipmaps,
+            hpb,
+            page_tables,
+            physical_pages
+          );
+        }
+      );
+
+      std::tie(
+        cull_geometry_context.cull_meshlets_cmd_buffer,
+        self.prepared_frame.meshes_buffer,
+        self.prepared_frame.mesh_instances_buffer,
+        self.prepared_frame.meshlet_instances_buffer,
+        self.prepared_frame.transforms_world_buffer,
+        cull_geometry_context.visibility_buffer,
+        self.prepared_frame.materials_buffer,
+        context.directional_clipmaps_buffer,
+        cull_geometry_context.hpb_attachment,
+        context.virtual_page_table_attachment,
+        context.physical_page_table_attachment
+      ) =
+        draw_physical_pages_ms_pass(
+          std::move(draw_geometry_cmd_buffer),
+          std::move(self.prepared_frame.meshes_buffer),
+          std::move(self.prepared_frame.mesh_instances_buffer),
+          std::move(self.prepared_frame.meshlet_instances_buffer),
+          std::move(self.prepared_frame.transforms_world_buffer),
+          std::move(cull_geometry_context.visibility_buffer),
+          std::move(self.prepared_frame.materials_buffer),
+          std::move(context.directional_clipmaps_buffer),
+          std::move(cull_geometry_context.hpb_attachment),
+          std::move(context.virtual_page_table_attachment),
+          std::move(context.physical_page_table_attachment)
+        );
+
+      continue;
+    }
 
     auto draw_physical_pages_pass = vuk::make_pass(
       stack.format("vsm draw clipmap {}", clipmap_index),

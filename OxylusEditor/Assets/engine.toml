@@ -80,6 +80,13 @@ entry_points = ["vs_main", "fs_main"]
 bindless = true
 
 [[shader_sessions.programs]]
+name = "visbuffer_encode_ms"
+path = "passes/visbuffer_encode_ms.slang"
+entry_points = ["ts_main", "ms_main", "fs_main"]
+bindless = true
+requires_mesh_shaders = true
+
+[[shader_sessions.programs]]
 name = "visbuffer_clear"
 path = "passes/visbuffer_clear.slang"
 entry_points = ["cs_main"]
@@ -120,6 +127,13 @@ name = "rmvsm_draw_physical_pages"
 path = "passes/rmvsm_draw_physical_pages.slang"
 entry_points = ["vs_main", "fs_main"]
 bindless = true
+
+[[shader_sessions.programs]]
+name = "rmvsm_draw_physical_pages_ms"
+path = "passes/rmvsm_draw_physical_pages_ms.slang"
+entry_points = ["ts_main", "ms_main", "fs_main"]
+bindless = true
+requires_mesh_shaders = true
 
 [[shader_sessions.programs]]
 name = "rmvsm_free_invisible_pages"

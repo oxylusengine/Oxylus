@@ -705,6 +705,11 @@ auto RenderContext::commit_descriptor_set(this RenderContext& self, std::span<Vk
 auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool {
   ZoneScoped;
 
+  if (pipeline_data.requires_mesh_shaders && !(self.features & RenderContext::Feature::MeshShaders)) {
+    OX_LOG_INFO("Skipped pipeline named {}, device has no mesh shader support.", pipeline_data.module_name);
+    return true;
+  }
+
   auto pipeline_ci = vuk::PipelineBaseCreateInfo{};
   if (pipeline_data.bindless) {
     const auto& bindless_set = self.resources.descriptor_set;
@@ -730,6 +735,10 @@ auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipeli
   OX_LOG_INFO("Created pipeline named {}.", pipeline_data.module_name);
 
   return true;
+}
+
+auto RenderContext::use_mesh_shaders(this const RenderContext& self) -> bool {
+  return (self.features & RenderContext::Feature::MeshShaders) && self.context_cvar.cvar_mesh_shaders.as_bool();
 }
 
 auto RenderContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {

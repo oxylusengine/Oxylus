@@ -113,6 +113,9 @@ public:
 
   auto create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool;
 
+  [[nodiscard]]
+  auto use_mesh_shaders(this const RenderContext& self) -> bool;
+
   auto allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID;
   auto destroy_image(const ImageID id) -> void;
   auto image(const ImageID id) -> vuk::Image;
