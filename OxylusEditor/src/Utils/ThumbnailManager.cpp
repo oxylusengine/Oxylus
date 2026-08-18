@@ -384,9 +384,25 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
     return;
   }
 
-  auto pixels = render_job->kind == RenderKind::Material
-                  ? self.render_material_thumbnail(render_job->asset_uuid, THUMBNAIL_SIZE)
-                  : self.render_model_thumbnail(render_job->asset_uuid, THUMBNAIL_SIZE);
+  auto asset_type = AssetType::None;
+  if (auto asset = App::mod<AssetManager>().get_asset(render_job->asset_uuid)) {
+    asset_type = asset->type;
+  }
+
+  auto pixels = option<std::vector<u8>>(nullopt);
+  switch (asset_type) {
+    case AssetType::Model   : pixels = self.render_model_thumbnail(render_job->asset_uuid, THUMBNAIL_SIZE); break;
+    case AssetType::Material: pixels = self.render_material_thumbnail(render_job->asset_uuid, THUMBNAIL_SIZE); break;
+    default                 : {
+      OX_LOG_ERROR(
+        "Can't render a thumbnail for asset {} of type {}.",
+        render_job->asset_uuid.str(),
+        AssetManager::to_asset_type_sv(asset_type)
+      );
+      self.mark_job_failed(render_job->cache_key);
+      return;
+    }
+  }
 
   if (!pixels.has_value() || pixels->empty()) {
     self.release_job(render_job->cache_key);
@@ -591,7 +607,6 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
   auto lock = std::unique_lock(self.queue_mutex);
   self.pending_renders.push({
     .cache_key = asset_hash,
-    .kind = RenderKind::Model,
     .asset_uuid = model_uuid,
     .expected_png = expected_png,
   });
@@ -660,7 +675,6 @@ auto ThumbnailManager::material_thumbnail_for(
   auto lock = std::unique_lock(self.queue_mutex);
   self.pending_renders.push({
     .cache_key = cache_key,
-    .kind = RenderKind::Material,
     .asset_uuid = material_uuid,
     .expected_png = expected_png,
   });

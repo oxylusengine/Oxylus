@@ -6,6 +6,8 @@
 
 #include "Render/RenderContext.hpp"
 
+#include "Utils/Log.hpp"
+
 namespace ox {
 void TracyProfiler::init_for_vulkan(this TracyProfiler& self, RenderContext* context) {
 #if TRACY_ENABLE

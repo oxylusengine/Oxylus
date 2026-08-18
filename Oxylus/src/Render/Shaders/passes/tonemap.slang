@@ -678,7 +678,6 @@ f32x4 fs_main(VertexOutput input) {
     }
 
     if ((scene_flags & SceneFlags::HasBloom) != 0) {
-        // The bloom chain already ran in exposed space, so it composites after the exposure above.
         let bloom = bloom_image.SampleLevel(sampler, input.tex_coord, 0.0).rgb;
         color += bloom * C.bloom_intensity;
     }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <glm/gtx/quaternion.hpp>
 #include <vuk/Buffer.hpp>
 
@@ -59,7 +60,13 @@ struct Model {
   std::vector<option<u32>> material_indices = {}; // these are per mesh, not per MeshGroup
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};
 
+  std::vector<std::atomic_flag> mesh_ready = {};
+  u32 pending_meshes = 0;
+
   usize default_scene_index = 0;
+
+  auto is_mesh_ready(this const Model& self, usize mesh_index) -> bool;
+  auto is_fully_loaded(this Model& self) -> bool;
 
   auto get_mesh_bounds(this const Model& self) -> GPU::MeshBounds;
 };

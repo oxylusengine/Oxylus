@@ -115,6 +115,9 @@ public:
   auto create_entity(const std::string& name = "", bool safe_naming = false) const -> flecs::entity;
 
   auto create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity;
+
+  auto create_model_entity_async(this Scene& self, const UUID& asset_uuid) -> void;
+
   auto attach_mesh(
     this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid = {}
   ) -> bool;
@@ -208,6 +211,20 @@ public:
 private:
   UUID uuid = {};
 
+  struct PendingModelSpawn {
+    struct MeshEntity {
+      usize mesh_index = 0;
+      usize mesh_group_index = 0;
+      flecs::entity parent = {};
+    };
+
+    UUID model_uuid = {};
+    std::vector<MeshEntity> mesh_entities = {};
+    bool hierarchy_spawned = false;
+  };
+
+  std::vector<PendingModelSpawn> pending_model_spawns = {};
+
   bool running = false;
   bool deserializing_entity = false;
 
@@ -231,6 +248,21 @@ private:
 
   auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
   auto remove_transform(this Scene& self, flecs::entity entity) -> void;
+
+  struct MeshSpawnInfo {
+    usize mesh_index = 0;
+    flecs::entity parent = {};
+    std::string name = {};
+
+    UUID material_uuid = {};
+    AABB aabb = {};
+  };
+
+  auto spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSpawn& spawn) -> flecs::entity;
+  auto resolve_mesh_spawn(this Scene& self, Model& model, const PendingModelSpawn::MeshEntity& mesh_entity)
+    -> MeshSpawnInfo;
+  auto spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, const MeshSpawnInfo& info) -> void;
+  auto update_pending_model_spawns(this Scene& self) -> void;
 
   auto bake_terrain(this Scene& self) -> void;
 
