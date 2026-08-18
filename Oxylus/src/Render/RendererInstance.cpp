@@ -1719,11 +1719,11 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       vuk::MemoryUsage::eGPUonly,
       self.prepared_frame.max_meshlet_instance_count * sizeof(GPU::MeshletInstance)
     );
-    self.prepared_frame.visible_meshlet_instances_indices_buffer = render_context.alloc_transient_buffer(
-      vuk::MemoryUsage::eGPUonly,
-      self.prepared_frame.max_meshlet_instance_count * sizeof(u32)
-    );
     if (!self.prepared_frame.use_mesh_shaders) {
+      self.prepared_frame.visible_meshlet_instances_indices_buffer = render_context.alloc_transient_buffer(
+        vuk::MemoryUsage::eGPUonly,
+        self.prepared_frame.max_meshlet_instance_count * sizeof(u32)
+      );
       self.prepared_frame.reordered_indices_buffer = render_context.alloc_transient_buffer(
         vuk::MemoryUsage::eGPUonly,
         self.prepared_frame.max_meshlet_instance_count * Model::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32)
