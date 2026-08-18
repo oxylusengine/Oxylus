@@ -12,6 +12,7 @@ import rmvsm;
 [[vk::binding(5)]] StructuredBuffer<VirtualClipmap> clipmaps;
 [[vk::binding(6)]] Texture2DArray<u32> page_tables;
 [[vk::binding(7)]] RWTexture2D<u32, 1, ImageFormat::R32UI> physical_pages;
+[[vk::binding(8)]] StructuredBuffer<u32> draw_clipmaps;
 
 [[vk::push_constant]] VSMContext ctx;
 
@@ -19,10 +20,12 @@ struct VertexOutput {
     f32x4 position : SV_Position;
     f32x2 tex_coord : TEXCOORD;
     nointerpolation u32 material_index;
+    nointerpolation u32 clipmap_index;
 };
 
 [[shader("vertex")]]
-func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
+func vs_main(u32 vertex_index : SV_VertexID, u32 draw_id : SV_DrawIndex) -> VertexOutput {
+    let clipmap_index = draw_clipmaps[draw_id];
     let vis = VisBufferData(vertex_index);
     let meshlet_instance = meshlet_instances[vis.meshlet_instance_index];
     let mesh_instance = mesh_instances[meshlet_instance.mesh_instance_index];
@@ -36,26 +39,28 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
     let tex_coord = meshlet.tex_coord(mesh, index);
     let world_pos = transform.to_world_position(vertex_pos);
 
-    let projection_view_mat = clipmaps[ctx.curr_clipmap_index].projection_view_mat;
+    let projection_view_mat = clipmaps[clipmap_index].projection_view_mat;
     let clip_pos = mul(projection_view_mat, f32x4(world_pos.xyz, 1.0));
 
     VertexOutput output;
     output.position = clip_pos;
     output.tex_coord = tex_coord;
     output.material_index = mesh_instance.material_index;
+    output.clipmap_index = clipmap_index;
 
     return output;
 }
 
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> void {
-    let clipmap = clipmaps[ctx.curr_clipmap_index];
+    let clipmap_index = input.clipmap_index;
+    let clipmap = clipmaps[clipmap_index];
     let page_offset = clipmap.page_offset;
 
     let virtual_uv = input.position.xy / ctx.get_physical_page_table_extent().xy;
     let virt_coords = i32x2(floor(virtual_uv * ctx.get_page_table_extent().xy));
     let wrapped_coords = ctx.page_coords_virtual_to_wrapped(virt_coords, page_offset);
-    let page_address = i32x3(wrapped_coords, ctx.curr_clipmap_index);
+    let page_address = i32x3(wrapped_coords, clipmap_index);
     let page = VSMPageMetadata(page_tables.Load(i32x4(page_address, 0)));
     if (page.is_backed() && page.is_dirty()) {
         let physical_page_coords = page.get_physical_coords(ctx.physcial_page_table_size, ctx.page_size);

@@ -116,6 +116,11 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
       );
   }
 
+  if (self.prepared_frame.use_mesh_shaders) {
+    context.draw_geometry_cmd_buffer = std::move(context.cull_meshlets_cmd_buffer);
+    return;
+  }
+
   // --- Stage 2: cull_meshlets (two versions due to different descriptor sets) ---
   auto cull_triangles_cmd_buffer = self.renderer.render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
     {.x = 0, .y = 1, .z = 1}

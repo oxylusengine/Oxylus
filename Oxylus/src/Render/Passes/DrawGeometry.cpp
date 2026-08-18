@@ -1,10 +1,113 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
+#include "Core/Enum.hpp"
+#include "Memory/Stack.hpp"
 #include "Render/RendererInstance.hpp"
 
 namespace ox {
+auto RendererInstance::draw_for_visbuffer_ms(this RendererInstance& self, MainGeometryContext& context) -> void {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  auto encode_pass = vuk::make_pass(
+    stack.format("vis encode ms {}", context.cull_flags & GPU::CullFlag::LatePass ? "late" : "early"),
+    [&descriptor_set = *context.bindless_set,
+     draw_overdraw = context.draw_overdraw,
+     cull_flags = context.cull_flags,
+     cull_camera = context.cull_camera](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eIndirectRead) mesh_tasks_indirect,
+      VUK_IA(vuk::eMeshSampled) hiz,
+      VUK_BA(vuk::eMeshRead) meshes,
+      VUK_BA(vuk::eMeshRead) mesh_instances,
+      VUK_BA(vuk::eMeshRead) meshlet_instances,
+      VUK_BA(vuk::eMeshRead) transforms,
+      VUK_BA(vuk::eMeshRead) visibility,
+      VUK_BA(vuk::eMemoryRW) meshlet_instance_visibility_mask,
+      VUK_BA(vuk::eFragmentRead) materials,
+      VUK_IA(vuk::eColorRW) visbuffer,
+      VUK_IA(vuk::eDepthStencilRW) depth,
+      VUK_IA(vuk::eFragmentRW) overdraw
+    ) {
+      cmd_list //
+        .bind_graphics_pipeline("visbuffer_encode_ms")
+        .set_rasterization({.cullMode = vuk::CullModeFlagBits::eBack})
+        .set_depth_stencil(
+          {.depthTestEnable = true, .depthWriteEnable = true, .depthCompareOp = vuk::CompareOp::eGreaterOrEqual}
+        )
+        .set_color_blend(visbuffer, vuk::BlendPreset::eOff)
+        .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+        .set_viewport(0, vuk::Rect2D::framebuffer())
+        .set_scissor(0, vuk::Rect2D::framebuffer())
+        .bind_image(0, 0, hiz)
+        .bind_buffer(0, 1, meshes)
+        .bind_buffer(0, 2, mesh_instances)
+        .bind_buffer(0, 3, meshlet_instances)
+        .bind_buffer(0, 4, transforms)
+        .bind_buffer(0, 5, visibility)
+        .bind_buffer(0, 6, meshlet_instance_visibility_mask)
+        .bind_buffer(0, 7, materials)
+        .bind_image(0, 8, overdraw)
+        .specialize_constants(0, std::to_underlying(cull_flags))
+        .specialize_constants(1, draw_overdraw)
+        .bind_persistent(1, descriptor_set)
+        .push_constants(vuk::ShaderStageFlagBits::eTaskEXT | vuk::ShaderStageFlagBits::eMeshEXT, 0, cull_camera)
+        .draw_mesh_tasks_indirect(mesh_tasks_indirect);
+
+      return std::make_tuple(
+        mesh_tasks_indirect,
+        hiz,
+        meshes,
+        mesh_instances,
+        meshlet_instances,
+        transforms,
+        visibility,
+        meshlet_instance_visibility_mask,
+        materials,
+        visbuffer,
+        depth,
+        overdraw
+      );
+    }
+  );
+
+  std::tie(
+    context.draw_geometry_cmd_buffer,
+    context.hiz_attachment,
+    self.prepared_frame.meshes_buffer,
+    self.prepared_frame.mesh_instances_buffer,
+    self.prepared_frame.meshlet_instances_buffer,
+    self.prepared_frame.transforms_world_buffer,
+    context.visibility_buffer,
+    self.prepared_frame.meshlet_instance_visibility_mask_buffer,
+    self.prepared_frame.materials_buffer,
+    context.visbuffer_attachment,
+    context.depth_attachment,
+    context.overdraw_attachment
+  ) =
+    encode_pass(
+      std::move(context.draw_geometry_cmd_buffer),
+      std::move(context.hiz_attachment),
+      std::move(self.prepared_frame.meshes_buffer),
+      std::move(self.prepared_frame.mesh_instances_buffer),
+      std::move(self.prepared_frame.meshlet_instances_buffer),
+      std::move(self.prepared_frame.transforms_world_buffer),
+      std::move(context.visibility_buffer),
+      std::move(self.prepared_frame.meshlet_instance_visibility_mask_buffer),
+      std::move(self.prepared_frame.materials_buffer),
+      std::move(context.visbuffer_attachment),
+      std::move(context.depth_attachment),
+      std::move(context.overdraw_attachment)
+    );
+}
+
 auto RendererInstance::draw_for_visbuffer(this RendererInstance& self, MainGeometryContext& context) -> void {
   ZoneScoped;
+
+  if (self.prepared_frame.use_mesh_shaders) {
+    self.draw_for_visbuffer_ms(context);
+    return;
+  }
 
   auto encode_pass = vuk::make_pass(
     "vis encode",

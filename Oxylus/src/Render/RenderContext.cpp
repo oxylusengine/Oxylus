@@ -13,6 +13,7 @@
 #include <zpp_bits.h>
 
 #include "Core/App.hpp"
+#include "Core/Enum.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/UploadBatch.hpp"
 #include "Render/Window.hpp"
@@ -30,6 +31,27 @@ PFN_vkCreateDescriptorPool vkCreateDescriptorPool;
 PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout;
 PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets;
 PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
+
+template <typename T>
+static auto query_device_feature(const vkb::Instance& instance, VkPhysicalDevice physical_device, VkStructureType type)
+  -> T {
+  T feature = {};
+  feature.sType = type;
+
+  const auto get_features_2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(
+    instance.fp_vkGetInstanceProcAddr(instance.instance, "vkGetPhysicalDeviceFeatures2")
+  );
+  if (!get_features_2) {
+    return feature;
+  }
+
+  VkPhysicalDeviceFeatures2 features_2 = {};
+  features_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+  features_2.pNext = &feature;
+  get_features_2(physical_device, &features_2);
+
+  return feature;
+}
 
 static VkBool32 debug_callback(
   const VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -198,6 +220,38 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   }
 
   self.physical_device = self.vkbphysical_device.physical_device;
+
+  const auto vk12_supported = query_device_feature<VkPhysicalDeviceVulkan12Features>(
+    self.vkb_instance,
+    self.physical_device,
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
+  );
+  if (!vk12_supported.drawIndirectCount) {
+    OX_LOG_FATAL("The selected device does not support drawIndirectCount, which is required by the renderer.");
+  }
+  VkPhysicalDeviceMeshShaderFeaturesEXT mesh_shader_features = {};
+  mesh_shader_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
+  if (self.vkbphysical_device.is_extension_present(VK_EXT_MESH_SHADER_EXTENSION_NAME)) {
+    const auto supported = query_device_feature<VkPhysicalDeviceMeshShaderFeaturesEXT>(
+      self.vkb_instance,
+      self.physical_device,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT
+    );
+    if (supported.meshShader && supported.taskShader) {
+      self.vkbphysical_device.enable_extension_if_present(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+      mesh_shader_features.meshShader = true;
+      mesh_shader_features.taskShader = true;
+      self.features |= RenderContext::Feature::MeshShaders;
+    } else {
+      OX_LOG_WARN(
+        "{} is present but meshShader({}) and taskShader({}) are not both supported; mesh shading is disabled.",
+        VK_EXT_MESH_SHADER_EXTENSION_NAME,
+        static_cast<bool>(supported.meshShader),
+        static_cast<bool>(supported.taskShader)
+      );
+    }
+  }
+
   vkb::DeviceBuilder device_builder{self.vkbphysical_device};
 
   VkPhysicalDeviceFeatures2 vk10_features{};
@@ -226,6 +280,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
 
   VkPhysicalDeviceVulkan12Features vk12_features{};
   vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+  vk12_features.drawIndirectCount = true;
   vk12_features.descriptorIndexing = true;
   vk12_features.shaderOutputLayer = true;
   vk12_features.shaderSampledImageArrayNonUniformIndexing = true;
@@ -274,10 +329,20 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
 #endif
     .add_pNext(&vk10_features);
 
+  if (self.features & RenderContext::Feature::MeshShaders) {
+    device_builder.add_pNext(&mesh_shader_features);
+  }
+
   auto dev_ret = device_builder.build();
   if (!dev_ret) {
     OX_LOG_ERROR("Couldn't create device");
   }
+
+  OX_LOG_INFO(
+    "Device '{}' features: mesh shaders({})",
+    self.device_name,
+    self.features & RenderContext::Feature::MeshShaders
+  );
 
   self.vkb_device = dev_ret.value();
   self.device = self.vkb_device.device;
@@ -649,6 +714,11 @@ auto RenderContext::commit_descriptor_set(this RenderContext& self, std::span<Vk
 auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool {
   ZoneScoped;
 
+  if (pipeline_data.requires_mesh_shaders && !(self.features & RenderContext::Feature::MeshShaders)) {
+    OX_LOG_INFO("Skipped pipeline named {}, device has no mesh shader support.", pipeline_data.module_name);
+    return true;
+  }
+
   auto pipeline_ci = vuk::PipelineBaseCreateInfo{};
   if (pipeline_data.bindless) {
     const auto& bindless_set = self.resources.descriptor_set;
@@ -674,6 +744,10 @@ auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipeli
   OX_LOG_INFO("Created pipeline named {}.", pipeline_data.module_name);
 
   return true;
+}
+
+auto RenderContext::use_mesh_shaders(this const RenderContext& self) -> bool {
+  return (self.features & RenderContext::Feature::MeshShaders) && self.context_cvar.cvar_mesh_shaders.as_bool();
 }
 
 auto RenderContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {

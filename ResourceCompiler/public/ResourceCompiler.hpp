@@ -43,6 +43,7 @@ struct ShaderCompileInfo {
   std::string module_name = {};
   std::vector<std::string> entry_points = {};
   bool bindless = false;
+  bool requires_mesh_shaders = false;
 };
 
 struct ShaderCompileRequest {
