@@ -317,6 +317,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   {
     using C = VehicleWheelComponent;
     registry.bind<
+      &C::attachment,
       &C::radius,
       &C::width,
       &C::suspension_min_length,

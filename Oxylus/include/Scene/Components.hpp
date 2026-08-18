@@ -440,6 +440,8 @@ struct VehicleComponent {
 };
 
 struct VehicleWheelComponent {
+  glm::vec3 attachment = {0.f, 0.f, 0.f};
+
   f32 radius = 0.5f;
   f32 width = 0.3f;
 

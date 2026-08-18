@@ -2059,10 +2059,8 @@ auto Scene::create_rigidbody(
   // Body
   auto rotation = glm::quat(transform.rotation);
 
-  u16 layer_index = 1; // Default Layer
-  if (const auto* layer_component = entity.try_get<LayerComponent>()) {
-    layer_index = layer_component->layer;
-  }
+  const auto object_layer = component.type == RigidBodyComponent::BodyType::Static ? PhysicsLayers::NON_MOVING
+                                                                                   : PhysicsLayers::MOVING;
 
   auto compound_shape = compound_shape_settings.Create();
   if (compound_shape.HasError()) {
@@ -2074,7 +2072,7 @@ auto Scene::create_rigidbody(
     {transform.position.x, transform.position.y, transform.position.z},
     {rotation.x, rotation.y, rotation.z, rotation.w},
     static_cast<JPH::EMotionType>(component.type),
-    layer_index
+    object_layer
   );
 
   JPH::MassProperties mass_properties;
@@ -2323,10 +2321,22 @@ auto Scene::create_vehicle(this Scene& self, flecs::entity entity, VehicleCompon
   for (auto wheel_index = 0_u32; wheel_index < wheel_entities.size(); wheel_index++) {
     auto wheel_entity = wheel_entities[wheel_index];
     auto& wheel = wheel_entity.get_mut<VehicleWheelComponent>();
-    const auto& wheel_tc = wheel_entity.get<TransformComponent>();
+
+    if (wheel.attachment == glm::vec3(0.f)) {
+      const auto& wheel_tc = wheel_entity.get<TransformComponent>();
+      const auto up = glm::vec3(settings.mUp.GetX(), settings.mUp.GetY(), settings.mUp.GetZ());
+      wheel.attachment = wheel_tc.position + up * glm::max(wheel.suspension_min_length, wheel.suspension_max_length);
+      OX_LOG_WARN(
+        "Vehicle wheel '{}' had no suspension attachment, derived ({}, {}, {}) from its transform.",
+        wheel_entity.name().c_str(),
+        wheel.attachment.x,
+        wheel.attachment.y,
+        wheel.attachment.z
+      );
+    }
 
     auto* wheel_settings = new JPH::WheelSettingsWV();
-    wheel_settings->mPosition = JPH::Vec3(wheel_tc.position.x, wheel_tc.position.y, wheel_tc.position.z);
+    wheel_settings->mPosition = JPH::Vec3(wheel.attachment.x, wheel.attachment.y, wheel.attachment.z);
     wheel_settings->mRadius = glm::max(0.01f, wheel.radius);
     wheel_settings->mWidth = glm::max(0.01f, wheel.width);
     wheel_settings->mSuspensionMinLength = wheel.suspension_min_length;
