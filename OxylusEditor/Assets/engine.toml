@@ -108,6 +108,11 @@ path = "passes/rmvsm_build_free_page_list.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "rmvsm_build_draw_commands"
+path = "passes/rmvsm_build_draw_commands.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "rmvsm_clear_dirty_pages"
 path = "passes/rmvsm_clear_dirty_pages.slang"
 entry_points = ["cs_main"]

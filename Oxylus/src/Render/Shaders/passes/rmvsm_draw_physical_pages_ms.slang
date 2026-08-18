@@ -18,6 +18,7 @@ import rmvsm;
 [[vk::binding(8)]] StructuredBuffer<MeshletInstanceVisibility> visibility;
 [[vk::binding(9)]] Texture2DArray<u8> hpb;
 [[vk::binding(10)]] SamplerState hpb_sampler;
+[[vk::binding(11)]] StructuredBuffer<u32> draw_clipmaps;
 
 [[vk::push_constant]] VSMContext ctx;
 
@@ -25,6 +26,7 @@ struct VertexOutput {
     f32x4 position : SV_Position;
     f32x2 tex_coord : TEXCOORD;
     nointerpolation u32 material_index : MATERIAL;
+    nointerpolation u32 clipmap_index : CLIPMAP;
 };
 
 struct PrimitiveOutput {
@@ -32,23 +34,34 @@ struct PrimitiveOutput {
 };
 
 groupshared u32 visible_meshlet_count;
-groupshared MeshletTaskPayload payload;
+struct VSMTaskPayload {
+    u32 base_meshlet_instance_index;
+    u32 clipmap_index;
+    u8 visible_indices[CULLING_MESHLET_COUNT];
+    u8 vertex_counts[CULLING_MESHLET_COUNT];
+    u8 triangle_counts[CULLING_MESHLET_COUNT];
+};
+
+groupshared VSMTaskPayload payload;
 
 [[shader("task")]]
-[[numthreads(TASK_MESHLET_COUNT, 1, 1)]]
+[[numthreads(CULLING_MESHLET_COUNT, 1, 1)]]
 func ts_main(
     u32 meshlet_instance_index : SV_DispatchThreadID,
-    u32 local_index : SV_GroupIndex
+    u32 local_index : SV_GroupIndex,
+    u32 draw_id : SV_DrawIndex
 ) -> void {
     if (local_index == 0) {
         visible_meshlet_count = 0;
         payload.base_meshlet_instance_index = meshlet_instance_index;
+        payload.clipmap_index = draw_clipmaps[draw_id];
     }
 
     GroupMemoryBarrierWithGroupSync();
 
     if (meshlet_instance_index < visibility[0].total_visible_meshlet_instances) {
-        let clipmap = clipmaps[ctx.curr_clipmap_index];
+        let clipmap_index = payload.clipmap_index;
+        let clipmap = clipmaps[clipmap_index];
         let meshlet_instance = meshlet_instances[meshlet_instance_index];
         let mesh_instance = mesh_instances[meshlet_instance.mesh_instance_index];
         let transform = transforms[mesh_instance.transform_index];
@@ -68,7 +81,7 @@ func ts_main(
         if (cone_visible && test_frustum(mvp, aabb_center, aabb_extent)) {
             var visible = true;
             if (let screen_aabb = project_aabb(mvp, clipmap.z_near, aabb_center, aabb_extent)) {
-                visible = test_vsm_page(screen_aabb, hpb, hpb_sampler, ctx.curr_clipmap_index, clipmap.page_offset);
+                visible = test_vsm_page(screen_aabb, hpb, hpb_sampler, clipmap_index, clipmap.page_offset);
             }
 
             if (visible) {
@@ -90,11 +103,11 @@ groupshared f32x4 clip_positions_shared[MESHLET_MAX_VERTICES];
 
 [[shader("mesh")]]
 [[outputtopology("triangle")]]
-[[numthreads(MESH_SHADER_THREAD_COUNT, 1, 1)]]
+[[numthreads(64, 1, 1)]]
 func ms_main(
     u32x3 group_id : SV_GroupID,
     u32 local_index : SV_GroupIndex,
-    in payload MeshletTaskPayload payload,
+    in payload VSMTaskPayload payload,
     OutputIndices<u32x3, MESHLET_MAX_PRIMITIVES> triangles,
     OutputVertices<VertexOutput, MESHLET_MAX_VERTICES> vertices,
     OutputPrimitives<PrimitiveOutput, MESHLET_MAX_PRIMITIVES> primitives
@@ -111,7 +124,7 @@ func ms_main(
     let mesh_lod = mesh.lods[mesh_instance.lod_index];
     let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
 
-    let mvp = mul(clipmaps[ctx.curr_clipmap_index].projection_view_mat, transforms[mesh_instance.transform_index].world);
+    let mvp = mul(clipmaps[payload.clipmap_index].projection_view_mat, transforms[mesh_instance.transform_index].world);
 
     if (local_index < vertex_count) {
         let vertex_index = mesh_lod.indirect_vertex_indices[meshlet.indirect_vertex_index_offset + local_index];
@@ -122,6 +135,7 @@ func ms_main(
         output.position = clip_pos;
         output.tex_coord = meshlet.tex_coord(mesh, vertex_index);
         output.material_index = mesh_instance.material_index;
+        output.clipmap_index = payload.clipmap_index;
         vertices[local_index] = output;
     }
 
@@ -150,13 +164,14 @@ func ms_main(
 
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> void {
-    let clipmap = clipmaps[ctx.curr_clipmap_index];
+    let clipmap_index = input.clipmap_index;
+    let clipmap = clipmaps[clipmap_index];
     let page_offset = clipmap.page_offset;
 
     let virtual_uv = input.position.xy / ctx.get_physical_page_table_extent().xy;
     let virt_coords = i32x2(floor(virtual_uv * ctx.get_page_table_extent().xy));
     let wrapped_coords = ctx.page_coords_virtual_to_wrapped(virt_coords, page_offset);
-    let page_address = i32x3(wrapped_coords, ctx.curr_clipmap_index);
+    let page_address = i32x3(wrapped_coords, clipmap_index);
     let page = VSMPageMetadata(page_tables.Load(i32x4(page_address, 0)));
     if (page.is_backed() && page.is_dirty()) {
         let physical_page_coords = page.get_physical_coords(ctx.physcial_page_table_size, ctx.page_size);

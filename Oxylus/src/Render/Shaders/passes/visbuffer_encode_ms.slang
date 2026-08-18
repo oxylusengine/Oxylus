@@ -38,7 +38,7 @@ groupshared u32 visible_meshlet_count;
 groupshared MeshletTaskPayload payload;
 
 [[shader("task")]]
-[[numthreads(TASK_MESHLET_COUNT, 1, 1)]]
+[[numthreads(CULLING_MESHLET_COUNT, 1, 1)]]
 func ts_main(
     u32 meshlet_instance_index : SV_DispatchThreadID,
     u32 local_index : SV_GroupIndex
@@ -114,7 +114,7 @@ groupshared f32x4 clip_positions_shared[MESHLET_MAX_VERTICES];
 
 [[shader("mesh")]]
 [[outputtopology("triangle")]]
-[[numthreads(MESH_SHADER_THREAD_COUNT, 1, 1)]]
+[[numthreads(64, 1, 1)]]
 func ms_main(
     u32x3 group_id : SV_GroupID,
     u32 local_index : SV_GroupIndex,

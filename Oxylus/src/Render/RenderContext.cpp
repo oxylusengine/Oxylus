@@ -221,6 +221,11 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
 
   self.physical_device = self.vkbphysical_device.physical_device;
 
+  const auto vk12_supported = query_device_feature<VkPhysicalDeviceVulkan12Features>(
+    self.vkb_instance,
+    self.physical_device,
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
+  );
   VkPhysicalDeviceMeshShaderFeaturesEXT mesh_shader_features = {};
   mesh_shader_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
   if (self.vkbphysical_device.is_extension_present(VK_EXT_MESH_SHADER_EXTENSION_NAME)) {
@@ -229,17 +234,19 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
       self.physical_device,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT
     );
-    if (supported.meshShader && supported.taskShader) {
+    if (supported.meshShader && supported.taskShader && vk12_supported.drawIndirectCount) {
       self.vkbphysical_device.enable_extension_if_present(VK_EXT_MESH_SHADER_EXTENSION_NAME);
       mesh_shader_features.meshShader = true;
       mesh_shader_features.taskShader = true;
       self.features |= RenderContext::Feature::MeshShaders;
     } else {
       OX_LOG_WARN(
-        "{} is present but meshShader({}) taskShader({}) are not both supported, mesh shading is disabled.",
+        "{} is present but meshShader({}), taskShader({}), and drawIndirectCount({}) are not all supported; mesh "
+        "shading is disabled.",
         VK_EXT_MESH_SHADER_EXTENSION_NAME,
         static_cast<bool>(supported.meshShader),
-        static_cast<bool>(supported.taskShader)
+        static_cast<bool>(supported.taskShader),
+        static_cast<bool>(vk12_supported.drawIndirectCount)
       );
     }
   }
@@ -272,6 +279,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
 
   VkPhysicalDeviceVulkan12Features vk12_features{};
   vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+  vk12_features.drawIndirectCount = self.features & RenderContext::Feature::MeshShaders;
   vk12_features.descriptorIndexing = true;
   vk12_features.shaderOutputLayer = true;
   vk12_features.shaderSampledImageArrayNonUniformIndexing = true;

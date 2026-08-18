@@ -7,6 +7,7 @@ struct ShaderParameters {
 
     RWStructuredBuffer<DispatchIndirectCommand> clear_cmd;
     RWStructuredBuffer<VSMPageAllocator> allocator;
+    RWStructuredBuffer<u32> clipmap_dirty_flags;
 };
 
 [[shader("compute")]]
@@ -24,5 +25,6 @@ func cs_main(
     if (page.is_backed() && page.is_dirty()) {
         push_dirty_physical_page(params.allocator[0], page.get_physical_coords(ctx.physcial_page_table_size, ctx.page_size));
         __atomic_add(params.clear_cmd[0].z, 1, MemoryOrder::Relaxed);
+        __atomic_max(params.clipmap_dirty_flags[thread_id.z], 1u, MemoryOrder::Relaxed);
     }
 }

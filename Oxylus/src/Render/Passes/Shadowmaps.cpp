@@ -110,6 +110,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vuk::MemoryUsage::eGPUonly,
     RMVSMContext::DIRECTIONAL_MAX_PAGE_COUNT * sizeof(glm::uvec2)
   );
+  auto clipmap_dirty_flags = std::array<u32, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT>{};
+  auto clipmap_dirty_flags_buffer = render_context->scratch_buffer_span<u32>(clipmap_dirty_flags);
   auto free_page_list_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
     max_physical_page_count * sizeof(u32)
@@ -374,25 +376,33 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eComputeSampled) page_table,
       VUK_BA(vuk::eComputeRW) allocator,
-      VUK_BA(vuk::eComputeRW) clear_cmd
+      VUK_BA(vuk::eComputeRW) clear_cmd,
+      VUK_BA(vuk::eComputeRW) dirty_clipmaps
     ) {
       cmd_list //
         .bind_compute_pipeline("rmvsm_mark_dirty_pages")
         .bind_image(0, 0, page_table)
         .bind_buffer(0, 1, clear_cmd)
         .bind_buffer(0, 2, allocator)
+        .bind_buffer(0, 3, dirty_clipmaps)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
         .dispatch_invocations_per_pixel(page_table, 1.0f, 1.0f, static_cast<f32>(page_table->layer_count));
 
-      return std::make_tuple(page_table, allocator, clear_cmd);
+      return std::make_tuple(page_table, allocator, clear_cmd, dirty_clipmaps);
     }
   );
 
-  std::tie(context.virtual_page_table_attachment, page_allocator_buffer, clear_dirty_pages_cmd_buffer) =
+  std::tie(
+    context.virtual_page_table_attachment,
+    page_allocator_buffer,
+    clear_dirty_pages_cmd_buffer,
+    clipmap_dirty_flags_buffer
+  ) =
     mark_dirty_pages_pass(
       std::move(context.virtual_page_table_attachment),
       std::move(page_allocator_buffer),
-      std::move(clear_dirty_pages_cmd_buffer)
+      std::move(clear_dirty_pages_cmd_buffer),
+      std::move(clipmap_dirty_flags_buffer)
     );
 
   auto clear_dirty_pages_pass = vuk::make_pass(
@@ -462,13 +472,64 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     auto draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
 
     if (self.prepared_frame.use_mesh_shaders) {
+      auto draw_commands = std::array<vuk::DispatchIndirectCommand, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT>{};
+      auto draw_commands_buffer = render_context->scratch_buffer_span<vuk::DispatchIndirectCommand>(draw_commands);
+      auto draw_clipmap_indices = std::array<u32, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT>{};
+      auto draw_clipmaps_buffer = render_context->scratch_buffer_span<u32>(draw_clipmap_indices);
+      auto draw_count_buffer = render_context->scratch_buffer<u32>(0u);
+
+      auto build_draw_commands_pass = vuk::make_pass(
+        "vsm build mesh draw commands",
+        [](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eComputeRead) source_command,
+          VUK_BA(vuk::eComputeRead) dirty_clipmaps,
+          VUK_BA(vuk::eComputeRW) commands,
+          VUK_BA(vuk::eComputeRW) draw_count,
+          VUK_BA(vuk::eComputeRW) clipmap_indices
+        ) {
+          cmd_list //
+            .bind_compute_pipeline("rmvsm_build_draw_commands")
+            .bind_buffer(0, 0, source_command)
+            .bind_buffer(0, 1, dirty_clipmaps)
+            .bind_buffer(0, 2, commands)
+            .bind_buffer(0, 3, draw_count)
+            .bind_buffer(0, 4, clipmap_indices)
+            .push_constants(
+              vuk::ShaderStageFlagBits::eCompute,
+              0,
+              static_cast<u32>(RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT)
+            )
+            .dispatch(1);
+
+          return std::make_tuple(source_command, dirty_clipmaps, commands, draw_count, clipmap_indices);
+        }
+      );
+
+      std::tie(
+        draw_geometry_cmd_buffer,
+        clipmap_dirty_flags_buffer,
+        draw_commands_buffer,
+        draw_count_buffer,
+        draw_clipmaps_buffer
+      ) =
+        build_draw_commands_pass(
+          std::move(draw_geometry_cmd_buffer),
+          std::move(clipmap_dirty_flags_buffer),
+          std::move(draw_commands_buffer),
+          std::move(draw_count_buffer),
+          std::move(draw_clipmaps_buffer)
+        );
+
       auto draw_physical_pages_ms_pass = vuk::make_pass(
-        stack.format("vsm draw clipmap {} ms", clipmap_index),
+        "vsm draw dirty clipmaps ms",
         [&descriptor_set = *context.bindless_set,
          vsm_ctx,
          vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
           vuk::CommandBuffer& cmd_list,
           VUK_BA(vuk::eIndirectRead) mesh_tasks_indirect,
+          VUK_BA(vuk::eIndirectRead) mesh_tasks_count,
+          VUK_BA(vuk::eMeshRead) draw_clipmaps,
           VUK_BA(vuk::eMeshRead) meshes,
           VUK_BA(vuk::eMeshRead) mesh_instances,
           VUK_BA(vuk::eMeshRead) meshlet_instances,
@@ -505,16 +566,22 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
             .bind_buffer(0, 8, visibility)
             .bind_image(0, 9, hpb)
             .bind_sampler(0, 10, vuk::NearestSamplerClamped)
+            .bind_buffer(0, 11, draw_clipmaps)
             .push_constants(
-              vuk::ShaderStageFlagBits::eTaskEXT | vuk::ShaderStageFlagBits::eMeshEXT |
-                vuk::ShaderStageFlagBits::eFragment,
+              vuk::ShaderStageFlagBits::eTaskEXT | vuk::ShaderStageFlagBits::eFragment,
               0,
               vsm_ctx
             )
-            .draw_mesh_tasks_indirect(mesh_tasks_indirect);
+            .draw_mesh_tasks_indirect_count(
+              RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
+              mesh_tasks_indirect,
+              mesh_tasks_count
+            );
 
           return std::make_tuple(
             mesh_tasks_indirect, //
+            mesh_tasks_count,
+            draw_clipmaps,
             meshes,
             mesh_instances,
             meshlet_instances,
@@ -530,7 +597,9 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       );
 
       std::tie(
-        cull_geometry_context.cull_meshlets_cmd_buffer,
+        draw_commands_buffer,
+        draw_count_buffer,
+        draw_clipmaps_buffer,
         self.prepared_frame.meshes_buffer,
         self.prepared_frame.mesh_instances_buffer,
         self.prepared_frame.meshlet_instances_buffer,
@@ -543,7 +612,9 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         context.physical_page_table_attachment
       ) =
         draw_physical_pages_ms_pass(
-          std::move(draw_geometry_cmd_buffer),
+          std::move(draw_commands_buffer),
+          std::move(draw_count_buffer),
+          std::move(draw_clipmaps_buffer),
           std::move(self.prepared_frame.meshes_buffer),
           std::move(self.prepared_frame.mesh_instances_buffer),
           std::move(self.prepared_frame.meshlet_instances_buffer),
@@ -556,7 +627,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
           std::move(context.physical_page_table_attachment)
         );
 
-      continue;
+      break;
     }
 
     auto draw_physical_pages_pass = vuk::make_pass(
