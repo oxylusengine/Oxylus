@@ -38,8 +38,6 @@ struct VSMTaskPayload {
     u32 base_meshlet_instance_index;
     u32 clipmap_index;
     u8 visible_indices[CULLING_MESHLET_COUNT];
-    u8 vertex_counts[CULLING_MESHLET_COUNT];
-    u8 triangle_counts[CULLING_MESHLET_COUNT];
 };
 
 groupshared VSMTaskPayload payload;
@@ -85,11 +83,8 @@ func ts_main(
             }
 
             if (visible) {
-                let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
                 let slot = __atomic_add(visible_meshlet_count, 1, MemoryOrder::Relaxed);
                 payload.visible_indices[slot] = u8(local_index);
-                payload.vertex_counts[slot] = u8(meshlet.vertex_count);
-                payload.triangle_counts[slot] = u8(meshlet.triangle_count);
             }
         }
     }
@@ -113,16 +108,15 @@ func ms_main(
     OutputPrimitives<PrimitiveOutput, MESHLET_MAX_PRIMITIVES> primitives
 ) -> void {
     let slot = group_id.x;
-    let vertex_count = u32(payload.vertex_counts[slot]);
-    let triangle_count = u32(payload.triangle_counts[slot]);
-    SetMeshOutputCounts(vertex_count, triangle_count);
-
     let meshlet_instance_index = payload.base_meshlet_instance_index + u32(payload.visible_indices[slot]);
     let meshlet_instance = meshlet_instances[meshlet_instance_index];
     let mesh_instance = mesh_instances[meshlet_instance.mesh_instance_index];
     let mesh = meshes[mesh_instance.mesh_index];
     let mesh_lod = mesh.lods[mesh_instance.lod_index];
     let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
+    let vertex_count = u32(meshlet.vertex_count);
+    let triangle_count = u32(meshlet.triangle_count);
+    SetMeshOutputCounts(vertex_count, triangle_count);
 
     let mvp = mul(clipmaps[payload.clipmap_index].projection_view_mat, transforms[mesh_instance.transform_index].world);
 
