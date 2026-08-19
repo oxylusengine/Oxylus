@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <vector>
 
+#include "Asset/ShaderFeature.hpp"
 #include "Core/Handle.hpp"
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
@@ -42,8 +43,7 @@ struct ShaderCompileInfo {
   std::filesystem::path path = {};
   std::string module_name = {};
   std::vector<std::string> entry_points = {};
-  bool bindless = false;
-  bool requires_mesh_shaders = false;
+  ShaderFeatureFlag required_features = ShaderFeatureFlag::None;
 };
 
 struct ShaderCompileRequest {

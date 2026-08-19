@@ -35,6 +35,7 @@ public:
   enum class Feature : u32 {
     None = 0,
     MeshShaders = 1 << 0,
+    RayTracing = 1 << 1,
   };
 
   struct Resources {

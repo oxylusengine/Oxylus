@@ -5,6 +5,7 @@
 #include <vuk/runtime/vk/VkTypes.hpp>
 #include <zpp_bits.h>
 
+#include "Asset/ShaderFeature.hpp"
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
 
@@ -53,8 +54,7 @@ struct ShaderPipelineData {
 
   std::string module_name = "";
   std::vector<ShaderEntryPointData> entry_points = {};
-  bool bindless = false;
-  bool requires_mesh_shaders = false;
+  ShaderFeatureFlag required_features = ShaderFeatureFlag::None;
 };
 
 struct AssetFileEntry {

@@ -15,13 +15,13 @@ entry_points = ["vs_main", "fs_main"]
 name = "2d_forward"
 path = "passes/2d_forward.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "2d_forward_vis"
 path = "passes/2d_forward_vis.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "sky_transmittance"
@@ -77,14 +77,13 @@ entry_points = ["cs_main"]
 name = "visbuffer_encode"
 path = "passes/visbuffer_encode.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "visbuffer_encode_ms"
 path = "passes/visbuffer_encode_ms.slang"
 entry_points = ["ts_main", "ms_main", "fs_main"]
-bindless = true
-requires_mesh_shaders = true
+requires = ["bindless", "mesh_shaders"]
 
 [[shader_sessions.programs]]
 name = "visbuffer_clear"
@@ -95,7 +94,7 @@ entry_points = ["cs_main"]
 name = "visbuffer_decode"
 path = "passes/visbuffer_decode.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "rmvsm_allocate_pages"
@@ -131,14 +130,13 @@ entry_points = ["cs_main"]
 name = "rmvsm_draw_physical_pages"
 path = "passes/rmvsm_draw_physical_pages.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "rmvsm_draw_physical_pages_ms"
 path = "passes/rmvsm_draw_physical_pages_ms.slang"
 entry_points = ["ts_main", "ms_main", "fs_main"]
-bindless = true
-requires_mesh_shaders = true
+requires = ["bindless", "mesh_shaders"]
 
 [[shader_sessions.programs]]
 name = "rmvsm_free_invisible_pages"
@@ -289,4 +287,4 @@ entry_points = ["vs_main", "hs_main", "ds_main", "fs_main"]
 name = "terrain_decode"
 path = "passes/terrain_decode.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]

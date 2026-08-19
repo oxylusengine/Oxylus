@@ -2,6 +2,7 @@
 
 #include <ranges>
 #include <sstream>
+#include <string_view>
 #include <vuk/ImageAttachment.hpp>
 #include <vuk/RenderGraph.hpp>
 #include <vuk/runtime/CommandBuffer.hpp>
@@ -51,6 +52,18 @@ static auto query_device_feature(const vkb::Instance& instance, VkPhysicalDevice
   get_features_2(physical_device, &features_2);
 
   return feature;
+}
+
+static auto missing_shader_feature(RenderContext::Feature device_features, ShaderFeatureFlag required)
+  -> std::string_view {
+  if ((required & ShaderFeatureFlag::MeshShaders) && !(device_features & RenderContext::Feature::MeshShaders)) {
+    return "mesh shader";
+  }
+  if ((required & ShaderFeatureFlag::RayTracing) && !(device_features & RenderContext::Feature::RayTracing)) {
+    return "ray tracing";
+  }
+
+  return {};
 }
 
 static VkBool32 debug_callback(
@@ -252,6 +265,44 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     }
   }
 
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features = {};
+  acceleration_structure_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+  VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
+  ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+  if (
+    self.vkbphysical_device.is_extension_present(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+    self.vkbphysical_device.is_extension_present(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+    self.vkbphysical_device.is_extension_present(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)
+  ) {
+    const auto as_supported = query_device_feature<VkPhysicalDeviceAccelerationStructureFeaturesKHR>(
+      self.vkb_instance,
+      self.physical_device,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR
+    );
+    const auto ray_query_supported = query_device_feature<VkPhysicalDeviceRayQueryFeaturesKHR>(
+      self.vkb_instance,
+      self.physical_device,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR
+    );
+    if (as_supported.accelerationStructure && ray_query_supported.rayQuery) {
+      self.vkbphysical_device.enable_extension_if_present(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+      self.vkbphysical_device.enable_extension_if_present(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+      self.vkbphysical_device.enable_extension_if_present(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+      acceleration_structure_features.accelerationStructure = true;
+      ray_query_features.rayQuery = true;
+      self.features |= RenderContext::Feature::RayTracing;
+    } else {
+      OX_LOG_WARN(
+        "{} and {} are present but accelerationStructure({}) and rayQuery({}) are not both supported; ray "
+        "tracing is disabled.",
+        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+        VK_KHR_RAY_QUERY_EXTENSION_NAME,
+        static_cast<bool>(as_supported.accelerationStructure),
+        static_cast<bool>(ray_query_supported.rayQuery)
+      );
+    }
+  }
+
   vkb::DeviceBuilder device_builder{self.vkbphysical_device};
 
   VkPhysicalDeviceFeatures2 vk10_features{};
@@ -333,15 +384,21 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     device_builder.add_pNext(&mesh_shader_features);
   }
 
+  if (self.features & RenderContext::Feature::RayTracing) {
+    device_builder.add_pNext(&acceleration_structure_features);
+    device_builder.add_pNext(&ray_query_features);
+  }
+
   auto dev_ret = device_builder.build();
   if (!dev_ret) {
     OX_LOG_ERROR("Couldn't create device");
   }
 
   OX_LOG_INFO(
-    "Device '{}' features: mesh shaders({})",
+    "Device '{}' features: mesh shaders({}) ray tracing({})",
     self.device_name,
-    self.features & RenderContext::Feature::MeshShaders
+    self.features & RenderContext::Feature::MeshShaders,
+    self.features & RenderContext::Feature::RayTracing
   );
 
   self.vkb_device = dev_ret.value();
@@ -714,13 +771,13 @@ auto RenderContext::commit_descriptor_set(this RenderContext& self, std::span<Vk
 auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool {
   ZoneScoped;
 
-  if (pipeline_data.requires_mesh_shaders && !(self.features & RenderContext::Feature::MeshShaders)) {
-    OX_LOG_INFO("Skipped pipeline named {}, device has no mesh shader support.", pipeline_data.module_name);
+  if (const auto missing = missing_shader_feature(self.features, pipeline_data.required_features); !missing.empty()) {
+    OX_LOG_INFO("Skipped pipeline named {}, device has no {} support.", pipeline_data.module_name, missing);
     return true;
   }
 
   auto pipeline_ci = vuk::PipelineBaseCreateInfo{};
-  if (pipeline_data.bindless) {
+  if (pipeline_data.required_features & ShaderFeatureFlag::Bindless) {
     const auto& bindless_set = self.resources.descriptor_set;
     const auto& set_layout_create_info = bindless_set.set_layout_create_info;
     pipeline_ci.explicit_set_layouts.emplace_back(set_layout_create_info);

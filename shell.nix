@@ -14,7 +14,7 @@ let
     Libs: -L''${libdir} -lXss
   '';
 in pkgs.mkShell.override {
-  stdenv = pkgs.llvmPackages_latest.libcxxStdenv;
+  stdenv = pkgs.llvmPackages_23.libcxxStdenv;
 } {
   nativeBuildInputs = [
     pkgs.xmake
@@ -24,12 +24,11 @@ in pkgs.mkShell.override {
 
     pkgs.mold
 
-    pkgs.llvmPackages_latest.lldb
-    pkgs.llvmPackages_latest.libcxx
-    pkgs.llvmPackages_latest.libcxx.dev
-    pkgs.llvmPackages_latest.compiler-rt
-    pkgs.llvmPackages_latest.bintools-unwrapped
-    (pkgs.llvmPackages_latest.clang-tools.override {
+    pkgs.llvmPackages_23.libcxx
+    pkgs.llvmPackages_23.libcxx.dev
+    pkgs.llvmPackages_23.compiler-rt
+    pkgs.llvmPackages_23.bintools-unwrapped
+    (pkgs.llvmPackages_23.clang-tools.override {
       enableLibcxx = true;
      })
 
@@ -63,10 +62,9 @@ in pkgs.mkShell.override {
   ];
 
   PKG_CONFIG_PATH = "${xssWrapper}/lib/pkgconfig:$PKG_CONFIG_PATH";
-  LIBCXX_PATH="${pkgs.llvmPackages_latest.libcxx.dev}";
+  LIBCXX_PATH="${pkgs.llvmPackages_23.libcxx.dev}";
   LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
-    pkgs.llvmPackages_latest.libcxx
-    pkgs.llvmPackages_latest.lldb
+    pkgs.llvmPackages_23.libcxx
     pkgs.gcc14.cc.lib
     pkgs.vulkan-loader
     # SDL3

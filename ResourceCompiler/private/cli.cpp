@@ -110,8 +110,7 @@ auto main(i32 argc, c8** argv) -> i32 {
         .path = prog.path,
         .module_name = prog.name,
         .entry_points = prog.entry_points,
-        .bindless = prog.bindless,
-        .requires_mesh_shaders = prog.requires_mesh_shaders,
+        .required_features = prog.required_features,
       });
     }
 
