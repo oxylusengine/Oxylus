@@ -1104,6 +1104,7 @@ auto RendererInstance::render(
   const auto draw_ddgi_probes = debug_view == GPU::DebugView::DDGIProbes && debugging;
   auto ddgi_irradiance_attachment = vuk::Value<vuk::ImageAttachment>{};
   auto ddgi_distance_attachment = vuk::Value<vuk::ImageAttachment>{};
+  auto ddgi_probe_states_buffer = vuk::Value<vuk::Buffer>{};
   auto ddgi_atlas_valid = false;
   if (!self.probe_volumes.empty()) {
     auto total_probe_count = 0_u32;
@@ -1114,6 +1115,11 @@ auto RendererInstance::render(
     const auto rays_per_probe = static_cast<u32>(std::clamp(cvar.cvar_ddgi_rays_per_probe.get(), 8, 512));
 
     self.allocate_ddgi_atlases(total_probe_count);
+
+    ddgi_probe_states_buffer = vuk::acquire_buf("ddgi probe states", *self.ddgi_probe_states, vuk::eMemoryRead);
+    if (!self.ddgi_history_valid) {
+      vuk::fill(ddgi_probe_states_buffer, 0u);
+    }
 
     if (tlas_it != self.shared_resources.buffer_resources.end()) {
       // One row of rays per probe, thrown away once the update passes have folded it into the atlases.
@@ -1157,6 +1163,7 @@ auto RendererInstance::render(
         .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
         .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
         .ray_data_attachment = std::move(ray_data_attachment),
+        .probe_states_buffer = std::move(ddgi_probe_states_buffer),
         .irradiance_attachment = std::move(irradiance_attachment),
         .distance_attachment = std::move(distance_attachment),
       };
@@ -1165,6 +1172,22 @@ auto RendererInstance::render(
       tlas_it->second = std::move(ddgi_trace_context.tlas_buffer);
       sky_view_lut_attachment = std::move(ddgi_trace_context.sky_view_lut_attachment);
       sky_transmittance_lut_attachment = std::move(ddgi_trace_context.sky_transmittance_lut_attachment);
+
+      if (cvar.cvar_ddgi_probe_relocation.as_bool()) {
+        auto ddgi_relocate_context = DDGIRelocateContext{
+          .rays_per_probe = rays_per_probe,
+          .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+          .min_frontface_distance = cvar.cvar_ddgi_min_frontface_distance.get(),
+          .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
+          .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
+          .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),
+        };
+        self.relocate_ddgi_probes(ddgi_relocate_context);
+
+        ddgi_trace_context.probe_volumes_buffer = std::move(ddgi_relocate_context.probe_volumes_buffer);
+        ddgi_trace_context.probe_states_buffer = std::move(ddgi_relocate_context.probe_states_buffer);
+        ddgi_trace_context.ray_data_attachment = std::move(ddgi_relocate_context.ray_data_attachment);
+      }
 
       auto ddgi_update_context = DDGIUpdateContext{
         .rays_per_probe = rays_per_probe,
@@ -1180,6 +1203,7 @@ auto RendererInstance::render(
 
       ddgi_irradiance_attachment = std::move(ddgi_update_context.irradiance_attachment);
       ddgi_distance_attachment = std::move(ddgi_update_context.distance_attachment);
+      ddgi_probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer);
       ddgi_atlas_valid = true;
       self.gpu_scene_flags |= GPU::SceneFlags::HasDDGI;
     }
@@ -1217,6 +1241,7 @@ auto RendererInstance::render(
       .intensity = cvar.cvar_ddgi_intensity.get(),
       .ambient_color = self.sky_data.ambient_color,
       .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+      .probe_states_buffer = std::move(ddgi_probe_states_buffer),
       .depth_attachment = std::move(depth_attachment),
       .albedo_attachment = std::move(albedo_attachment),
       .normal_attachment = std::move(normal_attachment),
@@ -1235,6 +1260,7 @@ auto RendererInstance::render(
     vbgtao_occlusion_attachment = std::move(ddgi_apply_context.ambient_occlusion_attachment);
     ddgi_irradiance_attachment = std::move(ddgi_apply_context.irradiance_attachment);
     ddgi_distance_attachment = std::move(ddgi_apply_context.distance_attachment);
+    ddgi_probe_states_buffer = std::move(ddgi_apply_context.probe_states_buffer);
   }
 
   // --- 2D Pass ---
@@ -1392,6 +1418,7 @@ auto RendererInstance::render(
       .probe_radius = cvar.cvar_ddgi_probe_debug_radius.get(),
       .atlas_valid = ddgi_atlas_valid,
       .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+      .probe_states_buffer = std::move(ddgi_probe_states_buffer),
       .irradiance_attachment = ddgi_atlas_valid ? std::move(ddgi_irradiance_attachment)
                                                 : vuk::discard_ia("ddgi irradiance", self.ddgi_irradiance_attachment),
       .depth_attachment = std::move(depth_attachment),
@@ -1400,6 +1427,7 @@ auto RendererInstance::render(
     final_attachment = self.draw_ddgi_probes(ddgi_debug_context, std::move(final_attachment));
     depth_attachment = std::move(ddgi_debug_context.depth_attachment);
     ddgi_irradiance_attachment = std::move(ddgi_debug_context.irradiance_attachment);
+    ddgi_probe_states_buffer = std::move(ddgi_debug_context.probe_states_buffer);
   }
 
   // --- FXAA Pass ---

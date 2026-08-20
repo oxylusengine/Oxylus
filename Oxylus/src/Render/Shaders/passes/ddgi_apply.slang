@@ -16,6 +16,7 @@ import ddgi;
 [[vk::binding(7, 0)]] Texture2D<f32> gtao_image;
 [[vk::binding(8, 0)]] Texture2D<f32x4> irradiance_atlas;
 [[vk::binding(9, 0)]] Texture2D<f32x2> distance_atlas;
+[[vk::binding(10, 0)]] StructuredBuffer<ProbeState> probe_states;
 
 [[shader("fragment")]]
 func fs_main(
@@ -45,8 +46,12 @@ func fs_main(
     let world_position = camera.unproject_uv(input.tex_coord, depth);
     let V = normalize(camera.position.xyz - world_position);
 
+    let R = reflect(-V, N);
+    let reflection_direction = normalize(lerp(N, R, 1.0 - roughness));
+
     let sample = sample_ddgi_irradiance(
         probe_volumes,
+        probe_states,
         volume_count,
         irradiance_atlas,
         distance_atlas,
@@ -54,17 +59,24 @@ func fs_main(
         world_position,
         N,
         V,
+        reflection_direction,
+        true,
         normal_bias,
         view_bias
     );
 
     let diffuse = sample.valid ? sample.irradiance * intensity : ambient_color;
+    let specular = sample.valid ? sample.specular * intensity : ambient_color;
 
     let NoV = abs(dot(N, V)) + 1e-5;
     let F0 = lerp(f32x3(0.04), albedo_color, metallic);
     let AB = GGX_directional_albedo(NoV, perceptual_roughness_to_alpha(roughness));
     let kS = F0 * AB.x + AB.y;
     let kD = (1.0 - metallic) * (1.0 - kS);
+    let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-    return f32x4(kD * diffuse * albedo_color * occlusion, 1.0);
+    let indirect_diffuse = kD * diffuse * albedo_color * occlusion;
+    let indirect_specular = kS * specular * spec_occlusion;
+
+    return f32x4(indirect_diffuse + indirect_specular, 1.0);
 }

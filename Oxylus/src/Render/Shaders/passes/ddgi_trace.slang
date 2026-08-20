@@ -21,6 +21,7 @@ import ddgi;
 [[vk::binding(10, 0)]] RWTexture2D<f32x4, 1, ImageFormat.RGBA16F> ray_data;
 [[vk::binding(11, 0)]] Image2D<f32x4> irradiance_atlas;
 [[vk::binding(12, 0)]] Image2D<f32x2> distance_atlas;
+[[vk::binding(13, 0)]] StructuredBuffer<ProbeState> probe_states;
 
 static const f32 HIT_TEXTURE_LOD = 3.0;
 
@@ -131,6 +132,7 @@ func shade_hit(
     if (bounce_valid != 0) {
         let bounce = sample_ddgi_irradiance(
             probe_volumes,
+            probe_states,
             volume_count,
             irradiance_atlas,
             distance_atlas,
@@ -138,6 +140,8 @@ func shade_hit(
             hit.position,
             N,
             view_direction,
+            N,
+            false,
             normal_bias,
             view_bias
         );
@@ -176,7 +180,7 @@ func cs_main(
         return;
     }
 
-    let origin = volume.probe_position(probe_index);
+    let origin = probe_world_position(volume, probe_states, probe_index);
     let direction = probe_ray_direction(ray_index, rays_per_probe, frame_index);
 
     RayDesc ray;

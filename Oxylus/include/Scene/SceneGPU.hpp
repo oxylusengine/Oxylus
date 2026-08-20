@@ -278,6 +278,11 @@ constexpr static u32 DDGI_DEBUG_SPHERE_RINGS = 8;
 constexpr static u32 DDGI_DEBUG_SPHERE_SECTORS = 12;
 constexpr static u32 DDGI_DEBUG_SPHERE_VERTEX_COUNT = DDGI_DEBUG_SPHERE_RINGS * DDGI_DEBUG_SPHERE_SECTORS * 6;
 
+struct ProbeState {
+  alignas(4) glm::vec3 offset = {};
+  alignas(4) u32 inactive = 0;
+};
+
 struct ProbeVolume {
   alignas(4) glm::vec3 origin = {};
   alignas(4) u32 probe_offset = 0;

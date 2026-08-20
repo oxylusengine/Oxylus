@@ -52,6 +52,10 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     .init(self.system, "rr.ddgi_max_ray_distance", "world space length of a probe ray", 50.0f);
   self.cvar_ddgi_max_ray_radiance
     .init(self.system, "rr.ddgi_max_ray_radiance", "luminance cap on a single probe ray, tames fireflies", 25.0f);
+  self.cvar_ddgi_probe_relocation
+    .init(self.system, "rr.ddgi_probe_relocation", "move probes out of the geometry they are buried in", 1);
+  self.cvar_ddgi_min_frontface_distance
+    .init(self.system, "rr.ddgi_min_frontface_distance", "how far a probe keeps off a surface, in world units", 0.5f);
   self.cvar_ddgi_normal_bias
     .init(self.system, "rr.ddgi_normal_bias", "surface offset applied before tracing a shadow ray", 0.05f);
   self.cvar_ddgi_view_bias
@@ -113,6 +117,8 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["rays_per_probe"] = self.cvar_ddgi_rays_per_probe.get();
   writer["max_ray_distance"] = self.cvar_ddgi_max_ray_distance.get();
   writer["max_ray_radiance"] = self.cvar_ddgi_max_ray_radiance.get();
+  writer["probe_relocation"] = self.cvar_ddgi_probe_relocation.as_bool();
+  writer["min_frontface_distance"] = self.cvar_ddgi_min_frontface_distance.get();
   writer["normal_bias"] = self.cvar_ddgi_normal_bias.get();
   writer["view_bias"] = self.cvar_ddgi_view_bias.get();
   writer["hysteresis"] = self.cvar_ddgi_hysteresis.get();
@@ -183,6 +189,8 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_ddgi_rays_per_probe.set(static_cast<i32>(ddgi_obj["rays_per_probe"].get_int64()));
     self.cvar_ddgi_max_ray_distance.set(static_cast<f32>(ddgi_obj["max_ray_distance"].get_double()));
     self.cvar_ddgi_max_ray_radiance.set(static_cast<f32>(ddgi_obj["max_ray_radiance"].get_double()));
+    self.cvar_ddgi_probe_relocation.set(ddgi_obj["probe_relocation"].get_bool());
+    self.cvar_ddgi_min_frontface_distance.set(static_cast<f32>(ddgi_obj["min_frontface_distance"].get_double()));
     self.cvar_ddgi_normal_bias.set(static_cast<f32>(ddgi_obj["normal_bias"].get_double()));
     self.cvar_ddgi_view_bias.set(static_cast<f32>(ddgi_obj["view_bias"].get_double()));
     self.cvar_ddgi_hysteresis.set(static_cast<f32>(ddgi_obj["hysteresis"].get_double()));

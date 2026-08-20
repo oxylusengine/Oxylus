@@ -10,6 +10,11 @@ public constexpr static u32 DEBUG_SPHERE_RINGS = 8;
 public constexpr static u32 DEBUG_SPHERE_SECTORS = 12;
 public constexpr static u32 DEBUG_SPHERE_VERTEX_COUNT = DEBUG_SPHERE_RINGS * DEBUG_SPHERE_SECTORS * 6;
 
+public struct ProbeState {
+    public f32x3 offset;
+    public u32 inactive;
+};
+
 public struct ProbeVolume {
     public f32x3 origin;
     public u32 probe_offset;
@@ -155,23 +160,32 @@ public func probe_ray_direction(u32 ray_index, u32 ray_count, u32 frame_index) -
     return normalize(rotate_by_quat(frame_rotation(frame_index), spherical_fibonacci(ray_index, ray_count)));
 }
 
+public func probe_world_position(in ProbeVolume volume, StructuredBuffer<ProbeState> states, u32 probe_index)
+    -> f32x3 {
+    return volume.probe_position(probe_index) + states[volume.probe_offset + probe_index].offset;
+}
+
 public struct IrradianceSample {
     public f32x3 irradiance;
+    public f32x3 specular;
     public bool valid;
 };
 
 public func sample_probe_volume(
     in ProbeVolume volume,
+    StructuredBuffer<ProbeState> states,
     Image2D<f32x4> irradiance_atlas,
     Image2D<f32x2> distance_atlas,
     Sampler atlas_sampler,
     f32x3 world_position,
     f32x3 normal,
     f32x3 view_direction,
+    f32x3 specular_direction,
+    bool want_specular,
     f32 normal_bias,
     f32 view_bias
 ) -> IrradianceSample {
-    IrradianceSample result = { f32x3(0.0), false };
+    IrradianceSample result = { f32x3(0.0), f32x3(0.0), false };
 
     let biased_position = world_position + normal * normal_bias + view_direction * view_bias;
     let grid_min = volume.grid_min();
@@ -180,6 +194,7 @@ public func sample_probe_volume(
     let alpha = saturate(grid_coord - f32x3(base_coord));
 
     var sum = f32x3(0.0);
+    var specular_sum = f32x3(0.0);
     var weight_sum = 0.0;
 
     for (u32 corner = 0; corner < 8; corner++) {
@@ -187,7 +202,12 @@ public func sample_probe_volume(
         let probe_coord = u32x3(clamp(base_coord + offset, i32x3(0), i32x3(volume.counts) - 1));
         let probe_index = volume.probe_index_at(probe_coord);
         let probe_row = volume.probe_offset + probe_index;
-        let probe_position = grid_min + f32x3(probe_coord) * volume.spacing;
+        let state = states[probe_row];
+        if (state.inactive != 0) {
+            continue;
+        }
+
+        let probe_position = grid_min + f32x3(probe_coord) * volume.spacing + state.offset;
 
         let trilinear = lerp(1.0 - alpha, alpha, f32x3(offset));
         var weight = trilinear.x * trilinear.y * trilinear.z;
@@ -215,6 +235,11 @@ public func sample_probe_volume(
         }
 
         sum += sample_probe_irradiance(irradiance_atlas, atlas_sampler, probe_row, normal) * weight;
+        if (want_specular) {
+            specular_sum += sample_probe_irradiance(irradiance_atlas, atlas_sampler, probe_row, specular_direction) *
+                            weight;
+        }
+
         weight_sum += weight;
     }
 
@@ -223,6 +248,7 @@ public func sample_probe_volume(
     }
 
     result.irradiance = com::sanitize(sum / weight_sum);
+    result.specular = com::sanitize(specular_sum / weight_sum);
     result.valid = true;
 
     return result;
@@ -230,6 +256,7 @@ public func sample_probe_volume(
 
 public func sample_ddgi_irradiance(
     StructuredBuffer<ProbeVolume> volumes,
+    StructuredBuffer<ProbeState> states,
     u32 volume_count,
     Image2D<f32x4> irradiance_atlas,
     Image2D<f32x2> distance_atlas,
@@ -237,6 +264,8 @@ public func sample_ddgi_irradiance(
     f32x3 world_position,
     f32x3 normal,
     f32x3 view_direction,
+    f32x3 specular_direction,
+    bool want_specular,
     f32 normal_bias,
     f32 view_bias
 ) -> IrradianceSample {
@@ -248,18 +277,21 @@ public func sample_ddgi_irradiance(
 
         return sample_probe_volume(
             volume,
+            states,
             irradiance_atlas,
             distance_atlas,
             atlas_sampler,
             world_position,
             normal,
             view_direction,
+            specular_direction,
+            want_specular,
             normal_bias,
             view_bias
         );
     }
 
-    IrradianceSample missed = { f32x3(0.0), false };
+    IrradianceSample missed = { f32x3(0.0), f32x3(0.0), false };
     return missed;
 }
 

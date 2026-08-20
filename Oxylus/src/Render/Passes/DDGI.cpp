@@ -14,7 +14,9 @@ auto RendererInstance::allocate_ddgi_atlases(this RendererInstance& self, u32 pr
   auto& allocator = *self.renderer.render_context->superframe_allocator;
 
   self.ddgi_irradiance_attachment = vuk::ImageAttachment{
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+    // eTransferDst: a freshly allocated atlas is cleared before its first update.
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
     .extent = GPU::ddgi_atlas_extent(probe_count, GPU::DDGI_IRRADIANCE_TEXELS),
     .format = vuk::Format::eR16G16B16A16Sfloat,
     .sample_count = vuk::Samples::e1,
@@ -30,7 +32,9 @@ auto RendererInstance::allocate_ddgi_atlases(this RendererInstance& self, u32 pr
   self.ddgi_irradiance_attachment.image_view = *self.ddgi_irradiance_view;
 
   self.ddgi_distance_attachment = vuk::ImageAttachment{
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+    // eTransferDst: a freshly allocated atlas is cleared before its first update.
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
     .extent = GPU::ddgi_atlas_extent(probe_count, GPU::DDGI_DISTANCE_TEXELS),
     .format = vuk::Format::eR16G16Sfloat,
     .sample_count = vuk::Samples::e1,
@@ -45,8 +49,59 @@ auto RendererInstance::allocate_ddgi_atlases(this RendererInstance& self, u32 pr
   self.ddgi_distance_view = *vuk::allocate_image_view(allocator, self.ddgi_distance_attachment);
   self.ddgi_distance_attachment.image_view = *self.ddgi_distance_view;
 
+  self.ddgi_probe_states = self.renderer.render_context->allocate_buffer_super(
+    vuk::MemoryUsage::eGPUonly,
+    sizeof(GPU::ProbeState) * probe_count
+  );
+
   self.ddgi_atlas_probe_count = probe_count;
   self.ddgi_history_valid = false;
+}
+
+auto RendererInstance::relocate_ddgi_probes(this RendererInstance& self, DDGIRelocateContext& context) -> void {
+  ZoneScoped;
+
+  auto probe_counts = ankerl::svector<u32, 4>{};
+  for (const auto& volume : self.probe_volumes) {
+    probe_counts.emplace_back(volume.probe_count);
+  }
+
+  auto relocate_pass = vuk::make_pass(
+    "ddgi relocate probes",
+    [probe_counts,
+     rays_per_probe = context.rays_per_probe,
+     frame_index = context.frame_index,
+     min_frontface_distance = context.min_frontface_distance](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eComputeRW) probe_states,
+      VUK_IA(vuk::eComputeSampled) ray_data,
+      VUK_BA(vuk::eComputeRead) probe_volumes
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("ddgi_relocate_probes")
+        .bind_buffer(0, 0, probe_volumes)
+        .bind_image(0, 1, ray_data)
+        .bind_buffer(0, 2, probe_states);
+
+      for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
+        cmd_list //
+          .push_constants(
+            vuk::ShaderStageFlagBits::eCompute,
+            0,
+            PushConstants(volume_index, rays_per_probe, frame_index, min_frontface_distance)
+          )
+          .dispatch((probe_counts[volume_index] + 63) / 64, 1, 1);
+      }
+
+      return std::make_tuple(probe_states, ray_data, probe_volumes);
+    }
+  );
+
+  std::tie(context.probe_states_buffer, context.ray_data_attachment, context.probe_volumes_buffer) = relocate_pass(
+    std::move(context.probe_states_buffer),
+    std::move(context.ray_data_attachment),
+    std::move(context.probe_volumes_buffer)
+  );
 }
 
 auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdateContext& context) -> void {
@@ -203,7 +258,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
       VUK_BA(vuk::eComputeRead) lights,
       VUK_BA(vuk::eComputeRead) atmosphere,
       VUK_IA(vuk::eComputeSampled) sky_view_lut,
-      VUK_IA(vuk::eComputeSampled) sky_transmittance_lut
+      VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
+      VUK_BA(vuk::eComputeRead) probe_states
     ) {
       cmd_list //
         .bind_compute_pipeline("ddgi_trace")
@@ -221,6 +277,7 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
         .bind_image(0, 10, ray_data)
         .bind_image(0, 11, irradiance)
         .bind_image(0, 12, probe_distance)
+        .bind_buffer(0, 13, probe_states)
         .specialize_constants(0, std::to_underlying(scene_flags));
 
       for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
@@ -261,7 +318,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
         lights,
         atmosphere,
         sky_view_lut,
-        sky_transmittance_lut
+        sky_transmittance_lut,
+        probe_states
       );
     }
   );
@@ -279,7 +337,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
     self.prepared_frame.lights_buffer,
     self.prepared_frame.atmosphere_buffer,
     context.sky_view_lut_attachment,
-    context.sky_transmittance_lut_attachment
+    context.sky_transmittance_lut_attachment,
+    context.probe_states_buffer
   ) =
     trace_pass(
       std::move(context.ray_data_attachment),
@@ -294,7 +353,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
       std::move(self.prepared_frame.lights_buffer),
       std::move(self.prepared_frame.atmosphere_buffer),
       std::move(context.sky_view_lut_attachment),
-      std::move(context.sky_transmittance_lut_attachment)
+      std::move(context.sky_transmittance_lut_attachment),
+      std::move(context.probe_states_buffer)
     );
 }
 
@@ -320,7 +380,8 @@ auto RendererInstance::apply_ddgi(
       VUK_IA(vuk::eFragmentSampled) irradiance,
       VUK_IA(vuk::eFragmentSampled) probe_distance,
       VUK_BA(vuk::eFragmentUniformRead) camera,
-      VUK_BA(vuk::eFragmentRead) probe_volumes
+      VUK_BA(vuk::eFragmentRead) probe_volumes,
+      VUK_BA(vuk::eFragmentRead) probe_states
     ) {
       cmd_list //
         .bind_graphics_pipeline("ddgi_apply")
@@ -350,6 +411,7 @@ auto RendererInstance::apply_ddgi(
         .bind_image(0, 7, gtao)
         .bind_image(0, 8, irradiance)
         .bind_image(0, 9, probe_distance)
+        .bind_buffer(0, 10, probe_states)
         .push_constants(
           vuk::ShaderStageFlagBits::eFragment,
           0,
@@ -367,7 +429,8 @@ auto RendererInstance::apply_ddgi(
         irradiance,
         probe_distance,
         camera,
-        probe_volumes
+        probe_volumes,
+        probe_states
       );
     }
   );
@@ -382,7 +445,8 @@ auto RendererInstance::apply_ddgi(
     context.irradiance_attachment,
     context.distance_attachment,
     self.prepared_frame.camera_buffer,
-    context.probe_volumes_buffer
+    context.probe_volumes_buffer,
+    context.probe_states_buffer
   ) =
     apply_pass(
       std::move(dst),
@@ -394,7 +458,8 @@ auto RendererInstance::apply_ddgi(
       std::move(context.irradiance_attachment),
       std::move(context.distance_attachment),
       std::move(self.prepared_frame.camera_buffer),
-      std::move(context.probe_volumes_buffer)
+      std::move(context.probe_volumes_buffer),
+      std::move(context.probe_states_buffer)
     );
 
   return dst;
@@ -418,7 +483,8 @@ auto RendererInstance::draw_ddgi_probes(
       VUK_IA(vuk::eDepthStencilRW) depth,
       VUK_BA(vuk::eVertexRead) camera,
       VUK_BA(vuk::eVertexRead) probe_volumes,
-      VUK_IA(vuk::eFragmentSampled) irradiance
+      VUK_IA(vuk::eFragmentSampled) irradiance,
+      VUK_BA(vuk::eVertexRead) probe_states
     ) {
       cmd_list //
         .bind_graphics_pipeline("ddgi_debug_probes")
@@ -433,7 +499,8 @@ auto RendererInstance::draw_ddgi_probes(
         .bind_buffer(0, 0, camera)
         .bind_buffer(0, 1, probe_volumes)
         .bind_image(0, 2, irradiance)
-        .bind_sampler(0, 3, vuk::LinearSamplerClamped);
+        .bind_sampler(0, 3, vuk::LinearSamplerClamped)
+        .bind_buffer(0, 4, probe_states);
 
       for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
         cmd_list //
@@ -445,7 +512,7 @@ auto RendererInstance::draw_ddgi_probes(
           .draw(GPU::DDGI_DEBUG_SPHERE_VERTEX_COUNT, probe_counts[volume_index], 0, 0);
       }
 
-      return std::make_tuple(dst, depth, camera, probe_volumes, irradiance);
+      return std::make_tuple(dst, depth, camera, probe_volumes, irradiance, probe_states);
     }
   );
 
@@ -454,14 +521,16 @@ auto RendererInstance::draw_ddgi_probes(
     context.depth_attachment,
     self.prepared_frame.camera_buffer,
     context.probe_volumes_buffer,
-    context.irradiance_attachment
+    context.irradiance_attachment,
+    context.probe_states_buffer
   ) =
     probe_pass(
       std::move(dst_attachment),
       std::move(context.depth_attachment),
       std::move(self.prepared_frame.camera_buffer),
       std::move(context.probe_volumes_buffer),
-      std::move(context.irradiance_attachment)
+      std::move(context.irradiance_attachment),
+      std::move(context.probe_states_buffer)
     );
 
   return dst_attachment;

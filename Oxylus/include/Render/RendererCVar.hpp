@@ -48,6 +48,8 @@ struct RendererCVar {
   AutoCVar_Int cvar_ddgi_rays_per_probe;
   AutoCVar_Float cvar_ddgi_max_ray_distance;
   AutoCVar_Float cvar_ddgi_max_ray_radiance;
+  AutoCVar_Int cvar_ddgi_probe_relocation;
+  AutoCVar_Float cvar_ddgi_min_frontface_distance;
   AutoCVar_Float cvar_ddgi_normal_bias;
   AutoCVar_Float cvar_ddgi_view_bias;
   AutoCVar_Float cvar_ddgi_hysteresis;

@@ -83,7 +83,7 @@ func fs_main(
     var diffuse_sky = environment_radiance;
     var specular_sky = environment_radiance;
 
-    {
+    if ((scene_flags & SceneFlags::HasDDGI) == 0) {
         let dielectric_F0 = f32x3(0.04);
         let F0 = lerp(dielectric_F0, albedo_color, metallic);
 
@@ -94,8 +94,7 @@ func fs_main(
 
         let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-        let has_ddgi = (scene_flags & SceneFlags::HasDDGI) != 0;
-        let ibl_diffuse = has_ddgi ? f32x3(0.0) : kD * diffuse_sky * albedo_color * Fd_Lambert();
+        let ibl_diffuse = kD * diffuse_sky * albedo_color * Fd_Lambert();
         let ibl_specular = kS * specular_sky * spec_occlusion;
         indirect_illuminance = (ibl_diffuse * occlusion) + ibl_specular;
     }

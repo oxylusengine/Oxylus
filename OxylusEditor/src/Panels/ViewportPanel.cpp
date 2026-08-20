@@ -801,6 +801,18 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             0.99f,
             "How much of a probe's history survives each update"
           );
+          UI::property(
+            "Probe Relocation",
+            cvar_sys.cvar_ddgi_probe_relocation.get_ptr_bool(),
+            "Move probes out of geometry they are buried in, and drop the ones that stay stuck"
+          );
+          UI::property<float>(
+            "Min Frontface Distance",
+            cvar_sys.cvar_ddgi_min_frontface_distance.get_ptr(),
+            0.f,
+            5.f,
+            "How far relocation keeps a probe off a surface, in world units"
+          );
           UI::property<float>(
             "Normal Bias",
             cvar_sys.cvar_ddgi_normal_bias.get_ptr(),
