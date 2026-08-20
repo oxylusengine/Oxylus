@@ -286,6 +286,7 @@ public enum SceneFlags : u32 {
   HasContactShadows = 1 << 9,
   HasSky = 1 << 10,
   TransparentBackground = 1 << 11,
+  HasDDGI = 1 << 12,
 };
 
 public struct DirectionalLightCascade {

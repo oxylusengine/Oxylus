@@ -768,6 +768,69 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
 
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
+      if (ImGui::TreeNodeEx("DDGI", TREE_FLAGS, "%s", "DDGI")) {
+        const auto has_ray_tracing = render_context.features & RenderContext::Feature::RayTracing;
+        ImGui::BeginDisabled(!has_ray_tracing);
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          UI::property(
+            "Enabled",
+            cvar_sys.cvar_ddgi_enable.get_ptr_bool(),
+            has_ray_tracing ? "Light probe volumes gather indirect diffuse by tracing the scene TLAS"
+                            : "This device does not support ray queries"
+          );
+          UI::property(
+            "Rays Per Probe",
+            cvar_sys.cvar_ddgi_rays_per_probe.get_ptr(),
+            8,
+            512,
+            1.0f,
+            "More rays converge faster and flicker less, at a linear cost"
+          );
+          UI::property<float>("Max Ray Distance", cvar_sys.cvar_ddgi_max_ray_distance.get_ptr(), 1.f, 500.f);
+          UI::property<float>(
+            "Max Ray Radiance",
+            cvar_sys.cvar_ddgi_max_ray_radiance.get_ptr(),
+            0.1f,
+            100.f,
+            "Luminance cap per probe ray. Lower it to stop a bright emitter from making probes flicker"
+          );
+          UI::property<float>(
+            "Hysteresis",
+            cvar_sys.cvar_ddgi_hysteresis.get_ptr(),
+            0.f,
+            0.99f,
+            "How much of a probe's history survives each update"
+          );
+          UI::property<float>(
+            "Normal Bias",
+            cvar_sys.cvar_ddgi_normal_bias.get_ptr(),
+            0.f,
+            2.f,
+            "Offsets the probe lookup along the surface normal, in world units"
+          );
+          UI::property<float>(
+            "View Bias",
+            cvar_sys.cvar_ddgi_view_bias.get_ptr(),
+            0.f,
+            2.f,
+            "Offsets the probe lookup toward the camera, in world units"
+          );
+          UI::property<float>("Intensity", cvar_sys.cvar_ddgi_intensity.get_ptr(), 0.f, 10.f);
+          UI::property<float>(
+            "Debug Probe Radius",
+            cvar_sys.cvar_ddgi_probe_debug_radius.get_ptr(),
+            0.01f,
+            2.f,
+            "Size of the spheres drawn by the DDGI Probes debug view"
+          );
+          UI::end_properties();
+        }
+        ImGui::EndDisabled();
+        ImGui::TreePop();
+      }
+
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
       if (ImGui::TreeNodeEx("Contact Shadows", TREE_FLAGS, "%s", "Contact Shadows")) {
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
           UI::property("Enabled", cvar_sys.cvar_contact_shadows_enabled.get_ptr_bool());

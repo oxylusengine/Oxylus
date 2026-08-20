@@ -400,25 +400,60 @@ struct DDGITraceContext {
   u32 frame_index = 0;
   u32 light_count = 0;
   f32 max_ray_distance = 50.0f;
+  f32 max_ray_radiance = 25.0f;
   f32 normal_bias = 0.05f;
   glm::vec3 sun_direction = {};
   f32 sun_intensity = 0.0f;
   glm::vec3 ambient_color = {};
+
+  u32 volume_count = 0;
+  bool bounce_valid = false;
+  f32 view_bias = 0.1f;
 
   vuk::Value<vuk::Buffer> tlas_buffer = {};
   vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
   vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> ray_data_attachment = {};
+  vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
+  vuk::Value<vuk::ImageAttachment> distance_attachment = {};
+};
+
+struct DDGIUpdateContext {
+  u32 rays_per_probe = 128;
+  u32 frame_index = 0;
+  f32 hysteresis = 0.97f;
+  f32 max_ray_distance = 50.0f;
+
+  vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
+  vuk::Value<vuk::ImageAttachment> ray_data_attachment = {};
+  vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
+  vuk::Value<vuk::ImageAttachment> distance_attachment = {};
+};
+
+struct DDGIApplyContext {
+  u32 volume_count = 0;
+  f32 normal_bias = 0.05f;
+  f32 view_bias = 0.1f;
+  f32 intensity = 1.0f;
+  glm::vec3 ambient_color = {};
+
+  vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
+  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
+  vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
+  vuk::Value<vuk::ImageAttachment> distance_attachment = {};
 };
 
 struct DDGIDebugContext {
   f32 probe_radius = 0.1f;
-  u32 rays_per_probe = 0;
-  u32 frame_index = 0;
+  bool atlas_valid = false;
 
   vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
-  vuk::Value<vuk::ImageAttachment> ray_data_attachment = {};
+  vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
 };
 
@@ -514,7 +549,11 @@ public:
   auto apply_tonemap(this RendererInstance&, PostProcessContext& context) -> vuk::Value<vuk::ImageAttachment>;
   auto apply_debug_view(this RendererInstance&, DebugContext& context, vuk::Extent3D extent)
     -> vuk::Value<vuk::ImageAttachment>;
+  auto allocate_ddgi_atlases(this RendererInstance& self, u32 probe_count) -> void;
   auto trace_ddgi_probes(this RendererInstance& self, DDGITraceContext& context) -> void;
+  auto update_ddgi_probes(this RendererInstance& self, DDGIUpdateContext& context) -> void;
+  auto apply_ddgi(this RendererInstance& self, DDGIApplyContext& context, vuk::Value<vuk::ImageAttachment>&& dst)
+    -> vuk::Value<vuk::ImageAttachment>;
   auto draw_ddgi_probes(
     this RendererInstance& self, DDGIDebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
   ) -> vuk::Value<vuk::ImageAttachment>;
@@ -588,6 +627,15 @@ private:
   vuk::Unique<vuk::Buffer> terrain_patch_visibility_mask_buffer{};
   u32 terrain_patch_visibility_patch_count = 0;
   vuk::Unique<vuk::Buffer> exposure_buffer{};
+
+  u32 ddgi_atlas_probe_count = 0;
+  bool ddgi_history_valid = false;
+  vuk::Unique<vuk::Image> ddgi_irradiance{};
+  vuk::Unique<vuk::ImageView> ddgi_irradiance_view{};
+  vuk::ImageAttachment ddgi_irradiance_attachment = {};
+  vuk::Unique<vuk::Image> ddgi_distance{};
+  vuk::Unique<vuk::ImageView> ddgi_distance_view{};
+  vuk::ImageAttachment ddgi_distance_attachment = {};
 
   vuk::Unique<vuk::Image> vsm_virtual_page_table{};
   vuk::Unique<vuk::ImageView> vsm_virtual_page_table_view{};

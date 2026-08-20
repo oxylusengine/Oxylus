@@ -50,8 +50,15 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_ddgi_rays_per_probe.init(self.system, "rr.ddgi_rays_per_probe", "rays traced per probe each frame", 128);
   self.cvar_ddgi_max_ray_distance
     .init(self.system, "rr.ddgi_max_ray_distance", "world space length of a probe ray", 50.0f);
+  self.cvar_ddgi_max_ray_radiance
+    .init(self.system, "rr.ddgi_max_ray_radiance", "luminance cap on a single probe ray, tames fireflies", 25.0f);
   self.cvar_ddgi_normal_bias
     .init(self.system, "rr.ddgi_normal_bias", "surface offset applied before tracing a shadow ray", 0.05f);
+  self.cvar_ddgi_view_bias
+    .init(self.system, "rr.ddgi_view_bias", "probe lookup offset toward the camera, hides surface leaks", 0.1f);
+  self.cvar_ddgi_intensity.init(self.system, "rr.ddgi_intensity", "scales the probe indirect diffuse", 1.0f);
+  self.cvar_ddgi_hysteresis
+    .init(self.system, "rr.ddgi_hysteresis", "how much of a probe's history survives each update", 0.97f);
   self.cvar_ddgi_probe_debug_radius
     .init(self.system, "rr.ddgi_probe_debug_radius", "world space radius of debug drawn probes", 0.1f);
 
@@ -105,7 +112,11 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["enabled"] = self.cvar_ddgi_enable.as_bool();
   writer["rays_per_probe"] = self.cvar_ddgi_rays_per_probe.get();
   writer["max_ray_distance"] = self.cvar_ddgi_max_ray_distance.get();
+  writer["max_ray_radiance"] = self.cvar_ddgi_max_ray_radiance.get();
   writer["normal_bias"] = self.cvar_ddgi_normal_bias.get();
+  writer["view_bias"] = self.cvar_ddgi_view_bias.get();
+  writer["hysteresis"] = self.cvar_ddgi_hysteresis.get();
+  writer["intensity"] = self.cvar_ddgi_intensity.get();
   writer["probe_debug_radius"] = self.cvar_ddgi_probe_debug_radius.get();
   writer.end_obj();
 
@@ -171,7 +182,11 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_ddgi_enable.set(ddgi_obj["enabled"].get_bool());
     self.cvar_ddgi_rays_per_probe.set(static_cast<i32>(ddgi_obj["rays_per_probe"].get_int64()));
     self.cvar_ddgi_max_ray_distance.set(static_cast<f32>(ddgi_obj["max_ray_distance"].get_double()));
+    self.cvar_ddgi_max_ray_radiance.set(static_cast<f32>(ddgi_obj["max_ray_radiance"].get_double()));
     self.cvar_ddgi_normal_bias.set(static_cast<f32>(ddgi_obj["normal_bias"].get_double()));
+    self.cvar_ddgi_view_bias.set(static_cast<f32>(ddgi_obj["view_bias"].get_double()));
+    self.cvar_ddgi_hysteresis.set(static_cast<f32>(ddgi_obj["hysteresis"].get_double()));
+    self.cvar_ddgi_intensity.set(static_cast<f32>(ddgi_obj["intensity"].get_double()));
     self.cvar_ddgi_probe_debug_radius.set(static_cast<f32>(ddgi_obj["probe_debug_radius"].get_double()));
   }
 

@@ -5,12 +5,12 @@ import ddgi;
 
 [[vk::binding(0, 0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1, 0)]] StructuredBuffer<ProbeVolume> probe_volumes;
-[[vk::binding(2, 0)]] Image2D<f32x4> ray_data;
+[[vk::binding(2, 0)]] Image2D<f32x4> irradiance;
+[[vk::binding(3, 0)]] Sampler linear_clamp_sampler;
 
 struct PushConstants {
     u32 volume_index;
-    u32 rays_per_probe;
-    u32 frame_index;
+    u32 atlas_valid;
     f32 probe_radius;
 };
 [[vk::push_constant]] PushConstants C;
@@ -38,27 +38,9 @@ func vs_main(u32 vertex_index: SV_VertexID, u32 probe_index: SV_InstanceID) -> V
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> f32x4 {
     let N = normalize(input.normal);
-    if (C.rays_per_probe == 0) {
+    if (C.atlas_valid == 0) {
         return f32x4(N * 0.5 + 0.5, 1.0);
     }
 
-    var radiance = f32x3(0.0);
-    var weight_sum = 0.0;
-    for (u32 ray_index = 0; ray_index < C.rays_per_probe; ray_index++) {
-        let direction = probe_ray_direction(ray_index, C.rays_per_probe, C.frame_index);
-        let weight = max(dot(direction, N), 0.0);
-        if (weight <= 0.0) {
-            continue;
-        }
-
-        let ray = ray_data.Load(u32x3(ray_index, input.probe_row, 0));
-        if (ray.a < 0.0) {
-            continue;
-        }
-
-        radiance += ray.rgb * weight;
-        weight_sum += weight;
-    }
-
-    return f32x4(weight_sum > 0.0 ? radiance / weight_sum : f32x3(0.0), 1.0);
+    return f32x4(sample_probe_irradiance(irradiance, linear_clamp_sampler, input.probe_row, N), 1.0);
 }

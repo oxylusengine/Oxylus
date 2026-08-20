@@ -94,7 +94,8 @@ func fs_main(
 
         let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-        let ibl_diffuse = kD * diffuse_sky * albedo_color * Fd_Lambert();
+        let has_ddgi = (scene_flags & SceneFlags::HasDDGI) != 0;
+        let ibl_diffuse = has_ddgi ? f32x3(0.0) : kD * diffuse_sky * albedo_color * Fd_Lambert();
         let ibl_specular = kS * specular_sky * spec_occlusion;
         indirect_illuminance = (ibl_diffuse * occlusion) + ibl_specular;
     }

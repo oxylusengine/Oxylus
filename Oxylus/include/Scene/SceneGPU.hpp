@@ -262,6 +262,18 @@ struct Light {
 // smallest guaranteed 2D image dimension.
 constexpr static u32 DDGI_MAX_PROBE_COUNT = 16384;
 
+// Octahedral tiles, each padded with a one texel border that mirrors the opposite edge so bilinear
+// taps stay continuous across the octahedron seam.
+constexpr static u32 DDGI_IRRADIANCE_TEXELS = 6;
+constexpr static u32 DDGI_DISTANCE_TEXELS = 14;
+constexpr static u32 DDGI_PROBES_PER_ATLAS_ROW = 32;
+
+constexpr auto ddgi_atlas_extent(u32 probe_count, u32 interior_texels) -> vuk::Extent3D {
+  const auto tile = interior_texels + 2;
+  const auto rows = (probe_count + DDGI_PROBES_PER_ATLAS_ROW - 1) / DDGI_PROBES_PER_ATLAS_ROW;
+  return {.width = DDGI_PROBES_PER_ATLAS_ROW * tile, .height = rows * tile, .depth = 1};
+}
+
 constexpr static u32 DDGI_DEBUG_SPHERE_RINGS = 8;
 constexpr static u32 DDGI_DEBUG_SPHERE_SECTORS = 12;
 constexpr static u32 DDGI_DEBUG_SPHERE_VERTEX_COUNT = DDGI_DEBUG_SPHERE_RINGS * DDGI_DEBUG_SPHERE_SECTORS * 6;
@@ -289,6 +301,7 @@ enum class SceneFlags : u32 {
   HasContactShadows = 1 << 9,
   HasSky = 1 << 10,
   TransparentBackground = 1 << 11,
+  HasDDGI = 1 << 12,
 };
 consteval void enable_bitmask(SceneFlags);
 
