@@ -86,6 +86,12 @@ entry_points = ["ts_main", "ms_main", "fs_main"]
 requires = ["bindless", "mesh_shaders"]
 
 [[shader_sessions.programs]]
+name = "tlas_write_instances"
+path = "passes/tlas_write_instances.slang"
+entry_points = ["cs_main"]
+requires = ["ray_tracing"]
+
+[[shader_sessions.programs]]
 name = "visbuffer_clear"
 path = "passes/visbuffer_clear.slang"
 entry_points = ["cs_main"]

@@ -765,6 +765,29 @@ auto RendererInstance::render(
   const auto* terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked() ? self.scene.terrain.get()
                                                                                         : nullptr;
 
+  // This needs to be finished before any RT passes begin executing
+  // should probably move this entire scope to somewhere else, shit_in_a_kettle.gif
+  auto& frame_render_context = *self.renderer.render_context;
+  if (
+    frame_render_context.use_ray_tracing() && self.prepared_frame.mesh_instance_count > 0 &&
+    self.prepared_frame.blas_addresses_buffer.node != nullptr &&
+    self.prepared_frame.mesh_instances_buffer.node != nullptr
+  ) {
+    auto tlas_value = build_scene_tlas(
+      frame_render_context,
+      self.scene_tlas,
+      TLASBuildInfo{
+        .instance_count = self.prepared_frame.mesh_instance_count,
+        .mesh_instances_buffer = self.prepared_frame.mesh_instances_buffer,
+        .transforms_buffer = self.prepared_frame.transforms_world_buffer,
+        .blas_addresses_buffer = self.prepared_frame.blas_addresses_buffer,
+      }
+    );
+    if (tlas_value.node != nullptr) {
+      self.shared_resources.buffer_resources["tlas"] = std::move(tlas_value);
+    }
+  }
+
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0 || terrain != nullptr) {
     auto main_geometry_context = MainGeometryContext{
@@ -1635,6 +1658,24 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshes_buffer = render_context.upload_staging(info.gpu_meshes, *self.meshes_buffer);
   } else if (self.meshes_buffer) {
     self.prepared_frame.meshes_buffer = vuk::acquire_buf("meshes", *self.meshes_buffer, vuk::Access::eMemoryRead);
+  }
+
+  if (!info.gpu_mesh_blas_addresses.empty()) {
+    self.blas_addresses_buffer = render_context.resize_buffer(
+      std::move(self.blas_addresses_buffer),
+      vuk::MemoryUsage::eGPUonly,
+      info.gpu_mesh_blas_addresses.size_bytes()
+    );
+    self.prepared_frame.blas_addresses_buffer = render_context.upload_staging(
+      info.gpu_mesh_blas_addresses,
+      *self.blas_addresses_buffer
+    );
+  } else if (self.blas_addresses_buffer) {
+    self.prepared_frame.blas_addresses_buffer = vuk::acquire_buf(
+      "blas addresses",
+      *self.blas_addresses_buffer,
+      vuk::Access::eMemoryRead
+    );
   }
 
   if (!info.gpu_mesh_instances.empty()) {

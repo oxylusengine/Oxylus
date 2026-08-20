@@ -28,10 +28,12 @@ namespace ox {
 thread_local vuk::Compiler this_thread_compiler;
 
 // i hate this
-PFN_vkCreateDescriptorPool vkCreateDescriptorPool;
-PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout;
-PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets;
-PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
+PFN_vkCreateDescriptorPool vkCreateDescriptorPool = nullptr;
+PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout = nullptr;
+PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets = nullptr;
+PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets = nullptr;
+
+PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR = nullptr;
 
 template <typename T>
 static auto query_device_feature(const vkb::Instance& instance, VkPhysicalDevice physical_device, VkStructureType type)
@@ -411,6 +413,11 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vkCreateDescriptorSetLayout = fps.vkCreateDescriptorSetLayout;
   vkAllocateDescriptorSets = fps.vkAllocateDescriptorSets;
   vkUpdateDescriptorSets = fps.vkUpdateDescriptorSets;
+  if (self.features & RenderContext::Feature::RayTracing) {
+    vkGetAccelerationStructureDeviceAddressKHR = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
+      self.vkb_instance.fp_vkGetDeviceProcAddr(self.device, "vkGetAccelerationStructureDeviceAddressKHR")
+    );
+  }
 
   std::vector<std::unique_ptr<vuk::Executor>> executors;
 
@@ -807,6 +814,15 @@ auto RenderContext::use_mesh_shaders(this const RenderContext& self) -> bool {
   return (self.features & RenderContext::Feature::MeshShaders) && self.context_cvar.cvar_mesh_shaders.as_bool();
 }
 
+auto RenderContext::use_ray_tracing(this const RenderContext& self) -> bool {
+  return (self.features & RenderContext::Feature::RayTracing) && self.context_cvar.cvar_ray_tracing.as_bool() &&
+         vkGetAccelerationStructureDeviceAddressKHR != nullptr;
+}
+
+auto RenderContext::as_scratch_alignment(this const RenderContext& self) -> u64 {
+  return self.runtime->as_properties.minAccelerationStructureScratchOffsetAlignment;
+}
+
 auto RenderContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {
   ZoneScoped;
 
@@ -1034,6 +1050,20 @@ auto RenderContext::sampler(const SamplerID id) -> vuk::Sampler {
   ZoneScoped;
 
   return resources.samplers.copy_slot(id).value_or(vuk::Sampler{});
+}
+
+auto RenderContext::get_accel_structure_device_address(
+  this const RenderContext& self, VkAccelerationStructureKHR handle
+) -> u64 {
+  ZoneScoped;
+
+  auto address_info = VkAccelerationStructureDeviceAddressInfoKHR{
+    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
+    .pNext = nullptr,
+    .accelerationStructure = handle,
+  };
+
+  return vkGetAccelerationStructureDeviceAddressKHR(self.device, &address_info);
 }
 
 auto RenderContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)

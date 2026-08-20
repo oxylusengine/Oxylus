@@ -82,7 +82,7 @@ inline auto calc_frustum_planes(glm::mat4& view_proj_mat, glm::vec4 (&planes)[6]
 bool decompose_transform(const glm::mat4& transform, glm::vec3& translation, glm::vec3& rotation, glm::vec3& scale);
 
 template <typename T>
-static T smooth_damp(
+T smooth_damp(
   const T& current, const T& target, T& current_velocity, float smooth_time, const float max_speed, float delta_time
 ) {
   ZoneScoped;

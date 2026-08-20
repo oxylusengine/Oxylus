@@ -117,6 +117,12 @@ public:
   [[nodiscard]]
   auto use_mesh_shaders(this const RenderContext& self) -> bool;
 
+  [[nodiscard]]
+  auto use_ray_tracing(this const RenderContext& self) -> bool;
+
+  [[nodiscard]]
+  auto as_scratch_alignment(this const RenderContext& self) -> u64;
+
   auto allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID;
   auto destroy_image(const ImageID id) -> void;
   auto image(const ImageID id) -> vuk::Image;
@@ -133,6 +139,8 @@ public:
 
   auto get_max_viewport_count() const -> uint32_t { return vkbphysical_device.properties.limits.maxViewports; }
   auto get_descriptor_set() -> vuk::PersistentDescriptorSet& { return resources.descriptor_set; }
+
+  auto get_accel_structure_device_address(this const RenderContext&, VkAccelerationStructureKHR handle) -> u64;
 
   auto resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
     -> vuk::Unique<vuk::Buffer>;

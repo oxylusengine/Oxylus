@@ -5,10 +5,10 @@
 #include <vuk/Buffer.hpp>
 
 #include "Core/UUID.hpp"
+#include "Render/AccelerationStructure.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
-
 enum class ModelID : u64 { Invalid = std::numeric_limits<u64>::max() };
 
 struct ModelLoadInfo {
@@ -59,6 +59,7 @@ struct Model {
   std::vector<GPU::Mesh> gpu_meshes = {};
   std::vector<option<u32>> material_indices = {}; // these are per mesh, not per MeshGroup
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};
+  std::vector<AccelerationStructure> mesh_blases = {};
 
   std::vector<std::atomic_flag> mesh_ready = {};
   u32 pending_meshes = 0;
