@@ -2,6 +2,7 @@ import common;
 import gpu;
 import scene;
 import visbuffer;
+import hit;
 
 #include <fullscreen.slang>
 
@@ -92,92 +93,44 @@ func fs_main(VertexOutput input) -> FragmentOutput {
         discard;
     }
 
-    let vis = VisBufferData(texel);
-    let meshlet_instance_index = vis.meshlet_instance_index;
-    let meshlet_instance = params.meshlet_instances[meshlet_instance_index];
-    let mesh_instance = params.mesh_instances[meshlet_instance.mesh_instance_index];
-    let mesh = params.meshes[mesh_instance.mesh_index];
-    let material = params.materials[mesh_instance.material_index];
-    let transform = params.transforms[mesh_instance.transform_index];
-    let mesh_lod = mesh.lods[mesh_instance.lod_index];
-    let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
-
     FragmentOutput output = {};
 
-    let indices = meshlet.indices(mesh_lod, vis.triangle_index);
-    if (any(indices > (mesh.vertex_count - 1))) {
+    let geometry = SceneGeometry(params.mesh_instances, params.meshes, params.transforms, params.materials);
+    let tri = resolve_visbuffer_triangle(geometry, params.meshlet_instances, VisBufferData(texel));
+    if (!tri.valid) {
         return output;
     }
-    let positions = meshlet.positions(mesh, indices);
-    let normals = meshlet.normals(mesh, indices);
-    let tex_coords = meshlet.tex_coords(mesh, indices);
-    let world_positions = transform.to_world_positions(positions);
+
+    let material = params.materials[tri.material_index];
+
     let NDC = f32x3(input.tex_coord * 2.0 - 1.0, 1.0);
-    let deriv = compute_partial_derivatives(world_positions, NDC.xy, params.camera.resolution);
-    var tex_coord_grad = deriv.gradient_of(tex_coords);
+    let deriv = compute_partial_derivatives(tri.world_positions, NDC.xy, params.camera.resolution);
+    var tex_coord_grad = deriv.gradient_of(tri.tex_coords);
+    material.transform_uv(tex_coord_grad);
 
-    let uv_size = material.get_uv_size();
-    tex_coord_grad.uv = tex_coord_grad.uv * uv_size + material.get_uv_offset();
-    tex_coord_grad.ddx *= uv_size;
-    tex_coord_grad.ddy *= uv_size;
-
-    // ALBEDO
-    output.albedo_color = material.sample_albedo_color(tex_coord_grad);
-
-    // NORMALS
     const f32x3x3 camera_relative_world_positions = {
-        world_positions[0].xyz - params.camera.position.xyz,
-        world_positions[1].xyz - params.camera.position.xyz,
-        world_positions[2].xyz - params.camera.position.xyz,
+        tri.world_positions[0].xyz - params.camera.position.xyz,
+        tri.world_positions[1].xyz - params.camera.position.xyz,
+        tri.world_positions[2].xyz - params.camera.position.xyz,
     };
-    const f32x3 pos_ddx = mul(deriv.ddx, camera_relative_world_positions);
-    const f32x3 pos_ddy = mul(deriv.ddy, camera_relative_world_positions);
 
-    const f32x3x3 world_normals = transform.to_world_normals(normals);
-    const f32x3 world_normal = normalize(mul(deriv.lambda, world_normals));
+    const f32x3 world_normal = tri.interpolate_normal(deriv.lambda);
+    const TangentFrame frame = build_tangent_frame(
+        world_normal,
+        mul(deriv.ddx, camera_relative_world_positions),
+        mul(deriv.ddy, camera_relative_world_positions),
+        tex_coord_grad.ddx,
+        tex_coord_grad.ddy
+    );
 
-    const f32x3 pos_ddx_s = pos_ddx - dot(pos_ddx, world_normal) * world_normal;
-    const f32x3 pos_ddy_s = pos_ddy - dot(pos_ddy, world_normal) * world_normal;
-    const f32x2 uv_ddx = tex_coord_grad.ddx;
-    const f32x2 uv_ddy = tex_coord_grad.ddy;
+    let surface = shade_surface(material, frame, tex_coord_grad);
 
-    const i32 jacobian_sign = sign(uv_ddx.x * uv_ddy.y - uv_ddx.y * uv_ddy.x);
-    f32x3 tangent = jacobian_sign * (uv_ddy.y * pos_ddx_s - uv_ddx.y * pos_ddy_s);
-    if (jacobian_sign != 0.0) {
-        tangent = normalize(tangent);
-    }
-    const f32 w = jacobian_sign * sign(dot(pos_ddy, cross(world_normal, pos_ddx)));
-    f32x3 bitangent = -w * cross(world_normal, tangent);
-    f32x3 normal = world_normal;
-
-    if (material.flags & MaterialFlag::HasNormalImage) {
-        f32x3 sampled_normal = material.sample_normal_color(tex_coord_grad) * 2.0 - 1.0;
-
-        let two_component = (material.flags & MaterialFlag::NormalTwoComponent) != MaterialFlag::None;
-        let flip_y = (material.flags & MaterialFlag::NormalFlipY) != MaterialFlag::None;
-
-        sampled_normal.y = flip_y ? -sampled_normal.y : sampled_normal.y;
-        sampled_normal.z = two_component ? sqrt(saturate(1.0 - dot(sampled_normal.xy, sampled_normal.xy)))
-                                         : sampled_normal.z;
-
-        normal = sampled_normal.x * tangent
-               + sampled_normal.y * bitangent
-               + sampled_normal.z * normal;
-        normal = normalize(normal);
-    }
-
-    output.normal_color.xy = com::vec3_to_oct(normal);
+    output.albedo_color = surface.albedo;
+    output.normal_color.xy = com::vec3_to_oct(surface.normal);
     output.normal_color.zw = com::vec3_to_oct(world_normal);
-
-    // EMISSION
-    output.emission_color = material.sample_emissive_color(tex_coord_grad);
-
-    // METALLIC ROUGHNESS
-    const f32x2 metallic_roughness_color = material.sample_metallic_roughness(tex_coord_grad);
-    output.metallic_roughness_occlusion_color.xy = metallic_roughness_color;
-
-    const f32 occlusion_color = material.sample_occlusion_color(tex_coord_grad);
-    output.metallic_roughness_occlusion_color.z = occlusion_color;
+    output.emission_color = surface.emissive;
+    output.metallic_roughness_occlusion_color.xy = f32x2(surface.metallic, surface.roughness);
+    output.metallic_roughness_occlusion_color.z = surface.occlusion;
 
     return output;
 }
