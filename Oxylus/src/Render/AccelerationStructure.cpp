@@ -128,13 +128,14 @@ auto build_mesh_blas(
   build_info.dstAccelerationStructure = *out_blas.handle;
   build_info.scratchData.deviceAddress = out_scratch->device_address;
 
+  // TODO: vuk needs more granular acces for the mesh param under the pass
   auto blas_buffer = vuk::discard_buf("blas", *out_blas.buffer);
   auto build_pass = vuk::make_pass(
     "blas build",
     [build_info, geometry, primitive_count](
       vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eAccelerationStructureBuildWrite) blas_ba,
-      VUK_BA(vuk::eAccelerationStructureBuildRead) mesh_ba
+      VUK_BA(vuk::eAccelerationStructureBuildWrite) blas,
+      VUK_BA(vuk::eAccelerationStructureBuildRead) mesh
     ) mutable {
       build_info.pGeometries = &geometry;
 
@@ -147,7 +148,7 @@ auto build_mesh_blas(
       const auto* range_ptr = &range;
       cmd_list.build_acceleration_structures(1, &build_info, &range_ptr);
 
-      return blas_ba;
+      return blas;
     }
   );
 
@@ -236,14 +237,15 @@ auto SceneTLAS::reserve(this SceneTLAS& self, RenderContext& render_context, u32
   return true;
 }
 
-auto build_scene_tlas(RenderContext& render_context, SceneTLAS& tlas, TLASBuildInfo&& info) -> vuk::Value<vuk::Buffer> {
+auto build_scene_tlas(RenderContext& render_context, SceneTLAS& scene_tlas, TLASBuildInfo&& info)
+  -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
 
-  if (!tlas.reserve(render_context, info.instance_count)) {
+  if (!scene_tlas.reserve(render_context, info.instance_count)) {
     return {};
   }
 
-  auto instances_buffer = vuk::discard_buf("tlas instances", *tlas.instances_buffer);
+  auto instances_buffer = vuk::discard_buf("tlas instances", *scene_tlas.instances_buffer);
   auto write_instances_pass = vuk::make_pass(
     "tlas write instances",
     [instance_count = info.instance_count](
@@ -273,6 +275,9 @@ auto build_scene_tlas(RenderContext& render_context, SceneTLAS& tlas, TLASBuildI
     std::move(info.blas_addresses_buffer)
   );
 
+  render_context.wait_on(std::move(instances_buffer));
+  instances_buffer = vuk::acquire_buf("tlas instances", *scene_tlas.instances_buffer, vuk::Access::eMemoryWrite);
+
   auto geometry = VkAccelerationStructureGeometryKHR{
     .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
     .pNext = nullptr,
@@ -283,7 +288,7 @@ auto build_scene_tlas(RenderContext& render_context, SceneTLAS& tlas, TLASBuildI
            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
            .pNext = nullptr,
            .arrayOfPointers = VK_FALSE,
-           .data = {.deviceAddress = tlas.instances_buffer->device_address},
+           .data = {.deviceAddress = scene_tlas.instances_buffer->device_address},
          }},
     .flags = 0,
   };
@@ -295,20 +300,20 @@ auto build_scene_tlas(RenderContext& render_context, SceneTLAS& tlas, TLASBuildI
     .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
     .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
     .srcAccelerationStructure = VK_NULL_HANDLE,
-    .dstAccelerationStructure = *tlas.acceleration_structure.handle,
+    .dstAccelerationStructure = *scene_tlas.acceleration_structure.handle,
     .geometryCount = 1,
     .pGeometries = &geometry,
     .ppGeometries = nullptr,
-    .scratchData = {.deviceAddress = tlas.scratch_buffer->device_address},
+    .scratchData = {.deviceAddress = scene_tlas.scratch_buffer->device_address},
   };
 
-  auto tlas_buffer = vuk::discard_buf("tlas", *tlas.acceleration_structure.buffer);
+  auto tlas_buffer = vuk::discard_buf("tlas", *scene_tlas.acceleration_structure.buffer);
   auto build_pass = vuk::make_pass(
     "tlas build",
     [build_info, geometry, instance_count = info.instance_count](
       vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eAccelerationStructureBuildWrite) tlas_ba,
-      VUK_BA(vuk::eAccelerationStructureBuildRead) instances_ba
+      VUK_BA(vuk::eAccelerationStructureBuildWrite) tlas,
+      VUK_BA(vuk::eAccelerationStructureBuildRead) instances
     ) mutable {
       build_info.pGeometries = &geometry;
 
@@ -321,7 +326,7 @@ auto build_scene_tlas(RenderContext& render_context, SceneTLAS& tlas, TLASBuildI
       const auto* range_ptr = &range;
       cmd_list.build_acceleration_structures(1, &build_info, &range_ptr);
 
-      return tlas_ba;
+      return tlas;
     }
   );
 

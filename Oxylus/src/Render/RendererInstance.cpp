@@ -1060,7 +1060,29 @@ auto RendererInstance::render(
     sky_aerial_perspective_attachment = std::move(atmos_context.sky_aerial_perspective_lut_attachment);
   }
 
-  if (self.gpu_scene_flags & GPU::SceneFlags::HasGTAO) {
+  const auto tlas_it = self.shared_resources.buffer_resources.find("tlas");
+  const auto use_rtao = cvar.cvar_rtao_enable.as_bool() && tlas_it != self.shared_resources.buffer_resources.end();
+  if (use_rtao) {
+    // RTAO feeds the same attachment the GTAO path writes, so PBR needs the flag either way.
+    self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
+
+    auto rtao_context = RTAOContext{
+      .tlas = &self.scene_tlas,
+      .ray_count = static_cast<u32>(std::max(cvar.cvar_rtao_ray_count.get(), 1)),
+      .radius = cvar.cvar_rtao_radius.get(),
+      .power = cvar.cvar_rtao_power.get(),
+      .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+      .tlas_buffer = std::move(tlas_it->second),
+      .normal_attachment = std::move(normal_attachment),
+      .depth_attachment = std::move(depth_attachment),
+      .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
+    };
+    self.generate_rtao(rtao_context);
+
+    normal_attachment = std::move(rtao_context.normal_attachment);
+    depth_attachment = std::move(rtao_context.depth_attachment);
+    vbgtao_occlusion_attachment = std::move(rtao_context.ambient_occlusion_attachment);
+  } else if (self.gpu_scene_flags & GPU::SceneFlags::HasGTAO) {
     auto ao_context = AmbientOcclusionContext{
       .noise_attachment = std::move(hilbert_noise_lut_attachment),
       .normal_attachment = std::move(normal_attachment),

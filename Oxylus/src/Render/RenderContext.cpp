@@ -15,6 +15,7 @@
 
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
+#include "Memory/Stack.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/UploadBatch.hpp"
 #include "Render/Window.hpp"
@@ -1130,9 +1131,10 @@ auto RenderContext::upload_staging(
   vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Buffer>&& dst, vuk::source_location LOC
 ) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
+  memory::ScopedStack stack;
 
   auto upload_pass = vuk::make_pass(
-    "upload staging",
+    stack.format_char("{}", LOC),
     [](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::Access::eTransferRead) src_ba,

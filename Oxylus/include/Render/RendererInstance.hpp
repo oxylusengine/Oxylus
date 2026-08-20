@@ -361,6 +361,19 @@ struct AmbientOcclusionContext {
   vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
 };
 
+struct RTAOContext {
+  const SceneTLAS* tlas = nullptr;
+  u32 ray_count = 2;
+  f32 radius = 1.0f;
+  f32 power = 1.0f;
+  u32 frame_index = 0;
+
+  vuk::Value<vuk::Buffer> tlas_buffer = {};
+  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
+};
+
 struct PBRContext {
   vuk::PersistentDescriptorSet* bindless_set = nullptr;
 
@@ -462,6 +475,7 @@ public:
   auto resolve_shadowmap(this RendererInstance&, ShadowResolveContext& context) -> void;
   auto draw_atmosphere(this RendererInstance&, AtmosphereContext& context) -> void;
   auto generate_ambient_occlusion(this RendererInstance&, AmbientOcclusionContext& context) -> void;
+  auto generate_rtao(this RendererInstance&, RTAOContext& context) -> void;
   auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
     -> vuk::Value<vuk::ImageAttachment>;
   auto apply_eye_adaptation(this RendererInstance&, PostProcessContext& context) -> void;

@@ -40,6 +40,12 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_vbgtao_radius.init(self.system, "pp.vbgtao_radius", "vbgtao radius", 0.5f);
   self.cvar_vbgtao_final_power.init(self.system, "pp.vbgtao_final_power", "vbgtao final power", 1.2f);
 
+  self.cvar_rtao_enable
+    .init(self.system, "pp.rtao", "trace ambient occlusion against the scene TLAS instead of screen space", 0);
+  self.cvar_rtao_ray_count.init(self.system, "pp.rtao_ray_count", "rays traced per pixel", 2);
+  self.cvar_rtao_radius.init(self.system, "pp.rtao_radius", "rtao world space ray length", 1.0f);
+  self.cvar_rtao_power.init(self.system, "pp.rtao_power", "rtao final power", 1.0f);
+
   self.cvar_bloom_enable.init(self.system, "pp.bloom", "use bloom", 1);
   self.cvar_bloom_threshold.init(self.system, "pp.bloom_threshold", "bloom threshold", 1.0f);
   self.cvar_bloom_soft_threshold.init(self.system, "pp.bloom_soft_threshold", "bloom soft threshold", 0.125f);
@@ -77,6 +83,13 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["thickness"] = self.cvar_vbgtao_thickness.get();
   writer["radius"] = self.cvar_vbgtao_radius.get();
   writer["final_power"] = self.cvar_vbgtao_final_power.get();
+  writer.end_obj();
+
+  writer["rtao"].begin_obj();
+  writer["enabled"] = self.cvar_rtao_enable.as_bool();
+  writer["ray_count"] = self.cvar_rtao_ray_count.get();
+  writer["radius"] = self.cvar_rtao_radius.get();
+  writer["power"] = self.cvar_rtao_power.get();
   writer.end_obj();
 
   writer["bloom"].begin_obj();
@@ -126,6 +139,14 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_vbgtao_thickness.set(static_cast<f32>(gtao_obj["thickness"]->get_double()));
     self.cvar_vbgtao_radius.set(static_cast<f32>(gtao_obj["radius"].get_double()));
     self.cvar_vbgtao_final_power.set(static_cast<f32>(gtao_obj["final_power"].get_double()));
+  }
+
+  auto rtao_obj = json["rtao"];
+  if (!rtao_obj.error()) {
+    self.cvar_rtao_enable.set(rtao_obj["enabled"].get_bool());
+    self.cvar_rtao_ray_count.set(static_cast<i32>(rtao_obj["ray_count"].get_int64()));
+    self.cvar_rtao_radius.set(static_cast<f32>(rtao_obj["radius"].get_double()));
+    self.cvar_rtao_power.set(static_cast<f32>(rtao_obj["power"].get_double()));
   }
 
   auto bloom_obj = json["bloom"];

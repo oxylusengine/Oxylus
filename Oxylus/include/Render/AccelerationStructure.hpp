@@ -49,5 +49,5 @@ struct TLASBuildInfo {
   vuk::Value<vuk::Buffer> blas_addresses_buffer = {};
 };
 
-auto build_scene_tlas(RenderContext& render_context, SceneTLAS& tlas, TLASBuildInfo&& info) -> vuk::Value<vuk::Buffer>;
+auto build_scene_tlas(RenderContext& render_context, SceneTLAS& scene_tlas, TLASBuildInfo&& info) -> vuk::Value<vuk::Buffer>;
 } // namespace ox

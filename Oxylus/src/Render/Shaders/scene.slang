@@ -25,8 +25,6 @@ public enum DebugView : i32 {
   GeometricNormal,
 };
 
-// How a shader picks a mip level. A rasterized pixel has screen-space gradients; a ray
-// hit has none, so it names a level outright.
 public interface IUVSample {
   func sample(u32 image_index, u32 sampler_index) -> f32x4;
   [[mutating]] func scale_offset(f32x2 size, f32x2 offset);

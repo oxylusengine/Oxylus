@@ -2,13 +2,6 @@ import common;
 import gpu;
 import scene;
 
-struct AccelerationStructureInstance {
-    f32 transform[12];
-    u32 custom_index_and_mask;
-    u32 sbt_offset_and_flags;
-    u64 blas_address;
-};
-
 [[vk::binding(0)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(1)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(2)]] StructuredBuffer<u64> blas_addresses;
@@ -31,12 +24,18 @@ func cs_main(
 
     var instance = AccelerationStructureInstance();
 
-    // Vulkan wants a row-major 3x4
+    const f32x4 columns[4] = {
+        mul(world, f32x4(1.0, 0.0, 0.0, 0.0)),
+        mul(world, f32x4(0.0, 1.0, 0.0, 0.0)),
+        mul(world, f32x4(0.0, 0.0, 1.0, 0.0)),
+        mul(world, f32x4(0.0, 0.0, 0.0, 1.0)),
+    };
+
     [ForceUnroll]
     for (u32 row = 0; row < 3; row++) {
         [ForceUnroll]
         for (u32 col = 0; col < 4; col++) {
-            instance.transform[row * 4 + col] = world[row][col];
+            instance.transform[row * 4 + col] = columns[col][row];
         }
     }
 

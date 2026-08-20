@@ -605,6 +605,10 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       cvar_sys.cvar_vbgtao_radius.set_default();
       cvar_sys.cvar_vbgtao_thickness.set_default();
       cvar_sys.cvar_vbgtao_final_power.set_default();
+      cvar_sys.cvar_rtao_enable.set_default();
+      cvar_sys.cvar_rtao_ray_count.set_default();
+      cvar_sys.cvar_rtao_radius.set_default();
+      cvar_sys.cvar_rtao_power.set_default();
       cvar_sys.cvar_contact_shadows_enabled.set_default();
       cvar_sys.cvar_contact_shadows_steps.set_default();
       cvar_sys.cvar_contact_shadows_thickness.set_default();
@@ -737,6 +741,27 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
           UI::property<float>("Final Power", cvar_sys.cvar_vbgtao_final_power.get_ptr(), 0.f, 10.f);
           UI::end_properties();
         }
+        ImGui::TreePop();
+      }
+
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      if (ImGui::TreeNodeEx("RTAO", TREE_FLAGS, "%s", "RTAO")) {
+        const auto has_ray_tracing = render_context.features & RenderContext::Feature::RayTracing;
+        ImGui::BeginDisabled(!has_ray_tracing);
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          UI::property(
+            "Enabled",
+            cvar_sys.cvar_rtao_enable.get_ptr_bool(),
+            has_ray_tracing ? "Trace occlusion rays against the scene TLAS instead of running GTAO"
+                            : "This device does not support ray queries"
+          );
+          UI::property("Ray Count", cvar_sys.cvar_rtao_ray_count.get_ptr(), 1, 32);
+          UI::property<float>("Radius", cvar_sys.cvar_rtao_radius.get_ptr(), 0.05f, 20.f);
+          UI::property<float>("Power", cvar_sys.cvar_rtao_power.get_ptr(), 0.f, 10.f);
+          UI::end_properties();
+        }
+        ImGui::EndDisabled();
         ImGui::TreePop();
       }
 

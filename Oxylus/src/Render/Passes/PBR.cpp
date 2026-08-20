@@ -310,6 +310,54 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
   );
 }
 
+auto RendererInstance::generate_rtao(this RendererInstance& self, RTAOContext& context) -> void {
+  ZoneScoped;
+
+  auto rtao_pass = vuk::make_pass(
+    "rtao",
+    [tlas = *context.tlas->acceleration_structure.handle,
+     ray_count = context.ray_count,
+     radius = context.radius,
+     power = context.power,
+     frame_index = context.frame_index](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eComputeRead | vuk::eAccelerationStructureBuildRead) tlas_buffer,
+      VUK_BA(vuk::eComputeUniformRead) camera,
+      VUK_IA(vuk::eComputeSampled) depth,
+      VUK_IA(vuk::eComputeSampled) normals,
+      VUK_IA(vuk::eComputeRW) ambient_occlusion
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("rtao")
+        .bind_acceleration_structure(0, 0, tlas)
+        .bind_buffer(0, 1, camera)
+        .bind_image(0, 2, depth)
+        .bind_image(0, 3, normals)
+        .bind_image(0, 4, ambient_occlusion)
+        .bind_sampler(0, 5, vuk::NearestSamplerClamped)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(ray_count, radius, power, frame_index))
+        .dispatch_invocations_per_pixel(ambient_occlusion);
+
+      return std::make_tuple(tlas_buffer, camera, depth, normals, ambient_occlusion);
+    }
+  );
+
+  std::tie(
+    context.tlas_buffer,
+    self.prepared_frame.camera_buffer,
+    context.depth_attachment,
+    context.normal_attachment,
+    context.ambient_occlusion_attachment
+  ) =
+    rtao_pass(
+      std::move(context.tlas_buffer),
+      std::move(self.prepared_frame.camera_buffer),
+      std::move(context.depth_attachment),
+      std::move(context.normal_attachment),
+      std::move(context.ambient_occlusion_attachment)
+    );
+}
+
 auto RendererInstance::apply_pbr(
   this RendererInstance& self, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
 ) -> vuk::Value<vuk::ImageAttachment> {

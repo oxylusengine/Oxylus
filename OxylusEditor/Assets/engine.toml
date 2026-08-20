@@ -240,6 +240,12 @@ path = "passes/gtao/vbgtao_denoise.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "rtao"
+path = "passes/rtao.slang"
+entry_points = ["cs_main"]
+requires = ["ray_tracing"]
+
+[[shader_sessions.programs]]
 name = "fxaa"
 path = "passes/fxaa/fxaa.slang"
 entry_points = ["vs_main", "fs_main"]

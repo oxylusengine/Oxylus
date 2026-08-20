@@ -39,6 +39,11 @@ struct RendererCVar {
   AutoCVar_Float cvar_vbgtao_radius;
   AutoCVar_Float cvar_vbgtao_final_power;
 
+  AutoCVar_Int cvar_rtao_enable;
+  AutoCVar_Int cvar_rtao_ray_count;
+  AutoCVar_Float cvar_rtao_radius;
+  AutoCVar_Float cvar_rtao_power;
+
   AutoCVar_Int cvar_bloom_enable;
   AutoCVar_Float cvar_bloom_threshold;
   AutoCVar_Float cvar_bloom_soft_threshold;
