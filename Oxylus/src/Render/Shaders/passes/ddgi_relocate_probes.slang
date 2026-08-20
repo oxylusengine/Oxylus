@@ -6,9 +6,6 @@ import ddgi;
 [[vk::binding(1, 0)]] Image2D<f32x4> ray_data;
 [[vk::binding(2, 0)]] RWStructuredBuffer<ProbeState> probe_states;
 
-// Above this share of backface hits a probe is taken to be inside geometry rather than merely facing a
-// wall, which is both what relocation steers by and what classification acts on.
-static const f32 BACKFACE_RATIO_THRESHOLD = 0.25;
 // A probe may wander at most this fraction of a grid cell, so it never crosses into its neighbour's
 // cell and breaks the trilinear weights that assume a regular grid.
 static const f32 MAX_OFFSET_RATIO = 0.45;
@@ -36,6 +33,11 @@ func cs_main(
     }
 
     let probe_row = volume.probe_offset + probe_index;
+
+    let flags = probe_states[probe_row].flags;
+    if (!probe_updates_this_frame(flags)) {
+        return;
+    }
 
     var backface_count = 0u;
     var closest_backface_distance = com::HALF_MAX;
@@ -68,7 +70,8 @@ func cs_main(
     }
 
     let backface_ratio = f32(backface_count) / f32(rays_per_probe);
-    let inside_geometry = backface_ratio > BACKFACE_RATIO_THRESHOLD;
+    let was_inside = probe_is_inactive(flags);
+    let inside_geometry = backface_ratio > (was_inside ? PROBE_ESCAPED_BACKFACE_RATIO : PROBE_INSIDE_BACKFACE_RATIO);
 
     let current_offset = probe_states[probe_row].offset;
     var full_offset = current_offset;
@@ -92,7 +95,12 @@ func cs_main(
 
     ProbeState state;
     state.offset = accepted ? com::sanitize(full_offset) : current_offset;
-    state.inactive = inside_geometry && !accepted ? 1u : 0u;
+    state.flags = probe_pack_flags(
+        inside_geometry,
+        probe_updates_this_frame(flags),
+        probe_is_reset(flags),
+        probe_update_interval(flags)
+    );
 
     probe_states[probe_row] = state;
 }

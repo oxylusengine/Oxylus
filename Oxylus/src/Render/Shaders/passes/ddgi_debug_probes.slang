@@ -34,7 +34,7 @@ func vs_main(u32 vertex_index: SV_VertexID, u32 probe_index: SV_InstanceID) -> V
     output.position = mul(camera.projection_view, f32x4(world_position, 1.0));
     output.normal = normal;
     output.probe_row = probe_row;
-    output.inactive = probe_states[probe_row].inactive;
+    output.inactive = probe_is_inactive(probe_states[probe_row].flags) ? 1u : 0u;
 
     return output;
 }

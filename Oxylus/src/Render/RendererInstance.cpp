@@ -1,5 +1,7 @@
 #include "Render/RendererInstance.hpp"
 
+#include <algorithm>
+
 #include "Asset/AssetManager.hpp"
 #include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
@@ -1142,6 +1144,16 @@ auto RendererInstance::render(
           ? vuk::acquire_ia("ddgi distance", self.ddgi_distance_attachment, vuk::eFragmentSampled)
           : vuk::clear_image(vuk::discard_ia("ddgi distance", self.ddgi_distance_attachment), vuk::Black<f32>);
 
+      auto ddgi_select_context = DDGISelectContext{
+        .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .max_interval = static_cast<u32>(std::clamp(cvar.cvar_ddgi_update_max_interval.get(), 1, 255)),
+        .full_rate_distance = cvar.cvar_ddgi_update_full_rate_distance.get(),
+        .update_all = !self.ddgi_history_valid,
+        .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+        .probe_states_buffer = std::move(ddgi_probe_states_buffer),
+      };
+      self.select_ddgi_probes(ddgi_select_context);
+
       auto ddgi_trace_context = DDGITraceContext{
         .bindless_set = &bindless_set,
         .tlas = &self.scene_tlas,
@@ -1151,6 +1163,7 @@ auto RendererInstance::render(
         .light_count = static_cast<u32>(self.scene.lights.size()),
         .max_ray_distance = cvar.cvar_ddgi_max_ray_distance.get(),
         .max_ray_radiance = cvar.cvar_ddgi_max_ray_radiance.get(),
+        .shadow_ray_offset = cvar.cvar_ddgi_shadow_ray_offset.get(),
         .normal_bias = cvar.cvar_ddgi_normal_bias.get(),
         .sun_direction = self.directional_light.direction,
         .sun_intensity = self.directional_light.intensity,
@@ -1159,11 +1172,11 @@ auto RendererInstance::render(
         .bounce_valid = self.ddgi_history_valid,
         .view_bias = cvar.cvar_ddgi_view_bias.get(),
         .tlas_buffer = std::move(tlas_it->second),
-        .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+        .probe_volumes_buffer = std::move(ddgi_select_context.probe_volumes_buffer),
+        .probe_states_buffer = std::move(ddgi_select_context.probe_states_buffer),
         .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
         .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
         .ray_data_attachment = std::move(ray_data_attachment),
-        .probe_states_buffer = std::move(ddgi_probe_states_buffer),
         .irradiance_attachment = std::move(irradiance_attachment),
         .distance_attachment = std::move(distance_attachment),
       };
@@ -1193,8 +1206,8 @@ auto RendererInstance::render(
         .rays_per_probe = rays_per_probe,
         .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
         .hysteresis = cvar.cvar_ddgi_hysteresis.get(),
-        .max_ray_distance = cvar.cvar_ddgi_max_ray_distance.get(),
         .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
+        .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
         .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),
         .irradiance_attachment = std::move(ddgi_trace_context.irradiance_attachment),
         .distance_attachment = std::move(ddgi_trace_context.distance_attachment),
@@ -1203,7 +1216,7 @@ auto RendererInstance::render(
 
       ddgi_irradiance_attachment = std::move(ddgi_update_context.irradiance_attachment);
       ddgi_distance_attachment = std::move(ddgi_update_context.distance_attachment);
-      ddgi_probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer);
+      ddgi_probe_states_buffer = std::move(ddgi_update_context.probe_states_buffer);
       ddgi_atlas_valid = true;
       self.gpu_scene_flags |= GPU::SceneFlags::HasDDGI;
     }
@@ -1682,47 +1695,81 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
                                       GPU::DebugView::DDGIProbes &&
                                     cvar.cvar_enable_debug_renderer.as_bool();
 
+    auto candidates = ankerl::svector<GPU::ProbeVolume, 8>{};
     self.scene.world
       .query_builder<const TransformComponent, const ProbeVolumeComponent>() //
       .build()
-      .each([&self, draw_volume_bounds](flecs::entity e, const TransformComponent&, const ProbeVolumeComponent& c) {
-        if (!e.enabled()) {
-          return;
-        }
-
-        const auto counts = glm::max(c.probe_counts, glm::uvec3(1));
-        const auto spacing = glm::max(c.probe_spacing, glm::vec3(0.01f));
-        const glm::vec3 origin = self.scene.get_world_transform(e)[3];
-        const auto extents = glm::vec3(counts - 1u) * spacing * 0.5f;
-
-        const auto probe_count = counts.x * counts.y * counts.z;
-        const auto probe_offset = self.probe_volumes.empty()
-                                    ? 0u
-                                    : self.probe_volumes.back().probe_offset + self.probe_volumes.back().probe_count;
-
-        if (probe_offset + probe_count > GPU::DDGI_MAX_PROBE_COUNT) {
-          OX_LOG_WARN(
-            "Probe volume '{}' does not fit, the scene is over the {} probe limit.",
-            e.name().c_str(),
-            GPU::DDGI_MAX_PROBE_COUNT
-          );
-          return;
-        }
-
-        self.probe_volumes.emplace_back(
-          GPU::ProbeVolume{
-            .origin = origin,
-            .probe_offset = probe_offset,
-            .spacing = spacing,
-            .counts = counts,
-            .probe_count = probe_count,
+      .each(
+        [&self,
+         &candidates,
+         camera_position = cam.position](flecs::entity e, const TransformComponent&, const ProbeVolumeComponent& c) {
+          if (!e.enabled()) {
+            return;
           }
-        );
 
-        if (draw_volume_bounds) {
-          App::mod<ox::DebugRenderer>().draw_aabb(AABB(origin - extents, origin + extents), glm::vec4(0, 1, 1, 1));
+          const auto counts = glm::max(c.probe_counts, glm::uvec3(1));
+          const auto base_spacing = glm::max(c.probe_spacing, glm::vec3(0.01f));
+          const glm::vec3 anchor = self.scene.get_world_transform(e)[3];
+          const auto cascades = std::clamp(c.cascade_count, 1u, GPU::DDGI_MAX_CASCADE_COUNT);
+
+          for (u32 cascade = 0; cascade < cascades; cascade++) {
+            const auto spacing = base_spacing * static_cast<f32>(1u << cascade);
+
+            auto scroll = glm::ivec3(0);
+            auto blend_origin = anchor;
+            if (c.follow_camera) {
+              scroll = glm::ivec3(glm::floor((camera_position - anchor) / spacing + 0.5f));
+              blend_origin = camera_position;
+            }
+
+            candidates.emplace_back(
+              GPU::ProbeVolume{
+                .origin = anchor + glm::vec3(scroll) * spacing,
+                .spacing = spacing,
+                .counts = counts,
+                .probe_count = counts.x * counts.y * counts.z,
+                .scroll = scroll,
+                .camera_locked = c.follow_camera ? 1u : 0u,
+                .blend_origin = blend_origin,
+              }
+            );
+          }
         }
-      });
+      );
+
+    std::stable_sort(
+      candidates.begin(),
+      candidates.end(),
+      [](const GPU::ProbeVolume& lhs, const GPU::ProbeVolume& rhs) {
+        return lhs.spacing.x * lhs.spacing.y * lhs.spacing.z < rhs.spacing.x * rhs.spacing.y * rhs.spacing.z;
+      }
+    );
+
+    for (auto& volume : candidates) {
+      const auto probe_offset = self.probe_volumes.empty()
+                                  ? 0u
+                                  : self.probe_volumes.back().probe_offset + self.probe_volumes.back().probe_count;
+
+      if (probe_offset + volume.probe_count > GPU::DDGI_MAX_PROBE_COUNT) {
+        OX_LOG_WARN(
+          "Dropped {} probe volume cascades, the scene is over the {} probe limit.",
+          candidates.size() - self.probe_volumes.size(),
+          GPU::DDGI_MAX_PROBE_COUNT
+        );
+        break;
+      }
+
+      volume.probe_offset = probe_offset;
+      self.probe_volumes.emplace_back(volume);
+
+      if (draw_volume_bounds) {
+        const auto extents = glm::vec3(volume.counts - 1u) * volume.spacing * 0.5f;
+        App::mod<ox::DebugRenderer>().draw_aabb(
+          AABB(volume.origin - extents, volume.origin + extents),
+          glm::vec4(0, 1, 1, 1)
+        );
+      }
+    }
   }
 
   self.post_proces_settings.exposure = cvar.cvar_exposure.get();

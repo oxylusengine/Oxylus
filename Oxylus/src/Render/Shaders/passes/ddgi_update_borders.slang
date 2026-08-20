@@ -5,6 +5,7 @@ import ddgi;
 [[vk::binding(0, 0)]] StructuredBuffer<ProbeVolume> probe_volumes;
 [[vk::binding(1, 0)]] RWTexture2D<f32x4, 1, ImageFormat.RGBA16F> irradiance;
 [[vk::binding(2, 0)]] RWTexture2D<f32x2, 1, ImageFormat.RG16F> probe_distance;
+[[vk::binding(3, 0)]] StructuredBuffer<ProbeState> probe_states;
 
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]
@@ -16,6 +17,10 @@ func cs_main(u32x3 group_id: SV_GroupID, u32x3 thread_id: SV_GroupThreadID, unif
     }
 
     let probe_row = volume.probe_offset + probe_index;
+    if (!probe_updates_this_frame(probe_states[probe_row].flags)) {
+        return;
+    }
+
     let index = thread_id.x;
 
     if (index < probe_border_texel_count(IRRADIANCE_TEXELS)) {

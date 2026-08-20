@@ -401,7 +401,8 @@ struct DDGITraceContext {
   u32 light_count = 0;
   f32 max_ray_distance = 50.0f;
   f32 max_ray_radiance = 25.0f;
-  f32 normal_bias = 0.05f;
+  f32 shadow_ray_offset = 0.05f;
+  f32 normal_bias = 0.25f;
   glm::vec3 sun_direction = {};
   f32 sun_intensity = 0.0f;
   glm::vec3 ambient_color = {};
@@ -424,12 +425,22 @@ struct DDGIUpdateContext {
   u32 rays_per_probe = 128;
   u32 frame_index = 0;
   f32 hysteresis = 0.97f;
-  f32 max_ray_distance = 50.0f;
 
   vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
+  vuk::Value<vuk::Buffer> probe_states_buffer = {};
   vuk::Value<vuk::ImageAttachment> ray_data_attachment = {};
   vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
   vuk::Value<vuk::ImageAttachment> distance_attachment = {};
+};
+
+struct DDGISelectContext {
+  u32 frame_index = 0;
+  u32 max_interval = 8;
+  f32 full_rate_distance = 10.0f;
+  bool update_all = false;
+
+  vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
+  vuk::Value<vuk::Buffer> probe_states_buffer = {};
 };
 
 struct DDGIRelocateContext {
@@ -564,6 +575,7 @@ public:
     -> vuk::Value<vuk::ImageAttachment>;
   auto allocate_ddgi_atlases(this RendererInstance& self, u32 probe_count) -> void;
   auto trace_ddgi_probes(this RendererInstance& self, DDGITraceContext& context) -> void;
+  auto select_ddgi_probes(this RendererInstance& self, DDGISelectContext& context) -> void;
   auto relocate_ddgi_probes(this RendererInstance& self, DDGIRelocateContext& context) -> void;
   auto update_ddgi_probes(this RendererInstance& self, DDGIUpdateContext& context) -> void;
   auto apply_ddgi(this RendererInstance& self, DDGIApplyContext& context, vuk::Value<vuk::ImageAttachment>&& dst)
@@ -617,7 +629,8 @@ private:
   GPU::DirectionalLight directional_light = {};
   f32 first_clipmap_width = 1.0f;
   f32 clipmap_selection_bias = 2.0f;
-  ankerl::svector<GPU::ProbeVolume, 4> probe_volumes = {};
+  ankerl::svector<GPU::ProbeVolume, 8> probe_volumes = {};
+  ankerl::svector<glm::ivec3, 8> probe_volume_scrolls = {};
   GPU::Atmosphere atmosphere = {};
   GPU::SkyData sky_data = {};
   GPU::EyeAdaptationSettings eye_adaptation = {};

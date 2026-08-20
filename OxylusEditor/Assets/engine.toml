@@ -262,6 +262,11 @@ entry_points = ["cs_main"]
 requires = ["ray_tracing", "bindless"]
 
 [[shader_sessions.programs]]
+name = "ddgi_select_probes"
+path = "passes/ddgi_select_probes.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "ddgi_relocate_probes"
 path = "passes/ddgi_relocate_probes.slang"
 entry_points = ["cs_main"]

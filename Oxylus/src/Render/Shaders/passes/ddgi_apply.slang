@@ -65,8 +65,8 @@ func fs_main(
         view_bias
     );
 
-    let diffuse = sample.valid ? sample.irradiance * intensity : ambient_color;
-    let specular = sample.valid ? sample.specular * intensity : ambient_color;
+    let diffuse = lerp(ambient_color, sample.irradiance * intensity, sample.coverage);
+    let specular = lerp(ambient_color, sample.specular * intensity, sample.coverage);
 
     let NoV = abs(dot(N, V)) + 1e-5;
     let F0 = lerp(f32x3(0.04), albedo_color, metallic);

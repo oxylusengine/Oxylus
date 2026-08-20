@@ -261,7 +261,7 @@ struct Light {
 // Probes of every volume share one ray data texture, one row each, so the total is bound by the
 // smallest guaranteed 2D image dimension.
 constexpr static u32 DDGI_MAX_PROBE_COUNT = 16384;
-
+constexpr static u32 DDGI_MAX_CASCADE_COUNT = 8;
 // Octahedral tiles, each padded with a one texel border that mirrors the opposite edge so bilinear
 // taps stay continuous across the octahedron seam.
 constexpr static u32 DDGI_IRRADIANCE_TEXELS = 6;
@@ -280,7 +280,7 @@ constexpr static u32 DDGI_DEBUG_SPHERE_VERTEX_COUNT = DDGI_DEBUG_SPHERE_RINGS * 
 
 struct ProbeState {
   alignas(4) glm::vec3 offset = {};
-  alignas(4) u32 inactive = 0;
+  alignas(4) u32 flags = 0;
 };
 
 struct ProbeVolume {
@@ -290,6 +290,10 @@ struct ProbeVolume {
   alignas(4) u32 pad1 = 0;
   alignas(4) glm::uvec3 counts = {};
   alignas(4) u32 probe_count = 0;
+  alignas(4) glm::ivec3 scroll = {};
+  alignas(4) u32 camera_locked = 0;
+  alignas(4) glm::vec3 blend_origin = {};
+  alignas(4) u32 pad2 = 0;
 };
 
 enum class SceneFlags : u32 {

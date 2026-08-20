@@ -81,6 +81,7 @@ func shade_hit(
     f32x3 view_direction,
     f32x3 sun_direction,
     f32 sun_intensity,
+    f32 shadow_ray_offset,
     f32 normal_bias,
     f32 view_bias,
     u32 light_count,
@@ -89,13 +90,13 @@ func shade_hit(
 ) -> f32x3 {
     let N = hit.surface.normal;
     let diffuse_albedo = hit.surface.albedo.rgb * (1.0 - hit.surface.metallic);
-    let shadow_origin = hit.position + hit.face_normal * normal_bias;
+    let shadow_origin = hit.position + hit.face_normal * shadow_ray_offset;
 
     var radiance = hit.surface.emissive;
 
     let NoL = saturate(dot(N, sun_direction));
     if ((scene_flags & SceneFlags::HasDirectionalLight) != 0 && NoL > 0.0) {
-        if (!trace_occluded(shadow_origin, sun_direction, normal_bias, com::HALF_MAX)) {
+        if (!trace_occluded(shadow_origin, sun_direction, shadow_ray_offset, com::HALF_MAX)) {
             let illuminance = sun_illuminance(atmosphere, hit.position, sun_direction, sun_intensity);
             radiance += diffuse_albedo * Fd_Lambert() * illuminance * NoL;
         }
@@ -145,9 +146,7 @@ func shade_hit(
             normal_bias,
             view_bias
         );
-        if (bounce.valid) {
-            radiance += diffuse_albedo * bounce.irradiance;
-        }
+        radiance += diffuse_albedo * bounce.irradiance * bounce.coverage;
     }
 
     return radiance;
@@ -166,6 +165,7 @@ func cs_main(
     uniform u32 light_count,
     uniform u32 bounce_valid,
     uniform f32 max_ray_distance,
+    uniform f32 shadow_ray_offset,
     uniform f32 normal_bias,
     uniform f32 view_bias,
     uniform f32x3 sun_direction,
@@ -177,6 +177,10 @@ func cs_main(
     let ray_index = thread_id.x;
     let probe_index = thread_id.y;
     if (ray_index >= rays_per_probe || probe_index >= volume.probe_count) {
+        return;
+    }
+
+    if (!probe_updates_this_frame(probe_states[volume.probe_offset + probe_index].flags)) {
         return;
     }
 
@@ -221,6 +225,7 @@ func cs_main(
                     -direction,
                     sun_direction,
                     sun_intensity,
+                    shadow_ray_offset,
                     normal_bias,
                     view_bias,
                     light_count,

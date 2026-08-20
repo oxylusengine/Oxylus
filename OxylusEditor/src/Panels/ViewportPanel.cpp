@@ -802,6 +802,21 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "How much of a probe's history survives each update"
           );
           UI::property(
+            "Max Update Interval",
+            cvar_sys.cvar_ddgi_update_max_interval.get_ptr(),
+            1,
+            64,
+            1.0f,
+            "Most frames a probe may go without being retraced. 1 retraces every probe every frame"
+          );
+          UI::property<float>(
+            "Full Rate Distance",
+            cvar_sys.cvar_ddgi_update_full_rate_distance.get_ptr(),
+            1.f,
+            200.f,
+            "Probes within this distance of the camera retrace every frame"
+          );
+          UI::property(
             "Probe Relocation",
             cvar_sys.cvar_ddgi_probe_relocation.get_ptr_bool(),
             "Move probes out of geometry they are buried in, and drop the ones that stay stuck"
@@ -814,18 +829,25 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "How far relocation keeps a probe off a surface, in world units"
           );
           UI::property<float>(
+            "Shadow Ray Offset",
+            cvar_sys.cvar_ddgi_shadow_ray_offset.get_ptr(),
+            0.f,
+            1.f,
+            "Offsets a probe ray hit before the shadow ray is traced from it, in world units"
+          );
+          UI::property<float>(
             "Normal Bias",
             cvar_sys.cvar_ddgi_normal_bias.get_ptr(),
             0.f,
-            2.f,
-            "Offsets the probe lookup along the surface normal, in world units"
+            1.f,
+            "Offsets the probe lookup along the surface normal, in probe spacings"
           );
           UI::property<float>(
             "View Bias",
             cvar_sys.cvar_ddgi_view_bias.get_ptr(),
             0.f,
-            2.f,
-            "Offsets the probe lookup toward the camera, in world units"
+            1.f,
+            "Offsets the probe lookup toward the camera, in probe spacings"
           );
           UI::property<float>("Intensity", cvar_sys.cvar_ddgi_intensity.get_ptr(), 0.f, 10.f);
           UI::property<float>(
