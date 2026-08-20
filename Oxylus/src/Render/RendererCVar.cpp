@@ -47,6 +47,11 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_rtao_power.init(self.system, "pp.rtao_power", "rtao final power", 1.0f);
 
   self.cvar_ddgi_enable.init(self.system, "rr.ddgi", "enable dynamic diffuse global illumination probe volumes", 1);
+  self.cvar_ddgi_rays_per_probe.init(self.system, "rr.ddgi_rays_per_probe", "rays traced per probe each frame", 128);
+  self.cvar_ddgi_max_ray_distance
+    .init(self.system, "rr.ddgi_max_ray_distance", "world space length of a probe ray", 50.0f);
+  self.cvar_ddgi_normal_bias
+    .init(self.system, "rr.ddgi_normal_bias", "surface offset applied before tracing a shadow ray", 0.05f);
   self.cvar_ddgi_probe_debug_radius
     .init(self.system, "rr.ddgi_probe_debug_radius", "world space radius of debug drawn probes", 0.1f);
 
@@ -98,6 +103,9 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
 
   writer["ddgi"].begin_obj();
   writer["enabled"] = self.cvar_ddgi_enable.as_bool();
+  writer["rays_per_probe"] = self.cvar_ddgi_rays_per_probe.get();
+  writer["max_ray_distance"] = self.cvar_ddgi_max_ray_distance.get();
+  writer["normal_bias"] = self.cvar_ddgi_normal_bias.get();
   writer["probe_debug_radius"] = self.cvar_ddgi_probe_debug_radius.get();
   writer.end_obj();
 
@@ -161,6 +169,9 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
   auto ddgi_obj = json["ddgi"];
   if (!ddgi_obj.error()) {
     self.cvar_ddgi_enable.set(ddgi_obj["enabled"].get_bool());
+    self.cvar_ddgi_rays_per_probe.set(static_cast<i32>(ddgi_obj["rays_per_probe"].get_int64()));
+    self.cvar_ddgi_max_ray_distance.set(static_cast<f32>(ddgi_obj["max_ray_distance"].get_double()));
+    self.cvar_ddgi_normal_bias.set(static_cast<f32>(ddgi_obj["normal_bias"].get_double()));
     self.cvar_ddgi_probe_debug_radius.set(static_cast<f32>(ddgi_obj["probe_debug_radius"].get_double()));
   }
 

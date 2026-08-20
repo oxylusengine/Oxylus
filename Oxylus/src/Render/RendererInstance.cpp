@@ -1079,6 +1079,7 @@ auto RendererInstance::render(
     };
     self.generate_rtao(rtao_context);
 
+    tlas_it->second = std::move(rtao_context.tlas_buffer);
     normal_attachment = std::move(rtao_context.normal_attachment);
     depth_attachment = std::move(rtao_context.depth_attachment);
     vbgtao_occlusion_attachment = std::move(rtao_context.ambient_occlusion_attachment);
@@ -1097,6 +1098,57 @@ auto RendererInstance::render(
     depth_attachment = std::move(ao_context.depth_attachment);
     vbgtao_depth_differences_attachment = std::move(ao_context.depth_differences_attachment);
     vbgtao_occlusion_attachment = std::move(ao_context.ambient_occlusion_attachment);
+  }
+
+  // --- DDGI Probe Tracing ---
+  auto ddgi_ray_data_attachment = vuk::Value<vuk::ImageAttachment>{};
+  auto ddgi_rays_per_probe = 0_u32;
+  if (!self.probe_volumes.empty()) {
+    auto total_probe_count = 0_u32;
+    for (const auto& volume : self.probe_volumes) {
+      total_probe_count += volume.probe_count;
+    }
+
+    const auto rays_per_probe = static_cast<u32>(std::clamp(cvar.cvar_ddgi_rays_per_probe.get(), 8, 512));
+
+    ddgi_ray_data_attachment = vuk::declare_ia(
+      "ddgi ray data",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+       .extent = {.width = rays_per_probe, .height = total_probe_count, .depth = 1},
+       .format = vuk::Format::eR16G16B16A16Sfloat,
+       .sample_count = vuk::Samples::e1,
+       .level_count = 1,
+       .layer_count = 1}
+    );
+    ddgi_ray_data_attachment = vuk::clear_image(std::move(ddgi_ray_data_attachment), vuk::Black<f32>);
+
+    if (tlas_it != self.shared_resources.buffer_resources.end()) {
+      auto ddgi_trace_context = DDGITraceContext{
+        .bindless_set = &bindless_set,
+        .tlas = &self.scene_tlas,
+        .scene_flags = self.gpu_scene_flags,
+        .rays_per_probe = rays_per_probe,
+        .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .light_count = static_cast<u32>(self.scene.lights.size()),
+        .max_ray_distance = cvar.cvar_ddgi_max_ray_distance.get(),
+        .normal_bias = cvar.cvar_ddgi_normal_bias.get(),
+        .sun_direction = self.directional_light.direction,
+        .sun_intensity = self.directional_light.intensity,
+        .ambient_color = self.sky_data.ambient_color,
+        .tlas_buffer = std::move(tlas_it->second),
+        .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+        .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
+        .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
+        .ray_data_attachment = std::move(ddgi_ray_data_attachment),
+      };
+      self.trace_ddgi_probes(ddgi_trace_context);
+
+      tlas_it->second = std::move(ddgi_trace_context.tlas_buffer);
+      sky_view_lut_attachment = std::move(ddgi_trace_context.sky_view_lut_attachment);
+      sky_transmittance_lut_attachment = std::move(ddgi_trace_context.sky_transmittance_lut_attachment);
+      ddgi_ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment);
+      ddgi_rays_per_probe = rays_per_probe;
+    }
   }
 
   auto pbr_context = PBRContext{
@@ -1271,12 +1323,16 @@ auto RendererInstance::render(
   if (debug_view == GPU::DebugView::DDGIProbes && debugging && !self.probe_volumes.empty()) {
     auto ddgi_debug_context = DDGIDebugContext{
       .probe_radius = cvar.cvar_ddgi_probe_debug_radius.get(),
+      .rays_per_probe = ddgi_rays_per_probe,
+      .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
       .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+      .ray_data_attachment = std::move(ddgi_ray_data_attachment),
       .depth_attachment = std::move(depth_attachment),
     };
 
     final_attachment = self.draw_ddgi_probes(ddgi_debug_context, std::move(final_attachment));
     depth_attachment = std::move(ddgi_debug_context.depth_attachment);
+    ddgi_ray_data_attachment = std::move(ddgi_debug_context.ray_data_attachment);
   }
 
   // --- FXAA Pass ---
@@ -1544,12 +1600,27 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         const glm::vec3 origin = self.scene.get_world_transform(e)[3];
         const auto extents = glm::vec3(counts - 1u) * spacing * 0.5f;
 
+        const auto probe_count = counts.x * counts.y * counts.z;
+        const auto probe_offset = self.probe_volumes.empty()
+                                    ? 0u
+                                    : self.probe_volumes.back().probe_offset + self.probe_volumes.back().probe_count;
+
+        if (probe_offset + probe_count > GPU::DDGI_MAX_PROBE_COUNT) {
+          OX_LOG_WARN(
+            "Probe volume '{}' does not fit, the scene is over the {} probe limit.",
+            e.name().c_str(),
+            GPU::DDGI_MAX_PROBE_COUNT
+          );
+          return;
+        }
+
         self.probe_volumes.emplace_back(
           GPU::ProbeVolume{
             .origin = origin,
+            .probe_offset = probe_offset,
             .spacing = spacing,
             .counts = counts,
-            .probe_count = counts.x * counts.y * counts.z,
+            .probe_count = probe_count,
           }
         );
 

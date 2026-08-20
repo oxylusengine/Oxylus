@@ -258,13 +258,17 @@ struct Light {
   alignas(4) u32 pad[2] = {};
 };
 
+// Probes of every volume share one ray data texture, one row each, so the total is bound by the
+// smallest guaranteed 2D image dimension.
+constexpr static u32 DDGI_MAX_PROBE_COUNT = 16384;
+
 constexpr static u32 DDGI_DEBUG_SPHERE_RINGS = 8;
 constexpr static u32 DDGI_DEBUG_SPHERE_SECTORS = 12;
 constexpr static u32 DDGI_DEBUG_SPHERE_VERTEX_COUNT = DDGI_DEBUG_SPHERE_RINGS * DDGI_DEBUG_SPHERE_SECTORS * 6;
 
 struct ProbeVolume {
   alignas(4) glm::vec3 origin = {};
-  alignas(4) u32 pad0 = 0;
+  alignas(4) u32 probe_offset = 0;
   alignas(4) glm::vec3 spacing = {};
   alignas(4) u32 pad1 = 0;
   alignas(4) glm::uvec3 counts = {};
