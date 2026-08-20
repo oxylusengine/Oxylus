@@ -44,6 +44,9 @@ struct RendererCVar {
   AutoCVar_Float cvar_rtao_radius;
   AutoCVar_Float cvar_rtao_power;
 
+  AutoCVar_Int cvar_ddgi_enable;
+  AutoCVar_Float cvar_ddgi_probe_debug_radius;
+
   AutoCVar_Int cvar_bloom_enable;
   AutoCVar_Float cvar_bloom_threshold;
   AutoCVar_Float cvar_bloom_soft_threshold;

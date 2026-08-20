@@ -24,6 +24,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   registry.bind_value<&glm::vec2::x, &glm::vec2::y>("glm::vec2");
   registry.bind_value<&glm::ivec2::x, &glm::ivec2::y>("glm::ivec2");
   registry.bind_value<&glm::vec3::x, &glm::vec3::y, &glm::vec3::z>("glm::vec3");
+  registry.bind_value<&glm::uvec3::x, &glm::uvec3::y, &glm::uvec3::z>("glm::uvec3");
   registry.bind_value<&glm::vec4::x, &glm::vec4::y, &glm::vec4::z, &glm::vec4::w>("glm::vec4");
   registry.bind_matrix<glm::mat3, glm::vec3, 3>("glm::mat3");
   registry.bind_matrix<glm::mat4, glm::vec4, 4>("glm::mat4");
@@ -158,6 +159,11 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::minimum_shadow_distance,
       &C::first_clipmap_width,
       &C::clipmap_selection_bias>();
+  }
+
+  {
+    using C = ProbeVolumeComponent;
+    registry.bind<&C::probe_counts, &C::probe_spacing>();
   }
 
   {

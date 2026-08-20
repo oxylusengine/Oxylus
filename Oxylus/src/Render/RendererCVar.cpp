@@ -18,7 +18,7 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     "rr.debug_view",
     "0: None, 1: Triangles, 2: Meshlets, 3: Overdraw, 4: Materials, 5: Mesh Instances, 6: Mesh LoDs, 7: Albedo Color, "
     "8: Normal Color, 9: Emissive Color, 10: Metallic Color, 11: Roughness Color, 12: Baked Ambient Occlusion, 13: "
-    "Screen Space Ambient Occlusion, 14: Virtual Shadowmaps",
+    "Screen Space Ambient Occlusion, 14: Geometric Normal, 15: Virtual Shadowmaps, 16: DDGI Probes",
     0
   );
   self.cvar_culling_frustum.init(self.system, "rr.culling_frustum", "Frustum Culling", 1);
@@ -45,6 +45,10 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_rtao_ray_count.init(self.system, "pp.rtao_ray_count", "rays traced per pixel", 2);
   self.cvar_rtao_radius.init(self.system, "pp.rtao_radius", "rtao world space ray length", 1.0f);
   self.cvar_rtao_power.init(self.system, "pp.rtao_power", "rtao final power", 1.0f);
+
+  self.cvar_ddgi_enable.init(self.system, "rr.ddgi", "enable dynamic diffuse global illumination probe volumes", 1);
+  self.cvar_ddgi_probe_debug_radius
+    .init(self.system, "rr.ddgi_probe_debug_radius", "world space radius of debug drawn probes", 0.1f);
 
   self.cvar_bloom_enable.init(self.system, "pp.bloom", "use bloom", 1);
   self.cvar_bloom_threshold.init(self.system, "pp.bloom_threshold", "bloom threshold", 1.0f);
@@ -90,6 +94,11 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["ray_count"] = self.cvar_rtao_ray_count.get();
   writer["radius"] = self.cvar_rtao_radius.get();
   writer["power"] = self.cvar_rtao_power.get();
+  writer.end_obj();
+
+  writer["ddgi"].begin_obj();
+  writer["enabled"] = self.cvar_ddgi_enable.as_bool();
+  writer["probe_debug_radius"] = self.cvar_ddgi_probe_debug_radius.get();
   writer.end_obj();
 
   writer["bloom"].begin_obj();
@@ -147,6 +156,12 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_rtao_ray_count.set(static_cast<i32>(rtao_obj["ray_count"].get_int64()));
     self.cvar_rtao_radius.set(static_cast<f32>(rtao_obj["radius"].get_double()));
     self.cvar_rtao_power.set(static_cast<f32>(rtao_obj["power"].get_double()));
+  }
+
+  auto ddgi_obj = json["ddgi"];
+  if (!ddgi_obj.error()) {
+    self.cvar_ddgi_enable.set(ddgi_obj["enabled"].get_bool());
+    self.cvar_ddgi_probe_debug_radius.set(static_cast<f32>(ddgi_obj["probe_debug_radius"].get_double()));
   }
 
   auto bloom_obj = json["bloom"];

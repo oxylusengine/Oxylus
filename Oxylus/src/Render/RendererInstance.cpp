@@ -1267,6 +1267,18 @@ auto RendererInstance::render(
     final_attachment = ctx.get_image_resource("final_attachment");
   }
 
+  // --- DDGI Probe Debug Pass ---
+  if (debug_view == GPU::DebugView::DDGIProbes && debugging && !self.probe_volumes.empty()) {
+    auto ddgi_debug_context = DDGIDebugContext{
+      .probe_radius = cvar.cvar_ddgi_probe_debug_radius.get(),
+      .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+      .depth_attachment = std::move(depth_attachment),
+    };
+
+    final_attachment = self.draw_ddgi_probes(ddgi_debug_context, std::move(final_attachment));
+    depth_attachment = std::move(ddgi_debug_context.depth_attachment);
+  }
+
   // --- FXAA Pass ---
   if (self.gpu_scene_flags & GPU::SceneFlags::HasFXAA) {
     auto fxaa_attachment = vuk::declare_ia(
@@ -1363,7 +1375,7 @@ auto RendererInstance::render(
     debug_context.vsm_clipmaps_buffer = std::move(rmvsm_virtual_clipmaps_buffer);
   }
 
-  if (debugging && self.prepared_frame.mesh_instance_count > 0) {
+  if (debugging && debug_view != GPU::DebugView::DDGIProbes && self.prepared_frame.mesh_instance_count > 0) {
     dst_attachment = self.apply_debug_view(debug_context, dst_extent);
   }
 
@@ -1512,6 +1524,40 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
       }
     });
+
+  self.probe_volumes.clear();
+  if (cvar.cvar_ddgi_enable.as_bool()) {
+    const auto draw_volume_bounds = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get()) ==
+                                      GPU::DebugView::DDGIProbes &&
+                                    cvar.cvar_enable_debug_renderer.as_bool();
+
+    self.scene.world
+      .query_builder<const TransformComponent, const ProbeVolumeComponent>() //
+      .build()
+      .each([&self, draw_volume_bounds](flecs::entity e, const TransformComponent&, const ProbeVolumeComponent& c) {
+        if (!e.enabled()) {
+          return;
+        }
+
+        const auto counts = glm::max(c.probe_counts, glm::uvec3(1));
+        const auto spacing = glm::max(c.probe_spacing, glm::vec3(0.01f));
+        const glm::vec3 origin = self.scene.get_world_transform(e)[3];
+        const auto extents = glm::vec3(counts - 1u) * spacing * 0.5f;
+
+        self.probe_volumes.emplace_back(
+          GPU::ProbeVolume{
+            .origin = origin,
+            .spacing = spacing,
+            .counts = counts,
+            .probe_count = counts.x * counts.y * counts.z,
+          }
+        );
+
+        if (draw_volume_bounds) {
+          App::mod<ox::DebugRenderer>().draw_aabb(AABB(origin - extents, origin + extents), glm::vec4(0, 1, 1, 1));
+        }
+      });
+  }
 
   self.post_proces_settings.exposure = cvar.cvar_exposure.get();
 

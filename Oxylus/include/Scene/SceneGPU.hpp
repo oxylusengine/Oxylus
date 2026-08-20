@@ -41,6 +41,7 @@ enum class DebugView : i32 {
   GTAO,
   GeometricNormal,
   RMVSM,
+  DDGIProbes,
 
   Count,
 };
@@ -255,6 +256,19 @@ struct Light {
   alignas(4) f32 outer_cone_angle = 0.0f; // spot only (radians)
   alignas(4) LightKind kind = LightKind::Point;
   alignas(4) u32 pad[2] = {};
+};
+
+constexpr static u32 DDGI_DEBUG_SPHERE_RINGS = 8;
+constexpr static u32 DDGI_DEBUG_SPHERE_SECTORS = 12;
+constexpr static u32 DDGI_DEBUG_SPHERE_VERTEX_COUNT = DDGI_DEBUG_SPHERE_RINGS * DDGI_DEBUG_SPHERE_SECTORS * 6;
+
+struct ProbeVolume {
+  alignas(4) glm::vec3 origin = {};
+  alignas(4) u32 pad0 = 0;
+  alignas(4) glm::vec3 spacing = {};
+  alignas(4) u32 pad1 = 0;
+  alignas(4) glm::uvec3 counts = {};
+  alignas(4) u32 probe_count = 0;
 };
 
 enum class SceneFlags : u32 {

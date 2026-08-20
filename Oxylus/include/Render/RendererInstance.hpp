@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ankerl/svector.h>
 #include <ankerl/unordered_dense.h>
 
 #include "Asset/Texture.hpp"
@@ -391,6 +392,13 @@ struct PBRContext {
   vuk::Value<vuk::ImageAttachment> resolved_shadows_attachment = {};
 };
 
+struct DDGIDebugContext {
+  f32 probe_radius = 0.1f;
+
+  vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+};
+
 struct DebugContext {
   f32 overdraw_heatmap_scale = 0.0f;
   GPU::DebugView debug_view = GPU::DebugView::None;
@@ -483,6 +491,9 @@ public:
   auto apply_tonemap(this RendererInstance&, PostProcessContext& context) -> vuk::Value<vuk::ImageAttachment>;
   auto apply_debug_view(this RendererInstance&, DebugContext& context, vuk::Extent3D extent)
     -> vuk::Value<vuk::ImageAttachment>;
+  auto draw_ddgi_probes(
+    this RendererInstance& self, DDGIDebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
+  ) -> vuk::Value<vuk::ImageAttachment>;
   auto draw_bounding_boxes(
     this RendererInstance&,
     vuk::Value<vuk::ImageAttachment>&& depth_attachment,
@@ -529,6 +540,7 @@ private:
   GPU::DirectionalLight directional_light = {};
   f32 first_clipmap_width = 1.0f;
   f32 clipmap_selection_bias = 2.0f;
+  ankerl::svector<GPU::ProbeVolume, 4> probe_volumes = {};
   GPU::Atmosphere atmosphere = {};
   GPU::SkyData sky_data = {};
   GPU::EyeAdaptationSettings eye_adaptation = {};

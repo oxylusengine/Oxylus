@@ -71,6 +71,7 @@ void EditorTheme::init(this EditorTheme& self) {
   self.component_icon_map[typeid(SpriteAnimationComponent).hash_code()] = ICON_MDI_SHAPE_SQUARE_PLUS;
   self.component_icon_map[typeid(AtmosphereComponent).hash_code()] = ICON_MDI_WEATHER_CLOUDY;
   self.component_icon_map[typeid(AutoExposureComponent).hash_code()] = ICON_MDI_CAMERA_ENHANCE;
+  self.component_icon_map[typeid(ProbeVolumeComponent).hash_code()] = ICON_MDI_GRID;
 
   self.apply_theme();
   self.set_style();

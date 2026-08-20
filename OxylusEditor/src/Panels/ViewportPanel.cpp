@@ -682,7 +682,8 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "Baked Occlusion",
             "GTAO",
             "Geometric Normal",
-            "Virtual Shadowmaps"
+            "Virtual Shadowmaps",
+            "DDGI Probes"
           };
           UI::property(
             "Debug View",
