@@ -2842,8 +2842,11 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
     self.renderer_cvar.from_json(config_json.value());
   }
 
+  auto& asset_man = App::mod<AssetManager>();
+
   std::vector<UUID> requested_assets = {};
 
+  std::vector<UUID> requested_scripts = {};
   auto scripts_array = doc["scripts"];
   if (!scripts_array.error()) {
     for (auto script_json : scripts_array.get_array()) {
@@ -2851,11 +2854,20 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
       auto uuid_str = uuid_json["uuid"].get_string();
       if (!uuid_str.error()) {
         auto script_uuid = UUID::from_string(uuid_str.value_unsafe()).value();
-        requested_assets.emplace_back(script_uuid);
+        requested_scripts.emplace_back(script_uuid);
       }
     }
   } else {
     OX_LOG_ERROR("No scripts field found in scene!");
+  }
+
+  // on_add callback of scripts should be called before entities are deserialized.
+  for (auto& script : requested_scripts) {
+    if (!asset_man.is_loaded(script)) {
+      asset_man.load_asset(script);
+    }
+
+    self.add_lua_system(script);
   }
 
   auto entities_array = doc["entities"];
@@ -2876,21 +2888,14 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   OX_LOG_INFO("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
 
   for (const auto& asset_uuid : requested_assets) {
-    auto& asset_man = App::mod<AssetManager>();
     // Snapshot the type and release the read guard before load_asset()/add_lua_system(),
     // which re-lock the registry.
-    auto asset_type = AssetType::None;
     auto exists = false;
     if (auto asset = asset_man.get_asset(asset_uuid)) {
       exists = true;
-      asset_type = asset->type;
     }
     if (exists) {
-      if (asset_type == AssetType::Script) {
-        self.add_lua_system(asset_uuid);
-      } else {
         asset_man.load_asset(asset_uuid);
-      }
     } else {
       // Not an imported/physical asset
       // Most likely was created on runtime and never written to a file, these should never exist.
