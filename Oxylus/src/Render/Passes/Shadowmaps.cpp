@@ -438,13 +438,9 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     .mesh_instance_count = self.prepared_frame.mesh_instance_count,
   };
 
-  // Cull once against the largest clipmap, whose frustum contains every smaller
-  // clipmap. Both rendering paths build one counted draw from that superset; the
-  // mesh path refines it in the task shader, while the traditional path rejects
-  // unbacked and clean pages in the fragment shader.
   auto cull_geometry_context = CullGeometryContext{
     .use_hiz = false,
-    .use_hpb = false,
+    .use_hpb = true,
     .cull_flags = GPU::CullFlag::TestFrustum,
     .hpb_attachment = std::move(hpb_attachment),
   };
@@ -458,9 +454,12 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
 
   cull_geometry_context.cull_camera = clipmap_camera;
   cull_geometry_context.init_cull_meshes = true;
-  cull_geometry_context.vsm_layer_index = clipmap_index;
-  cull_geometry_context.vsm_page_offset = clipmap.page_offset;
+  cull_geometry_context.vsm_clipmaps_buffer = std::move(context.directional_clipmaps_buffer);
+  cull_geometry_context.vsm_clipmap_dirty_flags_buffer = std::move(clipmap_dirty_flags_buffer);
+  cull_geometry_context.vsm_clipmap_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT;
   self.cull_geometry(cull_geometry_context);
+  context.directional_clipmaps_buffer = std::move(cull_geometry_context.vsm_clipmaps_buffer);
+  clipmap_dirty_flags_buffer = std::move(cull_geometry_context.vsm_clipmap_dirty_flags_buffer);
   auto draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
 
   if (self.prepared_frame.use_mesh_shaders) {
@@ -710,7 +709,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         .bind_image(0, 7, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
         .bind_buffer(0, 8, draw_clipmaps)
         .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
-        .push_constants(vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment, 0, vsm_ctx)
+        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, vsm_ctx)
         .draw_indexed_indirect_count(RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT, triangle_indirect, draw_count);
 
       return std::make_tuple(

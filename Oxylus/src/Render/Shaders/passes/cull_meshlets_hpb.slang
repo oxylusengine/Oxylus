@@ -2,6 +2,7 @@ import common;
 import gpu;
 import scene;
 import cull;
+import rmvsm;
 
 #include <defines.slang>
 
@@ -14,6 +15,8 @@ import cull;
 [[vk::binding(6)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
 [[vk::binding(7)]] Texture2DArray<u8> hpb;
 [[vk::binding(8)]] SamplerState hpb_sampler;
+[[vk::binding(9)]] StructuredBuffer<VirtualClipmap> clipmaps;
+[[vk::binding(10)]] StructuredBuffer<u32> clipmap_dirty_flags;
 
 groupshared u32 visible_count_shared;
 groupshared u32 base_index_shared;
@@ -25,8 +28,7 @@ func cs_main(
     uint global_thread_id : SV_DispatchThreadID,
     uint group_thread_id : SV_GroupThreadID,
     uniform CullCamera camera,
-    uniform u32 vsm_layer_index,
-    uniform i32x2 vsm_page_offset
+    uniform u32 clipmap_count
 ) -> void {
     if (group_thread_id == 0) {
         visible_count_shared = 0;
@@ -52,10 +54,28 @@ func cs_main(
         let cone_visible = cone_cutoff >= 1.0 || !test_cone_directional(cone_axis, cone_cutoff, camera.position);
 
         if (cone_visible && test_frustum(mvp, aabb_center, aabb_extent)) {
-            var visible = true;
+            var visible = false;
 
-            if (let screen_aabb = project_aabb(mvp, camera.near_clip, aabb_center, aabb_extent)) {
-                visible = test_vsm_page(screen_aabb, hpb, hpb_sampler, vsm_layer_index, vsm_page_offset);
+            for (var clipmap_index = 0u; clipmap_index < clipmap_count; clipmap_index++) {
+                if (clipmap_dirty_flags[clipmap_index] == 0u) {
+                    continue;
+                }
+
+                let clipmap = clipmaps[clipmap_index];
+                let clipmap_mvp = mul(clipmap.projection_view_mat, transform.world);
+                if (!test_frustum(clipmap_mvp, aabb_center, aabb_extent)) {
+                    continue;
+                }
+
+                if (let screen_aabb = project_aabb(clipmap_mvp, clipmap.z_near, aabb_center, aabb_extent)) {
+                    visible = test_vsm_page(screen_aabb, hpb, hpb_sampler, clipmap_index, clipmap.page_offset);
+                } else {
+                    visible = true;
+                }
+
+                if (visible) {
+                    break;
+                }
             }
 
             if (visible) {
