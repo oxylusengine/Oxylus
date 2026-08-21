@@ -175,6 +175,11 @@ public:
   auto set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void;
   auto clear_terrain_edits(this Scene& self) -> void;
 
+  // Needs the chassis rigidbody to exist already, so it runs after create_rigidbody. Wheels are read
+  // from child entities carrying VehicleWheelComponent, in hierarchy order.
+  auto create_vehicle(this Scene& self, flecs::entity entity, VehicleComponent& component) -> void;
+  auto destroy_vehicle(this Scene& self, VehicleComponent& component) -> void;
+
   auto render(
     this Scene& self,
     vuk::Value<vuk::ImageAttachment>&& dst_attachment,

@@ -311,11 +311,8 @@ auto SceneHierarchyViewer::draw_entity_node(
     if (ImGui::MenuItem("Rename", "F2"))
       renaming_entity_ = entity;
     if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
-      auto clone_entity = [](flecs::entity e) -> flecs::entity {
-        std::string clone_name = e.name().c_str();
-        while (e.world().lookup(clone_name.data())) {
-          clone_name = fmt::format("{}_clone", clone_name);
-        }
+      auto clone_entity = [this](flecs::entity e) -> flecs::entity {
+        std::string clone_name = this->scene_->safe_entity_name(fmt::format("{}_clone", e.name().c_str()));
         auto cloned_entity = e.clone(true);
         return cloned_entity.set_name(clone_name.data());
       };

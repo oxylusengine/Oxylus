@@ -4,6 +4,8 @@
 #include <string>
 #include <unordered_map>
 
+#include "Core/Option.hpp"
+
 namespace ox {
 struct Notification {
   std::string title;
@@ -25,10 +27,12 @@ struct Notification {
 
 struct NotificationSystem {
   std::unordered_map<std::string, Notification> active_notifications;
+  std::vector<Notification> notification_history = {};
 
-  auto add(Notification&& notif) -> void;
-  auto draw() -> void;
-  auto draw_single(Notification& notif) -> void;
+  auto add(this NotificationSystem& self, Notification&& notif) -> void;
+  auto get_last_notification(this NotificationSystem& self) -> option<Notification>;
+  auto draw(this NotificationSystem& self) -> void;
+  auto draw_single(this NotificationSystem& self, Notification& notif) -> void;
 };
 
 } // namespace ox

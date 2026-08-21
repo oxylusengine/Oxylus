@@ -16,6 +16,9 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 // clang-format on
 #include <RmlUi/Core.h>
 #include <glm/gtx/compatibility.hpp>
@@ -643,12 +646,28 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         auto& tc = entity.get<TransformComponent>();
         self.create_character_controller(entity, tc, ch);
       } else if (it.event() == flecs::OnRemove) {
-        JPH::BodyInterface& body_interface = self.physics_system->GetBodyInterface();
         if (ch.character) {
           auto* character = reinterpret_cast<JPH::Character*>(ch.character);
-          body_interface.RemoveBody(character->GetBodyID());
+          character->RemoveFromPhysicsSystem();
+          character->Release();
           ch.character = nullptr;
         }
+      }
+    });
+
+  self.world.observer<VehicleComponent>()
+    .event(flecs::OnSet)
+    .event(flecs::OnRemove)
+    .each([&self](flecs::iter& it, usize i, VehicleComponent& vehicle) {
+      ZoneScopedN("Vehicle observer");
+
+      if (!self.is_running())
+        return;
+
+      if (it.event() == flecs::OnSet) {
+        self.create_vehicle(it.entity(i), vehicle);
+      } else if (it.event() == flecs::OnRemove) {
+        self.destroy_vehicle(vehicle);
       }
     });
 
@@ -748,6 +767,31 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   const auto physics_tick_source = self.world.timer().interval(self.physics_interval);
 
+  // Declared before physics_step so the controller sees this tick's input. Systems in a phase run in
+  // declaration order.
+  self.world.system<VehicleComponent>("vehicle_input")
+    .kind(flecs::OnUpdate)
+    .tick_source(physics_tick_source)
+    .each([](VehicleComponent& vehicle) {
+      if (!vehicle.runtime_constraint)
+        return;
+
+      auto* constraint = static_cast<JPH::VehicleConstraint*>(vehicle.runtime_constraint);
+      auto* controller = static_cast<JPH::WheeledVehicleController*>(constraint->GetController());
+      controller
+        ->SetDriverInput(vehicle.input_forward, vehicle.input_right, vehicle.input_brake, vehicle.input_hand_brake);
+
+      // Jolt puts the body to sleep on its own, and a sleeping chassis ignores driver input.
+      if (
+        vehicle.input_forward != 0.f || vehicle.input_right != 0.f || vehicle.input_brake != 0.f ||
+        vehicle.input_hand_brake != 0.f
+      ) {
+        constraint->GetVehicleBody()->GetMotionProperties()->SetLinearVelocity(
+          constraint->GetVehicleBody()->GetLinearVelocity()
+        );
+      }
+    });
+
   self.world.system("physics_step")
     .kind(flecs::OnUpdate)
     .tick_source(physics_tick_source)
@@ -755,6 +799,40 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       OX_CHECK_NULL(self.physics_system);
       auto& p = App::mod<Physics>();
       self.physics_system->Update(self.physics_interval, 1, p.get_temp_allocator(), p.get_job_system());
+    });
+
+  // Drives the wheel child entities from the constraint so wheel meshes spin and steer.
+  self.world.system<TransformComponent, const VehicleWheelComponent>("vehicle_wheel_update")
+    .kind(flecs::OnUpdate)
+    .tick_source(physics_tick_source)
+    .each([](const flecs::entity& e, TransformComponent& tc, const VehicleWheelComponent& wheel) {
+      auto parent = e.parent();
+      if (!parent || !parent.has<VehicleComponent>())
+        return;
+
+      const auto& vehicle = parent.get<VehicleComponent>();
+      if (!vehicle.runtime_constraint)
+        return;
+
+      auto* constraint = static_cast<JPH::VehicleConstraint*>(vehicle.runtime_constraint);
+      if (wheel.runtime_wheel_index >= constraint->GetWheels().size())
+        return;
+
+      // Jolt reports the wheel in world space, but the child transform is relative to the chassis.
+      const auto wheel_world = constraint->GetWheelWorldTransform(
+        wheel.runtime_wheel_index,
+        JPH::Vec3::sAxisX(),
+        JPH::Vec3::sAxisY()
+      );
+      const auto chassis_world = constraint->GetVehicleBody()->GetWorldTransform();
+      const auto local = chassis_world.InversedRotationTranslation() * wheel_world;
+
+      const auto position = local.GetTranslation();
+      const auto rotation = local.GetQuaternion().Normalized();
+      tc.position = {position.GetX(), position.GetY(), position.GetZ()};
+      tc.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
+
+      e.modified<TransformComponent>();
     });
 
   self.world.system<TransformComponent, RigidBodyComponent>("rigidbody_update")
@@ -1098,6 +1176,13 @@ auto Scene::physics_init(this Scene& self) -> void {
 
   self.create_terrain_collision();
 
+  // Vehicles last: the constraint attaches to the chassis body the rigidbody pass just created.
+  self.world.query_builder<VehicleComponent>().build().each([&self](flecs::entity e, VehicleComponent& vehicle) {
+    if (vehicle.runtime_constraint == nullptr) {
+      self.create_vehicle(e, vehicle);
+    }
+  });
+
   self.physics_system->OptimizeBroadPhase();
 }
 
@@ -1105,6 +1190,11 @@ auto Scene::physics_deinit(this Scene& self) -> void {
   ZoneScoped;
 
   self.destroy_terrain_collision();
+
+  // Vehicles first: the constraint references the chassis body that the rigidbody pass destroys.
+  self.world.query_builder<VehicleComponent>().build().each([&self](const flecs::entity& e, VehicleComponent& vehicle) {
+    self.destroy_vehicle(vehicle);
+  });
 
   self.world.query_builder<RigidBodyComponent>().build().each([&self](const flecs::entity& e, RigidBodyComponent& rb) {
     if (rb.runtime_body) {
@@ -1116,11 +1206,13 @@ auto Scene::physics_deinit(this Scene& self) -> void {
     }
   });
   self.world.query_builder<CharacterControllerComponent>().build().each(
-    [&self](const flecs::entity& e, CharacterControllerComponent& ch) {
+    [](const flecs::entity& e, CharacterControllerComponent& ch) {
       if (ch.character) {
-        JPH::BodyInterface& body_interface = self.physics_system->GetBodyInterface();
+        // Character is refcounted and owns its body. RemoveBody alone leaves the body registered
+        // with the character and leaks the object, so go through its own teardown and release.
         auto* character = reinterpret_cast<JPH::Character*>(ch.character);
-        body_interface.RemoveBody(character->GetBodyID());
+        character->RemoveFromPhysicsSystem();
+        character->Release();
         ch.character = nullptr;
       }
     }
@@ -1295,9 +1387,6 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       }
     }
   }
-  self.dirty_transforms.clear();
-  self.dirty_mesh_instances.clear();
-  self.meshes_dirty = false;
 
   // Last, so the document reflects this tick's script changes. Sized from the previous render, which
   // is why callers get one frame of no UI before the first render establishes a size.
@@ -2103,10 +2192,8 @@ auto Scene::create_rigidbody(
   // Body
   auto rotation = glm::quat(transform.rotation);
 
-  u16 layer_index = 1; // Default Layer
-  if (const auto* layer_component = entity.try_get<LayerComponent>()) {
-    layer_index = layer_component->layer;
-  }
+  const auto object_layer = component.type == RigidBodyComponent::BodyType::Static ? PhysicsLayers::NON_MOVING
+                                                                                   : PhysicsLayers::MOVING;
 
   auto compound_shape = compound_shape_settings.Create();
   if (compound_shape.HasError()) {
@@ -2118,7 +2205,7 @@ auto Scene::create_rigidbody(
     {transform.position.x, transform.position.y, transform.position.z},
     {rotation.x, rotation.y, rotation.z, rotation.w},
     static_cast<JPH::EMotionType>(component.type),
-    layer_index
+    object_layer
   );
 
   JPH::MassProperties mass_properties;
@@ -2314,13 +2401,177 @@ void Scene::create_character_controller(
   ); // Accept contacts that touch the
      // lower sphere of the capsule
 
-  component.character = new JPH::Character(settings.get(), position, JPH::Quat::sIdentity(), 0, physics_system.get());
+  auto* character = new JPH::Character(settings.get(), position, JPH::Quat::sIdentity(), 0, physics_system.get());
+  // Balances the Release in physics_deinit / the OnRemove observer.
+  character->AddRef();
+  component.character = character;
 
-  auto* ch = reinterpret_cast<JPH::Character*>(component.character);
-  ch->AddToPhysicsSystem(JPH::EActivation::Activate);
+  character->AddToPhysicsSystem(JPH::EActivation::Activate);
 
-  auto ch_body = physics_system->GetBodyLockInterface().TryGetBody(ch->GetBodyID());
+  auto ch_body = physics_system->GetBodyLockInterface().TryGetBody(character->GetBodyID());
   ch_body->SetUserData(static_cast<u64>(entity.id()));
+}
+
+auto Scene::create_vehicle(this Scene& self, flecs::entity entity, VehicleComponent& component) -> void {
+  ZoneScoped;
+
+  self.destroy_vehicle(component);
+
+  const auto* rb = entity.try_get<RigidBodyComponent>();
+  if (!rb || !rb->runtime_body) {
+    OX_LOG_ERROR("Vehicle entity '{}' needs a RigidBodyComponent with a body.", entity.name().c_str());
+    return;
+  }
+  if (rb->type != RigidBodyComponent::BodyType::Dynamic) {
+    OX_LOG_ERROR("Vehicle entity '{}' needs a Dynamic rigidbody.", entity.name().c_str());
+    return;
+  }
+
+  // Wheel order is hierarchy order, and the differentials below pair them up as (0,1), (2,3), ...
+  // so author them left/right per axle, front to back.
+  auto wheel_entities = std::vector<flecs::entity>();
+  entity.children([&wheel_entities](flecs::entity child) {
+    if (child.has<VehicleWheelComponent>()) {
+      wheel_entities.emplace_back(child);
+    }
+  });
+
+  if (wheel_entities.size() < 2 || wheel_entities.size() % 2 != 0) {
+    OX_LOG_ERROR(
+      "Vehicle entity '{}' has {} wheel children, needs an even count of at least 2.",
+      entity.name().c_str(),
+      wheel_entities.size()
+    );
+    return;
+  }
+
+  auto settings = JPH::VehicleConstraintSettings();
+  settings.mUp = JPH::Vec3(component.up.x, component.up.y, component.up.z).NormalizedOr(JPH::Vec3::sAxisY());
+  settings.mForward = JPH::Vec3(component.forward.x, component.forward.y, component.forward.z)
+                        .NormalizedOr(JPH::Vec3::sAxisZ());
+  settings.mMaxPitchRollAngle = JPH::DegreesToRadians(component.max_pitch_roll_angle);
+
+  for (auto wheel_index = 0_u32; wheel_index < wheel_entities.size(); wheel_index++) {
+    auto wheel_entity = wheel_entities[wheel_index];
+    auto& wheel = wheel_entity.get_mut<VehicleWheelComponent>();
+
+    if (wheel.attachment == glm::vec3(0.f)) {
+      const auto& wheel_tc = wheel_entity.get<TransformComponent>();
+      const auto up = glm::vec3(settings.mUp.GetX(), settings.mUp.GetY(), settings.mUp.GetZ());
+      wheel.attachment = wheel_tc.position + up * glm::max(wheel.suspension_min_length, wheel.suspension_max_length);
+      OX_LOG_WARN(
+        "Vehicle wheel '{}' had no suspension attachment, derived ({}, {}, {}) from its transform.",
+        wheel_entity.name().c_str(),
+        wheel.attachment.x,
+        wheel.attachment.y,
+        wheel.attachment.z
+      );
+    }
+
+    auto* wheel_settings = new JPH::WheelSettingsWV();
+    wheel_settings->mPosition = JPH::Vec3(wheel.attachment.x, wheel.attachment.y, wheel.attachment.z);
+    wheel_settings->mRadius = glm::max(0.01f, wheel.radius);
+    wheel_settings->mWidth = glm::max(0.01f, wheel.width);
+    wheel_settings->mSuspensionMinLength = wheel.suspension_min_length;
+    wheel_settings->mSuspensionMaxLength = glm::max(wheel.suspension_min_length, wheel.suspension_max_length);
+    wheel_settings->mSuspensionSpring.mFrequency = wheel.suspension_frequency;
+    wheel_settings->mSuspensionSpring.mDamping = wheel.suspension_damping;
+    wheel_settings->mMaxSteerAngle = JPH::DegreesToRadians(wheel.max_steer_angle);
+    wheel_settings->mMaxBrakeTorque = wheel.max_brake_torque;
+    wheel_settings->mMaxHandBrakeTorque = wheel.max_hand_brake_torque;
+
+    settings.mWheels.push_back(wheel_settings);
+    wheel.runtime_wheel_index = wheel_index;
+  }
+
+  auto* controller = new JPH::WheeledVehicleControllerSettings();
+  controller->mEngine.mMaxTorque = component.max_engine_torque;
+  controller->mEngine.mMinRPM = component.min_engine_rpm;
+  controller->mEngine.mMaxRPM = glm::max(component.min_engine_rpm + 1.f, component.max_engine_rpm);
+  controller->mEngine.mInertia = component.engine_inertia;
+  controller->mTransmission.mMode = component.auto_transmission ? JPH::ETransmissionMode::Auto
+                                                                : JPH::ETransmissionMode::Manual;
+  controller->mTransmission.mClutchStrength = component.clutch_strength;
+  controller->mDifferentialLimitedSlipRatio = component.limited_slip_ratio;
+
+  // One differential per axle, front to back.
+  const auto axle_count = static_cast<u32>(wheel_entities.size() / 2);
+  for (auto axle = 0_u32; axle < axle_count; axle++) {
+    auto differential = JPH::VehicleDifferentialSettings();
+    differential.mLeftWheel = static_cast<int>(axle * 2);
+    differential.mRightWheel = static_cast<int>(axle * 2 + 1);
+
+    const auto is_front = axle == 0;
+    const auto is_rear = axle == axle_count - 1;
+    auto powered = true;
+    switch (component.drive_mode) {
+      case VehicleComponent::DriveMode::FrontWheelDrive: powered = is_front; break;
+      case VehicleComponent::DriveMode::RearWheelDrive : powered = is_rear; break;
+      case VehicleComponent::DriveMode::AllWheelDrive  : powered = true; break;
+    }
+
+    // A wheel opted out of drive still needs a differential slot, it just gets no torque.
+    const auto& left = wheel_entities[axle * 2].get<VehicleWheelComponent>();
+    const auto& right = wheel_entities[axle * 2 + 1].get<VehicleWheelComponent>();
+    differential.mEngineTorqueRatio = (powered && (left.driven || right.driven)) ? 1.f : 0.f;
+
+    controller->mDifferentials.push_back(differential);
+  }
+
+  // Normalize torque ratios so total engine torque stays constant regardless of axle count.
+  auto total_ratio = 0.f;
+  for (const auto& differential : controller->mDifferentials) {
+    total_ratio += differential.mEngineTorqueRatio;
+  }
+  if (total_ratio > 0.f) {
+    for (auto& differential : controller->mDifferentials) {
+      differential.mEngineTorqueRatio /= total_ratio;
+    }
+  } else {
+    OX_LOG_WARN("Vehicle entity '{}' has no driven axle, it will not accelerate.", entity.name().c_str());
+  }
+
+  settings.mController = controller;
+
+  auto* body = static_cast<JPH::Body*>(rb->runtime_body);
+  auto* constraint = new JPH::VehicleConstraint(*body, settings);
+
+  switch (component.collision_mode) {
+    case VehicleComponent::CollisionMode::Ray:
+      constraint->SetVehicleCollisionTester(new JPH::VehicleCollisionTesterRay(PhysicsLayers::MOVING));
+      break;
+    case VehicleComponent::CollisionMode::SphereCast:
+      constraint->SetVehicleCollisionTester(
+        new JPH::VehicleCollisionTesterCastSphere(PhysicsLayers::MOVING, 0.5f * settings.mWheels[0]->mWidth)
+      );
+      break;
+    case VehicleComponent::CollisionMode::CylinderCast:
+      constraint->SetVehicleCollisionTester(new JPH::VehicleCollisionTesterCastCylinder(PhysicsLayers::MOVING));
+      break;
+  }
+
+  // The system takes ownership through its own reference, and the constraint doubles as the step
+  // listener that runs the wheel simulation.
+  self.physics_system->AddConstraint(constraint);
+  self.physics_system->AddStepListener(constraint);
+
+  component.runtime_constraint = constraint;
+}
+
+auto Scene::destroy_vehicle(this Scene& self, VehicleComponent& component) -> void {
+  ZoneScoped;
+
+  if (!component.runtime_constraint) {
+    return;
+  }
+
+  auto* constraint = static_cast<JPH::VehicleConstraint*>(component.runtime_constraint);
+
+  // Step listener first: it must not outlive its place in the constraint list.
+  self.physics_system->RemoveStepListener(constraint);
+  self.physics_system->RemoveConstraint(constraint);
+
+  component.runtime_constraint = nullptr;
 }
 
 auto Scene::render(
@@ -2350,6 +2601,11 @@ auto Scene::render(
   for (auto& [_, system] : self.lua_systems) {
     system->on_scene_render(&self, dst_attachment->extent);
   }
+
+  // The prepared frame is consumed here, so the dirty state it covers has now really been submitted.
+  self.dirty_transforms.clear();
+  self.dirty_mesh_instances.clear();
+  self.meshes_dirty = false;
 
   auto scene_surface = ri->render(
     std::move(dst_attachment),
@@ -2485,6 +2741,14 @@ auto Scene::json_to_entity(
     }
   }
 
+  // Components are notified one at a time in JSON order, so an observer keyed on a pair such as
+  // (TransformComponent, MeshComponent) never sees both terms: the transform is notified before the
+  // mesh exists, and notifying the mesh does not re-trigger it. Re-notify once the whole set is in
+  // place, the same way create_model_entity does after setting its components.
+  if (e.has<TransformComponent>()) {
+    e.modified<TransformComponent>();
+  }
+
   auto children_json = json["children"];
   for (auto children : children_json.get_array()) {
     if (children.error()) {
@@ -2578,8 +2842,11 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
     self.renderer_cvar.from_json(config_json.value());
   }
 
+  auto& asset_man = App::mod<AssetManager>();
+
   std::vector<UUID> requested_assets = {};
 
+  std::vector<UUID> requested_scripts = {};
   auto scripts_array = doc["scripts"];
   if (!scripts_array.error()) {
     for (auto script_json : scripts_array.get_array()) {
@@ -2587,11 +2854,20 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
       auto uuid_str = uuid_json["uuid"].get_string();
       if (!uuid_str.error()) {
         auto script_uuid = UUID::from_string(uuid_str.value_unsafe()).value();
-        requested_assets.emplace_back(script_uuid);
+        requested_scripts.emplace_back(script_uuid);
       }
     }
   } else {
     OX_LOG_ERROR("No scripts field found in scene!");
+  }
+
+  // on_add callback of scripts should be called before entities are deserialized.
+  for (auto& script : requested_scripts) {
+    if (!asset_man.is_loaded(script)) {
+      asset_man.load_asset(script);
+    }
+
+    self.add_lua_system(script);
   }
 
   auto entities_array = doc["entities"];
@@ -2612,21 +2888,14 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   OX_LOG_INFO("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
 
   for (const auto& asset_uuid : requested_assets) {
-    auto& asset_man = App::mod<AssetManager>();
     // Snapshot the type and release the read guard before load_asset()/add_lua_system(),
     // which re-lock the registry.
-    auto asset_type = AssetType::None;
     auto exists = false;
     if (auto asset = asset_man.get_asset(asset_uuid)) {
       exists = true;
-      asset_type = asset->type;
     }
     if (exists) {
-      if (asset_type == AssetType::Script) {
-        self.add_lua_system(asset_uuid);
-      } else {
         asset_man.load_asset(asset_uuid);
-      }
     } else {
       // Not an imported/physical asset
       // Most likely was created on runtime and never written to a file, these should never exist.
