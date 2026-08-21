@@ -1123,8 +1123,7 @@ auto RendererInstance::render(
       vuk::fill(ddgi_probe_states_buffer, 0u);
     }
 
-    if (tlas_it != self.shared_resources.buffer_resources.end()) {
-      // One row of rays per probe, thrown away once the update passes have folded it into the atlases.
+    if (tlas_it != self.shared_resources.buffer_resources.end() && frame_render_context.use_ray_tracing_pipeline()) {
       auto ray_data_attachment = vuk::declare_ia(
         "ddgi ray data",
         {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
@@ -1206,6 +1205,9 @@ auto RendererInstance::render(
         .rays_per_probe = rays_per_probe,
         .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
         .hysteresis = cvar.cvar_ddgi_hysteresis.get(),
+        .max_brightness_step = cvar.cvar_ddgi_max_brightness_step.get(),
+        .firefly_ratio = cvar.cvar_ddgi_firefly_ratio.get(),
+        .hysteresis_dark_bias = cvar.cvar_ddgi_hysteresis_dark_bias.get(),
         .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
         .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
         .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),

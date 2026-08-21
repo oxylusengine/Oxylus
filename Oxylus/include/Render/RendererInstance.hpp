@@ -425,6 +425,9 @@ struct DDGIUpdateContext {
   u32 rays_per_probe = 128;
   u32 frame_index = 0;
   f32 hysteresis = 0.97f;
+  f32 max_brightness_step = 0.1f;
+  f32 firefly_ratio = 32.0f;
+  f32 hysteresis_dark_bias = 0.15f;
 
   vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
   vuk::Value<vuk::Buffer> probe_states_buffer = {};

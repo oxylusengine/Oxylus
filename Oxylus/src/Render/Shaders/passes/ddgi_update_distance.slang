@@ -10,8 +10,8 @@ import ddgi;
 [[shader("compute")]]
 [[numthreads(14, 14, 1)]]
 func cs_main(
-    u32x3 group_id: SV_GroupID,
-    u32x3 thread_id: SV_GroupThreadID,
+    u32x3 group_id : SV_GroupID,
+    u32x3 thread_id : SV_GroupThreadID,
     uniform u32 volume_index,
     uniform u32 rays_per_probe,
     uniform u32 frame_index,
@@ -43,7 +43,8 @@ func cs_main(
             continue;
         }
 
-        let distance = min(abs(ray_data.Load(u32x3(ray_index, probe_row, 0)).a), max_distance);
+        let hit_distance = ray_data.Load(u32x3(ray_index, probe_row, 0)).a;
+        let distance = hit_distance < 0.0 ? 0.0 : min(hit_distance, max_distance);
 
         sum += f32x2(distance, distance * distance) * weight;
         weight_sum += weight;
@@ -56,7 +57,7 @@ func cs_main(
     let previous = probe_distance[coords];
     let history = all(isfinite(previous)) ? previous : result;
 
-    let rate = probe_is_reset(flags) ? 0.0 : pow(hysteresis, f32(probe_update_interval(flags)));
+    let rate = probe_is_reset(flags) ? 0.0 : hysteresis;
 
     probe_distance[coords] = lerp(result, history, rate);
 }

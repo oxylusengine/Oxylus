@@ -151,7 +151,7 @@ func fs_main(
 
         let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-        let ibl_diffuse = kD * diffuse_sky * albedo_color * Fd_Lambert();
+        let ibl_diffuse = kD * diffuse_sky * albedo_color;
         let ibl_specular = kS * specular_sky * spec_occlusion;
         indirect_illuminance = (ibl_diffuse * occlusion) + ibl_specular;
     }

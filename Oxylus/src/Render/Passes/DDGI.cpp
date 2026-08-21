@@ -184,7 +184,13 @@ auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdat
 
   auto irradiance_pass = vuk::make_pass(
     "ddgi update irradiance",
-    [probe_counts, rays_per_probe = context.rays_per_probe, frame_index = context.frame_index, hysteresis](
+    [probe_counts,
+     rays_per_probe = context.rays_per_probe,
+     frame_index = context.frame_index,
+     hysteresis,
+     max_brightness_step = context.max_brightness_step,
+     firefly_ratio = context.firefly_ratio,
+     hysteresis_dark_bias = context.hysteresis_dark_bias](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eComputeRW) irradiance,
       VUK_IA(vuk::eComputeSampled) ray_data,
@@ -203,7 +209,15 @@ auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdat
           .push_constants(
             vuk::ShaderStageFlagBits::eCompute,
             0,
-            PushConstants(volume_index, rays_per_probe, frame_index, hysteresis)
+            PushConstants(
+              volume_index,
+              rays_per_probe,
+              frame_index,
+              hysteresis,
+              max_brightness_step,
+              firefly_ratio,
+              hysteresis_dark_bias
+            )
           )
           .dispatch(probe_counts[volume_index], 1, 1);
       }
@@ -338,23 +352,23 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
      bounce_valid = static_cast<u32>(context.bounce_valid),
      view_bias = context.view_bias](
       vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eComputeWrite) ray_data,
-      VUK_IA(vuk::eComputeSampled) irradiance,
-      VUK_IA(vuk::eComputeSampled) probe_distance,
-      VUK_BA(vuk::eComputeRead | vuk::eAccelerationStructureBuildRead) tlas_buffer,
-      VUK_BA(vuk::eComputeRead) probe_volumes,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
-      VUK_BA(vuk::eComputeRead) meshes,
-      VUK_BA(vuk::eComputeRead) transforms,
-      VUK_BA(vuk::eComputeRead) materials,
-      VUK_BA(vuk::eComputeRead) lights,
-      VUK_BA(vuk::eComputeRead) atmosphere,
-      VUK_IA(vuk::eComputeSampled) sky_view_lut,
-      VUK_IA(vuk::eComputeSampled) sky_transmittance_lut,
-      VUK_BA(vuk::eComputeRead) probe_states
+      VUK_IA(vuk::eRayTracingWrite) ray_data,
+      VUK_IA(vuk::eRayTracingSampled) irradiance,
+      VUK_IA(vuk::eRayTracingSampled) probe_distance,
+      VUK_BA(vuk::eRayTracingRead | vuk::eAccelerationStructureBuildRead) tlas_buffer,
+      VUK_BA(vuk::eRayTracingRead) probe_volumes,
+      VUK_BA(vuk::eRayTracingRead) mesh_instances,
+      VUK_BA(vuk::eRayTracingRead) meshes,
+      VUK_BA(vuk::eRayTracingRead) transforms,
+      VUK_BA(vuk::eRayTracingRead) materials,
+      VUK_BA(vuk::eRayTracingRead) lights,
+      VUK_BA(vuk::eRayTracingRead) atmosphere,
+      VUK_IA(vuk::eRayTracingSampled) sky_view_lut,
+      VUK_IA(vuk::eRayTracingSampled) sky_transmittance_lut,
+      VUK_BA(vuk::eRayTracingRead) probe_states
     ) {
       cmd_list //
-        .bind_compute_pipeline("ddgi_trace")
+        .bind_ray_tracing_pipeline("ddgi_trace")
         .bind_persistent(1, descriptor_set)
         .bind_acceleration_structure(0, 0, tlas)
         .bind_buffer(0, 1, probe_volumes)
@@ -375,7 +389,7 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
       for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
         cmd_list //
           .push_constants(
-            vuk::ShaderStageFlagBits::eCompute,
+            vuk::ShaderStageFlagBits::eRaygenKHR,
             0,
             PushConstants(
               atmosphere->device_address,
@@ -395,7 +409,7 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
               max_ray_radiance
             )
           )
-          .dispatch((rays_per_probe + 31) / 32, probe_counts[volume_index], 1);
+          .trace_rays(rays_per_probe, probe_counts[volume_index], 1);
       }
 
       return std::make_tuple(

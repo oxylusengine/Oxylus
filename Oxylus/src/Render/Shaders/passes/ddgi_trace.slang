@@ -25,6 +25,34 @@ import ddgi;
 
 static const f32 HIT_TEXTURE_LOD = 3.0;
 
+struct TraceConstants {
+    Atmosphere *atmosphere;
+    u32 volume_index;
+    u32 volume_count;
+    u32 rays_per_probe;
+    u32 frame_index;
+    u32 light_count;
+    u32 bounce_valid;
+    f32 max_ray_distance;
+    f32 shadow_ray_offset;
+    f32 normal_bias;
+    f32 view_bias;
+    f32x3 sun_direction;
+    f32 sun_intensity;
+    f32x3 ambient_color;
+    f32 max_ray_radiance;
+};
+
+[[vk::push_constant]] ConstantBuffer<TraceConstants> constants;
+
+struct ProbeRayPayload {
+    f32 hit_distance;
+    u32 mesh_instance_index;
+    u32 primitive_index;
+    f32x2 barycentrics;
+    bool front_face;
+};
+
 func trace_occluded(f32x3 origin, f32x3 direction, f32 t_min, f32 t_max) -> bool {
     RayDesc ray;
     ray.Origin = origin;
@@ -75,6 +103,50 @@ func miss_radiance(
     );
 }
 
+func punctual_diffuse(
+    in Light light,
+    f32x3 position,
+    f32x3 normal,
+    f32x3 diffuse_albedo,
+    f32x3 shadow_origin,
+    f32 shadow_ray_offset
+) -> f32x3 {
+    if (light.intensity <= 0.0) {
+        return f32x3(0.0);
+    }
+
+    let light_vector = light.position - position;
+    let light_distance = length(light_vector);
+    if (light_distance <= 1e-4) {
+        return f32x3(0.0);
+    }
+    let L = light_vector / light_distance;
+
+    let NoL = saturate(dot(normal, L));
+    if (NoL <= 0.0) {
+        return f32x3(0.0);
+    }
+
+    var attenuation = lights_attenuate_point(light_distance, light.range);
+    if (light.kind == LightKind::Spot) {
+        attenuation *= calculate_spot_light_attenuation(
+            L,
+            light.direction,
+            light.inner_cone_angle,
+            light.outer_cone_angle
+        );
+    }
+    if (attenuation <= 0.0) {
+        return f32x3(0.0);
+    }
+
+    if (trace_occluded(shadow_origin, L, shadow_ray_offset, max(light_distance - shadow_ray_offset, 0.0))) {
+        return f32x3(0.0);
+    }
+
+    return diffuse_albedo * Fd_Lambert() * light.color * light.intensity * attenuation * NoL;
+}
+
 func shade_hit(
     in RayHit hit,
     u32 volume_count,
@@ -104,29 +176,8 @@ func shade_hit(
 
     for (u32 light_index = 0; light_index < light_count; light_index++) {
         let light = lights[light_index];
-        if (light.kind == LightKind::Point) {
-            radiance += point_light_contribution(
-                hit.position,
-                N,
-                view_direction,
-                hit.surface.albedo.rgb,
-                hit.surface.roughness,
-                hit.surface.metallic,
-                light.position,
-                light
-            );
-        } else if (light.kind == LightKind::Spot) {
-            radiance += calculate_spot_light_contribution(
-                hit.position,
-                N,
-                view_direction,
-                hit.surface.albedo.rgb,
-                hit.surface.roughness,
-                hit.surface.metallic,
-                light.position,
-                light.direction,
-                light
-            );
+        if (light.kind == LightKind::Point || light.kind == LightKind::Spot) {
+            radiance += punctual_diffuse(light, hit.position, N, diffuse_albedo, shadow_origin, shadow_ray_offset);
         }
     }
 
@@ -152,31 +203,13 @@ func shade_hit(
     return radiance;
 }
 
-[[shader("compute")]]
-[[require(spvRayQueryKHR)]]
-[[numthreads(32, 1, 1)]]
-func cs_main(
-    u32x3 thread_id : SV_DispatchThreadID,
-    uniform Atmosphere *atmosphere,
-    uniform u32 volume_index,
-    uniform u32 volume_count,
-    uniform u32 rays_per_probe,
-    uniform u32 frame_index,
-    uniform u32 light_count,
-    uniform u32 bounce_valid,
-    uniform f32 max_ray_distance,
-    uniform f32 shadow_ray_offset,
-    uniform f32 normal_bias,
-    uniform f32 view_bias,
-    uniform f32x3 sun_direction,
-    uniform f32 sun_intensity,
-    uniform f32x3 ambient_color,
-    uniform f32 max_ray_radiance
-) -> void {
-    let volume = probe_volumes[volume_index];
-    let ray_index = thread_id.x;
-    let probe_index = thread_id.y;
-    if (ray_index >= rays_per_probe || probe_index >= volume.probe_count) {
+[[shader("raygeneration")]]
+[[require(spvRayTracingKHR, spvRayQueryKHR)]]
+func rgs_main() -> void {
+    let volume = probe_volumes[constants.volume_index];
+    let ray_index = DispatchRaysIndex().x;
+    let probe_index = DispatchRaysIndex().y;
+    if (ray_index >= constants.rays_per_probe || probe_index >= volume.probe_count) {
         return;
     }
 
@@ -185,65 +218,84 @@ func cs_main(
     }
 
     let origin = probe_world_position(volume, probe_states, probe_index);
-    let direction = probe_ray_direction(ray_index, rays_per_probe, frame_index);
+    let direction = probe_ray_direction(ray_index, constants.rays_per_probe, constants.frame_index);
 
     RayDesc ray;
     ray.Origin = origin;
     ray.Direction = direction;
     ray.TMin = 0.0;
-    ray.TMax = max_ray_distance;
+    ray.TMax = constants.max_ray_distance;
 
-    RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
-    query.TraceRayInline(scene_tlas, RAY_FLAG_NONE, 0xffu, ray);
-    query.Proceed();
+    ProbeRayPayload payload = {};
+    payload.hit_distance = -1.0;
+
+    TraceRay(scene_tlas, RAY_FLAG_FORCE_OPAQUE, 0xffu, 0, 0, 0, ray, payload);
 
     var radiance = f32x3(0.0);
-    var hit_distance = max_ray_distance;
+    var hit_distance = constants.max_ray_distance;
 
-    if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        hit_distance = query.CommittedRayT();
-
-        if (!query.CommittedTriangleFrontFace()) {
-            // Backfaces mean the probe sits inside geometry along this ray. The distance is negated so
-            // the update pass can tell those rays apart instead of trusting them.
-            hit_distance = -hit_distance;
-        } else {
-            let geometry = SceneGeometry(mesh_instances, meshes, transforms, materials);
-            let hit = resolve_ray_hit(
-                geometry,
-                query.CommittedInstanceID(),
-                query.CommittedPrimitiveIndex(),
-                query.CommittedTriangleBarycentrics(),
-                true,
-                HIT_TEXTURE_LOD
-            );
-
-            if (hit.valid) {
-                radiance = shade_hit(
-                    hit,
-                    volume_count,
-                    -direction,
-                    sun_direction,
-                    sun_intensity,
-                    shadow_ray_offset,
-                    normal_bias,
-                    view_bias,
-                    light_count,
-                    bounce_valid,
-                    atmosphere
-                );
-            }
-        }
+    if (payload.hit_distance < 0.0) {
+        radiance = miss_radiance(
+            constants.atmosphere,
+            origin,
+            direction,
+            constants.sun_direction,
+            constants.ambient_color
+        );
+    } else if (!payload.front_face) {
+        hit_distance = -payload.hit_distance;
     } else {
-        radiance = miss_radiance(atmosphere, origin, direction, sun_direction, ambient_color);
+        hit_distance = payload.hit_distance;
+
+        let geometry = SceneGeometry(mesh_instances, meshes, transforms, materials);
+        let hit = resolve_ray_hit(
+            geometry,
+            payload.mesh_instance_index,
+            payload.primitive_index,
+            payload.barycentrics,
+            true,
+            HIT_TEXTURE_LOD
+        );
+
+        if (hit.valid) {
+            radiance = shade_hit(
+                hit,
+                constants.volume_count,
+                -direction,
+                constants.sun_direction,
+                constants.sun_intensity,
+                constants.shadow_ray_offset,
+                constants.normal_bias,
+                constants.view_bias,
+                constants.light_count,
+                constants.bounce_valid,
+                constants.atmosphere
+            );
+        }
     }
 
     radiance = clamp(com::sanitize(radiance), 0.0, com::HALF_MAX);
 
     let ray_luminance = com::luminance(radiance);
-    if (ray_luminance > max_ray_radiance) {
-        radiance *= max_ray_radiance / ray_luminance;
+    if (ray_luminance > constants.max_ray_radiance) {
+        radiance *= constants.max_ray_radiance / ray_luminance;
     }
 
     ray_data[u32x2(ray_index, volume.probe_offset + probe_index)] = f32x4(radiance, hit_distance);
+}
+
+[[shader("miss")]]
+[[require(spvRayTracingKHR)]]
+func miss_main(inout ProbeRayPayload payload) -> void {
+    payload.hit_distance = -1.0;
+}
+
+[[shader("closesthit")]]
+[[require(spvRayTracingKHR)]]
+func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersectionAttributes attributes) -> void {
+    payload.hit_distance = RayTCurrent();
+    payload.mesh_instance_index = InstanceID();
+    payload.primitive_index = PrimitiveIndex();
+    payload.barycentrics = attributes.barycentrics;
+    payload.front_face = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
 }

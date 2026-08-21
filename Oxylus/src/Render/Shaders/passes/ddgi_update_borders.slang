@@ -9,7 +9,11 @@ import ddgi;
 
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]
-func cs_main(u32x3 group_id: SV_GroupID, u32x3 thread_id: SV_GroupThreadID, uniform u32 volume_index) -> void {
+func cs_main(
+    u32x3 group_id : SV_GroupID,
+    u32x3 thread_id : SV_GroupThreadID,
+    uniform u32 volume_index
+) -> void {
     let volume = probe_volumes[volume_index];
     let probe_index = group_id.x;
     if (probe_index >= volume.probe_count) {

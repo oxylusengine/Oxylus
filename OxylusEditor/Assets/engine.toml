@@ -258,8 +258,8 @@ entry_points = ["vs_main", "fs_main"]
 [[shader_sessions.programs]]
 name = "ddgi_trace"
 path = "passes/ddgi_trace.slang"
-entry_points = ["cs_main"]
-requires = ["ray_tracing", "bindless"]
+entry_points = ["rgs_main", "miss_main", "closesthit_main"]
+requires = ["ray_tracing", "ray_tracing_pipeline", "bindless"]
 
 [[shader_sessions.programs]]
 name = "ddgi_select_probes"

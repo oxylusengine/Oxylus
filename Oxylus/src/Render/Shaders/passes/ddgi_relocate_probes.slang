@@ -6,21 +6,14 @@ import ddgi;
 [[vk::binding(1, 0)]] Image2D<f32x4> ray_data;
 [[vk::binding(2, 0)]] RWStructuredBuffer<ProbeState> probe_states;
 
-// A probe may wander at most this fraction of a grid cell, so it never crosses into its neighbour's
-// cell and breaks the trilinear weights that assume a regular grid.
-static const f32 MAX_OFFSET_RATIO = 0.45;
-// Clearance is only ever measured to within one ray of the sphere's spacing, and a small feature is
-// hit some frames and missed others. Acting on differences smaller than this band would just chase
-// that noise.
-static const f32 CLEARANCE_DEADBAND = 0.1;
-// Retreat at once, return slowly. A probe that only occasionally sees the edge it is next to should
-// keep the clearance it earned on the frames it did see it, rather than being pulled back in between.
-static const f32 RETURN_RATE = 0.05;
+// x^2 / spacing.x^2 + y^2 / spacing.y^2 + z^2 / spacing.z^2 < 0.45^2, so a probe never crosses into its
+// neighbour's cell and breaks the trilinear weights that assume a regular grid.
+static const f32 MAX_OFFSET_RATIO_SQUARED = 0.2025;
 
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]
 func cs_main(
-    u32x3 thread_id: SV_DispatchThreadID,
+    u32x3 thread_id : SV_DispatchThreadID,
     uniform u32 volume_index,
     uniform u32 rays_per_probe,
     uniform u32 frame_index,
@@ -39,68 +32,75 @@ func cs_main(
         return;
     }
 
-    var backface_count = 0u;
+    var offset = probe_states[probe_row].offset;
+
+    var closest_backface_index = -1;
+    var closest_frontface_index = -1;
+    var farthest_frontface_index = -1;
     var closest_backface_distance = com::HALF_MAX;
-    var closest_backface_direction = f32x3(0.0);
     var closest_frontface_distance = com::HALF_MAX;
-    var closest_frontface_direction = f32x3(0.0);
-    var crowding = f32x3(0.0);
+    var farthest_frontface_distance = 0.0f;
+    var backface_count = 0.0f;
 
     for (u32 ray_index = 0; ray_index < rays_per_probe; ray_index++) {
-        let distance = ray_data.Load(u32x3(ray_index, probe_row, 0)).a;
-        let direction = probe_ray_direction(ray_index, rays_per_probe, frame_index);
+        var distance = ray_data.Load(u32x3(ray_index, probe_row, 0)).a;
 
         if (distance < 0.0) {
-            backface_count += 1;
-            if (-distance < closest_backface_distance) {
-                closest_backface_distance = -distance;
-                closest_backface_direction = direction;
+            // backface
+            backface_count += 1.0;
+            distance = -distance;
+            if (distance < closest_backface_distance) {
+                closest_backface_distance = distance;
+                closest_backface_index = i32(ray_index);
             }
-
-            continue;
-        }
-
-        if (distance < closest_frontface_distance) {
-            closest_frontface_distance = distance;
-            closest_frontface_direction = direction;
-        }
-        if (distance < min_frontface_distance) {
-            crowding += direction * (min_frontface_distance - distance);
+        } else {
+            // frontface
+            if (distance < closest_frontface_distance) {
+                closest_frontface_distance = distance;
+                closest_frontface_index = i32(ray_index);
+            } else if (distance > farthest_frontface_distance) {
+                farthest_frontface_distance = distance;
+                farthest_frontface_index = i32(ray_index);
+            }
         }
     }
 
-    let backface_ratio = f32(backface_count) / f32(rays_per_probe);
-    let was_inside = probe_is_inactive(flags);
-    let inside_geometry = backface_ratio > (was_inside ? PROBE_ESCAPED_BACKFACE_RATIO : PROBE_INSIDE_BACKFACE_RATIO);
+    var full_offset = f32x3(com::HALF_MAX);
 
-    let current_offset = probe_states[probe_row].offset;
-    var full_offset = current_offset;
+    let backface_ratio = backface_count / f32(rays_per_probe);
+    let was_inside = probe_is_inactive(flags);
+    let inside_geometry = closest_backface_index != -1 &&
+                          backface_ratio > (was_inside ? PROBE_ESCAPED_BACKFACE_RATIO : PROBE_INSIDE_BACKFACE_RATIO);
 
     if (inside_geometry) {
-        full_offset += closest_backface_direction * (closest_backface_distance + min_frontface_distance * 0.5);
-    } else if (closest_frontface_distance < min_frontface_distance * (1.0 - CLEARANCE_DEADBAND)) {
-        let crowding_length = length(crowding);
-        let escape_direction = crowding_length > 1e-6 ? crowding / crowding_length : closest_frontface_direction;
+        let closest_backface_direction = probe_ray_direction(u32(closest_backface_index), rays_per_probe, frame_index);
+        full_offset = offset + closest_backface_direction * (closest_backface_distance + min_frontface_distance * 0.5);
+    } else if (closest_frontface_distance < min_frontface_distance) {
+        let closest_frontface_direction = probe_ray_direction(u32(closest_frontface_index), rays_per_probe, frame_index);
+        var farthest_frontface_direction = probe_ray_direction(
+            u32(farthest_frontface_index),
+            rays_per_probe,
+            frame_index
+        );
 
-        full_offset -= escape_direction * (min_frontface_distance - closest_frontface_distance);
-    } else if (closest_frontface_distance > min_frontface_distance * (1.0 + CLEARANCE_DEADBAND)) {
-        let travelled = length(current_offset);
-        if (travelled > 0.0) {
-            let margin = min(closest_frontface_distance - min_frontface_distance, travelled);
-            full_offset -= normalize(current_offset) * margin * RETURN_RATE;
+        if (dot(closest_frontface_direction, farthest_frontface_direction) <= 0.0) {
+            farthest_frontface_direction *= min(farthest_frontface_distance, 1.0);
+            full_offset = offset + farthest_frontface_direction;
         }
+    } else if (closest_frontface_distance > min_frontface_distance) {
+        let move_back_margin = min(closest_frontface_distance - min_frontface_distance, length(offset));
+        let move_back_direction = normalize(-offset);
+        full_offset = offset + move_back_margin * move_back_direction;
     }
 
-    let accepted = all(abs(full_offset) < MAX_OFFSET_RATIO * volume.spacing);
+    let normalized_offset = full_offset / volume.spacing;
+    if (dot(normalized_offset, normalized_offset) < MAX_OFFSET_RATIO_SQUARED) {
+        offset = full_offset;
+    }
 
     ProbeState state;
-    state.offset = accepted ? com::sanitize(full_offset) : current_offset;
-    state.flags = probe_pack_flags(
-        inside_geometry,
-        probe_updates_this_frame(flags),
-        probe_is_reset(flags),
-        probe_update_interval(flags)
-    );
+    state.offset = com::sanitize(offset);
+    state.flags = probe_pack_flags(inside_geometry, probe_updates_this_frame(flags), probe_is_reset(flags));
 
     probe_states[probe_row] = state;
 }

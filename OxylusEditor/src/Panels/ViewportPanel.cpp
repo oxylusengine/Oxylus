@@ -769,14 +769,15 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
       if (ImGui::TreeNodeEx("DDGI", TREE_FLAGS, "%s", "DDGI")) {
-        const auto has_ray_tracing = render_context.features & RenderContext::Feature::RayTracing;
+        const auto has_ray_tracing = (render_context.features & RenderContext::Feature::RayTracing) &&
+                                     (render_context.features & RenderContext::Feature::RayTracingPipeline);
         ImGui::BeginDisabled(!has_ray_tracing);
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
           UI::property(
             "Enabled",
             cvar_sys.cvar_ddgi_enable.get_ptr_bool(),
             has_ray_tracing ? "Light probe volumes gather indirect diffuse by tracing the scene TLAS"
-                            : "This device does not support ray queries"
+                            : "This device does not support ray tracing pipelines"
           );
           UI::property(
             "Rays Per Probe",
@@ -848,6 +849,13 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             0.f,
             1.f,
             "Offsets the probe lookup toward the camera, in probe spacings"
+          );
+          UI::property<float>(
+            "Max Brightness Step",
+            cvar_sys.cvar_ddgi_max_brightness_step.get_ptr(),
+            0.f,
+            2.f,
+            "How far a probe may brighten in one update before the step is quartered, tames emissive flicker"
           );
           UI::property<float>("Intensity", cvar_sys.cvar_ddgi_intensity.get_ptr(), 0.f, 10.f);
           UI::property<float>(

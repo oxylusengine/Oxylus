@@ -36,6 +36,7 @@ public:
     None = 0,
     MeshShaders = 1 << 0,
     RayTracing = 1 << 1,
+    RayTracingPipeline = 1 << 2,
   };
 
   struct Resources {
@@ -119,6 +120,9 @@ public:
 
   [[nodiscard]]
   auto use_ray_tracing(this const RenderContext& self) -> bool;
+
+  [[nodiscard]]
+  auto use_ray_tracing_pipeline(this const RenderContext& self) -> bool;
 
   [[nodiscard]]
   auto as_scratch_alignment(this const RenderContext& self) -> u64;

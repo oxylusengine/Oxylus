@@ -43,9 +43,27 @@ struct NoneAsset {
   using serialize_id = zpp::bits::serialization_id<AssetType::None>;
 };
 
+enum class ShaderStage : u32 {
+  None = 0,
+  Vertex,
+  Hull,
+  Domain,
+  Geometry,
+  Fragment,
+  Compute,
+  RayGeneration,
+  Intersection,
+  AnyHit,
+  ClosestHit,
+  Miss,
+  Callable,
+  Mesh,
+  Amplification,
+};
+
 struct ShaderEntryPointData {
   std::string name = {};
-  u32 shader_stage = {};
+  ShaderStage shader_stage = ShaderStage::None;
   std::vector<u32> spirv = {};
 };
 

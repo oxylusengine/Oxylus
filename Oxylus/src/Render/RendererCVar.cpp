@@ -73,6 +73,24 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_ddgi_intensity.init(self.system, "rr.ddgi_intensity", "scales the probe indirect diffuse", 1.0f);
   self.cvar_ddgi_hysteresis
     .init(self.system, "rr.ddgi_hysteresis", "how much of a probe's history survives each update", 0.97f);
+  self.cvar_ddgi_max_brightness_step.init(
+    self.system,
+    "rr.ddgi_max_brightness_step",
+    "how far a probe may brighten in one update before the step is quartered, tames emissive flicker",
+    0.1f
+  );
+  self.cvar_ddgi_firefly_ratio.init(
+    self.system,
+    "rr.ddgi_firefly_ratio",
+    "how many times its own value a probe texel lets one ray carry before clamping it",
+    32.0f
+  );
+  self.cvar_ddgi_hysteresis_dark_bias.init(
+    self.system,
+    "rr.ddgi_hysteresis_dark_bias",
+    "encoded irradiance below which a texel stops treating a brightness swing as a lighting change",
+    0.15f
+  );
   self.cvar_ddgi_probe_debug_radius
     .init(self.system, "rr.ddgi_probe_debug_radius", "world space radius of debug drawn probes", 0.1f);
 
@@ -135,6 +153,9 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["normal_bias"] = self.cvar_ddgi_normal_bias.get();
   writer["view_bias"] = self.cvar_ddgi_view_bias.get();
   writer["hysteresis"] = self.cvar_ddgi_hysteresis.get();
+  writer["max_brightness_step"] = self.cvar_ddgi_max_brightness_step.get();
+  writer["firefly_ratio"] = self.cvar_ddgi_firefly_ratio.get();
+  writer["hysteresis_dark_bias"] = self.cvar_ddgi_hysteresis_dark_bias.get();
   writer["intensity"] = self.cvar_ddgi_intensity.get();
   writer["probe_debug_radius"] = self.cvar_ddgi_probe_debug_radius.get();
   writer.end_obj();
@@ -210,6 +231,9 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_ddgi_normal_bias.set(static_cast<f32>(ddgi_obj["normal_bias"].get_double()));
     self.cvar_ddgi_view_bias.set(static_cast<f32>(ddgi_obj["view_bias"].get_double()));
     self.cvar_ddgi_hysteresis.set(static_cast<f32>(ddgi_obj["hysteresis"].get_double()));
+    self.cvar_ddgi_max_brightness_step.set(static_cast<f32>(ddgi_obj["max_brightness_step"].get_double()));
+    self.cvar_ddgi_firefly_ratio.set(static_cast<f32>(ddgi_obj["firefly_ratio"].get_double()));
+    self.cvar_ddgi_hysteresis_dark_bias.set(static_cast<f32>(ddgi_obj["hysteresis_dark_bias"].get_double()));
     self.cvar_ddgi_intensity.set(static_cast<f32>(ddgi_obj["intensity"].get_double()));
     self.cvar_ddgi_probe_debug_radius.set(static_cast<f32>(ddgi_obj["probe_debug_radius"].get_double()));
   }

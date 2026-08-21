@@ -6,6 +6,26 @@
 #include "OS/File.hpp"
 
 namespace ox::rc {
+static auto to_shader_stage(SlangStage stage) -> ShaderStage {
+  switch (stage) {
+    case SLANG_STAGE_VERTEX        : return ShaderStage::Vertex;
+    case SLANG_STAGE_HULL          : return ShaderStage::Hull;
+    case SLANG_STAGE_DOMAIN        : return ShaderStage::Domain;
+    case SLANG_STAGE_GEOMETRY      : return ShaderStage::Geometry;
+    case SLANG_STAGE_FRAGMENT      : return ShaderStage::Fragment;
+    case SLANG_STAGE_COMPUTE       : return ShaderStage::Compute;
+    case SLANG_STAGE_RAY_GENERATION: return ShaderStage::RayGeneration;
+    case SLANG_STAGE_INTERSECTION  : return ShaderStage::Intersection;
+    case SLANG_STAGE_ANY_HIT       : return ShaderStage::AnyHit;
+    case SLANG_STAGE_CLOSEST_HIT   : return ShaderStage::ClosestHit;
+    case SLANG_STAGE_MISS          : return ShaderStage::Miss;
+    case SLANG_STAGE_CALLABLE      : return ShaderStage::Callable;
+    case SLANG_STAGE_MESH          : return ShaderStage::Mesh;
+    case SLANG_STAGE_AMPLIFICATION : return ShaderStage::Amplification;
+    default                        : return ShaderStage::None;
+  }
+}
+
 static auto blob_to_sv(slang::IBlob* blob) -> std::string_view {
   return {
     static_cast<const c8*>(blob->getBufferPointer()),
@@ -120,13 +140,12 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
     // Reflection
     auto* entry_point_layout = linked_program->getLayout();
     auto* entry_point_reflection = entry_point_layout->getEntryPointByIndex(0);
-    const auto stage = static_cast<u32>(entry_point_reflection->getStage());
+    const auto stage = to_shader_stage(entry_point_reflection->getStage());
 
     // Codegen
     auto spirv_code = Slang::ComPtr<slang::IBlob>();
     auto codegen_diag = Slang::ComPtr<slang::IBlob>();
-    const auto codegen_result =
-      linked_program->getEntryPointCode(0, 0, spirv_code.writeRef(), codegen_diag.writeRef());
+    const auto codegen_result = linked_program->getEntryPointCode(0, 0, spirv_code.writeRef(), codegen_diag.writeRef());
     if (codegen_diag) {
       self.rc_session.push_message(fmt::format("[Codegen] {}: {}", ep_prefix, blob_to_sv(codegen_diag)));
     }

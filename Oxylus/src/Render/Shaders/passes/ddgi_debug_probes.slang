@@ -50,5 +50,6 @@ func fs_main(VertexOutput input) -> f32x4 {
         return f32x4(0.4, 0.0, 0.0, 1.0);
     }
 
-    return f32x4(sample_probe_irradiance(irradiance, linear_clamp_sampler, input.probe_row, N), 1.0);
+    let encoded = sample_probe_irradiance(irradiance, linear_clamp_sampler, input.probe_row, N);
+    return f32x4(decode_probe_irradiance(encoded), 1.0);
 }

@@ -15,6 +15,9 @@ auto shader_feature_from_string(std::string_view name) -> option<ShaderFeatureFl
   if (name == "ray_tracing") {
     return ShaderFeatureFlag::RayTracing;
   }
+  if (name == "ray_tracing_pipeline") {
+    return ShaderFeatureFlag::RayTracingPipeline;
+  }
   if (name == "bindless") {
     return ShaderFeatureFlag::Bindless;
   }

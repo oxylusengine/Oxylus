@@ -56,6 +56,9 @@ struct RendererCVar {
   AutoCVar_Float cvar_ddgi_normal_bias;
   AutoCVar_Float cvar_ddgi_view_bias;
   AutoCVar_Float cvar_ddgi_hysteresis;
+  AutoCVar_Float cvar_ddgi_max_brightness_step;
+  AutoCVar_Float cvar_ddgi_firefly_ratio;
+  AutoCVar_Float cvar_ddgi_hysteresis_dark_bias;
   AutoCVar_Float cvar_ddgi_intensity;
   AutoCVar_Float cvar_ddgi_probe_debug_radius;
 

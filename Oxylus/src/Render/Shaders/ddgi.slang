@@ -5,6 +5,7 @@ public constexpr static u32 IRRADIANCE_TEXELS = 6;
 public constexpr static u32 DISTANCE_TEXELS = 14;
 public constexpr static u32 PROBES_PER_ATLAS_ROW = 32;
 public constexpr static f32 DISTANCE_SHARPNESS = 50.0;
+public constexpr static f32 IRRADIANCE_ENCODING_GAMMA = 5.0;
 
 public constexpr static u32 DEBUG_SPHERE_RINGS = 8;
 public constexpr static u32 DEBUG_SPHERE_SECTORS = 12;
@@ -38,13 +39,9 @@ public func probe_is_reset(u32 flags) -> bool {
     return (flags & PROBE_RESET_BIT) != 0;
 }
 
-public func probe_update_interval(u32 flags) -> u32 {
-    return max((flags >> 8) & 0xffu, 1u);
-}
-
-public func probe_pack_flags(bool inactive, bool update, bool reset, u32 interval) -> u32 {
+public func probe_pack_flags(bool inactive, bool update, bool reset) -> u32 {
     return (inactive ? PROBE_INACTIVE_BIT : 0u) | (update ? PROBE_UPDATE_BIT : 0u) |
-           (reset ? PROBE_RESET_BIT : 0u) | (min(interval, 0xffu) << 8);
+           (reset ? PROBE_RESET_BIT : 0u);
 }
 
 public struct ProbeVolume {
@@ -119,6 +116,15 @@ public func probe_atlas_uv(u32 probe_row, f32x3 direction, u32 interior_texels, 
     return (origin + 1.0 + octant * f32(interior_texels)) / atlas_size;
 }
 
+public func encode_probe_irradiance(f32x3 irradiance) -> f32x3 {
+    return pow(max(irradiance, 0.0), 1.0 / IRRADIANCE_ENCODING_GAMMA);
+}
+
+public func decode_probe_irradiance(f32x3 encoded) -> f32x3 {
+    let root = pow(max(encoded, 0.0), IRRADIANCE_ENCODING_GAMMA * 0.5);
+    return root * root;
+}
+
 public func sample_probe_irradiance(Image2D<f32x4> atlas, Sampler atlas_sampler, u32 probe_row, f32x3 direction)
     -> f32x3 {
     u32 width, height;
@@ -172,15 +178,27 @@ public func probe_border_texel_count(u32 interior_texels) -> u32 {
     return (interior_texels + 2) * 4 - 4;
 }
 
-func pcg_hash(u32 v) -> u32 {
-    let state = v * 747796405u + 2891336453u;
-    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
+// a word from our clanker:
+// A fresh random rotation every frame gives the accumulator an independent ray set each update, so the
+// probe's history random walks - slow visible breathing rather than noise the eye averages away. A short
+// repeating low discrepancy sequence makes the estimate periodic instead, and the hysteresis filters that
+// down to a small ripple: about 4x less wander for the same rate.
+//
+// 11 is the smallest period coprime with every update interval ddgi_select_probes can pick (1..8); on a
+// shared factor a probe locks onto one rotation forever and bakes its sampling error into a fixed
+// blotch. Smallest is best - a shorter period ripples faster, where the hysteresis attenuates it harder.
+public constexpr static u32 RAY_ROTATION_PERIOD = 11;
 
-func next_f32(inout u32 seed) -> f32 {
-    seed = pcg_hash(seed);
-    return f32(seed) * 2.3283064365386963e-10;
+func halton(u32 index, u32 base) -> f32 {
+    var result = 0.0;
+    var fraction = 1.0;
+    var i = index;
+    while (i > 0u) {
+        fraction /= f32(base);
+        result += fraction * f32(i % base);
+        i /= base;
+    }
+    return result;
 }
 
 func rotate_by_quat(f32x4 q, f32x3 v) -> f32x3 {
@@ -188,10 +206,10 @@ func rotate_by_quat(f32x4 q, f32x3 v) -> f32x3 {
 }
 
 func frame_rotation(u32 frame_index) -> f32x4 {
-    var seed = pcg_hash(frame_index);
-    let u1 = next_f32(seed);
-    let u2 = next_f32(seed);
-    let u3 = next_f32(seed);
+    let index = frame_index % RAY_ROTATION_PERIOD + 1u;
+    let u1 = halton(index, 2u);
+    let u2 = halton(index, 3u);
+    let u3 = halton(index, 5u);
 
     let r1 = sqrt(1.0 - u1);
     let r2 = sqrt(u1);
@@ -217,8 +235,6 @@ public func probe_world_position(in ProbeVolume volume, StructuredBuffer<ProbeSt
     -> f32x3 {
     return volume.probe_position(probe_index) + states[volume.probe_offset + probe_index].offset;
 }
-
-static const f32 MIN_TOTAL_WEIGHT = 1e-4;
 
 public struct IrradianceSample {
     public f32x3 irradiance;
@@ -268,7 +284,7 @@ public func sample_probe_volume(
 
         let probe_position = grid_min + f32x3(probe_coord) * volume.spacing + state.offset;
 
-        let trilinear = lerp(1.0 - alpha, alpha, f32x3(offset));
+        let trilinear = max(lerp(1.0 - alpha, alpha, f32x3(offset)), 0.001);
         let trilinear_weight = trilinear.x * trilinear.y * trilinear.z;
 
         let to_probe = normalize(probe_position - world_position);
@@ -279,13 +295,15 @@ public func sample_probe_volume(
         let probe_distance = length(bias_vector);
         let moments = sample_probe_distance(distance_atlas, atlas_sampler, probe_row, bias_vector);
         let mean = moments.x;
+        var chebyshev = 1.0;
         if (probe_distance > mean) {
             let variance = abs(mean * mean - moments.y);
             let difference = probe_distance - mean;
-            let chebyshev = variance / (variance + difference * difference);
-            weight *= chebyshev * chebyshev * chebyshev;
+            chebyshev = variance / (variance + difference * difference);
+            chebyshev = chebyshev * chebyshev * chebyshev;
         }
 
+        weight *= max(chebyshev, 0.05);
         weight = max(weight, 1e-6);
 
         const f32 crush_threshold = 0.2;
@@ -295,27 +313,29 @@ public func sample_probe_volume(
 
         weight *= trilinear_weight;
 
-        sum += sample_probe_irradiance(irradiance_atlas, atlas_sampler, probe_row, normal) * weight;
+        let half_decode = IRRADIANCE_ENCODING_GAMMA * 0.5;
+        sum += pow(sample_probe_irradiance(irradiance_atlas, atlas_sampler, probe_row, normal), half_decode) * weight;
         if (want_specular) {
-            specular_sum += sample_probe_irradiance(irradiance_atlas, atlas_sampler, probe_row, specular_direction) *
+            specular_sum += pow(
+                                sample_probe_irradiance(irradiance_atlas, atlas_sampler, probe_row, specular_direction),
+                                half_decode
+                            ) *
                             weight;
         }
 
         weight_sum += weight;
     }
 
-    if (active_probes == 0) {
+    if (active_probes == 0 || weight_sum <= 0.0) {
         return result;
     }
 
     result.coverage = 1.0;
 
-    if (weight_sum < MIN_TOTAL_WEIGHT) {
-        return result;
-    }
-
-    result.irradiance = com::sanitize(sum / weight_sum);
-    result.specular = com::sanitize(specular_sum / weight_sum);
+    let irradiance_root = com::sanitize(sum / weight_sum);
+    let specular_root = com::sanitize(specular_sum / weight_sum);
+    result.irradiance = irradiance_root * irradiance_root;
+    result.specular = specular_root * specular_root;
 
     return result;
 }
