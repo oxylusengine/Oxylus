@@ -51,6 +51,7 @@ func cs_main(
     let firefly_limit = reset ? com::HALF_MAX : (history_luminance + FIREFLY_FLOOR) * firefly_ratio;
 
     let texel_direction = probe_texel_direction(thread_id.xy, IRRADIANCE_TEXELS);
+    let rotation = probe_ray_rotation(frame_index);
 
     var sum = f32x3(0.0);
     var weight_sum = 0.0;
@@ -62,7 +63,7 @@ func cs_main(
             continue;
         }
 
-        let weight = max(dot(texel_direction, probe_ray_direction(ray_index, rays_per_probe, frame_index)), 0.0);
+        let weight = max(dot(texel_direction, probe_ray_direction(ray_index, rays_per_probe, rotation)), 0.0);
         if (weight <= 0.0) {
             continue;
         }

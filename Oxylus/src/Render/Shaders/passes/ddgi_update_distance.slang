@@ -31,26 +31,47 @@ func cs_main(
 
     let max_distance = volume.max_probe_distance();
     let texel_direction = probe_texel_direction(thread_id.xy, DISTANCE_TEXELS);
+    let rotation = probe_ray_rotation(frame_index);
 
-    var sum = f32x2(0.0);
-    var weight_sum = 0.0;
-    for (u32 ray_index = 0; ray_index < rays_per_probe; ray_index++) {
-        let weight = pow(
-            max(dot(texel_direction, probe_ray_direction(ray_index, rays_per_probe, frame_index)), 0.0),
-            DISTANCE_SHARPNESS
-        );
-        if (weight <= 0.0) {
-            continue;
+    var result = f32x2(max_distance, max_distance * max_distance);
+    if (SHARP_DISTANCE) {
+        var best_alignment = -1.0;
+        var best_ray = 0u;
+        for (u32 ray_index = 0; ray_index < rays_per_probe; ray_index++) {
+            let alignment = dot(texel_direction, probe_ray_direction(ray_index, rays_per_probe, rotation));
+            if (alignment > best_alignment) {
+                best_alignment = alignment;
+                best_ray = ray_index;
+            }
         }
 
-        let hit_distance = ray_data.Load(u32x3(ray_index, probe_row, 0)).a;
+        let hit_distance = ray_data.Load(u32x3(best_ray, probe_row, 0)).a;
         let distance = hit_distance < 0.0 ? 0.0 : min(hit_distance, max_distance);
 
-        sum += f32x2(distance, distance * distance) * weight;
-        weight_sum += weight;
-    }
+        result = f32x2(distance, distance * distance);
+    } else {
+        var sum = f32x2(0.0);
+        var weight_sum = 0.0;
+        for (u32 ray_index = 0; ray_index < rays_per_probe; ray_index++) {
+            let weight = pow(
+                max(dot(texel_direction, probe_ray_direction(ray_index, rays_per_probe, rotation)), 0.0),
+                DISTANCE_SHARPNESS
+            );
+            if (weight <= 0.0) {
+                continue;
+            }
 
-    let result = weight_sum > 0.0 ? sum / weight_sum : f32x2(max_distance, max_distance * max_distance);
+            let hit_distance = ray_data.Load(u32x3(ray_index, probe_row, 0)).a;
+            let distance = hit_distance < 0.0 ? 0.0 : min(hit_distance, max_distance);
+
+            sum += f32x2(distance, distance * distance) * weight;
+            weight_sum += weight;
+        }
+
+        if (weight_sum > 0.0) {
+            result = sum / weight_sum;
+        }
+    }
 
     let coords = probe_tile_origin(probe_row, DISTANCE_TEXELS) + 1 + thread_id.xy;
 

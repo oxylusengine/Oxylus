@@ -7,6 +7,9 @@ public constexpr static u32 PROBES_PER_ATLAS_ROW = 32;
 public constexpr static f32 DISTANCE_SHARPNESS = 50.0;
 public constexpr static f32 IRRADIANCE_ENCODING_GAMMA = 5.0;
 
+public constexpr static bool SHARP_DISTANCE = true;
+public constexpr static f32 DISTANCE_VARIANCE_BIAS = 0.01;
+
 public constexpr static u32 DEBUG_SPHERE_RINGS = 8;
 public constexpr static u32 DEBUG_SPHERE_SECTORS = 12;
 public constexpr static u32 DEBUG_SPHERE_VERTEX_COUNT = DEBUG_SPHERE_RINGS * DEBUG_SPHERE_SECTORS * 6;
@@ -205,7 +208,7 @@ func rotate_by_quat(f32x4 q, f32x3 v) -> f32x3 {
     return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
 }
 
-func frame_rotation(u32 frame_index) -> f32x4 {
+public func probe_ray_rotation(u32 frame_index) -> f32x4 {
     let index = frame_index % RAY_ROTATION_PERIOD + 1u;
     let u1 = halton(index, 2u);
     let u2 = halton(index, 3u);
@@ -227,8 +230,12 @@ func spherical_fibonacci(u32 index, u32 count) -> f32x3 {
     return f32x3(cos(phi) * r, sin(phi) * r, z);
 }
 
+public func probe_ray_direction(u32 ray_index, u32 ray_count, f32x4 rotation) -> f32x3 {
+    return normalize(rotate_by_quat(rotation, spherical_fibonacci(ray_index, ray_count)));
+}
+
 public func probe_ray_direction(u32 ray_index, u32 ray_count, u32 frame_index) -> f32x3 {
-    return normalize(rotate_by_quat(frame_rotation(frame_index), spherical_fibonacci(ray_index, ray_count)));
+    return probe_ray_direction(ray_index, ray_count, probe_ray_rotation(frame_index));
 }
 
 public func probe_world_position(in ProbeVolume volume, StructuredBuffer<ProbeState> states, u32 probe_index)
@@ -297,7 +304,8 @@ public func sample_probe_volume(
         let mean = moments.x;
         var chebyshev = 1.0;
         if (probe_distance > mean) {
-            let variance = abs(mean * mean - moments.y);
+            let variance_floor = DISTANCE_VARIANCE_BIAS * volume.max_probe_distance();
+            let variance = max(abs(mean * mean - moments.y), variance_floor * variance_floor);
             let difference = probe_distance - mean;
             chebyshev = variance / (variance + difference * difference);
             chebyshev = chebyshev * chebyshev * chebyshev;
