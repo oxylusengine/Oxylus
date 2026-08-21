@@ -747,7 +747,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
 
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
-      if (ImGui::TreeNodeEx("RTAO (DO NOT USE, TESTING ONLY)", TREE_FLAGS, "%s", "RTAO")) {
+      if (ImGui::TreeNodeEx("RTAO", TREE_FLAGS, "%s", "RTAO (DO NOT USE, TESTING ONLY)")) {
         const auto has_ray_tracing = render_context.features & RenderContext::Feature::RayTracing;
         ImGui::BeginDisabled(!has_ray_tracing);
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
@@ -787,7 +787,12 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             1.0f,
             "More rays converge faster and flicker less, at a linear cost"
           );
-          UI::property<float>("Max Ray Distance", cvar_sys.cvar_ddgi_max_ray_distance.get_ptr(), 1.f, 500.f);
+          UI::property<float>(
+            "Max Ray Distance (Cascade 0)",
+            cvar_sys.cvar_ddgi_max_ray_distance.get_ptr(),
+            1.f,
+            500.f
+          );
           UI::property<float>(
             "Max Ray Radiance",
             cvar_sys.cvar_ddgi_max_ray_radiance.get_ptr(),

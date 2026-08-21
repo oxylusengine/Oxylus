@@ -48,8 +48,12 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
 
   self.cvar_ddgi_enable.init(self.system, "rr.ddgi", "enable dynamic diffuse global illumination probe volumes", 1);
   self.cvar_ddgi_rays_per_probe.init(self.system, "rr.ddgi_rays_per_probe", "rays traced per probe each frame", 128);
-  self.cvar_ddgi_max_ray_distance
-    .init(self.system, "rr.ddgi_max_ray_distance", "world space length of a probe ray", 50.0f);
+  self.cvar_ddgi_max_ray_distance.init(
+    self.system,
+    "rr.ddgi_max_ray_distance",
+    "world space length of a cascade 0 probe ray, doubled per cascade",
+    50.0f
+  );
   self.cvar_ddgi_max_ray_radiance
     .init(self.system, "rr.ddgi_max_ray_radiance", "luminance cap on a single probe ray, tames fireflies", 25.0f);
   self.cvar_ddgi_update_max_interval

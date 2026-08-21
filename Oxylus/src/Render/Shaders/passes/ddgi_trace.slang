@@ -220,11 +220,16 @@ func rgs_main() -> void {
     let origin = probe_world_position(volume, probe_states, probe_index);
     let direction = probe_ray_direction(ray_index, constants.rays_per_probe, constants.frame_index);
 
+    let max_ray_distance = max(
+        constants.max_ray_distance * f32(1u << volume.cascade_index),
+        volume.max_probe_distance
+    );
+
     RayDesc ray;
     ray.Origin = origin;
     ray.Direction = direction;
     ray.TMin = 0.0;
-    ray.TMax = constants.max_ray_distance;
+    ray.TMax = max_ray_distance;
 
     ProbeRayPayload payload = {};
     payload.hit_distance = -1.0;
@@ -232,7 +237,7 @@ func rgs_main() -> void {
     TraceRay(scene_tlas, RAY_FLAG_FORCE_OPAQUE, 0xffu, 0, 0, 0, ray, payload);
 
     var radiance = f32x3(0.0);
-    var hit_distance = constants.max_ray_distance;
+    var hit_distance = max_ray_distance;
 
     if (payload.hit_distance < 0.0) {
         radiance = miss_radiance(

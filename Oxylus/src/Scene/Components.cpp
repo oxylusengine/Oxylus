@@ -163,7 +163,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = ProbeVolumeComponent;
-    registry.bind<&C::probe_counts, &C::probe_spacing, &C::cascade_count, &C::follow_camera>();
+    registry.bind<&C::probe_counts, &C::probe_spacing, &C::cascade_count, &C::cascade_blend, &C::follow_camera>();
   }
 
   {

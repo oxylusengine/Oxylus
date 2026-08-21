@@ -51,13 +51,15 @@ public struct ProbeVolume {
     public f32x3 origin;
     public u32 probe_offset;
     public f32x3 spacing;
-    public u32 _pad_1;
-    public u32x3 counts;
     public u32 probe_count;
+    public f32x3 spacing_rcp;
+    public u32 cascade_index;
+    public u32x3 counts;
+    public u32 cascade_count;
     public i32x3 scroll;
-    public u32 camera_locked;
-    public f32x3 blend_origin;
-    public u32 _pad_2;
+    public f32 cascade_blend;
+    public f32x3 center;
+    public f32 max_probe_distance;
 
     public func extents() -> f32x3 {
         return f32x3(max(this.counts, 1u) - 1u) * this.spacing * 0.5;
@@ -90,18 +92,24 @@ public struct ProbeVolume {
         return storage.x + storage.y * this.counts.x + storage.z * this.counts.x * this.counts.y;
     }
 
-    public func max_probe_distance() -> f32 {
-        return length(this.spacing) * 1.5;
-    }
-
-    public func blend_weight(f32x3 world_position) -> f32 {
-        let tightening = this.camera_locked != 0 ? this.spacing : f32x3(0.0);
-        let reach = max(this.extents() - tightening, f32x3(0.0));
-        let delta = abs(world_position - this.blend_origin) - reach;
-        let fade = saturate(1.0 - delta / this.spacing);
-        return fade.x * fade.y * fade.z;
+    public func grid_coord_of(f32x3 world_position) -> f32x3 {
+        return (world_position - this.grid_min()) * this.spacing_rcp;
     }
 };
+
+public func cascade_safe_range(in ProbeVolume cascade_zero) -> f32x3 {
+    return cascade_zero.spacing * max(f32x3(cascade_zero.counts / 2u) - 2.0, f32x3(1.0));
+}
+
+public func select_cascade(in ProbeVolume cascade_zero, f32x3 world_position) -> f32 {
+    let normalized = (world_position - cascade_zero.center) / cascade_safe_range(cascade_zero);
+    let cascade = max(0.0, log2(max(length(normalized), 1e-6)) + 1.0);
+
+    let outer = ceil(cascade);
+    let blend_start = min(floor(cascade) + (1.0 - cascade_zero.cascade_blend), outer - 1e-4);
+
+    return lerp(floor(cascade), outer, smoothstep(blend_start, outer, cascade));
+}
 
 public func probe_texel_direction(u32x2 texel, u32 interior_texels) -> f32x3 {
     return com::oct_to_vec3((f32x2(texel) + 0.5) / f32(interior_texels) * 2.0 - 1.0);
@@ -268,7 +276,7 @@ public func sample_probe_volume(
     let cell = min(min(volume.spacing.x, volume.spacing.y), volume.spacing.z);
     let biased_position = world_position + (normal * normal_bias + view_direction * view_bias) * cell;
     let grid_min = volume.grid_min();
-    let grid_position = (biased_position - grid_min) / volume.spacing;
+    let grid_position = volume.grid_coord_of(biased_position);
     let base_coord = clamp(i32x3(floor(grid_position)), i32x3(0), i32x3(volume.counts) - 1);
     let alpha = saturate(grid_position - f32x3(base_coord));
 
@@ -304,7 +312,7 @@ public func sample_probe_volume(
         let mean = moments.x;
         var chebyshev = 1.0;
         if (probe_distance > mean) {
-            let variance_floor = DISTANCE_VARIANCE_BIAS * volume.max_probe_distance();
+            let variance_floor = DISTANCE_VARIANCE_BIAS * volume.max_probe_distance;
             let variance = max(abs(mean * mean - moments.y), variance_floor * variance_floor);
             let difference = probe_distance - mean;
             chebyshev = variance / (variance + difference * difference);
@@ -338,7 +346,7 @@ public func sample_probe_volume(
         return result;
     }
 
-    result.coverage = 1.0;
+    result.coverage = weight_sum;
 
     let irradiance_root = com::sanitize(sum / weight_sum);
     let specular_root = com::sanitize(specular_sum / weight_sum);
@@ -347,6 +355,8 @@ public func sample_probe_volume(
 
     return result;
 }
+
+public static const f32 CASCADE_FALLBACK_WEIGHT = 0.02;
 
 public func sample_ddgi_irradiance(
     StructuredBuffer<ProbeVolume> volumes,
@@ -365,16 +375,19 @@ public func sample_ddgi_irradiance(
 ) -> IrradianceSample {
     IrradianceSample result = { f32x3(0.0), f32x3(0.0), 0.0 };
 
-    var remaining = 1.0;
-    for (u32 volume_index = 0; volume_index < volume_count; volume_index++) {
-        let volume = volumes[volume_index];
-        let coverage = volume.blend_weight(world_position) * remaining;
-        if (coverage <= 0.0) {
+    for (u32 set_start = 0; set_start < volume_count;) {
+        let cascade_zero = volumes[set_start];
+        let set_count = max(cascade_zero.cascade_count, 1u);
+
+        let cascade = select_cascade(cascade_zero, world_position);
+        if (cascade >= f32(set_count)) {
+            set_start += set_count;
             continue;
         }
 
-        let sample = sample_probe_volume(
-            volume,
+        let lower_index = u32(floor(cascade));
+        let lower = sample_probe_volume(
+            volumes[set_start + lower_index],
             states,
             irradiance_atlas,
             distance_atlas,
@@ -387,23 +400,52 @@ public func sample_ddgi_irradiance(
             normal_bias,
             view_bias
         );
-        if (sample.coverage <= 0.0) {
-            continue;
+
+        var irradiance = lower.irradiance;
+        var specular = lower.specular;
+        var weight = lower.coverage;
+
+        let higher_index = lower_index + 1;
+        let lower_missed = weight < CASCADE_FALLBACK_WEIGHT;
+        if (higher_index < set_count && (lower_missed || frac(cascade) > 0.0)) {
+            let higher = sample_probe_volume(
+                volumes[set_start + higher_index],
+                states,
+                irradiance_atlas,
+                distance_atlas,
+                atlas_sampler,
+                world_position,
+                normal,
+                view_direction,
+                specular_direction,
+                want_specular,
+                normal_bias,
+                view_bias
+            );
+
+            let distance_blend = lower_missed ? 0.5 : frac(cascade);
+            let lower_weight = weight * (1.0 - distance_blend);
+            let higher_weight = higher.coverage * distance_blend;
+            let weight_sum = lower_weight + higher_weight;
+
+            if (weight_sum > 0.0) {
+                let blend = higher_weight / weight_sum;
+                irradiance = lerp(irradiance, higher.irradiance, blend);
+                specular = lerp(specular, higher.specular, blend);
+                weight = max(weight, higher.coverage);
+            }
         }
 
-        result.irradiance += sample.irradiance * coverage;
-        result.specular += sample.specular * coverage;
-        result.coverage += coverage;
+        if (weight > 0.0) {
+            let outer_fade = saturate((f32(set_count) - cascade) / max(cascade_zero.cascade_blend, 1e-3));
 
-        remaining -= coverage;
-        if (remaining <= 1e-3) {
-            break;
+            result.irradiance = irradiance;
+            result.specular = specular;
+            result.coverage = saturate(weight / CASCADE_FALLBACK_WEIGHT) * outer_fade;
+            return result;
         }
-    }
 
-    if (result.coverage > 0.0) {
-        result.irradiance /= result.coverage;
-        result.specular /= result.coverage;
+        set_start += set_count;
     }
 
     return result;

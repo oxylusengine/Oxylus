@@ -1697,74 +1697,69 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
                                       GPU::DebugView::DDGIProbes &&
                                     cvar.cvar_enable_debug_renderer.as_bool();
 
-    auto candidates = ankerl::svector<GPU::ProbeVolume, 8>{};
+    // Cascades of one set are emitted contiguously, finest first, because the shader walks the array
+    // set by set and indexes a set's members by cascade index off its first entry.
     self.scene.world
       .query_builder<const TransformComponent, const ProbeVolumeComponent>() //
       .build()
       .each(
         [&self,
-         &candidates,
          camera_position = cam.position](flecs::entity e, const TransformComponent&, const ProbeVolumeComponent& c) {
           if (!e.enabled()) {
             return;
           }
 
-          const auto counts = glm::max(c.probe_counts, glm::uvec3(1));
+          const auto counts = glm::max(c.probe_counts, glm::uvec3(2));
           const auto base_spacing = glm::max(c.probe_spacing, glm::vec3(0.01f));
           const glm::vec3 anchor = self.scene.get_world_transform(e)[3];
+          const auto center = c.follow_camera ? camera_position : anchor;
           const auto cascades = std::clamp(c.cascade_count, 1u, GPU::DDGI_MAX_CASCADE_COUNT);
+          const auto probe_count = counts.x * counts.y * counts.z;
 
+          auto set = ankerl::svector<GPU::ProbeVolume, GPU::DDGI_MAX_CASCADE_COUNT>{};
           for (u32 cascade = 0; cascade < cascades; cascade++) {
             const auto spacing = base_spacing * static_cast<f32>(1u << cascade);
+            const auto scroll = glm::ivec3(glm::floor((center - anchor) / spacing + 0.5f));
 
-            auto scroll = glm::ivec3(0);
-            auto blend_origin = anchor;
-            if (c.follow_camera) {
-              scroll = glm::ivec3(glm::floor((camera_position - anchor) / spacing + 0.5f));
-              blend_origin = camera_position;
-            }
-
-            candidates.emplace_back(
+            set.emplace_back(
               GPU::ProbeVolume{
                 .origin = anchor + glm::vec3(scroll) * spacing,
                 .spacing = spacing,
+                .probe_count = probe_count,
+                .spacing_rcp = 1.0f / spacing,
+                .cascade_index = cascade,
                 .counts = counts,
-                .probe_count = counts.x * counts.y * counts.z,
+                .cascade_count = cascades,
                 .scroll = scroll,
-                .camera_locked = c.follow_camera ? 1u : 0u,
-                .blend_origin = blend_origin,
+                .cascade_blend = std::clamp(c.cascade_blend, 0.0f, 1.0f),
+                .center = center,
+                .max_probe_distance = glm::length(spacing) * 1.5f,
               }
             );
+          }
+
+          const auto probe_offset = self.probe_volumes.empty()
+                                      ? 0u
+                                      : self.probe_volumes.back().probe_offset + self.probe_volumes.back().probe_count;
+
+          if (probe_offset + probe_count * cascades > GPU::DDGI_MAX_PROBE_COUNT) {
+            OX_LOG_WARN(
+              "Dropped a {} cascade probe volume, the scene is over the {} probe limit.",
+              cascades,
+              GPU::DDGI_MAX_PROBE_COUNT
+            );
+            return;
+          }
+
+          for (u32 cascade = 0; cascade < cascades; cascade++) {
+            set[cascade].probe_offset = probe_offset + cascade * probe_count;
+            self.probe_volumes.emplace_back(set[cascade]);
           }
         }
       );
 
-    std::stable_sort(
-      candidates.begin(),
-      candidates.end(),
-      [](const GPU::ProbeVolume& lhs, const GPU::ProbeVolume& rhs) {
-        return lhs.spacing.x * lhs.spacing.y * lhs.spacing.z < rhs.spacing.x * rhs.spacing.y * rhs.spacing.z;
-      }
-    );
-
-    for (auto& volume : candidates) {
-      const auto probe_offset = self.probe_volumes.empty()
-                                  ? 0u
-                                  : self.probe_volumes.back().probe_offset + self.probe_volumes.back().probe_count;
-
-      if (probe_offset + volume.probe_count > GPU::DDGI_MAX_PROBE_COUNT) {
-        OX_LOG_WARN(
-          "Dropped {} probe volume cascades, the scene is over the {} probe limit.",
-          candidates.size() - self.probe_volumes.size(),
-          GPU::DDGI_MAX_PROBE_COUNT
-        );
-        break;
-      }
-
-      volume.probe_offset = probe_offset;
-      self.probe_volumes.emplace_back(volume);
-
-      if (draw_volume_bounds) {
+    if (draw_volume_bounds) {
+      for (const auto& volume : self.probe_volumes) {
         const auto extents = glm::vec3(volume.counts - 1u) * volume.spacing * 0.5f;
         App::mod<ox::DebugRenderer>().draw_aabb(
           AABB(volume.origin - extents, volume.origin + extents),

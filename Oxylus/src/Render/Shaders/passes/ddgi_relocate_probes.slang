@@ -8,7 +8,11 @@ import ddgi;
 
 // x^2 / spacing.x^2 + y^2 / spacing.y^2 + z^2 / spacing.z^2 < 0.45^2, so a probe never crosses into its
 // neighbour's cell and breaks the trilinear weights that assume a regular grid.
-static const f32 MAX_OFFSET_RATIO_SQUARED = 0.2025;
+static const f32 MAX_OFFSET_RATIO = 0.45;
+static const f32 MAX_OFFSET_RATIO_SQUARED = MAX_OFFSET_RATIO * MAX_OFFSET_RATIO;
+static const f32 RELOCATE_MAX_STEP_RATIO = MAX_OFFSET_RATIO * 0.5;
+static const f32 RELOCATE_BACKOFF_HYSTERESIS = 2.0;
+static const f32 RELOCATE_BACKOFF_RATE = 0.25;
 
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]
@@ -58,7 +62,8 @@ func cs_main(
             if (distance < closest_frontface_distance) {
                 closest_frontface_distance = distance;
                 closest_frontface_index = i32(ray_index);
-            } else if (distance > farthest_frontface_distance) {
+            }
+            if (distance > farthest_frontface_distance) {
                 farthest_frontface_distance = distance;
                 farthest_frontface_index = i32(ray_index);
             }
@@ -67,6 +72,10 @@ func cs_main(
 
     var full_offset = f32x3(com::HALF_MAX);
 
+    let cascade_scale = f32(1u << volume.cascade_index);
+    let min_distance = min_frontface_distance * cascade_scale;
+    let max_step = RELOCATE_MAX_STEP_RATIO * min(min(volume.spacing.x, volume.spacing.y), volume.spacing.z);
+
     let backface_ratio = backface_count / f32(rays_per_probe);
     let was_inside = probe_is_inactive(flags);
     let inside_geometry = closest_backface_index != -1 &&
@@ -74,8 +83,8 @@ func cs_main(
 
     if (inside_geometry) {
         let closest_backface_direction = probe_ray_direction(u32(closest_backface_index), rays_per_probe, frame_index);
-        full_offset = offset + closest_backface_direction * (closest_backface_distance + min_frontface_distance * 0.5);
-    } else if (closest_frontface_distance < min_frontface_distance) {
+        full_offset = offset + closest_backface_direction * (closest_backface_distance + min_distance * 0.5);
+    } else if (closest_frontface_distance < min_distance && farthest_frontface_index != -1) {
         let closest_frontface_direction = probe_ray_direction(u32(closest_frontface_index), rays_per_probe, frame_index);
         var farthest_frontface_direction = probe_ray_direction(
             u32(farthest_frontface_index),
@@ -84,13 +93,16 @@ func cs_main(
         );
 
         if (dot(closest_frontface_direction, farthest_frontface_direction) <= 0.0) {
-            farthest_frontface_direction *= min(farthest_frontface_distance, 1.0);
+            farthest_frontface_direction *= min(farthest_frontface_distance, max_step);
             full_offset = offset + farthest_frontface_direction;
         }
-    } else if (closest_frontface_distance > min_frontface_distance) {
-        let move_back_margin = min(closest_frontface_distance - min_frontface_distance, length(offset));
-        let move_back_direction = normalize(-offset);
-        full_offset = offset + move_back_margin * move_back_direction;
+    } else if (closest_frontface_distance > min_distance * RELOCATE_BACKOFF_HYSTERESIS) {
+        let offset_length = length(offset);
+        if (offset_length > 1e-4) {
+            let move_back_margin = min(closest_frontface_distance - min_distance, offset_length) *
+                                   RELOCATE_BACKOFF_RATE;
+            full_offset = offset - offset * (move_back_margin / offset_length);
+        }
     }
 
     let normalized_offset = full_offset / volume.spacing;

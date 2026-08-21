@@ -287,13 +287,15 @@ struct ProbeVolume {
   alignas(4) glm::vec3 origin = {};
   alignas(4) u32 probe_offset = 0;
   alignas(4) glm::vec3 spacing = {};
-  alignas(4) u32 pad1 = 0;
-  alignas(4) glm::uvec3 counts = {};
   alignas(4) u32 probe_count = 0;
+  alignas(4) glm::vec3 spacing_rcp = {};
+  alignas(4) u32 cascade_index = 0;
+  alignas(4) glm::uvec3 counts = {};
+  alignas(4) u32 cascade_count = 0;
   alignas(4) glm::ivec3 scroll = {};
-  alignas(4) u32 camera_locked = 0;
-  alignas(4) glm::vec3 blend_origin = {};
-  alignas(4) u32 pad2 = 0;
+  alignas(4) f32 cascade_blend = 0.3f;
+  alignas(4) glm::vec3 center = {};
+  alignas(4) f32 max_probe_distance = 0.0f;
 };
 
 enum class SceneFlags : u32 {

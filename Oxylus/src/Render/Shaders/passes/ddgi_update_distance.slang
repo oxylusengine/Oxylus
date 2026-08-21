@@ -29,7 +29,7 @@ func cs_main(
         return;
     }
 
-    let max_distance = volume.max_probe_distance();
+    let max_distance = volume.max_probe_distance;
     let texel_direction = probe_texel_direction(thread_id.xy, DISTANCE_TEXELS);
     let rotation = probe_ray_rotation(frame_index);
 
