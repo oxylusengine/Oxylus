@@ -747,7 +747,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
 
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
-      if (ImGui::TreeNodeEx("RTAO", TREE_FLAGS, "%s", "RTAO")) {
+      if (ImGui::TreeNodeEx("RTAO (DO NOT USE, TESTING ONLY)", TREE_FLAGS, "%s", "RTAO")) {
         const auto has_ray_tracing = render_context.features & RenderContext::Feature::RayTracing;
         ImGui::BeginDisabled(!has_ray_tracing);
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
