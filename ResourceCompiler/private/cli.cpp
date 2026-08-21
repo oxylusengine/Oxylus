@@ -111,6 +111,7 @@ auto main(i32 argc, c8** argv) -> i32 {
         .module_name = prog.name,
         .entry_points = prog.entry_points,
         .bindless = prog.bindless,
+        .requires_mesh_shaders = prog.requires_mesh_shaders,
       });
     }
 
@@ -165,11 +166,13 @@ auto main(i32 argc, c8** argv) -> i32 {
         }
         return 1;
       }
-      log(fmt::format(
-        "Compiled {} program(s) -> {}",
-        shader_session.programs.size(),
-        shader_session.output.filename().string()
-      ));
+      log(
+        fmt::format(
+          "Compiled {} program(s) -> {}",
+          shader_session.programs.size(),
+          shader_session.output.filename().string()
+        )
+      );
     }
   }
 

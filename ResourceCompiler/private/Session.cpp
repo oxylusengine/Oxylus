@@ -154,6 +154,7 @@ auto Session::compile() -> bool {
       }
 
       pipeline.bindless = shader.bindless;
+      pipeline.requires_mesh_shaders = shader.requires_mesh_shaders;
       impl->asset_file.add_entry(std::move(pipeline));
     }
   }

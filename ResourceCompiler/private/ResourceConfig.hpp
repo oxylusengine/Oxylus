@@ -13,6 +13,7 @@ struct ShaderProgramConfig {
   std::filesystem::path path = {};
   std::vector<std::string> entry_points = {};
   bool bindless = false;
+  bool requires_mesh_shaders = false;
 };
 
 struct ShaderSessionConfig {

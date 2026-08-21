@@ -54,6 +54,7 @@ struct ShaderPipelineData {
   std::string module_name = "";
   std::vector<ShaderEntryPointData> entry_points = {};
   bool bindless = false;
+  bool requires_mesh_shaders = false;
 };
 
 struct AssetFileEntry {

@@ -16,5 +16,6 @@ struct ContextCVar : public CVarInterface {
 
   AutoCVar_Int cvar_vsync;
   AutoCVar_Int cvar_frame_limit;
+  AutoCVar_Int cvar_mesh_shaders;
 };
 } // namespace ox

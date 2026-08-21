@@ -7,6 +7,7 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
+#include "Core/Enum.hpp"
 #include "Core/Input.hpp"
 #include "Editor.hpp"
 #include "Render/Camera.hpp"
@@ -638,6 +639,15 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
     );
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
       UI::property("VSync", context_cvar.cvar_vsync.get_ptr_bool());
+      const auto has_mesh_shaders = render_context.features & RenderContext::Feature::MeshShaders;
+      ImGui::BeginDisabled(!has_mesh_shaders);
+      UI::property(
+        "Mesh shaders",
+        context_cvar.cvar_mesh_shaders.get_ptr_bool(),
+        has_mesh_shaders ? "Draw geometry with the mesh shader pipeline instead of the compute one"
+                         : "This device does not support VK_EXT_mesh_shader"
+      );
+      ImGui::EndDisabled();
       UI::end_properties();
     }
 
