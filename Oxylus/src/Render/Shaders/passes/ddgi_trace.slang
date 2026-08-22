@@ -286,7 +286,11 @@ func rgs_main() -> void {
         radiance *= constants.max_ray_radiance / ray_luminance;
     }
 
-    ray_data[u32x2(ray_index, volume.probe_offset + probe_index)] = f32x4(radiance, hit_distance);
+    u32 ray_data_width, ray_data_height;
+    ray_data.GetDimensions(ray_data_width, ray_data_height);
+    let ray_origin = ray_data_row_origin(volume.probe_offset + probe_index, constants.rays_per_probe, ray_data_width);
+
+    ray_data[ray_origin + u32x2(ray_index, 0)] = f32x4(radiance, hit_distance);
 }
 
 [[shader("miss")]]

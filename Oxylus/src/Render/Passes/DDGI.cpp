@@ -14,7 +14,6 @@ auto RendererInstance::allocate_ddgi_atlases(this RendererInstance& self, u32 pr
   auto& allocator = *self.renderer.render_context->superframe_allocator;
 
   self.ddgi_irradiance_attachment = vuk::ImageAttachment{
-    // eTransferDst: a freshly allocated atlas is cleared before its first update.
     .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
              vuk::ImageUsageFlagBits::eTransferDst,
     .extent = GPU::ddgi_atlas_extent(probe_count, GPU::DDGI_IRRADIANCE_TEXELS),
@@ -32,7 +31,6 @@ auto RendererInstance::allocate_ddgi_atlases(this RendererInstance& self, u32 pr
   self.ddgi_irradiance_attachment.image_view = *self.ddgi_irradiance_view;
 
   self.ddgi_distance_attachment = vuk::ImageAttachment{
-    // eTransferDst: a freshly allocated atlas is cleared before its first update.
     .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
              vuk::ImageUsageFlagBits::eTransferDst,
     .extent = GPU::ddgi_atlas_extent(probe_count, GPU::DDGI_DISTANCE_TEXELS),
@@ -52,6 +50,11 @@ auto RendererInstance::allocate_ddgi_atlases(this RendererInstance& self, u32 pr
   self.ddgi_probe_states = self.renderer.render_context->allocate_buffer_super(
     vuk::MemoryUsage::eGPUonly,
     sizeof(GPU::ProbeState) * probe_count
+  );
+
+  self.ddgi_probe_update_list = self.renderer.render_context->allocate_buffer_super(
+    vuk::MemoryUsage::eGPUonly,
+    sizeof(u32) * probe_count
   );
 
   self.ddgi_atlas_probe_count = probe_count;
@@ -90,13 +93,17 @@ auto RendererInstance::select_ddgi_probes(this RendererInstance& self, DDGISelec
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eComputeRW) probe_states,
       VUK_BA(vuk::eComputeRead) probe_volumes,
-      VUK_BA(vuk::eComputeUniformRead) camera
+      VUK_BA(vuk::eComputeUniformRead) camera,
+      VUK_BA(vuk::eComputeWrite) probe_update_list,
+      VUK_BA(vuk::eComputeRW) probe_update_args
     ) {
       cmd_list //
         .bind_compute_pipeline("ddgi_select_probes")
         .bind_buffer(0, 0, camera)
         .bind_buffer(0, 1, probe_volumes)
-        .bind_buffer(0, 2, probe_states);
+        .bind_buffer(0, 2, probe_states)
+        .bind_buffer(0, 3, probe_update_list)
+        .bind_buffer(0, 4, probe_update_args);
 
       for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
         cmd_list //
@@ -115,77 +122,99 @@ auto RendererInstance::select_ddgi_probes(this RendererInstance& self, DDGISelec
           .dispatch_invocations(probe_counts[volume_index], 1, 1);
       }
 
-      return std::make_tuple(probe_states, probe_volumes, camera);
+      return std::make_tuple(probe_states, probe_volumes, camera, probe_update_list, probe_update_args);
     }
   );
 
-  std::tie(context.probe_states_buffer, context.probe_volumes_buffer, self.prepared_frame.camera_buffer) = select_pass(
-    std::move(context.probe_states_buffer),
-    std::move(context.probe_volumes_buffer),
-    std::move(self.prepared_frame.camera_buffer)
+  std::tie(
+    context.probe_states_buffer,
+    context.probe_volumes_buffer,
+    self.prepared_frame.camera_buffer,
+    context.probe_update_list_buffer,
+    context.probe_update_args_buffer
+  ) =
+    select_pass(
+      std::move(context.probe_states_buffer),
+      std::move(context.probe_volumes_buffer),
+      std::move(self.prepared_frame.camera_buffer),
+      std::move(context.probe_update_list_buffer),
+      std::move(context.probe_update_args_buffer)
+    );
+
+  auto build_args_pass = vuk::make_pass(
+    "ddgi build dispatch args",
+    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eComputeRW) probe_update_args) {
+      cmd_list //
+        .bind_compute_pipeline("ddgi_build_dispatch_args")
+        .bind_buffer(0, 0, probe_update_args)
+        .dispatch(1, 1, 1);
+
+      return probe_update_args;
+    }
   );
+
+  context.probe_update_args_buffer = build_args_pass(std::move(context.probe_update_args_buffer));
 }
 
 auto RendererInstance::relocate_ddgi_probes(this RendererInstance& self, DDGIRelocateContext& context) -> void {
   ZoneScoped;
 
-  auto probe_counts = ankerl::svector<u32, 8>{};
-  for (const auto& volume : self.probe_volumes) {
-    probe_counts.emplace_back(volume.probe_count);
-  }
-
   auto relocate_pass = vuk::make_pass(
     "ddgi relocate probes",
-    [probe_counts,
-     rays_per_probe = context.rays_per_probe,
+    [rays_per_probe = context.rays_per_probe,
      frame_index = context.frame_index,
      min_frontface_distance = context.min_frontface_distance](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eComputeRW) probe_states,
       VUK_IA(vuk::eComputeSampled) ray_data,
-      VUK_BA(vuk::eComputeRead) probe_volumes
+      VUK_BA(vuk::eComputeRead) probe_volumes,
+      VUK_BA(vuk::eComputeRead) probe_update_list,
+      VUK_BA(vuk::eIndirectRead | vuk::eComputeRead) probe_update_args
     ) {
       cmd_list //
         .bind_compute_pipeline("ddgi_relocate_probes")
         .bind_buffer(0, 0, probe_volumes)
         .bind_image(0, 1, ray_data)
-        .bind_buffer(0, 2, probe_states);
+        .bind_buffer(0, 2, probe_states)
+        .bind_buffer(0, 3, probe_update_list)
+        .bind_buffer(0, 4, probe_update_args)
+        .push_constants(
+          vuk::ShaderStageFlagBits::eCompute,
+          0,
+          PushConstants(rays_per_probe, frame_index, min_frontface_distance)
+        )
+        .dispatch_indirect(
+          probe_update_args->subrange(offsetof(GPU::ProbeUpdateArgs, relocate), sizeof(vuk::DispatchIndirectCommand))
+        );
 
-      for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
-        cmd_list //
-          .push_constants(
-            vuk::ShaderStageFlagBits::eCompute,
-            0,
-            PushConstants(volume_index, rays_per_probe, frame_index, min_frontface_distance)
-          )
-          .dispatch((probe_counts[volume_index] + 63) / 64, 1, 1);
-      }
-
-      return std::make_tuple(probe_states, ray_data, probe_volumes);
+      return std::make_tuple(probe_states, ray_data, probe_volumes, probe_update_list, probe_update_args);
     }
   );
 
-  std::tie(context.probe_states_buffer, context.ray_data_attachment, context.probe_volumes_buffer) = relocate_pass(
-    std::move(context.probe_states_buffer),
-    std::move(context.ray_data_attachment),
-    std::move(context.probe_volumes_buffer)
-  );
+  std::tie(
+    context.probe_states_buffer,
+    context.ray_data_attachment,
+    context.probe_volumes_buffer,
+    context.probe_update_list_buffer,
+    context.probe_update_args_buffer
+  ) =
+    relocate_pass(
+      std::move(context.probe_states_buffer),
+      std::move(context.ray_data_attachment),
+      std::move(context.probe_volumes_buffer),
+      std::move(context.probe_update_list_buffer),
+      std::move(context.probe_update_args_buffer)
+    );
 }
 
 auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdateContext& context) -> void {
   ZoneScoped;
 
-  auto probe_counts = ankerl::svector<u32, 8>{};
-  for (const auto& volume : self.probe_volumes) {
-    probe_counts.emplace_back(volume.probe_count);
-  }
-
   const auto hysteresis = self.ddgi_history_valid ? context.hysteresis : 0.0f;
 
   auto irradiance_pass = vuk::make_pass(
     "ddgi update irradiance",
-    [probe_counts,
-     rays_per_probe = context.rays_per_probe,
+    [rays_per_probe = context.rays_per_probe,
      frame_index = context.frame_index,
      hysteresis,
      max_brightness_step = context.max_brightness_step,
@@ -195,34 +224,35 @@ auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdat
       VUK_IA(vuk::eComputeRW) irradiance,
       VUK_IA(vuk::eComputeSampled) ray_data,
       VUK_BA(vuk::eComputeRead) probe_volumes,
-      VUK_BA(vuk::eComputeRead) probe_states
+      VUK_BA(vuk::eComputeRead) probe_states,
+      VUK_BA(vuk::eComputeRead) probe_update_list,
+      VUK_BA(vuk::eIndirectRead | vuk::eComputeRead) probe_update_args
     ) {
       cmd_list //
         .bind_compute_pipeline("ddgi_update_irradiance")
         .bind_buffer(0, 0, probe_volumes)
         .bind_image(0, 1, ray_data)
         .bind_image(0, 2, irradiance)
-        .bind_buffer(0, 3, probe_states);
-
-      for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
-        cmd_list //
-          .push_constants(
-            vuk::ShaderStageFlagBits::eCompute,
-            0,
-            PushConstants(
-              volume_index,
-              rays_per_probe,
-              frame_index,
-              hysteresis,
-              max_brightness_step,
-              firefly_ratio,
-              hysteresis_dark_bias
-            )
+        .bind_buffer(0, 3, probe_states)
+        .bind_buffer(0, 4, probe_update_list)
+        .bind_buffer(0, 5, probe_update_args)
+        .push_constants(
+          vuk::ShaderStageFlagBits::eCompute,
+          0,
+          PushConstants(
+            rays_per_probe,
+            frame_index,
+            hysteresis,
+            max_brightness_step,
+            firefly_ratio,
+            hysteresis_dark_bias
           )
-          .dispatch(probe_counts[volume_index], 1, 1);
-      }
+        )
+        .dispatch_indirect(
+          probe_update_args->subrange(offsetof(GPU::ProbeUpdateArgs, irradiance), sizeof(vuk::DispatchIndirectCommand))
+        );
 
-      return std::make_tuple(irradiance, ray_data, probe_volumes, probe_states);
+      return std::make_tuple(irradiance, ray_data, probe_volumes, probe_states, probe_update_list, probe_update_args);
     }
   );
 
@@ -230,42 +260,51 @@ auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdat
     context.irradiance_attachment,
     context.ray_data_attachment,
     context.probe_volumes_buffer,
-    context.probe_states_buffer
+    context.probe_states_buffer,
+    context.probe_update_list_buffer,
+    context.probe_update_args_buffer
   ) =
     irradiance_pass(
       std::move(context.irradiance_attachment),
       std::move(context.ray_data_attachment),
       std::move(context.probe_volumes_buffer),
-      std::move(context.probe_states_buffer)
+      std::move(context.probe_states_buffer),
+      std::move(context.probe_update_list_buffer),
+      std::move(context.probe_update_args_buffer)
     );
 
   auto distance_pass = vuk::make_pass(
     "ddgi update distance",
-    [probe_counts, rays_per_probe = context.rays_per_probe, frame_index = context.frame_index, hysteresis](
+    [rays_per_probe = context.rays_per_probe, frame_index = context.frame_index, hysteresis](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eComputeRW) probe_distance,
       VUK_IA(vuk::eComputeSampled) ray_data,
       VUK_BA(vuk::eComputeRead) probe_volumes,
-      VUK_BA(vuk::eComputeRead) probe_states
+      VUK_BA(vuk::eComputeRead) probe_states,
+      VUK_BA(vuk::eComputeRead) probe_update_list,
+      VUK_BA(vuk::eIndirectRead | vuk::eComputeRead) probe_update_args
     ) {
       cmd_list //
         .bind_compute_pipeline("ddgi_update_distance")
         .bind_buffer(0, 0, probe_volumes)
         .bind_image(0, 1, ray_data)
         .bind_image(0, 2, probe_distance)
-        .bind_buffer(0, 3, probe_states);
+        .bind_buffer(0, 3, probe_states)
+        .bind_buffer(0, 4, probe_update_list)
+        .bind_buffer(0, 5, probe_update_args)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(rays_per_probe, frame_index, hysteresis))
+        .dispatch_indirect(
+          probe_update_args->subrange(offsetof(GPU::ProbeUpdateArgs, distance), sizeof(vuk::DispatchIndirectCommand))
+        );
 
-      for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
-        cmd_list //
-          .push_constants(
-            vuk::ShaderStageFlagBits::eCompute,
-            0,
-            PushConstants(volume_index, rays_per_probe, frame_index, hysteresis)
-          )
-          .dispatch(probe_counts[volume_index], 1, 1);
-      }
-
-      return std::make_tuple(probe_distance, ray_data, probe_volumes, probe_states);
+      return std::make_tuple(
+        probe_distance,
+        ray_data,
+        probe_volumes,
+        probe_states,
+        probe_update_list,
+        probe_update_args
+      );
     }
   );
 
@@ -273,52 +312,17 @@ auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdat
     context.distance_attachment,
     context.ray_data_attachment,
     context.probe_volumes_buffer,
-    context.probe_states_buffer
+    context.probe_states_buffer,
+    context.probe_update_list_buffer,
+    context.probe_update_args_buffer
   ) =
     distance_pass(
       std::move(context.distance_attachment),
       std::move(context.ray_data_attachment),
       std::move(context.probe_volumes_buffer),
-      std::move(context.probe_states_buffer)
-    );
-
-  auto border_pass = vuk::make_pass(
-    "ddgi update borders",
-    [probe_counts](
-      vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eComputeRW) irradiance,
-      VUK_IA(vuk::eComputeRW) probe_distance,
-      VUK_BA(vuk::eComputeRead) probe_volumes,
-      VUK_BA(vuk::eComputeRead) probe_states
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("ddgi_update_borders")
-        .bind_buffer(0, 0, probe_volumes)
-        .bind_image(0, 1, irradiance)
-        .bind_image(0, 2, probe_distance)
-        .bind_buffer(0, 3, probe_states);
-
-      for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
-        cmd_list //
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(volume_index))
-          .dispatch(probe_counts[volume_index], 1, 1);
-      }
-
-      return std::make_tuple(irradiance, probe_distance, probe_volumes, probe_states);
-    }
-  );
-
-  std::tie(
-    context.irradiance_attachment,
-    context.distance_attachment,
-    context.probe_volumes_buffer,
-    context.probe_states_buffer
-  ) =
-    border_pass(
-      std::move(context.irradiance_attachment),
-      std::move(context.distance_attachment),
-      std::move(context.probe_volumes_buffer),
-      std::move(context.probe_states_buffer)
+      std::move(context.probe_states_buffer),
+      std::move(context.probe_update_list_buffer),
+      std::move(context.probe_update_args_buffer)
     );
 
   self.ddgi_history_valid = true;

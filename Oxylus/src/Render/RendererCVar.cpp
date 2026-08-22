@@ -1,5 +1,7 @@
 #include "Render/RendererCVar.hpp"
 
+#include "Scene/SceneGPU.hpp"
+
 namespace ox {
 
 RendererCVar::RendererCVar() { init(); }
@@ -47,7 +49,8 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_rtao_power.init(self.system, "pp.rtao_power", "rtao final power", 1.0f);
 
   self.cvar_ddgi_enable.init(self.system, "rr.ddgi", "enable dynamic diffuse global illumination probe volumes", 1);
-  self.cvar_ddgi_rays_per_probe.init(self.system, "rr.ddgi_rays_per_probe", "rays traced per probe each frame", 128);
+  self.cvar_ddgi_rays_per_probe
+    .init(self.system, "rr.ddgi_rays_per_probe", "rays traced per probe each frame", GPU::DDGI_RAYS_PER_PROBE);
   self.cvar_ddgi_max_ray_distance.init(
     self.system,
     "rr.ddgi_max_ray_distance",

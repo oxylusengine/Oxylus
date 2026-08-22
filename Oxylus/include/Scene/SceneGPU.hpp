@@ -3,6 +3,7 @@
 #include <glm/gtc/packing.hpp>
 #include <glm/mat4x4.hpp>
 #include <vuk/Types.hpp>
+#include <vuk/runtime/CommandBuffer.hpp>
 
 #include "Core/Types.hpp"
 #include "Utils/OxMath.hpp"
@@ -258,21 +259,53 @@ struct Light {
   alignas(4) u32 pad[2] = {};
 };
 
-// Probes of every volume share one ray data texture, one row each, so the total is bound by the
-// smallest guaranteed 2D image dimension.
-constexpr static u32 DDGI_MAX_PROBE_COUNT = 16384;
+constexpr static u32 DDGI_MAX_IMAGE_DIMENSION = 16384;
+
+constexpr static u32 DDGI_MAX_PROBE_COUNT = 1u << 18;
 constexpr static u32 DDGI_MAX_CASCADE_COUNT = 8;
 // Octahedral tiles, each padded with a one texel border that mirrors the opposite edge so bilinear
 // taps stay continuous across the octahedron seam.
-constexpr static u32 DDGI_IRRADIANCE_TEXELS = 6;
-constexpr static u32 DDGI_DISTANCE_TEXELS = 14;
-constexpr static u32 DDGI_PROBES_PER_ATLAS_ROW = 32;
+constexpr static u32 DDGI_IRRADIANCE_TEXELS = 12;
+constexpr static u32 DDGI_DISTANCE_TEXELS = 12;
+constexpr static u32 DDGI_TRACE_TEXELS = 12;
+constexpr static u32 DDGI_RAYS_PER_PROBE = DDGI_TRACE_TEXELS * DDGI_TRACE_TEXELS;
+constexpr static u32 DDGI_PROBES_PER_ATLAS_ROW = 512;
 
 constexpr auto ddgi_atlas_extent(u32 probe_count, u32 interior_texels) -> vuk::Extent3D {
   const auto tile = interior_texels + 2;
   const auto rows = (probe_count + DDGI_PROBES_PER_ATLAS_ROW - 1) / DDGI_PROBES_PER_ATLAS_ROW;
   return {.width = DDGI_PROBES_PER_ATLAS_ROW * tile, .height = rows * tile, .depth = 1};
 }
+
+constexpr auto ddgi_probes_per_ray_row(u32 rays_per_probe) -> u32 {
+  auto probes = 1_u32;
+  while (probes * 2 * rays_per_probe <= DDGI_MAX_IMAGE_DIMENSION) {
+    probes *= 2;
+  }
+  return probes;
+}
+
+constexpr auto ddgi_ray_data_extent(u32 probe_count, u32 rays_per_probe) -> vuk::Extent3D {
+  const auto probes_per_row = ddgi_probes_per_ray_row(rays_per_probe);
+  const auto rows = (probe_count + probes_per_row - 1) / probes_per_row;
+  return {.width = probes_per_row * rays_per_probe, .height = rows, .depth = 1};
+}
+
+constexpr static u32 DDGI_PROBE_SELECT_GROUP = 64;
+constexpr static u32 DDGI_TEXEL_UPDATE_GROUP = 8;
+constexpr static u32 DDGI_TEXEL_UPDATE_THREADS_Y = 48;
+constexpr static u32 DDGI_TEXEL_UPDATE_GROUPS_Y = DDGI_TEXEL_UPDATE_THREADS_Y / DDGI_TEXEL_UPDATE_GROUP;
+
+static_assert(DDGI_TEXEL_UPDATE_THREADS_Y % DDGI_IRRADIANCE_TEXELS == 0);
+static_assert(DDGI_TEXEL_UPDATE_THREADS_Y % DDGI_DISTANCE_TEXELS == 0);
+static_assert(DDGI_TEXEL_UPDATE_THREADS_Y % DDGI_TEXEL_UPDATE_GROUP == 0);
+
+struct ProbeUpdateArgs {
+  u32 count = 0;
+  vuk::DispatchIndirectCommand irradiance = {};
+  vuk::DispatchIndirectCommand distance = {};
+  vuk::DispatchIndirectCommand relocate = {};
+};
 
 constexpr static u32 DDGI_DEBUG_SPHERE_RINGS = 8;
 constexpr static u32 DDGI_DEBUG_SPHERE_SECTORS = 12;

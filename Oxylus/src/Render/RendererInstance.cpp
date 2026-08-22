@@ -1115,6 +1115,7 @@ auto RendererInstance::render(
     }
 
     const auto rays_per_probe = static_cast<u32>(std::clamp(cvar.cvar_ddgi_rays_per_probe.get(), 8, 512));
+    const auto ray_data_extent = GPU::ddgi_ray_data_extent(total_probe_count, rays_per_probe);
 
     self.allocate_ddgi_atlases(total_probe_count);
 
@@ -1127,7 +1128,7 @@ auto RendererInstance::render(
       auto ray_data_attachment = vuk::declare_ia(
         "ddgi ray data",
         {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-         .extent = {.width = rays_per_probe, .height = total_probe_count, .depth = 1},
+         .extent = ray_data_extent,
          .format = vuk::Format::eR16G16B16A16Sfloat,
          .sample_count = vuk::Samples::e1,
          .level_count = 1,
@@ -1150,6 +1151,13 @@ auto RendererInstance::render(
         .update_all = !self.ddgi_history_valid,
         .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
         .probe_states_buffer = std::move(ddgi_probe_states_buffer),
+        .probe_update_list_buffer = vuk::acquire_buf(
+          "ddgi probe update list",
+          *self.ddgi_probe_update_list,
+          vuk::eComputeRead
+        ),
+        // Uploaded zeroed so ddgi_select_probes can atomically count into it without a clear pass.
+        .probe_update_args_buffer = self.renderer.render_context->scratch_buffer(GPU::ProbeUpdateArgs{}),
       };
       self.select_ddgi_probes(ddgi_select_context);
 
@@ -1192,6 +1200,8 @@ auto RendererInstance::render(
           .min_frontface_distance = cvar.cvar_ddgi_min_frontface_distance.get(),
           .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
           .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
+          .probe_update_list_buffer = std::move(ddgi_select_context.probe_update_list_buffer),
+          .probe_update_args_buffer = std::move(ddgi_select_context.probe_update_args_buffer),
           .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),
         };
         self.relocate_ddgi_probes(ddgi_relocate_context);
@@ -1199,6 +1209,8 @@ auto RendererInstance::render(
         ddgi_trace_context.probe_volumes_buffer = std::move(ddgi_relocate_context.probe_volumes_buffer);
         ddgi_trace_context.probe_states_buffer = std::move(ddgi_relocate_context.probe_states_buffer);
         ddgi_trace_context.ray_data_attachment = std::move(ddgi_relocate_context.ray_data_attachment);
+        ddgi_select_context.probe_update_list_buffer = std::move(ddgi_relocate_context.probe_update_list_buffer);
+        ddgi_select_context.probe_update_args_buffer = std::move(ddgi_relocate_context.probe_update_args_buffer);
       }
 
       auto ddgi_update_context = DDGIUpdateContext{
@@ -1210,6 +1222,8 @@ auto RendererInstance::render(
         .hysteresis_dark_bias = cvar.cvar_ddgi_hysteresis_dark_bias.get(),
         .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
         .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
+        .probe_update_list_buffer = std::move(ddgi_select_context.probe_update_list_buffer),
+        .probe_update_args_buffer = std::move(ddgi_select_context.probe_update_args_buffer),
         .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),
         .irradiance_attachment = std::move(ddgi_trace_context.irradiance_attachment),
         .distance_attachment = std::move(ddgi_trace_context.distance_attachment),
@@ -1710,7 +1724,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           }
 
           const auto counts = glm::max(c.probe_counts, glm::uvec3(2));
-          const auto base_spacing = glm::max(c.probe_spacing, glm::vec3(0.01f));
+          const auto base_spacing = glm::max(c.probe_range, glm::vec3(0.01f)) / glm::vec3(counts - 1u);
           const glm::vec3 anchor = self.scene.get_world_transform(e)[3];
           const auto center = c.follow_camera ? camera_position : anchor;
           const auto cascades = std::clamp(c.cascade_count, 1u, GPU::DDGI_MAX_CASCADE_COUNT);

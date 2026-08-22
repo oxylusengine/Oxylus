@@ -432,6 +432,8 @@ struct DDGIUpdateContext {
 
   vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
   vuk::Value<vuk::Buffer> probe_states_buffer = {};
+  vuk::Value<vuk::Buffer> probe_update_list_buffer = {};
+  vuk::Value<vuk::Buffer> probe_update_args_buffer = {};
   vuk::Value<vuk::ImageAttachment> ray_data_attachment = {};
   vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
   vuk::Value<vuk::ImageAttachment> distance_attachment = {};
@@ -445,6 +447,8 @@ struct DDGISelectContext {
 
   vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
   vuk::Value<vuk::Buffer> probe_states_buffer = {};
+  vuk::Value<vuk::Buffer> probe_update_list_buffer = {};
+  vuk::Value<vuk::Buffer> probe_update_args_buffer = {};
 };
 
 struct DDGIRelocateContext {
@@ -454,6 +458,8 @@ struct DDGIRelocateContext {
 
   vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
   vuk::Value<vuk::Buffer> probe_states_buffer = {};
+  vuk::Value<vuk::Buffer> probe_update_list_buffer = {};
+  vuk::Value<vuk::Buffer> probe_update_args_buffer = {};
   vuk::Value<vuk::ImageAttachment> ray_data_attachment = {};
 };
 
@@ -665,6 +671,7 @@ private:
   vuk::Unique<vuk::ImageView> ddgi_irradiance_view{};
   vuk::ImageAttachment ddgi_irradiance_attachment = {};
   vuk::Unique<vuk::Buffer> ddgi_probe_states{};
+  vuk::Unique<vuk::Buffer> ddgi_probe_update_list{};
   vuk::Unique<vuk::Image> ddgi_distance{};
   vuk::Unique<vuk::ImageView> ddgi_distance_view{};
   vuk::ImageAttachment ddgi_distance_attachment = {};

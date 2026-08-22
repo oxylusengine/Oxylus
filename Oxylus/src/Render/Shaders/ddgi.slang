@@ -1,9 +1,12 @@
 import common;
 import gpu;
 
-public constexpr static u32 IRRADIANCE_TEXELS = 6;
-public constexpr static u32 DISTANCE_TEXELS = 14;
-public constexpr static u32 PROBES_PER_ATLAS_ROW = 32;
+public constexpr static u32 IRRADIANCE_TEXELS = 12;
+public constexpr static u32 DISTANCE_TEXELS = 12;
+public constexpr static u32 PROBES_PER_ATLAS_ROW = 512;
+public constexpr static u32 PROBE_SELECT_GROUP = 64;
+public constexpr static u32 TEXEL_UPDATE_GROUP = 8;
+public constexpr static u32 TEXEL_UPDATE_THREADS_Y = 48;
 public constexpr static f32 DISTANCE_SHARPNESS = 50.0;
 public constexpr static f32 IRRADIANCE_ENCODING_GAMMA = 5.0;
 
@@ -45,6 +48,40 @@ public func probe_is_reset(u32 flags) -> bool {
 public func probe_pack_flags(bool inactive, bool update, bool reset) -> u32 {
     return (inactive ? PROBE_INACTIVE_BIT : 0u) | (update ? PROBE_UPDATE_BIT : 0u) |
            (reset ? PROBE_RESET_BIT : 0u);
+}
+
+public struct ProbeUpdateArgs {
+    public u32 count;
+    public DispatchIndirectCommand irradiance;
+    public DispatchIndirectCommand distance;
+    public DispatchIndirectCommand relocate;
+};
+
+public func probe_pack_update_entry(u32 volume_index, u32 probe_index) -> u32 {
+    return (volume_index << 24u) | (probe_index & 0x00ffffffu);
+}
+
+public func probe_update_entry_volume(u32 entry) -> u32 {
+    return entry >> 24u;
+}
+
+public func probe_update_entry_index(u32 entry) -> u32 {
+    return entry & 0x00ffffffu;
+}
+
+public struct ProbeTexelWork {
+    public u32 list_index;
+    public u32x2 texel;
+};
+
+public func probe_texel_work(u32x2 thread, u32 interior_texels) -> ProbeTexelWork {
+    let probes_per_column = TEXEL_UPDATE_THREADS_Y / interior_texels;
+
+    ProbeTexelWork work;
+    work.list_index = (thread.x / interior_texels) * probes_per_column + thread.y / interior_texels;
+    work.texel = u32x2(thread.x % interior_texels, thread.y % interior_texels);
+
+    return work;
 }
 
 public struct ProbeVolume {
@@ -102,8 +139,9 @@ public func cascade_safe_range(in ProbeVolume cascade_zero) -> f32x3 {
 }
 
 public func select_cascade(in ProbeVolume cascade_zero, f32x3 world_position) -> f32 {
-    let normalized = (world_position - cascade_zero.center) / cascade_safe_range(cascade_zero);
-    let cascade = max(0.0, log2(max(length(normalized), 1e-6)) + 1.0);
+    let normalized = abs(world_position - cascade_zero.center) / cascade_safe_range(cascade_zero);
+    let radius = max(max(normalized.x, normalized.y), normalized.z);
+    let cascade = max(0.0, log2(max(radius, 1e-6)) + 1.0);
 
     let outer = ceil(cascade);
     let blend_start = min(floor(cascade) + (1.0 - cascade_zero.cascade_blend), outer - 1e-4);
@@ -118,6 +156,11 @@ public func probe_texel_direction(u32x2 texel, u32 interior_texels) -> f32x3 {
 public func probe_tile_origin(u32 probe_row, u32 interior_texels) -> u32x2 {
     let tile = interior_texels + 2;
     return u32x2(probe_row % PROBES_PER_ATLAS_ROW, probe_row / PROBES_PER_ATLAS_ROW) * tile;
+}
+
+public func ray_data_row_origin(u32 probe_row, u32 rays_per_probe, u32 ray_data_width) -> u32x2 {
+    let probes_per_row = max(ray_data_width / rays_per_probe, 1u);
+    return u32x2((probe_row % probes_per_row) * rays_per_probe, probe_row / probes_per_row);
 }
 
 public func probe_atlas_uv(u32 probe_row, f32x3 direction, u32 interior_texels, f32x2 atlas_size) -> f32x2 {
@@ -154,39 +197,28 @@ public func sample_probe_distance(Image2D<f32x2> atlas, Sampler atlas_sampler, u
     return atlas.SampleLevel(atlas_sampler, uv, 0.0).rg;
 }
 
-public func probe_border_source(u32x2 texel, u32 interior_texels) -> u32x2 {
+public struct ProbeBorderWrites {
+    public bool has_x;
+    public bool has_y;
+    public bool has_corner;
+    public u32x2 x_texel;
+    public u32x2 y_texel;
+    public u32x2 corner_texel;
+};
+
+public func probe_border_writes(u32x2 texel, u32 interior_texels) -> ProbeBorderWrites {
     let last = interior_texels + 1;
-    let on_x_border = texel.x == 0 || texel.x == last;
-    let on_y_border = texel.y == 0 || texel.y == last;
+    let tile_texel = texel + 1;
 
-    if (on_x_border && on_y_border) {
-        return u32x2(texel.x == 0 ? interior_texels : 1, texel.y == 0 ? interior_texels : 1);
-    }
+    ProbeBorderWrites writes;
+    writes.has_x = tile_texel.x == 1 || tile_texel.x == interior_texels;
+    writes.has_y = tile_texel.y == 1 || tile_texel.y == interior_texels;
+    writes.has_corner = writes.has_x && writes.has_y;
+    writes.x_texel = u32x2(tile_texel.x == 1 ? 0 : last, last - tile_texel.y);
+    writes.y_texel = u32x2(last - tile_texel.x, tile_texel.y == 1 ? 0 : last);
+    writes.corner_texel = u32x2(tile_texel.x == 1 ? last : 0, tile_texel.y == 1 ? last : 0);
 
-    if (on_x_border) {
-        return u32x2(texel.x == 0 ? 1 : interior_texels, last - texel.y);
-    }
-
-    return u32x2(last - texel.x, texel.y == 0 ? 1 : interior_texels);
-}
-
-public func probe_border_texel(u32 index, u32 interior_texels) -> u32x2 {
-    let tile = interior_texels + 2;
-    if (index < tile) {
-        return u32x2(index, 0);
-    }
-    if (index < tile * 2) {
-        return u32x2(index - tile, tile - 1);
-    }
-    if (index < tile * 3 - 2) {
-        return u32x2(0, index - tile * 2 + 1);
-    }
-
-    return u32x2(tile - 1, index - (tile * 3 - 2) + 1);
-}
-
-public func probe_border_texel_count(u32 interior_texels) -> u32 {
-    return (interior_texels + 2) * 4 - 4;
+    return writes;
 }
 
 // a word from our clanker:
@@ -423,17 +455,15 @@ public func sample_ddgi_irradiance(
                 view_bias
             );
 
-            let distance_blend = lower_missed ? 0.5 : frac(cascade);
-            let lower_weight = weight * (1.0 - distance_blend);
-            let higher_weight = higher.coverage * distance_blend;
-            let weight_sum = lower_weight + higher_weight;
-
-            if (weight_sum > 0.0) {
-                let blend = higher_weight / weight_sum;
-                irradiance = lerp(irradiance, higher.irradiance, blend);
-                specular = lerp(specular, higher.specular, blend);
-                weight = max(weight, higher.coverage);
+            let higher_missed = higher.coverage< CASCADE_FALLBACK_WEIGHT;
+            var blend = frac(cascade);
+            if (lower_missed != higher_missed) {
+                blend = lower_missed ? 1.0 : 0.0;
             }
+
+            irradiance = lerp(irradiance, higher.irradiance, blend);
+            specular = lerp(specular, higher.specular, blend);
+            weight = lerp(weight, higher.coverage, blend);
         }
 
         if (weight > 0.0) {

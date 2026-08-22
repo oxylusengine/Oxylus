@@ -7,6 +7,8 @@ import ddgi;
 [[vk::binding(0, 0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1, 0)]] StructuredBuffer<ProbeVolume> probe_volumes;
 [[vk::binding(2, 0)]] RWStructuredBuffer<ProbeState> probe_states;
+[[vk::binding(3, 0)]] RWStructuredBuffer<u32> probe_update_list;
+[[vk::binding(4, 0)]] RWStructuredBuffer<ProbeUpdateArgs> probe_update_args;
 
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]
@@ -62,4 +64,9 @@ func cs_main(
     let update = reset || ((frame_index + probe_index) % interval) == 0;
 
     probe_states[probe_row].flags = probe_pack_flags(!reset && probe_is_inactive(flags), update, reset);
+
+    if (update) {
+        let slot = __atomic_add(probe_update_args[0].count, 1u, MemoryOrder::Relaxed);
+        probe_update_list[slot] = probe_pack_update_entry(volume_index, probe_index);
+    }
 }

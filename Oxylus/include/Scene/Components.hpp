@@ -219,9 +219,9 @@ struct LightComponent {
 };
 
 struct ProbeVolumeComponent {
-  glm::uvec3 probe_counts = {8, 8, 8};
-  glm::vec3 probe_spacing = {2.0f, 2.0f, 2.0f};
-  u32 cascade_count = 4;
+  glm::uvec3 probe_counts = {32, 32, 32};
+  glm::vec3 probe_range = {64.0f, 64.0f, 64.0f};
+  u32 cascade_count = 6;
   f32 cascade_blend = 0.3f;
   bool follow_camera = true;
 };

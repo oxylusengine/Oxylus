@@ -267,6 +267,11 @@ path = "passes/ddgi_select_probes.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "ddgi_build_dispatch_args"
+path = "passes/ddgi_build_dispatch_args.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "ddgi_relocate_probes"
 path = "passes/ddgi_relocate_probes.slang"
 entry_points = ["cs_main"]
@@ -284,11 +289,6 @@ entry_points = ["cs_main"]
 [[shader_sessions.programs]]
 name = "ddgi_update_distance"
 path = "passes/ddgi_update_distance.slang"
-entry_points = ["cs_main"]
-
-[[shader_sessions.programs]]
-name = "ddgi_update_borders"
-path = "passes/ddgi_update_borders.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
