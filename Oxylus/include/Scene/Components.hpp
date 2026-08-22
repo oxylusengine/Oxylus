@@ -218,6 +218,14 @@ struct LightComponent {
   f32 clipmap_selection_bias = -1.5f;
 };
 
+struct ProbeVolumeComponent {
+  glm::uvec3 probe_counts = {32, 32, 32};
+  glm::vec3 probe_range = {64.0f, 64.0f, 64.0f};
+  u32 cascade_count = 6;
+  f32 cascade_blend = 0.3f;
+  bool follow_camera = true;
+};
+
 struct SkyComponent {
   glm::vec4 solid_color = glm::vec4{0.f, 0.f, 0.f, 1.0f};
   glm::vec3 ambient_color = glm::vec3{0.03f};

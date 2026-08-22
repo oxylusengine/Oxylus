@@ -11,6 +11,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/AccelerationStructure.hpp"
 #include "Render/UploadBatch.hpp"
 
 template <>
@@ -85,7 +86,7 @@ auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::Samp
 
   auto get_filter_mode = [](fastgltf::Filter v) -> vuk::Filter {
     switch (v) {
-      case fastgltf::Filter::Nearest:
+      case fastgltf::Filter::Nearest             :
       case fastgltf::Filter::NearestMipMapNearest:
       case fastgltf::Filter::NearestMipMapLinear : return vuk::Filter::eNearest;
       case fastgltf::Filter::Linear              :
@@ -98,7 +99,7 @@ auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::Samp
 
   auto get_mip_filter_mode = [](fastgltf::Filter v) -> vuk::SamplerMipmapMode {
     switch (v) {
-      case fastgltf::Filter::Nearest:
+      case fastgltf::Filter::Nearest             :
       case fastgltf::Filter::NearestMipMapNearest:
       case fastgltf::Filter::NearestMipMapLinear : return vuk::SamplerMipmapMode::eNearest;
       case fastgltf::Filter::Linear              :
@@ -770,8 +771,9 @@ auto build_gltf_mesh(const fastgltf::Asset& gltf_asset, const fastgltf::Primitiv
   return build;
 }
 
-auto upload_gltf_mesh(RenderContext& render_context, MeshBuildData& build, UploadBatch* batch)
-  -> vuk::Unique<vuk::Buffer> {
+auto upload_gltf_mesh(
+  RenderContext& render_context, MeshBuildData& build, UploadBatch* batch, AccelerationStructure& out_blas
+) -> vuk::Unique<vuk::Buffer> {
   ZoneScoped;
 
   auto gpu_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, build.blob.size());
@@ -806,11 +808,26 @@ auto upload_gltf_mesh(RenderContext& render_context, MeshBuildData& build, Uploa
   auto staging_value = vuk::acquire_buf("mesh staging", *staging_buffer, vuk::Access::eNone);
   auto upload = render_context.upload_staging(std::move(staging_value), std::move(gpu_mesh_value));
 
+  auto blas_scratch = vuk::Unique<vuk::Buffer>();
+  upload = build_mesh_blas(
+    render_context,
+    BLASBuildInfo{
+      .vertex_positions = build.gpu_mesh.vertex_positions,
+      .indices = build.lods[0].indices,
+      .vertex_count = build.gpu_mesh.vertex_count,
+      .index_count = build.lods[0].indices_count,
+    },
+    std::move(upload),
+    out_blas,
+    blas_scratch
+  );
+
   if (batch) {
     auto values = std::array<vuk::UntypedValue, 1>{std::move(upload)};
     render_context.submit_multiple(values);
     batch->add_upload(values);
-    batch->take_staging({&staging_buffer, 1});
+    auto owned = std::array<vuk::Unique<vuk::Buffer>, 2>{std::move(staging_buffer), std::move(blas_scratch)};
+    batch->take_staging(owned);
   } else {
     render_context.wait_on(std::move(upload));
   }
@@ -1024,6 +1041,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
       model.gpu_meshes.emplace_back();
       model.lod0_meshlet_counts.push_back(0_u32);
       model.gpu_mesh_buffers.emplace_back();
+      model.mesh_blases.emplace_back();
       pending_meshes.push_back({gltf_mesh_index, gltf_primitive_index});
     }
   }
@@ -1049,8 +1067,9 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
                                        .primitives[pending_mesh.gltf_primitive_index];
         auto build = build_gltf_mesh(*gltf_asset_ref, gltf_primitive);
         auto mesh_buffer = vuk::Unique<vuk::Buffer>();
+        auto mesh_blas = AccelerationStructure();
         if (build) {
-          mesh_buffer = upload_gltf_mesh(render_context, *build, mesh_batch.get());
+          mesh_buffer = upload_gltf_mesh(render_context, *build, mesh_batch.get(), mesh_blas);
         }
 
         auto loaded_model = asset_man.get_model(model_id);
@@ -1063,6 +1082,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
 
         if (build) {
           loaded_model->gpu_mesh_buffers[mesh_index] = std::move(mesh_buffer);
+          loaded_model->mesh_blases[mesh_index] = std::move(mesh_blas);
           loaded_model->gpu_meshes[mesh_index] = build->gpu_mesh;
           loaded_model->lod0_meshlet_counts[mesh_index] = build->lods[0].meshlet_count;
 
@@ -1331,12 +1351,35 @@ auto AssetManager::load_model(this AssetManager& self, const ModelLoadInfo& info
   );
   render_context.wait_on(render_context.upload_staging(std::move(cpu_metadata_buffer), std::move(metadata_subrange)));
 
+  auto mesh_blas = AccelerationStructure();
+  {
+    // The scratch dies with this scope, after the build it feeds has been waited on.
+    auto blas_scratch = vuk::Unique<vuk::Buffer>();
+    auto mesh_value = vuk::acquire_buf("mesh", *gpu_mesh_buffer, vuk::Access::eMemoryRead);
+    auto blas_value = build_mesh_blas(
+      render_context,
+      BLASBuildInfo{
+        .vertex_positions = gpu_mesh.vertex_positions,
+        .indices = lod0.indices,
+        .vertex_count = gpu_mesh.vertex_count,
+        .index_count = lod0.indices_count,
+      },
+      std::move(mesh_value),
+      mesh_blas,
+      blas_scratch
+    );
+    if (mesh_blas) {
+      render_context.wait_on(std::move(blas_value));
+    }
+  }
+
   auto& root_group = model.mesh_groups.emplace_back();
   root_group.name = "Root";
   root_group.mesh_indices.push_back(0);
 
   model.gpu_meshes.push_back(gpu_mesh);
   model.gpu_mesh_buffers.push_back(std::move(gpu_mesh_buffer));
+  model.mesh_blases.push_back(std::move(mesh_blas));
   model.lod0_meshlet_counts.push_back(lod0.meshlet_count);
   model.material_indices.push_back(info.materials.empty() ? option<u32>(nullopt) : option<u32>(0));
 

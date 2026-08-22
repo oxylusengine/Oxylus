@@ -2,11 +2,29 @@
 
 #include <fmt/base.h>
 #include <fmt/std.h>
+#include <string_view>
 #include <toml++/toml.hpp>
 
 #include "OS/File.hpp"
 
 namespace ox::rc {
+auto shader_feature_from_string(std::string_view name) -> option<ShaderFeatureFlag> {
+  if (name == "mesh_shaders") {
+    return ShaderFeatureFlag::MeshShaders;
+  }
+  if (name == "ray_tracing") {
+    return ShaderFeatureFlag::RayTracing;
+  }
+  if (name == "ray_tracing_pipeline") {
+    return ShaderFeatureFlag::RayTracingPipeline;
+  }
+  if (name == "bindless") {
+    return ShaderFeatureFlag::Bindless;
+  }
+
+  return nullopt;
+}
+
 auto parse_resource_config(const std::filesystem::path& config_path) -> option<ResourceConfig> {
   auto content = File::to_string(config_path);
   if (content.empty()) {
@@ -146,12 +164,22 @@ auto parse_resource_config(const std::filesystem::path& config_path) -> option<R
         }
       }
 
-      if (auto node = pt["bindless"].as_boolean()) {
-        prog.bindless = node->get();
-      }
+      if (auto* reqs = pt["requires"].as_array()) {
+        for (const auto& req : *reqs) {
+          auto req_str = req.as_string();
+          if (!req_str) {
+            fmt::println("Error: shader program '{}' has a non-string entry in 'requires'.", prog.name);
+            return nullopt;
+          }
 
-      if (auto node = pt["requires_mesh_shaders"].as_boolean()) {
-        prog.requires_mesh_shaders = node->get();
+          const auto flag = shader_feature_from_string(req_str->get());
+          if (!flag.has_value()) {
+            fmt::println("Error: shader program '{}' requires unknown feature '{}'.", prog.name, req_str->get());
+            return nullopt;
+          }
+
+          prog.required_features |= flag.value();
+        }
       }
 
       session.programs.push_back(std::move(prog));

@@ -26,6 +26,8 @@ auto ContextCVar::init(this ContextCVar& self) -> void {
     .init(self.system, "rr.frame_limit", "Limits the framerate with a sleep. 0: Disable, > 0: Enable", 0);
   self.cvar_mesh_shaders
     .init(self.system, "rr.mesh_shaders", "Use the mesh shader geometry pipeline when the device supports it", 1);
+  self.cvar_ray_tracing
+    .init(self.system, "rr.ray_tracing", "Build acceleration structures when the device supports them", 1);
 }
 
 auto ContextCVar::save(this ContextCVar& self) -> void {
@@ -43,6 +45,7 @@ auto ContextCVar::save(this ContextCVar& self) -> void {
       "render",
       toml::table{
         {"mesh_shaders", (bool)self.cvar_mesh_shaders.get()},
+        {"ray_tracing", (bool)self.cvar_ray_tracing.get()},
       },
     },
   };
@@ -72,6 +75,8 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
   if (const auto render_config = toml["render"]) {
     if (auto v = render_config["mesh_shaders"].as_boolean())
       self.cvar_mesh_shaders.set(v->get());
+    if (auto v = render_config["ray_tracing"].as_boolean())
+      self.cvar_ray_tracing.set(v->get());
   }
 
   return true;

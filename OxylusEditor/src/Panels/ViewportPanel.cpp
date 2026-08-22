@@ -605,6 +605,10 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       cvar_sys.cvar_vbgtao_radius.set_default();
       cvar_sys.cvar_vbgtao_thickness.set_default();
       cvar_sys.cvar_vbgtao_final_power.set_default();
+      cvar_sys.cvar_rtao_enable.set_default();
+      cvar_sys.cvar_rtao_ray_count.set_default();
+      cvar_sys.cvar_rtao_radius.set_default();
+      cvar_sys.cvar_rtao_power.set_default();
       cvar_sys.cvar_contact_shadows_enabled.set_default();
       cvar_sys.cvar_contact_shadows_steps.set_default();
       cvar_sys.cvar_contact_shadows_thickness.set_default();
@@ -678,7 +682,8 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "Baked Occlusion",
             "GTAO",
             "Geometric Normal",
-            "Virtual Shadowmaps"
+            "Virtual Shadowmaps",
+            "DDGI Probes"
           };
           UI::property(
             "Debug View",
@@ -737,6 +742,137 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
           UI::property<float>("Final Power", cvar_sys.cvar_vbgtao_final_power.get_ptr(), 0.f, 10.f);
           UI::end_properties();
         }
+        ImGui::TreePop();
+      }
+
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      if (ImGui::TreeNodeEx("RTAO", TREE_FLAGS, "%s", "RTAO (DO NOT USE, TESTING ONLY)")) {
+        const auto has_ray_tracing = render_context.features & RenderContext::Feature::RayTracing;
+        ImGui::BeginDisabled(!has_ray_tracing);
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          UI::property(
+            "Enabled",
+            cvar_sys.cvar_rtao_enable.get_ptr_bool(),
+            has_ray_tracing ? "Trace occlusion rays against the scene TLAS instead of running GTAO"
+                            : "This device does not support ray queries"
+          );
+          UI::property("Ray Count", cvar_sys.cvar_rtao_ray_count.get_ptr(), 1, 32);
+          UI::property<float>("Radius", cvar_sys.cvar_rtao_radius.get_ptr(), 0.05f, 20.f);
+          UI::property<float>("Power", cvar_sys.cvar_rtao_power.get_ptr(), 0.f, 10.f);
+          UI::end_properties();
+        }
+        ImGui::EndDisabled();
+        ImGui::TreePop();
+      }
+
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      if (ImGui::TreeNodeEx("DDGI", TREE_FLAGS, "%s", "DDGI")) {
+        const auto has_ray_tracing = (render_context.features & RenderContext::Feature::RayTracing) &&
+                                     (render_context.features & RenderContext::Feature::RayTracingPipeline);
+        ImGui::BeginDisabled(!has_ray_tracing);
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          UI::property(
+            "Enabled",
+            cvar_sys.cvar_ddgi_enable.get_ptr_bool(),
+            has_ray_tracing ? "Light probe volumes gather indirect diffuse by tracing the scene TLAS"
+                            : "This device does not support ray tracing pipelines"
+          );
+          UI::property(
+            "Rays Per Probe",
+            cvar_sys.cvar_ddgi_rays_per_probe.get_ptr(),
+            8,
+            512,
+            1.0f,
+            "More rays converge faster and flicker less, at a linear cost"
+          );
+          UI::property<float>(
+            "Max Ray Distance (Cascade 0)",
+            cvar_sys.cvar_ddgi_max_ray_distance.get_ptr(),
+            1.f,
+            500.f
+          );
+          UI::property<float>(
+            "Max Ray Radiance",
+            cvar_sys.cvar_ddgi_max_ray_radiance.get_ptr(),
+            0.1f,
+            100.f,
+            "Luminance cap per probe ray. Lower it to stop a bright emitter from making probes flicker"
+          );
+          UI::property<float>(
+            "Hysteresis",
+            cvar_sys.cvar_ddgi_hysteresis.get_ptr(),
+            0.f,
+            0.99f,
+            "How much of a probe's history survives each update"
+          );
+          UI::property(
+            "Max Update Interval",
+            cvar_sys.cvar_ddgi_update_max_interval.get_ptr(),
+            1,
+            64,
+            1.0f,
+            "Most frames a probe may go without being retraced. 1 retraces every probe every frame"
+          );
+          UI::property<float>(
+            "Full Rate Distance",
+            cvar_sys.cvar_ddgi_update_full_rate_distance.get_ptr(),
+            1.f,
+            200.f,
+            "Probes within this distance of the camera retrace every frame"
+          );
+          UI::property(
+            "Probe Relocation",
+            cvar_sys.cvar_ddgi_probe_relocation.get_ptr_bool(),
+            "Move probes out of geometry they are buried in, and drop the ones that stay stuck"
+          );
+          UI::property<float>(
+            "Min Frontface Distance",
+            cvar_sys.cvar_ddgi_min_frontface_distance.get_ptr(),
+            0.f,
+            5.f,
+            "How far relocation keeps a probe off a surface, in world units"
+          );
+          UI::property<float>(
+            "Shadow Ray Offset",
+            cvar_sys.cvar_ddgi_shadow_ray_offset.get_ptr(),
+            0.f,
+            1.f,
+            "Offsets a probe ray hit before the shadow ray is traced from it, in world units"
+          );
+          UI::property<float>(
+            "Normal Bias",
+            cvar_sys.cvar_ddgi_normal_bias.get_ptr(),
+            0.f,
+            1.f,
+            "Offsets the probe lookup along the surface normal, in probe spacings"
+          );
+          UI::property<float>(
+            "View Bias",
+            cvar_sys.cvar_ddgi_view_bias.get_ptr(),
+            0.f,
+            1.f,
+            "Offsets the probe lookup toward the camera, in probe spacings"
+          );
+          UI::property<float>(
+            "Max Brightness Step",
+            cvar_sys.cvar_ddgi_max_brightness_step.get_ptr(),
+            0.f,
+            2.f,
+            "How far a probe may brighten in one update before the step is quartered, tames emissive flicker"
+          );
+          UI::property<float>("Intensity", cvar_sys.cvar_ddgi_intensity.get_ptr(), 0.f, 10.f);
+          UI::property<float>(
+            "Debug Probe Radius",
+            cvar_sys.cvar_ddgi_probe_debug_radius.get_ptr(),
+            0.01f,
+            2.f,
+            "Size of the spheres drawn by the DDGI Probes debug view"
+          );
+          UI::end_properties();
+        }
+        ImGui::EndDisabled();
         ImGui::TreePop();
       }
 

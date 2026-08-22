@@ -1,5 +1,7 @@
 #include "Render/RendererCVar.hpp"
 
+#include "Scene/SceneGPU.hpp"
+
 namespace ox {
 
 RendererCVar::RendererCVar() { init(); }
@@ -18,7 +20,7 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     "rr.debug_view",
     "0: None, 1: Triangles, 2: Meshlets, 3: Overdraw, 4: Materials, 5: Mesh Instances, 6: Mesh LoDs, 7: Albedo Color, "
     "8: Normal Color, 9: Emissive Color, 10: Metallic Color, 11: Roughness Color, 12: Baked Ambient Occlusion, 13: "
-    "Screen Space Ambient Occlusion, 14: Virtual Shadowmaps",
+    "Screen Space Ambient Occlusion, 14: Geometric Normal, 15: Virtual Shadowmaps, 16: DDGI Probes",
     0
   );
   self.cvar_culling_frustum.init(self.system, "rr.culling_frustum", "Frustum Culling", 1);
@@ -39,6 +41,65 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_vbgtao_thickness.init(self.system, "pp.vbgtao_thickness", "vbgtao thickness", 0.25f);
   self.cvar_vbgtao_radius.init(self.system, "pp.vbgtao_radius", "vbgtao radius", 0.5f);
   self.cvar_vbgtao_final_power.init(self.system, "pp.vbgtao_final_power", "vbgtao final power", 1.2f);
+
+  self.cvar_rtao_enable
+    .init(self.system, "pp.rtao", "trace ambient occlusion against the scene TLAS instead of screen space", 0);
+  self.cvar_rtao_ray_count.init(self.system, "pp.rtao_ray_count", "rays traced per pixel", 2);
+  self.cvar_rtao_radius.init(self.system, "pp.rtao_radius", "rtao world space ray length", 1.0f);
+  self.cvar_rtao_power.init(self.system, "pp.rtao_power", "rtao final power", 1.0f);
+
+  self.cvar_ddgi_enable.init(self.system, "rr.ddgi", "enable dynamic diffuse global illumination probe volumes", 1);
+  self.cvar_ddgi_rays_per_probe
+    .init(self.system, "rr.ddgi_rays_per_probe", "rays traced per probe each frame", GPU::DDGI_RAYS_PER_PROBE);
+  self.cvar_ddgi_max_ray_distance.init(
+    self.system,
+    "rr.ddgi_max_ray_distance",
+    "world space length of a cascade 0 probe ray, doubled per cascade",
+    50.0f
+  );
+  self.cvar_ddgi_max_ray_radiance
+    .init(self.system, "rr.ddgi_max_ray_radiance", "luminance cap on a single probe ray, tames fireflies", 25.0f);
+  self.cvar_ddgi_update_max_interval
+    .init(self.system, "rr.ddgi_update_max_interval", "most frames a probe may go without being retraced", 8);
+  self.cvar_ddgi_update_full_rate_distance.init(
+    self.system,
+    "rr.ddgi_update_full_rate_distance",
+    "probes within this distance of the camera retrace every frame",
+    10.0f
+  );
+  self.cvar_ddgi_probe_relocation
+    .init(self.system, "rr.ddgi_probe_relocation", "move probes out of the geometry they are buried in", 1);
+  self.cvar_ddgi_min_frontface_distance
+    .init(self.system, "rr.ddgi_min_frontface_distance", "how far a probe keeps off a surface, in world units", 0.5f);
+  self.cvar_ddgi_shadow_ray_offset
+    .init(self.system, "rr.ddgi_shadow_ray_offset", "surface offset applied before tracing a shadow ray", 0.05f);
+  self.cvar_ddgi_normal_bias
+    .init(self.system, "rr.ddgi_normal_bias", "probe lookup offset along the normal, in probe spacings", 0.25f);
+  self.cvar_ddgi_view_bias
+    .init(self.system, "rr.ddgi_view_bias", "probe lookup offset toward the camera, in probe spacings", 0.1f);
+  self.cvar_ddgi_intensity.init(self.system, "rr.ddgi_intensity", "scales the probe indirect diffuse", 1.0f);
+  self.cvar_ddgi_hysteresis
+    .init(self.system, "rr.ddgi_hysteresis", "how much of a probe's history survives each update", 0.97f);
+  self.cvar_ddgi_max_brightness_step.init(
+    self.system,
+    "rr.ddgi_max_brightness_step",
+    "how far a probe may brighten in one update before the step is quartered, tames emissive flicker",
+    0.1f
+  );
+  self.cvar_ddgi_firefly_ratio.init(
+    self.system,
+    "rr.ddgi_firefly_ratio",
+    "how many times its own value a probe texel lets one ray carry before clamping it",
+    32.0f
+  );
+  self.cvar_ddgi_hysteresis_dark_bias.init(
+    self.system,
+    "rr.ddgi_hysteresis_dark_bias",
+    "encoded irradiance below which a texel stops treating a brightness swing as a lighting change",
+    0.15f
+  );
+  self.cvar_ddgi_probe_debug_radius
+    .init(self.system, "rr.ddgi_probe_debug_radius", "world space radius of debug drawn probes", 0.1f);
 
   self.cvar_bloom_enable.init(self.system, "pp.bloom", "use bloom", 1);
   self.cvar_bloom_threshold.init(self.system, "pp.bloom_threshold", "bloom threshold", 1.0f);
@@ -77,6 +138,33 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["thickness"] = self.cvar_vbgtao_thickness.get();
   writer["radius"] = self.cvar_vbgtao_radius.get();
   writer["final_power"] = self.cvar_vbgtao_final_power.get();
+  writer.end_obj();
+
+  writer["rtao"].begin_obj();
+  writer["enabled"] = self.cvar_rtao_enable.as_bool();
+  writer["ray_count"] = self.cvar_rtao_ray_count.get();
+  writer["radius"] = self.cvar_rtao_radius.get();
+  writer["power"] = self.cvar_rtao_power.get();
+  writer.end_obj();
+
+  writer["ddgi"].begin_obj();
+  writer["enabled"] = self.cvar_ddgi_enable.as_bool();
+  writer["rays_per_probe"] = self.cvar_ddgi_rays_per_probe.get();
+  writer["max_ray_distance"] = self.cvar_ddgi_max_ray_distance.get();
+  writer["max_ray_radiance"] = self.cvar_ddgi_max_ray_radiance.get();
+  writer["update_max_interval"] = self.cvar_ddgi_update_max_interval.get();
+  writer["update_full_rate_distance"] = self.cvar_ddgi_update_full_rate_distance.get();
+  writer["probe_relocation"] = self.cvar_ddgi_probe_relocation.as_bool();
+  writer["min_frontface_distance"] = self.cvar_ddgi_min_frontface_distance.get();
+  writer["shadow_ray_offset"] = self.cvar_ddgi_shadow_ray_offset.get();
+  writer["normal_bias"] = self.cvar_ddgi_normal_bias.get();
+  writer["view_bias"] = self.cvar_ddgi_view_bias.get();
+  writer["hysteresis"] = self.cvar_ddgi_hysteresis.get();
+  writer["max_brightness_step"] = self.cvar_ddgi_max_brightness_step.get();
+  writer["firefly_ratio"] = self.cvar_ddgi_firefly_ratio.get();
+  writer["hysteresis_dark_bias"] = self.cvar_ddgi_hysteresis_dark_bias.get();
+  writer["intensity"] = self.cvar_ddgi_intensity.get();
+  writer["probe_debug_radius"] = self.cvar_ddgi_probe_debug_radius.get();
   writer.end_obj();
 
   writer["bloom"].begin_obj();
@@ -126,6 +214,35 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_vbgtao_thickness.set(static_cast<f32>(gtao_obj["thickness"]->get_double()));
     self.cvar_vbgtao_radius.set(static_cast<f32>(gtao_obj["radius"].get_double()));
     self.cvar_vbgtao_final_power.set(static_cast<f32>(gtao_obj["final_power"].get_double()));
+  }
+
+  auto rtao_obj = json["rtao"];
+  if (!rtao_obj.error()) {
+    self.cvar_rtao_enable.set(rtao_obj["enabled"].get_bool());
+    self.cvar_rtao_ray_count.set(static_cast<i32>(rtao_obj["ray_count"].get_int64()));
+    self.cvar_rtao_radius.set(static_cast<f32>(rtao_obj["radius"].get_double()));
+    self.cvar_rtao_power.set(static_cast<f32>(rtao_obj["power"].get_double()));
+  }
+
+  auto ddgi_obj = json["ddgi"];
+  if (!ddgi_obj.error()) {
+    self.cvar_ddgi_enable.set(ddgi_obj["enabled"].get_bool());
+    self.cvar_ddgi_rays_per_probe.set(static_cast<i32>(ddgi_obj["rays_per_probe"].get_int64()));
+    self.cvar_ddgi_max_ray_distance.set(static_cast<f32>(ddgi_obj["max_ray_distance"].get_double()));
+    self.cvar_ddgi_max_ray_radiance.set(static_cast<f32>(ddgi_obj["max_ray_radiance"].get_double()));
+    self.cvar_ddgi_update_max_interval.set(static_cast<i32>(ddgi_obj["update_max_interval"].get_int64()));
+    self.cvar_ddgi_update_full_rate_distance.set(static_cast<f32>(ddgi_obj["update_full_rate_distance"].get_double()));
+    self.cvar_ddgi_probe_relocation.set(ddgi_obj["probe_relocation"].get_bool());
+    self.cvar_ddgi_min_frontface_distance.set(static_cast<f32>(ddgi_obj["min_frontface_distance"].get_double()));
+    self.cvar_ddgi_shadow_ray_offset.set(static_cast<f32>(ddgi_obj["shadow_ray_offset"].get_double()));
+    self.cvar_ddgi_normal_bias.set(static_cast<f32>(ddgi_obj["normal_bias"].get_double()));
+    self.cvar_ddgi_view_bias.set(static_cast<f32>(ddgi_obj["view_bias"].get_double()));
+    self.cvar_ddgi_hysteresis.set(static_cast<f32>(ddgi_obj["hysteresis"].get_double()));
+    self.cvar_ddgi_max_brightness_step.set(static_cast<f32>(ddgi_obj["max_brightness_step"].get_double()));
+    self.cvar_ddgi_firefly_ratio.set(static_cast<f32>(ddgi_obj["firefly_ratio"].get_double()));
+    self.cvar_ddgi_hysteresis_dark_bias.set(static_cast<f32>(ddgi_obj["hysteresis_dark_bias"].get_double()));
+    self.cvar_ddgi_intensity.set(static_cast<f32>(ddgi_obj["intensity"].get_double()));
+    self.cvar_ddgi_probe_debug_radius.set(static_cast<f32>(ddgi_obj["probe_debug_radius"].get_double()));
   }
 
   auto bloom_obj = json["bloom"];

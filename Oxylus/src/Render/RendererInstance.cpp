@@ -1,5 +1,7 @@
 #include "Render/RendererInstance.hpp"
 
+#include <algorithm>
+
 #include "Asset/AssetManager.hpp"
 #include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
@@ -765,6 +767,29 @@ auto RendererInstance::render(
   const auto* terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked() ? self.scene.terrain.get()
                                                                                         : nullptr;
 
+  // This needs to be finished before any RT passes begin executing
+  // should probably move this entire scope to somewhere else, shit_in_a_kettle.gif
+  auto& frame_render_context = *self.renderer.render_context;
+  if (
+    frame_render_context.use_ray_tracing() && self.prepared_frame.mesh_instance_count > 0 &&
+    self.prepared_frame.blas_addresses_buffer.node != nullptr &&
+    self.prepared_frame.mesh_instances_buffer.node != nullptr
+  ) {
+    auto tlas_value = build_scene_tlas(
+      frame_render_context,
+      self.scene_tlas,
+      TLASBuildInfo{
+        .instance_count = self.prepared_frame.mesh_instance_count,
+        .mesh_instances_buffer = self.prepared_frame.mesh_instances_buffer,
+        .transforms_buffer = self.prepared_frame.transforms_world_buffer,
+        .blas_addresses_buffer = self.prepared_frame.blas_addresses_buffer,
+      }
+    );
+    if (tlas_value.node != nullptr) {
+      self.shared_resources.buffer_resources["tlas"] = std::move(tlas_value);
+    }
+  }
+
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0 || terrain != nullptr) {
     auto main_geometry_context = MainGeometryContext{
@@ -1037,7 +1062,30 @@ auto RendererInstance::render(
     sky_aerial_perspective_attachment = std::move(atmos_context.sky_aerial_perspective_lut_attachment);
   }
 
-  if (self.gpu_scene_flags & GPU::SceneFlags::HasGTAO) {
+  const auto tlas_it = self.shared_resources.buffer_resources.find("tlas");
+  const auto use_rtao = cvar.cvar_rtao_enable.as_bool() && tlas_it != self.shared_resources.buffer_resources.end();
+  if (use_rtao) {
+    // RTAO feeds the same attachment the GTAO path writes, so PBR needs the flag either way.
+    self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
+
+    auto rtao_context = RTAOContext{
+      .tlas = &self.scene_tlas,
+      .ray_count = static_cast<u32>(std::max(cvar.cvar_rtao_ray_count.get(), 1)),
+      .radius = cvar.cvar_rtao_radius.get(),
+      .power = cvar.cvar_rtao_power.get(),
+      .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+      .tlas_buffer = std::move(tlas_it->second),
+      .normal_attachment = std::move(normal_attachment),
+      .depth_attachment = std::move(depth_attachment),
+      .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
+    };
+    self.generate_rtao(rtao_context);
+
+    tlas_it->second = std::move(rtao_context.tlas_buffer);
+    normal_attachment = std::move(rtao_context.normal_attachment);
+    depth_attachment = std::move(rtao_context.depth_attachment);
+    vbgtao_occlusion_attachment = std::move(rtao_context.ambient_occlusion_attachment);
+  } else if (self.gpu_scene_flags & GPU::SceneFlags::HasGTAO) {
     auto ao_context = AmbientOcclusionContext{
       .noise_attachment = std::move(hilbert_noise_lut_attachment),
       .normal_attachment = std::move(normal_attachment),
@@ -1052,6 +1100,142 @@ auto RendererInstance::render(
     depth_attachment = std::move(ao_context.depth_attachment);
     vbgtao_depth_differences_attachment = std::move(ao_context.depth_differences_attachment);
     vbgtao_occlusion_attachment = std::move(ao_context.ambient_occlusion_attachment);
+  }
+
+  // --- DDGI Probe Tracing ---
+  const auto draw_ddgi_probes = debug_view == GPU::DebugView::DDGIProbes && debugging;
+  auto ddgi_irradiance_attachment = vuk::Value<vuk::ImageAttachment>{};
+  auto ddgi_distance_attachment = vuk::Value<vuk::ImageAttachment>{};
+  auto ddgi_probe_states_buffer = vuk::Value<vuk::Buffer>{};
+  auto ddgi_atlas_valid = false;
+  if (!self.probe_volumes.empty()) {
+    auto total_probe_count = 0_u32;
+    for (const auto& volume : self.probe_volumes) {
+      total_probe_count += volume.probe_count;
+    }
+
+    const auto rays_per_probe = static_cast<u32>(std::clamp(cvar.cvar_ddgi_rays_per_probe.get(), 8, 512));
+    const auto ray_data_extent = GPU::ddgi_ray_data_extent(total_probe_count, rays_per_probe);
+
+    self.allocate_ddgi_atlases(total_probe_count);
+
+    ddgi_probe_states_buffer = vuk::acquire_buf("ddgi probe states", *self.ddgi_probe_states, vuk::eMemoryRead);
+    if (!self.ddgi_history_valid) {
+      vuk::fill(ddgi_probe_states_buffer, 0u);
+    }
+
+    if (tlas_it != self.shared_resources.buffer_resources.end() && frame_render_context.use_ray_tracing_pipeline()) {
+      auto ray_data_attachment = vuk::declare_ia(
+        "ddgi ray data",
+        {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+         .extent = ray_data_extent,
+         .format = vuk::Format::eR16G16B16A16Sfloat,
+         .sample_count = vuk::Samples::e1,
+         .level_count = 1,
+         .layer_count = 1}
+      );
+
+      auto irradiance_attachment =
+        self.ddgi_history_valid
+          ? vuk::acquire_ia("ddgi irradiance", self.ddgi_irradiance_attachment, vuk::eFragmentSampled)
+          : vuk::clear_image(vuk::discard_ia("ddgi irradiance", self.ddgi_irradiance_attachment), vuk::Black<f32>);
+      auto distance_attachment =
+        self.ddgi_history_valid
+          ? vuk::acquire_ia("ddgi distance", self.ddgi_distance_attachment, vuk::eFragmentSampled)
+          : vuk::clear_image(vuk::discard_ia("ddgi distance", self.ddgi_distance_attachment), vuk::Black<f32>);
+
+      auto ddgi_select_context = DDGISelectContext{
+        .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .max_interval = static_cast<u32>(std::clamp(cvar.cvar_ddgi_update_max_interval.get(), 1, 255)),
+        .full_rate_distance = cvar.cvar_ddgi_update_full_rate_distance.get(),
+        .update_all = !self.ddgi_history_valid,
+        .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+        .probe_states_buffer = std::move(ddgi_probe_states_buffer),
+        .probe_update_list_buffer = vuk::acquire_buf(
+          "ddgi probe update list",
+          *self.ddgi_probe_update_list,
+          vuk::eComputeRead
+        ),
+        // Uploaded zeroed so ddgi_select_probes can atomically count into it without a clear pass.
+        .probe_update_args_buffer = self.renderer.render_context->scratch_buffer(GPU::ProbeUpdateArgs{}),
+      };
+      self.select_ddgi_probes(ddgi_select_context);
+
+      auto ddgi_trace_context = DDGITraceContext{
+        .bindless_set = &bindless_set,
+        .tlas = &self.scene_tlas,
+        .scene_flags = self.gpu_scene_flags,
+        .rays_per_probe = rays_per_probe,
+        .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .light_count = static_cast<u32>(self.scene.lights.size()),
+        .max_ray_distance = cvar.cvar_ddgi_max_ray_distance.get(),
+        .max_ray_radiance = cvar.cvar_ddgi_max_ray_radiance.get(),
+        .shadow_ray_offset = cvar.cvar_ddgi_shadow_ray_offset.get(),
+        .normal_bias = cvar.cvar_ddgi_normal_bias.get(),
+        .sun_direction = self.directional_light.direction,
+        .sun_intensity = self.directional_light.intensity,
+        .ambient_color = self.sky_data.ambient_color,
+        .volume_count = static_cast<u32>(self.probe_volumes.size()),
+        .bounce_valid = self.ddgi_history_valid,
+        .view_bias = cvar.cvar_ddgi_view_bias.get(),
+        .tlas_buffer = std::move(tlas_it->second),
+        .probe_volumes_buffer = std::move(ddgi_select_context.probe_volumes_buffer),
+        .probe_states_buffer = std::move(ddgi_select_context.probe_states_buffer),
+        .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
+        .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
+        .ray_data_attachment = std::move(ray_data_attachment),
+        .irradiance_attachment = std::move(irradiance_attachment),
+        .distance_attachment = std::move(distance_attachment),
+      };
+      self.trace_ddgi_probes(ddgi_trace_context);
+
+      tlas_it->second = std::move(ddgi_trace_context.tlas_buffer);
+      sky_view_lut_attachment = std::move(ddgi_trace_context.sky_view_lut_attachment);
+      sky_transmittance_lut_attachment = std::move(ddgi_trace_context.sky_transmittance_lut_attachment);
+
+      if (cvar.cvar_ddgi_probe_relocation.as_bool()) {
+        auto ddgi_relocate_context = DDGIRelocateContext{
+          .rays_per_probe = rays_per_probe,
+          .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+          .min_frontface_distance = cvar.cvar_ddgi_min_frontface_distance.get(),
+          .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
+          .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
+          .probe_update_list_buffer = std::move(ddgi_select_context.probe_update_list_buffer),
+          .probe_update_args_buffer = std::move(ddgi_select_context.probe_update_args_buffer),
+          .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),
+        };
+        self.relocate_ddgi_probes(ddgi_relocate_context);
+
+        ddgi_trace_context.probe_volumes_buffer = std::move(ddgi_relocate_context.probe_volumes_buffer);
+        ddgi_trace_context.probe_states_buffer = std::move(ddgi_relocate_context.probe_states_buffer);
+        ddgi_trace_context.ray_data_attachment = std::move(ddgi_relocate_context.ray_data_attachment);
+        ddgi_select_context.probe_update_list_buffer = std::move(ddgi_relocate_context.probe_update_list_buffer);
+        ddgi_select_context.probe_update_args_buffer = std::move(ddgi_relocate_context.probe_update_args_buffer);
+      }
+
+      auto ddgi_update_context = DDGIUpdateContext{
+        .rays_per_probe = rays_per_probe,
+        .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .hysteresis = cvar.cvar_ddgi_hysteresis.get(),
+        .max_brightness_step = cvar.cvar_ddgi_max_brightness_step.get(),
+        .firefly_ratio = cvar.cvar_ddgi_firefly_ratio.get(),
+        .hysteresis_dark_bias = cvar.cvar_ddgi_hysteresis_dark_bias.get(),
+        .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
+        .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
+        .probe_update_list_buffer = std::move(ddgi_select_context.probe_update_list_buffer),
+        .probe_update_args_buffer = std::move(ddgi_select_context.probe_update_args_buffer),
+        .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),
+        .irradiance_attachment = std::move(ddgi_trace_context.irradiance_attachment),
+        .distance_attachment = std::move(ddgi_trace_context.distance_attachment),
+      };
+      self.update_ddgi_probes(ddgi_update_context);
+
+      ddgi_irradiance_attachment = std::move(ddgi_update_context.irradiance_attachment);
+      ddgi_distance_attachment = std::move(ddgi_update_context.distance_attachment);
+      ddgi_probe_states_buffer = std::move(ddgi_update_context.probe_states_buffer);
+      ddgi_atlas_valid = true;
+      self.gpu_scene_flags |= GPU::SceneFlags::HasDDGI;
+    }
   }
 
   auto pbr_context = PBRContext{
@@ -1076,6 +1260,37 @@ auto RendererInstance::render(
   emissive_attachment = std::move(pbr_context.emissive_attachment);
   metallic_roughness_occlusion_attachment = std::move(pbr_context.metallic_roughness_occlusion_attachment);
   vbgtao_occlusion_attachment = std::move(pbr_context.ambient_occlusion_attachment);
+
+  // --- DDGI Apply ---
+  if (ddgi_atlas_valid) {
+    auto ddgi_apply_context = DDGIApplyContext{
+      .volume_count = static_cast<u32>(self.probe_volumes.size()),
+      .normal_bias = cvar.cvar_ddgi_normal_bias.get(),
+      .view_bias = cvar.cvar_ddgi_view_bias.get(),
+      .intensity = cvar.cvar_ddgi_intensity.get(),
+      .ambient_color = self.sky_data.ambient_color,
+      .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+      .probe_states_buffer = std::move(ddgi_probe_states_buffer),
+      .depth_attachment = std::move(depth_attachment),
+      .albedo_attachment = std::move(albedo_attachment),
+      .normal_attachment = std::move(normal_attachment),
+      .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
+      .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
+      .irradiance_attachment = std::move(ddgi_irradiance_attachment),
+      .distance_attachment = std::move(ddgi_distance_attachment),
+    };
+
+    final_attachment = self.apply_ddgi(ddgi_apply_context, std::move(final_attachment));
+
+    depth_attachment = std::move(ddgi_apply_context.depth_attachment);
+    albedo_attachment = std::move(ddgi_apply_context.albedo_attachment);
+    normal_attachment = std::move(ddgi_apply_context.normal_attachment);
+    metallic_roughness_occlusion_attachment = std::move(ddgi_apply_context.metallic_roughness_occlusion_attachment);
+    vbgtao_occlusion_attachment = std::move(ddgi_apply_context.ambient_occlusion_attachment);
+    ddgi_irradiance_attachment = std::move(ddgi_apply_context.irradiance_attachment);
+    ddgi_distance_attachment = std::move(ddgi_apply_context.distance_attachment);
+    ddgi_probe_states_buffer = std::move(ddgi_apply_context.probe_states_buffer);
+  }
 
   // --- 2D Pass ---
   if (!self.render_queue_2d.sprite_data.empty()) {
@@ -1222,6 +1437,28 @@ auto RendererInstance::render(
     final_attachment = ctx.get_image_resource("final_attachment");
   }
 
+  // --- DDGI Probe Debug Pass ---
+  if (draw_ddgi_probes && !self.probe_volumes.empty()) {
+    if (!ddgi_atlas_valid) {
+      self.ddgi_history_valid = false;
+    }
+
+    auto ddgi_debug_context = DDGIDebugContext{
+      .probe_radius = cvar.cvar_ddgi_probe_debug_radius.get(),
+      .atlas_valid = ddgi_atlas_valid,
+      .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+      .probe_states_buffer = std::move(ddgi_probe_states_buffer),
+      .irradiance_attachment = ddgi_atlas_valid ? std::move(ddgi_irradiance_attachment)
+                                                : vuk::discard_ia("ddgi irradiance", self.ddgi_irradiance_attachment),
+      .depth_attachment = std::move(depth_attachment),
+    };
+
+    final_attachment = self.draw_ddgi_probes(ddgi_debug_context, std::move(final_attachment));
+    depth_attachment = std::move(ddgi_debug_context.depth_attachment);
+    ddgi_irradiance_attachment = std::move(ddgi_debug_context.irradiance_attachment);
+    ddgi_probe_states_buffer = std::move(ddgi_debug_context.probe_states_buffer);
+  }
+
   // --- FXAA Pass ---
   if (self.gpu_scene_flags & GPU::SceneFlags::HasFXAA) {
     auto fxaa_attachment = vuk::declare_ia(
@@ -1318,7 +1555,7 @@ auto RendererInstance::render(
     debug_context.vsm_clipmaps_buffer = std::move(rmvsm_virtual_clipmaps_buffer);
   }
 
-  if (debugging && self.prepared_frame.mesh_instance_count > 0) {
+  if (debugging && debug_view != GPU::DebugView::DDGIProbes && self.prepared_frame.mesh_instance_count > 0) {
     dst_attachment = self.apply_debug_view(debug_context, dst_extent);
   }
 
@@ -1467,6 +1704,84 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
       }
     });
+
+  self.probe_volumes.clear();
+  if (cvar.cvar_ddgi_enable.as_bool()) {
+    const auto draw_volume_bounds = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get()) ==
+                                      GPU::DebugView::DDGIProbes &&
+                                    cvar.cvar_enable_debug_renderer.as_bool();
+
+    // Cascades of one set are emitted contiguously, finest first, because the shader walks the array
+    // set by set and indexes a set's members by cascade index off its first entry.
+    self.scene.world
+      .query_builder<const TransformComponent, const ProbeVolumeComponent>() //
+      .build()
+      .each(
+        [&self,
+         camera_position = cam.position](flecs::entity e, const TransformComponent&, const ProbeVolumeComponent& c) {
+          if (!e.enabled()) {
+            return;
+          }
+
+          const auto counts = glm::max(c.probe_counts, glm::uvec3(2));
+          const auto base_spacing = glm::max(c.probe_range, glm::vec3(0.01f)) / glm::vec3(counts - 1u);
+          const glm::vec3 anchor = self.scene.get_world_transform(e)[3];
+          const auto center = c.follow_camera ? camera_position : anchor;
+          const auto cascades = std::clamp(c.cascade_count, 1u, GPU::DDGI_MAX_CASCADE_COUNT);
+          const auto probe_count = counts.x * counts.y * counts.z;
+
+          auto set = ankerl::svector<GPU::ProbeVolume, GPU::DDGI_MAX_CASCADE_COUNT>{};
+          for (u32 cascade = 0; cascade < cascades; cascade++) {
+            const auto spacing = base_spacing * static_cast<f32>(1u << cascade);
+            const auto scroll = glm::ivec3(glm::floor((center - anchor) / spacing + 0.5f));
+
+            set.emplace_back(
+              GPU::ProbeVolume{
+                .origin = anchor + glm::vec3(scroll) * spacing,
+                .spacing = spacing,
+                .probe_count = probe_count,
+                .spacing_rcp = 1.0f / spacing,
+                .cascade_index = cascade,
+                .counts = counts,
+                .cascade_count = cascades,
+                .scroll = scroll,
+                .cascade_blend = std::clamp(c.cascade_blend, 0.0f, 1.0f),
+                .center = center,
+                .max_probe_distance = glm::length(spacing) * 1.5f,
+              }
+            );
+          }
+
+          const auto probe_offset = self.probe_volumes.empty()
+                                      ? 0u
+                                      : self.probe_volumes.back().probe_offset + self.probe_volumes.back().probe_count;
+
+          if (probe_offset + probe_count * cascades > GPU::DDGI_MAX_PROBE_COUNT) {
+            OX_LOG_WARN(
+              "Dropped a {} cascade probe volume, the scene is over the {} probe limit.",
+              cascades,
+              GPU::DDGI_MAX_PROBE_COUNT
+            );
+            return;
+          }
+
+          for (u32 cascade = 0; cascade < cascades; cascade++) {
+            set[cascade].probe_offset = probe_offset + cascade * probe_count;
+            self.probe_volumes.emplace_back(set[cascade]);
+          }
+        }
+      );
+
+    if (draw_volume_bounds) {
+      for (const auto& volume : self.probe_volumes) {
+        const auto extents = glm::vec3(volume.counts - 1u) * volume.spacing * 0.5f;
+        App::mod<ox::DebugRenderer>().draw_aabb(
+          AABB(volume.origin - extents, volume.origin + extents),
+          glm::vec4(0, 1, 1, 1)
+        );
+      }
+    }
+  }
 
   self.post_proces_settings.exposure = cvar.cvar_exposure.get();
 
@@ -1635,6 +1950,24 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshes_buffer = render_context.upload_staging(info.gpu_meshes, *self.meshes_buffer);
   } else if (self.meshes_buffer) {
     self.prepared_frame.meshes_buffer = vuk::acquire_buf("meshes", *self.meshes_buffer, vuk::Access::eMemoryRead);
+  }
+
+  if (!info.gpu_mesh_blas_addresses.empty()) {
+    self.blas_addresses_buffer = render_context.resize_buffer(
+      std::move(self.blas_addresses_buffer),
+      vuk::MemoryUsage::eGPUonly,
+      info.gpu_mesh_blas_addresses.size_bytes()
+    );
+    self.prepared_frame.blas_addresses_buffer = render_context.upload_staging(
+      info.gpu_mesh_blas_addresses,
+      *self.blas_addresses_buffer
+    );
+  } else if (self.blas_addresses_buffer) {
+    self.prepared_frame.blas_addresses_buffer = vuk::acquire_buf(
+      "blas addresses",
+      *self.blas_addresses_buffer,
+      vuk::Access::eMemoryRead
+    );
   }
 
   if (!info.gpu_mesh_instances.empty()) {

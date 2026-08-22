@@ -5,6 +5,7 @@
 #include <vuk/runtime/vk/VkTypes.hpp>
 #include <zpp_bits.h>
 
+#include "Asset/ShaderFeature.hpp"
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
 
@@ -42,9 +43,27 @@ struct NoneAsset {
   using serialize_id = zpp::bits::serialization_id<AssetType::None>;
 };
 
+enum class ShaderStage : u32 {
+  None = 0,
+  Vertex,
+  Hull,
+  Domain,
+  Geometry,
+  Fragment,
+  Compute,
+  RayGeneration,
+  Intersection,
+  AnyHit,
+  ClosestHit,
+  Miss,
+  Callable,
+  Mesh,
+  Amplification,
+};
+
 struct ShaderEntryPointData {
   std::string name = {};
-  u32 shader_stage = {};
+  ShaderStage shader_stage = ShaderStage::None;
   std::vector<u32> spirv = {};
 };
 
@@ -53,8 +72,7 @@ struct ShaderPipelineData {
 
   std::string module_name = "";
   std::vector<ShaderEntryPointData> entry_points = {};
-  bool bindless = false;
-  bool requires_mesh_shaders = false;
+  ShaderFeatureFlag required_features = ShaderFeatureFlag::None;
 };
 
 struct AssetFileEntry {

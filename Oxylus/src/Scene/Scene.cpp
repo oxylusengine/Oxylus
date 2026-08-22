@@ -1220,6 +1220,8 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     auto meshlet_instance_visibility_offset = 0_u32;
     auto max_meshlet_instance_count = 0_u32;
     auto gpu_meshes = std::vector<GPU::Mesh>();
+    // Parallel to `gpu_meshes`, so the TLAS build can look a BLAS up by mesh index.
+    auto blas_addresses = std::vector<u64>();
     auto gpu_mesh_instances = std::vector<GPU::MeshInstance>();
     auto mesh_slot_to_gpu_index = ankerl::unordered_dense::map<u32, u32>();
 
@@ -1241,6 +1243,12 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         } else {
           mesh_index = static_cast<u32>(gpu_meshes.size());
           gpu_meshes.emplace_back(mesh);
+          const auto& mesh_blases = model->mesh_blases;
+          blas_addresses.emplace_back(
+            mesh_instance.mesh_node_index < mesh_blases.size()
+              ? mesh_blases[mesh_instance.mesh_node_index].device_address
+              : 0
+          );
           unique_mesh_to_gpu_mesh.emplace(unique_mesh, mesh_index);
         }
 
@@ -1284,6 +1292,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       .dirty_transform_ids = self.dirty_transforms,
       .gpu_transforms = self.transforms.slots_unsafe(),
       .gpu_meshes = gpu_meshes,
+      .gpu_mesh_blas_addresses = blas_addresses,
       .gpu_mesh_instances = gpu_mesh_instances,
       .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices,
     };

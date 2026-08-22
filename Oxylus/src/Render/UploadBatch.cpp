@@ -1,6 +1,8 @@
 #include "Render/UploadBatch.hpp"
 
 #include <ranges>
+#include <vuk/runtime/vk/PipelineInstance.hpp>
+#include <vuk/runtime/vk/Query.hpp>
 
 #include "Core/App.hpp"
 #include "Memory/Stack.hpp"
