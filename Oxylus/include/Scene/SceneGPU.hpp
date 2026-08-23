@@ -236,8 +236,7 @@ constexpr static u32 MAX_LIGHTS = MAX_POINT_LIGHTS + MAX_SPOT_LIGHTS;
 constexpr static u32 MAX_SHADOW_POINT_LIGHTS = 64;
 constexpr static u32 MAX_SHADOW_SPOT_LIGHTS = 64;
 
-// World-space froxel grid holding a 128-bit shadow-light mask per cell
-// (uvec4 = [point 0-31, point 32-63, spot 0-31, spot 32-63], bit = shadow_map_index).
+// per-cell shadow mask, point 0-63, then spot 0-63, packed into uvec4
 constexpr static glm::ivec3 LIGHT_GRID_RESOLUTION = {64, 32, 64};
 constexpr static f32 LIGHT_GRID_CELL_SIZE = 8.0f;
 constexpr static u32 LIGHT_GRID_CELL_COUNT = 64u * 32u * 64u;
@@ -259,7 +258,7 @@ struct Light {
   alignas(4) f32 inner_cone_angle = 0.0f; // spot only (radians)
   alignas(4) f32 outer_cone_angle = 0.0f; // spot only (radians)
   alignas(4) LightKind kind = LightKind::Point;
-  // Shadow slot of this light (point and spot slots are separate ranges), -1 = casts no shadows.
+  // -1 disables shadows
   alignas(4) i32 shadow_map_index = -1;
   alignas(4) u32 pad = {};
 };
@@ -324,7 +323,7 @@ enum struct TonemapType : u32 {
 
 struct VSMAllocRequest {
   alignas(4) glm::ivec3 page_table_address = {};
-  // Point/spot VPT mip level of the requested page, -1 for directional clipmap pages.
+  // -1 for directional pages
   alignas(4) i32 mip = -1;
 };
 
@@ -340,12 +339,11 @@ struct VSMPageAllocator {
   alignas(8) u64 free_page_list = {};
 };
 
-// Per-layer render view into the point/spot VPT array:
-// point light p, face f -> layer p * 6 + f; spot light s -> layer MAX_SHADOW_POINT_LIGHTS * 6 + s.
+// point layer = light * 6 + face, spot layers follow all point layers
 struct VSMPointSpotView {
   alignas(4) glm::mat4 projection_view = {};
   alignas(4) glm::vec3 light_position = {};
-  alignas(4) f32 range = 0.0f; // 0 means the layer is inactive
+  alignas(4) f32 range = 0.0f;             // 0 means the layer is inactive
   alignas(4) u32 light_index = 0;
   alignas(4) f32 z_near = 0.0f;
   alignas(4) f32 texel_world_scale = 1.0f; // tan(fov/2), for world-space texel sizing in shading

@@ -1,4 +1,6 @@
+#include <cstring>
 #include <vuk/runtime/CommandBuffer.hpp>
+#include <vuk/vsl/Core.hpp>
 
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/VukCommon.hpp"
@@ -7,11 +9,17 @@ namespace ox {
 auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostProcessContext& context) -> void {
   ZoneScoped;
 
+  constexpr auto histogram_size_bytes = GPU::HISTOGRAM_BIN_COUNT * sizeof(u32);
   auto histogram_bin_indices_buffer = self.renderer.render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
-    GPU::HISTOGRAM_BIN_COUNT * sizeof(u32)
+    histogram_size_bytes
   );
-  vuk::fill(histogram_bin_indices_buffer, 0);
+  auto histogram_clear_buffer = self.renderer.render_context->alloc_transient_buffer(
+    vuk::MemoryUsage::eCPUtoGPU,
+    histogram_size_bytes
+  );
+  std::memset(histogram_clear_buffer->mapped_ptr, 0, histogram_size_bytes);
+  histogram_bin_indices_buffer = vuk::copy(std::move(histogram_clear_buffer), std::move(histogram_bin_indices_buffer));
 
   auto histogram_generate_pass = vuk::make_pass(
     "histogram generate",

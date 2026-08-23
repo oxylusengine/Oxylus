@@ -285,8 +285,7 @@ public struct Light {
 public constexpr static u32 MAX_SHADOW_POINT_LIGHTS = 64;
 public constexpr static u32 MAX_SHADOW_SPOT_LIGHTS = 64;
 
-// World-space froxel grid holding a 128-bit shadow-light mask per cell
-// (u32x4 = [point 0-31, point 32-63, spot 0-31, spot 32-63], bit = shadow_map_index).
+// per-cell shadow mask, point 0-63, then spot 0-63, packed into u32x4
 public constexpr static i32x3 LIGHT_GRID_RESOLUTION = i32x3(64, 32, 64);
 public constexpr static f32 LIGHT_GRID_CELL_SIZE = 8.0;
 public constexpr static u32 LIGHT_GRID_CELL_COUNT = 64u * 32u * 64u;

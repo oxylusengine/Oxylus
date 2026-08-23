@@ -17,7 +17,6 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-// A light gathered from the ECS, held until shadow slots have been handed out.
 struct PendingLight {
   GPU::Light light = {};
   u64 entity_id = 0;
@@ -29,17 +28,12 @@ struct ShadowSlotCandidate {
   f32 priority = 0.0f;
 };
 
-// Both outcomes reset every page of the slot's layers, so they are the CPU-side
-// measure of how much the point/spot VSM chain has to re-render this frame.
 struct ShadowSlotStats {
   u32 reassigned = 0;
   u32 invalidated = 0;
 };
 
-// Slack given to a light that already holds a slot, both on the frustum test and
-// on its score. Without it a light grazing the frustum edge, or one tied with a
-// contender, would trade its slot back and forth every frame and drop its cached
-// pages each time.
+// prevent slot churn near frustum and priority boundaries
 constexpr static f32 SHADOW_SLOT_HYSTERESIS = 1.25f;
 
 static auto sphere_intersects_frustum(std::span<const glm::vec4> planes, const glm::vec3& center, f32 radius) -> bool {
@@ -59,9 +53,6 @@ static auto shadow_light_priority(const GPU::Light& light, const GPU::CameraData
 
   const auto hysteresis = holds_slot ? SHADOW_SLOT_HYSTERESIS : 1.0f;
 
-  // Shading only ever applies a light to pixels that are inside the camera
-  // frustum and within its range, so an influence sphere missing the frustum
-  // cannot contribute to the image and never earns a slot.
   if (!sphere_intersects_frustum(camera_data.frustum_planes, light.position, light.range * hysteresis)) {
     return -1.0f;
   }
@@ -85,8 +76,7 @@ static auto assign_shadow_slots(
 
   auto stats = ShadowSlotStats{};
 
-  // Lights past `MAX_LIGHTS` never reach the GPU buffer, so a slot spent on one
-  // would render a layer nothing can sample.
+  // only uploaded lights may receive shadow slots
   const auto uploaded_light_count = glm::min(lights.size(), static_cast<usize>(GPU::MAX_LIGHTS));
 
   auto candidates = stack.alloc<ShadowSlotCandidate>(uploaded_light_count);
@@ -117,9 +107,7 @@ static auto assign_shadow_slots(
   std::ranges::sort(selected, std::ranges::greater{}, &ShadowSlotCandidate::priority);
   selected = selected.subspan(0, glm::min(selected.size(), slots.size()));
 
-  // Slots are reclaimed in two passes: every light that held one last frame
-  // keeps it, and only the leftovers are packed into what remains. Moving a
-  // light between slots is what forces its cached pages to be dropped.
+  // preserve existing assignments before filling vacant slots
   auto assigned_slots = stack.alloc<i32>(selected.size());
   auto claimed_mask = 0_u64;
 
@@ -177,9 +165,7 @@ static auto assign_shadow_slots(
     slot_high_water = glm::max(slot_high_water, slot_index + 1);
   }
 
-  // Vacated slots are wiped so a light that comes back to one always compares
-  // as changed and re-renders instead of trusting pages that were freed while
-  // it had no slot.
+  // clearing vacated state invalidates it for future occupants
   for (auto slot_index = 0_u32; slot_index < slots.size(); slot_index++) {
     if ((claimed_mask & (1_u64 << slot_index)) == 0) {
       slots[slot_index] = {};
@@ -1294,7 +1280,7 @@ auto RendererInstance::render(
   }
 
   if (!vsm_chain_ran) {
-    // The VSM chain was skipped this frame; give PBR valid (empty) resources.
+    // VSM chain skipped this frame, give PBR valid empty resources
     pointspot_page_table_for_pbr = self.vsm_pointspot_virtual_page_table.acquire(
       "vsm pointspot page table",
       vuk::eFragmentSampled
@@ -1347,7 +1333,6 @@ auto RendererInstance::render(
   metallic_roughness_occlusion_attachment = std::move(pbr_context.metallic_roughness_occlusion_attachment);
   vbgtao_occlusion_attachment = std::move(pbr_context.ambient_occlusion_attachment);
 
-  // Kept for the point/spot VSM debug view (apply_pbr leaves them valid).
   auto rmvsm_pointspot_page_table_attachment = std::move(pbr_context.pointspot_page_table_attachment);
   auto rmvsm_pointspot_views_buffer = std::move(pbr_context.pointspot_views_buffer);
   auto rmvsm_light_grid_buffer = std::move(pbr_context.light_grid_buffer);
@@ -1679,8 +1664,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   math::calc_frustum_planes(self.camera_data.projection_view, self.camera_data.frustum_planes);
 
-  // Snap the camera-centered light grid volume to the cell size so cell
-  // contents stay stable under sub-cell camera movement.
   const auto light_grid_half_extent = glm::vec3(GPU::LIGHT_GRID_RESOLUTION) * (GPU::LIGHT_GRID_CELL_SIZE * 0.5f);
   self.light_grid_origin = glm::floor(
                              (glm::vec3(self.camera_data.position) - light_grid_half_extent) / GPU::LIGHT_GRID_CELL_SIZE
@@ -1689,10 +1672,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   self.scene.lights.reset();
 
-  // Lights are gathered first and only then given shadow slots: there are far
-  // fewer slots than a scene can hold lights, so they go to the lights that
-  // matter most to this camera instead of to whichever ones the ECS happens to
-  // visit first.
+  // rank lights before assigning the limited shadow slots
   ankerl::svector<PendingLight, 32> pending_lights = {};
 
   self.scene.world
@@ -1790,11 +1770,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.prepared_frame.shadow_slots_reassigned = point_slot_stats.reassigned + spot_slot_stats.reassigned;
   self.prepared_frame.shadow_slots_invalidated = point_slot_stats.invalidated + spot_slot_stats.invalidated;
 
-  // Profiling aid: shadow caching makes the expensive frames exactly the ones
-  // that are hardest to capture, because they only happen while the camera is
-  // moving. Marking every light moved (and the sun with it) drops the whole page
-  // cache each frame, so a stationary camera keeps rebuilding the shadows it can
-  // currently see and every captured frame is a worst-case rebuild.
+  // force worst-case cache rebuilds for profiling
   if (cvar.cvar_vsm_force_invalidate.as_bool()) {
     self.prepared_frame.moved_point_light_mask = ~0_u64;
     self.prepared_frame.moved_spot_light_mask = ~0_u64;
@@ -1919,13 +1895,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       //
     });
 
-  auto zero_fill_pass = vuk::make_pass(
-    "zero fill",
-    [](vuk::CommandBuffer& command_buffer, VUK_BA(vuk::eTransferWrite) dst) {
-      command_buffer.fill_buffer(dst, 0_u32);
-      return dst;
-    }
-  );
+  auto zero_fill_pass = vuk::make_pass("zero fill", [](vuk::CommandBuffer& command_buffer, VUK_BA(vuk::eClear) dst) {
+    command_buffer.fill_buffer(dst, 0_u32);
+    return dst;
+  });
 
   update_projected_transform_buffer<GPU::TransformWorld>(
     render_context,

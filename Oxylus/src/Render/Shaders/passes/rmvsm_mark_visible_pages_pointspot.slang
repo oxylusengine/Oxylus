@@ -37,10 +37,7 @@ func mark_page(i32x3 address, i32 mip) -> void {
     let prev_page = VSMPageMetadata(prev_page_data);
 
     if (!prev_page.is_visible()) {
-        // page became visible this frame
-
         if (prev_page.is_backed()) {
-            // keep track of visible and backed pages so the allocator wont overwrite it
             let physical_address = prev_page.get_physical_address();
             page_occupancy[physical_address] = 1u;
         } else {

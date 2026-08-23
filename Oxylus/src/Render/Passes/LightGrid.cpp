@@ -18,15 +18,10 @@ auto RendererInstance::build_light_grid(this RendererInstance& self, LightGridCo
   const auto shadow_light_count = self.prepared_frame.shadow_point_light_count +
                                   self.prepared_frame.shadow_spot_light_count;
   if (shadow_light_count == 0) {
-    // Every cell mask is written unconditionally by the pass; without shadow
-    // casting lights a zero fill keeps the consumers' reads valid.
-    auto zero_fill_pass = vuk::make_pass(
-      "light grid zero",
-      [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eTransferWrite) grid) {
-        cmd_list.fill_buffer(grid, 0_u32);
-        return grid;
-      }
-    );
+    auto zero_fill_pass = vuk::make_pass("light grid zero", [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eClear) grid) {
+      cmd_list.fill_buffer(grid, 0_u32);
+      return grid;
+    });
     context.light_grid_buffer = zero_fill_pass(std::move(context.light_grid_buffer));
     return;
   }

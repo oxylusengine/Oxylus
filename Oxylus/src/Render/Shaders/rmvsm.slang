@@ -221,10 +221,7 @@ public struct VirtualClipmap {
     }
 };
 
-// * Point / spot light virtualization *
-// Each point light occupies 6 consecutive VPT array layers (one per cube face),
-// spot lights are packed after all point lights with a single layer each.
-// Mips of the point/spot VPT are the LOD levels (32x32 pages down to 1x1).
+// point lights use six cube-face layers, spot layers follow, VPT mips are LODs
 
 public constexpr static u32 VSM_SPOT_LAYER_OFFSET = MAX_SHADOW_POINT_LIGHTS * 6;
 public constexpr static u32 VSM_POINT_SPOT_LAYER_COUNT = VSM_SPOT_LAYER_OFFSET + MAX_SHADOW_SPOT_LIGHTS;
@@ -237,8 +234,8 @@ public func vsm_spot_layer(i32 spot_shadow_index) -> i32 {
     return i32(VSM_SPOT_LAYER_OFFSET) + spot_shadow_index;
 }
 
-// Cube face order {+X, -X, +Y, -Y, +Z, -Z}; must match the CPU-side face view matrices.
-// `dir` points from the light towards the shaded position.
+// {+X, -X, +Y, -Y, +Z, -Z}, must match the CPU face matrices
+// dir points from the light to the shaded position
 public func vsm_point_face_index(f32x3 dir) -> i32 {
     let a = abs(dir);
     let coord_index = a.x < a.y ? (a.y < a.z ? 2 : 1) : (a.x < a.z ? 2 : 0);

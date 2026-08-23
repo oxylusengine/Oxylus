@@ -165,15 +165,10 @@ struct PreparedFrame {
 
   u32 spot_light_count = 0;
   u32 point_light_count = 0;
-  // High-water mark of occupied shadow slots, not a population count: slots are
-  // held across frames so the occupied set can have holes. Consumers use it to
-  // build a conservative "which slots may be live" mask.
   u32 shadow_point_light_count = 0;
   u32 shadow_spot_light_count = 0;
   u64 moved_point_light_mask = 0;
   u64 moved_spot_light_mask = 0;
-  // Both counts are slots whose pages get fully reset this frame, so they drive
-  // how much geometry the point/spot VSM chain has to re-render.
   u32 shadow_slots_reassigned = 0;
   u32 shadow_slots_invalidated = 0;
 
@@ -187,10 +182,6 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> debug_renderer_verticies_buffer = {};
 };
 
-// A point/spot shadow slot and the light that held it last frame. Slots persist
-// across frames so cached VSM pages stay valid; the stored view parameters are
-// what those pages were rendered with, and any mismatch (including a different
-// occupant) invalidates the slot's layers.
 struct ShadowSlotState {
   u64 entity_id = 0;
   glm::vec3 position = {};
@@ -229,7 +220,6 @@ struct CullGeometryContext {
 struct CullGeometryPointSpotContext {
   bool init = false;
 
-  // curr_mip is set by the caller per iteration.
   GPU::VSMPointSpotContext ps_ctx = {};
 
   vuk::Value<vuk::Buffer> views_buffer = {};
@@ -325,15 +315,12 @@ struct RMVSMContext {
   constexpr static u32 POINT_SPOT_IMAGE_RESOLUTION = 1 << 11;
   constexpr static u32 POINT_SPOT_PAGE_TABLE_SIZE = POINT_SPOT_IMAGE_RESOLUTION / PAGE_SIZE;
   constexpr static u32 POINT_SPOT_MIP_COUNT = 6;
-  // Occupancy pyramid over a single page-table mip, so its base is the full
-  // page table and it loses a level for every mip the base shrinks by.
   constexpr static u32 POINT_SPOT_HPB_LEVEL_COUNT = std::bit_width(POINT_SPOT_PAGE_TABLE_SIZE);
   constexpr static u32 POINT_SPOT_SPOT_LAYER_OFFSET = GPU::MAX_SHADOW_POINT_LIGHTS * 6;
   constexpr static u32 POINT_SPOT_LAYER_COUNT = POINT_SPOT_SPOT_LAYER_OFFSET + GPU::MAX_SHADOW_SPOT_LIGHTS;
   constexpr static u32 POINT_SPOT_MAX_MESHLET_INSTANCES = 1u << 18;
   constexpr static u32 POINT_SPOT_MAX_INDEX_COUNT = 1u << 23;
-  // Must match CULLING_MESH_COUNT in Shaders/defines.slang; needed here because
-  // `cull_meshes` is dispatched indirectly and has to size its own groups.
+  // must match CULLING_MESH_COUNT in Shaders/defines.slang
   constexpr static u32 CULLING_MESH_COUNT = 64;
 
   constexpr static u32 PHYSICAL_PAGE_TABLE_SIZE = DIRECTIONAL_IMAGE_RESOLUTION + POINT_SPOT_IMAGE_RESOLUTION;
@@ -363,9 +350,6 @@ struct RMVSMContext {
   vuk::Value<vuk::ImageAttachment> pointspot_page_table_attachment = {};
 };
 
-// Bakes the point/spot virtualization sizes (specialization constants 50-54, see
-// rmvsm.slang) into the currently-bound pipeline from RMVSMContext. Shared by
-// every point/spot pass so the values are driven from a single source.
 auto bind_vsm_pointspot_spec_constants(vuk::CommandBuffer& cmd) -> vuk::CommandBuffer&;
 
 struct ShadowResolveContext {

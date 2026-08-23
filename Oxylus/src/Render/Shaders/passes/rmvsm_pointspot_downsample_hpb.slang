@@ -7,13 +7,8 @@ import rmvsm;
 [[vk::binding(1)]] Texture2DArray<u8> src_hpb;
 [[vk::binding(2)]] RWTexture2DArray<u8, ImageFormat::R8UI> dst_hpb;
 
-// Occupancy pyramid over one page-table mip, so meshlet culling can ask "does
-// this screen AABB touch any page worth drawing into" in a couple of taps
-// instead of walking the page range.
-//
-// The base level must test exactly what `rmvsm_pointspot_draw_pages` tests,
-// otherwise a meshlet gets rejected here that the fragment shader would have
-// written, and the shadow goes missing.
+// per-mip occupancy pyramid for meshlet culling, its base predicate must match
+// rmvsm_pointspot_draw_pages
 [[shader("compute")]]
 [[numthreads(16, 16, 1)]]
 func cs_main(

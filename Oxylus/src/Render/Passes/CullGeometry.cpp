@@ -432,11 +432,7 @@ auto RendererInstance::cull_geometry_pointspot(this RendererInstance& self, Cull
     {.x = 0, .y = 1, .z = 1}
   );
 
-  // `cull_meshes` used to run over every one of POINT_SPOT_LAYER_COUNT layers,
-  // re-reading each mesh, transform and view once per layer just to fail a
-  // frustum test. The layers worth visiting are compacted first, and the Y group
-  // count of the indirect dispatch doubles as the append cursor: it starts at 0
-  // and ends up holding the active layer count.
+  // compact active layers into the indirect dispatch's Y dimension
   auto active_layers_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
     RMVSMContext::POINT_SPOT_LAYER_COUNT * sizeof(u32)
@@ -539,9 +535,7 @@ auto RendererInstance::cull_geometry_pointspot(this RendererInstance& self, Cull
       std::move(cull_meshlets_cmd_buffer)
     );
 
-  // Occupancy pyramid over this mip's page grid. Rebuilt every mip iteration
-  // because each page-table mip is an independent page grid, not a reduction of
-  // the one below it.
+  // each page-table mip has an independent occupancy pyramid
   auto downsample_hpb_pass = vuk::make_pass(
     "rmvsm pointspot downsample hpb",
     [curr_mip = ps_ctx.curr_mip](

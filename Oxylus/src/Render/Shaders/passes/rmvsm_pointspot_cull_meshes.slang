@@ -22,10 +22,6 @@ func cs_main(
     uniform VSMPointSpotContext ctx
 ) -> void {
     let mesh_instance_index = thread_id.x;
-    // Y is indexed through the compacted list built by
-    // `rmvsm_pointspot_build_active_layers`, so every layer reached here already
-    // has a live view and dirty pages at this mip. The group count is the active
-    // layer count exactly, so thread_id.y needs no bounds check.
     let layer = active_layers[thread_id.y];
 
     var meshlet_count = 0u;

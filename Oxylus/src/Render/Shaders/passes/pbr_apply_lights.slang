@@ -52,13 +52,11 @@ func fs_main(
     let grid_cell_in_bounds = light_grid_cell_in_bounds(grid_cell);
     let grid_mask = grid_cell_in_bounds ? light_grid[light_grid_cell_index(grid_cell)] : u32x4(0);
 
-    // World-space pixel footprint corners for VSM mip selection; must match the
-    // construction used by the VSM marking pass.
+    // must match the VSM marking footprint
     let footprint_uv_offset = (1.0 / camera.resolution) * 0.5;
     let footprint_left = camera.unproject_uv(input.tex_coord + f32x2(-footprint_uv_offset.x, footprint_uv_offset.y), depth);
     let footprint_right = camera.unproject_uv(input.tex_coord + f32x2(footprint_uv_offset.x, footprint_uv_offset.y), depth);
 
-    // Interleaved gradient noise rotates the PCF kernel per pixel.
     let pcf_rotation = 6.28318530718 *
                        fract(52.9829189 * fract(dot(f32x2(pixel_pos.xy), f32x2(0.06711056, 0.00583715))));
 
@@ -66,8 +64,7 @@ func fs_main(
     for (u32 light_index = 0; light_index < light_count; light_index++) {
         let light = lights[light_index];
 
-        // Shadow-casting lights are registered in the light grid; inside the
-        // grid volume a clear bit proves the light cannot affect this pixel.
+        // a clear in-grid bit proves this light cannot affect the pixel
         if (light.shadow_map_index >= 0 && grid_cell_in_bounds) {
             let word = light_grid_mask_word(light.kind, light.shadow_map_index);
             if ((grid_mask[word] & light_grid_mask_bit(light.shadow_map_index)) == 0) {

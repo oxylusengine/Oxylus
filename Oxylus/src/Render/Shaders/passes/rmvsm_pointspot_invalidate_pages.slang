@@ -116,7 +116,6 @@ func cs_main(
     let transform_previous = transforms_previous[mesh_instance.transform_index];
     let mesh = meshes[mesh_instance.mesh_index];
 
-    // Skip meshes that are out of the light's range in both frames.
     let world_center_curr = transform.to_world_position(mesh.bounds.aabb_center).xyz;
     let world_radius_curr = transform.to_world_radius(length(mesh.bounds.aabb_extent * 0.5));
     let prev_world = TransformWorld(transform_previous.previous_world);

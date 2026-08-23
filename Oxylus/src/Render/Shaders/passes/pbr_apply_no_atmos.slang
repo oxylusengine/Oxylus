@@ -23,8 +23,7 @@ import scene;
 [[shader("fragment")]]
 func fs_main(
   VertexOutput input,
-  // The pointer comes first so it stays 8-byte aligned under scalar layout;
-  // PushConstants only pads to 4.
+  // keep the pointer 8-byte aligned under scalar layout
   uniform Sky *sky,
   uniform f32x3 L,
   uniform f32 Li,

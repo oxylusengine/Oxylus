@@ -23,7 +23,7 @@ func first_shadow_light(u32x2 point_mask, u32x2 spot_mask, out i32 layer, out i3
         if (point_mask[word] != 0u) {
             let slot = word * 32 + i32(firstbitlow(point_mask[word]));
             layer = slot * 6;
-            face = -1; // resolved by caller from direction
+            face = -1; // resolve from direction
             return true;
         }
     }
@@ -61,7 +61,6 @@ func fs_main(
     i32 layer = 0;
     i32 face_tag = 0;
     if (!first_shadow_light(cell_mask.xy, cell_mask.zw, layer, face_tag)) {
-        // No shadow-casting point/spot light influences this pixel.
         return f32x4(0.1, 0.1, 0.1, 1.0);
     }
 
@@ -82,7 +81,7 @@ func fs_main(
         return f32x4(0.1, 0.1, 0.1, 1.0);
     }
 
-    // Footprint corners for mip selection, matching marking/shading.
+    // must match the marking and shading footprint
     let uv_offset = (1.0 / camera.resolution) * 0.5;
     let wp_left = camera.unproject_uv(input.tex_coord + f32x2(-uv_offset.x, uv_offset.y), depth);
     let wp_right = camera.unproject_uv(input.tex_coord + f32x2(uv_offset.x, uv_offset.y), depth);
@@ -95,8 +94,7 @@ func fs_main(
 
     let page = VSMPageMetadata(vsm_page_table.Load(i32x4(page_coords, layer, mip)));
 
-    // Page-border highlighting, hue per mip (the distance-selected LOD), matching
-    // the directional debug view which hues by clipmap. mip 0 (nearest) .. mip 5.
+    // hue encodes the selected mip
     let near_border = any(in_page_texel < 2) || any(in_page_texel > VSM_PAGE_SIZE - 2);
     if (near_border) {
         let hue = f32(mip) / f32(VSM_POINT_SPOT_MIP_COUNT) * TAU;
@@ -104,11 +102,10 @@ func fs_main(
     }
 
     if (page.is_visible() && !page.is_backed()) {
-        // Requested but unbacked (allocation pending or failed).
         return f32x4(1.0, 0.0, 0.0, 1.0);
     }
 
-    // R = backed, G = dirty, B = visible.
+    // r = backed, g = dirty, b = visible
     let status = f32x3(f32(page.is_backed()), f32(page.is_dirty()), f32(page.is_visible()));
     return f32x4(status, 1.0);
 }

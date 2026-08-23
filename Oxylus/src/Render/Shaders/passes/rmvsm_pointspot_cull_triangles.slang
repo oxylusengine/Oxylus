@@ -64,8 +64,7 @@ func cs_main(
             mul(model_view_proj_shared, f32x4(positions[2], 1.0))
         );
 
-        // Perspective projection: only reject triangles fully behind the light;
-        // the backface determinant is only meaningful with all w positive.
+        // reject only fully hidden triangles, the determinant requires positive w
         triangle_passed = clip_pos[0].w > 0.0 || clip_pos[1].w > 0.0 || clip_pos[2].w > 0.0;
         let all_in_front = clip_pos[0].w > 0.0 && clip_pos[1].w > 0.0 && clip_pos[2].w > 0.0;
         triangle_passed = triangle_passed && (!all_in_front || !test_triangle_backface(clip_pos));

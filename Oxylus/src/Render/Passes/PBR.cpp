@@ -505,10 +505,7 @@ auto RendererInstance::apply_pbr(
       );
   }
 
-  // Point and spot lights are applied in a second, additively blended pass so
-  // neither pass exceeds vuk's 16-input limit. It runs even with zero lights:
-  // as the last sampled consumer of the VSM images it also guarantees they end
-  // every frame in the read-only layout their next-frame acquires expect.
+  // split to stay below vuk's 16-input limit and leave VSM images fragment-sampled
   const auto light_count = static_cast<u32>(self.scene.lights.size());
   {
     auto pbr_apply_lights_pass = vuk::make_pass(

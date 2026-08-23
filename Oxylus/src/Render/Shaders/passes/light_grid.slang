@@ -5,7 +5,7 @@ import scene;
 [[vk::binding(0)]] StructuredBuffer<Light> lights;
 [[vk::binding(1)]] RWStructuredBuffer<u32x4> light_grid;
 
-// Cone vs sphere test by Bart Wronski,
+// cone vs sphere test by Bart Wronski
 // https://bartwronski.com/2017/04/13/cull-that-cone/
 func cone_intersects_sphere(f32x3 apex, f32x3 axis, f32 range, f32 angle, f32x3 sphere_center, f32 sphere_radius) -> bool {
     let V = sphere_center - apex;

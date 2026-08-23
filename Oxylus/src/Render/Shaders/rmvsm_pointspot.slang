@@ -13,8 +13,7 @@ func test_pointspot_pages(in ScreenAabb screen_aabb, Texture2DArray<u8> hpb, u32
     let min_page = clamp(i32x2(screen_aabb.min.xy * f32(mip_table_size)), 0, mip_table_size - 1);
     let max_page = clamp(i32x2(screen_aabb.max.xy * f32(mip_table_size)), 0, mip_table_size - 1);
 
-    // Climb until the projected bounds span at most two texels per axis, keeping
-    // the occupancy walk bounded at 3x3 even for very large meshlets.
+    // bound the occupancy lookup to 3x3 taps
     let page_span = max(max_page.x - min_page.x, max_page.y - min_page.y) + 1;
     let level = max(i32(ceil(log2(f32(page_span)))) - 1, 0);
 

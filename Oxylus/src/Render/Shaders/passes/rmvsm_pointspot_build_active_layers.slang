@@ -8,11 +8,7 @@ import rmvsm;
 [[vk::binding(2)]] RWStructuredBuffer<u32> active_layers;
 [[vk::binding(3)]] RWStructuredBuffer<DispatchIndirectCommand> cull_meshes_cmd;
 
-// Compacts the layers that actually need redrawing at this mip so `cull_meshes`
-// can be dispatched over them instead of over all VSM_POINT_SPOT_LAYER_COUNT.
-// The group count doubles as the append cursor: `cull_meshes_cmd.y` starts at 0
-// and ends up holding the active layer count, which is exactly the Y group count
-// the indirect dispatch needs.
+// indirect Y group count also serves as the active-layer append cursor
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]
 func cs_main(

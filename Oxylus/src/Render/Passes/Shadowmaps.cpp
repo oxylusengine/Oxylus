@@ -7,7 +7,7 @@
 #include "Scene/Scene.hpp"
 
 namespace ox {
-// Cube face order {+X, -X, +Y, -Y, +Z, -Z}; must match `vsm_point_face_index` in rmvsm.slang.
+// cube face order {+X, -X, +Y, -Y, +Z, -Z}, must match `vsm_point_face_index` in rmvsm.slang
 constexpr static glm::vec3 VSM_POINT_FACE_DIRS[6] = {
   {1.0f, 0.0f, 0.0f},
   {-1.0f, 0.0f, 0.0f},
@@ -228,16 +228,10 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     RMVSMContext::POINT_SPOT_LAYER_COUNT * sizeof(u32)
   );
 
-  // The occupancy and dirty mask buffers are consumed by both the directional
-  // and the point/spot chains, either of which can be inactive, so they get
-  // cleared up front instead of inside a marking pass.
+  // shared masks must be cleared when either shadow path is inactive
   auto clear_frame_buffers_pass = vuk::make_pass(
     "vsm clear frame buffers",
-    [](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eTransferWrite) page_occupancy,
-      VUK_BA(vuk::eTransferWrite) layer_dirty_mask
-    ) {
+    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eClear) page_occupancy, VUK_BA(vuk::eClear) layer_dirty_mask) {
       cmd_list //
         .fill_buffer(page_occupancy, 0_u32)
         .fill_buffer(layer_dirty_mask, 0_u32);
@@ -1303,9 +1297,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
               .bind_image(0, 6, page_tables)
               .bind_image(0, 7, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
               .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
-              // Only the fragment stage reads ctx (the VS uses per-layer view
-              // matrices from the views buffer), so the reflected push-constant
-              // range is fragment-only.
+              // only the fragment stage reads ctx
               .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, mip_ps_ctx)
               .draw_indexed_indirect(1, draw_cmd);
 
