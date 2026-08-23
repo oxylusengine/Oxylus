@@ -204,7 +204,7 @@ auto ContentPanel::directory_tree_view_recursive(
       nodeFlags |= ImGuiTreeNodeFlags_Selected;
     }
 
-    ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_Header);
+    ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
     ImVec4 hovered_color = ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered);
     ImGui::PushStyleColor(ImGuiCol_Header, active_color);
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, selected ? active_color : hovered_color);
@@ -480,7 +480,7 @@ void ContentPanel::render_side_view(this ContentPanel& self) {
       node_flags |= ImGuiTreeNodeFlags_Selected;
     }
 
-    ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_Header);
+    ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
     ImVec4 hovered_color = ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered);
     ImGui::PushStyleColor(ImGuiCol_Header, active_color);
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, selected ? active_color : hovered_color);
