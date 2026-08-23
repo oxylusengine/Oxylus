@@ -29,6 +29,7 @@ Be aware that Oxylus is still in it's early stages of development. Some importan
 		- Using both `VK_EXT_mesh_shader` and traditional compute based techniques for coverage.
 		- Occlusion, frustum and triangle culling
 		- Automatic LOD generation and selection
+	- Real time global illumination (DDGI)
 	- [GT-VBAO](https://cdrinmatane.github.io/posts/ssaovb-code/)
 	- Virtual Directional Shadows (by [Matěj Sakmary](https://github.com/MatejSakmary))
 	- Physically-based sky and atmosphere
