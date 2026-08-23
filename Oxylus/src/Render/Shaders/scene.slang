@@ -278,9 +278,38 @@ public struct Light {
   public f32 inner_cone_angle = 0.0; // spot only (radians)
   public f32 outer_cone_angle = 0.0; // spot only (radians)
   public LightKind kind = LightKind::Point;
+  public i32 shadow_map_index = -1;
   public u32 _pad_0 = 0;
-  public u32 _pad_1 = 0;
 };
+
+public constexpr static u32 MAX_SHADOW_POINT_LIGHTS = 64;
+public constexpr static u32 MAX_SHADOW_SPOT_LIGHTS = 64;
+
+// per-cell shadow mask, point 0-63, then spot 0-63, packed into u32x4
+public constexpr static i32x3 LIGHT_GRID_RESOLUTION = i32x3(64, 32, 64);
+public constexpr static f32 LIGHT_GRID_CELL_SIZE = 8.0;
+public constexpr static u32 LIGHT_GRID_CELL_COUNT = 64u * 32u * 64u;
+
+public func light_grid_cell_coords(f32x3 world_pos, f32x3 grid_origin) -> i32x3 {
+  return i32x3(floor((world_pos - grid_origin) / LIGHT_GRID_CELL_SIZE));
+}
+
+public func light_grid_cell_in_bounds(i32x3 cell) -> bool {
+  return all(cell >= 0) && all(cell < LIGHT_GRID_RESOLUTION);
+}
+
+public func light_grid_cell_index(i32x3 cell) -> u32 {
+  return u32(cell.x) + u32(cell.y) * u32(LIGHT_GRID_RESOLUTION.x) +
+         u32(cell.z) * u32(LIGHT_GRID_RESOLUTION.x * LIGHT_GRID_RESOLUTION.y);
+}
+
+public func light_grid_mask_word(LightKind kind, i32 shadow_map_index) -> u32 {
+  return (kind == LightKind::Spot ? 2u : 0u) + u32(shadow_map_index >> 5);
+}
+
+public func light_grid_mask_bit(i32 shadow_map_index) -> u32 {
+  return 1u << (u32(shadow_map_index) & 31u);
+}
 
 public struct TransformWorld {
   public mat4 world = {};

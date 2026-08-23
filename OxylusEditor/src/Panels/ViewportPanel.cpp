@@ -317,7 +317,6 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         corrected_max_region,
         mouse_pos
       );
-      // A left-drag belongs to the brush while it is on, so picking and the gizmo stand down.
       if (self.mouse_picking_enabled && !self.terrain_brush_enabled) {
         self.mouse_picking_stages(renderer_instance, picking_texel);
       }
@@ -505,7 +504,6 @@ auto ViewportPanel::drag_drop(this const ViewportPanel& self) -> void {
       const auto* payload = PayloadData::from_payload(imgui_payload);
       const auto path = payload->get_path();
       if (path.extension() == ".gltf" || path.extension() == ".glb") {
-        // Importing parses the glTF to write the meta file, so it stays off the main thread too.
         auto& job_man = App::get_job_manager();
         job_man.push_job_name("ViewportPanel_ImportModel");
         job_man.submit(Job::create([path, scene = self.editor_scene->get_scene()]() {
@@ -678,7 +676,8 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "Baked Occlusion",
             "GTAO",
             "Geometric Normal",
-            "Virtual Shadowmaps"
+            "Virtual Shadowmaps",
+            "Virtual Shadowmaps (Point/Spot)"
           };
           UI::property(
             "Debug View",

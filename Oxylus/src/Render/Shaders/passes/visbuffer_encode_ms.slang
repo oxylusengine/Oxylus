@@ -24,9 +24,9 @@ import meshlet;
 
 struct VertexOutput {
     f32x4 position : SV_Position;
-    f32x2 tex_coord : TEXCOORD;
-    nointerpolation u32 meshlet_instance_index : MESHLETINSTANCE;
-    nointerpolation u32 material_index : MATERIAL;
+    f32x2 tex_coord;
+    nointerpolation u32 meshlet_instance_index;
+    nointerpolation u32 material_index;
 };
 
 struct PrimitiveOutput {

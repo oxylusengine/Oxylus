@@ -314,15 +314,13 @@ auto RendererInstance::apply_pbr(
   this RendererInstance& self, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
-
-  auto has_atmos = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
-  if (has_atmos) {
+  const auto has_atmosphere = self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere;
+  if (has_atmosphere) {
     auto pbr_apply_pass = vuk::make_pass(
       "pbr apply",
       [scene_flags = self.gpu_scene_flags,
        sun_dir = self.directional_light.direction,
        sun_intensity = self.directional_light.intensity,
-       light_count = static_cast<u32>(self.scene.lights.size()),
        atmosphere_address = self.prepared_frame.atmosphere_buffer->device_address](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) dst,
@@ -338,8 +336,7 @@ auto RendererInstance::apply_pbr(
         VUK_IA(vuk::eFragmentSampled) gtao,
         VUK_IA(vuk::eFragmentSampled) resolved_shadows,
         VUK_IA(vuk::eFragmentSampled) contact_shadows,
-        VUK_BA(vuk::eFragmentUniformRead) camera,
-        VUK_BA(vuk::eFragmentRead) lights
+        VUK_BA(vuk::eFragmentUniformRead) camera
       ) {
         cmd_list //
           .bind_graphics_pipeline("pbr_apply")
@@ -366,14 +363,7 @@ auto RendererInstance::apply_pbr(
           .push_constants(
             vuk::ShaderStageFlagBits::eFragment,
             0,
-            PushConstants(
-              sun_dir,
-              sun_intensity,
-              glm::vec3(0.03f),
-              light_count,
-              atmosphere_address,
-              lights->device_address
-            )
+            PushConstants(atmosphere_address, sun_dir, sun_intensity, glm::vec3(0.02f, 0.03f, 0.04f))
           )
           .specialize_constants(0, std::to_underlying(scene_flags))
           .draw(3, 1, 0, 0);
@@ -392,8 +382,7 @@ auto RendererInstance::apply_pbr(
           gtao,
           resolved_shadows,
           contact_shadows,
-          camera,
-          lights
+          camera
         );
       }
     );
@@ -412,8 +401,7 @@ auto RendererInstance::apply_pbr(
       context.ambient_occlusion_attachment,
       context.resolved_shadows_attachment,
       context.contact_shadows_attachment,
-      self.prepared_frame.camera_buffer,
-      self.prepared_frame.lights_buffer
+      self.prepared_frame.camera_buffer
     ) =
       pbr_apply_pass(
         std::move(dst_attachment),
@@ -429,8 +417,7 @@ auto RendererInstance::apply_pbr(
         std::move(context.ambient_occlusion_attachment),
         std::move(context.resolved_shadows_attachment),
         std::move(context.contact_shadows_attachment),
-        std::move(self.prepared_frame.camera_buffer),
-        std::move(self.prepared_frame.lights_buffer)
+        std::move(self.prepared_frame.camera_buffer)
       );
   } else {
     auto pbr_apply_pass = vuk::make_pass(
@@ -438,7 +425,6 @@ auto RendererInstance::apply_pbr(
       [scene_flags = self.gpu_scene_flags,
        sun_dir = self.directional_light.direction,
        sun_intensity = self.directional_light.intensity,
-       light_count = static_cast<u32>(self.scene.lights.size()),
        sky_address = self.renderer.render_context->scratch_buffer(self.sky_data)->device_address](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) dst,
@@ -450,8 +436,7 @@ auto RendererInstance::apply_pbr(
         VUK_IA(vuk::eFragmentSampled) gtao,
         VUK_IA(vuk::eFragmentSampled) resolved_shadows,
         VUK_IA(vuk::eFragmentSampled) contact_shadows,
-        VUK_BA(vuk::eFragmentUniformRead) camera,
-        VUK_BA(vuk::eFragmentRead) lights
+        VUK_BA(vuk::eFragmentUniformRead) camera
       ) {
         cmd_list //
           .bind_graphics_pipeline("pbr_apply_no_atmos")
@@ -474,14 +459,7 @@ auto RendererInstance::apply_pbr(
           .push_constants(
             vuk::ShaderStageFlagBits::eFragment,
             0,
-            PushConstants(
-              sun_dir,
-              sun_intensity,
-              glm::vec3(0.03f),
-              light_count,
-              lights->device_address,
-              sky_address
-            )
+            PushConstants(sky_address, sun_dir, sun_intensity, glm::vec3(0.02f, 0.03f, 0.04f))
           )
           .specialize_constants(0, std::to_underlying(scene_flags))
           .draw(3, 1, 0, 0);
@@ -496,8 +474,7 @@ auto RendererInstance::apply_pbr(
           gtao,
           resolved_shadows,
           contact_shadows,
-          camera,
-          lights
+          camera
         );
       }
     );
@@ -512,8 +489,7 @@ auto RendererInstance::apply_pbr(
       context.ambient_occlusion_attachment,
       context.resolved_shadows_attachment,
       context.contact_shadows_attachment,
-      self.prepared_frame.camera_buffer,
-      self.prepared_frame.lights_buffer
+      self.prepared_frame.camera_buffer
     ) =
       pbr_apply_pass(
         std::move(dst_attachment),
@@ -525,8 +501,111 @@ auto RendererInstance::apply_pbr(
         std::move(context.ambient_occlusion_attachment),
         std::move(context.resolved_shadows_attachment),
         std::move(context.contact_shadows_attachment),
+        std::move(self.prepared_frame.camera_buffer)
+      );
+  }
+
+  // split to stay below vuk's 16-input limit and leave VSM images fragment-sampled
+  const auto light_count = static_cast<u32>(self.scene.lights.size());
+  {
+    auto pbr_apply_lights_pass = vuk::make_pass(
+      "pbr apply lights",
+      [light_count, light_grid_origin = context.light_grid_origin](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eColorWrite) dst,
+        VUK_IA(vuk::eFragmentSampled) depth,
+        VUK_IA(vuk::eFragmentSampled) albedo,
+        VUK_IA(vuk::eFragmentSampled) normal,
+        VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
+        VUK_IA(vuk::eFragmentSampled) vsm_pointspot_page_tables,
+        VUK_IA(vuk::eFragmentSampled) vsm_physical_pages,
+        VUK_IA(vuk::eFragmentSampled) vsm_page_table,
+        VUK_BA(vuk::eFragmentUniformRead) camera,
+        VUK_BA(vuk::eFragmentRead) lights,
+        VUK_BA(vuk::eFragmentRead) light_grid,
+        VUK_BA(vuk::eFragmentRead) vsm_pointspot_views
+      ) {
+        constexpr auto additive_blend = vuk::PipelineColorBlendAttachmentState{
+          .blendEnable = true,
+          .srcColorBlendFactor = vuk::BlendFactor::eOne,
+          .dstColorBlendFactor = vuk::BlendFactor::eOne,
+          .colorBlendOp = vuk::BlendOp::eAdd,
+          .srcAlphaBlendFactor = vuk::BlendFactor::eZero,
+          .dstAlphaBlendFactor = vuk::BlendFactor::eOne,
+          .alphaBlendOp = vuk::BlendOp::eAdd,
+        };
+
+        cmd_list //
+          .bind_graphics_pipeline("pbr_apply_lights");
+        bind_vsm_pointspot_spec_constants(cmd_list)
+          .set_rasterization({})
+          .set_color_blend(dst, additive_blend)
+          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+          .set_viewport(0, vuk::Rect2D::framebuffer())
+          .set_scissor(0, vuk::Rect2D::framebuffer())
+          .bind_buffer(0, 0, camera)
+          .bind_image(0, 1, depth)
+          .bind_image(0, 2, albedo)
+          .bind_image(0, 3, normal)
+          .bind_image(0, 4, metallic_roughness_occlusion)
+          .bind_image(0, 5, vsm_pointspot_page_tables)
+          .bind_image(0, 6, vsm_physical_pages)
+          .push_constants(
+            vuk::ShaderStageFlagBits::eFragment,
+            0,
+            PushConstants(
+              lights->device_address,
+              light_grid->device_address,
+              vsm_pointspot_views->device_address,
+              light_count,
+              light_grid_origin,
+              0_u32
+            )
+          )
+          .draw(3, 1, 0, 0);
+
+        return std::make_tuple(
+          dst,
+          depth,
+          albedo,
+          normal,
+          metallic_roughness_occlusion,
+          vsm_page_table,
+          vsm_pointspot_page_tables,
+          camera,
+          lights,
+          light_grid,
+          vsm_pointspot_views
+        );
+      }
+    );
+
+    std::tie(
+      dst_attachment,
+      context.depth_attachment,
+      context.albedo_attachment,
+      context.normal_attachment,
+      context.metallic_roughness_occlusion_attachment,
+      context.vsm_page_table_attachment,
+      context.pointspot_page_table_attachment,
+      self.prepared_frame.camera_buffer,
+      self.prepared_frame.lights_buffer,
+      context.light_grid_buffer,
+      context.pointspot_views_buffer
+    ) =
+      pbr_apply_lights_pass(
+        std::move(dst_attachment),
+        std::move(context.depth_attachment),
+        std::move(context.albedo_attachment),
+        std::move(context.normal_attachment),
+        std::move(context.metallic_roughness_occlusion_attachment),
+        std::move(context.pointspot_page_table_attachment),
+        std::move(context.vsm_physical_pages_attachment),
+        std::move(context.vsm_page_table_attachment),
         std::move(self.prepared_frame.camera_buffer),
-        std::move(self.prepared_frame.lights_buffer)
+        std::move(self.prepared_frame.lights_buffer),
+        std::move(context.light_grid_buffer),
+        std::move(context.pointspot_views_buffer)
       );
   }
 

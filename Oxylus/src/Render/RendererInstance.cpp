@@ -1,5 +1,9 @@
 #include "Render/RendererInstance.hpp"
 
+#include <algorithm>
+#include <ankerl/svector.h>
+#include <vuk/runtime/CommandBuffer.hpp>
+
 #include "Asset/AssetManager.hpp"
 #include "Asset/Model.hpp"
 #include "Asset/Texture.hpp"
@@ -13,6 +17,172 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
+struct PendingLight {
+  GPU::Light light = {};
+  u64 entity_id = 0;
+  bool cast_shadows = false;
+};
+
+struct ShadowSlotCandidate {
+  u32 light_index = 0;
+  f32 priority = 0.0f;
+};
+
+struct ShadowSlotStats {
+  u32 reassigned = 0;
+  u32 invalidated = 0;
+};
+
+// prevent slot churn near frustum and priority boundaries
+constexpr static f32 SHADOW_SLOT_HYSTERESIS = 1.25f;
+
+static auto sphere_intersects_frustum(std::span<const glm::vec4> planes, const glm::vec3& center, f32 radius) -> bool {
+  for (const auto& plane : planes) {
+    if (glm::dot(glm::vec3(plane), center) - plane.w < -radius) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static auto shadow_light_priority(const GPU::Light& light, const GPU::CameraData& camera_data, bool holds_slot) -> f32 {
+  if (light.range <= 0.0f) {
+    return -1.0f;
+  }
+
+  const auto hysteresis = holds_slot ? SHADOW_SLOT_HYSTERESIS : 1.0f;
+
+  if (!sphere_intersects_frustum(camera_data.frustum_planes, light.position, light.range * hysteresis)) {
+    return -1.0f;
+  }
+
+  const auto distance = glm::distance(glm::vec3(camera_data.position), light.position);
+  const auto screen_radius = light.range / glm::max(distance, 0.001f);
+
+  return screen_radius * glm::sqrt(glm::max(light.intensity, 0.0f)) * hysteresis;
+}
+
+static auto assign_shadow_slots(
+  std::span<PendingLight> lights,
+  GPU::LightKind kind,
+  const GPU::CameraData& camera_data,
+  std::span<ShadowSlotState> slots,
+  u32& slot_high_water,
+  u64& moved_mask
+) -> ShadowSlotStats {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  auto stats = ShadowSlotStats{};
+
+  // only uploaded lights may receive shadow slots
+  const auto uploaded_light_count = glm::min(lights.size(), static_cast<usize>(GPU::MAX_LIGHTS));
+
+  auto candidates = stack.alloc<ShadowSlotCandidate>(uploaded_light_count);
+  auto candidate_count = 0_sz;
+  for (auto light_index = 0_u32; light_index < uploaded_light_count; light_index++) {
+    const auto& pending = lights[light_index];
+    if (!pending.cast_shadows || pending.light.kind != kind) {
+      continue;
+    }
+
+    auto holds_slot = false;
+    for (const auto& slot : slots) {
+      if (slot.entity_id == pending.entity_id) {
+        holds_slot = true;
+        break;
+      }
+    }
+
+    const auto priority = shadow_light_priority(pending.light, camera_data, holds_slot);
+    if (priority <= 0.0f) {
+      continue;
+    }
+
+    candidates[candidate_count++] = ShadowSlotCandidate{.light_index = light_index, .priority = priority};
+  }
+
+  auto selected = candidates.subspan(0, candidate_count);
+  std::ranges::sort(selected, std::ranges::greater{}, &ShadowSlotCandidate::priority);
+  selected = selected.subspan(0, glm::min(selected.size(), slots.size()));
+
+  // preserve existing assignments before filling vacant slots
+  auto assigned_slots = stack.alloc<i32>(selected.size());
+  auto claimed_mask = 0_u64;
+
+  for (auto i = 0_sz; i < selected.size(); i++) {
+    assigned_slots[i] = -1;
+    const auto entity_id = lights[selected[i].light_index].entity_id;
+    for (auto slot_index = 0_u32; slot_index < slots.size(); slot_index++) {
+      if (slots[slot_index].entity_id == entity_id) {
+        assigned_slots[i] = static_cast<i32>(slot_index);
+        claimed_mask |= 1_u64 << slot_index;
+        break;
+      }
+    }
+  }
+
+  auto next_free_slot = 0_u32;
+  for (auto i = 0_sz; i < selected.size(); i++) {
+    if (assigned_slots[i] >= 0) {
+      continue;
+    }
+
+    while (next_free_slot < slots.size() && (claimed_mask & (1_u64 << next_free_slot)) != 0) {
+      next_free_slot++;
+    }
+
+    assigned_slots[i] = static_cast<i32>(next_free_slot);
+    claimed_mask |= 1_u64 << next_free_slot;
+  }
+
+  for (auto i = 0_sz; i < selected.size(); i++) {
+    auto& pending = lights[selected[i].light_index];
+    const auto slot_index = static_cast<u32>(assigned_slots[i]);
+    auto& slot = slots[slot_index];
+
+    const auto occupant_changed = slot.entity_id != pending.entity_id;
+    const auto view_changed = slot.position != pending.light.position ||   //
+                              slot.direction != pending.light.direction || //
+                              slot.range != pending.light.range ||         //
+                              slot.outer_cone_angle != pending.light.outer_cone_angle;
+    if (occupant_changed || view_changed) {
+      moved_mask |= 1_u64 << slot_index;
+      stats.reassigned += static_cast<u32>(occupant_changed);
+      stats.invalidated += static_cast<u32>(!occupant_changed);
+    }
+
+    slot = ShadowSlotState{
+      .entity_id = pending.entity_id,
+      .position = pending.light.position,
+      .direction = pending.light.direction,
+      .range = pending.light.range,
+      .outer_cone_angle = pending.light.outer_cone_angle,
+    };
+
+    pending.light.shadow_map_index = static_cast<i32>(slot_index);
+    slot_high_water = glm::max(slot_high_water, slot_index + 1);
+  }
+
+  // clearing vacated state invalidates it for future occupants
+  for (auto slot_index = 0_u32; slot_index < slots.size(); slot_index++) {
+    if ((claimed_mask & (1_u64 << slot_index)) == 0) {
+      slots[slot_index] = {};
+    }
+  }
+
+  return stats;
+}
+
+auto bind_vsm_pointspot_spec_constants(vuk::CommandBuffer& cmd) -> vuk::CommandBuffer& {
+  return cmd.specialize_constants(50, RMVSMContext::POINT_SPOT_IMAGE_RESOLUTION)
+    .specialize_constants(51, RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE)
+    .specialize_constants(52, RMVSMContext::POINT_SPOT_MIP_COUNT)
+    .specialize_constants(53, RMVSMContext::PAGE_SIZE)
+    .specialize_constants(54, RMVSMContext::PHYSICAL_PAGE_TABLE_SIZE);
+}
+
 template <typename T>
 auto update_projected_transform_buffer(
   auto& render_context,
@@ -263,59 +433,91 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   render_context.wait_on(std::move(transmittance_lut_attachment));
   render_context.wait_on(std::move(multiscatter_lut_attachment));
 
-  vsm_virtual_page_table_attachment = vuk::ImageAttachment{
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
-             vuk::ImageUsageFlagBits::eTransferDst,
-    .extent =
-      {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-       .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-       .depth = 1},
+  vsm_virtual_page_table = Texture::create({
     .format = vuk::Format::eR32Uint,
-    .sample_count = vuk::Samples::e1,
-    .view_type = vuk::ImageViewType::e2DArray,
-    .base_level = 0,
-    .level_count = 1,
-    .base_layer = 0,
+    .extent =
+      {
+        .width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+        .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+        .depth = 1,
+      },
     .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
-  };
-  vsm_virtual_page_table = *vuk::allocate_image(*allocator, vsm_virtual_page_table_attachment);
-  vsm_virtual_page_table_attachment.image = *vsm_virtual_page_table;
-  vsm_virtual_page_table_view = *vuk::allocate_image_view(*allocator, vsm_virtual_page_table_attachment);
-  vsm_virtual_page_table_attachment.image_view = *vsm_virtual_page_table_view;
-  render_context.wait_on(
-    vuk::clear_image(vuk::discard_ia("vsm virtual page table", vsm_virtual_page_table_attachment), vuk::Black<u32>)
-      .as_released(vuk::eFragmentSampled)
-  );
+    .level_count = 1,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+    .view_type = vuk::ImageViewType::e2DArray,
 
-  vsm_hpb_attachment = vuk::ImageAttachment{
+  });
+
+  auto virtual_page_table_attachment = vsm_virtual_page_table.discard("vsm virtual page table");
+  virtual_page_table_attachment = vuk::clear_image(std::move(virtual_page_table_attachment), vuk::Black<u32>);
+  virtual_page_table_attachment = std::move(virtual_page_table_attachment).as_released(vuk::eFragmentSampled);
+  render_context.wait_on(std::move(virtual_page_table_attachment));
+
+  vsm_pointspot_virtual_page_table = Texture::create({
+    .format = vuk::Format::eR32Uint,
+    .extent =
+      {
+        .width = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+        .height = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+        .depth = 1,
+      },
+    .layer_count = RMVSMContext::POINT_SPOT_LAYER_COUNT,
+    .level_count = RMVSMContext::POINT_SPOT_MIP_COUNT,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+    .view_type = vuk::ImageViewType::e2DArray,
+  });
+
+  auto pointspot_page_table_attachment = vsm_pointspot_virtual_page_table.discard("vsm pointspot page table");
+  pointspot_page_table_attachment = vuk::clear_image(std::move(pointspot_page_table_attachment), vuk::Black<u32>);
+  pointspot_page_table_attachment = std::move(pointspot_page_table_attachment).as_released(vuk::eFragmentSampled);
+  render_context.wait_on(std::move(pointspot_page_table_attachment));
+
+  vsm_hpb = Texture::create({
+    .format = vuk::Format::eR8Uint,
+    .extent =
+      {
+        .width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+        .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+        .depth = 1,
+      },
+    .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
+    .level_count = 1 + static_cast<u32>(std::log2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE)),
     .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
              vuk::ImageUsageFlagBits::eTransferDst,
-    .extent =
-      {.width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-       .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-       .depth = 1},
-    .format = vuk::Format::eR8Uint,
-    .sample_count = vuk::Samples::e1,
     .view_type = vuk::ImageViewType::e2DArray,
-    .base_level = 0,
-    .level_count = 1 + static_cast<u32>(std::log2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE)),
-    .base_layer = 0,
-    .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
-  };
-  vsm_hpb = *vuk::allocate_image(*allocator, vsm_hpb_attachment);
-  vsm_hpb_attachment.image = *vsm_hpb;
-  vsm_hpb_view = *vuk::allocate_image_view(*allocator, vsm_hpb_attachment);
-  vsm_hpb_attachment.image_view = *vsm_hpb_view;
-  render_context.wait_on(
-    vuk::clear_image(vuk::discard_ia("vsm hpb", vsm_hpb_attachment), vuk::Black<u32>).as_released(vuk::eComputeSampled)
-  );
+  });
+
+  auto vsm_hpb_attachment = vsm_hpb.discard("vsm hpb");
+  vsm_hpb_attachment = vuk::clear_image(std::move(vsm_hpb_attachment), vuk::Black<u32>);
+  vsm_hpb_attachment = std::move(vsm_hpb_attachment).as_released(vuk::eComputeSampled);
+  render_context.wait_on(std::move(vsm_hpb_attachment));
+
+  vsm_pointspot_hpb = Texture::create({
+    .format = vuk::Format::eR8Uint,
+    .extent =
+      {
+        .width = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+        .height = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+        .depth = 1,
+      },
+    .layer_count = RMVSMContext::POINT_SPOT_LAYER_COUNT,
+    .level_count = RMVSMContext::POINT_SPOT_HPB_LEVEL_COUNT,
+    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+             vuk::ImageUsageFlagBits::eTransferDst,
+    .view_type = vuk::ImageViewType::e2DArray,
+  });
+
+  auto vsm_pointspot_hpb_attachment = vsm_pointspot_hpb.discard("vsm pointspot hpb");
+  vsm_pointspot_hpb_attachment = vuk::clear_image(std::move(vsm_pointspot_hpb_attachment), vuk::Black<u32>);
+  vsm_pointspot_hpb_attachment = std::move(vsm_pointspot_hpb_attachment).as_released(vuk::eComputeSampled);
+  render_context.wait_on(std::move(vsm_pointspot_hpb_attachment));
 
   vsm_physical_page_table_attachment = vuk::ImageAttachment{
     .image_flags = vuk::ImageCreateFlagBits::eMutableFormat,
     .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
              vuk::ImageUsageFlagBits::eTransferDst,
     .extent =
-      {.width = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .height = RMVSMContext::DIRECTIONAL_IMAGE_SIZE, .depth = 1},
+      {.width = RMVSMContext::PHYSICAL_PAGE_TABLE_SIZE, .height = RMVSMContext::PHYSICAL_PAGE_TABLE_SIZE, .depth = 1},
     .format = vuk::Format::eR32Sfloat,
     .sample_count = vuk::Samples::e1,
     .view_type = vuk::ImageViewType::e2D,
@@ -761,6 +963,13 @@ auto RendererInstance::render(
   );
   auto rmvsm_virtual_page_table_attachment = vuk::Value<vuk::ImageAttachment>{};
   auto rmvsm_virtual_clipmaps_buffer = vuk::Value<vuk::Buffer>{};
+  auto pointspot_views_for_pbr = vuk::Value<vuk::Buffer>{};
+  auto pointspot_page_table_for_pbr = vuk::Value<vuk::ImageAttachment>{};
+  auto vsm_physical_pages_for_pbr = vuk::Value<vuk::ImageAttachment>{};
+  auto vsm_chain_ran = false;
+
+  auto light_grid_context = LightGridContext{};
+  self.build_light_grid(light_grid_context);
 
   const auto* terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked() ? self.scene.terrain.get()
                                                                                         : nullptr;
@@ -961,30 +1170,52 @@ auto RendererInstance::render(
     emissive_attachment = std::move(main_geometry_context.emissive_attachment);
     metallic_roughness_occlusion_attachment = std::move(main_geometry_context.metallic_roughness_occlusion_attachment);
 
-    if (self.directional_light_cast_shadows && has_meshes) {
+    const auto has_shadow_pointspot = self.prepared_frame.shadow_point_light_count +
+                                        self.prepared_frame.shadow_spot_light_count >
+                                      0;
+    if (
+      !(self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) || !self.directional_light_cast_shadows ||
+      !has_meshes
+    ) {
+      self.directional_vsm_cache_valid = false;
+    }
+    if ((self.directional_light_cast_shadows || has_shadow_pointspot) && has_meshes) {
       auto rmvsm_context = RMVSMContext{
         .bindless_set = &bindless_set,
         .sun_moved = self.sun_direction_changed,
         .depth_extent = dst_extent,
         .depth_attachment = std::move(depth_attachment),
+        .light_grid_origin = light_grid_context.grid_origin,
+        .light_grid_buffer = std::move(light_grid_context.light_grid_buffer),
       };
       self.draw_virtual_shadowmap(rmvsm_context);
       depth_attachment = std::move(rmvsm_context.depth_attachment);
+      light_grid_context.light_grid_buffer = std::move(rmvsm_context.light_grid_buffer);
 
-      auto shadow_resolve_context = ShadowResolveContext{
-        .directional_clipmaps_buffer = std::move(rmvsm_context.directional_clipmaps_buffer),
-        .depth_attachment = std::move(depth_attachment),
-        .normal_attachment = std::move(normal_attachment),
-        .virtual_page_table_attachment = std::move(rmvsm_context.virtual_page_table_attachment),
-        .physical_page_table_attachment = std::move(rmvsm_context.physical_page_table_attachment),
-        .resolved_shadows_attachment = std::move(resolved_shadows_attachment),
-      };
-      self.resolve_shadowmap(shadow_resolve_context);
-      depth_attachment = std::move(shadow_resolve_context.depth_attachment);
-      normal_attachment = std::move(shadow_resolve_context.normal_attachment);
-      resolved_shadows_attachment = std::move(shadow_resolve_context.resolved_shadows_attachment);
-      rmvsm_virtual_page_table_attachment = std::move(shadow_resolve_context.virtual_page_table_attachment);
-      rmvsm_virtual_clipmaps_buffer = std::move(shadow_resolve_context.directional_clipmaps_buffer);
+      vsm_chain_ran = true;
+      pointspot_views_for_pbr = std::move(rmvsm_context.pointspot_views_buffer);
+      pointspot_page_table_for_pbr = std::move(rmvsm_context.pointspot_page_table_attachment);
+
+      if (self.directional_light_cast_shadows) {
+        auto shadow_resolve_context = ShadowResolveContext{
+          .directional_clipmaps_buffer = std::move(rmvsm_context.directional_clipmaps_buffer),
+          .depth_attachment = std::move(depth_attachment),
+          .normal_attachment = std::move(normal_attachment),
+          .virtual_page_table_attachment = std::move(rmvsm_context.virtual_page_table_attachment),
+          .physical_page_table_attachment = std::move(rmvsm_context.physical_page_table_attachment),
+          .resolved_shadows_attachment = std::move(resolved_shadows_attachment),
+        };
+        self.resolve_shadowmap(shadow_resolve_context);
+        depth_attachment = std::move(shadow_resolve_context.depth_attachment);
+        normal_attachment = std::move(shadow_resolve_context.normal_attachment);
+        resolved_shadows_attachment = std::move(shadow_resolve_context.resolved_shadows_attachment);
+        rmvsm_virtual_page_table_attachment = std::move(shadow_resolve_context.virtual_page_table_attachment);
+        rmvsm_virtual_clipmaps_buffer = std::move(shadow_resolve_context.directional_clipmaps_buffer);
+        vsm_physical_pages_for_pbr = std::move(shadow_resolve_context.physical_page_table_attachment);
+      } else {
+        vsm_physical_pages_for_pbr = std::move(rmvsm_context.physical_page_table_attachment);
+        rmvsm_virtual_page_table_attachment = std::move(rmvsm_context.virtual_page_table_attachment);
+      }
     }
 
     auto contact_shadows_pass = vuk::make_pass(
@@ -1054,6 +1285,30 @@ auto RendererInstance::render(
     vbgtao_occlusion_attachment = std::move(ao_context.ambient_occlusion_attachment);
   }
 
+  if (!vsm_chain_ran) {
+    // VSM chain skipped this frame, give PBR valid empty resources
+    pointspot_page_table_for_pbr = self.vsm_pointspot_virtual_page_table.acquire(
+      "vsm pointspot page table",
+      vuk::eFragmentSampled
+    );
+    rmvsm_virtual_page_table_attachment = self.vsm_virtual_page_table.acquire(
+      "vsm virtual page table",
+      vuk::eFragmentSampled
+    );
+    vsm_physical_pages_for_pbr = vuk::acquire_ia(
+      "vsm physical page table",
+      self.vsm_physical_page_table_attachment,
+      vuk::eFragmentSampled
+    );
+    constexpr static auto pointspot_views_size_bytes = RMVSMContext::POINT_SPOT_LAYER_COUNT *
+                                                       sizeof(GPU::VSMPointSpotView);
+    pointspot_views_for_pbr = self.renderer.render_context->alloc_transient_buffer(
+      vuk::MemoryUsage::eCPUtoGPU,
+      pointspot_views_size_bytes
+    );
+    std::memset(pointspot_views_for_pbr->mapped_ptr, 0, pointspot_views_size_bytes);
+  }
+
   auto pbr_context = PBRContext{
     .bindless_set = &bindless_set,
     .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
@@ -1068,14 +1323,26 @@ auto RendererInstance::render(
     .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
     .contact_shadows_attachment = std::move(contact_shadows_attachment),
     .resolved_shadows_attachment = std::move(resolved_shadows_attachment),
+    .light_grid_origin = light_grid_context.grid_origin,
+    .light_grid_buffer = std::move(light_grid_context.light_grid_buffer),
+    .pointspot_views_buffer = std::move(pointspot_views_for_pbr),
+    .pointspot_page_table_attachment = std::move(pointspot_page_table_for_pbr),
+    .vsm_physical_pages_attachment = std::move(vsm_physical_pages_for_pbr),
+    .vsm_page_table_attachment = std::move(rmvsm_virtual_page_table_attachment),
   };
   final_attachment = self.apply_pbr(pbr_context, std::move(final_attachment));
+  rmvsm_virtual_page_table_attachment = std::move(pbr_context.vsm_page_table_attachment);
   depth_attachment = std::move(pbr_context.depth_attachment);
   albedo_attachment = std::move(pbr_context.albedo_attachment);
   normal_attachment = std::move(pbr_context.normal_attachment);
   emissive_attachment = std::move(pbr_context.emissive_attachment);
   metallic_roughness_occlusion_attachment = std::move(pbr_context.metallic_roughness_occlusion_attachment);
   vbgtao_occlusion_attachment = std::move(pbr_context.ambient_occlusion_attachment);
+
+  auto rmvsm_pointspot_page_table_attachment = std::move(pbr_context.pointspot_page_table_attachment);
+  auto rmvsm_pointspot_views_buffer = std::move(pbr_context.pointspot_views_buffer);
+  auto rmvsm_light_grid_buffer = std::move(pbr_context.light_grid_buffer);
+  const auto rmvsm_light_grid_origin = pbr_context.light_grid_origin;
 
   // --- 2D Pass ---
   if (!self.render_queue_2d.sprite_data.empty()) {
@@ -1316,6 +1583,11 @@ auto RendererInstance::render(
   if (debug_view == GPU::DebugView::RMVSM) {
     debug_context.vsm_page_table_attachment = std::move(rmvsm_virtual_page_table_attachment);
     debug_context.vsm_clipmaps_buffer = std::move(rmvsm_virtual_clipmaps_buffer);
+  } else if (debug_view == GPU::DebugView::RMVSMPointSpot) {
+    debug_context.light_grid_origin = rmvsm_light_grid_origin;
+    debug_context.pointspot_views_buffer = std::move(rmvsm_pointspot_views_buffer);
+    debug_context.light_grid_buffer = std::move(rmvsm_light_grid_buffer);
+    debug_context.vsm_pointspot_page_table_attachment = std::move(rmvsm_pointspot_page_table_attachment);
   }
 
   if (debugging && self.prepared_frame.mesh_instance_count > 0) {
@@ -1398,19 +1670,28 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   math::calc_frustum_planes(self.camera_data.projection_view, self.camera_data.frustum_planes);
 
+  const auto light_grid_half_extent = glm::vec3(GPU::LIGHT_GRID_RESOLUTION) * (GPU::LIGHT_GRID_CELL_SIZE * 0.5f);
+  self.light_grid_origin = glm::floor(
+                             (glm::vec3(self.camera_data.position) - light_grid_half_extent) / GPU::LIGHT_GRID_CELL_SIZE
+                           ) *
+                           GPU::LIGHT_GRID_CELL_SIZE;
+
   self.scene.lights.reset();
+
+  // rank lights before assigning the limited shadow slots
+  ankerl::svector<PendingLight, 32> pending_lights = {};
 
   self.scene.world
     .query_builder<const TransformComponent, const LightComponent>() //
     .build()
-    .each([&self](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
+    .each([&self, &pending_lights](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
       if (!e.enabled()) {
         return;
       }
 
-      const glm::mat4 world_transform = self.scene.get_world_transform(e);
-      const glm::vec3 world_position = world_transform[3];
-      const glm::vec3 world_forward = glm::normalize(glm::mat3(world_transform) * glm::vec3(0.0f, 0.0f, -1.0f));
+      const auto world_transform = self.scene.get_world_transform(e);
+      const auto world_position = world_transform[3];
+      const auto world_forward = glm::normalize(glm::mat3(world_transform) * glm::vec3(0.0f, 0.0f, -1.0f));
 
       if (lc.type == LightComponent::LightType::Directional) {
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
@@ -1426,16 +1707,23 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       } else {
         const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
         const auto direction = lc.type == LightComponent::LightType::Spot ? world_forward : glm::vec3(0.0f);
-        self.scene.lights.create_slot(
-          GPU::Light{
-            .position = world_position,
-            .intensity = lc.intensity,
-            .color = lc.color,
-            .range = lc.radius,
-            .direction = direction,
-            .inner_cone_angle = lc.inner_cone_angle,
-            .outer_cone_angle = lc.outer_cone_angle,
-            .kind = kind,
+
+        pending_lights.emplace_back(
+          PendingLight{
+            .light =
+              GPU::Light{
+                .position = world_position,
+                .intensity = lc.intensity,
+                .color = lc.color,
+                .range = lc.radius,
+                .direction = direction,
+                .inner_cone_angle = lc.inner_cone_angle,
+                .outer_cone_angle = lc.outer_cone_angle,
+                .kind = kind,
+                .shadow_map_index = -1,
+              },
+            .entity_id = static_cast<u64>(e.id()),
+            .cast_shadows = lc.cast_shadows,
           }
         );
       }
@@ -1467,6 +1755,40 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
       }
     });
+
+  const auto point_slot_stats = assign_shadow_slots(
+    pending_lights,
+    GPU::LightKind::Point,
+    self.camera_data,
+    self.shadow_point_slots,
+    self.prepared_frame.shadow_point_light_count,
+    self.prepared_frame.moved_point_light_mask
+  );
+  const auto spot_slot_stats = assign_shadow_slots(
+    pending_lights,
+    GPU::LightKind::Spot,
+    self.camera_data,
+    self.shadow_spot_slots,
+    self.prepared_frame.shadow_spot_light_count,
+    self.prepared_frame.moved_spot_light_mask
+  );
+
+  self.prepared_frame.shadow_slots_reassigned = point_slot_stats.reassigned + spot_slot_stats.reassigned;
+  self.prepared_frame.shadow_slots_invalidated = point_slot_stats.invalidated + spot_slot_stats.invalidated;
+
+  // force worst-case cache rebuilds for profiling
+  if (cvar.cvar_vsm_force_invalidate.as_bool()) {
+    self.prepared_frame.moved_point_light_mask = ~0_u64;
+    self.prepared_frame.moved_spot_light_mask = ~0_u64;
+    self.sun_direction_changed = true;
+  }
+
+  TracyPlot("vsm shadow slots reassigned", static_cast<i64>(self.prepared_frame.shadow_slots_reassigned));
+  TracyPlot("vsm shadow slots invalidated", static_cast<i64>(self.prepared_frame.shadow_slots_invalidated));
+
+  for (auto& pending : pending_lights) {
+    self.scene.lights.create_slot(std::move(pending.light));
+  }
 
   self.post_proces_settings.exposure = cvar.cvar_exposure.get();
 
@@ -1579,13 +1901,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       //
     });
 
-  auto zero_fill_pass = vuk::make_pass(
-    "zero fill",
-    [](vuk::CommandBuffer& command_buffer, VUK_BA(vuk::eTransferWrite) dst) {
-      command_buffer.fill_buffer(dst, 0_u32);
-      return dst;
-    }
-  );
+  auto zero_fill_pass = vuk::make_pass("zero fill", [](vuk::CommandBuffer& command_buffer, VUK_BA(vuk::eClear) dst) {
+    command_buffer.fill_buffer(dst, 0_u32);
+    return dst;
+  });
 
   update_projected_transform_buffer<GPU::TransformWorld>(
     render_context,
@@ -1612,6 +1931,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   {
     const auto lights_span = self.scene.lights.slots_unsafe();
+    for (const auto& light : lights_span) {
+      self.prepared_frame.spot_light_count += static_cast<u32>(light.kind == GPU::LightKind::Spot);
+      self.prepared_frame.point_light_count += static_cast<u32>(light.kind == GPU::LightKind::Point);
+    }
     const auto count = std::min<std::size_t>(lights_span.size(), GPU::MAX_LIGHTS);
     const auto size_bytes = count * sizeof(GPU::Light);
     if (count > 0) {

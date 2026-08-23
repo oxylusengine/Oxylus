@@ -215,7 +215,7 @@ struct LightComponent {
   f32 maximum_shadow_distance = 1000.0f;
   f32 minimum_shadow_distance = 0.01f;
   f32 first_clipmap_width = 10.0f;
-  f32 clipmap_selection_bias = -1.5f;
+  f32 clipmap_selection_bias = -0.5f;
 };
 
 struct SkyComponent {

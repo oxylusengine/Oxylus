@@ -23,12 +23,11 @@ import scene;
 [[shader("fragment")]]
 func fs_main(
   VertexOutput input,
+  // keep the pointer 8-byte aligned under scalar layout
+  uniform Sky *sky,
   uniform f32x3 L,
   uniform f32 Li,
   uniform f32x3 base_ambient_color,
-  uniform u32 light_count,
-  uniform Light *lights,
-  uniform Sky *sky,
 ) -> f32x4 {
     let pixel_pos = u32x3(u32x2(input.position.xy), 0);
     let depth = depth_image.Load(pixel_pos);
@@ -99,19 +98,6 @@ func fs_main(
         indirect_illuminance = (ibl_diffuse * occlusion) + ibl_specular;
     }
 
-    var total_lighting = f32x3(0.0, 0.0, 0.0);
-    for (u32 light_index = 0; light_index < light_count; light_index++) {
-        let light = lights[light_index];
-
-        if (light.kind == LightKind::Point) {
-            total_lighting += point_light_contribution(
-                world_position, N, V, albedo_color, roughness, metallic, light.position, light);
-        } else if (light.kind == LightKind::Spot) {
-            total_lighting += calculate_spot_light_contribution(
-                world_position, N, V, albedo_color, roughness, metallic, light.position, light.direction, light);
-        }
-    }
-
     let horizon_fade = 1.3;
     var horizon = saturate(1.0 + horizon_fade * dot(R, smooth_normal));
     horizon *= horizon;
@@ -122,6 +108,6 @@ func fs_main(
         material_surface_color = (result.diffuse + result.specular * horizon) * direct_illuminance * NoL * visibility;
     }
 
-    let final_color = material_surface_color + total_lighting + indirect_illuminance + emission;
+    let final_color = material_surface_color + indirect_illuminance + emission;
     return f32x4(final_color, 1.0);
 }

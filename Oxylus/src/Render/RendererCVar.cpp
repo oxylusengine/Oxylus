@@ -26,6 +26,12 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_culling_triangle.init(self.system, "rr.culling_triangle", "Triangle culling", 1);
   self.cvar_transparent_background
     .init(self.system, "rr.transparent_background", "skip the sky and leave the background transparent", 0);
+  self.cvar_vsm_force_invalidate.init(
+    self.system,
+    "rr.vsm_force_invalidate",
+    "reset every virtual shadowmap page each frame, so a still camera reproduces the worst-case rebuild",
+    0
+  );
 
   self.cvar_contact_shadows_enabled.init(self.system, "pp.contact_shadows", "enable contact shadows", 1);
   self.cvar_contact_shadows_steps.init(self.system, "pp.contact_shadows_steps", "contact shadows steps", 8);

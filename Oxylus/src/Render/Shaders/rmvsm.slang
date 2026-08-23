@@ -113,6 +113,20 @@ public struct VSMPageMetadata {
 
 #define VMS_USE_DIAG_PIXEL_FOOTPRINT 1
 
+public struct VSMClipmapSelection {
+    public f32 level_f;
+    public u32 fine_clipmap_index;
+    public u32 coarse_clipmap_index;
+    public f32 blend_weight;
+
+    public __init(f32 level_f, u32 fine_clipmap_index, u32 coarse_clipmap_index, f32 blend_weight) {
+        this.level_f = level_f;
+        this.fine_clipmap_index = fine_clipmap_index;
+        this.coarse_clipmap_index = coarse_clipmap_index;
+        this.blend_weight = blend_weight;
+    }
+};
+
 public struct VSMContext {
     public i32 page_size;
     public i32 page_table_size;
@@ -178,13 +192,31 @@ public struct VSMContext {
         return max(clipmap_level_f, 0.0);
     }
 
-    public func get_clipmap_index(in Camera camera, f32x2 uv, f32 depth) -> u32 {
+    public func get_clipmap_selection(in Camera camera, f32x2 uv, f32 depth) -> VSMClipmapSelection {
         let level_f = this.get_clipmap_level_f(camera, uv, depth);
 #if VMS_USE_DIAG_PIXEL_FOOTPRINT
-        return min(u32(ceil(this.clipmap_selection_bias + level_f)), u32(this.clipmap_count - 1));
+        let biased_level_f = this.clipmap_selection_bias + level_f;
 #else
-        return clamp(u32(ceil(level_f)), 0u, u32(this.clipmap_count - 1));
+        let biased_level_f = level_f;
 #endif
+        let max_clipmap_index = u32(this.clipmap_count - 1);
+        let clamped_level_f = clamp(biased_level_f, 0.0, f32(max_clipmap_index));
+        let fine_clipmap_index = u32(floor(clamped_level_f));
+        let blend_weight = fract(clamped_level_f);
+        let coarse_clipmap_index = blend_weight > 0.0
+            ? min(fine_clipmap_index + 1u, max_clipmap_index)
+            : fine_clipmap_index;
+
+        return VSMClipmapSelection(
+            clamped_level_f,
+            fine_clipmap_index,
+            coarse_clipmap_index,
+            blend_weight
+        );
+    }
+
+    public func get_clipmap_index(in Camera camera, f32x2 uv, f32 depth) -> u32 {
+        return this.get_clipmap_selection(camera, uv, depth).coarse_clipmap_index;
     }
 };
 
@@ -221,8 +253,76 @@ public struct VirtualClipmap {
     }
 };
 
+// point lights use six cube-face layers, spot layers follow, VPT mips are LODs
+
+public constexpr static u32 VSM_SPOT_LAYER_OFFSET = MAX_SHADOW_POINT_LIGHTS * 6;
+public constexpr static u32 VSM_POINT_SPOT_LAYER_COUNT = VSM_SPOT_LAYER_OFFSET + MAX_SHADOW_SPOT_LIGHTS;
+
+public func vsm_point_layer(i32 point_shadow_index, i32 face_index) -> i32 {
+    return point_shadow_index * 6 + face_index;
+}
+
+public func vsm_spot_layer(i32 spot_shadow_index) -> i32 {
+    return i32(VSM_SPOT_LAYER_OFFSET) + spot_shadow_index;
+}
+
+// {+X, -X, +Y, -Y, +Z, -Z}, must match the CPU face matrices
+// dir points from the light to the shaded position
+public func vsm_point_face_index(f32x3 dir) -> i32 {
+    let a = abs(dir);
+    let coord_index = a.x < a.y ? (a.y < a.z ? 2 : 1) : (a.x < a.z ? 2 : 0);
+    return coord_index * 2 + (dir[coord_index] < 0.0 ? 1 : 0);
+}
+
+public struct VSMPointSpotProjection {
+    public f32x2 uv;
+    public f32 depth;
+    public bool valid;
+};
+
+public struct VSMPointSpotView {
+    public f32x4x4 projection_view;
+    public f32x3 light_position;
+    public f32 range; // 0 means the layer is inactive
+    public u32 light_index;
+    public f32 z_near;
+    public f32 texel_world_scale;
+    public u32 _pad_0;
+
+    public func project(f32x3 world_pos) -> VSMPointSpotProjection {
+        let clip_pos = mul(this.projection_view, f32x4(world_pos, 1.0));
+        VSMPointSpotProjection result;
+        result.valid = clip_pos.w > 0.0;
+        let ndc = clip_pos.xyz / max(clip_pos.w, 1e-20);
+        result.uv = (ndc.xy + 1.0) * 0.5;
+        result.depth = ndc.z;
+        result.valid = result.valid && all(result.uv >= 0.0) && all(result.uv <= 1.0);
+        return result;
+    }
+};
+
+public constexpr static u32 VSM_POINT_SPOT_MAX_MESHLET_INSTANCES = 1u << 18;
+public constexpr static u32 VSM_POINT_SPOT_MAX_INDEX_COUNT = 1u << 23;
+
+public struct VSMMeshletInstance {
+    public u32 mesh_instance_index;
+    public u32 meshlet_index;
+    public u32 layer;
+};
+
+public struct VSMPointSpotContext {
+    public i32 curr_mip;
+    public u32 layer_count;
+    public u32 mesh_instance_count;
+    public i32x2 depth_extent;
+    public u32 mip_bias_min;
+    public u32 shadow_point_light_count;
+    public u32 shadow_spot_light_count;
+};
+
 public struct VSMAllocRequest {
     public i32x3 page_table_address;
+    public i32 mip;
 };
 
 public struct VSMPageAllocator {
@@ -230,6 +330,8 @@ public struct VSMPageAllocator {
     public u32 dirty_physical_page_count;
     public u32 free_page_count;
     public u32 alloc_cursor;
+    public u32 request_capacity;
+    public u32 _pad_0;
     public VSMAllocRequest *requests;
     public u32x2 *dirty_physical_page_coords;
     public u32 *free_page_list;
@@ -237,6 +339,9 @@ public struct VSMPageAllocator {
 
 public func push_page_alloc_request(__ref VSMPageAllocator allocator, in VSMAllocRequest request) -> void {
     let index = __atomic_add(allocator.active_request_count, 1, MemoryOrder::AcquireRelease);
+    if (index >= allocator.request_capacity) {
+        return;
+    }
     allocator.requests[index] = request;
 }
 
