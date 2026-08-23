@@ -59,8 +59,6 @@ public:
   const char* visibility_icon_on = "V";
   const char* visibility_icon_off = "NV";
 
-  ImVec4 header_selected_color = ImVec4(1.00f, 0.56f, 0.00f, 0.50f);
-
   SceneHierarchyViewer() = default;
   SceneHierarchyViewer(Scene* scene);
 

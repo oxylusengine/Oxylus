@@ -494,7 +494,6 @@ auto FlecsBinding::bind(sol::state* state) -> void {
   // ecs_iter_t
   auto iter_type = flecs_table.new_usertype<ecs_iter_t>(
     "iter",
-
     sol::call_constructor,
     [](ecs_query_t* q) { return ecs_query_iter(q->world, q); },
 

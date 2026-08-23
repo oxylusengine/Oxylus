@@ -42,6 +42,7 @@ enum class DebugView : i32 {
   GTAO,
   GeometricNormal,
   RMVSM,
+  RMVSMPointSpot,
   DDGIProbes,
 
   Count,
@@ -237,7 +238,17 @@ struct CullCamera {
   u32 mesh_instance_count = {};
 };
 
-constexpr static u32 MAX_LIGHTS = 256;
+constexpr static u32 MAX_POINT_LIGHTS = 128;
+constexpr static u32 MAX_SPOT_LIGHTS = 128;
+constexpr static u32 MAX_LIGHTS = MAX_POINT_LIGHTS + MAX_SPOT_LIGHTS;
+
+constexpr static u32 MAX_SHADOW_POINT_LIGHTS = 64;
+constexpr static u32 MAX_SHADOW_SPOT_LIGHTS = 64;
+
+// per-cell shadow mask, point 0-63, then spot 0-63, packed into uvec4
+constexpr static glm::ivec3 LIGHT_GRID_RESOLUTION = {64, 32, 64};
+constexpr static f32 LIGHT_GRID_CELL_SIZE = 8.0f;
+constexpr static u32 LIGHT_GRID_CELL_COUNT = 64u * 32u * 64u;
 
 struct DirectionalLight {
   alignas(4) glm::vec3 color = {0.02, 0.02, 0.02};
@@ -256,7 +267,9 @@ struct Light {
   alignas(4) f32 inner_cone_angle = 0.0f; // spot only (radians)
   alignas(4) f32 outer_cone_angle = 0.0f; // spot only (radians)
   alignas(4) LightKind kind = LightKind::Point;
-  alignas(4) u32 pad[2] = {};
+  // -1 disables shadows
+  alignas(4) i32 shadow_map_index = -1;
+  alignas(4) u32 pad = {};
 };
 
 constexpr static u32 DDGI_MAX_IMAGE_DIMENSION = 16384;
@@ -392,6 +405,8 @@ enum struct TonemapType : u32 {
 
 struct VSMAllocRequest {
   alignas(4) glm::ivec3 page_table_address = {};
+  // -1 for directional pages
+  alignas(4) i32 mip = -1;
 };
 
 struct VSMPageAllocator {
@@ -399,9 +414,38 @@ struct VSMPageAllocator {
   alignas(4) u32 dirty_physical_page_count = {};
   alignas(4) u32 free_page_count = {};
   alignas(4) u32 alloc_cursor = {};
+  alignas(4) u32 request_capacity = {};
+  alignas(4) u32 pad = {};
   alignas(8) u64 requests = {};
   alignas(8) u64 dirty_physical_page_coords = {};
   alignas(8) u64 free_page_list = {};
+};
+
+// point layer = light * 6 + face, spot layers follow all point layers
+struct VSMPointSpotView {
+  alignas(4) glm::mat4 projection_view = {};
+  alignas(4) glm::vec3 light_position = {};
+  alignas(4) f32 range = 0.0f;             // 0 means the layer is inactive
+  alignas(4) u32 light_index = 0;
+  alignas(4) f32 z_near = 0.0f;
+  alignas(4) f32 texel_world_scale = 1.0f; // tan(fov/2), for world-space texel sizing in shading
+  alignas(4) u32 pad = {};
+};
+
+struct VSMMeshletInstance {
+  alignas(4) u32 mesh_instance_index = 0;
+  alignas(4) u32 meshlet_index = 0;
+  alignas(4) u32 layer = 0;
+};
+
+struct VSMPointSpotContext {
+  i32 curr_mip = 0;
+  u32 layer_count = 0;
+  u32 mesh_instance_count = 0;
+  glm::ivec2 depth_extent = {};
+  u32 mip_bias_min = 0;
+  u32 shadow_point_light_count = 0;
+  u32 shadow_spot_light_count = 0;
 };
 
 struct VSMContext {

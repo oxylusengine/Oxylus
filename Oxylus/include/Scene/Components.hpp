@@ -215,7 +215,7 @@ struct LightComponent {
   f32 maximum_shadow_distance = 1000.0f;
   f32 minimum_shadow_distance = 0.01f;
   f32 first_clipmap_width = 10.0f;
-  f32 clipmap_selection_bias = -1.5f;
+  f32 clipmap_selection_bias = -0.5f;
 };
 
 struct ProbeVolumeComponent {
@@ -405,6 +405,68 @@ struct MeshColliderComponent {
   glm::vec3 offset = {0.f, 0.f, 0.f};
   f32 friction = 0.5f;
   f32 restitution = 0.0f;
+};
+
+// Goes on the chassis entity, which must also carry a dynamic RigidBodyComponent and a collider.
+// Wheels are child entities carrying VehicleWheelComponent: their local transform gives the
+// suspension attachment point, and the constraint drives it back so a wheel mesh animates for free.
+struct VehicleComponent {
+  enum DriveMode : u32 { FrontWheelDrive = 0, RearWheelDrive, AllWheelDrive };
+  // How each wheel probes the ground. Ray is cheapest, cylinder is most accurate over rough terrain.
+  enum CollisionMode : u32 { Ray = 0, SphereCast, CylinderCast };
+
+  DriveMode drive_mode = DriveMode::RearWheelDrive;
+  CollisionMode collision_mode = CollisionMode::CylinderCast;
+
+  // Local-space chassis axes, must match how the model is authored.
+  glm::vec3 up = {0.f, 1.f, 0.f};
+  glm::vec3 forward = {0.f, 0.f, 1.f};
+  // Degrees. Caps how far the rig can pitch or roll before the constraint fights it. 180 disables.
+  f32 max_pitch_roll_angle = 60.f;
+
+  // Engine
+  f32 max_engine_torque = 500.f;
+  f32 min_engine_rpm = 1000.f;
+  f32 max_engine_rpm = 6000.f;
+  f32 engine_inertia = 0.5f;
+
+  // Transmission
+  bool auto_transmission = true;
+  f32 clutch_strength = 10.f;
+
+  // Ratio max/min average wheel speed per differential before torque is shifted to the slower one.
+  f32 limited_slip_ratio = 1.4f;
+
+  // Driver input, written every frame by gameplay. forward and right are [-1,1], brakes are [0,1].
+  f32 input_forward = 0.f;
+  f32 input_right = 0.f;
+  f32 input_brake = 0.f;
+  f32 input_hand_brake = 0.f;
+
+  // Stored as JPH::VehicleConstraint. Owned by the physics system once added, not by this component.
+  void* runtime_constraint = nullptr;
+};
+
+struct VehicleWheelComponent {
+  glm::vec3 attachment = {0.f, 0.f, 0.f};
+
+  f32 radius = 0.5f;
+  f32 width = 0.3f;
+
+  f32 suspension_min_length = 0.3f;
+  f32 suspension_max_length = 0.5f;
+  f32 suspension_frequency = 1.5f;
+  f32 suspension_damping = 0.5f;
+
+  // Degrees. Zero leaves the wheel fixed, which is what you want on a trailer or rear axle.
+  f32 max_steer_angle = 0.f;
+  f32 max_brake_torque = 1500.f;
+  f32 max_hand_brake_torque = 0.f;
+  // Whether this wheel is on a differential and receives engine torque.
+  bool driven = true;
+
+  // Index into the constraint's wheel array, assigned when the vehicle is created.
+  u32 runtime_wheel_index = 0;
 };
 
 struct CharacterControllerComponent {

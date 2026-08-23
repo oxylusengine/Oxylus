@@ -2,6 +2,7 @@
 
 #include <ImGuizmo.h>
 #include <filesystem>
+#include <icons/IconsMaterialDesignIcons.h>
 #include <imgui_internal.h>
 #include <vuk/vsl/Core.hpp>
 
@@ -9,7 +10,7 @@
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
-#include "Networking/NetworkManager.hpp"
+#include "Panels/ActivityLogPanel.hpp"
 #include "Panels/AssetManagerPanel.hpp"
 #include "Panels/ContentPanel.hpp"
 #include "Panels/EditorSettingsPanel.hpp"
@@ -100,6 +101,8 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_panel_registry.add<EditorSettingsPanel>();
   self.editor_panel_registry.add<ProjectPanel>();
   self.editor_panel_registry.add<AssetManagerPanel>();
+  auto activity_log_panel = self.editor_panel_registry.add<ActivityLogPanel>();
+  activity_log_panel->set_system(&self.notification_system);
   auto text_editor_panel = self.editor_panel_registry.add<TextEditorPanel>();
 
   scene_hierarchy_panel->viewer.opened_script_callback = [text_editor_panel](const UUID& uuid) {
@@ -249,9 +252,11 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
                                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings;
 
+  constexpr float bottom_bar_height = 30.0f;
+
   ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(viewport->WorkPos);
-  ImGui::SetNextWindowSize(viewport->WorkSize);
+  ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, viewport->WorkSize.y - bottom_bar_height));
   ImGui::SetNextWindowViewport(viewport->ID);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -281,6 +286,8 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
   }
 
   ImGui::End();
+
+  self.draw_bottom_toolbar(bottom_bar_height);
 }
 
 void Editor::reset(this Editor& self) {
@@ -594,6 +601,98 @@ void Editor::draw_menubar(this Editor& self) {
 
     ImGui::EndMenuBar();
   }
+}
+
+void Editor::draw_bottom_toolbar(this Editor& self, float height) {
+  ZoneScoped;
+
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - height));
+  ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, height));
+  ImGui::SetNextWindowViewport(viewport->ID);
+
+  constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
+                                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 4.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.11f, 0.11f, 0.11f, 1.0f));
+
+  if (ImGui::Begin("##BottomToolbar", nullptr, flags)) {
+    auto& content_panel = self.editor_panel_registry.get<ContentPanel>();
+    auto content_panel_text = fmt::format("{} {}", content_panel.get_icon(), "Content Panel");
+    if (content_panel.visible)
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    if (
+      UI::toggle_button(
+        content_panel_text.c_str(),
+        content_panel.visible,
+        {},
+        1.f,
+        1.f,
+        ImGuiButtonFlags_None,
+        ImGuiCol_Header
+      )
+    ) {
+      content_panel.visible = !content_panel.visible;
+    }
+    if (content_panel.visible)
+      ImGui::PopStyleColor();
+
+    ImGui::SameLine();
+    auto activity_log_text = fmt::format("{} {}", ICON_MDI_FORUM, "Activity Log");
+    auto& activity_log_panel_state = self.editor_panel_registry.get<ActivityLogPanel>().visible;
+    if (activity_log_panel_state)
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    if (
+      UI::toggle_button(
+        activity_log_text.c_str(),
+        activity_log_panel_state,
+        {},
+        1.f,
+        1.f,
+        ImGuiButtonFlags_None,
+        ImGuiCol_Header
+      )
+    ) {
+      activity_log_panel_state = !activity_log_panel_state;
+    }
+    if (activity_log_panel_state)
+      ImGui::PopStyleColor();
+
+    ImGui::SameLine();
+    ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+    ImGui::SameLine();
+
+    ImGui::TextDisabled("Cmd: `~` to open console");
+
+    const auto& io = ImGui::GetIO();
+    auto last_notification = self.notification_system.get_last_notification();
+    if (last_notification.has_value()) {
+      auto& notif = *last_notification;
+      std::string icon_text = {};
+      switch (notif.type) {
+        case Notification::Info   : icon_text = ICON_MDI_INFORMATION; break;
+        case Notification::Warn   : icon_text = ICON_MDI_ALERT; break;
+        case Notification::Error  : icon_text = ICON_MDI_EXCLAMATION; break;
+        case Notification::Loading: icon_text = ICON_MDI_CHECK_BOLD; break;
+      }
+
+      auto notif_text = fmt::format("{} {}", icon_text, notif.title);
+      const float text_width = ImGui::CalcTextSize(notif_text.c_str()).x;
+      ImGui::SameLine(ImGui::GetWindowWidth() - text_width - 16.0f);
+      ImGui::TextUnformatted(notif_text.c_str());
+      if (ImGui::IsItemClicked()) {
+        activity_log_panel_state = !activity_log_panel_state;
+      }
+    }
+  }
+
+  ImGui::End();
+  ImGui::PopStyleColor();
+  ImGui::PopStyleVar(3);
 }
 
 void Editor::undo() const {

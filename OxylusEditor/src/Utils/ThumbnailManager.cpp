@@ -289,6 +289,16 @@ static auto material_meta_path(const std::filesystem::path& asset_path) -> std::
   return AssetManager::meta_file_path(asset_path);
 }
 
+static auto file_mtime(const std::filesystem::path& path) -> i64 {
+  auto error = std::error_code();
+  const auto time = std::filesystem::last_write_time(path, error);
+  if (error) {
+    return 0;
+  }
+
+  return static_cast<i64>(time.time_since_epoch().count());
+}
+
 static auto live_cache_key(const UUID& material_uuid) -> std::string {
   memory::ScopedStack stack;
 
@@ -424,6 +434,12 @@ auto ThumbnailManager::store_thumbnail(
   thumbnail_texture.upload(pixels, vuk::eFragmentSampled);
 
   auto lock = std::unique_lock(self.thumbnail_mutex);
+  if (self.superseded_jobs.contains(cache_key)) {
+    self.superseded_jobs.erase(cache_key);
+    self.active_jobs.erase(cache_key);
+    return;
+  }
+
   self.thumbnail_cache.insert_or_assign(cache_key, std::move(thumbnail_texture));
   self.active_jobs.erase(cache_key);
 }
@@ -463,7 +479,8 @@ auto ThumbnailManager::reset(this ThumbnailManager& self) -> void {
 
   auto lock = std::unique_lock(self.thumbnail_mutex);
   self.thumbnail_cache.clear();
-  self.failed_jobs.clear();
+  self.unsaved_materials.clear();
+  self.superseded_jobs.clear();
 }
 
 auto ThumbnailManager::find_cached(this ThumbnailManager& self, const std::string& cache_key) -> option<TextureView> {
@@ -630,7 +647,10 @@ auto ThumbnailManager::material_thumbnail_for(
 
   const auto meta_path = material_meta_path(asset_path);
   const auto has_file = !meta_path.empty() && std::filesystem::exists(meta_path);
-  const auto cache_key = has_file ? self.get_asset_hash(meta_path) : live_cache_key(material_uuid);
+  // While there are unsaved edits the file cache is not usable in either direction: its key describes
+  // the file on disk, which no longer matches what we would render.
+  const auto use_file_cache = has_file && !self.has_unsaved_edits(material_uuid, meta_path);
+  const auto cache_key = use_file_cache ? self.get_asset_hash(meta_path) : live_cache_key(material_uuid);
 
   if (auto cached = self.find_cached(cache_key)) {
     return *cached;
@@ -640,8 +660,9 @@ auto ThumbnailManager::material_thumbnail_for(
     return {};
   }
 
-  auto expected_png = has_file ? self.cache_dir / (cache_key + ".png") : std::filesystem::path{};
-  if (has_file && std::filesystem::exists(expected_png)) {
+  // Left empty for live previews, which is what stops update() from persisting them.
+  auto expected_png = use_file_cache ? self.cache_dir / (cache_key + ".png") : std::filesystem::path{};
+  if (use_file_cache && std::filesystem::exists(expected_png)) {
     self.submit_cached_png_load(cache_key, expected_png);
     return {};
   }
@@ -730,8 +751,55 @@ auto ThumbnailManager::invalidate_material(this ThumbnailManager& self, const UU
     return;
   }
 
+  auto meta_path = std::filesystem::path{};
+  if (auto asset = App::mod<AssetManager>().get_asset(material_uuid)) {
+    meta_path = material_meta_path(asset->path);
+  }
+
+  const auto live_key = live_cache_key(material_uuid);
+
   auto lock = std::unique_lock(self.thumbnail_mutex);
-  self.thumbnail_cache.erase(live_cache_key(material_uuid));
+  self.thumbnail_cache.erase(live_key);
+
+  // An edit can land while a render for this material is already running, which is normal when
+  // dragging a slider. That render's result is already out of date, so mark it to be thrown away.
+  if (self.active_jobs.contains(live_key)) {
+    self.superseded_jobs.insert(live_key);
+  }
+
+  // Drop the saved-state preview from memory as well, so the UI switches to the live one straight
+  // away, and remember the file's current mtime so we can tell when the edits get written out.
+  if (!meta_path.empty() && std::filesystem::exists(meta_path)) {
+    self.thumbnail_cache.erase(self.get_asset_hash(meta_path));
+    self.unsaved_materials.insert_or_assign(material_uuid, file_mtime(meta_path));
+  } else {
+    self.unsaved_materials.insert_or_assign(material_uuid, 0);
+  }
+}
+
+auto ThumbnailManager::has_unsaved_edits(
+  this ThumbnailManager& self, const UUID& material_uuid, const std::filesystem::path& meta_path
+) -> bool {
+  ZoneScoped;
+
+  auto lock = std::unique_lock(self.thumbnail_mutex);
+  const auto it = self.unsaved_materials.find(material_uuid);
+  if (it == self.unsaved_materials.end()) {
+    return false;
+  }
+
+  // A material with no file of its own can only ever be previewed live.
+  if (meta_path.empty()) {
+    return true;
+  }
+
+  // The file moved on, so the edits were saved and the on-disk cache is authoritative again.
+  if (file_mtime(meta_path) != it->second) {
+    self.unsaved_materials.erase(it);
+    return false;
+  }
+
+  return true;
 }
 
 auto ThumbnailManager::render_model_thumbnail(this ThumbnailManager& self, const UUID& model_uuid, u32 size)
@@ -876,7 +944,6 @@ auto ThumbnailManager::ensure_material_preview(this ThumbnailManager& self) -> b
                                PREVIEW_FRAMING_PADDING;
   const auto camera_position = glm::vec3(-camera_distance, 0.f, 0.f);
   const auto camera_direction = glm::normalize(-camera_position);
-
   const auto camera = scene.create_entity("preview_camera", true);
   camera.set<CameraComponent>({
     .fov = PREVIEW_FOV,

@@ -128,6 +128,11 @@ path = "passes/rmvsm_debug.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
+name = "rmvsm_debug_pointspot"
+path = "passes/rmvsm_debug_pointspot.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
 name = "rmvsm_downsample_hpb"
 path = "passes/rmvsm_downsample_hpb.slang"
 entry_points = ["cs_main"]
@@ -170,6 +175,73 @@ path = "passes/rmvsm_reset_page_visibility.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "rmvsm_pointspot_reset_page_visibility"
+path = "passes/rmvsm_pointspot_reset_page_visibility.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_free_invisible_pages"
+path = "passes/rmvsm_pointspot_free_invisible_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_mark_visible_pages_pointspot"
+path = "passes/rmvsm_mark_visible_pages_pointspot.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_mark_coarse_pages"
+path = "passes/rmvsm_pointspot_mark_coarse_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_mark_dirty_pages"
+path = "passes/rmvsm_pointspot_mark_dirty_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_invalidate_pages"
+path = "passes/rmvsm_pointspot_invalidate_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_build_active_layers"
+path = "passes/rmvsm_pointspot_build_active_layers.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_cull_meshes"
+path = "passes/rmvsm_pointspot_cull_meshes.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_downsample_hpb"
+path = "passes/rmvsm_pointspot_downsample_hpb.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_cull_meshlets"
+path = "passes/rmvsm_pointspot_cull_meshlets.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_cull_triangles"
+path = "passes/rmvsm_pointspot_cull_triangles.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_draw_pages"
+path = "passes/rmvsm_pointspot_draw_pages.slang"
+entry_points = ["vs_main", "fs_main"]
+requires = ["bindless"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_draw_pages_ms"
+path = "passes/rmvsm_pointspot_draw_pages_ms.slang"
+entry_points = ["ts_main", "ms_main", "fs_main"]
+requires = ["bindless", "mesh_shaders"]
+
+[[shader_sessions.programs]]
 name = "resolve_shadowmaps"
 path = "passes/resolve_shadowmaps.slang"
 entry_points = ["vs_main", "fs_main"]
@@ -187,6 +259,16 @@ entry_points = ["vs_main", "fs_main"]
 [[shader_sessions.programs]]
 name = "pbr_apply_no_atmos"
 path = "passes/pbr_apply_no_atmos.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "light_grid"
+path = "passes/light_grid.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "pbr_apply_lights"
+path = "passes/pbr_apply_lights.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]

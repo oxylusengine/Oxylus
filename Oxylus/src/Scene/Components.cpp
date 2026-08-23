@@ -52,6 +52,8 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   registry.bind_enum<CameraComponent::Projection>("CameraProjection");
   registry.bind_enum<LightComponent::LightType>("LightType");
   registry.bind_enum<RigidBodyComponent::BodyType>("RigidBodyType");
+  registry.bind_enum<VehicleComponent::DriveMode>("VehicleDriveMode");
+  registry.bind_enum<VehicleComponent::CollisionMode>("VehicleCollisionMode");
   registry.bind_enum<GPU::TonemapType>("TonemapType");
 
   {
@@ -295,6 +297,43 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   {
     using C = MeshColliderComponent;
     registry.bind<&C::offset, &C::friction, &C::restitution>();
+  }
+
+  {
+    using C = VehicleComponent;
+    registry.bind<
+      &C::drive_mode,
+      &C::collision_mode,
+      &C::up,
+      &C::forward,
+      &C::max_pitch_roll_angle,
+      &C::max_engine_torque,
+      &C::min_engine_rpm,
+      &C::max_engine_rpm,
+      &C::engine_inertia,
+      &C::auto_transmission,
+      &C::clutch_strength,
+      &C::limited_slip_ratio,
+      &C::input_forward,
+      &C::input_right,
+      &C::input_brake,
+      &C::input_hand_brake>();
+  }
+
+  {
+    using C = VehicleWheelComponent;
+    registry.bind<
+      &C::attachment,
+      &C::radius,
+      &C::width,
+      &C::suspension_min_length,
+      &C::suspension_max_length,
+      &C::suspension_frequency,
+      &C::suspension_damping,
+      &C::max_steer_angle,
+      &C::max_brake_torque,
+      &C::max_hand_brake_torque,
+      &C::driven>();
   }
 
   {
