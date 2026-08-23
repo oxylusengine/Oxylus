@@ -373,7 +373,6 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
     ) {
       cmd_list //
         .bind_ray_tracing_pipeline("ddgi_trace")
-        .bind_persistent(1, descriptor_set)
         .bind_acceleration_structure(0, 0, tlas)
         .bind_buffer(0, 1, probe_volumes)
         .bind_buffer(0, 2, mesh_instances)
@@ -392,6 +391,7 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
 
       for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
         cmd_list //
+          .bind_persistent(1, descriptor_set)
           .push_constants(
             vuk::ShaderStageFlagBits::eRaygenKHR,
             0,
