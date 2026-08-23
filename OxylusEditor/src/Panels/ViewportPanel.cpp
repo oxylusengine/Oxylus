@@ -834,11 +834,11 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "How far relocation keeps a probe off a surface, in world units"
           );
           UI::property<float>(
-            "Shadow Ray Offset",
+            "Shadow Bias",
             cvar_sys.cvar_ddgi_shadow_ray_offset.get_ptr(),
             0.f,
             1.f,
-            "Offsets a probe ray hit before the shadow ray is traced from it, in world units"
+            "Offsets a probe ray hit for ray-traced and virtual-shadow-map visibility tests, in world units"
           );
           UI::property<float>(
             "Normal Bias",

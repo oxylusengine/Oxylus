@@ -79,7 +79,7 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_ddgi_min_frontface_distance
     .init(self.system, "rr.ddgi_min_frontface_distance", "how far a probe keeps off a surface, in world units", 0.5f);
   self.cvar_ddgi_shadow_ray_offset
-    .init(self.system, "rr.ddgi_shadow_ray_offset", "surface offset applied before tracing a shadow ray", 0.05f);
+    .init(self.system, "rr.ddgi_shadow_ray_offset", "surface bias used for DDGI shadow visibility", 0.05f);
   self.cvar_ddgi_normal_bias
     .init(self.system, "rr.ddgi_normal_bias", "probe lookup offset along the normal, in probe spacings", 0.25f);
   self.cvar_ddgi_view_bias

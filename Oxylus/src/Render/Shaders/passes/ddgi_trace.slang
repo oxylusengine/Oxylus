@@ -5,6 +5,9 @@ import hit;
 import pbr;
 import sky;
 import ddgi;
+import rmvsm;
+
+#include <rmvsm_pointspot.slang>
 
 [[vk::constant_id(0)]] const u32 scene_flags = 0;
 
@@ -22,6 +25,8 @@ import ddgi;
 [[vk::binding(11, 0)]] Image2D<f32x4> irradiance_atlas;
 [[vk::binding(12, 0)]] Image2D<f32x2> distance_atlas;
 [[vk::binding(13, 0)]] StructuredBuffer<ProbeState> probe_states;
+[[vk::binding(14, 0)]] Texture2DArray<u32> pointspot_page_table;
+[[vk::binding(15, 0)]] Texture2D<f32> vsm_physical_pages;
 
 static const f32 HIT_TEXTURE_LOD = 3.0;
 
@@ -41,6 +46,9 @@ struct TraceConstants {
     f32 sun_intensity;
     f32x3 ambient_color;
     f32 max_ray_radiance;
+    u32x4 *light_grid;
+    VSMPointSpotView *pointspot_views;
+    f32x3 light_grid_origin;
 };
 
 [[vk::push_constant]] ConstantBuffer<TraceConstants> constants;
@@ -103,13 +111,52 @@ func miss_radiance(
     );
 }
 
+func punctual_shadow_visibility(
+    in Light light,
+    f32x3 position,
+    f32x3 receiver_normal,
+    f32x3 to_light_direction,
+    f32 receiver_bias
+) -> f32 {
+    if (light.shadow_map_index < 0) {
+        return 1.0;
+    }
+
+    let layer = light.kind == LightKind::Point
+        ? vsm_point_layer(light.shadow_map_index, vsm_point_face_index(position - light.position))
+        : vsm_spot_layer(light.shadow_map_index);
+    let view = constants.pointspot_views[layer];
+    if (view.range <= 0.0) {
+        return 1.0;
+    }
+
+    let receiver_position = position + receiver_normal * receiver_bias;
+    let center = view.project(receiver_position);
+    if (!center.valid) {
+        return 1.0;
+    }
+
+    let biased = view.project(receiver_position + to_light_direction * receiver_bias);
+    let reference_depth = biased.valid ? biased.depth : center.depth;
+    let coarse_mip = VSM_POINT_SPOT_MIP_COUNT - 1;
+    let shadow_depth = vsm_pointspot_load_depth(
+        pointspot_page_table,
+        vsm_physical_pages,
+        layer,
+        coarse_mip,
+        center.uv
+    );
+
+    return shadow_depth < reference_depth ? 0.0 : 1.0;
+}
+
 func punctual_diffuse(
     in Light light,
     f32x3 position,
     f32x3 normal,
+    f32x3 receiver_normal,
     f32x3 diffuse_albedo,
-    f32x3 shadow_origin,
-    f32 shadow_ray_offset
+    f32 receiver_bias
 ) -> f32x3 {
     if (light.intensity <= 0.0) {
         return f32x3(0.0);
@@ -140,11 +187,12 @@ func punctual_diffuse(
         return f32x3(0.0);
     }
 
-    if (trace_occluded(shadow_origin, L, shadow_ray_offset, max(light_distance - shadow_ray_offset, 0.0))) {
+    let visibility = punctual_shadow_visibility(light, position, receiver_normal, L, receiver_bias);
+    if (visibility <= 0.0) {
         return f32x3(0.0);
     }
 
-    return diffuse_albedo * Fd_Lambert() * light.color * light.intensity * attenuation * NoL;
+    return diffuse_albedo * Fd_Lambert() * light.color * light.intensity * attenuation * NoL * visibility;
 }
 
 func shade_hit(
@@ -174,10 +222,28 @@ func shade_hit(
         }
     }
 
+    let grid_cell = light_grid_cell_coords(hit.position, constants.light_grid_origin);
+    let grid_cell_in_bounds = light_grid_cell_in_bounds(grid_cell);
+    let grid_mask = grid_cell_in_bounds ? constants.light_grid[light_grid_cell_index(grid_cell)] : u32x4(0);
+
     for (u32 light_index = 0; light_index < light_count; light_index++) {
         let light = lights[light_index];
         if (light.kind == LightKind::Point || light.kind == LightKind::Spot) {
-            radiance += punctual_diffuse(light, hit.position, N, diffuse_albedo, shadow_origin, shadow_ray_offset);
+            if (light.shadow_map_index >= 0 && grid_cell_in_bounds) {
+                let word = light_grid_mask_word(light.kind, light.shadow_map_index);
+                if ((grid_mask[word] & light_grid_mask_bit(light.shadow_map_index)) == 0) {
+                    continue;
+                }
+            }
+
+            radiance += punctual_diffuse(
+                light,
+                hit.position,
+                N,
+                hit.face_normal,
+                diffuse_albedo,
+                shadow_ray_offset
+            );
         }
     }
 

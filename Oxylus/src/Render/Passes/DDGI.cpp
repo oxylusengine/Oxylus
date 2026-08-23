@@ -120,6 +120,10 @@ auto RendererInstance::select_ddgi_probes(this RendererInstance& self, DDGISelec
             )
           )
           .dispatch_invocations(probe_counts[volume_index], 1, 1);
+
+        if (volume_index + 1 < static_cast<u32>(probe_counts.size())) {
+          cmd_list.memory_barrier(vuk::eComputeRW, vuk::eComputeRW);
+        }
       }
 
       return std::make_tuple(probe_states, probe_volumes, camera, probe_update_list, probe_update_args);
@@ -336,6 +340,22 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
     probe_counts.emplace_back(volume.probe_count);
   }
 
+  const auto light_grid_address = context.light_grid_buffer->device_address;
+  const auto pointspot_views_address = context.pointspot_views_buffer->device_address;
+  auto trace_sync_pass = vuk::make_pass(
+    "trace sync",
+    [](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eRayTracingRead) light_grid,
+      VUK_BA(vuk::eRayTracingRead) pointspot_views
+    ) { return std::make_tuple(light_grid, pointspot_views); }
+  );
+
+  std::tie(context.light_grid_buffer, context.pointspot_views_buffer) = trace_sync_pass(
+    std::move(context.light_grid_buffer),
+    std::move(context.pointspot_views_buffer)
+  );
+
   auto trace_pass = vuk::make_pass(
     "ddgi trace",
     [probe_counts,
@@ -354,7 +374,10 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
      max_ray_radiance = context.max_ray_radiance,
      volume_count = context.volume_count,
      bounce_valid = static_cast<u32>(context.bounce_valid),
-     view_bias = context.view_bias](
+     view_bias = context.view_bias,
+     light_grid_address,
+     pointspot_views_address,
+     light_grid_origin = context.light_grid_origin](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eRayTracingWrite) ray_data,
       VUK_IA(vuk::eRayTracingSampled) irradiance,
@@ -366,13 +389,14 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
       VUK_BA(vuk::eRayTracingRead) transforms,
       VUK_BA(vuk::eRayTracingRead) materials,
       VUK_BA(vuk::eRayTracingRead) lights,
+      VUK_IA(vuk::eRayTracingSampled) pointspot_page_table,
+      VUK_IA(vuk::eRayTracingSampled) vsm_physical_pages,
       VUK_BA(vuk::eRayTracingRead) atmosphere,
       VUK_IA(vuk::eRayTracingSampled) sky_view_lut,
       VUK_IA(vuk::eRayTracingSampled) sky_transmittance_lut,
       VUK_BA(vuk::eRayTracingRead) probe_states
     ) {
-      cmd_list //
-        .bind_ray_tracing_pipeline("ddgi_trace")
+      bind_vsm_pointspot_spec_constants(cmd_list.bind_ray_tracing_pipeline("ddgi_trace"))
         .bind_acceleration_structure(0, 0, tlas)
         .bind_buffer(0, 1, probe_volumes)
         .bind_buffer(0, 2, mesh_instances)
@@ -387,6 +411,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
         .bind_image(0, 11, irradiance)
         .bind_image(0, 12, probe_distance)
         .bind_buffer(0, 13, probe_states)
+        .bind_image(0, 14, pointspot_page_table)
+        .bind_image(0, 15, vsm_physical_pages)
         .specialize_constants(0, std::to_underlying(scene_flags));
 
       for (u32 volume_index = 0; volume_index < static_cast<u32>(probe_counts.size()); volume_index++) {
@@ -410,10 +436,17 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
               sun_direction,
               sun_intensity,
               ambient_color,
-              max_ray_radiance
+              max_ray_radiance,
+              light_grid_address,
+              pointspot_views_address,
+              light_grid_origin
             )
           )
           .trace_rays(rays_per_probe, probe_counts[volume_index], 1);
+
+        if (volume_index + 1 < static_cast<u32>(probe_counts.size())) {
+          cmd_list.image_barrier(ray_data, vuk::eRayTracingWrite, vuk::eRayTracingWrite);
+        }
       }
 
       return std::make_tuple(
@@ -427,6 +460,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
         transforms,
         materials,
         lights,
+        pointspot_page_table,
+        vsm_physical_pages,
         atmosphere,
         sky_view_lut,
         sky_transmittance_lut,
@@ -446,6 +481,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
     self.prepared_frame.transforms_world_buffer,
     self.prepared_frame.materials_buffer,
     self.prepared_frame.lights_buffer,
+    context.pointspot_page_table_attachment,
+    context.vsm_physical_pages_attachment,
     self.prepared_frame.atmosphere_buffer,
     context.sky_view_lut_attachment,
     context.sky_transmittance_lut_attachment,
@@ -462,6 +499,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
       std::move(self.prepared_frame.transforms_world_buffer),
       std::move(self.prepared_frame.materials_buffer),
       std::move(self.prepared_frame.lights_buffer),
+      std::move(context.pointspot_page_table_attachment),
+      std::move(context.vsm_physical_pages_attachment),
       std::move(self.prepared_frame.atmosphere_buffer),
       std::move(context.sky_view_lut_attachment),
       std::move(context.sky_transmittance_lut_attachment),

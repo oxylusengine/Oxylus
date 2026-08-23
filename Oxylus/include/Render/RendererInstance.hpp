@@ -493,12 +493,17 @@ struct DDGITraceContext {
   u32 volume_count = 0;
   bool bounce_valid = false;
   f32 view_bias = 0.1f;
+  glm::vec3 light_grid_origin = {};
 
   vuk::Value<vuk::Buffer> tlas_buffer = {};
   vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
   vuk::Value<vuk::Buffer> probe_states_buffer = {};
+  vuk::Value<vuk::Buffer> light_grid_buffer = {};
+  vuk::Value<vuk::Buffer> pointspot_views_buffer = {};
   vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
   vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
+  vuk::Value<vuk::ImageAttachment> pointspot_page_table_attachment = {};
+  vuk::Value<vuk::ImageAttachment> vsm_physical_pages_attachment = {};
   vuk::Value<vuk::ImageAttachment> ray_data_attachment = {};
   vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
   vuk::Value<vuk::ImageAttachment> distance_attachment = {};
