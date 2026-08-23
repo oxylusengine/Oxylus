@@ -162,14 +162,14 @@ func fs_main(VertexOutput input) -> void {
     let clipmap = clipmaps[clipmap_index];
     let page_offset = clipmap.page_offset;
 
-    let virtual_uv = input.position.xy / ctx.get_physical_page_table_extent().xy;
+    let virtual_uv = input.position.xy / ctx.virtual_extent;
     let virt_coords = i32x2(floor(virtual_uv * ctx.get_page_table_extent().xy));
     let wrapped_coords = ctx.page_coords_virtual_to_wrapped(virt_coords, page_offset);
     let page_address = i32x3(wrapped_coords, clipmap_index);
     let page = VSMPageMetadata(page_tables.Load(i32x4(page_address, 0)));
     if (page.is_backed() && page.is_dirty()) {
         let physical_page_coords = page.get_physical_coords(ctx.physcial_page_table_size, ctx.page_size);
-        let virtual_texel_coord = i32x2(floor(virtual_uv * ctx.physcial_page_table_size));
+        let virtual_texel_coord = i32x2(floor(virtual_uv * ctx.virtual_extent));
         let in_page_texel_coord = i32x2(com::mod(f32x2(virtual_texel_coord), f32x2(ctx.page_size)));
         let in_memory_offset = physical_page_coords * ctx.page_size;
         let physical_texel_coord = in_memory_offset + in_page_texel_coord;
