@@ -1173,6 +1173,12 @@ auto RendererInstance::render(
     const auto has_shadow_pointspot = self.prepared_frame.shadow_point_light_count +
                                         self.prepared_frame.shadow_spot_light_count >
                                       0;
+    if (
+      !(self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) || !self.directional_light_cast_shadows ||
+      !has_meshes
+    ) {
+      self.directional_vsm_cache_valid = false;
+    }
     if ((self.directional_light_cast_shadows || has_shadow_pointspot) && has_meshes) {
       auto rmvsm_context = RMVSMContext{
         .bindless_set = &bindless_set,

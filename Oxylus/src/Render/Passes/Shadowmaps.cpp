@@ -183,6 +183,28 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     context.max_shadow_dist,
     directional_clipmaps
   );
+
+  auto clipmap_scroll_deltas = std::array<glm::ivec2, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT>{};
+  if (has_directional) {
+    // preserve overlapping toroidal pages while invalidating the rows and columns exposed by a clipmap shift
+    const auto mapping_changed = !self.directional_vsm_cache_valid ||
+                                 self.previous_directional_clipmap_width != self.first_clipmap_width ||
+                                 self.previous_directional_shadow_distance != context.max_shadow_dist;
+
+    for (auto clipmap_index = 0_u32; clipmap_index < RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT; clipmap_index++) {
+      if (mapping_changed && !context.sun_moved) {
+        clipmap_scroll_deltas[clipmap_index] = glm::ivec2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE);
+      } else if (!context.sun_moved) {
+        clipmap_scroll_deltas[clipmap_index] = directional_clipmaps[clipmap_index].page_offset -
+                                               self.previous_directional_clipmap_offsets[clipmap_index];
+      }
+      self.previous_directional_clipmap_offsets[clipmap_index] = directional_clipmaps[clipmap_index].page_offset;
+    }
+
+    self.previous_directional_clipmap_width = self.first_clipmap_width;
+    self.previous_directional_shadow_distance = context.max_shadow_dist;
+    self.directional_vsm_cache_valid = true;
+  }
   std::memcpy(context.directional_clipmaps_buffer->mapped_ptr, directional_clipmaps, directional_clipmaps_size_bytes);
 
   GPU::VSMPointSpotView pointspot_views[RMVSMContext::POINT_SPOT_LAYER_COUNT] = {};
@@ -270,23 +292,34 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     );
   }
 
-  auto reset_page_visibility_pass = vuk::make_pass(
-    "vsm reset page visibility",
-    [vsm_ctx](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) page_table) {
-      cmd_list //
-        .bind_compute_pipeline("rmvsm_reset_page_visibility")
-        .bind_image(0, 0, page_table)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
-        .dispatch_invocations_per_pixel(page_table, 1.0f, 1.0f, static_cast<f32>(page_table->layer_count));
-
-      return page_table;
-    }
-  );
-
   if (has_directional) {
-    context.virtual_page_table_attachment = reset_page_visibility_pass(
-      std::move(context.virtual_page_table_attachment)
+    auto clipmap_scroll_deltas_buffer = render_context->scratch_buffer_span<glm::ivec2>(clipmap_scroll_deltas);
+    auto reset_page_visibility_pass = vuk::make_pass(
+      "vsm reset page visibility",
+      [vsm_ctx](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eComputeRW) page_table,
+        VUK_BA(vuk::eComputeRead) clipmaps,
+        VUK_BA(vuk::eComputeRead) scroll_deltas
+      ) {
+        cmd_list //
+          .bind_compute_pipeline("rmvsm_reset_page_visibility")
+          .bind_image(0, 0, page_table)
+          .bind_buffer(0, 1, clipmaps)
+          .bind_buffer(0, 2, scroll_deltas)
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
+          .dispatch_invocations_per_pixel(page_table, 1.0f, 1.0f, static_cast<f32>(page_table->layer_count));
+
+        return std::make_tuple(page_table, clipmaps, scroll_deltas);
+      }
     );
+
+    std::tie(context.virtual_page_table_attachment, context.directional_clipmaps_buffer, clipmap_scroll_deltas_buffer) =
+      reset_page_visibility_pass(
+        std::move(context.virtual_page_table_attachment),
+        std::move(context.directional_clipmaps_buffer),
+        std::move(clipmap_scroll_deltas_buffer)
+      );
   }
 
   auto pointspot_reset_pass = vuk::make_pass(

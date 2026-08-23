@@ -577,6 +577,10 @@ private:
   Texture vsm_pointspot_virtual_page_table = {};
   Texture vsm_hpb = {};
   Texture vsm_pointspot_hpb = {};
+  std::array<glm::ivec2, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT> previous_directional_clipmap_offsets = {};
+  f32 previous_directional_clipmap_width = 0.0f;
+  f32 previous_directional_shadow_distance = 0.0f;
+  bool directional_vsm_cache_valid = false;
   std::array<ShadowSlotState, GPU::MAX_SHADOW_POINT_LIGHTS> shadow_point_slots = {};
   std::array<ShadowSlotState, GPU::MAX_SHADOW_SPOT_LIGHTS> shadow_spot_slots = {};
   vuk::Unique<vuk::Image> vsm_physical_page_table{};
