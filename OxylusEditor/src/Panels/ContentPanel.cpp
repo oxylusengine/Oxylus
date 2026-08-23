@@ -70,7 +70,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Unknown, ICON_MDI_FILE},
   {FileType::Directory, ICON_MDI_FOLDER},
   {FileType::Meta, ICON_MDI_FILE_DOCUMENT},
-  {FileType::Scene, ICON_MDI_IMAGE_FILTER_HDR},
+  {FileType::Scene, ICON_MDI_FILE_TREE},
   {FileType::Prefab, ICON_MDI_FILE},
   {FileType::Shader, ICON_MDI_IMAGE_FILTER_BLACK_WHITE},
   {FileType::Texture, ICON_MDI_FILE_IMAGE},
@@ -202,15 +202,16 @@ auto ContentPanel::directory_tree_view_recursive(
     const bool selected = (*selectionMask & BIT(*node_count)) != 0;
     if (selected) {
       nodeFlags |= ImGuiTreeNodeFlags_Selected;
-      ImGui::PushStyleColor(ImGuiCol_Header, editor_theme.header_selected_color);
-      ImGui::PushStyleColor(ImGuiCol_HeaderHovered, editor_theme.header_selected_color);
-    } else {
-      ImGui::PushStyleColor(ImGuiCol_HeaderHovered, editor_theme.header_hovered_color);
     }
+
+    ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_Header);
+    ImVec4 hovered_color = ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered);
+    ImGui::PushStyleColor(ImGuiCol_Header, active_color);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, selected ? active_color : hovered_color);
 
     const u64 node_id = *node_count;
     const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(node_id), nodeFlags, "");
-    ImGui::PopStyleColor(selected ? 2 : 1);
+    ImGui::PopStyleColor(2);
 
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
       if (!entry_is_file)
@@ -239,12 +240,15 @@ auto ContentPanel::directory_tree_view_recursive(
     }
 
     ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Text, editor_theme.asset_icon_color);
+    if (selected)
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
     ImGui::TextUnformatted(folder_icon);
-    ImGui::PopStyleColor();
     ImGui::SameLine();
     auto entry_name = entry_path.filename().string();
     ImGui::TextUnformatted(entry_name.c_str());
+    if (selected)
+      ImGui::PopStyleColor();
+
     currently_visible_items_tree_view_++;
 
     (*node_count)--;
@@ -470,32 +474,33 @@ void ContentPanel::render_side_view(this ContentPanel& self) {
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
 
-    const auto& editor_theme = App::mod<Editor>().editor_theme;
-
     ImGuiTreeNodeFlags node_flags = tree_node_flags;
     const bool selected = self.current_directory_ == self.assets_directory_ && selection_mask == 0;
     if (selected) {
       node_flags |= ImGuiTreeNodeFlags_Selected;
-      ImGui::PushStyleColor(ImGuiCol_Header, editor_theme.header_selected_color);
-      ImGui::PushStyleColor(ImGuiCol_HeaderHovered, editor_theme.header_selected_color);
-    } else {
-      ImGui::PushStyleColor(ImGuiCol_HeaderHovered, editor_theme.header_hovered_color);
     }
 
+    ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_Header);
+    ImVec4 hovered_color = ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered);
+    ImGui::PushStyleColor(ImGuiCol_Header, active_color);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, selected ? active_color : hovered_color);
+
     const bool opened = ImGui::TreeNodeEx(self.assets_directory_.string().c_str(), node_flags, "");
-    ImGui::PopStyleColor(selected ? 2 : 1);
+    ImGui::PopStyleColor(2);
 
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
       self.update_directory_entries(self.assets_directory_);
       selection_mask = 0;
     }
-    const char* folderIcon = opened ? ICON_MDI_FOLDER_OPEN : ICON_MDI_FOLDER;
+    const char* folder_icon = opened ? ICON_MDI_FOLDER_OPEN : ICON_MDI_FOLDER;
     ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Text, editor_theme.asset_icon_color);
-    ImGui::TextUnformatted(folderIcon);
-    ImGui::PopStyleColor();
+    if (selected)
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    ImGui::TextUnformatted(folder_icon);
     ImGui::SameLine();
     ImGui::TextUnformatted("Assets");
+    if (selected)
+      ImGui::PopStyleColor();
 
     if (opened) {
       u32 node_count = 0;
