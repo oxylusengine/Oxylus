@@ -84,15 +84,18 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
 
           const bool highlight = is_selected;
           if (highlight) {
-            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(header_selected_color));
-            ImGui::PushStyleColor(ImGuiCol_Header, header_selected_color);
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, header_selected_color);
+            ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
+            ImVec4 hovered_color = ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered);
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(active_color));
+            ImGui::PushStyleColor(ImGuiCol_Header, active_color);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, is_selected ? active_color : hovered_color);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
           }
 
           ImGui::TreeNodeEx(uuid.str().c_str(), flags, "%s %s", script_icon, system_name.c_str());
 
           if (highlight)
-            ImGui::PopStyleColor(2);
+            ImGui::PopStyleColor(3);
 
           // Select
           if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
@@ -270,19 +273,21 @@ auto SceneHierarchyViewer::draw_entity_node(
     flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
   }
 
-  const bool highlight = is_selected;
-  if (highlight) {
-    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(header_selected_color));
-    ImGui::PushStyleColor(ImGuiCol_Header, header_selected_color);
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, header_selected_color);
+  if (is_selected) {
+    ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
+    ImVec4 hovered_color = ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered);
+    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(active_color));
+    ImGui::PushStyleColor(ImGuiCol_Header, active_color);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, is_selected ? active_color : hovered_color);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
   }
 
   if (force_expand_tree)
     ImGui::SetNextItemOpen(true);
 
-  const bool prefab_color_applied = is_part_of_prefab && !is_selected;
-  if (prefab_color_applied)
-    ImGui::PushStyleColor(ImGuiCol_Text, header_selected_color);
+  // const bool prefab_color_applied = is_part_of_prefab && !is_selected;
+  // if (prefab_color_applied)
+  //   ImGui::PushStyleColor(ImGuiCol_Text, header_selected_color);
 
   const bool opened = ImGui::TreeNodeEx(
     reinterpret_cast<void*>(entity.raw_id()),
@@ -292,8 +297,8 @@ auto SceneHierarchyViewer::draw_entity_node(
     entity.name().c_str()
   );
 
-  if (highlight)
-    ImGui::PopStyleColor(2);
+  if (is_selected)
+    ImGui::PopStyleColor(3);
 
   // Select
   if (!ImGui::IsItemToggledOpen() && ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
@@ -311,11 +316,8 @@ auto SceneHierarchyViewer::draw_entity_node(
     if (ImGui::MenuItem("Rename", "F2"))
       renaming_entity_ = entity;
     if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
-      auto clone_entity = [](flecs::entity e) -> flecs::entity {
-        std::string clone_name = e.name().c_str();
-        while (e.world().lookup(clone_name.data())) {
-          clone_name = fmt::format("{}_clone", clone_name);
-        }
+      auto clone_entity = [this](flecs::entity e) -> flecs::entity {
+        std::string clone_name = this->scene_->safe_entity_name(fmt::format("{}_clone", e.name().c_str()));
         auto cloned_entity = e.clone(true);
         return cloned_entity.set_name(clone_name.data());
       };
@@ -407,8 +409,8 @@ auto SceneHierarchyViewer::draw_entity_node(
 
   ImGui::PopStyleColor(3);
 
-  if (prefab_color_applied)
-    ImGui::PopStyleColor();
+  // if (prefab_color_applied)
+  //   ImGui::PopStyleColor();
 
   // Open
   const ImRect node_rect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
