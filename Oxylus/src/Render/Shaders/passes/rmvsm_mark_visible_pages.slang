@@ -42,41 +42,50 @@ func cs_main(
     let uv = (f32x2(thread_id.xy) + 0.5) / f32x2(ctx.depth_extent);
     let world_pos = params.camera.unproject_uv(uv, depth);
 
-    let clipmap_index = ctx.get_clipmap_index(params.camera, uv, depth);
-    let clipmap = shared_clipmaps[clipmap_index];
-    let clipmap_info = clipmap.get_clipmap_info(world_pos);
-    let virt_coords = clipmap_info.get_virt_coords(ctx.get_page_table_extent().xy);
-    let wrapped_coords = ctx.page_coords_virtual_to_wrapped(virt_coords, clipmap.page_offset);
-    let page_table_address = i32x3(wrapped_coords, i32(clipmap_index));
-
-    // scalarization loop in listing 3.3
-    var first_thread_visible = all(wrapped_coords >= 0);
-    var done = false;
-    while (!done) {
-        let subgroup_address = WaveReadLaneFirst(page_table_address);
-        if (all(subgroup_address == page_table_address)) {
-            if (WaveIsFirstLane()) {
-                first_thread_visible = true;
-            }
-            done = true;
+    let clipmap_selection = ctx.get_clipmap_selection(params.camera, uv, depth);
+    for (var selection_index = 0u; selection_index < 2u; selection_index += 1u) {
+        let clipmap_index = selection_index == 0u
+            ? clipmap_selection.fine_clipmap_index
+            : clipmap_selection.coarse_clipmap_index;
+        if (selection_index == 1u && clipmap_index == clipmap_selection.fine_clipmap_index) {
+            continue;
         }
-    }
 
-    if (first_thread_visible) {
-        let prev_page_data = __atomic_or(params.page_tables[page_table_address], u32(VSMPageState.Visible), MemoryOrder::Relaxed);
-        let prev_page = VSMPageMetadata(prev_page_data);
+        let clipmap = shared_clipmaps[clipmap_index];
+        let clipmap_info = clipmap.get_clipmap_info(world_pos);
+        let virt_coords = clipmap_info.get_virt_coords(ctx.get_page_table_extent().xy);
+        let wrapped_coords = ctx.page_coords_virtual_to_wrapped(virt_coords, clipmap.page_offset);
+        let page_table_address = i32x3(wrapped_coords, i32(clipmap_index));
 
-        if (!prev_page.is_visible()) {
-            // page became visible this frame
+        // scalarization loop in listing 3.3
+        var first_thread_visible = all(wrapped_coords >= 0);
+        var done = false;
+        while (!done) {
+            let subgroup_address = WaveReadLaneFirst(page_table_address);
+            if (all(subgroup_address == page_table_address)) {
+                if (WaveIsFirstLane()) {
+                    first_thread_visible = true;
+                }
+                done = true;
+            }
+        }
 
-            if (prev_page.is_backed()) {
-                // we already have allocated this page, and it was marked visible
-                // keep track of visible and backed pages so the allocator wont overwrite it
-                let physical_address = prev_page.get_physical_address();
-                params.page_occupancy[physical_address] = 1u;
-            } else {
-                let alloc_request = VSMAllocRequest(page_table_address, -1);
-                push_page_alloc_request(params.allocator[0], alloc_request);
+        if (first_thread_visible) {
+            let prev_page_data = __atomic_or(params.page_tables[page_table_address], u32(VSMPageState.Visible), MemoryOrder::Relaxed);
+            let prev_page = VSMPageMetadata(prev_page_data);
+
+            if (!prev_page.is_visible()) {
+                // page became visible this frame
+
+                if (prev_page.is_backed()) {
+                    // we already have allocated this page, and it was marked visible
+                    // keep track of visible and backed pages so the allocator wont overwrite it
+                    let physical_address = prev_page.get_physical_address();
+                    params.page_occupancy[physical_address] = 1u;
+                } else {
+                    let alloc_request = VSMAllocRequest(page_table_address, -1);
+                    push_page_alloc_request(params.allocator[0], alloc_request);
+                }
             }
         }
     }

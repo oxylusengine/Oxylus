@@ -113,6 +113,20 @@ public struct VSMPageMetadata {
 
 #define VMS_USE_DIAG_PIXEL_FOOTPRINT 1
 
+public struct VSMClipmapSelection {
+    public f32 level_f;
+    public u32 fine_clipmap_index;
+    public u32 coarse_clipmap_index;
+    public f32 blend_weight;
+
+    public __init(f32 level_f, u32 fine_clipmap_index, u32 coarse_clipmap_index, f32 blend_weight) {
+        this.level_f = level_f;
+        this.fine_clipmap_index = fine_clipmap_index;
+        this.coarse_clipmap_index = coarse_clipmap_index;
+        this.blend_weight = blend_weight;
+    }
+};
+
 public struct VSMContext {
     public i32 page_size;
     public i32 page_table_size;
@@ -178,13 +192,31 @@ public struct VSMContext {
         return max(clipmap_level_f, 0.0);
     }
 
-    public func get_clipmap_index(in Camera camera, f32x2 uv, f32 depth) -> u32 {
+    public func get_clipmap_selection(in Camera camera, f32x2 uv, f32 depth) -> VSMClipmapSelection {
         let level_f = this.get_clipmap_level_f(camera, uv, depth);
 #if VMS_USE_DIAG_PIXEL_FOOTPRINT
-        return min(u32(ceil(this.clipmap_selection_bias + level_f)), u32(this.clipmap_count - 1));
+        let biased_level_f = this.clipmap_selection_bias + level_f;
 #else
-        return clamp(u32(ceil(level_f)), 0u, u32(this.clipmap_count - 1));
+        let biased_level_f = level_f;
 #endif
+        let max_clipmap_index = u32(this.clipmap_count - 1);
+        let clamped_level_f = clamp(biased_level_f, 0.0, f32(max_clipmap_index));
+        let fine_clipmap_index = u32(floor(clamped_level_f));
+        let blend_weight = fract(clamped_level_f);
+        let coarse_clipmap_index = blend_weight > 0.0
+            ? min(fine_clipmap_index + 1u, max_clipmap_index)
+            : fine_clipmap_index;
+
+        return VSMClipmapSelection(
+            clamped_level_f,
+            fine_clipmap_index,
+            coarse_clipmap_index,
+            blend_weight
+        );
+    }
+
+    public func get_clipmap_index(in Camera camera, f32x2 uv, f32 depth) -> u32 {
+        return this.get_clipmap_selection(camera, uv, depth).coarse_clipmap_index;
     }
 };
 

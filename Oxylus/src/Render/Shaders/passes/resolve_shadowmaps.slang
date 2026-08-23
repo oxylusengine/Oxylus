@@ -88,7 +88,7 @@ func pcss_shadow(
     let L = vsm_ctx.directional_light_dir;
     let NoL = max(dot(flat_normal, L), 0.0);
 
-    let clipmap_texel_size = pow(2.0, f32(base_clipmap_index + 1)) * vsm_ctx.get_first_clipmap_texel_length();
+    let clipmap_texel_size = exp2(f32(base_clipmap_index)) * vsm_ctx.get_first_clipmap_texel_length();
     let sqrt2 = 1.41421356;
     let quantize = 2.0 / (1 << 23);
     let b = sqrt2 * clipmap_texel_size * 0.5;
@@ -199,8 +199,25 @@ func fs_main(
     let world_position_h = mul(camera.inv_projection_view, f32x4(NDC, 1.0));
     let world_position = world_position_h.xyz / world_position_h.w;
 
-    let clipmap_index = i32(vsm_ctx.get_clipmap_index(camera, input.tex_coord, depth));
-
     let noise = hash2(f32x2(input.position.xy));
-    return pcss_shadow(vsm_ctx, clipmap_index, world_position, flat_N, noise);
+    let clipmap_selection = vsm_ctx.get_clipmap_selection(camera, input.tex_coord, depth);
+    let fine_visibility = pcss_shadow(
+        vsm_ctx,
+        i32(clipmap_selection.fine_clipmap_index),
+        world_position,
+        flat_N,
+        noise
+    );
+    if (clipmap_selection.fine_clipmap_index == clipmap_selection.coarse_clipmap_index) {
+        return fine_visibility;
+    }
+
+    let coarse_visibility = pcss_shadow(
+        vsm_ctx,
+        i32(clipmap_selection.coarse_clipmap_index),
+        world_position,
+        flat_N,
+        noise
+    );
+    return lerp(fine_visibility, coarse_visibility, clipmap_selection.blend_weight);
 }
