@@ -1,11 +1,35 @@
 import rmvsm;
 import common;
+import cull;
 
 [[vk::constant_id(50)]] const i32 VSM_POINT_SPOT_VIRTUAL_SIZE = 4096;
 [[vk::constant_id(51)]] const i32 VSM_POINT_SPOT_PAGE_TABLE_SIZE = 32;
 [[vk::constant_id(52)]] const i32 VSM_POINT_SPOT_MIP_COUNT = 6;
 [[vk::constant_id(53)]] const i32 VSM_PAGE_SIZE = 128;
 [[vk::constant_id(54)]] const i32 VSM_PHYSICAL_PAGE_TABLE_SIZE = 8192;
+
+func test_pointspot_pages(in ScreenAabb screen_aabb, Texture2DArray<u8> hpb, u32 layer, i32 mip) -> bool {
+    let mip_table_size = VSM_POINT_SPOT_PAGE_TABLE_SIZE >> mip;
+    let min_page = clamp(i32x2(screen_aabb.min.xy * f32(mip_table_size)), 0, mip_table_size - 1);
+    let max_page = clamp(i32x2(screen_aabb.max.xy * f32(mip_table_size)), 0, mip_table_size - 1);
+
+    // Climb until the projected bounds span at most two texels per axis, keeping
+    // the occupancy walk bounded at 3x3 even for very large meshlets.
+    let page_span = max(max_page.x - min_page.x, max_page.y - min_page.y) + 1;
+    let level = max(i32(ceil(log2(f32(page_span)))) - 1, 0);
+
+    let level_min = min_page >> level;
+    let level_max = max_page >> level;
+    for (var y = level_min.y; y <= level_max.y; y++) {
+        for (var x = level_min.x; x <= level_max.x; x++) {
+            if (hpb.Load(i32x4(x, y, i32(layer), level)) != 0) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
 
 func vsm_pointspot_mip(f32x2 uv_a, f32x2 uv_b, u32 mip_bias_min) -> i32 {
     let texel_dist = distance(uv_a, uv_b) * f32(VSM_POINT_SPOT_VIRTUAL_SIZE);

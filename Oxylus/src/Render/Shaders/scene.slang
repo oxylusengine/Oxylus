@@ -363,7 +363,7 @@ public struct Meshlet {
     public u32 vertex_count = 0;
     public u32 triangle_count = 0;
 
-    static func get_micro_index(Ptr<u32> buf, u32 byte_offset) -> u32 {
+    public static func get_micro_index(Ptr<u32> buf, u32 byte_offset) -> u32 {
         let pack_index = byte_offset >> 2;
         let index_pack = buf[pack_index];
         let in_pack_offset = byte_offset & 3;

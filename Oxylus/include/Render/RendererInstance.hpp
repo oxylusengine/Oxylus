@@ -148,6 +148,7 @@ struct RendererInstanceUpdateInfo {
 struct PreparedFrame {
   u32 mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
+  bool use_mesh_shaders = false;
   vuk::Value<vuk::Buffer> transforms_world_buffer = {};
   vuk::Value<vuk::Buffer> transforms_previous_buffer = {};
   vuk::Value<vuk::Buffer> meshes_buffer = {};
@@ -210,8 +211,9 @@ struct CullGeometryContext {
 
   GPU::CullFlag cull_flags = GPU::CullFlag::TestAll;
   GPU::CullCamera cull_camera = {};
-  u32 vsm_layer_index = 0;
-  glm::ivec2 vsm_page_offset = {};
+  vuk::Value<vuk::Buffer> vsm_clipmaps_buffer = {};
+  vuk::Value<vuk::Buffer> vsm_clipmap_dirty_flags_buffer = {};
+  u32 vsm_clipmap_count = 0;
 
   // HiZ pyramid attachment consumed by `cull_meshlets_hiz` (only when `use_hiz`).
   vuk::Value<vuk::ImageAttachment> hiz_attachment = {};
@@ -236,6 +238,7 @@ struct CullGeometryPointSpotContext {
   vuk::Value<vuk::ImageAttachment> hpb_attachment = {};
 
   vuk::Value<vuk::Buffer> vsm_meshlet_instances_buffer = {};
+  vuk::Value<vuk::Buffer> vsm_meshlet_instance_count_buffer = {};
   vuk::Value<vuk::Buffer> visible_indices_buffer = {};
   vuk::Value<vuk::Buffer> reordered_indices_buffer = {};
 
@@ -244,6 +247,9 @@ struct CullGeometryPointSpotContext {
 
 struct MainGeometryContext {
   bool draw_overdraw = false;
+
+  GPU::CullFlag cull_flags = GPU::CullFlag::TestAll;
+  GPU::CullCamera cull_camera = {};
 
   vuk::PersistentDescriptorSet* bindless_set = nullptr;
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
@@ -256,6 +262,7 @@ struct MainGeometryContext {
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
 
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
+  vuk::Value<vuk::Buffer> visibility_buffer = {};
 };
 
 struct LightGridContext {
@@ -500,6 +507,7 @@ public:
   auto decode_terrain(this RendererInstance& self, TerrainDecodeContext& context) -> void;
   auto build_terrain_buffer(this RendererInstance& self, const Terrain& terrain) -> vuk::Value<vuk::Buffer>;
   auto draw_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
+  auto draw_for_visbuffer_ms(this RendererInstance&, MainGeometryContext& context) -> void;
   auto decode_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
   auto draw_virtual_shadowmap(this RendererInstance&, RMVSMContext& context) -> void;
   auto resolve_shadowmap(this RendererInstance&, ShadowResolveContext& context) -> void;

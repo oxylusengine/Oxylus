@@ -1074,7 +1074,14 @@ auto RendererInstance::render(
         self.cull_geometry(cull_geometry_context);
         main_geometry_context.hiz_attachment = std::move(cull_geometry_context.hiz_attachment);
         main_geometry_context.draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
+        main_geometry_context.cull_flags = cull_geometry_context.cull_flags;
+        main_geometry_context.cull_camera = cull_geometry_context.cull_camera;
+        main_geometry_context.visibility_buffer = std::move(cull_geometry_context.visibility_buffer);
         self.draw_for_visbuffer(main_geometry_context);
+        cull_geometry_context.visibility_buffer = std::move(main_geometry_context.visibility_buffer);
+        if (self.prepared_frame.use_mesh_shaders) {
+          cull_geometry_context.cull_meshlets_cmd_buffer = std::move(main_geometry_context.draw_geometry_cmd_buffer);
+        }
       }
 
       if (terrain != nullptr) {
@@ -2036,6 +2043,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   self.prepared_frame.mesh_instance_count = info.mesh_instance_count;
   self.prepared_frame.max_meshlet_instance_count = info.max_meshlet_instance_count;
+  self.prepared_frame.use_mesh_shaders = render_context.use_mesh_shaders();
 
   if (!info.dirty_mesh_instance_indices.empty()) {
     self.prepared_frame.dirty_mesh_instance_count = static_cast<u32>(info.dirty_mesh_instance_indices.size());
@@ -2055,14 +2063,16 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       vuk::MemoryUsage::eGPUonly,
       self.prepared_frame.max_meshlet_instance_count * sizeof(GPU::MeshletInstance)
     );
-    self.prepared_frame.visible_meshlet_instances_indices_buffer = render_context.alloc_transient_buffer(
-      vuk::MemoryUsage::eGPUonly,
-      self.prepared_frame.max_meshlet_instance_count * sizeof(u32)
-    );
-    self.prepared_frame.reordered_indices_buffer = render_context.alloc_transient_buffer(
-      vuk::MemoryUsage::eGPUonly,
-      self.prepared_frame.max_meshlet_instance_count * Model::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32)
-    );
+    if (!self.prepared_frame.use_mesh_shaders) {
+      self.prepared_frame.visible_meshlet_instances_indices_buffer = render_context.alloc_transient_buffer(
+        vuk::MemoryUsage::eGPUonly,
+        self.prepared_frame.max_meshlet_instance_count * sizeof(u32)
+      );
+      self.prepared_frame.reordered_indices_buffer = render_context.alloc_transient_buffer(
+        vuk::MemoryUsage::eGPUonly,
+        self.prepared_frame.max_meshlet_instance_count * Model::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32)
+      );
+    }
   }
 
   auto debug_renderer_enabled = (bool)cvar.cvar_enable_debug_renderer.get();

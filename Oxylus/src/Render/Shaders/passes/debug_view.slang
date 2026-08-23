@@ -16,7 +16,6 @@ struct ShaderParameters {
     Image2D<f32x3> metallic_roughness_occlusion;
     Image2D<f32> ambient_occlusion;
 
-    StructuredBuffer<u32> visible_meshlet_instances_indices;
     StructuredBuffer<MeshletInstance> meshlet_instances;
     StructuredBuffer<MeshInstance> mesh_instances;
     StructuredBuffer<Mesh> meshes;

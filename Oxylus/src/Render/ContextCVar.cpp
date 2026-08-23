@@ -24,6 +24,8 @@ auto ContextCVar::init(this ContextCVar& self) -> void {
   self.cvar_vsync.init(self.system, "rr.vsync", "toggle vsync", 1);
   self.cvar_frame_limit
     .init(self.system, "rr.frame_limit", "Limits the framerate with a sleep. 0: Disable, > 0: Enable", 0);
+  self.cvar_mesh_shaders
+    .init(self.system, "rr.mesh_shaders", "Use the mesh shader geometry pipeline when the device supports it", 1);
 }
 
 auto ContextCVar::save(this ContextCVar& self) -> void {
@@ -35,6 +37,12 @@ auto ContextCVar::save(this ContextCVar& self) -> void {
       toml::table{
         {"vsync", (bool)self.cvar_vsync.get()},
         {"frame_limit", self.cvar_frame_limit.get()},
+      },
+    },
+    {
+      "render",
+      toml::table{
+        {"mesh_shaders", (bool)self.cvar_mesh_shaders.get()},
       },
     },
   };
@@ -59,6 +67,11 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
       self.cvar_vsync.set(v->get());
     if (auto v = display_config["frame_limit"].as_integer())
       self.cvar_frame_limit.set(static_cast<i32>(v->get()));
+  }
+
+  if (const auto render_config = toml["render"]) {
+    if (auto v = render_config["mesh_shaders"].as_boolean())
+      self.cvar_mesh_shaders.set(v->get());
   }
 
   return true;

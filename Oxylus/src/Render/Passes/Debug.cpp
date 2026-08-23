@@ -103,7 +103,6 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
         VUK_IA(vuk::eFragmentSampled) emissive,
         VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
         VUK_IA(vuk::eFragmentSampled) gtao,
-        VUK_BA(vuk::eFragmentRead) visible_meshlet_instances_indices,
         VUK_BA(vuk::eFragmentRead) meshlet_instances,
         VUK_BA(vuk::eFragmentRead) mesh_instances,
         VUK_BA(vuk::eFragmentRead) meshes
@@ -124,10 +123,9 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
           .bind_image(0, 6, emissive)
           .bind_image(0, 7, metallic_roughness_occlusion)
           .bind_image(0, 8, gtao)
-          .bind_buffer(0, 9, visible_meshlet_instances_indices)
-          .bind_buffer(0, 10, meshlet_instances)
-          .bind_buffer(0, 11, mesh_instances)
-          .bind_buffer(0, 12, meshes)
+          .bind_buffer(0, 9, meshlet_instances)
+          .bind_buffer(0, 10, mesh_instances)
+          .bind_buffer(0, 11, meshes)
           .push_constants(
             vuk::ShaderStageFlagBits::eFragment,
             0,
@@ -149,7 +147,6 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
       std::move(context.emissive_attachment),
       std::move(context.metallic_roughness_occlusion_attachment),
       std::move(context.ambient_occlusion_attachment),
-      std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
       std::move(self.prepared_frame.meshlet_instances_buffer),
       std::move(self.prepared_frame.mesh_instances_buffer),
       std::move(self.prepared_frame.meshes_buffer)

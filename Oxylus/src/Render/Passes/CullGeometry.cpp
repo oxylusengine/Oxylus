@@ -116,6 +116,11 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
       );
   }
 
+  if (self.prepared_frame.use_mesh_shaders) {
+    context.draw_geometry_cmd_buffer = std::move(context.cull_meshlets_cmd_buffer);
+    return;
+  }
+
   // --- Stage 2: cull_meshlets (two versions due to different descriptor sets) ---
   auto cull_triangles_cmd_buffer = self.renderer.render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
     {.x = 0, .y = 1, .z = 1}
@@ -194,7 +199,7 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
   } else if (context.use_hpb) {
     auto cull_meshlets_pass = vuk::make_pass(
       "rmvsm cull meshlets",
-      [cull_camera, clipmap_index = context.vsm_layer_index, page_offset = context.vsm_page_offset](
+      [cull_camera, clipmap_count = context.vsm_clipmap_count](
         vuk::CommandBuffer& cmd_list,
         VUK_BA(vuk::eIndirectRead) dispatch_cmd,
         VUK_BA(vuk::eComputeRead) meshes,
@@ -204,7 +209,9 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
         VUK_BA(vuk::eComputeRW) visibility,
         VUK_BA(vuk::eComputeRW) visible_meshlet_instances_indices,
         VUK_BA(vuk::eComputeRW) cull_triangles_cmd,
-        VUK_IA(vuk::eComputeSampled) hpb
+        VUK_IA(vuk::eComputeSampled) hpb,
+        VUK_BA(vuk::eComputeRead) clipmaps,
+        VUK_BA(vuk::eComputeRead) clipmap_dirty_flags
       ) {
         cmd_list //
           .bind_compute_pipeline("cull_meshlets_hpb")
@@ -217,7 +224,9 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
           .bind_buffer(0, 6, cull_triangles_cmd)
           .bind_image(0, 7, hpb)
           .bind_sampler(0, 8, vuk::NearestSamplerClamped)
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(cull_camera, clipmap_index, page_offset))
+          .bind_buffer(0, 9, clipmaps)
+          .bind_buffer(0, 10, clipmap_dirty_flags)
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(cull_camera, clipmap_count))
           .dispatch_indirect(dispatch_cmd);
 
         return std::make_tuple(
@@ -229,7 +238,9 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
           visibility,
           visible_meshlet_instances_indices,
           cull_triangles_cmd,
-          hpb
+          hpb,
+          clipmaps,
+          clipmap_dirty_flags
         );
       }
     );
@@ -243,7 +254,9 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
       context.visibility_buffer,
       self.prepared_frame.visible_meshlet_instances_indices_buffer,
       cull_triangles_cmd_buffer,
-      context.hpb_attachment
+      context.hpb_attachment,
+      context.vsm_clipmaps_buffer,
+      context.vsm_clipmap_dirty_flags_buffer
     ) =
       cull_meshlets_pass(
         std::move(context.cull_meshlets_cmd_buffer),
@@ -254,7 +267,9 @@ auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryCo
         std::move(context.visibility_buffer),
         std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
         std::move(cull_triangles_cmd_buffer),
-        std::move(context.hpb_attachment)
+        std::move(context.hpb_attachment),
+        std::move(context.vsm_clipmaps_buffer),
+        std::move(context.vsm_clipmap_dirty_flags_buffer)
       );
   } else {
     static constexpr auto cull_meshlets_flags = GPU::CullFlag::TestFrustum;
@@ -400,24 +415,22 @@ auto RendererInstance::cull_geometry_pointspot(this RendererInstance& self, Cull
       vuk::MemoryUsage::eGPUonly,
       RMVSMContext::POINT_SPOT_MAX_MESHLET_INSTANCES * sizeof(GPU::VSMMeshletInstance)
     );
-    context.visible_indices_buffer = render_context->alloc_transient_buffer(
-      vuk::MemoryUsage::eGPUonly,
-      RMVSMContext::POINT_SPOT_MAX_MESHLET_INSTANCES * sizeof(u32)
-    );
-    context.reordered_indices_buffer = render_context->alloc_transient_buffer(
-      vuk::MemoryUsage::eGPUonly,
-      RMVSMContext::POINT_SPOT_MAX_INDEX_COUNT * sizeof(u32)
-    );
+    if (!self.prepared_frame.use_mesh_shaders) {
+      context.visible_indices_buffer = render_context->alloc_transient_buffer(
+        vuk::MemoryUsage::eGPUonly,
+        RMVSMContext::POINT_SPOT_MAX_MESHLET_INSTANCES * sizeof(u32)
+      );
+      context.reordered_indices_buffer = render_context->alloc_transient_buffer(
+        vuk::MemoryUsage::eGPUonly,
+        RMVSMContext::POINT_SPOT_MAX_INDEX_COUNT * sizeof(u32)
+      );
+    }
   }
 
   auto vsm_meshlet_instance_count_buffer = render_context->scratch_buffer<u32>(0u);
   auto cull_meshlets_cmd_buffer = render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
     {.x = 0, .y = 1, .z = 1}
   );
-  auto cull_triangles_cmd_buffer = render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
-    {.x = 0, .y = 1, .z = 1}
-  );
-  context.draw_cmd_buffer = render_context->scratch_buffer<vuk::DrawIndexedIndirectCommand>({.instanceCount = 1});
 
   // `cull_meshes` used to run over every one of POINT_SPOT_LAYER_COUNT layers,
   // re-reading each mesh, transform and view once per layer just to fail a
@@ -573,6 +586,17 @@ auto RendererInstance::cull_geometry_pointspot(this RendererInstance& self, Cull
     std::move(context.page_table_attachment),
     std::move(context.hpb_attachment)
   );
+
+  if (self.prepared_frame.use_mesh_shaders) {
+    context.vsm_meshlet_instance_count_buffer = std::move(vsm_meshlet_instance_count_buffer);
+    context.draw_cmd_buffer = std::move(cull_meshlets_cmd_buffer);
+    return;
+  }
+
+  auto cull_triangles_cmd_buffer = render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
+    {.x = 0, .y = 1, .z = 1}
+  );
+  context.draw_cmd_buffer = render_context->scratch_buffer<vuk::DrawIndexedIndirectCommand>({.instanceCount = 1});
 
   auto cull_meshlets_pass = vuk::make_pass(
     "rmvsm pointspot cull meshlets",

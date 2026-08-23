@@ -26,12 +26,10 @@ Be aware that Oxylus is still in it's early stages of development. Some importan
 ## Feature Highlights 
 - Modular Vulkan renderer built using [vuk](https://github.com/martty/vuk) with modern rendering features:
 	- Meshlet Rendering
+		- Using both `VK_EXT_mesh_shader` and traditional compute based techniques for coverage.
 		- Occlusion, frustum and triangle culling
 		- Automatic LOD generation and selection
-	- GI with [Brixelizer](https://gpuopen.com/fidelityfx-brixelizer/)
 	- [GT-VBAO](https://cdrinmatane.github.io/posts/ssaovb-code/)
-	- [SSSR](https://gpuopen.com/fidelityfx-sssr/)
-	- [AMD FSR 3](https://gpuopen.com/fidelityfx-super-resolution-3/)
 	- Virtual Directional Shadows (by [Matěj Sakmary](https://github.com/MatejSakmary))
 	- Physically-based sky and atmosphere
 	- Physically-based Bloom, Depth Of Field, HDR, Tonemapping, Auto Exposure, Chromatic Aberration, Film Grain, Vignette, Sharpen and various other post-processing effects.

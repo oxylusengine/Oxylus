@@ -150,6 +150,10 @@ auto parse_resource_config(const std::filesystem::path& config_path) -> option<R
         prog.bindless = node->get();
       }
 
+      if (auto node = pt["requires_mesh_shaders"].as_boolean()) {
+        prog.requires_mesh_shaders = node->get();
+      }
+
       session.programs.push_back(std::move(prog));
     }
 

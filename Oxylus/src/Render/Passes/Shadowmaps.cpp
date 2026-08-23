@@ -207,6 +207,8 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vuk::MemoryUsage::eGPUonly,
     RMVSMContext::PHYSICAL_PAGE_COUNT * sizeof(glm::uvec2)
   );
+  auto clipmap_dirty_flags = std::array<u32, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT>{};
+  auto clipmap_dirty_flags_buffer = render_context->scratch_buffer_span<u32>(clipmap_dirty_flags);
   auto free_page_list_buffer = render_context->alloc_transient_buffer(
     vuk::MemoryUsage::eGPUonly,
     max_physical_page_count * sizeof(u32)
@@ -720,26 +722,34 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eComputeSampled) page_table,
       VUK_BA(vuk::eComputeRW) allocator,
-      VUK_BA(vuk::eComputeRW) clear_cmd
+      VUK_BA(vuk::eComputeRW) clear_cmd,
+      VUK_BA(vuk::eComputeRW) dirty_clipmaps
     ) {
       cmd_list //
         .bind_compute_pipeline("rmvsm_mark_dirty_pages")
         .bind_image(0, 0, page_table)
         .bind_buffer(0, 1, clear_cmd)
         .bind_buffer(0, 2, allocator)
+        .bind_buffer(0, 3, dirty_clipmaps)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
         .dispatch_invocations_per_pixel(page_table, 1.0f, 1.0f, static_cast<f32>(page_table->layer_count));
 
-      return std::make_tuple(page_table, allocator, clear_cmd);
+      return std::make_tuple(page_table, allocator, clear_cmd, dirty_clipmaps);
     }
   );
 
   if (has_directional) {
-    std::tie(context.virtual_page_table_attachment, page_allocator_buffer, clear_dirty_pages_cmd_buffer) =
+    std::tie(
+      context.virtual_page_table_attachment,
+      page_allocator_buffer,
+      clear_dirty_pages_cmd_buffer,
+      clipmap_dirty_flags_buffer
+    ) =
       mark_dirty_pages_pass(
         std::move(context.virtual_page_table_attachment),
         std::move(page_allocator_buffer),
-        std::move(clear_dirty_pages_cmd_buffer)
+        std::move(clear_dirty_pages_cmd_buffer),
+        std::move(clipmap_dirty_flags_buffer)
       );
   }
 
@@ -808,35 +818,23 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     std::move(context.physical_page_table_attachment)
   );
 
-  auto clipmap_camera = GPU::CullCamera{
-    .position = -self.directional_light.direction,
-    .acceptable_lod_error = self.camera_data.acceptable_lod_error,
-    .resolution = self.camera_data.resolution,
-    .near_clip = self.camera_data.near_clip,
-    .mesh_instance_count = self.prepared_frame.mesh_instance_count,
-  };
+  if (has_directional) {
+    auto clipmap_camera = GPU::CullCamera{
+      .position = -self.directional_light.direction,
+      .acceptable_lod_error = self.camera_data.acceptable_lod_error,
+      .resolution = self.camera_data.resolution,
+      .near_clip = self.camera_data.near_clip,
+      .mesh_instance_count = self.prepared_frame.mesh_instance_count,
+    };
 
-  // CullGeometryContext is hoisted outside the clipmap loop so the visibility /
-  // dispatch-command buffers allocated by the first iteration's `cull_meshes`
-  // pre-pass persist across subsequent iterations.
-  //
-  // We iterate from the largest clipmap (highest index) down to the smallest.
-  // Clipmap 0 covers the smallest area around the camera; if we ran `cull_meshes`
-  // against it, any mesh outside that tiny frustum would be marked invisible and
-  // stay invisible for every subsequent clipmap. The largest clipmap's frustum
-  // contains all the others, so culling against it yields a superset of every
-  // clipmap's visible meshes. Per-clipmap `cull_meshlets` then refines against
-  // each clipmap's own (tighter) frustum.
-  auto cull_geometry_context = CullGeometryContext{
-    .use_hiz = false,
-    .use_hpb = true,
-    .cull_flags = GPU::CullFlag::TestFrustum,
-    .hpb_attachment = std::move(hpb_attachment),
-  };
+    auto cull_geometry_context = CullGeometryContext{
+      .use_hiz = false,
+      .use_hpb = true,
+      .cull_flags = GPU::CullFlag::TestFrustum,
+      .hpb_attachment = std::move(hpb_attachment),
+    };
 
-  for (auto reverse_index = 0_u32; has_directional && reverse_index < RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT;
-       reverse_index++) {
-    const auto clipmap_index = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT - 1 - reverse_index;
+    constexpr auto clipmap_index = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT - 1;
     const auto& clipmap = directional_clipmaps[clipmap_index];
     clipmap_camera.projection_view = clipmap.projection_view_mat;
     clipmap_camera.near_clip = clipmap.z_near;
@@ -844,93 +842,314 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vsm_ctx.curr_clipmap_index = clipmap_index;
 
     cull_geometry_context.cull_camera = clipmap_camera;
-    cull_geometry_context.init_cull_meshes = (reverse_index == 0);
-    cull_geometry_context.vsm_layer_index = clipmap_index;
-    cull_geometry_context.vsm_page_offset = clipmap.page_offset;
+    cull_geometry_context.init_cull_meshes = true;
+    cull_geometry_context.vsm_clipmaps_buffer = std::move(context.directional_clipmaps_buffer);
+    cull_geometry_context.vsm_clipmap_dirty_flags_buffer = std::move(clipmap_dirty_flags_buffer);
+    cull_geometry_context.vsm_clipmap_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT;
     self.cull_geometry(cull_geometry_context);
+    context.directional_clipmaps_buffer = std::move(cull_geometry_context.vsm_clipmaps_buffer);
+    clipmap_dirty_flags_buffer = std::move(cull_geometry_context.vsm_clipmap_dirty_flags_buffer);
     auto draw_geometry_cmd_buffer = std::move(cull_geometry_context.draw_geometry_cmd_buffer);
 
-    auto draw_physical_pages_pass = vuk::make_pass(
-      stack.format("vsm draw clipmap {}", clipmap_index),
-      [&descriptor_set = *context.bindless_set,
-       vsm_ctx,
-       vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
-        vuk::CommandBuffer& cmd_list,
-        VUK_BA(vuk::eIndirectRead) triangle_indirect,
-        VUK_BA(vuk::eIndexRead) index_buffer,
-        VUK_BA(vuk::eVertexRead) meshes,
-        VUK_BA(vuk::eVertexRead) mesh_instances,
-        VUK_BA(vuk::eVertexRead) meshlet_instances,
-        VUK_BA(vuk::eVertexRead) transforms,
-        VUK_BA(vuk::eFragmentRead) materials,
-        VUK_BA(vuk::eVertexRead | vuk::eFragmentRead) clipmaps,
-        VUK_IA(vuk::eFragmentSampled) page_tables,
-        VUK_IA(vuk::eFragmentRW) physical_pages
-      ) {
-        auto viewport_rect = vuk::Rect2D{
-          .offset = {.x = 0, .y = 0},
-          .extent =
-            {.width = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION, .height = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION},
-          ._relative = {},
-        };
-        cmd_list //
-          .set_attachmentless_framebuffer(viewport_rect.extent, vuk::SampleCountFlagBits::e1)
-          .bind_graphics_pipeline("rmvsm_draw_physical_pages")
-          .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
-          .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
-          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-          .set_viewport(0, viewport_rect)
-          .set_scissor(0, vuk::Rect2D::framebuffer())
-          .bind_persistent(1, descriptor_set)
-          .bind_buffer(0, 0, meshes)
-          .bind_buffer(0, 1, mesh_instances)
-          .bind_buffer(0, 2, meshlet_instances)
-          .bind_buffer(0, 3, transforms)
-          .bind_buffer(0, 4, materials)
-          .bind_buffer(0, 5, clipmaps)
-          .bind_image(0, 6, page_tables)
-          .bind_image(0, 7, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
-          .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
-          .push_constants(vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment, 0, vsm_ctx)
-          .draw_indexed_indirect(1, triangle_indirect);
+    if (self.prepared_frame.use_mesh_shaders) {
+      auto draw_commands = std::array<vuk::DispatchIndirectCommand, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT>{};
+      auto draw_commands_buffer = render_context->scratch_buffer_span<vuk::DispatchIndirectCommand>(draw_commands);
+      auto draw_clipmap_indices = std::array<u32, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT>{};
+      auto draw_clipmaps_buffer = render_context->scratch_buffer_span<u32>(draw_clipmap_indices);
+      auto draw_count_buffer = render_context->scratch_buffer<u32>(0u);
 
-        return std::make_tuple(
-          index_buffer, //
-          meshes,
-          mesh_instances,
-          meshlet_instances,
-          transforms,
-          materials,
-          clipmaps,
-          page_tables,
-          physical_pages
-        );
-      }
-    );
+      auto build_draw_commands_pass = vuk::make_pass(
+        "vsm build mesh draw commands",
+        [](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eComputeRead) source_command,
+          VUK_BA(vuk::eComputeRead) dirty_clipmaps,
+          VUK_BA(vuk::eComputeRW) commands,
+          VUK_BA(vuk::eComputeRW) draw_count,
+          VUK_BA(vuk::eComputeRW) clipmap_indices
+        ) {
+          cmd_list //
+            .bind_compute_pipeline("rmvsm_build_draw_commands")
+            .bind_buffer(0, 0, source_command)
+            .bind_buffer(0, 1, dirty_clipmaps)
+            .bind_buffer(0, 2, commands)
+            .bind_buffer(0, 3, draw_count)
+            .bind_buffer(0, 4, clipmap_indices)
+            .push_constants(
+              vuk::ShaderStageFlagBits::eCompute,
+              0,
+              glm::uvec2(
+                RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
+                sizeof(vuk::DispatchIndirectCommand) / sizeof(u32)
+              )
+            )
+            .dispatch(1);
 
-    std::tie(
-      self.prepared_frame.reordered_indices_buffer,
-      self.prepared_frame.meshes_buffer,
-      self.prepared_frame.mesh_instances_buffer,
-      self.prepared_frame.meshlet_instances_buffer,
-      self.prepared_frame.transforms_world_buffer,
-      self.prepared_frame.materials_buffer,
-      context.directional_clipmaps_buffer,
-      context.virtual_page_table_attachment,
-      context.physical_page_table_attachment
-    ) =
-      draw_physical_pages_pass(
-        std::move(draw_geometry_cmd_buffer),
-        std::move(self.prepared_frame.reordered_indices_buffer),
-        std::move(self.prepared_frame.meshes_buffer),
-        std::move(self.prepared_frame.mesh_instances_buffer),
-        std::move(self.prepared_frame.meshlet_instances_buffer),
-        std::move(self.prepared_frame.transforms_world_buffer),
-        std::move(self.prepared_frame.materials_buffer),
-        std::move(context.directional_clipmaps_buffer),
-        std::move(context.virtual_page_table_attachment),
-        std::move(context.physical_page_table_attachment)
+          return std::make_tuple(source_command, dirty_clipmaps, commands, draw_count, clipmap_indices);
+        }
       );
+
+      std::tie(
+        draw_geometry_cmd_buffer,
+        clipmap_dirty_flags_buffer,
+        draw_commands_buffer,
+        draw_count_buffer,
+        draw_clipmaps_buffer
+      ) =
+        build_draw_commands_pass(
+          std::move(draw_geometry_cmd_buffer),
+          std::move(clipmap_dirty_flags_buffer),
+          std::move(draw_commands_buffer),
+          std::move(draw_count_buffer),
+          std::move(draw_clipmaps_buffer)
+        );
+
+      auto draw_physical_pages_ms_pass = vuk::make_pass(
+        "vsm draw dirty clipmaps ms",
+        [&descriptor_set = *context.bindless_set,
+         vsm_ctx,
+         vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eIndirectRead) mesh_tasks_indirect,
+          VUK_BA(vuk::eIndirectRead) mesh_tasks_count,
+          VUK_BA(vuk::eMeshRead) draw_clipmaps,
+          VUK_BA(vuk::eMeshRead) meshes,
+          VUK_BA(vuk::eMeshRead) mesh_instances,
+          VUK_BA(vuk::eMeshRead) meshlet_instances,
+          VUK_BA(vuk::eMeshRead) transforms,
+          VUK_BA(vuk::eMeshRead) visibility,
+          VUK_BA(vuk::eFragmentRead) materials,
+          VUK_BA(vuk::eMeshRead | vuk::eFragmentRead) clipmaps,
+          VUK_IA(vuk::eMeshSampled) hpb,
+          VUK_IA(vuk::eFragmentSampled) page_tables,
+          VUK_IA(vuk::eFragmentRW) physical_pages
+        ) {
+          auto viewport_rect = vuk::Rect2D{
+            .offset = {.x = 0, .y = 0},
+            .extent =
+              {.width = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION,
+               .height = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION},
+            ._relative = {},
+          };
+          cmd_list //
+            .set_attachmentless_framebuffer(viewport_rect.extent, vuk::SampleCountFlagBits::e1)
+            .bind_graphics_pipeline("rmvsm_draw_physical_pages_ms")
+            .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
+            .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
+            .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+            .set_viewport(0, viewport_rect)
+            .set_scissor(0, vuk::Rect2D::framebuffer())
+            .bind_persistent(1, descriptor_set)
+            .bind_buffer(0, 0, meshes)
+            .bind_buffer(0, 1, mesh_instances)
+            .bind_buffer(0, 2, meshlet_instances)
+            .bind_buffer(0, 3, transforms)
+            .bind_buffer(0, 4, materials)
+            .bind_buffer(0, 5, clipmaps)
+            .bind_image(0, 6, page_tables)
+            .bind_image(0, 7, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
+            .bind_buffer(0, 8, visibility)
+            .bind_image(0, 9, hpb)
+            .bind_sampler(0, 10, vuk::NearestSamplerClamped)
+            .bind_buffer(0, 11, draw_clipmaps)
+            .push_constants(vuk::ShaderStageFlagBits::eTaskEXT | vuk::ShaderStageFlagBits::eFragment, 0, vsm_ctx)
+            .draw_mesh_tasks_indirect_count(
+              RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
+              mesh_tasks_indirect,
+              mesh_tasks_count
+            );
+
+          return std::make_tuple(
+            mesh_tasks_indirect, //
+            mesh_tasks_count,
+            draw_clipmaps,
+            meshes,
+            mesh_instances,
+            meshlet_instances,
+            transforms,
+            visibility,
+            materials,
+            clipmaps,
+            hpb,
+            page_tables,
+            physical_pages
+          );
+        }
+      );
+
+      std::tie(
+        draw_commands_buffer,
+        draw_count_buffer,
+        draw_clipmaps_buffer,
+        self.prepared_frame.meshes_buffer,
+        self.prepared_frame.mesh_instances_buffer,
+        self.prepared_frame.meshlet_instances_buffer,
+        self.prepared_frame.transforms_world_buffer,
+        cull_geometry_context.visibility_buffer,
+        self.prepared_frame.materials_buffer,
+        context.directional_clipmaps_buffer,
+        cull_geometry_context.hpb_attachment,
+        context.virtual_page_table_attachment,
+        context.physical_page_table_attachment
+      ) =
+        draw_physical_pages_ms_pass(
+          std::move(draw_commands_buffer),
+          std::move(draw_count_buffer),
+          std::move(draw_clipmaps_buffer),
+          std::move(self.prepared_frame.meshes_buffer),
+          std::move(self.prepared_frame.mesh_instances_buffer),
+          std::move(self.prepared_frame.meshlet_instances_buffer),
+          std::move(self.prepared_frame.transforms_world_buffer),
+          std::move(cull_geometry_context.visibility_buffer),
+          std::move(self.prepared_frame.materials_buffer),
+          std::move(context.directional_clipmaps_buffer),
+          std::move(cull_geometry_context.hpb_attachment),
+          std::move(context.virtual_page_table_attachment),
+          std::move(context.physical_page_table_attachment)
+        );
+    }
+
+    if (!self.prepared_frame.use_mesh_shaders) {
+      auto draw_commands = std::array<vuk::DrawIndexedIndirectCommand, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT>{};
+      auto draw_commands_buffer = render_context->scratch_buffer_span<vuk::DrawIndexedIndirectCommand>(draw_commands);
+      auto draw_clipmap_indices = std::array<u32, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT>{};
+      auto draw_clipmaps_buffer = render_context->scratch_buffer_span<u32>(draw_clipmap_indices);
+      auto draw_count_buffer = render_context->scratch_buffer<u32>(0u);
+
+      auto build_draw_commands_pass = vuk::make_pass(
+        "vsm build indexed draw commands",
+        [](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eComputeRead) source_command,
+          VUK_BA(vuk::eComputeRead) dirty_clipmaps,
+          VUK_BA(vuk::eComputeRW) commands,
+          VUK_BA(vuk::eComputeRW) draw_count,
+          VUK_BA(vuk::eComputeRW) clipmap_indices
+        ) {
+          cmd_list //
+            .bind_compute_pipeline("rmvsm_build_draw_commands")
+            .bind_buffer(0, 0, source_command)
+            .bind_buffer(0, 1, dirty_clipmaps)
+            .bind_buffer(0, 2, commands)
+            .bind_buffer(0, 3, draw_count)
+            .bind_buffer(0, 4, clipmap_indices)
+            .push_constants(
+              vuk::ShaderStageFlagBits::eCompute,
+              0,
+              glm::uvec2(
+                RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
+                sizeof(vuk::DrawIndexedIndirectCommand) / sizeof(u32)
+              )
+            )
+            .dispatch(1);
+
+          return std::make_tuple(source_command, dirty_clipmaps, commands, draw_count, clipmap_indices);
+        }
+      );
+
+      std::tie(
+        draw_geometry_cmd_buffer,
+        clipmap_dirty_flags_buffer,
+        draw_commands_buffer,
+        draw_count_buffer,
+        draw_clipmaps_buffer
+      ) =
+        build_draw_commands_pass(
+          std::move(draw_geometry_cmd_buffer),
+          std::move(clipmap_dirty_flags_buffer),
+          std::move(draw_commands_buffer),
+          std::move(draw_count_buffer),
+          std::move(draw_clipmaps_buffer)
+        );
+
+      auto draw_physical_pages_pass = vuk::make_pass(
+        "vsm draw dirty clipmaps",
+        [&descriptor_set = *context.bindless_set,
+         vsm_ctx,
+         vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
+          vuk::CommandBuffer& cmd_list,
+          VUK_BA(vuk::eIndirectRead) triangle_indirect,
+          VUK_BA(vuk::eIndirectRead) draw_count,
+          VUK_BA(vuk::eVertexRead) draw_clipmaps,
+          VUK_BA(vuk::eIndexRead) index_buffer,
+          VUK_BA(vuk::eVertexRead) meshes,
+          VUK_BA(vuk::eVertexRead) mesh_instances,
+          VUK_BA(vuk::eVertexRead) meshlet_instances,
+          VUK_BA(vuk::eVertexRead) transforms,
+          VUK_BA(vuk::eFragmentRead) materials,
+          VUK_BA(vuk::eVertexRead | vuk::eFragmentRead) clipmaps,
+          VUK_IA(vuk::eFragmentSampled) page_tables,
+          VUK_IA(vuk::eFragmentRW) physical_pages
+        ) {
+          auto viewport_rect = vuk::Rect2D{
+            .offset = {.x = 0, .y = 0},
+            .extent =
+              {.width = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION,
+               .height = RMVSMContext::DIRECTIONAL_IMAGE_RESOLUTION},
+            ._relative = {},
+          };
+          cmd_list //
+            .set_attachmentless_framebuffer(viewport_rect.extent, vuk::SampleCountFlagBits::e1)
+            .bind_graphics_pipeline("rmvsm_draw_physical_pages")
+            .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
+            .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
+            .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+            .set_viewport(0, viewport_rect)
+            .set_scissor(0, vuk::Rect2D::framebuffer())
+            .bind_persistent(1, descriptor_set)
+            .bind_buffer(0, 0, meshes)
+            .bind_buffer(0, 1, mesh_instances)
+            .bind_buffer(0, 2, meshlet_instances)
+            .bind_buffer(0, 3, transforms)
+            .bind_buffer(0, 4, materials)
+            .bind_buffer(0, 5, clipmaps)
+            .bind_image(0, 6, page_tables)
+            .bind_image(0, 7, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
+            .bind_buffer(0, 8, draw_clipmaps)
+            .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
+            .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, vsm_ctx)
+            .draw_indexed_indirect_count(RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT, triangle_indirect, draw_count);
+
+          return std::make_tuple(
+            index_buffer, //
+            meshes,
+            mesh_instances,
+            meshlet_instances,
+            transforms,
+            materials,
+            clipmaps,
+            page_tables,
+            physical_pages
+          );
+        }
+      );
+
+      std::tie(
+        self.prepared_frame.reordered_indices_buffer,
+        self.prepared_frame.meshes_buffer,
+        self.prepared_frame.mesh_instances_buffer,
+        self.prepared_frame.meshlet_instances_buffer,
+        self.prepared_frame.transforms_world_buffer,
+        self.prepared_frame.materials_buffer,
+        context.directional_clipmaps_buffer,
+        context.virtual_page_table_attachment,
+        context.physical_page_table_attachment
+      ) =
+        draw_physical_pages_pass(
+          std::move(draw_commands_buffer),
+          std::move(draw_count_buffer),
+          std::move(draw_clipmaps_buffer),
+          std::move(self.prepared_frame.reordered_indices_buffer),
+          std::move(self.prepared_frame.meshes_buffer),
+          std::move(self.prepared_frame.mesh_instances_buffer),
+          std::move(self.prepared_frame.meshlet_instances_buffer),
+          std::move(self.prepared_frame.transforms_world_buffer),
+          std::move(self.prepared_frame.materials_buffer),
+          std::move(context.directional_clipmaps_buffer),
+          std::move(context.virtual_page_table_attachment),
+          std::move(context.physical_page_table_attachment)
+        );
+    }
   }
 
   if (has_pointspot) {
@@ -950,92 +1169,184 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       auto mip_ps_ctx = ps_ctx;
       mip_ps_ctx.curr_mip = static_cast<i32>(mip);
 
-      auto draw_pointspot_pages_pass = vuk::make_pass(
-        stack.format("vsm pointspot draw mip {}", mip),
-        [&descriptor_set = *context.bindless_set,
-         mip_ps_ctx,
-         vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
-          vuk::CommandBuffer& cmd_list,
-          VUK_BA(vuk::eIndirectRead) draw_cmd,
-          VUK_BA(vuk::eIndexRead) index_buffer,
-          VUK_BA(vuk::eVertexRead) meshes,
-          VUK_BA(vuk::eVertexRead) mesh_instances,
-          VUK_BA(vuk::eVertexRead) transforms,
-          VUK_BA(vuk::eFragmentRead) materials,
-          VUK_BA(vuk::eVertexRead) views,
-          VUK_BA(vuk::eVertexRead) vsm_meshlet_instances,
-          VUK_IA(vuk::eFragmentSampled) page_tables,
-          VUK_IA(vuk::eFragmentRW) physical_pages
-        ) {
-          const auto mip_extent = static_cast<u32>(RMVSMContext::POINT_SPOT_IMAGE_RESOLUTION) >> mip_ps_ctx.curr_mip;
-          auto viewport_rect = vuk::Rect2D{
-            .offset = {.x = 0, .y = 0},
-            .extent = {.width = mip_extent, .height = mip_extent},
-            ._relative = {},
-          };
+      if (self.prepared_frame.use_mesh_shaders) {
+        auto draw_pointspot_pages_ms_pass = vuk::make_pass(
+          stack.format("vsm pointspot draw mip {} ms", mip),
+          [&descriptor_set = *context.bindless_set,
+           mip_ps_ctx,
+           vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
+            vuk::CommandBuffer& cmd_list,
+            VUK_BA(vuk::eIndirectRead) mesh_tasks_indirect,
+            VUK_BA(vuk::eMeshRead) vsm_meshlet_instance_count,
+            VUK_BA(vuk::eMeshRead) meshes,
+            VUK_BA(vuk::eMeshRead) mesh_instances,
+            VUK_BA(vuk::eMeshRead) transforms,
+            VUK_BA(vuk::eFragmentRead) materials,
+            VUK_BA(vuk::eMeshRead) views,
+            VUK_BA(vuk::eMeshRead) vsm_meshlet_instances,
+            VUK_IA(vuk::eMeshSampled) hpb,
+            VUK_IA(vuk::eFragmentSampled) page_tables,
+            VUK_IA(vuk::eFragmentRW) physical_pages
+          ) {
+            const auto mip_extent = static_cast<u32>(RMVSMContext::POINT_SPOT_IMAGE_RESOLUTION) >> mip_ps_ctx.curr_mip;
+            auto viewport_rect = vuk::Rect2D{
+              .offset = {.x = 0, .y = 0},
+              .extent = {.width = mip_extent, .height = mip_extent},
+              ._relative = {},
+            };
 
-          cmd_list.set_attachmentless_framebuffer(viewport_rect.extent, vuk::SampleCountFlagBits::e1);
+            bind_vsm_pointspot_spec_constants(cmd_list)
+              .set_attachmentless_framebuffer(viewport_rect.extent, vuk::SampleCountFlagBits::e1)
+              .bind_graphics_pipeline("rmvsm_pointspot_draw_pages_ms")
+              .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
+              .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
+              .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+              .set_viewport(0, viewport_rect)
+              .set_scissor(0, vuk::Rect2D::framebuffer())
+              .bind_persistent(1, descriptor_set)
+              .bind_buffer(0, 0, meshes)
+              .bind_buffer(0, 1, mesh_instances)
+              .bind_buffer(0, 2, transforms)
+              .bind_buffer(0, 3, materials)
+              .bind_buffer(0, 4, views)
+              .bind_buffer(0, 5, vsm_meshlet_instances)
+              .bind_buffer(0, 6, vsm_meshlet_instance_count)
+              .bind_image(0, 7, hpb)
+              .bind_image(0, 8, page_tables)
+              .bind_image(0, 9, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
+              .push_constants(vuk::ShaderStageFlagBits::eTaskEXT | vuk::ShaderStageFlagBits::eFragment, 0, mip_ps_ctx)
+              .draw_mesh_tasks_indirect(mesh_tasks_indirect);
 
-          bind_vsm_pointspot_spec_constants(cmd_list)
-            .bind_graphics_pipeline("rmvsm_pointspot_draw_pages")
-            .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
-            .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
-            .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-            .set_viewport(0, viewport_rect)
-            .set_scissor(0, vuk::Rect2D::framebuffer())
-            .bind_persistent(1, descriptor_set)
-            .bind_buffer(0, 0, meshes)
-            .bind_buffer(0, 1, mesh_instances)
-            .bind_buffer(0, 2, transforms)
-            .bind_buffer(0, 3, materials)
-            .bind_buffer(0, 4, views)
-            .bind_buffer(0, 5, vsm_meshlet_instances)
-            .bind_image(0, 6, page_tables)
-            .bind_image(0, 7, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
-            .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
-            // Only the fragment stage reads ctx (the VS uses per-layer view
-            // matrices from the views buffer), so the reflected push-constant
-            // range is fragment-only.
-            .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, mip_ps_ctx)
-            .draw_indexed_indirect(1, draw_cmd);
-
-          return std::make_tuple(
-            index_buffer, //
-            meshes,
-            mesh_instances,
-            transforms,
-            materials,
-            views,
-            vsm_meshlet_instances,
-            page_tables,
-            physical_pages
-          );
-        }
-      );
-
-      std::tie(
-        ps_cull_context.reordered_indices_buffer,
-        self.prepared_frame.meshes_buffer,
-        self.prepared_frame.mesh_instances_buffer,
-        self.prepared_frame.transforms_world_buffer,
-        self.prepared_frame.materials_buffer,
-        ps_cull_context.views_buffer,
-        ps_cull_context.vsm_meshlet_instances_buffer,
-        ps_cull_context.page_table_attachment,
-        context.physical_page_table_attachment
-      ) =
-        draw_pointspot_pages_pass(
-          std::move(ps_cull_context.draw_cmd_buffer),
-          std::move(ps_cull_context.reordered_indices_buffer),
-          std::move(self.prepared_frame.meshes_buffer),
-          std::move(self.prepared_frame.mesh_instances_buffer),
-          std::move(self.prepared_frame.transforms_world_buffer),
-          std::move(self.prepared_frame.materials_buffer),
-          std::move(ps_cull_context.views_buffer),
-          std::move(ps_cull_context.vsm_meshlet_instances_buffer),
-          std::move(ps_cull_context.page_table_attachment),
-          std::move(context.physical_page_table_attachment)
+            return std::make_tuple(
+              mesh_tasks_indirect,
+              vsm_meshlet_instance_count,
+              meshes,
+              mesh_instances,
+              transforms,
+              materials,
+              views,
+              vsm_meshlet_instances,
+              hpb,
+              page_tables,
+              physical_pages
+            );
+          }
         );
+
+        std::tie(
+          ps_cull_context.draw_cmd_buffer,
+          ps_cull_context.vsm_meshlet_instance_count_buffer,
+          self.prepared_frame.meshes_buffer,
+          self.prepared_frame.mesh_instances_buffer,
+          self.prepared_frame.transforms_world_buffer,
+          self.prepared_frame.materials_buffer,
+          ps_cull_context.views_buffer,
+          ps_cull_context.vsm_meshlet_instances_buffer,
+          ps_cull_context.hpb_attachment,
+          ps_cull_context.page_table_attachment,
+          context.physical_page_table_attachment
+        ) =
+          draw_pointspot_pages_ms_pass(
+            std::move(ps_cull_context.draw_cmd_buffer),
+            std::move(ps_cull_context.vsm_meshlet_instance_count_buffer),
+            std::move(self.prepared_frame.meshes_buffer),
+            std::move(self.prepared_frame.mesh_instances_buffer),
+            std::move(self.prepared_frame.transforms_world_buffer),
+            std::move(self.prepared_frame.materials_buffer),
+            std::move(ps_cull_context.views_buffer),
+            std::move(ps_cull_context.vsm_meshlet_instances_buffer),
+            std::move(ps_cull_context.hpb_attachment),
+            std::move(ps_cull_context.page_table_attachment),
+            std::move(context.physical_page_table_attachment)
+          );
+      } else {
+        auto draw_pointspot_pages_pass = vuk::make_pass(
+          stack.format("vsm pointspot draw mip {}", mip),
+          [&descriptor_set = *context.bindless_set,
+           mip_ps_ctx,
+           vsm_physical_pages_u32_view = *self.vsm_physical_page_table_u32_view](
+            vuk::CommandBuffer& cmd_list,
+            VUK_BA(vuk::eIndirectRead) draw_cmd,
+            VUK_BA(vuk::eIndexRead) index_buffer,
+            VUK_BA(vuk::eVertexRead) meshes,
+            VUK_BA(vuk::eVertexRead) mesh_instances,
+            VUK_BA(vuk::eVertexRead) transforms,
+            VUK_BA(vuk::eFragmentRead) materials,
+            VUK_BA(vuk::eVertexRead) views,
+            VUK_BA(vuk::eVertexRead) vsm_meshlet_instances,
+            VUK_IA(vuk::eFragmentSampled) page_tables,
+            VUK_IA(vuk::eFragmentRW) physical_pages
+          ) {
+            const auto mip_extent = static_cast<u32>(RMVSMContext::POINT_SPOT_IMAGE_RESOLUTION) >> mip_ps_ctx.curr_mip;
+            auto viewport_rect = vuk::Rect2D{
+              .offset = {.x = 0, .y = 0},
+              .extent = {.width = mip_extent, .height = mip_extent},
+              ._relative = {},
+            };
+
+            cmd_list.set_attachmentless_framebuffer(viewport_rect.extent, vuk::SampleCountFlagBits::e1);
+
+            bind_vsm_pointspot_spec_constants(cmd_list)
+              .bind_graphics_pipeline("rmvsm_pointspot_draw_pages")
+              .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
+              .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
+              .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+              .set_viewport(0, viewport_rect)
+              .set_scissor(0, vuk::Rect2D::framebuffer())
+              .bind_persistent(1, descriptor_set)
+              .bind_buffer(0, 0, meshes)
+              .bind_buffer(0, 1, mesh_instances)
+              .bind_buffer(0, 2, transforms)
+              .bind_buffer(0, 3, materials)
+              .bind_buffer(0, 4, views)
+              .bind_buffer(0, 5, vsm_meshlet_instances)
+              .bind_image(0, 6, page_tables)
+              .bind_image(0, 7, vsm_physical_pages_u32_view, vuk::ImageLayout::eGeneral)
+              .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
+              // Only the fragment stage reads ctx (the VS uses per-layer view
+              // matrices from the views buffer), so the reflected push-constant
+              // range is fragment-only.
+              .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, mip_ps_ctx)
+              .draw_indexed_indirect(1, draw_cmd);
+
+            return std::make_tuple(
+              index_buffer, //
+              meshes,
+              mesh_instances,
+              transforms,
+              materials,
+              views,
+              vsm_meshlet_instances,
+              page_tables,
+              physical_pages
+            );
+          }
+        );
+
+        std::tie(
+          ps_cull_context.reordered_indices_buffer,
+          self.prepared_frame.meshes_buffer,
+          self.prepared_frame.mesh_instances_buffer,
+          self.prepared_frame.transforms_world_buffer,
+          self.prepared_frame.materials_buffer,
+          ps_cull_context.views_buffer,
+          ps_cull_context.vsm_meshlet_instances_buffer,
+          ps_cull_context.page_table_attachment,
+          context.physical_page_table_attachment
+        ) =
+          draw_pointspot_pages_pass(
+            std::move(ps_cull_context.draw_cmd_buffer),
+            std::move(ps_cull_context.reordered_indices_buffer),
+            std::move(self.prepared_frame.meshes_buffer),
+            std::move(self.prepared_frame.mesh_instances_buffer),
+            std::move(self.prepared_frame.transforms_world_buffer),
+            std::move(self.prepared_frame.materials_buffer),
+            std::move(ps_cull_context.views_buffer),
+            std::move(ps_cull_context.vsm_meshlet_instances_buffer),
+            std::move(ps_cull_context.page_table_attachment),
+            std::move(context.physical_page_table_attachment)
+          );
+      }
     }
 
     context.pointspot_views_buffer = std::move(ps_cull_context.views_buffer);
