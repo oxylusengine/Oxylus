@@ -622,18 +622,45 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
 
   if (ImGui::Begin("##BottomToolbar", nullptr, flags)) {
     auto& content_panel = self.editor_panel_registry.get<ContentPanel>();
-    bool content_visible = content_panel.visible;
     auto content_panel_text = fmt::format("{} {}", content_panel.get_icon(), "Content Panel");
-    if (UI::toggle_button(content_panel_text.c_str(), content_panel.visible)) {
+    if (content_panel.visible)
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    if (
+      UI::toggle_button(
+        content_panel_text.c_str(),
+        content_panel.visible,
+        {},
+        1.f,
+        1.f,
+        ImGuiButtonFlags_None,
+        ImGuiCol_Header
+      )
+    ) {
       content_panel.visible = !content_panel.visible;
     }
+    if (content_panel.visible)
+      ImGui::PopStyleColor();
 
     ImGui::SameLine();
     auto activity_log_text = fmt::format("{} {}", ICON_MDI_FORUM, "Activity Log");
     auto& activity_log_panel_state = self.editor_panel_registry.get<ActivityLogPanel>().visible;
-    if (UI::toggle_button(activity_log_text.c_str(), activity_log_panel_state)) {
+    if (activity_log_panel_state)
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    if (
+      UI::toggle_button(
+        activity_log_text.c_str(),
+        activity_log_panel_state,
+        {},
+        1.f,
+        1.f,
+        ImGuiButtonFlags_None,
+        ImGuiCol_Header
+      )
+    ) {
       activity_log_panel_state = !activity_log_panel_state;
     }
+    if (activity_log_panel_state)
+      ImGui::PopStyleColor();
 
     ImGui::SameLine();
     ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);

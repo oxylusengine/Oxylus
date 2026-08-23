@@ -277,10 +277,11 @@ bool UI::toggle_button(
   const ImVec2 size,
   const float alpha,
   const float pressed_alpha,
-  const ImGuiButtonFlags button_flags
+  const ImGuiButtonFlags button_flags,
+  ImGuiCol active_color
 ) {
   if (state) {
-    ImVec4 color = ImGui::GetStyle().Colors[ImGuiCol_ButtonActive];
+    ImVec4 color = ImGui::GetStyle().Colors[active_color];
 
     color.w = pressed_alpha;
     ImGui::PushStyleColor(ImGuiCol_Button, color);

@@ -270,11 +270,13 @@ auto SceneHierarchyViewer::draw_entity_node(
     flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
   }
 
-  const bool highlight = is_selected;
-  if (highlight) {
-    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(header_selected_color));
-    ImGui::PushStyleColor(ImGuiCol_Header, header_selected_color);
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, header_selected_color);
+  if (is_selected) {
+    ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_Header);
+    ImVec4 hovered_color = ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered);
+    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(active_color));
+    ImGui::PushStyleColor(ImGuiCol_Header, active_color);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, is_selected ? active_color : hovered_color);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
   }
 
   if (force_expand_tree)
@@ -292,8 +294,8 @@ auto SceneHierarchyViewer::draw_entity_node(
     entity.name().c_str()
   );
 
-  if (highlight)
-    ImGui::PopStyleColor(2);
+  if (is_selected)
+    ImGui::PopStyleColor(3);
 
   // Select
   if (!ImGui::IsItemToggledOpen() && ImGui::IsItemClicked(ImGuiMouseButton_Left)) {

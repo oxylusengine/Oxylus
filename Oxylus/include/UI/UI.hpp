@@ -169,7 +169,8 @@ public:
     ImVec2 size = {0, 0},
     float alpha = 1.0f,
     float pressed_alpha = 1.0f,
-    ImGuiButtonFlags button_flags = ImGuiButtonFlags_None
+    ImGuiButtonFlags button_flags = ImGuiButtonFlags_None,
+    ImGuiCol active_color = ImGuiCol_ButtonActive
   );
 
   static bool input_text(
