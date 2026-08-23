@@ -148,6 +148,22 @@ public struct Material {
     s.scale_offset(this.get_uv_size(), this.get_uv_offset());
   }
 
+  public func sample_albedo_color_grad(in UVGradient grad) -> f32x4 {
+    let albedo = this.get_albedo_color();
+    if (this.flags & MaterialFlag::HasAlbedoImage) {
+      let color = global_images[NonUniformResourceIndex(this.albedo_image_index)]
+        .SampleGrad(
+          global_samplers[NonUniformResourceIndex(this.sampler_index)],
+          grad.uv,
+          grad.ddx,
+          grad.ddy
+        );
+      return albedo * color;
+    }
+
+    return albedo;
+  }
+
   public func sample_albedo_color<S : IUVSample>(in S s) -> f32x4 {
     let albedo = this.get_albedo_color();
     if (this.flags & MaterialFlag::HasAlbedoImage) {

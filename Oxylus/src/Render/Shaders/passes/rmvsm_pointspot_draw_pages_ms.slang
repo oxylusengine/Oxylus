@@ -172,7 +172,7 @@ func fs_main(VertexOutput input) -> void {
             grad.uv = input.tex_coord;
             grad.ddx = ddx(input.tex_coord);
             grad.ddy = ddy(input.tex_coord);
-            let alpha_color = material.sample_albedo_color(grad).a;
+            let alpha_color = material.sample_albedo_color_grad(grad).a;
 
             if (alpha_color < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
                 return;
