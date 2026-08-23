@@ -8,6 +8,7 @@
 #include <span>
 #include <stack>
 #include <thread>
+#include <vector>
 
 #include "Core/Arc.hpp"
 #include "Core/Option.hpp"

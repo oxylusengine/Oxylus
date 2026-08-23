@@ -180,8 +180,9 @@ struct CullGeometryContext {
 
   GPU::CullFlag cull_flags = GPU::CullFlag::TestAll;
   GPU::CullCamera cull_camera = {};
-  u32 vsm_layer_index = 0;
-  glm::ivec2 vsm_page_offset = {};
+  vuk::Value<vuk::Buffer> vsm_clipmaps_buffer = {};
+  vuk::Value<vuk::Buffer> vsm_clipmap_dirty_flags_buffer = {};
+  u32 vsm_clipmap_count = 0;
 
   // HiZ pyramid attachment consumed by `cull_meshlets_hiz` (only when `use_hiz`).
   vuk::Value<vuk::ImageAttachment> hiz_attachment = {};

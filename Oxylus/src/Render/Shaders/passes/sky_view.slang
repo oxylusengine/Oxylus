@@ -1,5 +1,3 @@
-module sky_view;
-
 import common;
 import gpu;
 import sky;
