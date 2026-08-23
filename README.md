@@ -30,7 +30,7 @@ Be aware that Oxylus is still in it's early stages of development. Some importan
 		- Occlusion, frustum and triangle culling
 		- Automatic LOD generation and selection
 	- [GT-VBAO](https://cdrinmatane.github.io/posts/ssaovb-code/)
-	- Virtual Directional Shadows (by [Matěj Sakmary](https://github.com/MatejSakmary))
+	- Virtual Shadows (directional, point, spot) (by [Matěj Sakmary](https://github.com/MatejSakmary))
 	- Physically-based sky and atmosphere
 	- Physically-based Bloom, Depth Of Field, HDR, Tonemapping, Auto Exposure, Chromatic Aberration, Film Grain, Vignette, Sharpen and various other post-processing effects.
 	- 2D Rendering
