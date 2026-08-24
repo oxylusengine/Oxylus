@@ -1711,9 +1711,25 @@ auto RendererInstance::render(
     std::tie(final_attachment, fxaa_attachment) = fxaa_pass(std::move(fxaa_attachment), std::move(final_attachment));
   }
 
-  auto bloom_attachment = vuk::Value<vuk::ImageAttachment>{};
-  if (!(self.gpu_scene_flags & GPU::SceneFlags::HasBloom)) {
-    bloom_attachment = vuk::declare_ia(
+  auto bloom_upsampled_attachment = vuk::Value<vuk::ImageAttachment>{};
+  if (self.gpu_scene_flags & GPU::SceneFlags::HasBloom) {
+    const auto bloom_extent = vuk::Extent3D{
+      .width = std::max(dst_extent.width / 2, 1u),
+      .height = std::max(dst_extent.height / 2, 1u),
+      .depth = 1,
+    };
+    bloom_upsampled_attachment = vuk::declare_ia(
+      "bloom upsampled",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+       .extent = bloom_extent,
+       .format = vuk::Format::eB10G11R11UfloatPack32,
+       .sample_count = vuk::SampleCountFlagBits::e1,
+       .level_count = Texture::calculate_mip_count(bloom_extent),
+       .layer_count = 1}
+    );
+    bloom_upsampled_attachment = vuk::clear_image(std::move(bloom_upsampled_attachment), vuk::Black<float>);
+  } else {
+    bloom_upsampled_attachment = vuk::declare_ia(
       "bloom disabled",
       {.usage = vuk::ImageUsageFlagBits::eSampled,
        .extent = {1, 1, 1},
@@ -1722,7 +1738,7 @@ auto RendererInstance::render(
        .level_count = 1,
        .layer_count = 1}
     );
-    bloom_attachment = vuk::clear_image(std::move(bloom_attachment), vuk::Black<float>);
+    bloom_upsampled_attachment = vuk::clear_image(std::move(bloom_upsampled_attachment), vuk::Black<float>);
   }
 
   /// POST PROCESSING
@@ -1731,7 +1747,7 @@ auto RendererInstance::render(
     .extent = dst_extent,
     .dst_attachment = std::move(dst_attachment),
     .final_attachment = std::move(final_attachment),
-    .bloom_attachment = std::move(bloom_attachment),
+    .bloom_upsampled_attachment = std::move(bloom_upsampled_attachment),
   };
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasEyeAdaptation) {

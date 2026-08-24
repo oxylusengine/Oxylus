@@ -607,7 +607,7 @@ struct PostProcessContext {
 
   vuk::Value<vuk::ImageAttachment> dst_attachment = {};
   vuk::Value<vuk::ImageAttachment> final_attachment = {};
-  vuk::Value<vuk::ImageAttachment> bloom_attachment = {};
+  vuk::Value<vuk::ImageAttachment> bloom_upsampled_attachment = {};
 };
 
 class RendererInstance {
