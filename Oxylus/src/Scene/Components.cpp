@@ -222,6 +222,8 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::mie_density,
       &C::mie_extinction,
       &C::mie_asymmetry,
+      &C::mie_haze_amount,
+      &C::mie_haze_scale_height,
       &C::ozone_absorption,
       &C::ozone_height,
       &C::ozone_thickness,
@@ -296,7 +298,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = MeshColliderComponent;
-    registry.bind<&C::offset, &C::friction, &C::restitution>();
+    registry.bind<&C::offset, &C::friction, &C::restitution, &C::convex, &C::density>();
   }
 
   {

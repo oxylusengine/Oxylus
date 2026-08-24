@@ -34,6 +34,7 @@ func cs_main(
     AtmosphereIntegrateInfo info = {};
     info.eye_pos = ray_pos;
     info.sun_dir = sun_dir;
+    info.sun_intensity = 1.0;
     info.eval_multiscattering = false;
     info.eval_planet_luminance = true;
     info.step_count = 32;
@@ -53,7 +54,8 @@ func cs_main(
     luminance *= sphere_solid_angle * inv_sample_count;
     multi_scattering_as_1 *= inv_sample_count;
     f32x3 scattered_luminance = luminance * isotropic_phase;
-    f32x3 f_ms = 1.0 / (1.0 - multi_scattering_as_1);
+    f32x3 f_ms = 1.0 / max(1.0 - multi_scattering_as_1, 1e-4);
 
-    params.sky_multiscattering_lut.Store(thread_id.xy, f32x4(scattered_luminance * f_ms, 1.0));
+    let multiscattering = clamp(com::sanitize(scattered_luminance * f_ms), 0.0, com::HALF_MAX);
+    params.sky_multiscattering_lut.Store(thread_id.xy, f32x4(multiscattering, 1.0));
 }

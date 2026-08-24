@@ -460,6 +460,7 @@ struct MeshBuildData {
   GPU::Mesh gpu_mesh = {};
   std::array<GPU::MeshLOD, GPU::Mesh::MAX_LODS> lods = {};
   std::vector<u8> blob = {};
+  Model::CollisionMesh collision = {};
   u64 lod_metadata_offset = 0;
   bool has_texture_coords = false;
 };
@@ -587,6 +588,9 @@ auto build_gltf_mesh(const fastgltf::Asset& gltf_asset, const fastgltf::Primitiv
     quantized_texcoord.x = meshopt_quantizeHalf(texcoord.x);
     quantized_texcoord.y = meshopt_quantizeHalf(texcoord.y);
   }
+
+  build.collision.positions = positions;
+  build.collision.indices = indices;
 
   auto& gpu_mesh = build.gpu_mesh;
   gpu_mesh.vertex_count = vertex_count;
@@ -1042,6 +1046,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
       model.lod0_meshlet_counts.push_back(0_u32);
       model.gpu_mesh_buffers.emplace_back();
       model.mesh_blases.emplace_back();
+      model.collision_meshes.emplace_back();
       pending_meshes.push_back({gltf_mesh_index, gltf_primitive_index});
     }
   }
@@ -1084,6 +1089,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
           loaded_model->gpu_mesh_buffers[mesh_index] = std::move(mesh_buffer);
           loaded_model->mesh_blases[mesh_index] = std::move(mesh_blas);
           loaded_model->gpu_meshes[mesh_index] = build->gpu_mesh;
+          loaded_model->collision_meshes[mesh_index] = std::move(build->collision);
           loaded_model->lod0_meshlet_counts[mesh_index] = build->lods[0].meshlet_count;
 
           loaded_model->mesh_ready[mesh_index].test_and_set(std::memory_order_release);
@@ -1376,6 +1382,13 @@ auto AssetManager::load_model(this AssetManager& self, const ModelLoadInfo& info
   auto& root_group = model.mesh_groups.emplace_back();
   root_group.name = "Root";
   root_group.mesh_indices.push_back(0);
+
+  auto& collision = model.collision_meshes.emplace_back();
+  collision.positions.reserve(vertex_count);
+  for (const auto& vertex : info.vertices) {
+    collision.positions.push_back(vertex.position);
+  }
+  collision.indices = info.indices;
 
   model.gpu_meshes.push_back(gpu_mesh);
   model.gpu_mesh_buffers.push_back(std::move(gpu_mesh_buffer));

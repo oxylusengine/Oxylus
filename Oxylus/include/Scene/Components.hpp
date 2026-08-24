@@ -287,6 +287,8 @@ struct AtmosphereComponent {
   f32 mie_density = 1.2f;
   f32 mie_extinction = 4.44f;
   f32 mie_asymmetry = 3.6f;
+  f32 mie_haze_amount = 0.7f;
+  f32 mie_haze_scale_height = 11.0f;
   glm::vec3 ozone_absorption = {0.650f, 1.881f, 0.085f};
   f32 ozone_height = 25.0f;
   f32 ozone_thickness = 15.0f;
@@ -401,10 +403,15 @@ struct CylinderColliderComponent {
   f32 restitution = 0.0f;
 };
 
+// Collides against the triangles of the entity's MeshComponent. Jolt's triangle mesh shape has no
+// inertia, so it only works on a Static or Kinematic body: set `convex` for a Dynamic one and the
+// mesh is replaced by its convex hull.
 struct MeshColliderComponent {
   glm::vec3 offset = {0.f, 0.f, 0.f};
   f32 friction = 0.5f;
   f32 restitution = 0.0f;
+  bool convex = false;
+  f32 density = 1000.f;
 };
 
 // Goes on the chassis entity, which must also carry a dynamic RigidBodyComponent and a collider.

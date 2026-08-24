@@ -162,12 +162,10 @@ public:
   auto on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
   auto on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
 
-  auto create_rigidbody(
-    this Scene& self, flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component
-  ) -> void;
-  auto create_character_controller(
-    flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
-  ) const -> void;
+  // Both read the entity's world transform, so neither takes a TransformComponent: a body on a child
+  // entity has to be placed in world space, not at its local offset.
+  auto create_rigidbody(this Scene& self, flecs::entity entity, RigidBodyComponent& component) -> void;
+  auto create_character_controller(flecs::entity entity, CharacterControllerComponent& component) const -> void;
 
   auto create_terrain_collision(this Scene& self) -> void;
   auto destroy_terrain_collision(this Scene& self) -> void;

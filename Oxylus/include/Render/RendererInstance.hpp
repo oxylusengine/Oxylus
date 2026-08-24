@@ -745,6 +745,9 @@ private:
   ankerl::svector<GPU::ProbeVolume, 8> probe_volumes = {};
   ankerl::svector<glm::ivec3, 8> probe_volume_scrolls = {};
   GPU::Atmosphere atmosphere = {};
+  GPU::Atmosphere atmosphere_lut_state = {};
+  bool atmosphere_lut_state_valid = false;
+  bool atmosphere_luts_dirty = true;
   GPU::SkyData sky_data = {};
   GPU::EyeAdaptationSettings eye_adaptation = {};
   GPU::VBGTAOSettings vbgtao_info = {};

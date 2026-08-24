@@ -259,6 +259,8 @@ public struct Atmosphere {
     public f32   mie_density;
     public f32   mie_extinction;
     public f32   mie_asymmetry;
+    public f32   mie_haze_amount;
+    public f32   mie_haze_scale_height;
 
     public f32x3 ozone_absorption;
     public f32   ozone_height;

@@ -39,6 +39,14 @@ struct Model {
     glm::vec3 scale = {1.f, 1.f, 1.f};
   };
 
+  // LOD0 triangles kept CPU side, one entry per mesh, so physics can build a shape. The GPU blob
+  // cannot give these back: positions there are half-quantized, reordered into meshlets, and the
+  // buffer is device local.
+  struct CollisionMesh {
+    std::vector<glm::vec3> positions = {};
+    std::vector<u32> indices = {};
+  };
+
   enum class LightType { Directional, Spot, Point };
 
   struct Light {
@@ -60,6 +68,7 @@ struct Model {
   std::vector<option<u32>> material_indices = {}; // these are per mesh, not per MeshGroup
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};
   std::vector<AccelerationStructure> mesh_blases = {};
+  std::vector<CollisionMesh> collision_meshes = {};
 
   std::vector<std::atomic_flag> mesh_ready = {};
   u32 pending_meshes = 0;
