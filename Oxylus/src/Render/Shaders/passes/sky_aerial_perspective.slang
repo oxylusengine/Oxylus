@@ -72,6 +72,7 @@ func cs_main(
     info.sun_dir = sun_dir;
     info.sun_intensity = sun_intensity;
     info.eval_planet_luminance = false;
+    info.eval_multiscattering = true;
     info.step_count = max(1.0, (f32(thread_id.z) + 1.0) * 2.0);
     info.t_max = t_max_max;
     let result = integrate_single_scattered_luminance(

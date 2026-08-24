@@ -40,6 +40,7 @@ func cs_main(
     info.eye_dir = eye_dir;
     info.sun_dir = sun_dir;
     info.sun_intensity = sun_intensity;
+    info.eval_multiscattering = true;
     info.step_count = 48;
 
     let result = integrate_single_scattered_luminance(info, params.atmosphere, params.sampler, params.sky_transmittance_lut, params.sky_multiscattering_lut);

@@ -279,6 +279,8 @@ struct AtmosphereComponent {
   f32 mie_density = 1.2f;
   f32 mie_extinction = 4.44f;
   f32 mie_asymmetry = 3.6f;
+  f32 mie_haze_amount = 0.7f;
+  f32 mie_haze_scale_height = 11.0f;
   glm::vec3 ozone_absorption = {0.650f, 1.881f, 0.085f};
   f32 ozone_height = 25.0f;
   f32 ozone_thickness = 15.0f;

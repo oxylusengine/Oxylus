@@ -552,6 +552,9 @@ private:
   f32 first_clipmap_width = 1.0f;
   f32 clipmap_selection_bias = 2.0f;
   GPU::Atmosphere atmosphere = {};
+  GPU::Atmosphere atmosphere_lut_state = {};
+  bool atmosphere_lut_state_valid = false;
+  bool atmosphere_luts_dirty = true;
   GPU::SkyData sky_data = {};
   GPU::EyeAdaptationSettings eye_adaptation = {};
   GPU::VBGTAOSettings vbgtao_info = {};

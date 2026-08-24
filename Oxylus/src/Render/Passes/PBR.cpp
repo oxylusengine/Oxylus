@@ -8,6 +8,64 @@
 namespace ox {
 auto RendererInstance::draw_atmosphere(this RendererInstance& self, AtmosphereContext& context) -> void {
   ZoneScoped;
+
+  if (self.atmosphere_luts_dirty) {
+    auto transmittance_lut_pass = vuk::make_pass(
+      "sky transmittance",
+      [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) dst, VUK_BA(vuk::eComputeUniformRead) atmosphere) {
+        cmd_list //
+          .bind_compute_pipeline("sky_transmittance")
+          .bind_image(0, 0, dst)
+          .bind_buffer(0, 1, atmosphere)
+          .dispatch_invocations_per_pixel(dst);
+
+        return std::make_tuple(dst, atmosphere);
+      }
+    );
+
+    std::tie(context.sky_transmittance_lut_attachment, self.prepared_frame.atmosphere_buffer) =
+      transmittance_lut_pass(
+        std::move(context.sky_transmittance_lut_attachment),
+        std::move(self.prepared_frame.atmosphere_buffer)
+      );
+
+    auto multiscatter_lut_pass = vuk::make_pass(
+      "sky multiscattering",
+      [](
+        vuk::CommandBuffer& cmd_list,
+        VUK_IA(vuk::eComputeSampled) transmittance_lut,
+        VUK_IA(vuk::eComputeRW) multiscatter_lut,
+        VUK_BA(vuk::eComputeUniformRead) atmosphere
+      ) {
+        cmd_list //
+          .bind_compute_pipeline("sky_multiscatter")
+          .bind_sampler(0, 0, vuk::LinearSamplerClamped)
+          .bind_image(0, 1, transmittance_lut)
+          .bind_image(0, 2, multiscatter_lut)
+          .bind_buffer(0, 3, atmosphere)
+          .dispatch_invocations_per_pixel(multiscatter_lut);
+
+        return std::make_tuple(transmittance_lut, multiscatter_lut, atmosphere);
+      }
+    );
+
+    std::tie(
+      context.sky_transmittance_lut_attachment,
+      context.sky_multiscatter_lut_attachment,
+      self.prepared_frame.atmosphere_buffer
+    ) = multiscatter_lut_pass(
+      std::move(context.sky_transmittance_lut_attachment),
+      std::move(context.sky_multiscatter_lut_attachment),
+      std::move(self.prepared_frame.atmosphere_buffer)
+    );
+
+    context.sky_cubemap_attachment = vuk::clear_image(
+      std::move(context.sky_cubemap_attachment),
+      vuk::Black<f32>
+    );
+    self.atmosphere_luts_dirty = false;
+  }
+
   auto sky_view_pass = vuk::make_pass(
     "sky view",
     [sun_dir = self.directional_light.direction,

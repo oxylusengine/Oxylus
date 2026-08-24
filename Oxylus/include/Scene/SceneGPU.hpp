@@ -164,6 +164,8 @@ struct Atmosphere {
   alignas(4) f32 mie_density = 1.2f;
   alignas(4) f32 mie_extinction = 0.004440f;
   alignas(4) f32 mie_asymmetry = 3.6f;
+  alignas(4) f32 mie_haze_amount = 0.7f;
+  alignas(4) f32 mie_haze_scale_height = 11.0f;
 
   alignas(4) glm::vec3 ozone_absorption = {0.000650f, 0.001881f, 0.000085f};
   alignas(4) f32 ozone_height = 25.0f;
@@ -180,6 +182,8 @@ struct Atmosphere {
   alignas(4) vuk::Extent3D multiscattering_lut_size = {};
   alignas(4) vuk::Extent3D aerial_perspective_lut_size = {};
 };
+
+static_assert(sizeof(Atmosphere) == 144, "Atmosphere layout drifted from scene.slang");
 
 struct SkyData {
   alignas(4) glm::vec4 solid_color = {0.f, 0.f, 0.f, 1.f};
