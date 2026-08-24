@@ -89,14 +89,20 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
     return character;
   });
 
-  // Driver input lives on VehicleComponent and is settable through the usual component bindings.
-  // These expose the runtime state a game needs to read back: gearing, engine load, wheel contact.
   physics_table.set_function("get_vehicle_engine_rpm", [](flecs::entity* e) -> f32 {
     auto* vc = e->try_get<VehicleComponent>();
     if (!vc || !vc->runtime_constraint)
       return 0.f;
     auto* constraint = static_cast<JPH::VehicleConstraint*>(vc->runtime_constraint);
     return static_cast<JPH::WheeledVehicleController*>(constraint->GetController())->GetEngine().GetCurrentRPM();
+  });
+
+  physics_table.set_function("get_vehicle_angular_velocity", [](flecs::entity* e) -> f32 {
+    auto* vc = e->try_get<VehicleComponent>();
+    if (!vc || !vc->runtime_constraint)
+      return 0.f;
+    auto* constraint = static_cast<JPH::VehicleConstraint*>(vc->runtime_constraint);
+    return static_cast<JPH::WheeledVehicleController*>(constraint->GetController())->GetEngine().GetAngularVelocity();
   });
 
   physics_table.set_function("get_vehicle_gear", [](flecs::entity* e) -> i32 {

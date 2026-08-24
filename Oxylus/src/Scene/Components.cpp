@@ -290,7 +290,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = MeshColliderComponent;
-    registry.bind<&C::offset, &C::friction, &C::restitution>();
+    registry.bind<&C::offset, &C::friction, &C::restitution, &C::convex, &C::density>();
   }
 
   {

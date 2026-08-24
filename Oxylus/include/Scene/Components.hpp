@@ -393,10 +393,15 @@ struct CylinderColliderComponent {
   f32 restitution = 0.0f;
 };
 
+// Collides against the triangles of the entity's MeshComponent. Jolt's triangle mesh shape has no
+// inertia, so it only works on a Static or Kinematic body: set `convex` for a Dynamic one and the
+// mesh is replaced by its convex hull.
 struct MeshColliderComponent {
   glm::vec3 offset = {0.f, 0.f, 0.f};
   f32 friction = 0.5f;
   f32 restitution = 0.0f;
+  bool convex = false;
+  f32 density = 1000.f;
 };
 
 // Goes on the chassis entity, which must also carry a dynamic RigidBodyComponent and a collider.

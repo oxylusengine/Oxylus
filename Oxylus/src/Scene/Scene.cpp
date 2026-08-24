@@ -9,6 +9,7 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
@@ -306,6 +307,23 @@ struct JsonEntityDeserializer : IEntitySerializer {
     }
   }
 };
+
+// Physics reports world space; TransformComponent is local to the parent. Bodies on child entities
+// need the parent folded back out or the parent's transform is applied twice.
+auto world_pose_to_local(flecs::entity entity, glm::vec3& position, glm::quat& rotation) -> void {
+  const auto parent = entity.parent();
+  if (parent == flecs::entity::null() || !parent.has<TransformComponent>()) {
+    return;
+  }
+
+  const auto parent_world = Scene::get_world_transform(parent);
+  const auto local = glm::inverse(parent_world) * glm::translate(glm::mat4(1.f), position) * glm::mat4_cast(rotation);
+
+  auto scale = glm::vec3{};
+  auto skew = glm::vec3{};
+  auto perspective = glm::vec4{};
+  glm::decompose(local, scale, rotation, position, skew, perspective);
+}
 
 auto Scene::safe_entity_name(this const Scene& self, std::string prefix, flecs::entity parent) -> std::string {
   ZoneScoped;
@@ -618,9 +636,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
 
       if (it.event() == flecs::OnSet) {
-        auto entity = it.entity(i);
-        auto& tc = entity.get<TransformComponent>();
-        self.create_rigidbody(it.entity(i), tc, rb);
+        self.create_rigidbody(it.entity(i), rb);
       } else if (it.event() == flecs::OnRemove) {
         auto& body_interface = self.physics_system->GetBodyInterface();
         if (rb.runtime_body) {
@@ -642,9 +658,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
 
       if (it.event() == flecs::OnSet) {
-        auto entity = it.entity(i);
-        auto& tc = entity.get<TransformComponent>();
-        self.create_character_controller(entity, tc, ch);
+        self.create_character_controller(it.entity(i), ch);
       } else if (it.event() == flecs::OnRemove) {
         if (ch.character) {
           auto* character = reinterpret_cast<JPH::Character*>(ch.character);
@@ -868,8 +882,12 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
                           ? std::clamp(static_cast<f32>(timer->time / timer->timeout), 0.0f, 1.0f)
                           : 1.0f;
 
-      tc.position = glm::mix(rb.previous_translation, rb.translation, alpha);
-      tc.rotation = glm::slerp(rb.previous_rotation, rb.rotation, alpha);
+      auto position = glm::mix(rb.previous_translation, rb.translation, alpha);
+      auto rotation = glm::slerp(rb.previous_rotation, rb.rotation, alpha);
+      world_pose_to_local(e, position, rotation);
+
+      tc.position = position;
+      tc.rotation = rotation;
 
       e.modified<TransformComponent>();
     });
@@ -889,8 +907,12 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       ch.previous_rotation = ch.rotation;
       ch.translation = {position.GetX(), position.GetY(), position.GetZ()};
       ch.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
-      tc.position = ch.translation;
-      tc.rotation = ch.rotation;
+
+      auto local_position = ch.translation;
+      auto local_rotation = ch.rotation;
+      world_pose_to_local(e, local_position, local_rotation);
+      tc.position = local_position;
+      tc.rotation = local_rotation;
 
       e.modified<TransformComponent>();
     });
@@ -1155,21 +1177,17 @@ auto Scene::physics_init(this Scene& self) -> void {
   self.physics_system->SetContactListener(self.contact_listener_3d.get());
 
   // Rigidbodies
-  self.world.query_builder<const TransformComponent, RigidBodyComponent>().build().each(
-    [&self](flecs::entity e, const TransformComponent& tc, RigidBodyComponent& rb) {
-      if (rb.runtime_body == nullptr) {
-        rb.previous_translation = rb.translation = tc.position;
-        rb.previous_rotation = rb.rotation = tc.rotation;
-        self.create_rigidbody(e, tc, rb);
-      }
+  self.world.query_builder<RigidBodyComponent>().build().each([&self](flecs::entity e, RigidBodyComponent& rb) {
+    if (rb.runtime_body == nullptr) {
+      self.create_rigidbody(e, rb);
     }
-  );
+  });
 
   // Characters
-  self.world.query_builder<const TransformComponent, CharacterControllerComponent>().build().each(
-    [&self](flecs::entity e, const TransformComponent& tc, CharacterControllerComponent& ch) {
+  self.world.query_builder<CharacterControllerComponent>().build().each(
+    [&self](flecs::entity e, CharacterControllerComponent& ch) {
       if (ch.character == nullptr) {
-        self.create_character_controller(e, tc, ch);
+        self.create_character_controller(e, ch);
       }
     }
   );
@@ -2104,26 +2122,108 @@ auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_use
   }
 }
 
-auto Scene::create_rigidbody(
-  this Scene& self, flecs::entity entity, const TransformComponent& transform, RigidBodyComponent& component
-) -> void {
+auto build_mesh_collider_shape(
+  flecs::entity entity,
+  const glm::vec3& scale,
+  const MeshColliderComponent& component,
+  const JPH::PhysicsMaterial* material
+) -> JPH::ShapeSettings::ShapeResult {
   ZoneScoped;
 
-  auto& body_interface = self.physics_system->GetBodyInterface();
-  if (component.runtime_body) {
-    auto body_id = static_cast<JPH::Body*>(component.runtime_body)->GetID();
-    body_interface.RemoveBody(body_id);
-    body_interface.DestroyBody(body_id);
-    component.runtime_body = nullptr;
+  const auto* mesh_component = entity.try_get<MeshComponent>();
+  if (!mesh_component) {
+    OX_LOG_ERROR("MeshColliderComponent on '{}' needs a MeshComponent to take triangles from.", entity.name().c_str());
+    return {};
   }
 
-  JPH::MutableCompoundShapeSettings compound_shape_settings = {};
-  float max_scale_component = glm::max(glm::max(transform.scale.x, transform.scale.y), transform.scale.z);
+  auto& asset_man = App::mod<AssetManager>();
+  auto model = asset_man.get_model(mesh_component->model_uuid);
+  if (!model) {
+    OX_LOG_ERROR("MeshColliderComponent on '{}' has no loaded model.", entity.name().c_str());
+    return {};
+  }
 
+  if (mesh_component->mesh_index >= model->collision_meshes.size()) {
+    OX_LOG_ERROR(
+      "MeshColliderComponent on '{}' points at mesh {}, which does not exist.",
+      entity.name().c_str(),
+      mesh_component->mesh_index
+    );
+    return {};
+  }
+
+  if (!model->is_mesh_ready(mesh_component->mesh_index)) {
+    OX_LOG_ERROR("MeshColliderComponent on '{}' ran before its mesh finished loading.", entity.name().c_str());
+    return {};
+  }
+
+  const auto& collision = model->collision_meshes[mesh_component->mesh_index];
+  if (collision.positions.empty() || collision.indices.size() < 3) {
+    OX_LOG_ERROR("MeshColliderComponent on '{}' has no triangles.", entity.name().c_str());
+    return {};
+  }
+
+  // Jolt cannot scale a mesh shape non-uniformly after the fact, so bake the world scale into the
+  // vertices. A mirrored scale flips winding, which would leave every triangle facing inward.
+  const auto flipped = scale.x * scale.y * scale.z < 0.f;
+
+  auto vertices = JPH::Array<JPH::Float3>();
+  vertices.reserve(collision.positions.size());
+  for (const auto& position : collision.positions) {
+    const auto scaled = position * scale;
+    vertices.push_back(JPH::Float3(scaled.x, scaled.y, scaled.z));
+  }
+
+  if (component.convex) {
+    auto points = JPH::Array<JPH::Vec3>();
+    points.reserve(vertices.size());
+    for (const auto& vertex : vertices) {
+      points.push_back(JPH::Vec3(vertex.x, vertex.y, vertex.z));
+    }
+
+    auto shape_settings = JPH::ConvexHullShapeSettings(points, JPH::cDefaultConvexRadius, material);
+    shape_settings.SetDensity(glm::max(0.001f, component.density));
+    return shape_settings.Create();
+  }
+
+  auto triangles = JPH::IndexedTriangleList();
+  triangles.reserve(collision.indices.size() / 3);
+  for (auto i = 0_sz; i + 2 < collision.indices.size(); i += 3) {
+    const auto i0 = collision.indices[i];
+    const auto i1 = collision.indices[flipped ? i + 2 : i + 1];
+    const auto i2 = collision.indices[flipped ? i + 1 : i + 2];
+    // Jolt rejects the whole shape on a degenerate triangle, and simplification does produce them.
+    if (i0 == i1 || i1 == i2 || i0 == i2) {
+      continue;
+    }
+    triangles.push_back(JPH::IndexedTriangle(i0, i1, i2, 0));
+  }
+
+  if (triangles.empty()) {
+    OX_LOG_ERROR("MeshColliderComponent on '{}' has no non-degenerate triangles.", entity.name().c_str());
+    return {};
+  }
+
+  auto materials = JPH::PhysicsMaterialList();
+  materials.push_back(material);
+
+  return JPH::MeshShapeSettings(std::move(vertices), std::move(triangles), std::move(materials)).Create();
+}
+
+auto build_collider_shape(
+  flecs::entity entity, RigidBodyComponent::BodyType body_type, glm::vec3& offset, bool& needs_mass_override
+) -> JPH::ShapeSettings::ShapeResult {
+  ZoneScoped;
+
+  // World scale, not local: a collider deep in a model hierarchy inherits every parent's scale.
+  const auto world_matrix = Scene::get_world_transform(entity);
+  const auto world_scale = glm::vec3(
+    glm::length(glm::vec3(world_matrix[0])),
+    glm::length(glm::vec3(world_matrix[1])),
+    glm::length(glm::vec3(world_matrix[2]))
+  );
+  const auto max_scale_component = glm::max(glm::max(world_scale.x, world_scale.y), world_scale.z);
   const auto entity_name = std::string(entity.name());
-
-  JPH::ShapeSettings::ShapeResult shape_result = {};
-  glm::vec3 offset = {};
 
   if (const auto* bc = entity.try_get<BoxColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D>
@@ -2132,27 +2232,33 @@ auto Scene::create_rigidbody(
     glm::vec3 scale = bc->size;
     JPH::BoxShapeSettings shape_settings({glm::abs(scale.x), glm::abs(scale.y), glm::abs(scale.z)}, 0.05f, mat);
     shape_settings.SetDensity(glm::max(0.001f, bc->density));
-    shape_result = shape_settings.Create();
     offset = bc->offset;
-  } else if (const auto* scc = entity.try_get<SphereColliderComponent>()) {
+    return shape_settings.Create();
+  }
+
+  if (const auto* scc = entity.try_get<SphereColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), scc->friction, scc->restitution);
 
     float radius = 2.0f * scc->radius * max_scale_component;
     JPH::SphereShapeSettings shape_settings(glm::max(0.01f, radius), mat);
     shape_settings.SetDensity(glm::max(0.001f, scc->density));
-    shape_result = shape_settings.Create();
     offset = scc->offset;
-  } else if (const auto* ccc = entity.try_get<CapsuleColliderComponent>()) {
+    return shape_settings.Create();
+  }
+
+  if (const auto* ccc = entity.try_get<CapsuleColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), ccc->friction, ccc->restitution);
 
     float radius = 2.0f * ccc->radius * max_scale_component;
     JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, ccc->height) * 0.5f, glm::max(0.01f, radius), mat);
     shape_settings.SetDensity(glm::max(0.001f, ccc->density));
-    shape_result = shape_settings.Create();
     offset = ccc->offset;
-  } else if (const auto* tcc = entity.try_get<TaperedCapsuleColliderComponent>()) {
+    return shape_settings.Create();
+  }
+
+  if (const auto* tcc = entity.try_get<TaperedCapsuleColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), tcc->friction, tcc->restitution);
 
@@ -2165,9 +2271,11 @@ auto Scene::create_rigidbody(
       mat
     );
     shape_settings.SetDensity(glm::max(0.001f, tcc->density));
-    shape_result = shape_settings.Create();
     offset = tcc->offset;
-  } else if (const auto* cycc = entity.try_get<CylinderColliderComponent>()) {
+    return shape_settings.Create();
+  }
+
+  if (const auto* cycc = entity.try_get<CylinderColliderComponent>()) {
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cycc->friction, cycc->restitution);
 
@@ -2175,22 +2283,112 @@ auto Scene::create_rigidbody(
     JPH::CylinderShapeSettings
       shape_settings(glm::max(0.01f, cycc->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
     shape_settings.SetDensity(glm::max(0.001f, cycc->density));
-    shape_result = shape_settings.Create();
     offset = cycc->offset;
+    return shape_settings.Create();
   }
 
-  if (shape_result.HasError()) {
-    OX_LOG_ERROR("Jolt shape error: {}", shape_result.GetError().c_str());
+  if (const auto* mcc = entity.try_get<MeshColliderComponent>()) {
+    const JPH::Ref<PhysicsMaterial3D>
+      mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), mcc->friction, mcc->restitution);
+
+    // Jolt only registers triangle mesh collision against convex shapes, so a Dynamic mesh body never
+    // finds the static world or the terrain and drops through it. Kinematic is fine: it is driven, and
+    // whatever it hits is convex.
+    if (!mcc->convex && body_type == RigidBodyComponent::BodyType::Dynamic) {
+      OX_LOG_ERROR(
+        "MeshColliderComponent on '{}' is a triangle mesh on a Dynamic body, which cannot collide with "
+        "static meshes or terrain. Set `convex` on the collider, or make the body Static or Kinematic.",
+        entity_name
+      );
+      return {};
+    }
+
+    offset = mcc->offset;
+    // A triangle mesh has no computable volume, so Jolt hands back empty mass properties that cannot
+    // be scaled to a mass. Kinematic bodies still need an invertible inertia tensor.
+    needs_mass_override = !mcc->convex;
+    return build_mesh_collider_shape(entity, world_scale, *mcc, mat);
   }
 
-  if (!shape_result.IsEmpty()) {
-    compound_shape_settings.AddShape({offset.x, offset.y, offset.z}, JPH::Quat::sIdentity(), shape_result.Get());
-  } else {
+  return {};
+}
+
+auto Scene::create_rigidbody(this Scene& self, flecs::entity entity, RigidBodyComponent& component) -> void {
+  ZoneScoped;
+
+  auto& body_interface = self.physics_system->GetBodyInterface();
+  if (component.runtime_body) {
+    auto body_id = static_cast<JPH::Body*>(component.runtime_body)->GetID();
+    body_interface.RemoveBody(body_id);
+    body_interface.DestroyBody(body_id);
+    component.runtime_body = nullptr;
+  }
+
+  // Jolt bodies live in world space, but TransformComponent is local to the parent. A rigidbody on a
+  // child (which is where a model's MeshComponent ends up) would otherwise be created at its local
+  // offset, typically the origin.
+  auto body_world = Scene::get_world_transform(entity);
+  auto body_position = glm::vec3{};
+  auto body_rotation = glm::quat::wxyz(1.f, 0.f, 0.f, 0.f);
+  auto body_scale = glm::vec3{1.f};
+  {
+    auto skew = glm::vec3{};
+    auto perspective = glm::vec4{};
+    glm::decompose(body_world, body_scale, body_rotation, body_position, skew, perspective);
+  }
+
+  // Shapes are placed relative to the body, so the body's own rotation and translation come back out.
+  // Scale stays in: each collider bakes its own world scale into its shape.
+  const auto world_to_body = glm::inverse(
+    glm::translate(glm::mat4(1.f), body_position) * glm::mat4_cast(body_rotation)
+  );
+
+  JPH::MutableCompoundShapeSettings compound_shape_settings = {};
+  bool needs_mass_override = false;
+  auto shape_count = 0_u32;
+
+  // Colliders on descendants fold into this body as long as they do not have a body of their own, so
+  // a model root can carry the RigidBodyComponent while its mesh children carry the colliders.
+  auto collect = [&](this auto& collect_ref, flecs::entity collider_entity) -> void {
+    if (collider_entity != entity && collider_entity.has<RigidBodyComponent>()) {
+      return; // Owned by another body, along with everything below it.
+    }
+
+    if (collider_entity.has<TransformComponent>()) {
+      auto local_needs_mass_override = false;
+      auto offset = glm::vec3{};
+      auto shape_result = build_collider_shape(collider_entity, component.type, offset, local_needs_mass_override);
+
+      if (shape_result.HasError()) {
+        OX_LOG_ERROR("Jolt shape error: {}", shape_result.GetError().c_str());
+      } else if (!shape_result.IsEmpty()) {
+        const auto relative = world_to_body * Scene::get_world_transform(collider_entity);
+        auto relative_position = glm::vec3{};
+        auto relative_rotation = glm::quat::wxyz(1.f, 0.f, 0.f, 0.f);
+        auto relative_scale = glm::vec3{};
+        auto skew = glm::vec3{};
+        auto perspective = glm::vec4{};
+        glm::decompose(relative, relative_scale, relative_rotation, relative_position, skew, perspective);
+
+        const auto placement = relative_position + relative_rotation * offset;
+        compound_shape_settings.AddShape(
+          {placement.x, placement.y, placement.z},
+          {relative_rotation.x, relative_rotation.y, relative_rotation.z, relative_rotation.w},
+          shape_result.Get()
+        );
+
+        needs_mass_override |= local_needs_mass_override;
+        shape_count += 1;
+      }
+    }
+
+    collider_entity.children([&collect_ref](flecs::entity child) { collect_ref(child); });
+  };
+  collect(entity);
+
+  if (shape_count == 0) {
     return; // No Shape
   }
-
-  // Body
-  auto rotation = glm::quat(transform.rotation);
 
   const auto object_layer = component.type == RigidBodyComponent::BodyType::Static ? PhysicsLayers::NON_MOVING
                                                                                    : PhysicsLayers::MOVING;
@@ -2198,20 +2396,28 @@ auto Scene::create_rigidbody(
   auto compound_shape = compound_shape_settings.Create();
   if (compound_shape.HasError()) {
     OX_LOG_ERROR("Jolt shape error: {}", compound_shape.GetError().c_str());
+    return;
   }
 
   JPH::BodyCreationSettings body_settings(
     compound_shape.Get(),
-    {transform.position.x, transform.position.y, transform.position.z},
-    {rotation.x, rotation.y, rotation.z, rotation.w},
+    {body_position.x, body_position.y, body_position.z},
+    {body_rotation.x, body_rotation.y, body_rotation.z, body_rotation.w},
     static_cast<JPH::EMotionType>(component.type),
     object_layer
   );
 
   JPH::MassProperties mass_properties;
   mass_properties.mMass = glm::max(0.01f, component.mass);
+  if (needs_mass_override) {
+    const auto extent = compound_shape.Get()->GetLocalBounds().GetSize();
+    mass_properties.SetMassAndInertiaOfSolidBox(JPH::Vec3::sMax(extent, JPH::Vec3::sReplicate(0.01f)), 1.f);
+    mass_properties.ScaleToMass(glm::max(0.01f, component.mass));
+    body_settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+  } else {
+    body_settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+  }
   body_settings.mMassPropertiesOverride = mass_properties;
-  body_settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
   body_settings.mAllowSleeping = component.allow_sleep;
   body_settings.mLinearDamping = glm::max(0.0f, component.linear_drag);
   body_settings.mAngularDamping = glm::max(0.0f, component.angular_drag);
@@ -2233,6 +2439,10 @@ auto Scene::create_rigidbody(
   body_interface.AddBody(body->GetID(), activation);
 
   body->SetUserData(static_cast<u64>(entity.id()));
+
+  // Seeded in world space so the first interpolated frame does not snap from the local transform.
+  component.previous_translation = component.translation = body_position;
+  component.previous_rotation = component.rotation = body_rotation;
 
   component.runtime_body = body;
 }
@@ -2374,12 +2584,13 @@ auto Scene::set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void {
   }
 }
 
-void Scene::create_character_controller(
-  flecs::entity entity, const TransformComponent& transform, CharacterControllerComponent& component
-) const {
+void Scene::create_character_controller(flecs::entity entity, CharacterControllerComponent& component) const {
   ZoneScoped;
 
-  const auto position = JPH::Vec3(transform.position.x, transform.position.y, transform.position.z);
+  // World space, same as rigidbodies: a character parented to something would otherwise spawn at its
+  // local offset.
+  const auto world_position = get_world_position(entity);
+  const auto position = JPH::Vec3(world_position.x, world_position.y, world_position.z);
   const auto capsule_shape =
     JPH::RotatedTranslatedShapeSettings(
       JPH::Vec3(0, 0.5f * component.character_height_standing + component.character_radius_standing, 0),
@@ -2459,7 +2670,7 @@ auto Scene::create_vehicle(this Scene& self, flecs::entity entity, VehicleCompon
       const auto& wheel_tc = wheel_entity.get<TransformComponent>();
       const auto up = glm::vec3(settings.mUp.GetX(), settings.mUp.GetY(), settings.mUp.GetZ());
       wheel.attachment = wheel_tc.position + up * glm::max(wheel.suspension_min_length, wheel.suspension_max_length);
-      OX_LOG_WARN(
+      OX_LOG_INFO(
         "Vehicle wheel '{}' had no suspension attachment, derived ({}, {}, {}) from its transform.",
         wheel_entity.name().c_str(),
         wheel.attachment.x,
@@ -2895,7 +3106,7 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
       exists = true;
     }
     if (exists) {
-        asset_man.load_asset(asset_uuid);
+      asset_man.load_asset(asset_uuid);
     } else {
       // Not an imported/physical asset
       // Most likely was created on runtime and never written to a file, these should never exist.
