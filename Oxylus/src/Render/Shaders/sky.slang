@@ -131,9 +131,24 @@ public struct MediumScattering {
 
     [ForceInline]
     public __init(in Atmosphere atmosphere, f32 altitude) {
-        const f32 rayleigh_density  = exp(-altitude / atmosphere.rayleigh_density);
-        const f32 mie_density = exp(-altitude / atmosphere.mie_density);
-        const f32 ozone_density = max(0.0, 1.0 - abs(altitude - atmosphere.ozone_height) / atmosphere.ozone_thickness);
+        const f32 min_scale_height = 1e-3;
+        const f32 height = max(0.0, altitude);
+
+        const f32 rayleigh_density = exp(-height / max(atmosphere.rayleigh_density, min_scale_height));
+
+        // blend the dense boundary layer into a longer-lived aerosol distribution.
+        // both curves equal one at sea level, so changing the haze amount reshapes the column
+        // without introducing a density jump at the ground or at an arbitrary layer edge
+        const f32 mie_boundary_density = exp(-height / max(atmosphere.mie_density, min_scale_height));
+        const f32 mie_haze_density = exp(-height / max(atmosphere.mie_haze_scale_height, min_scale_height));
+        const f32 mie_density = lerp(
+            mie_boundary_density,
+            mie_haze_density,
+            saturate(atmosphere.mie_haze_amount));
+
+        const f32 ozone_half_width = max(atmosphere.ozone_thickness, min_scale_height);
+        const f32 ozone_distance = abs(height - atmosphere.ozone_height);
+        const f32 ozone_density = 1.0 - smoothstep(0.0, ozone_half_width, ozone_distance);
 
         this.rayleigh_scattering = atmosphere.rayleigh_scatter * rayleigh_density;
         this.rayleigh_extinction = this.rayleigh_scattering;  // Rayleigh scattering doesn't have absorption behavior
@@ -159,7 +174,7 @@ public struct AtmosphereIntegrateInfo {
     public f32x3 eye_pos = {};
     public f32x3 eye_dir = {};
     public f32x3 sun_dir = {};
-    public f32 sun_intensity = 10.0;
+    public f32 sun_intensity = 1.0;
     public f32 step_count = 32.0;
     public f32 t_max = -1.0;
     public constexpr bool eval_planet_luminance = false;
@@ -230,8 +245,9 @@ public func integrate_single_scattered_luminance(
         f32x3 sun_luminance = earth_shadow * sun_transmittance * scattering_phase + (MS * medium_info.scattering_sum);
         f32x3 step_transmittance = exp(-step_length * medium_info.extinction_sum);
 
-        f32x3 integral = (sun_luminance - sun_luminance * step_transmittance) / medium_info.extinction_sum;
-        f32x3 ms_integral = (medium_info.scattering_sum - medium_info.scattering_sum * step_transmittance) / medium_info.extinction_sum;
+        const f32x3 safe_extinction = max(medium_info.extinction_sum, 1e-6);
+        f32x3 integral = (sun_luminance - sun_luminance * step_transmittance) / safe_extinction;
+        f32x3 ms_integral = (medium_info.scattering_sum - medium_info.scattering_sum * step_transmittance) / safe_extinction;
 
         result.luminance += info.sun_intensity * (integral * result.transmittance);
         result.multiscattering_as_1 += ms_integral * result.transmittance;

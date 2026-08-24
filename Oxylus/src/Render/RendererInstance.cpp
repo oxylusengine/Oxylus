@@ -36,6 +36,23 @@ struct ShadowSlotStats {
 // prevent slot churn near frustum and priority boundaries
 constexpr static f32 SHADOW_SLOT_HYSTERESIS = 1.25f;
 
+static auto atmosphere_lut_inputs_equal(const GPU::Atmosphere& a, const GPU::Atmosphere& b) -> bool {
+  return a.rayleigh_scatter == b.rayleigh_scatter &&           //
+         a.rayleigh_density == b.rayleigh_density &&           //
+         a.mie_scatter == b.mie_scatter &&                     //
+         a.mie_density == b.mie_density &&                     //
+         a.mie_extinction == b.mie_extinction &&               //
+         a.mie_asymmetry == b.mie_asymmetry &&                 //
+         a.mie_haze_amount == b.mie_haze_amount &&             //
+         a.mie_haze_scale_height == b.mie_haze_scale_height && //
+         a.ozone_absorption == b.ozone_absorption &&           //
+         a.ozone_height == b.ozone_height &&                   //
+         a.ozone_thickness == b.ozone_thickness &&             //
+         a.terrain_albedo == b.terrain_albedo &&               //
+         a.planet_radius == b.planet_radius &&                 //
+         a.atmos_radius == b.atmos_radius;
+}
+
 static auto sphere_intersects_frustum(std::span<const glm::vec4> planes, const glm::vec3& center, f32 radius) -> bool {
   for (const auto& plane : planes) {
     if (glm::dot(glm::vec3(plane), center) - plane.w < -radius) {
@@ -370,66 +387,14 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   sky_cubemap_init = sky_cubemap_init.as_released(vuk::eFragmentSampled);
   render_context.wait_on(std::move(sky_cubemap_init));
 
-  auto temp_atmos_info = GPU::Atmosphere{};
-  temp_atmos_info.transmittance_lut_size = sky_transmittance_lut.get_extent();
-  temp_atmos_info.multiscattering_lut_size = sky_multiscatter_lut.get_extent();
-  auto temp_atmos_buffer = render_context.scratch_buffer(temp_atmos_info);
-
-  auto transmittance_lut_attachment = sky_transmittance_lut.discard("sky_transmittance_lut");
-
-  auto transmittance_lut_pass = vuk::make_pass(
-    "transmittance_lut_pass",
-    [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW) dst, VUK_BA(vuk::eComputeRead) atmos) {
-      cmd_list //
-        .bind_compute_pipeline("sky_transmittance")
-        .bind_image(0, 0, dst)
-        .bind_buffer(0, 1, atmos)
-        .dispatch_invocations_per_pixel(dst);
-
-      return std::make_tuple(dst, atmos);
-    }
+  auto transmittance_lut_attachment = vuk::clear_image(
+    sky_transmittance_lut.discard("sky_transmittance_lut_init"),
+    vuk::Black<f32>
   );
-
-  std::tie(transmittance_lut_attachment, temp_atmos_buffer) = transmittance_lut_pass(
-    transmittance_lut_attachment,
-    temp_atmos_buffer
+  auto multiscatter_lut_attachment = vuk::clear_image(
+    sky_multiscatter_lut.discard("sky_multiscatter_lut_init"),
+    vuk::Black<f32>
   );
-
-  auto multiscatter_lut_attachment = sky_multiscatter_lut.discard("sky_multiscatter_lut");
-  auto sky_multiscatter_lut_pass = vuk::make_pass(
-    "sky_multiscatter_lut_pass",
-    [](
-      vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eComputeSampled) sky_transmittance_lut_,
-      VUK_IA(vuk::eComputeRW) sky_multiscatter_lut_,
-      VUK_BA(vuk::eComputeRead) atmos
-    ) {
-      cmd_list.bind_compute_pipeline("sky_multiscatter")
-        .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
-        .bind_image(0, 1, sky_transmittance_lut_)
-        .bind_image(0, 2, sky_multiscatter_lut_)
-        .bind_buffer(0, 3, atmos)
-        .dispatch_invocations_per_pixel(sky_multiscatter_lut_);
-
-      return std::make_tuple(sky_transmittance_lut_, sky_multiscatter_lut_, atmos);
-    }
-  );
-
-  std::tie(transmittance_lut_attachment, multiscatter_lut_attachment, temp_atmos_buffer) = sky_multiscatter_lut_pass(
-    transmittance_lut_attachment,
-    multiscatter_lut_attachment,
-    temp_atmos_buffer
-  );
-
-  transmittance_lut_attachment = transmittance_lut_attachment.as_released(
-    vuk::eComputeSampled,
-    vuk::DomainFlagBits::eGraphicsQueue
-  );
-  multiscatter_lut_attachment = multiscatter_lut_attachment.as_released(
-    vuk::eComputeSampled,
-    vuk::DomainFlagBits::eGraphicsQueue
-  );
-
   render_context.wait_on(std::move(transmittance_lut_attachment));
   render_context.wait_on(std::move(multiscatter_lut_attachment));
 
@@ -1736,6 +1701,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.atmosphere.mie_density = atmos_info->mie_density;
         self.atmosphere.mie_extinction = atmos_info->mie_extinction * 1e-3f;
         self.atmosphere.mie_asymmetry = atmos_info->mie_asymmetry;
+        self.atmosphere.mie_haze_amount = atmos_info->mie_haze_amount;
+        self.atmosphere.mie_haze_scale_height = atmos_info->mie_haze_scale_height;
         self.atmosphere.ozone_absorption = atmos_info->ozone_absorption * 1e-3f;
         self.atmosphere.ozone_height = atmos_info->ozone_height;
         self.atmosphere.ozone_thickness = atmos_info->ozone_thickness;
@@ -1755,6 +1722,14 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
       }
     });
+
+  if ((self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) != 0 &&
+      (!self.atmosphere_lut_state_valid ||
+       !atmosphere_lut_inputs_equal(self.atmosphere, self.atmosphere_lut_state))) {
+    self.atmosphere_lut_state = self.atmosphere;
+    self.atmosphere_lut_state_valid = true;
+    self.atmosphere_luts_dirty = true;
+  }
 
   const auto point_slot_stats = assign_shadow_slots(
     pending_lights,
