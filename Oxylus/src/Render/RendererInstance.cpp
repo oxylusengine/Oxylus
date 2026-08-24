@@ -1180,11 +1180,13 @@ auto RendererInstance::render(
         .sun_moved = self.sun_direction_changed,
         .depth_extent = dst_extent,
         .depth_attachment = std::move(depth_attachment),
+        .normal_attachment = std::move(normal_attachment),
         .light_grid_origin = light_grid_context.grid_origin,
         .light_grid_buffer = std::move(light_grid_context.light_grid_buffer),
       };
       self.draw_virtual_shadowmap(rmvsm_context);
       depth_attachment = std::move(rmvsm_context.depth_attachment);
+      normal_attachment = std::move(rmvsm_context.normal_attachment);
       light_grid_context.light_grid_buffer = std::move(rmvsm_context.light_grid_buffer);
 
       vsm_chain_ran = true;

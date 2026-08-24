@@ -396,6 +396,7 @@ struct RMVSMContext {
   vuk::Value<vuk::Buffer> directional_clipmaps_buffer = {};
 
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
   vuk::Value<vuk::ImageAttachment> virtual_page_table_attachment = {};
   vuk::Value<vuk::ImageAttachment> physical_page_table_attachment = {};
 

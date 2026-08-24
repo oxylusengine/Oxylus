@@ -483,6 +483,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       VUK_BA(vuk::eComputeUniformRead) camera,
       VUK_BA(vuk::eComputeRead) clipmaps,
       VUK_IA(vuk::eComputeSampled) depth,
+      VUK_IA(vuk::eComputeSampled) normals,
       VUK_IA(vuk::eComputeRW) page_table,
       VUK_BA(vuk::eComputeRW) page_occupancy,
       VUK_BA(vuk::eComputeRW) allocator
@@ -492,13 +493,14 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         .bind_buffer(0, 0, camera)
         .bind_buffer(0, 1, clipmaps)
         .bind_image(0, 2, depth)
-        .bind_image(0, 3, page_table)
-        .bind_buffer(0, 4, page_occupancy)
-        .bind_buffer(0, 5, allocator)
+        .bind_image(0, 3, normals)
+        .bind_image(0, 4, page_table)
+        .bind_buffer(0, 5, page_occupancy)
+        .bind_buffer(0, 6, allocator)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
         .dispatch_invocations_per_pixel(depth);
 
-      return std::make_tuple(camera, clipmaps, depth, page_table, page_occupancy, allocator);
+      return std::make_tuple(camera, clipmaps, depth, normals, page_table, page_occupancy, allocator);
     }
   );
 
@@ -507,6 +509,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       self.prepared_frame.camera_buffer,
       context.directional_clipmaps_buffer,
       context.depth_attachment,
+      context.normal_attachment,
       context.virtual_page_table_attachment,
       page_occupancy_buffer,
       page_allocator_buffer
@@ -515,6 +518,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         std::move(self.prepared_frame.camera_buffer),
         std::move(context.directional_clipmaps_buffer),
         std::move(context.depth_attachment),
+        std::move(context.normal_attachment),
         std::move(context.virtual_page_table_attachment),
         std::move(page_occupancy_buffer),
         std::move(page_allocator_buffer)

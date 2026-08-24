@@ -34,12 +34,16 @@ func fs_main(
     let world_position_h = mul(camera.inv_projection_view, f32x4(NDC, 1.0));
     let world_position = world_position_h.xyz / world_position_h.w;
 
-    let clipmap_index = i32(vsm_ctx.get_clipmap_index(camera, input.tex_coord, depth));
+    let clipmap_index = i32(vsm_ctx.get_clipmap_index(camera, input.tex_coord, depth, flat_N));
     let clipmap = clipmaps[clipmap_index];
     let clipmap_info = clipmap.get_clipmap_info(world_position);
 
     let virt_coords = clipmap_info.get_virt_coords(vsm_ctx.get_page_table_extent().xy);
     let wrapped_coords = vsm_ctx.page_coords_virtual_to_wrapped(virt_coords, clipmap.page_offset);
+    if (any(wrapped_coords == INVALID_COORDS)) {
+      return f32x4(1.0, 0.0, 1.0, 1.0);
+    }
+
     let page = VSMPageMetadata(vsm_page_table.Load(i32x4(wrapped_coords, clipmap_index, 0)));
     let physical_page_coords = i32x2(page.get_physical_coords(vsm_ctx.physcial_page_table_size, vsm_ctx.page_size));
     let phys_texel = clipmap_info.get_virt_coords(i32x2(i32(vsm_ctx.virtual_extent)));
@@ -47,15 +51,17 @@ func fs_main(
     let physical_texel_coord = physical_page_coords * vsm_ctx.page_size + in_page_texel;
     let near_border = any(in_page_texel < 2) || any(in_page_texel > vsm_ctx.page_size - 2);
 
+    if (!page.is_backed() && page.is_visible()) {
+      return page.is_alloc_failed()
+        ? f32x4(1.0, 0.0, 0.0, 1.0)
+        : f32x4(1.0, 0.5, 0.0, 1.0);
+    }
+
     // page border highlighting
     if (near_border) {
       let line_hsv = f32x3(f32(clipmap_index) / f32(vsm_ctx.clipmap_count + 1) * TAU, 1.0, 0.5);
       let clipmap_color = hsv_to_rgb(line_hsv);
       return f32x4(clipmap_color, 1.0);
-    }
-
-    if (!page.is_backed() && page.is_visible()) {
-      return f32x4(1.0, 0.0, 0.0, 1.0);
     }
 
     let page_status = f32x3(f32(page.is_backed()), f32(page.is_dirty()), f32(page.is_visible()));

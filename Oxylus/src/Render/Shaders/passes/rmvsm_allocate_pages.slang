@@ -67,6 +67,7 @@ func cs_main(u32 thread_id : SV_DispatchThreadID) -> void {
     } else {
         let physical_page_index = allocator[0].free_page_list[slot];
 
+        page.set_alloc_failed(false);
         page.set_physical_address(physical_page_index);
         page.set_dirty(true);
         page.set_backed(true);

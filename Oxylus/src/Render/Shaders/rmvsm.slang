@@ -111,7 +111,7 @@ public struct VSMPageMetadata {
     }
 };
 
-#define VMS_USE_DIAG_PIXEL_FOOTPRINT 0
+public constexpr static f32 VSM_CLIPMAP_TRANSITION_WIDTH = 0.25;
 
 public struct VSMClipmapSelection {
     public f32 level_f;
@@ -160,50 +160,89 @@ public struct VSMContext {
     }
 
     public func get_first_clipmap_texel_length() -> f32 {
-        let page_count = this.page_table_size;
-        let scale_ratio = f32(page_count - 1) / f32(page_count);
-        let effective_width = this.first_clipmap_width * scale_ratio;
-        return (effective_width * 2.0) / this.virtual_extent;
+        return (this.first_clipmap_width * 2.0) / this.virtual_extent;
     }
 
-    public func get_clipmap_level_f(in Camera camera, f32x2 uv, f32 depth) -> f32 {
-#if VMS_USE_DIAG_PIXEL_FOOTPRINT
+    public func intersect_pixel_ray_with_plane(
+        in Camera camera,
+        f32x2 uv,
+        f32x3 plane_position,
+        f32x3 plane_normal
+    ) -> f32x3 {
+        let ray_near = camera.unproject_uv(uv, 1.0);
+        let ray_far = camera.unproject_uv(uv, 0.0);
+        let ray_direction = normalize(ray_far - ray_near);
+        let denominator = dot(plane_normal, ray_direction);
+        let safe_denominator = denominator < 0.0
+            ? min(denominator, -1e-5)
+            : max(denominator, 1e-5);
+        let distance_to_plane = dot(plane_normal, plane_position - ray_near) / safe_denominator;
+        return ray_near + ray_direction * distance_to_plane;
+    }
+
+    public func get_clipmap_level_f(
+        in Camera camera,
+        f32x2 uv,
+        f32 depth,
+        f32x3 flat_normal
+    ) -> f32 {
+        let center_position = camera.unproject_uv(uv, depth);
         let inv_resolution = 1.0 / camera.resolution;
         let uv_offset = inv_resolution * 0.5;
-        let left = uv + f32x2(-uv_offset.x, uv_offset.y);
-        let right = uv + f32x2(uv_offset.x, uv_offset.y);
-        let d = distance(
-            camera.unproject_uv(left, depth),
-            camera.unproject_uv(right, depth)
+
+        let bottom_left = this.intersect_pixel_ray_with_plane(
+            camera, uv + f32x2(-uv_offset.x, uv_offset.y), center_position, flat_normal
         );
-        let clipmap_level_f = log2(d / this.get_first_clipmap_texel_length());
-#else
-        let center_pos = camera.unproject_uv(uv, depth);
-        let d = length(center_pos - camera.position.xyz);
+        let bottom_right = this.intersect_pixel_ray_with_plane(
+            camera, uv + f32x2(uv_offset.x, uv_offset.y), center_position, flat_normal
+        );
+        let top_left = this.intersect_pixel_ray_with_plane(
+            camera, uv + f32x2(-uv_offset.x, -uv_offset.y), center_position, flat_normal
+        );
+        let top_right = this.intersect_pixel_ray_with_plane(
+            camera, uv + f32x2(uv_offset.x, -uv_offset.y), center_position, flat_normal
+        );
 
-        let page_count = this.virtual_extent / this.page_size;
-        let scale_ratio = f32(page_count - 2) / f32(page_count);
-        let base_scale = this.first_clipmap_width * 2.0 * scale_ratio;
+        let footprint_width = max(distance(bottom_left, bottom_right), distance(top_left, top_right));
+        let footprint_height = max(distance(bottom_left, top_left), distance(bottom_right, top_right));
+        let footprint_size = max(footprint_width, footprint_height);
+        let first_clipmap_texel_length = max(this.get_first_clipmap_texel_length(), 1e-5);
+        let quality_level_f = log2(max(footprint_size, first_clipmap_texel_length * 1e-5) /
+                                   first_clipmap_texel_length) + this.clipmap_selection_bias;
 
-        let clipmap_level_f = log2((d / base_scale) * this.clipmap_selection_bias);
-#endif
-        return max(clipmap_level_f, 0.0);
+        let page_count = f32(this.page_table_size);
+        let scale_ratio = (page_count - 2.0) / page_count;
+        let safe_half_extent = max(this.first_clipmap_width * scale_ratio, 1e-5);
+        let camera_distance = length(center_position - camera.position.xyz);
+        let coverage_level_f = ceil(log2(max(camera_distance / safe_half_extent, 1e-5)));
+        let min_coverage_level = max(coverage_level_f, 0.0);
+
+        let finite_quality_level_f = isfinite(quality_level_f) ? quality_level_f : min_coverage_level;
+        return max(max(finite_quality_level_f, min_coverage_level), 0.0);
     }
 
-    public func get_clipmap_selection(in Camera camera, f32x2 uv, f32 depth) -> VSMClipmapSelection {
-        let level_f = this.get_clipmap_level_f(camera, uv, depth);
-#if VMS_USE_DIAG_PIXEL_FOOTPRINT
-        let biased_level_f = this.clipmap_selection_bias + level_f;
-#else
-        let biased_level_f = level_f;
-#endif
+    public func get_clipmap_selection(
+        in Camera camera,
+        f32x2 uv,
+        f32 depth,
+        f32x3 flat_normal
+    ) -> VSMClipmapSelection {
+        let level_f = this.get_clipmap_level_f(camera, uv, depth, flat_normal);
         let max_clipmap_index = u32(this.clipmap_count - 1);
-        let clamped_level_f = clamp(biased_level_f, 0.0, f32(max_clipmap_index));
-        let fine_clipmap_index = u32(floor(clamped_level_f));
-        let blend_weight = fract(clamped_level_f);
-        let coarse_clipmap_index = blend_weight > 0.0
-            ? min(fine_clipmap_index + 1u, max_clipmap_index)
-            : fine_clipmap_index;
+        let clamped_level_f = clamp(level_f, 0.0, f32(max_clipmap_index));
+        let level_fraction = fract(clamped_level_f);
+
+        var fine_clipmap_index = u32(floor(clamped_level_f));
+        var coarse_clipmap_index = fine_clipmap_index;
+        var blend_weight = 0.0;
+        if (level_fraction > 0.0 && fine_clipmap_index < max_clipmap_index) {
+            coarse_clipmap_index = fine_clipmap_index + 1u;
+            if (level_fraction < VSM_CLIPMAP_TRANSITION_WIDTH) {
+                blend_weight = smoothstep(0.0, VSM_CLIPMAP_TRANSITION_WIDTH, level_fraction);
+            } else {
+                fine_clipmap_index = coarse_clipmap_index;
+            }
+        }
 
         return VSMClipmapSelection(
             clamped_level_f,
@@ -213,8 +252,8 @@ public struct VSMContext {
         );
     }
 
-    public func get_clipmap_index(in Camera camera, f32x2 uv, f32 depth) -> u32 {
-        return this.get_clipmap_selection(camera, uv, depth).coarse_clipmap_index;
+    public func get_clipmap_index(in Camera camera, f32x2 uv, f32 depth, f32x3 flat_normal) -> u32 {
+        return this.get_clipmap_selection(camera, uv, depth, flat_normal).coarse_clipmap_index;
     }
 };
 
