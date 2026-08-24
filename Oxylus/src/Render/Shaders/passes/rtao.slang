@@ -6,7 +6,7 @@ import scene;
 [[vk::binding(1)]] ConstantBuffer<Camera> camera;
 [[vk::binding(2)]] Image2D<f32> depth_image;
 [[vk::binding(3)]] Image2D<f32x4> normal_image;
-[[vk::binding(4)]] RWTexture2D<f32, 1, ImageFormat.R16F> ambient_occlusion;
+[[vk::binding(4)]] RWTexture2D<f32, 1, ImageFormat.R8> ambient_occlusion;
 [[vk::binding(5)]] Sampler nearest_clamp_sampler;
 
 func pcg_hash(u32 v) -> u32 {

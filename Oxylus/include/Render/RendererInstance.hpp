@@ -607,7 +607,7 @@ struct PostProcessContext {
 
   vuk::Value<vuk::ImageAttachment> dst_attachment = {};
   vuk::Value<vuk::ImageAttachment> final_attachment = {};
-  vuk::Value<vuk::ImageAttachment> bloom_upsampled_attachment = {};
+  vuk::Value<vuk::ImageAttachment> bloom_attachment = {};
 };
 
 class RendererInstance {
@@ -675,8 +675,9 @@ public:
   auto apply_eye_adaptation(this RendererInstance&, PostProcessContext& context) -> void;
   auto apply_bloom(this RendererInstance& self, PostProcessContext& context, const RendererCVar& cvar) -> void;
   auto apply_tonemap(this RendererInstance&, PostProcessContext& context) -> vuk::Value<vuk::ImageAttachment>;
-  auto apply_debug_view(this RendererInstance&, DebugContext& context, vuk::Extent3D extent)
-    -> vuk::Value<vuk::ImageAttachment>;
+  auto apply_debug_view(
+    this RendererInstance&, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
+  ) -> vuk::Value<vuk::ImageAttachment>;
   auto allocate_ddgi_atlases(this RendererInstance& self, u32 probe_count) -> void;
   auto trace_ddgi_probes(this RendererInstance& self, DDGITraceContext& context) -> void;
   auto select_ddgi_probes(this RendererInstance& self, DDGISelectContext& context) -> void;
@@ -773,8 +774,6 @@ private:
 
   Texture vsm_virtual_page_table = {};
   Texture vsm_pointspot_virtual_page_table = {};
-  Texture vsm_hpb = {};
-  Texture vsm_pointspot_hpb = {};
   std::array<glm::ivec2, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT> previous_directional_clipmap_offsets = {};
   f32 previous_directional_clipmap_width = 0.0f;
   f32 previous_directional_shadow_distance = 0.0f;

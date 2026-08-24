@@ -452,46 +452,6 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   pointspot_page_table_attachment = std::move(pointspot_page_table_attachment).as_released(vuk::eFragmentSampled);
   render_context.wait_on(std::move(pointspot_page_table_attachment));
 
-  vsm_hpb = Texture::create({
-    .format = vuk::Format::eR8Uint,
-    .extent =
-      {
-        .width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-        .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-        .depth = 1,
-      },
-    .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
-    .level_count = 1 + static_cast<u32>(std::log2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE)),
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
-             vuk::ImageUsageFlagBits::eTransferDst,
-    .view_type = vuk::ImageViewType::e2DArray,
-  });
-
-  auto vsm_hpb_attachment = vsm_hpb.discard("vsm hpb");
-  vsm_hpb_attachment = vuk::clear_image(std::move(vsm_hpb_attachment), vuk::Black<u32>);
-  vsm_hpb_attachment = std::move(vsm_hpb_attachment).as_released(vuk::eComputeSampled);
-  render_context.wait_on(std::move(vsm_hpb_attachment));
-
-  vsm_pointspot_hpb = Texture::create({
-    .format = vuk::Format::eR8Uint,
-    .extent =
-      {
-        .width = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
-        .height = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
-        .depth = 1,
-      },
-    .layer_count = RMVSMContext::POINT_SPOT_LAYER_COUNT,
-    .level_count = RMVSMContext::POINT_SPOT_HPB_LEVEL_COUNT,
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
-             vuk::ImageUsageFlagBits::eTransferDst,
-    .view_type = vuk::ImageViewType::e2DArray,
-  });
-
-  auto vsm_pointspot_hpb_attachment = vsm_pointspot_hpb.discard("vsm pointspot hpb");
-  vsm_pointspot_hpb_attachment = vuk::clear_image(std::move(vsm_pointspot_hpb_attachment), vuk::Black<u32>);
-  vsm_pointspot_hpb_attachment = std::move(vsm_pointspot_hpb_attachment).as_released(vuk::eComputeSampled);
-  render_context.wait_on(std::move(vsm_pointspot_hpb_attachment));
-
   vsm_physical_page_table_attachment = vuk::ImageAttachment{
     .image_flags = vuk::ImageCreateFlagBits::eMutableFormat,
     .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
@@ -688,8 +648,6 @@ auto RendererInstance::render(
   };
 
   const auto dst_extent = dst_attachment->extent;
-  const auto final_half_extent = dst_extent / 2;
-  const auto final_half_mip_count = Texture::calculate_mip_count(final_half_extent);
 
   OX_CHECK_GT(dst_extent.width, 0u);
   OX_CHECK_GT(dst_extent.height, 0u);
@@ -722,6 +680,9 @@ auto RendererInstance::render(
   const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
   const f32 debug_heatmap_scale = 5.0;
   const auto debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool();
+  const auto draw_overdraw = debugging && debug_view == GPU::DebugView::Overdraw;
+  const auto debug_uses_visbuffer = debugging && debug_view != GPU::DebugView::DDGIProbes &&
+                                    debug_view != GPU::DebugView::RMVSM && debug_view != GPU::DebugView::RMVSMPointSpot;
 
   const auto transparent_background = static_cast<bool>(self.gpu_scene_flags & GPU::SceneFlags::TransparentBackground);
   const auto hdr_format = transparent_background ? vuk::Format::eR16G16B16A16Sfloat
@@ -810,7 +771,8 @@ auto RendererInstance::render(
 
   auto visbuffer_attachment = vuk::declare_ia(
     "visbuffer",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage |
+              vuk::ImageUsageFlagBits::eColorAttachment,
      .format = vuk::Format::eR32Uint,
      .sample_count = vuk::SampleCountFlagBits::e1}
   );
@@ -831,19 +793,23 @@ auto RendererInstance::render(
   auto overdraw_attachment = vuk::declare_ia(
     "overdraw",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .sample_count = vuk::SampleCountFlagBits::e1}
+     .extent = draw_overdraw ? dst_extent : vuk::Extent3D{1, 1, 1},
+     .format = vuk::Format::eR32Uint,
+     .sample_count = vuk::SampleCountFlagBits::e1,
+     .level_count = 1,
+     .layer_count = 1}
   );
-  overdraw_attachment.similar_to(visbuffer_attachment);
 
   auto vis_clear_pass = vuk::make_pass(
     "vis clear",
-    [](
+    [draw_overdraw](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeWrite) visbuffer,
       VUK_IA(vuk::eComputeWrite) overdraw
     ) {
       cmd_list //
         .bind_compute_pipeline("visbuffer_clear")
+        .specialize_constants(0, draw_overdraw)
         .bind_image(0, 0, visbuffer)
         .bind_image(0, 1, overdraw)
         .push_constants(
@@ -865,7 +831,7 @@ auto RendererInstance::render(
     "shadows",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage |
               vuk::ImageUsageFlagBits::eColorAttachment,
-     .format = vuk::Format::eR16G16Sfloat,
+     .format = vuk::Format::eR8G8Unorm,
      .sample_count = vuk::SampleCountFlagBits::e1}
   );
   shadows_attachment.same_shape_as(final_attachment);
@@ -883,7 +849,7 @@ auto RendererInstance::render(
   auto normal_attachment = vuk::declare_ia(
     "normal",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-     .format = vuk::Format::eR16G16B16A16Sfloat,
+     .format = vuk::Format::eR8G8B8A8Snorm,
      .sample_count = vuk::Samples::e1}
   );
   normal_attachment.same_shape_as(visbuffer_attachment);
@@ -901,7 +867,7 @@ auto RendererInstance::render(
   auto metallic_roughness_occlusion_attachment = vuk::declare_ia(
     "metallic roughness occlusion",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-     .format = vuk::Format::eR8G8B8A8Unorm,
+     .format = vuk::Format::eR8G8Unorm,
      .sample_count = vuk::Samples::e1}
   );
   metallic_roughness_occlusion_attachment.same_shape_as(visbuffer_attachment);
@@ -913,7 +879,7 @@ auto RendererInstance::render(
   auto vbgtao_occlusion_attachment = vuk::declare_ia(
     "vbgtao occlusion",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eR16Sfloat,
+     .format = vuk::Format::eR8Unorm,
      .sample_count = vuk::Samples::e1,
      .view_type = vuk::ImageViewType::e2D,
      .level_count = 1,
@@ -922,17 +888,7 @@ auto RendererInstance::render(
   vbgtao_occlusion_attachment.same_extent_as(depth_attachment);
   vbgtao_occlusion_attachment = vuk::clear_image(std::move(vbgtao_occlusion_attachment), vuk::White<f32>);
 
-  auto vbgtao_depth_differences_attachment = vuk::declare_ia(
-    "vbgtao depth differences",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eR32Uint,
-     .sample_count = vuk::Samples::e1}
-  );
-  vbgtao_depth_differences_attachment.same_shape_as(vbgtao_occlusion_attachment);
-  vbgtao_depth_differences_attachment = vuk::clear_image(
-    std::move(vbgtao_depth_differences_attachment),
-    vuk::Black<f32>
-  );
+  auto vbgtao_depth_differences_attachment = vuk::Value<vuk::ImageAttachment>{};
   auto rmvsm_virtual_page_table_attachment = vuk::Value<vuk::ImageAttachment>{};
   auto rmvsm_virtual_clipmaps_buffer = vuk::Value<vuk::Buffer>{};
   auto pointspot_views_for_lighting = vuk::Value<vuk::Buffer>{};
@@ -972,7 +928,7 @@ auto RendererInstance::render(
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0 || terrain != nullptr) {
     auto main_geometry_context = MainGeometryContext{
-      .draw_overdraw = (std::to_underlying(debug_view) & std::to_underlying(GPU::DebugView::Overdraw)) == 1,
+      .draw_overdraw = draw_overdraw,
       .bindless_set = &bindless_set,
       .depth_attachment = std::move(depth_attachment),
       .hiz_attachment = std::move(hiz_attachment),
@@ -1289,6 +1245,20 @@ auto RendererInstance::render(
     depth_attachment = std::move(rtao_context.depth_attachment);
     vbgtao_occlusion_attachment = std::move(rtao_context.ambient_occlusion_attachment);
   } else if (self.gpu_scene_flags & GPU::SceneFlags::HasGTAO) {
+    if (debug_uses_visbuffer) {
+      vbgtao_depth_differences_attachment = vuk::declare_ia(
+        "vbgtao depth differences",
+        {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+         .extent = dst_extent,
+         .format = vuk::Format::eR32Uint,
+         .sample_count = vuk::Samples::e1,
+         .level_count = 1,
+         .layer_count = 1}
+      );
+    } else {
+      vbgtao_depth_differences_attachment = std::move(visbuffer_attachment);
+    }
+
     auto ao_context = AmbientOcclusionContext{
       .noise_attachment = std::move(hilbert_noise_lut_attachment),
       .normal_attachment = std::move(normal_attachment),
@@ -1303,6 +1273,10 @@ auto RendererInstance::render(
     depth_attachment = std::move(ao_context.depth_attachment);
     vbgtao_depth_differences_attachment = std::move(ao_context.depth_differences_attachment);
     vbgtao_occlusion_attachment = std::move(ao_context.ambient_occlusion_attachment);
+
+    if (!debug_uses_visbuffer) {
+      visbuffer_attachment = std::move(vbgtao_depth_differences_attachment);
+    }
   }
 
   if (!vsm_chain_ran) {
@@ -1737,17 +1711,19 @@ auto RendererInstance::render(
     std::tie(final_attachment, fxaa_attachment) = fxaa_pass(std::move(fxaa_attachment), std::move(final_attachment));
   }
 
-  auto bloom_upsampled_attachment = vuk::declare_ia(
-    "bloom upsampled",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .extent = final_half_extent,
-     .format = vuk::Format::eB10G11R11UfloatPack32,
-     .sample_count = vuk::SampleCountFlagBits::e1,
-     .level_count = final_half_mip_count,
-     .layer_count = 1}
-  );
-  bloom_upsampled_attachment.same_format_as(final_attachment);
-  bloom_upsampled_attachment = vuk::clear_image(std::move(bloom_upsampled_attachment), vuk::Black<float>);
+  auto bloom_attachment = vuk::Value<vuk::ImageAttachment>{};
+  if (!(self.gpu_scene_flags & GPU::SceneFlags::HasBloom)) {
+    bloom_attachment = vuk::declare_ia(
+      "bloom disabled",
+      {.usage = vuk::ImageUsageFlagBits::eSampled,
+       .extent = {1, 1, 1},
+       .format = vuk::Format::eB10G11R11UfloatPack32,
+       .sample_count = vuk::SampleCountFlagBits::e1,
+       .level_count = 1,
+       .layer_count = 1}
+    );
+    bloom_attachment = vuk::clear_image(std::move(bloom_attachment), vuk::Black<float>);
+  }
 
   /// POST PROCESSING
   auto post_process_context = PostProcessContext{
@@ -1755,7 +1731,7 @@ auto RendererInstance::render(
     .extent = dst_extent,
     .dst_attachment = std::move(dst_attachment),
     .final_attachment = std::move(final_attachment),
-    .bloom_upsampled_attachment = std::move(bloom_upsampled_attachment),
+    .bloom_attachment = std::move(bloom_attachment),
   };
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasEyeAdaptation) {
@@ -1807,7 +1783,7 @@ auto RendererInstance::render(
   }
 
   if (debugging && debug_view != GPU::DebugView::DDGIProbes && self.prepared_frame.mesh_instance_count > 0) {
-    dst_attachment = self.apply_debug_view(debug_context, dst_extent);
+    dst_attachment = self.apply_debug_view(debug_context, std::move(dst_attachment));
   }
 
   const auto draw_bounding_boxes = cvar.cvar_draw_bounding_boxes.as_bool() || debugging;

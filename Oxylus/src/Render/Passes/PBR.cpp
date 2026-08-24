@@ -259,7 +259,7 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
   auto vbgtao_noisy_occlusion_attachment = vuk::declare_ia(
     "vbgtao noisy occlusion",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eR16Sfloat,
+     .format = vuk::Format::eR8Unorm,
      .sample_count = vuk::Samples::e1}
   );
   vbgtao_noisy_occlusion_attachment.same_shape_as(context.ambient_occlusion_attachment);

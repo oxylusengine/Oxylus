@@ -17,7 +17,7 @@ import scene;
 [[vk::binding(7)]] Texture2D<f32x4> albedo_image;
 [[vk::binding(8)]] Texture2D<f32x4> normal_image;
 [[vk::binding(9)]] Texture2D<f32x3> emissive_image;
-[[vk::binding(10)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
+[[vk::binding(10)]] Texture2D<f32x2> metallic_roughness_image;
 [[vk::binding(11)]] Texture2D<f32> gtao_image;
 [[vk::binding(12)]] Texture2D<f32x2> shadows_image;
 [[vk::binding(13)]] ConstantBuffer<Camera> camera;
@@ -51,7 +51,8 @@ func fs_main(
         return f32x4(0.0);
     }
 
-    let albedo_color = albedo_image.SampleLevel(linear_repeat_sampler, input.tex_coord, 0).rgb;
+    let albedo_occlusion = albedo_image.SampleLevel(linear_repeat_sampler, input.tex_coord, 0);
+    let albedo_color = albedo_occlusion.rgb;
 
     let mapped_smooth_normal = normal_image.Load(pixel_pos);
     let mapped_normal = com::oct_to_vec3(mapped_smooth_normal.rg);
@@ -59,11 +60,11 @@ func fs_main(
 
     let emission = emissive_image.Load(pixel_pos);
 
-    let metallic_roughness_occlusion = metallic_roughness_occlusion_image.Load(pixel_pos);
-    let metallic = clamp(metallic_roughness_occlusion.r, 0.0, 1.0);
-    let roughness = clamp(metallic_roughness_occlusion.g, 0.045, 1.0);
+    let metallic_roughness = metallic_roughness_image.Load(pixel_pos);
+    let metallic = clamp(metallic_roughness.r, 0.0, 1.0);
+    let roughness = clamp(metallic_roughness.g, 0.045, 1.0);
 
-    let baked_occlusion = metallic_roughness_occlusion.b;
+    let baked_occlusion = albedo_occlusion.a;
     let screen_space_occlusion = gtao_image.Load(pixel_pos).r;
     let occlusion = baked_occlusion * screen_space_occlusion;
 

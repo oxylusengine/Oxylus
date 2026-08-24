@@ -12,7 +12,7 @@ import ddgi;
 [[vk::binding(3, 0)]] Texture2D<f32> depth_image;
 [[vk::binding(4, 0)]] Texture2D<f32x4> albedo_image;
 [[vk::binding(5, 0)]] Texture2D<f32x4> normal_image;
-[[vk::binding(6, 0)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
+[[vk::binding(6, 0)]] Texture2D<f32x2> metallic_roughness_image;
 [[vk::binding(7, 0)]] Texture2D<f32> gtao_image;
 [[vk::binding(8, 0)]] Texture2D<f32x4> irradiance_atlas;
 [[vk::binding(9, 0)]] Texture2D<f32x2> distance_atlas;
@@ -33,15 +33,16 @@ func fs_main(
         return f32x4(0.0);
     }
 
-    let albedo_color = albedo_image.SampleLevel(linear_clamp_sampler, input.tex_coord, 0).rgb;
+    let albedo_occlusion = albedo_image.SampleLevel(linear_clamp_sampler, input.tex_coord, 0);
+    let albedo_color = albedo_occlusion.rgb;
 
     let mapped_smooth_normal = normal_image.Load(pixel_pos);
     let N = normalize(com::oct_to_vec3(mapped_smooth_normal.rg));
 
-    let metallic_roughness_occlusion = metallic_roughness_occlusion_image.Load(pixel_pos);
-    let metallic = clamp(metallic_roughness_occlusion.r, 0.0, 1.0);
-    let roughness = clamp(metallic_roughness_occlusion.g, 0.045, 1.0);
-    let occlusion = metallic_roughness_occlusion.b * gtao_image.Load(pixel_pos).r;
+    let metallic_roughness = metallic_roughness_image.Load(pixel_pos);
+    let metallic = clamp(metallic_roughness.r, 0.0, 1.0);
+    let roughness = clamp(metallic_roughness.g, 0.045, 1.0);
+    let occlusion = albedo_occlusion.a * gtao_image.Load(pixel_pos).r;
 
     let world_position = camera.unproject_uv(input.tex_coord, depth);
     let V = normalize(camera.position.xyz - world_position);

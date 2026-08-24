@@ -5,7 +5,7 @@ import scene;
 struct ShaderParameters {
     Texture2D<f32> occlusion_noisy;
     Texture2D<u32> depth_differences;
-    RWTexture2D<f32> ambient_occlusion;
+    RWTexture2D<f32, 1, ImageFormat.R8> ambient_occlusion;
     Sampler point_clamp_sampler;
 };
 

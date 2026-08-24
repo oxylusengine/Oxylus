@@ -6,7 +6,7 @@ import raymarch;
 
 struct ShaderParameters {
   Texture2D<f32> src_depth;
-  RWTexture2D<f32x2, 1, ImageFormat::RG16F> dst_image;
+  RWTexture2D<f32x2, 1, ImageFormat::RG8> dst_image;
   ConstantBuffer<Camera> camera;
   Sampler sampler_nearest_clamp;
   Sampler sampler_linear_clamp;

@@ -60,6 +60,39 @@ static auto query_device_feature(const vkb::Instance& instance, VkPhysicalDevice
   return feature;
 }
 
+static auto query_device_features(const vkb::Instance& instance, VkPhysicalDevice physical_device)
+  -> VkPhysicalDeviceFeatures {
+  const auto get_features_2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(
+    instance.fp_vkGetInstanceProcAddr(instance.instance, "vkGetPhysicalDeviceFeatures2")
+  );
+  if (get_features_2 == nullptr) {
+    return {};
+  }
+
+  auto features_2 = VkPhysicalDeviceFeatures2{};
+  features_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+  get_features_2(physical_device, &features_2);
+  return features_2.features;
+}
+
+static auto supports_optimal_format_features(
+  const vkb::Instance& instance,
+  VkPhysicalDevice physical_device,
+  VkFormat format,
+  VkFormatFeatureFlags required_features
+) -> bool {
+  const auto get_format_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceFormatProperties>(
+    instance.fp_vkGetInstanceProcAddr(instance.instance, "vkGetPhysicalDeviceFormatProperties")
+  );
+  if (get_format_properties == nullptr) {
+    return false;
+  }
+
+  auto properties = VkFormatProperties{};
+  get_format_properties(physical_device, format, &properties);
+  return (properties.optimalTilingFeatures & required_features) == required_features;
+}
+
 static auto ray_tracing_stage_order(ShaderStage stage) -> u32 {
   switch (stage) {
     case ShaderStage::RayGeneration: return 0;
@@ -255,6 +288,30 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
 
   self.physical_device = self.vkbphysical_device.physical_device;
 
+  const auto vk10_supported = query_device_features(self.vkb_instance, self.physical_device);
+  if (!vk10_supported.shaderStorageImageExtendedFormats) {
+    OX_LOG_FATAL(
+      "The selected device does not support shaderStorageImageExtendedFormats, which is required by the renderer."
+    );
+  }
+
+  constexpr auto sampled_color = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+  constexpr auto sampled_storage = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+  constexpr auto sampled_storage_color = sampled_storage | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+  const auto require_format = [&](VkFormat format, VkFormatFeatureFlags features, std::string_view name) {
+    if (!supports_optimal_format_features(self.vkb_instance, self.physical_device, format, features)) {
+      OX_LOG_FATAL("The selected device does not support the required sampled/color/storage usage for {}.", name);
+    }
+  };
+  require_format(VK_FORMAT_R8G8B8A8_SNORM, sampled_color, "R8G8B8A8_SNORM normals");
+  require_format(VK_FORMAT_R8G8_UNORM, sampled_storage_color, "R8G8_UNORM material and shadow targets");
+  require_format(VK_FORMAT_R8_UNORM, sampled_storage, "R8_UNORM ambient occlusion");
+  require_format(
+    VK_FORMAT_B10G11R11_UFLOAT_PACK32,
+    sampled_storage_color,
+    "B10G11R11_UFLOAT_PACK32 HDR and bloom targets"
+  );
+
   const auto vk12_supported = query_device_feature<VkPhysicalDeviceVulkan12Features>(
     self.vkb_instance,
     self.physical_device,
@@ -354,6 +411,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vk10_features.features.multiDrawIndirect = true;
   vk10_features.features.fragmentStoresAndAtomics = true;
   vk10_features.features.shaderImageGatherExtended = true;
+  vk10_features.features.shaderStorageImageExtendedFormats = true;
   vk10_features.features.shaderInt16 = true;
   vk10_features.features.tessellationShader = true;
 

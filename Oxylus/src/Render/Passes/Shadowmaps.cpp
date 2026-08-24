@@ -283,7 +283,24 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vuk::eFragmentSampled
   );
 
-  auto hpb_attachment = self.vsm_hpb.acquire("vsm hpb", vuk::eComputeSampled);
+  auto hpb_attachment = vuk::Value<vuk::ImageAttachment>{};
+  if (has_directional) {
+    hpb_attachment = vuk::declare_ia(
+      "vsm hpb",
+      {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+       .extent =
+         {
+           .width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+           .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+           .depth = 1,
+         },
+       .format = vuk::Format::eR8Uint,
+       .sample_count = vuk::Samples::e1,
+       .view_type = vuk::ImageViewType::e2DArray,
+       .level_count = 1 + static_cast<u32>(std::log2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE)),
+       .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT}
+    );
+  }
 
   if (context.sun_moved) {
     context.virtual_page_table_attachment = vuk::clear_image(
@@ -1184,12 +1201,27 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   }
 
   if (has_pointspot) {
+    auto pointspot_hpb_attachment = vuk::declare_ia(
+      "vsm pointspot hpb",
+      {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+       .extent =
+         {
+           .width = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+           .height = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+           .depth = 1,
+         },
+       .format = vuk::Format::eR8Uint,
+       .sample_count = vuk::Samples::e1,
+       .view_type = vuk::ImageViewType::e2DArray,
+       .level_count = RMVSMContext::POINT_SPOT_HPB_LEVEL_COUNT,
+       .layer_count = RMVSMContext::POINT_SPOT_LAYER_COUNT}
+    );
     auto ps_cull_context = CullGeometryPointSpotContext{
       .ps_ctx = ps_ctx,
       .views_buffer = std::move(context.pointspot_views_buffer),
       .layer_dirty_mask_buffer = std::move(context.pointspot_layer_dirty_mask_buffer),
       .page_table_attachment = std::move(context.pointspot_page_table_attachment),
-      .hpb_attachment = self.vsm_pointspot_hpb.acquire("vsm pointspot hpb", vuk::eComputeSampled),
+      .hpb_attachment = std::move(pointspot_hpb_attachment),
     };
 
     for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {

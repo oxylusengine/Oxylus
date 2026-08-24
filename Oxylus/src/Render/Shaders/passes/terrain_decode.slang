@@ -23,7 +23,7 @@ struct FragmentOutput {
     f32x4 albedo_color : SV_Target0;
     f32x4 normal_color : SV_Target1;
     f32x3 emission_color : SV_Target2;
-    f32x4 metallic_roughness_occlusion_color : SV_Target3;
+    f32x2 metallic_roughness_color : SV_Target3;
 };
 
 struct TerrainSurface {
@@ -164,12 +164,11 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
     }
 
     FragmentOutput output = {};
-    output.albedo_color = surface.albedo;
+    output.albedo_color = f32x4(surface.albedo.rgb, surface.occlusion);
     output.normal_color.xy = com::vec3_to_oct(shading_normal);
     output.normal_color.zw = com::vec3_to_oct(geometric_normal);
     output.emission_color = surface.emissive;
-    output.metallic_roughness_occlusion_color.xy = surface.metallic_roughness;
-    output.metallic_roughness_occlusion_color.z = surface.occlusion;
+    output.metallic_roughness_color = surface.metallic_roughness;
 
     return output;
 }

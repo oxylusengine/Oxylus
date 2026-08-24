@@ -3,7 +3,6 @@ import gpu;
 
 [[vk::binding(0)]] StorageImage2D<f32x4, ImageFormat::R11F_G11F_B10F> result_image;
 [[vk::binding(1)]] Image2D<f32x4> source_image_upsample;
-[[vk::binding(2)]] Image2D<f32x4> source_image_downsample;
 [[vk::binding(3)]] SamplerState sampler;
 
 struct PushConstants {
@@ -42,6 +41,6 @@ func cs_main(
                 + (b + d + f + h) * 0.125
                 + (a + c + g + i) * 0.0625;
 
-  let source_color = source_image_downsample.SampleLevel(sampler, uv, 0).rgb;
+  let source_color = result_image.Load(img_coords).rgb;
   result_image.Store(img_coords, f32x4(lerp(source_color, color_sum, pc.radius), 1.0));
 }

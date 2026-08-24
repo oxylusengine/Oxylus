@@ -6,8 +6,9 @@
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
-auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContext& context, vuk::Extent3D extent)
-  -> vuk::Value<vuk::ImageAttachment> {
+auto RendererInstance::apply_debug_view(
+  this RendererInstance& self, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
+) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
   auto vsm_ctx = GPU::VSMContext{
@@ -22,24 +23,15 @@ auto RendererInstance::apply_debug_view(this RendererInstance& self, DebugContex
     .directional_light_dir = self.directional_light.direction,
   };
 
-  auto debug_attachment = vuk::declare_ia(
-    "debug",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-     .extent = extent,
-     .format = vuk::Format::eR16G16B16A16Sfloat,
-     .sample_count = vuk::Samples::e1,
-     .level_count = 1,
-     .layer_count = 1}
-  );
-  debug_attachment = vuk::clear_image(std::move(debug_attachment), vuk::Black<f32>);
+  auto debug_attachment = vuk::clear_image(std::move(dst_attachment), vuk::Black<f32>);
 
   if (self.prepared_frame.mesh_instance_count == 0) {
     // Prevent reading invalid geometry buffers
     switch (context.debug_view) {
-      case GPU::DebugView::Triangles:
-      case GPU::DebugView::Meshlets:
-      case GPU::DebugView::Overdraw:
-      case GPU::DebugView::Materials:
+      case GPU::DebugView::Triangles    :
+      case GPU::DebugView::Meshlets     :
+      case GPU::DebugView::Overdraw     :
+      case GPU::DebugView::Materials    :
       case GPU::DebugView::MeshInstances:
       case GPU::DebugView::MeshLods     : {
         return debug_attachment;

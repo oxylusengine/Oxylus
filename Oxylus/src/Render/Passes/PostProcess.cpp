@@ -94,15 +94,20 @@ auto RendererInstance::apply_bloom(this RendererInstance& self, PostProcessConte
   const auto clamp_value = cvar.cvar_bloom_clamp.get();
   context.bloom_intensity = cvar.cvar_bloom_intensity.get();
 
-  auto bloom_downsampled_attachment = vuk::declare_ia(
-    "bloom downsampled",
+  const auto bloom_extent = vuk::Extent3D{
+    .width = std::max(context.final_attachment->extent.width / 2, 1u),
+    .height = std::max(context.final_attachment->extent.height / 2, 1u),
+    .depth = 1,
+  };
+  auto bloom_attachment = vuk::declare_ia(
+    "bloom",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+     .extent = bloom_extent,
+     .format = vuk::Format::eB10G11R11UfloatPack32,
      .sample_count = vuk::SampleCountFlagBits::e1,
+     .level_count = Texture::calculate_mip_count(bloom_extent),
      .layer_count = 1}
   );
-  bloom_downsampled_attachment.same_shape_as(context.bloom_upsampled_attachment);
-  bloom_downsampled_attachment.same_format_as(context.final_attachment);
-  bloom_downsampled_attachment = vuk::clear_image(std::move(bloom_downsampled_attachment), vuk::Black<float>);
 
   auto bloom_prefilter_pass = vuk::make_pass(
     "bloom prefilter",
@@ -130,12 +135,11 @@ auto RendererInstance::apply_bloom(this RendererInstance& self, PostProcessConte
     }
   );
 
-  std::tie(context.final_attachment, bloom_downsampled_attachment, self.prepared_frame.exposure_buffer) =
-    bloom_prefilter_pass(
-      std::move(context.final_attachment),
-      std::move(bloom_downsampled_attachment),
-      std::move(self.prepared_frame.exposure_buffer)
-    );
+  std::tie(context.final_attachment, bloom_attachment, self.prepared_frame.exposure_buffer) = bloom_prefilter_pass(
+    std::move(context.final_attachment),
+    std::move(bloom_attachment),
+    std::move(self.prepared_frame.exposure_buffer)
+  );
 
   auto bloom_downsample_pass = vuk::make_pass(
     "bloom downsample",
@@ -158,25 +162,19 @@ auto RendererInstance::apply_bloom(this RendererInstance& self, PostProcessConte
           .dispatch_invocations(mip_width, mip_height);
       }
 
-      cmd_list.image_barrier(bloom, vuk::eComputeSampled, vuk::eComputeRW);
-
       return bloom;
     }
   );
 
-  bloom_downsampled_attachment = bloom_downsample_pass(std::move(bloom_downsampled_attachment));
+  bloom_attachment = bloom_downsample_pass(std::move(bloom_attachment));
 
   // https://www.froyok.fr/blog/2021-12-ue4-custom-bloom/resources/code/bloom_down_up_demo.jpg
 
   auto bloom_upsample_pass = vuk::make_pass(
     "bloom_upsample",
-    [radius](
-      vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eComputeRW | vuk::eComputeSampled) bloom_upsampled,
-      VUK_IA(vuk::eComputeSampled) bloom_downsampled
-    ) {
-      auto extent = bloom_upsampled->extent;
-      const auto last_mip = (int32_t)bloom_upsampled->level_count - 1;
+    [radius](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW | vuk::eComputeSampled) bloom) {
+      auto extent = bloom->extent;
+      const auto last_mip = static_cast<i32>(bloom->level_count) - 1;
 
       cmd_list //
         .bind_compute_pipeline("bloom_upsample")
@@ -185,29 +183,26 @@ auto RendererInstance::apply_bloom(this RendererInstance& self, PostProcessConte
       for (int32_t i = last_mip; i > 0; i--) {
         auto mip_width = std::max(1_u32, extent.width >> (i - 1));
         auto mip_height = std::max(1_u32, extent.height >> (i - 1));
+        auto low_mip = bloom->mip(i);
+        auto high_mip = bloom->mip(i - 1);
 
         if (i == last_mip) {
-          cmd_list.bind_image(0, 1, bloom_downsampled->mip(last_mip));
+          cmd_list.image_barrier(low_mip, vuk::eComputeWrite, vuk::eComputeSampled);
         } else {
-          cmd_list.image_barrier(bloom_upsampled->mip(i), vuk::eComputeWrite, vuk::eComputeSampled);
-          cmd_list.bind_image(0, 1, bloom_upsampled->mip(i));
+          cmd_list.image_barrier(low_mip, vuk::eComputeRW, vuk::eComputeSampled);
         }
-
-        cmd_list.image_barrier(bloom_upsampled->mip(i - 1), vuk::eComputeWrite, vuk::eComputeWrite);
-        cmd_list.bind_image(0, 0, bloom_upsampled->mip(i - 1));
-        cmd_list.bind_image(0, 2, bloom_downsampled->mip(i - 1));
+        cmd_list.image_barrier(high_mip, vuk::eComputeSampled, vuk::eComputeRW)
+          .bind_image(0, 0, high_mip)
+          .bind_image(0, 1, low_mip);
         cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height, radius));
         cmd_list.dispatch_invocations(mip_width, mip_height);
       }
 
-      return bloom_upsampled;
+      return bloom;
     }
   );
 
-  context.bloom_upsampled_attachment = bloom_upsample_pass(
-    context.bloom_upsampled_attachment,
-    bloom_downsampled_attachment
-  );
+  context.bloom_attachment = bloom_upsample_pass(std::move(bloom_attachment));
 }
 
 auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessContext& context)
@@ -249,7 +244,7 @@ auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessCon
   return tonemap_pass(
     std::move(context.dst_attachment),
     std::move(context.final_attachment),
-    std::move(context.bloom_upsampled_attachment),
+    std::move(context.bloom_attachment),
     std::move(self.prepared_frame.exposure_buffer)
   );
 }
