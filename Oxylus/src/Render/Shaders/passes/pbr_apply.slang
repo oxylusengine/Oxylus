@@ -19,9 +19,8 @@ import scene;
 [[vk::binding(9)]] Texture2D<f32x3> emissive_image;
 [[vk::binding(10)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
 [[vk::binding(11)]] Texture2D<f32> gtao_image;
-[[vk::binding(12)]] Texture2D<f32> resolved_shadows;
-[[vk::binding(13)]] Texture2D<f32> contact_shadows;
-[[vk::binding(14)]] ConstantBuffer<Camera> camera;
+[[vk::binding(12)]] Texture2D<f32x2> shadows_image;
+[[vk::binding(13)]] ConstantBuffer<Camera> camera;
 
 func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
     let min_cos_theta = cos(radius * PI / 180.0);
@@ -80,8 +79,9 @@ func fs_main(
     let NoV = abs(dot(N, V)) + 1e-5;
     let NoL = max(dot(N, L), 0.0);
 
-    let directional_shadow = has_directional_light ? resolved_shadows.Load(pixel_pos) : 1.0f;
-    let contact_shadow = ((scene_flags & SceneFlags::HasContactShadows) != 0) ? contact_shadows.Load(pixel_pos) : 1.0f;
+    let shadow_visibility = shadows_image.Load(pixel_pos);
+    let directional_shadow = has_directional_light ? shadow_visibility.x : 1.0f;
+    let contact_shadow = ((scene_flags & SceneFlags::HasContactShadows) != 0) ? shadow_visibility.y : 1.0f;
     let visibility = directional_shadow * contact_shadow;
 
     var indirect_illuminance = f32x3(0.0);

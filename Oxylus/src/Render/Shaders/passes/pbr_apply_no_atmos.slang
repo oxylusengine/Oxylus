@@ -15,9 +15,8 @@ import scene;
 [[vk::binding(5)]] Texture2D<f32x3> emissive_image;
 [[vk::binding(6)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
 [[vk::binding(7)]] Texture2D<f32> gtao_image;
-[[vk::binding(8)]] Texture2D<f32> resolved_shadows;
-[[vk::binding(9)]] Texture2D<f32> contact_shadows;
-[[vk::binding(10)]] ConstantBuffer<Camera> camera;
+[[vk::binding(8)]] Texture2D<f32x2> shadows_image;
+[[vk::binding(9)]] ConstantBuffer<Camera> camera;
 
 
 [[shader("fragment")]]
@@ -69,8 +68,9 @@ func fs_main(
       return sky.has_texture ? f32x4(1.f) : f32x4(sky.solid_color);
     }
 
-    let directional_shadow = has_directional_light ? resolved_shadows.Load(pixel_pos) : 1.0f;
-    let contact_shadow = ((scene_flags & SceneFlags::HasContactShadows) != 0) ? contact_shadows.Load(pixel_pos) : 1.0f;
+    let shadow_visibility = shadows_image.Load(pixel_pos);
+    let directional_shadow = has_directional_light ? shadow_visibility.x : 1.0f;
+    let contact_shadow = ((scene_flags & SceneFlags::HasContactShadows) != 0) ? shadow_visibility.y : 1.0f;
     let visibility = directional_shadow * contact_shadow;
 
     // No atmosphere, so no transmittance to attenuate the sun.

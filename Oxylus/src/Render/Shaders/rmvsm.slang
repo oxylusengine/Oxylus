@@ -111,7 +111,7 @@ public struct VSMPageMetadata {
     }
 };
 
-#define VMS_USE_DIAG_PIXEL_FOOTPRINT 1
+#define VMS_USE_DIAG_PIXEL_FOOTPRINT 0
 
 public struct VSMClipmapSelection {
     public f32 level_f;
@@ -160,8 +160,6 @@ public struct VSMContext {
     }
 
     public func get_first_clipmap_texel_length() -> f32 {
-        // Account for page snapping reducing effective coverage by up to one page per side.
-        // See Timberdoodle's scale_ratio: (page_count - 2) / page_count
         let page_count = this.page_table_size;
         let scale_ratio = f32(page_count - 1) / f32(page_count);
         let effective_width = this.first_clipmap_width * scale_ratio;

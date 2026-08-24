@@ -418,7 +418,7 @@ struct ShadowResolveContext {
   vuk::Value<vuk::ImageAttachment> virtual_page_table_attachment = {};
   vuk::Value<vuk::ImageAttachment> physical_page_table_attachment = {};
 
-  vuk::Value<vuk::ImageAttachment> resolved_shadows_attachment = {};
+  vuk::Value<vuk::ImageAttachment> shadows_attachment = {};
 };
 
 struct AtmosphereContext {
@@ -463,8 +463,7 @@ struct PBRContext {
   vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
   vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
-  vuk::Value<vuk::ImageAttachment> contact_shadows_attachment = {};
-  vuk::Value<vuk::ImageAttachment> resolved_shadows_attachment = {};
+  vuk::Value<vuk::ImageAttachment> shadows_attachment = {};
 
   glm::vec3 light_grid_origin = {};
   vuk::Value<vuk::Buffer> light_grid_buffer = {};

@@ -382,8 +382,7 @@ auto RendererInstance::apply_pbr(
         VUK_IA(vuk::eFragmentSampled) emissive,
         VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
         VUK_IA(vuk::eFragmentSampled) gtao,
-        VUK_IA(vuk::eFragmentSampled) resolved_shadows,
-        VUK_IA(vuk::eFragmentSampled) contact_shadows,
+        VUK_IA(vuk::eFragmentSampled) shadows,
         VUK_BA(vuk::eFragmentUniformRead) camera
       ) {
         cmd_list //
@@ -405,9 +404,8 @@ auto RendererInstance::apply_pbr(
           .bind_image(0, 9, emissive)
           .bind_image(0, 10, metallic_roughness_occlusion)
           .bind_image(0, 11, gtao)
-          .bind_image(0, 12, resolved_shadows)
-          .bind_image(0, 13, contact_shadows)
-          .bind_buffer(0, 14, camera)
+          .bind_image(0, 12, shadows)
+          .bind_buffer(0, 13, camera)
           .push_constants(
             vuk::ShaderStageFlagBits::eFragment,
             0,
@@ -428,8 +426,7 @@ auto RendererInstance::apply_pbr(
           emissive,
           metallic_roughness_occlusion,
           gtao,
-          resolved_shadows,
-          contact_shadows,
+          shadows,
           camera
         );
       }
@@ -447,8 +444,7 @@ auto RendererInstance::apply_pbr(
       context.emissive_attachment,
       context.metallic_roughness_occlusion_attachment,
       context.ambient_occlusion_attachment,
-      context.resolved_shadows_attachment,
-      context.contact_shadows_attachment,
+      context.shadows_attachment,
       self.prepared_frame.camera_buffer
     ) =
       pbr_apply_pass(
@@ -463,8 +459,7 @@ auto RendererInstance::apply_pbr(
         std::move(context.emissive_attachment),
         std::move(context.metallic_roughness_occlusion_attachment),
         std::move(context.ambient_occlusion_attachment),
-        std::move(context.resolved_shadows_attachment),
-        std::move(context.contact_shadows_attachment),
+        std::move(context.shadows_attachment),
         std::move(self.prepared_frame.camera_buffer)
       );
   } else {
@@ -482,8 +477,7 @@ auto RendererInstance::apply_pbr(
         VUK_IA(vuk::eFragmentSampled) emissive,
         VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
         VUK_IA(vuk::eFragmentSampled) gtao,
-        VUK_IA(vuk::eFragmentSampled) resolved_shadows,
-        VUK_IA(vuk::eFragmentSampled) contact_shadows,
+        VUK_IA(vuk::eFragmentSampled) shadows,
         VUK_BA(vuk::eFragmentUniformRead) camera
       ) {
         cmd_list //
@@ -501,9 +495,8 @@ auto RendererInstance::apply_pbr(
           .bind_image(0, 5, emissive)
           .bind_image(0, 6, metallic_roughness_occlusion)
           .bind_image(0, 7, gtao)
-          .bind_image(0, 8, resolved_shadows)
-          .bind_image(0, 9, contact_shadows)
-          .bind_buffer(0, 10, camera)
+          .bind_image(0, 8, shadows)
+          .bind_buffer(0, 9, camera)
           .push_constants(
             vuk::ShaderStageFlagBits::eFragment,
             0,
@@ -520,8 +513,7 @@ auto RendererInstance::apply_pbr(
           emissive,
           metallic_roughness_occlusion,
           gtao,
-          resolved_shadows,
-          contact_shadows,
+          shadows,
           camera
         );
       }
@@ -535,8 +527,7 @@ auto RendererInstance::apply_pbr(
       context.emissive_attachment,
       context.metallic_roughness_occlusion_attachment,
       context.ambient_occlusion_attachment,
-      context.resolved_shadows_attachment,
-      context.contact_shadows_attachment,
+      context.shadows_attachment,
       self.prepared_frame.camera_buffer
     ) =
       pbr_apply_pass(
@@ -547,8 +538,7 @@ auto RendererInstance::apply_pbr(
         std::move(context.emissive_attachment),
         std::move(context.metallic_roughness_occlusion_attachment),
         std::move(context.ambient_occlusion_attachment),
-        std::move(context.resolved_shadows_attachment),
-        std::move(context.contact_shadows_attachment),
+        std::move(context.shadows_attachment),
         std::move(self.prepared_frame.camera_buffer)
       );
   }

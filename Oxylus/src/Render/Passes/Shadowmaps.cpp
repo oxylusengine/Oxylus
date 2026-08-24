@@ -1399,7 +1399,7 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
     "resolve shadows",
     [vsm_ctx](
       vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eColorRW) resolved,
+      VUK_IA(vuk::eColorRW) shadows,
       VUK_BA(vuk::eFragmentUniformRead) camera,
       VUK_IA(vuk::eFragmentSampled) depth,
       VUK_IA(vuk::eFragmentSampled) normals,
@@ -1409,7 +1409,10 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
     ) {
       cmd_list //
         .bind_graphics_pipeline("resolve_shadowmaps")
-        .set_color_blend(resolved, vuk::BlendPreset::eOff)
+        .set_color_blend(
+          shadows,
+          vuk::PipelineColorBlendAttachmentState{.colorWriteMask = vuk::ColorComponentFlagBits::eR}
+        )
         .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
         .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
         .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
@@ -1424,12 +1427,12 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
         .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, vsm_ctx)
         .draw(3, 1, 0, 0);
 
-      return std::make_tuple(resolved, camera, depth, normals, page_tables, physical_pages, clipmaps);
+      return std::make_tuple(shadows, camera, depth, normals, page_tables, physical_pages, clipmaps);
     }
   );
 
   std::tie(
-    context.resolved_shadows_attachment,
+    context.shadows_attachment,
     self.prepared_frame.camera_buffer,
     context.depth_attachment,
     context.normal_attachment,
@@ -1438,7 +1441,7 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
     context.directional_clipmaps_buffer
   ) =
     resolve_pass(
-      std::move(context.resolved_shadows_attachment),
+      std::move(context.shadows_attachment),
       std::move(self.prepared_frame.camera_buffer),
       std::move(context.depth_attachment),
       std::move(context.normal_attachment),

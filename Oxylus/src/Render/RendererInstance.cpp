@@ -861,23 +861,15 @@ auto RendererInstance::render(
     std::move(overdraw_attachment)
   );
 
-  auto contact_shadows_attachment = vuk::declare_ia(
-    "contact shadows",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eR32Sfloat,
-     .sample_count = vuk::SampleCountFlagBits::e1}
-  );
-  contact_shadows_attachment.same_shape_as(final_attachment);
-  contact_shadows_attachment = vuk::clear_image(std::move(contact_shadows_attachment), vuk::Black<f32>);
-
-  auto resolved_shadows_attachment = vuk::declare_ia(
+  auto shadows_attachment = vuk::declare_ia(
     "shadows",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eR32Sfloat,
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage |
+              vuk::ImageUsageFlagBits::eColorAttachment,
+     .format = vuk::Format::eR16G16Sfloat,
      .sample_count = vuk::SampleCountFlagBits::e1}
   );
-  resolved_shadows_attachment.same_shape_as(final_attachment);
-  resolved_shadows_attachment = vuk::clear_image(std::move(resolved_shadows_attachment), vuk::White<f32>);
+  shadows_attachment.same_shape_as(final_attachment);
+  shadows_attachment = vuk::clear_image(std::move(shadows_attachment), vuk::White<f32>);
 
   auto albedo_attachment = vuk::declare_ia(
     "albedo",
@@ -1206,12 +1198,12 @@ auto RendererInstance::render(
           .normal_attachment = std::move(normal_attachment),
           .virtual_page_table_attachment = std::move(rmvsm_context.virtual_page_table_attachment),
           .physical_page_table_attachment = std::move(rmvsm_context.physical_page_table_attachment),
-          .resolved_shadows_attachment = std::move(resolved_shadows_attachment),
+          .shadows_attachment = std::move(shadows_attachment),
         };
         self.resolve_shadowmap(shadow_resolve_context);
         depth_attachment = std::move(shadow_resolve_context.depth_attachment);
         normal_attachment = std::move(shadow_resolve_context.normal_attachment);
-        resolved_shadows_attachment = std::move(shadow_resolve_context.resolved_shadows_attachment);
+        shadows_attachment = std::move(shadow_resolve_context.shadows_attachment);
         rmvsm_virtual_page_table_attachment = std::move(shadow_resolve_context.virtual_page_table_attachment);
         rmvsm_virtual_clipmaps_buffer = std::move(shadow_resolve_context.directional_clipmaps_buffer);
         vsm_physical_pages_for_lighting = std::move(shadow_resolve_context.physical_page_table_attachment);
@@ -1247,8 +1239,8 @@ auto RendererInstance::render(
       }
     );
 
-    std::tie(contact_shadows_attachment, depth_attachment, self.prepared_frame.camera_buffer) = contact_shadows_pass(
-      std::move(contact_shadows_attachment),
+    std::tie(shadows_attachment, depth_attachment, self.prepared_frame.camera_buffer) = contact_shadows_pass(
+      std::move(shadows_attachment),
       std::move(depth_attachment),
       std::move(self.prepared_frame.camera_buffer)
     );
@@ -1491,8 +1483,7 @@ auto RendererInstance::render(
     .emissive_attachment = std::move(emissive_attachment),
     .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
     .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
-    .contact_shadows_attachment = std::move(contact_shadows_attachment),
-    .resolved_shadows_attachment = std::move(resolved_shadows_attachment),
+    .shadows_attachment = std::move(shadows_attachment),
     .light_grid_origin = light_grid_context.grid_origin,
     .light_grid_buffer = std::move(light_grid_context.light_grid_buffer),
     .pointspot_views_buffer = std::move(pointspot_views_for_lighting),
