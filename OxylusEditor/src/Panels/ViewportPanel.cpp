@@ -822,6 +822,11 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "Probes within this distance of the camera retrace every frame"
           );
           UI::property(
+            "Distance Culling",
+            cvar_sys.cvar_ddgi_distance_culling.get_ptr_bool(),
+            "Trace mesh-distant probes only for staggered rechecks and reuse cached probe radiance for far ray hits"
+          );
+          UI::property(
             "Probe Relocation",
             cvar_sys.cvar_ddgi_probe_relocation.get_ptr_bool(),
             "Move probes out of geometry they are buried in, and drop the ones that stay stuck"

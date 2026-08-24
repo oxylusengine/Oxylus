@@ -491,6 +491,8 @@ struct DDGITraceContext {
   glm::vec3 ambient_color = {};
 
   u32 volume_count = 0;
+  u32 radiance_atlas_y_offset = 0;
+  bool distance_culling_enabled = true;
   bool bounce_valid = false;
   f32 view_bias = 0.1f;
   glm::vec3 light_grid_origin = {};
@@ -512,6 +514,7 @@ struct DDGITraceContext {
 struct DDGIUpdateContext {
   u32 rays_per_probe = 128;
   u32 frame_index = 0;
+  u32 radiance_atlas_y_offset = 0;
   f32 hysteresis = 0.97f;
   f32 max_brightness_step = 0.1f;
   f32 firefly_ratio = 32.0f;
@@ -531,6 +534,8 @@ struct DDGISelectContext {
   u32 max_interval = 8;
   f32 full_rate_distance = 10.0f;
   bool update_all = false;
+  bool force_update_all = false;
+  bool distance_culling_enabled = true;
 
   vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
   vuk::Value<vuk::Buffer> probe_states_buffer = {};
@@ -542,6 +547,8 @@ struct DDGIRelocateContext {
   u32 rays_per_probe = 128;
   u32 frame_index = 0;
   f32 min_frontface_distance = 0.5f;
+  bool relocation_enabled = true;
+  bool distance_culling_enabled = true;
 
   vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
   vuk::Value<vuk::Buffer> probe_states_buffer = {};
@@ -763,6 +770,7 @@ private:
 
   u32 ddgi_atlas_probe_count = 0;
   bool ddgi_history_valid = false;
+  bool ddgi_distance_culling_enabled = true;
   vuk::Unique<vuk::Image> ddgi_irradiance{};
   vuk::Unique<vuk::ImageView> ddgi_irradiance_view{};
   vuk::ImageAttachment ddgi_irradiance_attachment = {};

@@ -19,6 +19,8 @@ func cs_main(
     uniform u32 max_interval,
     uniform f32 full_rate_distance,
     uniform u32 update_all,
+    uniform u32 force_update_all,
+    uniform u32 distance_culling_enabled,
     uniform i32x3 scroll_delta
 ) -> void {
     let volume = probe_volumes[volume_index];
@@ -61,9 +63,19 @@ func cs_main(
         interval = clamp(u32(view_distance / max(full_rate_distance, 1e-3)), 1u, max_interval);
     }
 
-    let update = reset || ((frame_index + probe_index) % interval) == 0;
+    let mesh_distance_culled = distance_culling_enabled != 0 &&
+                               probe_is_mesh_distant(flags) &&
+                               !probe_is_inside_geometry(flags);
+    let update_interval = mesh_distance_culled ? PROBE_MESH_DISTANCE_RECHECK_INTERVAL : interval;
+    let update = reset || force_update_all != 0 || ((frame_index + probe_index) % update_interval) == 0;
 
-    probe_states[probe_row].flags = probe_pack_flags(!reset && probe_is_inactive(flags), update, reset);
+    probe_states[probe_row].flags = probe_pack_flags(
+        !reset && probe_is_inside_geometry(flags),
+        !reset && probe_is_mesh_distant(flags),
+        update,
+        reset,
+        !reset ? probe_mesh_distance_grace(flags) : 0u
+    );
 
     if (update) {
         let slot = __atomic_add(probe_update_args[0].count, 1u, MemoryOrder::Relaxed);

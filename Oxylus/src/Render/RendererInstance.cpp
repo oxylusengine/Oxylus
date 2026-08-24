@@ -1304,6 +1304,8 @@ auto RendererInstance::render(
 
   // --- DDGI Probe Tracing ---
   const auto draw_ddgi_probes = debug_view == GPU::DebugView::DDGIProbes && debugging;
+  const auto ddgi_distance_culling_enabled = cvar.cvar_ddgi_distance_culling.as_bool();
+  const auto ddgi_distance_culling_changed = ddgi_distance_culling_enabled != self.ddgi_distance_culling_enabled;
   auto ddgi_irradiance_attachment = vuk::Value<vuk::ImageAttachment>{};
   auto ddgi_distance_attachment = vuk::Value<vuk::ImageAttachment>{};
   auto ddgi_probe_states_buffer = vuk::Value<vuk::Buffer>{};
@@ -1349,6 +1351,8 @@ auto RendererInstance::render(
         .max_interval = static_cast<u32>(std::clamp(cvar.cvar_ddgi_update_max_interval.get(), 1, 255)),
         .full_rate_distance = cvar.cvar_ddgi_update_full_rate_distance.get(),
         .update_all = !self.ddgi_history_valid,
+        .force_update_all = ddgi_distance_culling_changed,
+        .distance_culling_enabled = ddgi_distance_culling_enabled,
         .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
         .probe_states_buffer = std::move(ddgi_probe_states_buffer),
         .probe_update_list_buffer = vuk::acquire_buf(
@@ -1376,6 +1380,8 @@ auto RendererInstance::render(
         .sun_intensity = self.directional_light.intensity,
         .ambient_color = self.sky_data.ambient_color,
         .volume_count = static_cast<u32>(self.probe_volumes.size()),
+        .radiance_atlas_y_offset = GPU::ddgi_radiance_atlas_y_offset(total_probe_count),
+        .distance_culling_enabled = ddgi_distance_culling_enabled,
         .bounce_valid = self.ddgi_history_valid,
         .view_bias = cvar.cvar_ddgi_view_bias.get(),
         .light_grid_origin = light_grid_context.grid_origin,
@@ -1402,29 +1408,30 @@ auto RendererInstance::render(
       pointspot_page_table_for_lighting = std::move(ddgi_trace_context.pointspot_page_table_attachment);
       vsm_physical_pages_for_lighting = std::move(ddgi_trace_context.vsm_physical_pages_attachment);
 
-      if (cvar.cvar_ddgi_probe_relocation.as_bool()) {
-        auto ddgi_relocate_context = DDGIRelocateContext{
-          .rays_per_probe = rays_per_probe,
-          .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
-          .min_frontface_distance = cvar.cvar_ddgi_min_frontface_distance.get(),
-          .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
-          .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
-          .probe_update_list_buffer = std::move(ddgi_select_context.probe_update_list_buffer),
-          .probe_update_args_buffer = std::move(ddgi_select_context.probe_update_args_buffer),
-          .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),
-        };
-        self.relocate_ddgi_probes(ddgi_relocate_context);
+      auto ddgi_relocate_context = DDGIRelocateContext{
+        .rays_per_probe = rays_per_probe,
+        .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .min_frontface_distance = cvar.cvar_ddgi_min_frontface_distance.get(),
+        .relocation_enabled = cvar.cvar_ddgi_probe_relocation.as_bool(),
+        .distance_culling_enabled = ddgi_distance_culling_enabled,
+        .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
+        .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
+        .probe_update_list_buffer = std::move(ddgi_select_context.probe_update_list_buffer),
+        .probe_update_args_buffer = std::move(ddgi_select_context.probe_update_args_buffer),
+        .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),
+      };
+      self.relocate_ddgi_probes(ddgi_relocate_context);
 
-        ddgi_trace_context.probe_volumes_buffer = std::move(ddgi_relocate_context.probe_volumes_buffer);
-        ddgi_trace_context.probe_states_buffer = std::move(ddgi_relocate_context.probe_states_buffer);
-        ddgi_trace_context.ray_data_attachment = std::move(ddgi_relocate_context.ray_data_attachment);
-        ddgi_select_context.probe_update_list_buffer = std::move(ddgi_relocate_context.probe_update_list_buffer);
-        ddgi_select_context.probe_update_args_buffer = std::move(ddgi_relocate_context.probe_update_args_buffer);
-      }
+      ddgi_trace_context.probe_volumes_buffer = std::move(ddgi_relocate_context.probe_volumes_buffer);
+      ddgi_trace_context.probe_states_buffer = std::move(ddgi_relocate_context.probe_states_buffer);
+      ddgi_trace_context.ray_data_attachment = std::move(ddgi_relocate_context.ray_data_attachment);
+      ddgi_select_context.probe_update_list_buffer = std::move(ddgi_relocate_context.probe_update_list_buffer);
+      ddgi_select_context.probe_update_args_buffer = std::move(ddgi_relocate_context.probe_update_args_buffer);
 
       auto ddgi_update_context = DDGIUpdateContext{
         .rays_per_probe = rays_per_probe,
         .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .radiance_atlas_y_offset = GPU::ddgi_radiance_atlas_y_offset(total_probe_count),
         .hysteresis = cvar.cvar_ddgi_hysteresis.get(),
         .max_brightness_step = cvar.cvar_ddgi_max_brightness_step.get(),
         .firefly_ratio = cvar.cvar_ddgi_firefly_ratio.get(),
@@ -1438,6 +1445,7 @@ auto RendererInstance::render(
         .distance_attachment = std::move(ddgi_trace_context.distance_attachment),
       };
       self.update_ddgi_probes(ddgi_update_context);
+      self.ddgi_distance_culling_enabled = ddgi_distance_culling_enabled;
 
       ddgi_irradiance_attachment = std::move(ddgi_update_context.irradiance_attachment);
       ddgi_distance_attachment = std::move(ddgi_update_context.distance_attachment);

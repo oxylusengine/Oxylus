@@ -50,6 +50,7 @@ struct RendererCVar {
   AutoCVar_Float cvar_ddgi_max_ray_radiance;
   AutoCVar_Int cvar_ddgi_update_max_interval;
   AutoCVar_Float cvar_ddgi_update_full_rate_distance;
+  AutoCVar_Int cvar_ddgi_distance_culling;
   AutoCVar_Int cvar_ddgi_probe_relocation;
   AutoCVar_Float cvar_ddgi_min_frontface_distance;
   AutoCVar_Float cvar_ddgi_shadow_ray_offset;

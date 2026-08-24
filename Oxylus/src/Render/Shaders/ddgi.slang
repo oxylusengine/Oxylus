@@ -2,8 +2,11 @@ import common;
 import gpu;
 
 public constexpr static u32 IRRADIANCE_TEXELS = 12;
+public constexpr static u32 RADIANCE_TEXELS = 6;
 public constexpr static u32 DISTANCE_TEXELS = 12;
 public constexpr static u32 PROBES_PER_ATLAS_ROW = 512;
+public constexpr static u32 IRRADIANCE_ATLAS_WIDTH = PROBES_PER_ATLAS_ROW * (IRRADIANCE_TEXELS + 2);
+public constexpr static u32 RADIANCE_PROBES_PER_ATLAS_ROW = IRRADIANCE_ATLAS_WIDTH / (RADIANCE_TEXELS + 2);
 public constexpr static u32 PROBE_SELECT_GROUP = 64;
 public constexpr static u32 TEXEL_UPDATE_GROUP = 8;
 public constexpr static u32 TEXEL_UPDATE_THREADS_Y = 48;
@@ -20,6 +23,12 @@ public constexpr static u32 DEBUG_SPHERE_VERTEX_COUNT = DEBUG_SPHERE_RINGS * DEB
 public static const u32 PROBE_INACTIVE_BIT = 1u;
 public static const u32 PROBE_UPDATE_BIT = 2u;
 public static const u32 PROBE_RESET_BIT = 4u;
+public static const u32 PROBE_INSIDE_GEOMETRY_BIT = 8u;
+public static const u32 PROBE_MESH_DISTANCE_BIT = 16u;
+public static const u32 PROBE_MESH_DISTANCE_GRACE_SHIFT = 8u;
+public static const u32 PROBE_MESH_DISTANCE_GRACE_MASK = 0x0f00u;
+public static const u32 PROBE_MESH_DISTANCE_GRACE_UPDATES = 8u;
+public static const u32 PROBE_MESH_DISTANCE_RECHECK_INTERVAL = 32u;
 
 // Above this share of backface hits a probe is taken to be inside geometry rather than merely facing a
 // wall. Coming back out is held to the lower figure: the ray set is rotated every frame, so a probe
@@ -45,9 +54,32 @@ public func probe_is_reset(u32 flags) -> bool {
     return (flags & PROBE_RESET_BIT) != 0;
 }
 
-public func probe_pack_flags(bool inactive, bool update, bool reset) -> u32 {
-    return (inactive ? PROBE_INACTIVE_BIT : 0u) | (update ? PROBE_UPDATE_BIT : 0u) |
-           (reset ? PROBE_RESET_BIT : 0u);
+public func probe_is_inside_geometry(u32 flags) -> bool {
+    return (flags & PROBE_INSIDE_GEOMETRY_BIT) != 0;
+}
+
+public func probe_is_mesh_distant(u32 flags) -> bool {
+    return (flags & PROBE_MESH_DISTANCE_BIT) != 0;
+}
+
+public func probe_mesh_distance_grace(u32 flags) -> u32 {
+    return (flags & PROBE_MESH_DISTANCE_GRACE_MASK) >> PROBE_MESH_DISTANCE_GRACE_SHIFT;
+}
+
+public func probe_pack_flags(
+    bool inside_geometry,
+    bool mesh_distant,
+    bool update,
+    bool reset,
+    u32 mesh_distance_grace
+) -> u32 {
+    let inactive = inside_geometry || mesh_distant;
+    return (inactive ? PROBE_INACTIVE_BIT : 0u) |
+           (update ? PROBE_UPDATE_BIT : 0u) |
+           (reset ? PROBE_RESET_BIT : 0u) |
+           (inside_geometry ? PROBE_INSIDE_GEOMETRY_BIT : 0u) |
+           (mesh_distant ? PROBE_MESH_DISTANCE_BIT : 0u) |
+           ((mesh_distance_grace << PROBE_MESH_DISTANCE_GRACE_SHIFT) & PROBE_MESH_DISTANCE_GRACE_MASK);
 }
 
 public struct ProbeUpdateArgs {
@@ -197,6 +229,30 @@ public func sample_probe_distance(Image2D<f32x2> atlas, Sampler atlas_sampler, u
     return atlas.SampleLevel(atlas_sampler, uv, 0.0).rg;
 }
 
+public func probe_radiance_tile_origin(u32 probe_row, u32 atlas_y_offset) -> u32x2 {
+    let tile = RADIANCE_TEXELS + 2;
+    return u32x2(
+        (probe_row % RADIANCE_PROBES_PER_ATLAS_ROW) * tile,
+        atlas_y_offset + (probe_row / RADIANCE_PROBES_PER_ATLAS_ROW) * tile
+    );
+}
+
+public func load_probe_radiance(
+    Image2D<f32x4> atlas,
+    u32 probe_row,
+    u32 atlas_y_offset,
+    f32x3 direction
+) -> f32x3 {
+    let origin = probe_radiance_tile_origin(probe_row, atlas_y_offset);
+    let octant = saturate(com::vec3_to_oct(normalize(direction)) * 0.5 + 0.5);
+    let texel = min(
+        u32x2(octant * f32(RADIANCE_TEXELS)),
+        u32x2(RADIANCE_TEXELS - 1u)
+    );
+
+    return atlas.Load(u32x3(origin + 1 + texel, 0)).rgb;
+}
+
 public struct ProbeBorderWrites {
     public bool has_x;
     public bool has_y;
@@ -286,6 +342,11 @@ public func probe_world_position(in ProbeVolume volume, StructuredBuffer<ProbeSt
 public struct IrradianceSample {
     public f32x3 irradiance;
     public f32x3 specular;
+    public f32 coverage;
+};
+
+public struct RadianceSample {
+    public f32x3 radiance;
     public f32 coverage;
 };
 
@@ -388,7 +449,142 @@ public func sample_probe_volume(
     return result;
 }
 
+public func sample_probe_radiance_volume(
+    in ProbeVolume volume,
+    StructuredBuffer<ProbeState> states,
+    Image2D<f32x4> irradiance_atlas,
+    Image2D<f32x2> distance_atlas,
+    Sampler atlas_sampler,
+    u32 radiance_atlas_y_offset,
+    f32x3 world_position,
+    f32x3 normal,
+    f32x3 view_direction,
+    f32 normal_bias,
+    f32 view_bias
+) -> RadianceSample {
+    RadianceSample result = { f32x3(0.0), 0.0 };
+
+    let cell = min(min(volume.spacing.x, volume.spacing.y), volume.spacing.z);
+    let biased_position = world_position + (normal * normal_bias + view_direction * view_bias) * cell;
+    let grid_min = volume.grid_min();
+    let grid_position = volume.grid_coord_of(biased_position);
+    let base_coord = clamp(i32x3(floor(grid_position)), i32x3(0), i32x3(volume.counts) - 1);
+    let alpha = saturate(grid_position - f32x3(base_coord));
+
+    var sum = f32x3(0.0);
+    var weight_sum = 0.0;
+
+    for (u32 corner = 0; corner < 8; corner++) {
+        let offset = i32x3(corner & 1u, (corner >> 1u) & 1u, (corner >> 2u) & 1u);
+        let probe_coord = u32x3(clamp(base_coord + offset, i32x3(0), i32x3(volume.counts) - 1));
+        let probe_index = volume.probe_index_at(probe_coord);
+        let probe_row = volume.probe_offset + probe_index;
+        let state = states[probe_row];
+        if (probe_is_inactive(state.flags) || probe_is_reset(state.flags)) {
+            continue;
+        }
+
+        let probe_position = grid_min + f32x3(probe_coord) * volume.spacing + state.offset;
+
+        let trilinear = max(lerp(1.0 - alpha, alpha, f32x3(offset)), 0.001);
+        let trilinear_weight = trilinear.x * trilinear.y * trilinear.z;
+
+        let to_probe = normalize(probe_position - world_position);
+        let facing = (dot(to_probe, normal) + 1.0) * 0.5;
+        var weight = facing * facing;
+
+        let bias_vector = biased_position - probe_position;
+        let probe_distance = length(bias_vector);
+        let moments = sample_probe_distance(distance_atlas, atlas_sampler, probe_row, bias_vector);
+        let mean = moments.x;
+        var chebyshev = 1.0;
+        if (probe_distance > mean) {
+            let variance_floor = DISTANCE_VARIANCE_BIAS * volume.max_probe_distance;
+            let variance = max(abs(mean * mean - moments.y), variance_floor * variance_floor);
+            let difference = probe_distance - mean;
+            chebyshev = variance / (variance + difference * difference);
+            chebyshev = chebyshev * chebyshev * chebyshev;
+        }
+
+        weight *= max(chebyshev, 0.05);
+        weight *= trilinear_weight;
+
+        let direction = world_position - probe_position;
+        let radiance = max(
+            load_probe_radiance(irradiance_atlas, probe_row, radiance_atlas_y_offset, direction),
+            f32x3(0.0)
+        );
+        sum += sqrt(radiance) * weight;
+        weight_sum += weight;
+    }
+
+    if (weight_sum <= 0.0) {
+        return result;
+    }
+
+    const f32 min_weight = 0.1;
+    let root = com::sanitize(sum / max(weight_sum, min_weight));
+    result.radiance = root * root;
+    result.coverage = weight_sum;
+
+    return result;
+}
+
 public static const f32 CASCADE_FALLBACK_WEIGHT = 0.02;
+
+public func sample_ddgi_radiance(
+    StructuredBuffer<ProbeVolume> volumes,
+    StructuredBuffer<ProbeState> states,
+    u32 volume_count,
+    Image2D<f32x4> irradiance_atlas,
+    Image2D<f32x2> distance_atlas,
+    Sampler atlas_sampler,
+    u32 radiance_atlas_y_offset,
+    f32x3 world_position,
+    f32x3 normal,
+    f32x3 view_direction,
+    f32 normal_bias,
+    f32 view_bias
+) -> RadianceSample {
+    RadianceSample result = { f32x3(0.0), 0.0 };
+
+    for (u32 set_start = 0; set_start < volume_count;) {
+        let cascade_zero = volumes[set_start];
+        let set_count = max(cascade_zero.cascade_count, 1u);
+
+        let cascade = select_cascade(cascade_zero, world_position);
+        if (cascade >= f32(set_count)) {
+            set_start += set_count;
+            continue;
+        }
+
+        let lower = sample_probe_radiance_volume(
+            volumes[set_start + u32(floor(cascade))],
+            states,
+            irradiance_atlas,
+            distance_atlas,
+            atlas_sampler,
+            radiance_atlas_y_offset,
+            world_position,
+            normal,
+            view_direction,
+            normal_bias,
+            view_bias
+        );
+
+        if (lower.coverage > 0.0) {
+            result.radiance = lower.radiance;
+            result.coverage = saturate(
+                (f32(set_count) - cascade) / max(cascade_zero.cascade_blend, 1e-3)
+            );
+            return result;
+        }
+
+        set_start += set_count;
+    }
+
+    return result;
+}
 
 public func sample_ddgi_irradiance(
     StructuredBuffer<ProbeVolume> volumes,

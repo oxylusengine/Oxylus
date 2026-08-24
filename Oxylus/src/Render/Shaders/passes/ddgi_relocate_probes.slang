@@ -22,7 +22,9 @@ func cs_main(
     u32x3 thread_id : SV_DispatchThreadID,
     uniform u32 rays_per_probe,
     uniform u32 frame_index,
-    uniform f32 min_frontface_distance
+    uniform f32 min_frontface_distance,
+    uniform u32 relocation_enabled,
+    uniform u32 distance_culling_enabled
 ) -> void {
     let list_index = thread_id.x;
     if (list_index >= probe_update_args[0].count) {
@@ -41,6 +43,7 @@ func cs_main(
     var farthest_frontface_index = -1;
     var closest_backface_distance = com::HALF_MAX;
     var closest_frontface_distance = com::HALF_MAX;
+    var closest_mesh_distance = com::HALF_MAX;
     var farthest_frontface_distance = 0.0f;
     var backface_count = 0.0f;
 
@@ -50,6 +53,7 @@ func cs_main(
 
     for (u32 ray_index = 0; ray_index < rays_per_probe; ray_index++) {
         var distance = ray_data.Load(u32x3(ray_origin.x + ray_index, ray_origin.y, 0)).a;
+        closest_mesh_distance = min(closest_mesh_distance, abs(distance));
 
         if (distance < 0.0) {
             // backface
@@ -79,7 +83,7 @@ func cs_main(
     let max_step = RELOCATE_MAX_STEP_RATIO * min(min(volume.spacing.x, volume.spacing.y), volume.spacing.z);
 
     let backface_ratio = backface_count / f32(rays_per_probe);
-    let was_inside = probe_is_inactive(flags);
+    let was_inside = probe_is_inside_geometry(flags);
     let inside_geometry = closest_backface_index != -1 &&
                           backface_ratio > (was_inside ? PROBE_ESCAPED_BACKFACE_RATIO : PROBE_INSIDE_BACKFACE_RATIO);
 
@@ -107,14 +111,41 @@ func cs_main(
         }
     }
 
-    let normalized_offset = full_offset / volume.spacing;
-    if (dot(normalized_offset, normalized_offset) < MAX_OFFSET_RATIO_SQUARED) {
-        offset = full_offset;
+    if (relocation_enabled != 0) {
+        let normalized_offset = full_offset / volume.spacing;
+        if (dot(normalized_offset, normalized_offset) < MAX_OFFSET_RATIO_SQUARED) {
+            offset = full_offset;
+        }
     }
+
+    var mesh_distance_grace = 0u;
+    var mesh_distant = false;
+    if (distance_culling_enabled != 0) {
+        let was_mesh_distant = probe_is_mesh_distant(flags);
+        let mesh_distance_limit = volume.max_probe_distance * (was_mesh_distant ? 0.9 : 1.0);
+        let sees_near_mesh = closest_mesh_distance < mesh_distance_limit;
+        mesh_distance_grace = probe_is_reset(flags) ? 0u : probe_mesh_distance_grace(flags);
+        if (sees_near_mesh) {
+            mesh_distance_grace = PROBE_MESH_DISTANCE_GRACE_UPDATES;
+        } else if (mesh_distance_grace > 0u) {
+            mesh_distance_grace -= 1u;
+        }
+
+        mesh_distant = !sees_near_mesh && mesh_distance_grace == 0u;
+    }
+
+    let inactive = inside_geometry || mesh_distant;
+    let classification_changed = inactive != probe_is_inactive(flags);
 
     ProbeState state;
     state.offset = com::sanitize(offset);
-    state.flags = probe_pack_flags(inside_geometry, probe_updates_this_frame(flags), probe_is_reset(flags));
+    state.flags = probe_pack_flags(
+        inside_geometry,
+        mesh_distant,
+        probe_updates_this_frame(flags),
+        probe_is_reset(flags) || classification_changed,
+        mesh_distance_grace
+    );
 
     probe_states[probe_row] = state;
 }

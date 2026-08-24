@@ -16,7 +16,7 @@ auto RendererInstance::allocate_ddgi_atlases(this RendererInstance& self, u32 pr
   self.ddgi_irradiance_attachment = vuk::ImageAttachment{
     .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
              vuk::ImageUsageFlagBits::eTransferDst,
-    .extent = GPU::ddgi_atlas_extent(probe_count, GPU::DDGI_IRRADIANCE_TEXELS),
+    .extent = GPU::ddgi_irradiance_atlas_extent(probe_count),
     .format = vuk::Format::eR16G16B16A16Sfloat,
     .sample_count = vuk::Samples::e1,
     .view_type = vuk::ImageViewType::e2D,
@@ -89,7 +89,9 @@ auto RendererInstance::select_ddgi_probes(this RendererInstance& self, DDGISelec
      frame_index = context.frame_index,
      max_interval = context.max_interval,
      full_rate_distance = context.full_rate_distance,
-     update_all = static_cast<u32>(context.update_all)](
+     update_all = static_cast<u32>(context.update_all),
+     force_update_all = static_cast<u32>(context.force_update_all),
+     distance_culling_enabled = static_cast<u32>(context.distance_culling_enabled)](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eComputeRW) probe_states,
       VUK_BA(vuk::eComputeRead) probe_volumes,
@@ -116,6 +118,8 @@ auto RendererInstance::select_ddgi_probes(this RendererInstance& self, DDGISelec
               max_interval,
               full_rate_distance,
               update_all,
+              force_update_all,
+              distance_culling_enabled,
               scroll_deltas[volume_index]
             )
           )
@@ -167,7 +171,9 @@ auto RendererInstance::relocate_ddgi_probes(this RendererInstance& self, DDGIRel
     "ddgi relocate probes",
     [rays_per_probe = context.rays_per_probe,
      frame_index = context.frame_index,
-     min_frontface_distance = context.min_frontface_distance](
+     min_frontface_distance = context.min_frontface_distance,
+     relocation_enabled = static_cast<u32>(context.relocation_enabled),
+     distance_culling_enabled = static_cast<u32>(context.distance_culling_enabled)](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eComputeRW) probe_states,
       VUK_IA(vuk::eComputeSampled) ray_data,
@@ -185,7 +191,13 @@ auto RendererInstance::relocate_ddgi_probes(this RendererInstance& self, DDGIRel
         .push_constants(
           vuk::ShaderStageFlagBits::eCompute,
           0,
-          PushConstants(rays_per_probe, frame_index, min_frontface_distance)
+          PushConstants(
+            rays_per_probe,
+            frame_index,
+            min_frontface_distance,
+            relocation_enabled,
+            distance_culling_enabled
+          )
         )
         .dispatch_indirect(
           probe_update_args->subrange(offsetof(GPU::ProbeUpdateArgs, relocate), sizeof(vuk::DispatchIndirectCommand))
@@ -220,6 +232,7 @@ auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdat
     "ddgi update irradiance",
     [rays_per_probe = context.rays_per_probe,
      frame_index = context.frame_index,
+     radiance_atlas_y_offset = context.radiance_atlas_y_offset,
      hysteresis,
      max_brightness_step = context.max_brightness_step,
      firefly_ratio = context.firefly_ratio,
@@ -246,6 +259,7 @@ auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdat
           PushConstants(
             rays_per_probe,
             frame_index,
+            radiance_atlas_y_offset,
             hysteresis,
             max_brightness_step,
             firefly_ratio,
@@ -373,6 +387,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
      ambient_color = context.ambient_color,
      max_ray_radiance = context.max_ray_radiance,
      volume_count = context.volume_count,
+     radiance_atlas_y_offset = context.radiance_atlas_y_offset,
+     distance_culling_enabled = static_cast<u32>(context.distance_culling_enabled),
      bounce_valid = static_cast<u32>(context.bounce_valid),
      view_bias = context.view_bias,
      light_grid_address,
@@ -439,6 +455,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
               max_ray_radiance,
               light_grid_address,
               pointspot_views_address,
+              radiance_atlas_y_offset,
+              distance_culling_enabled,
               light_grid_origin
             )
           )

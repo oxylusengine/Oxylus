@@ -25,6 +25,7 @@ func cs_main(
     u32x3 thread_id : SV_DispatchThreadID,
     uniform u32 rays_per_probe,
     uniform u32 frame_index,
+    uniform u32 radiance_atlas_y_offset,
     uniform f32 hysteresis,
     uniform f32 max_brightness_step,
     uniform f32 firefly_ratio,
@@ -55,6 +56,13 @@ func cs_main(
     var sum = f32x3(0.0);
     var weight_sum = 0.0;
     var backface_count = 0u;
+    let updates_radiance = all(work.texel < u32x2(RADIANCE_TEXELS));
+    let radiance_direction = probe_texel_direction(
+        min(work.texel, u32x2(RADIANCE_TEXELS - 1u)),
+        RADIANCE_TEXELS
+    );
+    var best_radiance_alignment = -2.0;
+    var selected_radiance = f32x3(0.0);
 
     u32 ray_data_width, ray_data_height;
     ray_data.GetDimensions(ray_data_width, ray_data_height);
@@ -62,20 +70,28 @@ func cs_main(
 
     for (u32 ray_index = 0; ray_index < rays_per_probe; ray_index++) {
         let ray = ray_data.Load(u32x3(ray_origin.x + ray_index, ray_origin.y, 0));
+        var radiance = ray.rgb;
+        let radiance_luminance = com::luminance(radiance);
+        if (radiance_luminance > firefly_limit) {
+            radiance *= firefly_limit / radiance_luminance;
+        }
+
+        let ray_direction = probe_ray_direction(ray_index, rays_per_probe, rotation);
+        let alignment = dot(texel_direction, ray_direction);
+        let radiance_alignment = dot(radiance_direction, ray_direction);
+        if (updates_radiance && radiance_alignment > best_radiance_alignment) {
+            best_radiance_alignment = radiance_alignment;
+            selected_radiance = radiance;
+        }
+
         if (ray.a < 0.0) {
             backface_count += 1;
             continue;
         }
 
-        let weight = max(dot(texel_direction, probe_ray_direction(ray_index, rays_per_probe, rotation)), 0.0);
+        let weight = max(alignment, 0.0);
         if (weight <= 0.0) {
             continue;
-        }
-
-        var radiance = ray.rgb;
-        let radiance_luminance = com::luminance(radiance);
-        if (radiance_luminance > firefly_limit) {
-            radiance *= firefly_limit / radiance_luminance;
         }
 
         sum += radiance * weight;
@@ -129,5 +145,32 @@ func cs_main(
     }
     if (border.has_corner) {
         irradiance[origin + border.corner_texel] = result_texel;
+    }
+
+    if (!updates_radiance) {
+        return;
+    }
+
+    let radiance_origin = probe_radiance_tile_origin(probe_row, radiance_atlas_y_offset);
+    let radiance_coords = radiance_origin + 1 + work.texel;
+    let radiance_history = com::sanitize(irradiance[radiance_coords].rgb);
+    let radiance_rate = reset ? 0.0 : confidence * 0.75;
+    let radiance_root = lerp(
+        sqrt(max(selected_radiance, f32x3(0.0))),
+        sqrt(max(radiance_history, f32x3(0.0))),
+        radiance_rate
+    );
+    let radiance_texel = f32x4(radiance_root * radiance_root, 1.0);
+    irradiance[radiance_coords] = radiance_texel;
+
+    let radiance_border = probe_border_writes(work.texel, RADIANCE_TEXELS);
+    if (radiance_border.has_x) {
+        irradiance[radiance_origin + radiance_border.x_texel] = radiance_texel;
+    }
+    if (radiance_border.has_y) {
+        irradiance[radiance_origin + radiance_border.y_texel] = radiance_texel;
+    }
+    if (radiance_border.has_corner) {
+        irradiance[radiance_origin + radiance_border.corner_texel] = radiance_texel;
     }
 }

@@ -279,6 +279,7 @@ constexpr static u32 DDGI_MAX_CASCADE_COUNT = 8;
 // Octahedral tiles, each padded with a one texel border that mirrors the opposite edge so bilinear
 // taps stay continuous across the octahedron seam.
 constexpr static u32 DDGI_IRRADIANCE_TEXELS = 12;
+constexpr static u32 DDGI_RADIANCE_TEXELS = 6;
 constexpr static u32 DDGI_DISTANCE_TEXELS = 12;
 constexpr static u32 DDGI_TRACE_TEXELS = 12;
 constexpr static u32 DDGI_RAYS_PER_PROBE = DDGI_TRACE_TEXELS * DDGI_TRACE_TEXELS;
@@ -289,6 +290,29 @@ constexpr auto ddgi_atlas_extent(u32 probe_count, u32 interior_texels) -> vuk::E
   const auto rows = (probe_count + DDGI_PROBES_PER_ATLAS_ROW - 1) / DDGI_PROBES_PER_ATLAS_ROW;
   return {.width = DDGI_PROBES_PER_ATLAS_ROW * tile, .height = rows * tile, .depth = 1};
 }
+
+constexpr static u32 DDGI_IRRADIANCE_ATLAS_WIDTH = DDGI_PROBES_PER_ATLAS_ROW * (DDGI_IRRADIANCE_TEXELS + 2);
+static_assert(DDGI_IRRADIANCE_ATLAS_WIDTH % (DDGI_RADIANCE_TEXELS + 2) == 0);
+constexpr static u32 DDGI_RADIANCE_PROBES_PER_ATLAS_ROW = DDGI_IRRADIANCE_ATLAS_WIDTH / (DDGI_RADIANCE_TEXELS + 2);
+
+constexpr auto ddgi_radiance_atlas_y_offset(u32 probe_count) -> u32 {
+  return ddgi_atlas_extent(probe_count, DDGI_IRRADIANCE_TEXELS).height;
+}
+
+constexpr auto ddgi_irradiance_atlas_extent(u32 probe_count) -> vuk::Extent3D {
+  const auto irradiance = ddgi_atlas_extent(probe_count, DDGI_IRRADIANCE_TEXELS);
+  const auto radiance_rows = (probe_count + DDGI_RADIANCE_PROBES_PER_ATLAS_ROW - 1) /
+                             DDGI_RADIANCE_PROBES_PER_ATLAS_ROW;
+  return {
+    .width = irradiance.width,
+    .height = irradiance.height + radiance_rows * (DDGI_RADIANCE_TEXELS + 2),
+    .depth = 1,
+  };
+}
+
+constexpr static auto DDGI_MAX_IRRADIANCE_ATLAS_EXTENT = ddgi_irradiance_atlas_extent(DDGI_MAX_PROBE_COUNT);
+static_assert(DDGI_MAX_IRRADIANCE_ATLAS_EXTENT.width <= DDGI_MAX_IMAGE_DIMENSION);
+static_assert(DDGI_MAX_IRRADIANCE_ATLAS_EXTENT.height <= DDGI_MAX_IMAGE_DIMENSION);
 
 constexpr auto ddgi_probes_per_ray_row(u32 rays_per_probe) -> u32 {
   auto probes = 1_u32;

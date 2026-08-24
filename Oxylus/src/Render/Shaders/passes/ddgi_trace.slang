@@ -48,6 +48,8 @@ struct TraceConstants {
     f32 max_ray_radiance;
     u32x4 *light_grid;
     VSMPointSpotView *pointspot_views;
+    u32 radiance_atlas_y_offset;
+    u32 distance_culling_enabled;
     f32x3 light_grid_origin;
 };
 
@@ -319,29 +321,54 @@ func rgs_main() -> void {
         hit_distance = payload.hit_distance;
 
         let geometry = SceneGeometry(mesh_instances, meshes, transforms, materials);
-        let hit = resolve_ray_hit(
-            geometry,
-            payload.mesh_instance_index,
-            payload.primitive_index,
-            payload.barycentrics,
-            true,
-            HIT_TEXTURE_LOD
-        );
-
-        if (hit.valid) {
-            radiance = shade_hit(
-                hit,
-                constants.volume_count,
-                -direction,
-                constants.sun_direction,
-                constants.sun_intensity,
-                constants.shadow_ray_offset,
-                constants.normal_bias,
-                constants.view_bias,
-                constants.light_count,
-                constants.bounce_valid,
-                constants.atmosphere
+        let use_radiance_cache = constants.distance_culling_enabled != 0 &&
+                                 constants.bounce_valid != 0 &&
+                                 hit_distance >= volume.max_probe_distance;
+        if (use_radiance_cache) {
+            let triangle = resolve_ray_triangle(geometry, payload.mesh_instance_index, payload.primitive_index);
+            if (triangle.valid) {
+                let hit_position = origin + direction * hit_distance;
+                let sample = sample_ddgi_radiance(
+                    probe_volumes,
+                    probe_states,
+                    constants.volume_count,
+                    irradiance_atlas,
+                    distance_atlas,
+                    linear_clamp_sampler,
+                    constants.radiance_atlas_y_offset,
+                    hit_position,
+                    triangle.face_normal(),
+                    -direction,
+                    constants.normal_bias,
+                    constants.view_bias
+                );
+                radiance = sample.radiance * sample.coverage;
+            }
+        } else {
+            let hit = resolve_ray_hit(
+                geometry,
+                payload.mesh_instance_index,
+                payload.primitive_index,
+                payload.barycentrics,
+                true,
+                HIT_TEXTURE_LOD
             );
+
+            if (hit.valid) {
+                radiance = shade_hit(
+                    hit,
+                    constants.volume_count,
+                    -direction,
+                    constants.sun_direction,
+                    constants.sun_intensity,
+                    constants.shadow_ray_offset,
+                    constants.normal_bias,
+                    constants.view_bias,
+                    constants.light_count,
+                    constants.bounce_valid,
+                    constants.atmosphere
+                );
+            }
         }
     }
 

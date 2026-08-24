@@ -74,6 +74,12 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     "probes within this distance of the camera retrace every frame",
     10.0f
   );
+  self.cvar_ddgi_distance_culling.init(
+    self.system,
+    "rr.ddgi_distance_culling",
+    "deactivate probes far from meshes and reuse cached probe radiance for far ray hits",
+    1
+  );
   self.cvar_ddgi_probe_relocation
     .init(self.system, "rr.ddgi_probe_relocation", "move probes out of the geometry they are buried in", 1);
   self.cvar_ddgi_min_frontface_distance
@@ -172,6 +178,7 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["hysteresis_dark_bias"] = self.cvar_ddgi_hysteresis_dark_bias.get();
   writer["intensity"] = self.cvar_ddgi_intensity.get();
   writer["probe_debug_radius"] = self.cvar_ddgi_probe_debug_radius.get();
+  writer["distance_culling"] = self.cvar_ddgi_distance_culling.as_bool();
   writer.end_obj();
 
   writer["bloom"].begin_obj();
@@ -250,6 +257,9 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_ddgi_hysteresis_dark_bias.set(static_cast<f32>(ddgi_obj["hysteresis_dark_bias"].get_double()));
     self.cvar_ddgi_intensity.set(static_cast<f32>(ddgi_obj["intensity"].get_double()));
     self.cvar_ddgi_probe_debug_radius.set(static_cast<f32>(ddgi_obj["probe_debug_radius"].get_double()));
+    auto distance_culling_obj = ddgi_obj["distance_culling"];
+    if (!distance_culling_obj.error())
+      self.cvar_ddgi_distance_culling.set(distance_culling_obj.get_bool());
   }
 
   auto bloom_obj = json["bloom"];
