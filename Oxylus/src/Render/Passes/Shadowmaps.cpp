@@ -283,7 +283,24 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     vuk::eFragmentSampled
   );
 
-  auto hpb_attachment = self.vsm_hpb.acquire("vsm hpb", vuk::eComputeSampled);
+  auto hpb_attachment = vuk::Value<vuk::ImageAttachment>{};
+  if (has_directional) {
+    hpb_attachment = vuk::declare_ia(
+      "vsm hpb",
+      {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+       .extent =
+         {
+           .width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+           .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
+           .depth = 1,
+         },
+       .format = vuk::Format::eR8Uint,
+       .sample_count = vuk::Samples::e1,
+       .view_type = vuk::ImageViewType::e2DArray,
+       .level_count = 1 + static_cast<u32>(std::log2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE)),
+       .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT}
+    );
+  }
 
   if (context.sun_moved) {
     context.virtual_page_table_attachment = vuk::clear_image(
@@ -483,6 +500,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       VUK_BA(vuk::eComputeUniformRead) camera,
       VUK_BA(vuk::eComputeRead) clipmaps,
       VUK_IA(vuk::eComputeSampled) depth,
+      VUK_IA(vuk::eComputeSampled) normals,
       VUK_IA(vuk::eComputeRW) page_table,
       VUK_BA(vuk::eComputeRW) page_occupancy,
       VUK_BA(vuk::eComputeRW) allocator
@@ -492,13 +510,14 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         .bind_buffer(0, 0, camera)
         .bind_buffer(0, 1, clipmaps)
         .bind_image(0, 2, depth)
-        .bind_image(0, 3, page_table)
-        .bind_buffer(0, 4, page_occupancy)
-        .bind_buffer(0, 5, allocator)
+        .bind_image(0, 3, normals)
+        .bind_image(0, 4, page_table)
+        .bind_buffer(0, 5, page_occupancy)
+        .bind_buffer(0, 6, allocator)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
         .dispatch_invocations_per_pixel(depth);
 
-      return std::make_tuple(camera, clipmaps, depth, page_table, page_occupancy, allocator);
+      return std::make_tuple(camera, clipmaps, depth, normals, page_table, page_occupancy, allocator);
     }
   );
 
@@ -507,6 +526,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       self.prepared_frame.camera_buffer,
       context.directional_clipmaps_buffer,
       context.depth_attachment,
+      context.normal_attachment,
       context.virtual_page_table_attachment,
       page_occupancy_buffer,
       page_allocator_buffer
@@ -515,6 +535,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         std::move(self.prepared_frame.camera_buffer),
         std::move(context.directional_clipmaps_buffer),
         std::move(context.depth_attachment),
+        std::move(context.normal_attachment),
         std::move(context.virtual_page_table_attachment),
         std::move(page_occupancy_buffer),
         std::move(page_allocator_buffer)
@@ -1180,12 +1201,27 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
   }
 
   if (has_pointspot) {
+    auto pointspot_hpb_attachment = vuk::declare_ia(
+      "vsm pointspot hpb",
+      {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+       .extent =
+         {
+           .width = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+           .height = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+           .depth = 1,
+         },
+       .format = vuk::Format::eR8Uint,
+       .sample_count = vuk::Samples::e1,
+       .view_type = vuk::ImageViewType::e2DArray,
+       .level_count = RMVSMContext::POINT_SPOT_HPB_LEVEL_COUNT,
+       .layer_count = RMVSMContext::POINT_SPOT_LAYER_COUNT}
+    );
     auto ps_cull_context = CullGeometryPointSpotContext{
       .ps_ctx = ps_ctx,
       .views_buffer = std::move(context.pointspot_views_buffer),
       .layer_dirty_mask_buffer = std::move(context.pointspot_layer_dirty_mask_buffer),
       .page_table_attachment = std::move(context.pointspot_page_table_attachment),
-      .hpb_attachment = self.vsm_pointspot_hpb.acquire("vsm pointspot hpb", vuk::eComputeSampled),
+      .hpb_attachment = std::move(pointspot_hpb_attachment),
     };
 
     for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
@@ -1399,7 +1435,7 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
     "resolve shadows",
     [vsm_ctx](
       vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eColorRW) resolved,
+      VUK_IA(vuk::eColorRW) shadows,
       VUK_BA(vuk::eFragmentUniformRead) camera,
       VUK_IA(vuk::eFragmentSampled) depth,
       VUK_IA(vuk::eFragmentSampled) normals,
@@ -1409,7 +1445,10 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
     ) {
       cmd_list //
         .bind_graphics_pipeline("resolve_shadowmaps")
-        .set_color_blend(resolved, vuk::BlendPreset::eOff)
+        .set_color_blend(
+          shadows,
+          vuk::PipelineColorBlendAttachmentState{.colorWriteMask = vuk::ColorComponentFlagBits::eR}
+        )
         .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
         .set_depth_stencil({.depthWriteEnable = false, .depthCompareOp = vuk::CompareOp::eNever})
         .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
@@ -1424,12 +1463,12 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
         .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, vsm_ctx)
         .draw(3, 1, 0, 0);
 
-      return std::make_tuple(resolved, camera, depth, normals, page_tables, physical_pages, clipmaps);
+      return std::make_tuple(shadows, camera, depth, normals, page_tables, physical_pages, clipmaps);
     }
   );
 
   std::tie(
-    context.resolved_shadows_attachment,
+    context.shadows_attachment,
     self.prepared_frame.camera_buffer,
     context.depth_attachment,
     context.normal_attachment,
@@ -1438,7 +1477,7 @@ auto RendererInstance::resolve_shadowmap(this RendererInstance& self, ShadowReso
     context.directional_clipmaps_buffer
   ) =
     resolve_pass(
-      std::move(context.resolved_shadows_attachment),
+      std::move(context.shadows_attachment),
       std::move(self.prepared_frame.camera_buffer),
       std::move(context.depth_attachment),
       std::move(context.normal_attachment),

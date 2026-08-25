@@ -1,19 +1,24 @@
 #include "Render/RenderContext.hpp"
 
+#include <algorithm>
+#include <ankerl/svector.h>
 #include <ranges>
 #include <sstream>
+#include <string_view>
 #include <vuk/ImageAttachment.hpp>
 #include <vuk/RenderGraph.hpp>
 #include <vuk/runtime/CommandBuffer.hpp>
 #include <vuk/runtime/ThisThreadExecutor.hpp>
 #include <vuk/runtime/vk/Allocator.hpp>
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
+#include <vuk/runtime/vk/Pipeline.hpp>
 #include <vuk/runtime/vk/PipelineInstance.hpp>
 #include <vuk/runtime/vk/Query.hpp>
 #include <zpp_bits.h>
 
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
+#include "Memory/Stack.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/UploadBatch.hpp"
 #include "Render/Window.hpp"
@@ -27,10 +32,12 @@ namespace ox {
 thread_local vuk::Compiler this_thread_compiler;
 
 // i hate this
-PFN_vkCreateDescriptorPool vkCreateDescriptorPool;
-PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout;
-PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets;
-PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets;
+PFN_vkCreateDescriptorPool vkCreateDescriptorPool = nullptr;
+PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout = nullptr;
+PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets = nullptr;
+PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets = nullptr;
+
+PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR = nullptr;
 
 template <typename T>
 static auto query_device_feature(const vkb::Instance& instance, VkPhysicalDevice physical_device, VkStructureType type)
@@ -51,6 +58,66 @@ static auto query_device_feature(const vkb::Instance& instance, VkPhysicalDevice
   get_features_2(physical_device, &features_2);
 
   return feature;
+}
+
+static auto query_device_features(const vkb::Instance& instance, VkPhysicalDevice physical_device)
+  -> VkPhysicalDeviceFeatures {
+  const auto get_features_2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(
+    instance.fp_vkGetInstanceProcAddr(instance.instance, "vkGetPhysicalDeviceFeatures2")
+  );
+  if (get_features_2 == nullptr) {
+    return {};
+  }
+
+  auto features_2 = VkPhysicalDeviceFeatures2{};
+  features_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+  get_features_2(physical_device, &features_2);
+  return features_2.features;
+}
+
+static auto supports_optimal_format_features(
+  const vkb::Instance& instance,
+  VkPhysicalDevice physical_device,
+  VkFormat format,
+  VkFormatFeatureFlags required_features
+) -> bool {
+  const auto get_format_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceFormatProperties>(
+    instance.fp_vkGetInstanceProcAddr(instance.instance, "vkGetPhysicalDeviceFormatProperties")
+  );
+  if (get_format_properties == nullptr) {
+    return false;
+  }
+
+  auto properties = VkFormatProperties{};
+  get_format_properties(physical_device, format, &properties);
+  return (properties.optimalTilingFeatures & required_features) == required_features;
+}
+
+static auto ray_tracing_stage_order(ShaderStage stage) -> u32 {
+  switch (stage) {
+    case ShaderStage::RayGeneration: return 0;
+    case ShaderStage::Miss         : return 1;
+    case ShaderStage::Callable     : return 2;
+    default                        : return 3;
+  }
+}
+
+static auto missing_shader_feature(RenderContext::Feature device_features, ShaderFeatureFlag required)
+  -> std::string_view {
+  if ((required & ShaderFeatureFlag::MeshShaders) && !(device_features & RenderContext::Feature::MeshShaders)) {
+    return "mesh shader";
+  }
+  if ((required & ShaderFeatureFlag::RayTracing) && !(device_features & RenderContext::Feature::RayTracing)) {
+    return "ray tracing";
+  }
+  if (
+    (required & ShaderFeatureFlag::RayTracingPipeline) &&
+    !(device_features & RenderContext::Feature::RayTracingPipeline)
+  ) {
+    return "ray tracing pipeline";
+  }
+
+  return {};
 }
 
 static VkBool32 debug_callback(
@@ -221,6 +288,30 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
 
   self.physical_device = self.vkbphysical_device.physical_device;
 
+  const auto vk10_supported = query_device_features(self.vkb_instance, self.physical_device);
+  if (!vk10_supported.shaderStorageImageExtendedFormats) {
+    OX_LOG_FATAL(
+      "The selected device does not support shaderStorageImageExtendedFormats, which is required by the renderer."
+    );
+  }
+
+  constexpr auto sampled_color = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+  constexpr auto sampled_storage = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+  constexpr auto sampled_storage_color = sampled_storage | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+  const auto require_format = [&](VkFormat format, VkFormatFeatureFlags features, std::string_view name) {
+    if (!supports_optimal_format_features(self.vkb_instance, self.physical_device, format, features)) {
+      OX_LOG_FATAL("The selected device does not support the required sampled/color/storage usage for {}.", name);
+    }
+  };
+  require_format(VK_FORMAT_R8G8B8A8_SNORM, sampled_color, "R8G8B8A8_SNORM normals");
+  require_format(VK_FORMAT_R8G8_UNORM, sampled_storage_color, "R8G8_UNORM material and shadow targets");
+  require_format(VK_FORMAT_R8_UNORM, sampled_storage, "R8_UNORM ambient occlusion");
+  require_format(
+    VK_FORMAT_B10G11R11_UFLOAT_PACK32,
+    sampled_storage_color,
+    "B10G11R11_UFLOAT_PACK32 HDR and bloom targets"
+  );
+
   const auto vk12_supported = query_device_feature<VkPhysicalDeviceVulkan12Features>(
     self.vkb_instance,
     self.physical_device,
@@ -252,6 +343,59 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     }
   }
 
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features = {};
+  acceleration_structure_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+  VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
+  ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+  VkPhysicalDeviceRayTracingPipelineFeaturesKHR ray_tracing_pipeline_features = {};
+  ray_tracing_pipeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+  if (
+    self.vkbphysical_device.is_extension_present(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+    self.vkbphysical_device.is_extension_present(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+    self.vkbphysical_device.is_extension_present(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)
+  ) {
+    const auto as_supported = query_device_feature<VkPhysicalDeviceAccelerationStructureFeaturesKHR>(
+      self.vkb_instance,
+      self.physical_device,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR
+    );
+    const auto ray_query_supported = query_device_feature<VkPhysicalDeviceRayQueryFeaturesKHR>(
+      self.vkb_instance,
+      self.physical_device,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR
+    );
+    if (as_supported.accelerationStructure && ray_query_supported.rayQuery) {
+      self.vkbphysical_device.enable_extension_if_present(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+      self.vkbphysical_device.enable_extension_if_present(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+      self.vkbphysical_device.enable_extension_if_present(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+      acceleration_structure_features.accelerationStructure = true;
+      ray_query_features.rayQuery = true;
+      self.features |= RenderContext::Feature::RayTracing;
+
+      if (self.vkbphysical_device.is_extension_present(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)) {
+        const auto pipeline_supported = query_device_feature<VkPhysicalDeviceRayTracingPipelineFeaturesKHR>(
+          self.vkb_instance,
+          self.physical_device,
+          VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR
+        );
+        if (pipeline_supported.rayTracingPipeline) {
+          self.vkbphysical_device.enable_extension_if_present(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+          ray_tracing_pipeline_features.rayTracingPipeline = true;
+          self.features |= RenderContext::Feature::RayTracingPipeline;
+        }
+      }
+    } else {
+      OX_LOG_WARN(
+        "{} and {} are present but accelerationStructure({}) and rayQuery({}) are not both supported; ray "
+        "tracing is disabled.",
+        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+        VK_KHR_RAY_QUERY_EXTENSION_NAME,
+        static_cast<bool>(as_supported.accelerationStructure),
+        static_cast<bool>(ray_query_supported.rayQuery)
+      );
+    }
+  }
+
   vkb::DeviceBuilder device_builder{self.vkbphysical_device};
 
   VkPhysicalDeviceFeatures2 vk10_features{};
@@ -267,6 +411,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vk10_features.features.multiDrawIndirect = true;
   vk10_features.features.fragmentStoresAndAtomics = true;
   vk10_features.features.shaderImageGatherExtended = true;
+  vk10_features.features.shaderStorageImageExtendedFormats = true;
   vk10_features.features.shaderInt16 = true;
   vk10_features.features.tessellationShader = true;
 
@@ -334,15 +479,26 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     device_builder.add_pNext(&mesh_shader_features);
   }
 
+  if (self.features & RenderContext::Feature::RayTracing) {
+    device_builder.add_pNext(&acceleration_structure_features);
+    device_builder.add_pNext(&ray_query_features);
+  }
+
+  if (self.features & RenderContext::Feature::RayTracingPipeline) {
+    device_builder.add_pNext(&ray_tracing_pipeline_features);
+  }
+
   auto dev_ret = device_builder.build();
   if (!dev_ret) {
     OX_LOG_ERROR("Couldn't create device");
   }
 
   OX_LOG_INFO(
-    "Device '{}' features: mesh shaders({})",
+    "Device '{}' features: mesh shaders({}) ray tracing({}) ray tracing pipeline({})",
     self.device_name,
-    self.features & RenderContext::Feature::MeshShaders
+    self.features & RenderContext::Feature::MeshShaders,
+    self.features & RenderContext::Feature::RayTracing,
+    self.features & RenderContext::Feature::RayTracingPipeline
   );
 
   self.vkb_device = dev_ret.value();
@@ -355,6 +511,11 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vkCreateDescriptorSetLayout = fps.vkCreateDescriptorSetLayout;
   vkAllocateDescriptorSets = fps.vkAllocateDescriptorSets;
   vkUpdateDescriptorSets = fps.vkUpdateDescriptorSets;
+  if (self.features & RenderContext::Feature::RayTracing) {
+    vkGetAccelerationStructureDeviceAddressKHR = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
+      self.vkb_instance.fp_vkGetDeviceProcAddr(self.device, "vkGetAccelerationStructureDeviceAddressKHR")
+    );
+  }
 
   std::vector<std::unique_ptr<vuk::Executor>> executors;
 
@@ -715,13 +876,13 @@ auto RenderContext::commit_descriptor_set(this RenderContext& self, std::span<Vk
 auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool {
   ZoneScoped;
 
-  if (pipeline_data.requires_mesh_shaders && !(self.features & RenderContext::Feature::MeshShaders)) {
-    OX_LOG_INFO("Skipped pipeline named {}, device has no mesh shader support.", pipeline_data.module_name);
+  if (const auto missing = missing_shader_feature(self.features, pipeline_data.required_features); !missing.empty()) {
+    OX_LOG_INFO("Skipped pipeline named {}, device has no {} support.", pipeline_data.module_name, missing);
     return true;
   }
 
   auto pipeline_ci = vuk::PipelineBaseCreateInfo{};
-  if (pipeline_data.bindless) {
+  if (pipeline_data.required_features & ShaderFeatureFlag::Bindless) {
     const auto& bindless_set = self.resources.descriptor_set;
     const auto& set_layout_create_info = bindless_set.set_layout_create_info;
     pipeline_ci.explicit_set_layouts.emplace_back(set_layout_create_info);
@@ -736,8 +897,45 @@ auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipeli
     }
   }
 
-  for (const auto& entry_point : pipeline_data.entry_points) {
-    pipeline_ci.add_spirv(entry_point.spirv, pipeline_data.module_name, entry_point.name);
+  const auto ray_tracing = std::ranges::any_of(pipeline_data.entry_points, [](const auto& entry_point) {
+    return entry_point.shader_stage == ShaderStage::RayGeneration;
+  });
+
+  if (ray_tracing) {
+    auto ordered = ankerl::svector<const ShaderEntryPointData*, 8>{};
+    for (const auto& entry_point : pipeline_data.entry_points) {
+      ordered.emplace_back(&entry_point);
+    }
+    std::ranges::stable_sort(ordered, {}, [](const ShaderEntryPointData* entry_point) {
+      return ray_tracing_stage_order(entry_point->shader_stage);
+    });
+
+    auto hit_group = vuk::HitGroup{.type = vuk::HitGroupType::eTriangles};
+    for (u32 index = 0; index < static_cast<u32>(ordered.size()); index++) {
+      const auto& entry_point = *ordered[index];
+      pipeline_ci.add_spirv(entry_point.spirv, pipeline_data.module_name, entry_point.name);
+
+      switch (entry_point.shader_stage) {
+        case ShaderStage::ClosestHit  : hit_group.closest_hit = index; break;
+        case ShaderStage::AnyHit      : hit_group.any_hit = index; break;
+        case ShaderStage::Intersection: hit_group.intersection = index; break;
+        default                       : break;
+      }
+    }
+
+    if (hit_group.intersection != VK_SHADER_UNUSED_KHR) {
+      hit_group.type = vuk::HitGroupType::eProcedural;
+    }
+    if (
+      hit_group.closest_hit != VK_SHADER_UNUSED_KHR || hit_group.any_hit != VK_SHADER_UNUSED_KHR ||
+      hit_group.intersection != VK_SHADER_UNUSED_KHR
+    ) {
+      pipeline_ci.add_hit_group(hit_group);
+    }
+  } else {
+    for (const auto& entry_point : pipeline_data.entry_points) {
+      pipeline_ci.add_spirv(entry_point.spirv, pipeline_data.module_name, entry_point.name);
+    }
   }
 
   self.runtime->create_named_pipeline(pipeline_data.module_name.c_str(), pipeline_ci);
@@ -749,6 +947,19 @@ auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipeli
 
 auto RenderContext::use_mesh_shaders(this const RenderContext& self) -> bool {
   return (self.features & RenderContext::Feature::MeshShaders) && self.context_cvar.cvar_mesh_shaders.as_bool();
+}
+
+auto RenderContext::use_ray_tracing(this const RenderContext& self) -> bool {
+  return (self.features & RenderContext::Feature::RayTracing) && self.context_cvar.cvar_ray_tracing.as_bool() &&
+         vkGetAccelerationStructureDeviceAddressKHR != nullptr;
+}
+
+auto RenderContext::use_ray_tracing_pipeline(this const RenderContext& self) -> bool {
+  return self.use_ray_tracing() && (self.features & RenderContext::Feature::RayTracingPipeline);
+}
+
+auto RenderContext::as_scratch_alignment(this const RenderContext& self) -> u64 {
+  return self.runtime->as_properties.minAccelerationStructureScratchOffsetAlignment;
 }
 
 auto RenderContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {
@@ -980,6 +1191,20 @@ auto RenderContext::sampler(const SamplerID id) -> vuk::Sampler {
   return resources.samplers.copy_slot(id).value_or(vuk::Sampler{});
 }
 
+auto RenderContext::get_accel_structure_device_address(
+  this const RenderContext& self, VkAccelerationStructureKHR handle
+) -> u64 {
+  ZoneScoped;
+
+  auto address_info = VkAccelerationStructureDeviceAddressInfoKHR{
+    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
+    .pNext = nullptr,
+    .accelerationStructure = handle,
+  };
+
+  return vkGetAccelerationStructureDeviceAddressKHR(self.device, &address_info);
+}
+
 auto RenderContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
   -> vuk::Unique<vuk::Buffer> {
   if (!buffer || new_size > buffer->size) {
@@ -1044,9 +1269,10 @@ auto RenderContext::upload_staging(
   vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Buffer>&& dst, vuk::source_location LOC
 ) -> vuk::Value<vuk::Buffer> {
   ZoneScoped;
+  memory::ScopedStack stack;
 
   auto upload_pass = vuk::make_pass(
-    "upload staging",
+    stack.format_char("{}", LOC),
     [](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::Access::eTransferRead) src_ba,

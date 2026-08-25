@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "Asset/ShaderFeature.hpp"
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
 
@@ -12,8 +13,7 @@ struct ShaderProgramConfig {
   std::string name = {};
   std::filesystem::path path = {};
   std::vector<std::string> entry_points = {};
-  bool bindless = false;
-  bool requires_mesh_shaders = false;
+  ShaderFeatureFlag required_features = ShaderFeatureFlag::None;
 };
 
 struct ShaderSessionConfig {

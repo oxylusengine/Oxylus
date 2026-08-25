@@ -26,6 +26,7 @@ struct PendingLight {
 struct ShadowSlotCandidate {
   u32 light_index = 0;
   f32 priority = 0.0f;
+  u64 entity_id = 0;
 };
 
 struct ShadowSlotStats {
@@ -53,37 +54,18 @@ static auto atmosphere_lut_inputs_equal(const GPU::Atmosphere& a, const GPU::Atm
          a.atmos_radius == b.atmos_radius;
 }
 
-static auto sphere_intersects_frustum(std::span<const glm::vec4> planes, const glm::vec3& center, f32 radius) -> bool {
-  for (const auto& plane : planes) {
-    if (glm::dot(glm::vec3(plane), center) - plane.w < -radius) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-static auto shadow_light_priority(const GPU::Light& light, const GPU::CameraData& camera_data, bool holds_slot) -> f32 {
+static auto shadow_light_priority(const GPU::Light& light) -> f32 {
   if (light.range <= 0.0f) {
     return -1.0f;
   }
 
-  const auto hysteresis = holds_slot ? SHADOW_SLOT_HYSTERESIS : 1.0f;
-
-  if (!sphere_intersects_frustum(camera_data.frustum_planes, light.position, light.range * hysteresis)) {
-    return -1.0f;
-  }
-
-  const auto distance = glm::distance(glm::vec3(camera_data.position), light.position);
-  const auto screen_radius = light.range / glm::max(distance, 0.001f);
-
-  return screen_radius * glm::sqrt(glm::max(light.intensity, 0.0f)) * hysteresis;
+  // VSM layers are also sampled by world-space DDGI probes, so their ownership must not depend on the camera
+  return light.range * glm::sqrt(glm::max(light.intensity, 0.0f));
 }
 
 static auto assign_shadow_slots(
   std::span<PendingLight> lights,
   GPU::LightKind kind,
-  const GPU::CameraData& camera_data,
   std::span<ShadowSlotState> slots,
   u32& slot_high_water,
   u64& moved_mask
@@ -104,24 +86,25 @@ static auto assign_shadow_slots(
       continue;
     }
 
-    auto holds_slot = false;
-    for (const auto& slot : slots) {
-      if (slot.entity_id == pending.entity_id) {
-        holds_slot = true;
-        break;
-      }
-    }
-
-    const auto priority = shadow_light_priority(pending.light, camera_data, holds_slot);
+    const auto priority = shadow_light_priority(pending.light);
     if (priority <= 0.0f) {
       continue;
     }
 
-    candidates[candidate_count++] = ShadowSlotCandidate{.light_index = light_index, .priority = priority};
+    candidates[candidate_count++] = ShadowSlotCandidate{
+      .light_index = light_index,
+      .priority = priority,
+      .entity_id = pending.entity_id,
+    };
   }
 
   auto selected = candidates.subspan(0, candidate_count);
-  std::ranges::sort(selected, std::ranges::greater{}, &ShadowSlotCandidate::priority);
+  std::ranges::sort(selected, [](const ShadowSlotCandidate& lhs, const ShadowSlotCandidate& rhs) {
+    if (lhs.priority != rhs.priority) {
+      return lhs.priority > rhs.priority;
+    }
+    return lhs.entity_id < rhs.entity_id;
+  });
   selected = selected.subspan(0, glm::min(selected.size(), slots.size()));
 
   // preserve existing assignments before filling vacant slots
@@ -437,46 +420,6 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   pointspot_page_table_attachment = std::move(pointspot_page_table_attachment).as_released(vuk::eFragmentSampled);
   render_context.wait_on(std::move(pointspot_page_table_attachment));
 
-  vsm_hpb = Texture::create({
-    .format = vuk::Format::eR8Uint,
-    .extent =
-      {
-        .width = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-        .height = RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-        .depth = 1,
-      },
-    .layer_count = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT,
-    .level_count = 1 + static_cast<u32>(std::log2(RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE)),
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
-             vuk::ImageUsageFlagBits::eTransferDst,
-    .view_type = vuk::ImageViewType::e2DArray,
-  });
-
-  auto vsm_hpb_attachment = vsm_hpb.discard("vsm hpb");
-  vsm_hpb_attachment = vuk::clear_image(std::move(vsm_hpb_attachment), vuk::Black<u32>);
-  vsm_hpb_attachment = std::move(vsm_hpb_attachment).as_released(vuk::eComputeSampled);
-  render_context.wait_on(std::move(vsm_hpb_attachment));
-
-  vsm_pointspot_hpb = Texture::create({
-    .format = vuk::Format::eR8Uint,
-    .extent =
-      {
-        .width = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
-        .height = RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
-        .depth = 1,
-      },
-    .layer_count = RMVSMContext::POINT_SPOT_LAYER_COUNT,
-    .level_count = RMVSMContext::POINT_SPOT_HPB_LEVEL_COUNT,
-    .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
-             vuk::ImageUsageFlagBits::eTransferDst,
-    .view_type = vuk::ImageViewType::e2DArray,
-  });
-
-  auto vsm_pointspot_hpb_attachment = vsm_pointspot_hpb.discard("vsm pointspot hpb");
-  vsm_pointspot_hpb_attachment = vuk::clear_image(std::move(vsm_pointspot_hpb_attachment), vuk::Black<u32>);
-  vsm_pointspot_hpb_attachment = std::move(vsm_pointspot_hpb_attachment).as_released(vuk::eComputeSampled);
-  render_context.wait_on(std::move(vsm_pointspot_hpb_attachment));
-
   vsm_physical_page_table_attachment = vuk::ImageAttachment{
     .image_flags = vuk::ImageCreateFlagBits::eMutableFormat,
     .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
@@ -673,8 +616,6 @@ auto RendererInstance::render(
   };
 
   const auto dst_extent = dst_attachment->extent;
-  const auto final_half_extent = dst_extent / 2;
-  const auto final_half_mip_count = Texture::calculate_mip_count(final_half_extent);
 
   OX_CHECK_GT(dst_extent.width, 0u);
   OX_CHECK_GT(dst_extent.height, 0u);
@@ -707,6 +648,9 @@ auto RendererInstance::render(
   const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
   const f32 debug_heatmap_scale = 5.0;
   const auto debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool();
+  const auto draw_overdraw = debugging && debug_view == GPU::DebugView::Overdraw;
+  const auto debug_uses_visbuffer = debugging && debug_view != GPU::DebugView::DDGIProbes &&
+                                    debug_view != GPU::DebugView::RMVSM && debug_view != GPU::DebugView::RMVSMPointSpot;
 
   const auto transparent_background = static_cast<bool>(self.gpu_scene_flags & GPU::SceneFlags::TransparentBackground);
   const auto hdr_format = transparent_background ? vuk::Format::eR16G16B16A16Sfloat
@@ -795,7 +739,8 @@ auto RendererInstance::render(
 
   auto visbuffer_attachment = vuk::declare_ia(
     "visbuffer",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage |
+              vuk::ImageUsageFlagBits::eColorAttachment,
      .format = vuk::Format::eR32Uint,
      .sample_count = vuk::SampleCountFlagBits::e1}
   );
@@ -816,19 +761,23 @@ auto RendererInstance::render(
   auto overdraw_attachment = vuk::declare_ia(
     "overdraw",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .sample_count = vuk::SampleCountFlagBits::e1}
+     .extent = draw_overdraw ? dst_extent : vuk::Extent3D{1, 1, 1},
+     .format = vuk::Format::eR32Uint,
+     .sample_count = vuk::SampleCountFlagBits::e1,
+     .level_count = 1,
+     .layer_count = 1}
   );
-  overdraw_attachment.similar_to(visbuffer_attachment);
 
   auto vis_clear_pass = vuk::make_pass(
     "vis clear",
-    [](
+    [draw_overdraw](
       vuk::CommandBuffer& cmd_list, //
       VUK_IA(vuk::eComputeWrite) visbuffer,
       VUK_IA(vuk::eComputeWrite) overdraw
     ) {
       cmd_list //
         .bind_compute_pipeline("visbuffer_clear")
+        .specialize_constants(0, draw_overdraw)
         .bind_image(0, 0, visbuffer)
         .bind_image(0, 1, overdraw)
         .push_constants(
@@ -846,23 +795,15 @@ auto RendererInstance::render(
     std::move(overdraw_attachment)
   );
 
-  auto contact_shadows_attachment = vuk::declare_ia(
-    "contact shadows",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eR32Sfloat,
-     .sample_count = vuk::SampleCountFlagBits::e1}
-  );
-  contact_shadows_attachment.same_shape_as(final_attachment);
-  contact_shadows_attachment = vuk::clear_image(std::move(contact_shadows_attachment), vuk::Black<f32>);
-
-  auto resolved_shadows_attachment = vuk::declare_ia(
+  auto shadows_attachment = vuk::declare_ia(
     "shadows",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eR32Sfloat,
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage |
+              vuk::ImageUsageFlagBits::eColorAttachment,
+     .format = vuk::Format::eR8G8Unorm,
      .sample_count = vuk::SampleCountFlagBits::e1}
   );
-  resolved_shadows_attachment.same_shape_as(final_attachment);
-  resolved_shadows_attachment = vuk::clear_image(std::move(resolved_shadows_attachment), vuk::White<f32>);
+  shadows_attachment.same_shape_as(final_attachment);
+  shadows_attachment = vuk::clear_image(std::move(shadows_attachment), vuk::White<f32>);
 
   auto albedo_attachment = vuk::declare_ia(
     "albedo",
@@ -876,7 +817,7 @@ auto RendererInstance::render(
   auto normal_attachment = vuk::declare_ia(
     "normal",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-     .format = vuk::Format::eR16G16B16A16Sfloat,
+     .format = vuk::Format::eR8G8B8A8Snorm,
      .sample_count = vuk::Samples::e1}
   );
   normal_attachment.same_shape_as(visbuffer_attachment);
@@ -894,7 +835,7 @@ auto RendererInstance::render(
   auto metallic_roughness_occlusion_attachment = vuk::declare_ia(
     "metallic roughness occlusion",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-     .format = vuk::Format::eR8G8B8A8Unorm,
+     .format = vuk::Format::eR8G8Unorm,
      .sample_count = vuk::Samples::e1}
   );
   metallic_roughness_occlusion_attachment.same_shape_as(visbuffer_attachment);
@@ -906,7 +847,7 @@ auto RendererInstance::render(
   auto vbgtao_occlusion_attachment = vuk::declare_ia(
     "vbgtao occlusion",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eR16Sfloat,
+     .format = vuk::Format::eR8Unorm,
      .sample_count = vuk::Samples::e1,
      .view_type = vuk::ImageViewType::e2D,
      .level_count = 1,
@@ -915,22 +856,12 @@ auto RendererInstance::render(
   vbgtao_occlusion_attachment.same_extent_as(depth_attachment);
   vbgtao_occlusion_attachment = vuk::clear_image(std::move(vbgtao_occlusion_attachment), vuk::White<f32>);
 
-  auto vbgtao_depth_differences_attachment = vuk::declare_ia(
-    "vbgtao depth differences",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eR32Uint,
-     .sample_count = vuk::Samples::e1}
-  );
-  vbgtao_depth_differences_attachment.same_shape_as(vbgtao_occlusion_attachment);
-  vbgtao_depth_differences_attachment = vuk::clear_image(
-    std::move(vbgtao_depth_differences_attachment),
-    vuk::Black<f32>
-  );
+  auto vbgtao_depth_differences_attachment = vuk::Value<vuk::ImageAttachment>{};
   auto rmvsm_virtual_page_table_attachment = vuk::Value<vuk::ImageAttachment>{};
   auto rmvsm_virtual_clipmaps_buffer = vuk::Value<vuk::Buffer>{};
-  auto pointspot_views_for_pbr = vuk::Value<vuk::Buffer>{};
-  auto pointspot_page_table_for_pbr = vuk::Value<vuk::ImageAttachment>{};
-  auto vsm_physical_pages_for_pbr = vuk::Value<vuk::ImageAttachment>{};
+  auto pointspot_views_for_lighting = vuk::Value<vuk::Buffer>{};
+  auto pointspot_page_table_for_lighting = vuk::Value<vuk::ImageAttachment>{};
+  auto vsm_physical_pages_for_lighting = vuk::Value<vuk::ImageAttachment>{};
   auto vsm_chain_ran = false;
 
   auto light_grid_context = LightGridContext{};
@@ -939,10 +870,33 @@ auto RendererInstance::render(
   const auto* terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked() ? self.scene.terrain.get()
                                                                                         : nullptr;
 
+  // This needs to be finished before any RT passes begin executing
+  // should probably move this entire scope to somewhere else, shit_in_a_kettle.gif
+  auto& frame_render_context = *self.renderer.render_context;
+  if (
+    frame_render_context.use_ray_tracing() && self.prepared_frame.mesh_instance_count > 0 &&
+    self.prepared_frame.blas_addresses_buffer.node != nullptr &&
+    self.prepared_frame.mesh_instances_buffer.node != nullptr
+  ) {
+    auto tlas_value = build_scene_tlas(
+      frame_render_context,
+      self.scene_tlas,
+      TLASBuildInfo{
+        .instance_count = self.prepared_frame.mesh_instance_count,
+        .mesh_instances_buffer = self.prepared_frame.mesh_instances_buffer,
+        .transforms_buffer = self.prepared_frame.transforms_world_buffer,
+        .blas_addresses_buffer = self.prepared_frame.blas_addresses_buffer,
+      }
+    );
+    if (tlas_value.node != nullptr) {
+      self.shared_resources.buffer_resources["tlas"] = std::move(tlas_value);
+    }
+  }
+
   // --- 3D Pass ---
   if (self.prepared_frame.mesh_instance_count > 0 || terrain != nullptr) {
     auto main_geometry_context = MainGeometryContext{
-      .draw_overdraw = (std::to_underlying(debug_view) & std::to_underlying(GPU::DebugView::Overdraw)) == 1,
+      .draw_overdraw = draw_overdraw,
       .bindless_set = &bindless_set,
       .depth_attachment = std::move(depth_attachment),
       .hiz_attachment = std::move(hiz_attachment),
@@ -1150,16 +1104,18 @@ auto RendererInstance::render(
         .sun_moved = self.sun_direction_changed,
         .depth_extent = dst_extent,
         .depth_attachment = std::move(depth_attachment),
+        .normal_attachment = std::move(normal_attachment),
         .light_grid_origin = light_grid_context.grid_origin,
         .light_grid_buffer = std::move(light_grid_context.light_grid_buffer),
       };
       self.draw_virtual_shadowmap(rmvsm_context);
       depth_attachment = std::move(rmvsm_context.depth_attachment);
+      normal_attachment = std::move(rmvsm_context.normal_attachment);
       light_grid_context.light_grid_buffer = std::move(rmvsm_context.light_grid_buffer);
 
       vsm_chain_ran = true;
-      pointspot_views_for_pbr = std::move(rmvsm_context.pointspot_views_buffer);
-      pointspot_page_table_for_pbr = std::move(rmvsm_context.pointspot_page_table_attachment);
+      pointspot_views_for_lighting = std::move(rmvsm_context.pointspot_views_buffer);
+      pointspot_page_table_for_lighting = std::move(rmvsm_context.pointspot_page_table_attachment);
 
       if (self.directional_light_cast_shadows) {
         auto shadow_resolve_context = ShadowResolveContext{
@@ -1168,17 +1124,17 @@ auto RendererInstance::render(
           .normal_attachment = std::move(normal_attachment),
           .virtual_page_table_attachment = std::move(rmvsm_context.virtual_page_table_attachment),
           .physical_page_table_attachment = std::move(rmvsm_context.physical_page_table_attachment),
-          .resolved_shadows_attachment = std::move(resolved_shadows_attachment),
+          .shadows_attachment = std::move(shadows_attachment),
         };
         self.resolve_shadowmap(shadow_resolve_context);
         depth_attachment = std::move(shadow_resolve_context.depth_attachment);
         normal_attachment = std::move(shadow_resolve_context.normal_attachment);
-        resolved_shadows_attachment = std::move(shadow_resolve_context.resolved_shadows_attachment);
+        shadows_attachment = std::move(shadow_resolve_context.shadows_attachment);
         rmvsm_virtual_page_table_attachment = std::move(shadow_resolve_context.virtual_page_table_attachment);
         rmvsm_virtual_clipmaps_buffer = std::move(shadow_resolve_context.directional_clipmaps_buffer);
-        vsm_physical_pages_for_pbr = std::move(shadow_resolve_context.physical_page_table_attachment);
+        vsm_physical_pages_for_lighting = std::move(shadow_resolve_context.physical_page_table_attachment);
       } else {
-        vsm_physical_pages_for_pbr = std::move(rmvsm_context.physical_page_table_attachment);
+        vsm_physical_pages_for_lighting = std::move(rmvsm_context.physical_page_table_attachment);
         rmvsm_virtual_page_table_attachment = std::move(rmvsm_context.virtual_page_table_attachment);
       }
     }
@@ -1209,8 +1165,8 @@ auto RendererInstance::render(
       }
     );
 
-    std::tie(contact_shadows_attachment, depth_attachment, self.prepared_frame.camera_buffer) = contact_shadows_pass(
-      std::move(contact_shadows_attachment),
+    std::tie(shadows_attachment, depth_attachment, self.prepared_frame.camera_buffer) = contact_shadows_pass(
+      std::move(shadows_attachment),
       std::move(depth_attachment),
       std::move(self.prepared_frame.camera_buffer)
     );
@@ -1233,7 +1189,44 @@ auto RendererInstance::render(
     sky_aerial_perspective_attachment = std::move(atmos_context.sky_aerial_perspective_lut_attachment);
   }
 
-  if (self.gpu_scene_flags & GPU::SceneFlags::HasGTAO) {
+  const auto tlas_it = self.shared_resources.buffer_resources.find("tlas");
+  const auto use_rtao = cvar.cvar_rtao_enable.as_bool() && tlas_it != self.shared_resources.buffer_resources.end();
+  if (use_rtao) {
+    // RTAO feeds the same attachment the GTAO path writes, so PBR needs the flag either way.
+    self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
+
+    auto rtao_context = RTAOContext{
+      .tlas = &self.scene_tlas,
+      .ray_count = static_cast<u32>(std::max(cvar.cvar_rtao_ray_count.get(), 1)),
+      .radius = cvar.cvar_rtao_radius.get(),
+      .power = cvar.cvar_rtao_power.get(),
+      .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+      .tlas_buffer = std::move(tlas_it->second),
+      .normal_attachment = std::move(normal_attachment),
+      .depth_attachment = std::move(depth_attachment),
+      .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
+    };
+    self.generate_rtao(rtao_context);
+
+    tlas_it->second = std::move(rtao_context.tlas_buffer);
+    normal_attachment = std::move(rtao_context.normal_attachment);
+    depth_attachment = std::move(rtao_context.depth_attachment);
+    vbgtao_occlusion_attachment = std::move(rtao_context.ambient_occlusion_attachment);
+  } else if (self.gpu_scene_flags & GPU::SceneFlags::HasGTAO) {
+    if (debug_uses_visbuffer) {
+      vbgtao_depth_differences_attachment = vuk::declare_ia(
+        "vbgtao depth differences",
+        {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+         .extent = dst_extent,
+         .format = vuk::Format::eR32Uint,
+         .sample_count = vuk::Samples::e1,
+         .level_count = 1,
+         .layer_count = 1}
+      );
+    } else {
+      vbgtao_depth_differences_attachment = std::move(visbuffer_attachment);
+    }
+
     auto ao_context = AmbientOcclusionContext{
       .noise_attachment = std::move(hilbert_noise_lut_attachment),
       .normal_attachment = std::move(normal_attachment),
@@ -1248,11 +1241,14 @@ auto RendererInstance::render(
     depth_attachment = std::move(ao_context.depth_attachment);
     vbgtao_depth_differences_attachment = std::move(ao_context.depth_differences_attachment);
     vbgtao_occlusion_attachment = std::move(ao_context.ambient_occlusion_attachment);
+
+    if (!debug_uses_visbuffer) {
+      visbuffer_attachment = std::move(vbgtao_depth_differences_attachment);
+    }
   }
 
   if (!vsm_chain_ran) {
-    // VSM chain skipped this frame, give PBR valid empty resources
-    pointspot_page_table_for_pbr = self.vsm_pointspot_virtual_page_table.acquire(
+    pointspot_page_table_for_lighting = self.vsm_pointspot_virtual_page_table.acquire(
       "vsm pointspot page table",
       vuk::eFragmentSampled
     );
@@ -1260,18 +1256,171 @@ auto RendererInstance::render(
       "vsm virtual page table",
       vuk::eFragmentSampled
     );
-    vsm_physical_pages_for_pbr = vuk::acquire_ia(
+    vsm_physical_pages_for_lighting = vuk::acquire_ia(
       "vsm physical page table",
       self.vsm_physical_page_table_attachment,
       vuk::eFragmentSampled
     );
     constexpr static auto pointspot_views_size_bytes = RMVSMContext::POINT_SPOT_LAYER_COUNT *
                                                        sizeof(GPU::VSMPointSpotView);
-    pointspot_views_for_pbr = self.renderer.render_context->alloc_transient_buffer(
+    pointspot_views_for_lighting = self.renderer.render_context->alloc_transient_buffer(
       vuk::MemoryUsage::eCPUtoGPU,
       pointspot_views_size_bytes
     );
-    std::memset(pointspot_views_for_pbr->mapped_ptr, 0, pointspot_views_size_bytes);
+    std::memset(pointspot_views_for_lighting->mapped_ptr, 0, pointspot_views_size_bytes);
+  }
+
+  // --- DDGI Probe Tracing ---
+  const auto draw_ddgi_probes = debug_view == GPU::DebugView::DDGIProbes && debugging;
+  const auto ddgi_distance_culling_enabled = cvar.cvar_ddgi_distance_culling.as_bool();
+  const auto ddgi_distance_culling_changed = ddgi_distance_culling_enabled != self.ddgi_distance_culling_enabled;
+  auto ddgi_irradiance_attachment = vuk::Value<vuk::ImageAttachment>{};
+  auto ddgi_distance_attachment = vuk::Value<vuk::ImageAttachment>{};
+  auto ddgi_probe_states_buffer = vuk::Value<vuk::Buffer>{};
+  auto ddgi_atlas_valid = false;
+  if (!self.probe_volumes.empty()) {
+    auto total_probe_count = 0_u32;
+    for (const auto& volume : self.probe_volumes) {
+      total_probe_count += volume.probe_count;
+    }
+
+    const auto rays_per_probe = static_cast<u32>(std::clamp(cvar.cvar_ddgi_rays_per_probe.get(), 8, 512));
+    const auto ray_data_extent = GPU::ddgi_ray_data_extent(total_probe_count, rays_per_probe);
+
+    self.allocate_ddgi_atlases(total_probe_count);
+
+    ddgi_probe_states_buffer = vuk::acquire_buf("ddgi probe states", *self.ddgi_probe_states, vuk::eMemoryRead);
+    if (!self.ddgi_history_valid) {
+      vuk::fill(ddgi_probe_states_buffer, 0u);
+    }
+
+    if (tlas_it != self.shared_resources.buffer_resources.end() && frame_render_context.use_ray_tracing_pipeline()) {
+      auto ray_data_attachment = vuk::declare_ia(
+        "ddgi ray data",
+        {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+         .extent = ray_data_extent,
+         .format = vuk::Format::eR16G16B16A16Sfloat,
+         .sample_count = vuk::Samples::e1,
+         .level_count = 1,
+         .layer_count = 1}
+      );
+
+      auto irradiance_attachment =
+        self.ddgi_history_valid
+          ? vuk::acquire_ia("ddgi irradiance", self.ddgi_irradiance_attachment, vuk::eFragmentSampled)
+          : vuk::clear_image(vuk::discard_ia("ddgi irradiance", self.ddgi_irradiance_attachment), vuk::Black<f32>);
+      auto distance_attachment =
+        self.ddgi_history_valid
+          ? vuk::acquire_ia("ddgi distance", self.ddgi_distance_attachment, vuk::eFragmentSampled)
+          : vuk::clear_image(vuk::discard_ia("ddgi distance", self.ddgi_distance_attachment), vuk::Black<f32>);
+
+      auto ddgi_select_context = DDGISelectContext{
+        .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .max_interval = static_cast<u32>(std::clamp(cvar.cvar_ddgi_update_max_interval.get(), 1, 255)),
+        .full_rate_distance = cvar.cvar_ddgi_update_full_rate_distance.get(),
+        .update_all = !self.ddgi_history_valid,
+        .force_update_all = ddgi_distance_culling_changed,
+        .distance_culling_enabled = ddgi_distance_culling_enabled,
+        .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+        .probe_states_buffer = std::move(ddgi_probe_states_buffer),
+        .probe_update_list_buffer = vuk::acquire_buf(
+          "ddgi probe update list",
+          *self.ddgi_probe_update_list,
+          vuk::eComputeRead
+        ),
+        // Uploaded zeroed so ddgi_select_probes can atomically count into it without a clear pass.
+        .probe_update_args_buffer = self.renderer.render_context->scratch_buffer(GPU::ProbeUpdateArgs{}),
+      };
+      self.select_ddgi_probes(ddgi_select_context);
+
+      auto ddgi_trace_context = DDGITraceContext{
+        .bindless_set = &bindless_set,
+        .tlas = &self.scene_tlas,
+        .scene_flags = self.gpu_scene_flags,
+        .rays_per_probe = rays_per_probe,
+        .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .light_count = static_cast<u32>(self.scene.lights.size()),
+        .max_ray_distance = cvar.cvar_ddgi_max_ray_distance.get(),
+        .max_ray_radiance = cvar.cvar_ddgi_max_ray_radiance.get(),
+        .shadow_ray_offset = cvar.cvar_ddgi_shadow_ray_offset.get(),
+        .normal_bias = cvar.cvar_ddgi_normal_bias.get(),
+        .sun_direction = self.directional_light.direction,
+        .sun_intensity = self.directional_light.intensity,
+        .ambient_color = self.sky_data.ambient_color,
+        .volume_count = static_cast<u32>(self.probe_volumes.size()),
+        .radiance_atlas_y_offset = GPU::ddgi_radiance_atlas_y_offset(total_probe_count),
+        .distance_culling_enabled = ddgi_distance_culling_enabled,
+        .bounce_valid = self.ddgi_history_valid,
+        .view_bias = cvar.cvar_ddgi_view_bias.get(),
+        .light_grid_origin = light_grid_context.grid_origin,
+        .tlas_buffer = std::move(tlas_it->second),
+        .probe_volumes_buffer = std::move(ddgi_select_context.probe_volumes_buffer),
+        .probe_states_buffer = std::move(ddgi_select_context.probe_states_buffer),
+        .light_grid_buffer = std::move(light_grid_context.light_grid_buffer),
+        .pointspot_views_buffer = std::move(pointspot_views_for_lighting),
+        .sky_view_lut_attachment = std::move(sky_view_lut_attachment),
+        .sky_transmittance_lut_attachment = std::move(sky_transmittance_lut_attachment),
+        .pointspot_page_table_attachment = std::move(pointspot_page_table_for_lighting),
+        .vsm_physical_pages_attachment = std::move(vsm_physical_pages_for_lighting),
+        .ray_data_attachment = std::move(ray_data_attachment),
+        .irradiance_attachment = std::move(irradiance_attachment),
+        .distance_attachment = std::move(distance_attachment),
+      };
+      self.trace_ddgi_probes(ddgi_trace_context);
+
+      tlas_it->second = std::move(ddgi_trace_context.tlas_buffer);
+      sky_view_lut_attachment = std::move(ddgi_trace_context.sky_view_lut_attachment);
+      sky_transmittance_lut_attachment = std::move(ddgi_trace_context.sky_transmittance_lut_attachment);
+      light_grid_context.light_grid_buffer = std::move(ddgi_trace_context.light_grid_buffer);
+      pointspot_views_for_lighting = std::move(ddgi_trace_context.pointspot_views_buffer);
+      pointspot_page_table_for_lighting = std::move(ddgi_trace_context.pointspot_page_table_attachment);
+      vsm_physical_pages_for_lighting = std::move(ddgi_trace_context.vsm_physical_pages_attachment);
+
+      auto ddgi_relocate_context = DDGIRelocateContext{
+        .rays_per_probe = rays_per_probe,
+        .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .min_frontface_distance = cvar.cvar_ddgi_min_frontface_distance.get(),
+        .relocation_enabled = cvar.cvar_ddgi_probe_relocation.as_bool(),
+        .distance_culling_enabled = ddgi_distance_culling_enabled,
+        .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
+        .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
+        .probe_update_list_buffer = std::move(ddgi_select_context.probe_update_list_buffer),
+        .probe_update_args_buffer = std::move(ddgi_select_context.probe_update_args_buffer),
+        .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),
+      };
+      self.relocate_ddgi_probes(ddgi_relocate_context);
+
+      ddgi_trace_context.probe_volumes_buffer = std::move(ddgi_relocate_context.probe_volumes_buffer);
+      ddgi_trace_context.probe_states_buffer = std::move(ddgi_relocate_context.probe_states_buffer);
+      ddgi_trace_context.ray_data_attachment = std::move(ddgi_relocate_context.ray_data_attachment);
+      ddgi_select_context.probe_update_list_buffer = std::move(ddgi_relocate_context.probe_update_list_buffer);
+      ddgi_select_context.probe_update_args_buffer = std::move(ddgi_relocate_context.probe_update_args_buffer);
+
+      auto ddgi_update_context = DDGIUpdateContext{
+        .rays_per_probe = rays_per_probe,
+        .frame_index = static_cast<u32>(self.renderer.render_context->num_frames),
+        .radiance_atlas_y_offset = GPU::ddgi_radiance_atlas_y_offset(total_probe_count),
+        .hysteresis = cvar.cvar_ddgi_hysteresis.get(),
+        .max_brightness_step = cvar.cvar_ddgi_max_brightness_step.get(),
+        .firefly_ratio = cvar.cvar_ddgi_firefly_ratio.get(),
+        .hysteresis_dark_bias = cvar.cvar_ddgi_hysteresis_dark_bias.get(),
+        .probe_volumes_buffer = std::move(ddgi_trace_context.probe_volumes_buffer),
+        .probe_states_buffer = std::move(ddgi_trace_context.probe_states_buffer),
+        .probe_update_list_buffer = std::move(ddgi_select_context.probe_update_list_buffer),
+        .probe_update_args_buffer = std::move(ddgi_select_context.probe_update_args_buffer),
+        .ray_data_attachment = std::move(ddgi_trace_context.ray_data_attachment),
+        .irradiance_attachment = std::move(ddgi_trace_context.irradiance_attachment),
+        .distance_attachment = std::move(ddgi_trace_context.distance_attachment),
+      };
+      self.update_ddgi_probes(ddgi_update_context);
+      self.ddgi_distance_culling_enabled = ddgi_distance_culling_enabled;
+
+      ddgi_irradiance_attachment = std::move(ddgi_update_context.irradiance_attachment);
+      ddgi_distance_attachment = std::move(ddgi_update_context.distance_attachment);
+      ddgi_probe_states_buffer = std::move(ddgi_update_context.probe_states_buffer);
+      ddgi_atlas_valid = true;
+      self.gpu_scene_flags |= GPU::SceneFlags::HasDDGI;
+    }
   }
 
   auto pbr_context = PBRContext{
@@ -1286,13 +1435,12 @@ auto RendererInstance::render(
     .emissive_attachment = std::move(emissive_attachment),
     .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
     .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
-    .contact_shadows_attachment = std::move(contact_shadows_attachment),
-    .resolved_shadows_attachment = std::move(resolved_shadows_attachment),
+    .shadows_attachment = std::move(shadows_attachment),
     .light_grid_origin = light_grid_context.grid_origin,
     .light_grid_buffer = std::move(light_grid_context.light_grid_buffer),
-    .pointspot_views_buffer = std::move(pointspot_views_for_pbr),
-    .pointspot_page_table_attachment = std::move(pointspot_page_table_for_pbr),
-    .vsm_physical_pages_attachment = std::move(vsm_physical_pages_for_pbr),
+    .pointspot_views_buffer = std::move(pointspot_views_for_lighting),
+    .pointspot_page_table_attachment = std::move(pointspot_page_table_for_lighting),
+    .vsm_physical_pages_attachment = std::move(vsm_physical_pages_for_lighting),
     .vsm_page_table_attachment = std::move(rmvsm_virtual_page_table_attachment),
   };
   final_attachment = self.apply_pbr(pbr_context, std::move(final_attachment));
@@ -1308,6 +1456,37 @@ auto RendererInstance::render(
   auto rmvsm_pointspot_views_buffer = std::move(pbr_context.pointspot_views_buffer);
   auto rmvsm_light_grid_buffer = std::move(pbr_context.light_grid_buffer);
   const auto rmvsm_light_grid_origin = pbr_context.light_grid_origin;
+
+  // --- DDGI Apply ---
+  if (ddgi_atlas_valid) {
+    auto ddgi_apply_context = DDGIApplyContext{
+      .volume_count = static_cast<u32>(self.probe_volumes.size()),
+      .normal_bias = cvar.cvar_ddgi_normal_bias.get(),
+      .view_bias = cvar.cvar_ddgi_view_bias.get(),
+      .intensity = cvar.cvar_ddgi_intensity.get(),
+      .ambient_color = self.sky_data.ambient_color,
+      .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+      .probe_states_buffer = std::move(ddgi_probe_states_buffer),
+      .depth_attachment = std::move(depth_attachment),
+      .albedo_attachment = std::move(albedo_attachment),
+      .normal_attachment = std::move(normal_attachment),
+      .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
+      .ambient_occlusion_attachment = std::move(vbgtao_occlusion_attachment),
+      .irradiance_attachment = std::move(ddgi_irradiance_attachment),
+      .distance_attachment = std::move(ddgi_distance_attachment),
+    };
+
+    final_attachment = self.apply_ddgi(ddgi_apply_context, std::move(final_attachment));
+
+    depth_attachment = std::move(ddgi_apply_context.depth_attachment);
+    albedo_attachment = std::move(ddgi_apply_context.albedo_attachment);
+    normal_attachment = std::move(ddgi_apply_context.normal_attachment);
+    metallic_roughness_occlusion_attachment = std::move(ddgi_apply_context.metallic_roughness_occlusion_attachment);
+    vbgtao_occlusion_attachment = std::move(ddgi_apply_context.ambient_occlusion_attachment);
+    ddgi_irradiance_attachment = std::move(ddgi_apply_context.irradiance_attachment);
+    ddgi_distance_attachment = std::move(ddgi_apply_context.distance_attachment);
+    ddgi_probe_states_buffer = std::move(ddgi_apply_context.probe_states_buffer);
+  }
 
   // --- 2D Pass ---
   if (!self.render_queue_2d.sprite_data.empty()) {
@@ -1454,6 +1633,28 @@ auto RendererInstance::render(
     final_attachment = ctx.get_image_resource("final_attachment");
   }
 
+  // --- DDGI Probe Debug Pass ---
+  if (draw_ddgi_probes && !self.probe_volumes.empty()) {
+    if (!ddgi_atlas_valid) {
+      self.ddgi_history_valid = false;
+    }
+
+    auto ddgi_debug_context = DDGIDebugContext{
+      .probe_radius = cvar.cvar_ddgi_probe_debug_radius.get(),
+      .atlas_valid = ddgi_atlas_valid,
+      .probe_volumes_buffer = self.renderer.render_context->scratch_buffer_span(std::span(self.probe_volumes)),
+      .probe_states_buffer = std::move(ddgi_probe_states_buffer),
+      .irradiance_attachment = ddgi_atlas_valid ? std::move(ddgi_irradiance_attachment)
+                                                : vuk::discard_ia("ddgi irradiance", self.ddgi_irradiance_attachment),
+      .depth_attachment = std::move(depth_attachment),
+    };
+
+    final_attachment = self.draw_ddgi_probes(ddgi_debug_context, std::move(final_attachment));
+    depth_attachment = std::move(ddgi_debug_context.depth_attachment);
+    ddgi_irradiance_attachment = std::move(ddgi_debug_context.irradiance_attachment);
+    ddgi_probe_states_buffer = std::move(ddgi_debug_context.probe_states_buffer);
+  }
+
   // --- FXAA Pass ---
   if (self.gpu_scene_flags & GPU::SceneFlags::HasFXAA) {
     auto fxaa_attachment = vuk::declare_ia(
@@ -1486,17 +1687,35 @@ auto RendererInstance::render(
     std::tie(final_attachment, fxaa_attachment) = fxaa_pass(std::move(fxaa_attachment), std::move(final_attachment));
   }
 
-  auto bloom_upsampled_attachment = vuk::declare_ia(
-    "bloom upsampled",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .extent = final_half_extent,
-     .format = vuk::Format::eB10G11R11UfloatPack32,
-     .sample_count = vuk::SampleCountFlagBits::e1,
-     .level_count = final_half_mip_count,
-     .layer_count = 1}
-  );
-  bloom_upsampled_attachment.same_format_as(final_attachment);
-  bloom_upsampled_attachment = vuk::clear_image(std::move(bloom_upsampled_attachment), vuk::Black<float>);
+  auto bloom_upsampled_attachment = vuk::Value<vuk::ImageAttachment>{};
+  if (self.gpu_scene_flags & GPU::SceneFlags::HasBloom) {
+    const auto bloom_extent = vuk::Extent3D{
+      .width = std::max(dst_extent.width / 2, 1u),
+      .height = std::max(dst_extent.height / 2, 1u),
+      .depth = 1,
+    };
+    bloom_upsampled_attachment = vuk::declare_ia(
+      "bloom upsampled",
+      {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
+       .extent = bloom_extent,
+       .format = vuk::Format::eB10G11R11UfloatPack32,
+       .sample_count = vuk::SampleCountFlagBits::e1,
+       .level_count = Texture::calculate_mip_count(bloom_extent),
+       .layer_count = 1}
+    );
+    bloom_upsampled_attachment = vuk::clear_image(std::move(bloom_upsampled_attachment), vuk::Black<float>);
+  } else {
+    bloom_upsampled_attachment = vuk::declare_ia(
+      "bloom disabled",
+      {.usage = vuk::ImageUsageFlagBits::eSampled,
+       .extent = {1, 1, 1},
+       .format = vuk::Format::eB10G11R11UfloatPack32,
+       .sample_count = vuk::SampleCountFlagBits::e1,
+       .level_count = 1,
+       .layer_count = 1}
+    );
+    bloom_upsampled_attachment = vuk::clear_image(std::move(bloom_upsampled_attachment), vuk::Black<float>);
+  }
 
   /// POST PROCESSING
   auto post_process_context = PostProcessContext{
@@ -1555,8 +1774,8 @@ auto RendererInstance::render(
     debug_context.vsm_pointspot_page_table_attachment = std::move(rmvsm_pointspot_page_table_attachment);
   }
 
-  if (debugging && self.prepared_frame.mesh_instance_count > 0) {
-    dst_attachment = self.apply_debug_view(debug_context, dst_extent);
+  if (debugging && debug_view != GPU::DebugView::DDGIProbes && self.prepared_frame.mesh_instance_count > 0) {
+    dst_attachment = self.apply_debug_view(debug_context, std::move(dst_attachment));
   }
 
   const auto draw_bounding_boxes = cvar.cvar_draw_bounding_boxes.as_bool() || debugging;
@@ -1734,7 +1953,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   const auto point_slot_stats = assign_shadow_slots(
     pending_lights,
     GPU::LightKind::Point,
-    self.camera_data,
     self.shadow_point_slots,
     self.prepared_frame.shadow_point_light_count,
     self.prepared_frame.moved_point_light_mask
@@ -1742,7 +1960,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   const auto spot_slot_stats = assign_shadow_slots(
     pending_lights,
     GPU::LightKind::Spot,
-    self.camera_data,
     self.shadow_spot_slots,
     self.prepared_frame.shadow_spot_light_count,
     self.prepared_frame.moved_spot_light_mask
@@ -1763,6 +1980,84 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   for (auto& pending : pending_lights) {
     self.scene.lights.create_slot(std::move(pending.light));
+  }
+
+  self.probe_volumes.clear();
+  if (cvar.cvar_ddgi_enable.as_bool()) {
+    const auto draw_volume_bounds = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get()) ==
+                                      GPU::DebugView::DDGIProbes &&
+                                    cvar.cvar_enable_debug_renderer.as_bool();
+
+    // Cascades of one set are emitted contiguously, finest first, because the shader walks the array
+    // set by set and indexes a set's members by cascade index off its first entry.
+    self.scene.world
+      .query_builder<const TransformComponent, const ProbeVolumeComponent>() //
+      .build()
+      .each(
+        [&self,
+         camera_position = cam.position](flecs::entity e, const TransformComponent&, const ProbeVolumeComponent& c) {
+          if (!e.enabled()) {
+            return;
+          }
+
+          const auto counts = glm::max(c.probe_counts, glm::uvec3(2));
+          const auto base_spacing = glm::max(c.probe_range, glm::vec3(0.01f)) / glm::vec3(counts - 1u);
+          const glm::vec3 anchor = self.scene.get_world_transform(e)[3];
+          const auto center = c.follow_camera ? camera_position : anchor;
+          const auto cascades = std::clamp(c.cascade_count, 1u, GPU::DDGI_MAX_CASCADE_COUNT);
+          const auto probe_count = counts.x * counts.y * counts.z;
+
+          auto set = ankerl::svector<GPU::ProbeVolume, GPU::DDGI_MAX_CASCADE_COUNT>{};
+          for (u32 cascade = 0; cascade < cascades; cascade++) {
+            const auto spacing = base_spacing * static_cast<f32>(1u << cascade);
+            const auto scroll = glm::ivec3(glm::floor((center - anchor) / spacing + 0.5f));
+
+            set.emplace_back(
+              GPU::ProbeVolume{
+                .origin = anchor + glm::vec3(scroll) * spacing,
+                .spacing = spacing,
+                .probe_count = probe_count,
+                .spacing_rcp = 1.0f / spacing,
+                .cascade_index = cascade,
+                .counts = counts,
+                .cascade_count = cascades,
+                .scroll = scroll,
+                .cascade_blend = std::clamp(c.cascade_blend, 0.0f, 1.0f),
+                .center = center,
+                .max_probe_distance = glm::length(spacing) * 1.5f,
+              }
+            );
+          }
+
+          const auto probe_offset = self.probe_volumes.empty()
+                                      ? 0u
+                                      : self.probe_volumes.back().probe_offset + self.probe_volumes.back().probe_count;
+
+          if (probe_offset + probe_count * cascades > GPU::DDGI_MAX_PROBE_COUNT) {
+            OX_LOG_WARN(
+              "Dropped a {} cascade probe volume, the scene is over the {} probe limit.",
+              cascades,
+              GPU::DDGI_MAX_PROBE_COUNT
+            );
+            return;
+          }
+
+          for (u32 cascade = 0; cascade < cascades; cascade++) {
+            set[cascade].probe_offset = probe_offset + cascade * probe_count;
+            self.probe_volumes.emplace_back(set[cascade]);
+          }
+        }
+      );
+
+    if (draw_volume_bounds) {
+      for (const auto& volume : self.probe_volumes) {
+        const auto extents = glm::vec3(volume.counts - 1u) * volume.spacing * 0.5f;
+        App::mod<ox::DebugRenderer>().draw_aabb(
+          AABB(volume.origin - extents, volume.origin + extents),
+          glm::vec4(0, 1, 1, 1)
+        );
+      }
+    }
   }
 
   self.post_proces_settings.exposure = cvar.cvar_exposure.get();
@@ -1933,6 +2228,24 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshes_buffer = render_context.upload_staging(info.gpu_meshes, *self.meshes_buffer);
   } else if (self.meshes_buffer) {
     self.prepared_frame.meshes_buffer = vuk::acquire_buf("meshes", *self.meshes_buffer, vuk::Access::eMemoryRead);
+  }
+
+  if (!info.gpu_mesh_blas_addresses.empty()) {
+    self.blas_addresses_buffer = render_context.resize_buffer(
+      std::move(self.blas_addresses_buffer),
+      vuk::MemoryUsage::eGPUonly,
+      info.gpu_mesh_blas_addresses.size_bytes()
+    );
+    self.prepared_frame.blas_addresses_buffer = render_context.upload_staging(
+      info.gpu_mesh_blas_addresses,
+      *self.blas_addresses_buffer
+    );
+  } else if (self.blas_addresses_buffer) {
+    self.prepared_frame.blas_addresses_buffer = vuk::acquire_buf(
+      "blas addresses",
+      *self.blas_addresses_buffer,
+      vuk::Access::eMemoryRead
+    );
   }
 
   if (!info.gpu_mesh_instances.empty()) {

@@ -501,6 +501,10 @@ auto SceneHierarchyViewer::draw_entities_context_menu() -> void {
         });
     }
 
+    if (ImGui::MenuItem("Probe Volume")) {
+      to_select = scene_->create_entity("probe_volume", true).add<ProbeVolumeComponent>();
+    }
+
     if (ImGui::BeginMenu("Light")) {
       if (ImGui::MenuItem("Light")) {
         to_select = scene_->create_entity("light", true).add<LightComponent>();

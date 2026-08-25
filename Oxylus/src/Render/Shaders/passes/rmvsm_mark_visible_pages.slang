@@ -8,6 +8,7 @@ struct ShaderParameters {
     StructuredBuffer<VirtualClipmap> clipmaps;
 
     Texture2D<f32> depth_image;
+    Texture2D<f32x4> normal_image;
 
     RWTexture2DArray<u32, ImageFormat::R32UI> page_tables;
     RWStructuredBuffer<u32> page_occupancy;
@@ -41,8 +42,10 @@ func cs_main(
 
     let uv = (f32x2(thread_id.xy) + 0.5) / f32x2(ctx.depth_extent);
     let world_pos = params.camera.unproject_uv(uv, depth);
+    let mapped_smooth_normal = params.normal_image.Load(i32x3(thread_id, 0));
+    let flat_normal = normalize(com::oct_to_vec3(mapped_smooth_normal.ba));
 
-    let clipmap_selection = ctx.get_clipmap_selection(params.camera, uv, depth);
+    let clipmap_selection = ctx.get_clipmap_selection(params.camera, uv, depth, flat_normal);
     for (var selection_index = 0u; selection_index < 2u; selection_index += 1u) {
         let clipmap_index = selection_index == 0u
             ? clipmap_selection.fine_clipmap_index
@@ -58,15 +61,15 @@ func cs_main(
         let page_table_address = i32x3(wrapped_coords, i32(clipmap_index));
 
         // scalarization loop in listing 3.3
-        var first_thread_visible = all(wrapped_coords >= 0);
-        var done = false;
-        while (!done) {
+        var thread_active = all(wrapped_coords >= 0);
+        var first_thread_visible = false;
+        while (thread_active) {
             let subgroup_address = WaveReadLaneFirst(page_table_address);
             if (all(subgroup_address == page_table_address)) {
                 if (WaveIsFirstLane()) {
                     first_thread_visible = true;
                 }
-                done = true;
+                thread_active = false;
             }
         }
 

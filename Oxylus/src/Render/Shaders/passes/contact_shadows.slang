@@ -6,7 +6,7 @@ import raymarch;
 
 struct ShaderParameters {
   Texture2D<f32> src_depth;
-  RWTexture2D<f32> dst_image;
+  RWTexture2D<f32x2, 1, ImageFormat::RG8> dst_image;
   ConstantBuffer<Camera> camera;
   Sampler sampler_nearest_clamp;
   Sampler sampler_linear_clamp;
@@ -74,5 +74,6 @@ func cs_main(
       shadow = smoothstep(1.0, 0.3, raymarch_result.hit_penetration_frac);
   }
 
-  params.dst_image.Store(img_coords, 1.0 - shadow);
+  let visibility = params.dst_image[img_coords];
+  params.dst_image[img_coords] = f32x2(visibility.x, 1.0 - shadow);
 }

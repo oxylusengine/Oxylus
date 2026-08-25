@@ -23,6 +23,13 @@ public struct DrawIndirectCommand {
     public u32 first_instance;
 };
 
+public struct AccelerationStructureInstance {
+    public f32 transform[12];
+    public u32 custom_index_and_mask;
+    public u32 sbt_offset_and_flags;
+    public u64 blas_address;
+};
+
 public enum ImageFormat : i32 {
     Undefined = 0,
     RGBA32F,           // 4 channel 32-bit floating point texture

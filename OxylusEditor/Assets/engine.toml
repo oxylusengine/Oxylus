@@ -15,13 +15,13 @@ entry_points = ["vs_main", "fs_main"]
 name = "2d_forward"
 path = "passes/2d_forward.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "2d_forward_vis"
 path = "passes/2d_forward_vis.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "sky_transmittance"
@@ -77,14 +77,19 @@ entry_points = ["cs_main"]
 name = "visbuffer_encode"
 path = "passes/visbuffer_encode.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "visbuffer_encode_ms"
 path = "passes/visbuffer_encode_ms.slang"
 entry_points = ["ts_main", "ms_main", "fs_main"]
-bindless = true
-requires_mesh_shaders = true
+requires = ["bindless", "mesh_shaders"]
+
+[[shader_sessions.programs]]
+name = "tlas_write_instances"
+path = "passes/tlas_write_instances.slang"
+entry_points = ["cs_main"]
+requires = ["ray_tracing"]
 
 [[shader_sessions.programs]]
 name = "visbuffer_clear"
@@ -95,7 +100,7 @@ entry_points = ["cs_main"]
 name = "visbuffer_decode"
 path = "passes/visbuffer_decode.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "rmvsm_allocate_pages"
@@ -136,14 +141,13 @@ entry_points = ["cs_main"]
 name = "rmvsm_draw_physical_pages"
 path = "passes/rmvsm_draw_physical_pages.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "rmvsm_draw_physical_pages_ms"
 path = "passes/rmvsm_draw_physical_pages_ms.slang"
 entry_points = ["ts_main", "ms_main", "fs_main"]
-bindless = true
-requires_mesh_shaders = true
+requires = ["bindless", "mesh_shaders"]
 
 [[shader_sessions.programs]]
 name = "rmvsm_free_invisible_pages"
@@ -229,14 +233,13 @@ entry_points = ["cs_main"]
 name = "rmvsm_pointspot_draw_pages"
 path = "passes/rmvsm_pointspot_draw_pages.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "rmvsm_pointspot_draw_pages_ms"
 path = "passes/rmvsm_pointspot_draw_pages_ms.slang"
 entry_points = ["ts_main", "ms_main", "fs_main"]
-bindless = true
-requires_mesh_shaders = true
+requires = ["bindless", "mesh_shaders"]
 
 [[shader_sessions.programs]]
 name = "resolve_shadowmaps"
@@ -319,6 +322,12 @@ path = "passes/gtao/vbgtao_denoise.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "rtao"
+path = "passes/rtao.slang"
+entry_points = ["cs_main"]
+requires = ["ray_tracing"]
+
+[[shader_sessions.programs]]
 name = "fxaa"
 path = "passes/fxaa/fxaa.slang"
 entry_points = ["vs_main", "fs_main"]
@@ -326,6 +335,47 @@ entry_points = ["vs_main", "fs_main"]
 [[shader_sessions.programs]]
 name = "debug_mesh"
 path = "passes/debug_mesh.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "ddgi_trace"
+path = "passes/ddgi_trace.slang"
+entry_points = ["rgs_main", "miss_main", "closesthit_main"]
+requires = ["ray_tracing", "ray_tracing_pipeline", "bindless"]
+
+[[shader_sessions.programs]]
+name = "ddgi_select_probes"
+path = "passes/ddgi_select_probes.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "ddgi_build_dispatch_args"
+path = "passes/ddgi_build_dispatch_args.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "ddgi_relocate_probes"
+path = "passes/ddgi_relocate_probes.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "ddgi_apply"
+path = "passes/ddgi_apply.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "ddgi_update_irradiance"
+path = "passes/ddgi_update_irradiance.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "ddgi_update_distance"
+path = "passes/ddgi_update_distance.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "ddgi_debug_probes"
+path = "passes/ddgi_debug_probes.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
@@ -372,4 +422,4 @@ entry_points = ["vs_main", "hs_main", "ds_main", "fs_main"]
 name = "terrain_decode"
 path = "passes/terrain_decode.slang"
 entry_points = ["vs_main", "fs_main"]
-bindless = true
+requires = ["bindless"]

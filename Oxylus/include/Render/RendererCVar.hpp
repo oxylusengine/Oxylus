@@ -39,6 +39,30 @@ struct RendererCVar {
   AutoCVar_Float cvar_vbgtao_radius;
   AutoCVar_Float cvar_vbgtao_final_power;
 
+  AutoCVar_Int cvar_rtao_enable;
+  AutoCVar_Int cvar_rtao_ray_count;
+  AutoCVar_Float cvar_rtao_radius;
+  AutoCVar_Float cvar_rtao_power;
+
+  AutoCVar_Int cvar_ddgi_enable;
+  AutoCVar_Int cvar_ddgi_rays_per_probe;
+  AutoCVar_Float cvar_ddgi_max_ray_distance;
+  AutoCVar_Float cvar_ddgi_max_ray_radiance;
+  AutoCVar_Int cvar_ddgi_update_max_interval;
+  AutoCVar_Float cvar_ddgi_update_full_rate_distance;
+  AutoCVar_Int cvar_ddgi_distance_culling;
+  AutoCVar_Int cvar_ddgi_probe_relocation;
+  AutoCVar_Float cvar_ddgi_min_frontface_distance;
+  AutoCVar_Float cvar_ddgi_shadow_ray_offset;
+  AutoCVar_Float cvar_ddgi_normal_bias;
+  AutoCVar_Float cvar_ddgi_view_bias;
+  AutoCVar_Float cvar_ddgi_hysteresis;
+  AutoCVar_Float cvar_ddgi_max_brightness_step;
+  AutoCVar_Float cvar_ddgi_firefly_ratio;
+  AutoCVar_Float cvar_ddgi_hysteresis_dark_bias;
+  AutoCVar_Float cvar_ddgi_intensity;
+  AutoCVar_Float cvar_ddgi_probe_debug_radius;
+
   AutoCVar_Int cvar_bloom_enable;
   AutoCVar_Float cvar_bloom_threshold;
   AutoCVar_Float cvar_bloom_soft_threshold;

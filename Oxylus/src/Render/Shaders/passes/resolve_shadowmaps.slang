@@ -200,7 +200,7 @@ func fs_main(
     let world_position = world_position_h.xyz / world_position_h.w;
 
     let noise = hash2(f32x2(input.position.xy));
-    let clipmap_selection = vsm_ctx.get_clipmap_selection(camera, input.tex_coord, depth);
+    let clipmap_selection = vsm_ctx.get_clipmap_selection(camera, input.tex_coord, depth, flat_N);
     let fine_visibility = pcss_shadow(
         vsm_ctx,
         i32(clipmap_selection.fine_clipmap_index),

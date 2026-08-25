@@ -17,11 +17,10 @@ import scene;
 [[vk::binding(7)]] Texture2D<f32x4> albedo_image;
 [[vk::binding(8)]] Texture2D<f32x4> normal_image;
 [[vk::binding(9)]] Texture2D<f32x3> emissive_image;
-[[vk::binding(10)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
+[[vk::binding(10)]] Texture2D<f32x2> metallic_roughness_image;
 [[vk::binding(11)]] Texture2D<f32> gtao_image;
-[[vk::binding(12)]] Texture2D<f32> resolved_shadows;
-[[vk::binding(13)]] Texture2D<f32> contact_shadows;
-[[vk::binding(14)]] ConstantBuffer<Camera> camera;
+[[vk::binding(12)]] Texture2D<f32x2> shadows_image;
+[[vk::binding(13)]] ConstantBuffer<Camera> camera;
 
 func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
     let min_cos_theta = cos(radius * PI / 180.0);
@@ -52,7 +51,8 @@ func fs_main(
         return f32x4(0.0);
     }
 
-    let albedo_color = albedo_image.SampleLevel(linear_repeat_sampler, input.tex_coord, 0).rgb;
+    let albedo_occlusion = albedo_image.SampleLevel(linear_repeat_sampler, input.tex_coord, 0);
+    let albedo_color = albedo_occlusion.rgb;
 
     let mapped_smooth_normal = normal_image.Load(pixel_pos);
     let mapped_normal = com::oct_to_vec3(mapped_smooth_normal.rg);
@@ -60,11 +60,11 @@ func fs_main(
 
     let emission = emissive_image.Load(pixel_pos);
 
-    let metallic_roughness_occlusion = metallic_roughness_occlusion_image.Load(pixel_pos);
-    let metallic = clamp(metallic_roughness_occlusion.r, 0.0, 1.0);
-    let roughness = clamp(metallic_roughness_occlusion.g, 0.045, 1.0);
+    let metallic_roughness = metallic_roughness_image.Load(pixel_pos);
+    let metallic = clamp(metallic_roughness.r, 0.0, 1.0);
+    let roughness = clamp(metallic_roughness.g, 0.045, 1.0);
 
-    let baked_occlusion = metallic_roughness_occlusion.b;
+    let baked_occlusion = albedo_occlusion.a;
     let screen_space_occlusion = gtao_image.Load(pixel_pos).r;
     let occlusion = baked_occlusion * screen_space_occlusion;
 
@@ -80,8 +80,9 @@ func fs_main(
     let NoV = abs(dot(N, V)) + 1e-5;
     let NoL = max(dot(N, L), 0.0);
 
-    let directional_shadow = has_directional_light ? resolved_shadows.Load(pixel_pos) : 1.0f;
-    let contact_shadow = ((scene_flags & SceneFlags::HasContactShadows) != 0) ? contact_shadows.Load(pixel_pos) : 1.0f;
+    let shadow_visibility = shadows_image.Load(pixel_pos);
+    let directional_shadow = has_directional_light ? shadow_visibility.x : 1.0f;
+    let contact_shadow = ((scene_flags & SceneFlags::HasContactShadows) != 0) ? shadow_visibility.y : 1.0f;
     let visibility = directional_shadow * contact_shadow;
 
     var indirect_illuminance = f32x3(0.0);
@@ -138,7 +139,7 @@ func fs_main(
         diffuse_sky = diffuse_sample.rgb * diffuse_sample.a * horizon_darkening;
     }
 
-    {
+    if ((scene_flags & SceneFlags::HasDDGI) == 0) {
         let dielectric_F0 = f32x3(0.04);
         let F0 = lerp(dielectric_F0, albedo_color, metallic);
 
@@ -149,7 +150,7 @@ func fs_main(
 
         let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-        let ibl_diffuse = kD * diffuse_sky * albedo_color * Fd_Lambert();
+        let ibl_diffuse = kD * diffuse_sky * albedo_color;
         let ibl_specular = kS * specular_sky * spec_occlusion;
         indirect_illuminance = (ibl_diffuse * occlusion) + ibl_specular;
     }

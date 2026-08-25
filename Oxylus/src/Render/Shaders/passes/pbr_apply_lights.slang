@@ -11,7 +11,7 @@ import rmvsm;
 [[vk::binding(1)]] Texture2D<f32> depth_image;
 [[vk::binding(2)]] Texture2D<f32x4> albedo_image;
 [[vk::binding(3)]] Texture2D<f32x4> normal_image;
-[[vk::binding(4)]] Texture2D<f32x3> metallic_roughness_occlusion_image;
+[[vk::binding(4)]] Texture2D<f32x2> metallic_roughness_image;
 [[vk::binding(5)]] Texture2DArray<u32> vsm_pointspot_page_tables;
 [[vk::binding(6)]] Texture2D<f32> vsm_physical_pages;
 
@@ -37,9 +37,9 @@ func fs_main(
     let mapped_normal = com::oct_to_vec3(mapped_smooth_normal.rg);
     let smooth_normal = com::oct_to_vec3(mapped_smooth_normal.ba);
 
-    let metallic_roughness_occlusion = metallic_roughness_occlusion_image.Load(pixel_pos);
-    let metallic = clamp(metallic_roughness_occlusion.r, 0.0, 1.0);
-    let roughness = clamp(metallic_roughness_occlusion.g, 0.045, 1.0);
+    let metallic_roughness = metallic_roughness_image.Load(pixel_pos);
+    let metallic = clamp(metallic_roughness.r, 0.0, 1.0);
+    let roughness = clamp(metallic_roughness.g, 0.045, 1.0);
 
     let NDC = f32x3(input.tex_coord * 2.0 - 1.0, depth);
     let world_position_h = mul(camera.inv_projection_view, f32x4(NDC, 1.0));

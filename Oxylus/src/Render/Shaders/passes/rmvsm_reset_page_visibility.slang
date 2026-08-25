@@ -30,6 +30,7 @@ func cs_main(
         page.set_visible(false);
         page.set_dirty(false);
         page.set_invalidated(false);
+        page.set_alloc_failed(false);
     } else {
         page.reset();
         page.set_invalidated(true);

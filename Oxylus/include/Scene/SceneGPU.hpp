@@ -1,9 +1,9 @@
 #pragma once
 
-#include <algorithm>
 #include <glm/gtc/packing.hpp>
 #include <glm/mat4x4.hpp>
 #include <vuk/Types.hpp>
+#include <vuk/runtime/CommandBuffer.hpp>
 
 #include "Core/Types.hpp"
 #include "Utils/OxMath.hpp"
@@ -43,6 +43,7 @@ enum class DebugView : i32 {
   GeometricNormal,
   RMVSM,
   RMVSMPointSpot,
+  DDGIProbes,
 
   Count,
 };
@@ -123,6 +124,14 @@ struct Meshlet {
   alignas(4) u32 vertex_count = 0;
   alignas(4) u32 triangle_count = 0;
 };
+
+struct AccelerationStructureInstance {
+  alignas(4) f32 transform[12] = {};
+  alignas(4) u32 custom_index_and_mask = 0;
+  alignas(4) u32 sbt_offset_and_flags = 0;
+  alignas(8) u64 blas_address = 0;
+};
+static_assert(sizeof(AccelerationStructureInstance) == 64);
 
 struct MeshLOD {
   alignas(8) u64 indices = 0;
@@ -267,6 +276,102 @@ struct Light {
   alignas(4) u32 pad = {};
 };
 
+constexpr static u32 DDGI_MAX_IMAGE_DIMENSION = 16384;
+
+constexpr static u32 DDGI_MAX_PROBE_COUNT = 1u << 18;
+constexpr static u32 DDGI_MAX_CASCADE_COUNT = 8;
+// Octahedral tiles, each padded with a one texel border that mirrors the opposite edge so bilinear
+// taps stay continuous across the octahedron seam.
+constexpr static u32 DDGI_IRRADIANCE_TEXELS = 12;
+constexpr static u32 DDGI_RADIANCE_TEXELS = 6;
+constexpr static u32 DDGI_DISTANCE_TEXELS = 12;
+constexpr static u32 DDGI_TRACE_TEXELS = 12;
+constexpr static u32 DDGI_RAYS_PER_PROBE = DDGI_TRACE_TEXELS * DDGI_TRACE_TEXELS;
+constexpr static u32 DDGI_PROBES_PER_ATLAS_ROW = 512;
+
+constexpr auto ddgi_atlas_extent(u32 probe_count, u32 interior_texels) -> vuk::Extent3D {
+  const auto tile = interior_texels + 2;
+  const auto rows = (probe_count + DDGI_PROBES_PER_ATLAS_ROW - 1) / DDGI_PROBES_PER_ATLAS_ROW;
+  return {.width = DDGI_PROBES_PER_ATLAS_ROW * tile, .height = rows * tile, .depth = 1};
+}
+
+constexpr static u32 DDGI_IRRADIANCE_ATLAS_WIDTH = DDGI_PROBES_PER_ATLAS_ROW * (DDGI_IRRADIANCE_TEXELS + 2);
+static_assert(DDGI_IRRADIANCE_ATLAS_WIDTH % (DDGI_RADIANCE_TEXELS + 2) == 0);
+constexpr static u32 DDGI_RADIANCE_PROBES_PER_ATLAS_ROW = DDGI_IRRADIANCE_ATLAS_WIDTH / (DDGI_RADIANCE_TEXELS + 2);
+
+constexpr auto ddgi_radiance_atlas_y_offset(u32 probe_count) -> u32 {
+  return ddgi_atlas_extent(probe_count, DDGI_IRRADIANCE_TEXELS).height;
+}
+
+constexpr auto ddgi_irradiance_atlas_extent(u32 probe_count) -> vuk::Extent3D {
+  const auto irradiance = ddgi_atlas_extent(probe_count, DDGI_IRRADIANCE_TEXELS);
+  const auto radiance_rows = (probe_count + DDGI_RADIANCE_PROBES_PER_ATLAS_ROW - 1) /
+                             DDGI_RADIANCE_PROBES_PER_ATLAS_ROW;
+  return {
+    .width = irradiance.width,
+    .height = irradiance.height + radiance_rows * (DDGI_RADIANCE_TEXELS + 2),
+    .depth = 1,
+  };
+}
+
+constexpr static auto DDGI_MAX_IRRADIANCE_ATLAS_EXTENT = ddgi_irradiance_atlas_extent(DDGI_MAX_PROBE_COUNT);
+static_assert(DDGI_MAX_IRRADIANCE_ATLAS_EXTENT.width <= DDGI_MAX_IMAGE_DIMENSION);
+static_assert(DDGI_MAX_IRRADIANCE_ATLAS_EXTENT.height <= DDGI_MAX_IMAGE_DIMENSION);
+
+constexpr auto ddgi_probes_per_ray_row(u32 rays_per_probe) -> u32 {
+  auto probes = 1_u32;
+  while (probes * 2 * rays_per_probe <= DDGI_MAX_IMAGE_DIMENSION) {
+    probes *= 2;
+  }
+  return probes;
+}
+
+constexpr auto ddgi_ray_data_extent(u32 probe_count, u32 rays_per_probe) -> vuk::Extent3D {
+  const auto probes_per_row = ddgi_probes_per_ray_row(rays_per_probe);
+  const auto rows = (probe_count + probes_per_row - 1) / probes_per_row;
+  return {.width = probes_per_row * rays_per_probe, .height = rows, .depth = 1};
+}
+
+constexpr static u32 DDGI_PROBE_SELECT_GROUP = 64;
+constexpr static u32 DDGI_TEXEL_UPDATE_GROUP = 8;
+constexpr static u32 DDGI_TEXEL_UPDATE_THREADS_Y = 48;
+constexpr static u32 DDGI_TEXEL_UPDATE_GROUPS_Y = DDGI_TEXEL_UPDATE_THREADS_Y / DDGI_TEXEL_UPDATE_GROUP;
+
+static_assert(DDGI_TEXEL_UPDATE_THREADS_Y % DDGI_IRRADIANCE_TEXELS == 0);
+static_assert(DDGI_TEXEL_UPDATE_THREADS_Y % DDGI_DISTANCE_TEXELS == 0);
+static_assert(DDGI_TEXEL_UPDATE_THREADS_Y % DDGI_TEXEL_UPDATE_GROUP == 0);
+
+struct ProbeUpdateArgs {
+  u32 count = 0;
+  vuk::DispatchIndirectCommand irradiance = {};
+  vuk::DispatchIndirectCommand distance = {};
+  vuk::DispatchIndirectCommand relocate = {};
+};
+
+constexpr static u32 DDGI_DEBUG_SPHERE_RINGS = 8;
+constexpr static u32 DDGI_DEBUG_SPHERE_SECTORS = 12;
+constexpr static u32 DDGI_DEBUG_SPHERE_VERTEX_COUNT = DDGI_DEBUG_SPHERE_RINGS * DDGI_DEBUG_SPHERE_SECTORS * 6;
+
+struct ProbeState {
+  alignas(4) glm::vec3 offset = {};
+  alignas(4) u32 flags = 0;
+};
+
+struct ProbeVolume {
+  alignas(4) glm::vec3 origin = {};
+  alignas(4) u32 probe_offset = 0;
+  alignas(4) glm::vec3 spacing = {};
+  alignas(4) u32 probe_count = 0;
+  alignas(4) glm::vec3 spacing_rcp = {};
+  alignas(4) u32 cascade_index = 0;
+  alignas(4) glm::uvec3 counts = {};
+  alignas(4) u32 cascade_count = 0;
+  alignas(4) glm::ivec3 scroll = {};
+  alignas(4) f32 cascade_blend = 0.3f;
+  alignas(4) glm::vec3 center = {};
+  alignas(4) f32 max_probe_distance = 0.0f;
+};
+
 enum class SceneFlags : u32 {
   None = 0,
   HasDirectionalLight = 1 << 0,
@@ -281,6 +386,7 @@ enum class SceneFlags : u32 {
   HasContactShadows = 1 << 9,
   HasSky = 1 << 10,
   TransparentBackground = 1 << 11,
+  HasDDGI = 1 << 12,
 };
 consteval void enable_bitmask(SceneFlags);
 
@@ -550,58 +656,6 @@ struct SpriteGPUData {
       },
     };
     return a.value > b.value;
-  }
-};
-
-struct RenderQueue2D {
-  std::vector<DrawBatch2D> batches = {};
-  std::vector<SpriteGPUData> sprite_data = {};
-
-  u32 num_sprites = 0;
-  u32 previous_offset = 0;
-
-  u32 last_batches_size = 0;
-  u32 last_sprite_data_size = 0;
-
-  void init() {
-    clear();
-    batches.reserve(last_batches_size);
-    sprite_data.reserve(last_sprite_data_size);
-    batches.emplace_back(DrawBatch2D{.pipeline_name = "2d_forward", .offset = previous_offset, .count = 0});
-  }
-
-  void update() {
-    if (!batches.empty()) {
-      batches.back().count = num_sprites - batches.back().offset;
-    }
-    previous_offset = num_sprites;
-  }
-
-  void add(u16 render_flags, f32 position_y, u32 transform_id, u32 material_id, f32 distance) {
-    const u32 flags_and_distance = math::pack_u16(render_flags, glm::packHalf1x16(distance));
-    const u32 materialid_and_ypos = math::pack_u16(static_cast<u16>(material_id), glm::packHalf1x16(position_y));
-
-    sprite_data.emplace_back(
-      SpriteGPUData{
-        .material_id16_ypos16 = materialid_and_ypos,
-        .flags16_distance16 = flags_and_distance,
-        .transform_id = transform_id,
-      }
-    );
-
-    num_sprites += 1;
-  }
-
-  void sort() { std::ranges::sort(sprite_data, std::greater<SpriteGPUData>()); }
-
-  void clear() {
-    num_sprites = 0;
-    previous_offset = 0;
-    last_batches_size = static_cast<u32>(batches.size());
-    last_sprite_data_size = static_cast<u32>(sprite_data.size());
-
-    batches.clear();
-    sprite_data.clear();
   }
 };
 

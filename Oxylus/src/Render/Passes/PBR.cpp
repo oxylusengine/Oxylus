@@ -317,7 +317,7 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
   auto vbgtao_noisy_occlusion_attachment = vuk::declare_ia(
     "vbgtao noisy occlusion",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .format = vuk::Format::eR16Sfloat,
+     .format = vuk::Format::eR8Unorm,
      .sample_count = vuk::Samples::e1}
   );
   vbgtao_noisy_occlusion_attachment.same_shape_as(context.ambient_occlusion_attachment);
@@ -368,6 +368,54 @@ auto RendererInstance::generate_ambient_occlusion(this RendererInstance& self, A
   );
 }
 
+auto RendererInstance::generate_rtao(this RendererInstance& self, RTAOContext& context) -> void {
+  ZoneScoped;
+
+  auto rtao_pass = vuk::make_pass(
+    "rtao",
+    [tlas = *context.tlas->acceleration_structure.handle,
+     ray_count = context.ray_count,
+     radius = context.radius,
+     power = context.power,
+     frame_index = context.frame_index](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eComputeRead | vuk::eAccelerationStructureBuildRead) tlas_buffer,
+      VUK_BA(vuk::eComputeUniformRead) camera,
+      VUK_IA(vuk::eComputeSampled) depth,
+      VUK_IA(vuk::eComputeSampled) normals,
+      VUK_IA(vuk::eComputeRW) ambient_occlusion
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("rtao")
+        .bind_acceleration_structure(0, 0, tlas)
+        .bind_buffer(0, 1, camera)
+        .bind_image(0, 2, depth)
+        .bind_image(0, 3, normals)
+        .bind_image(0, 4, ambient_occlusion)
+        .bind_sampler(0, 5, vuk::NearestSamplerClamped)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(ray_count, radius, power, frame_index))
+        .dispatch_invocations_per_pixel(ambient_occlusion);
+
+      return std::make_tuple(tlas_buffer, camera, depth, normals, ambient_occlusion);
+    }
+  );
+
+  std::tie(
+    context.tlas_buffer,
+    self.prepared_frame.camera_buffer,
+    context.depth_attachment,
+    context.normal_attachment,
+    context.ambient_occlusion_attachment
+  ) =
+    rtao_pass(
+      std::move(context.tlas_buffer),
+      std::move(self.prepared_frame.camera_buffer),
+      std::move(context.depth_attachment),
+      std::move(context.normal_attachment),
+      std::move(context.ambient_occlusion_attachment)
+    );
+}
+
 auto RendererInstance::apply_pbr(
   this RendererInstance& self, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
 ) -> vuk::Value<vuk::ImageAttachment> {
@@ -392,8 +440,7 @@ auto RendererInstance::apply_pbr(
         VUK_IA(vuk::eFragmentSampled) emissive,
         VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
         VUK_IA(vuk::eFragmentSampled) gtao,
-        VUK_IA(vuk::eFragmentSampled) resolved_shadows,
-        VUK_IA(vuk::eFragmentSampled) contact_shadows,
+        VUK_IA(vuk::eFragmentSampled) shadows,
         VUK_BA(vuk::eFragmentUniformRead) camera
       ) {
         cmd_list //
@@ -415,9 +462,8 @@ auto RendererInstance::apply_pbr(
           .bind_image(0, 9, emissive)
           .bind_image(0, 10, metallic_roughness_occlusion)
           .bind_image(0, 11, gtao)
-          .bind_image(0, 12, resolved_shadows)
-          .bind_image(0, 13, contact_shadows)
-          .bind_buffer(0, 14, camera)
+          .bind_image(0, 12, shadows)
+          .bind_buffer(0, 13, camera)
           .push_constants(
             vuk::ShaderStageFlagBits::eFragment,
             0,
@@ -438,8 +484,7 @@ auto RendererInstance::apply_pbr(
           emissive,
           metallic_roughness_occlusion,
           gtao,
-          resolved_shadows,
-          contact_shadows,
+          shadows,
           camera
         );
       }
@@ -457,8 +502,7 @@ auto RendererInstance::apply_pbr(
       context.emissive_attachment,
       context.metallic_roughness_occlusion_attachment,
       context.ambient_occlusion_attachment,
-      context.resolved_shadows_attachment,
-      context.contact_shadows_attachment,
+      context.shadows_attachment,
       self.prepared_frame.camera_buffer
     ) =
       pbr_apply_pass(
@@ -473,8 +517,7 @@ auto RendererInstance::apply_pbr(
         std::move(context.emissive_attachment),
         std::move(context.metallic_roughness_occlusion_attachment),
         std::move(context.ambient_occlusion_attachment),
-        std::move(context.resolved_shadows_attachment),
-        std::move(context.contact_shadows_attachment),
+        std::move(context.shadows_attachment),
         std::move(self.prepared_frame.camera_buffer)
       );
   } else {
@@ -492,8 +535,7 @@ auto RendererInstance::apply_pbr(
         VUK_IA(vuk::eFragmentSampled) emissive,
         VUK_IA(vuk::eFragmentSampled) metallic_roughness_occlusion,
         VUK_IA(vuk::eFragmentSampled) gtao,
-        VUK_IA(vuk::eFragmentSampled) resolved_shadows,
-        VUK_IA(vuk::eFragmentSampled) contact_shadows,
+        VUK_IA(vuk::eFragmentSampled) shadows,
         VUK_BA(vuk::eFragmentUniformRead) camera
       ) {
         cmd_list //
@@ -511,9 +553,8 @@ auto RendererInstance::apply_pbr(
           .bind_image(0, 5, emissive)
           .bind_image(0, 6, metallic_roughness_occlusion)
           .bind_image(0, 7, gtao)
-          .bind_image(0, 8, resolved_shadows)
-          .bind_image(0, 9, contact_shadows)
-          .bind_buffer(0, 10, camera)
+          .bind_image(0, 8, shadows)
+          .bind_buffer(0, 9, camera)
           .push_constants(
             vuk::ShaderStageFlagBits::eFragment,
             0,
@@ -530,8 +571,7 @@ auto RendererInstance::apply_pbr(
           emissive,
           metallic_roughness_occlusion,
           gtao,
-          resolved_shadows,
-          contact_shadows,
+          shadows,
           camera
         );
       }
@@ -545,8 +585,7 @@ auto RendererInstance::apply_pbr(
       context.emissive_attachment,
       context.metallic_roughness_occlusion_attachment,
       context.ambient_occlusion_attachment,
-      context.resolved_shadows_attachment,
-      context.contact_shadows_attachment,
+      context.shadows_attachment,
       self.prepared_frame.camera_buffer
     ) =
       pbr_apply_pass(
@@ -557,8 +596,7 @@ auto RendererInstance::apply_pbr(
         std::move(context.emissive_attachment),
         std::move(context.metallic_roughness_occlusion_attachment),
         std::move(context.ambient_occlusion_attachment),
-        std::move(context.resolved_shadows_attachment),
-        std::move(context.contact_shadows_attachment),
+        std::move(context.shadows_attachment),
         std::move(self.prepared_frame.camera_buffer)
       );
   }

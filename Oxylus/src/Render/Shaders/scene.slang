@@ -25,10 +25,47 @@ public enum DebugView : i32 {
   GeometricNormal,
 };
 
-public struct UVGradient {
+public interface IUVSample {
+  func sample(u32 image_index, u32 sampler_index) -> f32x4;
+  [[mutating]] func scale_offset(f32x2 size, f32x2 offset);
+};
+
+public struct UVGradient : IUVSample {
   public f32x2 uv;
   public f32x2 ddx;
   public f32x2 ddy;
+
+  public func sample(u32 image_index, u32 sampler_index) -> f32x4 {
+    return global_images[NonUniformResourceIndex(image_index)]
+      .SampleGrad(global_samplers[NonUniformResourceIndex(sampler_index)], this.uv, this.ddx, this.ddy);
+  }
+
+  [[mutating]]
+  public func scale_offset(f32x2 size, f32x2 offset) {
+    this.uv = this.uv * size + offset;
+    this.ddx *= size;
+    this.ddy *= size;
+  }
+};
+
+public struct UVLod : IUVSample {
+  public f32x2 uv;
+  public f32 lod;
+
+  public __init(f32x2 uv, f32 lod) {
+    this.uv = uv;
+    this.lod = lod;
+  }
+
+  public func sample(u32 image_index, u32 sampler_index) -> f32x4 {
+    return global_images[NonUniformResourceIndex(image_index)]
+      .SampleLevel(global_samplers[NonUniformResourceIndex(sampler_index)], this.uv, this.lod);
+  }
+
+  [[mutating]]
+  public func scale_offset(f32x2 size, f32x2 offset) {
+    this.uv = this.uv * size + offset;
+  }
 };
 
 public enum MaterialFlag : u32 {
@@ -107,52 +144,64 @@ public struct Material {
     );
   }
 
-  public func sample_albedo_color(in UVGradient grad) -> f32x4 {
+  public func transform_uv<S : IUVSample>(inout S s) {
+    s.scale_offset(this.get_uv_size(), this.get_uv_offset());
+  }
+
+  public func sample_albedo_color_grad(in UVGradient grad) -> f32x4 {
     let albedo = this.get_albedo_color();
     if (this.flags & MaterialFlag::HasAlbedoImage) {
-        let color = global_images[NonUniformResourceIndex(this.albedo_image_index)]
-            .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy);
-        return albedo * color;
+      let color = global_images[NonUniformResourceIndex(this.albedo_image_index)]
+        .SampleGrad(
+          global_samplers[NonUniformResourceIndex(this.sampler_index)],
+          grad.uv,
+          grad.ddx,
+          grad.ddy
+        );
+      return albedo * color;
     }
 
     return albedo;
   }
 
-  public func sample_normal_color(in UVGradient grad) -> f32x3 {
+  public func sample_albedo_color<S : IUVSample>(in S s) -> f32x4 {
+    let albedo = this.get_albedo_color();
+    if (this.flags & MaterialFlag::HasAlbedoImage) {
+        return albedo * s.sample(this.albedo_image_index, this.sampler_index);
+    }
+
+    return albedo;
+  }
+
+  public func sample_normal_color<S : IUVSample>(in S s) -> f32x3 {
     if (this.flags & MaterialFlag::HasNormalImage) {
-        return global_images[NonUniformResourceIndex(this.normal_image_index)]
-            .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy).rgb;
+        return s.sample(this.normal_image_index, this.sampler_index).rgb;
     }
 
     return { 0.0 };
   }
 
-  public func sample_emissive_color(in UVGradient grad) -> f32x3 {
+  public func sample_emissive_color<S : IUVSample>(in S s) -> f32x3 {
     let emissive = this.get_emissive_color();
     if (this.flags & MaterialFlag::HasEmissiveImage) {
-        let color = global_images[NonUniformResourceIndex(this.emissive_image_index)]
-            .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy).rgb;
-        return emissive * color;
+        return emissive * s.sample(this.emissive_image_index, this.sampler_index).rgb;
     }
 
     return emissive;
   }
 
-  public func sample_metallic_roughness(in UVGradient grad) -> f32x2 {
+  public func sample_metallic_roughness<S : IUVSample>(in S s) -> f32x2 {
     let metallic_roughness = f32x2(this.get_metallic_factor(), this.get_roughness_factor());
     if (this.flags & MaterialFlag::HasMetallicRoughnessImage) {
-        let color = global_images[NonUniformResourceIndex(this.metallic_rougness_image_index)]
-            .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy).bg;
-        return metallic_roughness * color;
+        return metallic_roughness * s.sample(this.metallic_rougness_image_index, this.sampler_index).bg;
     }
 
     return metallic_roughness;
   }
 
-  public func sample_occlusion_color(in UVGradient grad) -> f32 {
+  public func sample_occlusion_color<S : IUVSample>(in S s) -> f32 {
     if (this.flags & MaterialFlag::HasOcclusionImage) {
-        return global_images[NonUniformResourceIndex(this.occlusion_image_index)]
-            .SampleGrad(global_samplers[NonUniformResourceIndex(this.sampler_index)], grad.uv, grad.ddx, grad.ddy).r;
+        return s.sample(this.occlusion_image_index, this.sampler_index).r;
     }
 
     return 1.0;
@@ -255,6 +304,7 @@ public enum SceneFlags : u32 {
   HasContactShadows = 1 << 9,
   HasSky = 1 << 10,
   TransparentBackground = 1 << 11,
+  HasDDGI = 1 << 12,
 };
 
 public struct DirectionalLightCascade {
@@ -407,25 +457,15 @@ public struct Meshlet {
     }
 
     public func positions(in Mesh mesh, in u32x3 indices) -> f32x3x3 {
-        return { mesh.decode_position(indices.x),
-                 mesh.decode_position(indices.y),
-                 mesh.decode_position(indices.z) };
+        return mesh.positions(indices);
     }
 
     public func normals(in Mesh mesh, in u32x3 indices) -> f32x3x3 {
-        return { mesh.decode_normal(indices.x),
-                 mesh.decode_normal(indices.y),
-                 mesh.decode_normal(indices.z) };
+        return mesh.normals(indices);
     }
 
     public func tex_coords(in Mesh mesh, in u32x3 indices) -> f32x2x3 {
-        if (mesh.texture_coords == nullptr) {
-            return {};
-        }
-
-        return { mesh.decode_texcoord(indices.x),
-                 mesh.decode_texcoord(indices.y),
-                 mesh.decode_texcoord(indices.z) };
+        return mesh.tex_coords(indices);
     }
 };
 
@@ -525,6 +565,28 @@ public struct Mesh {
             com::dequantize_half(packed.x),
             com::dequantize_half(packed.y)
         );
+    }
+
+    public func positions(in u32x3 indices) -> f32x3x3 {
+        return { this.decode_position(indices.x),
+                 this.decode_position(indices.y),
+                 this.decode_position(indices.z) };
+    }
+
+    public func normals(in u32x3 indices) -> f32x3x3 {
+        return { this.decode_normal(indices.x),
+                 this.decode_normal(indices.y),
+                 this.decode_normal(indices.z) };
+    }
+
+    public func tex_coords(in u32x3 indices) -> f32x2x3 {
+        if (this.texture_coords == nullptr) {
+            return {};
+        }
+
+        return { this.decode_texcoord(indices.x),
+                 this.decode_texcoord(indices.y),
+                 this.decode_texcoord(indices.z) };
     }
 };
 

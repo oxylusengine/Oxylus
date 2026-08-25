@@ -13,7 +13,7 @@ struct ShaderParameters {
     Image2D<f32x4> albedo;
     Image2D<f32x4> normal;
     Image2D<f32x3> emissive;
-    Image2D<f32x3> metallic_roughness_occlusion;
+    Image2D<f32x2> metallic_roughness;
     Image2D<f32> ambient_occlusion;
 
     StructuredBuffer<MeshletInstance> meshlet_instances;
@@ -145,13 +145,13 @@ func fs_main(
             color = params.emissive.Load(u32x3(pixel_pos, 0)).rgb;
         } break;
         case DebugView::Metallic: {
-            color = params.metallic_roughness_occlusion.Load(u32x3(pixel_pos, 0)).rrr;
+            color = params.metallic_roughness.Load(u32x3(pixel_pos, 0)).rrr;
         } break;
         case DebugView::Roughness: {
-            color = params.metallic_roughness_occlusion.Load(u32x3(pixel_pos, 0)).ggg;
+            color = params.metallic_roughness.Load(u32x3(pixel_pos, 0)).ggg;
         } break;
         case DebugView::BakedOcclusion: {
-            color = params.metallic_roughness_occlusion.Load(u32x3(pixel_pos, 0)).bbb;
+            color = params.albedo.Load(u32x3(pixel_pos, 0)).aaa;
         } break;
         case DebugView::GTAO: {
             color = params.ambient_occlusion.Load(u32x3(pixel_pos, 0)).rrr;

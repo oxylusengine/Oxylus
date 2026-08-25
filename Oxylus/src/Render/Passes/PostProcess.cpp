@@ -101,7 +101,7 @@ auto RendererInstance::apply_bloom(this RendererInstance& self, PostProcessConte
      .layer_count = 1}
   );
   bloom_downsampled_attachment.same_shape_as(context.bloom_upsampled_attachment);
-  bloom_downsampled_attachment.same_format_as(context.final_attachment);
+  bloom_downsampled_attachment.same_format_as(context.bloom_upsampled_attachment);
   bloom_downsampled_attachment = vuk::clear_image(std::move(bloom_downsampled_attachment), vuk::Black<float>);
 
   auto bloom_prefilter_pass = vuk::make_pass(
@@ -176,13 +176,13 @@ auto RendererInstance::apply_bloom(this RendererInstance& self, PostProcessConte
       VUK_IA(vuk::eComputeSampled) bloom_downsampled
     ) {
       auto extent = bloom_upsampled->extent;
-      const auto last_mip = (int32_t)bloom_upsampled->level_count - 1;
+      const auto last_mip = static_cast<i32>(bloom_upsampled->level_count) - 1;
 
       cmd_list //
         .bind_compute_pipeline("bloom_upsample")
         .bind_sampler(0, 3, vuk::LinearSamplerClamped);
 
-      for (int32_t i = last_mip; i > 0; i--) {
+      for (i32 i = last_mip; i > 0; i--) {
         auto mip_width = std::max(1_u32, extent.width >> (i - 1));
         auto mip_height = std::max(1_u32, extent.height >> (i - 1));
 

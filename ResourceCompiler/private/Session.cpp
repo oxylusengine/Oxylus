@@ -153,8 +153,7 @@ auto Session::compile() -> bool {
         pipeline.entry_points.push_back(std::move(ep));
       }
 
-      pipeline.bindless = shader.bindless;
-      pipeline.requires_mesh_shaders = shader.requires_mesh_shaders;
+      pipeline.required_features = shader.required_features;
       impl->asset_file.add_entry(std::move(pipeline));
     }
   }
