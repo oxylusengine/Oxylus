@@ -164,6 +164,12 @@ public struct ProbeVolume {
     public func grid_coord_of(f32x3 world_position) -> f32x3 {
         return (world_position - this.grid_min()) * this.spacing_rcp;
     }
+
+    public func coverage_weight(f32x3 world_position) -> f32 {
+        let outside = max(abs(world_position - this.origin) - this.extents(), f32x3(0.0));
+        let fade = 1.0 - smoothstep(0.0, 1.0, outside * this.spacing_rcp);
+        return fade.x * fade.y * fade.z;
+    }
 };
 
 public func cascade_safe_range(in ProbeVolume cascade_zero) -> f32x3 {
@@ -548,15 +554,17 @@ public func sample_ddgi_radiance(
 ) -> RadianceSample {
     RadianceSample result = { f32x3(0.0), 0.0 };
 
+    var remaining = 1.0;
     for (u32 set_start = 0; set_start < volume_count;) {
         let cascade_zero = volumes[set_start];
         let set_count = max(cascade_zero.cascade_count, 1u);
-
-        let cascade = select_cascade(cascade_zero, world_position);
-        if (cascade >= f32(set_count)) {
+        let outer_coverage = volumes[set_start + set_count - 1u].coverage_weight(world_position) * remaining;
+        if (outer_coverage <= 0.0) {
             set_start += set_count;
             continue;
         }
+
+        let cascade = min(select_cascade(cascade_zero, world_position), f32(set_count - 1u));
 
         let lower = sample_probe_radiance_volume(
             volumes[set_start + u32(floor(cascade))],
@@ -573,14 +581,19 @@ public func sample_ddgi_radiance(
         );
 
         if (lower.coverage > 0.0) {
-            result.radiance = lower.radiance;
-            result.coverage = saturate(
-                (f32(set_count) - cascade) / max(cascade_zero.cascade_blend, 1e-3)
-            );
-            return result;
+            result.radiance += lower.radiance * outer_coverage;
+            result.coverage += outer_coverage;
+            remaining -= outer_coverage;
+            if (remaining <= 1e-3) {
+                break;
+            }
         }
 
         set_start += set_count;
+    }
+
+    if (result.coverage > 0.0) {
+        result.radiance /= result.coverage;
     }
 
     return result;
@@ -603,15 +616,17 @@ public func sample_ddgi_irradiance(
 ) -> IrradianceSample {
     IrradianceSample result = { f32x3(0.0), f32x3(0.0), 0.0 };
 
+    var remaining = 1.0;
     for (u32 set_start = 0; set_start < volume_count;) {
         let cascade_zero = volumes[set_start];
         let set_count = max(cascade_zero.cascade_count, 1u);
-
-        let cascade = select_cascade(cascade_zero, world_position);
-        if (cascade >= f32(set_count)) {
+        let outer_coverage = volumes[set_start + set_count - 1u].coverage_weight(world_position) * remaining;
+        if (outer_coverage <= 0.0) {
             set_start += set_count;
             continue;
         }
+
+        let cascade = min(select_cascade(cascade_zero, world_position), f32(set_count - 1u));
 
         let lower_index = u32(floor(cascade));
         let lower = sample_probe_volume(
@@ -651,7 +666,7 @@ public func sample_ddgi_irradiance(
                 view_bias
             );
 
-            let higher_missed = higher.coverage< CASCADE_FALLBACK_WEIGHT;
+            let higher_missed = higher.coverage < CASCADE_FALLBACK_WEIGHT;
             var blend = frac(cascade);
             if (lower_missed != higher_missed) {
                 blend = lower_missed ? 1.0 : 0.0;
@@ -663,15 +678,22 @@ public func sample_ddgi_irradiance(
         }
 
         if (weight > 0.0) {
-            let outer_fade = saturate((f32(set_count) - cascade) / max(cascade_zero.cascade_blend, 1e-3));
-
-            result.irradiance = irradiance;
-            result.specular = specular;
-            result.coverage = saturate(weight / CASCADE_FALLBACK_WEIGHT) * outer_fade;
-            return result;
+            let coverage = saturate(weight / CASCADE_FALLBACK_WEIGHT) * outer_coverage;
+            result.irradiance += irradiance * coverage;
+            result.specular += specular * coverage;
+            result.coverage += coverage;
+            remaining -= coverage;
+            if (remaining <= 1e-3) {
+                break;
+            }
         }
 
         set_start += set_count;
+    }
+
+    if (result.coverage > 0.0) {
+        result.irradiance /= result.coverage;
+        result.specular /= result.coverage;
     }
 
     return result;
