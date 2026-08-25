@@ -35,7 +35,7 @@ packages = {
     system = false,
   },
   ["vk-bootstrap v1.4.354"] = { system = false, debug = is_mode("debug") },
-  ["vuk 2026.08.20"] = {
+  ["vuk 2026.08.25"] = {
     configs = {
       debug_allocations = false,
     },

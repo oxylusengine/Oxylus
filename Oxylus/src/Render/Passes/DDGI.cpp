@@ -435,7 +435,8 @@ auto RendererInstance::trace_ddgi_probes(this RendererInstance& self, DDGITraceC
         cmd_list //
           .bind_persistent(1, descriptor_set)
           .push_constants(
-            vuk::ShaderStageFlagBits::eRaygenKHR,
+            vuk::ShaderStageFlagBits::eRaygenKHR | vuk::ShaderStageFlagBits::eMissKHR |
+              vuk::ShaderStageFlagBits::eClosestHitKHR,
             0,
             PushConstants(
               atmosphere->device_address,

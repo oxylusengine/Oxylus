@@ -56,11 +56,8 @@ struct TraceConstants {
 [[vk::push_constant]] ConstantBuffer<TraceConstants> constants;
 
 struct ProbeRayPayload {
+    f32x3 radiance;
     f32 hit_distance;
-    u32 mesh_instance_index;
-    u32 primitive_index;
-    f32x2 barycentrics;
-    bool front_face;
 };
 
 func trace_occluded(f32x3 origin, f32x3 direction, f32 t_min, f32 t_max) -> bool {
@@ -272,7 +269,7 @@ func shade_hit(
 }
 
 [[shader("raygeneration")]]
-[[require(spvRayTracingKHR, spvRayQueryKHR)]]
+[[require(spvRayTracingKHR)]]
 func rgs_main() -> void {
     let volume = probe_volumes[constants.volume_index];
     let ray_index = DispatchRaysIndex().x;
@@ -300,79 +297,12 @@ func rgs_main() -> void {
     ray.TMax = max_ray_distance;
 
     ProbeRayPayload payload = {};
-    payload.hit_distance = -1.0;
+    payload.radiance = f32x3(0.0);
+    payload.hit_distance = max_ray_distance;
 
     TraceRay(scene_tlas, RAY_FLAG_FORCE_OPAQUE, 0xffu, 0, 0, 0, ray, payload);
 
-    var radiance = f32x3(0.0);
-    var hit_distance = max_ray_distance;
-
-    if (payload.hit_distance < 0.0) {
-        radiance = miss_radiance(
-            constants.atmosphere,
-            origin,
-            direction,
-            constants.sun_direction,
-            constants.ambient_color
-        );
-    } else if (!payload.front_face) {
-        hit_distance = -payload.hit_distance;
-    } else {
-        hit_distance = payload.hit_distance;
-
-        let geometry = SceneGeometry(mesh_instances, meshes, transforms, materials);
-        let use_radiance_cache = constants.distance_culling_enabled != 0 &&
-                                 constants.bounce_valid != 0 &&
-                                 hit_distance >= volume.max_probe_distance;
-        if (use_radiance_cache) {
-            let triangle = resolve_ray_triangle(geometry, payload.mesh_instance_index, payload.primitive_index);
-            if (triangle.valid) {
-                let hit_position = origin + direction * hit_distance;
-                let sample = sample_ddgi_radiance(
-                    probe_volumes,
-                    probe_states,
-                    constants.volume_count,
-                    irradiance_atlas,
-                    distance_atlas,
-                    linear_clamp_sampler,
-                    constants.radiance_atlas_y_offset,
-                    hit_position,
-                    triangle.face_normal(),
-                    -direction,
-                    constants.normal_bias,
-                    constants.view_bias
-                );
-                radiance = sample.radiance * sample.coverage;
-            }
-        } else {
-            let hit = resolve_ray_hit(
-                geometry,
-                payload.mesh_instance_index,
-                payload.primitive_index,
-                payload.barycentrics,
-                true,
-                HIT_TEXTURE_LOD
-            );
-
-            if (hit.valid) {
-                radiance = shade_hit(
-                    hit,
-                    constants.volume_count,
-                    -direction,
-                    constants.sun_direction,
-                    constants.sun_intensity,
-                    constants.shadow_ray_offset,
-                    constants.normal_bias,
-                    constants.view_bias,
-                    constants.light_count,
-                    constants.bounce_valid,
-                    constants.atmosphere
-                );
-            }
-        }
-    }
-
-    radiance = clamp(com::sanitize(radiance), 0.0, com::HALF_MAX);
+    var radiance = clamp(com::sanitize(payload.radiance), 0.0, com::HALF_MAX);
 
     let ray_luminance = com::luminance(radiance);
     if (ray_luminance > constants.max_ray_radiance) {
@@ -383,21 +313,87 @@ func rgs_main() -> void {
     ray_data.GetDimensions(ray_data_width, ray_data_height);
     let ray_origin = ray_data_row_origin(volume.probe_offset + probe_index, constants.rays_per_probe, ray_data_width);
 
-    ray_data[ray_origin + u32x2(ray_index, 0)] = f32x4(radiance, hit_distance);
+    ray_data[ray_origin + u32x2(ray_index, 0)] = f32x4(radiance, payload.hit_distance);
 }
 
 [[shader("miss")]]
 [[require(spvRayTracingKHR)]]
 func miss_main(inout ProbeRayPayload payload) -> void {
-    payload.hit_distance = -1.0;
+    payload.radiance = miss_radiance(
+        constants.atmosphere,
+        WorldRayOrigin(),
+        WorldRayDirection(),
+        constants.sun_direction,
+        constants.ambient_color
+    );
 }
 
 [[shader("closesthit")]]
-[[require(spvRayTracingKHR)]]
+[[require(spvRayTracingKHR, spvRayQueryKHR)]]
 func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersectionAttributes attributes) -> void {
-    payload.hit_distance = RayTCurrent();
-    payload.mesh_instance_index = InstanceID();
-    payload.primitive_index = PrimitiveIndex();
-    payload.barycentrics = attributes.barycentrics;
-    payload.front_face = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+    let hit_distance = RayTCurrent();
+    if (HitKind() != HIT_KIND_TRIANGLE_FRONT_FACE) {
+        payload.hit_distance = -hit_distance;
+        return;
+    }
+
+    payload.hit_distance = hit_distance;
+
+    let volume = probe_volumes[constants.volume_index];
+    let geometry = SceneGeometry(mesh_instances, meshes, transforms, materials);
+    let direction = WorldRayDirection();
+
+    let use_radiance_cache = constants.distance_culling_enabled != 0 &&
+                             constants.bounce_valid != 0 &&
+                             hit_distance >= volume.max_probe_distance;
+    if (use_radiance_cache) {
+        let triangle = resolve_ray_triangle(geometry, InstanceID(), PrimitiveIndex());
+        if (!triangle.valid) {
+            return;
+        }
+
+        let hit_position = WorldRayOrigin() + direction * hit_distance;
+        let sample = sample_ddgi_radiance(
+            probe_volumes,
+            probe_states,
+            constants.volume_count,
+            irradiance_atlas,
+            distance_atlas,
+            linear_clamp_sampler,
+            constants.radiance_atlas_y_offset,
+            hit_position,
+            triangle.face_normal(),
+            -direction,
+            constants.normal_bias,
+            constants.view_bias
+        );
+        payload.radiance = sample.radiance * sample.coverage;
+        return;
+    }
+
+    let hit = resolve_ray_hit(
+        geometry,
+        InstanceID(),
+        PrimitiveIndex(),
+        attributes.barycentrics,
+        true,
+        HIT_TEXTURE_LOD
+    );
+    if (!hit.valid) {
+        return;
+    }
+
+    payload.radiance = shade_hit(
+        hit,
+        constants.volume_count,
+        -direction,
+        constants.sun_direction,
+        constants.sun_intensity,
+        constants.shadow_ray_offset,
+        constants.normal_bias,
+        constants.view_bias,
+        constants.light_count,
+        constants.bounce_valid,
+        constants.atmosphere
+    );
 }
