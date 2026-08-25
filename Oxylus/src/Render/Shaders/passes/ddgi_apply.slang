@@ -38,6 +38,7 @@ func fs_main(
 
     let mapped_smooth_normal = normal_image.Load(pixel_pos);
     let N = normalize(com::oct_to_vec3(mapped_smooth_normal.rg));
+    let geometric_N = normalize(com::oct_to_vec3(mapped_smooth_normal.ba));
 
     let metallic_roughness = metallic_roughness_image.Load(pixel_pos);
     let metallic = clamp(metallic_roughness.r, 0.0, 1.0);
@@ -45,10 +46,23 @@ func fs_main(
     let occlusion = albedo_occlusion.a * gtao_image.Load(pixel_pos).r;
 
     let world_position = camera.unproject_uv(input.tex_coord, depth);
-    let V = normalize(camera.position.xyz - world_position);
+    let to_camera = camera.position.xyz - world_position;
+    let view_distance = length(to_camera);
+    let V = to_camera / max(view_distance, 1e-6);
 
     let R = reflect(-V, N);
     let reflection_direction = normalize(lerp(N, R, 1.0 - roughness));
+
+    ProbeSampleParams params;
+    params.world_position = world_position;
+    params.normal = N;
+    params.geometric_normal = geometric_N;
+    params.view_direction = V;
+    params.view_distance = view_distance;
+    params.specular_direction = reflection_direction;
+    params.want_specular = true;
+    params.normal_bias = normal_bias;
+    params.view_bias = view_bias;
 
     let sample = sample_ddgi_irradiance(
         probe_volumes,
@@ -57,13 +71,7 @@ func fs_main(
         irradiance_atlas,
         distance_atlas,
         linear_clamp_sampler,
-        world_position,
-        N,
-        V,
-        reflection_direction,
-        true,
-        normal_bias,
-        view_bias
+        params
     );
 
     let diffuse = lerp(ambient_color, sample.irradiance * intensity, sample.coverage);

@@ -198,6 +198,7 @@ func shade_hit(
     in RayHit hit,
     u32 volume_count,
     f32x3 view_direction,
+    f32 view_distance,
     f32x3 sun_direction,
     f32 sun_intensity,
     f32 shadow_ray_offset,
@@ -247,6 +248,17 @@ func shade_hit(
     }
 
     if (bounce_valid != 0) {
+        ProbeSampleParams params;
+        params.world_position = hit.position;
+        params.normal = N;
+        params.geometric_normal = hit.face_normal;
+        params.view_direction = view_direction;
+        params.view_distance = view_distance;
+        params.specular_direction = N;
+        params.want_specular = false;
+        params.normal_bias = normal_bias;
+        params.view_bias = view_bias;
+
         let bounce = sample_ddgi_irradiance(
             probe_volumes,
             probe_states,
@@ -254,13 +266,7 @@ func shade_hit(
             irradiance_atlas,
             distance_atlas,
             linear_clamp_sampler,
-            hit.position,
-            N,
-            view_direction,
-            N,
-            false,
-            normal_bias,
-            view_bias
+            params
         );
         radiance += diffuse_albedo * bounce.irradiance * bounce.coverage;
     }
@@ -353,6 +359,19 @@ func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersecti
         }
 
         let hit_position = WorldRayOrigin() + direction * hit_distance;
+        let face_normal = triangle.face_normal();
+
+        ProbeSampleParams params;
+        params.world_position = hit_position;
+        params.normal = face_normal;
+        params.geometric_normal = face_normal;
+        params.view_direction = -direction;
+        params.view_distance = hit_distance;
+        params.specular_direction = face_normal;
+        params.want_specular = false;
+        params.normal_bias = constants.normal_bias;
+        params.view_bias = constants.view_bias;
+
         let sample = sample_ddgi_radiance(
             probe_volumes,
             probe_states,
@@ -361,11 +380,7 @@ func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersecti
             distance_atlas,
             linear_clamp_sampler,
             constants.radiance_atlas_y_offset,
-            hit_position,
-            triangle.face_normal(),
-            -direction,
-            constants.normal_bias,
-            constants.view_bias
+            params
         );
         payload.radiance = sample.radiance * sample.coverage;
         return;
@@ -387,6 +402,7 @@ func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersecti
         hit,
         constants.volume_count,
         -direction,
+        hit_distance,
         constants.sun_direction,
         constants.sun_intensity,
         constants.shadow_ray_offset,

@@ -4,10 +4,39 @@
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
+static auto ddgi_layout_key(std::span<const GPU::ProbeVolume> volumes) -> u64 {
+  auto key = 0xcbf29ce484222325_u64;
+  const auto mix = [&key](const auto& value) {
+    auto bytes = std::array<u8, sizeof(value)>{};
+    std::memcpy(bytes.data(), &value, sizeof(value));
+    for (const auto byte : bytes) {
+      key = (key ^ byte) * 0x100000001b3_u64;
+    }
+  };
+
+  for (const auto& volume : volumes) {
+    mix(volume.counts);
+    mix(volume.spacing);
+    mix(volume.probe_offset);
+    mix(volume.probe_count);
+    mix(volume.cascade_index);
+    mix(volume.cascade_count);
+  }
+
+  return key;
+}
+
 auto RendererInstance::allocate_ddgi_atlases(this RendererInstance& self, u32 probe_count) -> void {
   ZoneScoped;
 
+  const auto layout_key = ddgi_layout_key(self.probe_volumes);
+
   if (self.ddgi_atlas_probe_count == probe_count) {
+    if (self.ddgi_atlas_layout_key != layout_key) {
+      self.ddgi_atlas_layout_key = layout_key;
+      self.ddgi_history_valid = false;
+    }
+
     return;
   }
 
@@ -58,6 +87,7 @@ auto RendererInstance::allocate_ddgi_atlases(this RendererInstance& self, u32 pr
   );
 
   self.ddgi_atlas_probe_count = probe_count;
+  self.ddgi_atlas_layout_key = layout_key;
   self.ddgi_history_valid = false;
 }
 
@@ -66,20 +96,26 @@ auto RendererInstance::select_ddgi_probes(this RendererInstance& self, DDGISelec
 
   auto probe_counts = ankerl::svector<u32, 8>{};
   auto scroll_deltas = ankerl::svector<glm::ivec3, 8>{};
-  const auto scrolls_known = self.probe_volume_scrolls.size() == self.probe_volumes.size();
 
   for (u32 index = 0; index < static_cast<u32>(self.probe_volumes.size()); index++) {
     const auto& volume = self.probe_volumes[index];
     probe_counts.emplace_back(volume.probe_count);
 
+    const auto& key = self.probe_volume_keys[index];
+    const auto previous = std::ranges::find_if(self.probe_volume_scrolls, [&key](const ProbeVolumeScroll& entry) {
+      return entry.key == key;
+    });
+
     scroll_deltas.emplace_back(
-      scrolls_known ? volume.scroll - self.probe_volume_scrolls[index] : glm::ivec3(volume.counts)
+      previous != self.probe_volume_scrolls.end() ? volume.scroll - previous->scroll : glm::ivec3(volume.counts)
     );
   }
 
   self.probe_volume_scrolls.clear();
-  for (const auto& volume : self.probe_volumes) {
-    self.probe_volume_scrolls.emplace_back(volume.scroll);
+  for (u32 index = 0; index < static_cast<u32>(self.probe_volumes.size()); index++) {
+    self.probe_volume_scrolls.emplace_back(
+      ProbeVolumeScroll{.key = self.probe_volume_keys[index], .scroll = self.probe_volumes[index].scroll}
+    );
   }
 
   auto select_pass = vuk::make_pass(

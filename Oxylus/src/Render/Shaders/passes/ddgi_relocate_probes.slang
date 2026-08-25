@@ -89,7 +89,9 @@ func cs_main(
 
     if (inside_geometry) {
         let closest_backface_direction = probe_ray_direction(u32(closest_backface_index), rays_per_probe, frame_index);
-        full_offset = offset + closest_backface_direction * (closest_backface_distance + min_distance * 0.5);
+        let escape = closest_backface_direction * (closest_backface_distance + min_distance * 0.5);
+        let escape_length = length(escape);
+        full_offset = offset + escape * (escape_length > max_step ? max_step / escape_length : 1.0);
     } else if (closest_frontface_distance < min_distance && farthest_frontface_index != -1) {
         let closest_frontface_direction = probe_ray_direction(u32(closest_frontface_index), rays_per_probe, frame_index);
         var farthest_frontface_direction = probe_ray_direction(

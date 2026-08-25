@@ -475,6 +475,18 @@ struct PBRContext {
   vuk::Value<vuk::ImageAttachment> vsm_page_table_attachment = {};
 };
 
+struct ProbeVolumeKey {
+  u64 entity = 0;
+  u32 cascade_index = 0;
+
+  auto operator==(const ProbeVolumeKey& other) const -> bool = default;
+};
+
+struct ProbeVolumeScroll {
+  ProbeVolumeKey key = {};
+  glm::ivec3 scroll = {};
+};
+
 struct DDGITraceContext {
   vuk::PersistentDescriptorSet* bindless_set = nullptr;
   const SceneTLAS* tlas = nullptr;
@@ -743,7 +755,8 @@ private:
   f32 first_clipmap_width = 1.0f;
   f32 clipmap_selection_bias = 2.0f;
   ankerl::svector<GPU::ProbeVolume, 8> probe_volumes = {};
-  ankerl::svector<glm::ivec3, 8> probe_volume_scrolls = {};
+  ankerl::svector<ProbeVolumeKey, 8> probe_volume_keys = {};
+  ankerl::svector<ProbeVolumeScroll, 8> probe_volume_scrolls = {};
   GPU::Atmosphere atmosphere = {};
   GPU::Atmosphere atmosphere_lut_state = {};
   bool atmosphere_lut_state_valid = false;
@@ -772,6 +785,7 @@ private:
   vuk::Unique<vuk::Buffer> exposure_buffer{};
 
   u32 ddgi_atlas_probe_count = 0;
+  u64 ddgi_atlas_layout_key = 0;
   bool ddgi_history_valid = false;
   bool ddgi_distance_culling_enabled = true;
   vuk::Unique<vuk::Image> ddgi_irradiance{};

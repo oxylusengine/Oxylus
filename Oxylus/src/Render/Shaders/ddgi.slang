@@ -356,24 +356,37 @@ public struct RadianceSample {
     public f32 coverage;
 };
 
+public struct ProbeSampleParams {
+    public f32x3 world_position;
+    public f32x3 normal;
+    public f32x3 geometric_normal;
+    public f32x3 view_direction;
+    public f32 view_distance;
+    public f32x3 specular_direction;
+    public bool want_specular;
+    public f32 normal_bias;
+    public f32 view_bias;
+
+    public func biased_position(in ProbeVolume volume) -> f32x3 {
+        let cell = min(min(volume.spacing.x, volume.spacing.y), volume.spacing.z);
+        let reach = min(cell, this.view_distance * 0.5);
+        let direction = this.normal_bias * this.geometric_normal + this.view_bias * this.view_direction;
+
+        return this.world_position + direction * reach;
+    }
+};
+
 public func sample_probe_volume(
     in ProbeVolume volume,
     StructuredBuffer<ProbeState> states,
     Image2D<f32x4> irradiance_atlas,
     Image2D<f32x2> distance_atlas,
     Sampler atlas_sampler,
-    f32x3 world_position,
-    f32x3 normal,
-    f32x3 view_direction,
-    f32x3 specular_direction,
-    bool want_specular,
-    f32 normal_bias,
-    f32 view_bias
+    in ProbeSampleParams params
 ) -> IrradianceSample {
     IrradianceSample result = { f32x3(0.0), f32x3(0.0), 0.0 };
 
-    let cell = min(min(volume.spacing.x, volume.spacing.y), volume.spacing.z);
-    let biased_position = world_position + (normal * normal_bias + view_direction * view_bias) * cell;
+    let biased_position = params.biased_position(volume);
     let grid_min = volume.grid_min();
     let grid_position = volume.grid_coord_of(biased_position);
     let base_coord = clamp(i32x3(floor(grid_position)), i32x3(0), i32x3(volume.counts) - 1);
@@ -401,8 +414,8 @@ public func sample_probe_volume(
         let trilinear = max(lerp(1.0 - alpha, alpha, f32x3(offset)), 0.001);
         let trilinear_weight = trilinear.x * trilinear.y * trilinear.z;
 
-        let to_probe = normalize(probe_position - world_position);
-        let facing = (dot(to_probe, normal) + 1.0) * 0.5;
+        let to_probe = normalize(probe_position - params.world_position);
+        let facing = (dot(to_probe, params.normal) + 1.0) * 0.5;
         var weight = facing * facing + 0.2;
 
         let bias_vector = biased_position - probe_position;
@@ -429,10 +442,19 @@ public func sample_probe_volume(
         weight *= trilinear_weight;
 
         let half_decode = IRRADIANCE_ENCODING_GAMMA * 0.5;
-        sum += pow(sample_probe_irradiance(irradiance_atlas, atlas_sampler, probe_row, normal), half_decode) * weight;
-        if (want_specular) {
+        sum += pow(
+                   sample_probe_irradiance(irradiance_atlas, atlas_sampler, probe_row, params.normal),
+                   half_decode
+               ) *
+               weight;
+        if (params.want_specular) {
             specular_sum += pow(
-                                sample_probe_irradiance(irradiance_atlas, atlas_sampler, probe_row, specular_direction),
+                                sample_probe_irradiance(
+                                    irradiance_atlas,
+                                    atlas_sampler,
+                                    probe_row,
+                                    params.specular_direction
+                                ),
                                 half_decode
                             ) *
                             weight;
@@ -462,16 +484,11 @@ public func sample_probe_radiance_volume(
     Image2D<f32x2> distance_atlas,
     Sampler atlas_sampler,
     u32 radiance_atlas_y_offset,
-    f32x3 world_position,
-    f32x3 normal,
-    f32x3 view_direction,
-    f32 normal_bias,
-    f32 view_bias
+    in ProbeSampleParams params
 ) -> RadianceSample {
     RadianceSample result = { f32x3(0.0), 0.0 };
 
-    let cell = min(min(volume.spacing.x, volume.spacing.y), volume.spacing.z);
-    let biased_position = world_position + (normal * normal_bias + view_direction * view_bias) * cell;
+    let biased_position = params.biased_position(volume);
     let grid_min = volume.grid_min();
     let grid_position = volume.grid_coord_of(biased_position);
     let base_coord = clamp(i32x3(floor(grid_position)), i32x3(0), i32x3(volume.counts) - 1);
@@ -495,8 +512,8 @@ public func sample_probe_radiance_volume(
         let trilinear = max(lerp(1.0 - alpha, alpha, f32x3(offset)), 0.001);
         let trilinear_weight = trilinear.x * trilinear.y * trilinear.z;
 
-        let to_probe = normalize(probe_position - world_position);
-        let facing = (dot(to_probe, normal) + 1.0) * 0.5;
+        let to_probe = normalize(probe_position - params.world_position);
+        let facing = (dot(to_probe, params.normal) + 1.0) * 0.5;
         var weight = facing * facing;
 
         let bias_vector = biased_position - probe_position;
@@ -515,7 +532,7 @@ public func sample_probe_radiance_volume(
         weight *= max(chebyshev, 0.05);
         weight *= trilinear_weight;
 
-        let direction = world_position - probe_position;
+        let direction = params.world_position - probe_position;
         let radiance = max(
             load_probe_radiance(irradiance_atlas, probe_row, radiance_atlas_y_offset, direction),
             f32x3(0.0)
@@ -546,11 +563,7 @@ public func sample_ddgi_radiance(
     Image2D<f32x2> distance_atlas,
     Sampler atlas_sampler,
     u32 radiance_atlas_y_offset,
-    f32x3 world_position,
-    f32x3 normal,
-    f32x3 view_direction,
-    f32 normal_bias,
-    f32 view_bias
+    in ProbeSampleParams params
 ) -> RadianceSample {
     RadianceSample result = { f32x3(0.0), 0.0 };
 
@@ -558,13 +571,14 @@ public func sample_ddgi_radiance(
     for (u32 set_start = 0; set_start < volume_count;) {
         let cascade_zero = volumes[set_start];
         let set_count = max(cascade_zero.cascade_count, 1u);
-        let outer_coverage = volumes[set_start + set_count - 1u].coverage_weight(world_position) * remaining;
+        let outer_coverage = volumes[set_start + set_count - 1u].coverage_weight(params.world_position) *
+                             remaining;
         if (outer_coverage <= 0.0) {
             set_start += set_count;
             continue;
         }
 
-        let cascade = min(select_cascade(cascade_zero, world_position), f32(set_count - 1u));
+        let cascade = min(select_cascade(cascade_zero, params.world_position), f32(set_count - 1u));
 
         let lower = sample_probe_radiance_volume(
             volumes[set_start + u32(floor(cascade))],
@@ -573,11 +587,7 @@ public func sample_ddgi_radiance(
             distance_atlas,
             atlas_sampler,
             radiance_atlas_y_offset,
-            world_position,
-            normal,
-            view_direction,
-            normal_bias,
-            view_bias
+            params
         );
 
         if (lower.coverage > 0.0) {
@@ -606,13 +616,7 @@ public func sample_ddgi_irradiance(
     Image2D<f32x4> irradiance_atlas,
     Image2D<f32x2> distance_atlas,
     Sampler atlas_sampler,
-    f32x3 world_position,
-    f32x3 normal,
-    f32x3 view_direction,
-    f32x3 specular_direction,
-    bool want_specular,
-    f32 normal_bias,
-    f32 view_bias
+    in ProbeSampleParams params
 ) -> IrradianceSample {
     IrradianceSample result = { f32x3(0.0), f32x3(0.0), 0.0 };
 
@@ -620,13 +624,14 @@ public func sample_ddgi_irradiance(
     for (u32 set_start = 0; set_start < volume_count;) {
         let cascade_zero = volumes[set_start];
         let set_count = max(cascade_zero.cascade_count, 1u);
-        let outer_coverage = volumes[set_start + set_count - 1u].coverage_weight(world_position) * remaining;
+        let outer_coverage = volumes[set_start + set_count - 1u].coverage_weight(params.world_position) *
+                             remaining;
         if (outer_coverage <= 0.0) {
             set_start += set_count;
             continue;
         }
 
-        let cascade = min(select_cascade(cascade_zero, world_position), f32(set_count - 1u));
+        let cascade = min(select_cascade(cascade_zero, params.world_position), f32(set_count - 1u));
 
         let lower_index = u32(floor(cascade));
         let lower = sample_probe_volume(
@@ -635,13 +640,7 @@ public func sample_ddgi_irradiance(
             irradiance_atlas,
             distance_atlas,
             atlas_sampler,
-            world_position,
-            normal,
-            view_direction,
-            specular_direction,
-            want_specular,
-            normal_bias,
-            view_bias
+            params
         );
 
         var irradiance = lower.irradiance;
@@ -657,13 +656,7 @@ public func sample_ddgi_irradiance(
                 irradiance_atlas,
                 distance_atlas,
                 atlas_sampler,
-                world_position,
-                normal,
-                view_direction,
-                specular_direction,
-                want_specular,
-                normal_bias,
-                view_bias
+                params
             );
 
             let higher_missed = higher.coverage < CASCADE_FALLBACK_WEIGHT;

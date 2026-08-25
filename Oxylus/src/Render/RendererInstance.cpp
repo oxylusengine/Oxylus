@@ -1291,7 +1291,15 @@ auto RendererInstance::render(
 
     ddgi_probe_states_buffer = vuk::acquire_buf("ddgi probe states", *self.ddgi_probe_states, vuk::eMemoryRead);
     if (!self.ddgi_history_valid) {
-      vuk::fill(ddgi_probe_states_buffer, 0u);
+      auto clear_states_pass = vuk::make_pass(
+        "ddgi clear probe states",
+        [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eClear) probe_states) {
+          cmd_list.fill_buffer(probe_states, 0u);
+          return probe_states;
+        }
+      );
+
+      ddgi_probe_states_buffer = clear_states_pass(std::move(ddgi_probe_states_buffer));
     }
 
     if (tlas_it != self.shared_resources.buffer_resources.end() && frame_render_context.use_ray_tracing_pipeline()) {
@@ -1942,9 +1950,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       }
     });
 
-  if ((self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) != 0 &&
-      (!self.atmosphere_lut_state_valid ||
-       !atmosphere_lut_inputs_equal(self.atmosphere, self.atmosphere_lut_state))) {
+  if (
+    (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) != 0 &&
+    (!self.atmosphere_lut_state_valid || !atmosphere_lut_inputs_equal(self.atmosphere, self.atmosphere_lut_state))
+  ) {
     self.atmosphere_lut_state = self.atmosphere;
     self.atmosphere_lut_state_valid = true;
     self.atmosphere_luts_dirty = true;
@@ -1983,6 +1992,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   }
 
   self.probe_volumes.clear();
+  self.probe_volume_keys.clear();
   if (cvar.cvar_ddgi_enable.as_bool()) {
     const auto draw_volume_bounds = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get()) ==
                                       GPU::DebugView::DDGIProbes &&
@@ -2045,6 +2055,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           for (u32 cascade = 0; cascade < cascades; cascade++) {
             set[cascade].probe_offset = probe_offset + cascade * probe_count;
             self.probe_volumes.emplace_back(set[cascade]);
+            self.probe_volume_keys.emplace_back(ProbeVolumeKey{.entity = e.id(), .cascade_index = cascade});
           }
         }
       );
