@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <glm/gtc/packing.hpp>
 #include <glm/mat4x4.hpp>
 #include <vuk/Types.hpp>
@@ -666,6 +667,7 @@ struct SpriteGPUData {
 constexpr static u32 PARTICLE_REGISTER_COUNT = 16;
 constexpr static u32 PARTICLE_SIMULATE_GROUP = 64;
 constexpr static u32 PARTICLE_SORT_GROUP = 256;
+constexpr static u32 PARTICLE_USER_PARAM_COUNT = 4;
 
 enum class ParticleOperandKind : u32 {
   Register = 0,
@@ -705,6 +707,7 @@ enum class ParticleOpCode : u8 {
   Random,
   Time,
   AgeNorm,
+  Param,
   Count,
 };
 
@@ -795,9 +798,11 @@ struct ParticleEmitter {
 
   alignas(4) glm::vec2 lifetime = {1.0f, 1.0f};
   alignas(4) glm::vec4 shape_params = {};
+  alignas(4) glm::vec4 velocity_offset = {};
+  alignas(4) std::array<glm::vec4, PARTICLE_USER_PARAM_COUNT> user_params = {};
 };
 
-static_assert(sizeof(ParticleEmitter) == 200, "ParticleEmitter layout drifted from particles.slang");
+static_assert(sizeof(ParticleEmitter) == 280, "ParticleEmitter layout drifted from particles.slang");
 
 struct ParticleSortKey {
   alignas(4) u32 key = ~0_u32;

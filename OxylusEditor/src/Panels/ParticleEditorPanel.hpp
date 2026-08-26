@@ -43,6 +43,7 @@ private:
   ParticleGraph update_graph = {};
   std::vector<ParticleCurve> curves = {};
   std::vector<ParticleGradient> gradients = {};
+  std::vector<ParticleParameter> parameters = {};
   std::string compile_error = {};
 
   ParticleProgramKind active_kind = ParticleProgramKind::Spawn;

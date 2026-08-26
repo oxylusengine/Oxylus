@@ -146,6 +146,7 @@ auto ParticleEditorPanel::open_asset(this ParticleEditorPanel& self, const UUID&
     self.update_graph = system->update_graph;
     self.curves = system->curves;
     self.gradients = system->gradients;
+    self.parameters = system->parameters;
     self.compile_error = system->compile_error;
   }
 
@@ -179,6 +180,7 @@ auto ParticleEditorPanel::commit(this ParticleEditorPanel& self, const bool reco
       system.update_graph = self.update_graph;
       system.curves = self.curves;
       system.gradients = self.gradients;
+      system.parameters = self.parameters;
     },
     recompile
   );
@@ -565,6 +567,22 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
         }
       }
 
+      if (node->type == ParticleNodeType::ReadParameter) {
+        if (self.parameters.empty()) {
+          UI::text("Parameter", "none defined");
+        } else {
+          auto index = static_cast<i32>(node->index);
+          auto names = stack.alloc<const c8*>(self.parameters.size());
+          for (usize i = 0; i < self.parameters.size(); i++) {
+            names[i] = stack.null_terminate_cstr(self.parameters[i].name);
+          }
+          if (UI::property("Parameter", &index, names.data(), static_cast<i32>(names.size()))) {
+            node->index = static_cast<u32>(index);
+            modified = true;
+          }
+        }
+      }
+
       if (node->type == ParticleNodeType::Random) {
         auto stream = static_cast<i32>(node->index);
         if (UI::property("Stream", &stream, 0, 63)) {
@@ -833,6 +851,49 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
 
     if (UI::button("Add Gradient")) {
       self.gradients.emplace_back();
+      modified = true;
+    }
+  }
+
+  if (ImGui::CollapsingHeader("Parameters")) {
+    ImGui::TextWrapped(
+      "Slots the game writes at runtime. A Parameter node reads one; the value below is what an "
+      "emitter uses until something overrides it."
+    );
+
+    for (usize i = 0; i < self.parameters.size(); i++) {
+      ImGui::PushID(static_cast<i32>(i));
+      auto& parameter = self.parameters[i];
+
+      UI::begin_properties();
+      modified |= UI::input_text("Name", &parameter.name);
+      modified |= UI::property_vector(
+        "Default",
+        parameter.default_value,
+        false,
+        true,
+        nullptr,
+        0.01f,
+        -PARTICLE_LITERAL_RANGE,
+        PARTICLE_LITERAL_RANGE
+      );
+      UI::end_properties();
+
+      const auto remove_parameter = UI::button(stack.format_char("{} Remove Parameter", ICON_MDI_TRASH_CAN));
+      ImGui::Separator();
+      ImGui::PopID();
+
+      if (remove_parameter) {
+        self.parameters.erase(self.parameters.begin() + static_cast<std::ptrdiff_t>(i));
+        remap_particle_sampler_indices(self.spawn_graph, ParticleNodeType::ReadParameter, static_cast<u32>(i));
+        remap_particle_sampler_indices(self.update_graph, ParticleNodeType::ReadParameter, static_cast<u32>(i));
+        modified = true;
+        break;
+      }
+    }
+
+    if (self.parameters.size() < GPU::PARTICLE_USER_PARAM_COUNT && UI::button("Add Parameter")) {
+      self.parameters.emplace_back();
       modified = true;
     }
   }

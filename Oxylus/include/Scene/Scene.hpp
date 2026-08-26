@@ -129,6 +129,22 @@ public:
   ) -> bool;
   auto detach_mesh(this Scene& self, flecs::entity entity) -> bool;
 
+  // --- Particles ---
+  // Runtime control over an entity's emitter. Stopping only halts spawning; particles already alive
+  // keep simulating until their lifetime runs out.
+  auto particle_emitter_state(this Scene& self, flecs::entity entity) -> ParticleEmitterState*;
+  auto play_particles(this Scene& self, flecs::entity entity) -> void;
+  auto stop_particles(this Scene& self, flecs::entity entity) -> void;
+  // Rewinds emitter time so bursts and the duration window fire again. Live particles are untouched.
+  auto restart_particles(this Scene& self, flecs::entity entity) -> void;
+  auto is_particles_playing(this Scene& self, flecs::entity entity) -> bool;
+  // Queues an extra spawn for the next frame, whether or not the emitter is playing.
+  auto emit_particle_burst(this Scene& self, flecs::entity entity, u32 count) -> void;
+  auto set_particle_parameter(this Scene& self, flecs::entity entity, u32 index, const glm::vec4& value) -> void;
+  // Resolves the name against the asset's parameter list. Returns false when no such parameter exists.
+  auto set_particle_parameter(this Scene& self, flecs::entity entity, std::string_view name, const glm::vec4& value)
+    -> bool;
+
   static auto copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Scene>;
 
   static auto get_world_position(flecs::entity entity) -> glm::vec3;

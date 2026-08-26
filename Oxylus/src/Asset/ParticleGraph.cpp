@@ -59,6 +59,8 @@ constexpr static ParticleNodeDesc PARTICLE_NODE_DESCS[] = {
   {"Set Lifetime", "Output", 1, false, 1},
   {"Add Position", "Output", 1, false, 1},
   {"Add Velocity", "Output", 1, false, 1},
+
+  {"Parameter", "Input", 0, true, 0},
 };
 
 static_assert(
@@ -496,6 +498,10 @@ auto compile_particle_graph(const ParticleGraph& graph, const ParticleProgramKin
           } break;
           case ParticleNodeType::ReadTime: {
             compiler.emit(GPU::ParticleOpCode::Time, reg, 0b1111);
+          } break;
+          case ParticleNodeType::ReadParameter: {
+            compiler
+              .emit(GPU::ParticleOpCode::Param, reg, 0b1111, ParticleValue{}, ParticleCompiler::immediate(node.index));
           } break;
           case ParticleNodeType::ReadDeltaTime: {
             compiler.emit(

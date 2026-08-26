@@ -10,6 +10,7 @@ public static const u32 PARTICLE_REGISTER_COUNT = 16;
 public static const u32 PARTICLE_SIMULATE_GROUP = 64;
 public static const u32 PARTICLE_SORT_GROUP = 256;
 public static const u32 PARTICLE_CURVE_ATLAS_WIDTH = 64;
+public static const u32 PARTICLE_USER_PARAM_COUNT = 4;
 
 public enum ParticleRegister : u32 {
     PositionLife = 0,
@@ -51,6 +52,7 @@ public enum ParticleOpCode : u32 {
     Random,
     Time,
     AgeNorm,
+    Param,
 };
 
 public enum ParticleOperandKind : u32 {
@@ -135,6 +137,8 @@ public struct ParticleEmitter {
 
     public f32x2 lifetime;
     public f32x4 shape_params;
+    public f32x4 velocity_offset;
+    public f32x4 user_params[PARTICLE_USER_PARAM_COUNT];
 };
 
 public struct ParticleSortKey {
@@ -356,6 +360,9 @@ public func particle_execute(
             } break;
             case ParticleOpCode.Time      : result = f32x4(vm.regs[ParticleRegister.Context].y); break;
             case ParticleOpCode.AgeNorm  : result = f32x4(vm.regs[ParticleRegister.Context].x); break;
+            case ParticleOpCode.Param    :
+                result = emitter.user_params[(instruction.src1 & 0x3FFFFFFFu) % PARTICLE_USER_PARAM_COUNT];
+                break;
             default                    : break;
         }
 

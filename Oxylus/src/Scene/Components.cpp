@@ -90,7 +90,18 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = ParticleSystemComponent;
-    registry.bind<&C::particle_system, &C::play_on_awake, &C::simulation_speed, &C::seed>();
+    registry.bind<
+      &C::particle_system,
+      &C::play_on_awake,
+      &C::simulation_speed,
+      &C::seed,
+      &C::emission_rate_scale,
+      &C::velocity_offset,
+      &C::override_parameters,
+      &C::param0,
+      &C::param1,
+      &C::param2,
+      &C::param3>();
   }
 
   {

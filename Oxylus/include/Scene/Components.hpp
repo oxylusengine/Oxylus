@@ -133,6 +133,25 @@ struct ParticleSystemComponent {
   bool play_on_awake = true;
   f32 simulation_speed = 1.0f;
   u32 seed = 0;
+  f32 emission_rate_scale = 1.0f;
+  // world-space velocity added to every particle at spawn, on top of the spawn graph
+  glm::vec3 velocity_offset = {};
+
+  bool override_parameters = false;
+  glm::vec4 param0 = {};
+  glm::vec4 param1 = {};
+  glm::vec4 param2 = {};
+  glm::vec4 param3 = {};
+
+  template <typename Self>
+  auto parameter(this Self& self, const u32 index) -> auto& {
+    switch (index) {
+      case 1 : return self.param1;
+      case 2 : return self.param2;
+      case 3 : return self.param3;
+      default: return self.param0;
+    }
+  }
 };
 
 struct LightComponent {

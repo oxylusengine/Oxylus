@@ -2,8 +2,10 @@
 
 #include <filesystem>
 #include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Asset/ParticleGraph.hpp"
@@ -95,6 +97,11 @@ struct ParticleGradientKey {
   glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
+struct ParticleParameter {
+  std::string name = "Parameter";
+  glm::vec4 default_value = {};
+};
+
 struct ParticleGradient {
   std::string name = "Gradient";
   std::vector<ParticleGradientKey> keys = {
@@ -114,6 +121,7 @@ struct ParticleSystem {
   ParticleGraph update_graph = {};
   std::vector<ParticleCurve> curves = {};
   std::vector<ParticleGradient> gradients = {};
+  std::vector<ParticleParameter> parameters = {};
 
   ParticleCompiledPrograms programs = {};
   std::string compile_error = {};
@@ -138,6 +146,8 @@ struct ParticleSystem {
   auto atlas_row_count(this const ParticleSystem& self) -> u32 {
     return static_cast<u32>(self.curves.size() + self.gradients.size());
   }
+
+  auto find_parameter(this const ParticleSystem& self, std::string_view name) -> option<u32>;
 };
 
 enum class ParticleEmitterID : u64 { Invalid = std::numeric_limits<u64>::max() };
@@ -151,6 +161,7 @@ struct ParticleEmitterState {
   f32 spawn_accumulator = 0.0f;
   u32 pool_offset = 0;
   u32 capacity = 0;
+  u32 pending_burst = 0;
   bool pool_valid = false;
   std::vector<u32> burst_cycles_fired = {};
 };

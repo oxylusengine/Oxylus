@@ -1946,6 +1946,99 @@ auto Scene::detach_mesh(this Scene& self, flecs::entity entity) -> bool {
   return true;
 }
 
+auto Scene::particle_emitter_state(this Scene& self, const flecs::entity entity) -> ParticleEmitterState* {
+  const auto it = self.entity_particle_emitters_map.find(entity);
+  if (it == self.entity_particle_emitters_map.end()) {
+    return nullptr;
+  }
+
+  return self.particle_emitters.slot(it->second);
+}
+
+auto Scene::play_particles(this Scene& self, const flecs::entity entity) -> void {
+  if (auto* state = self.particle_emitter_state(entity)) {
+    state->playing = true;
+  }
+}
+
+auto Scene::stop_particles(this Scene& self, const flecs::entity entity) -> void {
+  if (auto* state = self.particle_emitter_state(entity)) {
+    state->playing = false;
+  }
+}
+
+auto Scene::restart_particles(this Scene& self, const flecs::entity entity) -> void {
+  auto* state = self.particle_emitter_state(entity);
+  if (!state) {
+    return;
+  }
+
+  state->playing = true;
+  state->time = 0.0f;
+  state->spawn_accumulator = 0.0f;
+  std::ranges::fill(state->burst_cycles_fired, 0_u32);
+}
+
+auto Scene::is_particles_playing(this Scene& self, const flecs::entity entity) -> bool {
+  const auto* state = self.particle_emitter_state(entity);
+  return state != nullptr && state->playing;
+}
+
+auto Scene::emit_particle_burst(this Scene& self, const flecs::entity entity, const u32 count) -> void {
+  if (auto* state = self.particle_emitter_state(entity)) {
+    state->pending_burst += count;
+  }
+}
+
+auto Scene::set_particle_parameter(
+  this Scene& self, const flecs::entity entity, const u32 index, const glm::vec4& value
+) -> void {
+  if (index >= GPU::PARTICLE_USER_PARAM_COUNT || !entity.has<ParticleSystemComponent>()) {
+    return;
+  }
+
+  auto& component = entity.get_mut<ParticleSystemComponent>();
+
+  // the first write takes the instance off the asset's defaults, so seed the other slots from them
+  // instead of dropping them to zero
+  if (!component.override_parameters) {
+    component.override_parameters = true;
+
+    if (auto* state = self.particle_emitter_state(entity); state && state->asset) {
+      if (auto system = App::mod<AssetManager>().get_particle_system(state->asset)) {
+        for (auto i = 0_u32; i < GPU::PARTICLE_USER_PARAM_COUNT; i++) {
+          component.parameter(i) = i < system->parameters.size() ? system->parameters[i].default_value
+                                                                 : glm::vec4(0.0f);
+        }
+      }
+    }
+  }
+
+  component.parameter(index) = value;
+}
+
+auto Scene::set_particle_parameter(
+  this Scene& self, const flecs::entity entity, const std::string_view name, const glm::vec4& value
+) -> bool {
+  const auto* state = self.particle_emitter_state(entity);
+  if (!state || !state->asset) {
+    return false;
+  }
+
+  auto index = [&]() -> option<u32> {
+    auto system = App::mod<AssetManager>().get_particle_system(state->asset);
+    return system ? system->find_parameter(name) : nullopt;
+  }();
+
+  if (!index) {
+    return false;
+  }
+
+  self.set_particle_parameter(entity, *index, value);
+
+  return true;
+}
+
 auto Scene::on_contact_added(
   const JPH::Body& body1,
   const JPH::Body& body2,

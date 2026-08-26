@@ -356,6 +356,16 @@ auto ParticleSystem::destroy(this ParticleSystem& self) -> void {
   }
 }
 
+auto ParticleSystem::find_parameter(this const ParticleSystem& self, const std::string_view name) -> option<u32> {
+  for (usize i = 0; i < self.parameters.size(); i++) {
+    if (self.parameters[i].name == name) {
+      return static_cast<u32>(i);
+    }
+  }
+
+  return nullopt;
+}
+
 auto ParticleSystem::write(this const ParticleSystem& self, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
@@ -425,6 +435,15 @@ auto ParticleSystem::write(this const ParticleSystem& self, const std::filesyste
       writer.end_obj();
     }
     writer.end_array();
+    writer.end_obj();
+  }
+  writer.end_array();
+
+  writer["parameters"].begin_array();
+  for (const auto& parameter : self.parameters) {
+    writer.begin_obj();
+    writer["name"] = parameter.name;
+    writer["default"] = parameter.default_value;
     writer.end_obj();
   }
   writer.end_array();
@@ -546,6 +565,17 @@ auto ParticleSystem::read(const std::filesystem::path& path) -> option<ParticleS
         }
       }
       system.gradients.emplace_back(std::move(gradient));
+    }
+  }
+
+  if (auto parameters_json = doc["parameters"]; !parameters_json.error()) {
+    for (auto parameter_json : parameters_json.get_array()) {
+      auto parameter = ParticleParameter{};
+      if (auto name = parameter_json.value_unsafe()["name"].get_string(); !name.error()) {
+        parameter.name = name.value_unsafe();
+      }
+      read_json_vec(parameter_json.value_unsafe(), "default", parameter.default_value);
+      system.parameters.emplace_back(std::move(parameter));
     }
   }
 

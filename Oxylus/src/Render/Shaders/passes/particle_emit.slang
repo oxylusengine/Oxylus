@@ -92,6 +92,15 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID) -> void {
             );
             vm.store(particle);
 
+            // world-space push from the game (inherited vehicle velocity, wind), applied after the
+            // spawn graph so it adds to whatever the graph set
+            if (HAS_FLAG(emitter.flags, ParticleEmitterFlags.LocalSpace)) {
+                let inverse_rotation = f32x4(-emitter.rotation.xyz, emitter.rotation.w);
+                particle.velocity += particle_rotate_by_quat(inverse_rotation, emitter.velocity_offset.xyz);
+            } else {
+                particle.velocity += emitter.velocity_offset.xyz;
+            }
+
             particles[particle_index] = particle;
         }
     }

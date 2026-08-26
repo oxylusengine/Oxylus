@@ -1,3 +1,7 @@
+#include <array>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/mat3x3.hpp>
+#include <utility>
 #include <vuk/runtime/CommandBuffer.hpp>
 
 #include "Asset/AssetManager.hpp"
@@ -30,6 +34,7 @@ auto next_power_of_two(u32 value) -> u32 {
 struct ParticleAssetSnapshot {
   ParticleEmitterSettings emitter = {};
   ParticleRenderSettings render = {};
+  std::array<glm::vec4, GPU::PARTICLE_USER_PARAM_COUNT> parameter_defaults = {};
   u32 instruction_offset = 0;
   u32 constant_offset = 0;
   u32 spawn_count = 0;
@@ -57,7 +62,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
   self.scene.world
     .query_builder<const TransformComponent, const ParticleSystemComponent>() //
     .build()
-    .each([&](flecs::entity entity, const TransformComponent& tc, const ParticleSystemComponent& component) {
+    .each([&](flecs::entity entity, const TransformComponent&, const ParticleSystemComponent& component) {
       const auto emitter_it = self.scene.entity_particle_emitters_map.find(entity);
       if (emitter_it == self.scene.entity_particle_emitters_map.end()) {
         return;
@@ -79,6 +84,9 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
 
           snapshot.emitter = system->emitter;
           snapshot.render = system->render;
+          for (usize i = 0; i < std::min<usize>(system->parameters.size(), GPU::PARTICLE_USER_PARAM_COUNT); i++) {
+            snapshot.parameter_defaults[i] = system->parameters[i].default_value;
+          }
           snapshot.spawn_count = system->programs.spawn_count;
           snapshot.update_count = system->programs.update_count;
           snapshot.curve_row_count = system->curve_row_count();
@@ -131,7 +139,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
       auto spawn_count = 0_u32;
       const auto within_duration = settings.looping || local_time <= settings.duration;
       if (state->playing && local_time >= 0.0f && within_duration) {
-        state->spawn_accumulator += settings.spawn_rate * step;
+        state->spawn_accumulator += settings.spawn_rate * std::max(component.emission_rate_scale, 0.0f) * step;
         spawn_count = static_cast<u32>(state->spawn_accumulator);
         state->spawn_accumulator -= static_cast<f32>(spawn_count);
 
@@ -147,6 +155,8 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         }
       }
 
+      // an explicit burst from gameplay fires whether or not the emitter is playing
+      spawn_count += std::exchange(state->pending_burst, 0_u32);
       spawn_count = std::min(spawn_count, capacity);
 
       auto material_index = 0_u32;
@@ -209,9 +219,23 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
 
       const auto world = Scene::get_world_transform(entity);
 
+      // spawn direction has to follow the *world* orientation -- an exhaust emitter parented to a
+      // car inherits the car's rotation, which the entity's local rotation knows nothing about
+      auto basis = glm::mat3(world);
+      for (auto axis = 0; axis < 3; axis++) {
+        const auto axis_length = glm::length(basis[axis]);
+        if (axis_length > 1e-6f) {
+          basis[axis] /= axis_length;
+        } else {
+          basis[axis] = glm::vec3(0.0f);
+          basis[axis][axis] = 1.0f;
+        }
+      }
+      const auto world_rotation = glm::normalize(glm::quat_cast(basis));
+
       auto gpu_emitter = GPU::ParticleEmitter{
         .transform = world,
-        .rotation = {tc.rotation.x, tc.rotation.y, tc.rotation.z, tc.rotation.w},
+        .rotation = {world_rotation.x, world_rotation.y, world_rotation.z, world_rotation.w},
         .pool_offset = state->pool_offset,
         .capacity = capacity,
         .spawn_count = spawn_count,
@@ -238,7 +262,13 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         .velocity_stretch = snapshot.render.velocity_stretch,
         .lifetime = settings.lifetime,
         .shape_params = {settings.shape_size, settings.shape_angle},
+        .velocity_offset = glm::vec4(component.velocity_offset, 0.0f),
       };
+
+      for (auto i = 0_u32; i < GPU::PARTICLE_USER_PARAM_COUNT; i++) {
+        gpu_emitter.user_params[i] = component.override_parameters ? component.parameter(i)
+                                                                   : snapshot.parameter_defaults[i];
+      }
 
       prepared.particle_total_spawn += spawn_count;
       prepared.particle_sort_enabled = prepared.particle_sort_enabled || snapshot.render.sort;

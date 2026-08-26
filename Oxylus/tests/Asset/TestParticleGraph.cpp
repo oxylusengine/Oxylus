@@ -328,3 +328,21 @@ TEST(ParticleGraph, CompilationIsDeterministic) {
     EXPECT_EQ(first->instructions[i].src2, second->instructions[i].src2);
   }
 }
+
+TEST(ParticleGraph, ParameterNodeCarriesItsSlotAsAnImmediate) {
+  auto graph = ParticleGraph{};
+  const auto parameter = graph.add_node(ParticleNodeType::ReadParameter, {});
+  const auto output = graph.add_node(ParticleNodeType::AddVelocity, {});
+
+  graph.nodes.front().index = 2;
+  graph.add_link(parameter, output, 0);
+
+  const auto program = compile_particle_graph(graph, ParticleProgramKind::Update);
+  ASSERT_TRUE(program.has_value());
+  ASSERT_GE(program->instructions.size(), 1u);
+
+  const auto& instruction = program->instructions[0];
+  EXPECT_EQ(opcode_of(instruction), GPU::ParticleOpCode::Param);
+  EXPECT_EQ(operand_kind(instruction.src1), GPU::ParticleOperandKind::Immediate);
+  EXPECT_EQ(operand_payload(instruction.src1), 2u);
+}

@@ -66,6 +66,8 @@ enum class ParticleNodeType : u32 {
   AddPosition,
   AddVelocity,
 
+  ReadParameter,
+
   Count,
 };
 
