@@ -1153,6 +1153,12 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
       self.editor_scene->get_scene().get(),
       [](const char* component_icon, const CameraComponent& c) { return component_icon; }
     );
+    show_component_gizmo<ParticleSystemComponent>(
+      gizmo_info,
+      "ParticleSystemComponent",
+      self.editor_scene->get_scene().get(),
+      [](const char* component_icon, const ParticleSystemComponent& c) { return component_icon; }
+    );
   }
 
   const flecs::entity selected_entity = editor_context.entity.value_or(flecs::entity::null());
