@@ -22,6 +22,7 @@
 #include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 // clang-format on
 #include <RmlUi/Core.h>
+#include <algorithm>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <meshoptimizer.h>
@@ -1189,6 +1190,22 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     self.create_terrain_collision();
   }
 
+  std::ranges::sort(self.dirty_transforms);
+  self.dirty_transforms.erase(std::ranges::unique(self.dirty_transforms).begin(), self.dirty_transforms.end());
+  std::ranges::sort(self.dirty_mesh_instances);
+  self.dirty_mesh_instances.erase(
+    std::ranges::unique(self.dirty_mesh_instances).begin(),
+    self.dirty_mesh_instances.end()
+  );
+
+  if (self.rml_view) {
+    self.rml_view->update(self.rml_surface_size);
+  }
+}
+
+auto Scene::prepare_render(this Scene& self) -> void {
+  ZoneScoped;
+
   if (self.renderer_instance) {
     auto& asset_man = App::mod<AssetManager>();
     auto meshlet_instance_visibility_offset = 0_u32;
@@ -1277,12 +1294,6 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
         gpu_transform->previous_world = gpu_transform->world;
       }
     }
-  }
-
-  // Last, so the document reflects this tick's script changes. Sized from the previous render, which
-  // is why callers get one frame of no UI before the first render establishes a size.
-  if (self.rml_view) {
-    self.rml_view->update(self.rml_surface_size);
   }
 }
 
@@ -2685,6 +2696,10 @@ auto Scene::render(
   for (auto& [_, system] : self.lua_systems) {
     system->on_scene_render(&self, dst_attachment->extent);
   }
+
+  // Paired with the render below: the GPU-side work is built here rather than in `runtime_update` so
+  // that a scene which ticks without rendering never leaves an unsubmitted graph behind.
+  self.prepare_render();
 
   // The prepared frame is consumed here, so the dirty state it covers has now really been submitted.
   self.dirty_transforms.clear();

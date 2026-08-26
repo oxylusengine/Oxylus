@@ -109,6 +109,8 @@ public:
   auto runtime_stop(this Scene& self) -> void;
   auto runtime_update(this Scene& self, const Timestep& delta_time) -> void;
 
+  auto prepare_render(this Scene& self) -> void;
+
   auto defer_function(this Scene& self, const std::function<void(Scene* scene)>& func) -> void;
 
   auto disable_phases(const std::vector<flecs::entity_t>& phases) -> void;
