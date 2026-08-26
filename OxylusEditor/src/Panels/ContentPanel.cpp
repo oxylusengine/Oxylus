@@ -95,7 +95,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Script, ICON_MDI_LANGUAGE_LUA},
   {FileType::Material, ICON_MDI_PALETTE_SWATCH},
   {FileType::Terrain, ICON_MDI_TERRAIN},
-  {FileType::ParticleSystem, ICON_MDI_LAMP},
+  {FileType::ParticleSystem, ICON_MDI_SHIMMER},
 };
 
 static auto standalone_asset_file_type(const std::filesystem::path& path) -> option<FileType> {

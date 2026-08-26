@@ -101,7 +101,7 @@ auto particle_pin_is_output(const u64 pin_id) -> bool {
   return particle_pin_slot(pin_id) == PARTICLE_PINS_PER_NODE - 1;
 }
 
-ParticleEditorPanel::ParticleEditorPanel() : EditorPanelState("Particle Editor", ICON_MDI_LAMP, false) {
+ParticleEditorPanel::ParticleEditorPanel() : EditorPanelState("Particle Editor", ICON_MDI_SHIMMER, false) {
   this->window_default_size = {1280, 720};
 
   auto config = ed::Config{};
