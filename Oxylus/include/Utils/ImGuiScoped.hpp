@@ -3,10 +3,10 @@
 #include "imgui.h"
 
 namespace ImGuiScoped {
-#define IMGUI_DELETE_MOVE_COPY(Base)                           \
-  Base(Base&&) = delete;                /* Move not allowed */ \
-  Base& operator=(Base&&) = delete;     /* "" */               \
-  Base(const Base&) = delete;           /* Copy not allowed */ \
+#define IMGUI_DELETE_MOVE_COPY(Base)                                                                                   \
+  Base(Base&&) = delete;                /* Move not allowed */                                                         \
+  Base& operator=(Base&&) = delete;     /* "" */                                                                       \
+  Base(const Base&) = delete;           /* Copy not allowed */                                                         \
   Base& operator=(const Base&) = delete /* "" */
 
 struct Window {
@@ -413,6 +413,20 @@ struct ClipRect {
   ~ClipRect() { ImGui::PopClipRect(); }
 
   IMGUI_DELETE_MOVE_COPY(ClipRect);
+};
+
+struct ChildFrame {
+  bool IsOpen;
+
+  ChildFrame(ImGuiID id, const ImVec2& size, ImGuiWindowFlags flags = 0) {
+    IsOpen = ImGui::BeginChild(id, size, ImGuiChildFlags_FrameStyle, flags);
+  }
+
+  ~ChildFrame() { ImGui::EndChild(); }
+
+  explicit operator bool() const { return IsOpen; }
+
+  IMGUI_DELETE_MOVE_COPY(ChildFrame);
 };
 
 #undef IMGUI_DELETE_MOVE_COPY

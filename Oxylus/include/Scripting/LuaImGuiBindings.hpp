@@ -2046,6 +2046,13 @@ inline std::string GetStyleColorName(int idx) {
   return std::string(ImGui::GetStyleColorName(static_cast<ImGuiCol>(idx)));
 }
 /* TODO: SetStateStorage(), GetStateStorage(), CalcListClipping() ==> UNSUPPORTED */
+inline bool BeginChildFrame(unsigned int id, float sizeX, float sizeY) {
+  return ImGui::BeginChild(id, {sizeX, sizeY}, ImGuiChildFlags_FrameStyle);
+}
+inline bool BeginChildFrame(unsigned int id, float sizeX, float sizeY, int flags) {
+  return ImGui::BeginChild(id, {sizeX, sizeY}, ImGuiChildFlags_FrameStyle, static_cast<ImGuiWindowFlags>(flags));
+}
+inline void EndChildFrame() { return ImGui::EndChild(); }
 
 // Text Utilities
 inline std::tuple<float, float> CalcTextSize(const std::string& text) {
@@ -2674,6 +2681,8 @@ inline void init_enums(sol::state* lua) {
     ImGuiPopupFlags_MouseButtonMiddle,
     "MouseButtonMask_",
     ImGuiPopupFlags_MouseButtonMask_,
+    "MouseButtonDefault_",
+    ImGuiPopupFlags_MouseButtonRight,
     "NoOpenOverExistingPopup",
     ImGuiPopupFlags_NoOpenOverExistingPopup,
     "NoOpenOverItems",
@@ -3968,6 +3977,14 @@ inline void init(sol::state* lua) {
   ImGui.set_function("GetTime", GetTime);
   ImGui.set_function("GetFrameCount", GetFrameCount);
   ImGui.set_function("GetStyleColorName", GetStyleColorName);
+  ImGui.set_function(
+    "BeginChildFrame",
+    sol::overload(
+      sol::resolve<bool(unsigned int, float, float)>(BeginChildFrame),
+      sol::resolve<bool(unsigned int, float, float, int)>(BeginChildFrame)
+    )
+  );
+  ImGui.set_function("EndChildFrame", EndChildFrame);
 #pragma endregion Miscellaneous Utilities
 
 #pragma region Text Utilities

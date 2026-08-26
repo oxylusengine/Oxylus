@@ -2,6 +2,9 @@
 
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
+#include <algorithm>
+#include <glm/common.hpp>
+#include <imgui_internal.h>
 #include <vuk/RenderGraph.hpp>
 #include <vuk/Types.hpp>
 #include <vuk/runtime/CommandBuffer.hpp>
@@ -17,6 +20,69 @@
 #include "Utils/Profiler.hpp"
 
 namespace ox {
+// Shadow draws are injected into ImDrawData as command lists whose texture id is an index into
+// `shadow_draw_data` biased by this value, so the render loop can tell them apart from real textures.
+constexpr auto SHADOW_TEX_ID_BASE = ImTextureID{1} << 40;
+
+static auto window_casts_shadow(const ImGuiWindow* window) -> bool {
+  if (window == nullptr || !window->Active || window->Hidden)
+    return false;
+  if (window->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_NoBackground))
+    return false;
+  if (window->DockNode != nullptr)
+    return false;
+
+  return window->Size.x > 1.0f && window->Size.y > 1.0f;
+}
+
+static auto add_shadow_quad(ImDrawList* draw_list, glm::vec2 min, glm::vec2 max, glm::vec2 origin, ImU32 color)
+  -> void {
+  if (max.x <= min.x || max.y <= min.y)
+    return;
+
+  draw_list->PrimReserve(6, 4);
+
+  const auto base = static_cast<ImDrawIdx>(draw_list->_VtxCurrentIdx);
+  draw_list->PrimWriteIdx(base);
+  draw_list->PrimWriteIdx(static_cast<ImDrawIdx>(base + 1));
+  draw_list->PrimWriteIdx(static_cast<ImDrawIdx>(base + 2));
+  draw_list->PrimWriteIdx(base);
+  draw_list->PrimWriteIdx(static_cast<ImDrawIdx>(base + 2));
+  draw_list->PrimWriteIdx(static_cast<ImDrawIdx>(base + 3));
+
+  const auto local_min = min - origin;
+  const auto local_max = max - origin;
+  draw_list->PrimWriteVtx(ImVec2(min.x, min.y), ImVec2(local_min.x, local_min.y), color);
+  draw_list->PrimWriteVtx(ImVec2(max.x, min.y), ImVec2(local_max.x, local_min.y), color);
+  draw_list->PrimWriteVtx(ImVec2(max.x, max.y), ImVec2(local_max.x, local_max.y), color);
+  draw_list->PrimWriteVtx(ImVec2(min.x, max.y), ImVec2(local_min.x, local_max.y), color);
+}
+
+// Emits the shadow as a ring around `hole`, which is the largest rect the caster is guaranteed to cover
+// and where the cutout would zero the result anyway. Saves a lot of fill on large windows.
+static auto add_shadow_ring(
+  ImDrawList* draw_list, //
+  glm::vec2 outer_min,
+  glm::vec2 outer_max,
+  glm::vec2 hole_min,
+  glm::vec2 hole_max,
+  glm::vec2 origin,
+  ImU32 color
+) -> void {
+  hole_min = glm::clamp(hole_min, outer_min, outer_max);
+  hole_max = glm::clamp(hole_max, outer_min, outer_max);
+
+  if (hole_max.x - hole_min.x < 1.0f || hole_max.y - hole_min.y < 1.0f) {
+    add_shadow_quad(draw_list, outer_min, outer_max, origin, color);
+    return;
+  }
+
+  add_shadow_quad(draw_list, outer_min, {outer_max.x, hole_min.y}, origin, color);
+  add_shadow_quad(draw_list, {outer_min.x, hole_max.y}, outer_max, origin, color);
+  add_shadow_quad(draw_list, {outer_min.x, hole_min.y}, {hole_min.x, hole_max.y}, origin, color);
+  add_shadow_quad(draw_list, {hole_max.x, hole_min.y}, {outer_max.x, hole_max.y}, origin, color);
+}
+
 ImFont* ImGuiRenderer::load_default_font() {
   ImGuiIO& io = ImGui::GetIO();
   return io.Fonts->AddFontDefault();
@@ -96,10 +162,19 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   );
   runtime.create_named_pipeline("imgui", pipelie_ci);
 
+  this->shadow_settings.layers = {
+    ImGuiShadowLayer{.sigma = 22.0f, .spread = -4.0f, .offset = {0.0f, 10.0f}, .color = {0.0f, 0.0f, 0.0f, 0.75f}},
+    ImGuiShadowLayer{.sigma = 5.0f, .spread = -1.0f, .offset = {0.0f, 2.0f}, .color = {0.0f, 0.0f, 0.0f, 0.65f}},
+  };
+
   return {};
 }
 
 auto ImGuiRenderer::deinit() -> std::expected<void, std::string> {
+  // Owned draw lists point into the context's shared draw data.
+  shadow_draw_lists.clear();
+  shadow_draw_data.clear();
+
   ImGui::DestroyContext();
   return {};
 }
@@ -162,6 +237,8 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
   }
 
   ImDrawData* draw_data = ImGui::GetDrawData();
+
+  build_window_shadows(draw_data);
 
   if (draw_data->Textures) {
     for (auto* texture : *draw_data->Textures) {
@@ -326,9 +403,11 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
       command_buffer.push_constants(vuk::ShaderStageFlagBits::eVertex, 0, pc);
     };
 
+  auto shadow_params_copy = shadow_draw_data;
+
   return vuk::make_pass(
       "imgui",
-      [reset_render_state, draw_data]( //
+      [reset_render_state, draw_data, shadow_draw_params = std::move(shadow_params_copy)]( //
           vuk::CommandBuffer& command_buffer,
           VUK_BA(vuk::Access::eVertexRead) vertex_buf,
           VUK_BA(vuk::Access::eIndexRead) index_buf,
@@ -348,6 +427,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
         // (Because we merged all buffers into a single one, we maintain our own offset into them)
         int global_vtx_offset = 0;
         int global_idx_offset = 0;
+        bool pipeline_dirty = false;
         for (int n = 0; n < draw_data->CmdListsCount; n++) {
           const ImDrawList* cmd_list = draw_data->CmdLists[n];
           for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++) {
@@ -356,10 +436,12 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
               // User callback, registered via ImDrawList::AddCallback()
               // (ImDrawCallback_ResetRenderState is a special callback value used by the user to request the renderer
               // to reset render state.)
-              if (im_cmd->UserCallback == ImDrawCallback_ResetRenderState)
+              if (im_cmd->UserCallback == ImDrawCallback_ResetRenderState) {
                 reset_render_state(command_buffer, vertex_buf, index_buf);
-              else
+                pipeline_dirty = false;
+              } else {
                 im_cmd->UserCallback(cmd_list, im_cmd);
+              }
             } else {
               // Project scissor/clipping rectangles into framebuffer space
               ImVec4 clip_rect;
@@ -383,10 +465,42 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
                 scissor.extent.height = static_cast<uint32_t>(clip_rect.w - clip_rect.y);
                 command_buffer.set_scissor(0, scissor);
 
+                const auto texture_id = im_cmd->GetTexID();
+                if (texture_id >= SHADOW_TEX_ID_BASE) {
+                  struct ShadowPC {
+                    float translate[2];
+                    float scale[2];
+                    ImGuiShadowDrawData shadow;
+                  } shadow_pc;
+                  static_assert(sizeof(ShadowPC) == 56, "imgui_shadow.slang push constant layout mismatch");
+                  shadow_pc.scale[0] = 2.0f / draw_data->DisplaySize.x;
+                  shadow_pc.scale[1] = 2.0f / draw_data->DisplaySize.y;
+                  shadow_pc.translate[0] = -1.0f - draw_data->DisplayPos.x * shadow_pc.scale[0];
+                  shadow_pc.translate[1] = -1.0f - draw_data->DisplayPos.y * shadow_pc.scale[1];
+                  shadow_pc.shadow = shadow_draw_params[texture_id - SHADOW_TEX_ID_BASE];
+
+                  command_buffer.bind_graphics_pipeline("imgui_shadow")
+                                .push_constants(vuk::ShaderStageFlagBits::eVertex |
+                                                    vuk::ShaderStageFlagBits::eFragment,
+                                                0,
+                                                shadow_pc)
+                                .draw_indexed(im_cmd->ElemCount,
+                                              1,
+                                              im_cmd->IdxOffset + global_idx_offset,
+                                              im_cmd->VtxOffset + global_vtx_offset,
+                                              0);
+                  pipeline_dirty = true;
+                  continue;
+                }
+
+                if (pipeline_dirty) {
+                  reset_render_state(command_buffer, vertex_buf, index_buf);
+                  pipeline_dirty = false;
+                }
+
                 // NOTE: Dear ImGui assumes id 0 for textures means they are invalid textures.
                 // So we use indices for textures starting from 1 thus this -1 is required.
-                const auto index = im_cmd->GetTexID();
-                const auto& image = sis[index - 1];
+                const auto& image = sis[texture_id - 1];
 
                 command_buffer.bind_image(0, 1, image)
                               .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
@@ -407,6 +521,101 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
          std::move(imind),
          std::move(target),
          std::move(sampled_images_array));
+}
+
+auto ImGuiRenderer::build_window_shadows(this ImGuiRenderer& self, ImDrawData* draw_data) -> void {
+  ZoneScoped;
+
+  self.shadow_draw_data.clear();
+
+  if (!self.shadow_settings.enabled || self.shadow_settings.layers.empty() || draw_data->CmdLists.Size == 0)
+    return;
+
+  auto& ctx = *ImGui::GetCurrentContext();
+
+  auto casters = ankerl::svector<std::pair<const ImDrawList*, const ImGuiWindow*>, 32>{};
+  for (const auto* window : ctx.Windows) {
+    if (window_casts_shadow(window))
+      casters.emplace_back(window->DrawList, window);
+  }
+  if (casters.empty())
+    return;
+
+  const auto display_min = glm::vec2(draw_data->DisplayPos.x, draw_data->DisplayPos.y);
+  const auto display_max = display_min + glm::vec2(draw_data->DisplaySize.x, draw_data->DisplaySize.y);
+
+  auto used_lists = 0_sz;
+  for (auto index = 0; index < draw_data->CmdLists.Size; index++) {
+    const auto* window_list = draw_data->CmdLists[index];
+    const auto caster = std::ranges::find(casters, window_list, &decltype(casters)::value_type::first);
+    if (caster == casters.end())
+      continue;
+
+    const auto* window = caster->second;
+    const auto rect_min = glm::vec2(window->Pos.x, window->Pos.y);
+    const auto rect_max = rect_min + glm::vec2(window->Size.x, window->Size.y);
+    const auto rect_center = (rect_min + rect_max) * 0.5f;
+    const auto rect_half = (rect_max - rect_min) * 0.5f;
+    const auto rounding = window->WindowRounding;
+
+    if (self.shadow_draw_lists.size() <= used_lists)
+      self.shadow_draw_lists.emplace_back(std::make_unique<ImDrawList>(ImGui::GetDrawListSharedData()));
+
+    auto* shadow_list = self.shadow_draw_lists[used_lists].get();
+    shadow_list->_OwnerName = "##WindowShadow";
+    shadow_list->_ResetForNewFrame();
+    shadow_list->PushClipRect(ImVec2(display_min.x, display_min.y), ImVec2(display_max.x, display_max.y), false);
+
+    for (const auto& layer : self.shadow_settings.layers) {
+      const auto sigma = std::max(layer.sigma, 0.01f);
+      const auto shadow_center = rect_center + layer.offset;
+      const auto shadow_half = glm::max(rect_half + layer.spread, glm::vec2(0.5f));
+      const auto extent = 3.0f * sigma;
+
+      const auto outer_min = glm::max(shadow_center - shadow_half - extent, display_min);
+      const auto outer_max = glm::min(shadow_center + shadow_half + extent, display_max);
+      if (outer_max.x <= outer_min.x || outer_max.y <= outer_min.y)
+        continue;
+
+      const auto texture_id = SHADOW_TEX_ID_BASE + static_cast<ImTextureID>(self.shadow_draw_data.size());
+      self.shadow_draw_data.emplace_back(
+        ImGuiShadowDrawData{
+          .half_size = shadow_half,
+          .corner_radius = std::max(rounding + layer.spread, 0.0f),
+          .sigma = sigma,
+          .cutout_center = rect_center - shadow_center,
+          .cutout_half_size = rect_half,
+          .cutout_radius = rounding,
+          .cutout_enabled = 1.0f,
+        }
+      );
+
+      const auto color = ImGui::ColorConvertFloat4ToU32(
+        ImVec4(layer.color.r, layer.color.g, layer.color.b, layer.color.a)
+      );
+
+      // The caster's rounded rect always covers this inset, so the cutout zeroes the shadow there.
+      const auto inset = rounding * 0.2929f;
+      shadow_list->PushTexture(ImTextureRef(texture_id));
+      add_shadow_ring(shadow_list, outer_min, outer_max, rect_min + inset, rect_max - inset, shadow_center, color);
+      shadow_list->PopTexture();
+    }
+
+    shadow_list->PopClipRect();
+    shadow_list->_PopUnusedDrawCmd();
+
+    if (shadow_list->VtxBuffer.Size == 0)
+      continue;
+
+    used_lists += 1;
+    draw_data->CmdLists.insert(draw_data->CmdLists.Data + index, shadow_list);
+    index += 1;
+
+    draw_data->TotalVtxCount += shadow_list->VtxBuffer.Size;
+    draw_data->TotalIdxCount += shadow_list->IdxBuffer.Size;
+  }
+
+  draw_data->CmdListsCount = draw_data->CmdLists.Size;
 }
 
 ImTextureID ImGuiRenderer::add_image(vuk::Value<vuk::ImageAttachment>&& attachment) {
