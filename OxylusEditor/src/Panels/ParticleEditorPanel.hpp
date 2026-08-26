@@ -1,5 +1,6 @@
 #pragma once
 
+#include <imgui.h>
 #include <memory>
 
 #include "Asset/ParticleSystem.hpp"
@@ -31,6 +32,8 @@ private:
   // Plots one curve and lets its control points be dragged. Returns true when the curve changed.
   auto draw_curve_editor(this ParticleEditorPanel& self, usize curve_index, ParticleCurve& curve) -> bool;
   auto draw_preview(this ParticleEditorPanel& self, const vuk::ImageAttachment& swapchain_attachment) -> void;
+  // Outlines the emission shape over the rendered preview, in the preview camera's projection.
+  auto draw_shape_overlay(this ParticleEditorPanel& self, ImVec2 image_min, ImVec2 image_size) -> void;
   auto ensure_preview_scene(this ParticleEditorPanel& self) -> void;
   auto sync_preview_asset(this ParticleEditorPanel& self) -> void;
 
@@ -39,6 +42,7 @@ private:
 
   ParticleEmitterSettings emitter_settings = {};
   ParticleRenderSettings render_settings = {};
+  ParticleGraph emitter_graph = {};
   ParticleGraph spawn_graph = {};
   ParticleGraph update_graph = {};
   std::vector<ParticleCurve> curves = {};
@@ -59,8 +63,10 @@ private:
   f32 inspector_width = 360.0f;
   f32 preview_width = 380.0f;
 
+  ax::NodeEditor::EditorContext* emitter_context = nullptr;
   ax::NodeEditor::EditorContext* spawn_context = nullptr;
   ax::NodeEditor::EditorContext* update_context = nullptr;
+  bool emitter_positions_applied = false;
   bool spawn_positions_applied = false;
   bool update_positions_applied = false;
 
@@ -76,5 +82,6 @@ private:
   f32 preview_speed = 1.0f;
   bool preview_playing = true;
   bool preview_grid_enabled = true;
+  bool preview_shape_enabled = true;
 };
 } // namespace ox

@@ -287,7 +287,7 @@ TEST(ParticleGraph, MergedProgramsShareOneConstantPool) {
   update.nodes[0].params = {glm::vec4(1.0f, 0.0f, 0.0f, 0.0f)};
   update.add_link(update_source, update_output, 0);
 
-  const auto merged = compile_particle_graphs(spawn, update);
+  const auto merged = compile_particle_graphs({}, spawn, update);
   ASSERT_TRUE(merged.has_value());
 
   EXPECT_EQ(merged->spawn_offset, 0u);

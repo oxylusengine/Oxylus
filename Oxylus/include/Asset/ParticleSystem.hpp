@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
@@ -13,6 +14,7 @@
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
 #include "Core/UUID.hpp"
+#include "Scene/SceneGPU.hpp"
 
 namespace ox {
 enum class ParticleSystemID : u64 { Invalid = std::numeric_limits<u64>::max() };
@@ -49,13 +51,6 @@ enum class ParticleBlendMode : u32 {
   Additive,
 };
 
-struct ParticleBurst {
-  f32 time = 0.0f;
-  u32 count = 10;
-  u32 cycles = 1;
-  f32 interval = 1.0f;
-};
-
 struct ParticleEmitterSettings {
   u32 capacity = 1024;
   f32 spawn_rate = 32.0f;
@@ -68,7 +63,6 @@ struct ParticleEmitterSettings {
   f32 shape_angle = 25.0f;
   ParticleSimulationSpace simulation_space = ParticleSimulationSpace::World;
   u32 seed = 0;
-  std::vector<ParticleBurst> bursts = {};
 };
 
 struct ParticleRenderSettings {
@@ -117,6 +111,8 @@ struct ParticleSystem {
 
   ParticleEmitterSettings emitter = {};
   ParticleRenderSettings render = {};
+  // decides how many particles are born each frame, replaces the old fixed burst list
+  ParticleGraph emitter_graph = {};
   ParticleGraph spawn_graph = {};
   ParticleGraph update_graph = {};
   std::vector<ParticleCurve> curves = {};
@@ -163,6 +159,7 @@ struct ParticleEmitterState {
   u32 capacity = 0;
   u32 pending_burst = 0;
   bool pool_valid = false;
-  std::vector<u32> burst_cycles_fired = {};
+  // one slot per trigger node in the emitter graph, carried between frames
+  std::array<glm::vec4, GPU::PARTICLE_EMITTER_STATE_COUNT> program_state = {};
 };
 } // namespace ox

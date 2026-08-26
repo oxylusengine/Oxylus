@@ -708,6 +708,9 @@ enum class ParticleOpCode : u8 {
   Time,
   AgeNorm,
   Param,
+  // CPU-only, executed by the emitter program interpreter. The GPU never sees these.
+  LoadState,
+  StoreState,
   Count,
 };
 
@@ -734,6 +737,13 @@ constexpr static u32 PARTICLE_REG_SIZE_ROT_SEED = 2;  // xy size, z rotation, w 
 constexpr static u32 PARTICLE_REG_COLOR = 3;          // rgba
 constexpr static u32 PARTICLE_REG_CONTEXT = 4;        // x age_norm, y emitter time, z delta time, w flipbook frame
 constexpr static u32 PARTICLE_ATTRIBUTE_REGISTERS = 5;
+
+// The emitter program is a third bytecode program run once per emitter per frame, on the CPU, over
+// the same instruction encoding. Its registers mean something else entirely.
+constexpr static u32 PARTICLE_EMITTER_REG_OUTPUT = 0;  // x spawn count, y spawn rate
+constexpr static u32 PARTICLE_EMITTER_REG_CONTEXT = 1; // x time, y delta time, z cycle norm, w queued pulses
+constexpr static u32 PARTICLE_EMITTER_ATTRIBUTE_REGISTERS = 2;
+constexpr static u32 PARTICLE_EMITTER_STATE_COUNT = 8;
 
 struct Particle {
   alignas(4) glm::vec3 position = {};

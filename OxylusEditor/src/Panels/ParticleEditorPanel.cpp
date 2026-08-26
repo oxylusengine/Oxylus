@@ -1,5 +1,7 @@
 #include "ParticleEditorPanel.hpp"
 
+#include <cmath>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
@@ -26,6 +28,141 @@ constexpr static u64 PARTICLE_PINS_PER_NODE = 64;
 
 constexpr static f32 PARTICLE_LITERAL_RANGE = 1.0e6f;
 constexpr static f32 PARTICLE_PREVIEW_GRID_DISTANCE = 200.0f;
+
+constexpr static f32 PARTICLE_PREVIEW_CONE_HEIGHT = 1.5f;
+constexpr static u32 PARTICLE_PREVIEW_RING_SEGMENTS = 48;
+
+// Projects emitter-local line segments onto the preview image. The shapes mirror
+// particle_emission_point in particles.slang, so what is drawn is what the emit shader samples.
+struct ParticleShapeGizmo {
+  glm::mat4 clip_from_local = glm::mat4(1.0f);
+  ImDrawList* draw_list = nullptr;
+  ImVec2 origin = {};
+  ImVec2 size = {};
+  u32 color = 0;
+
+  auto to_screen(this const ParticleShapeGizmo& self, const glm::vec4& clip) -> ImVec2 {
+    const auto ndc = glm::vec2(clip) / clip.w;
+    return ImVec2(
+      self.origin.x + (ndc.x * 0.5f + 0.5f) * self.size.x,
+      self.origin.y + (ndc.y * 0.5f + 0.5f) * self.size.y
+    );
+  }
+
+  auto line(this const ParticleShapeGizmo& self, const glm::vec3& from, const glm::vec3& to) -> void {
+    constexpr auto near_w = 1.0e-4f;
+
+    auto a = self.clip_from_local * glm::vec4(from, 1.0f);
+    auto b = self.clip_from_local * glm::vec4(to, 1.0f);
+
+    // both endpoints behind the eye: nothing to draw. one behind: pull it up to the near plane so
+    // the segment does not wrap to the far side of the screen
+    if (a.w < near_w && b.w < near_w) {
+      return;
+    }
+    if (a.w < near_w) {
+      a = glm::mix(a, b, (near_w - a.w) / (b.w - a.w));
+    } else if (b.w < near_w) {
+      b = glm::mix(b, a, (near_w - b.w) / (a.w - b.w));
+    }
+
+    self.draw_list->AddLine(self.to_screen(a), self.to_screen(b), self.color);
+  }
+
+  // Traces center + u * cos(t) + v * sin(t) over [begin, end] radians.
+  auto arc(
+    this const ParticleShapeGizmo& self,
+    const glm::vec3& center,
+    const glm::vec3& u,
+    const glm::vec3& v,
+    const u32 segments,
+    const f32 begin,
+    const f32 end
+  ) -> void {
+    auto previous = center + u * std::cos(begin) + v * std::sin(begin);
+    for (auto i = 1_u32; i <= segments; i++) {
+      const auto t = begin + (end - begin) * (static_cast<f32>(i) / static_cast<f32>(segments));
+      const auto current = center + u * std::cos(t) + v * std::sin(t);
+      self.line(previous, current);
+      previous = current;
+    }
+  }
+
+  auto ring(this const ParticleShapeGizmo& self, const glm::vec3& center, const glm::vec3& u, const glm::vec3& v)
+    -> void {
+    self.arc(center, u, v, PARTICLE_PREVIEW_RING_SEGMENTS, 0.0f, glm::two_pi<f32>());
+  }
+};
+
+auto draw_particle_shape(
+  const ParticleShapeGizmo& gizmo, const ParticleEmissionShape shape, const glm::vec3& shape_size, const f32 shape_angle
+) -> void {
+  const auto x = glm::vec3(shape_size.x, 0.0f, 0.0f);
+  const auto y = glm::vec3(0.0f, shape_size.y, 0.0f);
+  const auto z = glm::vec3(0.0f, 0.0f, shape_size.z);
+
+  switch (shape) {
+    case ParticleEmissionShape::Point: {
+      // no extent to outline, so just mark the origin
+      constexpr auto tick = 0.15f;
+      gizmo.line({-tick, 0.0f, 0.0f}, {tick, 0.0f, 0.0f});
+      gizmo.line({0.0f, -tick, 0.0f}, {0.0f, tick, 0.0f});
+      gizmo.line({0.0f, 0.0f, -tick}, {0.0f, 0.0f, tick});
+    } break;
+    case ParticleEmissionShape::Sphere: {
+      gizmo.ring({}, x, y);
+      gizmo.ring({}, x, z);
+      gizmo.ring({}, y, z);
+    } break;
+    case ParticleEmissionShape::Hemisphere: {
+      gizmo.ring({}, x, z);
+      gizmo.arc({}, x, y, PARTICLE_PREVIEW_RING_SEGMENTS / 2, 0.0f, glm::pi<f32>());
+      gizmo.arc({}, z, y, PARTICLE_PREVIEW_RING_SEGMENTS / 2, 0.0f, glm::pi<f32>());
+    } break;
+    case ParticleEmissionShape::Box: {
+      for (auto corner = 0_u32; corner < 8; corner++) {
+        const auto from = glm::vec3(
+          (corner & 1u) ? shape_size.x : -shape_size.x,
+          (corner & 2u) ? shape_size.y : -shape_size.y,
+          (corner & 4u) ? shape_size.z : -shape_size.z
+        );
+
+        // one edge per axis, only towards the higher corner, so each of the 12 is drawn once
+        for (auto axis = 0_u32; axis < 3; axis++) {
+          const auto bit = 1u << axis;
+          if (corner & bit) {
+            continue;
+          }
+
+          auto to = from;
+          to[static_cast<i32>(axis)] = -to[static_cast<i32>(axis)];
+          gizmo.line(from, to);
+        }
+      }
+    } break;
+    case ParticleEmissionShape::Circle: {
+      gizmo.ring({}, x, z);
+    } break;
+    case ParticleEmissionShape::Cone: {
+      // the shader spreads outwards from a disc of radius shape_size.x, so a particle starting at
+      // radius r sits at r * (1 + height * tan(angle)) once it has risen that far
+      const auto spread = std::tan(glm::radians(std::clamp(shape_angle, 0.0f, 89.0f)));
+      const auto top = glm::vec3(shape_size.x * (1.0f + PARTICLE_PREVIEW_CONE_HEIGHT * spread), 0.0f, 0.0f);
+      const auto top_center = glm::vec3(0.0f, PARTICLE_PREVIEW_CONE_HEIGHT, 0.0f);
+      const auto base_radius = glm::vec3(shape_size.x, 0.0f, 0.0f);
+
+      gizmo.ring({}, base_radius, {0.0f, 0.0f, shape_size.x});
+      gizmo.ring(top_center, top, {0.0f, 0.0f, top.x});
+
+      for (auto i = 0_u32; i < 4; i++) {
+        const auto angle = glm::half_pi<f32>() * static_cast<f32>(i);
+        const auto direction = glm::vec3(std::cos(angle), 0.0f, std::sin(angle));
+        gizmo.line(direction * shape_size.x, top_center + direction * top.x);
+      }
+    } break;
+    default: break;
+  }
+}
 
 auto particle_node_editor_id(const ParticleNodeID id) -> u64 { return std::to_underlying(id) + 1; }
 
@@ -106,11 +243,15 @@ ParticleEditorPanel::ParticleEditorPanel() : EditorPanelState("Particle Editor",
 
   auto config = ed::Config{};
   config.SettingsFile = nullptr;
+  emitter_context = ed::CreateEditor(&config);
   spawn_context = ed::CreateEditor(&config);
   update_context = ed::CreateEditor(&config);
 }
 
 ParticleEditorPanel::~ParticleEditorPanel() {
+  if (emitter_context) {
+    ed::DestroyEditor(emitter_context);
+  }
   if (spawn_context) {
     ed::DestroyEditor(spawn_context);
   }
@@ -125,7 +266,11 @@ ParticleEditorPanel::~ParticleEditorPanel() {
 }
 
 auto ParticleEditorPanel::active_graph(this ParticleEditorPanel& self) -> ParticleGraph& {
-  return self.active_kind == ParticleProgramKind::Spawn ? self.spawn_graph : self.update_graph;
+  switch (self.active_kind) {
+    case ParticleProgramKind::Emitter: return self.emitter_graph;
+    case ParticleProgramKind::Update : return self.update_graph;
+    default                          : return self.spawn_graph;
+  }
 }
 
 auto ParticleEditorPanel::open_asset(this ParticleEditorPanel& self, const UUID& uuid) -> void {
@@ -142,6 +287,7 @@ auto ParticleEditorPanel::open_asset(this ParticleEditorPanel& self, const UUID&
 
     self.emitter_settings = system->emitter;
     self.render_settings = system->render;
+    self.emitter_graph = system->emitter_graph;
     self.spawn_graph = system->spawn_graph;
     self.update_graph = system->update_graph;
     self.curves = system->curves;
@@ -156,6 +302,7 @@ auto ParticleEditorPanel::open_asset(this ParticleEditorPanel& self, const UUID&
 
   self.asset_uuid = uuid;
   self.selected_node = ParticleNodeID::Invalid;
+  self.emitter_positions_applied = false;
   self.spawn_positions_applied = false;
   self.update_positions_applied = false;
   self.visible = true;
@@ -176,6 +323,7 @@ auto ParticleEditorPanel::commit(this ParticleEditorPanel& self, const bool reco
     [&self](ParticleSystem& system) {
       system.emitter = self.emitter_settings;
       system.render = self.render_settings;
+      system.emitter_graph = self.emitter_graph;
       system.spawn_graph = self.spawn_graph;
       system.update_graph = self.update_graph;
       system.curves = self.curves;
@@ -259,9 +407,22 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 
-  auto* context = self.active_kind == ParticleProgramKind::Spawn ? self.spawn_context : self.update_context;
-  auto& positions_applied = self.active_kind == ParticleProgramKind::Spawn ? self.spawn_positions_applied
-                                                                           : self.update_positions_applied;
+  // the canvas context and its one-shot position flag have to be picked together -- selecting them
+  // separately is how the update graph ended up consuming the emitter graph's flag
+  auto* context = self.spawn_context;
+  auto* positions_applied = &self.spawn_positions_applied;
+  switch (self.active_kind) {
+    case ParticleProgramKind::Emitter: {
+      context = self.emitter_context;
+      positions_applied = &self.emitter_positions_applied;
+    } break;
+    case ParticleProgramKind::Update: {
+      context = self.update_context;
+      positions_applied = &self.update_positions_applied;
+    } break;
+    default: break;
+  }
+
   auto& graph = self.active_graph();
 
   ed::SetCurrentEditor(context);
@@ -271,7 +432,7 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self) -> void {
     const auto& desc = particle_node_desc(node.type);
     const auto node_id = ed::NodeId(particle_node_editor_id(node.id));
 
-    if (!positions_applied) {
+    if (!*positions_applied) {
       ed::SetNodePosition(node_id, ImVec2(node.canvas_position.x, node.canvas_position.y));
     }
 
@@ -324,9 +485,8 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self) -> void {
     );
   }
 
-  positions_applied = true;
+  *positions_applied = true;
 
-  // Only a structural change needs the bytecode rebuilt; dragging a node is layout, not behaviour.
   auto structure_modified = false;
   auto layout_modified = false;
 
@@ -461,15 +621,30 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self) -> void {
       ImVec2(self.context_screen_position.x, self.context_screen_position.y)
     );
 
-    constexpr static std::string_view categories[] = {"Input", "Attribute", "Math", "Vector", "Output"};
+    constexpr static std::string_view categories[] = {"Input", "Attribute", "Trigger", "Math", "Vector", "Output"};
     for (const auto category : categories) {
+      // a category with nothing valid in this program would open onto an empty menu
+      const auto has_any = [&] {
+        for (auto type = 0_u32; type < static_cast<u32>(ParticleNodeType::Count); type++) {
+          const auto& desc = particle_node_desc(static_cast<ParticleNodeType>(type));
+          if (desc.category == category && particle_kind_allows(desc.kinds, self.active_kind)) {
+            return true;
+          }
+        }
+        return false;
+      }();
+
+      if (!has_any) {
+        continue;
+      }
+
       if (!ImGui::BeginMenu(stack.null_terminate_cstr(category))) {
         continue;
       }
 
       for (auto type = 0_u32; type < static_cast<u32>(ParticleNodeType::Count); type++) {
         const auto& desc = particle_node_desc(static_cast<ParticleNodeType>(type));
-        if (desc.category != category) {
+        if (desc.category != category || !particle_kind_allows(desc.kinds, self.active_kind)) {
           continue;
         }
 
@@ -503,14 +678,21 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
   auto modified = false;
   auto& asset_man = App::mod<AssetManager>();
 
-  if (ImGui::CollapsingHeader("Selected Node", ImGuiTreeNodeFlags_DefaultOpen)) {
+  const auto node_open = ImGui::CollapsingHeader("Selected Node", ImGuiTreeNodeFlags_DefaultOpen);
+  UI::tooltip_hover(
+    "Values of the node picked in the graph above. Inputs with nothing wired into them fall back "
+    "to the literals shown here."
+  );
+  if (node_open) {
     auto& graph = self.active_graph();
     auto* node = const_cast<ParticleNode*>(graph.find_node(self.selected_node));
     if (!node) {
       ImGui::TextUnformatted("No node selected.");
+      UI::tooltip_hover("Click a node in the graph above to edit it here.");
     } else {
       const auto& desc = particle_node_desc(node->type);
       ImGui::TextUnformatted(desc.name.data(), desc.name.data() + desc.name.size());
+      UI::tooltip_hover(stack.format_char("{} node.", desc.category));
 
       // An output node with nothing plugged in still writes -- and writes its literal, every frame,
       // over whatever the spawn program set. Worth saying out loud.
@@ -524,6 +706,10 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
             ImVec4(0.95f, 0.75f, 0.30f, 1.0f),
             "Nothing connected: writes the value below\nover this attribute every frame."
           );
+          UI::tooltip_hover(
+            "Wire something into this node's input, or delete the node, if you meant whatever the "
+            "spawn program set to survive."
+          );
         }
       }
 
@@ -536,7 +722,7 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
           node->params[i],
           false,
           true,
-          nullptr,
+          stack.format_char("Literal used for input {} when nothing is connected to that pin.", i),
           0.01f,
           -PARTICLE_LITERAL_RANGE,
           PARTICLE_LITERAL_RANGE
@@ -549,7 +735,16 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
         for (usize i = 0; i < self.curves.size(); i++) {
           names[i] = stack.null_terminate_cstr(self.curves[i].name);
         }
-        if (UI::property("Curve", &index, names.data(), static_cast<i32>(names.size()))) {
+        if (
+          UI::property(
+            "Curve",
+            &index,
+            names.data(),
+            static_cast<i32>(names.size()),
+            "Which curve this node samples. Curves are defined in the Curves section and baked into a lookup "
+            "texture the GPU reads."
+          )
+        ) {
           node->index = static_cast<u32>(index);
           modified = true;
         }
@@ -561,7 +756,16 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
         for (usize i = 0; i < self.gradients.size(); i++) {
           names[i] = stack.null_terminate_cstr(self.gradients[i].name);
         }
-        if (UI::property("Gradient", &index, names.data(), static_cast<i32>(names.size()))) {
+        if (
+          UI::property(
+            "Gradient",
+            &index,
+            names.data(),
+            static_cast<i32>(names.size()),
+            "Which gradient this node samples. Gradients are defined in the Gradients section and share the "
+            "curve lookup texture."
+          )
+        ) {
           node->index = static_cast<u32>(index);
           modified = true;
         }
@@ -569,23 +773,93 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
 
       if (node->type == ParticleNodeType::ReadParameter) {
         if (self.parameters.empty()) {
-          UI::text("Parameter", "none defined");
+          UI::text(
+            "Parameter",
+            "none defined",
+            "Add a parameter in the Parameters section before this node has anything to read."
+          );
         } else {
           auto index = static_cast<i32>(node->index);
           auto names = stack.alloc<const c8*>(self.parameters.size());
           for (usize i = 0; i < self.parameters.size(); i++) {
             names[i] = stack.null_terminate_cstr(self.parameters[i].name);
           }
-          if (UI::property("Parameter", &index, names.data(), static_cast<i32>(names.size()))) {
+          if (
+            UI::property(
+              "Parameter",
+              &index,
+              names.data(),
+              static_cast<i32>(names.size()),
+              "Which runtime parameter slot this node reads. The game writes these through "
+              "Scene::set_particle_parameter."
+            )
+          ) {
             node->index = static_cast<u32>(index);
             modified = true;
           }
         }
       }
 
+      switch (node->type) {
+        case ParticleNodeType::Interval:
+          UI::text(
+            "Fires",
+            "every Value 0 seconds",
+            "Hands back how many whole periods elapsed this frame, so a "
+            "period shorter than a frame still fires more than once."
+          );
+          break;
+        case ParticleNodeType::Once:
+          UI::text(
+            "Fires",
+            "once at Value 0 seconds",
+            "Measured from the emitter's start delay. Restarting the "
+            "emitter re-arms it."
+          );
+          break;
+        case ParticleNodeType::OnRising:
+          UI::text(
+            "Fires",
+            "when Value 0 crosses Value 1",
+            "Only on the frame the input goes from below the "
+            "threshold to at or above it, so it will not "
+            "re-fire until it drops back."
+          );
+          break;
+        case ParticleNodeType::ReadPulse:
+          UI::text(
+            "Reads",
+            "bursts queued by gameplay",
+            "Whatever scene:emit_particle_burst queued since the "
+            "last frame. Having this node anywhere in the graph "
+            "means the graph owns those bursts instead of them "
+            "spawning directly."
+          );
+          break;
+        case ParticleNodeType::ReadCycleTime:
+          UI::text(
+            "Reads",
+            "cycle position, 0 to 1",
+            "Position within the emitter's Duration. Stays at 0 when "
+            "Duration is 0."
+          );
+          break;
+        default: break;
+      }
+
       if (node->type == ParticleNodeType::Random) {
         auto stream = static_cast<i32>(node->index);
-        if (UI::property("Stream", &stream, 0, 63)) {
+        if (
+          UI::property(
+            "Stream",
+            &stream,
+            0,
+            63,
+            1.0f,
+            "Random stream index. Two Random nodes on the same stream draw identical numbers for a given "
+            "particle; different streams are independent."
+          )
+        ) {
           node->index = static_cast<u32>(std::max(stream, 0));
           modified = true;
         }
@@ -594,66 +868,139 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
     }
   }
 
-  if (ImGui::CollapsingHeader("Emitter", ImGuiTreeNodeFlags_DefaultOpen)) {
+  const auto emitter_open = ImGui::CollapsingHeader("Emitter", ImGuiTreeNodeFlags_DefaultOpen);
+  UI::tooltip_hover(
+    "How many particles are born, when, and where. Every entity using this asset shares these "
+    "settings."
+  );
+  if (emitter_open) {
     auto& settings = self.emitter_settings;
 
     UI::begin_properties();
-    modified |= UI::property("Capacity", &settings.capacity, 1_u32, 1u << 20);
-    modified |= UI::property("Spawn Rate", &settings.spawn_rate, 0.0f, 10000.0f);
-    modified |= UI::property("Duration", &settings.duration, 0.0f, 1000.0f);
-    modified |= UI::property("Start Delay", &settings.start_delay, 0.0f, 1000.0f);
-    modified |= UI::property("Looping", &settings.looping);
-    modified |= UI::property_vector("Lifetime", settings.lifetime, false, true, nullptr, 0.05f, 0.0f, 100.0f);
+    modified |= UI::property(
+      "Capacity",
+      &settings.capacity,
+      1_u32,
+      1u << 20,
+      1.0f,
+      "Maximum particles alive at once. The GPU pool is allocated at this size and spawns are dropped once it "
+      "is full."
+    );
+    modified |= UI::property(
+      "Spawn Rate",
+      &settings.spawn_rate,
+      0.0f,
+      10000.0f,
+      "Particles emitted per second while the emitter is playing. Scaled at runtime by the component's "
+      "Emission Rate Scale."
+    );
+    modified |= UI::property(
+      "Duration",
+      &settings.duration,
+      0.0f,
+      1000.0f,
+      "Length of one emission cycle in seconds. With Looping off, spawning stops once it elapses."
+    );
+    modified |= UI::property(
+      "Start Delay",
+      &settings.start_delay,
+      0.0f,
+      1000.0f,
+      "Seconds to wait after the emitter starts before the first particle spawns."
+    );
+    modified |= UI::property(
+      "Looping",
+      &settings.looping,
+      "Restart the cycle once Duration elapses, re-arming every burst."
+    );
+    modified |= UI::property_vector(
+      "Lifetime",
+      settings.lifetime,
+      false,
+      true,
+      "Minimum and maximum seconds a particle lives. Each one picks a random value in this range.",
+      0.05f,
+      0.0f,
+      100.0f
+    );
 
     static const c8* shape_names[] = {"Point", "Sphere", "Hemisphere", "Box", "Circle", "Cone"};
     auto shape = static_cast<i32>(settings.shape);
-    if (UI::property("Shape", &shape, shape_names, static_cast<i32>(std::size(shape_names)))) {
+    if (
+      UI::property(
+        "Shape",
+        &shape,
+        shape_names,
+        static_cast<i32>(std::size(shape_names)),
+        "The volume particles spawn in and the direction they start moving. Outlined in the preview when the "
+        "shape overlay is on."
+      )
+    ) {
       settings.shape = static_cast<ParticleEmissionShape>(shape);
       modified = true;
     }
-    modified |= UI::property_vector("Shape Size", settings.shape_size, false, true, nullptr, 0.05f, 0.0f, 100.0f);
-    modified |= UI::property("Cone Angle", &settings.shape_angle, 0.0f, 89.0f);
+    modified |= UI::property_vector(
+      "Shape Size",
+      settings.shape_size,
+      false,
+      true,
+      "Per-axis extent of the shape: radii for Sphere and Hemisphere, half-extents for Box, X and Z radii for "
+      "Circle. Cone uses X only, and Point ignores it entirely.",
+      0.05f,
+      0.0f,
+      100.0f
+    );
+    modified |= UI::property(
+      "Cone Angle",
+      &settings.shape_angle,
+      0.0f,
+      89.0f,
+      "Spread half-angle in degrees. Used by the Cone shape only."
+    );
 
     static const c8* space_names[] = {"World", "Local"};
     auto space = static_cast<i32>(settings.simulation_space);
-    if (UI::property("Simulation Space", &space, space_names, static_cast<i32>(std::size(space_names)))) {
+    if (
+      UI::property(
+        "Simulation Space",
+        &space,
+        space_names,
+        static_cast<i32>(std::size(space_names)),
+        "World leaves particles where they spawned, so a moving emitter trails them behind it. Local stores "
+        "them relative to the emitter, so the whole plume moves and rotates with it."
+      )
+    ) {
       settings.simulation_space = static_cast<ParticleSimulationSpace>(space);
       modified = true;
     }
-    modified |= UI::property("Seed", &settings.seed);
+    modified |= UI::property(
+      "Seed",
+      &settings.seed,
+      0_u32,
+      0_u32,
+      1.0f,
+      "Base random seed, combined with the component's own seed so two entities sharing this asset can differ."
+    );
     UI::end_properties();
-
-    ImGui::TextUnformatted("Bursts");
-    for (usize i = 0; i < settings.bursts.size(); i++) {
-      ImGui::PushID(static_cast<i32>(i));
-      UI::begin_properties();
-      modified |= UI::property("Time", &settings.bursts[i].time, 0.0f, 1000.0f);
-      modified |= UI::property("Count", &settings.bursts[i].count, 0_u32, 100000_u32);
-      modified |= UI::property("Cycles", &settings.bursts[i].cycles, 0_u32, 10000_u32);
-      modified |= UI::property("Interval", &settings.bursts[i].interval, 0.0f, 1000.0f);
-      UI::end_properties();
-      if (UI::button("Remove Burst")) {
-        settings.bursts.erase(settings.bursts.begin() + static_cast<std::ptrdiff_t>(i));
-        modified = true;
-        ImGui::PopID();
-        break;
-      }
-      ImGui::PopID();
-    }
-
-    if (UI::button("Add Burst")) {
-      settings.bursts.emplace_back();
-      modified = true;
-    }
   }
 
-  if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
+  const auto rendering_open = ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen);
+  UI::tooltip_hover("How particles are drawn once they exist. Nothing here changes the simulation.");
+  if (rendering_open) {
     auto& settings = self.render_settings;
 
     UI::begin_properties();
     static const c8* mode_names[] = {"Billboard", "Mesh"};
     auto mode = static_cast<i32>(settings.render_mode);
-    if (UI::property("Render Mode", &mode, mode_names, static_cast<i32>(std::size(mode_names)))) {
+    if (
+      UI::property(
+        "Render Mode",
+        &mode,
+        mode_names,
+        static_cast<i32>(std::size(mode_names)),
+        "Billboard draws a camera-facing quad per particle. Mesh draws the assigned model per particle."
+      )
+    ) {
       settings.render_mode = static_cast<ParticleRenderMode>(mode);
       modified = true;
     }
@@ -665,33 +1012,93 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       "Vertical Plane",
     };
     auto billboard = static_cast<i32>(settings.billboard);
-    if (UI::property("Billboard", &billboard, billboard_names, static_cast<i32>(std::size(billboard_names)))) {
+    if (
+      UI::property(
+        "Billboard",
+        &billboard,
+        billboard_names,
+        static_cast<i32>(std::size(billboard_names)),
+        "How the quad is oriented. Face Camera and Velocity Stretched are implemented; Horizontal Plane and "
+        "Vertical Plane are not wired up yet and currently render as Face Camera."
+      )
+    ) {
       settings.billboard = static_cast<ParticleBillboardMode>(billboard);
       modified = true;
     }
 
     static const c8* blend_names[] = {"Alpha Blend", "Additive"};
     auto blend = static_cast<i32>(settings.blend);
-    if (UI::property("Blend", &blend, blend_names, static_cast<i32>(std::size(blend_names)))) {
+    if (
+      UI::property(
+        "Blend",
+        &blend,
+        blend_names,
+        static_cast<i32>(std::size(blend_names)),
+        "Alpha Blend composites the particle over the scene. Additive only brightens it, which suits fire, "
+        "sparks and glows."
+      )
+    ) {
       settings.blend = static_cast<ParticleBlendMode>(blend);
       modified = true;
     }
 
-    modified |= UI::property_vector("Flipbook", settings.flipbook, false, true, nullptr, 1.0f, 1.0f, 32.0f);
-    modified |= UI::property("Soft Particle Distance", &settings.soft_particle_distance, 0.0f, 100.0f);
-    modified |= UI::property("Velocity Stretch", &settings.velocity_stretch, 0.0f, 10.0f);
-    modified |= UI::property("Restitution", &settings.restitution, 0.0f, 1.0f);
-    modified |= UI::property("Sort", &settings.sort);
-    modified |= UI::property("Depth Collision", &settings.depth_collision);
+    modified |= UI::property_vector(
+      "Flipbook",
+      settings.flipbook,
+      false,
+      true,
+      "Columns and rows of the material's sprite atlas. The frame is stepped automatically across the "
+      "particle's lifetime. 1 x 1 means a single image.",
+      1.0f,
+      1.0f,
+      32.0f
+    );
+    modified |= UI::property(
+      "Soft Particle Distance",
+      &settings.soft_particle_distance,
+      0.0f,
+      100.0f,
+      "Fade the particle out as it approaches scene geometry, over this distance in world units. 0 disables "
+      "the fade and the hard intersection edge comes back."
+    );
+    modified |= UI::property(
+      "Velocity Stretch",
+      &settings.velocity_stretch,
+      0.0f,
+      10.0f,
+      "How far to elongate the quad along its velocity. Only used by the Velocity Stretched billboard mode."
+    );
+    modified |= UI::property(
+      "Restitution",
+      &settings.restitution,
+      0.0f,
+      1.0f,
+      "Fraction of speed kept when a particle bounces. Only used when Depth Collision is on."
+    );
+    modified |= UI::property(
+      "Sort",
+      &settings.sort,
+      "Sort particles back to front so alpha blending layers correctly. Sorting is frame-wide -- turning it "
+      "on here sorts every emitter's particles, and the renderer's own particle sort setting can still "
+      "override it off."
+    );
+    modified |= UI::property(
+      "Depth Collision",
+      &settings.depth_collision,
+      "Bounce particles off scene geometry sampled from the depth buffer. Only what the camera can see is "
+      "solid, so particles pass through anything off screen or occluded."
+    );
     UI::end_properties();
 
-    const auto asset_slot = [&asset_man, &modified](const c8* label, UUID& uuid) {
+    const auto asset_slot = [&asset_man, &modified](const c8* label, UUID& uuid, const c8* tooltip) {
       auto text = uuid ? uuid.str() : std::string("None");
       const auto clear_width = ImGui::GetFrameHeight();
 
       ImGui::TextUnformatted(label);
+      UI::tooltip_hover(tooltip);
       ImGui::PushID(label);
       ImGui::Button(text.c_str(), ImVec2(-(clear_width + ImGui::GetStyle().ItemSpacing.x), 0.0f));
+      UI::tooltip_hover("Drag an asset here from the content browser to assign it.");
       if (ImGui::BeginDragDropTarget()) {
         if (const auto* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
           const auto* data = PayloadData::from_payload(payload);
@@ -721,13 +1128,23 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       ImGui::PopID();
     };
 
-    asset_slot("Material", settings.material);
+    asset_slot(
+      "Material",
+      settings.material,
+      "Material every particle of this emitter is shaded with. Its albedo texture is what the flipbook grid "
+      "indexes into."
+    );
     if (settings.render_mode == ParticleRenderMode::Mesh) {
-      asset_slot("Mesh", settings.mesh);
+      asset_slot("Mesh", settings.mesh, "Model drawn per particle. The first mesh of the model is used.");
     }
   }
 
-  if (ImGui::CollapsingHeader("Curves")) {
+  const auto curves_open = ImGui::CollapsingHeader("Curves");
+  UI::tooltip_hover(
+    "Scalar ramps a Curve node samples, usually by a particle's normalized age. Baked into one "
+    "lookup texture alongside the gradients."
+  );
+  if (curves_open) {
     const auto row_button_width = ImGui::GetFrameHeight();
 
     for (usize i = 0; i < self.curves.size(); i++) {
@@ -735,13 +1152,22 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       auto& curve = self.curves[i];
 
       UI::begin_properties();
-      modified |= UI::input_text("Name", &curve.name);
+      modified |= UI::input_text(
+        "Name",
+        &curve.name,
+        0,
+        nullptr,
+        nullptr,
+        "Name shown in the Curve node's dropdown. Only the row order reaches the GPU, so renaming is safe."
+      );
       UI::end_properties();
 
       modified |= self.draw_curve_editor(i, curve);
 
       auto removed_point = self.curves[i].points.size();
-      if (ImGui::TreeNode("Points")) {
+      const auto points_open = ImGui::TreeNode("Points");
+      UI::tooltip_hover("Exact control point values. Dragging in the plot above edits the same data.");
+      if (points_open) {
         for (usize point = 0; point < curve.points.size(); point++) {
           ImGui::PushID(static_cast<i32>(point));
           const auto field_width = (ImGui::GetContentRegionAvail().x - row_button_width -
@@ -749,6 +1175,9 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
                                    0.5f;
           ImGui::SetNextItemWidth(field_width);
           modified |= ImGui::DragFloat("##t", &curve.points[point].x, 0.01f, 0.0f, 1.0f);
+          UI::tooltip_hover(
+            "Position along the curve, 0 to 1. Whatever feeds the Curve node is clamped to this range."
+          );
           ImGui::SameLine();
           ImGui::SetNextItemWidth(field_width);
           modified |= ImGui::DragFloat(
@@ -758,6 +1187,7 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
             -PARTICLE_LITERAL_RANGE,
             PARTICLE_LITERAL_RANGE
           );
+          UI::tooltip_hover("Value the curve returns at this position.");
           ImGui::SameLine();
           if (UI::button(ICON_MDI_TRASH_CAN, ImVec2(row_button_width, 0.0f), "Remove point")) {
             removed_point = point;
@@ -765,7 +1195,7 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
           ImGui::PopID();
         }
 
-        if (UI::button("Add Point")) {
+        if (UI::button("Add Point", ImVec2(0.0f, 0.0f), "Append a control point at the end of the curve")) {
           curve.points.emplace_back(1.0f, 1.0f);
           modified = true;
         }
@@ -778,7 +1208,11 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
         modified = true;
       }
 
-      const auto remove_curve = UI::button(stack.format_char("{} Remove Curve", ICON_MDI_TRASH_CAN));
+      const auto remove_curve = UI::button(
+        stack.format_char("{} Remove Curve", ICON_MDI_TRASH_CAN),
+        ImVec2(0.0f, 0.0f),
+        "Delete this curve. Curve nodes pointing past it shift down to keep sampling the same row."
+      );
       ImGui::Separator();
       ImGui::PopID();
 
@@ -791,13 +1225,18 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       }
     }
 
-    if (UI::button("Add Curve")) {
+    if (UI::button("Add Curve", ImVec2(0.0f, 0.0f), "Add a curve a Curve node can sample over a particle's life")) {
       self.curves.emplace_back();
       modified = true;
     }
   }
 
-  if (ImGui::CollapsingHeader("Gradients")) {
+  const auto gradients_open = ImGui::CollapsingHeader("Gradients");
+  UI::tooltip_hover(
+    "Colour ramps a Gradient node samples, usually by a particle's normalized age. Share the "
+    "lookup texture with the curves."
+  );
+  if (gradients_open) {
     const auto row_button_width = ImGui::GetFrameHeight();
 
     for (usize i = 0; i < self.gradients.size(); i++) {
@@ -805,7 +1244,14 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       auto& gradient = self.gradients[i];
 
       UI::begin_properties();
-      modified |= UI::input_text("Name", &gradient.name);
+      modified |= UI::input_text(
+        "Name",
+        &gradient.name,
+        0,
+        nullptr,
+        nullptr,
+        "Name shown in the Gradient node's dropdown. Only the row order reaches the GPU, so renaming is safe."
+      );
       UI::end_properties();
 
       auto removed_key = gradient.keys.size();
@@ -816,9 +1262,11 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
                                  0.5f;
         ImGui::SetNextItemWidth(field_width);
         modified |= ImGui::DragFloat("##time", &gradient.keys[key].t, 0.01f, 0.0f, 1.0f);
+        UI::tooltip_hover("Position of this key along the gradient, 0 to 1.");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(field_width);
         modified |= ImGui::ColorEdit4("##color", glm::value_ptr(gradient.keys[key].color));
+        UI::tooltip_hover("Colour at this key. Alpha rides along to the particle, so it doubles as a fade.");
         ImGui::SameLine();
         if (UI::button(ICON_MDI_TRASH_CAN, ImVec2(row_button_width, 0.0f), "Remove key")) {
           removed_key = key;
@@ -831,12 +1279,16 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
         modified = true;
       }
 
-      if (UI::button("Add Key")) {
+      if (UI::button("Add Key", ImVec2(0.0f, 0.0f), "Append a colour key to this gradient")) {
         gradient.keys.emplace_back();
         modified = true;
       }
       ImGui::SameLine();
-      const auto remove_gradient = UI::button(stack.format_char("{} Remove Gradient", ICON_MDI_TRASH_CAN));
+      const auto remove_gradient = UI::button(
+        stack.format_char("{} Remove Gradient", ICON_MDI_TRASH_CAN),
+        ImVec2(0.0f, 0.0f),
+        "Delete this gradient. Gradient nodes pointing past it shift down to keep sampling the same row."
+      );
       ImGui::Separator();
       ImGui::PopID();
 
@@ -849,16 +1301,28 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       }
     }
 
-    if (UI::button("Add Gradient")) {
+    if (
+      UI::button(
+        "Add Gradient",
+        ImVec2(0.0f, 0.0f),
+        "Add a colour ramp a Gradient node can sample over a particle's life"
+      )
+    ) {
       self.gradients.emplace_back();
       modified = true;
     }
   }
 
-  if (ImGui::CollapsingHeader("Parameters")) {
+  const auto parameters_open = ImGui::CollapsingHeader("Parameters");
+  UI::tooltip_hover("Runtime slots gameplay can drive per entity. A Parameter node reads one by index.");
+  if (parameters_open) {
     ImGui::TextWrapped(
-      "Slots the game writes at runtime. A Parameter node reads one; the value below is what an "
+      "Slots the game writes at runtime. A Parameter node reads one, the value below is what an "
       "emitter uses until something overrides it."
+    );
+    UI::tooltip_hover(
+      "From gameplay: scene:set_particle_parameter(entity, name_or_index, value). The first write "
+      "flips the entity's Override Parameters flag and seeds the rest from these defaults."
     );
 
     for (usize i = 0; i < self.parameters.size(); i++) {
@@ -866,20 +1330,33 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       auto& parameter = self.parameters[i];
 
       UI::begin_properties();
-      modified |= UI::input_text("Name", &parameter.name);
+      modified |= UI::input_text(
+        "Name",
+        &parameter.name,
+        0,
+        nullptr,
+        nullptr,
+        "The name gameplay passes to Scene::set_particle_parameter, and what the Parameter node's dropdown "
+        "shows. The GPU only ever sees the slot index, so renaming costs nothing but breaks by-name lookups."
+      );
       modified |= UI::property_vector(
         "Default",
         parameter.default_value,
         false,
         true,
-        nullptr,
+        "Value every emitter uses until it overrides this parameter. The preview always runs on these, so "
+        "this is what you author against.",
         0.01f,
         -PARTICLE_LITERAL_RANGE,
         PARTICLE_LITERAL_RANGE
       );
       UI::end_properties();
 
-      const auto remove_parameter = UI::button(stack.format_char("{} Remove Parameter", ICON_MDI_TRASH_CAN));
+      const auto remove_parameter = UI::button(
+        stack.format_char("{} Remove Parameter", ICON_MDI_TRASH_CAN),
+        ImVec2(0.0f, 0.0f),
+        "Delete this parameter. Parameter nodes pointing past it shift down to keep reading the same slot."
+      );
       ImGui::Separator();
       ImGui::PopID();
 
@@ -892,7 +1369,14 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       }
     }
 
-    if (self.parameters.size() < GPU::PARTICLE_USER_PARAM_COUNT && UI::button("Add Parameter")) {
+    if (
+      self.parameters.size() < GPU::PARTICLE_USER_PARAM_COUNT &&
+      UI::button(
+        "Add Parameter",
+        ImVec2(0.0f, 0.0f),
+        stack.format_char("Add a runtime slot the game can drive. {} slots maximum.", GPU::PARTICLE_USER_PARAM_COUNT)
+      )
+    ) {
       self.parameters.emplace_back();
       modified = true;
     }
@@ -1086,9 +1570,57 @@ auto ParticleEditorPanel::draw_curve_editor(
     }
 
     ImPlot::EndPlot();
+    UI::tooltip_hover(
+      "Drag a control point to move it. Double-click empty space to add one, right-click a point "
+      "to delete it. The curve always keeps at least two points."
+    );
   }
 
   return modified;
+}
+
+auto ParticleEditorPanel::draw_shape_overlay(
+  this ParticleEditorPanel& self, const ImVec2 image_min, const ImVec2 image_size
+) -> void {
+  ZoneScoped;
+
+  if (
+    !self.preview_scene || !self.preview_emitter.has<TransformComponent>() || image_size.x <= 0.0f ||
+    image_size.y <= 0.0f
+  ) {
+    return;
+  }
+
+  auto clip_from_world = glm::mat4(0.0f);
+  self.preview_scene->world.query_builder<const CameraComponent>().build().each(
+    [&clip_from_world](const CameraComponent& cc) {
+      clip_from_world = cc.get_projection_matrix() * cc.get_view_matrix();
+    }
+  );
+
+  if (clip_from_world == glm::mat4(0.0f)) {
+    return;
+  }
+
+  auto* draw_list = ImGui::GetWindowDrawList();
+  draw_list->PushClipRect(image_min, ImVec2(image_min.x + image_size.x, image_min.y + image_size.y), true);
+
+  const auto gizmo = ParticleShapeGizmo{
+    .clip_from_local = clip_from_world * Scene::get_world_transform(self.preview_emitter),
+    .draw_list = draw_list,
+    .origin = image_min,
+    .size = image_size,
+    .color = ImGui::GetColorU32(ImVec4(0.30f, 0.85f, 1.0f, 0.60f)),
+  };
+
+  draw_particle_shape(
+    gizmo,
+    self.emitter_settings.shape,
+    self.emitter_settings.shape_size,
+    self.emitter_settings.shape_angle
+  );
+
+  draw_list->PopClipRect();
 }
 
 auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk::ImageAttachment& swapchain_attachment)
@@ -1182,6 +1714,10 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk
     self.preview_distance = std::clamp(self.preview_distance - ImGui::GetIO().MouseWheel * 0.5f, 0.5f, 100.0f);
   }
 
+  if (self.preview_shape_enabled) {
+    self.draw_shape_overlay(ImGui::GetItemRectMin(), image_size);
+  }
+
   if (UI::button(self.preview_playing ? ICON_MDI_PAUSE : ICON_MDI_PLAY)) {
     self.preview_playing = !self.preview_playing;
   }
@@ -1197,6 +1733,13 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
     ImGui::SetTooltip("Toggle grid");
+  }
+  ImGui::SameLine();
+  if (UI::toggle_button(ICON_MDI_SHAPE_OUTLINE, self.preview_shape_enabled)) {
+    self.preview_shape_enabled = !self.preview_shape_enabled;
+  }
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+    ImGui::SetTooltip("Toggle emission shape");
   }
   ImGui::SameLine();
   ImGui::SetNextItemWidth(120.0f);
@@ -1235,15 +1778,26 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
   }
   ImGui::SameLine();
 
+  if (ImGui::RadioButton("Emitter", self.active_kind == ParticleProgramKind::Emitter)) {
+    self.active_kind = ParticleProgramKind::Emitter;
+    self.selected_node = ParticleNodeID::Invalid;
+  }
+  UI::tooltip_hover(
+    "Runs once per emitter per frame and decides how many particles are born. This is where "
+    "bursts, intervals and rate changes live."
+  );
+  ImGui::SameLine();
   if (ImGui::RadioButton("Spawn", self.active_kind == ParticleProgramKind::Spawn)) {
     self.active_kind = ParticleProgramKind::Spawn;
     self.selected_node = ParticleNodeID::Invalid;
   }
+  UI::tooltip_hover("Runs once per particle, at birth. Sets the starting attributes.");
   ImGui::SameLine();
   if (ImGui::RadioButton("Update", self.active_kind == ParticleProgramKind::Update)) {
     self.active_kind = ParticleProgramKind::Update;
     self.selected_node = ParticleNodeID::Invalid;
   }
+  UI::tooltip_hover("Runs once per living particle, every frame.");
 
   if (!self.compile_error.empty()) {
     ImGui::SameLine();

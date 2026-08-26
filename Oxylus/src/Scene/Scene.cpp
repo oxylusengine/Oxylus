@@ -758,7 +758,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         state->pool_valid = false;
         state->time = 0.0f;
         state->spawn_accumulator = 0.0f;
-        state->burst_cycles_fired.clear();
+        state->program_state = {};
       }
 
       if (it.event() == flecs::OnAdd) {
@@ -1976,7 +1976,8 @@ auto Scene::restart_particles(this Scene& self, const flecs::entity entity) -> v
   state->playing = true;
   state->time = 0.0f;
   state->spawn_accumulator = 0.0f;
-  std::ranges::fill(state->burst_cycles_fired, 0_u32);
+  // clearing the trigger state is what re-arms Once nodes and restarts Interval accumulators
+  state->program_state = {};
 }
 
 auto Scene::is_particles_playing(this Scene& self, const flecs::entity entity) -> bool {

@@ -5,6 +5,7 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/ParticleEmitterProgram.hpp"
 #include "Core/App.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/RendererInstance.hpp"
@@ -35,6 +36,13 @@ struct ParticleAssetSnapshot {
   ParticleEmitterSettings emitter = {};
   ParticleRenderSettings render = {};
   std::array<glm::vec4, GPU::PARTICLE_USER_PARAM_COUNT> parameter_defaults = {};
+  // the emitter program runs on the CPU, so it needs the curve and gradient sources rather than the
+  // baked atlas the GPU programs sample
+  std::vector<GPU::ParticleInstruction> emitter_instructions = {};
+  std::vector<glm::vec4> emitter_constants = {};
+  std::vector<ParticleCurve> curves = {};
+  std::vector<ParticleGradient> gradients = {};
+  bool emitter_consumes_pulse = false;
   u32 instruction_offset = 0;
   u32 constant_offset = 0;
   u32 spawn_count = 0;
@@ -96,6 +104,14 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
             snapshot.curve_sampler_index = system->curve_atlas.get_sampler_index();
           }
 
+          snapshot.emitter_instructions = system->programs.emitter_instructions;
+          snapshot.emitter_constants = system->programs.emitter_constants;
+          snapshot.emitter_consumes_pulse = system->programs.emitter_consumes_pulse;
+          if (!snapshot.emitter_instructions.empty()) {
+            snapshot.curves = system->curves;
+            snapshot.gradients = system->gradients;
+          }
+
           snapshot.instruction_offset = static_cast<u32>(prepared.particle_instructions.size());
           snapshot.constant_offset = static_cast<u32>(prepared.particle_constants.size());
           prepared.particle_instructions.insert(
@@ -133,30 +149,48 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
       const auto local_time = state->time - settings.start_delay;
       if (settings.looping && settings.duration > 0.0f && local_time > settings.duration) {
         state->time -= settings.duration;
-        std::ranges::fill(state->burst_cycles_fired, 0_u32);
+      }
+
+      auto user_params = std::array<glm::vec4, GPU::PARTICLE_USER_PARAM_COUNT>{};
+      for (auto i = 0_u32; i < GPU::PARTICLE_USER_PARAM_COUNT; i++) {
+        user_params[i] = component.override_parameters ? component.parameter(i) : snapshot.parameter_defaults[i];
       }
 
       auto spawn_count = 0_u32;
       const auto within_duration = settings.looping || local_time <= settings.duration;
       if (state->playing && local_time >= 0.0f && within_duration) {
-        state->spawn_accumulator += settings.spawn_rate * std::max(component.emission_rate_scale, 0.0f) * step;
+        const auto cycle_time = settings.duration > 0.0f ? std::clamp(local_time / settings.duration, 0.0f, 1.0f)
+                                                         : 0.0f;
+
+        const auto emitted = run_particle_emitter_program(
+          snapshot.emitter_instructions,
+          snapshot.emitter_constants,
+          ParticleEmitterProgramInput{
+            .time = std::max(local_time, 0.0f),
+            .cycle_time = cycle_time,
+            .delta_time = step,
+            .pulse = static_cast<f32>(state->pending_burst),
+            .spawn_rate = settings.spawn_rate,
+            .seed = settings.seed ^ component.seed ^ static_cast<u32>(state->time * 1000.0f),
+            .user_params = user_params,
+            .curves = snapshot.curves,
+            .gradients = snapshot.gradients,
+          },
+          state->program_state
+        );
+
+        state->spawn_accumulator += emitted.spawn_rate * std::max(component.emission_rate_scale, 0.0f) * step;
         spawn_count = static_cast<u32>(state->spawn_accumulator);
         state->spawn_accumulator -= static_cast<f32>(spawn_count);
-
-        state->burst_cycles_fired.resize(settings.bursts.size(), 0_u32);
-        for (usize i = 0; i < settings.bursts.size(); i++) {
-          const auto& burst = settings.bursts[i];
-          auto fired = state->burst_cycles_fired[i];
-          while (fired < burst.cycles && local_time >= burst.time + static_cast<f32>(fired) * burst.interval) {
-            spawn_count += burst.count;
-            fired += 1;
-          }
-          state->burst_cycles_fired[i] = fired;
-        }
+        spawn_count += static_cast<u32>(emitted.spawn + 0.5f);
       }
 
-      // an explicit burst from gameplay fires whether or not the emitter is playing
-      spawn_count += std::exchange(state->pending_burst, 0_u32);
+      // a graph holding a Pulse node has already seen the queued bursts and decided what they mean;
+      // without one they land directly, and fire whether or not the emitter is playing
+      if (!snapshot.emitter_consumes_pulse) {
+        spawn_count += state->pending_burst;
+      }
+      state->pending_burst = 0;
       spawn_count = std::min(spawn_count, capacity);
 
       auto material_index = 0_u32;
@@ -265,10 +299,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         .velocity_offset = glm::vec4(component.velocity_offset, 0.0f),
       };
 
-      for (auto i = 0_u32; i < GPU::PARTICLE_USER_PARAM_COUNT; i++) {
-        gpu_emitter.user_params[i] = component.override_parameters ? component.parameter(i)
-                                                                   : snapshot.parameter_defaults[i];
-      }
+      gpu_emitter.user_params = user_params;
 
       prepared.particle_total_spawn += spawn_count;
       prepared.particle_sort_enabled = prepared.particle_sort_enabled || snapshot.render.sort;

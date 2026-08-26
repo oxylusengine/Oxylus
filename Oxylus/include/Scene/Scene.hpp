@@ -135,10 +135,13 @@ public:
   auto particle_emitter_state(this Scene& self, flecs::entity entity) -> ParticleEmitterState*;
   auto play_particles(this Scene& self, flecs::entity entity) -> void;
   auto stop_particles(this Scene& self, flecs::entity entity) -> void;
-  // Rewinds emitter time so bursts and the duration window fire again. Live particles are untouched.
+  // Rewinds emitter time and clears trigger state, so Once nodes and the duration window fire again.
+  // Live particles are untouched.
   auto restart_particles(this Scene& self, flecs::entity entity) -> void;
   auto is_particles_playing(this Scene& self, flecs::entity entity) -> bool;
-  // Queues an extra spawn for the next frame, whether or not the emitter is playing.
+  // Queues an extra spawn for the next frame. An emitter graph holding a Pulse node receives the
+  // count and decides what it means; without one the particles are spawned directly, whether or not
+  // the emitter is playing.
   auto emit_particle_burst(this Scene& self, flecs::entity entity, u32 count) -> void;
   auto set_particle_parameter(this Scene& self, flecs::entity entity, u32 index, const glm::vec4& value) -> void;
   // Resolves the name against the asset's parameter list. Returns false when no such parameter exists.

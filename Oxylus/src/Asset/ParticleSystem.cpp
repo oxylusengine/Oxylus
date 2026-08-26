@@ -278,7 +278,7 @@ auto ParticleSystem::make_default() -> ParticleSystem {
 auto ParticleSystem::recompile(this ParticleSystem& self) -> void {
   ZoneScoped;
 
-  auto compiled = compile_particle_graphs(self.spawn_graph, self.update_graph);
+  auto compiled = compile_particle_graphs(self.emitter_graph, self.spawn_graph, self.update_graph);
   if (compiled) {
     self.programs = std::move(compiled.value());
     self.compile_error.clear();
@@ -384,16 +384,6 @@ auto ParticleSystem::write(this const ParticleSystem& self, const std::filesyste
   writer["shape_angle"] = self.emitter.shape_angle;
   writer["simulation_space"] = std::to_underlying(self.emitter.simulation_space);
   writer["seed"] = self.emitter.seed;
-  writer["bursts"].begin_array();
-  for (const auto& burst : self.emitter.bursts) {
-    writer.begin_obj();
-    writer["time"] = burst.time;
-    writer["count"] = burst.count;
-    writer["cycles"] = burst.cycles;
-    writer["interval"] = burst.interval;
-    writer.end_obj();
-  }
-  writer.end_array();
   writer.end_obj();
 
   writer["render"].begin_obj();
@@ -448,6 +438,8 @@ auto ParticleSystem::write(this const ParticleSystem& self, const std::filesyste
   }
   writer.end_array();
 
+  writer["emitter_graph"];
+  write_particle_graph(writer, self.emitter_graph);
   writer["spawn_graph"];
   write_particle_graph(writer, self.spawn_graph);
   writer["update_graph"];
@@ -498,17 +490,6 @@ auto ParticleSystem::read(const std::filesystem::path& path) -> option<ParticleS
     read_json_f32(value, "shape_angle", system.emitter.shape_angle);
     read_json_enum(value, "simulation_space", system.emitter.simulation_space);
     read_json_u32(value, "seed", system.emitter.seed);
-
-    if (auto bursts_json = value["bursts"]; !bursts_json.error()) {
-      for (auto burst_json : bursts_json.get_array()) {
-        auto burst = ParticleBurst{};
-        read_json_f32(burst_json.value_unsafe(), "time", burst.time);
-        read_json_u32(burst_json.value_unsafe(), "count", burst.count);
-        read_json_u32(burst_json.value_unsafe(), "cycles", burst.cycles);
-        read_json_f32(burst_json.value_unsafe(), "interval", burst.interval);
-        system.emitter.bursts.push_back(burst);
-      }
-    }
   }
 
   if (auto render_json = doc["render"]; !render_json.error()) {
@@ -577,6 +558,10 @@ auto ParticleSystem::read(const std::filesystem::path& path) -> option<ParticleS
       read_json_vec(parameter_json.value_unsafe(), "default", parameter.default_value);
       system.parameters.emplace_back(std::move(parameter));
     }
+  }
+
+  if (auto graph_json = doc["emitter_graph"]; !graph_json.error()) {
+    read_particle_graph(graph_json.value_unsafe(), system.emitter_graph);
   }
 
   if (auto graph_json = doc["spawn_graph"]; !graph_json.error()) {

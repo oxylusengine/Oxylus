@@ -53,6 +53,9 @@ public enum ParticleOpCode : u32 {
     Time,
     AgeNorm,
     Param,
+    // CPU-only, never emitted into a GPU program. Listed so the numbering matches SceneGPU.hpp.
+    LoadState,
+    StoreState,
 };
 
 public enum ParticleOperandKind : u32 {
