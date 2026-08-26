@@ -770,7 +770,7 @@ auto compile_particle_graphs(
   result.constants.insert(result.constants.end(), update->constants.begin(), update->constants.end());
   result.update_count = static_cast<u32>(result.instructions.size()) - result.update_offset;
 
-  // the emitter program stays in its own pool -- it never reaches the GPU, so there is no reason to
+  // the emitter program stays in its own pool. it never reaches the GPU, so there is no reason to
   // upload it or to rebase its constants against the particle programs'
   result.emitter_instructions = std::move(emitter->instructions);
   result.emitter_constants = std::move(emitter->constants);

@@ -293,7 +293,7 @@ auto ParticleSystem::recompile(this ParticleSystem& self) -> void {
     return;
   }
 
-  // Sampling walks the control points in order, so the bake works off sorted copies -- the authored
+  // Sampling walks the control points in order, so the bake works off sorted copies. The authored
   // order stays as the editor left it, and dragging a point past its neighbour cannot corrupt it.
   auto curves = self.curves;
   for (auto& curve : curves) {

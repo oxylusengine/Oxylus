@@ -7,6 +7,7 @@
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui-node-editor/imgui_node_editor.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <implot.h>
 #include <vuk/vsl/Core.hpp>
 
@@ -29,8 +30,13 @@ constexpr static u64 PARTICLE_PINS_PER_NODE = 64;
 constexpr static f32 PARTICLE_LITERAL_RANGE = 1.0e6f;
 constexpr static f32 PARTICLE_PREVIEW_GRID_DISTANCE = 200.0f;
 
-constexpr static f32 PARTICLE_PREVIEW_CONE_HEIGHT = 1.5f;
 constexpr static u32 PARTICLE_PREVIEW_RING_SEGMENTS = 48;
+
+constexpr static ParticleProgramKind PARTICLE_PROGRAM_KINDS[] = {
+  ParticleProgramKind::Emitter,
+  ParticleProgramKind::Spawn,
+  ParticleProgramKind::Update,
+};
 
 // Projects emitter-local line segments onto the preview image. The shapes mirror
 // particle_emission_point in particles.slang, so what is drawn is what the emit shader samples.
@@ -144,20 +150,17 @@ auto draw_particle_shape(
       gizmo.ring({}, x, z);
     } break;
     case ParticleEmissionShape::Cone: {
-      // the shader spreads outwards from a disc of radius shape_size.x, so a particle starting at
-      // radius r sits at r * (1 + height * tan(angle)) once it has risen that far
       const auto spread = std::tan(glm::radians(std::clamp(shape_angle, 0.0f, 89.0f)));
-      const auto top = glm::vec3(shape_size.x * (1.0f + PARTICLE_PREVIEW_CONE_HEIGHT * spread), 0.0f, 0.0f);
-      const auto top_center = glm::vec3(0.0f, PARTICLE_PREVIEW_CONE_HEIGHT, 0.0f);
-      const auto base_radius = glm::vec3(shape_size.x, 0.0f, 0.0f);
+      const auto top_radius = shape_size.x + shape_size.y * spread;
+      const auto top_center = glm::vec3(0.0f, shape_size.y, 0.0f);
 
-      gizmo.ring({}, base_radius, {0.0f, 0.0f, shape_size.x});
-      gizmo.ring(top_center, top, {0.0f, 0.0f, top.x});
+      gizmo.ring({}, {shape_size.x, 0.0f, 0.0f}, {0.0f, 0.0f, shape_size.x});
+      gizmo.ring(top_center, {top_radius, 0.0f, 0.0f}, {0.0f, 0.0f, top_radius});
 
       for (auto i = 0_u32; i < 4; i++) {
         const auto angle = glm::half_pi<f32>() * static_cast<f32>(i);
         const auto direction = glm::vec3(std::cos(angle), 0.0f, std::sin(angle));
-        gizmo.line(direction * shape_size.x, top_center + direction * top.x);
+        gizmo.line(direction * shape_size.x, top_center + direction * top_radius);
       }
     } break;
     default: break;
@@ -238,25 +241,52 @@ auto particle_pin_is_output(const u64 pin_id) -> bool {
   return particle_pin_slot(pin_id) == PARTICLE_PINS_PER_NODE - 1;
 }
 
+auto particle_kind_index(const ParticleProgramKind kind) -> usize {
+  return static_cast<usize>(std::to_underlying(kind));
+}
+
+// the id after ### is what imgui stores the dock position under, so it has to stay put
+auto particle_kind_window_id(const ParticleProgramKind kind) -> const c8* {
+  switch (kind) {
+    case ParticleProgramKind::Emitter: return ICON_MDI_FOUNTAIN " Emitter###particle_graph_emitter";
+    case ParticleProgramKind::Update : return ICON_MDI_AUTORENEW " Update###particle_graph_update";
+    default                          : return ICON_MDI_CREATION " Spawn###particle_graph_spawn";
+  }
+}
+
+auto particle_kind_summary(const ParticleProgramKind kind) -> const c8* {
+  switch (kind) {
+    case ParticleProgramKind::Emitter: return "Decides how many particles to spawn this frame.";
+    case ParticleProgramKind::Update : return "Moves and ages every particle that is alive.";
+    default                          : return "Gives a new particle its starting look and motion.";
+  }
+}
+
+auto particle_kind_description(const ParticleProgramKind kind) -> const c8* {
+  switch (kind) {
+    case ParticleProgramKind::Emitter:
+      return "Runs once per emitter per frame and decides how many particles are born. This is where "
+             "bursts, intervals and rate changes live.";
+    case ParticleProgramKind::Update: return "Runs once per living particle, every frame.";
+    default                         : return "Runs once per particle, at birth. Sets the starting attributes.";
+  }
+}
+
 ParticleEditorPanel::ParticleEditorPanel() : EditorPanelState("Particle Editor", ICON_MDI_SHIMMER, false) {
   this->window_default_size = {1280, 720};
 
   auto config = ed::Config{};
   config.SettingsFile = nullptr;
-  emitter_context = ed::CreateEditor(&config);
-  spawn_context = ed::CreateEditor(&config);
-  update_context = ed::CreateEditor(&config);
+  for (auto& context : graph_contexts) {
+    context = ed::CreateEditor(&config);
+  }
 }
 
 ParticleEditorPanel::~ParticleEditorPanel() {
-  if (emitter_context) {
-    ed::DestroyEditor(emitter_context);
-  }
-  if (spawn_context) {
-    ed::DestroyEditor(spawn_context);
-  }
-  if (update_context) {
-    ed::DestroyEditor(update_context);
+  for (auto* context : graph_contexts) {
+    if (context) {
+      ed::DestroyEditor(context);
+    }
   }
 
   if (preview_scene && preview_asset) {
@@ -266,7 +296,11 @@ ParticleEditorPanel::~ParticleEditorPanel() {
 }
 
 auto ParticleEditorPanel::active_graph(this ParticleEditorPanel& self) -> ParticleGraph& {
-  switch (self.active_kind) {
+  return self.graph_for(self.active_kind);
+}
+
+auto ParticleEditorPanel::graph_for(this ParticleEditorPanel& self, const ParticleProgramKind kind) -> ParticleGraph& {
+  switch (kind) {
     case ParticleProgramKind::Emitter: return self.emitter_graph;
     case ParticleProgramKind::Update : return self.update_graph;
     default                          : return self.spawn_graph;
@@ -302,9 +336,7 @@ auto ParticleEditorPanel::open_asset(this ParticleEditorPanel& self, const UUID&
 
   self.asset_uuid = uuid;
   self.selected_node = ParticleNodeID::Invalid;
-  self.emitter_positions_applied = false;
-  self.spawn_positions_applied = false;
-  self.update_positions_applied = false;
+  self.graph_positions_applied = {};
   self.visible = true;
 
   self.sync_preview_asset();
@@ -403,27 +435,19 @@ auto ParticleEditorPanel::on_update(this ParticleEditorPanel& self) -> void {
   // The preview scene ticks in `draw_preview`, immediately before its render.
 }
 
-auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self) -> void {
+auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self, const ParticleProgramKind kind) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 
-  // the canvas context and its one-shot position flag have to be picked together -- selecting them
-  // separately is how the update graph ended up consuming the emitter graph's flag
-  auto* context = self.spawn_context;
-  auto* positions_applied = &self.spawn_positions_applied;
-  switch (self.active_kind) {
-    case ParticleProgramKind::Emitter: {
-      context = self.emitter_context;
-      positions_applied = &self.emitter_positions_applied;
-    } break;
-    case ParticleProgramKind::Update: {
-      context = self.update_context;
-      positions_applied = &self.update_positions_applied;
-    } break;
-    default: break;
-  }
+  const auto index = particle_kind_index(kind);
+  auto* context = self.graph_contexts[index];
+  auto* positions_applied = &self.graph_positions_applied[index];
+  auto& graph = self.graph_for(kind);
 
-  auto& graph = self.active_graph();
+  // several graphs can be on screen at once, so the inspector follows whichever one has focus
+  if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+    self.active_kind = kind;
+  }
 
   ed::SetCurrentEditor(context);
   ed::Begin("particle_graph_canvas");
@@ -463,7 +487,11 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self) -> void {
       const auto node_min = ImGui::GetItemRectMin();
       const auto node_max = ImGui::GetItemRectMax();
       const auto& style = ed::GetStyle();
-      const auto inset = style.NodeBorderWidth * 0.5f;
+      // the node border is stroked half a pixel inside the bounds and centered on that path, so its
+      // inner edge is here. the header sits on a channel above the border and would paint over it
+      const auto inset = style.NodeBorderWidth * 0.5f + 0.5f;
+      // same arc centers as the border, one inset smaller, so the corners nest instead of bulging out
+      const auto rounding = std::max(style.NodeRounding - inset, 0.0f);
 
       if (auto* background = ed::GetNodeBackgroundDrawList(node_id)) {
         draw_particle_node_header(
@@ -471,7 +499,7 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self) -> void {
           {node_min.x + inset, node_min.y + inset},
           {node_max.x - inset, header_bottom + style.NodePadding.y * 0.5f},
           particle_node_header_color(desc.category),
-          style.NodeRounding
+          rounding
         );
       }
     }
@@ -543,10 +571,16 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self) -> void {
     }
   }
 
-  if (const auto selected_count = ed::GetSelectedObjectCount(); selected_count > 0) {
-    auto selected = std::vector<ed::NodeId>(static_cast<usize>(selected_count));
-    const auto count = ed::GetSelectedNodes(selected.data(), selected_count);
-    self.selected_node = count > 0 ? static_cast<ParticleNodeID>(selected[0].Get() - 1) : ParticleNodeID::Invalid;
+  // node ids are graph-local, so a stale id from another graph would resolve to the wrong node here
+  if (self.active_kind == kind) {
+    auto picked = ParticleNodeID::Invalid;
+    if (const auto selected_count = ed::GetSelectedObjectCount(); selected_count > 0) {
+      const auto selected = stack.alloc<ed::NodeId>(static_cast<usize>(selected_count));
+      if (ed::GetSelectedNodes(selected.data(), selected_count) > 0) {
+        picked = static_cast<ParticleNodeID>(selected[0].Get() - 1);
+      }
+    }
+    self.selected_node = picked;
   }
 
   ed::Suspend();
@@ -627,7 +661,7 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self) -> void {
       const auto has_any = [&] {
         for (auto type = 0_u32; type < static_cast<u32>(ParticleNodeType::Count); type++) {
           const auto& desc = particle_node_desc(static_cast<ParticleNodeType>(type));
-          if (desc.category == category && particle_kind_allows(desc.kinds, self.active_kind)) {
+          if (desc.category == category && particle_kind_allows(desc.kinds, kind)) {
             return true;
           }
         }
@@ -644,7 +678,7 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self) -> void {
 
       for (auto type = 0_u32; type < static_cast<u32>(ParticleNodeType::Count); type++) {
         const auto& desc = particle_node_desc(static_cast<ParticleNodeType>(type));
-        if (desc.category != category || !particle_kind_allows(desc.kinds, self.active_kind)) {
+        if (desc.category != category || !particle_kind_allows(desc.kinds, kind)) {
           continue;
         }
 
@@ -694,8 +728,8 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       ImGui::TextUnformatted(desc.name.data(), desc.name.data() + desc.name.size());
       UI::tooltip_hover(stack.format_char("{} node.", desc.category));
 
-      // An output node with nothing plugged in still writes -- and writes its literal, every frame,
-      // over whatever the spawn program set. Worth saying out loud.
+      // An output node with nothing plugged in still writes. Every frame it puts its literal over
+      // whatever the spawn program set. Worth saying out loud.
       if (is_particle_output_node(node->type)) {
         const auto connected = std::ranges::any_of(graph.links, [node](const ParticleLink& link) {
           return link.to_node == node->id && link.to_pin == 0;
@@ -945,7 +979,7 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       false,
       true,
       "Per-axis extent of the shape: radii for Sphere and Hemisphere, half-extents for Box, X and Z radii for "
-      "Circle. Cone uses X only, and Point ignores it entirely.",
+      "Circle. Cone uses X as the base radius and Y as the height it fills, and Point ignores it entirely.",
       0.05f,
       0.0f,
       100.0f
@@ -955,7 +989,8 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       &settings.shape_angle,
       0.0f,
       89.0f,
-      "Spread half-angle in degrees. Used by the Cone shape only."
+      "Half-angle in degrees the cone widens by over its height, and the angle particles fly out at. Used by "
+      "the Cone shape only."
     );
 
     static const c8* space_names[] = {"World", "Local"};
@@ -1018,8 +1053,8 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
         &billboard,
         billboard_names,
         static_cast<i32>(std::size(billboard_names)),
-        "How the quad is oriented. Face Camera and Velocity Stretched are implemented; Horizontal Plane and "
-        "Vertical Plane are not wired up yet and currently render as Face Camera."
+        "Which way each quad faces: at the camera, leaning along its own motion, flat on the ground, or "
+        "standing upright and turning to follow the camera."
       )
     ) {
       settings.billboard = static_cast<ParticleBillboardMode>(billboard);
@@ -1078,8 +1113,8 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
     modified |= UI::property(
       "Sort",
       &settings.sort,
-      "Sort particles back to front so alpha blending layers correctly. Sorting is frame-wide -- turning it "
-      "on here sorts every emitter's particles, and the renderer's own particle sort setting can still "
+      "Sort particles back to front so alpha blending layers correctly. Sorting is frame-wide, so turning "
+      "it on here sorts every emitter's particles. The renderer's own particle sort setting can still "
       "override it off."
     );
     modified |= UI::property(
@@ -1671,7 +1706,7 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk
   }
 
   // Pause and speed ride on the component the emitter tick already reads, so the scene still gets a
-  // full update every frame -- `RendererInstance::render` asserts that `update` ran this frame.
+  // full update every frame. `RendererInstance::render` asserts that `update` ran this frame.
   if (self.preview_emitter.has<ParticleSystemComponent>()) {
     self.preview_emitter.get_mut<ParticleSystemComponent>().simulation_speed = self.preview_playing ? self.preview_speed
                                                                                                     : 0.0f;
@@ -1776,28 +1811,6 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
   if (UI::button(ICON_MDI_CONTENT_SAVE " Save") && !self.asset_path.empty()) {
     App::mod<AssetManager>().export_asset(self.asset_uuid, self.asset_path);
   }
-  ImGui::SameLine();
-
-  if (ImGui::RadioButton("Emitter", self.active_kind == ParticleProgramKind::Emitter)) {
-    self.active_kind = ParticleProgramKind::Emitter;
-    self.selected_node = ParticleNodeID::Invalid;
-  }
-  UI::tooltip_hover(
-    "Runs once per emitter per frame and decides how many particles are born. This is where "
-    "bursts, intervals and rate changes live."
-  );
-  ImGui::SameLine();
-  if (ImGui::RadioButton("Spawn", self.active_kind == ParticleProgramKind::Spawn)) {
-    self.active_kind = ParticleProgramKind::Spawn;
-    self.selected_node = ParticleNodeID::Invalid;
-  }
-  UI::tooltip_hover("Runs once per particle, at birth. Sets the starting attributes.");
-  ImGui::SameLine();
-  if (ImGui::RadioButton("Update", self.active_kind == ParticleProgramKind::Update)) {
-    self.active_kind = ParticleProgramKind::Update;
-    self.selected_node = ParticleNodeID::Invalid;
-  }
-  UI::tooltip_hover("Runs once per living particle, every frame.");
 
   if (!self.compile_error.empty()) {
     ImGui::SameLine();
@@ -1835,9 +1848,22 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
     canvas_width = std::max(region.x - self.inspector_width - self.preview_width - splitter_width * 2.0f, 1.0f);
   }
 
-  ImGui::BeginChild("particle_canvas", ImVec2(canvas_width, 0.0f), ImGuiChildFlags_Borders);
-  self.draw_canvas();
-  ImGui::EndChild();
+  // the graphs are windows docked into this space rather than tab items, so a tab can be dragged out
+  // and two programs edited side by side
+  const auto dockspace_id = ImGui::GetID("particle_graph_dockspace");
+  if (!self.graph_dock_built) {
+    self.graph_dock_built = true;
+    // a node restored from imgui.ini already carries the artist's layout
+    if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr) {
+      ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+      ImGui::DockBuilderSetNodeSize(dockspace_id, ImVec2(canvas_width, std::max(region.y, 1.0f)));
+      for (const auto kind : PARTICLE_PROGRAM_KINDS) {
+        ImGui::DockBuilderDockWindow(particle_kind_window_id(kind), dockspace_id);
+      }
+      ImGui::DockBuilderFinish(dockspace_id);
+    }
+  }
+  ImGui::DockSpace(dockspace_id, ImVec2(canvas_width, 0.0f));
 
   drag_splitter("##canvas_splitter", self.preview_width);
   ImGui::BeginChild(
@@ -1855,5 +1881,16 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
   ImGui::EndChild();
 
   self.on_end();
+
+  // submitted after the host window: imgui undocks a window that begins before the node it lives in
+  for (const auto kind : PARTICLE_PROGRAM_KINDS) {
+    constexpr auto window_flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+    if (ImGui::Begin(particle_kind_window_id(kind), nullptr, window_flags)) {
+      ImGui::TextDisabled("%s %s", ICON_MDI_INFORMATION_OUTLINE, particle_kind_summary(kind));
+      UI::tooltip_hover(particle_kind_description(kind));
+      self.draw_canvas(kind);
+    }
+    ImGui::End();
+  }
 }
 } // namespace ox

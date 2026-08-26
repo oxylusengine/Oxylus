@@ -72,6 +72,8 @@ public enum ParticleEmitterFlags : u32 {
     SoftParticles,
     DepthCollision,
     MeshRenderer,
+    HorizontalPlane,
+    VerticalPlane,
 };
 
 public enum ParticleShape : u32 {
@@ -413,11 +415,13 @@ public func particle_emission_point(in ParticleEmitter emitter, u32 rng, out f32
         } break;
         case ParticleShape.Cone: {
             let theta = r.x * TAU;
-            let radius = sqrt(max(r.y, 0.0));
-            let angle = radians(emitter.shape_params.w);
-            let spread = tan(angle);
-            local = f32x3(cos(theta), 0.0, sin(theta)) * emitter.shape_params.x * radius;
-            direction = normalize(f32x3(local.x * spread, 1.0, local.z * spread));
+            // normalized radius, so the spread is the authored angle no matter how big the cone is
+            let unit_radius = sqrt(max(r.y, 0.0));
+            let spread = tan(radians(clamp(emitter.shape_params.w, 0.0, 89.0)));
+            let ring = f32x3(cos(theta), 0.0, sin(theta));
+            let height = emitter.shape_params.y * r.z;
+            local = ring * (emitter.shape_params.x + height * spread) * unit_radius + f32x3(0.0, height, 0.0);
+            direction = normalize(f32x3(0.0, 1.0, 0.0) + ring * spread * unit_radius);
         } break;
         default: {
             local = f32x3(0.0);

@@ -210,8 +210,11 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
       if (snapshot.render.blend == ParticleBlendMode::Additive) {
         flags |= GPU::ParticleEmitterFlags::Additive;
       }
-      if (snapshot.render.billboard == ParticleBillboardMode::VelocityStretched) {
-        flags |= GPU::ParticleEmitterFlags::VelocityStretched;
+      switch (snapshot.render.billboard) {
+        case ParticleBillboardMode::VelocityStretched: flags |= GPU::ParticleEmitterFlags::VelocityStretched; break;
+        case ParticleBillboardMode::HorizontalPlane  : flags |= GPU::ParticleEmitterFlags::HorizontalPlane; break;
+        case ParticleBillboardMode::VerticalPlane    : flags |= GPU::ParticleEmitterFlags::VerticalPlane; break;
+        default                                      : break;
       }
       if (snapshot.render.soft_particle_distance > 0.0f) {
         flags |= GPU::ParticleEmitterFlags::SoftParticles;
@@ -253,8 +256,8 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
 
       const auto world = Scene::get_world_transform(entity);
 
-      // spawn direction has to follow the *world* orientation -- an exhaust emitter parented to a
-      // car inherits the car's rotation, which the entity's local rotation knows nothing about
+      // spawn direction has to follow the *world* orientation. an exhaust emitter parented to a car
+      // inherits the car's rotation, which the entity's local rotation knows nothing about
       auto basis = glm::mat3(world);
       for (auto axis = 0; axis < 3; axis++) {
         const auto axis_length = glm::length(basis[axis]);

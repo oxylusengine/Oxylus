@@ -62,6 +62,10 @@ func vs_main(u32 vertex_id : SV_VertexID, u32 instance_id : SV_InstanceID) -> VO
         center = mul(emitter.transform, f32x4(center, 1.0)).xyz;
     }
 
+    const f32x3 world_up = f32x3(0.0, 1.0, 0.0);
+    let c = cos(particle.rotation);
+    let s = sin(particle.rotation);
+
     f32x3 axis_x;
     f32x3 axis_y;
     if (HAS_FLAG(emitter.flags, ParticleEmitterFlags.VelocityStretched)) {
@@ -74,9 +78,17 @@ func vs_main(u32 vertex_id : SV_VertexID, u32 instance_id : SV_InstanceID) -> VO
         axis_y = speed > 1e-4 ? velocity / speed : camera.up;
         axis_x = normalize(cross(axis_y, camera.forward) + f32x3(1e-6));
         axis_y *= 1.0 + speed * emitter.velocity_stretch;
+    } else if (HAS_FLAG(emitter.flags, ParticleEmitterFlags.HorizontalPlane)) {
+        axis_x = f32x3(c, 0.0, -s);
+        axis_y = f32x3(s, 0.0, c);
+    } else if (HAS_FLAG(emitter.flags, ParticleEmitterFlags.VerticalPlane)) {
+        // rotation is dropped here on purpose: spinning the quad would tip it off the up axis, which
+        // is the one thing this mode promises
+        let side = cross(world_up, camera.position.xyz - center);
+        let side_length = length(side);
+        axis_x = side_length > 1e-4 ? side / side_length : camera.right;
+        axis_y = world_up;
     } else {
-        let c = cos(particle.rotation);
-        let s = sin(particle.rotation);
         axis_x = camera.right * c + camera.up * s;
         axis_y = camera.up * c - camera.right * s;
     }

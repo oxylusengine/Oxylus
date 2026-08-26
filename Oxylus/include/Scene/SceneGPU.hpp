@@ -769,6 +769,8 @@ enum class ParticleEmitterFlags : u32 {
   SoftParticles = 1 << 3,
   DepthCollision = 1 << 4,
   MeshRenderer = 1 << 5,
+  HorizontalPlane = 1 << 6,
+  VerticalPlane = 1 << 7,
 };
 consteval void enable_bitmask(ParticleEmitterFlags);
 

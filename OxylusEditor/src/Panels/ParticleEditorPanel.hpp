@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <imgui.h>
 #include <memory>
 
@@ -12,6 +13,8 @@ struct EditorContext;
 }
 
 namespace ox {
+constexpr static usize PARTICLE_PROGRAM_KIND_COUNT = 3;
+
 class ParticleEditorPanel : public EditorPanelState {
 public:
   ParticleEditorPanel();
@@ -26,8 +29,9 @@ public:
 
 private:
   auto active_graph(this ParticleEditorPanel& self) -> ParticleGraph&;
+  auto graph_for(this ParticleEditorPanel& self, ParticleProgramKind kind) -> ParticleGraph&;
   auto commit(this ParticleEditorPanel& self, bool recompile = true) -> void;
-  auto draw_canvas(this ParticleEditorPanel& self) -> void;
+  auto draw_canvas(this ParticleEditorPanel& self, ParticleProgramKind kind) -> void;
   auto draw_inspector(this ParticleEditorPanel& self) -> void;
   // Plots one curve and lets its control points be dragged. Returns true when the curve changed.
   auto draw_curve_editor(this ParticleEditorPanel& self, usize curve_index, ParticleCurve& curve) -> bool;
@@ -50,7 +54,8 @@ private:
   std::vector<ParticleParameter> parameters = {};
   std::string compile_error = {};
 
-  ParticleProgramKind active_kind = ParticleProgramKind::Spawn;
+  // matches the first docked tab, so the inspector agrees with what is on screen before any click
+  ParticleProgramKind active_kind = ParticleProgramKind::Emitter;
   ParticleNodeID selected_node = ParticleNodeID::Invalid;
   // Held across frames: the popup opens on one frame and is clicked on a later one.
   ParticleNodeID context_node = ParticleNodeID::Invalid;
@@ -63,12 +68,11 @@ private:
   f32 inspector_width = 360.0f;
   f32 preview_width = 380.0f;
 
-  ax::NodeEditor::EditorContext* emitter_context = nullptr;
-  ax::NodeEditor::EditorContext* spawn_context = nullptr;
-  ax::NodeEditor::EditorContext* update_context = nullptr;
-  bool emitter_positions_applied = false;
-  bool spawn_positions_applied = false;
-  bool update_positions_applied = false;
+  // indexed by ParticleProgramKind, so a graph and its one-shot position flag can never be picked
+  // from different programs
+  std::array<ax::NodeEditor::EditorContext*, PARTICLE_PROGRAM_KIND_COUNT> graph_contexts = {};
+  std::array<bool, PARTICLE_PROGRAM_KIND_COUNT> graph_positions_applied = {};
+  bool graph_dock_built = false;
 
   std::unique_ptr<Scene> preview_scene = nullptr;
   flecs::entity preview_emitter = {};
