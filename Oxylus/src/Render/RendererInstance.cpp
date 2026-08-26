@@ -378,6 +378,8 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
     sky_multiscatter_lut.discard("sky_multiscatter_lut_init"),
     vuk::Black<f32>
   );
+  transmittance_lut_attachment = std::move(transmittance_lut_attachment).as_released(vuk::eFragmentSampled);
+  multiscatter_lut_attachment = std::move(multiscatter_lut_attachment).as_released(vuk::eFragmentSampled);
   render_context.wait_on(std::move(transmittance_lut_attachment));
   render_context.wait_on(std::move(multiscatter_lut_attachment));
 
