@@ -12,6 +12,7 @@
 #include <simdjson.h>
 
 #include "Asset/Model.hpp"
+#include "Asset/ParticleSystem.hpp"
 #include "Core/UUID.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Render/DebugRenderer.hpp"
@@ -83,6 +84,9 @@ public:
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};
 
+  SlotMap<ParticleEmitterState, ParticleEmitterID> particle_emitters = {};
+  ankerl::unordered_dense::map<flecs::entity, ParticleEmitterID> entity_particle_emitters_map = {};
+
   std::unique_ptr<Terrain> terrain = nullptr;
   flecs::entity terrain_entity = {};
   bool terrain_dirty = false;
@@ -105,6 +109,8 @@ public:
   auto runtime_stop(this Scene& self) -> void;
   auto runtime_update(this Scene& self, const Timestep& delta_time) -> void;
 
+  auto prepare_render(this Scene& self) -> void;
+
   auto defer_function(this Scene& self, const std::function<void(Scene* scene)>& func) -> void;
 
   auto disable_phases(const std::vector<flecs::entity_t>& phases) -> void;
@@ -122,6 +128,25 @@ public:
     this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid = {}
   ) -> bool;
   auto detach_mesh(this Scene& self, flecs::entity entity) -> bool;
+
+  // --- Particles ---
+  // Runtime control over an entity's emitter. Stopping only halts spawning; particles already alive
+  // keep simulating until their lifetime runs out.
+  auto particle_emitter_state(this Scene& self, flecs::entity entity) -> ParticleEmitterState*;
+  auto play_particles(this Scene& self, flecs::entity entity) -> void;
+  auto stop_particles(this Scene& self, flecs::entity entity) -> void;
+  // Rewinds emitter time and clears trigger state, so Once nodes and the duration window fire again.
+  // Live particles are untouched.
+  auto restart_particles(this Scene& self, flecs::entity entity) -> void;
+  auto is_particles_playing(this Scene& self, flecs::entity entity) -> bool;
+  // Queues an extra spawn for the next frame. An emitter graph holding a Pulse node receives the
+  // count and decides what it means; without one the particles are spawned directly, whether or not
+  // the emitter is playing.
+  auto emit_particle_burst(this Scene& self, flecs::entity entity, u32 count) -> void;
+  auto set_particle_parameter(this Scene& self, flecs::entity entity, u32 index, const glm::vec4& value) -> void;
+  // Resolves the name against the asset's parameter list. Returns false when no such parameter exists.
+  auto set_particle_parameter(this Scene& self, flecs::entity entity, std::string_view name, const glm::vec4& value)
+    -> bool;
 
   static auto copy(const std::shared_ptr<Scene>& src_scene) -> std::shared_ptr<Scene>;
 

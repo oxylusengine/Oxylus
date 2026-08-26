@@ -1,6 +1,8 @@
 #include "Asset/AssetManager.hpp"
 
 #include <ankerl/svector.h>
+#include <array>
+#include <atomic>
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
 #include <zpp_bits.h>
@@ -143,6 +145,12 @@ auto write_terrain_asset_meta(JsonWriter&, const TerrainEdits*) -> bool {
   return true;
 }
 
+auto write_particle_system_asset_meta(JsonWriter&, const ParticleSystem*) -> bool {
+  ZoneScoped;
+
+  return true;
+}
+
 auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
@@ -187,6 +195,7 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   self.audio_map.reset();
   self.script_map.reset();
   self.terrain_edits_map.reset();
+  self.particle_system_map.reset();
 
   return {};
 }
@@ -246,18 +255,19 @@ auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> Asse
 
   auto extension = stack.to_upper(path.extension().string());
   switch (fnv64_str(extension)) {
-    case fnv64_c(".GLB")      : return AssetFileType::GLB;
-    case fnv64_c(".GLTF")     : return AssetFileType::GLTF;
-    case fnv64_c(".PNG")      : return AssetFileType::PNG;
-    case fnv64_c(".JPG")      :
-    case fnv64_c(".JPEG")     : return AssetFileType::JPEG;
-    case fnv64_c(".DDS")      : return AssetFileType::DDS;
-    case fnv64_c(".JSON")     : return AssetFileType::JSON;
-    case fnv64_c(".OXASSET")  : return AssetFileType::Meta;
-    case fnv64_c(".KTX2")     : return AssetFileType::KTX2;
-    case fnv64_c(".LUA")      : return AssetFileType::LUA;
-    case fnv64_c(".OXTERRAIN"): return AssetFileType::OXTERRAIN;
-    default                   : return AssetFileType::None;
+    case fnv64_c(".GLB")       : return AssetFileType::GLB;
+    case fnv64_c(".GLTF")      : return AssetFileType::GLTF;
+    case fnv64_c(".PNG")       : return AssetFileType::PNG;
+    case fnv64_c(".JPG")       :
+    case fnv64_c(".JPEG")      : return AssetFileType::JPEG;
+    case fnv64_c(".DDS")       : return AssetFileType::DDS;
+    case fnv64_c(".JSON")      : return AssetFileType::JSON;
+    case fnv64_c(".OXASSET")   : return AssetFileType::Meta;
+    case fnv64_c(".KTX2")      : return AssetFileType::KTX2;
+    case fnv64_c(".LUA")       : return AssetFileType::LUA;
+    case fnv64_c(".OXTERRAIN") : return AssetFileType::OXTERRAIN;
+    case fnv64_c(".OXPARTICLE"): return AssetFileType::OXPARTICLE;
+    default                    : return AssetFileType::None;
   }
 }
 
@@ -294,17 +304,18 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
   ZoneScoped;
 
   switch (type) {
-    case AssetType::None    : return "None";
-    case AssetType::Shader  : return "Shader";
-    case AssetType::Model   : return "Model";
-    case AssetType::Texture : return "Texture";
-    case AssetType::Material: return "Material";
-    case AssetType::Font    : return "Font";
-    case AssetType::Scene   : return "Scene";
-    case AssetType::Audio   : return "Audio";
-    case AssetType::Script  : return "Script";
-    case AssetType::Terrain : return "Terrain";
-    default                 : return {};
+    case AssetType::None          : return "None";
+    case AssetType::Shader        : return "Shader";
+    case AssetType::Model         : return "Model";
+    case AssetType::Texture       : return "Texture";
+    case AssetType::Material      : return "Material";
+    case AssetType::Font          : return "Font";
+    case AssetType::Scene         : return "Scene";
+    case AssetType::Audio         : return "Audio";
+    case AssetType::Script        : return "Script";
+    case AssetType::Terrain       : return "Terrain";
+    case AssetType::ParticleSystem: return "ParticleSystem";
+    default                       : return {};
   }
 }
 
@@ -339,14 +350,14 @@ auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::
     case AssetFileType::Meta: {
       return self.register_asset(path);
     }
-    case AssetFileType::GLB:
+    case AssetFileType::GLB :
     case AssetFileType::GLTF: {
       asset_type = AssetType::Model;
       break;
     }
-    case AssetFileType::PNG:
+    case AssetFileType::PNG :
     case AssetFileType::JPEG:
-    case AssetFileType::DDS:
+    case AssetFileType::DDS :
     case AssetFileType::KTX2: {
       asset_type = AssetType::Texture;
       break;
@@ -357,6 +368,10 @@ auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::
     }
     case AssetFileType::OXTERRAIN: {
       asset_type = AssetType::Terrain;
+      break;
+    }
+    case AssetFileType::OXPARTICLE: {
+      asset_type = AssetType::ParticleSystem;
       break;
     }
     default: {
@@ -502,15 +517,21 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
 
   auto children = ankerl::svector<UUID, 8>{};
   switch (asset->type) {
-    case AssetType::None:
-    case AssetType::Shader:
-    case AssetType::Font:
-    case AssetType::Scene:
-    case AssetType::Audio:
-    case AssetType::Texture:
-    case AssetType::Terrain:
-    case AssetType::Script : break;
-    case AssetType::Model  : {
+    case AssetType::None          :
+    case AssetType::Shader        :
+    case AssetType::Font          :
+    case AssetType::Scene         :
+    case AssetType::Audio         :
+    case AssetType::Texture       :
+    case AssetType::Terrain       :
+    case AssetType::Script        : break;
+    case AssetType::ParticleSystem: {
+      auto particle_system = self.get_particle_system(asset->particle_system_id);
+      if (particle_system) {
+        children = {particle_system->render.material, particle_system->render.mesh};
+      }
+    } break;
+    case AssetType::Model: {
       auto model = self.get_model(asset->model_id);
       if (model) {
         children.assign(model->materials.begin(), model->materials.end());
@@ -550,15 +571,21 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
   // release children first
   auto children = ankerl::svector<UUID, 8>{};
   switch (type) {
-    case AssetType::None:
-    case AssetType::Shader:
-    case AssetType::Font:
-    case AssetType::Scene:
-    case AssetType::Audio:
-    case AssetType::Texture:
-    case AssetType::Terrain:
-    case AssetType::Script : break;
-    case AssetType::Model  : {
+    case AssetType::None          :
+    case AssetType::Shader        :
+    case AssetType::Font          :
+    case AssetType::Scene         :
+    case AssetType::Audio         :
+    case AssetType::Texture       :
+    case AssetType::Terrain       :
+    case AssetType::Script        : break;
+    case AssetType::ParticleSystem: {
+      auto particle_system = self.get_particle_system(asset->particle_system_id);
+      if (particle_system) {
+        children = {particle_system->render.material, particle_system->render.mesh};
+      }
+    } break;
+    case AssetType::Model: {
       auto model = self.get_model(asset->model_id);
       if (model) {
         children.assign(model->materials.begin(), model->materials.end());
@@ -617,16 +644,17 @@ auto AssetManager::unload_asset_impl(this AssetManager& self, const AssetType ty
   }
 
   switch (type) {
-    case AssetType::Model   : return self.unload_model(static_cast<ModelID>(id));
-    case AssetType::Texture : return self.unload_texture(static_cast<TextureID>(id));
-    case AssetType::Material: return self.unload_material(static_cast<MaterialID>(id));
-    case AssetType::Scene   : return self.unload_scene(static_cast<SceneID>(id));
-    case AssetType::Audio   : return self.unload_audio(static_cast<AudioID>(id));
-    case AssetType::Script  : return self.unload_script(static_cast<ScriptID>(id));
-    case AssetType::Terrain : return self.unload_terrain_edits(static_cast<TerrainEditsID>(id));
-    case AssetType::None    :
-    case AssetType::Shader  :
-    case AssetType::Font    : return false;
+    case AssetType::Model         : return self.unload_model(static_cast<ModelID>(id));
+    case AssetType::Texture       : return self.unload_texture(static_cast<TextureID>(id));
+    case AssetType::Material      : return self.unload_material(static_cast<MaterialID>(id));
+    case AssetType::Scene         : return self.unload_scene(static_cast<SceneID>(id));
+    case AssetType::Audio         : return self.unload_audio(static_cast<AudioID>(id));
+    case AssetType::Script        : return self.unload_script(static_cast<ScriptID>(id));
+    case AssetType::Terrain       : return self.unload_terrain_edits(static_cast<TerrainEditsID>(id));
+    case AssetType::ParticleSystem: return self.unload_particle_system(static_cast<ParticleSystemID>(id));
+    case AssetType::None          :
+    case AssetType::Shader        :
+    case AssetType::Font          : return false;
   }
 
   return false;
@@ -671,6 +699,10 @@ auto AssetManager::export_asset(this AssetManager& self, const UUID& uuid, const
     } break;
     case AssetType::Terrain: {
       if (!self.export_terrain_edits(asset->uuid, writer, path))
+        return false;
+    } break;
+    case AssetType::ParticleSystem: {
+      if (!self.export_particle_system(asset->uuid, writer, path))
         return false;
     } break;
     default: return false;
@@ -724,6 +756,23 @@ auto AssetManager::export_terrain_edits(
   }
 
   return write_terrain_asset_meta(writer, edits.value);
+}
+
+auto AssetManager::export_particle_system(
+  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+) -> bool {
+  ZoneScoped;
+
+  auto particle_system = self.get_particle_system(uuid);
+  if (!particle_system) {
+    return false;
+  }
+
+  if (!particle_system->write(path)) {
+    return false;
+  }
+
+  return write_particle_system_asset_meta(writer, particle_system.value);
 }
 
 auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire)
@@ -826,11 +875,12 @@ auto AssetManager::load_asset_impl(
         auto info = std::get_if<TextureLoadInfo>(&explicit_load);
         return static_cast<u64>(self.load_texture(asset_path, info ? *info : TextureLoadInfo{}));
       }
-      case AssetType::Scene   : return static_cast<u64>(self.load_scene(asset_path));
-      case AssetType::Audio   : return static_cast<u64>(self.load_audio(asset_path));
-      case AssetType::Script  : return static_cast<u64>(self.load_script(asset_path));
-      case AssetType::Terrain : return static_cast<u64>(self.load_terrain_edits(asset_path));
-      case AssetType::Material: {
+      case AssetType::Scene         : return static_cast<u64>(self.load_scene(asset_path));
+      case AssetType::Audio         : return static_cast<u64>(self.load_audio(asset_path));
+      case AssetType::Script        : return static_cast<u64>(self.load_script(asset_path));
+      case AssetType::Terrain       : return static_cast<u64>(self.load_terrain_edits(asset_path));
+      case AssetType::ParticleSystem: return static_cast<u64>(self.load_particle_system(asset_path));
+      case AssetType::Material      : {
         if (auto* info = std::get_if<Material>(&explicit_load)) {
           return static_cast<u64>(self.load_material(asset_path, *info));
         }
@@ -1027,6 +1077,39 @@ auto AssetManager::unload_script(this AssetManager& self, const ScriptID script_
 
   auto write_lock = std::unique_lock(self.scripts_mutex);
   self.script_map.destroy_slot(script_id);
+
+  return true;
+}
+
+auto AssetManager::load_particle_system(this AssetManager& self, const std::filesystem::path& path)
+  -> ParticleSystemID {
+  ZoneScoped;
+
+  auto system = ParticleSystem::read(path);
+  auto payload = system ? std::move(*system) : ParticleSystem::make_default();
+
+  if (payload.render.material) {
+    self.load_asset(payload.render.material, {}, false);
+  }
+  if (payload.render.mesh) {
+    self.load_asset(payload.render.mesh, {}, false);
+  }
+
+  auto write_lock = std::unique_lock(self.particle_systems_mutex);
+  return self.particle_system_map.create_slot(std::move(payload));
+}
+
+auto AssetManager::unload_particle_system(this AssetManager& self, const ParticleSystemID particle_system_id) -> bool {
+  ZoneScoped;
+
+  auto write_lock = std::unique_lock(self.particle_systems_mutex);
+  auto* system = self.particle_system_map.slot(particle_system_id);
+  if (!system) {
+    return false;
+  }
+
+  system->destroy();
+  self.particle_system_map.destroy_slot(particle_system_id);
 
   return true;
 }
@@ -1350,4 +1433,98 @@ auto AssetManager::set_terrain_edits(this AssetManager& self, const UUID& uuid, 
   }
 }
 
+auto AssetManager::get_particle_system(this AssetManager& self, const UUID& uuid) -> ReadGuard<ParticleSystem> {
+  ZoneScoped;
+
+  ParticleSystemID particle_system_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::ParticleSystem || guard->particle_system_id == ParticleSystemID::Invalid)
+      return {};
+    particle_system_id = guard->particle_system_id;
+  }
+  return self.get_particle_system(particle_system_id);
+}
+
+auto AssetManager::get_particle_system(this AssetManager& self, const ParticleSystemID particle_system_id)
+  -> ReadGuard<ParticleSystem> {
+  ZoneScoped;
+
+  if (particle_system_id == ParticleSystemID::Invalid)
+    return {};
+  self.particle_systems_mutex.lock_shared();
+  auto* system = self.particle_system_map.slot(particle_system_id);
+  if (!system) {
+    self.particle_systems_mutex.unlock_shared();
+    return {};
+  }
+  return ReadGuard<ParticleSystem>(self.particle_systems_mutex, system, adopt_lock);
+}
+
+auto AssetManager::edit_particle_system(
+  this AssetManager& self, const UUID& uuid, const std::function<void(ParticleSystem&)>& mutate, const bool recompile
+) -> void {
+  ZoneScoped;
+
+  ParticleSystemID particle_system_id;
+  auto holder_count = 0_u64;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::ParticleSystem || guard->particle_system_id == ParticleSystemID::Invalid)
+      return;
+    particle_system_id = guard->particle_system_id;
+    holder_count = std::atomic_ref(guard->ref_count).load();
+  }
+
+  auto previous_children = std::array<UUID, 2>{};
+  auto current_children = std::array<UUID, 2>{};
+  {
+    auto write_lock = std::unique_lock(self.particle_systems_mutex);
+    auto* slot = self.particle_system_map.slot(particle_system_id);
+    if (!slot) {
+      return;
+    }
+
+    previous_children = {slot->render.material, slot->render.mesh};
+    mutate(*slot);
+    if (recompile) {
+      slot->recompile();
+    }
+    current_children = {slot->render.material, slot->render.mesh};
+  }
+
+  // acquire_ref walks into the sub-assets once per holder of this system, so swapping one has to
+  // hand that many refs over, not a single one
+  for (usize i = 0; i < previous_children.size(); i++) {
+    if (previous_children[i] == current_children[i]) {
+      continue;
+    }
+
+    if (current_children[i]) {
+      self.load_asset(current_children[i], {}, false);
+    }
+
+    for (auto ref = 0_u64; ref < holder_count; ref++) {
+      self.acquire_ref(self.get_asset(current_children[i]));
+      self.release_ref(self.get_asset(previous_children[i]));
+    }
+  }
+}
+
+auto AssetManager::set_particle_system_dirty(this AssetManager& self, const UUID& uuid) -> void {
+  ZoneScoped;
+
+  ParticleSystemID particle_system_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::ParticleSystem || guard->particle_system_id == ParticleSystemID::Invalid)
+      return;
+    particle_system_id = guard->particle_system_id;
+  }
+
+  auto write_lock = std::unique_lock(self.particle_systems_mutex);
+  if (auto* slot = self.particle_system_map.slot(particle_system_id)) {
+    slot->recompile();
+  }
+}
 } // namespace ox

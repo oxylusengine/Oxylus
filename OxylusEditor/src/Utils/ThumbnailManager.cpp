@@ -995,8 +995,11 @@ auto ThumbnailManager::render_scene(this ThumbnailManager& self, Scene& scene, u
   );
   thumbnail_image = vuk::clear_image(std::move(thumbnail_image), vuk::Transparent<f32>);
 
-  // Builds this tick's uploads; `render` below submits them.
   scene.runtime_update(App::get_timestep());
+
+  // Builds this tick's uploads; `render` below submits them. `Scene::render` would do this itself,
+  // but this path drives the renderer instance directly.
+  scene.prepare_render();
 
   auto scene_view_image = renderer_instance->render(
     std::move(thumbnail_image),

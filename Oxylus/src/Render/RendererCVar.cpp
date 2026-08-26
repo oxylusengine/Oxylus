@@ -120,6 +120,8 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_bloom_radius.init(self.system, "pp.bloom_radius", "bloom radius", 0.75f);
   self.cvar_bloom_intensity.init(self.system, "pp.bloom_intensity", "bloom intensity", 0.1f);
   self.cvar_bloom_clamp.init(self.system, "pp.bloom_clamp", "bloom source clamp", 4.0f);
+  self.cvar_particles_enable.init(self.system, "rr.particles", "simulate and draw GPU particle systems", 1);
+  self.cvar_particle_sort.init(self.system, "rr.particle_sort", "sort particles back to front before drawing", 1);
 
   self.cvar_fxaa_enable.init(self.system, "pp.fxaa", "use fxaa", 1);
 
@@ -188,6 +190,11 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["radius"] = self.cvar_bloom_radius.get();
   writer["intensity"] = self.cvar_bloom_intensity.get();
   writer["clamp"] = self.cvar_bloom_clamp.get();
+  writer.end_obj();
+
+  writer["particles"].begin_obj();
+  writer["enabled"] = self.cvar_particles_enable.as_bool();
+  writer["sort"] = self.cvar_particle_sort.as_bool();
   writer.end_obj();
 
   writer["fxaa"].begin_obj();
@@ -273,6 +280,12 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     auto clamp_obj = bloom_obj["clamp"];
     if (!clamp_obj.error())
       self.cvar_bloom_clamp.set(static_cast<f32>(clamp_obj.get_double()));
+  }
+
+  auto particles_obj = json["particles"];
+  if (!particles_obj.error()) {
+    self.cvar_particles_enable.set(particles_obj["enabled"].get_bool());
+    self.cvar_particle_sort.set(particles_obj["sort"].get_bool());
   }
 
   auto fxaa_obj = json["fxaa"];

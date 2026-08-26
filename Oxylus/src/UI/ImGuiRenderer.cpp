@@ -376,38 +376,41 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
   }
 
   auto reset_render_state =
-    [draw_data](vuk::CommandBuffer& command_buffer, const vuk::Buffer& vertex, const vuk::Buffer& index) {
-      if (index.size > 0) {
-        command_buffer.bind_index_buffer(
-          index,
-          sizeof(ImDrawIdx) == 2 ? vuk::IndexType::eUint16 : vuk::IndexType::eUint32
-        );
-      }
-      command_buffer
-        .bind_vertex_buffer(
-          0,
-          vertex,
-          0,
-          vuk::Packed{vuk::Format::eR32G32Sfloat, vuk::Format::eR32G32Sfloat, vuk::Format::eR8G8B8A8Unorm}
-        )
-        .bind_graphics_pipeline("imgui")
-        .set_viewport(0, vuk::Rect2D::framebuffer());
-      struct PC {
-        float translate[2];
-        float scale[2];
-      } pc;
-      pc.scale[0] = 2.0f / draw_data->DisplaySize.x;
-      pc.scale[1] = 2.0f / draw_data->DisplaySize.y;
-      pc.translate[0] = -1.0f - draw_data->DisplayPos.x * pc.scale[0];
-      pc.translate[1] = -1.0f - draw_data->DisplayPos.y * pc.scale[1];
-      command_buffer.push_constants(vuk::ShaderStageFlagBits::eVertex, 0, pc);
-    };
+    [](vuk::CommandBuffer& command_buffer, const vuk::Buffer& vertex, const vuk::Buffer& index) -> void {
+    if (index.size > 0) {
+      command_buffer.bind_index_buffer(
+        index,
+        sizeof(ImDrawIdx) == 2 ? vuk::IndexType::eUint16 : vuk::IndexType::eUint32
+      );
+    }
+    command_buffer
+      .bind_vertex_buffer(
+        0,
+        vertex,
+        0,
+        vuk::Packed{vuk::Format::eR32G32Sfloat, vuk::Format::eR32G32Sfloat, vuk::Format::eR8G8B8A8Unorm}
+      )
+      .set_viewport(0, vuk::Rect2D::framebuffer());
+  };
+
+  auto bind_base_pipeline = [draw_data](vuk::CommandBuffer& command_buffer) -> void {
+    command_buffer.bind_graphics_pipeline("imgui");
+    struct PC {
+      float translate[2];
+      float scale[2];
+    } pc;
+    pc.scale[0] = 2.0f / draw_data->DisplaySize.x;
+    pc.scale[1] = 2.0f / draw_data->DisplaySize.y;
+    pc.translate[0] = -1.0f - draw_data->DisplayPos.x * pc.scale[0];
+    pc.translate[1] = -1.0f - draw_data->DisplayPos.y * pc.scale[1];
+    command_buffer.push_constants(vuk::ShaderStageFlagBits::eVertex, 0, pc);
+  };
 
   auto shadow_params_copy = shadow_draw_data;
 
   return vuk::make_pass(
       "imgui",
-      [reset_render_state, draw_data, shadow_draw_params = std::move(shadow_params_copy)]( //
+      [reset_render_state, bind_base_pipeline, draw_data, shadow_draw_params = std::move(shadow_params_copy)]( //
           vuk::CommandBuffer& command_buffer,
           VUK_BA(vuk::Access::eVertexRead) vertex_buf,
           VUK_BA(vuk::Access::eIndexRead) index_buf,
@@ -427,7 +430,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
         // (Because we merged all buffers into a single one, we maintain our own offset into them)
         int global_vtx_offset = 0;
         int global_idx_offset = 0;
-        bool pipeline_dirty = false;
+        bool pipeline_dirty = true;
         for (int n = 0; n < draw_data->CmdListsCount; n++) {
           const ImDrawList* cmd_list = draw_data->CmdLists[n];
           for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++) {
@@ -438,7 +441,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
               // to reset render state.)
               if (im_cmd->UserCallback == ImDrawCallback_ResetRenderState) {
                 reset_render_state(command_buffer, vertex_buf, index_buf);
-                pipeline_dirty = false;
+                pipeline_dirty = true;
               } else {
                 im_cmd->UserCallback(cmd_list, im_cmd);
               }
@@ -494,7 +497,7 @@ vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
                 }
 
                 if (pipeline_dirty) {
-                  reset_render_state(command_buffer, vertex_buf, index_buf);
+                  bind_base_pipeline(command_buffer);
                   pipeline_dirty = false;
                 }
 

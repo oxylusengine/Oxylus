@@ -21,6 +21,7 @@ enum class AssetType : u32 {
   Audio,
   Script,
   Terrain,
+  ParticleSystem,
 };
 
 // List of file extensions supported by Engine.
@@ -37,6 +38,7 @@ enum class AssetFileType : u32 {
   KTX2,
   LUA,
   OXTERRAIN,
+  OXPARTICLE,
 };
 
 struct NoneAsset {

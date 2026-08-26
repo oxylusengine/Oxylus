@@ -428,3 +428,62 @@ name = "terrain_decode"
 path = "passes/terrain_decode.slang"
 entry_points = ["vs_main", "fs_main"]
 requires = ["bindless"]
+
+[[shader_sessions.programs]]
+name = "particle_init"
+path = "passes/particle_init.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "particle_prepare"
+path = "passes/particle_prepare.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "particle_emit"
+path = "passes/particle_emit.slang"
+entry_points = ["cs_main"]
+requires = ["bindless"]
+
+[[shader_sessions.programs]]
+name = "particle_build_dispatch_args"
+path = "passes/particle_build_dispatch_args.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "particle_simulate"
+path = "passes/particle_simulate.slang"
+entry_points = ["cs_main"]
+requires = ["bindless"]
+
+[[shader_sessions.programs]]
+name = "particle_sort_local"
+path = "passes/particle_sort_local.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "particle_sort_step"
+path = "passes/particle_sort_step.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "particle_sort_merge"
+path = "passes/particle_sort_merge.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "particle_build_draw_args"
+path = "passes/particle_build_draw_args.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "particle_billboard"
+path = "passes/particle_billboard.slang"
+entry_points = ["vs_main", "fs_main"]
+requires = ["bindless"]
+
+[[shader_sessions.programs]]
+name = "particle_mesh"
+path = "passes/particle_mesh.slang"
+entry_points = ["vs_main", "fs_main"]
+requires = ["bindless"]

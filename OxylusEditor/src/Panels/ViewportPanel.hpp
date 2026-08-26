@@ -101,7 +101,6 @@ private:
   auto draw_gizmos(this ViewportPanel& self) -> void;
   auto mouse_picking_stages(this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel)
     -> void;
-  auto grid_stage(this ViewportPanel& self, RendererInstance* renderer_instance) -> void;
   auto transform_gizmos_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) -> void;
   auto scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) -> void;
 };

@@ -49,6 +49,29 @@ auto SceneBinding::bind(sol::state* state) -> void {
     return scene->get_local_transform(e)[3];
   });
 
+  SET_TYPE_FUNCTION(scene_type, Scene, play_particles);
+  SET_TYPE_FUNCTION(scene_type, Scene, stop_particles);
+  SET_TYPE_FUNCTION(scene_type, Scene, restart_particles);
+  SET_TYPE_FUNCTION(scene_type, Scene, is_particles_playing);
+  SET_TYPE_FUNCTION(scene_type, Scene, emit_particle_burst);
+
+  // one Lua name for both overloads: a number picks the slot, a string resolves against the asset
+  scene_type.set_function(
+    "set_particle_parameter",
+    [](Scene* scene, flecs::entity e, sol::object key, const glm::vec4& value) -> bool {
+      if (key.is<u32>()) {
+        scene->set_particle_parameter(e, key.as<u32>(), value);
+        return true;
+      }
+
+      if (key.is<std::string>()) {
+        return scene->set_particle_parameter(e, key.as<std::string>(), value);
+      }
+
+      return false;
+    }
+  );
+
   scene_type.set_function("defer", [](Scene* scene, sol::function func) {
     scene->defer_function([func](Scene* s) {
       ZoneScopedN("scene::defer lua function");

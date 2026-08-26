@@ -200,6 +200,13 @@ struct RendererInstanceUpdateInfo {
   std::span<u32> dirty_mesh_instance_indices = {};
 };
 
+struct ParticleMeshDraw {
+  u32 emitter_index = 0;
+  GPU::Mesh gpu_mesh = {};
+  vuk::Buffer index_buffer = {};
+  u32 index_count = 0;
+};
+
 struct PreparedFrame {
   u32 mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
@@ -233,9 +240,42 @@ struct PreparedFrame {
 
   vuk::Value<vuk::Buffer> terrain_patch_visibility_mask_buffer = {};
 
+  ankerl::svector<GPU::ParticleEmitter, 8> particle_emitters = {};
+  std::vector<GPU::ParticleInstruction> particle_instructions = {};
+  std::vector<glm::vec4> particle_constants = {};
+  ankerl::svector<ParticleMeshDraw, 4> particle_mesh_draws = {};
+  u32 particle_total_spawn = 0;
+  u32 particle_total_capacity = 0;
+  u32 particle_sorted_count = 0;
+  bool particle_pool_reset = false;
+  bool particle_sort_enabled = false;
+
   u32 line_index_count = 0;
   u32 triangle_index_count = 0;
   vuk::Value<vuk::Buffer> debug_renderer_verticies_buffer = {};
+};
+
+struct ParticleContext {
+  u32 total_capacity = 0;
+  u32 sorted_count = 0;
+  u32 emitter_count = 0;
+  u32 total_spawn = 0;
+  bool needs_init = false;
+  bool sort_enabled = false;
+
+  std::span<const ParticleMeshDraw> mesh_draws = {};
+
+  vuk::Value<vuk::Buffer> emitters_buffer = {};
+  vuk::Value<vuk::Buffer> program_buffer = {};
+  vuk::Value<vuk::Buffer> constants_buffer = {};
+  vuk::Value<vuk::Buffer> camera_buffer = {};
+  vuk::Value<vuk::Buffer> materials_buffer = {};
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+
+  vuk::Value<vuk::Buffer> particles_buffer = {};
+  vuk::Value<vuk::Buffer> sort_keys_buffer = {};
+  vuk::Value<vuk::Buffer> draw_cmd_buffer = {};
+  vuk::Value<vuk::Buffer> draw_indexed_cmd_buffer = {};
 };
 
 struct ShadowSlotState {
@@ -713,6 +753,12 @@ public:
     vuk::Value<vuk::ImageAttachment>&& dst_attachment
   ) -> vuk::Value<vuk::ImageAttachment>;
 
+  auto prepare_particles(this RendererInstance& self, f32 delta_time, bool sort_enabled) -> void;
+  auto simulate_particles(this RendererInstance& self, ParticleContext& context) -> void;
+  auto draw_particles(
+    this RendererInstance& self, ParticleContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
+  ) -> vuk::Value<vuk::ImageAttachment>;
+
   auto update_vbgtao_info(this RendererInstance&, const RendererCVar& cvar) -> void;
 
 private:
@@ -783,6 +829,16 @@ private:
   vuk::Unique<vuk::Buffer> terrain_patch_visibility_mask_buffer{};
   u32 terrain_patch_visibility_patch_count = 0;
   vuk::Unique<vuk::Buffer> exposure_buffer{};
+
+  vuk::Unique<vuk::Buffer> particle_buffer{};
+  vuk::Unique<vuk::Buffer> particle_alive_list_a{};
+  vuk::Unique<vuk::Buffer> particle_alive_list_b{};
+  vuk::Unique<vuk::Buffer> particle_dead_list{};
+  vuk::Unique<vuk::Buffer> particle_dead_counts{};
+  vuk::Unique<vuk::Buffer> particle_counters{};
+  vuk::Unique<vuk::Buffer> particle_sort_keys{};
+  u32 particle_pool_capacity = 0;
+  bool particle_pool_ping = false;
 
   u32 ddgi_atlas_probe_count = 0;
   u64 ddgi_atlas_layout_key = 0;

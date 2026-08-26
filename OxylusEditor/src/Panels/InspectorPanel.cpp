@@ -11,6 +11,7 @@
 #include "Core/EventSystem.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
+#include "ParticleEditorPanel.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
@@ -278,12 +279,18 @@ struct EntityInspector : IEntitySerializer {
 
         switch (asset_type) {
           case ox::AssetType::None:
-          case AssetType::Shader:  // TODO: Shaders
-          case AssetType::Texture: // TODO: Textures
-          case AssetType::Font:    // TODO: Fonts
-          case AssetType::Scene:   // TODO: Scenes
-          case AssetType::Terrain: // TODO: Terrain edits
+          case AssetType::Shader  : // TODO: Shaders
+          case AssetType::Texture : // TODO: Textures
+          case AssetType::Font    : // TODO: Fonts
+          case AssetType::Scene   : // TODO: Scenes
+          case AssetType::Terrain : // TODO: Terrain edits
             break;
+          case AssetType::ParticleSystem: {
+            if (UI::button("Open Particle Editor")) {
+              App::mod<Editor>().editor_panel_registry.get<ParticleEditorPanel>().open_asset(asset_uuid);
+            }
+            break;
+          }
           case AssetType::Model: {
             auto model = asset_man.get_model(model_id);
             inspector_panel.draw_model_asset(std::move(model));

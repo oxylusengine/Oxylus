@@ -5,9 +5,20 @@
 
 class JobManagerTest : public ::testing::Test {
 protected:
+  // every test starts the pool itself, so it can pick the worker count its expectations need
+  auto start_with_threads(u32 thread_count) -> void {
+    manager->set_thread_count(thread_count);
+    auto init_result = manager->init();
+    ASSERT_TRUE(init_result.has_value());
+    ASSERT_EQ(manager->get_thread_count(), thread_count);
+  }
+
   void SetUp() override { manager = std::make_unique<ox::JobManager>(); }
 
-  void TearDown() override { manager->shutdown(); }
+  void TearDown() override {
+    auto deinit_result = manager->deinit();
+    EXPECT_TRUE(deinit_result.has_value());
+  }
 
   std::unique_ptr<ox::JobManager> manager = nullptr;
 };
@@ -15,6 +26,8 @@ protected:
 // --- Basic Functionality Tests ---
 
 TEST_F(JobManagerTest, ExecutesSingleJob) {
+  start_with_threads(4);
+
   std::atomic<bool> executed{false};
 
   manager->push_job_name("TestJob");
@@ -28,6 +41,9 @@ TEST_F(JobManagerTest, ExecutesSingleJob) {
 }
 
 TEST_F(JobManagerTest, ExecutesMultipleJobsInOrder) {
+  // the queue is FIFO but only one worker can make the execution order match the submit order
+  start_with_threads(1);
+
   std::vector<int> execution_order;
   std::mutex order_mutex;
 
@@ -49,6 +65,8 @@ TEST_F(JobManagerTest, ExecutesMultipleJobsInOrder) {
 // --- Thread Safety Tests ---
 
 TEST_F(JobManagerTest, HandlesConcurrentAccess) {
+  start_with_threads(4);
+
   std::atomic<int> counter{0};
   constexpr int kIterations = 1000;
 
@@ -63,6 +81,8 @@ TEST_F(JobManagerTest, HandlesConcurrentAccess) {
 }
 
 TEST_F(JobManagerTest, SafeWithSimultaneousSubmitAndShutdown) {
+  start_with_threads(4);
+
   manager->push_job_name("StressTest");
   std::thread worker([this] {
     for (int i = 0; i < 100; ++i) {
@@ -81,10 +101,16 @@ TEST_F(JobManagerTest, SafeWithSimultaneousSubmitAndShutdown) {
 // --- Tracking System Tests ---
 
 TEST_F(JobManagerTest, TracksJobStatusWhenEnabled) {
+  start_with_threads(4);
+
   manager->get_tracker().start_tracking();
 
+  // the job parks until the status below has been read, otherwise a worker can finish it first and
+  // there is no "working" state left to observe
+  std::atomic<bool> release{false};
+
   manager->push_job_name("TrackedJob");
-  auto job = ox::Job::create([] {});
+  auto job = ox::Job::create([&] { release.wait(false, std::memory_order_acquire); });
   manager->submit(job);
 
   auto status = manager->get_tracker().get_status();
@@ -93,6 +119,9 @@ TEST_F(JobManagerTest, TracksJobStatusWhenEnabled) {
   EXPECT_TRUE(status[0].second); // Should be working
   manager->pop_job_name();
 
+  release.store(true, std::memory_order_release);
+  release.notify_all();
+
   manager->wait();
 
   status = manager->get_tracker().get_status();
@@ -100,6 +129,8 @@ TEST_F(JobManagerTest, TracksJobStatusWhenEnabled) {
 }
 
 TEST_F(JobManagerTest, NoTrackingWhenDisabled) {
+  start_with_threads(4);
+
   manager->get_tracker().stop_tracking();
 
   manager->push_job_name("Untracked");
@@ -111,6 +142,8 @@ TEST_F(JobManagerTest, NoTrackingWhenDisabled) {
 }
 
 TEST_F(JobManagerTest, CleanupOldJobs) {
+  start_with_threads(4);
+
   manager->get_tracker().start_tracking();
 
   const std::string job_name = "TempJob";
