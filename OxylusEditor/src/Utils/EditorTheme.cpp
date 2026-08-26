@@ -110,6 +110,7 @@ void EditorTheme::apply_theme(bool dark) {
     colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.43f, 0.43f, 0.43f, 1.00f);
 
     colors[ImGuiCol_CheckMark] = ImVec4(1.00f, 0.56f, 0.00f, 1.00f);
+    colors[ImGuiCol_CheckboxSelectedBg] = colors[ImGuiCol_FrameBg];
 
     colors[ImGuiCol_SliderGrab] = ImVec4(1.00f, 0.56f, 0.00f, 1.00f);
     colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.56f, 0.00f, 1.00f);

@@ -2047,12 +2047,12 @@ inline std::string GetStyleColorName(int idx) {
 }
 /* TODO: SetStateStorage(), GetStateStorage(), CalcListClipping() ==> UNSUPPORTED */
 inline bool BeginChildFrame(unsigned int id, float sizeX, float sizeY) {
-  return ImGui::BeginChildFrame(id, {sizeX, sizeY});
+  return ImGui::BeginChild(id, {sizeX, sizeY}, ImGuiChildFlags_FrameStyle);
 }
 inline bool BeginChildFrame(unsigned int id, float sizeX, float sizeY, int flags) {
-  return ImGui::BeginChildFrame(id, {sizeX, sizeY}, static_cast<ImGuiWindowFlags>(flags));
+  return ImGui::BeginChild(id, {sizeX, sizeY}, ImGuiChildFlags_FrameStyle, static_cast<ImGuiWindowFlags>(flags));
 }
-inline void EndChildFrame() { return ImGui::EndChildFrame(); }
+inline void EndChildFrame() { return ImGui::EndChild(); }
 
 // Text Utilities
 inline std::tuple<float, float> CalcTextSize(const std::string& text) {
@@ -2682,7 +2682,7 @@ inline void init_enums(sol::state* lua) {
     "MouseButtonMask_",
     ImGuiPopupFlags_MouseButtonMask_,
     "MouseButtonDefault_",
-    ImGuiPopupFlags_MouseButtonDefault_,
+    ImGuiPopupFlags_MouseButtonRight,
     "NoOpenOverExistingPopup",
     ImGuiPopupFlags_NoOpenOverExistingPopup,
     "NoOpenOverItems",

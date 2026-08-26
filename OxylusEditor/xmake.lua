@@ -1,6 +1,8 @@
+local imgui_version = "v1.92.9b-docking"
+
 add_requires("imguizmo df1c30142e7c3fb13c171aaeb328bb338fa7aaa6")
-add_requireconfs("imgui", "imguizmo.imgui", {
-    override = true, version = "42e91c315534a15133fb08fb8108cfdd515e0912", configs = { wchar32 = true }
+add_requireconfs("imguizmo.imgui", {
+    override = true, version = imgui_version, configs = { wchar32 = true }
 })
 
 target("OxylusEditor")

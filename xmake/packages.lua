@@ -1,6 +1,7 @@
 local fmt_version = "12.1.0"
 local fmt_configs = { header_only = false, shared = false }
 local lua_version = "v5.4.7"
+local imgui_version = "v1.92.9b-docking"
 
 packages = {
   ["stb 2024.06.01"] = {},
@@ -18,7 +19,7 @@ packages = {
       use_more_peers = false,
     },
   },
-  ["imgui 42e91c315534a15133fb08fb8108cfdd515e0912"] = { configs = { wchar32 = true } },
+  ["imgui " .. imgui_version] = { configs = { wchar32 = true } },
   ["glm 1.0.3"] = {
     configs = {
       header_only = true,
