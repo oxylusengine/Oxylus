@@ -181,9 +181,8 @@ static void open_file(const std::filesystem::path& path) {
       }
       case ox::FileType::Material  : break;
       case FileType::ParticleSystem: {
-        auto& asset_man = App::mod<AssetManager>();
-        const auto uuid = asset_man.import_asset(path);
-        if (uuid && asset_man.load_asset(uuid)) {
+        // `open_asset` loads it and holds the ref for as long as the panel shows it
+        if (const auto uuid = App::mod<AssetManager>().import_asset(path)) {
           App::mod<Editor>().editor_panel_registry.get<ParticleEditorPanel>().open_asset(uuid);
         }
         break;

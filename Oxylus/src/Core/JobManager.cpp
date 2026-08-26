@@ -17,10 +17,12 @@ auto Barrier::wait(this Barrier& self, JobManager& job_manager) -> void {
     }
   }
 
-  const auto on_worker = this_thread_worker.id != ~0_u32;
+  // with no worker pool nothing else can drain the queue, so the waiter runs jobs itself instead of
+  // blocking on a counter that will never reach zero
+  const auto drain_here = this_thread_worker.id != ~0_u32 || job_manager.get_thread_count() == 0;
   auto v = self.counter.load(std::memory_order_acquire);
   while (v != 0) {
-    if (on_worker) {
+    if (drain_here) {
       if (!job_manager.try_execute_one()) {
         std::this_thread::yield();
       }
@@ -189,9 +191,11 @@ auto JobManager::submit(this JobManager& self, Arc<Job> job, bool prioritize) ->
 auto JobManager::wait(this JobManager& self) -> void {
   ZoneScoped;
 
-  const auto on_worker = this_thread_worker.id != ~0_u32;
+  // same as `Barrier::wait`: an uninitialized pool has to be drained by whoever waits on it, or this
+  // spins forever
+  const auto drain_here = this_thread_worker.id != ~0_u32 || self.num_threads == 0;
   while (self.job_count.load(std::memory_order_acquire) != 0) {
-    if (!on_worker || !self.try_execute_one()) {
+    if (!drain_here || !self.try_execute_one()) {
       std::this_thread::yield();
     }
   }

@@ -289,9 +289,14 @@ ParticleEditorPanel::~ParticleEditorPanel() {
     }
   }
 
+  // the preview scene releases the ref its emitter component holds
   if (preview_scene && preview_asset) {
     preview_emitter = {};
     preview_scene.reset();
+  }
+
+  if (asset_uuid) {
+    App::mod<AssetManager>().unload_asset(asset_uuid);
   }
 }
 
@@ -312,10 +317,18 @@ auto ParticleEditorPanel::open_asset(this ParticleEditorPanel& self, const UUID&
 
   auto& asset_man = App::mod<AssetManager>();
 
+  // the panel holds its own ref for as long as it shows the asset, so opening one from the content
+  // browser does not depend on an entity keeping it alive
+  if (!asset_man.load_asset(uuid)) {
+    OX_LOG_ERROR("Couldn't load particle system {}.", uuid.str());
+    return;
+  }
+
   {
     auto system = asset_man.get_particle_system(uuid);
     if (!system) {
       OX_LOG_ERROR("Particle system {} is not loaded.", uuid.str());
+      asset_man.unload_asset(uuid);
       return;
     }
 
@@ -334,7 +347,12 @@ auto ParticleEditorPanel::open_asset(this ParticleEditorPanel& self, const UUID&
     self.asset_path = asset->path;
   }
 
+  const auto previous_asset = self.asset_uuid;
   self.asset_uuid = uuid;
+  if (previous_asset) {
+    asset_man.unload_asset(previous_asset);
+  }
+
   self.selected_node = ParticleNodeID::Invalid;
   self.graph_positions_applied = {};
   self.visible = true;
@@ -422,11 +440,22 @@ auto ParticleEditorPanel::sync_preview_asset(this ParticleEditorPanel& self) -> 
     return;
   }
 
+  auto& asset_man = App::mod<AssetManager>();
+  const auto previous = self.preview_asset;
+  if (self.asset_uuid) {
+    asset_man.load_asset(self.asset_uuid);
+  }
+
   self.preview_asset = self.asset_uuid;
   self.preview_emitter.set<ParticleSystemComponent>({
     .particle_system = self.asset_uuid,
     .play_on_awake = true,
   });
+
+  // the scene releases this again when the component goes away, so only the swap is ours to undo
+  if (previous) {
+    asset_man.unload_asset(previous);
+  }
 }
 
 auto ParticleEditorPanel::on_update(this ParticleEditorPanel& self) -> void {
@@ -1134,18 +1163,15 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       ImGui::PushID(label);
       ImGui::Button(text.c_str(), ImVec2(-(clear_width + ImGui::GetStyle().ItemSpacing.x), 0.0f));
       UI::tooltip_hover("Drag an asset here from the content browser to assign it.");
+      // no load/unload here: `edit_particle_system` hands the sub-asset refs over on commit, once
+      // per holder of the system
       if (ImGui::BeginDragDropTarget()) {
         if (const auto* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
           const auto* data = PayloadData::from_payload(payload);
           if (!data->get_str().empty()) {
             if (const auto imported = asset_man.import_asset(data->str)) {
-              if (asset_man.load_asset(imported)) {
-                if (uuid) {
-                  asset_man.unload_asset(uuid);
-                }
-                uuid = imported;
-                modified = true;
-              }
+              uuid = imported;
+              modified = true;
             }
           }
         }
@@ -1155,7 +1181,6 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
       ImGui::SameLine();
       ImGui::BeginDisabled(!uuid);
       if (UI::button(ICON_MDI_TRASH_CAN, ImVec2(clear_width, 0.0f), "Detach")) {
-        asset_man.unload_asset(uuid);
         uuid = UUID(nullptr);
         modified = true;
       }

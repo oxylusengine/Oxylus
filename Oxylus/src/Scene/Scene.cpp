@@ -743,17 +743,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
       }
 
+      // whoever writes the uuid owns the ref, the same way MeshComponent and AudioSourceComponent
+      // do. acquiring here as well would double count every scene load, since `from_json` already
+      // acquires every deserialized asset uuid
       if (state->asset != c.particle_system) {
-        const auto previous = state->asset;
-
-        if (c.particle_system) {
-          asset_man.load_asset(c.particle_system);
-        }
-
-        if (previous) {
-          asset_man.unload_asset(previous);
-        }
-
         state->asset = c.particle_system;
         state->pool_valid = false;
         state->time = 0.0f;

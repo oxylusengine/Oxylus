@@ -9,7 +9,14 @@ for _, file in ipairs(os.files("./**/Test*.cpp")) do
 
         add_files(file)
 
-        add_tests("default", { runargs = { "--gmock_verbose=info", "--gtest_stack_trace_depth=10" } })
+        -- only the test targets are instrumented, the Oxylus library they link is not, so a
+        -- container annotated on one side of that line and mutated on the other reads as an
+        -- overflow. every other ASan check still applies
+        add_runenvs("ASAN_OPTIONS", "detect_container_overflow=0")
+        add_tests("default", {
+            runargs = { "--gmock_verbose=info", "--gtest_stack_trace_depth=10" },
+            runenvs = { ASAN_OPTIONS = "detect_container_overflow=0" }
+        })
 
         add_packages("gtest")
 

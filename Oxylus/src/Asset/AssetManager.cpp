@@ -1,6 +1,8 @@
 #include "Asset/AssetManager.hpp"
 
 #include <ankerl/svector.h>
+#include <array>
+#include <atomic>
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
 #include <zpp_bits.h>
@@ -1465,18 +1467,46 @@ auto AssetManager::edit_particle_system(
   ZoneScoped;
 
   ParticleSystemID particle_system_id;
+  auto holder_count = 0_u64;
   {
     auto guard = self.get_asset(uuid);
     if (!guard || guard->type != AssetType::ParticleSystem || guard->particle_system_id == ParticleSystemID::Invalid)
       return;
     particle_system_id = guard->particle_system_id;
+    holder_count = std::atomic_ref(guard->ref_count).load();
   }
 
-  auto write_lock = std::unique_lock(self.particle_systems_mutex);
-  if (auto* slot = self.particle_system_map.slot(particle_system_id)) {
+  auto previous_children = std::array<UUID, 2>{};
+  auto current_children = std::array<UUID, 2>{};
+  {
+    auto write_lock = std::unique_lock(self.particle_systems_mutex);
+    auto* slot = self.particle_system_map.slot(particle_system_id);
+    if (!slot) {
+      return;
+    }
+
+    previous_children = {slot->render.material, slot->render.mesh};
     mutate(*slot);
     if (recompile) {
       slot->recompile();
+    }
+    current_children = {slot->render.material, slot->render.mesh};
+  }
+
+  // acquire_ref walks into the sub-assets once per holder of this system, so swapping one has to
+  // hand that many refs over, not a single one
+  for (usize i = 0; i < previous_children.size(); i++) {
+    if (previous_children[i] == current_children[i]) {
+      continue;
+    }
+
+    if (current_children[i]) {
+      self.load_asset(current_children[i], {}, false);
+    }
+
+    for (auto ref = 0_u64; ref < holder_count; ref++) {
+      self.acquire_ref(self.get_asset(current_children[i]));
+      self.release_ref(self.get_asset(previous_children[i]));
     }
   }
 }
