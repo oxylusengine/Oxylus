@@ -1224,12 +1224,7 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
   self.draw_canvas();
   ImGui::EndChild();
 
-  drag_splitter("##canvas_splitter", self.inspector_width);
-  ImGui::BeginChild("particle_inspector", ImVec2(self.inspector_width, 0.0f), ImGuiChildFlags_Borders);
-  self.draw_inspector();
-  ImGui::EndChild();
-
-  drag_splitter("##inspector_splitter", self.preview_width);
+  drag_splitter("##canvas_splitter", self.preview_width);
   ImGui::BeginChild(
     "particle_preview",
     ImVec2(self.preview_width, 0.0f),
@@ -1237,6 +1232,11 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
     ImGuiWindowFlags_NoScrollWithMouse
   );
   self.draw_preview(swapchain_attachment);
+  ImGui::EndChild();
+
+  drag_splitter("##preview_splitter", self.inspector_width);
+  ImGui::BeginChild("particle_inspector", ImVec2(self.inspector_width, 0.0f), ImGuiChildFlags_Borders);
+  self.draw_inspector();
   ImGui::EndChild();
 
   self.on_end();
