@@ -53,6 +53,7 @@ private:
   glm::vec2 context_screen_position = {};
   u64 context_pin = 0;
   usize dragged_curve = ~0_sz;
+  glm::vec2 dragged_curve_range = {0.0f, 1.0f};
 
   f32 inspector_width = 360.0f;
   f32 preview_width = 380.0f;

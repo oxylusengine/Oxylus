@@ -851,7 +851,7 @@ auto ParticleEditorPanel::draw_curve_editor(
 
   auto modified = false;
 
-  // The vertical range follows the data, so a curve that peaks above 1 still fills the plot.
+  // let the vertical range follow curves that extend beyond 1
   auto min_value = 0.0f;
   auto max_value = 1.0f;
   for (const auto& point : curve.points) {
@@ -863,14 +863,20 @@ auto ParticleEditorPanel::draw_curve_editor(
   min_value -= padding;
   max_value += padding;
 
-  constexpr auto plot_flags = ImPlotFlags_CanvasOnly | ImPlotFlags_NoInputs;
-  constexpr auto axis_flags =
-    ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoMenus | ImPlotAxisFlags_NoSideSwitch;
+  // keep a stable scale while dragging so auto-ranging cannot amplify pointer movement
+  if (self.dragged_curve == curve_index) {
+    min_value = self.dragged_curve_range.x;
+    max_value = self.dragged_curve_range.y;
+  }
+
+  constexpr auto plot_flags = ImPlotFlags_CanvasOnly;
+  constexpr auto axis_flags = ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoMenus | ImPlotAxisFlags_NoSideSwitch;
 
   if (ImPlot::BeginPlot("##curve_plot", ImVec2(-1.0f, plot_height), plot_flags)) {
     ImPlot::SetupAxes(nullptr, nullptr, axis_flags, axis_flags);
     ImPlot::SetupAxesLimits(0.0, 1.0, min_value, max_value, ImPlotCond_Always);
     ImPlot::SetupFinish();
+    const auto plot_size = ImPlot::GetPlotSize();
 
     auto removed_point = curve.points.size();
     auto active_point = curve.points.size();
@@ -885,20 +891,28 @@ auto ParticleEditorPanel::draw_curve_editor(
       auto hovered = false;
       auto held = false;
 
-      if (ImPlot::DragPoint(
-            static_cast<i32>(i),
-            &x,
-            &y,
-            ImVec4(0.0f, 0.0f, 0.0f, 0.0f),
-            grab_radius,
-            ImPlotDragToolFlags_NoFit,
-            nullptr,
-            &hovered,
-            &held
-          )) {
+      const auto dragging = ImPlot::DragPoint(
+        static_cast<i32>(i),
+        &x,
+        &y,
+        ImVec4(0.0f, 0.0f, 0.0f, 0.0f),
+        grab_radius,
+        ImPlotDragToolFlags_NoFit,
+        nullptr,
+        &hovered,
+        &held
+      );
+
+      if (dragging) {
+        const auto mouse_delta = ImGui::GetIO().MouseDelta;
+        const auto value_span = std::max(max_value - min_value, 0.001f);
         curve.points[i] = {
-          std::clamp(static_cast<f32>(x), 0.0f, 1.0f),
-          std::clamp(static_cast<f32>(y), -PARTICLE_LITERAL_RANGE, PARTICLE_LITERAL_RANGE),
+          std::clamp(curve.points[i].x + mouse_delta.x / std::max(plot_size.x, 1.0f), 0.0f, 1.0f),
+          std::clamp(
+            curve.points[i].y - mouse_delta.y / std::max(plot_size.y, 1.0f) * value_span,
+            -PARTICLE_LITERAL_RANGE,
+            PARTICLE_LITERAL_RANGE
+          ),
         };
         modified = true;
       }
@@ -910,7 +924,20 @@ auto ParticleEditorPanel::draw_curve_editor(
       point_held |= held;
 
       if (held) {
+        if (self.dragged_curve != curve_index) {
+          self.dragged_curve_range = {min_value, max_value};
+        }
         self.dragged_curve = curve_index;
+
+        const auto range_span = self.dragged_curve_range.y - self.dragged_curve_range.x;
+        const auto follow_margin = range_span * 0.05f;
+        auto range_shift = 0.0f;
+        if (curve.points[i].y < self.dragged_curve_range.x + follow_margin) {
+          range_shift = curve.points[i].y - (self.dragged_curve_range.x + follow_margin);
+        } else if (curve.points[i].y > self.dragged_curve_range.y - follow_margin) {
+          range_shift = curve.points[i].y - (self.dragged_curve_range.y - follow_margin);
+        }
+        self.dragged_curve_range += glm::vec2(range_shift);
       }
 
       // A curve needs two points to interpolate between.
@@ -992,11 +1019,7 @@ auto ParticleEditorPanel::draw_curve_editor(
     // Suppressed mid-drag: the tooltip would sit on top of the point being moved.
     if (ImPlot::IsPlotHovered() && !point_held) {
       const auto mouse = ImPlot::GetPlotMousePos();
-      ImGui::SetTooltip(
-        "t %.3f  value %.3f\nDouble-click to add, right-click a point to remove",
-        mouse.x,
-        mouse.y
-      );
+      ImGui::SetTooltip("t %.3f  value %.3f\nDouble-click to add, right-click a point to remove", mouse.x, mouse.y);
     }
 
     ImPlot::EndPlot();
