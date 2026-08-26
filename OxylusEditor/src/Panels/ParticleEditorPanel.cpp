@@ -14,6 +14,7 @@
 #include "Scene/Components.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
+#include "Utils/EditorGrid.hpp"
 #include "Utils/Log.hpp"
 
 namespace ed = ax::NodeEditor;
@@ -24,6 +25,7 @@ constexpr static u64 PARTICLE_LINK_ID_BASE = 0x0100'0000_u64;
 constexpr static u64 PARTICLE_PINS_PER_NODE = 64;
 
 constexpr static f32 PARTICLE_LITERAL_RANGE = 1.0e6f;
+constexpr static f32 PARTICLE_PREVIEW_GRID_DISTANCE = 200.0f;
 
 auto particle_node_editor_id(const ParticleNodeID id) -> u64 { return std::to_underlying(id) + 1; }
 
@@ -1086,6 +1088,12 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk
   // inside another panel's on_render, by which point update_all has already run past it.
   self.preview_scene->runtime_update(App::get_timestep());
 
+  if (self.preview_grid_enabled) {
+    if (auto* renderer_instance = self.preview_scene->get_renderer_instance(); renderer_instance != nullptr) {
+      add_editor_grid_stage(*renderer_instance, PARTICLE_PREVIEW_GRID_DISTANCE);
+    }
+  }
+
   auto image = self.preview_scene->render(
     std::move(attachment),
     glm::ivec2(0),
@@ -1121,6 +1129,13 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk
     self.preview_asset = {};
     self.preview_emitter.remove<ParticleSystemComponent>();
     self.sync_preview_asset();
+  }
+  ImGui::SameLine();
+  if (UI::toggle_button(ICON_MDI_GRID, self.preview_grid_enabled)) {
+    self.preview_grid_enabled = !self.preview_grid_enabled;
+  }
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+    ImGui::SetTooltip("Toggle grid");
   }
   ImGui::SameLine();
   ImGui::SetNextItemWidth(120.0f);

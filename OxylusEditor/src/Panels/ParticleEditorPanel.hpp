@@ -74,5 +74,6 @@ private:
   f32 preview_distance = 6.0f;
   f32 preview_speed = 1.0f;
   bool preview_playing = true;
+  bool preview_grid_enabled = true;
 };
 } // namespace ox
