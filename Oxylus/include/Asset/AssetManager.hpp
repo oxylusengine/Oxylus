@@ -1,12 +1,14 @@
 #pragma once
 
 #include <condition_variable>
+#include <functional>
 #include <simdjson.h>
 
 #include "Asset/AssetFile.hpp"
 #include "Asset/AudioSource.hpp"
 #include "Asset/Material.hpp"
 #include "Asset/Model.hpp"
+#include "Asset/ParticleSystem.hpp"
 #include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/UUID.hpp"
@@ -29,6 +31,7 @@ struct Asset {
     AudioID audio_id;
     ScriptID script_id;
     TerrainEditsID terrain_edits_id;
+    ParticleSystemID particle_system_id;
   };
 
   // Reference count of loads
@@ -89,6 +92,9 @@ public:
   auto export_terrain_edits(
     this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
   ) -> bool;
+  auto export_particle_system(
+    this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+  ) -> bool;
 
   auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true)
     -> bool;
@@ -129,6 +135,13 @@ public:
   auto get_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> ReadGuard<TerrainEdits>;
   auto set_terrain_edits(this AssetManager& self, const UUID& uuid, TerrainEdits&& edits) -> void;
 
+  auto get_particle_system(this AssetManager& self, const UUID& uuid) -> ReadGuard<ParticleSystem>;
+  auto get_particle_system(this AssetManager& self, ParticleSystemID particle_system_id) -> ReadGuard<ParticleSystem>;
+  auto set_particle_system_dirty(this AssetManager& self, const UUID& uuid) -> void;
+  auto edit_particle_system(
+    this AssetManager& self, const UUID& uuid, const std::function<void(ParticleSystem&)>& mutate, bool recompile = true
+  ) -> void;
+
 private:
   auto load_asset_impl(
     this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire, bool async
@@ -162,6 +175,9 @@ private:
   auto load_terrain_edits(this AssetManager& self, const std::filesystem::path& path) -> TerrainEditsID;
   auto unload_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> bool;
 
+  auto load_particle_system(this AssetManager& self, const std::filesystem::path& path) -> ParticleSystemID;
+  auto unload_particle_system(this AssetManager& self, ParticleSystemID particle_system_id) -> bool;
+
   AssetRegistry asset_registry = {};
 
   std::shared_mutex registry_mutex = {};
@@ -172,6 +188,7 @@ private:
   std::shared_mutex audio_mutex = {};
   std::shared_mutex scripts_mutex = {};
   std::shared_mutex terrain_edits_mutex = {};
+  std::shared_mutex particle_systems_mutex = {};
 
   std::vector<MaterialID> dirty_materials = {};
 
@@ -188,6 +205,7 @@ private:
   SlotMap<AudioSource, AudioID> audio_map = {};
   SlotMap<std::unique_ptr<LuaScript>, ScriptID> script_map = {};
   SlotMap<TerrainEdits, TerrainEditsID> terrain_edits_map = {};
+  SlotMap<ParticleSystem, ParticleSystemID> particle_system_map = {};
 
   UUID null_material = {};
 };

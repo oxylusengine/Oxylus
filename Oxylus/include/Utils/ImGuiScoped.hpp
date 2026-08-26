@@ -415,19 +415,5 @@ struct ClipRect {
   IMGUI_DELETE_MOVE_COPY(ClipRect);
 };
 
-struct ChildFrame {
-  bool IsOpen;
-
-  ChildFrame(ImGuiID id, const ImVec2& size, ImGuiWindowFlags flags = 0) {
-    IsOpen = ImGui::BeginChildFrame(id, size, flags);
-  }
-
-  ~ChildFrame() { ImGui::EndChildFrame(); }
-
-  explicit operator bool() const { return IsOpen; }
-
-  IMGUI_DELETE_MOVE_COPY(ChildFrame);
-};
-
 #undef IMGUI_DELETE_MOVE_COPY
 } // namespace ImGuiScoped

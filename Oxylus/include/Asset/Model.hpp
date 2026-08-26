@@ -47,6 +47,11 @@ struct Model {
     std::vector<u32> indices = {};
   };
 
+  struct IndexRange {
+    u64 device_address = 0;
+    u32 count = 0;
+  };
+
   enum class LightType { Directional, Spot, Point };
 
   struct Light {
@@ -64,6 +69,7 @@ struct Model {
   std::vector<MeshGroup> mesh_groups = {};
   std::vector<Light> lights = {};
   std::vector<u32> lod0_meshlet_counts = {};
+  std::vector<IndexRange> lod0_index_ranges = {};
   std::vector<GPU::Mesh> gpu_meshes = {};
   std::vector<option<u32>> material_indices = {}; // these are per mesh, not per MeshGroup
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};

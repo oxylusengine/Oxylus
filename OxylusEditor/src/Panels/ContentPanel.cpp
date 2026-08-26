@@ -12,6 +12,7 @@
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "OS/OS.hpp"
+#include "ParticleEditorPanel.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 
@@ -30,27 +31,41 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_S
   {FileType::Audio, "Audio"},
   {FileType::Material, "Material"},
   {FileType::Terrain, "Terrain"},
+  {FileType::ParticleSystem, "Particle System"},
 };
 
 static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
-  {"", FileType::Unknown},                                                                       //
-  {".oxasset", FileType::Meta},                                                                  //
-  {".oxscene", FileType::Scene},                                                                 //
-  {".oxprefab", FileType::Prefab},                                                               //
-  {".oxterrain", FileType::Terrain},                                                             //
-  {".hlsl", FileType::Shader},       {".hlsli", FileType::Shader}, {".glsl", FileType::Shader},  //
-  {".frag", FileType::Shader},       {".vert", FileType::Shader},  {".slang", FileType::Shader}, //
+  {"", FileType::Unknown},                   //
+  {".oxasset", FileType::Meta},              //
+  {".oxscene", FileType::Scene},             //
+  {".oxprefab", FileType::Prefab},           //
+  {".oxterrain", FileType::Terrain},         //
+  {".oxparticle", FileType::ParticleSystem}, //
+  {".hlsl", FileType::Shader},
+  {".hlsli", FileType::Shader},
+  {".glsl", FileType::Shader},               //
+  {".frag", FileType::Shader},
+  {".vert", FileType::Shader},
+  {".slang", FileType::Shader},              //
 
-  {".png", FileType::Texture},       {".jpg", FileType::Texture},  {".jpeg", FileType::Texture}, //
-  {".bmp", FileType::Texture},       {".gif", FileType::Texture},  {".ktx", FileType::Texture},  //
-  {".ktx2", FileType::Texture},      {".tiff", FileType::Texture},                               //
+  {".png", FileType::Texture},
+  {".jpg", FileType::Texture},
+  {".jpeg", FileType::Texture}, //
+  {".bmp", FileType::Texture},
+  {".gif", FileType::Texture},
+  {".ktx", FileType::Texture},  //
+  {".ktx2", FileType::Texture},
+  {".tiff", FileType::Texture}, //
 
-  {".gltf", FileType::Model},        {".glb", FileType::Model},                                  //
+  {".gltf", FileType::Model},
+  {".glb", FileType::Model},    //
 
-  {".mp3", FileType::Audio},         {".m4a", FileType::Audio},    {".wav", FileType::Audio},    //
-  {".ogg", FileType::Audio},                                                                     //
+  {".mp3", FileType::Audio},
+  {".m4a", FileType::Audio},
+  {".wav", FileType::Audio},  //
+  {".ogg", FileType::Audio},  //
 
-  {".lua", FileType::Script},                                                                    //
+  {".lua", FileType::Script}, //
 };
 
 static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
@@ -64,6 +79,7 @@ static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
   {FileType::Script, {0.0f, 16.0f, 121.0f, 1.00f}},
   {FileType::Material, {0.85f, 0.60f, 0.15f, 1.00f}},
   {FileType::Terrain, {0.45f, 0.70f, 0.30f, 1.00f}},
+  {FileType::ParticleSystem, {0.60f, 0.35f, 0.85f, 1.00f}},
 };
 
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_ICON = {
@@ -79,6 +95,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Script, ICON_MDI_LANGUAGE_LUA},
   {FileType::Material, ICON_MDI_PALETTE_SWATCH},
   {FileType::Terrain, ICON_MDI_TERRAIN},
+  {FileType::ParticleSystem, ICON_MDI_LAMP},
 };
 
 static auto standalone_asset_file_type(const std::filesystem::path& path) -> option<FileType> {
@@ -162,8 +179,16 @@ static void open_file(const std::filesystem::path& path) {
         os::open_file_externally(path);
         break;
       }
-      case ox::FileType::Material: break;
-      default                    : break;
+      case ox::FileType::Material  : break;
+      case FileType::ParticleSystem: {
+        auto& asset_man = App::mod<AssetManager>();
+        const auto uuid = asset_man.import_asset(path);
+        if (uuid && asset_man.load_asset(uuid)) {
+          App::mod<Editor>().editor_panel_registry.get<ParticleEditorPanel>().open_asset(uuid);
+        }
+        break;
+      }
+      default: break;
     }
   } else {
     os::open_file_externally(path);
@@ -840,9 +865,9 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
   }
 
   if (self.should_open_new_asset_popup)
-    ImGui::OpenPopup("New Material");
+    ImGui::OpenPopup("New Asset");
 
-  if (ImGui::BeginPopupModal("New Material", nullptr, ImGuiWindowFlags_NoResize)) {
+  if (ImGui::BeginPopupModal("New Asset", nullptr, ImGuiWindowFlags_NoResize)) {
     UI::begin_properties();
     UI::input_text("Name", &self.new_asset_name_);
     UI::end_properties();
@@ -855,13 +880,25 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           asset_path.replace_extension("");
         }
 
-        auto asset = asset_man.create_asset(AssetType::Material, asset_path);
+        if (self.new_asset_type_ == AssetType::ParticleSystem && asset_path.extension() != ".oxparticle") {
+          asset_path.replace_extension(".oxparticle");
+        }
+
+        auto asset = asset_man.create_asset(self.new_asset_type_, asset_path);
         asset_man.load_asset(asset);
         if (asset_man.export_asset(asset, asset_path)) {
-          OX_LOG_INFO("Created new material asset {}", self.new_asset_name_);
+          OX_LOG_INFO(
+            "Created new {} asset {}",
+            AssetManager::to_asset_type_sv(self.new_asset_type_),
+            self.new_asset_name_
+          );
           self.refresh();
         } else {
-          OX_LOG_ERROR("Couldn't create material asset {}", self.new_asset_name_);
+          OX_LOG_ERROR(
+            "Couldn't create {} asset {}",
+            AssetManager::to_asset_type_sv(self.new_asset_type_),
+            self.new_asset_name_
+          );
         }
         self.new_asset_name_.clear();
         self.should_open_new_asset_popup = false;
@@ -980,6 +1017,12 @@ auto ContentPanel::draw_context_menu_items(this ContentPanel& self, const std::f
       }
       if (ImGui::MenuItem("Material")) {
         self.new_asset_name_.clear();
+        self.new_asset_type_ = AssetType::Material;
+        self.should_open_new_asset_popup = true;
+      }
+      if (ImGui::MenuItem("Particle System")) {
+        self.new_asset_name_.clear();
+        self.new_asset_type_ = AssetType::ParticleSystem;
         self.should_open_new_asset_popup = true;
       }
       ImGui::EndMenu();

@@ -644,6 +644,10 @@ auto RendererInstance::render(
     self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
   if (cvar.cvar_transparent_background.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::TransparentBackground;
+  if (cvar.cvar_particles_enable.as_bool())
+    self.gpu_scene_flags |= GPU::SceneFlags::HasParticles;
+  if (cvar.cvar_particle_sort.as_bool())
+    self.gpu_scene_flags |= GPU::SceneFlags::HasParticleSorting;
 
   const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
   const f32 debug_heatmap_scale = 5.0;
@@ -1641,6 +1645,38 @@ auto RendererInstance::render(
     final_attachment = ctx.get_image_resource("final_attachment");
   }
 
+  // --- Particle Simulation Pass ---
+  if (!self.prepared_frame.particle_emitters.empty()) {
+    auto particle_context = ParticleContext{
+      .total_capacity = self.prepared_frame.particle_total_capacity,
+      .sorted_count = self.prepared_frame.particle_sorted_count,
+      .emitter_count = static_cast<u32>(self.prepared_frame.particle_emitters.size()),
+      .total_spawn = self.prepared_frame.particle_total_spawn,
+      .needs_init = self.prepared_frame.particle_pool_reset,
+      .sort_enabled = self.prepared_frame.particle_sort_enabled,
+      .mesh_draws = std::span(self.prepared_frame.particle_mesh_draws),
+      .emitters_buffer = self.renderer.render_context->scratch_buffer_span(
+        std::span(self.prepared_frame.particle_emitters)
+      ),
+      .program_buffer = self.renderer.render_context->scratch_buffer_span(
+        std::span(self.prepared_frame.particle_instructions)
+      ),
+      .constants_buffer = self.renderer.render_context->scratch_buffer_span(
+        std::span(self.prepared_frame.particle_constants)
+      ),
+      .camera_buffer = std::move(self.prepared_frame.camera_buffer),
+      .materials_buffer = std::move(self.prepared_frame.materials_buffer),
+      .depth_attachment = std::move(depth_attachment),
+    };
+
+    self.simulate_particles(particle_context);
+    final_attachment = self.draw_particles(particle_context, std::move(final_attachment));
+
+    depth_attachment = std::move(particle_context.depth_attachment);
+    self.prepared_frame.camera_buffer = std::move(particle_context.camera_buffer);
+    self.prepared_frame.materials_buffer = std::move(particle_context.materials_buffer);
+  }
+
   // --- DDGI Probe Debug Pass ---
   if (draw_ddgi_probes && !self.probe_volumes.empty()) {
     if (!ddgi_atlas_valid) {
@@ -1851,8 +1887,11 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     .previous_inv_projection_view = self.previous_camera_data.inv_projection_view,
     .temporalaa_jitter = cam.jitter,
     .temporalaa_jitter_prev = self.previous_camera_data.temporalaa_jitter_prev,
+    .up = cam.up,
     .near_clip = cam.near_clip,
+    .forward = cam.forward,
     .far_clip = cam.far_clip,
+    .right = cam.right,
     .fov = cam.fov,
     .output_index = 0,
     .acceptable_lod_error = 2.0f,
@@ -2100,36 +2139,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           );
         } else {
           OX_LOG_WARN("No registered transform for sprite entity: {}", e.name().c_str());
-        }
-      }
-    });
-
-  self.scene.world
-    .query_builder<const TransformComponent, const ParticleComponent>() //
-    .build()
-    .each([&asset_man,
-           &s = self.scene,
-           &cam,
-           &rq2d = self.render_queue_2d](flecs::entity e, const TransformComponent& tc, const ParticleComponent& comp) {
-      if (comp.life_remaining <= 0.0f)
-        return;
-
-      const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
-
-      auto particle_system_component = e.parent().try_get<ParticleSystemComponent>();
-      if (particle_system_component) {
-        if (auto material = asset_man.get_asset(particle_system_component->material)) {
-          if (auto transform_id = s.get_entity_transform_id(e)) {
-            rq2d.add(
-              GPU::RENDER_FLAGS_2D_SORT_Y,
-              tc.position.y,
-              SlotMap_decode_id(*transform_id).index,
-              SlotMap_decode_id(material->material_id).index,
-              distance
-            );
-          } else {
-            OX_LOG_WARN("No registered transform for sprite entity: {}", e.name().c_str());
-          }
         }
       }
     });
@@ -2396,6 +2405,11 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   }
 
   self.update_vbgtao_info(cvar);
+
+  if (cvar.cvar_particles_enable.as_bool()) {
+    const auto particle_delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f;
+    self.prepare_particles(particle_delta_time, cvar.cvar_particle_sort.as_bool());
+  }
 
   if (!self.exposure_buffer) {
     self.exposure_buffer = render_context.allocate_buffer_super(

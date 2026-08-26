@@ -198,6 +198,14 @@ Jolt contact callbacks. Scripts can define flecs systems, so gameplay can be wri
   `namespace detail`, and don't reach for one to "hide" a symbol.
 - Short numeric typedefs from `Core/Types.hpp` are global: `u32`, `i64`, `f32`, `usize`, `c8`, ...
   Prefer these over `uint32_t`/`float`.
+- **Spell floating-point literals with a digit after the decimal point.** Write `0.0f`, `1.0f`,
+  `32.0f`, and `-1.0f`; never use shorthand forms such as `0.f`, `1.f`, `32.f`, or `-1.f`.
+- **Only use built-in `SV_*` semantics in Slang stage interfaces.** Keep required system-value
+  semantics such as `SV_Position`, `SV_VertexID`, `SV_InstanceID`, and `SV_Target0`, but leave
+  ordinary varying fields unannotated. Do not add custom semantics such as `: UV`, `: COLOR`,
+  `: MAT_INDEX`, or similar names.
+- **Keep comments casual.** Start comment text with a lowercase letter and omit sentence-ending
+  punctuation: write `// word, word`, not `// Word, word.`
 - **Trailing return types everywhere.** Every function, member function, lambda with a non-obvious
   result, and free function is written `auto foo(...) -> T`, never `T foo(...)`. This holds for
   `void`, for constructors' helper factories, for static functions, and for declarations in headers —
@@ -385,4 +393,3 @@ preference:
 `.github/workflows/xmake.yaml` builds Windows/msvc, Linux/clang-20, and macOS/mac-clang in both debug
 and release with `--tests=false`, then `xmake build -a` and `xmake install`. It does **not** run
 tests, so verify tests locally.
-

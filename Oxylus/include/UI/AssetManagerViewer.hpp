@@ -25,6 +25,7 @@ private:
   std::vector<Asset> shader_assets = {};
   std::vector<Asset> font_assets = {};
   std::vector<Asset> terrain_assets = {};
+  std::vector<Asset> particle_system_assets = {};
 
   ankerl::unordered_dense::map<AssetType, bool> asset_type_filter_flags = {
     {AssetType::Shader, true},
@@ -36,6 +37,7 @@ private:
     {AssetType::Script, true},
     {AssetType::Model, true},
     {AssetType::Terrain, true},
+    {AssetType::ParticleSystem, true},
   };
 
   ImGuiTextFilter text_filter = {};

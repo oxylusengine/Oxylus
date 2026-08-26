@@ -129,76 +129,10 @@ struct CameraComponent {
 };
 
 struct ParticleSystemComponent {
-  UUID material = {};
-  f32 duration = 3.f;
-  bool looping = true;
-  f32 start_delay = 0.f;
-  f32 start_lifetime = 3.0f;
-  glm::vec3 start_velocity = {0.f, 2.f, 0.f};
-  glm::vec4 start_color = {1.f, 1.f, 1.f, 1.f};
-  glm::vec4 start_size = {1.f, 1.f, 1.f, 1.f};
-  glm::quat start_rotation = glm::quat::wxyz(1.f, 0.f, 0.f, 0.f);
-  f32 gravity_modifier = 0.f;
-  f32 simulation_speed = 1.f;
+  UUID particle_system = {};
   bool play_on_awake = true;
-  u32 max_particles = 100;
-  u32 rate_over_time = 10;
-  u32 rate_over_distance = 0;
-  u32 burst_count = 0;
-  glm::vec3 position_start = {-0.2f, 0.f, 0.f};
-  glm::vec3 position_end = {0.2f, 0.f, 0.f};
-
-  bool velocity_over_lifetime_enabled = false;
-  glm::vec3 velocity_over_lifetime_start = {};
-  glm::vec3 velocity_over_lifetime_end = {};
-
-  bool force_over_lifetime_enabled = false;
-  glm::vec3 force_over_lifetime_start = {};
-  glm::vec3 force_over_lifetime_end = {};
-
-  bool color_over_lifetime_enabled = false;
-  glm::vec4 color_over_lifetime_start = {0.8f, 0.2f, 0.2f, 0.0f};
-  glm::vec4 color_over_lifetime_end = {0.2f, 0.2f, 0.75f, 1.0f};
-
-  bool color_by_speed_enabled = false;
-  glm::vec4 color_by_speed_start = {0.8f, 0.2f, 0.2f, 0.0f};
-  glm::vec4 color_by_speed_end = {0.2f, 0.2f, 0.75f, 1.0f};
-  f32 color_by_speed_min_speed = 0.f;
-  f32 color_by_speed_max_speed = 1.f;
-
-  bool size_over_lifetime_enabled = false;
-  glm::vec3 size_over_lifetime_start = glm::vec3(0.2f);
-  glm::vec3 size_over_lifetime_end = glm::vec3(1.0f);
-
-  bool size_by_speed_enabled = false;
-  glm::vec3 size_by_speed_start = glm::vec3(0.2f);
-  glm::vec3 size_by_speed_end = glm::vec3(1.0f);
-  f32 size_by_speed_min_speed = 0.f;
-  f32 size_by_speed_max_speed = 1.f;
-
-  bool rotation_over_lifetime_enabled = false;
-  glm::quat rotation_over_lifetime_start = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
-  glm::quat rotation_over_lifetime_end = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
-
-  bool rotation_by_speed_enabled = false;
-  glm::quat rotation_by_speed_start = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
-  glm::quat rotation_by_speed_end = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
-  f32 rotation_by_speed_min_speed = 0.f;
-  f32 rotation_by_speed_max_speed = 1.f;
-
-  std::vector<u64> particles = {};
-  u32 pool_index = 0;
-  float system_time = 0.0f;
-  float burst_time = 0.0f;
-  float spawn_time = 0.0f;
-  glm::vec3 last_spawned_position = glm::vec3(0.0f);
-  uint32_t active_particle_count = 0;
-  bool playing = false;
-};
-
-struct ParticleComponent {
-  glm::vec4 color = {};
-  f32 life_remaining = 0.f;
+  f32 simulation_speed = 1.0f;
+  u32 seed = 0;
 };
 
 struct LightComponent {

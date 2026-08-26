@@ -387,6 +387,8 @@ enum class SceneFlags : u32 {
   HasSky = 1 << 10,
   TransparentBackground = 1 << 11,
   HasDDGI = 1 << 12,
+  HasParticles = 1 << 13,
+  HasParticleSorting = 1 << 14,
 };
 consteval void enable_bitmask(SceneFlags);
 
@@ -657,6 +659,156 @@ struct SpriteGPUData {
     };
     return a.value > b.value;
   }
+};
+
+// --- Particles ---
+
+constexpr static u32 PARTICLE_REGISTER_COUNT = 16;
+constexpr static u32 PARTICLE_SIMULATE_GROUP = 64;
+constexpr static u32 PARTICLE_SORT_GROUP = 256;
+
+enum class ParticleOperandKind : u32 {
+  Register = 0,
+  Constant = 1,
+  Immediate = 2,
+};
+
+enum class ParticleOpCode : u8 {
+  Nop = 0,
+  Mov,
+  Swizzle,
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Mad,
+  Min,
+  Max,
+  Clamp,
+  Lerp,
+  Abs,
+  Floor,
+  Frac,
+  Pow,
+  Dot,
+  Cross,
+  Normalize,
+  Length,
+  Sin,
+  Cos,
+  Step,
+  Smoothstep,
+  Select,
+  Curve,
+  Gradient,
+  Noise,
+  Random,
+  Time,
+  AgeNorm,
+  Count,
+};
+
+struct ParticleInstruction {
+  alignas(4) u32 op_dst = 0;
+  alignas(4) u32 src0 = 0;
+  alignas(4) u32 src1 = 0;
+  alignas(4) u32 src2 = 0;
+
+  static auto encode_op(ParticleOpCode op, u32 dst_register, u32 write_mask) -> u32 {
+    return static_cast<u32>(op) | (dst_register << 8u) | (write_mask << 12u);
+  }
+
+  static auto encode_operand(ParticleOperandKind kind, u32 payload) -> u32 {
+    return (static_cast<u32>(kind) << 30u) | (payload & 0x3FFFFFFFu);
+  }
+};
+
+static_assert(sizeof(ParticleInstruction) == 16, "ParticleInstruction layout drifted from particles.slang");
+
+constexpr static u32 PARTICLE_REG_POSITION_LIFE = 0;  // xyz position, w life_remaining
+constexpr static u32 PARTICLE_REG_VELOCITY_TOTAL = 1; // xyz velocity, w life_total
+constexpr static u32 PARTICLE_REG_SIZE_ROT_SEED = 2;  // xy size, z rotation, w seed
+constexpr static u32 PARTICLE_REG_COLOR = 3;          // rgba
+constexpr static u32 PARTICLE_REG_CONTEXT = 4;        // x age_norm, y emitter time, z delta time, w flipbook frame
+constexpr static u32 PARTICLE_ATTRIBUTE_REGISTERS = 5;
+
+struct Particle {
+  alignas(4) glm::vec3 position = {};
+  alignas(4) f32 life_remaining = 0.0f;
+  alignas(4) glm::vec3 velocity = {};
+  alignas(4) f32 life_total = 0.0f;
+  alignas(4) glm::vec2 size = {};
+  alignas(4) f32 rotation = 0.0f;
+  alignas(4) f32 seed = 0.0f;
+  alignas(4) u32 color = 0;
+  alignas(4) u32 flipbook_frame = 0;
+  alignas(4) u32 emitter_index = 0;
+  alignas(4) u32 flags = 0;
+};
+
+static_assert(sizeof(Particle) == 64, "Particle layout drifted from particles.slang");
+
+enum class ParticleEmitterFlags : u32 {
+  None = 0,
+  LocalSpace = 1 << 0,
+  Additive = 1 << 1,
+  VelocityStretched = 1 << 2,
+  SoftParticles = 1 << 3,
+  DepthCollision = 1 << 4,
+  MeshRenderer = 1 << 5,
+};
+consteval void enable_bitmask(ParticleEmitterFlags);
+
+struct ParticleEmitter {
+  alignas(4) glm::mat4 transform = glm::mat4(1.0f);
+  alignas(4) glm::vec4 rotation = {0.0f, 0.0f, 0.0f, 1.0f};
+
+  alignas(4) u32 pool_offset = 0;
+  alignas(4) u32 capacity = 0;
+  alignas(4) u32 spawn_count = 0;
+  alignas(4) u32 spawn_offset = 0;
+
+  alignas(4) u32 spawn_program_offset = 0;
+  alignas(4) u32 spawn_program_count = 0;
+  alignas(4) u32 update_program_offset = 0;
+  alignas(4) u32 update_program_count = 0;
+
+  alignas(4) u32 constants_offset = 0;
+  alignas(4) u32 curve_atlas_index = ~0_u32;
+  alignas(4) u32 curve_sampler_index = 0;
+  alignas(4) u32 curve_row_count = 0;
+
+  alignas(4) u32 atlas_row_count = 0;
+  alignas(4) u32 material_index = 0;
+  alignas(4) u32 flipbook_x = 1;
+  alignas(4) u32 flipbook_y = 1;
+
+  alignas(4) ParticleEmitterFlags flags = ParticleEmitterFlags::None;
+  alignas(4) u32 shape = 0;
+  alignas(4) u32 seed = 0;
+  alignas(4) f32 time = 0.0f;
+
+  alignas(4) f32 delta_time = 0.0f;
+  alignas(4) f32 restitution = 0.4f;
+  alignas(4) f32 soft_particle_distance = 0.0f;
+  alignas(4) f32 velocity_stretch = 1.0f;
+
+  alignas(4) glm::vec2 lifetime = {1.0f, 1.0f};
+  alignas(4) glm::vec4 shape_params = {};
+};
+
+static_assert(sizeof(ParticleEmitter) == 200, "ParticleEmitter layout drifted from particles.slang");
+
+struct ParticleSortKey {
+  alignas(4) u32 key = ~0_u32;
+  alignas(4) u32 index = ~0_u32;
+};
+
+struct ParticleCounters {
+  alignas(4) u32 alive_count = 0;
+  alignas(4) u32 alive_count_next = 0;
+  alignas(4) u32 draw_count = 0;
+  alignas(4) u32 pad = 0;
 };
 
 } // namespace ox::GPU

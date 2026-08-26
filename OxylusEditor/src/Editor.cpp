@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui_internal.h>
+#include <implot.h>
 #include <vuk/vsl/Core.hpp>
 
 #include "Core/App.hpp"
@@ -15,6 +16,7 @@
 #include "Panels/ContentPanel.hpp"
 #include "Panels/EditorSettingsPanel.hpp"
 #include "Panels/InspectorPanel.hpp"
+#include "Panels/ParticleEditorPanel.hpp"
 #include "Panels/ProjectPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Panels/TextEditorPanel.hpp"
@@ -26,6 +28,8 @@
 namespace ox {
 auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
+
+  ImPlot::CreateContext();
 
   auto& job_man = App::get_job_manager();
   job_man.get_tracker().start_tracking();
@@ -101,6 +105,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_panel_registry.add<EditorSettingsPanel>();
   self.editor_panel_registry.add<ProjectPanel>();
   self.editor_panel_registry.add<AssetManagerPanel>();
+  self.editor_panel_registry.add<ParticleEditorPanel>();
   auto activity_log_panel = self.editor_panel_registry.add<ActivityLogPanel>();
   activity_log_panel->set_system(&self.notification_system);
   auto text_editor_panel = self.editor_panel_registry.add<TextEditorPanel>();
@@ -177,6 +182,8 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   self.scene_manager.reset();
 
   Log::remove_callback("editor_notifications");
+
+  ImPlot::DestroyContext();
 
   return {};
 }
@@ -561,6 +568,7 @@ void Editor::draw_menubar(this Editor& self) {
       ImGui::MenuItem("Inspector", nullptr, &self.editor_panel_registry.get<InspectorPanel>().visible);
       ImGui::MenuItem("Scene hierarchy", nullptr, &self.editor_panel_registry.get<SceneHierarchyPanel>().visible);
       ImGui::MenuItem("Text Editor", nullptr, &self.editor_panel_registry.get<TextEditorPanel>().visible);
+      ImGui::MenuItem("Particle Editor", nullptr, &self.editor_panel_registry.get<ParticleEditorPanel>().visible);
       if (ImGui::BeginMenu("Layout")) {
         if (ImGui::MenuItem("Classic")) {
           self.set_docking_layout(EditorLayout::Classic);

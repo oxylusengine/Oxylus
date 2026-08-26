@@ -70,6 +70,9 @@ struct RendererCVar {
   AutoCVar_Float cvar_bloom_intensity;
   AutoCVar_Float cvar_bloom_clamp;
 
+  AutoCVar_Int cvar_particles_enable;
+  AutoCVar_Int cvar_particle_sort;
+
   AutoCVar_Int cvar_fxaa_enable;
 
   AutoCVar_Int cvar_tonemapper;

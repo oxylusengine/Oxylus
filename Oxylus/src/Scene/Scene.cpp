@@ -418,6 +418,18 @@ Scene::~Scene() {
     runtime_stop();
 
   tearing_down = true;
+
+  {
+    auto& asset_man = App::mod<AssetManager>();
+    for (const auto& [entity, emitter_id] : entity_particle_emitters_map) {
+      if (const auto* state = particle_emitters.slot(emitter_id); state && state->asset) {
+        asset_man.unload_asset(state->asset);
+      }
+    }
+    entity_particle_emitters_map.clear();
+    particle_emitters.reset();
+  }
+
   destroy_terrain_collision();
   set_terrain_edits_ref({});
   terrain.reset();
@@ -686,50 +698,70 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     });
 
   self.world.observer<ParticleSystemComponent>()
-    .event(flecs::OnSet)
     .event(flecs::OnAdd)
+    .event(flecs::OnSet)
     .event(flecs::OnRemove)
-    .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
+    .each([&self](flecs::iter& it, usize i, ParticleSystemComponent& c) {
+      ZoneScopedN("Particle system observer");
+
       auto& asset_man = App::mod<AssetManager>();
-      if (it.event() == flecs::OnAdd) {
-        if (c.play_on_awake) {
-          c.system_time = 0.0f;
-          c.playing = true;
-        }
-        if (!c.material)
-          c.material = asset_man.create_asset(AssetType::Material, {});
-        asset_man.load_asset(c.material);
+      const auto entity = it.entity(i);
 
-        auto parent = it.entity(i);
-        for (u32 k = 0; k < c.max_particles; k++) {
-          auto particle = it.world().entity().set<TransformComponent>({{}, {}, {0.5f, 0.5f, 0.5f}});
-          particle.set<ParticleComponent>({.life_remaining = c.start_lifetime});
-          c.particles.emplace_back(particle);
-          particle.child_of(parent);
-        }
-      } else if (it.event() == flecs::OnRemove) {
-        for (auto p : c.particles) {
-          flecs::entity e{it.world(), p};
-          e.destruct();
-        }
-      } else if (it.event() == flecs::OnSet) {
-        // is_loaded() takes and releases the read guard internally; don't hold one across
-        // load_asset() (which re-locks the registry).
-        if (!asset_man.is_loaded(c.material)) {
-          asset_man.load_asset(c.material);
-        }
-
-        asset_man.set_material_dirty(c.material);
-      }
-    });
-
-  self.world.observer<ParticleSystemComponent>()
-    .event(flecs::OnRemove)
-    .each([](flecs::iter& it, usize i, ParticleSystemComponent& c) {
-      auto& asset_man = App::mod<AssetManager>();
       if (it.event() == flecs::OnRemove) {
-        // See note in SpriteComponent OnRemove: never hold a read guard across unload_asset().
-        asset_man.unload_asset(c.material);
+        if (self.tearing_down) {
+          return;
+        }
+
+        const auto emitter_it = self.entity_particle_emitters_map.find(entity);
+        if (emitter_it == self.entity_particle_emitters_map.end()) {
+          return;
+        }
+
+        auto asset = UUID{};
+        if (const auto* state = self.particle_emitters.slot(emitter_it->second)) {
+          asset = state->asset;
+        }
+
+        self.particle_emitters.destroy_slot(emitter_it->second);
+        self.entity_particle_emitters_map.erase(emitter_it);
+
+        if (asset) {
+          asset_man.unload_asset(asset);
+        }
+
+        return;
+      }
+
+      auto [emitter_it, inserted] = self.entity_particle_emitters_map.try_emplace(entity, ParticleEmitterID::Invalid);
+      if (inserted) {
+        emitter_it->second = self.particle_emitters.create_slot(ParticleEmitterState{});
+      }
+
+      auto* state = self.particle_emitters.slot(emitter_it->second);
+      if (!state) {
+        return;
+      }
+
+      if (state->asset != c.particle_system) {
+        const auto previous = state->asset;
+
+        if (c.particle_system) {
+          asset_man.load_asset(c.particle_system);
+        }
+
+        if (previous) {
+          asset_man.unload_asset(previous);
+        }
+
+        state->asset = c.particle_system;
+        state->pool_valid = false;
+        state->time = 0.0f;
+        state->spawn_accumulator = 0.0f;
+        state->burst_cycles_fired.clear();
+      }
+
+      if (it.event() == flecs::OnAdd) {
+        state->playing = c.play_on_awake;
       }
     });
 
@@ -918,174 +950,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     });
 
   // -- Renderer Systems ---
-
-  self.world.system<const TransformComponent, ParticleSystemComponent>("particle_system_update")
-    .kind(flecs::PostUpdate)
-    .each([](flecs::iter& it, usize i, const TransformComponent& tc, ParticleSystemComponent& component) {
-      const auto emit = [&it, &component](flecs::entity parent, glm::vec3 position, u32 count) {
-        if (component.active_particle_count >= component.max_particles)
-          return;
-
-        for (uint32_t pool_idx = 0; pool_idx < count; ++pool_idx) {
-          if (++component.pool_index >= component.max_particles)
-            component.pool_index = 0;
-
-          auto particle = flecs::entity{it.world(), component.particles[component.pool_index]};
-
-          const auto random_float = [](f32 min, f32 max) {
-            static Random random = {};
-            f32 r = random.get_float();
-            return min + r * (max - min);
-          };
-
-          auto new_position = position;
-          new_position.x += random_float(component.position_start.x, component.position_end.x);
-          new_position.y += random_float(component.position_start.y, component.position_end.y);
-          new_position.z += random_float(component.position_start.z, component.position_end.z);
-
-          particle.set<TransformComponent>({new_position});
-          particle.set<ParticleComponent>({.life_remaining = component.start_lifetime});
-        }
-      };
-
-      OX_CHECK_EQ(component.particles.size(), component.max_particles);
-
-      auto entity = it.entity(i);
-
-      const float sim_ts = it.delta_time() * component.simulation_speed;
-
-      if (component.playing && !component.looping)
-        component.system_time += sim_ts;
-      const float delay = component.start_delay;
-      if (
-        component.playing &&
-        (component.looping || (component.system_time <= delay + component.duration && component.system_time > delay))
-      ) {
-        // Emit particles in unit time
-        component.spawn_time += sim_ts;
-        if (component.spawn_time >= 1.0f / static_cast<float>(component.rate_over_time)) {
-          component.spawn_time = 0.0f;
-          emit(entity, tc.position, 1);
-        }
-
-        // Emit particles over unit distance
-        if (glm::distance2(component.last_spawned_position, tc.position) > 1.0f) {
-          component.last_spawned_position = tc.position;
-          emit(entity, tc.position, component.rate_over_distance);
-        }
-
-        // Emit bursts of particles over time
-        component.burst_time += sim_ts;
-        if (component.burst_time >= component.burst_time) {
-          component.burst_time = 0.0f;
-          emit(entity, tc.position, component.burst_count);
-        }
-      }
-
-      component.active_particle_count = 0;
-    });
-
-  self.world.system<TransformComponent, ParticleComponent>("particle_update")
-    .kind(flecs::PostUpdate)
-    .each([](flecs::iter& it, usize i, TransformComponent& particle_tc, ParticleComponent& particle) {
-      if (particle.life_remaining <= 0.0f)
-        return;
-
-      auto evaluate_over_time = []<typename T>(T start, T end, f32 factor) -> T {
-        if constexpr (std::is_same_v<T, glm::quat>) {
-          if (glm::dot(start, end) < 0.0f)
-            end = -end;
-          return glm::slerp(end, start, factor);
-        } else {
-          return glm::lerp(end, start, factor);
-        }
-      };
-
-      auto evaluate_by_speed = []<typename T>(T start, T end, f32 min_speed, f32 max_speed, f32 speed) -> T {
-        f32 factor = math::inverse_lerp_clamped(min_speed, max_speed, speed);
-
-        if constexpr (std::is_same_v<T, glm::quat>) {
-          if (glm::dot(start, end) < 0.0f)
-            end = -end;
-          return glm::slerp(end, start, factor);
-        } else {
-          return glm::lerp(end, start, factor);
-        }
-      };
-
-      auto particle_entity = it.entity(i);
-      auto parent = particle_entity.parent();
-      auto component = parent.get<ParticleSystemComponent>();
-
-      float sim_ts = it.delta_time() * component.simulation_speed;
-
-      particle.life_remaining -= sim_ts;
-
-      const float t = glm::clamp(particle.life_remaining / component.start_lifetime, 0.0f, 1.0f);
-
-      glm::vec3 velocity = component.start_velocity;
-      if (component.velocity_over_lifetime_enabled)
-        velocity *= evaluate_over_time(component.velocity_over_lifetime_start, component.velocity_over_lifetime_end, t);
-
-      glm::vec3 force(0.0f);
-      if (component.force_over_lifetime_enabled)
-        force = evaluate_over_time(component.force_over_lifetime_start, component.force_over_lifetime_end, t);
-
-      force.y += component.gravity_modifier * -9.8f;
-      velocity += force * sim_ts;
-
-      const float velocity_magnitude = glm::length(velocity);
-
-      // Color
-      particle.color = component.start_color;
-      if (component.color_over_lifetime_enabled)
-        particle.color *= evaluate_over_time(component.color_over_lifetime_start, component.color_over_lifetime_end, t);
-      if (component.color_by_speed_enabled)
-        particle.color *= evaluate_by_speed(
-          component.color_by_speed_start,
-          component.color_by_speed_end,
-          component.color_by_speed_min_speed,
-          component.color_by_speed_max_speed,
-          velocity_magnitude
-        );
-
-      // Size
-      particle_tc.scale = component.start_size;
-      if (component.size_over_lifetime_enabled)
-        particle_tc
-          .scale *= evaluate_over_time(component.size_over_lifetime_start, component.size_over_lifetime_end, t);
-      if (component.size_by_speed_enabled)
-        particle_tc.scale *= evaluate_by_speed(
-          component.size_by_speed_start,
-          component.size_by_speed_end,
-          component.size_by_speed_min_speed,
-          component.size_by_speed_max_speed,
-          velocity_magnitude
-        );
-
-      // Rotation
-      particle_tc.rotation = component.start_rotation;
-      if (component.rotation_over_lifetime_enabled)
-        particle_tc.rotation += evaluate_over_time(
-          component.rotation_over_lifetime_start,
-          component.rotation_over_lifetime_end,
-          t
-        );
-      if (component.rotation_by_speed_enabled)
-        particle_tc.rotation += evaluate_by_speed(
-          component.rotation_by_speed_start,
-          component.rotation_by_speed_end,
-          component.rotation_by_speed_min_speed,
-          component.rotation_by_speed_max_speed,
-          velocity_magnitude
-        );
-
-      particle_tc.position += velocity * sim_ts;
-
-      particle_entity.modified<TransformComponent>();
-
-      ++component.active_particle_count;
-    });
 
   self.world.system<const TransformComponent, CameraComponent>("camera_update")
     .kind(flecs::PostUpdate)

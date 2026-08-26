@@ -12,6 +12,7 @@
 #include <simdjson.h>
 
 #include "Asset/Model.hpp"
+#include "Asset/ParticleSystem.hpp"
 #include "Core/UUID.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Render/DebugRenderer.hpp"
@@ -82,6 +83,9 @@ public:
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};
+
+  SlotMap<ParticleEmitterState, ParticleEmitterID> particle_emitters = {};
+  ankerl::unordered_dense::map<flecs::entity, ParticleEmitterID> entity_particle_emitters_map = {};
 
   std::unique_ptr<Terrain> terrain = nullptr;
   flecs::entity terrain_entity = {};

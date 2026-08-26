@@ -555,8 +555,8 @@ auto ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw
       ImGui::Text("Entities with light: %d", light_entities_count);
       const auto sprite_entities_count = self.editor_scene->get_scene()->world.count<SpriteComponent>();
       ImGui::Text("Entities with sprite: %d", sprite_entities_count);
-      const auto particle_entities_count = self.editor_scene->get_scene()->world.count<ParticleSystemComponent>();
-      ImGui::Text("Entities with particle: %d", particle_entities_count);
+      const auto particle_emitter_count = self.editor_scene->get_scene()->world.count<ParticleSystemComponent>();
+      ImGui::Text("Particle emitters: %d", particle_emitter_count);
       const auto rigidbody_entities_count = self.editor_scene->get_scene()->world.count<RigidBodyComponent>();
       ImGui::Text("Entities with rigidbody: %d", rigidbody_entities_count);
       const auto audio_entities_count = self.editor_scene->get_scene()->world.count<AudioSourceComponent>();

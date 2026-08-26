@@ -90,60 +90,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = ParticleSystemComponent;
-    registry.bind<
-      &C::material,
-      &C::duration,
-      &C::looping,
-      &C::start_delay,
-      &C::start_lifetime,
-      &C::start_velocity,
-      &C::start_color,
-      &C::start_size,
-      &C::start_rotation,
-      &C::gravity_modifier,
-      &C::simulation_speed,
-      &C::play_on_awake,
-      &C::max_particles,
-      &C::rate_over_time,
-      &C::rate_over_distance,
-      &C::burst_count,
-      &C::position_start,
-      &C::position_end,
-      &C::velocity_over_lifetime_enabled,
-      &C::velocity_over_lifetime_start,
-      &C::velocity_over_lifetime_end,
-      &C::force_over_lifetime_enabled,
-      &C::force_over_lifetime_start,
-      &C::force_over_lifetime_end,
-      &C::color_over_lifetime_enabled,
-      &C::color_over_lifetime_start,
-      &C::color_over_lifetime_end,
-      &C::color_by_speed_enabled,
-      &C::color_by_speed_start,
-      &C::color_by_speed_end,
-      &C::color_by_speed_min_speed,
-      &C::color_by_speed_max_speed,
-      &C::size_over_lifetime_enabled,
-      &C::size_over_lifetime_start,
-      &C::size_over_lifetime_end,
-      &C::size_by_speed_enabled,
-      &C::size_by_speed_start,
-      &C::size_by_speed_end,
-      &C::size_by_speed_min_speed,
-      &C::size_by_speed_max_speed,
-      &C::rotation_over_lifetime_enabled,
-      &C::rotation_over_lifetime_start,
-      &C::rotation_over_lifetime_end,
-      &C::rotation_by_speed_enabled,
-      &C::rotation_by_speed_start,
-      &C::rotation_by_speed_end,
-      &C::rotation_by_speed_min_speed,
-      &C::rotation_by_speed_max_speed>();
-  }
-
-  {
-    using C = ParticleComponent;
-    registry.bind<&C::color, &C::life_remaining>();
+    registry.bind<&C::particle_system, &C::play_on_awake, &C::simulation_speed, &C::seed>();
   }
 
   {

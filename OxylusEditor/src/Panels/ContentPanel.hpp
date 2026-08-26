@@ -28,7 +28,8 @@ enum class FileType {
   Audio,
   Script,
   Material,
-  Terrain
+  Terrain,
+  ParticleSystem
 };
 
 class ContentPanel : public EditorPanelState {
@@ -66,6 +67,7 @@ private:
 
   std::string new_asset_name_ = {};
   bool should_open_new_asset_popup = false;
+  AssetType new_asset_type_ = AssetType::Material;
 
   Texture white_texture = {};
   std::filesystem::path _directory_to_delete;
