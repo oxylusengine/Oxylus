@@ -24,6 +24,7 @@ enum class AssetType : u32 {
   ParticleSystem,
   Skeleton,
   Animation,
+  Cinematic,
 };
 
 // List of file extensions supported by Engine.
@@ -41,6 +42,7 @@ enum class AssetFileType : u32 {
   LUA,
   OXTERRAIN,
   OXPARTICLE,
+  OXCINE,
 };
 
 struct NoneAsset {

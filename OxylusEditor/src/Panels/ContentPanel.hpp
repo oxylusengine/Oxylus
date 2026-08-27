@@ -29,7 +29,8 @@ enum class FileType {
   Script,
   Material,
   Terrain,
-  ParticleSystem
+  ParticleSystem,
+  Cinematic
 };
 
 class ContentPanel : public EditorPanelState {

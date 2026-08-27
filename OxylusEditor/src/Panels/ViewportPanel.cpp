@@ -6,6 +6,7 @@
 #include <imgui.h>
 
 #include "Asset/AssetManager.hpp"
+#include "CinematicEditorPanel.hpp"
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
@@ -385,10 +386,33 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
 }
 
 auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
+  if (!self.editor_scene || !self.editor_camera.has<CameraComponent>()) {
+    return;
+  }
+
   if (
-    !self.editor_scene || !self.is_viewport_hovered || self.editor_scene->get_scene()->is_running() ||
-    !self.editor_camera.has<CameraComponent>()
+    self.piloted_camera && self.piloted_camera.is_alive() && self.piloted_camera.has<TransformComponent>() &&
+    self.piloted_camera != self.editor_camera
   ) {
+    const auto& source_transform = self.piloted_camera.get<TransformComponent>();
+    auto& transform = self.editor_camera.get_mut<TransformComponent>();
+    transform.position = source_transform.position;
+    transform.rotation = source_transform.rotation;
+
+    auto& camera = self.editor_camera.get_mut<CameraComponent>();
+    if (self.piloted_camera.has<CameraComponent>()) {
+      camera.fov = self.piloted_camera.get<CameraComponent>().fov;
+    }
+
+    // kept in sync so releasing the pilot resumes from where the shot left off instead of snapping
+    const auto euler = glm::eulerAngles(transform.rotation);
+    self.camera_yaw_pitch = {euler.y, euler.x};
+
+    self.editor_camera.modified<TransformComponent>();
+    return;
+  }
+
+  if (!self.is_viewport_hovered || self.editor_scene->get_scene()->is_running()) {
     return;
   }
 
@@ -1183,13 +1207,13 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
     }
   }
 
-  if (selected_entity == flecs::entity::null() || !self.editor_camera.has<CameraComponent>())
+  if (!self.editor_camera.has<CameraComponent>())
     return;
 
   if (self.gizmo_type == -1)
     return;
 
-  if (auto* tc = selected_entity.try_get_mut<TransformComponent>()) {
+  const auto setup_gizmo_rect = [&self]() {
     ImGuizmo::SetOrthographic(false);
     ImGuizmo::SetDrawlist();
     ImGuizmo::SetRect(
@@ -1198,6 +1222,55 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
       self.viewport_bounds_[1].x - self.viewport_bounds_[0].x,
       self.viewport_bounds_[1].y - self.viewport_bounds_[0].y
     );
+  };
+
+  // a selected camera waypoint takes the handle: it has no entity of its own to select, so the
+  // entity gizmo below would never reach it
+  if (auto& cinematic_panel = editor.editor_panel_registry.get<CinematicEditorPanel>(); cinematic_panel.visible) {
+    if (auto* waypoint = cinematic_panel.selected_waypoint()) {
+      setup_gizmo_rect();
+
+      auto camera_projection = cam.get_projection_matrix();
+      camera_projection[1][1] *= -1;
+
+      auto transform = glm::translate(glm::mat4(1.0f), waypoint->position) * glm::toMat4(waypoint->rotation);
+      auto delta_mat = glm::mat4(1.0f);
+      ImGuizmo::Manipulate(
+        value_ptr(cam.get_view_matrix()),
+        value_ptr(camera_projection),
+        static_cast<ImGuizmo::OPERATION>(self.gizmo_type),
+        static_cast<ImGuizmo::MODE>(self.gizmo_mode),
+        value_ptr(transform),
+        glm::value_ptr(delta_mat)
+      );
+
+      if (ImGuizmo::IsUsing()) {
+        glm::vec3 delta_translation;
+        glm::quat delta_rotation;
+        glm::vec3 delta_scale;
+        glm::vec3 skew;
+        glm::vec4 perspective;
+
+        if (glm::decompose(delta_mat, delta_scale, delta_rotation, delta_translation, skew, perspective)) {
+          if (self.gizmo_type == ImGuizmo::TRANSLATE) {
+            waypoint->position += delta_translation;
+          } else if (self.gizmo_type == ImGuizmo::ROTATE) {
+            waypoint->rotation = delta_rotation * waypoint->rotation;
+          }
+
+          cinematic_panel.commit();
+        }
+      }
+
+      return;
+    }
+  }
+
+  if (selected_entity == flecs::entity::null())
+    return;
+
+  if (auto* tc = selected_entity.try_get_mut<TransformComponent>()) {
+    setup_gizmo_rect();
 
     auto camera_projection = cam.get_projection_matrix();
     camera_projection[1][1] *= -1;

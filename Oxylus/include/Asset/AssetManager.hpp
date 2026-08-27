@@ -13,6 +13,7 @@
 #include "Asset/ParticleSystem.hpp"
 #include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
+#include "Cinematic/Cinematic.hpp"
 #include "Core/UUID.hpp"
 #include "Memory/ReadGuard.hpp"
 #include "Memory/SlotMap.hpp"
@@ -36,6 +37,7 @@ struct Asset {
     ParticleSystemID particle_system_id;
     SkeletonID skeleton_id;
     AnimationID animation_id;
+    CinematicID cinematic_id;
   };
 
   // Reference count of loads
@@ -99,6 +101,9 @@ public:
   auto export_particle_system(
     this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
   ) -> bool;
+  auto export_cinematic(
+    this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+  ) -> bool;
 
   auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true)
     -> bool;
@@ -157,6 +162,10 @@ public:
     this AssetManager& self, const UUID& uuid, const std::function<void(ParticleSystem&)>& mutate, bool recompile = true
   ) -> void;
 
+  auto get_cinematic(this AssetManager& self, const UUID& uuid) -> ReadGuard<Cinematic>;
+  auto get_cinematic(this AssetManager& self, CinematicID cinematic_id) -> ReadGuard<Cinematic>;
+  auto edit_cinematic(this AssetManager& self, const UUID& uuid, const std::function<void(Cinematic&)>& mutate) -> void;
+
 private:
   auto load_asset_impl(
     this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire, bool async
@@ -202,6 +211,9 @@ private:
   auto load_particle_system(this AssetManager& self, const std::filesystem::path& path) -> ParticleSystemID;
   auto unload_particle_system(this AssetManager& self, ParticleSystemID particle_system_id) -> bool;
 
+  auto load_cinematic(this AssetManager& self, const std::filesystem::path& path) -> CinematicID;
+  auto unload_cinematic(this AssetManager& self, CinematicID cinematic_id) -> bool;
+
   AssetRegistry asset_registry = {};
 
   std::shared_mutex registry_mutex = {};
@@ -215,6 +227,7 @@ private:
   std::shared_mutex particle_systems_mutex = {};
   std::shared_mutex skeletons_mutex = {};
   std::shared_mutex animations_mutex = {};
+  std::shared_mutex cinematics_mutex = {};
 
   std::vector<MaterialID> dirty_materials = {};
 
@@ -234,6 +247,7 @@ private:
   SlotMap<ParticleSystem, ParticleSystemID> particle_system_map = {};
   SlotMap<Skeleton, SkeletonID> skeleton_map = {};
   SlotMap<AnimationClip, AnimationID> animation_map = {};
+  SlotMap<Cinematic, CinematicID> cinematic_map = {};
 
   UUID null_material = {};
 };

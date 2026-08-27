@@ -1,4 +1,4 @@
-version = 10
+version = 11
 
 [[shader_sessions]]
 root_directory = "../../Oxylus/src/Render/Shaders"

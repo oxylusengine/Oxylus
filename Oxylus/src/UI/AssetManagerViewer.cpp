@@ -69,6 +69,17 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
     // explicit format here because MSVC %lu != clang %lu (its %llu instead)
     ImGui::TextUnformatted(stack.format_char("RefCount: {}", asset.ref_count));
 
+    if (asset.type == AssetType::Cinematic) {
+      if (auto cinematic = asset_man.get_cinematic(asset.cinematic_id)) {
+        ImGui::TextUnformatted(stack.format_char("Duration: {:.2f}s", cinematic->duration));
+        ImGui::TextUnformatted(stack.format_char(
+          "Tracks: {} camera, {} property",
+          cinematic->camera_tracks.size(),
+          cinematic->property_tracks.size()
+        ));
+      }
+    }
+
     ImGui::EndPopup();
   }
 
@@ -176,6 +187,10 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
         }
         case AssetType::Animation: {
           animation_assets.emplace_back(asset);
+          break;
+        }
+        case AssetType::Cinematic: {
+          cinematic_assets.emplace_back(asset);
           break;
         }
       }
@@ -392,6 +407,20 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
       );
     }
 
+    if (asset_type_filter_flags[AssetType::Cinematic]) {
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      draw_asset_table(
+        "Cinematic Assets",
+        "cinematic_table",
+        cinematic_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
+    }
+
     if (asset_type_filter_flags[AssetType::Shader]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
@@ -439,5 +468,6 @@ auto AssetManagerViewer::clear_vectors(this AssetManagerViewer& self) -> void {
   self.particle_system_assets.clear();
   self.skeleton_assets.clear();
   self.animation_assets.clear();
+  self.cinematic_assets.clear();
 }
 } // namespace ox

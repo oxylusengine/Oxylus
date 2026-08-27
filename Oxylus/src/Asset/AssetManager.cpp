@@ -151,6 +151,12 @@ auto write_particle_system_asset_meta(JsonWriter&, const ParticleSystem*) -> boo
   return true;
 }
 
+auto write_cinematic_asset_meta(JsonWriter&, const Cinematic*) -> bool {
+  ZoneScoped;
+
+  return true;
+}
+
 auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
@@ -196,6 +202,7 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   self.script_map.reset();
   self.terrain_edits_map.reset();
   self.particle_system_map.reset();
+  self.cinematic_map.reset();
 
   return {};
 }
@@ -267,6 +274,7 @@ auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> Asse
     case fnv64_c(".LUA")       : return AssetFileType::LUA;
     case fnv64_c(".OXTERRAIN") : return AssetFileType::OXTERRAIN;
     case fnv64_c(".OXPARTICLE"): return AssetFileType::OXPARTICLE;
+    case fnv64_c(".OXCINE")    : return AssetFileType::OXCINE;
     default                    : return AssetFileType::None;
   }
 }
@@ -317,6 +325,7 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
     case AssetType::ParticleSystem: return "ParticleSystem";
     case AssetType::Skeleton      : return "Skeleton";
     case AssetType::Animation     : return "Animation";
+    case AssetType::Cinematic     : return "Cinematic";
     default                       : return {};
   }
 }
@@ -374,6 +383,10 @@ auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::
     }
     case AssetFileType::OXPARTICLE: {
       asset_type = AssetType::ParticleSystem;
+      break;
+    }
+    case AssetFileType::OXCINE: {
+      asset_type = AssetType::Cinematic;
       break;
     }
     default: {
@@ -527,6 +540,7 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Texture  :
     case AssetType::Terrain  :
     case AssetType::Skeleton :
+    case AssetType::Cinematic:
     case AssetType::Script   : break;
     case AssetType::Animation: {
       auto clip = self.get_animation(asset->animation_id);
@@ -596,6 +610,7 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Texture  :
     case AssetType::Terrain  :
     case AssetType::Skeleton :
+    case AssetType::Cinematic:
     case AssetType::Script   : break;
     case AssetType::Animation: {
       auto clip = self.get_animation(asset->animation_id);
@@ -686,6 +701,7 @@ auto AssetManager::unload_asset_impl(this AssetManager& self, const AssetType ty
     case AssetType::ParticleSystem: return self.unload_particle_system(static_cast<ParticleSystemID>(id));
     case AssetType::Skeleton      : return self.unload_skeleton(static_cast<SkeletonID>(id));
     case AssetType::Animation     : return self.unload_animation(static_cast<AnimationID>(id));
+    case AssetType::Cinematic     : return self.unload_cinematic(static_cast<CinematicID>(id));
     case AssetType::None          :
     case AssetType::Shader        :
     case AssetType::Font          : return false;
@@ -739,6 +755,10 @@ auto AssetManager::export_asset(this AssetManager& self, const UUID& uuid, const
     } break;
     case AssetType::ParticleSystem: {
       if (!self.export_particle_system(asset->uuid, writer, path))
+        return false;
+    } break;
+    case AssetType::Cinematic: {
+      if (!self.export_cinematic(asset->uuid, writer, path))
         return false;
     } break;
     default: return false;
@@ -809,6 +829,23 @@ auto AssetManager::export_particle_system(
   }
 
   return write_particle_system_asset_meta(writer, particle_system.value);
+}
+
+auto AssetManager::export_cinematic(
+  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
+) -> bool {
+  ZoneScoped;
+
+  auto cinematic = self.get_cinematic(uuid);
+  if (!cinematic) {
+    return false;
+  }
+
+  if (!cinematic->write(path)) {
+    return false;
+  }
+
+  return write_cinematic_asset_meta(writer, cinematic.value);
 }
 
 auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire)
@@ -940,6 +977,7 @@ auto AssetManager::load_asset_impl(
       case AssetType::Script        : return static_cast<u64>(self.load_script(asset_path));
       case AssetType::Terrain       : return static_cast<u64>(self.load_terrain_edits(asset_path));
       case AssetType::ParticleSystem: return static_cast<u64>(self.load_particle_system(asset_path));
+      case AssetType::Cinematic     : return static_cast<u64>(self.load_cinematic(asset_path));
       case AssetType::Material      : {
         if (auto* info = std::get_if<Material>(&explicit_load)) {
           return static_cast<u64>(self.load_material(asset_path, *info));
@@ -1170,6 +1208,29 @@ auto AssetManager::unload_particle_system(this AssetManager& self, const Particl
 
   system->destroy();
   self.particle_system_map.destroy_slot(particle_system_id);
+
+  return true;
+}
+
+auto AssetManager::load_cinematic(this AssetManager& self, const std::filesystem::path& path) -> CinematicID {
+  ZoneScoped;
+
+  auto cinematic = Cinematic::read(path);
+  auto payload = cinematic ? std::move(*cinematic) : Cinematic::make_default();
+
+  auto write_lock = std::unique_lock(self.cinematics_mutex);
+  return self.cinematic_map.create_slot(std::move(payload));
+}
+
+auto AssetManager::unload_cinematic(this AssetManager& self, const CinematicID cinematic_id) -> bool {
+  ZoneScoped;
+
+  auto write_lock = std::unique_lock(self.cinematics_mutex);
+  if (!self.cinematic_map.slot(cinematic_id)) {
+    return false;
+  }
+
+  self.cinematic_map.destroy_slot(cinematic_id);
 
   return true;
 }
@@ -1708,6 +1769,52 @@ auto AssetManager::edit_particle_system(
       self.acquire_ref(self.get_asset(current_children[i]));
       self.release_ref(self.get_asset(previous_children[i]));
     }
+  }
+}
+
+auto AssetManager::get_cinematic(this AssetManager& self, const UUID& uuid) -> ReadGuard<Cinematic> {
+  ZoneScoped;
+
+  CinematicID cinematic_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Cinematic || guard->cinematic_id == CinematicID::Invalid)
+      return {};
+    cinematic_id = guard->cinematic_id;
+  }
+  return self.get_cinematic(cinematic_id);
+}
+
+auto AssetManager::get_cinematic(this AssetManager& self, const CinematicID cinematic_id) -> ReadGuard<Cinematic> {
+  ZoneScoped;
+
+  if (cinematic_id == CinematicID::Invalid)
+    return {};
+  self.cinematics_mutex.lock_shared();
+  auto* cinematic = self.cinematic_map.slot(cinematic_id);
+  if (!cinematic) {
+    self.cinematics_mutex.unlock_shared();
+    return {};
+  }
+  return ReadGuard<Cinematic>(self.cinematics_mutex, cinematic, adopt_lock);
+}
+
+auto AssetManager::edit_cinematic(
+  this AssetManager& self, const UUID& uuid, const std::function<void(Cinematic&)>& mutate
+) -> void {
+  ZoneScoped;
+
+  CinematicID cinematic_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Cinematic || guard->cinematic_id == CinematicID::Invalid)
+      return;
+    cinematic_id = guard->cinematic_id;
+  }
+
+  auto write_lock = std::unique_lock(self.cinematics_mutex);
+  if (auto* slot = self.cinematic_map.slot(cinematic_id)) {
+    mutate(*slot);
   }
 }
 

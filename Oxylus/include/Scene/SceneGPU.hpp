@@ -424,6 +424,8 @@ enum class SceneFlags : u32 {
   HasDDGI = 1 << 12,
   HasParticles = 1 << 13,
   HasParticleSorting = 1 << 14,
+  HasLetterbox = 1 << 15,
+  HasScreenFade = 1 << 16,
 };
 consteval void enable_bitmask(SceneFlags);
 
@@ -459,6 +461,11 @@ struct PostProcessSettings {
   alignas(4) f32 film_grain_scale = 1.0f;
   alignas(4) f32 film_grain_amount = 0.5f;
   alignas(4) u32 film_grain_seed = 0;
+  alignas(4) f32 letterbox_amount = 0.0f;
+  alignas(4) f32 letterbox_aspect = 2.39f;
+  alignas(4) glm::vec3 letterbox_color = {};
+  alignas(4) f32 fade_amount = 0.0f;
+  alignas(4) glm::vec3 fade_color = {};
 };
 
 enum struct TonemapType : u32 {

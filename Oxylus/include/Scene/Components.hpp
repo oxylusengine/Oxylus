@@ -47,6 +47,17 @@ struct AnimatorComponent {
   bool playing = true;
 };
 
+// drives a Cinematic asset's camera and property tracks against this scene
+struct CinematicPlayerComponent {
+  UUID cinematic_uuid = {};
+  f32 speed = 1.0f;
+  bool loop = false;
+  bool play_on_awake = false;
+  bool playing = false;
+  // put every animated member back the way it was when the cinematic stops
+  bool restore_on_stop = true;
+};
+
 struct SpriteComponent {
   u32 layer = 0;
   bool sort_y = true;
@@ -281,6 +292,19 @@ struct ChromaticAberrationComponent {
 struct FilmGrainComponent {
   f32 amount = 0.6f;
   f32 scale = 0.7f;
+};
+
+struct LetterboxComponent {
+  // fraction of screen height covered by each bar, and the scale applied to the aspect-derived size
+  f32 amount = 1.0f;
+  // when > 0, bars are sized to frame the image to this aspect instead of using `amount` directly
+  f32 target_aspect = 2.39f;
+  glm::vec3 color = {0.0f, 0.0f, 0.0f};
+};
+
+struct ScreenFadeComponent {
+  glm::vec3 color = {0.0f, 0.0f, 0.0f};
+  f32 amount = 0.0f;
 };
 
 struct TonemappingComponent {

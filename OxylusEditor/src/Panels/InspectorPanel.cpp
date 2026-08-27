@@ -9,6 +9,7 @@
 #include "AnimationEditorPanel.hpp"
 #include "Asset/AssetFile.hpp"
 #include "Asset/AssetManager.hpp"
+#include "CinematicEditorPanel.hpp"
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
 #include "Editor.hpp"
@@ -280,6 +281,7 @@ struct EntityInspector : IEntitySerializer {
         const auto script_id = asset_type == AssetType::Script ? asset->script_id : ScriptID::Invalid;
         const auto skeleton_id = asset_type == AssetType::Skeleton ? asset->skeleton_id : SkeletonID::Invalid;
         const auto animation_id = asset_type == AssetType::Animation ? asset->animation_id : AnimationID::Invalid;
+        const auto cinematic_id = asset_type == AssetType::Cinematic ? asset->cinematic_id : CinematicID::Invalid;
         asset.reset();
 
         switch (asset_type) {
@@ -381,6 +383,23 @@ struct EntityInspector : IEntitySerializer {
           case AssetType::ParticleSystem: {
             if (UI::button("Open Particle Editor")) {
               App::mod<Editor>().editor_panel_registry.get<ParticleEditorPanel>().open_asset(asset_uuid);
+            }
+            break;
+          }
+          case AssetType::Cinematic: {
+            memory::ScopedStack stack;
+
+            if (auto cinematic = asset_man.get_cinematic(cinematic_id)) {
+              UI::begin_properties();
+              UI::text("Name", cinematic->name);
+              UI::text("Duration", stack.format("{:.2f}s", cinematic->duration));
+              UI::text("Camera tracks", stack.format("{}", cinematic->camera_tracks.size()));
+              UI::text("Property tracks", stack.format("{}", cinematic->property_tracks.size()));
+              UI::end_properties();
+            }
+
+            if (UI::button(ICON_MDI_MOVIE_OPEN " Edit")) {
+              App::mod<Editor>().editor_panel_registry.get<CinematicEditorPanel>().open_asset(asset_uuid);
             }
             break;
           }

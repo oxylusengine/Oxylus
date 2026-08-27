@@ -2241,6 +2241,27 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     });
 
   self.scene.world
+    .query_builder<const TransformComponent, const LetterboxComponent>() //
+    .build()
+    .each([&](flecs::entity e, const TransformComponent& tc, const LetterboxComponent& c) {
+      self.post_proces_settings.letterbox_amount = c.amount;
+      self.post_proces_settings.letterbox_aspect = c.target_aspect;
+      self.post_proces_settings.letterbox_color = c.color;
+
+      self.gpu_scene_flags |= GPU::SceneFlags::HasLetterbox;
+    });
+
+  self.scene.world
+    .query_builder<const TransformComponent, const ScreenFadeComponent>() //
+    .build()
+    .each([&](flecs::entity e, const TransformComponent& tc, const ScreenFadeComponent& c) {
+      self.post_proces_settings.fade_amount = c.amount;
+      self.post_proces_settings.fade_color = c.color;
+
+      self.gpu_scene_flags |= GPU::SceneFlags::HasScreenFade;
+    });
+
+  self.scene.world
     .query_builder<const TonemappingComponent>() //
     .build()
     .each([&](flecs::entity e, const TonemappingComponent& tc) {

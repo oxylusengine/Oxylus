@@ -84,6 +84,11 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   }
 
   {
+    using C = CinematicPlayerComponent;
+    registry.bind<&C::cinematic_uuid, &C::speed, &C::loop, &C::play_on_awake, &C::playing, &C::restore_on_stop>();
+  }
+
+  {
     using C = SpriteComponent;
     registry.bind<&C::layer, &C::sort_y, &C::flip_x, &C::material>().tags<Networked>();
   }
@@ -217,6 +222,16 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   {
     using C = FilmGrainComponent;
     registry.bind<&C::amount, &C::scale>();
+  }
+
+  {
+    using C = LetterboxComponent;
+    registry.bind<&C::amount, &C::target_aspect, &C::color>();
+  }
+
+  {
+    using C = ScreenFadeComponent;
+    registry.bind<&C::color, &C::amount>();
   }
 
   // Physics Components

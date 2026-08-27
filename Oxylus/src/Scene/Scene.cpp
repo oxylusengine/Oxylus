@@ -500,6 +500,22 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
+  // same ownership rule as AnimatorComponent: whoever writes the uuid owns the ref, so only the
+  // release is keyed on component lifetime
+  self.world.observer<CinematicPlayerComponent>()
+    .event(flecs::OnSet)
+    .each([&self](flecs::iter& it, usize i, CinematicPlayerComponent&) { self.attach_cinematic(it.entity(i)); });
+
+  self.world.observer<CinematicPlayerComponent>()
+    .event(flecs::OnRemove)
+    .each([&self](flecs::iter& it, usize i, CinematicPlayerComponent& player) {
+      self.detach_cinematic(it.entity(i));
+
+      if (player.cinematic_uuid) {
+        App::mod<AssetManager>().unload_asset(player.cinematic_uuid);
+      }
+    });
+
   self.world.observer<SkinnedMeshComponent>()
     .event(flecs::OnSet)
     .each([&self](flecs::iter& it, usize i, SkinnedMeshComponent&) {
@@ -1174,6 +1190,14 @@ auto Scene::runtime_start(this Scene& self) -> void {
 
   self.physics_init();
 
+  self.world.query_builder<CinematicPlayerComponent>().build().each(
+    [&self](flecs::entity e, CinematicPlayerComponent& player) {
+      if (player.play_on_awake) {
+        self.play_cinematic(e);
+      }
+    }
+  );
+
   // Scripting
   for (auto& [_, system] : self.lua_systems) {
     system->on_scene_start(&self);
@@ -1184,6 +1208,10 @@ auto Scene::runtime_stop(this Scene& self) -> void {
   ZoneScoped;
 
   self.running = false;
+
+  self.world.query_builder<CinematicPlayerComponent>().build().each(
+    [&self](flecs::entity e, CinematicPlayerComponent&) { self.stop_cinematic(e); }
+  );
 
   self.physics_deinit();
 
@@ -1220,6 +1248,10 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
       system->on_scene_update(&self, static_cast<f32>(delta_time.get_seconds()));
     }
   }
+
+  // before progress(), not after: camera_update runs in flecs::PostUpdate and has to see the pose a
+  // camera track just wrote, otherwise the camera trails the path by a frame
+  self.update_cinematics(delta_time.get_seconds());
 
   // TODO: Pass our delta_time?
   self.world.progress();
@@ -3656,6 +3688,16 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
     self.attach_animator(e);
     self.relink_skinned_meshes(e);
   });
+
+  // a cinematic names its targets by entity path, so binding could not have resolved anything while
+  // the hierarchy was still being built. Binding here also snapshots the authored values that
+  // `restore_on_stop` puts back.
+  self.world.query_builder<CinematicPlayerComponent>().build().each(
+    [&self](flecs::entity e, CinematicPlayerComponent&) {
+      self.attach_cinematic(e);
+      self.rebind_cinematic(e);
+    }
+  );
 
   return true;
 }

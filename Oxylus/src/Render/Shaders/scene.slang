@@ -305,6 +305,10 @@ public enum SceneFlags : u32 {
   HasSky = 1 << 10,
   TransparentBackground = 1 << 11,
   HasDDGI = 1 << 12,
+  HasParticles = 1 << 13,
+  HasParticleSorting = 1 << 14,
+  HasLetterbox = 1 << 15,
+  HasScreenFade = 1 << 16,
 };
 
 public struct DirectionalLightCascade {
@@ -654,6 +658,11 @@ public struct PostProcessSettings {
     public f32 film_grain_scale;
     public f32 film_grain_amount;
     public u32 film_grain_seed;
+    public f32 letterbox_amount;
+    public f32 letterbox_aspect;
+    public f32x3 letterbox_color;
+    public f32 fade_amount;
+    public f32x3 fade_color;
 };
 
 public enum TonemapType : u32 {

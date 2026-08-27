@@ -15,6 +15,7 @@
 #include "Animation/PoseTaskSystem.hpp"
 #include "Asset/Model.hpp"
 #include "Asset/ParticleSystem.hpp"
+#include "Cinematic/Fwd.hpp"
 #include "Core/UUID.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Render/DebugRenderer.hpp"
@@ -87,6 +88,32 @@ struct AnimationInstance {
   bool was_advancing = false;
 };
 
+// one per property track, resolved once so a per-frame write is a memcpy at a known offset rather
+// than another reflection walk
+struct BoundProperty {
+  flecs::entity target = {};
+  flecs::entity_t component = 0;
+  u32 offset = 0;
+  CinematicValueKind kind = CinematicValueKind::Float;
+  glm::vec4 restore_value = {};
+  bool valid = false;
+};
+
+// kept off CinematicPlayerComponent for the same reason AnimationInstance is: variable length and
+// nothing here is reflectable
+struct CinematicInstance {
+  UUID cinematic_uuid = {};
+  f32 current_time = 0.0f;
+  bool bound = false;
+  bool was_playing = false;
+  // a scrub or a freshly bound asset has to be applied even though the clock did not move
+  bool seek_pending = true;
+  std::vector<BoundProperty> bound_properties = {};
+  std::vector<flecs::entity> bound_cameras = {};
+  // concatenated, Cinematic::ARC_LUT_SIZE entries per camera track
+  std::vector<f32> arc_luts = {};
+};
+
 enum class SceneID : u64 { Invalid = std::numeric_limits<u64>::max() };
 class Scene {
 public:
@@ -130,6 +157,9 @@ public:
   std::vector<Model::MeshIndexRanges> skinned_lod_ranges = {};
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};
+
+  SlotMap<CinematicInstance, CinematicInstanceID> cinematic_instances = {};
+  ankerl::unordered_dense::map<flecs::entity, CinematicInstanceID> entity_to_cinematic_instance_map = {};
 
   SlotMap<ParticleEmitterState, ParticleEmitterID> particle_emitters = {};
   ankerl::unordered_dense::map<flecs::entity, ParticleEmitterID> entity_particle_emitters_map = {};
@@ -186,6 +216,21 @@ public:
   auto relink_skinned_meshes_under(this Scene& self, flecs::entity animator, flecs::entity node) -> void;
   auto update_animations(this Scene& self, f32 delta_time) -> void;
   auto end_animation_fade(this Scene& self, AnimationInstance& instance) -> void;
+
+  // --- Cinematics ---
+  auto attach_cinematic(this Scene& self, flecs::entity entity) -> bool;
+  auto detach_cinematic(this Scene& self, flecs::entity entity) -> bool;
+  // re-resolves every track against the live world. Deferred to the first update after a load
+  // because a track names its target by entity path, which only resolves once the hierarchy exists.
+  auto rebind_cinematic(this Scene& self, flecs::entity entity) -> void;
+  auto cinematic_instance(this Scene& self, flecs::entity entity) -> CinematicInstance*;
+  auto update_cinematics(this Scene& self, f32 delta_time) -> void;
+  auto play_cinematic(this Scene& self, flecs::entity entity) -> void;
+  // honours `restore_on_stop`
+  auto stop_cinematic(this Scene& self, flecs::entity entity) -> void;
+  auto seek_cinematic(this Scene& self, flecs::entity entity, f32 time) -> void;
+  auto cinematic_time(this Scene& self, flecs::entity entity) -> f32;
+  auto cinematic_duration(this Scene& self, flecs::entity entity) -> f32;
 
   // --- Particles ---
   // Runtime control over an entity's emitter. Stopping only halts spawning; particles already alive

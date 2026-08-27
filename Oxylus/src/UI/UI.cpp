@@ -140,7 +140,10 @@ bool UI::property(const char* label, int* value, const char** dropdown_strings, 
   begin_property_grid(label, tooltip);
 
   bool modified = false;
-  const char* current = dropdown_strings[*value];
+  // callers pass an index that can legitimately be out of range (nothing selected yet, a list that
+  // shrank), and indexing the label array with it reads whatever happens to be there
+  const bool in_range = count > 0 && *value >= 0 && *value < count;
+  const char* current = in_range ? dropdown_strings[*value] : nullptr;
 
   if (ImGui::BeginCombo(id_buffer, current)) {
     for (int i = 0; i < count; i++) {

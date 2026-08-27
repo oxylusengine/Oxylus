@@ -8,6 +8,7 @@
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "CinematicEditorPanel.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
@@ -32,6 +33,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_S
   {FileType::Material, "Material"},
   {FileType::Terrain, "Terrain"},
   {FileType::ParticleSystem, "Particle System"},
+  {FileType::Cinematic, "Cinematic"},
 };
 
 static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
@@ -41,6 +43,7 @@ static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
   {".oxprefab", FileType::Prefab},           //
   {".oxterrain", FileType::Terrain},         //
   {".oxparticle", FileType::ParticleSystem}, //
+  {".oxcine", FileType::Cinematic},          //
   {".hlsl", FileType::Shader},
   {".hlsli", FileType::Shader},
   {".glsl", FileType::Shader},               //
@@ -80,6 +83,7 @@ static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
   {FileType::Material, {0.85f, 0.60f, 0.15f, 1.00f}},
   {FileType::Terrain, {0.45f, 0.70f, 0.30f, 1.00f}},
   {FileType::ParticleSystem, {0.60f, 0.35f, 0.85f, 1.00f}},
+  {FileType::Cinematic, {0.90f, 0.45f, 0.55f, 1.00f}},
 };
 
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_ICON = {
@@ -96,6 +100,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Material, ICON_MDI_PALETTE_SWATCH},
   {FileType::Terrain, ICON_MDI_TERRAIN},
   {FileType::ParticleSystem, ICON_MDI_SHIMMER},
+  {FileType::Cinematic, ICON_MDI_MOVIE_OPEN},
 };
 
 static auto standalone_asset_file_type(const std::filesystem::path& path) -> option<FileType> {
@@ -184,6 +189,12 @@ static void open_file(const std::filesystem::path& path) {
         // `open_asset` loads it and holds the ref for as long as the panel shows it
         if (const auto uuid = App::mod<AssetManager>().import_asset(path)) {
           App::mod<Editor>().editor_panel_registry.get<ParticleEditorPanel>().open_asset(uuid);
+        }
+        break;
+      }
+      case FileType::Cinematic: {
+        if (const auto uuid = App::mod<AssetManager>().import_asset(path)) {
+          App::mod<Editor>().editor_panel_registry.get<CinematicEditorPanel>().open_asset(uuid);
         }
         break;
       }
@@ -883,6 +894,10 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           asset_path.replace_extension(".oxparticle");
         }
 
+        if (self.new_asset_type_ == AssetType::Cinematic && asset_path.extension() != ".oxcine") {
+          asset_path.replace_extension(".oxcine");
+        }
+
         auto asset = asset_man.create_asset(self.new_asset_type_, asset_path);
         asset_man.load_asset(asset);
         if (asset_man.export_asset(asset, asset_path)) {
@@ -1022,6 +1037,11 @@ auto ContentPanel::draw_context_menu_items(this ContentPanel& self, const std::f
       if (ImGui::MenuItem("Particle System")) {
         self.new_asset_name_.clear();
         self.new_asset_type_ = AssetType::ParticleSystem;
+        self.should_open_new_asset_popup = true;
+      }
+      if (ImGui::MenuItem("Cinematic")) {
+        self.new_asset_name_.clear();
+        self.new_asset_type_ = AssetType::Cinematic;
         self.should_open_new_asset_popup = true;
       }
       ImGui::EndMenu();
