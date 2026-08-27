@@ -74,6 +74,16 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   }
 
   {
+    using C = SkinnedMeshComponent;
+    registry.bind<&C::skeleton_uuid>();
+  }
+
+  {
+    using C = AnimatorComponent;
+    registry.bind<&C::clip_uuid, &C::speed, &C::blend_time, &C::loop, &C::playing>();
+  }
+
+  {
     using C = SpriteComponent;
     registry.bind<&C::layer, &C::sort_y, &C::flip_x, &C::material>().tags<Networked>();
   }

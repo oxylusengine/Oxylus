@@ -774,6 +774,10 @@ auto RendererInstance::render(
      .layer_count = 1}
   );
 
+  // before anything reads vertex positions: the culling passes, both visbuffer encoders and every
+  // shadow pass all fetch through the same pointers this rewrites
+  self.skin_vertices();
+
   auto vis_clear_pass = vuk::make_pass(
     "vis clear",
     [draw_overdraw](
@@ -2241,7 +2245,70 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   self.prepared_frame.atmosphere_buffer = self.renderer.render_context->scratch_buffer(self.atmosphere);
 
-  if (!info.gpu_meshes.empty()) {
+  // the arena has to exist before the instance array is patched with pointers into it, and the
+  // instance array has to be uploaded after that patch
+  self.prepared_frame.skinned_vertex_total = info.skinned_vertex_total;
+  if (info.skinned_vertex_total > 0) {
+    const auto positions_bytes = static_cast<usize>(info.skinned_vertex_total) * sizeof(glm::u16vec4);
+    const auto normals_bytes = static_cast<usize>(info.skinned_vertex_total) * sizeof(u32);
+
+    self.skinned_vertices_buffer = render_context.resize_buffer(
+      std::move(self.skinned_vertices_buffer),
+      vuk::MemoryUsage::eGPUonly,
+      positions_bytes + normals_bytes
+    );
+
+    const auto arena_address = self.skinned_vertices_buffer->device_address;
+    for (const auto& skinned : info.skinned_mesh_instances) {
+      if (skinned.gpu_instance_index >= info.gpu_mesh_instances.size()) {
+        continue;
+      }
+
+      // no skeleton yet means nothing wrote this instance's slice of the arena, so leaving the
+      // pointers null renders it in bind pose instead of skinning against uninitialized transforms
+      auto& gpu_mesh_instance = info.gpu_mesh_instances[skinned.gpu_instance_index];
+      if (skinned.bone_count == 0) {
+        gpu_mesh_instance.skinned_vertex_positions = 0;
+        gpu_mesh_instance.skinned_vertex_normals = 0;
+        continue;
+      }
+
+      gpu_mesh_instance.skinned_vertex_positions = arena_address + skinned.vertex_offset * sizeof(glm::u16vec4);
+      gpu_mesh_instance.skinned_vertex_normals = arena_address + positions_bytes + skinned.vertex_offset * sizeof(u32);
+    }
+
+    self.skinning_transforms_buffer = render_context.resize_buffer(
+      std::move(self.skinning_transforms_buffer),
+      vuk::MemoryUsage::eGPUonly,
+      ox::max(info.skinning_transforms.size_bytes(), sizeof(GPU::SkinningTransform))
+    );
+    self.prepared_frame.skinning_transforms_buffer =
+      info.skinning_transforms.empty()
+        ? vuk::acquire_buf("skinning transforms", *self.skinning_transforms_buffer, vuk::eNone)
+        : render_context.upload_staging(info.skinning_transforms, *self.skinning_transforms_buffer);
+
+    self.prepared_frame.skin_jobs.clear();
+    self.prepared_frame.skin_jobs.reserve(info.skinned_mesh_instances.size());
+    for (const auto& skinned : info.skinned_mesh_instances) {
+      if (skinned.vertex_count == 0 || skinned.bone_count == 0) {
+        continue;
+      }
+
+      self.prepared_frame.skin_jobs.emplace_back(
+        GPU::SkinJob{
+          .mesh_instance_index = skinned.gpu_instance_index,
+          .vertex_offset = skinned.vertex_offset,
+          .bone_offset = skinned.bone_offset,
+          .vertex_count = skinned.vertex_count,
+        }
+      );
+    }
+
+    self.prepared_frame
+      .skinned_vertices_buffer = vuk::acquire_buf("skinned vertices", *self.skinned_vertices_buffer, vuk::eNone);
+  }
+
+  if (info.meshes_dirty && !info.gpu_meshes.empty()) {
     self.meshes_buffer = render_context.resize_buffer(
       std::move(self.meshes_buffer),
       vuk::MemoryUsage::eGPUonly,
@@ -2252,7 +2319,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshes_buffer = vuk::acquire_buf("meshes", *self.meshes_buffer, vuk::Access::eMemoryRead);
   }
 
-  if (!info.gpu_mesh_blas_addresses.empty()) {
+  if (info.meshes_dirty && !info.gpu_mesh_blas_addresses.empty()) {
     self.blas_addresses_buffer = render_context.resize_buffer(
       std::move(self.blas_addresses_buffer),
       vuk::MemoryUsage::eGPUonly,
@@ -2270,7 +2337,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
   }
 
-  if (!info.gpu_mesh_instances.empty()) {
+  if (info.mesh_instances_dirty && !info.gpu_mesh_instances.empty()) {
     self.mesh_instances_buffer = render_context.resize_buffer(
       std::move(self.mesh_instances_buffer),
       vuk::MemoryUsage::eGPUonly,

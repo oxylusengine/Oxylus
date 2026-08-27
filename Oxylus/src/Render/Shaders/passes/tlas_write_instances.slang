@@ -39,7 +39,9 @@ func cs_main(
         }
     }
 
-    let mask = blas_address != 0 ? 0xffu : 0u;
+    // a skinned instance's BLAS covers the bind pose, so tracing against it would report geometry
+    // nowhere near where the character actually is, and it is masked out of the TLAS entirely
+    let mask = (blas_address != 0 && !mesh_instance.is_skinned()) ? 0xffu : 0u;
     instance.custom_index_and_mask = (index & 0xffffffu) | (mask << 24);
     instance.sbt_offset_and_flags = 0;
     instance.blas_address = blas_address;

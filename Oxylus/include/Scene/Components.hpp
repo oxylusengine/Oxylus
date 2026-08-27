@@ -33,6 +33,20 @@ struct MeshComponent {
   AABB world_aabb = {};
 };
 
+// the pose comes from the nearest ancestor carrying an AnimatorComponent
+struct SkinnedMeshComponent {
+  UUID skeleton_uuid = {};
+};
+
+// assigning a different `clip_uuid` crossfades from whatever is playing
+struct AnimatorComponent {
+  UUID clip_uuid = {};
+  f32 speed = 1.0f;
+  f32 blend_time = 0.2f;
+  bool loop = true;
+  bool playing = true;
+};
+
 struct SpriteComponent {
   u32 layer = 0;
   bool sort_y = true;

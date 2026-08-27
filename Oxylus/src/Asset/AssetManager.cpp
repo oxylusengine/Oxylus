@@ -315,6 +315,8 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
     case AssetType::Script        : return "Script";
     case AssetType::Terrain       : return "Terrain";
     case AssetType::ParticleSystem: return "ParticleSystem";
+    case AssetType::Skeleton      : return "Skeleton";
+    case AssetType::Animation     : return "Animation";
     default                       : return {};
   }
 }
@@ -517,14 +519,21 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
 
   auto children = ankerl::svector<UUID, 8>{};
   switch (asset->type) {
-    case AssetType::None          :
-    case AssetType::Shader        :
-    case AssetType::Font          :
-    case AssetType::Scene         :
-    case AssetType::Audio         :
-    case AssetType::Texture       :
-    case AssetType::Terrain       :
-    case AssetType::Script        : break;
+    case AssetType::None     :
+    case AssetType::Shader   :
+    case AssetType::Font     :
+    case AssetType::Scene    :
+    case AssetType::Audio    :
+    case AssetType::Texture  :
+    case AssetType::Terrain  :
+    case AssetType::Skeleton :
+    case AssetType::Script   : break;
+    case AssetType::Animation: {
+      auto clip = self.get_animation(asset->animation_id);
+      if (clip) {
+        children = {clip->skeleton_uuid};
+      }
+    } break;
     case AssetType::ParticleSystem: {
       auto particle_system = self.get_particle_system(asset->particle_system_id);
       if (particle_system) {
@@ -534,7 +543,15 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Model: {
       auto model = self.get_model(asset->model_id);
       if (model) {
+        // the skeleton and the clips are minted by this model's import and cannot be rebuilt from
+        // anywhere else, so the model has to keep them alive, otherwise a clip that nothing else
+        // references drops to zero, gets erased from the registry and stops resolving while the
+        // model it belongs to is still loaded and still lists it
         children.assign(model->materials.begin(), model->materials.end());
+        children.insert(children.end(), model->animations.begin(), model->animations.end());
+        if (model->skeleton_uuid) {
+          children.emplace_back(model->skeleton_uuid);
+        }
       }
     } break;
     case AssetType::Material: {
@@ -571,14 +588,21 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
   // release children first
   auto children = ankerl::svector<UUID, 8>{};
   switch (type) {
-    case AssetType::None          :
-    case AssetType::Shader        :
-    case AssetType::Font          :
-    case AssetType::Scene         :
-    case AssetType::Audio         :
-    case AssetType::Texture       :
-    case AssetType::Terrain       :
-    case AssetType::Script        : break;
+    case AssetType::None     :
+    case AssetType::Shader   :
+    case AssetType::Font     :
+    case AssetType::Scene    :
+    case AssetType::Audio    :
+    case AssetType::Texture  :
+    case AssetType::Terrain  :
+    case AssetType::Skeleton :
+    case AssetType::Script   : break;
+    case AssetType::Animation: {
+      auto clip = self.get_animation(asset->animation_id);
+      if (clip) {
+        children = {clip->skeleton_uuid};
+      }
+    } break;
     case AssetType::ParticleSystem: {
       auto particle_system = self.get_particle_system(asset->particle_system_id);
       if (particle_system) {
@@ -588,7 +612,15 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Model: {
       auto model = self.get_model(asset->model_id);
       if (model) {
+        // the skeleton and the clips are minted by this model's import and cannot be rebuilt from
+        // anywhere else, so the model has to keep them alive, otherwise a clip that nothing else
+        // references drops to zero, gets erased from the registry and stops resolving while the
+        // model it belongs to is still loaded and still lists it
         children.assign(model->materials.begin(), model->materials.end());
+        children.insert(children.end(), model->animations.begin(), model->animations.end());
+        if (model->skeleton_uuid) {
+          children.emplace_back(model->skeleton_uuid);
+        }
       }
     } break;
     case AssetType::Material: {
@@ -652,6 +684,8 @@ auto AssetManager::unload_asset_impl(this AssetManager& self, const AssetType ty
     case AssetType::Script        : return self.unload_script(static_cast<ScriptID>(id));
     case AssetType::Terrain       : return self.unload_terrain_edits(static_cast<TerrainEditsID>(id));
     case AssetType::ParticleSystem: return self.unload_particle_system(static_cast<ParticleSystemID>(id));
+    case AssetType::Skeleton      : return self.unload_skeleton(static_cast<SkeletonID>(id));
+    case AssetType::Animation     : return self.unload_animation(static_cast<AnimationID>(id));
     case AssetType::None          :
     case AssetType::Shader        :
     case AssetType::Font          : return false;
@@ -680,8 +714,10 @@ auto AssetManager::export_asset(this AssetManager& self, const UUID& uuid, const
   begin_asset_meta(writer, uuid, asset->type);
 
   switch (asset->type) {
-    case AssetType::Texture:
-    case AssetType::Model  : {
+    case AssetType::Texture  :
+    case AssetType::Skeleton :
+    case AssetType::Animation:
+    case AssetType::Model    : {
       OX_LOG_ERROR("Cannot export unsupported asset type {}.", to_asset_type_sv(asset->type));
       return false;
     }
@@ -861,6 +897,30 @@ auto AssetManager::load_asset_impl(
   auto asset_path = asset->path;
 
   asset.reset();
+
+  // skeletons and clips are produced by the glTF importer, so the only way to materialize one is
+  // to import its source model, and the model reference is dropped again afterwards because the
+  // payload lives in its own registry entry from here on and a kept edge would be cyclic
+  if (asset_type == AssetType::Skeleton || asset_type == AssetType::Animation) {
+    const auto model_uuid = self.source_model_uuid(asset_path);
+    const auto model_loaded = model_uuid && self.load_asset(model_uuid);
+
+    auto published = self.get_asset(uuid);
+    const auto materialized = published && published->is_loaded();
+    published.reset();
+
+    // strictly before the model reference goes back: the model owns the skeleton and the clips it
+    // minted, so releasing it first would destroy the payload that was just imported
+    if (materialized && should_acquire) {
+      self.acquire_ref(self.get_asset(uuid));
+    }
+
+    if (model_loaded) {
+      self.unload_asset(model_uuid);
+    }
+
+    return materialized;
+  }
 
   auto asset_id = [&]() -> u64 {
     switch (asset_type) {
@@ -1431,6 +1491,146 @@ auto AssetManager::set_terrain_edits(this AssetManager& self, const UUID& uuid, 
   if (auto* slot = self.terrain_edits_map.slot(terrain_edits_id)) {
     *slot = std::move(edits);
   }
+}
+
+auto AssetManager::source_model_uuid(this AssetManager& self, const std::filesystem::path& path) -> UUID {
+  ZoneScoped;
+
+  if (path.empty()) {
+    return UUID(nullptr);
+  }
+
+  auto meta_file = self.read_meta_file_from_asset(path);
+  if (!meta_file) {
+    return UUID(nullptr);
+  }
+
+  auto uuid_json = meta_file->doc["uuid"].get_string();
+  if (uuid_json.error()) {
+    return UUID(nullptr);
+  }
+
+  return UUID::from_string(uuid_json.value_unsafe()).value_or(UUID(nullptr));
+}
+
+auto AssetManager::publish_skeleton(this AssetManager& self, const UUID& uuid, Skeleton&& skeleton) -> bool {
+  ZoneScoped;
+
+  const auto skeleton_id = self.load_skeleton(std::move(skeleton));
+
+  auto write_lock = std::unique_lock(self.registry_mutex);
+  const auto it = self.asset_registry.find(uuid);
+  if (it == self.asset_registry.end() || it->second.is_loaded()) {
+    write_lock.unlock();
+    self.unload_skeleton(skeleton_id);
+    return false;
+  }
+
+  it->second.skeleton_id = skeleton_id;
+  return true;
+}
+
+auto AssetManager::publish_animation(this AssetManager& self, const UUID& uuid, AnimationClip&& clip) -> bool {
+  ZoneScoped;
+
+  const auto animation_id = self.load_animation(std::move(clip));
+
+  auto write_lock = std::unique_lock(self.registry_mutex);
+  const auto it = self.asset_registry.find(uuid);
+  if (it == self.asset_registry.end() || it->second.is_loaded()) {
+    write_lock.unlock();
+    self.unload_animation(animation_id);
+    return false;
+  }
+
+  it->second.animation_id = animation_id;
+  return true;
+}
+
+auto AssetManager::get_skeleton(this AssetManager& self, const UUID& uuid) -> ReadGuard<Skeleton> {
+  ZoneScoped;
+
+  SkeletonID skeleton_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Skeleton || guard->skeleton_id == SkeletonID::Invalid)
+      return {};
+    skeleton_id = guard->skeleton_id;
+  }
+  return self.get_skeleton(skeleton_id);
+}
+
+auto AssetManager::get_skeleton(this AssetManager& self, const SkeletonID skeleton_id) -> ReadGuard<Skeleton> {
+  ZoneScoped;
+
+  if (skeleton_id == SkeletonID::Invalid)
+    return {};
+  self.skeletons_mutex.lock_shared();
+  auto* skeleton = self.skeleton_map.slot(skeleton_id);
+  if (!skeleton) {
+    self.skeletons_mutex.unlock_shared();
+    return {};
+  }
+  return ReadGuard<Skeleton>(self.skeletons_mutex, skeleton, adopt_lock);
+}
+
+auto AssetManager::get_animation(this AssetManager& self, const UUID& uuid) -> ReadGuard<AnimationClip> {
+  ZoneScoped;
+
+  AnimationID animation_id;
+  {
+    auto guard = self.get_asset(uuid);
+    if (!guard || guard->type != AssetType::Animation || guard->animation_id == AnimationID::Invalid)
+      return {};
+    animation_id = guard->animation_id;
+  }
+  return self.get_animation(animation_id);
+}
+
+auto AssetManager::get_animation(this AssetManager& self, const AnimationID animation_id) -> ReadGuard<AnimationClip> {
+  ZoneScoped;
+
+  if (animation_id == AnimationID::Invalid)
+    return {};
+  self.animations_mutex.lock_shared();
+  auto* clip = self.animation_map.slot(animation_id);
+  if (!clip) {
+    self.animations_mutex.unlock_shared();
+    return {};
+  }
+  return ReadGuard<AnimationClip>(self.animations_mutex, clip, adopt_lock);
+}
+
+auto AssetManager::load_skeleton(this AssetManager& self, Skeleton&& skeleton) -> SkeletonID {
+  ZoneScoped;
+
+  auto lock = std::unique_lock(self.skeletons_mutex);
+  return self.skeleton_map.create_slot(std::move(skeleton));
+}
+
+auto AssetManager::unload_skeleton(this AssetManager& self, const SkeletonID skeleton_id) -> bool {
+  ZoneScoped;
+
+  auto lock = std::unique_lock(self.skeletons_mutex);
+  self.skeleton_map.destroy_slot(skeleton_id);
+
+  return true;
+}
+
+auto AssetManager::load_animation(this AssetManager& self, AnimationClip&& clip) -> AnimationID {
+  ZoneScoped;
+
+  auto lock = std::unique_lock(self.animations_mutex);
+  return self.animation_map.create_slot(std::move(clip));
+}
+
+auto AssetManager::unload_animation(this AssetManager& self, const AnimationID animation_id) -> bool {
+  ZoneScoped;
+
+  auto lock = std::unique_lock(self.animations_mutex);
+  self.animation_map.destroy_slot(animation_id);
+
+  return true;
 }
 
 auto AssetManager::get_particle_system(this AssetManager& self, const UUID& uuid) -> ReadGuard<ParticleSystem> {

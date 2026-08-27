@@ -4,9 +4,15 @@
 #include <glm/gtx/quaternion.hpp>
 #include <vuk/Buffer.hpp>
 
+#include "Animation/Fwd.hpp"
 #include "Core/UUID.hpp"
 #include "Render/AccelerationStructure.hpp"
 #include "Scene/SceneGPU.hpp"
+
+// repeating the alias avoids dragging flecs.h into every consumer of this header
+namespace flecs {
+using entity_t = std::uint64_t;
+}
 
 namespace ox {
 enum class ModelID : u64 { Invalid = std::numeric_limits<u64>::max() };
@@ -66,6 +72,12 @@ struct Model {
 
   std::vector<UUID> textures = {};
   std::vector<UUID> materials = {};
+  // nil unless the glTF carried a skin, and clips reference the same skeleton asset
+  UUID skeleton_uuid = UUID(nullptr);
+  std::vector<UUID> animations = {};
+  // widest bind-pose reach of any bone, which is what inflates the per-instance culling bounds
+  // enough to cover any pose
+  f32 max_bone_influence_radius = 0.f;
   std::vector<MeshGroup> mesh_groups = {};
   std::vector<Light> lights = {};
   std::vector<u32> lod0_meshlet_counts = {};
@@ -93,6 +105,7 @@ struct MeshInstance {
   usize mesh_node_index = 0;
   UUID material_uuid = UUID(nullptr);
   GPU::TransformID transform_id = GPU::TransformID::Invalid;
+  flecs::entity_t animator_entity = 0;
 };
 
 } // namespace ox

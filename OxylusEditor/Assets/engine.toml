@@ -54,6 +54,11 @@ path = "passes/sky_ibl.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "skin_vertices"
+path = "passes/skin_vertices.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "cull_meshes"
 path = "passes/cull_meshes.slang"
 entry_points = ["cs_main"]

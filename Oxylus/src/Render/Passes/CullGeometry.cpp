@@ -58,6 +58,60 @@ auto RendererInstance::generate_hiz(this RendererInstance& self, MainGeometryCon
   context.hiz_attachment = std::move(hiz);
 }
 
+auto RendererInstance::skin_vertices(this RendererInstance& self) -> void {
+  ZoneScoped;
+
+  auto& prepared = self.prepared_frame;
+  if (prepared.skinned_vertex_total == 0 || prepared.skin_jobs.empty()) {
+    return;
+  }
+
+  // positions and normals share one arena, and the shader writes them through two bound subranges
+  // so it never has to write through a device address
+  const auto positions_bytes = static_cast<usize>(prepared.skinned_vertex_total) * sizeof(glm::u16vec4);
+  const auto normals_bytes = static_cast<usize>(prepared.skinned_vertex_total) * sizeof(u32);
+
+  auto skin_pass = vuk::make_pass(
+    "skin vertices",
+    [jobs = prepared.skin_jobs, positions_bytes, normals_bytes](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eComputeRead) meshes,
+      VUK_BA(vuk::eComputeRead) mesh_instances,
+      VUK_BA(vuk::eComputeRead) skinning_transforms,
+      VUK_BA(vuk::eComputeWrite) skinned_vertices
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("skin_vertices")
+        .bind_buffer(0, 0, meshes)
+        .bind_buffer(0, 1, mesh_instances)
+        .bind_buffer(0, 2, skinning_transforms)
+        .bind_buffer(0, 3, skinned_vertices->subrange(0, positions_bytes))
+        .bind_buffer(0, 4, skinned_vertices->subrange(positions_bytes, normals_bytes));
+
+      for (const auto& job : jobs) {
+        cmd_list //
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, job)
+          .dispatch_invocations(job.vertex_count);
+      }
+
+      return std::make_tuple(meshes, mesh_instances, skinning_transforms, skinned_vertices);
+    }
+  );
+
+  std::tie(
+    prepared.meshes_buffer,
+    prepared.mesh_instances_buffer,
+    prepared.skinning_transforms_buffer,
+    prepared.skinned_vertices_buffer
+  ) =
+    skin_pass(
+      std::move(prepared.meshes_buffer),
+      std::move(prepared.mesh_instances_buffer),
+      std::move(prepared.skinning_transforms_buffer),
+      std::move(prepared.skinned_vertices_buffer)
+    );
+}
+
 auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void {
   ZoneScoped;
   memory::ScopedStack stack;

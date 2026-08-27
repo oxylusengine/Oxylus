@@ -1,9 +1,12 @@
+#include <algorithm>
 #include <fastgltf/core.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <meshoptimizer.h>
+#include <numeric>
 #include <queue>
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
@@ -20,6 +23,9 @@ template <>
 struct fastgltf::ElementTraits<glm::vec3> : fastgltf::ElementTraitsBase<glm::vec3, AccessorType::Vec3, float> {};
 template <>
 struct fastgltf::ElementTraits<glm::vec2> : fastgltf::ElementTraitsBase<glm::vec2, AccessorType::Vec2, float> {};
+template <>
+struct fastgltf::ElementTraits<glm::u16vec4>
+    : fastgltf::ElementTraitsBase<glm::u16vec4, AccessorType::Vec4, std::uint16_t> {};
 
 namespace ox {
 auto get_default_gltf_extensions() -> fastgltf::Extensions {
@@ -263,6 +269,23 @@ auto AssetManager::write_gltf_meta(AssetManager& self, const std::filesystem::pa
   }
   json.end_array();
 
+  json["skeletons"].begin_array();
+  for (auto i = 0_sz; i < gltf_asset.skins.size(); i++) {
+    json << UUID::generate_random().str();
+  }
+  json.end_array();
+
+  json["animations"].begin_array();
+  for (const auto& [gltf_animation, animation_index] :
+       std::views::zip(gltf_asset.animations, std::views::iota(0_u32))) {
+    json.begin_obj();
+    json["uuid"] = UUID::generate_random().str();
+    json["name"] = std::string(gltf_animation.name);
+    json["animation_index"] = animation_index;
+    json.end_obj();
+  }
+  json.end_array();
+
   return true;
 }
 
@@ -456,6 +479,436 @@ auto register_gltf_materials(
   return result;
 }
 
+struct SkinBuildData {
+  Skeleton skeleton = {};
+  // glTF skin joint slot -> bone index
+  std::vector<u32> joint_to_bone = {};
+  // bone index -> glTF node index
+  std::vector<usize> bone_to_node = {};
+  // chain from the scene root down to the parent of the skin's root joints, because glTF ignores
+  // the skinned mesh node's own transform yet the joints still live under whatever ancestors the
+  // exporter emitted, and those have to be folded back in somewhere
+  BoneTransform root_prefix = {};
+};
+
+auto gltf_node_local_transform(const fastgltf::Node& node) -> BoneTransform {
+  if (const auto* trs = std::get_if<fastgltf::TRS>(&node.transform)) {
+    const auto scale = glm::vec3(trs->scale[0], trs->scale[1], trs->scale[2]);
+    return BoneTransform::from_trs(
+      glm::vec3(trs->translation[0], trs->translation[1], trs->translation[2]),
+      glm::quat::wxyz(trs->rotation[3], trs->rotation[0], trs->rotation[1], trs->rotation[2]),
+      (scale.x + scale.y + scale.z) / 3.f
+    );
+  }
+
+  const auto* matrix = std::get_if<fastgltf::math::fmat4x4>(&node.transform);
+  return matrix ? BoneTransform::from_mat4(glm::make_mat4(matrix->data())) : BoneTransform{};
+}
+
+auto build_gltf_node_parents(const fastgltf::Asset& gltf_asset) -> std::vector<usize> {
+  auto parents = std::vector<usize>(gltf_asset.nodes.size(), ~0_sz);
+  for (const auto& [node, node_index] : std::views::zip(gltf_asset.nodes, std::views::iota(0_sz))) {
+    for (const auto child : node.children) {
+      parents[child] = node_index;
+    }
+  }
+
+  return parents;
+}
+
+auto build_gltf_skeleton(const fastgltf::Asset& gltf_asset, const fastgltf::Skin& gltf_skin) -> option<SkinBuildData> {
+  ZoneScoped;
+
+  const auto joint_count = gltf_skin.joints.size();
+  if (joint_count == 0) {
+    return nullopt;
+  }
+
+  const auto node_parents = build_gltf_node_parents(gltf_asset);
+
+  auto node_to_joint = ankerl::unordered_dense::map<usize, u32>();
+  node_to_joint.reserve(joint_count);
+  for (const auto& [node_index, joint_slot] : std::views::zip(gltf_skin.joints, std::views::iota(0_u32))) {
+    node_to_joint.emplace(static_cast<usize>(node_index), joint_slot);
+  }
+
+  // depth-first from every joint whose parent is outside the skin, which emits parents before
+  // children, the invariant the whole model-space accumulation relies on
+  auto build = SkinBuildData{};
+  build.joint_to_bone.assign(joint_count, 0_u32);
+  build.bone_to_node.reserve(joint_count);
+
+  auto joint_parent_bone = std::vector<i32>();
+  joint_parent_bone.reserve(joint_count);
+
+  auto visited = std::vector<bool>(joint_count, false);
+  auto stack = std::vector<std::pair<u32, i32>>(); // joint slot, parent bone index
+
+  for (auto slot = 0_u32; slot < joint_count; ++slot) {
+    const auto parent_node = node_parents[gltf_skin.joints[slot]];
+    if (parent_node == ~0_sz || !node_to_joint.contains(parent_node)) {
+      stack.emplace_back(slot, -1);
+    }
+  }
+
+  if (stack.empty()) {
+    OX_LOG_ERROR("Skin '{}' has no root joint; its joint hierarchy is cyclic.", std::string(gltf_skin.name));
+    return nullopt;
+  }
+
+  while (!stack.empty()) {
+    const auto [slot, parent_bone] = stack.back();
+    stack.pop_back();
+
+    if (visited[slot]) {
+      continue;
+    }
+    visited[slot] = true;
+
+    const auto bone = static_cast<u32>(build.bone_to_node.size());
+    build.joint_to_bone[slot] = bone;
+    build.bone_to_node.push_back(gltf_skin.joints[slot]);
+    joint_parent_bone.push_back(parent_bone);
+
+    const auto& node = gltf_asset.nodes[gltf_skin.joints[slot]];
+    for (const auto child : std::views::reverse(node.children)) {
+      if (const auto it = node_to_joint.find(static_cast<usize>(child)); it != node_to_joint.end()) {
+        stack.emplace_back(it->second, static_cast<i32>(bone));
+      }
+    }
+  }
+
+  if (build.bone_to_node.size() != joint_count) {
+    OX_LOG_ERROR("Skin '{}' has joints unreachable from any root joint.", std::string(gltf_skin.name));
+    return nullopt;
+  }
+
+  // ancestors above the first root joint, which every root joint is assumed to share because a rig
+  // with roots under different ancestors is malformed
+  {
+    auto prefix_chain = std::vector<usize>();
+    auto node = node_parents[build.bone_to_node[0]];
+    while (node != ~0_sz) {
+      prefix_chain.push_back(node);
+      node = node_parents[node];
+    }
+
+    for (const auto ancestor : std::views::reverse(prefix_chain)) {
+      build.root_prefix = build.root_prefix * gltf_node_local_transform(gltf_asset.nodes[ancestor]);
+    }
+  }
+
+  auto& skeleton = build.skeleton;
+  skeleton.parent_indices = std::move(joint_parent_bone);
+  skeleton.bone_names.reserve(joint_count);
+  skeleton.parent_space_reference_pose.reserve(joint_count);
+  skeleton.inverse_bind_pose.assign(joint_count, BoneTransform{});
+
+  for (auto bone = 0_u32; bone < joint_count; ++bone) {
+    const auto& node = gltf_asset.nodes[build.bone_to_node[bone]];
+    auto name = std::string(node.name);
+    skeleton.bone_names.emplace_back(name.empty() ? fmt::format("bone_{}", bone) : std::move(name));
+
+    auto local = gltf_node_local_transform(node);
+    if (skeleton.parent_indices[bone] < 0) {
+      local = build.root_prefix * local;
+    }
+    skeleton.parent_space_reference_pose.emplace_back(local);
+  }
+
+  if (gltf_skin.inverseBindMatrices.has_value()) {
+    const auto& accessor = gltf_asset.accessors[gltf_skin.inverseBindMatrices.value()];
+    fastgltf::iterateAccessorWithIndex<fastgltf::math::fmat4x4>(
+      gltf_asset,
+      accessor,
+      [&](const fastgltf::math::fmat4x4& matrix, const usize slot) {
+        if (slot < joint_count) {
+          skeleton.inverse_bind_pose[build.joint_to_bone[slot]] = BoneTransform::from_mat4(
+            glm::make_mat4(matrix.data())
+          );
+        }
+      }
+    );
+  } else {
+    // per spec the identity is the default, meaning the joints are already in mesh space
+    for (auto bone = 0_u32; bone < joint_count; ++bone) {
+      skeleton.inverse_bind_pose[bone] = BoneTransform{};
+    }
+  }
+
+  if (!skeleton.finalize()) {
+    return nullopt;
+  }
+
+  return build;
+}
+
+constexpr static auto ANIMATION_DEFAULT_FPS = 30.f;
+constexpr static auto ANIMATION_MAX_FPS = 120.f;
+
+struct GltfAnimationSampler {
+  std::vector<f32> times = {};
+  // vec3 channels use xyz, rotation uses all four
+  std::vector<glm::vec4> values = {};
+  fastgltf::AnimationInterpolation interpolation = fastgltf::AnimationInterpolation::Linear;
+
+  auto sample(this const GltfAnimationSampler& self, f32 time, const glm::vec4& fallback) -> glm::vec4;
+};
+
+auto GltfAnimationSampler::sample(this const GltfAnimationSampler& self, const f32 time, const glm::vec4& fallback)
+  -> glm::vec4 {
+  const auto is_cubic = self.interpolation == fastgltf::AnimationInterpolation::CubicSpline;
+  const auto key_count = self.times.size();
+  const auto value_at = [&](const usize key) {
+    return self.values[is_cubic ? key * 3 + 1 : key];
+  };
+
+  if (key_count == 0 || self.values.size() < (is_cubic ? key_count * 3 : key_count)) {
+    return fallback;
+  }
+  if (key_count == 1 || time <= self.times.front()) {
+    return value_at(0);
+  }
+  if (time >= self.times.back()) {
+    return value_at(key_count - 1);
+  }
+
+  const auto upper = static_cast<usize>(
+    std::upper_bound(self.times.begin(), self.times.end(), time) - self.times.begin()
+  );
+  const auto lower = upper - 1;
+  const auto span = self.times[upper] - self.times[lower];
+  const auto t = span > glm::epsilon<f32>() ? (time - self.times[lower]) / span : 0.f;
+
+  switch (self.interpolation) {
+    case fastgltf::AnimationInterpolation::Step: {
+      return value_at(lower);
+    }
+    case fastgltf::AnimationInterpolation::CubicSpline: {
+      const auto p0 = self.values[lower * 3 + 1];
+      const auto m0 = self.values[lower * 3 + 2] * span;
+      const auto p1 = self.values[upper * 3 + 1];
+      const auto m1 = self.values[upper * 3 + 0] * span;
+      const auto t2 = t * t;
+      const auto t3 = t2 * t;
+      return (2.f * t3 - 3.f * t2 + 1.f) * p0 + (t3 - 2.f * t2 + t) * m0 + (-2.f * t3 + 3.f * t2) * p1 + (t3 - t2) * m1;
+    }
+    default: {
+      return glm::mix(value_at(lower), value_at(upper), t);
+    }
+  }
+}
+
+auto read_gltf_animation_sampler(const fastgltf::Asset& gltf_asset, const fastgltf::AnimationSampler& gltf_sampler)
+  -> GltfAnimationSampler {
+  ZoneScoped;
+
+  auto sampler = GltfAnimationSampler{.interpolation = gltf_sampler.interpolation};
+
+  const auto& input = gltf_asset.accessors[gltf_sampler.inputAccessor];
+  sampler.times.resize(input.count);
+  fastgltf::iterateAccessorWithIndex<f32>(gltf_asset, input, [&](const f32 t, const usize i) { sampler.times[i] = t; });
+
+  const auto& output = gltf_asset.accessors[gltf_sampler.outputAccessor];
+  sampler.values.resize(output.count);
+  if (output.type == fastgltf::AccessorType::Vec4) {
+    fastgltf::iterateAccessorWithIndex<glm::vec4>(gltf_asset, output, [&](const glm::vec4 v, const usize i) {
+      sampler.values[i] = v;
+    });
+  } else if (output.type == fastgltf::AccessorType::Vec3) {
+    fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf_asset, output, [&](const glm::vec3 v, const usize i) {
+      sampler.values[i] = glm::vec4(v, 0.f);
+    });
+  } else {
+    sampler.values.clear();
+  }
+
+  return sampler;
+}
+
+struct BoneChannels {
+  option<usize> translation = nullopt;
+  option<usize> rotation = nullopt;
+  option<usize> scale = nullopt;
+};
+
+auto build_gltf_animation(
+  const fastgltf::Asset& gltf_asset,
+  const fastgltf::Animation& gltf_animation,
+  const SkinBuildData& skin,
+  const UUID& skeleton_uuid
+) -> option<AnimationClip> {
+  ZoneScoped;
+
+  const auto bone_count = skin.skeleton.bone_count();
+
+  auto node_to_bone = ankerl::unordered_dense::map<usize, u32>();
+  node_to_bone.reserve(bone_count);
+  for (const auto& [node_index, bone] : std::views::zip(skin.bone_to_node, std::views::iota(0_u32))) {
+    node_to_bone.emplace(node_index, bone);
+  }
+
+  auto samplers = std::vector<GltfAnimationSampler>();
+  samplers.reserve(gltf_animation.samplers.size());
+  for (const auto& gltf_sampler : gltf_animation.samplers) {
+    samplers.emplace_back(read_gltf_animation_sampler(gltf_asset, gltf_sampler));
+  }
+
+  auto bone_channels = std::vector<BoneChannels>(bone_count);
+  auto duration = 0.f;
+  auto max_key_count = 0_sz;
+  auto touched_bones = false;
+
+  for (const auto& channel : gltf_animation.channels) {
+    if (!channel.nodeIndex.has_value() || channel.samplerIndex >= samplers.size()) {
+      continue;
+    }
+
+    const auto bone_it = node_to_bone.find(static_cast<usize>(channel.nodeIndex.value()));
+    if (bone_it == node_to_bone.end()) {
+      continue;
+    }
+
+    auto& channels = bone_channels[bone_it->second];
+    switch (channel.path) {
+      case fastgltf::AnimationPath::Translation: channels.translation = channel.samplerIndex; break;
+      case fastgltf::AnimationPath::Rotation   : channels.rotation = channel.samplerIndex; break;
+      case fastgltf::AnimationPath::Scale      : channels.scale = channel.samplerIndex; break;
+      default                                  : continue;
+    }
+
+    const auto& sampler = samplers[channel.samplerIndex];
+    if (!sampler.times.empty()) {
+      duration = glm::max(duration, sampler.times.back());
+      max_key_count = ox::max(max_key_count, sampler.times.size());
+    }
+    touched_bones = true;
+  }
+
+  if (!touched_bones || duration <= 0.f) {
+    return nullopt;
+  }
+
+  // resample onto a fixed rate, which is what makes the frame-major layout possible at all, with
+  // enough frames that a densely keyed clip does not lose detail
+  auto fps = ANIMATION_DEFAULT_FPS;
+  if (max_key_count > 1) {
+    fps = glm::clamp(static_cast<f32>(max_key_count - 1) / duration, ANIMATION_DEFAULT_FPS, ANIMATION_MAX_FPS);
+  }
+
+  const auto frame_count = ox::max(2_u32, static_cast<u32>(glm::round(duration * fps)) + 1_u32);
+
+  auto sampled = std::vector<BoneTransform>(static_cast<usize>(frame_count) * bone_count);
+  for (auto frame = 0_u32; frame < frame_count; ++frame) {
+    const auto time = duration * static_cast<f32>(frame) / static_cast<f32>(frame_count - 1);
+
+    for (auto bone = 0_u32; bone < bone_count; ++bone) {
+      const auto& reference = skin.skeleton.parent_space_reference_pose[bone];
+      const auto is_root = skin.skeleton.parent_indices[bone] < 0;
+      // glTF channels drive node-local values and the reference pose already carries the root
+      // prefix, so strip it before sampling and put it back afterwards
+      const auto local_reference = is_root ? skin.root_prefix.inverse() * reference : reference;
+
+      auto& channels = bone_channels[bone];
+      auto translation = local_reference.translation();
+      auto rotation = local_reference.rotation;
+      auto scale = local_reference.scale();
+
+      if (channels.translation.has_value()) {
+        translation = glm::vec3(samplers[channels.translation.value()].sample(time, glm::vec4(translation, 0.f)));
+      }
+      if (channels.rotation.has_value()) {
+        const auto sampled_rotation = samplers[channels.rotation.value()].sample(
+          time,
+          glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w)
+        );
+        rotation = glm::normalize(
+          glm::quat::wxyz(sampled_rotation.w, sampled_rotation.x, sampled_rotation.y, sampled_rotation.z)
+        );
+      }
+      if (channels.scale.has_value()) {
+        const auto sampled_scale = glm::vec3(samplers[channels.scale.value()].sample(time, glm::vec4(scale)));
+        scale = (sampled_scale.x + sampled_scale.y + sampled_scale.z) / 3.f;
+      }
+
+      auto local = BoneTransform::from_trs(translation, rotation, scale);
+      sampled[static_cast<usize>(frame) * bone_count + bone] = is_root ? skin.root_prefix * local : local;
+    }
+  }
+
+  auto clip = AnimationClip{};
+  clip.name = std::string(gltf_animation.name);
+  clip.skeleton_uuid = skeleton_uuid;
+  clip.frame_count = frame_count;
+  clip.duration = duration;
+  animation::compress_tracks(clip, sampled, bone_count, frame_count);
+
+  return clip;
+}
+
+auto extract_skeleton_uuids(simdjson::ondemand::document& doc) -> std::vector<UUID> {
+  ZoneScoped;
+
+  auto result = std::vector<UUID>();
+  auto array = doc["skeletons"].get_array();
+  if (array.error()) {
+    return result;
+  }
+
+  for (auto obj_json : array) {
+    if (obj_json.error() || !obj_json.is_string()) {
+      continue;
+    }
+
+    if (auto uuid = UUID::from_string(obj_json.get_string()); uuid.has_value()) {
+      result.emplace_back(uuid.value());
+    }
+  }
+
+  return result;
+}
+
+struct AnimationMeta {
+  UUID uuid = UUID(nullptr);
+  u32 animation_index = 0;
+};
+
+auto extract_animation_metas(simdjson::ondemand::document& doc) -> std::vector<AnimationMeta> {
+  ZoneScoped;
+
+  auto result = std::vector<AnimationMeta>();
+  auto array = doc["animations"].get_array();
+  if (array.error()) {
+    return result;
+  }
+
+  for (auto obj_json : array) {
+    if (obj_json.error()) {
+      continue;
+    }
+
+    auto uuid_json = obj_json["uuid"].get_string();
+    auto index_json = obj_json["animation_index"].get_uint64();
+    if (uuid_json.error() || index_json.error()) {
+      continue;
+    }
+
+    auto uuid = UUID::from_string(uuid_json.value_unsafe());
+    if (!uuid.has_value()) {
+      continue;
+    }
+
+    result.emplace_back(
+      AnimationMeta{
+        .uuid = uuid.value(),
+        .animation_index = static_cast<u32>(index_json.value_unsafe()),
+      }
+    );
+  }
+
+  return result;
+}
+
 struct MeshBuildData {
   GPU::Mesh gpu_mesh = {};
   std::array<GPU::MeshLOD, GPU::Mesh::MAX_LODS> lods = {};
@@ -463,6 +916,7 @@ struct MeshBuildData {
   Model::CollisionMesh collision = {};
   u64 lod_metadata_offset = 0;
   bool has_texture_coords = false;
+  bool has_skin = false;
 };
 
 auto blob_append(std::vector<u8>& blob, const void* data, usize size, usize alignment) -> u64 {
@@ -480,21 +934,38 @@ auto blob_append(std::vector<u8>& blob, const std::vector<T>& data, usize alignm
   return blob_append(blob, data.data(), ox::size_bytes(data), alignment);
 }
 
-auto build_gltf_mesh(const fastgltf::Asset& gltf_asset, const fastgltf::Primitive& gltf_primitive)
-  -> option<MeshBuildData> {
+// `joint_to_bone` maps a glTF skin joint slot to its index in the topologically sorted skeleton,
+// and empty means the primitive is not skinned
+auto build_gltf_mesh(
+  const fastgltf::Asset& gltf_asset,
+  const fastgltf::Primitive& gltf_primitive,
+  std::span<const u32> joint_to_bone,
+  std::span<const BoneTransform> inverse_bind_pose,
+  f32& out_max_bone_influence_radius
+) -> option<MeshBuildData> {
   ZoneScoped;
 
-  if (!gltf_primitive.indicesAccessor.has_value()) {
+  const auto position_attrib = gltf_primitive.findAttribute("POSITION");
+  if (position_attrib == gltf_primitive.attributes.end()) {
     return nullopt;
   }
 
   auto build = MeshBuildData{};
 
-  auto& index_accessor = gltf_asset.accessors[gltf_primitive.indicesAccessor.value()];
-  auto raw_indices = std::vector<u32>(index_accessor.count);
-  fastgltf::iterateAccessorWithIndex<u32>(gltf_asset, index_accessor, [&](u32 index, usize i) {
-    raw_indices[i] = index;
-  });
+  auto raw_indices = std::vector<u32>();
+  if (gltf_primitive.indicesAccessor.has_value()) {
+    auto& index_accessor = gltf_asset.accessors[gltf_primitive.indicesAccessor.value()];
+    raw_indices.resize(index_accessor.count);
+    fastgltf::iterateAccessorWithIndex<u32>(gltf_asset, index_accessor, [&](u32 index, usize i) {
+      raw_indices[i] = index;
+    });
+  } else {
+    // glTF allows a non-indexed triangle soup but the rest of this pipeline does not, and a
+    // sequential index buffer costs one pass while letting meshopt, the meshlet builder and the
+    // BLAS work unchanged, leaving vertices unwelded so such a mesh simply gets no LOD chain
+    raw_indices.resize(gltf_asset.accessors[position_attrib->accessorIndex].count);
+    std::iota(raw_indices.begin(), raw_indices.end(), 0_u32);
+  }
 
   auto vertex_count = 0_u32;
   auto vertex_remap = std::vector<u32>();
@@ -566,8 +1037,66 @@ auto build_gltf_mesh(const fastgltf::Asset& gltf_asset, const fastgltf::Primitiv
     );
   }
 
-  auto indices = std::vector<u32>(index_accessor.count);
+  auto joints = std::vector<glm::u16vec4>();
+  auto weights = std::vector<glm::vec4>();
+  if (!joint_to_bone.empty()) {
+    const auto joints_attrib = gltf_primitive.findAttribute("JOINTS_0");
+    const auto weights_attrib = gltf_primitive.findAttribute("WEIGHTS_0");
+    if (joints_attrib != gltf_primitive.attributes.end() && weights_attrib != gltf_primitive.attributes.end()) {
+      auto& joints_accessor = gltf_asset.accessors[joints_attrib->accessorIndex];
+      auto raw_joints = std::vector<glm::u16vec4>(joints_accessor.count);
+      fastgltf::iterateAccessorWithIndex<glm::u16vec4>(gltf_asset, joints_accessor, [&](glm::u16vec4 j, usize i) {
+        raw_joints[i] = j;
+      });
+
+      auto& weights_accessor = gltf_asset.accessors[weights_attrib->accessorIndex];
+      auto raw_weights = std::vector<glm::vec4>(weights_accessor.count);
+      fastgltf::iterateAccessorWithIndex<glm::vec4>(gltf_asset, weights_accessor, [&](glm::vec4 w, usize i) {
+        raw_weights[i] = w;
+      });
+
+      joints.resize(vertex_count);
+      meshopt_remapVertexBuffer(
+        joints.data(),
+        raw_joints.data(),
+        raw_joints.size(),
+        sizeof(glm::u16vec4),
+        vertex_remap.data()
+      );
+
+      weights.resize(vertex_count);
+      meshopt_remapVertexBuffer(
+        weights.data(),
+        raw_weights.data(),
+        raw_weights.size(),
+        sizeof(glm::vec4),
+        vertex_remap.data()
+      );
+    }
+  }
+
+  auto indices = std::vector<u32>(raw_indices.size());
   meshopt_remapIndexBuffer(indices.data(), raw_indices.data(), raw_indices.size(), vertex_remap.data());
+
+  if (normals.empty() && vertex_count > 0) {
+    // NORMAL is optional in glTF and a mesh without it must be shaded flat, which accumulating
+    // face normals gives exactly on an unwelded mesh, whereas leaving the array zeroed would decode
+    // to (-1, -1, -1) in the shader and light the whole mesh from one wrong direction
+    normals.assign(vertex_count, glm::vec3(0.f));
+    for (auto i = 0_sz; i + 2 < indices.size(); i += 3) {
+      const auto i0 = indices[i];
+      const auto i1 = indices[i + 1];
+      const auto i2 = indices[i + 2];
+      const auto face = glm::cross(positions[i1] - positions[i0], positions[i2] - positions[i0]);
+      normals[i0] += face;
+      normals[i1] += face;
+      normals[i2] += face;
+    }
+
+    for (auto& normal : normals) {
+      normal = glm::dot(normal, normal) > 0.f ? glm::normalize(normal) : glm::vec3(0.f, 1.f, 0.f);
+    }
+  }
 
   quantized_positions.resize(vertex_count);
   for (const auto& [position, quantized_position] : std::views::zip(positions, quantized_positions)) {
@@ -592,6 +1121,36 @@ auto build_gltf_mesh(const fastgltf::Asset& gltf_asset, const fastgltf::Primitiv
   build.collision.positions = positions;
   build.collision.indices = indices;
 
+  auto quantized_joints = std::vector<glm::u16vec4>();
+  auto quantized_weights = std::vector<glm::u16vec4>();
+  if (!joints.empty()) {
+    quantized_joints.resize(vertex_count);
+    quantized_weights.resize(vertex_count);
+
+    for (auto i = 0_u32; i < vertex_count; ++i) {
+      // exporters routinely emit weights that sum to slightly off 1.0, and the shader does a plain
+      // weighted sum with no correction of its own
+      auto weight = weights[i];
+      const auto sum = weight.x + weight.y + weight.z + weight.w;
+      weight = sum > glm::epsilon<f32>() ? weight / sum : glm::vec4(1.f, 0.f, 0.f, 0.f);
+
+      for (auto influence = 0_u32; influence < MAX_BONE_INFLUENCES; ++influence) {
+        const auto joint = joints[i][static_cast<int>(influence)];
+        const auto bone = joint < joint_to_bone.size() ? joint_to_bone[joint] : 0_u32;
+        quantized_joints[i][static_cast<int>(influence)] = static_cast<u16>(bone);
+        quantized_weights[i][static_cast<int>(influence)] = static_cast<u16>(
+          glm::clamp(weight[static_cast<int>(influence)], 0.f, 1.f) * 65535.f + 0.5f
+        );
+
+        // widest bind-pose reach of any bone, which is what inflates the animated culling bounds
+        if (weight[static_cast<int>(influence)] > 0.f && bone < inverse_bind_pose.size()) {
+          const auto bone_local = inverse_bind_pose[bone].transform_point(positions[i]);
+          out_max_bone_influence_radius = glm::max(out_max_bone_influence_radius, glm::length(bone_local));
+        }
+      }
+    }
+  }
+
   auto& gpu_mesh = build.gpu_mesh;
   gpu_mesh.vertex_count = vertex_count;
   gpu_mesh.vertex_positions = blob_append(build.blob, quantized_positions, 8);
@@ -599,6 +1158,11 @@ auto build_gltf_mesh(const fastgltf::Asset& gltf_asset, const fastgltf::Primitiv
   if (!texcoords.empty()) {
     build.has_texture_coords = true;
     gpu_mesh.texture_coords = blob_append(build.blob, quantized_texcoords, 4);
+  }
+  if (!quantized_joints.empty()) {
+    build.has_skin = true;
+    gpu_mesh.skin_joint_indices = blob_append(build.blob, quantized_joints, 8);
+    gpu_mesh.skin_weights = blob_append(build.blob, quantized_weights, 8);
   }
 
   auto last_lod_indices = std::vector<u32>();
@@ -788,6 +1352,10 @@ auto upload_gltf_mesh(
   if (build.has_texture_coords) {
     build.gpu_mesh.texture_coords += gpu_mesh_bda;
   }
+  if (build.has_skin) {
+    build.gpu_mesh.skin_joint_indices += gpu_mesh_bda;
+    build.gpu_mesh.skin_weights += gpu_mesh_bda;
+  }
   build.gpu_mesh.lods = gpu_mesh_bda + build.lod_metadata_offset;
 
   for (auto lod_index = 0_u32; lod_index < build.gpu_mesh.lod_count; lod_index++) {
@@ -959,10 +1527,80 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
     });
   }
 
+  // a clip names the nodes it drives, so more than one skin makes "which skeleton does this clip
+  // target" ambiguous, mirroring the single-scene restriction above
+  if (gltf_asset.skins.size() > 1) {
+    OX_LOG_ERROR("Model '{}' has {} skins; only one is supported.", path, gltf_asset.skins.size());
+    return ModelID::Invalid;
+  }
+
+  auto skin = option<SkinBuildData>(nullopt);
+  auto skeleton_uuid = UUID(nullptr);
+  // shared, because the mesh build jobs outlive this function on the async path
+  auto joint_to_bone = std::make_shared<std::vector<u32>>();
+  auto inverse_bind_pose = std::make_shared<std::vector<BoneTransform>>();
+  auto animation_uuids = std::vector<UUID>();
+  auto joint_nodes = ankerl::unordered_dense::set<usize>();
+
+  if (!gltf_asset.skins.empty()) {
+    const auto skeleton_uuids = extract_skeleton_uuids(*meta_json->doc);
+    if (skeleton_uuids.empty()) {
+      // meta file predates skeleton support, and minting a UUID here would produce a different one
+      // every run and break every scene that referenced it, so load the model as static instead
+      OX_LOG_WARN(
+        "Model '{}' has a skin but its meta file lists no skeleton UUID. Loading it as static; delete "
+        "the .oxasset and re-import to get animation.",
+        path
+      );
+    } else {
+      skin = build_gltf_skeleton(gltf_asset, gltf_asset.skins[0]);
+      if (!skin.has_value()) {
+        OX_LOG_ERROR("Failed to build the skeleton of '{}'.", path);
+        return ModelID::Invalid;
+      }
+
+      skeleton_uuid = skeleton_uuids[0];
+    }
+  }
+
+  if (skin.has_value()) {
+    for (const auto node_index : skin->bone_to_node) {
+      joint_nodes.emplace(node_index);
+    }
+
+    self.register_asset(skeleton_uuid, AssetType::Skeleton, path);
+    joint_to_bone = std::make_shared<std::vector<u32>>(skin->joint_to_bone);
+    inverse_bind_pose = std::make_shared<std::vector<BoneTransform>>(skin->skeleton.inverse_bind_pose);
+
+    for (const auto& animation_meta : extract_animation_metas(*meta_json->doc)) {
+      if (animation_meta.animation_index >= gltf_asset.animations.size()) {
+        continue;
+      }
+
+      auto clip = build_gltf_animation(
+        gltf_asset,
+        gltf_asset.animations[animation_meta.animation_index],
+        skin.value(),
+        skeleton_uuid
+      );
+      if (!clip.has_value()) {
+        continue;
+      }
+
+      self.register_asset(animation_meta.uuid, AssetType::Animation, path);
+      self.publish_animation(animation_meta.uuid, std::move(clip.value()));
+      animation_uuids.emplace_back(animation_meta.uuid);
+    }
+
+    self.publish_skeleton(skeleton_uuid, std::move(skin->skeleton));
+  }
+
   auto model = Model{};
   model.textures = std::move(textures);
   model.materials = std::move(materials);
   model.lights = std::move(lights);
+  model.skeleton_uuid = skeleton_uuid;
+  model.animations = std::move(animation_uuids);
 
   auto& gltf_default_scene = gltf_asset.scenes[gltf_asset.defaultScene.value_or(0_sz)];
   struct ProcessingNode {
@@ -988,6 +1626,12 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
     const auto& node = gltf_asset.nodes[gltf_node_index];
     auto& parent_mesh_group = model.mesh_groups[parent_mesh_group_index];
     processing_gltf_nodes.pop();
+
+    // joints live in the Skeleton, not the scene graph, because an entity per joint would make
+    // hundreds of them per character whose transforms would fight the pose every frame
+    if (joint_nodes.contains(gltf_node_index)) {
+      continue;
+    }
 
     auto mesh_group_index = model.mesh_groups.size();
     parent_mesh_group.child_indices.push_back(mesh_group_index);
@@ -1029,7 +1673,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
     const auto& gltf_mesh = gltf_asset.meshes[gltf_mesh_index];
     for (const auto& [gltf_primitive, gltf_primitive_index] :
          std::views::zip(gltf_mesh.primitives, std::views::iota(0_sz))) {
-      if (!gltf_primitive.indicesAccessor.has_value()) {
+      if (gltf_primitive.findAttribute("POSITION") == gltf_primitive.attributes.end()) {
         continue;
       }
 
@@ -1066,12 +1710,27 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
   for (const auto& [pending_mesh, mesh_index] : std::views::zip(pending_meshes, std::views::iota(0_sz))) {
     dispatch(
       mesh_barrier,
-      [&asset_man = self, model_id, gltf_asset_ref, &render_context, pending_mesh, mesh_index, mesh_batch]() {
+      [&asset_man = self,
+       model_id,
+       gltf_asset_ref,
+       &render_context,
+       pending_mesh,
+       mesh_index,
+       mesh_batch,
+       joint_to_bone,
+       inverse_bind_pose]() {
         ZoneScopedN("GLTF Mesh Build");
 
         const auto& gltf_primitive = gltf_asset_ref->meshes[pending_mesh.gltf_mesh_index]
                                        .primitives[pending_mesh.gltf_primitive_index];
-        auto build = build_gltf_mesh(*gltf_asset_ref, gltf_primitive);
+        auto max_bone_influence_radius = 0.f;
+        auto build = build_gltf_mesh(
+          *gltf_asset_ref,
+          gltf_primitive,
+          *joint_to_bone,
+          *inverse_bind_pose,
+          max_bone_influence_radius
+        );
         auto mesh_buffer = vuk::Unique<vuk::Buffer>();
         auto mesh_blas = AccelerationStructure();
         if (build) {
@@ -1093,6 +1752,12 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
           loaded_model->collision_meshes[mesh_index] = std::move(build->collision);
           loaded_model->lod0_meshlet_counts[mesh_index] = build->lods[0].meshlet_count;
           loaded_model->lod0_index_ranges[mesh_index] = {build->lods[0].indices, build->lods[0].indices_count};
+
+          auto radius_ref = std::atomic_ref(loaded_model->max_bone_influence_radius);
+          auto known = radius_ref.load(std::memory_order_relaxed);
+          while (known < max_bone_influence_radius &&
+                 !radius_ref.compare_exchange_weak(known, max_bone_influence_radius, std::memory_order_relaxed)) {
+          }
 
           loaded_model->mesh_ready[mesh_index].test_and_set(std::memory_order_release);
         }

@@ -1,5 +1,6 @@
 #include "InspectorPanel.hpp"
 
+#include <ankerl/svector.h>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -275,6 +276,8 @@ struct EntityInspector : IEntitySerializer {
         const auto material_id = asset_type == AssetType::Material ? asset->material_id : MaterialID::Invalid;
         const auto audio_id = asset_type == AssetType::Audio ? asset->audio_id : AudioID::Invalid;
         const auto script_id = asset_type == AssetType::Script ? asset->script_id : ScriptID::Invalid;
+        const auto skeleton_id = asset_type == AssetType::Skeleton ? asset->skeleton_id : SkeletonID::Invalid;
+        const auto animation_id = asset_type == AssetType::Animation ? asset->animation_id : AnimationID::Invalid;
         asset.reset();
 
         switch (asset_type) {
@@ -285,6 +288,108 @@ struct EntityInspector : IEntitySerializer {
           case AssetType::Scene   : // TODO: Scenes
           case AssetType::Terrain : // TODO: Terrain edits
             break;
+          case AssetType::Skeleton: {
+            if (auto skeleton = asset_man.get_skeleton(skeleton_id)) {
+              UI::begin_properties();
+              UI::text("Bones", std::to_string(skeleton->bone_count()));
+              UI::end_properties();
+            }
+            break;
+          }
+          case AssetType::Animation: {
+            memory::ScopedStack stack;
+
+            // the picker shows every clip of a model under the same file name, so offer the
+            // sibling clips by name instead
+            auto siblings = ankerl::svector<std::pair<const c8*, UUID>, 8>();
+
+            // a clip carries its model's path, so the registry finds the model without reopening
+            // the .oxasset sidecar, and the model's own list is authoritative and in import order
+            auto model_animations = ankerl::svector<UUID, 8>();
+            for (const auto& registered : asset_man.get_registry_snapshot()) {
+              if (registered.type != AssetType::Model || registered.path != asset_path) {
+                continue;
+              }
+
+              if (auto model = asset_man.get_model(registered.model_id)) {
+                model_animations.assign(model->animations.begin(), model->animations.end());
+              }
+
+              break;
+            }
+
+            if (model_animations.empty()) {
+              // the model itself is not loaded, so fall back to whatever clips of it the registry
+              // still knows about rather than showing an empty list
+              for (const auto& registered : asset_man.get_registry_snapshot()) {
+                if (registered.type == AssetType::Animation && registered.path == asset_path) {
+                  model_animations.emplace_back(registered.uuid);
+                }
+              }
+            }
+
+            for (const auto& sibling_uuid : model_animations) {
+              // the name has to be copied onto the stack while the guard still holds the lock
+              const c8* label = nullptr;
+              if (auto sibling = asset_man.get_animation(sibling_uuid)) {
+                label = stack.null_terminate_cstr(sibling->name);
+              }
+
+              if (label == nullptr) {
+                continue;
+              }
+
+              siblings.emplace_back(label, sibling_uuid);
+            }
+
+            // ImGui wants the labels contiguous
+            auto sibling_names = ankerl::svector<const c8*, 8>();
+            auto selected_clip = 0;
+            for (const auto& [label, sibling_uuid] : siblings) {
+              if (sibling_uuid == asset_uuid) {
+                selected_clip = static_cast<i32>(sibling_names.size());
+              }
+
+              sibling_names.emplace_back(label);
+            }
+
+            auto duration = 0.f;
+            auto frame_count = 0_u32;
+            const c8* clip_name = "";
+            if (auto clip = asset_man.get_animation(animation_id)) {
+              clip_name = stack.null_terminate_cstr(clip->name);
+              duration = clip->duration;
+              frame_count = clip->frame_count;
+            }
+
+            UI::begin_properties();
+            UI::text("Name", clip_name);
+            UI::text("Duration", stack.format("{:.2f}s", duration));
+            UI::text("Frames", stack.format("{}", frame_count));
+
+            auto chosen = UUID(nullptr);
+            if (
+              sibling_names.size() > 1 &&
+              UI::property("Clip", &selected_clip, sibling_names.data(), static_cast<i32>(sibling_names.size())) &&
+              selected_clip >= 0 && selected_clip < static_cast<i32>(siblings.size())
+            ) {
+              chosen = siblings[static_cast<usize>(selected_clip)].second;
+            }
+            UI::end_properties();
+
+            // outside the properties block and after every guard is gone, because load and unload
+            // take the registry write lock
+            if (chosen && chosen != *uuid && asset_man.load_asset(chosen)) {
+              if (*uuid) {
+                asset_man.unload_asset(*uuid);
+              }
+
+              *uuid = chosen;
+              modified = true;
+            }
+
+            break;
+          }
           case AssetType::ParticleSystem: {
             if (UI::button("Open Particle Editor")) {
               App::mod<Editor>().editor_panel_registry.get<ParticleEditorPanel>().open_asset(asset_uuid);

@@ -22,6 +22,8 @@ enum class AssetType : u32 {
   Script,
   Terrain,
   ParticleSystem,
+  Skeleton,
+  Animation,
 };
 
 // List of file extensions supported by Engine.

@@ -200,6 +200,22 @@ public func dequantize_half(u16 h) -> f32 {
     return asfloat(s | r);
 }
 
+// port of meshopt_quantizeHalf, so vertices written by the skinning pass decode bit-identically to
+// the ones the importer quantized
+public func quantize_half(f32 v) -> u16 {
+    let ui = asuint(v);
+
+    let s = i32((ui >> 16) & 0x8000);
+    let em = i32(ui & 0x7fffffff);
+
+    var h = (em - (112 << 23) + (1 << 12)) >> 13;
+    h = (em < (113 << 23)) ? 0 : h;
+    h = (em >= (143 << 23)) ? 0x7c00 : h;
+    h = (em > (255 << 23)) ? 0x7e00 : h;
+
+    return u16(s | h);
+}
+
 public func remap(float val, float start1, float end1, float start2, float end2) -> float {
   return (val - start1) / (end1 - start1) * (end2 - start2) + start2;
 }

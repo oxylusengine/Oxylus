@@ -11,6 +11,8 @@
 
 #include <simdjson.h>
 
+#include "Animation/Pose.hpp"
+#include "Animation/PoseTaskSystem.hpp"
 #include "Asset/Model.hpp"
 #include "Asset/ParticleSystem.hpp"
 #include "Core/UUID.hpp"
@@ -57,6 +59,34 @@ struct ComponentDB {
   auto get_components(this ComponentDB&) -> std::span<flecs::id>;
 };
 
+// kept out of AnimatorComponent so the component stays small, serializable and reflection-friendly
+struct AnimationInstance {
+  UUID skeleton_uuid = {};
+  UUID clip_uuid = {};
+  UUID fade_from_clip_uuid = {};
+
+  f32 current_time = 0.f;
+  f32 fade_from_time = 0.f;
+  f32 fade_elapsed = 0.f;
+  f32 fade_duration = 0.f;
+
+  Pose pose = {};
+  PoseTaskSystem task_system = {};
+
+  u32 bone_offset = 0;
+  u32 bone_count = 0;
+  // Model::max_bone_influence_radius of whatever skinned mesh linked to this animator
+  f32 influence_radius = 0.f;
+  // model-space and conservative: bone positions inflated by the widest bone influence
+  GPU::MeshBounds bounds = {};
+  // advanced this frame, so anything skinned from it has to be re-uploaded and re-skinned
+  bool advanced = false;
+  // something other than the clock changed the pose, so it has to be pushed once more even though
+  // the clip is not running
+  bool pose_dirty = true;
+  bool was_advancing = false;
+};
+
 enum class SceneID : u64 { Invalid = std::numeric_limits<u64>::max() };
 class Scene {
 public:
@@ -81,6 +111,17 @@ public:
 
   SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};
+
+  SlotMap<AnimationInstance, AnimationInstanceID> animation_instances = {};
+  ankerl::unordered_dense::map<flecs::entity, AnimationInstanceID> entity_to_animation_instance_map = {};
+  std::vector<GPU::SkinningTransform> skinning_transforms = {};
+  u32 skinned_vertex_total = 0;
+
+  // rebuilt only when `meshes_dirty`, though skinned entries are patched in place every frame
+  std::vector<GPU::Mesh> gpu_meshes = {};
+  std::vector<u64> gpu_mesh_blas_addresses = {};
+  std::vector<GPU::MeshInstance> gpu_mesh_instances = {};
+  std::vector<SkinnedMeshInstance> skinned_mesh_instances = {};
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};
 
@@ -128,6 +169,17 @@ public:
     this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid = {}
   ) -> bool;
   auto detach_mesh(this Scene& self, flecs::entity entity) -> bool;
+
+  auto attach_animator(this Scene& self, flecs::entity entity) -> bool;
+  auto detach_animator(this Scene& self, flecs::entity entity) -> bool;
+  static auto find_animator_entity(flecs::entity entity) -> flecs::entity;
+  // needed because a mesh entity can be created before the animator it belongs to
+  auto relink_skinned_meshes(this Scene& self, flecs::entity animator) -> void;
+  // `node` walks the subtree while `animator` stays put, so a mesh nested several levels down is
+  // still stamped with the animator rather than with its own parent
+  auto relink_skinned_meshes_under(this Scene& self, flecs::entity animator, flecs::entity node) -> void;
+  auto update_animations(this Scene& self, f32 delta_time) -> void;
+  auto end_animation_fade(this Scene& self, AnimationInstance& instance) -> void;
 
   // --- Particles ---
   // Runtime control over an entity's emitter. Stopping only halts spawning; particles already alive
@@ -242,6 +294,10 @@ private:
     };
 
     UUID model_uuid = {};
+    // used when the glTF root node is unnamed, so the entity holding the model's AnimatorComponent
+    // is still findable in the hierarchy, and resolved by the caller because spawning runs under a
+    // read guard on the model that the asset registry must not be locked from under
+    std::string fallback_root_name = {};
     std::vector<MeshEntity> mesh_entities = {};
     bool hierarchy_spawned = false;
   };
@@ -278,6 +334,7 @@ private:
     std::string name = {};
 
     UUID material_uuid = {};
+    UUID skeleton_uuid = {};
     AABB aabb = {};
   };
 

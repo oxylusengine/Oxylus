@@ -90,7 +90,8 @@ func cs_main(
     let mesh_instance = mesh_instances[dirty_mesh_instance_indices[mesh_index]];
     let transform = transforms[mesh_instance.transform_index];
     let transform_previous = transforms_previous[mesh_instance.transform_index];
-    let mesh = meshes[mesh_instance.mesh_index];
+    var mesh = meshes[mesh_instance.mesh_index];
+    mesh.apply_skin(mesh_instance);
     let clipmap = clipmaps[clipmap_index];
 
     let mvp_prev = mul(clipmap.projection_view_mat, transform_previous.previous_world);

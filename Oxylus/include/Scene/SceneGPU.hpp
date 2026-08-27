@@ -111,12 +111,32 @@ struct MeshletInstance {
   alignas(4) u32 meshlet_index = 0;
 };
 
+// half the bandwidth of a 3x4 matrix per bone, and the shader rotates a vector instead of doing a
+// matrix multiply
+struct SkinningTransform {
+  alignas(4) glm::vec4 rotation = {0.f, 0.f, 0.f, 1.f};
+  alignas(4) glm::vec4 translation_scale = {0.f, 0.f, 0.f, 1.f};
+};
+static_assert(sizeof(SkinningTransform) == 32);
+
+struct SkinJob {
+  alignas(4) u32 mesh_instance_index = 0;
+  alignas(4) u32 vertex_offset = 0;
+  alignas(4) u32 bone_offset = 0;
+  alignas(4) u32 vertex_count = 0;
+};
+
 struct MeshInstance {
   alignas(4) u32 mesh_index = 0;
   alignas(4) u32 lod_index = 0;
   alignas(4) u32 material_index = 0;
   alignas(4) u32 transform_index = 0;
   alignas(4) u32 meshlet_instance_visibility_offset = 0;
+  // per-instance override of the mesh's bind-pose vertex data, written by the skinning pass, and
+  // zero for a static instance so the mesh's own pointers and bounds are used
+  alignas(8) u64 skinned_vertex_positions = 0;
+  alignas(8) u64 skinned_vertex_normals = 0;
+  alignas(4) MeshBounds skinned_bounds = {};
 };
 
 struct Meshlet {
@@ -156,6 +176,9 @@ struct Mesh {
   alignas(8) u64 vertex_positions = 0;
   alignas(8) u64 vertex_normals = 0;
   alignas(8) u64 texture_coords = 0;
+  // u16x4 bone indices and u16x4 unorm weights, both null on a static mesh
+  alignas(8) u64 skin_joint_indices = 0;
+  alignas(8) u64 skin_weights = 0;
   alignas(4) u32 vertex_count = 0;
   alignas(4) u32 lod_count = 0;
   alignas(8) u64 lods = 0;

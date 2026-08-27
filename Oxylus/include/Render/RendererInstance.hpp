@@ -4,6 +4,7 @@
 #include <ankerl/unordered_dense.h>
 #include <array>
 
+#include "Animation/Fwd.hpp"
 #include "Asset/Texture.hpp"
 #include "Render/AccelerationStructure.hpp"
 #include "Render/Renderer.hpp"
@@ -191,6 +192,11 @@ struct RendererInstanceUpdateInfo {
   u32 mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
 
+  // the mesh and instance arrays are only rebuilt when the instance set changes, but skinned
+  // instances carry per-frame vertex pointers and bounds, so their upload runs more often
+  bool meshes_dirty = false;
+  bool mesh_instances_dirty = false;
+
   std::span<GPU::TransformID> dirty_transform_ids = {};
   std::span<GPU::Transforms> gpu_transforms = {};
 
@@ -198,6 +204,10 @@ struct RendererInstanceUpdateInfo {
   std::span<u64> gpu_mesh_blas_addresses = {};
   std::span<GPU::MeshInstance> gpu_mesh_instances = {};
   std::span<u32> dirty_mesh_instance_indices = {};
+
+  std::span<const SkinnedMeshInstance> skinned_mesh_instances = {};
+  std::span<GPU::SkinningTransform> skinning_transforms = {};
+  u32 skinned_vertex_total = 0;
 };
 
 struct ParticleMeshDraw {
@@ -216,6 +226,10 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> meshes_buffer = {};
   vuk::Value<vuk::Buffer> blas_addresses_buffer = {};
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
+  vuk::Value<vuk::Buffer> skinning_transforms_buffer = {};
+  vuk::Value<vuk::Buffer> skinned_vertices_buffer = {};
+  u32 skinned_vertex_total = 0;
+  std::vector<GPU::SkinJob> skin_jobs = {};
   vuk::Value<vuk::Buffer> meshlet_instances_buffer = {};
   vuk::Value<vuk::Buffer> visible_meshlet_instances_indices_buffer = {};
   vuk::Value<vuk::Buffer> meshlet_instance_visibility_mask_buffer = {};
@@ -713,6 +727,7 @@ public:
   auto get_viewport_size(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_size_; }
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
+  auto skin_vertices(this RendererInstance& self) -> void;
   auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
   auto cull_geometry_pointspot(this RendererInstance& self, CullGeometryPointSpotContext& context) -> void;
   auto build_light_grid(this RendererInstance&, LightGridContext& context) -> void;
@@ -820,6 +835,10 @@ private:
   vuk::Unique<vuk::Buffer> transforms_world_buffer{};
   vuk::Unique<vuk::Buffer> transforms_previous_buffer{};
   vuk::Unique<vuk::Buffer> mesh_instances_buffer{};
+  vuk::Unique<vuk::Buffer> skinning_transforms_buffer{};
+  // in the same quantized format as the bind pose, so every downstream consumer works by pointer
+  // swap alone
+  vuk::Unique<vuk::Buffer> skinned_vertices_buffer{};
   vuk::Unique<vuk::Buffer> meshes_buffer{};
   vuk::Unique<vuk::Buffer> blas_addresses_buffer{};
   SceneTLAS scene_tlas{};
