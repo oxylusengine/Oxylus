@@ -1964,35 +1964,52 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           }
         );
       }
-      if (const auto* atmos_info = e.try_get<AtmosphereComponent>()) {
-        self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
+    });
 
-        self.atmosphere.rayleigh_scatter = atmos_info->rayleigh_scattering * 1e-3f;
-        self.atmosphere.rayleigh_density = atmos_info->rayleigh_density;
-        self.atmosphere.mie_scatter = atmos_info->mie_scattering * 1e-3f;
-        self.atmosphere.mie_density = atmos_info->mie_density;
-        self.atmosphere.mie_extinction = atmos_info->mie_extinction * 1e-3f;
-        self.atmosphere.mie_asymmetry = atmos_info->mie_asymmetry;
-        self.atmosphere.mie_haze_amount = atmos_info->mie_haze_amount;
-        self.atmosphere.mie_haze_scale_height = atmos_info->mie_haze_scale_height;
-        self.atmosphere.ozone_absorption = atmos_info->ozone_absorption * 1e-3f;
-        self.atmosphere.ozone_height = atmos_info->ozone_height;
-        self.atmosphere.ozone_thickness = atmos_info->ozone_thickness;
-        self.atmosphere.aerial_perspective_start_km = atmos_info->aerial_perspective_start_km;
-        self.atmosphere.aerial_perspective_exposure = atmos_info->aerial_perspective_exposure;
-        self.atmosphere.sky_view_lut_size = self.sky_view_lut_extent;
-        self.atmosphere.aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
-        self.atmosphere.transmittance_lut_size = self.sky_transmittance_lut.get_extent();
-        self.atmosphere.multiscattering_lut_size = self.sky_multiscatter_lut.get_extent();
+  // queried apart from the lights: an environment does not need a light on the same entity, and
+  // riding along with one meant a scene that lit itself any other way silently lost its sky
+  self.scene.world
+    .query_builder<const AtmosphereComponent>() //
+    .build()
+    .each([&self](flecs::entity e, const AtmosphereComponent& atmos_info) {
+      if (!e.enabled()) {
+        return;
       }
 
-      if (const auto* sky_info = e.try_get<SkyComponent>()) {
-        self.gpu_scene_flags |= GPU::SceneFlags::HasSky;
+      self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
 
-        self.sky_data.solid_color = sky_info->solid_color;
-        self.sky_data.ambient_color = sky_info->ambient_color;
-        self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
+      self.atmosphere.rayleigh_scatter = atmos_info.rayleigh_scattering * 1e-3f;
+      self.atmosphere.rayleigh_density = atmos_info.rayleigh_density;
+      self.atmosphere.mie_scatter = atmos_info.mie_scattering * 1e-3f;
+      self.atmosphere.mie_density = atmos_info.mie_density;
+      self.atmosphere.mie_extinction = atmos_info.mie_extinction * 1e-3f;
+      self.atmosphere.mie_asymmetry = atmos_info.mie_asymmetry;
+      self.atmosphere.mie_haze_amount = atmos_info.mie_haze_amount;
+      self.atmosphere.mie_haze_scale_height = atmos_info.mie_haze_scale_height;
+      self.atmosphere.ozone_absorption = atmos_info.ozone_absorption * 1e-3f;
+      self.atmosphere.ozone_height = atmos_info.ozone_height;
+      self.atmosphere.ozone_thickness = atmos_info.ozone_thickness;
+      self.atmosphere.aerial_perspective_start_km = atmos_info.aerial_perspective_start_km;
+      self.atmosphere.aerial_perspective_exposure = atmos_info.aerial_perspective_exposure;
+      self.atmosphere.sky_view_lut_size = self.sky_view_lut_extent;
+      self.atmosphere.aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
+      self.atmosphere.transmittance_lut_size = self.sky_transmittance_lut.get_extent();
+      self.atmosphere.multiscattering_lut_size = self.sky_multiscatter_lut.get_extent();
+    });
+
+  self.scene.world
+    .query_builder<const SkyComponent>() //
+    .build()
+    .each([&self](flecs::entity e, const SkyComponent& sky_info) {
+      if (!e.enabled()) {
+        return;
       }
+
+      self.gpu_scene_flags |= GPU::SceneFlags::HasSky;
+
+      self.sky_data.solid_color = sky_info.solid_color;
+      self.sky_data.ambient_color = sky_info.ambient_color;
+      self.sky_data.has_texture = static_cast<bool>(sky_info.texture);
     });
 
   if (

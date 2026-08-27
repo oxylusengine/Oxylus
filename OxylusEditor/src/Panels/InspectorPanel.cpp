@@ -6,6 +6,7 @@
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 
+#include "AnimationEditorPanel.hpp"
 #include "Asset/AssetFile.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
@@ -16,6 +17,7 @@
 #include "Scene/EntitySerializer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
+#include "Utils/AnimationAssets.hpp"
 #include "Utils/EditorTheme.hpp"
 
 namespace ox {
@@ -303,29 +305,11 @@ struct EntityInspector : IEntitySerializer {
             // sibling clips by name instead
             auto siblings = ankerl::svector<std::pair<const c8*, UUID>, 8>();
 
-            // a clip carries its model's path, so the registry finds the model without reopening
-            // the .oxasset sidecar, and the model's own list is authoritative and in import order
-            auto model_animations = ankerl::svector<UUID, 8>();
-            for (const auto& registered : asset_man.get_registry_snapshot()) {
-              if (registered.type != AssetType::Model || registered.path != asset_path) {
-                continue;
-              }
-
-              if (auto model = asset_man.get_model(registered.model_id)) {
-                model_animations.assign(model->animations.begin(), model->animations.end());
-              }
-
-              break;
-            }
-
+            // the model's own list is authoritative and in import order, with the registry as a
+            // fallback for when the model itself is not loaded
+            auto model_animations = model_animation_clips(find_source_model(asset_uuid));
             if (model_animations.empty()) {
-              // the model itself is not loaded, so fall back to whatever clips of it the registry
-              // still knows about rather than showing an empty list
-              for (const auto& registered : asset_man.get_registry_snapshot()) {
-                if (registered.type == AssetType::Animation && registered.path == asset_path) {
-                  model_animations.emplace_back(registered.uuid);
-                }
-              }
+              model_animations = sibling_animation_clips(asset_uuid);
             }
 
             for (const auto& sibling_uuid : model_animations) {
@@ -376,6 +360,10 @@ struct EntityInspector : IEntitySerializer {
               chosen = siblings[static_cast<usize>(selected_clip)].second;
             }
             UI::end_properties();
+
+            if (UI::button(ICON_MDI_ANIMATION_PLAY " Preview")) {
+              App::mod<Editor>().editor_panel_registry.get<AnimationEditorPanel>().open_asset(asset_uuid);
+            }
 
             // outside the properties block and after every guard is gone, because load and unload
             // take the registry write lock

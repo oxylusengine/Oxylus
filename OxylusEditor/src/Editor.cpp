@@ -12,6 +12,7 @@
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Panels/ActivityLogPanel.hpp"
+#include "Panels/AnimationEditorPanel.hpp"
 #include "Panels/AssetManagerPanel.hpp"
 #include "Panels/ContentPanel.hpp"
 #include "Panels/EditorSettingsPanel.hpp"
@@ -106,6 +107,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_panel_registry.add<ProjectPanel>();
   self.editor_panel_registry.add<AssetManagerPanel>();
   self.editor_panel_registry.add<ParticleEditorPanel>();
+  self.editor_panel_registry.add<AnimationEditorPanel>();
   auto activity_log_panel = self.editor_panel_registry.add<ActivityLogPanel>();
   activity_log_panel->set_system(&self.notification_system);
   auto text_editor_panel = self.editor_panel_registry.add<TextEditorPanel>();
