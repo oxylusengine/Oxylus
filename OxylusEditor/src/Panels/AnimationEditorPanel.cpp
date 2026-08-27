@@ -1,6 +1,7 @@
 #include "AnimationEditorPanel.hpp"
 
 #include <algorithm>
+#include <ankerl/svector.h>
 #include <array>
 #include <cmath>
 #include <glm/gtc/quaternion.hpp>
@@ -11,9 +12,11 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Animation/AnimationClip.hpp"
+#include "Animation/Skeleton.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Scene/Components.hpp"
 #include "UI/UI.hpp"
 #include "Utils/AnimationAssets.hpp"
@@ -26,11 +29,63 @@ constexpr static std::array<f32, STUDIO_LIGHT_COUNT> STUDIO_LIGHT_AZIMUTHS = {0.
 constexpr static f32 STUDIO_LIGHT_ELEVATION = 0.95f;
 // key, fill, rim
 constexpr static std::array<f32, STUDIO_LIGHT_COUNT> STUDIO_LIGHT_GAINS = {6.0f, 2.4f, 3.4f};
+constexpr static glm::vec4 SKELETON_BONE_COLOR = {0.20f, 0.95f, 1.00f, 1.00f};
+// blender's proportions: the ring sits a tenth of the way down the bone and is a tenth as wide
+constexpr static f32 BONE_RING_POSITION = 0.1f;
+constexpr static f32 BONE_RING_RADIUS = 0.1f;
+constexpr static glm::vec4 SKELETON_AXIS_X_COLOR = {0.95f, 0.25f, 0.25f, 1.00f};
+constexpr static glm::vec4 SKELETON_AXIS_Y_COLOR = {0.35f, 0.90f, 0.35f, 1.00f};
+constexpr static glm::vec4 SKELETON_AXIS_Z_COLOR = {0.35f, 0.55f, 0.95f, 1.00f};
+
 constexpr static std::array<glm::vec3, STUDIO_LIGHT_COUNT> STUDIO_LIGHT_COLORS = {
   glm::vec3(1.00f, 0.96f, 0.90f),
   glm::vec3(0.88f, 0.93f, 1.00f),
   glm::vec3(1.00f, 1.00f, 1.00f),
 };
+
+// blender's octahedral bone: a square ring near the head, fanned out to the head and in to the tail
+auto draw_bone_octahedron(
+  DebugRenderer& debug_renderer,
+  const glm::vec3& head,
+  const glm::vec3& tail,
+  const glm::vec3& roll_reference,
+  const glm::vec4& color
+) -> void {
+  const auto axis = tail - head;
+  const auto length = glm::length(axis);
+  if (length <= 1e-6f) {
+    return;
+  }
+
+  const auto direction = axis / length;
+
+  // the ring twists with the joint, which is what makes a bad roll visible at a glance. the
+  // reference arrives scaled by the world transform, so the parallel test needs it normalized
+  const auto reference_length = glm::length(roll_reference);
+  auto reference = reference_length > 1e-6f ? roll_reference / reference_length : glm::vec3(0.0f, 1.0f, 0.0f);
+  if (glm::abs(glm::dot(reference, direction)) > 0.99f) {
+    reference = glm::abs(direction.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+  }
+
+  const auto right = glm::normalize(glm::cross(direction, reference));
+  const auto up = glm::cross(right, direction);
+
+  const auto ring_center = head + direction * (length * BONE_RING_POSITION);
+  const auto radius = length * BONE_RING_RADIUS;
+  const glm::vec3 ring[4] = {
+    ring_center + right * radius,
+    ring_center + up * radius,
+    ring_center - right * radius,
+    ring_center - up * radius,
+  };
+
+  for (auto corner = 0_u32; corner < 4; ++corner) {
+    const auto& next = ring[(corner + 1) % 4];
+    debug_renderer.draw_line(head, ring[corner], 1.0f, color, false);
+    debug_renderer.draw_line(ring[corner], next, 1.0f, color, false);
+    debug_renderer.draw_line(ring[corner], tail, 1.0f, color, false);
+  }
+}
 
 AnimationEditorPanel::AnimationEditorPanel() : EditorPanelState("Animation Editor", ICON_MDI_ANIMATION_PLAY, false) {
   this->window_default_size = {900, 640};
@@ -119,7 +174,6 @@ auto AnimationEditorPanel::ensure_preview_scene(this AnimationEditorPanel& self)
     .set<CameraComponent>({.fov = 60.0f, .far_clip = 10000.0f, .near_clip = 0.05f})
     .set<TransformComponent>({});
 
-  scene.renderer_cvar.cvar_enable_debug_renderer.set(false);
   scene.renderer_cvar.cvar_draw_bounding_boxes.set(false);
   scene.renderer_cvar.cvar_bloom_enable.set(false);
   scene.renderer_cvar.cvar_vbgtao_enable.set(false);
@@ -252,6 +306,72 @@ auto AnimationEditorPanel::update_studio_lights(this AnimationEditorPanel& self)
   }
 }
 
+auto AnimationEditorPanel::draw_skeleton(this AnimationEditorPanel& self) -> void {
+  ZoneScoped;
+
+  if (!self.preview_animator) {
+    return;
+  }
+
+  const auto instance_it = self.preview_scene->entity_to_animation_instance_map.find(self.preview_animator);
+  if (instance_it == self.preview_scene->entity_to_animation_instance_map.end()) {
+    return;
+  }
+
+  const auto* instance = self.preview_scene->animation_instances.slot(instance_it->second);
+  if (instance == nullptr || instance->pose.model_space_transforms.empty()) {
+    return;
+  }
+
+  auto skeleton = App::mod<AssetManager>().get_skeleton(instance->skeleton_uuid);
+  if (!skeleton) {
+    return;
+  }
+
+  // the pose is in skin space, which glTF pins to the animator root rather than to the mesh node
+  const auto to_world = Scene::get_world_transform(self.preview_animator);
+  const auto bone_position = [&](const usize bone) {
+    return glm::vec3(to_world * glm::vec4(instance->pose.model_space_transforms[bone].translation(), 1.0f));
+  };
+
+  const auto bone_count = ox::min(instance->pose.model_space_transforms.size(), skeleton->parent_indices.size());
+  const auto bone_basis = [&](const usize bone) {
+    return glm::mat3(to_world) * glm::mat3_cast(instance->pose.model_space_transforms[bone].rotation);
+  };
+
+  // a glTF joint carries no tail, so a bone body is the segment down to each child. a joint with no
+  // children has no body and would otherwise not be drawn at all
+  auto has_child = ankerl::svector<bool, 64>(bone_count, false);
+  for (auto bone = 0_sz; bone < bone_count; ++bone) {
+    const auto parent = skeleton->parent_indices[bone];
+    if (parent >= 0 && static_cast<usize>(parent) < bone_count) {
+      has_child[static_cast<usize>(parent)] = true;
+    }
+  }
+
+  auto& debug_renderer = App::mod<DebugRenderer>();
+  for (auto bone = 0_sz; bone < bone_count; ++bone) {
+    const auto position = bone_position(bone);
+
+    const auto parent = skeleton->parent_indices[bone];
+    if (parent >= 0) {
+      const auto head = static_cast<usize>(parent);
+      draw_bone_octahedron(debug_renderer, bone_position(head), position, bone_basis(head)[1], SKELETON_BONE_COLOR);
+    }
+
+    if (has_child[bone]) {
+      continue;
+    }
+
+    // proportional to the rig, so a tip stays visible without swallowing a small one
+    const auto axis_length = self.preview_radius * 0.02f;
+    const auto basis = bone_basis(bone);
+    debug_renderer.draw_line(position, position + basis[0] * axis_length, 1.0f, SKELETON_AXIS_X_COLOR, false);
+    debug_renderer.draw_line(position, position + basis[1] * axis_length, 1.0f, SKELETON_AXIS_Y_COLOR, false);
+    debug_renderer.draw_line(position, position + basis[2] * axis_length, 1.0f, SKELETON_AXIS_Z_COLOR, false);
+  }
+}
+
 auto AnimationEditorPanel::on_update(this AnimationEditorPanel& self) -> void {
   ZoneScoped;
 
@@ -315,6 +435,13 @@ auto AnimationEditorPanel::draw_preview(
   // inside another panel's on_render, by which point update_all has already run past it
   self.preview_scene->runtime_update(App::get_timestep());
 
+  // after the tick that rebuilt the pose and before the render, which is what drains the global
+  // debug line list through this scene's own renderer update
+  self.preview_scene->renderer_cvar.cvar_enable_debug_renderer.set(self.preview_skeleton_enabled);
+  if (self.preview_skeleton_enabled) {
+    self.draw_skeleton();
+  }
+
   if (self.preview_grid_enabled) {
     if (auto* renderer_instance = self.preview_scene->get_renderer_instance(); renderer_instance != nullptr) {
       add_editor_grid_stage(*renderer_instance, self.preview_grid_distance);
@@ -366,6 +493,14 @@ auto AnimationEditorPanel::draw_toolbar(this AnimationEditorPanel& self) -> void
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
     ImGui::SetTooltip("Toggle grid");
+  }
+
+  ImGui::SameLine();
+  if (UI::toggle_button(ICON_MDI_BONE, self.preview_skeleton_enabled)) {
+    self.preview_skeleton_enabled = !self.preview_skeleton_enabled;
+  }
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+    ImGui::SetTooltip("Toggle skeleton");
   }
 
   ImGui::SameLine();

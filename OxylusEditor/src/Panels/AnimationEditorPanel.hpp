@@ -33,6 +33,8 @@ private:
   auto frame_model(this AnimationEditorPanel& self) -> void;
   // places the three-point rig relative to the framed bounds
   auto update_studio_lights(this AnimationEditorPanel& self) -> void;
+  // bone segments through the global DebugRenderer, drained by this scene's own renderer update
+  auto draw_skeleton(this AnimationEditorPanel& self) -> void;
   auto draw_preview(this AnimationEditorPanel& self, const vuk::ImageAttachment& swapchain_attachment) -> void;
   auto draw_toolbar(this AnimationEditorPanel& self) -> void;
 
@@ -59,5 +61,6 @@ private:
   f32 preview_light_intensity = 1.0f;
   bool preview_playing = true;
   bool preview_grid_enabled = true;
+  bool preview_skeleton_enabled = false;
 };
 } // namespace ox

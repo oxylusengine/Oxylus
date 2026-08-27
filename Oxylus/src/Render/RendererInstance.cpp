@@ -1828,8 +1828,7 @@ auto RendererInstance::render(
     dst_attachment = self.apply_debug_view(debug_context, std::move(dst_attachment));
   }
 
-  const auto draw_bounding_boxes = cvar.cvar_draw_bounding_boxes.as_bool() || debugging;
-  if (draw_bounding_boxes) {
+  if (cvar.cvar_enable_debug_renderer.as_bool()) {
     dst_attachment = self.draw_bounding_boxes(std::move(depth_attachment), std::move(dst_attachment));
   }
 
