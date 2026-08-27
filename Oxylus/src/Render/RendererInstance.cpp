@@ -883,23 +883,57 @@ auto RendererInstance::render(
   // This needs to be finished before any RT passes begin executing
   // should probably move this entire scope to somewhere else, shit_in_a_kettle.gif
   auto& frame_render_context = *self.renderer.render_context;
+  // nothing else reads the acceleration structures, and with no consumer the whole chain would be
+  // recorded and then dropped unsubmitted, which also leaves the skinned structures holding memory
+  // that was never built
+  const auto tlas_has_consumer = cvar.cvar_rtao_enable.as_bool() || !self.probe_volumes.empty();
   if (
-    frame_render_context.use_ray_tracing() && self.prepared_frame.mesh_instance_count > 0 &&
+    frame_render_context.use_ray_tracing() && tlas_has_consumer && self.prepared_frame.mesh_instance_count > 0 &&
     self.prepared_frame.blas_addresses_buffer.node != nullptr &&
     self.prepared_frame.mesh_instances_buffer.node != nullptr
   ) {
-    auto tlas_value = build_scene_tlas(
-      frame_render_context,
-      self.scene_tlas,
-      TLASBuildInfo{
-        .instance_count = self.prepared_frame.mesh_instance_count,
-        .mesh_instances_buffer = self.prepared_frame.mesh_instances_buffer,
-        .transforms_buffer = self.prepared_frame.transforms_world_buffer,
-        .blas_addresses_buffer = self.prepared_frame.blas_addresses_buffer,
+    // rebuilding a bottom level structure leaves every top level one that references it undefined,
+    // so the two are gated together rather than separately
+    const auto rebuild_acceleration_structures = self.prepared_frame.acceleration_structures_dirty ||
+                                                 !self.scene_tlas.acceleration_structure;
+
+    if (rebuild_acceleration_structures) {
+      // skinned instances trace against bottom level structures of their own, which have to be
+      // rebuilt from this frame's skinned vertices before the top level can reference them
+      auto skinned_blas_buffer = ox::build_skinned_blases(
+        frame_render_context,
+        self.skinned_blas_pool,
+        SkinnedBLASBudget{
+          .rebuild_primitive_budget = static_cast<u32>(ox::max(0, cvar.cvar_rt_skinned_rebuild_budget.get())),
+          .max_refits_before_rebuild = static_cast<u32>(ox::max(0, cvar.cvar_rt_skinned_max_refits.get())),
+        },
+        self.prepared_frame.skinned_vertices_buffer
+      );
+
+      auto tlas_value = build_scene_tlas(
+        frame_render_context,
+        self.scene_tlas,
+        TLASBuildInfo{
+          .instance_count = self.prepared_frame.mesh_instance_count,
+          .mesh_instances_buffer = self.prepared_frame.mesh_instances_buffer,
+          .transforms_buffer = self.prepared_frame.transforms_world_buffer,
+          .blas_addresses_buffer = self.prepared_frame.blas_addresses_buffer,
+          .skinned_blas_buffer = std::move(skinned_blas_buffer),
+        }
+      );
+      if (tlas_value.node != nullptr) {
+        self.shared_resources.buffer_resources["tlas"] = std::move(tlas_value);
       }
-    );
-    if (tlas_value.node != nullptr) {
-      self.shared_resources.buffer_resources["tlas"] = std::move(tlas_value);
+    } else {
+      // still published, because both consumers key off this resource existing and would otherwise
+      // switch themselves off on any frame the scene held still
+      // acquired as the build write that last touched it, so the barrier into the tracing passes is
+      // still emitted rather than assumed away
+      self.shared_resources.buffer_resources["tlas"] = vuk::acquire_buf(
+        "tlas",
+        *self.scene_tlas.acceleration_structure.buffer,
+        vuk::eAccelerationStructureBuildWrite
+      );
     }
   }
 
@@ -1838,6 +1872,7 @@ auto RendererInstance::render(
 auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdateInfo& info, const RendererCVar& cvar)
   -> void {
   ZoneScoped;
+  memory::ScopedStack stack;
 
   self.update_ran_this_frame = true;
 
@@ -2263,6 +2298,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   // the arena has to exist before the instance array is patched with pointers into it, and the
   // instance array has to be uploaded after that patch
+  self.prepared_frame.acceleration_structures_dirty = info.acceleration_structures_dirty;
   self.prepared_frame.skinned_vertex_total = info.skinned_vertex_total;
   if (info.skinned_vertex_total > 0) {
     const auto positions_bytes = static_cast<usize>(info.skinned_vertex_total) * sizeof(glm::u16vec4);
@@ -2275,7 +2311,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
 
     const auto arena_address = self.skinned_vertices_buffer->device_address;
-    for (const auto& skinned : info.skinned_mesh_instances) {
+    auto blas_build_infos = stack.alloc<BLASBuildInfo>(info.skinned_mesh_instances.size());
+    for (usize i = 0; i < info.skinned_mesh_instances.size(); i++) {
+      const auto& skinned = info.skinned_mesh_instances[i];
+      blas_build_infos[i] = {};
       if (skinned.gpu_instance_index >= info.gpu_mesh_instances.size()) {
         continue;
       }
@@ -2286,11 +2325,46 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       if (skinned.bone_count == 0) {
         gpu_mesh_instance.skinned_vertex_positions = 0;
         gpu_mesh_instance.skinned_vertex_normals = 0;
+        gpu_mesh_instance.blas_lod_index = 0;
         continue;
       }
 
       gpu_mesh_instance.skinned_vertex_positions = arena_address + skinned.vertex_offset * sizeof(glm::u16vec4);
       gpu_mesh_instance.skinned_vertex_normals = arena_address + positions_bytes + skinned.vertex_offset * sizeof(u32);
+      gpu_mesh_instance.blas_lod_index = skinned.blas_lod_index;
+
+      blas_build_infos[i] = BLASBuildInfo{
+        .vertex_positions = gpu_mesh_instance.skinned_vertex_positions,
+        .indices = skinned.index_address,
+        .vertex_count = skinned.vertex_count,
+        .index_count = skinned.index_count,
+      };
+    }
+
+    // the addresses have to be stamped before the instance array goes up, and the pool only mints
+    // new handles when the geometry counts change, so they stay put across an ordinary frame
+    self.skinned_blas_pool.reserve(render_context, blas_build_infos);
+    for (usize i = 0; i < info.skinned_mesh_instances.size(); i++) {
+      const auto& skinned = info.skinned_mesh_instances[i];
+      if (skinned.gpu_instance_index >= info.gpu_mesh_instances.size()) {
+        continue;
+      }
+
+      info.gpu_mesh_instances[skinned.gpu_instance_index]
+        .skinned_blas_address = i < self.skinned_blas_pool.device_addresses.size()
+                                  ? self.skinned_blas_pool.device_addresses[i]
+                                  : 0;
+
+      // a character standing still reskins to the same vertices every frame, so its structure is
+      // still good and touching it at all is pure waste. One that moved only moved its vertices,
+      // which is the case a refit exists for, and the rebuild flag reserve raises outranks this
+      // because a structure that holds no tree has nothing to refit from
+      if (
+        skinned.pose_advanced && i < self.skinned_blas_pool.build_modes.size() &&
+        self.skinned_blas_pool.build_modes[i] == SkinnedBLASBuildMode::None
+      ) {
+        self.skinned_blas_pool.build_modes[i] = SkinnedBLASBuildMode::Refit;
+      }
     }
 
     self.skinning_transforms_buffer = render_context.resize_buffer(
@@ -2322,6 +2396,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
     self.prepared_frame
       .skinned_vertices_buffer = vuk::acquire_buf("skinned vertices", *self.skinned_vertices_buffer, vuk::eNone);
+  } else {
+    self.skinned_blas_pool.reset();
   }
 
   if (info.meshes_dirty && !info.gpu_meshes.empty()) {

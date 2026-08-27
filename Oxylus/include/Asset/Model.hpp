@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <glm/gtx/quaternion.hpp>
 #include <vuk/Buffer.hpp>
@@ -58,6 +59,14 @@ struct Model {
     u32 count = 0;
   };
 
+  // the whole chain per mesh, because the ray tracing path builds its acceleration structures from a
+  // coarser level than the raster path draws. Every level indexes the same vertex array, so a
+  // coarser one costs nothing extra to skin.
+  struct MeshIndexRanges {
+    std::array<IndexRange, GPU::Mesh::MAX_LODS> lods = {};
+    u32 lod_count = 0;
+  };
+
   enum class LightType { Directional, Spot, Point };
 
   struct Light {
@@ -81,7 +90,7 @@ struct Model {
   std::vector<MeshGroup> mesh_groups = {};
   std::vector<Light> lights = {};
   std::vector<u32> lod0_meshlet_counts = {};
-  std::vector<IndexRange> lod0_index_ranges = {};
+  std::vector<MeshIndexRanges> index_ranges = {};
   std::vector<GPU::Mesh> gpu_meshes = {};
   std::vector<option<u32>> material_indices = {}; // these are per mesh, not per MeshGroup
   std::vector<vuk::Unique<vuk::Buffer>> gpu_mesh_buffers = {};

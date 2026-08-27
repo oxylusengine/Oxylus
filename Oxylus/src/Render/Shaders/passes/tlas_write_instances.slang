@@ -20,7 +20,10 @@ func cs_main(
 
     let mesh_instance = mesh_instances[index];
     let world = transforms[mesh_instance.transform_index].world;
-    let blas_address = blas_addresses[mesh_instance.mesh_index];
+    // the per-mesh BLAS is the bind pose, which is nowhere near where an animated character
+    // actually is, so a skinned instance traces against the one rebuilt from its skinned vertices
+    let blas_address = mesh_instance.is_skinned() ? mesh_instance.skinned_blas_address
+                                                  : blas_addresses[mesh_instance.mesh_index];
 
     var instance = AccelerationStructureInstance();
 
@@ -39,9 +42,7 @@ func cs_main(
         }
     }
 
-    // a skinned instance's BLAS covers the bind pose, so tracing against it would report geometry
-    // nowhere near where the character actually is, and it is masked out of the TLAS entirely
-    let mask = (blas_address != 0 && !mesh_instance.is_skinned()) ? 0xffu : 0u;
+    let mask = blas_address != 0 ? 0xffu : 0u;
     instance.custom_index_and_mask = (index & 0xffffffu) | (mask << 24);
     instance.sbt_offset_and_flags = 0;
     instance.blas_address = blas_address;

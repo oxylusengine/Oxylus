@@ -121,7 +121,13 @@ public:
   std::vector<GPU::Mesh> gpu_meshes = {};
   std::vector<u64> gpu_mesh_blas_addresses = {};
   std::vector<GPU::MeshInstance> gpu_mesh_instances = {};
+  // which transforms actually feed a mesh instance, so a frame that only moved the camera or a light
+  // does not count as having moved geometry. Rebuilt with `gpu_mesh_instances`.
+  ankerl::unordered_dense::set<u32> mesh_instance_transform_indices = {};
   std::vector<SkinnedMeshInstance> skinned_mesh_instances = {};
+  // parallel to the above, so the ray tracing LOD can be re-picked every frame without going back
+  // to the asset manager
+  std::vector<Model::MeshIndexRanges> skinned_lod_ranges = {};
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};
 
