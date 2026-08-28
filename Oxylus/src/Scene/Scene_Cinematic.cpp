@@ -346,12 +346,34 @@ auto Scene::stop_cinematic(this Scene& self, flecs::entity entity) -> void {
     return;
   }
 
+  player->playing = false;
+
   auto* instance = self.cinematic_instance(entity);
   if (instance == nullptr) {
     return;
   }
 
-  // TODO: Fix this
+  instance->current_time = 0.0f;
+  instance->was_playing = false;
+  instance->seek_pending = false;
+
+  if (!player->restore_on_stop) {
+    return;
+  }
+
+  for (const auto& bound : instance->bound_properties) {
+    if (!bound.valid || !bound.target.is_alive()) {
+      continue;
+    }
+
+    auto* base = bound.target.try_get_mut(bound.component);
+    if (base == nullptr) {
+      continue;
+    }
+
+    cinematic::write_value(static_cast<u8*>(base) + bound.offset, bound.kind, bound.restore_value);
+    bound.target.modified(bound.component);
+  }
 }
 
 auto Scene::seek_cinematic(this Scene& self, flecs::entity entity, const f32 time) -> void {
