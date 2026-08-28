@@ -231,10 +231,10 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         {
           auto model = asset_man.get_model(snapshot.render.mesh);
           if (
-            model && !model->gpu_meshes.empty() && !model->index_ranges.empty() && model->gpu_mesh_buffers[0] &&
+            model && !model->gpu_meshes.empty() && !model->lod0_index_ranges.empty() && model->gpu_mesh_buffers[0] &&
             model->is_mesh_ready(0)
           ) {
-            const auto& range = model->index_ranges[0].lods[0];
+            const auto& range = model->lod0_index_ranges[0];
             const auto& buffer = *model->gpu_mesh_buffers[0];
             if (range.count > 0 && range.device_address >= buffer.device_address) {
               mesh_draw.gpu_mesh = model->gpu_meshes[0];

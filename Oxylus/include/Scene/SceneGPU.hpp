@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <cstddef>
 #include <glm/gtc/packing.hpp>
 #include <glm/mat4x4.hpp>
 #include <vuk/Types.hpp>
@@ -133,22 +132,12 @@ struct MeshInstance {
   alignas(4) u32 material_index = 0;
   alignas(4) u32 transform_index = 0;
   alignas(4) u32 meshlet_instance_visibility_offset = 0;
-  // the LOD this instance's acceleration structure was built from, which a ray hit resolves its
-  // triangle against. Static instances share the mesh BLAS, which is always LOD0.
-  alignas(4) u32 blas_lod_index = 0;
   // per-instance override of the mesh's bind-pose vertex data, written by the skinning pass, and
   // zero for a static instance so the mesh's own pointers and bounds are used
   alignas(8) u64 skinned_vertex_positions = 0;
   alignas(8) u64 skinned_vertex_normals = 0;
   alignas(4) MeshBounds skinned_bounds = {};
-  // this instance's own BLAS over the skinned vertices, because the mesh's BLAS is the bind pose
-  alignas(8) u64 skinned_blas_address = 0;
 };
-
-// blas_lod_index rides in the padding the first pointer's alignment opens up, so a reorder would
-// silently feed the TLAS build garbage rather than fail to compile
-static_assert(offsetof(MeshInstance, blas_lod_index) == 20);
-static_assert(sizeof(MeshInstance) == 72, "MeshInstance layout drifted from scene.slang");
 
 struct Meshlet {
   alignas(4) u32 indirect_vertex_index_offset = 0;

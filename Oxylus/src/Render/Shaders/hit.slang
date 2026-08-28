@@ -109,9 +109,7 @@ public func resolve_ray_triangle(in SceneGeometry geometry, u32 mesh_instance_in
         return {};
     }
 
-    // the acceleration structure the hit came from decides which index buffer the primitive index
-    // addresses, and a skinned instance is built from a coarser level than LOD0
-    let mesh_lod = mesh.lods[min(mesh_instance.blas_lod_index, mesh.lod_count - 1)];
+    let mesh_lod = mesh.lods[0];
     let base = primitive_index * 3;
     if (base + 3 > mesh_lod.indices_count) {
         return {};

@@ -196,7 +196,6 @@ struct RendererInstanceUpdateInfo {
   // instances carry per-frame vertex pointers and bounds, so their upload runs more often
   bool meshes_dirty = false;
   bool mesh_instances_dirty = false;
-  // nothing that the acceleration structures are built from moved, so last frame's are still exact
 
   std::span<GPU::TransformID> dirty_transform_ids = {};
   std::span<GPU::Transforms> gpu_transforms = {};
@@ -226,8 +225,6 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> transforms_previous_buffer = {};
   vuk::Value<vuk::Buffer> meshes_buffer = {};
   vuk::Value<vuk::Buffer> blas_addresses_buffer = {};
-  // entries actually uploaded, which `resize_buffer` over-allocating makes smaller than the buffer
-  u32 blas_address_count = 0;
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
   vuk::Value<vuk::Buffer> skinning_transforms_buffer = {};
   vuk::Value<vuk::Buffer> skinned_vertices_buffer = {};
@@ -845,7 +842,6 @@ private:
   vuk::Unique<vuk::Buffer> meshes_buffer{};
   vuk::Unique<vuk::Buffer> blas_addresses_buffer{};
   SceneTLAS scene_tlas{};
-  SkinnedBLASPool skinned_blas_pool{};
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
   vuk::Unique<vuk::Buffer> lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};

@@ -22,13 +22,6 @@ struct SkinnedMeshInstance {
   u32 bone_offset = 0;
   // zero until the skeleton asset finishes loading, so the instance renders in bind pose till then
   u32 bone_count = 0;
-  // the index buffer the per-instance BLAS is built from, at whatever level the ray tracing LOD
-  // bias picked, and the level itself so a ray hit can decode the triangle it landed on
-  u64 index_address = 0;
-  u32 index_count = 0;
-  u32 blas_lod_index = 0;
-  // a pose that did not move reskins to the same vertices, so its structure is still valid
-  bool pose_advanced = false;
   AnimationInstanceID animation_instance_id = AnimationInstanceID::Invalid;
 };
 } // namespace ox

@@ -11,10 +11,7 @@ import scene;
 [[numthreads(64, 1, 1)]]
 func cs_main(
     uint3 thread_id : SV_DispatchThreadID,
-    uniform u64 skinned_blas_address_min,
-    uniform u64 skinned_blas_address_max,
     uniform u32 instance_count,
-    uniform u32 blas_address_count,
 ) -> void {
     let index = thread_id.x;
     if (index >= instance_count) {
@@ -23,31 +20,7 @@ func cs_main(
 
     let mesh_instance = mesh_instances[index];
     let world = transforms[mesh_instance.transform_index].world;
-    // the per-mesh BLAS is the bind pose, which is nowhere near where an animated character
-    // actually is, so a skinned instance traces against the one rebuilt from its skinned vertices
-    let skinned = mesh_instance.is_skinned();
-    // the instance array and the address array are uploaded on separate schedules, so an instance
-    // can name a mesh the address array does not have yet. Reading past its end returns whatever
-    // the allocation holds, and the build takes that as a structure handle
-    u64 blas_address = 0;
-    if (skinned) {
-        blas_address = mesh_instance.skinned_blas_address;
-    } else if (mesh_instance.mesh_index < blas_address_count) {
-        blas_address = blas_addresses[mesh_instance.mesh_index];
-    }
-
-    // the build reads a structure reference as a raw address, so an instance array that lags the
-    // pool by a frame costs a lost device rather than a wrong pixel. Only an address the pool
-    // actually minted this frame gets through, and dropping the rest costs one frame of a character
-    if (skinned && (blas_address < skinned_blas_address_min || blas_address > skinned_blas_address_max)) {
-        blas_address = 0;
-    }
-
-    // cheap catch for the static path, whose addresses come from a buffer with the same staleness
-    // window: every structure is allocated at a 256 byte offset, so an odd one is not one of ours
-    if ((u32(blas_address) & 0xffu) != 0u) {
-        blas_address = 0;
-    }
+    let blas_address = blas_addresses[mesh_instance.mesh_index];
 
     var instance = AccelerationStructureInstance();
 
@@ -66,7 +39,9 @@ func cs_main(
         }
     }
 
-    let mask = blas_address != 0 ? 0xffu : 0u;
+    // a skinned instance's BLAS covers the bind pose, so tracing against it would report geometry
+    // nowhere near where the character actually is, and it is masked out of the TLAS entirely
+    let mask = (blas_address != 0 && !mesh_instance.is_skinned()) ? 0xffu : 0u;
     instance.custom_index_and_mask = (index & 0xffffffu) | (mask << 24);
     instance.sbt_offset_and_flags = 0;
     instance.blas_address = blas_address;

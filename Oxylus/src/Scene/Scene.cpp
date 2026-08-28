@@ -1312,7 +1312,6 @@ auto Scene::prepare_render(this Scene& self) -> void {
       blas_addresses.clear();
       gpu_mesh_instances.clear();
       self.skinned_mesh_instances.clear();
-      self.skinned_lod_ranges.clear();
       self.skinned_vertex_total = 0;
       auto mesh_instances = self.mesh_instances.slots_unsafe();
       auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, u32>();
@@ -1367,7 +1366,6 @@ auto Scene::prepare_render(this Scene& self) -> void {
               .animation_instance_id = animation_it->second,
             }
           );
-          self.skinned_lod_ranges.emplace_back(model->index_ranges[mesh_instance.mesh_node_index]);
           self.skinned_vertex_total += mesh.vertex_count;
         }
 
@@ -1396,16 +1394,10 @@ auto Scene::prepare_render(this Scene& self) -> void {
     // refresh the culling bounds of every skinned instance and force the shadow cache to notice
     // them, because a character animating in place never moves its entity transform so nothing
     // else would invalidate its cached pages
-    const auto requested_lod_bias = static_cast<u32>(ox::max(0, self.renderer_cvar.cvar_rt_skinned_lod_bias.get()));
-
     auto any_skinned_advanced = false;
-    for (usize i = 0; i < self.skinned_mesh_instances.size(); i++) {
-      auto& skinned = self.skinned_mesh_instances[i];
+    for (auto& skinned : self.skinned_mesh_instances) {
       const auto* animation_instance = self.animation_instances.slot(skinned.animation_instance_id);
-      if (
-        animation_instance == nullptr || skinned.gpu_instance_index >= gpu_mesh_instances.size() ||
-        i >= self.skinned_lod_ranges.size()
-      ) {
+      if (animation_instance == nullptr || skinned.gpu_instance_index >= gpu_mesh_instances.size()) {
         continue;
       }
 
@@ -1413,21 +1405,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
       skinned.bone_offset = animation_instance->bone_offset;
       skinned.bone_count = animation_instance->bone_count;
 
-      // probe rays are low frequency and temporally accumulated, so a character's silhouette is
-      // worth tracing and their fingers are not. Every level indexes the vertex array the skinning
-      // pass already wrote, so a coarser one costs nothing beyond a smaller structure to build.
-      const auto& lod_ranges = self.skinned_lod_ranges[i];
-      const auto lod_index = lod_ranges.lod_count == 0 ? 0_u32 : ox::min(requested_lod_bias, lod_ranges.lod_count - 1);
-      skinned.index_address = lod_ranges.lods[lod_index].device_address;
-      skinned.index_count = lod_ranges.lods[lod_index].count;
-
-      // the level rides in the instance array, so a change to the bias has to re-upload it as well
-      // as force the acceleration structure to be rebuilt at the new triangle count
-      const auto lod_changed = skinned.blas_lod_index != lod_index;
-      skinned.blas_lod_index = lod_index;
-      skinned.pose_advanced = animation_instance->advanced;
-
-      if (animation_instance->advanced || lod_changed) {
+      if (animation_instance->advanced) {
         any_skinned_advanced = true;
         dirty_mesh_instance_gpu_indices.push_back(skinned.gpu_instance_index);
       }

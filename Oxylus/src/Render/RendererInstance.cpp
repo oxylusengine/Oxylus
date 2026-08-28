@@ -883,30 +883,11 @@ auto RendererInstance::render(
   // This needs to be finished before any RT passes begin executing
   // should probably move this entire scope to somewhere else, shit_in_a_kettle.gif
   auto& frame_render_context = *self.renderer.render_context;
-  // nothing else reads the acceleration structures, and with no consumer the whole chain would be
-  // recorded and then dropped unsubmitted, which also leaves the skinned structures holding memory
-  // that was never built
-  const auto tlas_has_consumer = cvar.cvar_rtao_enable.as_bool() || !self.probe_volumes.empty();
   if (
-    frame_render_context.use_ray_tracing() && tlas_has_consumer && self.prepared_frame.mesh_instance_count > 0 &&
+    frame_render_context.use_ray_tracing() && self.prepared_frame.mesh_instance_count > 0 &&
     self.prepared_frame.blas_addresses_buffer.node != nullptr &&
     self.prepared_frame.mesh_instances_buffer.node != nullptr
   ) {
-    // rebuilt every frame rather than keyed to a dirty flag: a model's BLAS is allocated, and its
-    // address published, on the loading thread well before `vkCmdBuildAccelerationStructuresKHR`
-    // fills it in, so any flag the scene can raise fires before the structures it names exist.
-    // `build_skinned_blases` still stages its own work against the budget, which is where the cost
-    // actually was
-    auto skinned_blas_buffer = ox::build_skinned_blases(
-      frame_render_context,
-      self.skinned_blas_pool,
-      SkinnedBLASBudget{
-        .rebuild_primitive_budget = static_cast<u32>(ox::max(0, cvar.cvar_rt_skinned_rebuild_budget.get())),
-        .max_refits_before_rebuild = static_cast<u32>(ox::max(0, cvar.cvar_rt_skinned_max_refits.get())),
-      },
-      self.prepared_frame.skinned_vertices_buffer
-    );
-
     auto tlas_value = build_scene_tlas(
       frame_render_context,
       self.scene_tlas,
@@ -915,10 +896,6 @@ auto RendererInstance::render(
         .mesh_instances_buffer = self.prepared_frame.mesh_instances_buffer,
         .transforms_buffer = self.prepared_frame.transforms_world_buffer,
         .blas_addresses_buffer = self.prepared_frame.blas_addresses_buffer,
-        .blas_address_count = self.prepared_frame.blas_address_count,
-        .skinned_blas_buffer = std::move(skinned_blas_buffer),
-        .skinned_blas_address_min = self.skinned_blas_pool.address_min,
-        .skinned_blas_address_max = self.skinned_blas_pool.address_max,
       }
     );
     if (tlas_value.node != nullptr) {
@@ -1861,7 +1838,6 @@ auto RendererInstance::render(
 auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdateInfo& info, const RendererCVar& cvar)
   -> void {
   ZoneScoped;
-  memory::ScopedStack stack;
 
   self.update_ran_this_frame = true;
 
@@ -2309,10 +2285,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   // the arena has to exist before the instance array is patched with pointers into it, and the
   // instance array has to be uploaded after that patch
   self.prepared_frame.skinned_vertex_total = info.skinned_vertex_total;
-  // the patches below rewrite device addresses in the instance array on frames the scene's own
-  // dirty flags know nothing about: the arena moving, or the pool re-minting its handles. An
-  // address that reaches the TLAS build one frame stale points at a structure `reserve` destroyed
-  auto instances_patched = false;
   if (info.skinned_vertex_total > 0) {
     const auto positions_bytes = static_cast<usize>(info.skinned_vertex_total) * sizeof(glm::u16vec4);
     const auto normals_bytes = static_cast<usize>(info.skinned_vertex_total) * sizeof(u32);
@@ -2324,10 +2296,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
 
     const auto arena_address = self.skinned_vertices_buffer->device_address;
-    auto blas_build_infos = stack.alloc<BLASBuildInfo>(info.skinned_mesh_instances.size());
-    for (usize i = 0; i < info.skinned_mesh_instances.size(); i++) {
-      const auto& skinned = info.skinned_mesh_instances[i];
-      blas_build_infos[i] = {};
+    for (const auto& skinned : info.skinned_mesh_instances) {
       if (skinned.gpu_instance_index >= info.gpu_mesh_instances.size()) {
         continue;
       }
@@ -2336,58 +2305,13 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       // pointers null renders it in bind pose instead of skinning against uninitialized transforms
       auto& gpu_mesh_instance = info.gpu_mesh_instances[skinned.gpu_instance_index];
       if (skinned.bone_count == 0) {
-        instances_patched |= gpu_mesh_instance.skinned_vertex_positions != 0 ||
-                             gpu_mesh_instance.skinned_vertex_normals != 0 || gpu_mesh_instance.blas_lod_index != 0;
         gpu_mesh_instance.skinned_vertex_positions = 0;
         gpu_mesh_instance.skinned_vertex_normals = 0;
-        gpu_mesh_instance.blas_lod_index = 0;
         continue;
       }
 
-      const auto positions = arena_address + skinned.vertex_offset * sizeof(glm::u16vec4);
-      const auto normals = arena_address + positions_bytes + skinned.vertex_offset * sizeof(u32);
-      instances_patched |= gpu_mesh_instance.skinned_vertex_positions != positions ||
-                           gpu_mesh_instance.skinned_vertex_normals != normals ||
-                           gpu_mesh_instance.blas_lod_index != skinned.blas_lod_index;
-
-      gpu_mesh_instance.skinned_vertex_positions = positions;
-      gpu_mesh_instance.skinned_vertex_normals = normals;
-      gpu_mesh_instance.blas_lod_index = skinned.blas_lod_index;
-
-      blas_build_infos[i] = BLASBuildInfo{
-        .vertex_positions = gpu_mesh_instance.skinned_vertex_positions,
-        .indices = skinned.index_address,
-        .vertex_count = skinned.vertex_count,
-        .index_count = skinned.index_count,
-      };
-    }
-
-    // the addresses have to be stamped before the instance array goes up, and the pool only mints
-    // new handles when the geometry counts change, so they stay put across an ordinary frame
-    self.skinned_blas_pool.reserve(render_context, blas_build_infos);
-    for (usize i = 0; i < info.skinned_mesh_instances.size(); i++) {
-      const auto& skinned = info.skinned_mesh_instances[i];
-      if (skinned.gpu_instance_index >= info.gpu_mesh_instances.size()) {
-        continue;
-      }
-
-      const auto blas_address = i < self.skinned_blas_pool.device_addresses.size()
-                                  ? self.skinned_blas_pool.device_addresses[i]
-                                  : 0_u64;
-      auto& gpu_mesh_instance = info.gpu_mesh_instances[skinned.gpu_instance_index];
-      instances_patched |= gpu_mesh_instance.skinned_blas_address != blas_address;
-      gpu_mesh_instance.skinned_blas_address = blas_address;
-
-      // a character standing still reskins to the same vertices every frame, so its structure is
-      // still good and touching it at all is pure waste. One that moved only moved its vertices,
-      // which is the case a refit exists for, and the rebuild flag reserve raises outranks this
-      // because a structure that holds no tree has nothing to refit from
-      if (
-        skinned.pose_advanced && i < self.skinned_blas_pool.build_modes.size() &&
-        self.skinned_blas_pool.build_modes[i] == SkinnedBLASBuildMode::None
-      ) {
-        self.skinned_blas_pool.build_modes[i] = SkinnedBLASBuildMode::Refit;
-      }
+      gpu_mesh_instance.skinned_vertex_positions = arena_address + skinned.vertex_offset * sizeof(glm::u16vec4);
+      gpu_mesh_instance.skinned_vertex_normals = arena_address + positions_bytes + skinned.vertex_offset * sizeof(u32);
     }
 
     self.skinning_transforms_buffer = render_context.resize_buffer(
@@ -2419,8 +2343,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
     self.prepared_frame
       .skinned_vertices_buffer = vuk::acquire_buf("skinned vertices", *self.skinned_vertices_buffer, vuk::eNone);
-  } else {
-    self.skinned_blas_pool.reset();
   }
 
   if (info.meshes_dirty && !info.gpu_meshes.empty()) {
@@ -2434,7 +2356,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshes_buffer = vuk::acquire_buf("meshes", *self.meshes_buffer, vuk::Access::eMemoryRead);
   }
 
-  self.prepared_frame.blas_address_count = static_cast<u32>(info.gpu_mesh_blas_addresses.size());
   if (info.meshes_dirty && !info.gpu_mesh_blas_addresses.empty()) {
     self.blas_addresses_buffer = render_context.resize_buffer(
       std::move(self.blas_addresses_buffer),
@@ -2453,7 +2374,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
   }
 
-  if ((info.mesh_instances_dirty || instances_patched) && !info.gpu_mesh_instances.empty()) {
+  if (info.mesh_instances_dirty && !info.gpu_mesh_instances.empty()) {
     self.mesh_instances_buffer = render_context.resize_buffer(
       std::move(self.mesh_instances_buffer),
       vuk::MemoryUsage::eGPUonly,
@@ -2463,17 +2384,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       info.gpu_mesh_instances,
       *self.mesh_instances_buffer
     );
-  } else if (self.mesh_instances_buffer) {
-    self.prepared_frame.mesh_instances_buffer = vuk::acquire_buf(
-      "mesh instances",
-      *self.mesh_instances_buffer,
-      vuk::Access::eMemoryRead
-    );
-  }
 
-  // keyed to the instance set rather than to the upload: a patched address changes nothing about
-  // which meshlets exist, and clearing the mask would throw away a frame of occlusion history
-  if (info.mesh_instances_dirty && !info.gpu_mesh_instances.empty()) {
     auto meshlet_instance_visibility_mask_size_bytes = (info.max_meshlet_instance_count + 31) / 32 * sizeof(u32);
 
     self.meshlet_instance_visibility_mask_buffer = render_context.resize_buffer(
@@ -2489,7 +2400,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshlet_instance_visibility_mask_buffer = zero_fill_pass(
       std::move(meshlet_instance_visibility_mask_buffer)
     );
-  } else if (self.meshlet_instance_visibility_mask_buffer) {
+  } else if (self.mesh_instances_buffer) {
+    self.prepared_frame.mesh_instances_buffer = vuk::acquire_buf(
+      "mesh instances",
+      *self.mesh_instances_buffer,
+      vuk::Access::eMemoryRead
+    );
     self.prepared_frame.meshlet_instance_visibility_mask_buffer = vuk::acquire_buf(
       "meshlet instances visibility mask",
       *self.meshlet_instance_visibility_mask_buffer,
