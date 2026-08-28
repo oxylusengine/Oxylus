@@ -225,6 +225,8 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> transforms_previous_buffer = {};
   vuk::Value<vuk::Buffer> meshes_buffer = {};
   vuk::Value<vuk::Buffer> blas_addresses_buffer = {};
+  vuk::Value<vuk::Buffer> skinned_blas_addresses_buffer = {};
+  u32 skinned_instance_count = 0;
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
   vuk::Value<vuk::Buffer> skinning_transforms_buffer = {};
   vuk::Value<vuk::Buffer> skinned_vertices_buffer = {};
@@ -744,6 +746,10 @@ public:
   auto draw_atmosphere(this RendererInstance&, AtmosphereContext& context) -> void;
   auto generate_ambient_occlusion(this RendererInstance&, AmbientOcclusionContext& context) -> void;
   auto generate_rtao(this RendererInstance&, RTAOContext& context) -> void;
+
+  // mirrors the two sites that actually consume the TLAS. With no consumer the whole chain would be
+  // recorded and then dropped unsubmitted, so both the pool and the build read this one answer
+  auto tlas_has_consumer(this const RendererInstance& self, const RendererCVar& cvar) -> bool;
   auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
     -> vuk::Value<vuk::ImageAttachment>;
   auto apply_eye_adaptation(this RendererInstance&, PostProcessContext& context) -> void;
@@ -841,6 +847,12 @@ private:
   vuk::Unique<vuk::Buffer> skinned_vertices_buffer{};
   vuk::Unique<vuk::Buffer> meshes_buffer{};
   vuk::Unique<vuk::Buffer> blas_addresses_buffer{};
+  // one entry per skinned instance rather than per mesh, because ten characters sharing a model
+  // need ten structures. Renderer owned and uploaded every frame, so a moving address cannot
+  // outlive a scene dirty flag that never fires
+  std::vector<u64> skinned_blas_addresses = {};
+  vuk::Unique<vuk::Buffer> skinned_blas_addresses_buffer{};
+  SkinnedBLASPool skinned_blas_pool{};
   SceneTLAS scene_tlas{};
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
   vuk::Unique<vuk::Buffer> lights_buffer{};

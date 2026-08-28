@@ -543,6 +543,7 @@ public struct MeshInstance {
     public u32 material_index = 0;
     public u32 transform_index = 0;
     public u32 meshlet_instance_visibility_offset = 0;
+    public u32 skinned_instance_index = 0;
     public u16x4 *skinned_vertex_positions = nullptr;
     public u32 *skinned_vertex_normals = nullptr;
     public MeshBounds skinned_bounds = {};

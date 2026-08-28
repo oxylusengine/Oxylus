@@ -49,6 +49,19 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_vbgtao_radius.init(self.system, "pp.vbgtao_radius", "vbgtao radius", 0.5f);
   self.cvar_vbgtao_final_power.init(self.system, "pp.vbgtao_final_power", "vbgtao final power", 1.2f);
 
+  self.cvar_rt_skinned_rebuild_budget.init(
+    self.system,
+    "rr.rt_skinned_rebuild_budget",
+    "triangles a frame may spend rebuilding skinned acceleration structures, 0 for no cap",
+    50000
+  );
+  self.cvar_rt_skinned_max_refits.init(
+    self.system,
+    "rr.rt_skinned_max_refits",
+    "refits a skinned acceleration structure takes before its tree is rebuilt, subject to the budget",
+    8
+  );
+
   self.cvar_rtao_enable
     .init(self.system, "pp.rtao", "trace ambient occlusion against the scene TLAS instead of screen space", 0);
   self.cvar_rtao_ray_count.init(self.system, "pp.rtao_ray_count", "rays traced per pixel", 2);
@@ -155,6 +168,11 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["final_power"] = self.cvar_vbgtao_final_power.get();
   writer.end_obj();
 
+  writer["raytracing"].begin_obj();
+  writer["skinned_rebuild_budget"] = self.cvar_rt_skinned_rebuild_budget.get();
+  writer["skinned_max_refits"] = self.cvar_rt_skinned_max_refits.get();
+  writer.end_obj();
+
   writer["rtao"].begin_obj();
   writer["enabled"] = self.cvar_rtao_enable.as_bool();
   writer["ray_count"] = self.cvar_rtao_ray_count.get();
@@ -235,6 +253,16 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_vbgtao_thickness.set(static_cast<f32>(gtao_obj["thickness"]->get_double()));
     self.cvar_vbgtao_radius.set(static_cast<f32>(gtao_obj["radius"].get_double()));
     self.cvar_vbgtao_final_power.set(static_cast<f32>(gtao_obj["final_power"].get_double()));
+  }
+
+  auto raytracing_obj = json["raytracing"];
+  if (!raytracing_obj.error()) {
+    if (auto budget = raytracing_obj["skinned_rebuild_budget"]; !budget.error()) {
+      self.cvar_rt_skinned_rebuild_budget.set(static_cast<i32>(budget.get_int64()));
+    }
+    if (auto max_refits = raytracing_obj["skinned_max_refits"]; !max_refits.error()) {
+      self.cvar_rt_skinned_max_refits.set(static_cast<i32>(max_refits.get_int64()));
+    }
   }
 
   auto rtao_obj = json["rtao"];

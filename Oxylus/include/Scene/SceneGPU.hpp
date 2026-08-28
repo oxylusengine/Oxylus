@@ -132,6 +132,10 @@ struct MeshInstance {
   alignas(4) u32 material_index = 0;
   alignas(4) u32 transform_index = 0;
   alignas(4) u32 meshlet_instance_visibility_offset = 0;
+  // rank among the scene's skinned instances, which is what indexes the per-instance BLAS address
+  // table. Meaningless unless `skinned_vertex_positions` is set, and it lands in padding that was
+  // there anyway
+  alignas(4) u32 skinned_instance_index = 0;
   // per-instance override of the mesh's bind-pose vertex data, written by the skinning pass, and
   // zero for a static instance so the mesh's own pointers and bounds are used
   alignas(8) u64 skinned_vertex_positions = 0;

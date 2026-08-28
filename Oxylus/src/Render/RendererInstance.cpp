@@ -884,21 +884,39 @@ auto RendererInstance::render(
   // should probably move this entire scope to somewhere else, shit_in_a_kettle.gif
   auto& frame_render_context = *self.renderer.render_context;
   if (
-    frame_render_context.use_ray_tracing() && self.prepared_frame.mesh_instance_count > 0 &&
-    self.prepared_frame.blas_addresses_buffer.node != nullptr &&
+    frame_render_context.use_ray_tracing() && self.tlas_has_consumer(cvar) &&
+    self.prepared_frame.mesh_instance_count > 0 && self.prepared_frame.blas_addresses_buffer.node != nullptr &&
+    self.prepared_frame.skinned_blas_addresses_buffer.node != nullptr &&
     self.prepared_frame.mesh_instances_buffer.node != nullptr
   ) {
+    auto skinned_blas_buffer = build_skinned_blases(
+      frame_render_context,
+      self.skinned_blas_pool,
+      SkinnedBLASBudget{
+        .rebuild_primitive_budget = static_cast<u32>(ox::max(0, cvar.cvar_rt_skinned_rebuild_budget.get())),
+        .max_refits_before_rebuild = static_cast<u32>(ox::max(0, cvar.cvar_rt_skinned_max_refits.get())),
+      },
+      std::move(self.prepared_frame.skinned_vertices_buffer)
+    );
+
     auto tlas_value = build_scene_tlas(
       frame_render_context,
       self.scene_tlas,
       TLASBuildInfo{
         .instance_count = self.prepared_frame.mesh_instance_count,
+        .skinned_instance_count = self.prepared_frame.skinned_instance_count,
         .mesh_instances_buffer = self.prepared_frame.mesh_instances_buffer,
         .transforms_buffer = self.prepared_frame.transforms_world_buffer,
         .blas_addresses_buffer = self.prepared_frame.blas_addresses_buffer,
+        .skinned_blas_addresses_buffer = self.prepared_frame.skinned_blas_addresses_buffer,
+        .skinned_blas_buffer = std::move(skinned_blas_buffer),
       }
     );
+
     if (tlas_value.node != nullptr) {
+      // build_scene_tlas waits on the subgraph the builds were threaded into, so by here they have
+      // run: only now may an entry count as built and start publishing its address
+      self.skinned_blas_pool.commit_builds();
       self.shared_resources.buffer_resources["tlas"] = std::move(tlas_value);
     }
   }
@@ -1835,6 +1853,11 @@ auto RendererInstance::render(
   return dst_attachment;
 }
 
+auto RendererInstance::tlas_has_consumer(this const RendererInstance& self, const RendererCVar& cvar) -> bool {
+  return cvar.cvar_rtao_enable.as_bool() ||
+         (!self.probe_volumes.empty() && self.renderer.render_context->use_ray_tracing_pipeline());
+}
+
 auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdateInfo& info, const RendererCVar& cvar)
   -> void {
   ZoneScoped;
@@ -2349,6 +2372,16 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
     self.prepared_frame
       .skinned_vertices_buffer = vuk::acquire_buf("skinned vertices", *self.skinned_vertices_buffer, vuk::eNone);
+
+    // after the arena is final, because an entry's structure is built straight out of its slice.
+    // Same answer `render` builds against, so the pool holds no memory while nothing traces
+    if (self.tlas_has_consumer(cvar)) {
+      self.skinned_blas_pool.sync(render_context, info.skinned_mesh_instances, arena_address);
+    } else {
+      self.skinned_blas_pool.reset(render_context);
+    }
+  } else {
+    self.skinned_blas_pool.reset(render_context);
   }
 
   if (info.meshes_dirty && !info.gpu_meshes.empty()) {
@@ -2381,6 +2414,26 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       vuk::Access::eMemoryRead
     );
   }
+
+  // an entry the pool has not actually built yet reads back as zero, which drops that instance out
+  // of the TLAS rather than pointing the build at memory nothing has written. Since this runs before
+  // the frame records its builds, a freshly pooled structure publishes its address next frame
+  self.prepared_frame.skinned_instance_count = static_cast<u32>(info.skinned_mesh_instances.size());
+  self.skinned_blas_addresses.assign(ox::max(info.skinned_mesh_instances.size(), 1_sz), 0_u64);
+  for (usize i = 0; i < info.skinned_mesh_instances.size(); i++) {
+    self.skinned_blas_addresses[i] = self.skinned_blas_pool.address_of(
+      info.skinned_mesh_instances[i].mesh_instance_slot
+    );
+  }
+  self.skinned_blas_addresses_buffer = render_context.resize_buffer(
+    std::move(self.skinned_blas_addresses_buffer),
+    vuk::MemoryUsage::eGPUonly,
+    ox::size_bytes(self.skinned_blas_addresses)
+  );
+  self.prepared_frame.skinned_blas_addresses_buffer = render_context.upload_staging(
+    std::span(self.skinned_blas_addresses),
+    *self.skinned_blas_addresses_buffer
+  );
 
   if (info.mesh_instances_dirty && !info.gpu_mesh_instances.empty()) {
     self.mesh_instances_buffer = render_context.resize_buffer(

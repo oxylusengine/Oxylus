@@ -1368,11 +1368,15 @@ auto Scene::prepare_render(this Scene& self) -> void {
                                     : self.entity_to_animation_instance_map.end();
 
         if (animation_it != self.entity_to_animation_instance_map.end() && mesh.skin_joint_indices != 0) {
+          gpu_mesh_instance.skinned_instance_index = static_cast<u32>(self.skinned_mesh_instances.size());
           self.skinned_mesh_instances.emplace_back(
             SkinnedMeshInstance{
               .gpu_instance_index = gpu_index,
               .vertex_count = mesh.vertex_count,
               .vertex_offset = self.skinned_vertex_total,
+              .mesh_instance_slot = static_cast<u32>(index),
+              .model_id = model_id,
+              .mesh_node_index = static_cast<u32>(mesh_instance.mesh_node_index),
               .animation_instance_id = animation_it->second,
             }
           );
@@ -1405,19 +1409,45 @@ auto Scene::prepare_render(this Scene& self) -> void {
     // them, because a character animating in place never moves its entity transform so nothing
     // else would invalidate its cached pages
     auto any_skinned_advanced = false;
-    for (auto& skinned : self.skinned_mesh_instances) {
-      const auto* animation_instance = self.animation_instances.slot(skinned.animation_instance_id);
-      if (animation_instance == nullptr || skinned.gpu_instance_index >= gpu_mesh_instances.size()) {
-        continue;
-      }
+    {
+      auto cached_model_id = ModelID::Invalid;
+      auto cached_model = ReadGuard<Model>();
+      for (auto& skinned : self.skinned_mesh_instances) {
+        skinned.pose_advanced = false;
 
-      gpu_mesh_instances[skinned.gpu_instance_index].skinned_bounds = animation_instance->bounds;
-      skinned.bone_offset = animation_instance->bone_offset;
-      skinned.bone_count = animation_instance->bone_count;
+        const auto* animation_instance = self.animation_instances.slot(skinned.animation_instance_id);
+        if (animation_instance == nullptr || skinned.gpu_instance_index >= gpu_mesh_instances.size()) {
+          continue;
+        }
 
-      if (animation_instance->advanced) {
-        any_skinned_advanced = true;
-        dirty_mesh_instance_gpu_indices.push_back(skinned.gpu_instance_index);
+        gpu_mesh_instances[skinned.gpu_instance_index].skinned_bounds = animation_instance->bounds;
+        skinned.bone_offset = animation_instance->bone_offset;
+        skinned.bone_count = animation_instance->bone_count;
+        skinned.pose_advanced = animation_instance->advanced;
+
+        // the model may have finished loading long after `meshes_dirty` last fired, so the range the
+        // per-instance acceleration structure is built from is re-read rather than captured once
+        if (skinned.model_id != cached_model_id) {
+          cached_model.reset();
+          cached_model = asset_man.get_model(skinned.model_id);
+          cached_model_id = skinned.model_id;
+        }
+
+        skinned.index_address = 0;
+        skinned.index_count = 0;
+        if (
+          cached_model && skinned.mesh_node_index < cached_model->lod0_index_ranges.size() &&
+          cached_model->is_mesh_ready(skinned.mesh_node_index)
+        ) {
+          const auto& range = cached_model->lod0_index_ranges[skinned.mesh_node_index];
+          skinned.index_address = range.device_address;
+          skinned.index_count = range.count;
+        }
+
+        if (animation_instance->advanced) {
+          any_skinned_advanced = true;
+          dirty_mesh_instance_gpu_indices.push_back(skinned.gpu_instance_index);
+        }
       }
     }
 
