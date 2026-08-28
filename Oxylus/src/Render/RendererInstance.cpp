@@ -1850,6 +1850,9 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   CameraComponent current_camera = {};
   CameraComponent frozen_camera = {};
   const auto freeze_culling = static_cast<bool>(cvar.cvar_freeze_culling_frustum.get());
+  // an explicitly active camera wins over a later one; with none marked the last one still does,
+  // which is what every single-camera scene has always relied on
+  auto found_active_camera = false;
 
   self.scene.world
     .query_builder<const TransformComponent, const CameraComponent>() //
@@ -1871,7 +1874,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         debug_renderer.draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
       }
 
-      current_camera = c;
+      if (c.active || !found_active_camera) {
+        current_camera = c;
+        found_active_camera = c.active;
+      }
     });
 
   CameraComponent cam = freeze_culling ? frozen_camera : current_camera;

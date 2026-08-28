@@ -120,6 +120,10 @@ struct CameraComponent {
   f32 tilt = 0.0f;
   f32 zoom = 1.0f;
 
+  // the scene renders through the last active camera, so a cinematic can cut between shots by
+  // keying this member on two cameras
+  bool active = true;
+
   glm::vec2 jitter = {};
   glm::vec2 jitter_prev = {};
 

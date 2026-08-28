@@ -100,7 +100,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = CameraComponent;
-    registry.bind<&C::projection, &C::fov, &C::aspect, &C::far_clip, &C::near_clip, &C::tilt, &C::zoom>();
+    registry.bind<&C::projection, &C::fov, &C::aspect, &C::far_clip, &C::near_clip, &C::tilt, &C::zoom, &C::active>();
   }
 
   {

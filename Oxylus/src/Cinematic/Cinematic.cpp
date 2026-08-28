@@ -179,6 +179,7 @@ auto Cinematic::write(this const Cinematic& self, const std::filesystem::path& p
       writer["rotation"] = waypoint.rotation;
       writer["fov"] = waypoint.fov;
       writer["easing"] = static_cast<u32>(waypoint.easing);
+      writer["cut"] = waypoint.cut;
       writer.end_obj();
     }
     writer.end_array();
@@ -270,6 +271,7 @@ auto Cinematic::read(const std::filesystem::path& path) -> option<Cinematic> {
           read_quat(waypoint_value, "rotation", waypoint.rotation);
           read_f32(waypoint_value, "fov", waypoint.fov);
           read_enum(waypoint_value, "easing", waypoint.easing);
+          read_bool(waypoint_value, "cut", waypoint.cut);
           track.waypoints.emplace_back(waypoint);
         }
       }
@@ -380,20 +382,32 @@ auto sample_camera_raw(const CinematicCameraTrack& track, const f32 time) -> Cam
   const auto& previous = track.waypoints[index - 1];
   const auto& current = track.waypoints[index];
 
+  auto result = CameraWaypoint{};
+  result.time = time;
+  result.easing = current.easing;
+  result.cut = current.cut;
+
+  // the outgoing shot holds until the cut lands, so nothing between the two poses is ever shown.
+  // `time == current.time` falls through, which puts the camera exactly on the incoming waypoint
+  if (current.cut && time < current.time) {
+    result.position = previous.position;
+    result.rotation = previous.rotation;
+    result.fov = previous.fov;
+    return result;
+  }
+
   const auto span = current.time - previous.time;
   const auto factor = span > 0.0f ? (time - previous.time) / span : 1.0f;
   const auto t = ease(current.easing, factor);
 
-  auto result = CameraWaypoint{};
-  result.time = time;
-  result.easing = current.easing;
-
   if (track.interp == CameraInterp::CatmullRom) {
     // the missing neighbour at each end is extrapolated, not duplicated: repeating the endpoint bends
-    // an evenly spaced straight run into an ease-in
-    const auto before = index >= 2 ? track.waypoints[index - 2].position : 2.0f * previous.position - current.position;
-    const auto after = index + 1 < track.waypoints.size() ? track.waypoints[index + 1].position
-                                                          : 2.0f * current.position - previous.position;
+    // an evenly spaced straight run into an ease-in. A cut is such an end: pulling the pose from the
+    // far side of it would drag the whole shot towards wherever the next one starts
+    const auto has_before = index >= 2 && !previous.cut;
+    const auto has_after = index + 1 < track.waypoints.size() && !track.waypoints[index + 1].cut;
+    const auto before = has_before ? track.waypoints[index - 2].position : 2.0f * previous.position - current.position;
+    const auto after = has_after ? track.waypoints[index + 1].position : 2.0f * current.position - previous.position;
     result.position = catmull_rom(before, previous.position, current.position, after, t);
   } else {
     result.position = glm::mix(previous.position, current.position, t);
@@ -403,6 +417,10 @@ auto sample_camera_raw(const CinematicCameraTrack& track, const f32 time) -> Cam
   result.fov = glm::mix(previous.fov, current.fov, t);
 
   return result;
+}
+
+auto track_has_cuts(const CinematicCameraTrack& track) -> bool {
+  return std::ranges::any_of(track.waypoints, &CameraWaypoint::cut);
 }
 
 auto build_arc_length_lut(const CinematicCameraTrack& track, std::span<f32> out) -> void {
@@ -415,6 +433,12 @@ auto build_arc_length_lut(const CinematicCameraTrack& track, std::span<f32> out)
   std::ranges::fill(out, 0.0f);
 
   if (track.waypoints.size() < 2) {
+    return;
+  }
+
+  // arc length reparameterization compresses anything stationary to no time at all, which is the
+  // whole of a cut's hold. An empty LUT is what makes `sample_camera` fall back to raw timing
+  if (track_has_cuts(track)) {
     return;
   }
 
@@ -447,7 +471,7 @@ auto build_arc_length_lut(const CinematicCameraTrack& track, std::span<f32> out)
 auto sample_camera(const CinematicCameraTrack& track, std::span<const f32> arc_lut, const f32 time) -> CameraWaypoint {
   ZoneScoped;
 
-  if (!track.constant_speed || arc_lut.size() < 2 || track.waypoints.size() < 2) {
+  if (!track.constant_speed || arc_lut.size() < 2 || track.waypoints.size() < 2 || arc_lut.back() <= 0.0f) {
     return sample_camera_raw(track, time);
   }
 

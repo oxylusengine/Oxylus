@@ -16,6 +16,10 @@ static auto make_waypoint(const f32 time, const glm::vec3& position) -> CameraWa
   return CameraWaypoint{.time = time, .position = position};
 }
 
+static auto make_cut(const f32 time, const glm::vec3& position) -> CameraWaypoint {
+  return CameraWaypoint{.time = time, .position = position, .cut = true};
+}
+
 TEST(Easing, EndpointsAreExact) {
   for (auto raw = 0_u8; raw < std::to_underlying(Easing::Count); raw++) {
     const auto kind = static_cast<Easing>(raw);
@@ -160,6 +164,72 @@ TEST(SampleCamera, SingleWaypointHoldsStill) {
 
   const auto sampled = cinematic::sample_camera_raw(track, 99.f);
   EXPECT_NEAR(glm::distance(sampled.position, glm::vec3(3.f, 4.f, 5.f)), 0.f, 1e-5f);
+}
+
+TEST(SampleCamera, CutHoldsThenJumps) {
+  auto track = CinematicCameraTrack{};
+  track.interp = CameraInterp::Linear;
+  track.waypoints = {
+    make_waypoint(0.f, {0.f, 0.f, 0.f}),
+    make_cut(1.f, {100.f, 0.f, 0.f}),
+  };
+
+  // nothing between the two poses is ever shown, however close to the cut the sample lands
+  EXPECT_NEAR(cinematic::sample_camera_raw(track, 0.f).position.x, 0.f, 1e-4f);
+  EXPECT_NEAR(cinematic::sample_camera_raw(track, 0.5f).position.x, 0.f, 1e-4f);
+  EXPECT_NEAR(cinematic::sample_camera_raw(track, 0.999f).position.x, 0.f, 1e-4f);
+  EXPECT_NEAR(cinematic::sample_camera_raw(track, 1.f).position.x, 100.f, 1e-4f);
+}
+
+TEST(SampleCamera, CutHoldsRotationAndFov) {
+  auto track = CinematicCameraTrack{};
+  track.waypoints = {make_waypoint(0.f, {}), make_cut(1.f, {})};
+  track.waypoints[0].fov = 30.f;
+  track.waypoints[0].rotation = glm::angleAxis(0.f, glm::vec3(0.f, 1.f, 0.f));
+  track.waypoints[1].fov = 90.f;
+  track.waypoints[1].rotation = glm::angleAxis(glm::half_pi<f32>(), glm::vec3(0.f, 1.f, 0.f));
+
+  const auto held = cinematic::sample_camera_raw(track, 0.5f);
+  EXPECT_NEAR(held.fov, 30.f, 1e-4f);
+  EXPECT_NEAR(glm::abs(glm::dot(held.rotation, track.waypoints[0].rotation)), 1.f, 1e-4f);
+
+  const auto after = cinematic::sample_camera_raw(track, 1.f);
+  EXPECT_NEAR(after.fov, 90.f, 1e-4f);
+  EXPECT_NEAR(glm::abs(glm::dot(after.rotation, track.waypoints[1].rotation)), 1.f, 1e-4f);
+}
+
+TEST(SampleCamera, SplineDoesNotReachAcrossACut) {
+  auto track = CinematicCameraTrack{};
+  track.waypoints = {
+    make_waypoint(0.f, {0.f, 0.f, 0.f}),
+    make_waypoint(1.f, {1.f, 0.f, 0.f}),
+    make_cut(2.f, {1000.f, 0.f, 0.f}),
+  };
+
+  // the incoming shot would bow towards the far waypoint if the Catmull-Rom tangent used it
+  const auto sampled = cinematic::sample_camera_raw(track, 0.5f);
+  EXPECT_NEAR(sampled.position.x, 0.5f, 1e-3f);
+}
+
+TEST(SampleCamera, CutsOptOutOfConstantSpeed) {
+  auto track = CinematicCameraTrack{};
+  track.interp = CameraInterp::Linear;
+  track.constant_speed = true;
+  track.waypoints = {
+    make_waypoint(0.f, {0.f, 0.f, 0.f}),
+    make_cut(1.f, {100.f, 0.f, 0.f}),
+    make_waypoint(2.f, {110.f, 0.f, 0.f}),
+  };
+
+  EXPECT_TRUE(cinematic::track_has_cuts(track));
+
+  auto lut = std::array<f32, Cinematic::ARC_LUT_SIZE>{};
+  cinematic::build_arc_length_lut(track, lut);
+  EXPECT_FLOAT_EQ(lut.back(), 0.f);
+
+  // arc length would compress the hold to nothing, so the cut keeps its authored timing instead
+  EXPECT_NEAR(cinematic::sample_camera(track, lut, 0.5f).position.x, 0.f, 1e-4f);
+  EXPECT_NEAR(cinematic::sample_camera(track, lut, 1.5f).position.x, 105.f, 1e-4f);
 }
 
 TEST(ArcLengthLut, IsMonotonicAndNormalized) {

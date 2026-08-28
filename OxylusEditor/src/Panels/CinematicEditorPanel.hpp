@@ -14,6 +14,20 @@ class ViewportPanel;
 
 enum class CinematicTrackKind : u8 { Camera = 0, Property };
 
+struct CinematicTimelineSettings {
+  bool snap_enabled = true;
+  bool snap_to_grid = true;
+  bool snap_to_keys = true;
+  bool snap_to_playhead = true;
+  // scrubbing lands on the same times keys do, so a waypoint dropped at the cursor is exact
+  bool snap_playhead = true;
+  f32 grid_step = 0.25f;
+  f32 snap_pixels = 10.0f;
+  bool follow_playhead = true;
+  bool show_row_names = true;
+  f32 row_height = 24.0f;
+};
+
 struct CinematicSelection {
   CinematicTrackKind kind = CinematicTrackKind::Camera;
   usize track = ~0_sz;
@@ -56,18 +70,40 @@ private:
   auto draw_toolbar(this CinematicEditorPanel& self) -> void;
   auto draw_track_list(this CinematicEditorPanel& self) -> void;
   auto draw_timeline(this CinematicEditorPanel& self) -> void;
+  auto draw_timeline_header(this CinematicEditorPanel& self) -> void;
+  auto draw_timeline_settings(this CinematicEditorPanel& self) -> void;
   auto draw_inspector(this CinematicEditorPanel& self) -> void;
   auto draw_curve_view(this CinematicEditorPanel& self) -> void;
   auto draw_new_track_popup(this CinematicEditorPanel& self) -> void;
   auto draw_path_overlay(this CinematicEditorPanel& self) -> void;
 
-  auto snapshot_waypoint(this CinematicEditorPanel& self) -> void;
+  auto snapshot_waypoint(this CinematicEditorPanel& self) -> bool;
   auto capture_tick(this CinematicEditorPanel& self, f32 delta_time) -> void;
   // Ramer-Douglas-Peucker on position plus a rotation-angle threshold, so a long fly-through does
   // not leave a waypoint per capture tick
   auto decimate_track(this CinematicEditorPanel& self, usize track_index) -> void;
   auto sort_active_keys(this CinematicEditorPanel& self) -> void;
   auto grow_duration_to_fit(this CinematicEditorPanel& self) -> void;
+
+  // the nearest of a key, the playhead and the grid, whichever is inside the pixel radius. `exclude`
+  // is the key being dragged, which must not snap to itself
+  auto snap_time(
+    this CinematicEditorPanel& self,
+    f32 time,
+    f32 seconds_per_pixel,
+    const CinematicSelection& exclude,
+    bool moving_playhead
+  ) -> f32;
+  auto frame_view(this CinematicEditorPanel& self) -> void;
+  // samples the bound member live, so posing the entity and keying it records the pose. A key
+  // already sitting on `time` is overwritten rather than stacked on top of
+  auto key_property_track(this CinematicEditorPanel& self, usize track_index, f32 time) -> bool;
+  auto zoom_view(this CinematicEditorPanel& self, f32 factor, f32 anchor_time, f32 anchor_fraction) -> void;
+  // creates, or reuses, a Bool track on this camera's `CameraComponent.active` so the shot can cut
+  // to a different camera rather than flying one across the scene
+  auto add_camera_switch_track(this CinematicEditorPanel& self, usize camera_track) -> void;
+  // the camera the cinematic currently considers active, so the pilot preview follows a cut
+  auto pilot_target(this CinematicEditorPanel& self) -> flecs::entity;
 
   UUID asset_uuid = {};
   std::filesystem::path asset_path = {};
@@ -88,12 +124,20 @@ private:
   f32 decimate_tolerance = 0.05f;
   f32 decimate_angle = glm::radians(2.0f);
 
+  CinematicTimelineSettings timeline_settings = {};
+  // seconds at the left edge and across the visible width; a zero span means "fit on next layout"
+  f32 view_start = 0.0f;
+  f32 view_span = 0.0f;
+
   CinematicSelection selection = {};
   // which key the press landed on, so a drag elsewhere on the timeline scrubs instead of
   // flinging the selected key to the cursor
   CinematicSelection dragging = {};
   // which camera track snapshots and live capture append to
   usize active_camera_track = ~0_sz;
+  // the right-click popup opens on one frame and is clicked on a later one
+  CinematicSelection context_selection = {};
+  f32 context_time = 0.0f;
 
   // held across frames because the popup opens on one frame and is clicked on a later one
   flecs::entity picker_entity = {};

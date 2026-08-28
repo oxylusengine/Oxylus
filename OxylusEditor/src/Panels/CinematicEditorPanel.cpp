@@ -1,6 +1,7 @@
 #include "CinematicEditorPanel.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <glm/gtx/quaternion.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
@@ -19,9 +20,20 @@
 #include "UI/UI.hpp"
 
 namespace ox {
-constexpr static auto TIMELINE_ROW_HEIGHT = 22.0f;
+constexpr static auto TIMELINE_RULER_HEIGHT = 22.0f;
 constexpr static auto TIMELINE_KEY_RADIUS = 5.0f;
+constexpr static auto TIMELINE_MIN_SPAN = 0.05f;
 constexpr static auto PATH_SAMPLE_COUNT = 96;
+
+// the coarsest of 1/2/5 x 10^n that still leaves `min_pixels` between two ticks
+static auto nice_time_step(const f32 seconds_per_pixel, const f32 min_pixels) -> f32 {
+  const auto raw = glm::max(seconds_per_pixel * min_pixels, 1e-6f);
+  const auto magnitude = std::pow(10.0f, std::floor(std::log10(raw)));
+  const auto normalized = raw / magnitude;
+  const auto multiplier = normalized <= 1.0f ? 1.0f : (normalized <= 2.0f ? 2.0f : (normalized <= 5.0f ? 5.0f : 10.0f));
+
+  return magnitude * multiplier;
+}
 
 // walks a component's flecs meta description and reports every leaf a track can drive, with the
 // dotted path the runtime resolves it by
@@ -286,6 +298,7 @@ auto CinematicEditorPanel::open_asset(this CinematicEditorPanel& self, const UUI
 
   self.selection = {};
   self.active_camera_track = self.camera_tracks.empty() ? ~0_sz : 0;
+  self.view_span = 0.0f;
   self.current_time = 0.0f;
   self.previewing = false;
   self.recording = false;
@@ -361,13 +374,208 @@ auto CinematicEditorPanel::sort_active_keys(this CinematicEditorPanel& self) -> 
   }
 }
 
-auto CinematicEditorPanel::snapshot_waypoint(this CinematicEditorPanel& self) -> void {
+auto CinematicEditorPanel::frame_view(this CinematicEditorPanel& self) -> void {
+  self.view_span = glm::max(self.duration, TIMELINE_MIN_SPAN);
+  self.view_start = 0.0f;
+}
+
+auto CinematicEditorPanel::zoom_view(
+  this CinematicEditorPanel& self, const f32 factor, const f32 anchor_time, const f32 anchor_fraction
+) -> void {
+  self.view_span = glm::clamp(self.view_span * factor, TIMELINE_MIN_SPAN, glm::max(self.duration, 1.0f) * 16.0f);
+  self.view_start = anchor_time - anchor_fraction * self.view_span;
+}
+
+auto CinematicEditorPanel::snap_time(
+  this CinematicEditorPanel& self,
+  const f32 time,
+  const f32 seconds_per_pixel,
+  const CinematicSelection& exclude,
+  const bool moving_playhead
+) -> f32 {
+  ZoneScoped;
+
+  const auto& settings = self.timeline_settings;
+  // alt is the escape hatch, so a key can still be parked on an arbitrary time without visiting the
+  // settings menu first
+  if (!settings.snap_enabled || ImGui::GetIO().KeyAlt || (moving_playhead && !settings.snap_playhead)) {
+    return time;
+  }
+
+  const auto radius = settings.snap_pixels * seconds_per_pixel;
+  auto nearest = time;
+  auto nearest_distance = radius;
+  const auto consider = [&](const f32 candidate) {
+    const auto distance = glm::abs(candidate - time);
+    if (distance < nearest_distance) {
+      nearest_distance = distance;
+      nearest = candidate;
+    }
+  };
+
+  if (settings.snap_to_keys) {
+    for (usize t = 0; t < self.camera_tracks.size(); t++) {
+      const auto& waypoints = self.camera_tracks[t].waypoints;
+      for (usize k = 0; k < waypoints.size(); k++) {
+        if (exclude.kind == CinematicTrackKind::Camera && exclude.track == t && exclude.key == k) {
+          continue;
+        }
+        consider(waypoints[k].time);
+      }
+    }
+
+    for (usize t = 0; t < self.property_tracks.size(); t++) {
+      const auto& keys = self.property_tracks[t].keys;
+      for (usize k = 0; k < keys.size(); k++) {
+        if (exclude.kind == CinematicTrackKind::Property && exclude.track == t && exclude.key == k) {
+          continue;
+        }
+        consider(keys[k].time);
+      }
+    }
+
+    consider(0.0f);
+    consider(self.duration);
+  }
+
+  if (settings.snap_to_playhead && !moving_playhead) {
+    consider(self.current_time);
+  }
+
+  // a key or a marker beats the grid whenever both are in range, so waypoints can be stacked on the
+  // same instant across tracks even when that instant is not on a grid line
+  if (nearest_distance < radius) {
+    return nearest;
+  }
+
+  if (settings.snap_to_grid && settings.grid_step > 0.0f) {
+    return glm::round(time / settings.grid_step) * settings.grid_step;
+  }
+
+  return time;
+}
+
+auto CinematicEditorPanel::key_property_track(this CinematicEditorPanel& self, const usize track_index, const f32 time)
+  -> bool {
+  ZoneScoped;
+
+  if (track_index >= self.property_tracks.size()) {
+    return false;
+  }
+
+  auto& track = self.property_tracks[track_index];
+  auto value = cinematic::sample_property(track.keys, track.kind, time);
+
+  // the resolved offset comes from the instance's binding rather than a second meta walk
+  auto* scene = self.active_scene();
+  if (const auto player = self.resolve_player(); scene != nullptr && player) {
+    if (auto* instance = scene->cinematic_instance(player)) {
+      if (track_index < instance->bound_properties.size()) {
+        const auto& bound = instance->bound_properties[track_index];
+        if (bound.valid && bound.target.is_alive()) {
+          if (auto* base = bound.target.try_get_mut(bound.component)) {
+            value = cinematic::read_value(static_cast<u8*>(base) + bound.offset, bound.kind);
+          }
+        }
+      }
+    }
+  }
+
+  const auto existing = std::ranges::find_if(track.keys, [&](const CinematicKey& key) {
+    return glm::abs(key.time - time) < 1e-4f;
+  });
+
+  if (existing != track.keys.end()) {
+    existing->value = value;
+  } else {
+    track.keys.emplace_back(CinematicKey{.time = time, .value = value});
+    std::ranges::stable_sort(track.keys, {}, &CinematicKey::time);
+  }
+
+  self.grow_duration_to_fit();
+
+  return true;
+}
+
+auto CinematicEditorPanel::add_camera_switch_track(this CinematicEditorPanel& self, const usize camera_track) -> void {
+  ZoneScoped;
+
+  auto* scene = self.active_scene();
+  if (scene == nullptr || camera_track >= self.camera_tracks.size()) {
+    return;
+  }
+
+  const auto& track = self.camera_tracks[camera_track];
+  const auto target = scene->world.lookup(track.entity_path.c_str());
+  if (!target || !target.has<CameraComponent>()) {
+    OX_LOG_WARN("Camera track '{}' does not target an entity with a CameraComponent.", track.name);
+    return;
+  }
+
+  const auto component_path = std::string(
+    scene->world.entity(scene->world.id<CameraComponent>().raw_id()).path().c_str()
+  );
+
+  auto existing = std::ranges::find_if(self.property_tracks, [&](const CinematicPropertyTrack& candidate) {
+    return candidate.entity_path == track.entity_path && candidate.component_path == component_path &&
+           candidate.member_path == "active";
+  });
+
+  if (existing == self.property_tracks.end()) {
+    auto switch_track = CinematicPropertyTrack{};
+    switch_track.name = fmt::format("{} active", track.name.empty() ? "Camera" : track.name.c_str());
+    switch_track.entity_path = track.entity_path;
+    switch_track.component_path = component_path;
+    switch_track.member_path = "active";
+    switch_track.kind = CinematicValueKind::Bool;
+    self.property_tracks.emplace_back(std::move(switch_track));
+    existing = self.property_tracks.end() - 1;
+  }
+
+  self.selection = {CinematicTrackKind::Property, static_cast<usize>(existing - self.property_tracks.begin()), ~0_sz};
+  self.commit(true);
+}
+
+auto CinematicEditorPanel::pilot_target(this CinematicEditorPanel& self) -> flecs::entity {
+  ZoneScoped;
+
+  auto* scene = self.active_scene();
+  if (scene == nullptr) {
+    return {};
+  }
+
+  auto fallback = flecs::entity{};
+  for (const auto& track : self.camera_tracks) {
+    if (!track.enabled) {
+      continue;
+    }
+
+    const auto entity = scene->world.lookup(track.entity_path.c_str());
+    if (!entity || !entity.is_alive()) {
+      continue;
+    }
+
+    // following whichever camera the cinematic switched on is what makes a cut between two cameras
+    // visible here, since the editor camera outranks both in the viewport
+    if (const auto* camera = entity.try_get<CameraComponent>(); camera != nullptr && camera->active) {
+      return entity;
+    }
+
+    if (!fallback) {
+      fallback = entity;
+    }
+  }
+
+  return fallback;
+}
+
+auto CinematicEditorPanel::snapshot_waypoint(this CinematicEditorPanel& self) -> bool {
   ZoneScoped;
 
   if (self.active_camera_track >= self.camera_tracks.size()) {
     if (self.camera_tracks.empty()) {
       OX_LOG_WARN("Add a camera track before snapshotting a waypoint.");
-      return;
+      return false;
     }
 
     self.active_camera_track = 0;
@@ -376,7 +584,7 @@ auto CinematicEditorPanel::snapshot_waypoint(this CinematicEditorPanel& self) ->
   auto* viewport = self.editor_camera_viewport();
   if (viewport == nullptr || !viewport->editor_camera.has<TransformComponent>()) {
     OX_LOG_WARN("No viewport with an editor camera to snapshot from.");
-    return;
+    return false;
   }
 
   const auto& transform = viewport->editor_camera.get<TransformComponent>();
@@ -397,6 +605,7 @@ auto CinematicEditorPanel::snapshot_waypoint(this CinematicEditorPanel& self) ->
 
   if (existing != track.waypoints.end()) {
     waypoint.easing = existing->easing;
+    waypoint.cut = existing->cut;
     *existing = waypoint;
     self.selection =
       {CinematicTrackKind::Camera, self.active_camera_track, static_cast<usize>(existing - track.waypoints.begin())};
@@ -412,6 +621,8 @@ auto CinematicEditorPanel::snapshot_waypoint(this CinematicEditorPanel& self) ->
 
   self.grow_duration_to_fit();
   self.commit();
+
+  return true;
 }
 
 auto CinematicEditorPanel::capture_tick(this CinematicEditorPanel& self, const f32 delta_time) -> void {
@@ -429,7 +640,7 @@ auto CinematicEditorPanel::capture_tick(this CinematicEditorPanel& self, const f
   self.capture_accumulator = 0.0f;
   self.current_time += self.capture_interval;
   self.duration = glm::max(self.duration, self.current_time);
-  self.snapshot_waypoint();
+  std::ignore = self.snapshot_waypoint();
 }
 
 auto CinematicEditorPanel::decimate_track(this CinematicEditorPanel& self, const usize track_index) -> void {
@@ -488,13 +699,9 @@ auto CinematicEditorPanel::on_update(this CinematicEditorPanel& self) -> void {
 
   // written to every visible viewport rather than the focused one, so releasing the toggle while
   // this panel has focus still clears the pilot
-  auto pilot_target = flecs::entity{};
-  if (auto* scene = self.active_scene(); self.piloting && scene != nullptr && !self.camera_tracks.empty()) {
-    pilot_target = scene->world.lookup(self.camera_tracks.front().entity_path.c_str());
-  }
-
+  const auto pilot = self.piloting ? self.pilot_target() : flecs::entity{};
   for (auto* viewport : App::mod<Editor>().main_viewport_panel.get_visible_viwports()) {
-    viewport->piloted_camera = pilot_target;
+    viewport->piloted_camera = pilot;
   }
 
   if (self.draw_path) {
@@ -518,21 +725,29 @@ auto CinematicEditorPanel::draw_path_overlay(this CinematicEditorPanel& self) ->
 
     const auto start = track.waypoints.front().time;
     const auto end = track.waypoints.back().time;
+    auto previous_time = start;
     auto previous = cinematic::sample_camera_raw(track, start).position;
     for (auto step = 1; step <= PATH_SAMPLE_COUNT; step++) {
       const auto t = start + (end - start) * (static_cast<f32>(step) / static_cast<f32>(PATH_SAMPLE_COUNT));
       const auto current = cinematic::sample_camera_raw(track, t).position;
-      debug_renderer.draw_line(previous, current, 1.0f, color);
+      // the camera never travels across a cut, so drawing the jump would invent a path that the
+      // shot does not take
+      const auto jumped = std::ranges::any_of(track.waypoints, [&](const CameraWaypoint& w) {
+        return w.cut && w.time > previous_time && w.time <= t;
+      });
+      if (!jumped) {
+        debug_renderer.draw_line(previous, current, 1.0f, color);
+      }
       previous = current;
+      previous_time = t;
     }
 
     for (usize w = 0; w < track.waypoints.size(); w++) {
       const auto is_selected = selected && self.selection.key == w;
-      debug_renderer.draw_point(
-        track.waypoints[w].position,
-        is_selected ? 0.12f : 0.07f,
-        is_selected ? glm::vec4(1.0f, 0.4f, 0.2f, 1.0f) : color
-      );
+      const auto point_color = is_selected              ? glm::vec4(1.0f, 0.4f, 0.2f, 1.0f)
+                               : track.waypoints[w].cut ? glm::vec4(1.0f, 0.45f, 0.4f, 1.0f)
+                                                        : color;
+      debug_renderer.draw_point(track.waypoints[w].position, is_selected ? 0.12f : 0.07f, point_color);
     }
   }
 }
@@ -571,6 +786,16 @@ auto CinematicEditorPanel::draw_toolbar(this CinematicEditorPanel& self) -> void
     self.snapshot_waypoint();
   }
   UI::tooltip_hover("Add a waypoint at the cursor from the editor camera");
+
+  ImGui::SameLine();
+  if (UI::button(ICON_MDI_CONTENT_CUT) && self.snapshot_waypoint()) {
+    // the snapshot leaves the new waypoint selected, so this is the one it just placed
+    if (auto* waypoint = self.selected_waypoint(); waypoint != nullptr) {
+      waypoint->cut = true;
+      self.commit();
+    }
+  }
+  UI::tooltip_hover("Add a cut at the cursor: hold the previous shot, then jump to the editor camera");
 
   ImGui::SameLine();
   if (UI::toggle_button(ICON_MDI_EYE, self.piloting)) {
@@ -867,70 +1092,275 @@ auto CinematicEditorPanel::draw_track_list(this CinematicEditorPanel& self) -> v
   }
 }
 
-auto CinematicEditorPanel::draw_timeline(this CinematicEditorPanel& self) -> void {
+auto CinematicEditorPanel::draw_timeline_settings(this CinematicEditorPanel& self) -> void {
   ZoneScoped;
 
-  const auto region = ImGui::GetContentRegionAvail();
-  const auto origin = ImGui::GetCursorScreenPos();
-  const auto width = glm::max(region.x, 64.0f);
-  const auto track_count = self.camera_tracks.size() + self.property_tracks.size();
-  const auto height = glm::max(TIMELINE_ROW_HEIGHT * static_cast<f32>(track_count + 1), 64.0f);
+  auto& settings = self.timeline_settings;
 
-  auto* draw_list = ImGui::GetWindowDrawList();
-  const auto span = glm::max(self.duration, 1e-3f);
-  const auto to_x = [&](const f32 time) {
-    return origin.x + (time / span) * width;
-  };
-  const auto to_time = [&](const f32 x) {
-    return glm::clamp(((x - origin.x) / width) * span, 0.0f, span);
-  };
+  ImGui::SeparatorText("Snapping");
+  UI::begin_properties();
+  UI::property("Snapping", &settings.snap_enabled, "Hold Alt while dragging to bypass it");
+  UI::property("Snap to grid", &settings.snap_to_grid);
+  UI::property<f32>("Grid step", &settings.grid_step, 0.01f, 60.0f, "Seconds between grid lines", 0.01f, "%.3f");
+  UI::property("Snap to keys", &settings.snap_to_keys, "Also snaps to the start and to the duration");
+  UI::property("Snap to playhead", &settings.snap_to_playhead);
+  UI::property("Snap while scrubbing", &settings.snap_playhead);
+  UI::property<f32>("Snap radius", &settings.snap_pixels, 2.0f, 40.0f, "Pixels", 0.5f, "%.0f px");
+  UI::end_properties();
 
-  draw_list->AddRectFilled(origin, ImVec2(origin.x + width, origin.y + height), IM_COL32(24, 24, 28, 255));
+  ImGui::SeparatorText("View");
+  UI::begin_properties();
+  UI::property("Follow playhead", &settings.follow_playhead, "Scroll the view to keep the cursor visible");
+  UI::property("Track names on rows", &settings.show_row_names);
+  UI::property<f32>("Row height", &settings.row_height, 14.0f, 48.0f, nullptr, 0.5f, "%.0f px");
+  UI::end_properties();
 
-  // one second gridlines, thinned out so a long shot does not turn into a solid block
-  const auto step = span > 60.0f ? 10.0f : (span > 20.0f ? 5.0f : 1.0f);
-  for (auto t = 0.0f; t <= span; t += step) {
-    const auto x = to_x(t);
-    draw_list->AddLine(ImVec2(x, origin.y), ImVec2(x, origin.y + height), IM_COL32(60, 60, 68, 255));
+  ImGui::TextDisabled("Wheel zooms, middle drag pans, double click a key to seek to it.");
+
+  if (UI::button(ICON_MDI_FIT_TO_PAGE_OUTLINE " Fit to duration")) {
+    self.frame_view();
+  }
+}
+
+auto CinematicEditorPanel::draw_timeline_header(this CinematicEditorPanel& self) -> void {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  if (UI::button(ICON_MDI_COG)) {
+    ImGui::OpenPopup("timeline_settings");
+  }
+  UI::tooltip_hover("Timeline and snapping settings");
+
+  if (ImGui::BeginPopup("timeline_settings")) {
+    self.draw_timeline_settings();
+    ImGui::EndPopup();
   }
 
-  ImGui::InvisibleButton("##timeline", ImVec2(width, height));
-  const auto hovered = ImGui::IsItemHovered();
-  const auto activated = ImGui::IsItemActive();
+  ImGui::SameLine();
+  if (UI::toggle_button(ICON_MDI_MAGNET, self.timeline_settings.snap_enabled)) {
+    self.timeline_settings.snap_enabled = !self.timeline_settings.snap_enabled;
+  }
+  UI::tooltip_hover("Snapping (hold Alt to bypass)");
 
-  auto dirty = false;
+  ImGui::SameLine();
+  if (UI::button(ICON_MDI_MAGNIFY_MINUS)) {
+    self.zoom_view(1.5f, self.view_start + self.view_span * 0.5f, 0.5f);
+  }
+  ImGui::SameLine();
+  if (UI::button(ICON_MDI_MAGNIFY_PLUS)) {
+    self.zoom_view(1.0f / 1.5f, self.view_start + self.view_span * 0.5f, 0.5f);
+  }
+  ImGui::SameLine();
+  if (UI::button(ICON_MDI_FIT_TO_PAGE_OUTLINE)) {
+    self.frame_view();
+  }
+  UI::tooltip_hover("Fit the whole duration");
+
+  ImGui::SameLine();
+  ImGui::TextDisabled("%s", stack.format_char("{:.2f}s - {:.2f}s", self.view_start, self.view_start + self.view_span));
+}
+
+auto CinematicEditorPanel::draw_timeline(this CinematicEditorPanel& self) -> void {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  const auto& settings = self.timeline_settings;
+  const auto duration = glm::max(self.duration, 1e-3f);
+
+  if (self.view_span <= 0.0f) {
+    self.frame_view();
+  }
+
+  const auto region = ImGui::GetContentRegionAvail();
+  const auto width = glm::max(region.x, 64.0f);
+  const auto track_count = self.camera_tracks.size() + self.property_tracks.size();
+  const auto rows_height = settings.row_height * static_cast<f32>(glm::max(track_count, 1_sz));
+  const auto height = TIMELINE_RULER_HEIGHT + rows_height;
+
+  const auto origin = ImGui::GetCursorScreenPos();
+  const auto rows_y = origin.y + TIMELINE_RULER_HEIGHT;
+
+  constexpr auto interaction_flags = ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
+                                     ImGuiButtonFlags_MouseButtonMiddle;
+
+  ImGui::SetCursorScreenPos(origin);
+  ImGui::InvisibleButton("##timeline_ruler", ImVec2(width, TIMELINE_RULER_HEIGHT), interaction_flags);
+  // claiming the wheel is what stops the enclosing child from scrolling out from under a zoom, and
+  // ownership has to be re-registered every frame it is held on hover
+  ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY, ImGuiInputFlags_CondHovered);
+  const auto ruler_hovered = ImGui::IsItemHovered();
+  const auto ruler_active = ImGui::IsItemActive();
+
+  ImGui::SetCursorScreenPos(ImVec2(origin.x, rows_y));
+  ImGui::InvisibleButton("##timeline_rows", ImVec2(width, rows_height), interaction_flags);
+  ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY, ImGuiInputFlags_CondHovered);
+  const auto rows_hovered = ImGui::IsItemHovered();
+  const auto rows_active = ImGui::IsItemActive();
+
+  auto& io = ImGui::GetIO();
+
+  // every view change happens before the mapping is built, so nothing drawn this frame is laid out
+  // against a range that a later line then moves
+  if ((ruler_hovered || rows_hovered) && io.MouseWheel != 0.0f) {
+    const auto fraction = glm::clamp((io.MousePos.x - origin.x) / width, 0.0f, 1.0f);
+    self.zoom_view(std::pow(0.85f, io.MouseWheel), self.view_start + fraction * self.view_span, fraction);
+  }
+
+  if ((ruler_active || rows_active) && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+    self.view_start -= io.MouseDelta.x * (self.view_span / width);
+  }
+
+  if (settings.follow_playhead && (self.previewing || self.recording)) {
+    if (self.current_time < self.view_start || self.current_time > self.view_start + self.view_span) {
+      self.view_start = self.current_time - self.view_span * 0.1f;
+    }
+  }
+
+  const auto slack = self.view_span * 0.25f;
+  self.view_start = glm::clamp(self.view_start, -slack, glm::max(duration - self.view_span + slack, -slack));
+
+  const auto seconds_per_pixel = self.view_span / width;
+  const auto view_end = self.view_start + self.view_span;
+  const auto to_x = [&](const f32 time) {
+    return origin.x + (time - self.view_start) / seconds_per_pixel;
+  };
+  const auto to_time = [&](const f32 x) {
+    return self.view_start + (x - origin.x) * seconds_per_pixel;
+  };
+
+  auto* draw_list = ImGui::GetWindowDrawList();
+  const auto bottom_right = ImVec2(origin.x + width, origin.y + height);
+  draw_list->PushClipRect(origin, bottom_right, true);
+
+  draw_list->AddRectFilled(origin, bottom_right, IM_COL32(24, 24, 28, 255));
+  draw_list->AddRectFilled(origin, ImVec2(origin.x + width, rows_y), IM_COL32(34, 34, 40, 255));
+
+  // anything past the duration is not part of the shot, so it reads as out of bounds rather than as
+  // more timeline to drop keys onto
+  if (duration < view_end) {
+    draw_list->AddRectFilled(ImVec2(to_x(duration), rows_y), bottom_right, IM_COL32(16, 16, 18, 255));
+  }
+
+  const auto major_step = nice_time_step(seconds_per_pixel, 72.0f);
+  const auto minor_step = major_step * 0.2f;
+  const auto decimals = major_step >= 1.0f ? 0 : (major_step >= 0.1f ? 1 : 2);
+
+  // the snap grid is drawn only once it is coarse enough to read, otherwise a zoomed out view turns
+  // into a solid block that says nothing about where a key would land
+  if (settings.snap_enabled && settings.snap_to_grid && settings.grid_step / seconds_per_pixel >= 6.0f) {
+    const auto first = static_cast<i64>(std::floor(self.view_start / settings.grid_step));
+    const auto last = static_cast<i64>(std::ceil(view_end / settings.grid_step));
+    for (auto i = first; i <= last; i++) {
+      const auto x = to_x(static_cast<f32>(i) * settings.grid_step);
+      draw_list->AddLine(ImVec2(x, rows_y), ImVec2(x, origin.y + height), IM_COL32(44, 44, 52, 255));
+    }
+  }
+
+  {
+    const auto first = static_cast<i64>(std::floor(self.view_start / minor_step));
+    const auto last = static_cast<i64>(std::ceil(view_end / minor_step));
+    for (auto i = first; i <= last; i++) {
+      const auto time = static_cast<f32>(i) * minor_step;
+      const auto x = to_x(time);
+      const auto major = i % 5 == 0;
+
+      draw_list->AddLine(
+        ImVec2(x, major ? origin.y : rows_y - 6.0f),
+        ImVec2(x, major ? origin.y + height : rows_y),
+        major ? IM_COL32(70, 70, 80, 255) : IM_COL32(56, 56, 64, 255)
+      );
+
+      if (major) {
+        draw_list->AddText(
+          ImVec2(x + 3.0f, origin.y + 3.0f),
+          IM_COL32(170, 170, 180, 255),
+          stack.format_char("{:.{}f}s", time, decimals)
+        );
+      }
+    }
+  }
+
+  // the row the mouse is over, and the key inside it if one is close enough to grab
+  auto hover = CinematicSelection{};
+  auto hover_row = false;
+  auto hover_time = 0.0f;
+
   auto row = 0_sz;
-  const auto draw_row = [&](const CinematicTrackKind kind, const usize track_index, auto&& times, const usize count) {
-    const auto y = origin.y + TIMELINE_ROW_HEIGHT * (static_cast<f32>(row) + 0.5f);
-    draw_list->AddLine(
-      ImVec2(origin.x, y + TIMELINE_ROW_HEIGHT * 0.5f),
-      ImVec2(origin.x + width, y + TIMELINE_ROW_HEIGHT * 0.5f),
-      IM_COL32(48, 48, 54, 255)
-    );
+  const auto draw_row = [&](
+                          const CinematicTrackKind kind,
+                          const usize track_index,
+                          const std::string_view name,
+                          const bool enabled,
+                          const usize count,
+                          auto&& time_of,
+                          auto&& cut_at
+                        ) {
+    const auto top = rows_y + settings.row_height * static_cast<f32>(row);
+    const auto bottom = top + settings.row_height;
+    const auto center_y = (top + bottom) * 0.5f;
+    const auto selected_track = self.selection.kind == kind && self.selection.track == track_index;
+
+    if (selected_track) {
+      draw_list->AddRectFilled(ImVec2(origin.x, top), ImVec2(origin.x + width, bottom), IM_COL32(52, 46, 30, 160));
+    } else if (row % 2 == 1) {
+      draw_list->AddRectFilled(ImVec2(origin.x, top), ImVec2(origin.x + width, bottom), IM_COL32(255, 255, 255, 8));
+    }
+    draw_list->AddLine(ImVec2(origin.x, bottom), ImVec2(origin.x + width, bottom), IM_COL32(48, 48, 54, 255));
+
+    const auto dim = enabled ? 255 : 90;
+    if (count >= 2) {
+      draw_list->AddLine(
+        ImVec2(to_x(time_of(0)), center_y),
+        ImVec2(to_x(time_of(count - 1)), center_y),
+        IM_COL32(96, 116, 150, dim),
+        1.0f
+      );
+    }
+
+    if (settings.show_row_names && !name.empty()) {
+      draw_list
+        ->AddText(ImVec2(origin.x + 4.0f, top + 2.0f), IM_COL32(160, 160, 175, 110), stack.null_terminate_cstr(name));
+    }
 
     for (usize k = 0; k < count; k++) {
-      const auto x = to_x(times(k));
-      const auto selected = self.selection.kind == kind && self.selection.track == track_index &&
-                            self.selection.key == k;
-      const auto color = selected ? IM_COL32(255, 190, 60, 255) : IM_COL32(140, 190, 255, 255);
-      const auto center = ImVec2(x, y);
-      const ImVec2 diamond[4] = {
-        {center.x, center.y - TIMELINE_KEY_RADIUS},
-        {center.x + TIMELINE_KEY_RADIUS, center.y},
-        {center.x, center.y + TIMELINE_KEY_RADIUS},
-        {center.x - TIMELINE_KEY_RADIUS, center.y},
-      };
-      draw_list->AddConvexPolyFilled(diamond, 4, color);
+      const auto x = to_x(time_of(k));
+      if (x < origin.x - 16.0f || x > origin.x + width + 16.0f) {
+        continue;
+      }
 
-      const auto mouse = ImGui::GetIO().MousePos;
-      const auto near_key = glm::abs(mouse.x - center.x) <= TIMELINE_KEY_RADIUS + 2.0f &&
-                            glm::abs(mouse.y - center.y) <= TIMELINE_KEY_RADIUS + 2.0f;
+      const auto selected = selected_track && self.selection.key == k;
+      const auto cut = cut_at(k);
+      const auto color = selected ? IM_COL32(255, 190, 60, dim)
+                         : cut    ? IM_COL32(255, 118, 104, dim)
+                                  : IM_COL32(140, 190, 255, dim);
 
-      // the press has to land on the key itself; the move happens after the rows are drawn, because
-      // reordering here would invalidate the range this loop is walking
-      if (hovered && near_key && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        self.selection = {kind, track_index, k};
-        self.dragging = self.selection;
+      if (cut) {
+        // a cut is a boundary, not a pose to blend through, so it gets a bar rather than a diamond
+        draw_list->AddRectFilled(ImVec2(x - 2.0f, top + 3.0f), ImVec2(x + 2.0f, bottom - 3.0f), color);
+      } else {
+        const ImVec2 diamond[4] = {
+          {x, center_y - TIMELINE_KEY_RADIUS},
+          {x + TIMELINE_KEY_RADIUS, center_y},
+          {x, center_y + TIMELINE_KEY_RADIUS},
+          {x - TIMELINE_KEY_RADIUS, center_y},
+        };
+        draw_list->AddConvexPolyFilled(diamond, 4, color);
+      }
+    }
+
+    // the nearest key wins rather than the first one found, so two keys a few pixels apart still
+    // pick the one actually under the cursor
+    if (rows_hovered && io.MousePos.y >= top && io.MousePos.y < bottom) {
+      hover_row = true;
+      hover = {kind, track_index, ~0_sz};
+      auto nearest_distance = TIMELINE_KEY_RADIUS + 4.0f;
+      for (usize k = 0; k < count; k++) {
+        const auto distance = glm::abs(io.MousePos.x - to_x(time_of(k)));
+        if (distance < nearest_distance) {
+          nearest_distance = distance;
+          hover.key = k;
+          hover_time = time_of(k);
+        }
       }
     }
 
@@ -938,21 +1368,67 @@ auto CinematicEditorPanel::draw_timeline(this CinematicEditorPanel& self) -> voi
   };
 
   for (usize i = 0; i < self.camera_tracks.size(); i++) {
-    const auto& waypoints = self.camera_tracks[i].waypoints;
-    draw_row(CinematicTrackKind::Camera, i, [&](usize k) { return waypoints[k].time; }, waypoints.size());
+    const auto& track = self.camera_tracks[i];
+    draw_row(
+      CinematicTrackKind::Camera,
+      i,
+      track.name.empty() ? std::string_view("Camera") : std::string_view(track.name),
+      track.enabled,
+      track.waypoints.size(),
+      [&](const usize k) { return track.waypoints[k].time; },
+      [&](const usize k) { return track.waypoints[k].cut; }
+    );
   }
 
   for (usize i = 0; i < self.property_tracks.size(); i++) {
-    const auto& keys = self.property_tracks[i].keys;
-    draw_row(CinematicTrackKind::Property, i, [&](usize k) { return keys[k].time; }, keys.size());
+    const auto& track = self.property_tracks[i];
+    draw_row(
+      CinematicTrackKind::Property,
+      i,
+      track.name.empty() ? std::string_view(track.member_path) : std::string_view(track.name),
+      track.enabled,
+      track.keys.size(),
+      [&](const usize k) { return track.keys[k].time; },
+      [&](usize) { return false; }
+    );
+  }
+
+  auto dirty = false;
+
+  if (hover_row && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    self.selection = hover;
+    if (hover.has_key()) {
+      self.dragging = hover;
+    } else if (hover.kind == CinematicTrackKind::Camera) {
+      self.active_camera_track = hover.track;
+    }
+  }
+
+  if (hover_row && hover.has_key() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+    self.previewing = false;
+    self.dragging = {};
+    self.seek(hover_time);
+  }
+
+  if ((hover_row || ruler_hovered) && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    self.context_selection = hover;
+    self.context_time = glm::max(self.snap_time(to_time(io.MousePos.x), seconds_per_pixel, {}, false), 0.0f);
+    if (hover.has_key()) {
+      self.selection = hover;
+    }
+    ImGui::OpenPopup("timeline_context");
   }
 
   if (self.dragging.has_key() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-    const auto time = to_time(ImGui::GetIO().MousePos.x);
+    const auto time = glm::max(self.snap_time(to_time(io.MousePos.x), seconds_per_pixel, self.dragging, false), 0.0f);
 
     // erase and reinsert at the sorted position rather than assigning in place, so the keys stay
     // ordered for sampling and the drag keeps following the same key when it crosses a neighbour
     const auto reinsert = [&](auto& keys, auto time_of) {
+      if (keys[self.dragging.key].time == time) {
+        return;
+      }
+
       auto moved = keys[self.dragging.key];
       moved.time = time;
       keys.erase(keys.begin() + static_cast<std::ptrdiff_t>(self.dragging.key));
@@ -960,6 +1436,7 @@ auto CinematicEditorPanel::draw_timeline(this CinematicEditorPanel& self) -> voi
       keys.insert(keys.begin() + static_cast<std::ptrdiff_t>(at), moved);
       self.dragging.key = at;
       self.selection = self.dragging;
+      dirty = true;
     };
 
     if (self.dragging.kind == CinematicTrackKind::Camera) {
@@ -967,14 +1444,12 @@ auto CinematicEditorPanel::draw_timeline(this CinematicEditorPanel& self) -> voi
         auto& waypoints = self.camera_tracks[self.dragging.track].waypoints;
         if (self.dragging.key < waypoints.size()) {
           reinsert(waypoints, &CameraWaypoint::time);
-          dirty = true;
         }
       }
     } else if (self.dragging.track < self.property_tracks.size()) {
       auto& keys = self.property_tracks[self.dragging.track].keys;
       if (self.dragging.key < keys.size()) {
         reinsert(keys, &CinematicKey::time);
-        dirty = true;
       }
     }
   }
@@ -983,14 +1458,73 @@ auto CinematicEditorPanel::draw_timeline(this CinematicEditorPanel& self) -> voi
     self.dragging = {};
   }
 
-  // scrubbing: a drag that did not start on a key moves the cursor
-  if (activated && !self.dragging.has_key() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+  // scrubbing: the ruler always scrubs, and in the rows a drag that did not start on a key does
+  const auto scrubbing = ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+                         (ruler_active || (rows_active && !self.dragging.has_key()));
+  if (scrubbing) {
     self.previewing = false;
-    self.seek(to_time(ImGui::GetIO().MousePos.x));
+    self.seek(self.snap_time(to_time(io.MousePos.x), seconds_per_pixel, {}, true));
   }
 
   const auto cursor_x = to_x(self.current_time);
   draw_list->AddLine(ImVec2(cursor_x, origin.y), ImVec2(cursor_x, origin.y + height), IM_COL32(255, 80, 80, 255), 2.0f);
+  const ImVec2 handle[3] = {
+    {cursor_x - 6.0f, origin.y},
+    {cursor_x + 6.0f, origin.y},
+    {cursor_x, origin.y + 9.0f},
+  };
+  draw_list->AddConvexPolyFilled(handle, 3, IM_COL32(255, 80, 80, 255));
+
+  draw_list->PopClipRect();
+
+  if (ImGui::BeginPopup("timeline_context")) {
+    const auto& target = self.context_selection;
+
+    ImGui::TextDisabled("%s", stack.format_char("{:.3f}s", self.context_time));
+    ImGui::Separator();
+
+    if (ImGui::MenuItem(ICON_MDI_CURSOR_DEFAULT_CLICK " Seek here")) {
+      self.previewing = false;
+      self.seek(self.context_time);
+    }
+
+    if (target.kind == CinematicTrackKind::Camera && target.track < self.camera_tracks.size()) {
+      auto& track = self.camera_tracks[target.track];
+
+      if (target.has_key() && target.key < track.waypoints.size()) {
+        auto& waypoint = track.waypoints[target.key];
+        if (ImGui::MenuItem(ICON_MDI_CONTENT_CUT " Cut to this waypoint", nullptr, waypoint.cut)) {
+          waypoint.cut = !waypoint.cut;
+          dirty = true;
+        }
+        UI::tooltip_hover("Hold the previous pose, then jump here with no interpolation");
+
+        if (ImGui::MenuItem(ICON_MDI_DELETE " Delete waypoint")) {
+          track.waypoints.erase(track.waypoints.begin() + static_cast<std::ptrdiff_t>(target.key));
+          self.selection.key = ~0_sz;
+          dirty = true;
+        }
+      } else if (ImGui::MenuItem(ICON_MDI_CAMERA_PLUS " Waypoint from editor camera")) {
+        self.active_camera_track = target.track;
+        self.seek(self.context_time);
+        self.snapshot_waypoint();
+      }
+    } else if (target.kind == CinematicTrackKind::Property && target.track < self.property_tracks.size()) {
+      auto& track = self.property_tracks[target.track];
+
+      if (target.has_key() && target.key < track.keys.size()) {
+        if (ImGui::MenuItem(ICON_MDI_DELETE " Delete key")) {
+          track.keys.erase(track.keys.begin() + static_cast<std::ptrdiff_t>(target.key));
+          self.selection.key = ~0_sz;
+          dirty = true;
+        }
+      } else if (ImGui::MenuItem(ICON_MDI_KEY_PLUS " Key at this time")) {
+        dirty |= self.key_property_track(target.track, self.context_time);
+      }
+    }
+
+    ImGui::EndPopup();
+  }
 
   if (dirty) {
     self.grow_duration_to_fit();
@@ -1074,6 +1608,18 @@ auto CinematicEditorPanel::draw_inspector(this CinematicEditorPanel& self) -> vo
     dirty |= UI::property("Drive FOV", &track.drive_fov);
     UI::end_properties();
 
+    if (track.constant_speed && cinematic::track_has_cuts(track)) {
+      ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "Constant speed is ignored: this track has cuts.");
+    }
+
+    if (UI::button(ICON_MDI_CAMERA_SWITCH " Add camera switch track")) {
+      self.add_camera_switch_track(self.selection.track);
+    }
+    UI::tooltip_hover(
+      "Keys this camera's CameraComponent.active, so the shot can cut to another camera entirely "
+      "instead of flying one across the scene. Key it false on the outgoing camera at the same time."
+    );
+
     if (!self.selection.has_key() || self.selection.key >= track.waypoints.size()) {
       ImGui::TextUnformatted("Select a waypoint.");
     } else {
@@ -1083,13 +1629,18 @@ auto CinematicEditorPanel::draw_inspector(this CinematicEditorPanel& self) -> vo
       ImGui::SeparatorText("Waypoint");
       // draw_vec3_control emits a table row of its own, so it has to stay inside this block
       UI::begin_properties();
-      dirty |= UI::property<f32>("Time", &waypoint.time, 0.0f, self.duration);
+      dirty |= UI::property<f32>("Time", &waypoint.time, 0.0f, self.duration, nullptr, 0.01f, "%.3f");
       dirty |= UI::draw_vec3_control("Position", waypoint.position);
       if (UI::draw_vec3_control("Rotation", euler)) {
         waypoint.rotation = glm::quat(glm::radians(euler));
         dirty = true;
       }
       dirty |= UI::property<f32>("FOV", &waypoint.fov, 1.0f, 179.0f);
+      dirty |= UI::property(
+        "Cut",
+        &waypoint.cut,
+        "Hold the previous waypoint's pose until this time, then jump here with no interpolation"
+      );
       auto easing = static_cast<i32>(waypoint.easing);
       if (UI::property("Easing", &easing, easing_labels.data(), static_cast<i32>(easing_labels.size()))) {
         waypoint.easing = static_cast<Easing>(easing);
@@ -1119,28 +1670,7 @@ auto CinematicEditorPanel::draw_inspector(this CinematicEditorPanel& self) -> vo
     UI::end_properties();
 
     if (UI::button(ICON_MDI_KEY_PLUS " Key at cursor")) {
-      // read the member as it stands right now, so posing the entity and pressing this records the
-      // pose. The resolved offset comes from the instance's binding rather than a second meta walk.
-      auto value = cinematic::sample_property(track.keys, track.kind, self.current_time);
-
-      auto* scene = self.active_scene();
-      if (const auto player = self.resolve_player(); scene != nullptr && player) {
-        if (auto* instance = scene->cinematic_instance(player)) {
-          if (self.selection.track < instance->bound_properties.size()) {
-            const auto& bound = instance->bound_properties[self.selection.track];
-            if (bound.valid && bound.target.is_alive()) {
-              if (auto* base = bound.target.try_get_mut(bound.component)) {
-                value = cinematic::read_value(static_cast<u8*>(base) + bound.offset, bound.kind);
-              }
-            }
-          }
-        }
-      }
-
-      track.keys.emplace_back(CinematicKey{.time = self.current_time, .value = value});
-      std::ranges::stable_sort(track.keys, {}, &CinematicKey::time);
-      self.grow_duration_to_fit();
-      dirty = true;
+      dirty |= self.key_property_track(self.selection.track, self.current_time);
     }
 
     if (!self.selection.has_key() || self.selection.key >= track.keys.size()) {
@@ -1150,7 +1680,7 @@ auto CinematicEditorPanel::draw_inspector(this CinematicEditorPanel& self) -> vo
 
       ImGui::SeparatorText("Key");
       UI::begin_properties();
-      dirty |= UI::property<f32>("Time", &key.time, 0.0f, self.duration);
+      dirty |= UI::property<f32>("Time", &key.time, 0.0f, self.duration, nullptr, 0.01f, "%.3f");
 
       // no range metadata exists anywhere in the reflection, so these stay unbounded drags
       switch (track.kind) {
@@ -1241,6 +1771,7 @@ auto CinematicEditorPanel::on_render(this CinematicEditorPanel& self, vuk::Image
     ImGui::TableSetColumnIndex(1);
     if (ImGui::BeginTabBar("cinematic_tabs")) {
       if (ImGui::BeginTabItem("Timeline")) {
+        self.draw_timeline_header();
         if (ImGui::BeginChild("##timeline_child", ImVec2(0.0f, ImGui::GetContentRegionAvail().y * 0.5f))) {
           self.draw_timeline();
         }

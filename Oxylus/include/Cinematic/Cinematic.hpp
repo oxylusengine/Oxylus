@@ -44,6 +44,9 @@ struct CameraWaypoint {
   glm::quat rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
   f32 fov = 60.0f;
   Easing easing = Easing::Linear;
+  // starts a new shot: the outgoing pose is held right up to this time and the camera then snaps
+  // here with no blending, and the spline never reaches across the boundary
+  bool cut = false;
 };
 
 struct CinematicCameraTrack {
@@ -88,7 +91,10 @@ auto sample_property(std::span<const CinematicKey> keys, CinematicValueKind kind
 auto sample_camera_raw(const CinematicCameraTrack& track, f32 time) -> CameraWaypoint;
 auto sample_camera(const CinematicCameraTrack& track, std::span<const f32> arc_lut, f32 time) -> CameraWaypoint;
 
-// cumulative chord length at `out.size()` evenly spaced times, normalized so the last entry is 1
+auto track_has_cuts(const CinematicCameraTrack& track) -> bool;
+
+// cumulative chord length at `out.size()` evenly spaced times, normalized so the last entry is 1.
+// a cut track gets no LUT: arc length cannot describe a path that holds still and then teleports
 auto build_arc_length_lut(const CinematicCameraTrack& track, std::span<f32> out) -> void;
 
 // reads a component member into the vec4 representation the keys use
