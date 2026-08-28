@@ -12,7 +12,6 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Editor.hpp"
-#include "MainViewportPanel.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Scene/Components.hpp"

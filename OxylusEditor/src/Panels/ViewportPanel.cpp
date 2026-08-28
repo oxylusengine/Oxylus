@@ -386,7 +386,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
 }
 
 auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
-  if (!self.editor_scene || !self.editor_camera.has<CameraComponent>()) {
+  if (!self.editor_scene || !self.editor_camera.is_alive() || !self.editor_camera.has<CameraComponent>()) {
     return;
   }
 
@@ -1207,7 +1207,7 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
     }
   }
 
-  if (!self.editor_camera.has<CameraComponent>())
+  if (!self.editor_camera.is_alive() || !self.editor_camera.has<CameraComponent>())
     return;
 
   if (self.gizmo_type == -1)
