@@ -61,17 +61,14 @@ static auto create_acceleration_structure(RenderContext& render_context, VkAccel
   return result;
 }
 
-static auto compact_blas(RenderContext& render_context, AccelerationStructure& blas, vuk::Value<vuk::Buffer>&& built)
-  -> vuk::Value<vuk::Buffer> {
+// replaces `blas` with a compacted copy of itself. The build it measures has to have run already,
+// and the device address changes, so this belongs before the structure is handed to anyone
+static auto compact_blas(RenderContext& render_context, AccelerationStructure& blas) -> void {
   ZoneScoped;
-
-  if (!render_context.use_ray_tracing()) {
-    return std::move(built);
-  }
 
   const auto query_pool = render_context.create_query_pool(VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, 1);
   if (query_pool == VK_NULL_HANDLE) {
-    return std::move(built);
+    return;
   }
   OX_DEFER(&) { render_context.destroy_query_pool(query_pool); };
 
@@ -86,15 +83,17 @@ static auto compact_blas(RenderContext& render_context, AccelerationStructure& b
     }
   );
 
-  auto queried = query_pass(std::move(built));
-  render_context.wait_on(std::move(queried));
+  // the size has to be back on the host before the copy can even be sized, so this pass is its own
+  // submission rather than a link in the build's chain
+  auto queried_buffer = vuk::acquire_buf("blas", *blas.buffer, vuk::Access::eAccelerationStructureBuildWrite);
+  render_context.wait_on(query_pass(std::move(queried_buffer)));
 
   auto compacted_size = 0_u64;
   if (!render_context.read_query_pool(query_pool, {&compacted_size, 1})) {
-    return queried;
+    return;
   }
   if (compacted_size == 0 || compacted_size >= blas.buffer->size) {
-    return queried;
+    return;
   }
 
   auto compacted = create_acceleration_structure(
@@ -103,7 +102,7 @@ static auto compact_blas(RenderContext& render_context, AccelerationStructure& b
     compacted_size
   );
   if (!compacted) {
-    return queried;
+    return;
   }
 
   const auto copy_info = VkCopyAccelerationStructureInfoKHR{
@@ -114,7 +113,6 @@ static auto compact_blas(RenderContext& render_context, AccelerationStructure& b
     .mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR,
   };
 
-  auto compacted_buffer = vuk::discard_buf("blas compacted", *compacted.buffer);
   auto copy_pass = vuk::make_pass(
     "blas compact",
     [&render_context, copy_info](
@@ -128,14 +126,12 @@ static auto compact_blas(RenderContext& render_context, AccelerationStructure& b
     }
   );
 
+  // the source is read by the copy and dies at the assignment below
+  auto compacted_buffer = vuk::discard_buf("blas compacted", *compacted.buffer);
   auto source_buffer = vuk::acquire_buf("blas", *blas.buffer, vuk::Access::eAccelerationStructureBuildWrite);
-
-  auto copied = copy_pass(std::move(compacted_buffer), std::move(source_buffer));
-  render_context.wait_on(vuk::UntypedValue(copied));
+  render_context.wait_on(copy_pass(std::move(compacted_buffer), std::move(source_buffer)));
 
   blas = std::move(compacted);
-
-  return copied;
 }
 
 auto build_mesh_blas(
@@ -246,9 +242,15 @@ auto build_mesh_blas(
     }
   );
 
+  // callers publish `out_blas.device_address` as soon as this returns and the TLAS build dereferences
+  // it as a raw pointer, so the build has to have actually run by then. Nothing downstream waits on
+  // the returned value first: the batched loader path only parks it in an `UploadBatch`
   auto built = build_pass(std::move(blas_buffer), std::move(mesh_buffer));
+  render_context.wait_on(vuk::UntypedValue(built));
 
-  return compact_blas(render_context, out_blas, std::move(built));
+  compact_blas(render_context, out_blas);
+
+  return built;
 }
 
 auto SceneTLAS::reserve(this SceneTLAS& self, RenderContext& render_context, u32 instance_count) -> bool {
