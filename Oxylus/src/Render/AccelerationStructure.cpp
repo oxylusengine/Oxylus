@@ -4,8 +4,8 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 
+#include "Core/Base.hpp"
 #include "Render/RenderContext.hpp"
-#include "Render/Utils/VukCommon.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Utils/Log.hpp"
 
@@ -13,6 +13,23 @@ namespace ox {
 constexpr static auto BLAS_VERTEX_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr static auto BLAS_VERTEX_STRIDE = 8_u64;
 constexpr static auto AS_BUFFER_ALIGNMENT = 256_u64;
+
+// the size query and the build have to name identical flags, or the structure and scratch
+// allocations do not match what the build actually writes, so both sites read this one constant.
+// ALLOW_COMPACTION is what pays for the query pool round trip in `compact_blas`: these are built
+// once at load, so the round trip costs nothing at runtime and the compacted tree is typically half
+// the size. A structure that is rebuilt per frame must not borrow these flags
+constexpr static auto STATIC_BLAS_BUILD_FLAGS = VkBuildAccelerationStructureFlagsKHR{
+  VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR
+};
+
+// same pairing rule: SceneTLAS::reserve sizes with these and build_scene_tlas builds with them.
+// Deliberately the slow builder even though this one is rebuilt every frame: FAST_BUILD measured as
+// no wall clock win and a slightly worse wavefront profile, and unlike a bottom level structure
+// every ray traverses this one
+constexpr static auto TLAS_BUILD_FLAGS = VkBuildAccelerationStructureFlagsKHR{
+  VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+};
 
 static auto create_acceleration_structure(RenderContext& render_context, VkAccelerationStructureTypeKHR type, u64 size)
   -> AccelerationStructure {
@@ -42,6 +59,83 @@ static auto create_acceleration_structure(RenderContext& render_context, VkAccel
   result.device_address = render_context.get_accel_structure_device_address(*result.handle);
 
   return result;
+}
+
+static auto compact_blas(RenderContext& render_context, AccelerationStructure& blas, vuk::Value<vuk::Buffer>&& built)
+  -> vuk::Value<vuk::Buffer> {
+  ZoneScoped;
+
+  if (!render_context.use_ray_tracing()) {
+    return std::move(built);
+  }
+
+  const auto query_pool = render_context.create_query_pool(VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, 1);
+  if (query_pool == VK_NULL_HANDLE) {
+    return std::move(built);
+  }
+  OX_DEFER(&) { render_context.destroy_query_pool(query_pool); };
+
+  auto query_pass = vuk::make_pass(
+    "blas compacted size",
+    [&render_context,
+     query_pool,
+     handle = *blas.handle](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eAccelerationStructureBuildRead) blas_buffer) {
+      render_context.cmd_write_accel_structure_compacted_size(cmd_list.get_underlying(), handle, query_pool, 0);
+
+      return blas_buffer;
+    }
+  );
+
+  auto queried = query_pass(std::move(built));
+  render_context.wait_on(std::move(queried));
+
+  auto compacted_size = 0_u64;
+  if (!render_context.read_query_pool(query_pool, {&compacted_size, 1})) {
+    return queried;
+  }
+  if (compacted_size == 0 || compacted_size >= blas.buffer->size) {
+    return queried;
+  }
+
+  auto compacted = create_acceleration_structure(
+    render_context,
+    VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+    compacted_size
+  );
+  if (!compacted) {
+    return queried;
+  }
+
+  const auto copy_info = VkCopyAccelerationStructureInfoKHR{
+    .sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR,
+    .pNext = nullptr,
+    .src = *blas.handle,
+    .dst = *compacted.handle,
+    .mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR,
+  };
+
+  auto compacted_buffer = vuk::discard_buf("blas compacted", *compacted.buffer);
+  auto copy_pass = vuk::make_pass(
+    "blas compact",
+    [&render_context, copy_info](
+      vuk::CommandBuffer& cmd_list,
+      VUK_BA(vuk::eAccelerationStructureBuildWrite) dst,
+      VUK_BA(vuk::eAccelerationStructureBuildRead) src
+    ) {
+      render_context.cmd_copy_accel_structure(cmd_list.get_underlying(), copy_info);
+
+      return dst;
+    }
+  );
+
+  auto source_buffer = vuk::acquire_buf("blas", *blas.buffer, vuk::Access::eAccelerationStructureBuildWrite);
+
+  auto copied = copy_pass(std::move(compacted_buffer), std::move(source_buffer));
+  render_context.wait_on(vuk::UntypedValue(copied));
+
+  blas = std::move(compacted);
+
+  return copied;
 }
 
 auto build_mesh_blas(
@@ -85,7 +179,7 @@ auto build_mesh_blas(
     .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
     .pNext = nullptr,
     .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-    .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+    .flags = STATIC_BLAS_BUILD_FLAGS,
     .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
     .srcAccelerationStructure = VK_NULL_HANDLE,
     .dstAccelerationStructure = VK_NULL_HANDLE,
@@ -152,7 +246,9 @@ auto build_mesh_blas(
     }
   );
 
-  return build_pass(std::move(blas_buffer), std::move(mesh_buffer));
+  auto built = build_pass(std::move(blas_buffer), std::move(mesh_buffer));
+
+  return compact_blas(render_context, out_blas, std::move(built));
 }
 
 auto SceneTLAS::reserve(this SceneTLAS& self, RenderContext& render_context, u32 instance_count) -> bool {
@@ -166,6 +262,8 @@ auto SceneTLAS::reserve(this SceneTLAS& self, RenderContext& render_context, u32
     return true;
   }
 
+  // grow only, deliberately: this is reserved from the frame that needs it, so releasing on a dip
+  // would hand the next spike a fresh structure, buffer and scratch allocation mid frame
   const auto capacity = std::bit_ceil(instance_count);
 
   auto geometry = VkAccelerationStructureGeometryKHR{
@@ -187,7 +285,7 @@ auto SceneTLAS::reserve(this SceneTLAS& self, RenderContext& render_context, u32
     .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
     .pNext = nullptr,
     .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
-    .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+    .flags = TLAS_BUILD_FLAGS,
     .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
     .srcAccelerationStructure = VK_NULL_HANDLE,
     .dstAccelerationStructure = VK_NULL_HANDLE,
@@ -261,8 +359,8 @@ auto build_scene_tlas(RenderContext& render_context, SceneTLAS& scene_tlas, TLAS
         .bind_buffer(0, 1, transforms)
         .bind_buffer(0, 2, blas_addresses)
         .bind_buffer(0, 3, instances)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(instance_count))
-        .dispatch((instance_count + 63) / 64);
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, instance_count)
+        .dispatch_invocations(instance_count);
 
       return instances;
     }
@@ -297,7 +395,7 @@ auto build_scene_tlas(RenderContext& render_context, SceneTLAS& scene_tlas, TLAS
     .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
     .pNext = nullptr,
     .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
-    .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+    .flags = TLAS_BUILD_FLAGS,
     .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
     .srcAccelerationStructure = VK_NULL_HANDLE,
     .dstAccelerationStructure = *scene_tlas.acceleration_structure.handle,
