@@ -188,6 +188,8 @@ auto SkinnedBLASPool::reset(this SkinnedBLASPool& self) -> void {
   self.refit_counts.clear();
   self.buffer.reset();
   self.scratch_buffer.reset();
+  self.address_min = 0;
+  self.address_max = 0;
   self.layout_key = 0;
 }
 
@@ -232,6 +234,8 @@ auto SkinnedBLASPool::reserve(
   self.scratch_buffer.reset();
   self.device_addresses.assign(infos.size(), 0);
   self.scratch_offsets.assign(infos.size(), 0);
+  self.address_min = 0;
+  self.address_max = 0;
   self.layout_key = key;
 
   auto as_offsets = stack.alloc<u64>(infos.size());
@@ -322,7 +326,10 @@ auto SkinnedBLASPool::reserve(
       continue;
     }
 
-    self.device_addresses[i] = render_context.get_accel_structure_device_address(*self.handles[i]);
+    const auto address = render_context.get_accel_structure_device_address(*self.handles[i]);
+    self.device_addresses[i] = address;
+    self.address_min = self.address_min == 0 ? address : ox::min(self.address_min, address);
+    self.address_max = ox::max(self.address_max, address);
   }
 
   return true;
@@ -618,7 +625,10 @@ auto build_scene_tlas(RenderContext& render_context, SceneTLAS& scene_tlas, TLAS
   auto instances_buffer = vuk::discard_buf("tlas instances", *scene_tlas.instances_buffer);
   auto write_instances_pass = vuk::make_pass(
     "tlas write instances",
-    [instance_count = info.instance_count](
+    [instance_count = info.instance_count,
+     blas_address_count = info.blas_address_count,
+     address_min = info.skinned_blas_address_min,
+     address_max = info.skinned_blas_address_max](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eComputeWrite) instances,
       VUK_BA(vuk::eComputeRead) mesh_instances,
@@ -631,7 +641,11 @@ auto build_scene_tlas(RenderContext& render_context, SceneTLAS& scene_tlas, TLAS
         .bind_buffer(0, 1, transforms)
         .bind_buffer(0, 2, blas_addresses)
         .bind_buffer(0, 3, instances)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(instance_count))
+        .push_constants(
+          vuk::ShaderStageFlagBits::eCompute,
+          0,
+          PushConstants(address_min, address_max, instance_count, blas_address_count)
+        )
         .dispatch((instance_count + 63) / 64);
 
       return instances;

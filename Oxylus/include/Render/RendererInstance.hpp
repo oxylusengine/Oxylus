@@ -197,7 +197,6 @@ struct RendererInstanceUpdateInfo {
   bool meshes_dirty = false;
   bool mesh_instances_dirty = false;
   // nothing that the acceleration structures are built from moved, so last frame's are still exact
-  bool acceleration_structures_dirty = false;
 
   std::span<GPU::TransformID> dirty_transform_ids = {};
   std::span<GPU::Transforms> gpu_transforms = {};
@@ -227,10 +226,11 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> transforms_previous_buffer = {};
   vuk::Value<vuk::Buffer> meshes_buffer = {};
   vuk::Value<vuk::Buffer> blas_addresses_buffer = {};
+  // entries actually uploaded, which `resize_buffer` over-allocating makes smaller than the buffer
+  u32 blas_address_count = 0;
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
   vuk::Value<vuk::Buffer> skinning_transforms_buffer = {};
   vuk::Value<vuk::Buffer> skinned_vertices_buffer = {};
-  bool acceleration_structures_dirty = false;
   u32 skinned_vertex_total = 0;
   std::vector<GPU::SkinJob> skin_jobs = {};
   vuk::Value<vuk::Buffer> meshlet_instances_buffer = {};

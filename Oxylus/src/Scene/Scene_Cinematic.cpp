@@ -351,7 +351,7 @@ auto Scene::stop_cinematic(this Scene& self, flecs::entity entity) -> void {
     return;
   }
 
-  // TODO(human)
+  // TODO: Fix this
 }
 
 auto Scene::seek_cinematic(this Scene& self, flecs::entity entity, const f32 time) -> void {

@@ -1311,7 +1311,6 @@ auto Scene::prepare_render(this Scene& self) -> void {
       gpu_meshes.clear();
       blas_addresses.clear();
       gpu_mesh_instances.clear();
-      self.mesh_instance_transform_indices.clear();
       self.skinned_mesh_instances.clear();
       self.skinned_lod_ranges.clear();
       self.skinned_vertex_total = 0;
@@ -1349,7 +1348,6 @@ auto Scene::prepare_render(this Scene& self) -> void {
         gpu_mesh_instance.lod_index = lod0_index;
         gpu_mesh_instance.material_index = SlotMap_decode_id(material_id).index;
         gpu_mesh_instance.transform_index = SlotMap_decode_id(mesh_instance.transform_id).index;
-        self.mesh_instance_transform_indices.emplace(gpu_mesh_instance.transform_index);
         gpu_mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
 
         const auto gpu_index = static_cast<u32>(gpu_mesh_instances.size() - 1);
@@ -1435,23 +1433,11 @@ auto Scene::prepare_render(this Scene& self) -> void {
       }
     }
 
-    // a camera or a light moving dirties transforms too, and rebuilding the acceleration structures
-    // for those is exactly the waste this avoids, so only transforms a mesh instance reads count
-    auto mesh_transform_moved = false;
-    for (const auto transform_id : self.dirty_transforms) {
-      const auto transform_index = static_cast<u32>(SlotMap_decode_id(transform_id).index);
-      if (self.mesh_instance_transform_indices.contains(transform_index)) {
-        mesh_transform_moved = true;
-        break;
-      }
-    }
-
     auto update_info = RendererInstanceUpdateInfo{
       .mesh_instance_count = self.gpu_mesh_instance_count,
       .max_meshlet_instance_count = self.max_meshlet_instance_count,
       .meshes_dirty = meshes_were_dirty,
       .mesh_instances_dirty = meshes_were_dirty || any_skinned_advanced,
-      .acceleration_structures_dirty = meshes_were_dirty || any_skinned_advanced || mesh_transform_moved,
       .dirty_transform_ids = self.dirty_transforms,
       .gpu_transforms = self.transforms.slots_unsafe(),
       .gpu_meshes = gpu_meshes,

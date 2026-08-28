@@ -57,6 +57,10 @@ struct SkinnedBLASPool {
   // from that one. Counting refits since the last full build is what lets the budget spend itself
   // on the structures that have drifted furthest
   std::vector<u32> refit_counts{};
+  // the span the minted addresses actually fall in, so the TLAS write can reject an instance array
+  // that lags a frame behind this pool instead of handing the build whatever bytes it read
+  u64 address_min = 0;
+  u64 address_max = 0;
   u64 layout_key = 0;
 
   auto reserve(this SkinnedBLASPool& self, RenderContext& render_context, std::span<const BLASBuildInfo> infos) -> bool;
@@ -96,9 +100,12 @@ struct TLASBuildInfo {
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
   vuk::Value<vuk::Buffer> transforms_buffer = {};
   vuk::Value<vuk::Buffer> blas_addresses_buffer = {};
+  u32 blas_address_count = 0;
   // null when nothing in the scene is skinned, in which case the build reads no per-instance
   // structures and needs no edge to them
   vuk::Value<vuk::Buffer> skinned_blas_buffer = {};
+  u64 skinned_blas_address_min = 0;
+  u64 skinned_blas_address_max = 0;
 };
 
 auto build_scene_tlas(RenderContext& render_context, SceneTLAS& scene_tlas, TLASBuildInfo&& info)
