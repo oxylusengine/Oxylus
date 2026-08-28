@@ -117,6 +117,12 @@ struct CinematicInstance {
 enum class SceneID : u64 { Invalid = std::numeric_limits<u64>::max() };
 class Scene {
 public:
+  // where a unique mesh came from, so its BLAS address can be re-read without a full rebuild
+  struct GPUMeshSource {
+    ModelID model_id = ModelID::Invalid;
+    u32 mesh_node_index = 0;
+  };
+
   std::string scene_name = "Untitled";
 
   bool tearing_down = false;
@@ -146,6 +152,8 @@ public:
 
   // rebuilt only when `meshes_dirty`, though skinned entries are patched in place every frame
   std::vector<GPU::Mesh> gpu_meshes = {};
+  std::vector<GPUMeshSource> gpu_mesh_sources = {};
+  // parallel to `gpu_meshes`, and unlike the rest of these it is refreshed every frame
   std::vector<u64> gpu_mesh_blas_addresses = {};
   std::vector<GPU::MeshInstance> gpu_mesh_instances = {};
   std::vector<SkinnedMeshInstance> skinned_mesh_instances = {};

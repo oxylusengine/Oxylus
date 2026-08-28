@@ -26,6 +26,7 @@
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <meshoptimizer.h>
+#include <ranges>
 #include <simdjson.h>
 #include <sol/state.hpp>
 
@@ -1303,6 +1304,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
     auto& gpu_meshes = self.gpu_meshes;
     // Parallel to `gpu_meshes`, so the TLAS build can look a BLAS up by mesh index.
     auto& blas_addresses = self.gpu_mesh_blas_addresses;
+    auto& mesh_sources = self.gpu_mesh_sources;
     auto& gpu_mesh_instances = self.gpu_mesh_instances;
     auto mesh_slot_to_gpu_index = ankerl::unordered_dense::map<u32, u32>();
     const auto meshes_were_dirty = self.meshes_dirty;
@@ -1310,6 +1312,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
     if (self.meshes_dirty) {
       gpu_meshes.clear();
       blas_addresses.clear();
+      mesh_sources.clear();
       gpu_mesh_instances.clear();
       self.skinned_mesh_instances.clear();
       self.skinned_vertex_total = 0;
@@ -1317,7 +1320,13 @@ auto Scene::prepare_render(this Scene& self) -> void {
       auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, u32>();
 
       self.mesh_instances.for_each_active([&](usize index, const MeshInstance& mesh_instance) {
-        const auto model = asset_man.get_model(mesh_instance.model_uuid);
+        auto model_id = ModelID::Invalid;
+        {
+          // scoped, because `get_model` re-enters `get_asset` and the registry lock is not recursive
+          const auto model_asset = asset_man.get_asset(mesh_instance.model_uuid);
+          model_id = model_asset ? model_asset->model_id : ModelID::Invalid;
+        }
+        const auto model = asset_man.get_model(model_id);
         const auto& mesh = model->gpu_meshes[mesh_instance.mesh_node_index];
         const auto material_asset = asset_man.get_asset(mesh_instance.material_uuid);
         const auto material_id = material_asset ? material_asset->material_id
@@ -1330,12 +1339,13 @@ auto Scene::prepare_render(this Scene& self) -> void {
         } else {
           mesh_index = static_cast<u32>(gpu_meshes.size());
           gpu_meshes.emplace_back(mesh);
-          const auto& mesh_blases = model->mesh_blases;
-          blas_addresses.emplace_back(
-            mesh_instance.mesh_node_index < mesh_blases.size()
-              ? mesh_blases[mesh_instance.mesh_node_index].device_address
-              : 0
+          mesh_sources.emplace_back(
+            GPUMeshSource{
+              .model_id = model_id,
+              .mesh_node_index = static_cast<u32>(mesh_instance.mesh_node_index),
+            }
           );
+          blas_addresses.emplace_back(0_u64);
           unique_mesh_to_gpu_mesh.emplace(unique_mesh, mesh_index);
         }
 
@@ -1408,6 +1418,25 @@ auto Scene::prepare_render(this Scene& self) -> void {
       if (animation_instance->advanced) {
         any_skinned_advanced = true;
         dirty_mesh_instance_gpu_indices.push_back(skinned.gpu_instance_index);
+      }
+    }
+
+    // a BLAS address is a raw pointer the TLAS build dereferences, and nothing promises that whatever
+    // moves one also raises `meshes_dirty`, so the table is re-read from the models every frame
+    // instead of being captured once at rebuild
+    {
+      auto cached_model_id = ModelID::Invalid;
+      auto cached_model = ReadGuard<Model>();
+      for (const auto& [source, address] : std::views::zip(mesh_sources, blas_addresses)) {
+        if (source.model_id != cached_model_id) {
+          cached_model.reset();
+          cached_model = asset_man.get_model(source.model_id);
+          cached_model_id = source.model_id;
+        }
+
+        address = cached_model && source.mesh_node_index < cached_model->mesh_blases.size()
+                    ? cached_model->mesh_blases[source.mesh_node_index].device_address
+                    : 0_u64;
       }
     }
 

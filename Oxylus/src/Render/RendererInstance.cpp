@@ -2362,7 +2362,9 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshes_buffer = vuk::acquire_buf("meshes", *self.meshes_buffer, vuk::Access::eMemoryRead);
   }
 
-  if (info.meshes_dirty && !info.gpu_mesh_blas_addresses.empty()) {
+  // uploaded every frame rather than under `meshes_dirty`, matching how the scene refreshes it: the
+  // TLAS build dereferences these as raw pointers, and it is 8 bytes per unique mesh
+  if (!info.gpu_mesh_blas_addresses.empty()) {
     self.blas_addresses_buffer = render_context.resize_buffer(
       std::move(self.blas_addresses_buffer),
       vuk::MemoryUsage::eGPUonly,
