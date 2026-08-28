@@ -260,6 +260,10 @@ public:
   static auto get_local_transform(flecs::entity entity) -> glm::mat4;
 
   auto get_entity_transform_id(flecs::entity entity) const -> option<GPU::TransformID>;
+  // the transform a mesh entity is actually drawn with, which is not its own when the mesh is
+  // skinned: `attach_mesh` binds those to the animator root, and that is the index the visbuffer
+  // carries, so anything matching against rendered pixels has to ask for this one
+  auto get_mesh_transform_id(this const Scene& self, flecs::entity entity) -> option<GPU::TransformID>;
   auto get_entity_transform(GPU::TransformID transform_id) const -> const GPU::Transforms*;
 
   auto set_dirty(this Scene& self, flecs::entity entity) -> void;

@@ -1,6 +1,7 @@
 #include "ViewportPanel.hpp"
 
 #include <ImGuizmo.h>
+#include <algorithm>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
@@ -1727,7 +1728,7 @@ auto ViewportPanel::mouse_picking_stages(
           auto traverse_hierarchy = [&](this auto&& f, flecs::entity entity) -> void {
             entity.children([s, &transform_indices, &f](flecs::entity child) {
               if (child.has<MeshComponent>()) {
-                auto transform_id = s->get_scene()->get_entity_transform_id(child);
+                auto transform_id = s->get_scene()->get_mesh_transform_id(child);
                 if (transform_id.has_value()) {
                   auto transform_index = SlotMap_decode_id(*transform_id).index;
                   transform_indices.emplace_back(transform_index);
@@ -1749,13 +1750,19 @@ auto ViewportPanel::mouse_picking_stages(
 
           traverse_hierarchy(*editor_context.entity);
         } else {
-          auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
+          auto transform_id = s->get_scene()->get_mesh_transform_id(*editor_context.entity);
           if (transform_id.has_value()) {
             auto transform_index = SlotMap_decode_id(*transform_id).index;
             transform_indices.emplace_back(transform_index);
           }
         }
       }
+
+      // every skinned mesh under one animator resolves to that animator's transform, and the mask
+      // walks this list per pixel, so a rigged model with a dozen parts would pay for the same index
+      // a dozen times
+      std::ranges::sort(transform_indices);
+      transform_indices.erase(std::ranges::unique(transform_indices).begin(), transform_indices.end());
 
       if (transform_indices.empty()) {
         return;

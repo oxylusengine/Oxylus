@@ -1966,6 +1966,20 @@ auto Scene::get_entity_transform_id(flecs::entity entity) const -> option<GPU::T
   return it->second;
 }
 
+auto Scene::get_mesh_transform_id(this const Scene& self, flecs::entity entity) -> option<GPU::TransformID> {
+  const auto it = self.entity_to_mesh_instance_map.find(entity);
+  if (it == self.entity_to_mesh_instance_map.end()) {
+    return self.get_entity_transform_id(entity);
+  }
+
+  const auto* mesh_instance = self.mesh_instances.slotc(it->second);
+  if (mesh_instance == nullptr || mesh_instance->transform_id == GPU::TransformID::Invalid) {
+    return self.get_entity_transform_id(entity);
+  }
+
+  return mesh_instance->transform_id;
+}
+
 auto Scene::get_entity_transform(GPU::TransformID transform_id) const -> const GPU::Transforms* {
   return transforms.slotc(transform_id);
 }
