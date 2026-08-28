@@ -17,6 +17,9 @@
 namespace ox {
 constexpr static auto BLAS_VERTEX_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr static auto BLAS_VERTEX_STRIDE = 8_u64;
+// fixed by the spec rather than a device limit: VkAccelerationStructureCreateInfoKHR::offset must be
+// a multiple of 256 and there is nothing to query it from. Scratch is the opposite case and reads
+// minAccelerationStructureScratchOffsetAlignment through RenderContext::as_scratch_alignment
 constexpr static auto AS_BUFFER_ALIGNMENT = 256_u64;
 
 // the size query and the build have to name identical flags, or the structure and scratch
@@ -402,10 +405,28 @@ static auto retire_handle(
   pool.retired.back().handles.emplace_back(std::move(handle));
 }
 
-// replaces the arena with a larger one and re-places every live entry in it. Everything loses its
-// tree, which is the safe direction: an entry with no tree publishes no address
+// a staged migration can only run against the arena it was staged over, so anything that replaces or
+// drops that arena has to give up the sources first
+static auto discard_migrations(RenderContext& render_context, SkinnedBLASPool& pool) -> void {
+  for (auto& entry : pool.entries) {
+    retire_handle(render_context, pool, std::move(entry.previous_handle));
+  }
+
+  if (pool.migration_source_buffer) {
+    pool.retired.emplace_back(
+      SkinnedBLASPool::Retired{.buffer = std::move(pool.migration_source_buffer), .frame = render_context.num_frames}
+    );
+  }
+}
+
+// replaces the arena with a larger one and re-places every live entry in it. An entry that already
+// holds a tree keeps it by migrating off its old structure, and one that does not falls back to a
+// full build, which is the safe direction: an entry with no tree publishes no address
 static auto grow_skinned_arena(RenderContext& render_context, SkinnedBLASPool& pool, u64 required) -> bool {
   ZoneScoped;
+
+  // whatever was staged against the arena about to be replaced can no longer run
+  discard_migrations(render_context, pool);
 
   auto live = 0_u64;
   for (const auto& entry : pool.entries) {
@@ -416,26 +437,21 @@ static auto grow_skinned_arena(RenderContext& render_context, SkinnedBLASPool& p
 
   const auto capacity = ox::max(ox::max(live + required, pool.capacity * 2), SKINNED_ARENA_MIN_SIZE);
 
-  auto retired = SkinnedBLASPool::Retired{.frame = render_context.num_frames};
-  retired.buffer = std::move(pool.buffer);
-  for (auto& entry : pool.entries) {
-    if (entry.handle) {
-      retired.handles.emplace_back(std::move(entry.handle));
-    }
-  }
-  if (retired.buffer || !retired.handles.empty()) {
-    pool.retired.emplace_back(std::move(retired));
-  }
-
-  pool.buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, capacity, AS_BUFFER_ALIGNMENT);
-  if (!pool.buffer) {
-    pool.capacity = 0;
+  // allocated before anything is given up, so a failure leaves the arena that is already working
+  // alone rather than trading it for nothing
+  auto arena = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, capacity, AS_BUFFER_ALIGNMENT);
+  if (!arena) {
     return false;
   }
 
+  auto previous_arena = std::move(pool.buffer);
+  pool.buffer = std::move(arena);
   pool.capacity = capacity;
   pool.bump = 0;
   pool.free_blocks.clear();
+
+  auto retired = SkinnedBLASPool::Retired{.frame = render_context.num_frames};
+  auto migrating = false;
 
   for (u32 index = 0; index < static_cast<u32>(pool.entries.size()); index++) {
     auto& entry = pool.entries[index];
@@ -443,13 +459,40 @@ static auto grow_skinned_arena(RenderContext& render_context, SkinnedBLASPool& p
       continue;
     }
 
+    // create_pool_handle clears both, and a migrated tree inherits the staleness of the one it came
+    // from rather than counting as freshly built
+    const auto refits_since_build = entry.refits_since_build;
+    const auto can_migrate = entry.handle && entry.built_once;
+    auto previous = std::move(entry.handle);
+
     entry.offset = pool.bump;
     pool.bump += align_up(entry.size, AS_BUFFER_ALIGNMENT);
     if (!create_pool_handle(render_context, pool, entry)) {
+      retired.handles.emplace_back(std::move(previous));
       pool.slot_to_entry.erase(entry.mesh_instance_slot);
       entry = {};
       pool.free_entries.push_back(index);
+      continue;
     }
+
+    if (can_migrate) {
+      entry.previous_handle = std::move(previous);
+      entry.refits_since_build = refits_since_build;
+      migrating = true;
+    } else {
+      retired.handles.emplace_back(std::move(previous));
+    }
+  }
+
+  if (migrating) {
+    pool.migration_source_buffer = std::move(previous_arena);
+  } else {
+    retired.buffer = std::move(previous_arena);
+  }
+
+  std::erase_if(retired.handles, [](const vuk::Unique<VkAccelerationStructureKHR>& handle) { return !handle; });
+  if (retired.buffer || !retired.handles.empty()) {
+    pool.retired.emplace_back(std::move(retired));
   }
 
   return true;
@@ -458,6 +501,8 @@ static auto grow_skinned_arena(RenderContext& render_context, SkinnedBLASPool& p
 // retires rather than drops, because a frame still in flight may be reading both the arena and the
 // handles that were created over it
 auto SkinnedBLASPool::reset(this SkinnedBLASPool& self, RenderContext& render_context) -> void {
+  discard_migrations(render_context, self);
+
   auto retired = Retired{.frame = render_context.num_frames};
   retired.buffer = std::move(self.buffer);
   for (auto& entry : self.entries) {
@@ -478,6 +523,7 @@ auto SkinnedBLASPool::reset(this SkinnedBLASPool& self, RenderContext& render_co
   self.slot_to_entry.clear();
   self.pending_rebuilt.clear();
   self.pending_refit.clear();
+  self.pending_migrated.clear();
   self.capacity = 0;
   self.bump = 0;
 
@@ -507,12 +553,19 @@ auto SkinnedBLASPool::commit_builds(this SkinnedBLASPool& self) -> void {
   for (const auto index : self.pending_refit) {
     self.entries[index].refits_since_build += 1;
   }
+  // a migration is an update, so it degrades the tree it carried over exactly like a refit does, and
+  // the entry is only back in the TLAS once that update has actually run
+  for (const auto index : self.pending_migrated) {
+    self.entries[index].refits_since_build += 1;
+    self.entries[index].built_once = true;
+  }
   for (const auto index : self.pending_rebuilt) {
     self.entries[index].refits_since_build = 0;
     self.entries[index].built_once = true;
   }
 
   self.pending_refit.clear();
+  self.pending_migrated.clear();
   self.pending_rebuilt.clear();
 }
 
@@ -536,6 +589,7 @@ auto SkinnedBLASPool::sync(
   // are rebuilt from scratch anyway
   self.pending_rebuilt.clear();
   self.pending_refit.clear();
+  self.pending_migrated.clear();
 
   for (auto& entry : self.entries) {
     entry.alive = false;
@@ -587,6 +641,7 @@ auto SkinnedBLASPool::sync(
     self.slot_to_entry.erase(entry.mesh_instance_slot);
     give_free_block(self.free_blocks, entry.offset, align_up(entry.size, AS_BUFFER_ALIGNMENT));
     retire_handle(render_context, self, std::move(entry.handle));
+    retire_handle(render_context, self, std::move(entry.previous_handle));
     entry = {};
     self.free_entries.push_back(index);
   }
@@ -660,6 +715,14 @@ auto SkinnedBLASPool::sync(
 
     self.slot_to_entry.insert_or_assign(skinned.mesh_instance_slot, index);
   }
+
+  // the replaced arena is only worth holding while something still has to read a tree out of it
+  const auto migrating = std::ranges::any_of(self.entries, [](const Entry& entry) {
+    return static_cast<bool>(entry.previous_handle);
+  });
+  if (!migrating) {
+    discard_migrations(render_context, self);
+  }
 }
 
 auto build_skinned_blases(
@@ -689,6 +752,9 @@ auto build_skinned_blases(
   auto refits = stack.alloc<u32>(entry_count);
   auto refit_count = 0_sz;
 
+  auto migrations = stack.alloc<u32>(entry_count);
+  auto migration_count = 0_sz;
+
   const auto refit_limit = ox::max(budget.max_refits_before_rebuild, 1_u32);
   for (u32 index = 0; index < static_cast<u32>(entry_count); index++) {
     const auto& entry = pool.entries[index];
@@ -696,7 +762,11 @@ auto build_skinned_blases(
       continue;
     }
 
-    if (!entry.built_once) {
+    // an entry holding a source structure has a tree already, it is just sitting in the arena that
+    // was replaced, so it updates out of that one instead of joining the rebuild queue
+    if (entry.previous_handle) {
+      migrations[migration_count++] = index;
+    } else if (!entry.built_once) {
       unbuilt[unbuilt_count++] = index;
     } else if (entry.refits_since_build >= refit_limit) {
       stale[stale_count++] = index;
@@ -705,7 +775,7 @@ auto build_skinned_blases(
     }
   }
 
-  if (unbuilt_count == 0 && stale_count == 0 && refit_count == 0) {
+  if (migration_count == 0 && unbuilt_count == 0 && stale_count == 0 && refit_count == 0) {
     return {};
   }
 
@@ -723,12 +793,14 @@ auto build_skinned_blases(
 
   struct Build {
     VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
+    // null for a full build. The entry's own structure for an in place refit, and the structure it
+    // is migrating off for a move between arenas
+    VkAccelerationStructureKHR source = VK_NULL_HANDLE;
     u64 vertex_positions = 0;
     u64 indices = 0;
     u64 scratch_offset = 0;
     u32 vertex_count = 0;
     u32 primitive_count = 0;
-    bool refit = false;
   };
 
   auto pending = stack.alloc<Build>(entry_count);
@@ -736,27 +808,37 @@ auto build_skinned_blases(
   auto scratch_total = 0_u64;
   const auto scratch_alignment = render_context.as_scratch_alignment();
 
+  enum class Kind : u8 { Build, Refit, Migrate };
+
   // the builds in one command run concurrently, so every one of them needs its own scratch region
-  const auto stage = [&](const u32 index, const bool refit) {
+  const auto stage = [&](const u32 index, const Kind kind) {
     const auto& entry = pool.entries[index];
-    const auto scratch_size = refit ? entry.update_scratch_size : entry.build_scratch_size;
+    const auto scratch_size = kind == Kind::Build ? entry.build_scratch_size : entry.update_scratch_size;
     pending[pending_count++] = Build{
       .handle = *entry.handle,
+      .source = kind == Kind::Build     ? VK_NULL_HANDLE
+                : kind == Kind::Migrate ? *entry.previous_handle
+                                        : *entry.handle,
       .vertex_positions = entry.vertex_positions,
       .indices = entry.indices,
       .scratch_offset = scratch_total,
       .vertex_count = entry.vertex_count,
       .primitive_count = entry.index_count / 3,
-      .refit = refit,
     };
     scratch_total += align_up(scratch_size, scratch_alignment);
 
-    if (refit) {
-      pool.pending_refit.push_back(index);
-    } else {
-      pool.pending_rebuilt.push_back(index);
+    switch (kind) {
+      case Kind::Build  : pool.pending_rebuilt.push_back(index); break;
+      case Kind::Refit  : pool.pending_refit.push_back(index); break;
+      case Kind::Migrate: pool.pending_migrated.push_back(index); break;
     }
   };
+
+  // ahead of the budget and outside it: a migration costs an update rather than a build, and until it
+  // runs the entry is out of the TLAS while holding a perfectly good tree in the old arena
+  for (usize k = 0; k < migration_count; k++) {
+    stage(migrations[k], Kind::Migrate);
+  }
 
   auto remaining_budget = budget.rebuild_primitive_budget == 0 ? std::numeric_limits<u64>::max()
                                                                : static_cast<u64>(budget.rebuild_primitive_budget);
@@ -769,7 +851,7 @@ auto build_skinned_blases(
     }
 
     remaining_budget -= primitives;
-    stage(index, false);
+    stage(index, Kind::Build);
   }
   for (usize k = 0; k < stale_count; k++) {
     const auto index = stale[k];
@@ -777,16 +859,16 @@ auto build_skinned_blases(
     if (primitives > remaining_budget) {
       // over budget this frame, so it keeps refitting rather than sitting on a frozen tree
       if (pool.entries[index].pose_advanced) {
-        stage(index, true);
+        stage(index, Kind::Refit);
       }
       continue;
     }
 
     remaining_budget -= primitives;
-    stage(index, false);
+    stage(index, Kind::Build);
   }
   for (usize k = 0; k < refit_count; k++) {
-    stage(refits[k], true);
+    stage(refits[k], Kind::Refit);
   }
 
   if (pending_count == 0) {
@@ -803,6 +885,7 @@ auto build_skinned_blases(
   }
   if (!pool.scratch_buffer) {
     pool.pending_refit.clear();
+    pool.pending_migrated.clear();
     pool.pending_rebuilt.clear();
     return {};
   }
@@ -829,6 +912,14 @@ auto build_skinned_blases(
     *pool.scratch_buffer,
     vuk::Access::eAccelerationStructureBuildWrite
   );
+  // the arena the migrations read out of. A stand-in keeps the pass signature fixed on the frames
+  // where nothing is migrating, which is nearly all of them
+  auto migration_source = migration_count > 0 ? vuk::acquire_buf(
+                                                  "skinned blas migration source",
+                                                  *pool.migration_source_buffer,
+                                                  vuk::Access::eAccelerationStructureBuildWrite
+                                                )
+                                              : render_context.scratch_buffer<u32>(0u);
 
   auto build_pass = vuk::make_pass(
     "skinned blas build",
@@ -836,7 +927,8 @@ auto build_skinned_blases(
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eAccelerationStructureBuildRW) blas,
       VUK_BA(vuk::eAccelerationStructureBuildWrite) scratch,
-      VUK_BA(vuk::eAccelerationStructureBuildRead) vertices
+      VUK_BA(vuk::eAccelerationStructureBuildRead) vertices,
+      VUK_BA(vuk::eAccelerationStructureBuildRead) migration_src
     ) {
       memory::ScopedStack pass_stack;
 
@@ -862,11 +954,13 @@ auto build_skinned_blases(
           .pNext = nullptr,
           .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
           .flags = SKINNED_BLAS_BUILD_FLAGS,
-          .mode = build.refit ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR
-                              : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+          .mode = build.source != VK_NULL_HANDLE ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR
+                                                 : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
           // refits are in place, which is why the pass takes the storage read write: the tree being
-          // rewritten is also the tree being read
-          .srcAccelerationStructure = build.refit ? build.handle : VK_NULL_HANDLE,
+          // rewritten is also the tree being read. A migration is the same update pointed at a
+          // source in the arena that was replaced, so the tree survives the move for the price of a
+          // refit instead of a full build
+          .srcAccelerationStructure = build.source,
           .dstAccelerationStructure = build.handle,
           .geometryCount = 1,
           .pGeometries = &geometries[i],
@@ -889,7 +983,20 @@ auto build_skinned_blases(
     }
   );
 
-  return build_pass(std::move(blas_buffer), std::move(scratch_buffer), std::move(skinned_vertices));
+  auto built = build_pass(
+    std::move(blas_buffer),
+    std::move(scratch_buffer),
+    std::move(skinned_vertices),
+    std::move(migration_source)
+  );
+
+  // the caller submits and waits on this before the frame is out, so the sources have been consumed
+  // by the time the deferred release they go into can actually collect them
+  if (migration_count > 0) {
+    discard_migrations(render_context, pool);
+  }
+
+  return built;
 }
 
 auto SceneTLAS::reserve(this SceneTLAS& self, RenderContext& render_context, u32 instance_count) -> bool {

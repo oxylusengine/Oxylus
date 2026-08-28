@@ -43,6 +43,9 @@ auto build_mesh_blas(
 struct SkinnedBLASPool {
   struct Entry {
     vuk::Unique<VkAccelerationStructureKHR> handle{};
+    // the structure this entry occupied before the arena was replaced under it. An update off it
+    // carries the tree over to the new memory instead of paying for a full rebuild
+    vuk::Unique<VkAccelerationStructureKHR> previous_handle{};
     u64 offset = 0;
     u64 size = 0;
     u64 build_scratch_size = 0;
@@ -77,6 +80,9 @@ struct SkinnedBLASPool {
 
   vuk::Unique<vuk::Buffer> buffer{};
   vuk::Unique<vuk::Buffer> scratch_buffer{};
+  // the replaced arena, held rather than retired for as long as anything still has to migrate off
+  // it, because the copy sources live in it
+  vuk::Unique<vuk::Buffer> migration_source_buffer{};
   u64 capacity = 0;
   u64 bump = 0;
 
@@ -90,6 +96,7 @@ struct SkinnedBLASPool {
   // work that builds it has actually been submitted
   std::vector<u32> pending_rebuilt{};
   std::vector<u32> pending_refit{};
+  std::vector<u32> pending_migrated{};
 
   auto sync(
     this SkinnedBLASPool& self,
