@@ -20,6 +20,10 @@ public:
 
   auto get_engine() const -> ma_engine*;
 
+  // -- Device --
+  auto set_device_volume(f32 volume) -> void;
+  auto get_device_volume() -> f32;
+
   // -- Source --
   auto play_source(ma_sound* sound) -> void;
   auto pause_source(ma_sound* sound) -> void;

@@ -13,6 +13,7 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
+#include "Core/Input.hpp"
 #include "Memory/Stack.hpp"
 #include "Scene/Components.hpp"
 #include "UI/PayloadData.hpp"
@@ -610,6 +611,11 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self, const Part
       }
     }
     self.selected_node = picked;
+  }
+
+  auto input = App::mod<Input>();
+  if (input.get_key_held(ScanCode::LeftControl) && (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) || ed::IsBackgroundClicked())) {
+    App::get_window().set_cursor_override(WindowCursor::Hand);
   }
 
   ed::Suspend();
@@ -1511,6 +1517,8 @@ auto ParticleEditorPanel::draw_curve_editor(
       );
 
       if (dragging) {
+        App::get_window().set_cursor_override(WindowCursor::Crosshair);
+
         const auto mouse_delta = ImGui::GetIO().MouseDelta;
         const auto value_span = std::max(max_value - min_value, 0.001f);
         curve.points[i] = {

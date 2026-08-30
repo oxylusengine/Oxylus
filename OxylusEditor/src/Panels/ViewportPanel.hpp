@@ -72,6 +72,8 @@ private:
   f32 snap_amount = 1.f;
   f32 rotate_snap_amount = 45.f;
 
+  f32 volume_level = 0.f;
+
   bool terrain_brush_enabled = false;
   bool terrain_stroke_active = false;
   TerrainBrush terrain_brush = {};
@@ -97,6 +99,7 @@ private:
   auto draw_snap_settings_panel(this ViewportPanel& self) -> void;
   auto draw_terrain_brush_settings_panel(this ViewportPanel& self) -> void;
   auto update_terrain_brush(this ViewportPanel& self, glm::vec2 viewport_uv) -> void;
+  auto draw_sound_settings_panel(this ViewportPanel& self) -> void;
   auto draw_stats_overlay(this const ViewportPanel& self, bool draw_scene_stats) -> void;
   auto draw_gizmos(this ViewportPanel& self) -> void;
   auto mouse_picking_stages(this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel)

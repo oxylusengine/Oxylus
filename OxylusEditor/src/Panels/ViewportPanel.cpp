@@ -131,6 +131,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     bool gizmo_settings_popup = false;
     bool snap_settings_popup = false;
     bool terrain_brush_settings_popup = false;
+    bool sound_settings_popup = false;
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
     if (ImGui::BeginMenuBar()) {
@@ -159,6 +160,18 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       if (ImGui::MenuItem(ICON_MDI_BRUSH, nullptr, self.terrain_brush_enabled)) {
         terrain_brush_settings_popup = true;
       }
+
+      auto& audio_engine = App::mod<AudioEngine>();
+      auto sound_muted = audio_engine.get_device_volume() <= 0.f;
+      const char* sound_icon = sound_muted ? ICON_MDI_VOLUME_MUTE : ICON_MDI_VOLUME_HIGH;
+      if (ImGui::MenuItem(sound_icon, nullptr, sound_settings_popup)) {
+        audio_engine.set_device_volume(sound_muted ? 100.f : 0.f);
+      }
+      UI::tooltip_hover("Left-click to toggle mute, right-click for settings");
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+        sound_settings_popup = true;
+      }
+
       ImGui::EndMenuBar();
     }
 
@@ -201,6 +214,14 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     ImGui::SetNextWindowSize(ImVec2(345, 0));
     if (ImGui::BeginPopup("terrain_brush_settings")) {
       self.draw_terrain_brush_settings_panel();
+      ImGui::EndPopup();
+    }
+
+    if (sound_settings_popup)
+      ImGui::OpenPopup("sound_settings", ImGuiPopupFlags_MouseButtonRight);
+    ImGui::SetNextWindowSize(ImVec2(225, 0));
+    if (ImGui::BeginPopup("sound_settings")) {
+      self.draw_sound_settings_panel();
       ImGui::EndPopup();
     }
 
@@ -1096,6 +1117,19 @@ auto ViewportPanel::update_terrain_brush(this ViewportPanel& self, glm::vec2 vie
   brush.active = can_begin || self.terrain_stroke_active;
   brush.painting = self.terrain_stroke_active;
   brush.invert = ImGui::GetIO().KeyShift;
+}
+
+auto ViewportPanel::draw_sound_settings_panel(this ViewportPanel& self) -> void {
+  ZoneScoped;
+
+  if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+    auto& audio_engine = App::mod<AudioEngine>();
+    self.volume_level = audio_engine.get_device_volume();
+    if (UI::property<f32>("Volume", &self.volume_level, 0.0f, 100.0f, nullptr, 1.0f, "%.0f")) {
+      audio_engine.set_device_volume(self.volume_level);
+    }
+    UI::end_properties();
+  }
 }
 
 void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
