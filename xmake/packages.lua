@@ -2,6 +2,7 @@ local fmt_version = "12.1.0"
 local fmt_configs = { header_only = false, shared = false }
 local lua_version = "v5.4.7"
 local imgui_version = "v1.92.9b-docking"
+local simdjson_version = "v4.2.4"
 
 packages = {
   ["stb 2024.06.01"] = {},
@@ -47,7 +48,7 @@ packages = {
       header_only = true,
     },
   },
-  ["simdjson v4.2.4"] = {},
+  ["simdjson " .. simdjson_version] = {},
   ["joltphysics v5.6.0"] = {
     configs = {
       debug_renderer = true,
@@ -118,6 +119,15 @@ confs = {
       version = fmt_version,
       configs = fmt_configs,
       system = false,
+    },
+  },
+
+  {
+    package = "simdjson",
+    override = "fastgltf-ox.simdjson",
+    configs = {
+      override = true,
+      version = simdjson_version,
     },
   },
 
