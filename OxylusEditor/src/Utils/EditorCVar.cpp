@@ -43,6 +43,8 @@ auto EditorCVar::init(this EditorCVar& self) -> void {
   self.cvar_content_sort_field.init(self.system, "editor.content_sort_field", "content panel sort field", 0);
   self.cvar_content_sort_ascending
     .init(self.system, "editor.content_sort_ascending", "sort content panel entries in ascending order", 1);
+  self.cvar_content_type_filter
+    .init(self.system, "editor.content_type_filter", "content panel asset type filter bitmask", 0);
   self.cvar_show_style_editor.init(self.system, "ui.imgui_style_editor", "show imgui style editor", 0);
   self.cvar_show_imgui_demo.init(self.system, "ui.imgui_demo", "show imgui demo window", 0);
 }
@@ -88,6 +90,9 @@ auto EditorCVar::load(this EditorCVar& self) -> void {
   }
   if (auto v = config["content_sort_ascending"].as_boolean())
     self.cvar_content_sort_ascending.set(v->get());
+  // the content panel masks this down to the bits it knows about
+  if (auto v = config["content_type_filter"].as_integer())
+    self.cvar_content_type_filter.set(static_cast<i32>(v->get()));
 
   return;
 }
@@ -116,6 +121,7 @@ auto EditorCVar::save(this EditorCVar& self) -> void {
        {"show_meta_files", self.cvar_show_meta_files.as_bool()},
        {"content_sort_field", self.cvar_content_sort_field.get()},
        {"content_sort_ascending", self.cvar_content_sort_ascending.as_bool()},
+       {"content_type_filter", self.cvar_content_type_filter.get()},
      }}
   };
 

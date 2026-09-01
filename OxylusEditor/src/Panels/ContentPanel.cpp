@@ -1,6 +1,7 @@
 #include "ContentPanel.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -197,12 +198,45 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Shader, ICON_MDI_IMAGE_FILTER_BLACK_WHITE},
   {FileType::Texture, ICON_MDI_FILE_IMAGE},
   {FileType::Model, ICON_MDI_VECTOR_POLYGON},
-  {FileType::Audio, ICON_MDI_MICROPHONE},
+  {FileType::Audio, ICON_MDI_VOLUME_HIGH},
   {FileType::Script, ICON_MDI_LANGUAGE_LUA},
   {FileType::Material, ICON_MDI_PALETTE_SWATCH},
   {FileType::Terrain, ICON_MDI_TERRAIN},
   {FileType::ParticleSystem, ICON_MDI_SHIMMER},
 };
+
+static constexpr auto file_type_bit(const FileType type) -> u32 { return 1u << static_cast<u32>(type); }
+
+static constexpr FileType FILTER_FILE_TYPES[] = {
+  FileType::Model,
+  FileType::Texture,
+  FileType::Material,
+  FileType::Scene,
+  FileType::Prefab,
+  FileType::Script,
+  FileType::Shader,
+  FileType::Audio,
+  FileType::Terrain,
+  FileType::ParticleSystem,
+  FileType::Unknown,
+};
+
+static constexpr u32 ALL_FILTER_TYPES_MASK = [] {
+  u32 mask = 0;
+  for (const auto type : FILTER_FILE_TYPES)
+    mask |= file_type_bit(type);
+  return mask;
+}();
+
+static auto file_type_label(const FileType type) -> const char* {
+  const auto it = FILE_TYPES_TO_STRING.find(type);
+  return it != FILE_TYPES_TO_STRING.end() ? it->second : "Unknown";
+}
+
+static auto file_type_icon(const FileType type) -> const char* {
+  const auto it = FILE_TYPES_TO_ICON.find(type);
+  return it != FILE_TYPES_TO_ICON.end() ? it->second : ICON_MDI_FILE;
+}
 
 static auto standalone_asset_file_type(const std::filesystem::path& path) -> option<FileType> {
   auto companion_path = path;
@@ -379,6 +413,32 @@ auto ContentPanel::set_sort(this ContentPanel& self, const SortField field, cons
   editor_cvar.cvar_content_sort_ascending.set(ascending);
 }
 
+auto ContentPanel::set_type_filter(this ContentPanel& self, const u32 mask) -> void {
+  const u32 sanitized_mask = mask & ALL_FILTER_TYPES_MASK;
+  if (self.type_filter_mask_ == sanitized_mask)
+    return;
+
+  self.type_filter_mask_ = sanitized_mask;
+  App::mod<Editor>().editor_cvar.cvar_content_type_filter.set(static_cast<i32>(sanitized_mask));
+}
+
+auto ContentPanel::passes_filter(this const ContentPanel& self, const File& file, const bool show_meta_files) -> bool {
+  if (!self.filter_.PassFilter(file.name.c_str()))
+    return false;
+
+  // directories always pass the type filter, they are how you navigate out of a filtered view
+  if (file.is_directory)
+    return true;
+
+  if (file.type == FileType::Meta && !show_meta_files)
+    return false;
+
+  if (self.type_filter_mask_ == 0)
+    return true;
+
+  return (self.type_filter_mask_ & file_type_bit(file.type)) != 0;
+}
+
 auto ContentPanel::directory_tree_view_recursive(
   this ContentPanel& self,
   const std::filesystem::path& path,
@@ -484,6 +544,7 @@ void ContentPanel::init(this ContentPanel& self) {
   else
     self.sort_field_ = SortField::Name;
   self.sort_ascending_ = editor_cvar.cvar_content_sort_ascending.as_bool();
+  self.type_filter_mask_ = static_cast<u32>(editor_cvar.cvar_content_type_filter.get()) & ALL_FILTER_TYPES_MASK;
 
   auto assets_dir = vfs.resolve_physical_dir(VFS::PROJECT_DIR, "");
   self.assets_directory = assets_dir;
@@ -539,6 +600,8 @@ void ContentPanel::render_header(this ContentPanel& self) {
   }
   ImGui::SameLine();
   self.render_sort_menu();
+  ImGui::SameLine();
+  self.render_filter_menu();
 
   auto& editor_cvar = App::mod<Editor>().editor_cvar;
 
@@ -722,6 +785,60 @@ auto ContentPanel::render_sort_menu(this ContentPanel& self) -> void {
   ImGui::EndPopup();
 }
 
+auto ContentPanel::render_filter_menu(this ContentPanel& self) -> void {
+  memory::ScopedStack stack;
+
+  const i32 selected_count = std::popcount(self.type_filter_mask_);
+  const c8* button_label = nullptr;
+  if (selected_count == 0) {
+    button_label = stack.format_char("{} Filter###ContentFilterButton", ICON_MDI_FILTER_OUTLINE);
+  } else if (selected_count == 1) {
+    const auto selected_type = *std::ranges::find_if(FILTER_FILE_TYPES, [&self](const FileType type) {
+      return (self.type_filter_mask_ & file_type_bit(type)) != 0;
+    });
+    button_label = stack.format_char("{} {}###ContentFilterButton", ICON_MDI_FILTER, file_type_label(selected_type));
+  } else {
+    button_label = stack.format_char("{} {} types###ContentFilterButton", ICON_MDI_FILTER, selected_count);
+  }
+
+  if (UI::button(button_label))
+    ImGui::OpenPopup("ContentFilterPopup");
+
+  UI::tooltip_hover(
+    selected_count == 0 ? "Showing every asset type" : stack.format_char("Filtering {} asset types", selected_count)
+  );
+
+  if (!ImGui::BeginPopup("ContentFilterPopup"))
+    return;
+
+  ImGui::SeparatorText("Asset types");
+
+  u32 mask = self.type_filter_mask_;
+  for (const auto type : FILTER_FILE_TYPES) {
+    const u32 bit = file_type_bit(type);
+    bool checked = (mask & bit) != 0;
+    const auto label = stack.format_char(
+      "  {} {}###ContentFilterType{}",
+      file_type_icon(type),
+      file_type_label(type),
+      static_cast<u32>(type)
+    );
+    if (ImGui::Checkbox(label, &checked))
+      mask = checked ? mask | bit : mask & ~bit;
+  }
+
+  ImGui::Separator();
+  if (UI::button(stack.format_char("{} All", ICON_MDI_SELECT_ALL)))
+    mask = ALL_FILTER_TYPES_MASK;
+  ImGui::SameLine();
+  if (UI::button(stack.format_char("{} Clear", ICON_MDI_FILTER_OFF_OUTLINE)))
+    mask = 0;
+
+  self.set_type_filter(mask);
+
+  ImGui::EndPopup();
+}
+
 auto ContentPanel::render_details_headers(this ContentPanel& self) -> void {
   memory::ScopedStack stack;
 
@@ -816,6 +933,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
   std::filesystem::path directory_to_open;
 
   auto& editor_cvar = App::mod<Editor>().editor_cvar;
+  const bool show_meta_files = editor_cvar.cvar_show_meta_files.as_bool();
 
   const float padding = UI::scale(2.0f);
   const float scaled_thumbnail_size = UI::scale(editor_cvar.cvar_file_thumbnail_size.get());
@@ -856,6 +974,25 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     flags |= ImGuiTableFlags_PadOuterX | ImGuiTableFlags_SizingFixedFit;
   }
 
+  // without this an active filter that matches nothing is indistinguishable from an empty directory
+  if (self.filter_.IsActive() || self.type_filter_mask_ != 0) {
+    usize visible_entries = 0;
+    {
+      auto read_lock = std::shared_lock(self.directory_mutex);
+      for (const auto& file : self.directory_entries)
+        visible_entries += self.passes_filter(file, show_meta_files) ? 1u : 0u;
+    }
+
+    if (visible_entries == 0) {
+      ImGui::TextDisabled("No entries match the filter");
+      ImGui::SameLine();
+      if (UI::button(ICON_MDI_FILTER_OFF_OUTLINE " Clear")) {
+        self.filter_.Clear();
+        self.set_type_filter(0);
+      }
+    }
+  }
+
   ImVec2 cursor_pos = ImGui::GetCursorPos();
   const ImVec2 region = ImGui::GetContentRegionAvail();
   ImGui::InvisibleButton("##DragDropTargetAssetPanelBody", region);
@@ -878,13 +1015,8 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     {
       auto read_lock = std::shared_lock(self.directory_mutex);
       for (auto& file : self.directory_entries) {
-        if (!self.filter_.PassFilter(file.name.c_str()))
+        if (!self.passes_filter(file, show_meta_files))
           continue;
-
-        if (!editor_cvar.cvar_show_meta_files.as_bool()) {
-          if (file.type == FileType::Meta)
-            continue;
-        }
 
         const bool is_dir = file.is_directory;
         const char* filename = file.name.c_str();

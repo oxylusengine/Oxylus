@@ -79,6 +79,7 @@ private:
   f32 elapsed_time_ = 0.0f;
   SortField sort_field_ = SortField::Name;
   bool sort_ascending_ = true;
+  u32 type_filter_mask_ = 0; // bitmask of FileType, zero means no type filtering
 
   std::string new_asset_name = {};
   bool should_open_new_asset_popup = false;
@@ -100,12 +101,15 @@ private:
   ) -> void;
   auto render_header(this ContentPanel& self) -> void;
   auto render_sort_menu(this ContentPanel& self) -> void;
+  auto render_filter_menu(this ContentPanel& self) -> void;
   auto render_details_headers(this ContentPanel& self) -> void;
   auto render_side_view(this ContentPanel& self) -> void;
   auto render_body(this ContentPanel& self, bool grid) -> void;
   auto update_directory_entries(this ContentPanel& self, const std::filesystem::path& directory) -> void;
   auto refresh(this ContentPanel& self) -> void;
   auto set_sort(this ContentPanel& self, SortField field, bool ascending) -> void;
+  auto set_type_filter(this ContentPanel& self, u32 mask) -> void;
+  auto passes_filter(this const ContentPanel& self, const File& file, bool show_meta_files) -> bool;
 
   static auto sort_entries(std::span<File> entries, SortField field, bool ascending) -> void;
   static auto sort_field_label(SortField field) -> std::string_view;

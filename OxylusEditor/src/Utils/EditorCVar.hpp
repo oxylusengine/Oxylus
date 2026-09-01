@@ -40,6 +40,7 @@ public:
   AutoCVar_Int cvar_show_meta_files;
   AutoCVar_Int cvar_content_sort_field;
   AutoCVar_Int cvar_content_sort_ascending;
+  AutoCVar_Int cvar_content_type_filter;
   AutoCVar_Int cvar_show_style_editor;
   AutoCVar_Int cvar_show_imgui_demo;
 
