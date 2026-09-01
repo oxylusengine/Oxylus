@@ -621,6 +621,9 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       cvar_sys.cvar_bloom_intensity.set_default();
       cvar_sys.cvar_bloom_clamp.set_default();
       cvar_sys.cvar_fxaa_enable.set_default();
+      cvar_sys.cvar_upscaler_backend.set_default();
+      cvar_sys.cvar_upscaler_quality.set_default();
+      cvar_sys.cvar_upscaler_sharpness.set_default();
       cvar_sys.cvar_vbgtao_quality_level.set_default();
       cvar_sys.cvar_vbgtao_radius.set_default();
       cvar_sys.cvar_vbgtao_thickness.set_default();
@@ -743,9 +746,36 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
 
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
+      if (ImGui::TreeNodeEx("Upscaling", TREE_FLAGS, "%s", "Upscaling")) {
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          const char* backends[2] = {"None", "FSR 3.1.5"};
+          UI::property("Backend", cvar_sys.cvar_upscaler_backend.get_ptr(), backends, 2);
+
+          const auto upscaling_active = cvar_sys.cvar_upscaler_backend.get() != 0;
+          ImGui::BeginDisabled(!upscaling_active);
+          const char* quality_modes[5] = {
+            "Native AA (1.0x)",
+            "Quality (1.5x)",
+            "Balanced (1.7x)",
+            "Performance (2.0x)",
+            "Ultra Performance (3.0x)",
+          };
+          UI::property("Quality", cvar_sys.cvar_upscaler_quality.get_ptr(), quality_modes, 5);
+          UI::property<float>("Sharpness", cvar_sys.cvar_upscaler_sharpness.get_ptr(), 0.0f, 1.0f);
+          ImGui::EndDisabled();
+
+          UI::end_properties();
+        }
+        ImGui::TreePop();
+      }
+
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
       if (ImGui::TreeNodeEx("FXAA", TREE_FLAGS, "%s", "FXAA")) {
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          ImGui::BeginDisabled(cvar_sys.cvar_upscaler_backend.get() != 0);
           UI::property("Enabled", cvar_sys.cvar_fxaa_enable.get_ptr_bool());
+          ImGui::EndDisabled();
           UI::end_properties();
         }
         ImGui::TreePop();

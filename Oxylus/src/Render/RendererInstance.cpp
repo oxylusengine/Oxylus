@@ -1749,6 +1749,82 @@ auto RendererInstance::render(
     ddgi_probe_states_buffer = std::move(ddgi_debug_context.probe_states_buffer);
   }
 
+  // --- FSR3 Upscale ---
+  // sits between scene composition and post processing, so bloom and tonemap run at display
+  // resolution on the upscaled image
+  if (upscaling) {
+    self.allocate_fsr3_resources(render_size, display_size);
+
+    const auto resolution_changed = self.fsr3_previous_render_size != render_size ||
+                                    self.fsr3_previous_display_size != display_size;
+    const auto reset_history = !self.fsr3_history_valid || resolution_changed;
+
+    if (reset_history) {
+      self.fsr3_frame_index = 0;
+    }
+
+    auto fsr3_constants = GPU::FSR3Constants{
+      .render_size = glm::ivec2(render_size),
+      .previous_frame_render_size = glm::ivec2(reset_history ? render_size : self.fsr3_previous_render_size),
+      .upscale_size = glm::ivec2(display_size),
+      .previous_frame_upscale_size = glm::ivec2(reset_history ? display_size : self.fsr3_previous_display_size),
+      .max_render_size = glm::ivec2(self.fsr3_render_size),
+      .max_upscale_size = glm::ivec2(self.fsr3_display_size),
+      .jitter_offset = self.current_jitter,
+      .previous_frame_jitter_offset = reset_history ? self.current_jitter : self.previous_jitter,
+      // velocity is written in render resolution pixels, fsr reprojects in uv
+      .motion_vector_scale = 1.0f / glm::vec2(render_size),
+      .downscale_factor = glm::vec2(render_size) / glm::vec2(display_size),
+      // motion vectors are built from unjittered matrices, so there is nothing to cancel
+      .motion_vector_jitter_cancellation = {},
+      .jitter_phase_count = static_cast<f32>(upscaler_jitter_phase_count(render_size.x, display_size.x)),
+      .delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f,
+      // oxylus does not pre-expose the hdr buffer, so there is no exposure delta to undo
+      .delta_pre_exposure = 1.0f,
+      .frame_index = static_cast<f32>(self.fsr3_frame_index),
+    };
+
+    // reversed-z with a finite far plane: the SDK's inverted, non-infinite case
+    {
+      const auto near_clip = self.camera_data.near_clip;
+      const auto far_clip = self.camera_data.far_clip;
+      const auto depth_min = std::max(near_clip, far_clip);
+      const auto depth_max = std::min(near_clip, far_clip);
+      const auto q = depth_max / (depth_min - depth_max);
+
+      const auto aspect = static_cast<f32>(render_size.x) / static_cast<f32>(render_size.y);
+      const auto fov_vertical = glm::radians(self.camera_data.fov);
+      const auto cot_half_fov_y = std::cos(0.5f * fov_vertical) / std::sin(0.5f * fov_vertical);
+
+      fsr3_constants.device_to_view_depth = {
+        -1.0f * q,
+        q * depth_min,
+        aspect / cot_half_fov_y,
+        1.0f / cot_half_fov_y,
+      };
+      fsr3_constants.tan_half_fov = 1.0f / cot_half_fov_y;
+    }
+
+    auto fsr3_context = FSR3Context{
+      .constants = fsr3_constants,
+      .sharpness = std::clamp(upscaler.sharpness, 0.0f, 1.0f),
+      .reset = reset_history,
+      .color_attachment = std::move(final_attachment),
+      .depth_attachment = std::move(depth_attachment),
+      .velocity_attachment = std::move(velocity_attachment),
+      .exposure_buffer = std::move(self.prepared_frame.exposure_buffer),
+    };
+
+    final_attachment = self.apply_fsr3(fsr3_context);
+    depth_attachment = std::move(fsr3_context.depth_attachment);
+    velocity_attachment = std::move(fsr3_context.velocity_attachment);
+    self.prepared_frame.exposure_buffer = std::move(fsr3_context.exposure_buffer);
+
+    self.fsr3_previous_render_size = render_size;
+    self.fsr3_previous_display_size = display_size;
+    self.fsr3_frame_index += 1;
+  }
+
   // --- FXAA Pass ---
   if (self.gpu_scene_flags & GPU::SceneFlags::HasFXAA) {
     auto fxaa_attachment = vuk::declare_ia(
@@ -1829,6 +1905,46 @@ auto RendererInstance::render(
   }
 
   dst_attachment = self.apply_tonemap(post_process_context);
+
+  // overlay passes in the PostProcessing stage bind depth as a real attachment next to the display
+  // resolution result, and vulkan needs the extents to match
+  if (upscaling) {
+    auto upscaled_depth = vuk::declare_ia(
+      "depth_image_display",
+      {.usage = vuk::ImageUsageFlagBits::eDepthStencilAttachment | vuk::ImageUsageFlagBits::eSampled,
+       .extent = dst_extent,
+       .format = vuk::Format::eD32Sfloat,
+       .sample_count = vuk::SampleCountFlagBits::e1,
+       .level_count = 1,
+       .layer_count = 1}
+    );
+    upscaled_depth = vuk::clear_image(std::move(upscaled_depth), vuk::DepthZero);
+
+    auto depth_upscale_pass = vuk::make_pass(
+      "depth upscale",
+      [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eDepthStencilRW) dst, VUK_IA(vuk::eFragmentSampled) src) {
+        cmd_list.bind_graphics_pipeline("depth_upscale")
+          .set_rasterization({})
+          .set_depth_stencil(
+            {.depthTestEnable = true, .depthWriteEnable = true, .depthCompareOp = vuk::CompareOp::eAlways}
+          )
+          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+          .set_viewport(0, vuk::Rect2D::framebuffer())
+          .set_scissor(0, vuk::Rect2D::framebuffer())
+          .bind_image(0, 0, src)
+          .bind_sampler(0, 1, vuk::NearestSamplerClamped)
+          .draw(3, 1, 0, 0);
+
+        return std::make_tuple(dst, src);
+      }
+    );
+
+    std::tie(upscaled_depth, depth_attachment) = depth_upscale_pass(
+      std::move(upscaled_depth),
+      std::move(depth_attachment)
+    );
+    depth_attachment = std::move(upscaled_depth);
+  }
 
   {
     RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, *self.renderer.render_context);
