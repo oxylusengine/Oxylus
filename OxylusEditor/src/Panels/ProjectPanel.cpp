@@ -218,8 +218,8 @@ auto ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment) -> v
                 }
 
                 auto selected_path = std::filesystem::path(std::string(*files)).make_preferred().string();
-                App::defer_to_next_frame([panel, selected_path = std::move(selected_path)]() -> void {
-                  panel->new_project_location = selected_path;
+                App::defer_to_next_frame([panel, p = std::move(selected_path)]() -> void {
+                  panel->new_project_location = p;
                   panel->panel_error.clear();
                 });
               },
@@ -303,7 +303,7 @@ auto ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment) -> v
 
             const auto row_min = ImGui::GetItemRectMin();
             const auto row_max = ImGui::GetItemRectMax();
-            const auto text_vertical_padding = UI::scale(2.0f);
+            const auto text_vertical_padding = UI::scale(5.0f);
             const auto name_y = row_min.y + text_vertical_padding;
             const auto path_y = row_max.y - ImGui::GetTextLineHeight() - text_vertical_padding;
             const auto name_color = ImGui::GetColorU32(project_exists ? ImGuiCol_Text : ImGuiCol_TextDisabled);
@@ -386,8 +386,8 @@ auto ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment) -> v
                 }
 
                 auto path = std::filesystem::path(std::string(*files));
-                App::defer_to_next_frame([panel, path = std::move(path)]() -> void {
-                  panel->load_project_for_editor(path);
+                App::defer_to_next_frame([panel, p = std::move(path)]() -> void {
+                  panel->load_project_for_editor(p);
                 });
               },
             .title = "Open an Oxylus project",
