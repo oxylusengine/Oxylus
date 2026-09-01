@@ -12,6 +12,7 @@
 #include "Editor.hpp"
 #include "Render/Camera.hpp"
 #include "Render/RenderContext.hpp"
+#include "Render/Upscaler.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
@@ -767,7 +768,23 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
             "Performance (2.0x)",
             "Ultra Performance (3.0x)",
           };
-          UI::property("Quality", cvar_sys.cvar_upscaler_quality.get_ptr(), quality_modes, 5);
+
+          const auto display_size = glm::uvec2(
+            static_cast<u32>(std::max(self.scaled_render_size.x, 0.0f)),
+            static_cast<u32>(std::max(self.scaled_render_size.y, 0.0f))
+          );
+          const auto quality = static_cast<UpscalerQuality>(
+            std::clamp(cvar_sys.cvar_upscaler_quality.get(), 0, static_cast<i32>(UpscalerQuality::Count) - 1)
+          );
+          const auto render_size = upscaler_render_extent(display_size, quality);
+          auto quality_text = fmt::format(
+            "Quality: {}x{} -> {}x{}",
+            render_size.x,
+            render_size.y,
+            display_size.x,
+            display_size.y
+          );
+          UI::property(quality_text.c_str(), cvar_sys.cvar_upscaler_quality.get_ptr(), quality_modes, 5);
           UI::property<float>("Sharpness", cvar_sys.cvar_upscaler_sharpness.get_ptr(), 0.0f, 1.0f);
 
           const char* debug_views[8] = {
