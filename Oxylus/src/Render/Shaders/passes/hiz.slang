@@ -29,8 +29,6 @@ typealias HiZMip = StorageImage2D<f32, ImageFormat::R32F>;
 [[vk::constant_id(0)]] constexpr u32 is_pot = 0;
 [[vk::constant_id(1)]] constexpr u32 src_width = 0;
 [[vk::constant_id(2)]] constexpr u32 src_height = 0;
-constexpr static u32x2 src_extent = u32x2(src_width, src_height);
-constexpr static f32x2 inv_src_extent = 1.0 / f32x2(src_extent);
 
 struct PushConstants {
     u32 mip_count;
@@ -90,6 +88,9 @@ func store_2x2(u32x2 p, u32 mip, f32x4 v) -> void {
 }
 
 func load(u32x2 texel) -> f32 {
+    u32x2 src_extent = u32x2(src_width, src_height);
+    f32x2 inv_src_extent = 1.0 / f32x2(src_extent);
+
     let uv = f32x2(texel) * inv_src_extent + inv_src_extent;
     return src_image.SampleLevel(sampler, uv, 0);
 }
@@ -111,6 +112,8 @@ func load_4x4(u32x2 p) -> f32x4x4 {
 }
 
 func load_mid(u32x2 texel) -> f32 {
+    u32x2 src_extent = u32x2(src_width, src_height);
+
     if (is_pot == 0) {
         texel = min(texel, src_extent >> 6);
     }
