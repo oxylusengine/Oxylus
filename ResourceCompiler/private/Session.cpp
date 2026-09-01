@@ -1,10 +1,18 @@
 #include "Session.hpp"
 
+#include <algorithm>
+#include <ranges>
+#include <thread>
 #include <zpp_bits.h>
 
 #include "ShaderSession.hpp"
 
 namespace ox::rc {
+struct ShaderTask {
+  option<std::vector<ShaderEntryPointData>> result = nullopt;
+  ShaderDiagnostics diag = {};
+};
+
 auto create_shader_session(slang::IGlobalSession* global_session, const ShaderSessionInfo& info)
   -> Slang::ComPtr<slang::ISession> {
   slang::CompilerOptionEntry entries[] = {
@@ -88,10 +96,21 @@ auto create_shader_session(slang::IGlobalSession* global_session, const ShaderSe
   return session;
 }
 
-auto Session::create() -> option<Session> {
+auto Session::create(const SessionCreateInfo& info) -> option<Session> {
   auto* self = new Session::Impl;
-  auto write_lock = std::unique_lock(self->session_mutex);
   if (SLANG_FAILED(slang::createGlobalSession(self->slang_global_session.writeRef()))) {
+    delete self;
+    return nullopt;
+  }
+
+  auto thread_count = info.thread_count;
+  if (thread_count == 0) {
+    const auto available = std::thread::hardware_concurrency();
+    thread_count = std::clamp(available > 1 ? available - 1 : 1_u32, 1_u32, 8_u32);
+  }
+
+  self->job_manager.set_thread_count(thread_count);
+  if (!self->job_manager.init().has_value()) {
     delete self;
     return nullopt;
   }
@@ -100,6 +119,7 @@ auto Session::create() -> option<Session> {
 }
 
 auto Session::destroy() -> void {
+  std::ignore = impl->job_manager.deinit();
   delete impl;
   impl = nullptr;
 }
@@ -131,25 +151,48 @@ auto Session::compile() -> bool {
       continue;
     }
 
+    // one session shared by every worker, so the modules this request imports are parsed once
     auto shader_session = ShaderSession{
-      .rc_session = *this,
+      .slang_session = slang_session,
       .name = request.session_info.name,
-      .slang_session = slang_session.get(),
       .root_directory = request.session_info.root_directory,
     };
 
-    for (const auto& shader : request.shaders) {
-      auto entry_points = shader_session.compile_shader(shader);
-      if (!entry_points.has_value()) {
+    // pre-sized and filled by index so the archive comes out in declaration order no matter which
+    // worker finishes first
+    auto tasks = std::vector<ShaderTask>(request.shaders.size());
+
+    auto barrier = Barrier::create();
+    for (auto shader_index = 0_sz; shader_index < request.shaders.size(); shader_index++) {
+      auto job = Job::create([&shader_session, &request, &task = tasks[shader_index], shader_index]() {
+        task.result = shader_session.compile_shader(request.shaders[shader_index], task.diag);
+      });
+
+      job->signal(barrier);
+      impl->job_manager.submit(std::move(job));
+    }
+
+    barrier->wait(impl->job_manager);
+
+    for (auto [shader_index, task] : std::views::enumerate(tasks)) {
+      for (auto& error : task.diag.errors) {
+        push_error(std::move(error));
+      }
+      for (auto& message : task.diag.messages) {
+        push_message(std::move(message));
+      }
+
+      if (!task.result.has_value()) {
         success = false;
         continue;
       }
 
+      const auto& shader = request.shaders[static_cast<usize>(shader_index)];
       auto pipeline = ShaderPipelineData{
         .module_name = shader.module_name,
       };
-      pipeline.entry_points.reserve(entry_points->size());
-      for (auto& ep : entry_points.value()) {
+      pipeline.entry_points.reserve(task.result->size());
+      for (auto& ep : task.result.value()) {
         pipeline.entry_points.push_back(std::move(ep));
       }
 

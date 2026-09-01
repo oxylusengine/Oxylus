@@ -51,8 +51,13 @@ struct ShaderCompileRequest {
   std::vector<ShaderCompileInfo> shaders = {};
 };
 
+struct SessionCreateInfo {
+  // 0 picks a default from the hardware concurrency
+  u32 thread_count = 0;
+};
+
 struct OXRC_API Session : Handle<Session> {
-  static auto create() -> option<Session>;
+  static auto create(const SessionCreateInfo& info = {}) -> option<Session>;
   auto destroy() -> void;
 
   auto add_request(const ShaderCompileRequest& request) -> void;

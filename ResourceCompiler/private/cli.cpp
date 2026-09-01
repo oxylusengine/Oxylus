@@ -1,5 +1,6 @@
 #include <Core/AppCommandLineArgs.hpp>
 #include <ResourceCompiler.hpp>
+#include <charconv>
 #include <fmt/base.h>
 #include <fmt/std.h>
 
@@ -21,6 +22,7 @@ auto print_help() -> void {
   print_command("config \"path\"", "TOML config file with resources to compile.");
   print_command("output \"path\"", "Output path for compiled resources. Overrides config file output.");
   print_command("include-dir \"path\"", "Extra shader search path, appended to every session. Repeatable.");
+  print_command("threads N", "Number of shader codegen workers. Defaults to the hardware concurrency, capped.");
 }
 
 auto main(i32 argc, c8** argv) -> i32 {
@@ -59,7 +61,27 @@ auto main(i32 argc, c8** argv) -> i32 {
     return 1;
   }
 
-  auto session = rc::Session::create();
+  auto session_info = rc::SessionCreateInfo{};
+  auto threads_argi = args.get_index("--threads");
+  if (threads_argi.has_value()) {
+    auto threads_arg = args.get(threads_argi.value() + 1);
+    if (!threads_arg.has_value()) {
+      log("Specify a thread count after `--threads`.");
+      return 1;
+    }
+
+    auto thread_count = 0;
+    const auto* begin = threads_arg->arg_str.data();
+    const auto* end = begin + threads_arg->arg_str.size();
+    if (std::from_chars(begin, end, thread_count).ec != std::errc{} || thread_count < 1) {
+      log(fmt::format("Error: `--threads` expects a positive integer, got '{}'.", threads_arg->arg_str));
+      return 1;
+    }
+
+    session_info.thread_count = static_cast<u32>(thread_count);
+  }
+
+  auto session = rc::Session::create(session_info);
   if (!session.has_value()) {
     log("Error: failed to create compiler session.");
     return 1;
