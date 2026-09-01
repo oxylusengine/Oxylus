@@ -26,6 +26,8 @@ auto ContextCVar::init(this ContextCVar& self) -> void {
   self.cvar_frame_limit
     .init(self.system, "rr.frame_limit", "Limits the framerate with a sleep. 0: Disable, > 0: Enable", 0);
   self.cvar_ui_scale.init(self.system, "ui.scale", "UI scale multiplier", UI_SCALE_DEFAULT_MULTIPLIER);
+  self.cvar_bindless_descriptor_count
+    .init(self.system, "rr.bindless_descriptor_count", "Requested capacity for each bindless descriptor array", 65536);
   self.cvar_mesh_shaders
     .init(self.system, "rr.mesh_shaders", "Use the mesh shader geometry pipeline when the device supports it", 1);
   self.cvar_ray_tracing
@@ -52,6 +54,7 @@ auto ContextCVar::save(this ContextCVar& self) -> void {
     {
       "render",
       toml::table{
+        {"bindless_descriptor_count", self.cvar_bindless_descriptor_count.get()},
         {"mesh_shaders", (bool)self.cvar_mesh_shaders.get()},
         {"ray_tracing", (bool)self.cvar_ray_tracing.get()},
       },
@@ -89,6 +92,8 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
   }
 
   if (const auto render_config = toml["render"]) {
+    if (auto v = render_config["bindless_descriptor_count"].as_integer())
+      self.cvar_bindless_descriptor_count.set(static_cast<i32>(v->get()));
     if (auto v = render_config["mesh_shaders"].as_boolean())
       self.cvar_mesh_shaders.set(v->get());
     if (auto v = render_config["ray_tracing"].as_boolean())
