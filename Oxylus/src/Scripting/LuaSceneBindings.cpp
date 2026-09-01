@@ -40,6 +40,7 @@ auto SceneBinding::bind(sol::state* state) -> void {
   SET_TYPE_FUNCTION(scene_type, Scene, get_rml_context);
   SET_TYPE_FUNCTION(scene_type, Scene, get_rml_context_name);
   SET_TYPE_FUNCTION(scene_type, Scene, set_rml_dpi_ratio);
+  SET_TYPE_FUNCTION(scene_type, Scene, clear_rml_dpi_ratio_override);
   SET_TYPE_FUNCTION(scene_type, Scene, get_uuid);
 
   scene_type.set_function("get_world_position", [](Scene* scene, flecs::entity e) -> glm::vec3 {

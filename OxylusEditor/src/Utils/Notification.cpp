@@ -8,6 +8,7 @@
 
 #include "Core/App.hpp"
 #include "EditorTheme.hpp"
+#include "UI/UI.hpp"
 
 namespace ox {
 static constexpr auto notification_window_size = ImVec2(400.f, 60.f);
@@ -52,9 +53,11 @@ auto NotificationSystem::draw(this NotificationSystem& self) -> void {
   ZoneScoped;
 
   // Bottom right
+  const auto scaled_root_window_size = UI::scale(root_window_size);
+  const auto scaled_padding = UI::scale(padding);
   ImVec2 root_screen_pos = ImGui::GetMainViewport()->Size;
-  root_screen_pos.x -= root_window_size.x + padding;
-  root_screen_pos.y -= root_window_size.y + padding + 25;
+  root_screen_pos.x -= scaled_root_window_size.x + scaled_padding;
+  root_screen_pos.y -= scaled_root_window_size.y + scaled_padding + UI::scale(25.0f);
 
   if (self.active_notifications.empty())
     return;
@@ -62,7 +65,7 @@ auto NotificationSystem::draw(this NotificationSystem& self) -> void {
   App::get_window().set_cursor_override(WindowCursor::Progress);
 
   ImGui::SetNextWindowPos({root_screen_pos.x, root_screen_pos.y}, ImGuiCond_Always);
-  ImGui::SetNextWindowSize(root_window_size, ImGuiCond_Always);
+  ImGui::SetNextWindowSize(scaled_root_window_size, ImGuiCond_Always);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.f, 0.f, 0.f, 0.f));
   ImGui::Begin(
     "##Notifications",
@@ -88,11 +91,12 @@ auto NotificationSystem::draw(this NotificationSystem& self) -> void {
 auto NotificationSystem::draw_single(this NotificationSystem& self, Notification& notif) -> void {
   ZoneScoped;
 
+  const auto scaled_notification_window_size = UI::scale(notification_window_size);
   ImGui::SetNextWindowBgAlpha(0.8f);
-  ImGui::SetNextWindowSize(notification_window_size, ImGuiCond_Always);
+  ImGui::SetNextWindowSize(scaled_notification_window_size, ImGuiCond_Always);
 
-  ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 3.0f);
-  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 3.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UI::scale(3.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, UI::scale(3.0f));
   ImGui::PushStyleColor(ImGuiCol_Border, Gruvbox::dark0_hard.Value);
   if (
     ImGui::BeginChild(
@@ -107,22 +111,23 @@ auto NotificationSystem::draw_single(this NotificationSystem& self, Notification
     config.setSpinnerType(ImSpinner::e_st_ang);
     config.setSpeed(6.f);
     config.setAngle(4.f);
-    config.setThickness(2.f);
-    config.setRadius(16.f);
+    config.setThickness(UI::scale(2.0f));
+    config.setRadius(UI::scale(16.0f));
     config.setColor(ImColor(1.f, 1.f, 1.f, 1.f));
     ImGui::PushFont(nullptr, 32.f);
-    constexpr auto icon_child_size = 60.f;
+    const auto icon_child_size = UI::scale(60.0f);
     // Center icon vertically
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.f, 0.f));
     ImGui::SetCursorPos(ImVec2(0.f, 0.f));
     ImGui::BeginChild(
       "##notification_icon",
-      ImVec2(icon_child_size, notification_window_size.y),
+      ImVec2(icon_child_size, scaled_notification_window_size.y),
       0,
       ImGuiWindowFlags_NoBackground
     );
-    ImGui::SetCursorPos(ImVec2(icon_child_size / 2.f - 16.f, icon_child_size / 2.f - 16.f));
+    const auto icon_half_size = UI::scale(16.0f);
+    ImGui::SetCursorPos(ImVec2(icon_child_size / 2.0f - icon_half_size, icon_child_size / 2.0f - icon_half_size));
     switch (notif.type) {
       case Notification::Info   : ImGui::TextUnformatted(ICON_MDI_INFORMATION); break;
       case Notification::Warn   : ImGui::TextUnformatted(ICON_MDI_ALERT); break;
@@ -136,7 +141,7 @@ auto NotificationSystem::draw_single(this NotificationSystem& self, Notification
     ImGui::SetCursorPos(ImVec2(icon_child_size, 0.f));
     ImGui::BeginChild(
       "##notification_text",
-      ImVec2(notification_window_size.x - icon_child_size, notification_window_size.y)
+      ImVec2(scaled_notification_window_size.x - icon_child_size, scaled_notification_window_size.y)
     );
     switch (notif.type) {
       case Notification::Info   : ImGui::Text("Info: "); break;

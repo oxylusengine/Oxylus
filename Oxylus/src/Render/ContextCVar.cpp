@@ -3,6 +3,7 @@
 #include <toml++/toml.hpp>
 
 #include "OS/File.hpp"
+#include "UI/UIScale.hpp"
 
 namespace ox {
 ContextCVar::ContextCVar() {
@@ -24,6 +25,7 @@ auto ContextCVar::init(this ContextCVar& self) -> void {
   self.cvar_vsync.init(self.system, "rr.vsync", "toggle vsync", 1);
   self.cvar_frame_limit
     .init(self.system, "rr.frame_limit", "Limits the framerate with a sleep. 0: Disable, > 0: Enable", 0);
+  self.cvar_ui_scale.init(self.system, "ui.scale", "UI scale multiplier", UI_SCALE_DEFAULT_MULTIPLIER);
   self.cvar_bindless_descriptor_count
     .init(self.system, "rr.bindless_descriptor_count", "Requested capacity for each bindless descriptor array", 65536);
   self.cvar_mesh_shaders
@@ -35,12 +37,18 @@ auto ContextCVar::init(this ContextCVar& self) -> void {
 auto ContextCVar::save(this ContextCVar& self) -> void {
   ZoneScoped;
 
+  const auto ui_scale = normalize_ui_scale_multiplier(self.cvar_ui_scale.get());
+  self.cvar_ui_scale.set(ui_scale);
+
   auto root = toml::table{
     {
       "display",
       toml::table{
         {"vsync", (bool)self.cvar_vsync.get()},
         {"frame_limit", self.cvar_frame_limit.get()},
+        {"ui_scale", ui_scale},
+        {"ui_scale_is_absolute", self.ui_scale_is_absolute},
+        {"ui_scale_uses_content_scale", self.ui_scale_uses_content_scale},
       },
     },
     {
@@ -73,6 +81,14 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
       self.cvar_vsync.set(v->get());
     if (auto v = display_config["frame_limit"].as_integer())
       self.cvar_frame_limit.set(static_cast<i32>(v->get()));
+    if (auto floating_scale = display_config["ui_scale"].as_floating_point())
+      self.cvar_ui_scale.set(normalize_ui_scale_multiplier(static_cast<f32>(floating_scale->get())));
+    else if (auto integer_scale = display_config["ui_scale"].as_integer())
+      self.cvar_ui_scale.set(normalize_ui_scale_multiplier(static_cast<f32>(integer_scale->get())));
+    if (auto absolute_scale = display_config["ui_scale_is_absolute"].as_boolean())
+      self.ui_scale_is_absolute = absolute_scale->get();
+    if (auto content_scale = display_config["ui_scale_uses_content_scale"].as_boolean())
+      self.ui_scale_uses_content_scale = content_scale->get();
   }
 
   if (const auto render_config = toml["render"]) {
@@ -85,5 +101,21 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
   }
 
   return true;
+}
+
+auto ContextCVar::initialize_ui_scale(this ContextCVar& self, f32 content_scale, f32 window_scale) -> void {
+  ZoneScoped;
+
+  if (self.ui_scale_uses_content_scale) {
+    return;
+  }
+
+  const auto current_scale = self.cvar_ui_scale.get();
+  self.cvar_ui_scale.set(
+    self.ui_scale_is_absolute ? migrate_framebuffer_ui_scale(window_scale, content_scale, current_scale)
+                              : migrate_legacy_ui_scale(content_scale, current_scale)
+  );
+  self.ui_scale_is_absolute = true;
+  self.ui_scale_uses_content_scale = true;
 }
 } // namespace ox

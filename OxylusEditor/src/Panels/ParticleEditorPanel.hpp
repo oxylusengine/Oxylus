@@ -40,6 +40,7 @@ private:
   auto draw_shape_overlay(this ParticleEditorPanel& self, ImVec2 image_min, ImVec2 image_size) -> void;
   auto ensure_preview_scene(this ParticleEditorPanel& self) -> void;
   auto sync_preview_asset(this ParticleEditorPanel& self) -> void;
+  auto sync_node_editor_scale(this ParticleEditorPanel& self) -> void;
 
   UUID asset_uuid = {};
   std::filesystem::path asset_path = {};
@@ -72,6 +73,7 @@ private:
   // from different programs
   std::array<ax::NodeEditor::EditorContext*, PARTICLE_PROGRAM_KIND_COUNT> graph_contexts = {};
   std::array<bool, PARTICLE_PROGRAM_KIND_COUNT> graph_positions_applied = {};
+  f32 applied_node_editor_scale = 0.0f;
   bool graph_dock_built = false;
 
   std::unique_ptr<Scene> preview_scene = nullptr;

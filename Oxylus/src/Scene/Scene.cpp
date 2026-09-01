@@ -2826,6 +2826,14 @@ auto Scene::set_rml_dpi_ratio(this const Scene& self, f32 ratio) -> void {
   }
 }
 
+auto Scene::clear_rml_dpi_ratio_override(this const Scene& self) -> void {
+  ZoneScoped;
+
+  if (self.rml_view) {
+    self.rml_view->clear_dpi_ratio_override();
+  }
+}
+
 auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   ZoneScoped;
 

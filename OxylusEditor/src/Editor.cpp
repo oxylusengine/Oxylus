@@ -207,6 +207,7 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   imgui_renderer.keyboard_input_enabled = !self.main_viewport_panel.is_any_scene_playing();
 
+  self.editor_theme.sync_scale(App::get_ui_scale());
   imgui_renderer.begin_frame(timestep.get_seconds(), window.get_logical_size(), window.get_real_size());
   ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
   ImGuizmo::BeginFrame();
@@ -259,7 +260,7 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
                                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings;
 
-  constexpr float bottom_bar_height = 30.0f;
+  const float bottom_bar_height = UI::scale(30.0f);
 
   ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -599,7 +600,7 @@ void Editor::draw_menubar(this Editor& self) {
       // Project name text
       const std::string& project_name = self.active_project->get_config().name;
       ImGui::SetCursorPos(
-        ImVec2(ImGui::GetMainViewport()->Size.x - 10 - ImGui::CalcTextSize(project_name.c_str()).x, 0)
+        ImVec2(ImGui::GetMainViewport()->Size.x - UI::scale(10.0f) - ImGui::CalcTextSize(project_name.c_str()).x, 0)
       );
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
       ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
@@ -623,7 +624,7 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
                                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 4.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, UI::scale(ImVec2(8.0f, 4.0f)));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.11f, 0.11f, 0.11f, 1.0f));
@@ -690,7 +691,7 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
 
       auto notif_text = fmt::format("{} {}", icon_text, notif.title);
       const float text_width = ImGui::CalcTextSize(notif_text.c_str()).x;
-      ImGui::SameLine(ImGui::GetWindowWidth() - text_width - 16.0f);
+      ImGui::SameLine(ImGui::GetWindowWidth() - text_width - UI::scale(16.0f));
       ImGui::TextUnformatted(notif_text.c_str());
       if (ImGui::IsItemClicked()) {
         activity_log_panel_state = !activity_log_panel_state;

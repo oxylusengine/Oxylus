@@ -10,6 +10,7 @@
 #include "Render/Renderer.hpp"
 #include "Render/Window.hpp"
 #include "UI/ImGuiRenderer.hpp"
+#include "UI/UIScale.hpp"
 #include "Utils/Profiler.hpp"
 
 namespace ox {
@@ -56,6 +57,10 @@ auto App::init(this App& self) -> void {
 
   if (self.registry.has<Renderer>()) {
     self.render_context = std::make_unique<RenderContext>();
+    self.render_context->context_cvar.initialize_ui_scale(
+      self.window->get_content_scale(),
+      self.window->get_dpi_scale()
+    );
 
     const bool enable_validation = self.command_line_args.contains("--vulkan-validation");
     self.render_context->create_context(*self.window, enable_validation);
@@ -79,7 +84,8 @@ auto App::init(this App& self) -> void {
 }
 
 auto App::step(this App& self) -> void {
-  const i32 frame_limit = self.frame_limit > 0 ? self.frame_limit : self.render_context->context_cvar.cvar_frame_limit.get();
+  const i32 frame_limit = self.frame_limit > 0 ? self.frame_limit
+                                               : self.render_context->context_cvar.cvar_frame_limit.get();
   if (frame_limit > 0) {
     self.timestep.set_max_frame_time(1000.0 / static_cast<f64>(frame_limit));
   } else {
@@ -214,6 +220,10 @@ auto App::get_window() -> const Window& {
 
 auto App::get_rendercontext() -> RenderContext& {
   return *instance_->render_context; //
+}
+
+auto App::get_ui_scale() -> f32 {
+  return normalize_ui_scale_multiplier(get_rendercontext().context_cvar.cvar_ui_scale.get());
 }
 
 auto App::get_timestep() -> const Timestep& {
