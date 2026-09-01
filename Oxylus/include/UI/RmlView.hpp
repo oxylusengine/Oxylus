@@ -7,6 +7,7 @@
 #include <vuk/ImageAttachment.hpp>
 #include <vuk/Value.hpp>
 
+#include "Core/Option.hpp"
 #include "Core/Types.hpp"
 
 namespace ox {
@@ -33,7 +34,8 @@ public:
 
   // Where this view lands on the window, in the same space as the mouse events.
   auto set_viewport(this RmlView& self, glm::ivec2 origin, glm::ivec2 size, bool keyboard_focused_) -> void;
-  auto set_dpi_ratio(this const RmlView& self, f32 ratio) -> void;
+  auto set_dpi_ratio(this RmlView& self, f32 ratio) -> void;
+  auto clear_dpi_ratio_override(this RmlView& self) -> void;
 
   auto context(this const RmlView& self) -> Rml::Context* { return self.rml_context; }
   auto name(this const RmlView& self) -> std::string_view;
@@ -47,5 +49,9 @@ public:
 private:
   Rml::Context* rml_context = nullptr;
   std::unique_ptr<RmlRenderer> renderer = {};
+  option<f32> dpi_ratio_override = nullopt;
+  f32 applied_dpi_ratio = 0.0f;
+
+  auto sync_dpi_ratio(this RmlView& self) -> void;
 };
 } // namespace ox

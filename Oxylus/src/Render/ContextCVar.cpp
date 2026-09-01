@@ -3,6 +3,7 @@
 #include <toml++/toml.hpp>
 
 #include "OS/File.hpp"
+#include "UI/UIScale.hpp"
 
 namespace ox {
 ContextCVar::ContextCVar() {
@@ -24,6 +25,7 @@ auto ContextCVar::init(this ContextCVar& self) -> void {
   self.cvar_vsync.init(self.system, "rr.vsync", "toggle vsync", 1);
   self.cvar_frame_limit
     .init(self.system, "rr.frame_limit", "Limits the framerate with a sleep. 0: Disable, > 0: Enable", 0);
+  self.cvar_ui_scale.init(self.system, "ui.scale", "UI scale multiplier", UI_SCALE_DEFAULT_MULTIPLIER);
   self.cvar_mesh_shaders
     .init(self.system, "rr.mesh_shaders", "Use the mesh shader geometry pipeline when the device supports it", 1);
   self.cvar_ray_tracing
@@ -33,12 +35,16 @@ auto ContextCVar::init(this ContextCVar& self) -> void {
 auto ContextCVar::save(this ContextCVar& self) -> void {
   ZoneScoped;
 
+  const auto ui_scale = normalize_ui_scale_multiplier(self.cvar_ui_scale.get());
+  self.cvar_ui_scale.set(ui_scale);
+
   auto root = toml::table{
     {
       "display",
       toml::table{
         {"vsync", (bool)self.cvar_vsync.get()},
         {"frame_limit", self.cvar_frame_limit.get()},
+        {"ui_scale", ui_scale},
       },
     },
     {
@@ -70,6 +76,10 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
       self.cvar_vsync.set(v->get());
     if (auto v = display_config["frame_limit"].as_integer())
       self.cvar_frame_limit.set(static_cast<i32>(v->get()));
+    if (auto floating_scale = display_config["ui_scale"].as_floating_point())
+      self.cvar_ui_scale.set(normalize_ui_scale_multiplier(static_cast<f32>(floating_scale->get())));
+    else if (auto integer_scale = display_config["ui_scale"].as_integer())
+      self.cvar_ui_scale.set(normalize_ui_scale_multiplier(static_cast<f32>(integer_scale->get())));
   }
 
   if (const auto render_config = toml["render"]) {

@@ -23,7 +23,7 @@ void UI::pop_id() {
   --ui_context_id;
 }
 
-void UI::push_frame_style(bool on) { ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, on ? 1.f : 0.f); }
+void UI::push_frame_style(bool on) { ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, on ? scale(1.0f) : 0.0f); }
 void UI::pop_frame_style() { ImGui::PopStyleVar(); }
 
 bool UI::begin_properties(const ImGuiTableFlags flags, bool fixed_width, float width) {
@@ -109,6 +109,13 @@ void UI::align_right(float item_width) {
   const auto posX = ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - item_width - ImGui::GetScrollX();
   if (posX > ImGui::GetCursorPosX())
     ImGui::SetCursorPosX(posX);
+}
+
+auto UI::scale(f32 value) -> f32 { return value * App::get_ui_scale(); }
+
+auto UI::scale(ImVec2 value) -> ImVec2 {
+  const auto ui_scale = App::get_ui_scale();
+  return {value.x * ui_scale, value.y * ui_scale};
 }
 
 void UI::text(std::string_view label, std::string_view value, const char* tooltip) {
@@ -331,7 +338,7 @@ bool UI::draw_vec3_control(const char* label, glm::vec3& values, const char* too
   ImGui::PushMultiItemsWidths(3, ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize);
 
   const float frame_height = ImGui::GetFrameHeight();
-  const ImVec2 button_size = {2.f, frame_height};
+  const ImVec2 button_size = {scale(2.0f), frame_height};
 
   // X
   {
@@ -417,7 +424,7 @@ bool UI::draw_vec2_control(const char* label, glm::vec2& values, const char* too
   ImGui::PushMultiItemsWidths(2, ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize);
 
   const float frame_height = ImGui::GetFrameHeight();
-  const ImVec2 button_size = {2.f, frame_height};
+  const ImVec2 button_size = {scale(2.0f), frame_height};
 
   // X
   {
@@ -608,9 +615,10 @@ void UI::draw_framerate_overlay(const ImVec2 work_pos, const ImVec2 work_size, c
                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
   if (corner != -1) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const auto scaled_padding = scale(padding);
     ImVec2 window_pos, window_pos_pivot;
-    window_pos.x = corner & 1 ? work_pos.x + work_size.x - padding.x : work_pos.x + padding.x;
-    window_pos.y = corner & 2 ? work_pos.y + work_size.y - padding.y : work_pos.y + padding.y;
+    window_pos.x = corner & 1 ? work_pos.x + work_size.x - scaled_padding.x : work_pos.x + scaled_padding.x;
+    window_pos.y = corner & 2 ? work_pos.y + work_size.y - scaled_padding.y : work_pos.y + scaled_padding.y;
     window_pos_pivot.x = corner & 1 ? 1.0f : 0.0f;
     window_pos_pivot.y = corner & 2 ? 1.0f : 0.0f;
     ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
@@ -618,7 +626,7 @@ void UI::draw_framerate_overlay(const ImVec2 work_pos, const ImVec2 work_size, c
     window_flags |= ImGuiWindowFlags_NoMove;
   }
   ImGui::SetNextWindowBgAlpha(0.35f);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 3.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, scale(3.0f));
   if (ImGui::Begin("Performance Overlay", nullptr, window_flags)) {
     ImGui::Text("%.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
   }

@@ -2,7 +2,9 @@
 
 #include <ImGuizmo.h>
 #include <RmlUi/Core.h>
+#include <cmath>
 #include <icons/IconsMaterialDesignIcons.h>
+#include <implot.h>
 
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
@@ -169,20 +171,6 @@ void EditorTheme::apply_theme(bool dark) {
 
 void EditorTheme::set_style() {
   {
-    auto& style = ImGuizmo::GetStyle();
-    style.TranslationLineThickness *= 1.3f;
-    style.TranslationLineArrowSize *= 1.3f;
-    style.RotationLineThickness *= 1.3f;
-    style.RotationOuterLineThickness *= 1.3f;
-    style.ScaleLineThickness *= 1.3f;
-    style.ScaleLineCircleSize *= 1.3f;
-    style.HatchedAxisLineThickness *= 1.3f;
-    style.CenterCircleSize *= 1.3f;
-
-    ImGuizmo::SetGizmoSizeClipSpace(0.2f);
-  }
-
-  {
     ImGuiStyle* style = &ImGui::GetStyle();
 
     style->AntiAliasedFill = true;
@@ -231,7 +219,55 @@ void EditorTheme::set_style() {
                                                      ImGuiColorEditFlags_PickerHueBar | ImGuiColorEditFlags_Uint8;
     ImGui::SetColorEditOptions(color_edit_flags);
 
-    style->ScaleAllSizes(1.0f);
+    App::mod<ImGuiRenderer>().set_base_style(*style);
   }
+
+  this->sync_scale(App::get_ui_scale());
+}
+
+auto EditorTheme::sync_scale(this EditorTheme& self, const f32 ui_scale) -> void {
+  if (std::abs(self.applied_ui_scale - ui_scale) <= 0.0001f) {
+    return;
+  }
+
+  {
+    auto style = ImGuizmo::Style{};
+    const auto gizmo_scale = 1.3f * ui_scale;
+    style.TranslationLineThickness *= gizmo_scale;
+    style.TranslationLineArrowSize *= gizmo_scale;
+    style.RotationLineThickness *= gizmo_scale;
+    style.RotationOuterLineThickness *= gizmo_scale;
+    style.ScaleLineThickness *= gizmo_scale;
+    style.ScaleLineCircleSize *= gizmo_scale;
+    style.HatchedAxisLineThickness *= gizmo_scale;
+    style.CenterCircleSize *= gizmo_scale;
+    ImGuizmo::GetStyle() = style;
+    ImGuizmo::SetGizmoSizeClipSpace(0.2f);
+  }
+
+  {
+    auto style = ImPlotStyle{};
+    style.PlotDefaultSize *= ui_scale;
+    style.PlotMinSize *= ui_scale;
+    style.PlotBorderSize *= ui_scale;
+    style.MajorTickLen *= ui_scale;
+    style.MinorTickLen *= ui_scale;
+    style.MajorTickSize *= ui_scale;
+    style.MinorTickSize *= ui_scale;
+    style.MajorGridSize *= ui_scale;
+    style.MinorGridSize *= ui_scale;
+    style.PlotPadding *= ui_scale;
+    style.LabelPadding *= ui_scale;
+    style.LegendPadding *= ui_scale;
+    style.LegendInnerPadding *= ui_scale;
+    style.LegendSpacing *= ui_scale;
+    style.MousePosPadding *= ui_scale;
+    style.AnnotationPadding *= ui_scale;
+    style.DigitalPadding *= ui_scale;
+    style.DigitalSpacing *= ui_scale;
+    ImPlot::GetStyle() = style;
+  }
+
+  self.applied_ui_scale = ui_scale;
 }
 } // namespace ox

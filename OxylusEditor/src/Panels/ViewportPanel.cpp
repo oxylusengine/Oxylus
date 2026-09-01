@@ -1,6 +1,7 @@
 #include "ViewportPanel.hpp"
 
 #include <ImGuizmo.h>
+#include <cmath>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
@@ -35,6 +36,7 @@ template <typename T, typename Func>
 void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, Scene* scene, Func&& icon_select_func) {
   auto& editor = App::mod<Editor>();
   auto& editor_theme = editor.editor_theme;
+  const auto scaled_icon_size = UI::scale(gizmo_info.icon_size);
 
   scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T& component) {
     const glm::vec3 pos = Scene::get_world_transform(entity)[3];
@@ -53,14 +55,14 @@ void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, 
       gizmo_info.xpos,
       gizmo_info.ypos
     );
-    ImGui::SetCursorPos({screen_pos.x - (gizmo_info.icon_size / 2.f), screen_pos.y - (gizmo_info.icon_size / 2.f)});
+    ImGui::SetCursorPos({screen_pos.x - scaled_icon_size * 0.5f, screen_pos.y - scaled_icon_size * 0.5f});
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.7f, 0.7f, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.1f));
 
     ImGui::PushFont(nullptr, gizmo_info.icon_size);
     ImGui::PushID(static_cast<i32>(entity.id()));
     const char* icon = icon_select_func(editor_theme.component_icon_map.at(typeid(T).hash_code()), component);
-    if (ImGui::Button(icon, {gizmo_info.icon_size, gizmo_info.icon_size})) {
+    if (ImGui::Button(icon, {scaled_icon_size, scaled_icon_size})) {
       auto& editor_context = editor.get_context();
       editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
     }
@@ -184,7 +186,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     if (viewport_settings_popup)
       ImGui::OpenPopup("viewport_settings");
 
-    ImGui::SetNextWindowSize(ImVec2(345, 0));
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(345.0f, 0.0f)));
     if (ImGui::BeginPopup("viewport_settings")) {
       self.draw_settings_panel();
       ImGui::EndPopup();
@@ -193,7 +195,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     if (gizmo_settings_popup)
       ImGui::OpenPopup("gizmo_settings");
 
-    ImGui::SetNextWindowSize(ImVec2(325, 0));
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(325.0f, 0.0f)));
     if (ImGui::BeginPopup("gizmo_settings")) {
       self.draw_gizmo_settings_panel();
       ImGui::EndPopup();
@@ -202,7 +204,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     if (snap_settings_popup)
       ImGui::OpenPopup("snap_settings");
 
-    ImGui::SetNextWindowSize(ImVec2(325, 0));
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(325.0f, 0.0f)));
     if (ImGui::BeginPopup("snap_settings")) {
       self.draw_snap_settings_panel();
       ImGui::EndPopup();
@@ -211,7 +213,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     if (terrain_brush_settings_popup)
       ImGui::OpenPopup("terrain_brush_settings");
 
-    ImGui::SetNextWindowSize(ImVec2(345, 0));
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(345.0f, 0.0f)));
     if (ImGui::BeginPopup("terrain_brush_settings")) {
       self.draw_terrain_brush_settings_panel();
       ImGui::EndPopup();
@@ -219,7 +221,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
 
     if (sound_settings_popup)
       ImGui::OpenPopup("sound_settings", ImGuiPopupFlags_MouseButtonRight);
-    ImGui::SetNextWindowSize(ImVec2(225, 0));
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(225.0f, 0.0f)));
     if (ImGui::BeginPopup("sound_settings")) {
       self.draw_sound_settings_panel();
       ImGui::EndPopup();
@@ -258,15 +260,15 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       }
     }
 
-    self.scaled_render_size = self.render_size;
-    const u32 scale = editor.editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool()
-                        ? static_cast<u32>(App::get_window().get_dpi_scale())
-                        : (
-                            1u << static_cast<u32>(editor.editor_cvar.cvar_viewport_scale_amount.get())
-                          ); // 0->1, 1->2, 2->4, 3->8
-
-    self.scaled_render_size.x *= scale;
-    self.scaled_render_size.y *= scale;
+    const auto render_scale = editor.editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool()
+                                ? App::get_ui_scale()
+                                : static_cast<f32>(
+                                    1u << static_cast<u32>(editor.editor_cvar.cvar_viewport_scale_amount.get())
+                                  ); // 0->1, 1->2, 2->4, 3->8
+    self.scaled_render_size = {
+      std::round(self.render_size.x * render_scale),
+      std::round(self.render_size.y * render_scale),
+    };
     self.viewport_bounds_[0] = {
       viewport_min_region.x + self.viewport_position.x + self.viewport_offset.x,
       viewport_min_region.y + self.viewport_position.y + self.viewport_offset.y
@@ -549,7 +551,7 @@ auto ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw
     return;
   auto work_pos = ImVec2(self.viewport_position.x, self.viewport_position.y);
   auto work_size = ImVec2(self.viewport_size.x, self.viewport_size.y);
-  auto padding = glm::vec2{15, 55};
+  const auto padding = UI::scale(ImVec2(15.0f, 55.0f));
 
   ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
@@ -561,8 +563,8 @@ auto ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw
   window_pos_pivot.y = 0.0f;
   ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
   ImGui::SetNextWindowBgAlpha(0.35f);
-  ImGui::SetNextWindowSize(draw ? ImVec2({220.f, 0.f}) : ImVec2(120.f, 5.f), ImGuiCond_Always);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
+  ImGui::SetNextWindowSize(draw ? UI::scale(ImVec2(220.0f, 0.0f)) : UI::scale(ImVec2(120.0f, 5.0f)), ImGuiCond_Always);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UI::scale(2.0f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   auto overlay_id = fmt::format("{}_overlay", self.get_id());
   if (ImGui::Begin(overlay_id.c_str(), nullptr, window_flags)) {
@@ -1745,25 +1747,29 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
   const ImVec2 content_min = ImGui::GetWindowContentRegionMin();
   const ImVec2 panel_top_left = {window_pos.x + content_min.x, window_pos.y + content_min.y};
 
-  const ImVec2 gizmo_pos = {panel_top_left.x + self.gizmo_position.x, panel_top_left.y + self.gizmo_position.y};
+  const auto scaled_gizmo_position = UI::scale(self.gizmo_position);
+  const ImVec2 gizmo_pos = {
+    panel_top_left.x + scaled_gizmo_position.x,
+    panel_top_left.y + scaled_gizmo_position.y,
+  };
   const ImRect bb(
     gizmo_pos.x,
     gizmo_pos.y,
-    gizmo_pos.x + button_size.x + 8,
-    gizmo_pos.y + (button_size.y + 2) * (button_count + 0.5f)
+    gizmo_pos.x + button_size.x + UI::scale(8.0f),
+    gizmo_pos.y + (button_size.y + UI::scale(2.0f)) * (button_count + 0.5f)
   );
   ImVec4 frame_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
   frame_color.w = 0.5f;
   ImGui::RenderFrame(bb.Min, bb.Max, ImGui::GetColorU32(frame_color), false, ImGui::GetStyle().FrameRounding);
 
-  const auto temp_gizmo_position = self.gizmo_position;
-  ImGui::SetCursorPos(
-    {start_cursor_pos.x + temp_gizmo_position.x + frame_padding.x, start_cursor_pos.y + temp_gizmo_position.y}
-  );
+  ImGui::SetCursorPos({
+    start_cursor_pos.x + scaled_gizmo_position.x + frame_padding.x,
+    start_cursor_pos.y + scaled_gizmo_position.y,
+  });
   ImGui::BeginGroup();
   {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, UI::scale(ImVec2(1.0f, 1.0f)));
 
     const ImVec2 dragger_cursor_pos = ImGui::GetCursorPos();
     ImGui::SetCursorPosX(dragger_cursor_pos.x + frame_padding.x);
@@ -1775,8 +1781,8 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
     static ImVec2 last_mouse_position = ImGui::GetMousePos();
     const ImVec2 mouse_pos = ImGui::GetMousePos();
     if (ImGui::IsItemActive()) {
-      self.gizmo_position.x += mouse_pos.x - last_mouse_position.x;
-      self.gizmo_position.y += mouse_pos.y - last_mouse_position.y;
+      self.gizmo_position.x += (mouse_pos.x - last_mouse_position.x) / App::get_ui_scale();
+      self.gizmo_position.y += (mouse_pos.y - last_mouse_position.y) / App::get_ui_scale();
     }
     last_mouse_position = mouse_pos;
 
@@ -1834,16 +1840,16 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
 
 void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) {
   constexpr float button_count = 2.0f;
-  constexpr float y_pad = 3.0f;
-  const ImVec2 button_size = {35.f, 25.f};
+  const float y_pad = UI::scale(3.0f);
+  const ImVec2 button_size = UI::scale(ImVec2(35.0f, 25.0f));
   const ImVec2 group_size = {button_size.x * button_count, button_size.y + y_pad};
 
   ImGui::SetCursorPos({self.viewport_size.x * 0.5f - (group_size.x * 0.5f), start_cursor_pos.y + y_pad});
   ImGui::BeginGroup();
   {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, UI::scale(ImVec2(1.0f, 1.0f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UI::scale(1.0f));
 
     auto& event_system = App::get_event_system();
 

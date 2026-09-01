@@ -68,14 +68,14 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
 
   UI::center_next_window();
   ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.7f));
-  ImGui::SetNextWindowSize(ImVec2(static_cast<f32>(banner_size.width), 400.f));
+  ImGui::SetNextWindowSize(UI::scale(ImVec2(static_cast<f32>(banner_size.width), 400.0f)));
   if (ImGui::BeginPopupModal("ProjectSelector", nullptr, flags)) {
-    const float x = static_cast<float>(banner_size.width);
+    const float x = UI::scale(static_cast<float>(banner_size.width));
     const float y = static_cast<float>(ImGui::GetFrameHeight()) * 1.3f;
 
     const auto& window = App::get_window();
 
-    UI::image(self.engine_banner.view(), {x, static_cast<float>(banner_size.height)});
+    UI::image(self.engine_banner.view(), {x, UI::scale(static_cast<float>(banner_size.height))});
     UI::spacing(2);
     ImGui::SeparatorText("Recent Projects");
     UI::spacing(2);
@@ -126,7 +126,7 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
         ImGui::Separator();
 
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::Button("Create", ImVec2(120, 0))) {
+        if (ImGui::Button("Create", UI::scale(ImVec2(120.0f, 0.0f)))) {
           self.new_project_dir = std::filesystem::path(new_project_dir_str).make_preferred();
           self.new_project_asset_dir = std::filesystem::path(new_project_asset_dir_str).make_preferred();
           new_project(self.new_project_dir, self.new_project_name, self.new_project_asset_dir);
@@ -135,7 +135,7 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
         }
         ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+        if (ImGui::Button("Cancel", UI::scale(ImVec2(120.0f, 0.0f)))) {
           draw_new_project_panel = false;
         }
       } else {
@@ -151,9 +151,9 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
           ImGui::SameLine();
 
           // Arrow icons for buttons
-          ImGui::SetCursorPosX(x - 30.f);
-          const auto font_size = y * 0.6f;
-          ImGui::SetCursorPosY(cursor_pos_y + 4.f); // 4 is just a random number I picked that looked centered enough...
+          ImGui::SetCursorPosX(x - UI::scale(30.0f));
+          const auto font_size = y * 0.6f / App::get_ui_scale();
+          ImGui::SetCursorPosY(cursor_pos_y + UI::scale(4.0f));
           ImGui::PushFont(nullptr, font_size);
           ImGui::TextUnformatted(ICON_MDI_PLAY_OUTLINE);
           ImGui::PopFont();
@@ -194,7 +194,7 @@ void ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment swapc
 
         UI::spacing(8);
 
-        constexpr f32 cnt_button_size = 200.f;
+        const f32 cnt_button_size = UI::scale(200.0f);
         ImGui::SetCursorPosX((x / 2.f) - (cnt_button_size / 2.f));
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
         if (ImGui::Button("Continue without project", ImVec2(cnt_button_size, 0))) {

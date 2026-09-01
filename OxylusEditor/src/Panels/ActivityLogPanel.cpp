@@ -5,6 +5,8 @@
 #include <ranges>
 #include <tracy/Tracy.hpp>
 
+#include "UI/UI.hpp"
+
 namespace ox {
 ActivityLogPanel::ActivityLogPanel() : EditorPanelState("Activity Log", ICON_MDI_FORUM, false) {}
 
@@ -28,7 +30,7 @@ auto ActivityLogPanel::on_render(this ActivityLogPanel& self, vuk::ImageAttachme
     }
 
     if (ImGui::BeginTable("table_row_height", 2, ImGuiTableFlags_Borders)) {
-      ImGui::TableSetupColumn("##", ImGuiTableColumnFlags_WidthFixed, 12.f);
+      ImGui::TableSetupColumn("##", ImGuiTableColumnFlags_WidthFixed, UI::scale(12.0f));
 
       for (auto& notification : std::views::reverse(self.notification_system->notification_history)) {
         if (!self.log_filter.PassFilter(notification.title.c_str())) {

@@ -517,7 +517,7 @@ void ContentPanel::on_render(this ContentPanel& self, vuk::ImageAttachment swapc
     ImGui::Separator();
     const ImVec2 availableRegion = ImGui::GetContentRegionAvail();
     if (ImGui::BeginTable("MainViewTable", 2, tableFlags, availableRegion)) {
-      ImGui::TableSetupColumn("##side_view", ImGuiTableColumnFlags_WidthFixed, 150);
+      ImGui::TableSetupColumn("##side_view", ImGuiTableColumnFlags_WidthFixed, UI::scale(150.0f));
       ImGui::TableNextRow();
       ImGui::TableNextColumn();
       self.render_side_view();
@@ -817,23 +817,25 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
   auto& editor_cvar = App::mod<Editor>().editor_cvar;
 
-  constexpr float padding = 2.0f;
-  const float scaled_thumbnail_size = editor_cvar.cvar_file_thumbnail_size.get() * ImGui::GetIO().FontGlobalScale;
+  const float padding = UI::scale(2.0f);
+  const float scaled_thumbnail_size = UI::scale(editor_cvar.cvar_file_thumbnail_size.get());
   const float scaled_thumbnail_size_x = scaled_thumbnail_size * 0.55f;
   const float cell_size = scaled_thumbnail_size_x + 2 * padding + scaled_thumbnail_size_x * 0.1f;
 
-  constexpr float thumbnail_content_padding = padding * 2.0f;
-  constexpr float thumbnail_image_offset = padding + thumbnail_content_padding;
+  const float thumbnail_content_padding = padding * 2.0f;
+  const float thumbnail_image_offset = padding + thumbnail_content_padding;
   const float thumb_image_size = scaled_thumbnail_size_x - thumbnail_content_padding * 2.0f;
+  const float thumb_image_font_size = thumb_image_size / App::get_ui_scale();
 
   constexpr float thumbnail_name_font_size = 14.0f;
-  constexpr float thumbnail_name_height = thumbnail_name_font_size * 2.0f;
-  constexpr float thumbnail_name_type_spacing = padding * 2.0f;
-  const float type_color_frame_height = std::max(1.0f, scaled_thumbnail_size_x * 0.03f);
+  const float thumbnail_name_height = UI::scale(thumbnail_name_font_size) * 2.0f;
+  const float thumbnail_name_type_spacing = padding * 2.0f;
+  const float type_color_frame_height = std::max(UI::scale(1.0f), scaled_thumbnail_size_x * 0.03f);
   const float type_color_frame_offset_y = thumbnail_image_offset + thumb_image_size + thumbnail_content_padding;
   const float thumbnail_name_offset_y = type_color_frame_offset_y + type_color_frame_height + padding;
   const float thumbnail_type_offset_y = thumbnail_name_offset_y + thumbnail_name_height + thumbnail_name_type_spacing;
-  const float thumbnail_card_height = thumbnail_type_offset_y + editor_theme.small_font_size + padding * 2.0f;
+  const float thumbnail_card_height = thumbnail_type_offset_y + UI::scale(editor_theme.small_font_size) +
+                                      padding * 2.0f;
   const ImVec2 background_thumbnail_size = {scaled_thumbnail_size_x + padding * 2.0f, thumbnail_card_height};
 
   const float panel_width = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize;
@@ -845,7 +847,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
   ImGuiTableFlags flags = ImGuiTableFlags_ContextMenuInBody | ImGuiTableFlags_ScrollY;
 
   if (!grid) {
-    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, {4.0f, 2.0f});
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, UI::scale(ImVec2(4.0f, 2.0f)));
     column_count = 4;
     flags |= ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_RowBg |
              ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp;
@@ -902,7 +904,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           if (clicked) {
             editor_context.reset(EditorContext::Type::File, file_path_str);
           }
-          ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, editor_theme.popup_item_spacing);
+          ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, UI::scale(editor_theme.popup_item_spacing));
           if (ImGui::BeginPopupContextItem()) {
             if (ImGui::MenuItem("Delete")) {
               self.directory_to_delete = path;
@@ -982,15 +984,15 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
               config.setSpinnerType(ImSpinner::e_st_ang);
               config.setSpeed(6.f);
               config.setAngle(4.f);
-              config.setThickness(2.f);
+              config.setThickness(UI::scale(2.0f));
               config.setRadius(thumb_image_size / 2.f);
               config.setColor(ImColor(1.f, 1.f, 1.f, 1.f));
-              ImGui::PushFont(nullptr, thumb_image_size);
+              ImGui::PushFont(nullptr, thumb_image_font_size);
               ImSpinner::Spinner("SpinnerAng270NoBg", config);
               ImGui::PopFont();
             }
           } else {
-            ImGui::PushFont(nullptr, thumb_image_size);
+            ImGui::PushFont(nullptr, thumb_image_font_size);
             ImGui::TextUnformatted(file.icon.c_str());
             ImGui::PopFont();
           }
@@ -1052,7 +1054,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           if (clicked)
             editor_context.reset(EditorContext::Type::File, file_path_str);
 
-          ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, editor_theme.popup_item_spacing);
+          ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, UI::scale(editor_theme.popup_item_spacing));
           if (ImGui::BeginPopupContextItem("ContentEntryContext")) {
             if (ImGui::MenuItem("Delete")) {
               self.directory_to_delete = path;
@@ -1095,7 +1097,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
       }
     }
 
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, editor_theme.popup_item_spacing);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, UI::scale(editor_theme.popup_item_spacing));
     if (
       ImGui::BeginPopupContextWindow(
         "AssetPanelHierarchyContextWindow",
@@ -1129,7 +1131,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
       self.directory_to_delete.string().c_str()
     );
     ImGui::Separator();
-    if (ImGui::Button("OK", ImVec2(120, 0))) {
+    if (ImGui::Button("OK", UI::scale(ImVec2(120.0f, 0.0f)))) {
       std::filesystem::remove_all(self.directory_to_delete);
       self.directory_to_delete.clear();
       self.refresh();
@@ -1137,7 +1139,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     }
     ImGui::SetItemDefaultFocus();
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+    if (ImGui::Button("Cancel", UI::scale(ImVec2(120.0f, 0.0f)))) {
       ImGui::CloseCurrentPopup();
       self.directory_to_delete.clear();
     }
@@ -1153,7 +1155,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     UI::input_text("Name", &self.new_asset_name);
     UI::end_properties();
 
-    if (ImGui::Button("Create", ImVec2(120, 0))) {
+    if (ImGui::Button("Create", UI::scale(ImVec2(120.0f, 0.0f)))) {
       if (!self.new_asset_name.empty()) {
         auto& asset_man = App::mod<AssetManager>();
         auto asset_path = self.current_directory / self.new_asset_name;
@@ -1188,7 +1190,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     }
 
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+    if (ImGui::Button("Cancel", UI::scale(ImVec2(120.0f, 0.0f)))) {
       self.new_asset_name.clear();
       self.should_open_new_asset_popup = false;
       ImGui::CloseCurrentPopup();
