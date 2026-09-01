@@ -32,9 +32,8 @@ auto EditorCVar::init(this EditorCVar& self) -> void {
   self.cvar_camera_zoom.init(self.system, "editor.camera_zoom", "editor camera zoom for ortho projection", 1);
 
   self.cvar_scale_viewport_size_with_content_scale
-    .init(self.system, "editor.scale_viewport_size_with_content_scale", "scale viewport size with content scale", 1);
-  self.cvar_viewport_scale_amount
-    .init(self.system, "editor.viewport_scale_amount", "scale viewport size with content scale", 1);
+    .init(self.system, "editor.scale_viewport_size_with_content_scale", "scale viewport size with pixel density", 1);
+  self.cvar_viewport_scale_amount.init(self.system, "editor.viewport_scale_amount", "manual viewport render scale", 1);
 
   self.cvar_file_thumbnails.init(self.system, "editor.file_thumbnails", "show file thumbnails in content panel", 0);
   self.cvar_file_thumbnail_size

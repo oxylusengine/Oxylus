@@ -49,7 +49,8 @@ struct Handle<Window>::Impl {
   SDL_Window* handle = nullptr;
   u32 monitor_id = {};
   std::array<SDL_Cursor*, static_cast<usize>(WindowCursor::Count)> cursors = {};
-  f32 window_dpi_scale = {};
+  f32 window_dpi_scale = 1.0f;
+  f32 window_content_scale = 1.0f;
   f32 refresh_rate = {};
 
   bool cursor_overridden = false;
@@ -208,6 +209,7 @@ auto Window::create(const WindowInfo& info) -> Window {
   }
 
   impl->window_dpi_scale = dpi_scale;
+  impl->window_content_scale = display->content_scale > 0.0f ? display->content_scale : 1.0f;
 
   const auto self = Window(impl);
   self.set_cursor(WindowCursor::Arrow);
@@ -390,6 +392,14 @@ auto Window::poll(const WindowCallbacks& callbacks) const -> void {
         const f32 new_scale = SDL_GetWindowDisplayScale(impl->handle);
         if (new_scale > 0.0f) {
           impl->window_dpi_scale = new_scale;
+        }
+
+        const auto display_id = SDL_GetDisplayForWindow(impl->handle);
+        if (display_id != 0) {
+          const f32 new_content_scale = SDL_GetDisplayContentScale(display_id);
+          if (new_content_scale > 0.0f) {
+            impl->window_content_scale = new_content_scale;
+          }
         }
       } break;
       case SDL_EVENT_WINDOW_RESTORED: {
@@ -632,6 +642,7 @@ auto Window::get_real_height() const -> u32 { return impl->height; }
 auto Window::get_handle() const -> void* { return impl->handle; }
 
 auto Window::get_dpi_scale() const -> f32 { return impl->window_dpi_scale; }
+auto Window::get_content_scale() const -> f32 { return impl->window_content_scale; }
 
 auto Window::get_refresh_rate() const -> f32 { return impl->refresh_rate; }
 } // namespace ox

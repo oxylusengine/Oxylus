@@ -40,7 +40,7 @@ auto EditorSettingsPanel::draw_general_tab(this EditorSettingsPanel& self) -> vo
 
     auto& context_cvar = App::get_rendercontext().context_cvar;
     auto& ui_scale_cvar = context_cvar.cvar_ui_scale;
-    const auto os_ui_scale = ui_scale_from_display_scale(App::get_window().get_dpi_scale());
+    const auto os_ui_scale = ui_scale_from_content_scale(App::get_window().get_content_scale());
     const auto applied_ui_scale = normalize_ui_scale_multiplier(ui_scale_cvar.get());
     const auto applied_ui_scale_percent = static_cast<i32>(std::round(applied_ui_scale * 100.0f));
     if (!self.ui_scale_edit_initialized || !self.ui_scale_dirty) {
@@ -48,10 +48,7 @@ auto EditorSettingsPanel::draw_general_tab(this EditorSettingsPanel& self) -> vo
       self.ui_scale_edit_initialized = true;
     }
 
-    UI::begin_property_grid(
-      "UI scale",
-      "Sets the scale for ImGui, RmlUi, and automatic viewport rendering."
-    );
+    UI::begin_property_grid("UI scale", "Sets the scale for ImGui and RmlUi.");
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
     if (ImGui::SliderInt("##ui_scale", &self.pending_ui_scale_percent, 50, 200, "%d%%")) {
       self.pending_ui_scale_percent = std::clamp(

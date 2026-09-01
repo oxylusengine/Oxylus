@@ -46,6 +46,7 @@ auto ContextCVar::save(this ContextCVar& self) -> void {
         {"frame_limit", self.cvar_frame_limit.get()},
         {"ui_scale", ui_scale},
         {"ui_scale_is_absolute", self.ui_scale_is_absolute},
+        {"ui_scale_uses_content_scale", self.ui_scale_uses_content_scale},
       },
     },
     {
@@ -83,6 +84,8 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
       self.cvar_ui_scale.set(normalize_ui_scale_multiplier(static_cast<f32>(integer_scale->get())));
     if (auto absolute_scale = display_config["ui_scale_is_absolute"].as_boolean())
       self.ui_scale_is_absolute = absolute_scale->get();
+    if (auto content_scale = display_config["ui_scale_uses_content_scale"].as_boolean())
+      self.ui_scale_uses_content_scale = content_scale->get();
   }
 
   if (const auto render_config = toml["render"]) {
@@ -95,14 +98,19 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
   return true;
 }
 
-auto ContextCVar::initialize_ui_scale(this ContextCVar& self, f32 display_scale) -> void {
+auto ContextCVar::initialize_ui_scale(this ContextCVar& self, f32 content_scale, f32 window_scale) -> void {
   ZoneScoped;
 
-  if (self.ui_scale_is_absolute) {
+  if (self.ui_scale_uses_content_scale) {
     return;
   }
 
-  self.cvar_ui_scale.set(migrate_legacy_ui_scale(display_scale, self.cvar_ui_scale.get()));
+  const auto current_scale = self.cvar_ui_scale.get();
+  self.cvar_ui_scale.set(
+    self.ui_scale_is_absolute ? migrate_framebuffer_ui_scale(window_scale, content_scale, current_scale)
+                              : migrate_legacy_ui_scale(content_scale, current_scale)
+  );
   self.ui_scale_is_absolute = true;
+  self.ui_scale_uses_content_scale = true;
 }
 } // namespace ox

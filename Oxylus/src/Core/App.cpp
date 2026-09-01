@@ -57,7 +57,10 @@ auto App::init(this App& self) -> void {
 
   if (self.registry.has<Renderer>()) {
     self.render_context = std::make_unique<RenderContext>();
-    self.render_context->context_cvar.initialize_ui_scale(self.window->get_dpi_scale());
+    self.render_context->context_cvar.initialize_ui_scale(
+      self.window->get_content_scale(),
+      self.window->get_dpi_scale()
+    );
 
     const bool enable_validation = self.command_line_args.contains("--vulkan-validation");
     self.render_context->create_context(*self.window, enable_validation);

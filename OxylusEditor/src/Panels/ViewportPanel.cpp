@@ -261,7 +261,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     }
 
     const auto render_scale = editor.editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool()
-                                ? App::get_ui_scale()
+                                ? ImGui::GetIO().DisplayFramebufferScale.x
                                 : static_cast<f32>(
                                     1u << static_cast<u32>(editor.editor_cvar.cvar_viewport_scale_amount.get())
                                   ); // 0->1, 1->2, 2->4, 3->8
@@ -928,7 +928,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
     ImGui::TextUnformatted(resolution.c_str());
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
       UI::property(
-        "Scale Viewport With Content Scale",
+        "Scale Viewport With Pixel Density",
         editor_cvar.cvar_scale_viewport_size_with_content_scale.get_ptr_bool()
       );
       const char* scale_amounts[4] = {
