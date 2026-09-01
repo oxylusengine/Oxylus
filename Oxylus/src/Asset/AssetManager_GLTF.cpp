@@ -53,26 +53,6 @@ auto get_default_gltf_options() -> fastgltf::Options {
   return options;
 }
 
-auto gltf_mime_type_to_asset_file_type(fastgltf::MimeType mime) -> AssetFileType {
-  switch (mime) {
-    case fastgltf::MimeType::JPEG: return AssetFileType::JPEG;
-    case fastgltf::MimeType::PNG : return AssetFileType::PNG;
-    case fastgltf::MimeType::KTX2: return AssetFileType::KTX2;
-    case fastgltf::MimeType::DDS : return AssetFileType::DDS;
-    default                      : return AssetFileType::None;
-  }
-}
-
-auto gltf_mime_type_to_texture_mime_type(fastgltf::MimeType mime) -> TextureSourceType {
-  switch (mime) {
-    case fastgltf::MimeType::KTX2: return TextureSourceType::KTX;
-    case fastgltf::MimeType::DDS : return TextureSourceType::DDS;
-    case fastgltf::MimeType::JPEG:
-    case fastgltf::MimeType::PNG :
-    default                      : return TextureSourceType::Generic;
-  }
-}
-
 auto gltf_sampler_to_sampler(const fastgltf::Sampler& gltf_sampler) -> vuk::SamplerCreateInfo {
   auto get_address_mode = [](fastgltf::Wrap v) -> vuk::SamplerAddressMode {
     switch (v) {
@@ -130,18 +110,6 @@ auto get_effective_image_index(const fastgltf::Texture& texture) -> option<usize
   if (texture.imageIndex.has_value())
     return texture.imageIndex.value();
   return nullopt;
-}
-
-auto get_mime_type(const fastgltf::Image& image) -> fastgltf::MimeType {
-  return std::visit(
-    ox::match{
-      [](const fastgltf::sources::BufferView& v) { return v.mimeType; },
-      [](const fastgltf::sources::Array& v) { return v.mimeType; },
-      [](const fastgltf::sources::URI& v) { return v.mimeType; },
-      [](const auto&) { return fastgltf::MimeType::None; },
-    },
-    image.data
-  );
 }
 
 auto gltf_alpha_mode_to_alpha_mode(fastgltf::AlphaMode mode) -> AlphaMode {

@@ -1,8 +1,6 @@
 #pragma once
 
 #include <filesystem>
-#include <vuk/Types.hpp>
-#include <vuk/runtime/vk/VkTypes.hpp>
 #include <zpp_bits.h>
 
 #include "Asset/ShaderFeature.hpp"

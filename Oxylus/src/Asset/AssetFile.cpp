@@ -25,6 +25,16 @@ auto AssetFile::unpack(const std::filesystem::path& path) -> option<AssetFile> {
     return nullopt;
   }
 
+  if (header.version != AssetFileHeader::VERSION) {
+    OX_LOG_ERROR(
+      "Asset file '{}' was built with version {}, expected {}. Recompile it.",
+      path,
+      header.version,
+      AssetFileHeader::VERSION
+    );
+    return nullopt;
+  }
+
   if (zpp::bits::failure(deser(entries))) {
     OX_LOG_ERROR("Failed to deserialize Asset entries.");
     return nullopt;
@@ -32,7 +42,7 @@ auto AssetFile::unpack(const std::filesystem::path& path) -> option<AssetFile> {
 
   return AssetFile{
     .flags = header.flags,
-    .entries = entries,
+    .entries = std::move(entries),
   };
 }
 

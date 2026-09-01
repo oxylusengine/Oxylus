@@ -13,7 +13,6 @@ target("ResourceCompiler")
 
   add_packages(
     "shader-slang",
-    "spirv-tools",
     "zpp_bits",
     { public = false })
 

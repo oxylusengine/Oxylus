@@ -1,7 +1,6 @@
 #include "ShaderSession.hpp"
 
 #include <fmt/std.h>
-#include <spirv-tools/optimizer.hpp>
 
 #include "OS/File.hpp"
 

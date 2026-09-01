@@ -25,7 +25,6 @@
 #include <algorithm>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
-#include <meshoptimizer.h>
 #include <simdjson.h>
 #include <sol/state.hpp>
 
