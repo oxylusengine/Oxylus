@@ -110,7 +110,7 @@ static auto format_file_size(const u64 size_bytes) -> std::string {
 
 static auto format_modified_time(const std::filesystem::file_time_type modified_time) -> std::string {
   const auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-    std::filesystem::file_time_type::clock::to_sys(modified_time)
+    modified_time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()
   );
   const auto time = std::chrono::system_clock::to_time_t(system_time);
   std::tm local_time = {};
