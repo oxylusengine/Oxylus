@@ -10,7 +10,7 @@ struct ShaderParameters {
     Texture2D<f32> current_luma;
     Texture2D<f32x4> luma_history_prev;
     Texture2D<f32> farthest_depth_mip1;
-    StructuredBuffer<f32> exposure;
+    ConstantBuffer<FSR3Exposure> exposure;
     Sampler sampler_linear_clamp;
 
     RWTexture2D<f32x4> luma_history;
@@ -72,7 +72,7 @@ func compute_luma_instability_factor(
 [[numthreads(8, 8, 1)]]
 func cs_main(u32x3 thread_id : SV_DispatchThreadID) -> void {
     let px_pos = i32x2(thread_id.xy);
-    let exposure = params.exposure[0];
+    let exposure = params.exposure.value();
 
     LumaInstabilityFactorData data;
     data.luma_instability_factor = 0.0;

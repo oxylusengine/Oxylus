@@ -643,10 +643,15 @@ auto RendererInstance::render(
 
   self.render_size_ = render_size;
 
-  if (upscaling) {
+  if (upscaling && !cvar.cvar_upscaler_disable_jitter.as_bool()) {
     const auto phase_count = upscaler_jitter_phase_count(render_size.x, display_size.x);
     self.previous_jitter = self.current_jitter;
     self.current_jitter = upscaler_jitter_offset(self.jitter_frame_index, phase_count);
+    self.jitter_frame_index += 1;
+  } else if (upscaling) {
+    // jitter held at zero; the accumulator still runs, which isolates jitter related artifacts
+    self.previous_jitter = {};
+    self.current_jitter = {};
     self.jitter_frame_index += 1;
   } else {
     self.previous_jitter = {};
@@ -1826,6 +1831,7 @@ auto RendererInstance::render(
       .constants = fsr3_constants,
       .sharpness = std::clamp(upscaler.sharpness, 0.0f, 1.0f),
       .reset = reset_history,
+      .debug_view = static_cast<u32>(std::max(cvar.cvar_upscaler_debug_view.get(), 0)),
       .color_attachment = std::move(final_attachment),
       .depth_attachment = std::move(depth_attachment),
       .velocity_attachment = std::move(velocity_attachment),

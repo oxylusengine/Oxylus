@@ -688,6 +688,8 @@ struct FSR3Context {
   // drops history and treats every pixel as a new sample, for the first frame and after a
   // resolution or quality change
   bool reset = false;
+  // diagnostic: non-zero replaces the output with an intermediate, see pp.upscaler_debug_view
+  u32 debug_view = 0;
 
   vuk::Value<vuk::ImageAttachment> color_attachment = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};

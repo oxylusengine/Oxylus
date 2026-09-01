@@ -14,7 +14,7 @@ struct ShaderParameters {
     Texture2D<f32> current_luma;
     Texture2D<f32> previous_luma;
     Texture2D<f32x2> dilated_motion_vectors;
-    StructuredBuffer<f32> exposure;
+    ConstantBuffer<FSR3Exposure> exposure;
 
     RWTexture2D<f32x2> spd_mip0;
 };
@@ -145,7 +145,7 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID) -> void {
         return;
     }
 
-    let exposure = params.exposure[0];
+    let exposure = params.exposure.value();
     let src_pos = dst_pos * 2;
 
     // average the 2x2 render resolution block, matching SPD's first reduction

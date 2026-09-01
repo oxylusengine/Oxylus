@@ -8,7 +8,7 @@ struct ShaderParameters {
     ConstantBuffer<FSR3Constants> constants;
 
     Texture2D<f32x4> rcas_input;
-    StructuredBuffer<f32> exposure;
+    ConstantBuffer<FSR3Exposure> exposure;
 
     RWTexture2D<f32x4> upscaled_output;
 };
@@ -36,7 +36,7 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID, uniform PushConstants pc) ->
         return;
     }
 
-    let exposure = params.exposure[0];
+    let exposure = params.exposure.value();
 
     // minimal 3x3 neighbourhood
     //     b

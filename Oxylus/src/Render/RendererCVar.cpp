@@ -134,6 +134,15 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   );
   self.cvar_upscaler_sharpness
     .init(self.system, "pp.upscaler_sharpness", "RCAS sharpening strength, 0 skips the sharpen pass", 0.0f);
+  self.cvar_upscaler_debug_view.init(
+    self.system,
+    "pp.upscaler_debug_view",
+    "replace the upscaled output with an upscaler intermediate. 0: Off, 1: Dilated Motion Vectors, "
+    "2: Disocclusion, 3: Reactive, 4: Shading Change, 5: Accumulation, 6: Luma Instability, 7: Dilated Depth",
+    0
+  );
+  self.cvar_upscaler_disable_jitter
+    .init(self.system, "pp.upscaler_disable_jitter", "hold the jitter at zero, to isolate jitter related artifacts", 0);
 
   self.cvar_tonemapper.init(self.system, "pp.tonemapper", "tonemapper preset", 0);
   self.cvar_exposure.init(self.system, "pp.exposure", "tonemapping exposure", 1.0f);

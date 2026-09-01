@@ -11,7 +11,7 @@ struct ShaderParameters {
     Texture2D<f32> luma_instability;
     Texture2D<f32> farthest_depth_mip1;
     Texture2D<f32x4> internal_upscaled_color_prev;
-    StructuredBuffer<f32> exposure;
+    ConstantBuffer<FSR3Exposure> exposure;
     Sampler sampler_linear_clamp;
 
     RWTexture2D<f32> new_locks;
@@ -115,7 +115,7 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID, uniform PushConstants pc) ->
         return;
     }
 
-    let exposure = params.exposure[0];
+    let exposure = params.exposure.value();
 
     AccumulationPassCommonParams p;
     AccumulationPassData data;

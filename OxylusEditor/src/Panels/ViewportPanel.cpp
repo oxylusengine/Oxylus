@@ -629,6 +629,8 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       cvar_sys.cvar_upscaler_backend.set_default();
       cvar_sys.cvar_upscaler_quality.set_default();
       cvar_sys.cvar_upscaler_sharpness.set_default();
+      cvar_sys.cvar_upscaler_debug_view.set_default();
+      cvar_sys.cvar_upscaler_disable_jitter.set_default();
       cvar_sys.cvar_vbgtao_quality_level.set_default();
       cvar_sys.cvar_vbgtao_radius.set_default();
       cvar_sys.cvar_vbgtao_thickness.set_default();
@@ -767,6 +769,19 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
           };
           UI::property("Quality", cvar_sys.cvar_upscaler_quality.get_ptr(), quality_modes, 5);
           UI::property<float>("Sharpness", cvar_sys.cvar_upscaler_sharpness.get_ptr(), 0.0f, 1.0f);
+
+          const char* debug_views[8] = {
+            "Off",
+            "Dilated Motion Vectors",
+            "Disocclusion",
+            "Reactive",
+            "Shading Change",
+            "Accumulation",
+            "Luma Instability",
+            "Dilated Depth",
+          };
+          UI::property("Debug View", cvar_sys.cvar_upscaler_debug_view.get_ptr(), debug_views, 8);
+          UI::property("Hold Jitter At Zero", cvar_sys.cvar_upscaler_disable_jitter.get_ptr_bool());
           ImGui::EndDisabled();
 
           UI::end_properties();

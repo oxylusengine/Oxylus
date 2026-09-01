@@ -625,6 +625,52 @@ auto RendererInstance::apply_fsr3(this RendererInstance& self, FSR3Context& cont
     upscaled_output = std::move(sharpened_output);
   }
 
+  // --- diagnostic view, replaces the output with one of the intermediates ---
+  if (context.debug_view != 0) {
+    auto debug_pass = vuk::make_pass(
+      "fsr3 debug view",
+      [mode = context.debug_view](
+        vuk::CommandBuffer& cmd_list,
+        VUK_BA(vuk::eComputeRead) fsr3_constants,
+        VUK_IA(vuk::eComputeSampled) motion_vectors,
+        VUK_IA(vuk::eComputeSampled) masks,
+        VUK_IA(vuk::eComputeSampled) instability,
+        VUK_IA(vuk::eComputeSampled) depth,
+        VUK_IA(vuk::eComputeRW) dst
+      ) {
+        cmd_list.bind_compute_pipeline("fsr3_debug_view")
+          .bind_buffer(0, 0, fsr3_constants)
+          .bind_image(0, 1, motion_vectors)
+          .bind_image(0, 2, masks)
+          .bind_image(0, 3, instability)
+          .bind_image(0, 4, depth)
+          .bind_sampler(0, 5, vuk::LinearSamplerClamped)
+          .bind_image(0, 6, dst)
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mode))
+          .dispatch_invocations_per_pixel(dst);
+
+        return std::make_tuple(fsr3_constants, motion_vectors, masks, instability, depth, dst);
+      }
+    );
+
+    std::tie(
+      constants_buffer,
+      dilated_motion_vectors,
+      dilated_reactive_masks,
+      luma_instability,
+      dilated_depth,
+      upscaled_output
+    ) =
+      debug_pass(
+        std::move(constants_buffer),
+        std::move(dilated_motion_vectors),
+        std::move(dilated_reactive_masks),
+        std::move(luma_instability),
+        std::move(dilated_depth),
+        std::move(upscaled_output)
+      );
+  }
+
   // the history writes ride along on passes that are already kept alive by their other outputs
   // (accumulate feeds upscaled_output, prepare_inputs feeds the dilated targets, and so on), so
   // there is nothing further to release here

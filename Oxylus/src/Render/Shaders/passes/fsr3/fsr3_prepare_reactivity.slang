@@ -13,7 +13,7 @@ struct ShaderParameters {
     Texture2D<f32> accumulation_prev;
     Texture2D<f32> input_reactive_mask;
     Texture2D<f32> input_transparency_and_composition_mask;
-    StructuredBuffer<f32> exposure;
+    ConstantBuffer<FSR3Exposure> exposure;
     Sampler sampler_linear_clamp;
 
     RWTexture2D<f32x4> dilated_reactive_masks;
@@ -224,7 +224,7 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID) -> void {
         return;
     }
 
-    let exposure = params.exposure[0];
+    let exposure = params.exposure.value();
     let uv = (f32x2(px_pos) + 0.5) / f32x2(params.constants.render_size);
     let motion_vector = params.dilated_motion_vectors.Load(i32x3(px_pos, 0));
     let dilated_depth = params.dilated_depth.Load(i32x3(px_pos, 0));

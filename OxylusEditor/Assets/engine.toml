@@ -383,6 +383,11 @@ path = "passes/fsr3/fsr3_accumulate.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "fsr3_debug_view"
+path = "passes/fsr3/fsr3_debug_view.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "fsr3_rcas"
 path = "passes/fsr3/fsr3_rcas.slang"
 entry_points = ["cs_main"]
