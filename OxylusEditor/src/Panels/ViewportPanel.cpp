@@ -332,8 +332,15 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         corrected_min_region.y + self.render_size.y
       };
 
+      // picking and the terrain brush index the visbuffer, which sits at render resolution while an
+      // upscaler is active, so map into that rather than the displayed size
+      const auto picking_render_size = renderer_instance->get_render_size();
+      const auto picking_target_size = picking_render_size.x > 0 && picking_render_size.y > 0
+                                         ? picking_render_size
+                                         : glm::uvec2(self.scaled_render_size.x, self.scaled_render_size.y);
+
       glm::uvec2 picking_texel = get_mouse_texel_coords(
-        {self.scaled_render_size.x, self.scaled_render_size.y},
+        {static_cast<f32>(picking_target_size.x), static_cast<f32>(picking_target_size.y)},
         self.viewport_position,
         corrected_min_region,
         corrected_max_region,
@@ -344,9 +351,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       }
 
       self.update_terrain_brush(
-        picking_texel.x == ~0_u32
-          ? glm::vec2(-1.0f)
-          : glm::vec2(picking_texel) / glm::vec2(self.scaled_render_size.x, self.scaled_render_size.y)
+        picking_texel.x == ~0_u32 ? glm::vec2(-1.0f) : glm::vec2(picking_texel) / glm::vec2(picking_target_size)
       );
 
       if (editor.editor_cvar.cvar_draw_grid.as_bool()) {
@@ -1474,7 +1479,8 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
      .format = vuk::Format::eR8Unorm,
      .sample_count = vuk::Samples::e1}
   );
-  temp_mask.same_shape_as(outline_composite_output);
+  // the dilation runs entirely in mask space; the composite maps display fragments into it
+  temp_mask.same_shape_as(*silhouette_mask);
 
   auto horiz_dilate_pass = vuk::make_pass(
     "horizontal_dilate_pass",
@@ -1517,11 +1523,13 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
       struct PC {
         glm::vec4 outline_color = glm::vec4(1.0f, 0.53f, 0.0f, 1.0f); // Pure Gold
         glm::uvec2 resolution;
+        glm::uvec2 mask_resolution;
         i32 outline_width = 5;
         i32 occluded_mode = OccludeMode::AlwaysVisible;
       } push_block;
 
       push_block.resolution = glm::uvec2(color->extent.width, color->extent.height);
+      push_block.mask_resolution = glm::uvec2(original_mask->extent.width, original_mask->extent.height);
 
       cmd_list.bind_graphics_pipeline("highlight_composite")
         .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)

@@ -93,10 +93,9 @@ auto RendererInstance::apply_fsr3(this RendererInstance& self, FSR3Context& cont
   auto reconstructed_prev_nearest_depth = declare_render_ia("fsr3 reconstructed prev depth", vuk::Format::eR32Uint);
   reconstructed_prev_nearest_depth = vuk::clear_image(std::move(reconstructed_prev_nearest_depth), vuk::Black<u32>);
 
-  // oxylus does not author reactive or transparency masks yet, so these stay cleared. writing
-  // particle and sprite coverage into the reactive mask is the natural home for that later
-  auto input_reactive_mask = declare_render_ia("fsr3 input reactive mask", vuk::Format::eR8Unorm);
-  input_reactive_mask = vuk::clear_image(std::move(input_reactive_mask), vuk::Black<f32>);
+  // sprites and particles author this while compositing; there is no separate transparency and
+  // composition mask yet, so that one stays cleared
+  auto input_reactive_mask = std::move(context.reactive_mask_attachment);
   auto input_transparency_mask = declare_render_ia("fsr3 input transparency mask", vuk::Format::eR8Unorm);
   input_transparency_mask = vuk::clear_image(std::move(input_transparency_mask), vuk::Black<f32>);
 
@@ -269,7 +268,10 @@ auto RendererInstance::apply_fsr3(this RendererInstance& self, FSR3Context& cont
     std::move(farthest_depth_mip1)
   );
 
-  // --- shading change pyramid mip 0, then the remaining mips ---
+  // --- shading change pyramid: mip 0 from the luma pair, then the reduction chain ---
+  // The whole chain lives in one pass with manual barriers between mips, the same shape as the
+  // bloom downsample. A pass per mip would leave each mip's write unconsumed and vuk would cull it,
+  // leaving the pyramid undefined and the shading change signal reading garbage.
   auto shading_change_pyramid_pass = vuk::make_pass(
     "fsr3 shading change pyramid",
     [](
@@ -279,53 +281,50 @@ auto RendererInstance::apply_fsr3(this RendererInstance& self, FSR3Context& cont
       VUK_IA(vuk::eComputeSampled) luma_previous,
       VUK_IA(vuk::eComputeSampled) motion_vectors,
       VUK_BA(vuk::eComputeRead) exposure,
-      VUK_IA(vuk::eComputeRW) dst
+      VUK_IA(vuk::eComputeRW) mips
     ) {
+      const auto mip0_width = std::max(1_u32, mips->extent.width);
+      const auto mip0_height = std::max(1_u32, mips->extent.height);
+
       cmd_list.bind_compute_pipeline("fsr3_shading_change_pyramid")
         .bind_buffer(0, 0, fsr3_constants)
         .bind_image(0, 1, luma_current)
         .bind_image(0, 2, luma_previous)
         .bind_image(0, 3, motion_vectors)
         .bind_buffer(0, 4, exposure)
-        .bind_image(0, 5, dst)
-        .dispatch_invocations_per_pixel(dst);
+        .bind_image(0, 5, mips->mip(0))
+        .dispatch_invocations(mip0_width, mip0_height);
 
-      return std::make_tuple(fsr3_constants, luma_current, luma_previous, motion_vectors, exposure, dst);
+      cmd_list.bind_compute_pipeline("fsr3_downsample");
+      for (auto mip = 1_u32; mip < mips->level_count; mip++) {
+        const auto dst_size = glm::ivec2(std::max(1_u32, mip0_width >> mip), std::max(1_u32, mip0_height >> mip));
+        const auto src_size = glm::ivec2(
+          std::max(1_u32, mip0_width >> (mip - 1)),
+          std::max(1_u32, mip0_height >> (mip - 1))
+        );
+
+        cmd_list.image_barrier(mips->mip(mip - 1), vuk::eComputeWrite, vuk::eComputeSampled)
+          .bind_image(0, 0, mips->mip(mip - 1))
+          .bind_image(0, 1, mips->mip(mip))
+          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(dst_size, src_size))
+          .dispatch_invocations(static_cast<u32>(dst_size.x), static_cast<u32>(dst_size.y));
+      }
+
+      cmd_list.image_barrier(mips, vuk::eComputeSampled, vuk::eComputeRW);
+
+      return std::make_tuple(fsr3_constants, luma_current, luma_previous, motion_vectors, exposure, mips);
     }
   );
 
-  auto spd_mip0 = spd_mips.mip(0);
-  std::tie(constants_buffer, current_luma, previous_luma, dilated_motion_vectors, context.exposure_buffer, spd_mip0) =
+  std::tie(constants_buffer, current_luma, previous_luma, dilated_motion_vectors, context.exposure_buffer, spd_mips) =
     shading_change_pyramid_pass(
       std::move(constants_buffer),
       std::move(current_luma),
       std::move(previous_luma),
       std::move(dilated_motion_vectors),
       std::move(context.exposure_buffer),
-      std::move(spd_mip0)
+      std::move(spd_mips)
     );
-
-  auto downsample_pass = vuk::make_pass(
-    "fsr3 downsample",
-    [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeSampled) src, VUK_IA(vuk::eComputeRW) dst) {
-      const auto dst_size = glm::ivec2(dst->extent.width, dst->extent.height);
-      const auto src_size = glm::ivec2(src->extent.width, src->extent.height);
-
-      cmd_list.bind_compute_pipeline("fsr3_downsample")
-        .bind_image(0, 0, src)
-        .bind_image(0, 1, dst)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(dst_size, src_size))
-        .dispatch_invocations_per_pixel(dst);
-
-      return std::make_tuple(src, dst);
-    }
-  );
-
-  for (auto mip = 1_u32; mip < FSR3_SHADING_CHANGE_MIP_COUNT; mip++) {
-    auto src_mip = spd_mips.mip(mip - 1);
-    auto dst_mip = spd_mips.mip(mip);
-    downsample_pass(std::move(src_mip), std::move(dst_mip));
-  }
 
   // --- shading change ---
   auto shading_change_pass = vuk::make_pass(
@@ -415,7 +414,7 @@ auto RendererInstance::apply_fsr3(this RendererInstance& self, FSR3Context& cont
     current_luma,
     shading_change,
     accumulation_prev,
-    input_reactive_mask,
+    context.reactive_mask_attachment,
     input_transparency_mask,
     context.exposure_buffer,
     dilated_reactive_masks,

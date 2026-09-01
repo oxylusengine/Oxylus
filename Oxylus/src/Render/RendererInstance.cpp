@@ -883,6 +883,17 @@ auto RendererInstance::render(
     vuk::Black<f32>
   );
 
+  // alpha blended content (sprites, particles) cannot produce a meaningful motion vector, so it
+  // marks itself reactive here and the upscaler leans on the current frame in those pixels
+  auto reactive_mask_attachment = vuk::declare_ia(
+    "reactive_mask",
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+     .format = vuk::Format::eR8Unorm,
+     .sample_count = vuk::Samples::e1}
+  );
+  reactive_mask_attachment.same_shape_as(final_attachment);
+  reactive_mask_attachment = vuk::clear_image(std::move(reactive_mask_attachment), vuk::Black<f32>);
+
   auto velocity_attachment = vuk::declare_ia(
     "velocity",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
@@ -1624,6 +1635,7 @@ auto RendererInstance::render(
       [rq2d = self.render_queue_2d, &descriptor_set = bindless_set](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) target,
+        VUK_IA(vuk::eColorRW) reactive,
         VUK_IA(vuk::eDepthStencilRW) depth,
         VUK_BA(vuk::eAttributeRead) vertex_buffer,
         VUK_BA(vuk::eVertexRead) materials,
@@ -1651,7 +1663,8 @@ auto RendererInstance::render(
             .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
             .set_viewport(0, vuk::Rect2D::framebuffer())
             .set_scissor(0, vuk::Rect2D::framebuffer())
-            .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
+            .set_color_blend(target, vuk::BlendPreset::eAlphaBlend)
+            .set_color_blend(reactive, REACTIVE_MASK_BLEND_STATE)
             .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
             .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack_2d, vuk::VertexInputRate::eInstance)
             .push_constants(
@@ -1663,12 +1676,13 @@ auto RendererInstance::render(
             .draw(6, batch.count, 0, batch.offset);
         }
 
-        return std::make_tuple(target, depth, camera, vertex_buffer, materials, transforms_);
+        return std::make_tuple(target, reactive, depth, camera, vertex_buffer, materials, transforms_);
       }
     );
 
     std::tie(
       final_attachment,
+      reactive_mask_attachment,
       depth_attachment,
       self.prepared_frame.camera_buffer,
       vertex_buffer_2d,
@@ -1677,6 +1691,7 @@ auto RendererInstance::render(
     ) =
       forward_2d_pass(
         std::move(final_attachment),
+        std::move(reactive_mask_attachment),
         std::move(depth_attachment),
         std::move(vertex_buffer_2d),
         std::move(self.prepared_frame.materials_buffer),
@@ -1717,12 +1732,14 @@ auto RendererInstance::render(
       .camera_buffer = std::move(self.prepared_frame.camera_buffer),
       .materials_buffer = std::move(self.prepared_frame.materials_buffer),
       .depth_attachment = std::move(depth_attachment),
+      .reactive_mask_attachment = std::move(reactive_mask_attachment),
     };
 
     self.simulate_particles(particle_context);
     final_attachment = self.draw_particles(particle_context, std::move(final_attachment));
 
     depth_attachment = std::move(particle_context.depth_attachment);
+    reactive_mask_attachment = std::move(particle_context.reactive_mask_attachment);
     self.prepared_frame.camera_buffer = std::move(particle_context.camera_buffer);
     self.prepared_frame.materials_buffer = std::move(particle_context.materials_buffer);
   }
@@ -1812,12 +1829,14 @@ auto RendererInstance::render(
       .color_attachment = std::move(final_attachment),
       .depth_attachment = std::move(depth_attachment),
       .velocity_attachment = std::move(velocity_attachment),
+      .reactive_mask_attachment = std::move(reactive_mask_attachment),
       .exposure_buffer = std::move(self.prepared_frame.exposure_buffer),
     };
 
     final_attachment = self.apply_fsr3(fsr3_context);
     depth_attachment = std::move(fsr3_context.depth_attachment);
     velocity_attachment = std::move(fsr3_context.velocity_attachment);
+    reactive_mask_attachment = std::move(fsr3_context.reactive_mask_attachment);
     self.prepared_frame.exposure_buffer = std::move(fsr3_context.exposure_buffer);
 
     self.fsr3_previous_render_size = render_size;

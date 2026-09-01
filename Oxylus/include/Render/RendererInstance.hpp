@@ -272,6 +272,8 @@ struct ParticleContext {
   vuk::Value<vuk::Buffer> camera_buffer = {};
   vuk::Value<vuk::Buffer> materials_buffer = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  // alpha blended particles have no usable motion vector, so they mark themselves reactive instead
+  vuk::Value<vuk::ImageAttachment> reactive_mask_attachment = {};
 
   vuk::Value<vuk::Buffer> particles_buffer = {};
   vuk::Value<vuk::Buffer> sort_keys_buffer = {};
@@ -662,6 +664,23 @@ struct DebugContext {
   vuk::Value<vuk::ImageAttachment> vsm_pointspot_page_table_attachment = {};
 };
 
+// Reactivity is a coverage value in [0, 1], so overlapping alpha blended draws combine as
+// `src + dst * (1 - src)` rather than summing. That saturates instead of running away, and treats
+// two half covering layers as covering more than either alone, which is what actually happened.
+//
+// BlendOp::eMax would say "take the strongest layer" more directly, but it hangs the Metal Vulkan
+// driver inside its NIR lowering, apparently while lowering max blending into the shader. Nothing
+// else in the engine uses eMax, so that path had never been exercised.
+constexpr static auto REACTIVE_MASK_BLEND_STATE = vuk::PipelineColorBlendAttachmentState{
+  .blendEnable = true,
+  .srcColorBlendFactor = vuk::BlendFactor::eOne,
+  .dstColorBlendFactor = vuk::BlendFactor::eOneMinusSrcColor,
+  .colorBlendOp = vuk::BlendOp::eAdd,
+  .srcAlphaBlendFactor = vuk::BlendFactor::eOne,
+  .dstAlphaBlendFactor = vuk::BlendFactor::eOneMinusSrcAlpha,
+  .alphaBlendOp = vuk::BlendOp::eAdd,
+};
+
 struct FSR3Context {
   GPU::FSR3Constants constants = {};
   // 0 skips the RCAS pass, in which case the accumulate pass writes the final output itself
@@ -673,6 +692,7 @@ struct FSR3Context {
   vuk::Value<vuk::ImageAttachment> color_attachment = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
   vuk::Value<vuk::ImageAttachment> velocity_attachment = {};
+  vuk::Value<vuk::ImageAttachment> reactive_mask_attachment = {};
   vuk::Value<vuk::Buffer> exposure_buffer = {};
 
   vuk::Value<vuk::ImageAttachment> output_attachment = {};
@@ -730,6 +750,10 @@ public:
   auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info, const RendererCVar& cvar) -> void;
 
   auto get_viewport_size(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_size_; }
+
+  // resolution the scene is actually rasterized at; below the display size while an upscaler runs,
+  // so anything indexing the visbuffer or g-buffer by pixel has to go through this
+  auto get_render_size(this const RendererInstance& self) -> glm::uvec2 { return self.render_size_; }
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
   auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;

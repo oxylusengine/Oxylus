@@ -113,8 +113,16 @@ func vs_main(u32 vertex_id : SV_VertexID, u32 instance_id : SV_InstanceID) -> VO
     return output;
 }
 
+// Alpha blended content has no usable motion vector, so instead of ghosting it is marked reactive
+// and the upscaler leans on the current frame in those pixels. The SDK asks that reactivity stay at
+// or below 0.9 so history is never fully discarded.
+struct FragmentOutput {
+    f32x4 color : SV_Target0;
+    f32 reactive : SV_Target1;
+};
+
 [[shader("fragment")]]
-f32x4 fs_main(VOutput input) : SV_Target0 {
+FragmentOutput fs_main(VOutput input) {
     let pixel = i32x2(input.position.xy);
     let scene_depth = depth_image.Load(i32x3(pixel, 0)).r;
 
@@ -141,10 +149,17 @@ f32x4 fs_main(VOutput input) : SV_Target0 {
         discard;
     }
 
+    // captured before the additive path zeroes alpha, so additive particles still register
+    let coverage = color.a;
+
     color.rgb *= color.a;
     if (HAS_FLAG(input.flags, ParticleEmitterFlags.Additive)) {
         color.a = 0.0;
     }
 
-    return color;
+    FragmentOutput output;
+    output.color = color;
+    output.reactive = min(coverage, 0.9);
+
+    return output;
 }
