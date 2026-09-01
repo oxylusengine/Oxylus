@@ -26,11 +26,11 @@ typealias HiZMip = StorageImage2D<f32, ImageFormat::R32F>;
 [[vk::binding(14)]] HiZMip dst_mip_11;
 [[vk::binding(15)]] HiZMip dst_mip_12;
 
-[[vk::constant_id(0)]] constexpr u32 is_pot = 0;
-[[vk::constant_id(1)]] constexpr u32 src_width = 0;
-[[vk::constant_id(2)]] constexpr u32 src_height = 0;
-constexpr static u32x2 src_extent = u32x2(src_width, src_height);
-constexpr static f32x2 inv_src_extent = 1.0 / f32x2(src_extent);
+[[vk::constant_id(0)]] const u32 is_pot = 0;
+[[vk::constant_id(1)]] const u32 src_width = 0;
+[[vk::constant_id(2)]] const u32 src_height = 0;
+static let src_extent = u32x2(src_width, src_height);
+static let inv_src_extent = 1.0 / f32x2(src_extent);
 
 struct PushConstants {
     u32 mip_count;
