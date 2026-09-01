@@ -1,5 +1,7 @@
 #include "EditorSettingsPanel.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 
@@ -8,6 +10,7 @@
 #include "Core/Input.hpp"
 #include "Editor.hpp"
 #include "UI/UI.hpp"
+#include "UI/UIScale.hpp"
 
 namespace ox {
 EditorSettingsPanel::EditorSettingsPanel() : EditorPanelState("Editor Settings", ICON_MDI_COGS, false) {
@@ -26,14 +29,61 @@ auto EditorSettingsPanel::option_row_to_sv(OptionRows row) -> std::string_view {
   }
 }
 
-auto EditorSettingsPanel::draw_general_tab() -> void {
+auto EditorSettingsPanel::draw_general_tab(this EditorSettingsPanel& self) -> void {
   ZoneScoped;
 
-  ImGui::BeginChild("right_panel", ImVec2(320, 0), ImGuiChildFlags_Borders);
+  ImGui::BeginChild("right_panel", ImVec2(UI::scale(320.0f), 0.0f), ImGuiChildFlags_Borders);
   {
     auto& editor = App::mod<Editor>();
     auto& undo_redo_system = editor.undo_redo_system;
     UI::begin_properties(UI::default_properties_flags | ImGuiTableFlags_BordersInnerH, true, 0.4f);
+
+    auto& context_cvar = App::get_rendercontext().context_cvar;
+    auto& ui_scale_cvar = context_cvar.cvar_ui_scale;
+    const auto os_ui_scale = ui_scale_from_content_scale(App::get_window().get_content_scale());
+    const auto applied_ui_scale = normalize_ui_scale_multiplier(ui_scale_cvar.get());
+    const auto applied_ui_scale_percent = static_cast<i32>(std::round(applied_ui_scale * 100.0f));
+    if (!self.ui_scale_edit_initialized || !self.ui_scale_dirty) {
+      self.pending_ui_scale_percent = applied_ui_scale_percent;
+      self.ui_scale_edit_initialized = true;
+    }
+
+    UI::begin_property_grid("UI scale", "Sets the scale for ImGui and RmlUi.");
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    if (ImGui::SliderInt("##ui_scale", &self.pending_ui_scale_percent, 50, 200, "%d%%")) {
+      self.pending_ui_scale_percent = std::clamp(
+        static_cast<i32>(std::round(self.pending_ui_scale_percent / 5.0f)) * 5,
+        50,
+        200
+      );
+    }
+
+    const auto action_button_width = std::max(
+      1.0f,
+      (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f
+    );
+    if (ImGui::Button("Reset", ImVec2(action_button_width, 0.0f))) {
+      self.pending_ui_scale_percent = static_cast<i32>(std::round(os_ui_scale * 100.0f));
+    }
+
+    self.ui_scale_dirty = self.pending_ui_scale_percent != applied_ui_scale_percent;
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!self.ui_scale_dirty);
+    if (ImGui::Button("Save", ImVec2(action_button_width, 0.0f))) {
+      const auto multiplier = static_cast<f32>(self.pending_ui_scale_percent) / 100.0f;
+      ui_scale_cvar.set(normalize_ui_scale_multiplier(multiplier));
+      context_cvar.save();
+      self.ui_scale_dirty = false;
+    }
+    ImGui::EndDisabled();
+    UI::end_property_grid();
+
+    UI::text("OS scale", fmt::format("{:.0f}%", os_ui_scale * 100.0f));
+
+    if (self.ui_scale_dirty) {
+      UI::text("After save", fmt::format("{}%", self.pending_ui_scale_percent));
+    }
+
     auto current_history_size = undo_redo_system->get_max_history_size();
     if (UI::property("Undo history size", &current_history_size))
       undo_redo_system->set_max_history_size(current_history_size);
@@ -45,7 +95,7 @@ auto EditorSettingsPanel::draw_general_tab() -> void {
 auto EditorSettingsPanel::draw_keybinds_tab() -> void {
   ZoneScoped;
 
-  ImGui::BeginChild("right_panel", ImVec2(320, 0), ImGuiChildFlags_Borders);
+  ImGui::BeginChild("right_panel", ImVec2(UI::scale(320.0f), 0.0f), ImGuiChildFlags_Borders);
   {
     auto& input = App::mod<Input>();
     auto bindings = input.get_bindings();
@@ -139,7 +189,7 @@ auto EditorSettingsPanel::on_render(this EditorSettingsPanel& self, vuk::ImageAt
                                  ImGuiTableFlags_BordersV | ImGuiTableFlags_BordersH;
 
     if (ImGui::BeginTable("options_table", 2, table_flags)) {
-      ImGui::TableSetupColumn("##side_view", ImGuiTableColumnFlags_WidthFixed, 100);
+      ImGui::TableSetupColumn("##side_view", ImGuiTableColumnFlags_WidthFixed, UI::scale(100.0f));
       ImGui::TableNextRow();
       ImGui::TableNextColumn();
       if (ImGui::BeginTable("options_side", 1, ImGuiTableFlags_BordersH)) {

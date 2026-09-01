@@ -60,6 +60,7 @@ public:
   auto wants_keyboard(this const ImGuiRenderer& self) -> bool;
 
   void begin_frame(f64 delta_time, glm::vec2 logical_size, glm::vec2 real_size);
+  auto set_base_style(this ImGuiRenderer& self, const ImGuiStyle& style) -> void;
   [[nodiscard]]
   vuk::Value<vuk::ImageAttachment> end_frame(RenderContext& context, vuk::Value<vuk::ImageAttachment> target);
 
@@ -79,6 +80,10 @@ public:
   auto build_window_shadows(this ImGuiRenderer& self, ImDrawData* draw_data) -> void;
 
 private:
+  ImGuiStyle base_style = {};
+  f32 applied_ui_scale = 0.0f;
   bool keyboard_routed_last_frame = true;
+
+  auto apply_ui_scale(this ImGuiRenderer& self) -> void;
 };
 } // namespace ox

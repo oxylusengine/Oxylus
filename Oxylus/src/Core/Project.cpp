@@ -1,5 +1,7 @@
 #include "Core/Project.hpp"
 
+#include <system_error>
+
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Core/ProjectSerializer.hpp"
@@ -92,27 +94,44 @@ auto Project::new_project(
   std::string_view project_name,
   const std::filesystem::path& project_asset_dir
 ) -> bool {
+  if (project_dir.empty() || project_name.empty() || project_asset_dir.empty()) {
+    return false;
+  }
+
+  std::error_code error;
+  std::filesystem::create_directories(project_dir, error);
+  if (error) {
+    OX_LOG_ERROR("Couldn't create project directory {}: {}", project_dir, error.message());
+    return false;
+  }
+
+  const auto asset_folder_dir = project_dir / project_asset_dir;
+  std::filesystem::create_directories(asset_folder_dir, error);
+  if (error) {
+    OX_LOG_ERROR("Couldn't create project asset directory {}: {}", asset_folder_dir, error.message());
+    return false;
+  }
+
   self.project_config.name = project_name;
   self.project_config.asset_directory = project_asset_dir;
 
   self.set_project_dir(project_dir);
 
-  if (project_dir.empty())
-    return false;
-
-  std::filesystem::create_directory(project_dir);
-
-  const auto asset_folder_dir = project_dir / project_asset_dir;
-  std::filesystem::create_directory(asset_folder_dir);
-
   self.project_file_path = project_dir / project_name;
   self.project_file_path.replace_extension(".oxproj");
 
   const ProjectSerializer serializer(&self);
-  serializer.serialize(self.project_file_path);
+  if (!serializer.serialize(self.project_file_path)) {
+    OX_LOG_ERROR("Couldn't write project file: {}", self.project_file_path);
+    return false;
+  }
 
   const auto asset_dir_path = self.project_file_path.parent_path() / self.project_config.asset_directory;
-  App::get_vfs().mount_dir(VFS::PROJECT_DIR, asset_dir_path);
+  auto& vfs = App::get_vfs();
+  if (vfs.is_mounted_dir(VFS::PROJECT_DIR)) {
+    vfs.unmount_dir(VFS::PROJECT_DIR);
+  }
+  vfs.mount_dir(VFS::PROJECT_DIR, asset_dir_path);
 
   self.register_assets(asset_dir_path);
 

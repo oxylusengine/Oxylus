@@ -593,7 +593,7 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   auto& editor = App::mod<Editor>();
   auto& undo_redo_system = editor.undo_redo_system;
 
-  ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + 20.0f));
+  ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + UI::scale(20.0f)));
   std::string new_name = entity.name().c_str();
   if (self.rename_entity_)
     ImGui::SetKeyboardFocusHere();
@@ -651,7 +651,7 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
                                                      ImGuiTreeNodeFlags_SpanAvailWidth |
                                                      ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
                                                      ImGuiTreeNodeFlags_FramePadding;
-    const float line_height = editor.editor_theme.regular_font_size + GImGui->Style.FramePadding.y * 2.0f;
+    const float line_height = ImGui::GetFontSize() + GImGui->Style.FramePadding.y * 2.0f;
 
     auto ty = fid.type_id();
     if (!ty) {

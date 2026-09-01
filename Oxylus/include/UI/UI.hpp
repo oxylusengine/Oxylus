@@ -40,6 +40,9 @@ public:
 
   static void align_right(float item_width);
 
+  static auto scale(f32 value) -> f32;
+  static auto scale(ImVec2 value) -> ImVec2;
+
   static void text(std::string_view label, std::string_view value, const char* tooltip = nullptr);
 
   static void help_marker(const char* desc);

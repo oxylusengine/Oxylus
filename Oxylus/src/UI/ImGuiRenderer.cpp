@@ -3,6 +3,7 @@
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
 #include <algorithm>
+#include <cmath>
 #include <glm/common.hpp>
 #include <imgui_internal.h>
 #include <vuk/RenderGraph.hpp>
@@ -124,8 +125,7 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = nullptr;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard /*| ImGuiConfigFlags_ViewportsEnable*/ |
-                    ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_DockingEnable |
-                    ImGuiConfigFlags_DpiEnableScaleFonts | ImGuiConfigFlags_IsSRGB;
+                    ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_IsSRGB;
   io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_HasMouseCursors;
   /*io.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;*/
   io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
@@ -133,13 +133,12 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   io.BackendRendererName = "oxylus";
   io.Fonts->TexDesiredFormat = ImTextureFormat_RGBA32;
 
-  auto& window = App::get_window();
-  const float dpi_scale = window.get_dpi_scale();
-  io.ConfigDpiScaleFonts = true;
+  io.ConfigDpiScaleFonts = false;
   io.ConfigDpiScaleViewports = false;
-  io.DisplayFramebufferScale = ImVec2(dpi_scale, dpi_scale);
+  io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
   ImGuiStyle& style = ImGui::GetStyle();
-  style.FontScaleDpi = dpi_scale;
+  style.FontScaleDpi = 1.0f;
+  this->set_base_style(style);
 
   auto& runtime = *App::get_rendercontext().runtime;
 
@@ -190,6 +189,8 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size, gl
     logical_size.y > 0 ? (real_size.y / logical_size.y) : 1.0f
   );
 
+  this->apply_ui_scale();
+
   rendering_images.clear();
   acquired_images.clear();
 
@@ -200,6 +201,27 @@ void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size, gl
   keyboard_routed_last_frame = routed;
 
   ImGui::NewFrame();
+}
+
+auto ImGuiRenderer::set_base_style(this ImGuiRenderer& self, const ImGuiStyle& style) -> void {
+  self.base_style = style;
+  self.base_style.FontScaleDpi = 1.0f;
+  self.applied_ui_scale = 0.0f;
+}
+
+auto ImGuiRenderer::apply_ui_scale(this ImGuiRenderer& self) -> void {
+  const auto ui_scale = App::get_ui_scale();
+  ImGui::GetMainViewport()->DpiScale = ui_scale;
+
+  if (std::abs(self.applied_ui_scale - ui_scale) <= 0.0001f) {
+    return;
+  }
+
+  auto& style = ImGui::GetStyle();
+  style = self.base_style;
+  style.ScaleAllSizes(ui_scale);
+  style.FontScaleDpi = ui_scale;
+  self.applied_ui_scale = ui_scale;
 }
 
 vuk::Value<vuk::ImageAttachment> ImGuiRenderer::end_frame(
@@ -546,6 +568,7 @@ auto ImGuiRenderer::build_window_shadows(this ImGuiRenderer& self, ImDrawData* d
 
   const auto display_min = glm::vec2(draw_data->DisplayPos.x, draw_data->DisplayPos.y);
   const auto display_max = display_min + glm::vec2(draw_data->DisplaySize.x, draw_data->DisplaySize.y);
+  const auto ui_scale = App::get_ui_scale();
 
   auto used_lists = 0_sz;
   for (auto index = 0; index < draw_data->CmdLists.Size; index++) {
@@ -570,9 +593,10 @@ auto ImGuiRenderer::build_window_shadows(this ImGuiRenderer& self, ImDrawData* d
     shadow_list->PushClipRect(ImVec2(display_min.x, display_min.y), ImVec2(display_max.x, display_max.y), false);
 
     for (const auto& layer : self.shadow_settings.layers) {
-      const auto sigma = std::max(layer.sigma, 0.01f);
-      const auto shadow_center = rect_center + layer.offset;
-      const auto shadow_half = glm::max(rect_half + layer.spread, glm::vec2(0.5f));
+      const auto sigma = std::max(layer.sigma * ui_scale, 0.01f);
+      const auto spread = layer.spread * ui_scale;
+      const auto shadow_center = rect_center + layer.offset * ui_scale;
+      const auto shadow_half = glm::max(rect_half + spread, glm::vec2(0.5f));
       const auto extent = 3.0f * sigma;
 
       const auto outer_min = glm::max(shadow_center - shadow_half - extent, display_min);
@@ -584,7 +608,7 @@ auto ImGuiRenderer::build_window_shadows(this ImGuiRenderer& self, ImDrawData* d
       self.shadow_draw_data.emplace_back(
         ImGuiShadowDrawData{
           .half_size = shadow_half,
-          .corner_radius = std::max(rounding + layer.spread, 0.0f),
+          .corner_radius = std::max(rounding + spread, 0.0f),
           .sigma = sigma,
           .cutout_center = rect_center - shadow_center,
           .cutout_half_size = rect_half,

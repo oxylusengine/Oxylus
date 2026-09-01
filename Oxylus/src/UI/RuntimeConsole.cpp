@@ -4,6 +4,7 @@
 
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
+#include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
 
 namespace ox {
@@ -138,7 +139,7 @@ void RuntimeConsole::render(this RuntimeConsole& self) {
       ImGui::Separator();
 
       float width = 0;
-      if (ImGui::BeginChild("TextTable", ImVec2(0, -35))) {
+      if (ImGui::BeginChild("TextTable", ImVec2(0.0f, -UI::scale(35.0f)))) {
         width = ImGui::GetWindowSize().x;
         // ImGui::PushFont(ImGuiLayer::bold_font);
         for (int32_t i = 0; i < (int32_t)self.text_buffer.size(); i++) {

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
+#include <string_view>
 
 #include "Asset/Texture.hpp"
 #include "EditorPanelState.hpp"
@@ -18,14 +20,19 @@ public:
 private:
   Texture engine_banner = {};
 
-  std::filesystem::path new_project_dir = {};
-  std::string new_project_name = "NewProject";
-  std::filesystem::path new_project_asset_dir = "Assets";
+  bool creating_project = false;
+  bool close_requested = false;
 
-  static void new_project(
+  std::string new_project_location = {};
+  std::string new_project_name = "NewProject";
+  std::string new_project_asset_dir = "Assets";
+  std::string panel_error = {};
+
+  auto new_project(
+    this ProjectPanel& self,
     const std::filesystem::path& project_dir,
-    const std::string& project_name,
+    std::string_view project_name,
     const std::filesystem::path& project_asset_dir
-  );
+  ) -> bool;
 };
 } // namespace ox
