@@ -3,15 +3,16 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <array>
-#include <ranges>
+#include <memory>
 #include <stb_image.h>
+#include <string>
+#include <vector>
 
 #include "Core/App.hpp"
 #include "Core/Base.hpp"
 #include "Core/Enum.hpp"
 #include "Core/Handle.hpp"
 #include "Core/Input.hpp"
-#include "Memory/Stack.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/RmlUI.hpp"
 #include "Utils/Log.hpp"
@@ -19,6 +20,21 @@
 #define LOG_SDL_ERROR(call) OX_LOG_ERROR("{}: {}", #call, SDL_GetError())
 
 namespace ox {
+struct FileDialogCallbackState {
+  void* user_data = nullptr;
+  void (*callback)(void* user_data, const c8* const* files, i32 filter) = nullptr;
+  std::vector<std::string> filter_names = {};
+  std::vector<std::string> filter_patterns = {};
+  std::vector<SDL_DialogFileFilter> filters = {};
+};
+
+auto complete_file_dialog(void* user_data, const c8* const* files, const i32 filter) -> void {
+  const auto state = std::unique_ptr<FileDialogCallbackState>(static_cast<FileDialogCallbackState*>(user_data));
+  if (state->callback) {
+    state->callback(state->user_data, files, filter);
+  }
+}
+
 template <>
 struct Handle<Window>::Impl {
   u32 width = {};
@@ -498,33 +514,52 @@ auto Window::display_at(const u32 monitor_id) -> option<SystemDisplay> {
 }
 
 auto Window::show_dialog(const ShowDialogInfo& info) const -> void {
-  memory::ScopedStack stack;
+  auto state = std::make_unique<FileDialogCallbackState>();
+  state->user_data = info.user_data;
+  state->callback = info.callback;
 
-  auto sdl_filters = stack.alloc<SDL_DialogFileFilter>(info.filters.size());
-  for (const auto& [filter, sdl_filter] : std::views::zip(info.filters, sdl_filters)) {
-    sdl_filter.name = stack.null_terminate_cstr(filter.name);
-    sdl_filter.pattern = stack.null_terminate_cstr(filter.pattern);
+  if (info.kind != DialogKind::OpenFolder) {
+    state->filter_names.reserve(info.filters.size());
+    state->filter_patterns.reserve(info.filters.size());
+    state->filters.reserve(info.filters.size());
+
+    for (const auto& filter : info.filters) {
+      state->filter_names.emplace_back(filter.name);
+      state->filter_patterns.emplace_back(filter.pattern);
+    }
+    for (usize filter_index = 0; filter_index < info.filters.size(); ++filter_index) {
+      state->filters.emplace_back(
+        SDL_DialogFileFilter{
+          .name = state->filter_names[filter_index].c_str(),
+          .pattern = state->filter_patterns[filter_index].c_str(),
+        }
+      );
+    }
   }
 
   const auto props = SDL_CreateProperties();
   OX_DEFER(&) { SDL_DestroyProperties(props); };
 
-  SDL_SetPointerProperty(props, SDL_PROP_FILE_DIALOG_FILTERS_POINTER, sdl_filters.data());
-  SDL_SetNumberProperty(props, SDL_PROP_FILE_DIALOG_NFILTERS_NUMBER, static_cast<i32>(sdl_filters.size()));
+  if (!state->filters.empty()) {
+    SDL_SetPointerProperty(props, SDL_PROP_FILE_DIALOG_FILTERS_POINTER, state->filters.data());
+    SDL_SetNumberProperty(props, SDL_PROP_FILE_DIALOG_NFILTERS_NUMBER, static_cast<i32>(state->filters.size()));
+  }
   SDL_SetPointerProperty(props, SDL_PROP_FILE_DIALOG_WINDOW_POINTER, impl->handle);
   SDL_SetStringProperty(props, SDL_PROP_FILE_DIALOG_LOCATION_STRING, info.default_path.string().c_str());
   SDL_SetBooleanProperty(props, SDL_PROP_FILE_DIALOG_MANY_BOOLEAN, info.multi_select);
-  SDL_SetStringProperty(props, SDL_PROP_FILE_DIALOG_TITLE_STRING, stack.null_terminate_cstr(info.title));
+  SDL_SetStringProperty(props, SDL_PROP_FILE_DIALOG_TITLE_STRING, std::string(info.title).c_str());
+
+  auto* callback_state = state.release();
 
   switch (info.kind) {
     case DialogKind::OpenFile:
-      SDL_ShowFileDialogWithProperties(SDL_FILEDIALOG_OPENFILE, info.callback, info.user_data, props);
+      SDL_ShowFileDialogWithProperties(SDL_FILEDIALOG_OPENFILE, complete_file_dialog, callback_state, props);
       break;
     case DialogKind::SaveFile:
-      SDL_ShowFileDialogWithProperties(SDL_FILEDIALOG_SAVEFILE, info.callback, info.user_data, props);
+      SDL_ShowFileDialogWithProperties(SDL_FILEDIALOG_SAVEFILE, complete_file_dialog, callback_state, props);
       break;
     case DialogKind::OpenFolder:
-      SDL_ShowFileDialogWithProperties(SDL_FILEDIALOG_OPENFOLDER, info.callback, info.user_data, props);
+      SDL_ShowFileDialogWithProperties(SDL_FILEDIALOG_OPENFOLDER, complete_file_dialog, callback_state, props);
       break;
   }
 }

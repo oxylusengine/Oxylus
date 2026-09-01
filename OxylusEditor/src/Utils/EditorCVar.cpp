@@ -133,18 +133,19 @@ auto EditorCVar::save(this EditorCVar& self) -> void {
   file.close();
 }
 
-void EditorCVar::add_recent_project(this EditorCVar& self, const Project* project) {
-  for (auto& recent_project_path : self.recent_projects) {
-    if (recent_project_path.filename() == project->get_project_file_path().filename()) {
-      return;
-    }
-  }
-
-  self.recent_projects.emplace_back(project->get_project_file_path());
+auto EditorCVar::add_recent_project(this EditorCVar& self, const Project* project) -> void {
+  const auto project_path = project->get_project_file_path().lexically_normal();
+  std::erase_if(self.recent_projects, [&project_path](const std::filesystem::path& recent_path) {
+    return recent_path.lexically_normal() == project_path;
+  });
+  self.recent_projects.emplace(self.recent_projects.begin(), project_path);
 }
 
 auto EditorCVar::remove_recent_project(this EditorCVar& self, const std::filesystem::path& path) -> void {
-  std::erase_if(self.recent_projects, [path](const std::filesystem::path& e) { return e == path; });
+  const auto normalized_path = path.lexically_normal();
+  std::erase_if(self.recent_projects, [&normalized_path](const std::filesystem::path& recent_path) {
+    return recent_path.lexically_normal() == normalized_path;
+  });
 }
 
 } // namespace ox
