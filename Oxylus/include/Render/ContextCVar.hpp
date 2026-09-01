@@ -13,11 +13,15 @@ struct ContextCVar : public CVarInterface {
 
   auto save(this ContextCVar& self) -> void;
   auto load(this ContextCVar& self) -> bool;
+  auto initialize_ui_scale(this ContextCVar& self, f32 display_scale) -> void;
 
   AutoCVar_Int cvar_vsync;
   AutoCVar_Int cvar_frame_limit;
   AutoCVar_Float cvar_ui_scale;
   AutoCVar_Int cvar_mesh_shaders;
   AutoCVar_Int cvar_ray_tracing;
+
+private:
+  bool ui_scale_is_absolute = false;
 };
 } // namespace ox

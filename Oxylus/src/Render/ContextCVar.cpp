@@ -45,6 +45,7 @@ auto ContextCVar::save(this ContextCVar& self) -> void {
         {"vsync", (bool)self.cvar_vsync.get()},
         {"frame_limit", self.cvar_frame_limit.get()},
         {"ui_scale", ui_scale},
+        {"ui_scale_is_absolute", self.ui_scale_is_absolute},
       },
     },
     {
@@ -80,6 +81,8 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
       self.cvar_ui_scale.set(normalize_ui_scale_multiplier(static_cast<f32>(floating_scale->get())));
     else if (auto integer_scale = display_config["ui_scale"].as_integer())
       self.cvar_ui_scale.set(normalize_ui_scale_multiplier(static_cast<f32>(integer_scale->get())));
+    if (auto absolute_scale = display_config["ui_scale_is_absolute"].as_boolean())
+      self.ui_scale_is_absolute = absolute_scale->get();
   }
 
   if (const auto render_config = toml["render"]) {
@@ -90,5 +93,16 @@ auto ContextCVar::load(this ContextCVar& self) -> bool {
   }
 
   return true;
+}
+
+auto ContextCVar::initialize_ui_scale(this ContextCVar& self, f32 display_scale) -> void {
+  ZoneScoped;
+
+  if (self.ui_scale_is_absolute) {
+    return;
+  }
+
+  self.cvar_ui_scale.set(migrate_legacy_ui_scale(display_scale, self.cvar_ui_scale.get()));
+  self.ui_scale_is_absolute = true;
 }
 } // namespace ox

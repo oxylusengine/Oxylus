@@ -17,16 +17,25 @@ inline auto normalize_ui_scale_multiplier(f32 multiplier) -> f32 {
   }
 
   const auto clamped = std::clamp(multiplier, UI_SCALE_MIN_MULTIPLIER, UI_SCALE_MAX_MULTIPLIER);
-  const auto snapped = std::round(clamped / UI_SCALE_MULTIPLIER_STEP) * UI_SCALE_MULTIPLIER_STEP;
+  // Keep mathematical half steps rounding up even when chained float operations land a few ULPs below them.
+  constexpr auto rounding_epsilon = 0.0001f;
+  const auto snapped = std::round(clamped / UI_SCALE_MULTIPLIER_STEP + rounding_epsilon) *
+                       UI_SCALE_MULTIPLIER_STEP;
   return std::clamp(snapped, UI_SCALE_MIN_MULTIPLIER, UI_SCALE_MAX_MULTIPLIER);
 }
 
-inline auto calculate_ui_scale(f32 display_scale, f32 multiplier) -> f32 {
+inline auto ui_scale_from_display_scale(f32 display_scale) -> f32 {
   if (!std::isfinite(display_scale) || display_scale <= 0.0f) {
     display_scale = 1.0f;
   }
 
-  return display_scale * normalize_ui_scale_multiplier(multiplier);
+  return normalize_ui_scale_multiplier(display_scale);
+}
+
+inline auto migrate_legacy_ui_scale(f32 display_scale, f32 multiplier) -> f32 {
+  return normalize_ui_scale_multiplier(
+    ui_scale_from_display_scale(display_scale) * normalize_ui_scale_multiplier(multiplier)
+  );
 }
 
 inline auto calculate_rml_dpi_ratio(f32 ui_scale, f32 viewport_width, i32 surface_width) -> f32 {

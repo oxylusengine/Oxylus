@@ -40,6 +40,7 @@ auto EditorSettingsPanel::draw_general_tab(this EditorSettingsPanel& self) -> vo
 
     auto& context_cvar = App::get_rendercontext().context_cvar;
     auto& ui_scale_cvar = context_cvar.cvar_ui_scale;
+    const auto os_ui_scale = ui_scale_from_display_scale(App::get_window().get_dpi_scale());
     const auto applied_ui_scale = normalize_ui_scale_multiplier(ui_scale_cvar.get());
     const auto applied_ui_scale_percent = static_cast<i32>(std::round(applied_ui_scale * 100.0f));
     if (!self.ui_scale_edit_initialized || !self.ui_scale_dirty) {
@@ -49,7 +50,7 @@ auto EditorSettingsPanel::draw_general_tab(this EditorSettingsPanel& self) -> vo
 
     UI::begin_property_grid(
       "UI scale",
-      "Multiplies the desktop scale for ImGui, RmlUi, and automatic viewport rendering."
+      "Sets the scale for ImGui, RmlUi, and automatic viewport rendering."
     );
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
     if (ImGui::SliderInt("##ui_scale", &self.pending_ui_scale_percent, 50, 200, "%d%%")) {
@@ -65,7 +66,7 @@ auto EditorSettingsPanel::draw_general_tab(this EditorSettingsPanel& self) -> vo
       (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f
     );
     if (ImGui::Button("Reset", ImVec2(action_button_width, 0.0f))) {
-      self.pending_ui_scale_percent = static_cast<i32>(UI_SCALE_DEFAULT_MULTIPLIER * 100.0f);
+      self.pending_ui_scale_percent = static_cast<i32>(std::round(os_ui_scale * 100.0f));
     }
 
     self.ui_scale_dirty = self.pending_ui_scale_percent != applied_ui_scale_percent;
@@ -80,30 +81,10 @@ auto EditorSettingsPanel::draw_general_tab(this EditorSettingsPanel& self) -> vo
     ImGui::EndDisabled();
     UI::end_property_grid();
 
-    const auto display_scale = App::get_window().get_dpi_scale();
-    const auto current_ui_scale = normalize_ui_scale_multiplier(ui_scale_cvar.get());
-    const auto effective_scale = calculate_ui_scale(display_scale, current_ui_scale);
-    UI::text(
-      "Effective scale",
-      fmt::format(
-        "{:.0f}% OS x {:.0f}% UI = {:.0f}%",
-        display_scale * 100.0f,
-        current_ui_scale * 100.0f,
-        effective_scale * 100.0f
-      )
-    );
+    UI::text("OS scale", fmt::format("{:.0f}%", os_ui_scale * 100.0f));
 
     if (self.ui_scale_dirty) {
-      const auto pending_ui_scale = static_cast<f32>(self.pending_ui_scale_percent) / 100.0f;
-      UI::text(
-        "After save",
-        fmt::format(
-          "{:.0f}% OS x {:.0f}% UI = {:.0f}%",
-          display_scale * 100.0f,
-          pending_ui_scale * 100.0f,
-          calculate_ui_scale(display_scale, pending_ui_scale) * 100.0f
-        )
-      );
+      UI::text("After save", fmt::format("{}%", self.pending_ui_scale_percent));
     }
 
     auto current_history_size = undo_redo_system->get_max_history_size();

@@ -13,10 +13,18 @@ TEST(UIScale, NormalizesUserMultiplier) {
   EXPECT_FLOAT_EQ(normalize_ui_scale_multiplier(std::numeric_limits<f32>::infinity()), UI_SCALE_DEFAULT_MULTIPLIER);
 }
 
-TEST(UIScale, CombinesDisplayScaleAndUserMultiplier) {
-  EXPECT_NEAR(calculate_ui_scale(1.5f, 1.13f), 1.725f, 0.0001f);
-  EXPECT_FLOAT_EQ(calculate_ui_scale(0.0f, 1.5f), 1.5f);
-  EXPECT_FLOAT_EQ(calculate_ui_scale(std::numeric_limits<f32>::quiet_NaN(), 1.0f), 1.0f);
+TEST(UIScale, UsesDisplayScaleAsDefault) {
+  EXPECT_FLOAT_EQ(ui_scale_from_display_scale(1.5f), 1.5f);
+  EXPECT_FLOAT_EQ(ui_scale_from_display_scale(0.0f), UI_SCALE_DEFAULT_MULTIPLIER);
+  EXPECT_FLOAT_EQ(
+    ui_scale_from_display_scale(std::numeric_limits<f32>::quiet_NaN()),
+    UI_SCALE_DEFAULT_MULTIPLIER
+  );
+}
+
+TEST(UIScale, MigratesLegacyMultiplierToAbsoluteScale) {
+  EXPECT_FLOAT_EQ(migrate_legacy_ui_scale(1.5f, 1.13f), 1.75f);
+  EXPECT_FLOAT_EQ(migrate_legacy_ui_scale(0.0f, 1.5f), 1.5f);
 }
 
 TEST(UIScale, CompensatesRmlUiForRenderSurfaceScaling) {
