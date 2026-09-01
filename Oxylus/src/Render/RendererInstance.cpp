@@ -624,7 +624,39 @@ auto RendererInstance::render(
 
   auto& bindless_set = self.renderer.render_context->get_descriptor_set();
 
-  self.camera_data.resolution = {dst_extent.width, dst_extent.height};
+  const auto upscaler = UpscalerSettings{
+    .backend = static_cast<UpscalerBackend>(
+      std::clamp(cvar.cvar_upscaler_backend.get(), 0, static_cast<i32>(UpscalerBackend::Count) - 1)
+    ),
+    .quality = static_cast<UpscalerQuality>(
+      std::clamp(cvar.cvar_upscaler_quality.get(), 0, static_cast<i32>(UpscalerQuality::Count) - 1)
+    ),
+    .sharpness = cvar.cvar_upscaler_sharpness.get(),
+  };
+  const auto upscaling = upscaler.backend != UpscalerBackend::None;
+
+  // everything from the visbuffer through lighting runs at render resolution; only the upscale
+  // output and the post chain behind it are display resolution
+  const auto display_size = glm::uvec2(dst_extent.width, dst_extent.height);
+  const auto render_size = upscaling ? upscaler_render_extent(display_size, upscaler.quality) : display_size;
+  const auto render_extent = vuk::Extent3D{render_size.x, render_size.y, 1};
+
+  self.render_size_ = render_size;
+
+  if (upscaling) {
+    const auto phase_count = upscaler_jitter_phase_count(render_size.x, display_size.x);
+    self.previous_jitter = self.current_jitter;
+    self.current_jitter = upscaler_jitter_offset(self.jitter_frame_index, phase_count);
+    self.jitter_frame_index += 1;
+  } else {
+    self.previous_jitter = {};
+    self.current_jitter = {};
+    self.jitter_frame_index = 0;
+  }
+
+  self.camera_data.resolution = {render_extent.width, render_extent.height};
+  self.camera_data.temporalaa_jitter = self.current_jitter;
+  self.camera_data.temporalaa_jitter_prev = self.previous_jitter;
   self.prepared_frame.camera_buffer = self.renderer.render_context->scratch_buffer(self.camera_data);
 
   self.render_queue_2d.update();
@@ -638,7 +670,8 @@ auto RendererInstance::render(
 
   if (cvar.cvar_bloom_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasBloom;
-  if (cvar.cvar_fxaa_enable.as_bool())
+  // a temporal upscaler already resolves aliasing, and FXAA would smear its output
+  if (cvar.cvar_fxaa_enable.as_bool() && !upscaling)
     self.gpu_scene_flags |= GPU::SceneFlags::HasFXAA;
   if (cvar.cvar_vbgtao_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
@@ -665,7 +698,7 @@ auto RendererInstance::render(
   auto final_attachment = vuk::declare_ia(
     "final_attachment",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-     .extent = dst_extent,
+     .extent = render_extent,
      .format = hdr_format,
      .sample_count = vuk::Samples::e1,
      .level_count = 1,
@@ -679,7 +712,7 @@ auto RendererInstance::render(
   auto depth_attachment = vuk::declare_ia(
     "depth_image",
     {.usage = vuk::ImageUsageFlagBits::eDepthStencilAttachment | vuk::ImageUsageFlagBits::eSampled,
-     .extent = dst_extent,
+     .extent = render_extent,
      .format = vuk::Format::eD32Sfloat,
      .sample_count = vuk::SampleCountFlagBits::e1,
      .level_count = 1,
@@ -767,7 +800,7 @@ auto RendererInstance::render(
   auto overdraw_attachment = vuk::declare_ia(
     "overdraw",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .extent = draw_overdraw ? dst_extent : vuk::Extent3D{1, 1, 1},
+     .extent = draw_overdraw ? render_extent : vuk::Extent3D{1, 1, 1},
      .format = vuk::Format::eR32Uint,
      .sample_count = vuk::SampleCountFlagBits::e1,
      .level_count = 1,
@@ -850,6 +883,16 @@ auto RendererInstance::render(
     vuk::Black<f32>
   );
 
+  auto velocity_attachment = vuk::declare_ia(
+    "velocity",
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+     .format = vuk::Format::eR16G16Sfloat,
+     .sample_count = vuk::Samples::e1}
+  );
+  velocity_attachment.same_shape_as(visbuffer_attachment);
+  // background pixels keep a zero vector, which reprojects onto themselves
+  velocity_attachment = vuk::clear_image(std::move(velocity_attachment), vuk::Black<f32>);
+
   auto vbgtao_occlusion_attachment = vuk::declare_ia(
     "vbgtao occlusion",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
@@ -912,6 +955,7 @@ auto RendererInstance::render(
       .normal_attachment = std::move(normal_attachment),
       .emissive_attachment = std::move(emissive_attachment),
       .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
+      .velocity_attachment = std::move(velocity_attachment),
     };
 
     auto cull_camera = GPU::CullCamera{
@@ -921,6 +965,7 @@ auto RendererInstance::render(
       .resolution = self.camera_data.resolution,
       .near_clip = self.camera_data.near_clip,
       .mesh_instance_count = self.prepared_frame.mesh_instance_count,
+      .jitter = self.current_jitter,
     };
     const auto has_meshes = self.prepared_frame.mesh_instance_count > 0;
 
@@ -1074,6 +1119,7 @@ auto RendererInstance::render(
         .metallic_roughness_occlusion_attachment = std::move(
           main_geometry_context.metallic_roughness_occlusion_attachment
         ),
+        .velocity_attachment = std::move(main_geometry_context.velocity_attachment),
       };
       self.decode_terrain(terrain_decode_context);
 
@@ -1085,6 +1131,7 @@ auto RendererInstance::render(
       main_geometry_context.metallic_roughness_occlusion_attachment = std::move(
         terrain_decode_context.metallic_roughness_occlusion_attachment
       );
+      main_geometry_context.velocity_attachment = std::move(terrain_decode_context.velocity_attachment);
     }
 
     visbuffer_attachment = std::move(main_geometry_context.visbuffer_attachment);
@@ -1094,6 +1141,7 @@ auto RendererInstance::render(
     normal_attachment = std::move(main_geometry_context.normal_attachment);
     emissive_attachment = std::move(main_geometry_context.emissive_attachment);
     metallic_roughness_occlusion_attachment = std::move(main_geometry_context.metallic_roughness_occlusion_attachment);
+    velocity_attachment = std::move(main_geometry_context.velocity_attachment);
 
     const auto has_shadow_pointspot = self.prepared_frame.shadow_point_light_count +
                                         self.prepared_frame.shadow_spot_light_count >
@@ -1108,7 +1156,7 @@ auto RendererInstance::render(
       auto rmvsm_context = RMVSMContext{
         .bindless_set = &bindless_set,
         .sun_moved = self.sun_direction_changed,
-        .depth_extent = dst_extent,
+        .depth_extent = render_extent,
         .depth_attachment = std::move(depth_attachment),
         .normal_attachment = std::move(normal_attachment),
         .light_grid_origin = light_grid_context.grid_origin,
@@ -1223,7 +1271,7 @@ auto RendererInstance::render(
       vbgtao_depth_differences_attachment = vuk::declare_ia(
         "vbgtao depth differences",
         {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-         .extent = dst_extent,
+         .extent = render_extent,
          .format = vuk::Format::eR32Uint,
          .sample_count = vuk::Samples::e1,
          .level_count = 1,
@@ -1887,8 +1935,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     .previous_inv_view = self.previous_camera_data.inv_view,
     .previous_projection_view = self.previous_camera_data.projection_view,
     .previous_inv_projection_view = self.previous_camera_data.inv_projection_view,
-    .temporalaa_jitter = cam.jitter,
-    .temporalaa_jitter_prev = self.previous_camera_data.temporalaa_jitter_prev,
     .up = cam.up,
     .near_clip = cam.near_clip,
     .forward = cam.forward,

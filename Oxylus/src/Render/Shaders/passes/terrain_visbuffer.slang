@@ -93,7 +93,7 @@ func ds_main(PatchConstants constants, f32x2 uv: SV_DomainLocation, const Output
     let world_position = f32x3(interpolated.x, sample_height(interpolated.xz), interpolated.z);
 
     DomainOutput output;
-    output.position = mul(camera.projection_view, f32x4(world_position, 1.0));
+    output.position = camera.jitter_clip(mul(camera.projection_view, f32x4(world_position, 1.0)));
 
     return output;
 }

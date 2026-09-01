@@ -125,6 +125,16 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
 
   self.cvar_fxaa_enable.init(self.system, "pp.fxaa", "use fxaa", 1);
 
+  self.cvar_upscaler_backend.init(self.system, "pp.upscaler_backend", "0: None, 1: FSR3", 0);
+  self.cvar_upscaler_quality.init(
+    self.system,
+    "pp.upscaler_quality",
+    "0: Native AA (1.0x), 1: Quality (1.5x), 2: Balanced (1.7x), 3: Performance (2.0x), 4: Ultra Performance (3.0x)",
+    1
+  );
+  self.cvar_upscaler_sharpness
+    .init(self.system, "pp.upscaler_sharpness", "RCAS sharpening strength, 0 skips the sharpen pass", 0.0f);
+
   self.cvar_tonemapper.init(self.system, "pp.tonemapper", "tonemapper preset", 0);
   self.cvar_exposure.init(self.system, "pp.exposure", "tonemapping exposure", 1.0f);
   self.cvar_gamma.init(self.system, "pp.gamma", "screen gamma", 2.2f);
@@ -199,6 +209,12 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
 
   writer["fxaa"].begin_obj();
   writer["enabled"] = self.cvar_fxaa_enable.as_bool();
+  writer.end_obj();
+
+  writer["upscaler"].begin_obj();
+  writer["backend"] = self.cvar_upscaler_backend.get();
+  writer["quality"] = self.cvar_upscaler_quality.get();
+  writer["sharpness"] = self.cvar_upscaler_sharpness.get();
   writer.end_obj();
 
   writer["contact_shadows"].begin_obj();
@@ -291,6 +307,13 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
   auto fxaa_obj = json["fxaa"];
   if (!fxaa_obj.error()) {
     self.cvar_fxaa_enable.set(fxaa_obj["enabled"].get_bool());
+  }
+
+  auto upscaler_obj = json["upscaler"];
+  if (!upscaler_obj.error()) {
+    self.cvar_upscaler_backend.set(static_cast<i32>(upscaler_obj["backend"].get_int64()));
+    self.cvar_upscaler_quality.set(static_cast<i32>(upscaler_obj["quality"].get_int64()));
+    self.cvar_upscaler_sharpness.set(static_cast<f32>(upscaler_obj["sharpness"].get_double()));
   }
 
   auto cs_obj = json["contact_shadows"];

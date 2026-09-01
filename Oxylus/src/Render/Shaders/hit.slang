@@ -27,7 +27,10 @@ public struct SceneGeometry {
 public struct TriangleHit {
     public u32 mesh_instance_index;
     public u32 material_index;
+    public u32 transform_index;
     public f32x4x3 world_positions;
+    // object space, kept so a consumer can re-transform by the previous frame's matrix for motion vectors
+    public f32x3x3 object_positions;
     public f32x3x3 world_normals;
     public f32x2x3 tex_coords;
     public bool valid;
@@ -71,7 +74,9 @@ func build_triangle(
     }
 
     let transform = geometry.transforms[mesh_instance.transform_index];
-    hit.world_positions = transform.to_world_positions(mesh.positions(indices));
+    hit.transform_index = mesh_instance.transform_index;
+    hit.object_positions = mesh.positions(indices);
+    hit.world_positions = transform.to_world_positions(hit.object_positions);
     hit.world_normals = transform.to_world_normals(mesh.normals(indices));
     hit.tex_coords = mesh.tex_coords(indices);
     hit.valid = true;

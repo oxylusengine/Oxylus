@@ -94,7 +94,7 @@ func vs_main(u32 vertex_id : SV_VertexID, u32 instance_id : SV_InstanceID) -> VO
     }
 
     let world = center + axis_x * (corner.x * particle.size.x) + axis_y * (corner.y * particle.size.y);
-    let clip = mul(camera.projection_view, f32x4(world, 1.0));
+    let clip = camera.jitter_clip(mul(camera.projection_view, f32x4(world, 1.0)));
 
     let tiles = f32x2(f32(max(emitter.flipbook_x, 1u)), f32(max(emitter.flipbook_y, 1u)));
     let frame = f32(particle.flipbook_frame);

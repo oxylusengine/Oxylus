@@ -8,6 +8,7 @@
 #include "Render/AccelerationStructure.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererCVar.hpp"
+#include "Render/Upscaler.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Scene/Terrain.hpp"
 
@@ -346,6 +347,7 @@ struct MainGeometryContext {
   vuk::Value<vuk::ImageAttachment> normal_attachment = {};
   vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> velocity_attachment = {};
 
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
   vuk::Value<vuk::Buffer> visibility_buffer = {};
@@ -398,6 +400,7 @@ struct TerrainDecodeContext {
   vuk::Value<vuk::ImageAttachment> normal_attachment = {};
   vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> velocity_attachment = {};
 };
 
 struct RMVSMContext {
@@ -781,6 +784,12 @@ private:
   glm::uvec2 viewport_size_ = {};
   glm::uvec2 viewport_origin_ = {};
   glm::uvec2 surface_size_ = {};
+  // resolution the scene is rasterized at, below the display size whenever an upscaler is active
+  glm::uvec2 render_size_ = {};
+
+  glm::vec2 current_jitter = {};
+  glm::vec2 previous_jitter = {};
+  u32 jitter_frame_index = 0;
 
   vuk::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
   vuk::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};

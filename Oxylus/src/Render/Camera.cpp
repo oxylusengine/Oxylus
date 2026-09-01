@@ -7,7 +7,6 @@ auto Camera::update(CameraComponent& component, const TransformComponent& transf
   -> void {
   ZoneScoped;
 
-  component.jitter_prev = component.jitter;
   component.matrices_prev.projection_matrix = component.matrices.projection_matrix;
   component.matrices_prev.view_matrix = component.matrices.view_matrix;
 

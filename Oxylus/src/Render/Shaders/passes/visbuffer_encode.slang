@@ -35,7 +35,7 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
     let vertex_pos = meshlet.position(mesh, index);
     let tex_coord = meshlet.tex_coord(mesh, index);
     let world_pos = transform.to_world_position(vertex_pos);
-    let clip_pos = mul(camera.projection_view, f32x4(world_pos.xyz, 1.0));
+    let clip_pos = camera.jitter_clip(mul(camera.projection_view, f32x4(world_pos.xyz, 1.0)));
 
     let encoded_vis = VisBufferData(vis.meshlet_instance_index, vis.triangle_index / 3);
 

@@ -52,7 +52,9 @@ VOutput vs_main(VertexInput input, u32 vertex_id : SV_VertexID) {
   f32x4 world_position = f32x4(f32x2(positions[vertex_index].xy * f32x2((f32)((bool)flip ? -1 : 1), 1)), 0, 1);
   world_position = mul(transform, world_position);
 
-  output.position = mul(C.camera_buffer.projection_view, f32x4(world_position.xyz, 1.0f));
+  output.position = C.camera_buffer.jitter_clip(
+    mul(C.camera_buffer.projection_view, f32x4(world_position.xyz, 1.0f))
+  );
   output.material_index = material_index;
 
   return output;

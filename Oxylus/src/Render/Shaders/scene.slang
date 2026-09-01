@@ -235,6 +235,14 @@ public struct Camera {
   public f32x2 resolution;
   public f32 acceptable_lod_error;
 
+  // jitter stays out of `projection` so cpu side culling and the motion vector reprojection keep
+  // working off unjittered matrices. oxylus ndc has +y down, matching the texel space the upscaler
+  // reports the offset in, so neither axis is flipped here
+  public func jitter_clip(f32x4 clip_pos) -> f32x4 {
+    clip_pos.xy += (2.0 * this.temporalaa_jitter / this.resolution) * clip_pos.w;
+    return clip_pos;
+  }
+
   public func unproject_uv(f32x2 uv, f32 depth) -> f32x3 {
     let ndc = f32x4(uv * 2.0 - 1.0, depth, 1.0);
     let world_pos_h = mul(this.inv_projection_view, ndc);
@@ -249,6 +257,13 @@ public struct CullCamera {
     public f32x2 resolution = {};
     public f32 near_clip = {};
     public u32 mesh_instances_count = {};
+    public f32x2 jitter = {};
+
+    // see Camera::jitter_clip, same convention
+    public func jitter_clip(f32x4 clip_pos) -> f32x4 {
+        clip_pos.xy += (2.0 * this.jitter / this.resolution) * clip_pos.w;
+        return clip_pos;
+    }
 };
 
 public struct Atmosphere {

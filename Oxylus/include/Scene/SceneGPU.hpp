@@ -241,6 +241,8 @@ struct CullCamera {
   glm::vec2 resolution = {};
   f32 near_clip = {};
   u32 mesh_instance_count = {};
+  // only the main geometry pass sets this; culling and shadow users leave it zero
+  glm::vec2 jitter = {};
 };
 
 constexpr static u32 MAX_POINT_LIGHTS = 128;
