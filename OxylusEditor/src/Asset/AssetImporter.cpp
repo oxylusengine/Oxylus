@@ -2,6 +2,8 @@
 
 #include <ResourceCompiler.hpp>
 #include <charconv>
+#include <condition_variable>
+#include <mutex>
 #include <ranges>
 #include <span>
 
@@ -11,11 +13,47 @@
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
-#include "Render/Utils/TextureFormat.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
+// A parallel scan can reach one file from several threads at once -- two models naming the same
+// sibling texture, or a source and its own `.oxasset` sitting side by side in one directory. Whoever
+// claims a path first does the work and the others wait, so nothing is compiled twice or handed two
+// UUIDs. The waiter then takes the warm path, which is why no result needs caching here.
+//
+// Claims nest (a model claims itself, then its textures) but never cycle: a texture import cannot
+// reach a model.
+struct ImportGate {
+  std::mutex mutex = {};
+  std::condition_variable released = {};
+  ankerl::unordered_dense::set<std::string> in_flight = {};
+};
+
+static ImportGate import_gate = {};
+
+struct ImportClaim {
+  std::string key = {};
+
+  explicit ImportClaim(const std::filesystem::path& path) : key(path.lexically_normal().string()) {
+    auto lock = std::unique_lock(import_gate.mutex);
+    import_gate.released.wait(lock, [&] { return !import_gate.in_flight.contains(key); });
+    import_gate.in_flight.emplace(key);
+  }
+
+  ~ImportClaim() {
+    {
+      auto lock = std::unique_lock(import_gate.mutex);
+      import_gate.in_flight.erase(key);
+    }
+
+    import_gate.released.notify_all();
+  }
+
+  ImportClaim(const ImportClaim&) = delete;
+  auto operator=(const ImportClaim&) -> ImportClaim& = delete;
+};
+
 // What the sidecar records for one of a model's textures. Exactly one of the two paths is set:
 // `external` for a sibling file that is an asset in its own right, `cache` for one the compiler
 // produced and only this model refers to. `is_srgb` is the colour space the glTF's material graph
@@ -40,7 +78,9 @@ auto needs_compiling(AssetFileType file_type) -> bool {
     case AssetFileType::GLB :
     case AssetFileType::GLTF:
     case AssetFileType::KTX2:
-    case AssetFileType::DDS : return true;
+    case AssetFileType::DDS :
+    case AssetFileType::PNG :
+    case AssetFileType::JPEG: return true;
     default                 : return false;
   }
 }
@@ -93,22 +133,21 @@ auto hash_to_string(u64 hash) -> std::string { return fmt::format("{:016X}", has
 
 auto mix_hash(u64 hash, u64 value) -> u64 { return (hash ^ value) * 0x100000001B3_u64; }
 
-// `Session` accumulates messages for its whole lifetime, so a compile reports only what it added.
+// `Session` accumulates messages for its whole lifetime, and imports run concurrently, so a compile
+// drains what is there rather than slicing by offset -- with several importers pushing at once an
+// offset reports another thread's messages too, and reports them again from its own log. Draining
+// makes attribution approximate but prints every message exactly once.
 struct SessionLog {
   rc::Session& session;
-  usize first_message = 0;
-  usize first_error = 0;
 
-  explicit SessionLog(rc::Session& session_)
-      : session(session_),
-        first_message(session_.get_messages().size()),
-        first_error(session_.get_errors().size()) {}
+  explicit SessionLog(rc::Session& session_) : session(session_) {}
 
   ~SessionLog() {
-    for (const auto& message : std::span(session.get_messages()).subspan(first_message)) {
+    const auto diagnostics = session.take_diagnostics();
+    for (const auto& message : diagnostics.messages) {
       OX_LOG_INFO("{}", message);
     }
-    for (const auto& error : std::span(session.get_errors()).subspan(first_error)) {
+    for (const auto& error : diagnostics.errors) {
       OX_LOG_ERROR("{}", error);
     }
   }
@@ -122,28 +161,6 @@ auto string_to_hash(std::string_view text) -> u64 {
   }
 
   return value;
-}
-
-// stb sniffs the content, so this only decides what the cache file is called.
-auto image_extension(std::span<const u8> bytes) -> std::string_view {
-  if (bytes.size() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
-    return ".jpg";
-  }
-
-  return ".png";
-}
-
-auto write_bytes(const std::filesystem::path& path, std::span<const u8> bytes) -> bool {
-  auto file = File(path, FileAccess::Write);
-  if (!file) {
-    OX_LOG_ERROR("Couldn't open '{}' for writing.", path);
-    return false;
-  }
-
-  file.write_data(bytes.data(), bytes.size_bytes());
-  file.close();
-
-  return true;
 }
 
 auto write_texture_pack(const std::filesystem::path& path, TextureData&& data, const UUID& uuid) -> bool {
@@ -322,17 +339,9 @@ auto compile_model(
                    ? previous_textures[texture_index].uuid
                    : UUID::generate_random();
 
-    if (compiled_texture.kind == rc::CompiledTexture::Kind::SourceBytes) {
-      // PNG/JPEG stay encoded so the engine's stb path handles them, per the format split
-      entry.cache = entry.uuid.str() + std::string(image_extension(compiled_texture.source_bytes));
-      if (!write_bytes(cache_dir() / entry.cache, compiled_texture.source_bytes)) {
-        return false;
-      }
-    } else {
-      entry.cache = entry.uuid.str() + ".oxpack";
-      if (!write_texture_pack(cache_dir() / entry.cache, std::move(compiled_texture.data), entry.uuid)) {
-        return false;
-      }
+    entry.cache = entry.uuid.str() + ".oxpack";
+    if (!write_texture_pack(cache_dir() / entry.cache, std::move(compiled_texture.data), entry.uuid)) {
+      return false;
     }
 
     model.textures[texture_index].uuid = PackedUUID::pack(entry.uuid);
@@ -416,7 +425,6 @@ auto import_model(AssetManager& asset_man, rc::Session& session, const std::file
   const auto hash = source_hash(path);
   const auto stale = meta->source_hash != hash || !std::filesystem::exists(cache_path(meta->uuid));
   if (stale) {
-    OX_LOG_INFO("Compiling model '{}'...", path);
     meta->source_hash = hash;
     if (!compile_model(asset_man, session, path, meta.value())) {
       return UUID(nullptr);
@@ -473,8 +481,6 @@ auto import_compiled_texture(
   const auto hash = mix_hash(source_hash(path), resolved.has_value() ? (*resolved ? 1 : 2) : 0);
   const auto pack_path = cache_path(uuid);
   if (recorded_hash != hash || !std::filesystem::exists(pack_path)) {
-    OX_LOG_INFO("Compiling texture '{}'...", path);
-
     auto data = option<TextureData>{nullopt};
     {
       auto log = SessionLog(session);
@@ -487,19 +493,6 @@ auto import_compiled_texture(
       OX_LOG_ERROR("Failed to compile texture '{}'.", path);
       return UUID(nullptr);
     }
-
-    // Which of the three inputs won is otherwise invisible, and it is the first thing to look at
-    // when a texture comes back the wrong colour space.
-    OX_LOG_INFO(
-      "Compiled texture '{}' as {} ({}).",
-      path,
-      to_unorm_format(static_cast<vuk::Format>(data->vk_format)) != static_cast<vuk::Format>(data->vk_format)
-        ? "sRGB"
-        : "linear",
-      srgb.has_value()        ? "overridden by its .oxasset"
-      : directive.has_value() ? "requested by the model using it"
-                              : "declared by the source"
-    );
 
     if (!write_texture_pack(pack_path, std::move(data.value()), uuid)) {
       OX_LOG_ERROR("Failed to write the texture pack for '{}'.", path);
@@ -525,6 +518,8 @@ auto import_asset(
     OX_LOG_ERROR("Trying to import an asset '{}' that doesn't exist.", path);
     return UUID(nullptr);
   }
+
+  const auto claim = ImportClaim(path);
 
   const auto file_type = to_asset_file_type(path);
   if (file_type == AssetFileType::Meta) {

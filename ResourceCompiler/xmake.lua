@@ -18,6 +18,7 @@ target("ResourceCompiler")
     "fastgltf-ox",
     "meshoptimizer",
     "ktx-ox",
+    "stb",
     "glm",
     { public = false })
 

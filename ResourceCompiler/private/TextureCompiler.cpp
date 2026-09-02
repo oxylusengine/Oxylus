@@ -1,16 +1,38 @@
 #include "TextureCompiler.hpp"
 
+#include <atomic>
 #include <cstring>
 #include <fmt/format.h>
 #include <fmt/std.h>
 #include <ktx.h>
+#include <mutex>
+#include <stb_image.h>
+#include <stb_image_resize2.h>
 #include <vuk/Types.hpp>
 
+#include "Core/Base.hpp"
 #include "DDS/DDS.hpp"
 #include "OS/File.hpp"
 #include "Render/Utils/TextureFormat.hpp"
 
 namespace ox::rc {
+// libktx builds the basisu transcoder tables lazily on the first `ktxTexture2_TranscodeBasis`, from
+// a plain non-atomic `static bool`, so the first transcode has to run alone
+static std::mutex ktx_transcoder_init_mutex = {};
+static std::atomic<bool> ktx_transcoder_ready = false;
+
+auto transcode_ktx2(ktxTexture2* ktx) -> KTX_error_code {
+  if (ktx_transcoder_ready.load(std::memory_order_acquire)) {
+    return ktxTexture2_TranscodeBasis(ktx, KTX_TTF_BC7_RGBA, KTX_TF_HIGH_QUALITY);
+  }
+
+  auto lock = std::unique_lock(ktx_transcoder_init_mutex);
+  const auto result = ktxTexture2_TranscodeBasis(ktx, KTX_TTF_BC7_RGBA, KTX_TF_HIGH_QUALITY);
+  ktx_transcoder_ready.store(true, std::memory_order_release);
+
+  return result;
+}
+
 auto mip_extent(u32 base, u32 level) -> u32 { return ox::max(base >> level, 1_u32); }
 
 auto detect_texture_source_kind(std::span<const u8> bytes) -> TextureSourceKind {
@@ -83,7 +105,7 @@ auto compile_ktx2(Session& session, std::span<const u8> bytes, std::string_view 
   auto format = vuk::Format::eBc7UnormBlock;
   if (ktxTexture2_NeedsTranscoding(ktx)) {
     ZoneNamedN(z, "Transcode KTX2", true);
-    if (ktxTexture2_TranscodeBasis(ktx, KTX_TTF_BC7_RGBA, KTX_TF_HIGH_QUALITY) != KTX_SUCCESS) {
+    if (transcode_ktx2(ktx) != KTX_SUCCESS) {
       session.push_error(fmt::format("Couldn't transcode KTX2 texture '{}'.", name));
       return nullopt;
     }
@@ -118,16 +140,105 @@ auto compile_ktx2(Session& session, std::span<const u8> bytes, std::string_view 
   return result;
 }
 
+auto mip_count(u32 width, u32 height) -> u32 {
+  auto count = 1_u32;
+  auto extent = ox::max(width, height);
+  while (extent > 1) {
+    extent >>= 1;
+    count += 1;
+  }
+
+  return count;
+}
+
+// PNG/JPEG and friends: stb decodes them to RGBA8 and the mip chain is built here rather than on the
+// GPU at load, so a compiled texture is the same shape whatever it was authored as.
+auto compile_generic(Session& session, std::span<const u8> bytes, std::string_view name, option<bool> srgb)
+  -> option<TextureData> {
+  ZoneScoped;
+
+  auto width = 0;
+  auto height = 0;
+  auto channels = 0;
+  auto* raw =
+    stbi_load_from_memory(bytes.data(), static_cast<i32>(bytes.size()), &width, &height, &channels, STBI_rgb_alpha);
+  if (!raw) {
+    session.push_error(fmt::format("Couldn't decode image '{}': {}", name, stbi_failure_reason()));
+    return nullopt;
+  }
+
+  OX_DEFER(&) { stbi_image_free(raw); };
+
+  // a plain image carries no colour space of its own, and all but a handful are authored as sRGB. a
+  // model naming one as a normal or metallic-roughness map overrides this.
+  const auto is_srgb = srgb.value_or(true);
+  auto result = TextureData{
+    .name = std::string(name),
+    .vk_format = static_cast<u32>(is_srgb ? vuk::Format::eR8G8B8A8Srgb : vuk::Format::eR8G8B8A8Unorm),
+    .width = static_cast<u32>(width),
+    .height = static_cast<u32>(height),
+  };
+
+  const auto level_count = mip_count(result.width, result.height);
+  result.mips.reserve(level_count);
+
+  auto& base = result.mips.emplace_back();
+  base.width = result.width;
+  base.height = result.height;
+  base.pixels.assign(raw, raw + static_cast<usize>(width) * static_cast<usize>(height) * 4);
+
+  for (auto level = 1_u32; level < level_count; level++) {
+    const auto level_width = mip_extent(result.width, level);
+    const auto level_height = mip_extent(result.height, level);
+    const auto& previous = result.mips[level - 1];
+
+    auto pixels = std::vector<u8>(static_cast<usize>(level_width) * level_height * 4);
+    // downsampling sRGB values with a linear filter darkens the result, so the sRGB variant decodes
+    // to linear, filters, and re-encodes
+    const auto* resized = is_srgb ? stbir_resize_uint8_srgb(
+                                      previous.pixels.data(),
+                                      static_cast<i32>(previous.width),
+                                      static_cast<i32>(previous.height),
+                                      0,
+                                      pixels.data(),
+                                      static_cast<i32>(level_width),
+                                      static_cast<i32>(level_height),
+                                      0,
+                                      STBIR_RGBA
+                                    )
+                                  : stbir_resize_uint8_linear(
+                                      previous.pixels.data(),
+                                      static_cast<i32>(previous.width),
+                                      static_cast<i32>(previous.height),
+                                      0,
+                                      pixels.data(),
+                                      static_cast<i32>(level_width),
+                                      static_cast<i32>(level_height),
+                                      0,
+                                      STBIR_RGBA
+                                    );
+    if (!resized) {
+      session.push_error(fmt::format("Couldn't build mip {} of '{}'.", level, name));
+      return nullopt;
+    }
+
+    auto& mip = result.mips.emplace_back();
+    mip.width = level_width;
+    mip.height = level_height;
+    mip.pixels = std::move(pixels);
+  }
+
+  return result;
+}
+
 auto compile_texture(Session& session, std::span<const u8> bytes, std::string_view name, option<bool> srgb)
   -> option<TextureData> {
   ZoneScoped;
 
   switch (detect_texture_source_kind(bytes)) {
-    case TextureSourceKind::DDS : return compile_dds(session, bytes, name, srgb);
-    case TextureSourceKind::KTX2: return compile_ktx2(session, bytes, name, srgb);
-    case TextureSourceKind::Generic:
-      session.push_error(fmt::format("'{}' is a plain image; the engine decodes those itself.", name));
-      return nullopt;
+    case TextureSourceKind::DDS    : return compile_dds(session, bytes, name, srgb);
+    case TextureSourceKind::KTX2   : return compile_ktx2(session, bytes, name, srgb);
+    case TextureSourceKind::Generic: return compile_generic(session, bytes, name, srgb);
   }
 
   return nullopt;

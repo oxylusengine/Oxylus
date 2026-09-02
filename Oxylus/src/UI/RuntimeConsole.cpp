@@ -74,15 +74,42 @@ void RuntimeConsole::register_command(const std::string& command, const std::str
 }
 
 void RuntimeConsole::add_log(const char* fmt, loguru::Verbosity verb) {
-  if ((uint32_t)text_buffer.size() >= MAX_TEXT_BUFFER_SIZE)
-    text_buffer.erase(text_buffer.begin());
-  text_buffer.emplace_back(fmt, verb);
-  request_scroll_to_bottom = true;
+  auto lock = std::unique_lock(pending_mutex);
+  pending.emplace_back(fmt, verb);
 }
 
-void RuntimeConsole::clear_log() { text_buffer.clear(); }
+auto RuntimeConsole::drain_pending(this RuntimeConsole& self) -> void {
+  auto incoming = std::vector<ConsoleText>();
+  {
+    auto lock = std::unique_lock(self.pending_mutex);
+    if (self.pending.empty()) {
+      return;
+    }
+
+    incoming.swap(self.pending);
+  }
+
+  for (auto& entry : incoming) {
+    if (static_cast<u32>(self.text_buffer.size()) >= MAX_TEXT_BUFFER_SIZE)
+      self.text_buffer.erase(self.text_buffer.begin());
+    self.text_buffer.emplace_back(std::move(entry));
+  }
+
+  self.request_scroll_to_bottom = true;
+}
+
+void RuntimeConsole::clear_log() {
+  {
+    auto lock = std::unique_lock(pending_mutex);
+    pending.clear();
+  }
+
+  text_buffer.clear();
+}
 
 void RuntimeConsole::render(this RuntimeConsole& self) {
+  self.drain_pending();
+
   if (App::mod<Input>().get_key_pressed(ScanCode::Grave)) {
     self.visible = !self.visible;
     self.request_keyboard_focus = true;

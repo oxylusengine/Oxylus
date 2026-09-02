@@ -16,6 +16,8 @@
 #include <queue>
 #include <ranges>
 
+#include "Parallel.hpp"
+#include "Session.hpp"
 #include "TextureCompiler.hpp"
 
 template <>
@@ -539,59 +541,49 @@ auto gltf_image_bytes(const fastgltf::Asset& asset, const fastgltf::Image& image
   return bytes;
 }
 
-auto compile_gltf_textures(
-  Session& session, const fastgltf::Asset& asset, std::string_view model_name, ModelCompileResult& out
+// writes only the two slots it is handed, so a whole model's textures can be decoded at once
+auto compile_gltf_texture(
+  Session& session,
+  const fastgltf::Asset& asset,
+  usize texture_index,
+  bool is_srgb,
+  std::string_view model_name,
+  ModelData::Texture& entry,
+  CompiledTexture& compiled
 ) -> void {
   ZoneScoped;
 
-  const auto linear_texture_indices = extract_linear_texture_indices(asset);
+  const auto& gltf_texture = asset.textures[texture_index];
+  entry.is_srgb = is_srgb;
 
-  out.model.textures.reserve(asset.textures.size());
-  out.textures.reserve(asset.textures.size());
-
-  for (const auto& [gltf_texture, texture_index] : std::views::zip(asset.textures, std::views::iota(0_sz))) {
-    auto& entry = out.model.textures.emplace_back();
-    auto& compiled = out.textures.emplace_back();
-
-    const auto is_srgb = !linear_texture_indices.contains(texture_index);
-    entry.is_srgb = is_srgb;
-
-    auto image_index = get_effective_image_index(gltf_texture);
-    if (!image_index.has_value()) {
-      entry.name = fmt::format("{}_texture_{}", model_name, texture_index);
-      continue;
-    }
-
-    const auto& image = asset.images[image_index.value()];
-    entry.name = image.name.empty() ? fmt::format("{}_texture_{}", model_name, texture_index) : std::string(image.name);
-
-    if (const auto* uri = std::get_if<fastgltf::sources::URI>(&image.data)) {
-      compiled.kind = CompiledTexture::Kind::External;
-      compiled.external_path = uri->uri.fspath();
-      continue;
-    }
-
-    const auto bytes = gltf_image_bytes(asset, image);
-    if (bytes.empty()) {
-      session.push_error(fmt::format("Unsupported image source for texture '{}'.", entry.name));
-      continue;
-    }
-
-    if (detect_texture_source_kind(bytes) == TextureSourceKind::Generic) {
-      // PNG/JPEG stay encoded; the engine decodes those with stb at load time.
-      compiled.kind = CompiledTexture::Kind::SourceBytes;
-      compiled.source_bytes.assign(bytes.begin(), bytes.end());
-      continue;
-    }
-
-    auto data = compile_texture(session, bytes, entry.name, is_srgb);
-    if (!data.has_value()) {
-      continue;
-    }
-
-    compiled.kind = CompiledTexture::Kind::Compiled;
-    compiled.data = std::move(data.value());
+  auto image_index = get_effective_image_index(gltf_texture);
+  if (!image_index.has_value()) {
+    entry.name = fmt::format("{}_texture_{}", model_name, texture_index);
+    return;
   }
+
+  const auto& image = asset.images[image_index.value()];
+  entry.name = image.name.empty() ? fmt::format("{}_texture_{}", model_name, texture_index) : std::string(image.name);
+
+  if (const auto* uri = std::get_if<fastgltf::sources::URI>(&image.data)) {
+    compiled.kind = CompiledTexture::Kind::External;
+    compiled.external_path = uri->uri.fspath();
+    return;
+  }
+
+  const auto bytes = gltf_image_bytes(asset, image);
+  if (bytes.empty()) {
+    session.push_error(fmt::format("Unsupported image source for texture '{}'.", entry.name));
+    return;
+  }
+
+  auto data = compile_texture(session, bytes, entry.name, is_srgb);
+  if (!data.has_value()) {
+    return;
+  }
+
+  compiled.kind = CompiledTexture::Kind::Compiled;
+  compiled.data = std::move(data.value());
 }
 
 auto compile_gltf_lights(const fastgltf::Asset& asset, ModelData& model) -> void {
@@ -745,6 +737,30 @@ auto read_gltf_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive
   return source;
 }
 
+// writes only the slot it is handed, so a whole model's primitives can be built at once
+auto build_pending_mesh(
+  Session& session, const fastgltf::Asset& asset, const PendingMesh& pending, ModelData::Mesh& out
+) -> void {
+  ZoneScoped;
+
+  const auto& gltf_mesh = asset.meshes[pending.gltf_mesh_index];
+  const auto& gltf_primitive = gltf_mesh.primitives[pending.gltf_primitive_index];
+
+  auto name = fmt::format("{}_{}", std::string(gltf_mesh.name), pending.gltf_primitive_index);
+  auto built = build_mesh(read_gltf_primitive(asset, gltf_primitive, name));
+  if (!built.has_value()) {
+    session.push_message(fmt::format("Primitive '{}' produced no renderable geometry.", name));
+    // The slot has to stay so `MeshGroup::mesh_indices` keeps pointing at the right mesh.
+    built = ModelData::Mesh{.name = std::move(name)};
+  }
+
+  if (gltf_primitive.materialIndex.has_value()) {
+    built->material_index = static_cast<u32>(gltf_primitive.materialIndex.value());
+  }
+
+  out = std::move(built.value());
+}
+
 auto compile_model(Session& session, const ModelCompileRequest& request) -> option<ModelCompileResult> {
   ZoneScoped;
 
@@ -764,8 +780,6 @@ auto compile_model(Session& session, const ModelCompileRequest& request) -> opti
   model.name = request.name.empty() ? request.path.filename().string() : request.name;
   model.default_scene_index = static_cast<u32>(asset.defaultScene.value_or(0_sz));
 
-  compile_gltf_textures(session, asset, model.name, result);
-
   model.materials.reserve(asset.materials.size());
   for (const auto& gltf_material : asset.materials) {
     model.materials.push_back(gltf_material_to_material(gltf_material, asset.textures.size()));
@@ -773,27 +787,41 @@ auto compile_model(Session& session, const ModelCompileRequest& request) -> opti
 
   compile_gltf_lights(asset, model);
 
+  // has to stay serial: it walks the node graph breadth-first and grows `model.mesh_groups`
   const auto pending_meshes = flatten_gltf_nodes(asset, model);
 
-  // TODO: fan this out over the session's job manager once `rc_multithread` lands.
-  model.meshes.reserve(pending_meshes.size());
-  for (const auto& pending : pending_meshes) {
-    const auto& gltf_mesh = asset.meshes[pending.gltf_mesh_index];
-    const auto& gltf_primitive = gltf_mesh.primitives[pending.gltf_primitive_index];
+  const auto linear_texture_indices = extract_linear_texture_indices(asset);
 
-    auto name = fmt::format("{}_{}", std::string(gltf_mesh.name), pending.gltf_primitive_index);
-    auto built = build_mesh(read_gltf_primitive(asset, gltf_primitive, name));
-    if (!built.has_value()) {
-      session.push_message(fmt::format("Primitive '{}' produced no renderable geometry.", name));
-      // The slot has to stay so `MeshGroup::mesh_indices` keeps pointing at the right mesh.
-      built = ModelData::Mesh{.name = std::move(name)};
+  // sized up front and filled by index, so the jobs below never touch a growing vector
+  model.textures.resize(asset.textures.size());
+  result.textures.resize(asset.textures.size());
+  model.meshes.resize(pending_meshes.size());
+
+  {
+    // texture decodes and mesh builds only read the parsed asset, so they share one barrier and
+    // balance a texture-heavy model against a primitive-heavy one
+    auto scope = ParallelScope(session->job_manager);
+
+    for (auto texture_index = 0_sz; texture_index < asset.textures.size(); texture_index++) {
+      const auto is_srgb = !linear_texture_indices.contains(texture_index);
+      scope.dispatch([&session, &asset, &model, &result, texture_index, is_srgb] {
+        compile_gltf_texture(
+          session,
+          asset,
+          texture_index,
+          is_srgb,
+          model.name,
+          model.textures[texture_index],
+          result.textures[texture_index]
+        );
+      });
     }
 
-    if (gltf_primitive.materialIndex.has_value()) {
-      built->material_index = static_cast<u32>(gltf_primitive.materialIndex.value());
+    for (auto mesh_index = 0_sz; mesh_index < pending_meshes.size(); mesh_index++) {
+      scope.dispatch([&session, &asset, &model, &pending_meshes, mesh_index] {
+        build_pending_mesh(session, asset, pending_meshes[mesh_index], model.meshes[mesh_index]);
+      });
     }
-
-    model.meshes.push_back(std::move(built.value()));
   }
 
   return result;

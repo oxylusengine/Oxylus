@@ -82,16 +82,14 @@ struct ProceduralMeshRequest {
 
 struct CompiledTexture {
   enum class Kind : u32 {
-    None = 0,    // the glTF texture has no usable image source
-    External,    // a sibling file the caller imports as an asset of its own
-    Compiled,    // decoded here; `data` is ready to pack
-    SourceBytes, // PNG/JPEG, left encoded for the engine's stb path
+    None = 0, // the glTF texture has no usable image source
+    External, // a sibling file the caller imports as an asset of its own
+    Compiled, // decoded here; `data` is ready to pack
   };
 
   Kind kind = Kind::None;
   std::filesystem::path external_path = {}; // Kind::External, relative to the model file
   TextureData data = {};                    // Kind::Compiled
-  std::vector<u8> source_bytes = {};        // Kind::SourceBytes
 };
 
 struct ModelCompileResult {
@@ -99,8 +97,18 @@ struct ModelCompileResult {
   std::vector<CompiledTexture> textures = {};
 };
 
+struct SessionDiagnostics {
+  std::vector<std::string> errors = {};
+  std::vector<std::string> messages = {};
+};
+
+struct SessionCreateInfo {
+  // 0 derives a count from the hardware concurrency
+  u32 thread_count = 0;
+};
+
 struct OXRC_API Session : Handle<Session> {
-  static auto create() -> option<Session>;
+  static auto create(const SessionCreateInfo& info = {}) -> option<Session>;
   auto destroy() -> void;
 
   auto add_request(const ShaderCompileRequest& request) -> void;
@@ -113,8 +121,11 @@ struct OXRC_API Session : Handle<Session> {
 
   auto push_error(std::string msg) -> void;
   auto push_message(std::string msg) -> void;
-  auto get_errors() const -> const std::vector<std::string>&;
-  auto get_messages() const -> const std::vector<std::string>&;
+  // snapshots, because the compilers push from worker threads
+  auto get_errors() const -> std::vector<std::string>;
+  auto get_messages() const -> std::vector<std::string>;
+  // moves both out and clears them, so concurrent callers each report a disjoint slice
+  auto take_diagnostics() -> SessionDiagnostics;
 };
 
 struct OXRC_API ResourceCompiler final : Session {

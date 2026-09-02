@@ -7,6 +7,7 @@
 #include <queue>
 #include <shared_mutex>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "Asset/Texture.hpp"
@@ -16,6 +17,19 @@
 namespace ox {
 class Scene;
 struct MaterialPreview;
+
+enum class ThumbnailKind : u8 { Texture = 0, Model, Material, Terrain };
+
+struct ThumbnailPrewarmRequest {
+  std::filesystem::path path = {};
+  ThumbnailKind kind = ThumbnailKind::Texture;
+};
+
+struct ThumbnailPrewarmProgress {
+  usize completed = 0;
+  usize total = 0;
+  std::string current = {};
+};
 
 class ThumbnailManager {
 public:
@@ -41,6 +55,13 @@ public:
 
   auto thumbnail_unavailable(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> bool;
 
+  // Asks for every thumbnail up front instead of waiting for the content panel to scroll one into
+  // view, so a project open can report how much of its preview cache is still cold. Cheap when the
+  // cache is warm: each request short-circuits on a cache hit without touching the asset.
+  auto begin_prewarm(this ThumbnailManager& self, std::vector<ThumbnailPrewarmRequest>&& requests) -> void;
+  auto prewarm_progress(this ThumbnailManager& self) -> ThumbnailPrewarmProgress;
+  auto cancel_prewarm(this ThumbnailManager& self) -> void;
+
 private:
   struct PendingRender {
     std::string cache_key = {};
@@ -53,7 +74,18 @@ private:
     std::vector<u8> pixels = {};
   };
 
+  struct PrewarmEntry {
+    ThumbnailPrewarmRequest request = {};
+    u32 polls = 0;
+  };
+
   static constexpr u32 THUMBNAIL_SIZE = 256;
+
+  // Model and material previews are GPU renders that `update` drains one per frame, and each one
+  // loads its asset, so the queue is issued in a window rather than all at once.
+  static constexpr usize PREWARM_MAX_INFLIGHT = 32;
+  // A request that never resolves must not hold the loading panel open forever
+  static constexpr u32 PREWARM_MAX_POLLS = 600;
 
   std::filesystem::path cache_dir = {};
 
@@ -82,6 +114,11 @@ private:
 
   std::unique_ptr<MaterialPreview> material_preview = {};
 
+  std::vector<PrewarmEntry> prewarm_queue = {};
+  std::vector<usize> prewarm_inflight = {};
+  usize prewarm_cursor = 0;
+  usize prewarm_done = 0;
+
   auto render_model_thumbnail(this ThumbnailManager& self, const UUID& model_uuid, u32 size) -> option<std::vector<u8>>;
   auto render_material_thumbnail(this ThumbnailManager& self, const UUID& material_uuid, u32 size)
     -> option<std::vector<u8>>;
@@ -90,6 +127,9 @@ private:
 
   auto store_thumbnail(this ThumbnailManager& self, const std::string& cache_key, std::span<const u8> pixels) -> void;
   auto drain_pending_upload(this ThumbnailManager& self) -> void;
+
+  auto pump_prewarm(this ThumbnailManager& self) -> void;
+  auto request_thumbnail(this ThumbnailManager& self, const ThumbnailPrewarmRequest& request) -> TextureView;
 
   auto get_asset_hash(this const ThumbnailManager& self, const std::filesystem::path& path) -> std::string;
   auto has_unsaved_edits(this ThumbnailManager& self, const UUID& material_uuid, const std::filesystem::path& meta_path)
@@ -102,6 +142,7 @@ private:
   ) -> TextureView;
 
   auto acquire_asset(this ThumbnailManager& self, const UUID& uuid) -> bool;
+  auto release_asset(this ThumbnailManager& self, const UUID& uuid) -> void;
 
   auto find_cached(this ThumbnailManager& self, const std::string& cache_key) -> option<TextureView>;
   auto try_claim_job(this ThumbnailManager& self, const std::string& cache_key) -> bool;

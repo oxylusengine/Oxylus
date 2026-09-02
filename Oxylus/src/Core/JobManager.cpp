@@ -83,9 +83,16 @@ auto JobManager::get_thread_count(this JobManager& self) -> u32 {
 auto JobManager::shutdown(this JobManager& self) -> void {
   ZoneScoped;
 
-  std::unique_lock lock(self.mutex);
-  self.running = false;
-  self.condition_var.notify_all();
+  {
+    std::unique_lock lock(self.mutex);
+    self.running = false;
+    self.condition_var.notify_all();
+  }
+
+  // `workers` is declared before `jobs`, `mutex` and `condition_var`, so the destructor would join
+  // the threads only after everything they touch is already gone
+  self.workers.clear();
+  self.num_threads = 0;
 }
 
 auto JobManager::worker(this JobManager& self, u32 id) -> void {

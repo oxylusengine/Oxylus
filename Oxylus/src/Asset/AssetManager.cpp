@@ -137,7 +137,7 @@ auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> vo
 
   self.clear_pending_load_info(uuid);
 
-  OX_LOG_INFO("Deleted asset {}.", uuid.str());
+  OX_LOG_TRACE("Deleted asset {}.", uuid.str());
 }
 
 auto AssetManager::register_asset(
@@ -160,7 +160,7 @@ auto AssetManager::register_asset(
   asset.path = path;
   asset.type = type;
 
-  OX_LOG_INFO("Registered new asset: {}:{}", to_asset_type_sv(asset.type), uuid.str());
+  OX_LOG_TRACE("Registered new asset: {}:{}", to_asset_type_sv(asset.type), uuid.str());
 
   return true;
 }

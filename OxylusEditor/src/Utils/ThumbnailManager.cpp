@@ -389,6 +389,17 @@ auto ThumbnailManager::acquire_asset(this ThumbnailManager& self, const UUID& uu
   return true;
 }
 
+auto ThumbnailManager::release_asset(this ThumbnailManager& self, const UUID& uuid) -> void {
+  ZoneScoped;
+
+  auto lock = std::unique_lock(self.owned_refs_mutex);
+  if (self.owned_asset_refs.erase(uuid) == 0) {
+    return;
+  }
+
+  App::mod<AssetManager>().unload_asset(uuid);
+}
+
 auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
   ZoneScoped;
 
@@ -396,6 +407,7 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
     return;
   }
 
+  self.pump_prewarm();
   self.drain_pending_upload();
 
   auto render_job = option<PendingRender>(nullopt);
@@ -429,6 +441,13 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
       self.mark_job_failed(render_job->cache_key);
       return;
     }
+  }
+
+  // The pixels are what the cache keeps; the model itself is only needed for the render, and a
+  // project-wide prewarm would otherwise leave every model in the project resident. Materials keep
+  // their ref because an edit re-renders them.
+  if (asset_type == AssetType::Model) {
+    self.release_asset(render_job->asset_uuid);
   }
 
   if (!pixels.has_value() || pixels->empty()) {
@@ -490,8 +509,98 @@ auto ThumbnailManager::drain_pending_upload(this ThumbnailManager& self) -> void
   self.store_thumbnail(upload->cache_key, upload->pixels);
 }
 
+auto ThumbnailManager::begin_prewarm(this ThumbnailManager& self, std::vector<ThumbnailPrewarmRequest>&& requests)
+  -> void {
+  ZoneScoped;
+
+  self.prewarm_queue.clear();
+  self.prewarm_queue.reserve(requests.size());
+  for (auto& request : requests) {
+    self.prewarm_queue.emplace_back(PrewarmEntry{.request = std::move(request)});
+  }
+
+  self.prewarm_inflight.clear();
+  self.prewarm_cursor = 0;
+  self.prewarm_done = 0;
+}
+
+auto ThumbnailManager::cancel_prewarm(this ThumbnailManager& self) -> void {
+  ZoneScoped;
+
+  self.prewarm_queue.clear();
+  self.prewarm_inflight.clear();
+  self.prewarm_cursor = 0;
+  self.prewarm_done = 0;
+}
+
+auto ThumbnailManager::prewarm_progress(this ThumbnailManager& self) -> ThumbnailPrewarmProgress {
+  ZoneScoped;
+
+  auto progress = ThumbnailPrewarmProgress{
+    .completed = self.prewarm_done,
+    .total = self.prewarm_queue.size(),
+  };
+
+  if (!self.prewarm_inflight.empty()) {
+    progress.current = self.prewarm_queue[self.prewarm_inflight.front()].request.path.filename().string();
+  }
+
+  return progress;
+}
+
+auto ThumbnailManager::request_thumbnail(this ThumbnailManager& self, const ThumbnailPrewarmRequest& request)
+  -> TextureView {
+  switch (request.kind) {
+    case ThumbnailKind::Texture : return self.get_thumbnail_texture(request.path);
+    case ThumbnailKind::Model   : return self.get_thumbnail_model(request.path);
+    case ThumbnailKind::Material: return self.get_thumbnail_material(request.path);
+    case ThumbnailKind::Terrain : return self.get_thumbnail_terrain(request.path);
+  }
+
+  return {};
+}
+
+auto ThumbnailManager::pump_prewarm(this ThumbnailManager& self) -> void {
+  ZoneScoped;
+
+  if (self.prewarm_done == self.prewarm_queue.size()) {
+    return;
+  }
+
+  // Re-asking is what polls: a claimed job short-circuits in `try_claim_job` before any import
+  // work, so this costs a hash lookup and the mtime stat behind the cache key.
+  std::erase_if(self.prewarm_inflight, [&self](const usize index) {
+    auto& entry = self.prewarm_queue[index];
+    entry.polls += 1;
+
+    const auto resolved = static_cast<bool>(self.request_thumbnail(entry.request)) ||
+                          self.thumbnail_unavailable(entry.request.path) || entry.polls >= PREWARM_MAX_POLLS;
+    if (resolved) {
+      self.prewarm_done += 1;
+    }
+
+    return resolved;
+  });
+
+  while (self.prewarm_inflight.size() < PREWARM_MAX_INFLIGHT && self.prewarm_cursor < self.prewarm_queue.size()) {
+    const auto index = self.prewarm_cursor;
+    self.prewarm_cursor += 1;
+
+    auto& entry = self.prewarm_queue[index];
+    entry.polls += 1;
+    if (self.request_thumbnail(entry.request) || self.thumbnail_unavailable(entry.request.path)) {
+      self.prewarm_done += 1;
+      continue;
+    }
+
+    self.prewarm_inflight.push_back(index);
+  }
+}
+
 auto ThumbnailManager::reset(this ThumbnailManager& self) -> void {
   ZoneScoped;
+
+  self.cancel_prewarm();
 
   if (std::filesystem::exists(self.cache_dir)) {
     std::filesystem::remove_all(self.cache_dir);

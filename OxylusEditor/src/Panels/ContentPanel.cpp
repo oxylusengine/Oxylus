@@ -264,6 +264,29 @@ static auto standalone_asset_file_type(const std::filesystem::path& path) -> opt
   }
 }
 
+auto classify_file_type(const std::filesystem::path& path) -> FileType {
+  ZoneScoped;
+
+  auto error = std::error_code();
+  if (std::filesystem::is_directory(path, error)) {
+    return FileType::Directory;
+  }
+
+  auto file_type = FileType::Unknown;
+  const auto extension = path.extension().string();
+  const auto& file_type_it = FILE_TYPES.find(extension);
+  if (file_type_it != FILE_TYPES.end())
+    file_type = file_type_it->second;
+
+  if (file_type == FileType::Meta) {
+    if (auto standalone_type = standalone_asset_file_type(path)) {
+      file_type = standalone_type.value();
+    }
+  }
+
+  return file_type;
+}
+
 static bool drag_drop_target(const std::filesystem::path& drop_path) {
   if (ImGui::BeginDragDropTarget()) {
     const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_TARGET);
@@ -1014,6 +1037,8 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
     bool any_item_hovered = false;
 
+    const auto scanning = asset_scan_active();
+
     {
       auto read_lock = std::shared_lock(self.directory_mutex);
       for (auto& file : self.directory_entries) {
@@ -1021,6 +1046,9 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           continue;
 
         const bool is_dir = file.is_directory;
+        // Still cooking, so it has no asset to make a thumbnail out of yet -- and asking for one
+        // would import it inline, on this thread, in the middle of a draw.
+        const bool importing = !is_dir && scanning && asset_scan_pending(file.file_path);
         const char* filename = file.name.c_str();
         const auto file_path_str = file.file_path.string();
         const auto& path = file.file_path;
@@ -1090,7 +1118,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           ImGui::SetCursorPos({cursor_pos.x + thumbnail_image_offset, cursor_pos.y + thumbnail_image_offset});
           ImGui::SetNextItemAllowOverlap();
 
-          auto use_thumbnail_image = !is_dir && editor_cvar.cvar_file_thumbnails.get() &&
+          auto use_thumbnail_image = !is_dir && !importing && editor_cvar.cvar_file_thumbnails.get() &&
                                      (file.type == FileType::Texture || file.type == FileType::Model ||
                                       file.type == FileType::Material || file.type == FileType::Terrain);
           auto thumbnail_image = TextureView{};
@@ -1110,10 +1138,10 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
               use_thumbnail_image = false;
             }
           }
-          if (use_thumbnail_image) {
-            if (thumbnail_image) {
-              UI::image(thumbnail_image, {thumb_image_size, thumb_image_size});
-            } else {
+          if (use_thumbnail_image && thumbnail_image) {
+            UI::image(thumbnail_image, {thumb_image_size, thumb_image_size});
+          } else if (importing || use_thumbnail_image) {
+            {
               ImSpinner::detail::SpinnerConfig config{};
               config.setSpinnerType(ImSpinner::e_st_ang);
               config.setSpeed(6.f);
@@ -1174,7 +1202,11 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           ImGui::TableSetColumnIndex(0);
 
           memory::ScopedStack row_stack;
-          const auto entry_label = row_stack.format_char("{}  {}###ContentEntry", file.icon, filename);
+          const auto entry_label = row_stack.format_char(
+            "{}  {}###ContentEntry",
+            importing ? ICON_MDI_TIMER_SAND : file.icon.c_str(),
+            filename
+          );
           constexpr ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_SpanAllColumns |
                                                             ImGuiSelectableFlags_AllowOverlap |
                                                             ImGuiSelectableFlags_AllowDoubleClick;
@@ -1366,19 +1398,7 @@ void ContentPanel::update_directory_entries(this ContentPanel& self, const std::
 
     std::error_code type_error;
     const bool is_directory = directory_entry.is_directory(type_error);
-    auto file_type = is_directory ? FileType::Directory : FileType::Unknown;
-    if (!is_directory) {
-      const auto extension = path.extension().string();
-      const auto& file_type_it = FILE_TYPES.find(extension);
-      if (file_type_it != FILE_TYPES.end())
-        file_type = file_type_it->second;
-    }
-
-    if (file_type == FileType::Meta) {
-      if (auto standalone_type = standalone_asset_file_type(path)) {
-        file_type = standalone_type.value();
-      }
-    }
+    const auto file_type = is_directory ? FileType::Directory : classify_file_type(path);
 
     std::string_view file_type_string = FILE_TYPES_TO_STRING.at(FileType::Unknown);
     const auto& file_string_type_it = FILE_TYPES_TO_STRING.find(file_type);

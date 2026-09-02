@@ -2,23 +2,48 @@
 
 #include <ResourceCompiler.hpp>
 #include <system_error>
+#include <thread>
 
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
+#include "Core/JobManager.hpp"
 #include "Core/UUID.hpp"
 #include "Core/VFS.hpp"
 #include "Project/ProjectSerializer.hpp"
 
 namespace ox {
-struct AssetDirectoryCallbacks {
-  void* user_data = nullptr;
-  void (*on_new_directory)(void* user_data, AssetDirectory* directory) = nullptr;
-  void (*on_new_asset)(void* user_data, UUID& asset_uuid) = nullptr;
+
+struct PendingImport {
+  AssetDirectory* dir = nullptr;
+  std::filesystem::path path = {};
+  std::string key = {};
+  UUID uuid = UUID(nullptr);
+  std::atomic<bool> started = false;
+  std::atomic<bool> finished = false;
+  bool applied = false;
+  // whether the compiler has to cook this one, as opposed to just reading or writing a sidecar
+  bool compiled = false;
 };
 
-auto populate_directory(AssetDirectory* dir, const AssetDirectoryCallbacks& callbacks) -> void {
+struct AssetScan {
+  // a deque because the jobs hold pointers into it; nothing may move once they are submitted
+  std::deque<PendingImport> imports = {};
+  ankerl::unordered_dense::set<std::string> pending_keys = {};
+  AssetDirectoryCallbacks callbacks = {};
+  usize applied_count = 0;
+  usize compiled_total = 0;
+  usize compiled_applied = 0;
+};
+
+// Only ever touched from the thread that drives the editor: scans start from a project load and are
+// drained by `poll_asset_scans`, both on the main thread. A job writes nothing but its own slot.
+static std::vector<std::unique_ptr<AssetScan>> active_scans = {};
+
+// Builds the directory tree and lists what has to be imported, without importing anything. The walk
+// mutates `AssetDirectory` and fires `on_new_directory`, so it stays on one thread.
+auto collect_directory(AssetDirectory* dir, const AssetDirectoryCallbacks& callbacks, AssetScan& scan) -> void {
   for (const auto& entry : std::filesystem::directory_iterator(dir->path)) {
     const auto& path = entry.path();
     if (entry.is_directory()) {
@@ -42,14 +67,166 @@ auto populate_directory(AssetDirectory* dir, const AssetDirectoryCallbacks& call
         cur_subdir = dir_it->get();
       }
 
-      populate_directory(cur_subdir, callbacks);
+      collect_directory(cur_subdir, callbacks, scan);
     } else if (entry.is_regular_file()) {
-      auto new_asset_uuid = dir->add_asset(path);
-      if (callbacks.on_new_asset) {
-        callbacks.on_new_asset(callbacks.user_data, new_asset_uuid);
+      auto& import = scan.imports.emplace_back();
+      import.dir = dir;
+      import.path = path;
+      import.key = path.lexically_normal().string();
+      import.compiled = needs_compiling(path);
+      if (import.compiled) {
+        scan.compiled_total += 1;
       }
     }
   }
+}
+
+// Hands finished imports back to the directory tree. Main thread only.
+auto apply_scan(AssetScan& scan) -> void {
+  for (auto& import : scan.imports) {
+    if (import.applied || !import.finished.load(std::memory_order_acquire)) {
+      continue;
+    }
+
+    if (import.uuid) {
+      import.dir->asset_uuids.emplace(import.uuid);
+    }
+
+    if (scan.callbacks.on_new_asset) {
+      scan.callbacks.on_new_asset(scan.callbacks.user_data, import.uuid);
+    }
+
+    import.applied = true;
+    scan.pending_keys.erase(import.key);
+    scan.applied_count += 1;
+    if (import.compiled) {
+      scan.compiled_applied += 1;
+    }
+  }
+}
+
+auto populate_directory(
+  AssetDirectory* dir,
+  const AssetDirectoryCallbacks& callbacks,
+  AssetManager& asset_man,
+  rc::Session& session,
+  JobManager& job_man
+) -> void {
+  ZoneScoped;
+
+  auto scan = std::make_unique<AssetScan>();
+  scan->callbacks = callbacks;
+  collect_directory(dir, callbacks, *scan);
+  if (scan->imports.empty()) {
+    return;
+  }
+
+  // once here, rather than raced for by every job that turns out to need it
+  auto error = std::error_code{};
+  std::filesystem::create_directories(cache_dir(), error);
+
+  if (job_man.get_thread_count() <= 1) {
+    for (auto& import : scan->imports) {
+      import.started.store(true, std::memory_order_relaxed);
+      import.uuid = import_asset(asset_man, session, import.path);
+      import.finished.store(true, std::memory_order_release);
+    }
+
+    apply_scan(*scan);
+    return;
+  }
+
+  for (auto& import : scan->imports) {
+    scan->pending_keys.emplace(import.key);
+  }
+
+  // a cold first open compiles every model in the project, and one import is independent of the
+  // next -- `import_asset` gates itself per path so two of them cannot cook the same file. nothing
+  // is waited on here: `poll_asset_scans` picks the results up over the following frames, so the
+  // editor is usable while its assets cook.
+  for (auto& import : scan->imports) {
+    job_man.submit(Job::create([&asset_man, &session, &import] {
+      import.started.store(true, std::memory_order_relaxed);
+      import.uuid = import_asset(asset_man, session, import.path);
+      import.finished.store(true, std::memory_order_release);
+    }));
+  }
+
+  active_scans.push_back(std::move(scan));
+}
+
+auto populate_directory(AssetDirectory* dir, const AssetDirectoryCallbacks& callbacks) -> void {
+  populate_directory(
+    dir,
+    callbacks,
+    App::mod<AssetManager>(),
+    App::mod<rc::ResourceCompiler>(),
+    App::get_job_manager()
+  );
+}
+
+auto poll_asset_scans() -> void {
+  ZoneScoped;
+
+  for (auto& scan : active_scans) {
+    apply_scan(*scan);
+  }
+
+  std::erase_if(active_scans, [](const auto& scan) { return scan->applied_count == scan->imports.size(); });
+}
+
+auto wait_for_asset_scans() -> void {
+  ZoneScoped;
+
+  // the jobs are already queued on the pool, so this only has to outlast them -- running them here
+  // would pull unrelated work onto the main thread
+  for (auto& scan : active_scans) {
+    for (auto& import : scan->imports) {
+      while (!import.finished.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+    }
+  }
+
+  poll_asset_scans();
+}
+
+auto asset_scan_active() -> bool { return !active_scans.empty(); }
+
+auto asset_scan_progress() -> AssetScanProgress {
+  ZoneScoped;
+
+  auto progress = AssetScanProgress();
+  for (const auto& scan : active_scans) {
+    progress.compiled_completed += scan->compiled_applied;
+    progress.compiled_total += scan->compiled_total;
+    progress.registered_completed += scan->applied_count - scan->compiled_applied;
+    progress.registered_total += scan->imports.size() - scan->compiled_total;
+
+    if (!progress.current_file.empty()) {
+      continue;
+    }
+
+    // whichever worker got there first, rather than a file that is already done
+    for (const auto& import : scan->imports) {
+      if (import.started.load(std::memory_order_relaxed) && !import.finished.load(std::memory_order_acquire)) {
+        progress.current_file = import.path.filename().string();
+        break;
+      }
+    }
+  }
+
+  return progress;
+}
+
+auto asset_scan_pending(const std::filesystem::path& path) -> bool {
+  if (active_scans.empty()) {
+    return false;
+  }
+
+  const auto key = path.lexically_normal().string();
+
+  return std::ranges::any_of(active_scans, [&](const auto& scan) { return scan->pending_keys.contains(key); });
 }
 
 AssetDirectory::AssetDirectory(std::filesystem::path path_, AssetDirectory* parent_)
@@ -79,21 +256,12 @@ auto AssetDirectory::add_subdir(this AssetDirectory& self, std::unique_ptr<Asset
   return ptr;
 }
 
-auto AssetDirectory::add_asset(this AssetDirectory& self, const std::filesystem::path& dir_path) -> UUID {
-  auto& asset_man = App::mod<AssetManager>();
-  auto asset_uuid = import_asset(asset_man, App::mod<rc::ResourceCompiler>(), dir_path);
-  if (!asset_uuid) {
-    return UUID(nullptr);
-  }
-
-  self.asset_uuids.emplace(asset_uuid);
-
-  return asset_uuid;
-}
-
 auto AssetDirectory::refresh(this AssetDirectory& self) -> void { populate_directory(&self, {}); }
 
 auto Project::register_assets(const std::filesystem::path& path) -> void {
+  // a scan still in flight holds `AssetDirectory*` slots into the tree we are about to replace
+  wait_for_asset_scans();
+
   this->asset_directory = std::make_unique<AssetDirectory>(path, nullptr);
   populate_directory(this->asset_directory.get(), {});
 }
@@ -162,6 +330,7 @@ auto Project::load(this Project& self, const std::filesystem::path& path) -> boo
       vfs.unmount_dir(VFS::PROJECT_DIR);
     vfs.mount_dir(VFS::PROJECT_DIR, asset_dir_path);
 
+    wait_for_asset_scans();
     self.asset_directory.reset();
     self.register_assets(asset_dir_path);
 

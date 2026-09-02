@@ -17,6 +17,10 @@ public:
 
   auto load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) -> void;
 
+  // Reopens the selector on the message, for a load that only failed once the loading panel had
+  // already taken over.
+  auto show_error(this ProjectPanel& self, std::string message) -> void;
+
 private:
   Texture engine_banner = {};
 

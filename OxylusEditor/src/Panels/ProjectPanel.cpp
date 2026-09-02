@@ -8,9 +8,9 @@
 #include <system_error>
 
 #include "Core/App.hpp"
-#include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Panels/ContentPanel.hpp"
+#include "Panels/LoadingPanel.hpp"
 #include "Project/Project.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EmbeddedBanner.hpp"
@@ -80,7 +80,6 @@ ProjectPanel::ProjectPanel() : EditorPanelState("Projects", ICON_MDI_ACCOUNT_BAD
 
 auto ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) -> void {
   auto& editor = App::mod<Editor>();
-  const auto& active_project = editor.active_project;
 
   std::error_code error;
   if (!std::filesystem::is_regular_file(filepath, error)) {
@@ -90,23 +89,17 @@ auto ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::f
     return;
   }
 
-  if (active_project->load(filepath)) {
-    auto& vfs = App::get_vfs();
-    const auto start_scene = vfs.resolve_physical_dir(VFS::PROJECT_DIR, active_project->get_config().start_scene);
-    editor.reset();
-    if (!editor.open_scene(start_scene)) {
-      editor.new_scene();
-    }
-    editor.reset_current_docking_layout();
-    editor.editor_cvar.add_recent_project(active_project.get());
-    editor.editor_panel_registry.get<ContentPanel>().init();
-    self.panel_error.clear();
-    self.close_requested = true;
-    return;
-  }
+  // The load itself runs from `LoadingPanel`, a frame later, so its modal is painted before the
+  // directory walk blocks the thread.
+  editor.editor_panel_registry.get<LoadingPanel>().begin(filepath);
+  self.panel_error.clear();
+  self.close_requested = true;
+}
 
-  self.panel_error = "The selected file is not a valid Oxylus project";
-  OX_LOG_WARN("Couldn't load project: {}", filepath);
+auto ProjectPanel::show_error(this ProjectPanel& self, std::string message) -> void {
+  self.panel_error = std::move(message);
+  self.creating_project = false;
+  self.visible = true;
 }
 
 auto ProjectPanel::new_project(

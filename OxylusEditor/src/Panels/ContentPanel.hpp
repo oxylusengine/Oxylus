@@ -33,6 +33,10 @@ enum class FileType {
   ParticleSystem
 };
 
+// Resolves what a file on disk is, including the meta-file case where a standalone `.oxasset`
+// stands in for the asset itself rather than describing a sibling source.
+auto classify_file_type(const std::filesystem::path& path) -> FileType;
+
 class ContentPanel : public EditorPanelState {
 public:
   ContentPanel();
