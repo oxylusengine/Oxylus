@@ -6,6 +6,7 @@
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 
+#include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"

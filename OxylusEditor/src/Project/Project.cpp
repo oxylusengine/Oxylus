@@ -1,7 +1,9 @@
 #include "Project/Project.hpp"
 
+#include <ResourceCompiler.hpp>
 #include <system_error>
 
+#include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
@@ -20,6 +22,13 @@ auto populate_directory(AssetDirectory* dir, const AssetDirectoryCallbacks& call
   for (const auto& entry : std::filesystem::directory_iterator(dir->path)) {
     const auto& path = entry.path();
     if (entry.is_directory()) {
+      // The editor's own caches, not project source. Only reachable when the editor is run from
+      // inside the asset directory, but then every cached texture and thumbnail would be imported as
+      // an asset of its own.
+      if (path == cache_dir().parent_path()) {
+        continue;
+      }
+
       AssetDirectory* cur_subdir = nullptr;
       auto dir_it = std::ranges::find_if(dir->subdirs, [&](const auto& v) { return path == v->path; });
       if (dir_it == dir->subdirs.end()) {
@@ -72,7 +81,7 @@ auto AssetDirectory::add_subdir(this AssetDirectory& self, std::unique_ptr<Asset
 
 auto AssetDirectory::add_asset(this AssetDirectory& self, const std::filesystem::path& dir_path) -> UUID {
   auto& asset_man = App::mod<AssetManager>();
-  auto asset_uuid = import_asset(asset_man, dir_path);
+  auto asset_uuid = import_asset(asset_man, App::mod<rc::ResourceCompiler>(), dir_path);
   if (!asset_uuid) {
     return UUID(nullptr);
   }

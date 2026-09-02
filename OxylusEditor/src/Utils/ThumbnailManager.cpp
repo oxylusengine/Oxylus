@@ -10,6 +10,7 @@
 #include <stb_image_write.h>
 #include <vuk/vsl/Core.hpp>
 
+#include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Asset/Model.hpp"
@@ -284,6 +285,29 @@ static auto write_thumbnail_png(const std::filesystem::path& path, std::span<con
   stbi_write_png(path.string().c_str(), isize, isize, 4, pixels.data(), isize * 4);
 }
 
+// A compiled texture is block compressed, so a preview cannot be resampled out of it. The smallest
+// mip that still covers the thumbnail becomes the preview's level 0 instead, which keeps a 4K source
+// from costing its full size in VRAM for a content browser icon.
+static auto trim_to_thumbnail_mips(const TextureData& data, u32 size) -> TextureData {
+  ZoneScoped;
+
+  auto level = usize{0};
+  while (level + 1 < data.mips.size() && (data.mips[level].width > size || data.mips[level].height > size)) {
+    level += 1;
+  }
+
+  auto result = TextureData{
+    .name = data.name,
+    .vk_format = data.vk_format,
+    .width = data.mips[level].width,
+    .height = data.mips[level].height,
+    .layer_count = data.layer_count,
+  };
+  result.mips.assign(data.mips.begin() + static_cast<std::ptrdiff_t>(level), data.mips.end());
+
+  return result;
+}
+
 static auto material_meta_path(const std::filesystem::path& asset_path) -> std::filesystem::path {
   if (!owns_meta_file(asset_path)) {
     return {};
@@ -528,11 +552,52 @@ auto ThumbnailManager::submit_cached_png_load(
       .target_width = THUMBNAIL_SIZE,
       .target_height = THUMBNAIL_SIZE,
     });
+    if (!thumbnail_texture) {
+      self.mark_job_failed(cache_key);
+      return;
+    }
 
     auto lock = std::unique_lock(self.thumbnail_mutex);
-    if (thumbnail_texture) {
-      self.thumbnail_cache.insert_or_assign(cache_key, std::move(thumbnail_texture));
+    self.thumbnail_cache.insert_or_assign(cache_key, std::move(thumbnail_texture));
+    self.active_jobs.erase(cache_key);
+  }));
+  job_man.pop_job_name();
+}
+
+auto ThumbnailManager::submit_compiled_texture_load(
+  this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& pack_path
+) -> void {
+  auto& job_man = App::get_job_manager();
+  job_man.push_job_name("ContentPanelThumbnail_CompiledTextureLoad");
+  job_man.submit(Job::create([&self, pack_path, cache_key]() {
+    auto pack = AssetFile::unpack(pack_path);
+    if (!pack) {
+      self.mark_job_failed(cache_key);
+      return;
     }
+
+    const TextureData* texture_data = nullptr;
+    for (auto& entry : pack->entries) {
+      if (auto* data = std::get_if<TextureData>(&entry.data)) {
+        texture_data = data;
+        break;
+      }
+    }
+
+    if (!texture_data || texture_data->mips.empty()) {
+      OX_LOG_ERROR("Compiled texture '{}' holds no image data.", pack_path);
+      self.mark_job_failed(cache_key);
+      return;
+    }
+
+    auto thumbnail_texture = Texture::create(trim_to_thumbnail_mips(*texture_data, THUMBNAIL_SIZE), TextureLoadInfo{});
+    if (!thumbnail_texture) {
+      self.mark_job_failed(cache_key);
+      return;
+    }
+
+    auto lock = std::unique_lock(self.thumbnail_mutex);
+    self.thumbnail_cache.insert_or_assign(cache_key, std::move(thumbnail_texture));
     self.active_jobs.erase(cache_key);
   }));
   job_man.pop_job_name();
@@ -556,6 +621,27 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
     return {};
   }
 
+  // KTX2 and DDS are cooked offline now, so their source bytes mean nothing to the engine; the
+  // preview comes out of the pack the importer produced instead.
+  if (needs_compiling(asset_path)) {
+    auto& asset_man = App::mod<AssetManager>();
+    const auto uuid = import_asset(asset_man, asset_path);
+
+    auto pack_path = std::filesystem::path();
+    if (auto asset = asset_man.get_asset(uuid)) {
+      pack_path = asset->path;
+    }
+
+    if (pack_path.empty()) {
+      self.mark_job_failed(asset_hash);
+      return {};
+    }
+
+    self.submit_compiled_texture_load(asset_hash, pack_path);
+
+    return {};
+  }
+
   auto& job_man = App::get_job_manager();
   job_man.push_job_name("ContentPanelThumbnail_TextureLoad");
   job_man.submit(Job::create([&self, asset_path, asset_hash]() {
@@ -564,11 +650,13 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
       .target_width = THUMBNAIL_SIZE,
       .target_height = THUMBNAIL_SIZE,
     });
+    if (!thumbnail_texture) {
+      self.mark_job_failed(asset_hash);
+      return;
+    }
 
     auto lock = std::unique_lock(self.thumbnail_mutex);
-    if (thumbnail_texture) {
-      self.thumbnail_cache.insert_or_assign(asset_hash, std::move(thumbnail_texture));
-    }
+    self.thumbnail_cache.insert_or_assign(asset_hash, std::move(thumbnail_texture));
     self.active_jobs.erase(asset_hash);
   }));
   job_man.pop_job_name();

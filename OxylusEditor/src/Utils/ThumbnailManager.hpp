@@ -110,5 +110,8 @@ private:
   auto submit_cached_png_load(
     this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& png_path
   ) -> void;
+  auto submit_compiled_texture_load(
+    this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& pack_path
+  ) -> void;
 };
 } // namespace ox

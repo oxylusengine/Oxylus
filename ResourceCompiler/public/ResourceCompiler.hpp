@@ -58,7 +58,9 @@ struct TextureCompileRequest {
   // takes priority over `path`, for images embedded in a glTF buffer
   std::vector<u8> source_bytes = {};
   std::string name = {};
-  bool srgb = false;
+  // unset honours the colour space the source declares (a KTX2's transfer function, a DDS's DXGI
+  // format); a value overrides it, which is what a glTF does since the material slot knows better
+  option<bool> srgb = nullopt;
 };
 
 struct ModelCompileRequest {

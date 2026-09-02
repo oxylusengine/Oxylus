@@ -6,6 +6,7 @@
 #include <misc/cpp/imgui_stdlib.h>
 
 #include "Asset/AssetFile.hpp"
+#include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"

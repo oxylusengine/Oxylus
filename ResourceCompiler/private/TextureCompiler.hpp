@@ -13,8 +13,9 @@ enum class TextureSourceKind : u32 {
 
 auto detect_texture_source_kind(std::span<const u8> bytes) -> TextureSourceKind;
 
-// `bytes` must outlive the call only; the returned mips own their pixels.
-auto compile_texture(Session& session, std::span<const u8> bytes, std::string_view name, bool srgb)
+// `bytes` must outlive the call only; the returned mips own their pixels. An unset `srgb` keeps the
+// colour space the source declares.
+auto compile_texture(Session& session, std::span<const u8> bytes, std::string_view name, option<bool> srgb)
   -> option<TextureData>;
 auto compile_texture(Session& session, const TextureCompileRequest& request) -> option<TextureData>;
 } // namespace ox::rc

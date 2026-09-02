@@ -1,6 +1,7 @@
 #include "Asset/AssetFile.hpp"
 
 #include <algorithm>
+#include <glm/gtc/type_ptr.hpp>
 
 #include "OS/File.hpp"
 #include "Utils/Log.hpp"
@@ -18,6 +19,30 @@ auto PackedUUID::pack(const UUID& uuid) -> PackedUUID {
 auto PackedUUID::unpack(this const PackedUUID& self) -> UUID {
   auto bytes = self.bytes;
   return UUID::from_bytes(bytes).value_or(UUID(nullptr));
+}
+
+auto to_material(const ModelData::Material& src, std::span<const UUID> textures) -> Material {
+  const auto resolve = [&](u32 index) -> UUID {
+    return index < textures.size() ? textures[index] : UUID(nullptr);
+  };
+
+  return Material{
+    .albedo_color = glm::make_vec4(src.albedo_color),
+    .uv_size = glm::make_vec2(src.uv_size),
+    .uv_offset = glm::make_vec2(src.uv_offset),
+    .emissive_color = glm::make_vec3(src.emissive_color),
+    .roughness_factor = src.roughness_factor,
+    .metallic_factor = src.metallic_factor,
+    .alpha_mode = src.alpha_mode,
+    .alpha_cutoff = src.alpha_cutoff,
+    .sampling_mode = src.sampling_mode,
+    .flip_normal_y = src.flip_normal_y,
+    .albedo_texture = resolve(src.albedo_texture_index),
+    .normal_texture = resolve(src.normal_texture_index),
+    .emissive_texture = resolve(src.emissive_texture_index),
+    .metallic_roughness_texture = resolve(src.metallic_roughness_texture_index),
+    .occlusion_texture = resolve(src.occlusion_texture_index),
+  };
 }
 
 auto AssetFile::unpack(const std::filesystem::path& path) -> option<AssetFile> {

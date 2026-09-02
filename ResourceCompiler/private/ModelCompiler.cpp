@@ -200,6 +200,16 @@ auto build_mesh(const MeshSource& source) -> option<ModelData::Mesh> {
     return nullopt;
   }
 
+  // The project scan compiles every model it finds, so a malformed primitive has to be rejected
+  // here rather than reaching meshoptimizer, which only asserts about it in debug builds.
+  if (source.indices.size() % 3 != 0) {
+    return nullopt;
+  }
+
+  if (std::ranges::any_of(source.indices, [&](u32 index) { return index >= source.positions.size(); })) {
+    return nullopt;
+  }
+
   auto vertex_remap = std::vector<u32>(source.positions.size());
   const auto vertex_count = static_cast<u32>(meshopt_optimizeVertexFetchRemap(
     vertex_remap.data(),
@@ -218,7 +228,7 @@ auto build_mesh(const MeshSource& source) -> option<ModelData::Mesh> {
   );
 
   auto normals = std::vector<glm::vec3>();
-  if (!source.normals.empty()) {
+  if (source.normals.size() == source.positions.size()) {
     normals.resize(vertex_count);
     meshopt_remapVertexBuffer(
       normals.data(),
@@ -230,7 +240,7 @@ auto build_mesh(const MeshSource& source) -> option<ModelData::Mesh> {
   }
 
   auto texcoords = std::vector<glm::vec2>();
-  if (!source.texcoords.empty()) {
+  if (source.texcoords.size() == source.positions.size()) {
     texcoords.resize(vertex_count);
     meshopt_remapVertexBuffer(
       texcoords.data(),
@@ -299,23 +309,37 @@ auto build_mesh(const MeshSource& source) -> option<ModelData::Mesh> {
       constexpr f32 NORMAL_WEIGHTS[] = {1.0f, 1.0f, 1.0f};
 
       auto result_error = 0.0f;
-      auto result_index_count = meshopt_simplifyWithAttributes(
-        simplified_indices.data(),
-        last_lod_indices.data(),
-        last_lod_indices.size(),
-        reinterpret_cast<const f32*>(positions.data()),
-        vertex_count,
-        sizeof(glm::vec3),
-        reinterpret_cast<const f32*>(normals.data()),
-        sizeof(glm::vec3),
-        NORMAL_WEIGHTS,
-        ox::count_of(NORMAL_WEIGHTS),
-        nullptr,
-        lod_index_count,
-        TARGET_ERROR,
-        meshopt_SimplifyLockBorder,
-        &result_error
-      );
+      // A primitive without NORMAL leaves nothing to weight the attribute error by, and handing
+      // meshoptimizer a null attribute buffer dereferences it.
+      auto result_index_count = normals.empty() ? meshopt_simplify(
+                                                    simplified_indices.data(),
+                                                    last_lod_indices.data(),
+                                                    last_lod_indices.size(),
+                                                    reinterpret_cast<const f32*>(positions.data()),
+                                                    vertex_count,
+                                                    sizeof(glm::vec3),
+                                                    lod_index_count,
+                                                    TARGET_ERROR,
+                                                    meshopt_SimplifyLockBorder,
+                                                    &result_error
+                                                  )
+                                                : meshopt_simplifyWithAttributes(
+                                                    simplified_indices.data(),
+                                                    last_lod_indices.data(),
+                                                    last_lod_indices.size(),
+                                                    reinterpret_cast<const f32*>(positions.data()),
+                                                    vertex_count,
+                                                    sizeof(glm::vec3),
+                                                    reinterpret_cast<const f32*>(normals.data()),
+                                                    sizeof(glm::vec3),
+                                                    NORMAL_WEIGHTS,
+                                                    ox::count_of(NORMAL_WEIGHTS),
+                                                    nullptr,
+                                                    lod_index_count,
+                                                    TARGET_ERROR,
+                                                    meshopt_SimplifyLockBorder,
+                                                    &result_error
+                                                  );
 
       cur_lod.error = last_lod.error + result_error;
       if (
@@ -661,6 +685,11 @@ auto flatten_gltf_nodes(const fastgltf::Asset& asset, ModelData& model) -> std::
     for (const auto& [gltf_primitive, gltf_primitive_index] :
          std::views::zip(gltf_mesh.primitives, std::views::iota(0_sz))) {
       if (!gltf_primitive.indicesAccessor.has_value()) {
+        continue;
+      }
+
+      // meshlets are triangle lists; strips, fans, lines and points have nothing to build from
+      if (gltf_primitive.type != fastgltf::PrimitiveType::Triangles) {
         continue;
       }
 

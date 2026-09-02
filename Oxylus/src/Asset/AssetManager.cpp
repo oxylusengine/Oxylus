@@ -416,12 +416,17 @@ auto AssetManager::load_asset_impl(
     if (texture_info) {
       auto texture = self.get_texture(loaded_texture_id);
       if (texture && texture->is_srgb() != texture_info->is_srgb) {
+        // A compiled texture's colour space is settled at import, so no slot ever wins the race --
+        // the pack does, and the fix is to re-import rather than to split the asset.
+        const auto is_compiled = loaded_path.extension() == ".oxpack";
         OX_LOG_WARN(
-          "Texture '{}' is already loaded as {}; the request for {} is ignored. Whichever slot "
-          "loaded it first won. Use a separate asset per color space.",
+          "Texture '{}' is {} as {} but is being used as {}. {}",
           loaded_path.string(),
+          is_compiled ? "compiled" : "already loaded",
           texture->is_srgb() ? "sRGB" : "linear",
-          texture_info->is_srgb ? "sRGB" : "linear"
+          texture_info->is_srgb ? "sRGB" : "linear",
+          is_compiled ? "Re-import the source with the other color space."
+                      : "Whichever slot loaded it first won; use a separate asset per color space."
         );
       }
     }

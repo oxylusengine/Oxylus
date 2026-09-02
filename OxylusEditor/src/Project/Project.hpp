@@ -48,7 +48,7 @@ public:
 
   auto get_config() -> ProjectConfig& { return project_config; }
 
-  auto get_project_directory() -> const std::filesystem::path& { return project_directory; }
+  auto get_project_directory() const -> const std::filesystem::path& { return project_directory; }
   auto set_project_dir(const std::filesystem::path& dir) -> void { project_directory = dir; }
   auto get_project_file_path() const -> const std::filesystem::path& { return project_file_path; }
 

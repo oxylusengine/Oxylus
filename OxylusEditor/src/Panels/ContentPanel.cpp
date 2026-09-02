@@ -13,6 +13,7 @@
 #include <mutex>
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 
+#include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <filesystem>
+#include <span>
 #include <zpp_bits.h>
 
 #include "Asset/Material.hpp"
@@ -175,6 +176,10 @@ struct ModelData {
   std::vector<MeshGroup> mesh_groups = {};
   u32 default_scene_index = 0;
 };
+
+// Resolves a compiled material's texture indices against the model's texture table. Shared, so the
+// engine's model load and the editor's sidecar writer cannot drift apart on what a material means.
+auto to_material(const ModelData::Material& src, std::span<const UUID> textures) -> Material;
 
 static_assert(sizeof(GPU::Mesh) == 64);
 static_assert(sizeof(GPU::MeshLOD) == 64);

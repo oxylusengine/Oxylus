@@ -27,7 +27,8 @@ auto detect_texture_source_kind(std::span<const u8> bytes) -> TextureSourceKind 
   return TextureSourceKind::Generic;
 }
 
-auto compile_dds(Session& session, std::span<const u8> bytes, std::string_view name, bool srgb) -> option<TextureData> {
+auto compile_dds(Session& session, std::span<const u8> bytes, std::string_view name, option<bool> srgb)
+  -> option<TextureData> {
   ZoneScoped;
 
   auto dds_image = dds::Image{};
@@ -36,10 +37,11 @@ auto compile_dds(Session& session, std::span<const u8> bytes, std::string_view n
     return nullopt;
   }
 
-  const auto format = apply_srgb_preference(
-    static_cast<vuk::Format>(dds::getVulkanFormat(dds_image.format, dds_image.supportsAlpha)),
-    srgb
-  );
+  // DXGI spells sRGB into the format itself, so the file already answers this unless asked otherwise.
+  auto format = static_cast<vuk::Format>(dds::getVulkanFormat(dds_image.format, dds_image.supportsAlpha));
+  if (srgb.has_value()) {
+    format = apply_srgb_preference(format, *srgb);
+  }
 
   auto result = TextureData{
     .name = std::string(name),
@@ -60,7 +62,7 @@ auto compile_dds(Session& session, std::span<const u8> bytes, std::string_view n
   return result;
 }
 
-auto compile_ktx2(Session& session, std::span<const u8> bytes, std::string_view name, bool srgb)
+auto compile_ktx2(Session& session, std::span<const u8> bytes, std::string_view name, option<bool> srgb)
   -> option<TextureData> {
   ZoneScoped;
 
@@ -73,6 +75,10 @@ auto compile_ktx2(Session& session, std::span<const u8> bytes, std::string_view 
     return nullopt;
   }
   std::unique_ptr<ktxTexture2, decltype([](ktxTexture2* p) { ktxTexture_Destroy(ktxTexture(p)); })> owned(ktx);
+
+  // A supercompressed KTX2 has no vkFormat to read until it is transcoded, but its data format
+  // descriptor carries the transfer function either way, so that is the file's own answer.
+  const auto declares_srgb = ktxTexture2_GetTransferFunction_e(ktx) == KHR_DF_TRANSFER_SRGB;
 
   auto format = vuk::Format::eBc7UnormBlock;
   if (ktxTexture2_NeedsTranscoding(ktx)) {
@@ -87,7 +93,7 @@ auto compile_ktx2(Session& session, std::span<const u8> bytes, std::string_view 
 
   auto result = TextureData{
     .name = std::string(name),
-    .vk_format = static_cast<u32>(apply_srgb_preference(format, srgb)),
+    .vk_format = static_cast<u32>(apply_srgb_preference(format, srgb.value_or(declares_srgb))),
     .width = ktx->baseWidth,
     .height = ktx->baseHeight,
   };
@@ -112,7 +118,7 @@ auto compile_ktx2(Session& session, std::span<const u8> bytes, std::string_view 
   return result;
 }
 
-auto compile_texture(Session& session, std::span<const u8> bytes, std::string_view name, bool srgb)
+auto compile_texture(Session& session, std::span<const u8> bytes, std::string_view name, option<bool> srgb)
   -> option<TextureData> {
   ZoneScoped;
 
