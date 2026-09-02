@@ -1,158 +1,190 @@
 name: Build
-permissions:
-  contents: write
+
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
-env:
-  VULKAN_VERSION: 1.4.309.0
-  LLVM_VERSION: 20
-  LLVM_WINDOWS_VERSION: 20.1.4
-  LLVM_MACOS_VERSION: 22
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.mode.name }}-${{ matrix.platform.toolchain }}
+    runs-on: ${{ matrix.platform.runner }}
+    env:
+      XMAKE_GLOBALDIR: ${{ github.workspace }}/../xmake-global
+      XMAKE_RUNTIME: ${{ matrix.platform.os == 'windows' && matrix.mode.windows_runtime || 'c++_static' }}
     strategy:
       fail-fast: false
       matrix:
+        mode:
+          - name: release
+            windows_runtime: MD
+          - name: debug
+            windows_runtime: MDd
         platform:
-          - { runner: windows-2025, os: windows, arch: x64,    toolchain: msvc,     mode: release, runtime: MD }
-          - { runner: windows-2025, os: windows, arch: x64,    toolchain: msvc,     mode: debug,   runtime: MDd }
+          - runner: windows-2025
+            os: windows
+            arch: x64
+            toolchain: msvc
+          - runner: windows-2025
+            os: windows
+            arch: x64
+            toolchain: clang-cl
+            llvm_version: "23.1.0"
+          - runner: ubuntu-latest
+            os: linux
+            arch: x86_64
+            toolchain: clang-23
+            llvm_version: "23"
+          - runner: macos-26
+            os: macos
+            arch: arm64
+            toolchain: mac-clang
+            llvm_version: "22"
 
-          # - { runner: windows-2025, os: windows, arch: x64,    toolchain: clang-cl, mode: release, runtime: MD }
-          # - { runner: windows-2025, os: windows, arch: x64,    toolchain: clang-cl, mode: debug,   runtime: MDd }
-
-          - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: clang-20, mode: release, runtime: c++_static }
-          - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: clang-20, mode: debug,   runtime: c++_static }
-
-          # - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: gcc-14,   mode: release, runtime: stdc++_static }
-          # - { runner: ubuntu-latest,  os: linux,   arch: x86_64, toolchain: gcc-14,   mode: debug,   runtime: stdc++_static }
-
-          - { runner: macos-26,  os: macos,   arch: arm64, toolchain: mac-clang, mode: release, runtime: c++_static }
-          - { runner: macos-26,  os: macos,   arch: arm64, toolchain: mac-clang, mode: debug,   runtime: c++_static }
-
-    runs-on: ${{ matrix.platform.runner }}
     steps:
-      - name: Get current date as package key
-        id: cache_key
-        run: echo "key=$(date +'%W')" >> $GITHUB_OUTPUT
-        shell: bash
-
-      - name: Set OUTPUT_FILE variable
-        run: echo "OUTPUT_FILE=${{ matrix.platform.os }}_${{ matrix.platform.arch }}_${{ matrix.platform.mode }}_${{ matrix.platform.toolchain }}_${{ matrix.platform.runtime }}${{ matrix.platform.archive_ext }}" >> $GITHUB_ENV
-        shell: bash
-
-      # Force xmake to a specific folder (for cache)
-      - name: Set xmake env
-        run: echo "XMAKE_GLOBALDIR=${{ runner.workspace }}/xmake-global" >> $GITHUB_ENV
-        shell: bash
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Get current week for cache key
+        id: cache_key
+        run: echo "key=$(date +'%G-W%V')" >> "$GITHUB_OUTPUT"
+        shell: bash
+
       - name: Install Linux dependencies
-        if: ${{ matrix.platform.os == 'linux' }}
+        if: matrix.platform.os == 'linux'
         run: |
-          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          sudo add-apt-repository -y "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-${{ env.LLVM_VERSION }} main"
-          sudo add-apt-repository -y "deb-src http://apt.llvm.org/noble/ llvm-toolchain-noble-${{ env.LLVM_VERSION }} main"
-          sudo apt update -y
-          sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }} llvm-${{ env.LLVM_VERSION }} libllvm${{ env.LLVM_VERSION }} llvm-${{ env.LLVM_VERSION }}-runtime libclang-common-${{ env.LLVM_VERSION }}-dev libclang-${{ env.LLVM_VERSION }}-dev libclang1-${{ env.LLVM_VERSION }} libclang-rt-${{ env.LLVM_VERSION }}-dev libc++-${{ env.LLVM_VERSION }}-dev libc++abi-${{ env.LLVM_VERSION }}-dev libunwind-${{ env.LLVM_VERSION }}-dev libllvmlibc-${{ env.LLVM_VERSION }}-dev
-          sudo apt install libx11-dev libxext-dev libxrandr-dev libxrender-dev libxfixes-dev libxi-dev libxinerama-dev libxkbcommon-dev
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor --yes -o /etc/apt/keyrings/llvm.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-${{ matrix.platform.llvm_version }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-${{ matrix.platform.llvm_version }} \
+            lld-${{ matrix.platform.llvm_version }} \
+            llvm-${{ matrix.platform.llvm_version }} \
+            libc++-${{ matrix.platform.llvm_version }}-dev \
+            libc++abi-${{ matrix.platform.llvm_version }}-dev \
+            libunwind-${{ matrix.platform.llvm_version }}-dev \
+            libx11-dev \
+            libxext-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libxfixes-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxkbcommon-dev
+
+      - name: Verify Linux LLVM
+        if: matrix.platform.os == 'linux'
+        run: clang-${{ matrix.platform.llvm_version }} --version
+
+      - name: Install LLVM for clang-cl
+        if: matrix.platform.toolchain == 'clang-cl'
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP "LLVM-${{ matrix.platform.llvm_version }}-win64.msi"
+          $expectedHash = "95602d03944a7db534899adc5203988b63921ad0db71fe15748a3fe3d340416f"
+          $uri = "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ matrix.platform.llvm_version }}/LLVM-${{ matrix.platform.llvm_version }}-win64.msi"
+          Invoke-WebRequest -Uri $uri -OutFile $installer
+
+          $actualHash = (Get-FileHash -Path $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "LLVM installer checksum mismatch: expected $expectedHash, got $actualHash"
+          }
+
+          $process = Start-Process msiexec.exe -ArgumentList "/i `"$installer`" /qn /norestart" -Wait -PassThru
+          if ($process.ExitCode -notin @(0, 3010)) {
+            throw "LLVM installer exited with code $($process.ExitCode)"
+          }
+
+          "$env:ProgramFiles\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify Windows LLVM
+        if: matrix.platform.toolchain == 'clang-cl'
+        shell: pwsh
+        run: |
+          $version = clang-cl --version
+          $version
+          if (($version -join "`n") -notmatch "version 23\.1\.0") {
+            throw "Expected clang-cl 23.1.0"
+          }
 
       - name: Set up Python
-        if: ${{ matrix.platform.os == 'macos' }}
+        if: matrix.platform.os == 'macos'
         uses: actions/setup-python@v6
         with:
-          python-version: '3.14'
+          python-version: "3.14"
 
-      - name: Install MacOS dependencies
-        if: ${{ matrix.platform.os == 'macos' }}
+      - name: Install macOS dependencies
+        if: matrix.platform.os == 'macos'
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install LLVM for macOS
+        if: matrix.platform.os == 'macos'
         run: |
-          python -m pip install --upgrade pip setuptools wheel
+          brew install llvm@${{ matrix.platform.llvm_version }}
+          LLVM_PATH=$(brew --prefix llvm@${{ matrix.platform.llvm_version }})
+          {
+            echo "LLVM_PATH=$LLVM_PATH"
+            echo "PATH=$LLVM_PATH/bin:$PATH"
+            echo "LDFLAGS=-L$LLVM_PATH/lib/c++ -Wl,-rpath,$LLVM_PATH/lib/c++ $LDFLAGS"
+            echo "CPPFLAGS=-I$LLVM_PATH/include $CPPFLAGS"
+            echo "CXXFLAGS=-stdlib=libc++ $CXXFLAGS"
+          } >> "$GITHUB_ENV"
 
-      - name: Install LLVM for Windows
-        if: ${{ matrix.platform.os == 'windows' }}
-        uses: KyleMayes/install-llvm-action@master
-        with:
-          version: "${{env.LLVM_WINDOWS_VERSION}}"
+      - name: Verify macOS LLVM
+        if: matrix.platform.os == 'macos'
+        run: clang++ --version
 
-      - name: Install LLVM for MacOS
-        if: ${{ matrix.platform.os == 'macos' }}
-        run: |
-          brew install llvm@${{ env.LLVM_MACOS_VERSION }}
-          LLVM_PATH=$(brew --prefix llvm@${{ env.LLVM_MACOS_VERSION }})
-          echo "LLVM_PATH=$LLVM_PATH" >> $GITHUB_ENV
-          echo "PATH=$LLVM_PATH/bin:$PATH" >> $GITHUB_ENV
-          echo "LDFLAGS=-L$LLVM_PATH/lib/c++ -Wl,-rpath,$LLVM_PATH/lib/c++ $LDFLAGS" >> $GITHUB_ENV
-          echo "CPPFLAGS=-I$LLVM_PATH/include $CPPFLAGS" >> $GITHUB_ENV
-          echo "CXXFLAGS=-stdlib=libc++ $CXXFLAGS" >> $GITHUB_ENV
-
-      - name: Verify LLVM version
-        if: ${{ matrix.platform.os == 'macos' }}
-        run: |
-          which clang++
-          clang++ --version
-          echo "LLVM_PATH: $LLVM_PATH"
-          echo "LDFLAGS: $LDFLAGS"
-          echo "CPPFLAGS: $CPPFLAGS"
-          echo "CXXFLAGS: $CXXFLAGS"
-          brew --prefix llvm@21
-
-      # Install xmake
       - name: Setup xmake
         uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: branch@dev
-          actions-cache-folder: .xmake-cache-W${{ steps.cache_key.outputs.key }}
+          actions-cache-folder: .xmake-cache-${{ steps.cache_key.outputs.key }}
 
-      # Update xmake repository (in order to have the file that will be cached)
       - name: Update xmake repository
         run: xmake repo --update -vD
 
-      # Fetch xmake dephash
       - name: Retrieve dependencies hash
         id: dep_hash
-        run: echo "hash=$(xmake l utils.ci.packageskey)" >> $GITHUB_OUTPUT
+        run: echo "hash=$(xmake l utils.ci.packageskey)" >> "$GITHUB_OUTPUT"
         shell: bash
 
-      # Retrieve xmake dependencies
       - name: Restore cached xmake dependencies
         id: restore-depcache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.XMAKE_GLOBALDIR }}/.xmake/packages
-          key: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.platform.mode }}-${{ matrix.platform.runtime }}-${{ matrix.platform.toolchain }}-${{ steps.dep_hash.outputs.hash }}-W${{ steps.cache_key.outputs.key }}
+          key: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.mode.name }}-${{ env.XMAKE_RUNTIME }}-${{ matrix.platform.toolchain }}-${{ steps.dep_hash.outputs.hash }}-${{ steps.cache_key.outputs.key }}
 
       - name: Configure xmake and install dependencies
-        run: xmake config -v --toolchain=${{ matrix.platform.toolchain }} --arch=${{ matrix.platform.arch }} --mode=${{ matrix.platform.mode }} --runtimes=${{ matrix.platform.runtime }} --yes --policies=package.precompiled:n --profile=n --lua_bindings=y --tests=false
+        run: xmake config -v --toolchain=${{ matrix.platform.toolchain }} --arch=${{ matrix.platform.arch }} --mode=${{ matrix.mode.name }} --runtimes=${{ env.XMAKE_RUNTIME }} --yes --policies=package.precompiled:n --profile=n --lua_bindings=y --tests=false
 
-      # Save dependencies
       - name: Save cached xmake dependencies
-        if: ${{ !steps.restore-depcache.outputs.cache-hit }}
+        if: steps.restore-depcache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.XMAKE_GLOBALDIR }}/.xmake/packages
           key: ${{ steps.restore-depcache.outputs.cache-primary-key }}
 
       - name: Stage package shared libs (Unix)
-        if: ${{ matrix.platform.os != 'windows' }}
+        if: matrix.platform.os != 'windows'
         run: |
           mkdir -p dest/bin
           find "${{ env.XMAKE_GLOBALDIR }}/.xmake/packages" \( -name "*.so*" -o -name "*.dylib" \) -exec cp {} dest/bin/ \; 2>/dev/null || true
-          echo "LD_LIBRARY_PATH=$PWD/dest/bin:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-          echo "DYLD_LIBRARY_PATH=$PWD/dest/bin:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$PWD/dest/bin:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$PWD/dest/bin:$DYLD_LIBRARY_PATH" >> "$GITHUB_ENV"
         shell: bash
 
       - name: Stage package shared libs (Windows)
-        if: ${{ matrix.platform.os == 'windows' }}
+        if: matrix.platform.os == 'windows'
         run: |
-          $dest = "build\windows\x64\${{ matrix.platform.mode }}"
+          $dest = "build\windows\x64\${{ matrix.mode.name }}"
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
           Get-ChildItem -Path "${{ env.XMAKE_GLOBALDIR }}\.xmake\packages" -Recurse -Filter "*.dll" |
             ForEach-Object { Copy-Item $_.FullName -Destination $dest -Force -ErrorAction SilentlyContinue }
@@ -164,12 +196,11 @@ jobs:
       - name: Install project targets
         run: |
           xmake install -vo dest/
-          rm -rf dest/include/ dest/lib/
+          rm -rf dest/include dest/lib
         shell: bash
 
       - name: Archive production artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.platform.mode }}-${{ matrix.platform.toolchain }}-${{ matrix.platform.runtime }}
-          path: |
-            dest
+          name: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.mode.name }}-${{ matrix.platform.toolchain }}-${{ env.XMAKE_RUNTIME }}
+          path: dest
