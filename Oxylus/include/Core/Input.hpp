@@ -247,7 +247,7 @@ private:
   void set_mouse_released(const MouseCode key, const bool state);
   void set_mouse_held(const MouseCode key, const bool state);
   void set_mouse_position(const glm::vec2& position);
-  void set_mouse_position_rel(const glm::vec2& position);
+  void set_mouse_position_rel(const glm::vec2& delta);
   void set_mouse_scroll_offset_y(const f32 offset);
   void set_mouse_moved(bool state);
 

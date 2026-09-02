@@ -423,15 +423,13 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
 
   auto& cam = self.editor_camera.get_mut<CameraComponent>();
   auto& tc = self.editor_camera.get_mut<TransformComponent>();
-  const glm::vec3 position = tc.position;
-  const glm::vec2 yaw_pitch = self.camera_yaw_pitch;
-  glm::vec3 final_position = position;
-  glm::vec2 final_yaw_pitch = yaw_pitch;
+  glm::vec3 final_position = self.camera_position_target;
+  glm::vec2 final_yaw_pitch = self.camera_yaw_pitch_target;
 
   const auto is_ortho = cam.projection == CameraComponent::Projection::Orthographic;
   if (is_ortho) {
     final_position = {0.0f, 0.0f, 0.0f};
-    final_yaw_pitch = {0.f, 0.f};
+    final_yaw_pitch = {0.0f, 0.0f};
   }
 
   const auto& window = App::get_window();
@@ -447,13 +445,8 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
     }
   }
 
-  const auto actual_sens = editor.editor_cvar.cvar_camera_sens.get() / 10.f;
-  const auto smoothed_sens = actual_sens * 100.f;
-  const auto camera_sens = editor.editor_cvar.cvar_camera_smooth.get() ? smoothed_sens : actual_sens;
-
-  const auto actual_speed = editor.editor_cvar.cvar_camera_speed.get();
-  const auto smoothed_speed = actual_speed * 100.f;
-  const auto camera_speed = editor.editor_cvar.cvar_camera_smooth.get() ? smoothed_speed : actual_speed;
+  const auto camera_sens = editor.editor_cvar.cvar_camera_sens.get() * glm::radians(2.0f);
+  const auto camera_speed = editor.editor_cvar.cvar_camera_speed.get();
 
   if ((input_sys.get_mouse_held(MouseCode::Middle) || input_sys.get_mouse_held(MouseCode::Right)) && !is_ortho) {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
@@ -487,23 +480,42 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
     window.set_cursor_override(WindowCursor::ResizeAll);
 
-    const glm::vec2 change = (new_mouse_position - self.locked_mouse_position) * 1.f;
+    const glm::vec2 change = new_mouse_position - self.locked_mouse_position;
 
     if (input_sys.get_mouse_moved()) {
-      const float max_move_speed = camera_speed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f) * dt;
-      final_position += cam.forward * change.y * max_move_speed;
-      final_position += cam.right * change.x * max_move_speed;
+      const f32 pan_speed = camera_speed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f) * 0.01f;
+      final_position += cam.forward * change.y * pan_speed;
+      final_position += cam.right * change.x * pan_speed;
     }
   }
 
-  const glm::vec3 damped_position =
-    math::smooth_damp(position, final_position, self.translation_velocity, self.translation_dampening, 1000.0f, dt);
-  const glm::vec2 damped_yaw_pitch =
-    math::smooth_damp(yaw_pitch, final_yaw_pitch, self.rotation_velocity, self.rotation_dampening, 1000.0f, dt);
+  self.camera_position_target = final_position;
+  self.camera_yaw_pitch_target = final_yaw_pitch;
 
-  const bool smooth = editor.editor_cvar.cvar_camera_smooth.as_bool();
-  tc.position = smooth ? damped_position : final_position;
-  self.camera_yaw_pitch = smooth ? damped_yaw_pitch : final_yaw_pitch;
+  if (editor.editor_cvar.cvar_camera_smooth.as_bool()) {
+    tc.position = math::smooth_damp(
+      tc.position,
+      final_position,
+      self.translation_velocity,
+      self.translation_dampening,
+      1000.0f,
+      dt
+    );
+    self.camera_yaw_pitch = math::smooth_damp(
+      self.camera_yaw_pitch,
+      final_yaw_pitch,
+      self.rotation_velocity,
+      self.rotation_dampening,
+      1000.0f,
+      dt
+    );
+  } else {
+    tc.position = final_position;
+    self.camera_yaw_pitch = final_yaw_pitch;
+    self.translation_velocity = glm::vec3(0.0f);
+    self.rotation_velocity = glm::vec2(0.0f);
+  }
+
   tc.rotation = glm::quat(glm::vec3(self.camera_yaw_pitch.y, self.camera_yaw_pitch.x, 0.0f));
   cam.zoom = static_cast<float>(editor.editor_cvar.cvar_camera_zoom.get());
 }
@@ -518,6 +530,12 @@ auto ViewportPanel::set_context(this ViewportPanel& self, const std::shared_ptr<
   if (!scene->is_playing()) {
     self.editor_camera = self.editor_scene->get_scene()->create_entity("editor_camera", false);
     self.editor_camera.add<CameraComponent>().add<Hidden>();
+
+    self.camera_position_target = glm::vec3(0.0f);
+    self.camera_yaw_pitch_target = glm::vec2(0.0f);
+    self.camera_yaw_pitch = glm::vec2(0.0f);
+    self.translation_velocity = glm::vec3(0.0f);
+    self.rotation_velocity = glm::vec2(0.0f);
   }
 
   auto& event_system = App::get_event_system();
