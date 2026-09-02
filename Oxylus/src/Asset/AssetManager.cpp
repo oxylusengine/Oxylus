@@ -393,9 +393,6 @@ auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::
   begin_asset_meta(writer, uuid, asset_type);
 
   switch (asset_type) {
-    case AssetType::Model: {
-      write_gltf_meta(self, path, writer);
-    } break;
     case AssetType::Texture: {
       Texture texture = {};
       write_texture_asset_meta(writer, &texture);
@@ -865,14 +862,18 @@ auto AssetManager::load_asset_impl(
   auto asset_id = [&]() -> u64 {
     switch (asset_type) {
       case AssetType::Model: {
-        if (auto* info = std::get_if<ModelLoadInfo>(&explicit_load)) {
-          return static_cast<u64>(self.load_model(*info));
+        if (auto* model_data = std::get_if<ModelData>(&explicit_load)) {
+          return static_cast<u64>(self.load_model(std::move(*model_data), async));
         }
 
         return static_cast<u64>(self.load_model(asset_path, async));
       }
       case AssetType::Texture: {
-        auto info = std::get_if<TextureLoadInfo>(&explicit_load);
+        if (auto* texture_data = std::get_if<TextureData>(&explicit_load)) {
+          return static_cast<u64>(self.load_texture(*texture_data, TextureLoadInfo{}));
+        }
+
+        const auto* info = std::get_if<TextureLoadInfo>(&explicit_load);
         return static_cast<u64>(self.load_texture(asset_path, info ? *info : TextureLoadInfo{}));
       }
       case AssetType::Scene         : return static_cast<u64>(self.load_scene(asset_path));
@@ -948,6 +949,26 @@ auto AssetManager::load_texture(this AssetManager& self, const std::filesystem::
     data_source = path;
   }
 
+  // A cooked texture lives in a pack of its own; only PNG/JPEG still reach the engine encoded.
+  if (
+    const auto* file_path = std::get_if<std::filesystem::path>(&data_source);
+    file_path && file_path->extension() == ".oxpack"
+  ) {
+    auto pack = AssetFile::unpack(*file_path);
+    if (!pack) {
+      return TextureID::Invalid;
+    }
+
+    for (auto& entry : pack->entries) {
+      if (auto* texture_data = std::get_if<TextureData>(&entry.data)) {
+        return self.load_texture(*texture_data, info);
+      }
+    }
+
+    OX_LOG_ERROR("Asset pack '{}' contains no texture.", *file_path);
+    return TextureID::Invalid;
+  }
+
   auto texture = Texture::create({
     .source = data_source,
     .level_count = info.level_count,
@@ -955,7 +976,21 @@ auto AssetManager::load_texture(this AssetManager& self, const std::filesystem::
     .target_width = info.target_width,
     .target_height = info.target_height,
     .sampler_info = info.sampler_info,
+    .batch = info.batch,
   });
+  if (!texture) {
+    return TextureID::Invalid;
+  }
+
+  auto write_lock = std::unique_lock(self.textures_mutex);
+  return self.texture_map.create_slot(std::move(texture));
+}
+
+auto AssetManager::load_texture(this AssetManager& self, const TextureData& data, const TextureLoadInfo& info)
+  -> TextureID {
+  ZoneScoped;
+
+  auto texture = Texture::create(data, info);
   if (!texture) {
     return TextureID::Invalid;
   }

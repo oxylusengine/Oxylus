@@ -13,16 +13,11 @@ using Preset = vuk::ImageAttachment::Preset;
 
 namespace ox {
 struct UploadBatch;
+struct TextureData;
 
 enum class TextureID : u64 { Invalid = std::numeric_limits<u64>::max() };
 
 using TextureDataSource = std::variant<std::filesystem::path, std::span<const u8>>;
-
-enum class TextureSourceType : u32 {
-  Generic = 0,
-  DDS,
-  KTX,
-};
 
 struct TextureCreateInfo {
   vuk::Format format = vuk::Format::eR8G8B8A8Srgb;
@@ -101,6 +96,7 @@ public:
 
   static auto create(const TextureCreateInfo& info, OX_THISCALL) -> Texture;
   static auto create(const TextureLoadInfo& info, OX_THISCALL) -> Texture;
+  static auto create(const TextureData& data, const TextureLoadInfo& info, OX_THISCALL) -> Texture;
   auto destroy(this Texture&) -> void;
 
   auto acquire(this const Texture&, std::string_view name, vuk::Access last_access, OX_THISCALL)

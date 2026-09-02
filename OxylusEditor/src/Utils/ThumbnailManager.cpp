@@ -20,6 +20,7 @@
 #include "Memory/Stack.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/Renderer.hpp"
+#include "ResourceCompiler.hpp"
 #include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
 #include "Utils/ThumbnailCamera.hpp"
@@ -66,8 +67,8 @@ struct MaterialPreview {
   UUID sphere_model_uuid = UUID(nullptr);
 };
 
-static auto generate_uv_sphere(f32 radius, u32 rings, u32 sectors) -> ModelLoadInfo {
-  auto model = ModelLoadInfo{};
+static auto generate_uv_sphere(f32 radius, u32 rings, u32 sectors) -> rc::ProceduralMeshRequest {
+  auto model = rc::ProceduralMeshRequest{.name = "MaterialPreviewSphere"};
 
   const auto inv_rings = 1.0f / static_cast<f32>(rings);
   const auto inv_sectors = 1.0f / static_cast<f32>(sectors);
@@ -83,12 +84,13 @@ static auto generate_uv_sphere(f32 radius, u32 rings, u32 sectors) -> ModelLoadI
       const auto u = static_cast<f32>(sector) * inv_sectors;
       const auto theta = u * 2.0f * std::numbers::pi_v<f32>;
       const auto normal = glm::vec3(sin_phi * std::cos(theta), cos_phi, sin_phi * std::sin(theta));
+      const auto position = normal * radius;
 
       model.vertices.emplace_back(
-        ModelLoadInfo::Vertex{
-          .position = normal * radius,
-          .normal = normal,
-          .uv = glm::vec2(u, v),
+        rc::ModelVertex{
+          .position = {position.x, position.y, position.z},
+          .normal = {normal.x, normal.y, normal.z},
+          .uv = {u, v},
         }
       );
     }
@@ -899,8 +901,9 @@ auto ThumbnailManager::ensure_material_preview(this ThumbnailManager& self) -> b
     return false;
   }
 
-  auto sphere_data = generate_uv_sphere(PREVIEW_SPHERE_RADIUS, PREVIEW_SPHERE_RINGS, PREVIEW_SPHERE_SECTORS);
-  if (!asset_man.load_asset(sphere_model_uuid, std::move(sphere_data))) {
+  auto sphere_request = generate_uv_sphere(PREVIEW_SPHERE_RADIUS, PREVIEW_SPHERE_RINGS, PREVIEW_SPHERE_SECTORS);
+  auto sphere_data = App::mod<rc::ResourceCompiler>().process(sphere_request);
+  if (!sphere_data || !asset_man.load_asset(sphere_model_uuid, std::move(sphere_data.value()))) {
     OX_LOG_ERROR("Couldn't build the material preview sphere mesh!");
     asset_man.delete_asset(sphere_model_uuid);
     return false;

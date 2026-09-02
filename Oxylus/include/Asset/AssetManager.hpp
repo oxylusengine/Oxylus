@@ -50,13 +50,12 @@ class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
-  using LoadInfo = std::variant<TextureLoadInfo, Material, ModelLoadInfo>;
+  using LoadInfo = std::variant<TextureLoadInfo, Material, ModelData, TextureData>;
 
   static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
   static auto meta_file_path(const std::filesystem::path& path) -> std::filesystem::path;
   static auto owns_meta_file(const std::filesystem::path& path) -> bool;
-  static auto write_gltf_meta(AssetManager& self, const std::filesystem::path& path, JsonWriter& json) -> bool;
 
   struct AssetMetaFile {
     simdjson::padded_string contents;
@@ -149,14 +148,16 @@ private:
 
   auto unload_asset_impl(this AssetManager& self, AssetType type, u64 id) -> bool;
 
+  auto load_model(this AssetManager& self, ModelData&& model_data, bool async) -> ModelID;
+  // Unpacks the compiled model out of the `.oxpack` at `path`.
   auto load_model(this AssetManager& self, const std::filesystem::path& path, bool async) -> ModelID;
-  auto load_model(this AssetManager& self, const ModelLoadInfo& info) -> ModelID;
   auto unload_model(this AssetManager& self, ModelID model_id) -> bool;
   // Blocks until every mesh job of the model has finished.
   auto wait_until_model_loaded(this AssetManager& self, ModelID model_id) -> void;
   auto notify_model_loaded(this AssetManager& self) -> void;
 
   auto load_texture(this AssetManager& self, const std::filesystem::path& path, TextureLoadInfo info = {}) -> TextureID;
+  auto load_texture(this AssetManager& self, const TextureData& data, const TextureLoadInfo& info) -> TextureID;
   auto unload_texture(this AssetManager& self, TextureID texture_id) -> bool;
 
   auto load_material(this AssetManager& self, const std::filesystem::path& path, const Material& info = {})

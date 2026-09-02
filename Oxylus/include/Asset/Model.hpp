@@ -11,18 +11,6 @@
 namespace ox {
 enum class ModelID : u64 { Invalid = std::numeric_limits<u64>::max() };
 
-struct ModelLoadInfo {
-  struct Vertex {
-    glm::vec3 position = {};
-    glm::vec3 normal = {};
-    glm::vec2 uv = {};
-  };
-
-  std::vector<Vertex> vertices = {};
-  std::vector<u32> indices = {};
-  std::vector<UUID> materials = {};
-};
-
 struct Model {
   using Index = u32;
 

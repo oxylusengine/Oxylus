@@ -6,8 +6,8 @@
 #include <ktx.h>
 #include <vuk/Types.hpp>
 
+#include "DDS/DDS.hpp"
 #include "OS/File.hpp"
-#include "Render/Utils/DDS.hpp"
 #include "Render/Utils/TextureFormat.hpp"
 
 namespace ox::rc {
