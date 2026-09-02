@@ -16,7 +16,7 @@ struct Session;
 // Bumped whenever a compiled payload's meaning changes, so every cache entry in every project goes
 // stale at once. `AssetFileHeader::VERSION` covers layout; this covers everything else the compiler
 // decides (sRGB choices, LOD thresholds, meshlet limits).
-constexpr static auto ASSET_COMPILER_VERSION = 2_u32;
+constexpr static auto ASSET_COMPILER_VERSION = 3_u32;
 
 // Alongside the thumbnail cache, and editor-global for the same reason: entries are keyed by UUID,
 // so nothing about them is specific to the project that produced them.

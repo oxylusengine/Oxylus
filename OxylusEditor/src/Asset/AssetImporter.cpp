@@ -18,11 +18,13 @@
 namespace ox {
 // What the sidecar records for one of a model's textures. Exactly one of the two paths is set:
 // `external` for a sibling file that is an asset in its own right, `cache` for one the compiler
-// produced and only this model refers to.
+// produced and only this model refers to. `is_srgb` is the colour space the glTF's material graph
+// asked for, kept because a re-registration has to repeat the directive the compile made.
 struct ImportedTexture {
   UUID uuid = UUID(nullptr);
   std::filesystem::path external = {};
   std::string cache = {};
+  bool is_srgb = true;
 };
 
 struct ImportedModelMeta {
@@ -189,6 +191,9 @@ auto read_model_meta(const std::filesystem::path& meta_path) -> option<ImportedM
       if (auto cache = texture_json["cache"].get_string(); !cache.error()) {
         texture.cache = std::string(cache.value_unsafe());
       }
+      if (auto srgb = texture_json["srgb"].get_bool(); !srgb.error()) {
+        texture.is_srgb = srgb.value_unsafe();
+      }
     }
   }
 
@@ -223,6 +228,7 @@ auto write_model_meta(const std::filesystem::path& source_path, const ImportedMo
     writer["uuid"] = texture.uuid.str();
     writer["external"] = texture.external.generic_string();
     writer["cache"] = texture.cache;
+    writer["srgb"] = texture.is_srgb;
     writer.end_obj();
   }
   writer.end_array();
@@ -246,8 +252,9 @@ auto write_simple_meta(const std::filesystem::path& source_path, const UUID& uui
   return end_asset_meta(writer, source_path);
 }
 
-auto write_texture_meta(const std::filesystem::path& source_path, const UUID& uuid, u64 hash, option<bool> srgb)
-  -> bool {
+auto write_texture_meta(
+  const std::filesystem::path& source_path, const UUID& uuid, u64 hash, option<bool> srgb, option<bool> directive
+) -> bool {
   ZoneScoped;
 
   JsonWriter writer{};
@@ -257,6 +264,11 @@ auto write_texture_meta(const std::filesystem::path& source_path, const UUID& uu
   // keeps tracking what it declares.
   if (srgb.has_value()) {
     writer["color_space"] = *srgb ? "srgb" : "linear";
+  }
+  // The last directive a model handed down, remembered so that an import with no opinion of its own
+  // does not reset the file to what it declares. See `import_compiled_texture`.
+  if (directive.has_value()) {
+    writer["model_color_space"] = *directive ? "srgb" : "linear";
   }
 
   return end_asset_meta(writer, source_path);
@@ -291,16 +303,13 @@ auto compile_model(
     auto& entry = meta.textures[texture_index];
     auto& compiled_texture = compiled->textures[texture_index];
 
+    entry.is_srgb = model.textures[texture_index].is_srgb;
+
     if (compiled_texture.kind == rc::CompiledTexture::Kind::External) {
       // an asset in its own right, so its own sidecar owns the UUID -- but the model still oversees
       // how its own resources are read, so the slot's colour space goes down with it
       entry.external = compiled_texture.external_path;
-      entry.uuid = import_asset(
-        asset_man,
-        session,
-        model_dir / compiled_texture.external_path,
-        model.textures[texture_index].is_srgb
-      );
+      entry.uuid = import_asset(asset_man, session, model_dir / compiled_texture.external_path, entry.is_srgb);
       model.textures[texture_index].uuid = PackedUUID::pack(entry.uuid);
       continue;
     }
@@ -373,8 +382,10 @@ auto register_model(
     }
 
     if (!texture.external.empty()) {
-      // idempotent: the sibling file's own sidecar already owns this UUID
-      import_asset(asset_man, session, model_dir / texture.external);
+      // the sibling file's own sidecar owns this UUID, but the directive has to be repeated: it is
+      // mixed into the texture's staleness hash, so dropping it here recompiles the pack against
+      // the colour space the file declares and undoes what the compile above resolved
+      import_asset(asset_man, session, model_dir / texture.external, texture.is_srgb);
       continue;
     }
 
@@ -431,8 +442,9 @@ auto import_compiled_texture(
   auto recorded_hash = 0_u64;
   // KTX2 and DDS both declare their own colour space, but a model that reaches this file knows what
   // it is actually for, which is better evidence than a label an exporter guessed at. The sidecar
-  // only carries a flag when the user overrides both, and editing it there forces a recompile.
+  // carries a flag when the user overrides both, and editing it there forces a recompile.
   auto srgb = option<bool>(nullopt);
+  auto recorded_directive = option<bool>(nullopt);
   if (auto meta_json = std::filesystem::exists(meta_path) ? read_meta_file(meta_path) : nullptr) {
     if (auto uuid_json = meta_json->doc["uuid"].get_string(); !uuid_json.error()) {
       uuid = UUID::from_string(uuid_json.value_unsafe()).value_or(UUID(nullptr));
@@ -443,15 +455,21 @@ auto import_compiled_texture(
     if (auto space_json = meta_json->doc["color_space"].get_string(); !space_json.error()) {
       srgb = space_json.value_unsafe() == "srgb";
     }
+    if (auto directive_json = meta_json->doc["model_color_space"].get_string(); !directive_json.error()) {
+      recorded_directive = directive_json.value_unsafe() == "srgb";
+    }
   }
 
   if (!uuid) {
     uuid = UUID::generate_random();
   }
 
-  // Only the user's override is ever written back: the directive is re-derived from the glTF on
-  // every import, so moving a texture to another material slot still takes effect.
-  const auto resolved = srgb.has_value() ? srgb : srgb_directive;
+  // A caller with no opinion inherits the last directive rather than falling back to the source, so
+  // the order a project scan happens to walk the directory in cannot flip an already-cooked pack.
+  // A model that names this file still passes its own directive on every import, so moving a texture
+  // to another material slot takes effect immediately.
+  const auto directive = srgb_directive.has_value() ? srgb_directive : recorded_directive;
+  const auto resolved = srgb.has_value() ? srgb : directive;
   const auto hash = mix_hash(source_hash(path), resolved.has_value() ? (*resolved ? 1 : 2) : 0);
   const auto pack_path = cache_path(uuid);
   if (recorded_hash != hash || !std::filesystem::exists(pack_path)) {
@@ -478,9 +496,9 @@ auto import_compiled_texture(
       to_unorm_format(static_cast<vuk::Format>(data->vk_format)) != static_cast<vuk::Format>(data->vk_format)
         ? "sRGB"
         : "linear",
-      srgb.has_value()             ? "overridden by its .oxasset"
-      : srgb_directive.has_value() ? "requested by the model using it"
-                                   : "declared by the source"
+      srgb.has_value()        ? "overridden by its .oxasset"
+      : directive.has_value() ? "requested by the model using it"
+                              : "declared by the source"
     );
 
     if (!write_texture_pack(pack_path, std::move(data.value()), uuid)) {
@@ -488,7 +506,7 @@ auto import_compiled_texture(
       return UUID(nullptr);
     }
 
-    if (!write_texture_meta(path, uuid, hash, srgb)) {
+    if (!write_texture_meta(path, uuid, hash, srgb, directive)) {
       return UUID(nullptr);
     }
   }
