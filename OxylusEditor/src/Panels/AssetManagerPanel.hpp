@@ -45,7 +45,7 @@ struct AssetBrowser {
   auto draw_toolbar(this AssetBrowser& self, AssetType forced_type) -> void;
   auto draw_filter_menu(this AssetBrowser& self) -> void;
   // Returns true when a row was activated (double click), which is what commits a pick.
-  auto draw_list(this AssetBrowser& self, bool picking) -> bool;
+  auto draw_list(this AssetBrowser& self, bool picking, f32 height) -> bool;
   auto draw_details(this AssetBrowser& self, const Asset& asset) -> void;
   auto draw_row_context_menu(this AssetBrowser& self, const Asset& asset) -> void;
 };

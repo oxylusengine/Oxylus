@@ -211,10 +211,8 @@ auto AssetBrowser::draw_toolbar(this AssetBrowser& self, const AssetType forced_
 
   const auto clear_width = ImGui::GetFrameHeight();
   const auto search_cursor_x = ImGui::GetCursorPosX();
-  self.text_filter.Draw(
-    "###AssetSearch",
-    ImGui::GetContentRegionAvail().x - clear_width - ImGui::GetStyle().ItemSpacing.x
-  );
+  const auto search_width = ImGui::GetContentRegionAvail().x - clear_width - ImGui::GetStyle().ItemSpacing.x;
+  self.text_filter.Draw("###AssetSearch", search_width);
   if (!self.text_filter.IsActive()) {
     ImGui::SameLine();
     ImGui::SetCursorPosX(search_cursor_x + ImGui::GetFontSize() * 0.5f);
@@ -224,6 +222,7 @@ auto AssetBrowser::draw_toolbar(this AssetBrowser& self, const AssetType forced_
   }
 
   ImGui::SameLine();
+  ImGui::SetCursorPosX(search_cursor_x + search_width + ImGui::GetStyle().ItemSpacing.x);
   if (UI::button(stack.format_char("{}###AssetSearchClear", ICON_MDI_CLOSE), {clear_width, clear_width})) {
     self.text_filter.Clear();
   }
@@ -253,16 +252,16 @@ auto AssetBrowser::draw_row_context_menu(this AssetBrowser& self, const Asset& a
   }
 }
 
-auto AssetBrowser::draw_list(this AssetBrowser& self, const bool picking) -> bool {
+auto AssetBrowser::draw_list(this AssetBrowser& self, const bool picking, const f32 height) -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
 
   constexpr ImGuiTableFlags TABLE_FLAGS = ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
-                                          ImGuiTableFlags_Hideable | ImGuiTableFlags_Sortable | ImGuiTableFlags_RowBg |
+                                          ImGuiTableFlags_Hideable | ImGuiTableFlags_Sortable |
                                           ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY |
                                           ImGuiTableFlags_SizingStretchProp;
 
-  if (!ImGui::BeginTable("AssetTable", 5, TABLE_FLAGS)) {
+  if (!ImGui::BeginTable("AssetTable", 5, TABLE_FLAGS, {0.0f, height})) {
     return false;
   }
 
@@ -306,8 +305,10 @@ auto AssetBrowser::draw_list(this AssetBrowser& self, const bool picking) -> boo
 
   auto activated = false;
 
+  const auto row_height = ImGui::GetFrameHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+
   auto clipper = ImGuiListClipper();
-  clipper.Begin(static_cast<i32>(self.visible_assets.size()));
+  clipper.Begin(static_cast<i32>(self.visible_assets.size()), row_height);
 
   // The row to scroll to is almost always clipped away, so it has to be forced into the range the
   // clipper actually submits or SetScrollHereY below never runs.
@@ -327,7 +328,7 @@ auto AssetBrowser::draw_list(this AssetBrowser& self, const bool picking) -> boo
       const auto& asset = self.assets[self.visible_assets[static_cast<usize>(row)]];
       const auto uuid_str = asset.uuid.str();
 
-      ImGui::TableNextRow();
+      ImGui::TableNextRow(ImGuiTableRowFlags_None, row_height);
       ImGui::TableSetColumnIndex(0);
       ImGui::PushID(uuid_str.c_str());
 
@@ -468,12 +469,16 @@ auto AssetBrowser::draw(this AssetBrowser& self, const AssetType forced_type, co
   const auto footer_height = picking ? ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing()
                                      : ImGui::GetTextLineHeightWithSpacing();
   const auto body_height = ox::max(ImGui::GetContentRegionAvail().y - footer_height, ImGui::GetFrameHeight());
+  // a table without ScrollY ignores outer_size.y, and a cell doesn't bound its content either, so
+  // both panes get an explicit height: otherwise the list eats the whole window and pushes the
+  // status line and the picker's buttons below the bottom edge
+  const auto pane_height = ox::max(body_height - ImGui::GetStyle().CellPadding.y * 2.0f, ImGui::GetFrameHeight());
 
   if (
     ImGui::BeginTable(
       "AssetViewerSplit",
       2,
-      ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings,
+      ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoHostExtendY,
       {0.0f, body_height}
     )
   ) {
@@ -482,10 +487,10 @@ auto AssetBrowser::draw(this AssetBrowser& self, const AssetType forced_type, co
 
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
-    committed = self.draw_list(picking);
+    committed = self.draw_list(picking, pane_height);
 
     ImGui::TableSetColumnIndex(1);
-    if (ImGui::BeginChild("AssetDetails", {0.0f, 0.0f})) {
+    if (ImGui::BeginChild("AssetDetails", {0.0f, pane_height})) {
       if (const auto* selected = self.find_asset(self.selected_uuid)) {
         self.draw_details(*selected);
       } else {

@@ -715,7 +715,7 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
 
   ImGui::SameLine();
 
-  ImGui::BeginDisabled(!uuid);
+  ImGui::BeginDisabled(!uuid || !pickable);
   if (UI::button(stack.format_char("{} Clear", ICON_MDI_CLOSE))) {
     // The field owns one reference, the same way picking and dropping do, so clearing gives it back.
     asset_man.unload_asset(uuid);
