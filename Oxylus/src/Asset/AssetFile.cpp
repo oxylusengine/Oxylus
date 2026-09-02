@@ -27,10 +27,10 @@ auto to_material(const ModelData::Material& src, std::span<const UUID> textures)
   };
 
   return Material{
-    .albedo_color = glm::make_vec4(src.albedo_color),
-    .uv_size = glm::make_vec2(src.uv_size),
-    .uv_offset = glm::make_vec2(src.uv_offset),
-    .emissive_color = glm::make_vec3(src.emissive_color),
+    .albedo_color = glm::make_vec4(src.albedo_color.data()),
+    .uv_size = glm::make_vec2(src.uv_size.data()),
+    .uv_offset = glm::make_vec2(src.uv_offset.data()),
+    .emissive_color = glm::make_vec3(src.emissive_color.data()),
     .roughness_factor = src.roughness_factor,
     .metallic_factor = src.metallic_factor,
     .normal_scale = src.normal_scale,

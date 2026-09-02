@@ -128,11 +128,29 @@ struct OXRC_API Session : Handle<Session> {
   auto take_diagnostics() -> SessionDiagnostics;
 };
 
+// msvc rejects an out-of-line definition of an explicit-object member of a dllexport class
+// (C2340), so these stay inline in the class
 struct OXRC_API ResourceCompiler final : Session {
   constexpr static auto MODULE_NAME = "ResourceCompiler";
 
-  auto init(this ResourceCompiler& self) -> std::expected<void, std::string>;
-  auto deinit(this ResourceCompiler& self) -> std::expected<void, std::string>;
+  auto init(this ResourceCompiler& self) -> std::expected<void, std::string> {
+    auto session = Session::create();
+    if (!session.has_value()) {
+      return std::unexpected("Failed to create the resource compiler session.");
+    }
+
+    static_cast<Session&>(self) = session.value();
+
+    return {};
+  }
+
+  auto deinit(this ResourceCompiler& self) -> std::expected<void, std::string> {
+    if (self) {
+      self.destroy();
+    }
+
+    return {};
+  }
 };
 
 } // namespace ox::rc

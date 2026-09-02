@@ -107,8 +107,8 @@ struct ModelData {
     u32 lod_count = 0;
     u64 lod_metadata_offset = 0;
     bool has_texture_coords = false;
-    f32 bounds_center[3] = {};
-    f32 bounds_extent[3] = {};
+    std::array<f32, 3> bounds_center = {};
+    std::array<f32, 3> bounds_extent = {};
     std::array<GPU::MeshLOD, GPU::Mesh::MAX_LODS> lods = {};
     std::vector<u8> blob = {};
     // LOD0 triangles, un-quantized, so physics can build a shape. Positions are xyz triples.
@@ -120,10 +120,10 @@ struct ModelData {
   struct Material {
     std::string name = {};
     PackedUUID uuid = {};
-    f32 albedo_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-    f32 emissive_color[3] = {0.0f, 0.0f, 0.0f};
-    f32 uv_size[2] = {1.0f, 1.0f};
-    f32 uv_offset[2] = {0.0f, 0.0f};
+    std::array<f32, 4> albedo_color = {1.0f, 1.0f, 1.0f, 1.0f};
+    std::array<f32, 3> emissive_color = {0.0f, 0.0f, 0.0f};
+    std::array<f32, 2> uv_size = {1.0f, 1.0f};
+    std::array<f32, 2> uv_offset = {0.0f, 0.0f};
     f32 roughness_factor = 1.0f;
     f32 metallic_factor = 0.0f;
     f32 alpha_cutoff = 0.1f;
@@ -150,7 +150,7 @@ struct ModelData {
   struct Light {
     std::string name = {};
     ModelLightType type = ModelLightType::Directional;
-    f32 color[3] = {1.0f, 1.0f, 1.0f};
+    std::array<f32, 3> color = {1.0f, 1.0f, 1.0f};
     f32 intensity = 1.0f;
     bool has_range = false;
     f32 range = 0.0f;
@@ -162,9 +162,9 @@ struct ModelData {
 
   struct MeshGroup {
     std::string name = {};
-    f32 translation[3] = {0.0f, 0.0f, 0.0f};
-    f32 rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-    f32 scale[3] = {1.0f, 1.0f, 1.0f};
+    std::array<f32, 3> translation = {0.0f, 0.0f, 0.0f};
+    std::array<f32, 4> rotation = {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<f32, 3> scale = {1.0f, 1.0f, 1.0f};
     std::vector<u32> child_indices = {};
     std::vector<u32> mesh_indices = {};
     std::vector<u32> light_indices = {};

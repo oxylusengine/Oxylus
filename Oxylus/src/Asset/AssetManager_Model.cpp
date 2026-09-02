@@ -31,8 +31,8 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
   auto& gpu_mesh = result.gpu_mesh;
   gpu_mesh.vertex_count = mesh.vertex_count;
   gpu_mesh.lod_count = mesh.lod_count;
-  gpu_mesh.bounds.aabb_center = glm::make_vec3(mesh.bounds_center);
-  gpu_mesh.bounds.aabb_extent = glm::make_vec3(mesh.bounds_extent);
+  gpu_mesh.bounds.aabb_center = glm::make_vec3(mesh.bounds_center.data());
+  gpu_mesh.bounds.aabb_extent = glm::make_vec3(mesh.bounds_extent.data());
   gpu_mesh.vertex_positions = gpu_mesh_bda + mesh.vertex_positions_offset;
   gpu_mesh.vertex_normals = gpu_mesh_bda + mesh.vertex_normals_offset;
   if (mesh.has_texture_coords) {
@@ -173,7 +173,7 @@ auto AssetManager::load_model(this AssetManager& self, ModelData&& model_data, b
     model.lights.push_back({
       .name = light.name,
       .type = static_cast<Model::LightType>(light.type),
-      .color = glm::make_vec3(light.color),
+      .color = glm::make_vec3(light.color.data()),
       .intensity = light.intensity,
       .range = light.has_range ? option<f32>(light.range) : nullopt,
       .inner_cone_angle = light.has_inner_cone_angle ? option<f32>(light.inner_cone_angle) : nullopt,
@@ -188,9 +188,9 @@ auto AssetManager::load_model(this AssetManager& self, ModelData&& model_data, b
     mesh_group.child_indices.assign(group.child_indices.begin(), group.child_indices.end());
     mesh_group.mesh_indices.assign(group.mesh_indices.begin(), group.mesh_indices.end());
     mesh_group.light_indices.assign(group.light_indices.begin(), group.light_indices.end());
-    mesh_group.translation = glm::make_vec3(group.translation);
+    mesh_group.translation = glm::make_vec3(group.translation.data());
     mesh_group.rotation = glm::quat::wxyz(group.rotation[3], group.rotation[0], group.rotation[1], group.rotation[2]);
-    mesh_group.scale = glm::make_vec3(group.scale);
+    mesh_group.scale = glm::make_vec3(group.scale.data());
   }
 
   const auto mesh_count = data->meshes.size();
