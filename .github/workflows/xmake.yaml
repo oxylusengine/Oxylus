@@ -14,7 +14,6 @@ jobs:
     name: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.mode.name }}-${{ matrix.platform.toolchain }}
     runs-on: ${{ matrix.platform.runner }}
     env:
-      XMAKE_GLOBALDIR: ${{ github.workspace }}/../xmake-global
       XMAKE_RUNTIME: ${{ matrix.platform.os == 'windows' && matrix.mode.windows_runtime || 'c++_static' }}
     strategy:
       fail-fast: false
@@ -43,7 +42,8 @@ jobs:
             os: macos
             arch: arm64
             toolchain: mac-clang
-            llvm_version: "22"
+            llvm_version: "23"
+            llvm_formula: llvm
 
     steps:
       - name: Checkout repository
@@ -54,6 +54,10 @@ jobs:
       - name: Get current week for cache key
         id: cache_key
         run: echo "key=$(date +'%G-W%V')" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Set xmake global directory
+        run: echo "XMAKE_GLOBALDIR=${{ runner.temp }}/xmake-global" >> "$GITHUB_ENV"
         shell: bash
 
       - name: Install Linux dependencies
@@ -126,20 +130,33 @@ jobs:
 
       - name: Install LLVM for macOS
         if: matrix.platform.os == 'macos'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install llvm@${{ matrix.platform.llvm_version }}
-          LLVM_PATH=$(brew --prefix llvm@${{ matrix.platform.llvm_version }})
+          # runner images preinstall an older llvm, and install is a no-op on it
+          brew update
+          if brew list --versions ${{ matrix.platform.llvm_formula }} > /dev/null 2>&1; then
+            brew upgrade ${{ matrix.platform.llvm_formula }}
+          else
+            brew install ${{ matrix.platform.llvm_formula }}
+          fi
+          LLVM_PATH=$(brew --prefix ${{ matrix.platform.llvm_formula }})
           {
             echo "LLVM_PATH=$LLVM_PATH"
             echo "PATH=$LLVM_PATH/bin:$PATH"
-            echo "LDFLAGS=-L$LLVM_PATH/lib/c++ -Wl,-rpath,$LLVM_PATH/lib/c++ $LDFLAGS"
-            echo "CPPFLAGS=-I$LLVM_PATH/include $CPPFLAGS"
-            echo "CXXFLAGS=-stdlib=libc++ $CXXFLAGS"
           } >> "$GITHUB_ENV"
 
       - name: Verify macOS LLVM
         if: matrix.platform.os == 'macos'
-        run: clang++ --version
+        run: |
+          brew list --versions ${{ matrix.platform.llvm_formula }}
+          "$LLVM_PATH/bin/clang++" --version
+          if ! "$LLVM_PATH/bin/clang++" --version | grep -q "clang version ${{ matrix.platform.llvm_version }}\."; then
+            echo "Expected clang ${{ matrix.platform.llvm_version }} from $LLVM_PATH." >&2
+            echo "If homebrew-core has moved past ${{ matrix.platform.llvm_version }}, pin llvm_formula to llvm@${{ matrix.platform.llvm_version }}." >&2
+            exit 1
+          fi
 
       - name: Setup xmake
         uses: xmake-io/github-action-setup-xmake@v1
@@ -157,17 +174,17 @@ jobs:
 
       - name: Restore cached xmake dependencies
         id: restore-depcache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.XMAKE_GLOBALDIR }}/.xmake/packages
-          key: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.mode.name }}-${{ env.XMAKE_RUNTIME }}-${{ matrix.platform.toolchain }}-${{ steps.dep_hash.outputs.hash }}-${{ steps.cache_key.outputs.key }}
+          key: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.mode.name }}-${{ env.XMAKE_RUNTIME }}-${{ matrix.platform.toolchain }}${{ matrix.platform.llvm_version }}-${{ steps.dep_hash.outputs.hash }}-${{ steps.cache_key.outputs.key }}
 
       - name: Configure xmake and install dependencies
         run: xmake config -v --toolchain=${{ matrix.platform.toolchain }} --arch=${{ matrix.platform.arch }} --mode=${{ matrix.mode.name }} --runtimes=${{ env.XMAKE_RUNTIME }} --yes --policies=package.precompiled:n --profile=n --lua_bindings=y --tests=false
 
       - name: Save cached xmake dependencies
         if: steps.restore-depcache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ env.XMAKE_GLOBALDIR }}/.xmake/packages
           key: ${{ steps.restore-depcache.outputs.cache-primary-key }}

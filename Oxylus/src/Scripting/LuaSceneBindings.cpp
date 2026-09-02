@@ -1,4 +1,4 @@
-﻿#include "Scripting/LuaSceneBindings.hpp"
+#include "Scripting/LuaSceneBindings.hpp"
 
 #include <RmlUi/Core/Context.h>
 #include <sol/state.hpp>
@@ -28,6 +28,7 @@ auto SceneBinding::bind(sol::state* state) -> void {
     }
   );
   SET_TYPE_FUNCTION(scene_type, Scene, create_model_entity);
+  SET_TYPE_FUNCTION(scene_type, Scene, create_particle_system_entity);
   SET_TYPE_FUNCTION(scene_type, Scene, save_to_file);
   SET_TYPE_FUNCTION(scene_type, Scene, load_from_file);
   SET_TYPE_FUNCTION(scene_type, Scene, safe_entity_name);

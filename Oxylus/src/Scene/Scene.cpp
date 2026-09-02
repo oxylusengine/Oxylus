@@ -42,7 +42,6 @@
 #include "UI/RmlView.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Log.hpp"
-#include "Utils/Random.hpp"
 #include "Utils/Timestep.hpp"
 
 namespace ox {
@@ -1583,6 +1582,36 @@ auto Scene::create_model_entity_async(this Scene& self, const UUID& asset_uuid) 
   }
 
   self.pending_model_spawns.push_back(PendingModelSpawn{.model_uuid = asset_uuid});
+}
+
+auto Scene::create_particle_system_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
+
+  auto name = std::string("particle_system");
+  {
+    auto asset = asset_man.get_asset(asset_uuid);
+    if (!asset || asset->type != AssetType::ParticleSystem) {
+      OX_LOG_ERROR("Cannot create a particle system entity from invalid asset '{}'!", asset_uuid.str());
+      return {};
+    }
+
+    if (!asset->path.stem().empty()) {
+      name = asset->path.stem().string();
+    }
+  }
+
+  if (!asset_man.load_asset(asset_uuid)) {
+    return {};
+  }
+
+  auto entity = self.create_entity(name, true);
+  entity.set<ParticleSystemComponent>(ParticleSystemComponent{
+    .particle_system = asset_uuid,
+  });
+
+  return entity;
 }
 
 auto Scene::update_pending_model_spawns(this Scene& self) -> void {

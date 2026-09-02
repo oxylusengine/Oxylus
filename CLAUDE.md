@@ -390,6 +390,6 @@ preference:
 
 ## CI
 
-`.github/workflows/xmake.yaml` builds Windows/msvc, Linux/clang-20, and macOS/mac-clang in both debug
-and release with `--tests=false`, then `xmake build -a` and `xmake install`. It does **not** run
-tests, so verify tests locally.
+`.github/workflows/xmake.yaml` builds Windows/msvc, Windows/clang-cl, Linux/clang-23, and
+macOS/mac-clang (homebrew LLVM, not Apple Clang) in both debug and release with `--tests=false`,
+then `xmake build -a` and `xmake install`. It does **not** run tests, so verify tests locally.

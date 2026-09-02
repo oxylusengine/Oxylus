@@ -6,6 +6,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "UI/AssetManagerViewer.hpp"
+#include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 #include "Utils/ImGuiScoped.hpp"
 
@@ -180,8 +181,26 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
 
       const ImVec2 cursor_pos = ImGui::GetCursorPos();
       const ImVec2 region = ImGui::GetContentRegionAvail();
-      if (region.x != 0.0f && region.y != 0.0f)
+      if (region.x != 0.0f && region.y != 0.0f) {
         ImGui::InvisibleButton("##DragDropTargetBehindTable", region);
+        if (ImGui::BeginDragDropTarget()) {
+          if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+            const auto* payload_data = PayloadData::from_payload(payload);
+            const auto path = payload_data->get_path();
+            if (path.extension() == ".oxparticle") {
+              auto asset = import_asset_callback ? import_asset_callback(path) : UUID(nullptr);
+              if (asset) {
+                auto new_entity = scene_->create_particle_system_entity(asset);
+                if (new_entity != flecs::entity::null()) {
+                  selected_entity_.set(new_entity);
+                  selected_script_ = nullptr;
+                }
+              }
+            }
+          }
+          ImGui::EndDragDropTarget();
+        }
+      }
 
       ImGui::SetCursorPos(cursor_pos);
       if (ImGui::BeginTable("HierarchyTable", 3, table_flags)) {
@@ -345,11 +364,19 @@ auto SceneHierarchyViewer::draw_entity_node(
       if (const ImGuiPayload* entity_payload = ImGui::AcceptDragDropPayload("Entity")) {
         dragged_entity_ = *static_cast<flecs::entity*>(entity_payload->Data);
         dragged_entity_target_ = entity;
-      } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-        const std::filesystem::path path = std::filesystem::path((const char*)payload->Data);
-        if (path.extension() == ".oxprefab") {
-          // dragged_entity = EntitySerializer::deserialize_entity_as_prefab(path.string().c_str(), _scene.get());
-          // dragged_entity = entity;
+      } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+        const auto* payload_data = PayloadData::from_payload(payload);
+        const auto path = payload_data->get_path();
+        if (path.extension() == ".oxparticle") {
+          auto asset = import_asset_callback ? import_asset_callback(path) : UUID(nullptr);
+          if (asset) {
+            auto new_entity = scene_->create_particle_system_entity(asset);
+            if (new_entity != flecs::entity::null()) {
+              new_entity.child_of(entity);
+              selected_entity_.set(new_entity);
+              selected_script_ = nullptr;
+            }
+          }
         }
       }
 

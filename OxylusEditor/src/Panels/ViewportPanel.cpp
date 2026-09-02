@@ -559,6 +559,15 @@ auto ViewportPanel::drag_drop(this const ViewportPanel& self) -> void {
           App::defer_to_next_frame([scene, asset]() { scene->create_model_entity_async(asset); });
         }));
         job_man.pop_job_name();
+      } else if (path.extension() == ".oxparticle") {
+        auto asset = import_asset(App::mod<AssetManager>(), path);
+        if (asset) {
+          auto entity = self.editor_scene->get_scene()->create_particle_system_entity(asset);
+          if (entity != flecs::entity::null()) {
+            auto& editor_context = App::mod<Editor>().get_context();
+            editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
+          }
+        }
       }
     }
 
