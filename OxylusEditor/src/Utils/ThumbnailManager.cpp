@@ -11,6 +11,7 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/AudioSource.hpp"
 #include "Asset/Model.hpp"
 #include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
@@ -52,6 +53,14 @@ constexpr auto TERRAIN_PREVIEW_UNPAINTED = glm::vec3(0.72f, 0.74f, 0.78f);
 // Zero delta is untouched ground, so it sits mid tone with cuts below it and raises above.
 constexpr auto TERRAIN_PREVIEW_CUT_TONE = 0.55f;
 constexpr auto TERRAIN_PREVIEW_RAISE_TONE = 1.2f;
+
+// Sound has nothing to render, so its preview is the amplitude envelope drawn over a flat plate.
+constexpr auto AUDIO_PREVIEW_BACKGROUND = glm::vec3(0.10f, 0.11f, 0.13f);
+constexpr auto AUDIO_PREVIEW_WAVE = glm::vec3(0.36f, 0.78f, 0.55f);
+constexpr auto AUDIO_PREVIEW_CENTER_LINE = glm::vec3(0.26f, 0.28f, 0.31f);
+// Quiet recordings would otherwise draw as a flat line, so the envelope is normalized to this much
+// of the half height instead of being shown at its absolute level.
+constexpr auto AUDIO_PREVIEW_HEADROOM = 0.9f;
 
 constexpr auto TERRAIN_LAYER_COLORS = std::array{
   glm::vec3(0.45f, 0.62f, 0.32f),
@@ -268,6 +277,54 @@ static auto render_terrain_preview(const TerrainEdits& edits, u32 size) -> std::
       pixels[index * 4 + 1] = static_cast<u8>(std::clamp(color.g, 0.f, 1.f) * 255.f);
       pixels[index * 4 + 2] = static_cast<u8>(std::clamp(color.b, 0.f, 1.f) * 255.f);
       pixels[index * 4 + 3] = 255;
+    }
+  }
+
+  return pixels;
+}
+
+static auto render_audio_preview(const AudioPeaks& peaks, u32 size) -> std::vector<u8> {
+  ZoneScoped;
+
+  const auto bucket_count = peaks.max_amplitude.size();
+  if (bucket_count == 0 || peaks.min_amplitude.size() != bucket_count || size == 0) {
+    return {};
+  }
+
+  auto loudest = 0.0f;
+  for (auto bucket = 0_sz; bucket < bucket_count; ++bucket) {
+    loudest = ox::max(loudest, ox::max(-peaks.min_amplitude[bucket], peaks.max_amplitude[bucket]));
+  }
+
+  const auto center = static_cast<f32>(size - 1) * 0.5f;
+  const auto gain = loudest > 0.0f ? AUDIO_PREVIEW_HEADROOM * center / loudest : 0.0f;
+  const auto center_row = static_cast<i32>(std::lround(center));
+
+  auto pixels = std::vector<u8>(static_cast<usize>(size) * size * 4);
+  for (auto x = 0_u32; x < size; ++x) {
+    const auto bucket = ox::min(static_cast<usize>(x) * bucket_count / size, bucket_count - 1);
+
+    auto top = static_cast<i32>(std::lround(center - peaks.max_amplitude[bucket] * gain));
+    auto bottom = static_cast<i32>(std::lround(center - peaks.min_amplitude[bucket] * gain));
+    // Silence still deserves a hairline, otherwise gaps read as a broken image.
+    if (bottom <= top) {
+      bottom = top + 1;
+    }
+
+    for (auto y = 0_u32; y < size; ++y) {
+      const auto row = static_cast<i32>(y);
+      auto color = AUDIO_PREVIEW_BACKGROUND;
+      if (row >= top && row < bottom) {
+        color = AUDIO_PREVIEW_WAVE;
+      } else if (row == center_row) {
+        color = AUDIO_PREVIEW_CENTER_LINE;
+      }
+
+      const auto index = (static_cast<usize>(y) * size + x) * 4;
+      pixels[index] = static_cast<u8>(color.r * 255.f);
+      pixels[index + 1] = static_cast<u8>(color.g * 255.f);
+      pixels[index + 2] = static_cast<u8>(color.b * 255.f);
+      pixels[index + 3] = 255;
     }
   }
 
@@ -729,6 +786,74 @@ auto ThumbnailManager::get_thumbnail_terrain(this ThumbnailManager& self, const 
   job_man.pop_job_name();
 
   return {};
+}
+
+auto ThumbnailManager::get_thumbnail_audio(this ThumbnailManager& self, const std::filesystem::path& asset_path)
+  -> TextureView {
+  ZoneScoped;
+
+  if (!std::filesystem::exists(asset_path)) {
+    return {};
+  }
+
+  auto asset_hash = self.get_asset_hash(asset_path);
+
+  if (auto cached = self.find_cached(asset_hash)) {
+    return *cached;
+  }
+
+  if (!self.try_claim_job(asset_hash)) {
+    return {};
+  }
+
+  auto expected_png = self.cache_dir / (asset_hash + ".png");
+  if (std::filesystem::exists(expected_png)) {
+    self.submit_cached_png_load(asset_hash, expected_png);
+    return {};
+  }
+
+  auto& job_man = App::get_job_manager();
+  job_man.push_job_name("ContentPanelThumbnail_AudioWaveform");
+  job_man.submit(Job::create([&self, asset_path, asset_hash, expected_png]() {
+    // One bucket per output column: any more detail than that is thrown away by the rasterizer.
+    auto peaks = read_audio_peaks(asset_path, THUMBNAIL_SIZE);
+    if (!peaks) {
+      self.mark_job_failed(asset_hash);
+      return;
+    }
+
+    auto pixels = render_audio_preview(*peaks, THUMBNAIL_SIZE);
+    if (pixels.empty()) {
+      self.mark_job_failed(asset_hash);
+      return;
+    }
+
+    write_thumbnail_png(expected_png, pixels, THUMBNAIL_SIZE);
+
+    auto lock = std::unique_lock(self.queue_mutex);
+    self.pending_uploads.push({.cache_key = asset_hash, .pixels = std::move(pixels)});
+  }));
+  job_man.pop_job_name();
+
+  return {};
+}
+
+auto ThumbnailManager::get_thumbnail(
+  this ThumbnailManager& self, const AssetType type, const std::filesystem::path& asset_path, const UUID& asset_uuid
+) -> TextureView {
+  ZoneScoped;
+
+  switch (type) {
+    case AssetType::Texture : return self.get_thumbnail_texture(asset_path);
+    case AssetType::Model   : return self.get_thumbnail_model(asset_path);
+    case AssetType::Terrain : return self.get_thumbnail_terrain(asset_path);
+    case AssetType::Audio   : return self.get_thumbnail_audio(asset_path);
+    // A material's preview follows its in-memory edits, which only the UUID can find.
+    case AssetType::Material: {
+      return asset_uuid ? self.get_thumbnail_material(asset_uuid) : self.get_thumbnail_material(asset_path);
+    }
+    default: return {};
+  }
 }
 
 auto ThumbnailManager::thumbnail_unavailable(this ThumbnailManager& self, const std::filesystem::path& asset_path)

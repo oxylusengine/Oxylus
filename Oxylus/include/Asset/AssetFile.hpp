@@ -39,6 +39,10 @@ enum class AssetFileType : u32 {
   LUA,
   OXTERRAIN,
   OXPARTICLE,
+  WAV,
+  MP3,
+  FLAC,
+  OGG,
 };
 
 struct NoneAsset {

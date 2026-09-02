@@ -9,6 +9,7 @@
 #include <span>
 #include <vector>
 
+#include "Asset/AssetFile.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/Types.hpp"
 #include "Core/UUID.hpp"
@@ -38,6 +39,15 @@ public:
   auto invalidate_material(this ThumbnailManager& self, const UUID& material_uuid) -> void;
 
   auto get_thumbnail_terrain(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> TextureView;
+
+  auto get_thumbnail_audio(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> TextureView;
+
+  auto get_thumbnail(
+    this ThumbnailManager& self,
+    AssetType type,
+    const std::filesystem::path& asset_path,
+    const UUID& asset_uuid = UUID(nullptr)
+  ) -> TextureView;
 
   auto thumbnail_unavailable(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> bool;
 

@@ -267,6 +267,10 @@ auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> Asse
     case fnv64_c(".LUA")       : return AssetFileType::LUA;
     case fnv64_c(".OXTERRAIN") : return AssetFileType::OXTERRAIN;
     case fnv64_c(".OXPARTICLE"): return AssetFileType::OXPARTICLE;
+    case fnv64_c(".WAV")       : return AssetFileType::WAV;
+    case fnv64_c(".MP3")       : return AssetFileType::MP3;
+    case fnv64_c(".FLAC")      : return AssetFileType::FLAC;
+    case fnv64_c(".OGG")       : return AssetFileType::OGG;
     default                    : return AssetFileType::None;
   }
 }
@@ -350,14 +354,14 @@ auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::
     case AssetFileType::Meta: {
       return self.register_asset(path);
     }
-    case AssetFileType::GLB :
+    case AssetFileType::GLB:
     case AssetFileType::GLTF: {
       asset_type = AssetType::Model;
       break;
     }
-    case AssetFileType::PNG :
+    case AssetFileType::PNG:
     case AssetFileType::JPEG:
-    case AssetFileType::DDS :
+    case AssetFileType::DDS:
     case AssetFileType::KTX2: {
       asset_type = AssetType::Texture;
       break;
@@ -372,6 +376,13 @@ auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::
     }
     case AssetFileType::OXPARTICLE: {
       asset_type = AssetType::ParticleSystem;
+      break;
+    }
+    case AssetFileType::WAV:
+    case AssetFileType::MP3:
+    case AssetFileType::FLAC:
+    case AssetFileType::OGG : {
+      asset_type = AssetType::Audio;
       break;
     }
     default: {
@@ -517,13 +528,13 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
 
   auto children = ankerl::svector<UUID, 8>{};
   switch (asset->type) {
-    case AssetType::None          :
-    case AssetType::Shader        :
-    case AssetType::Font          :
-    case AssetType::Scene         :
-    case AssetType::Audio         :
-    case AssetType::Texture       :
-    case AssetType::Terrain       :
+    case AssetType::None:
+    case AssetType::Shader:
+    case AssetType::Font:
+    case AssetType::Scene:
+    case AssetType::Audio:
+    case AssetType::Texture:
+    case AssetType::Terrain:
     case AssetType::Script        : break;
     case AssetType::ParticleSystem: {
       auto particle_system = self.get_particle_system(asset->particle_system_id);
@@ -571,13 +582,13 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
   // release children first
   auto children = ankerl::svector<UUID, 8>{};
   switch (type) {
-    case AssetType::None          :
-    case AssetType::Shader        :
-    case AssetType::Font          :
-    case AssetType::Scene         :
-    case AssetType::Audio         :
-    case AssetType::Texture       :
-    case AssetType::Terrain       :
+    case AssetType::None:
+    case AssetType::Shader:
+    case AssetType::Font:
+    case AssetType::Scene:
+    case AssetType::Audio:
+    case AssetType::Texture:
+    case AssetType::Terrain:
     case AssetType::Script        : break;
     case AssetType::ParticleSystem: {
       auto particle_system = self.get_particle_system(asset->particle_system_id);
@@ -1042,7 +1053,9 @@ auto AssetManager::load_audio(this AssetManager& self, const std::filesystem::pa
   ZoneScoped;
 
   auto audio = AudioSource{};
-  audio.load(path);
+  if (!audio.load(path)) {
+    return AudioID::Invalid;
+  }
 
   auto write_lock = std::unique_lock(self.audio_mutex);
   return self.audio_map.create_slot(std::move(audio));

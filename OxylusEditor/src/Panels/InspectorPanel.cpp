@@ -7,18 +7,54 @@
 
 #include "Asset/AssetFile.hpp"
 #include "Asset/AssetManager.hpp"
+#include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "ParticleEditorPanel.hpp"
 #include "Scene/EntitySerializer.hpp"
+#include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EditorTheme.hpp"
 
 namespace ox {
 static UUID pending_save_material_uuid = {};
+
+// Components only carry a UUID, and nothing in the reflection says which kind of asset a field
+// points at, so an empty field is matched by the name the component gave it. A field that already
+// holds something uses the type of what it holds instead.
+static auto expected_asset_type(const std::string_view field_name) -> AssetType {
+  const auto has = [field_name](const std::string_view needle) {
+    return field_name.find(needle) != std::string_view::npos;
+  };
+
+  if (has("model"))
+    return AssetType::Model;
+  if (has("material"))
+    return AssetType::Material;
+  if (has("texture") || has("layer_"))
+    return AssetType::Texture;
+  if (has("audio") || has("sound"))
+    return AssetType::Audio;
+  if (has("particle"))
+    return AssetType::ParticleSystem;
+  if (has("terrain"))
+    return AssetType::Terrain;
+  if (has("script"))
+    return AssetType::Script;
+  if (has("scene") || has("prefab"))
+    return AssetType::Scene;
+
+  return AssetType::None;
+}
+
+static auto format_timestamp(memory::ScopedStack& stack, const f32 seconds) -> const c8* {
+  const auto total = static_cast<i32>(seconds);
+
+  return stack.format_char("{}:{:02}", total / 60, total % 60);
+}
 
 struct EntityInspector : IEntitySerializer {
   UndoRedoSystem& undo_redo_system;
@@ -194,142 +230,24 @@ struct EntityInspector : IEntitySerializer {
   auto on_opaque_value(
     std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
   ) -> void override {
-    if (field_type == world.entity<UUID>()) {
-      auto* uuid = static_cast<UUID*>(field_ptr);
-      UI::end_properties();
-
-      ImGui::Separator();
-      UI::begin_properties();
-      auto uuid_str = uuid->str();
-      UI::input_text(name.data(), &uuid_str, ImGuiInputTextFlags_ReadOnly);
-      UI::end_properties();
-
-      auto& asset_man = App::mod<AssetManager>();
-
-      ImGui::PushID(field_ptr);
-      static bool draw_asset_picker = false;
-      if (UI::button(ICON_MDI_CIRCLE_DOUBLE)) {
-        draw_asset_picker = !draw_asset_picker;
-      }
-
-      if (draw_asset_picker) {
-        Asset selected = {};
-        AssetType filter = {};
-        inspector_panel.viewer.render("Asset Picker", &draw_asset_picker, filter, &selected);
-
-        // NOTE: We don't allow model assets to be loaded this way yet(or ever).
-        if (selected.type != AssetType::None && selected.type != AssetType::Model) {
-          // NOTE: Don't allow the existing asset to be swapped with a different type of asset.
-          auto existing_type = AssetType::None;
-          if (auto existing_asset = asset_man.get_asset(*uuid)) {
-            existing_type = existing_asset->type;
-          }
-          const bool is_same_asset = selected.uuid == *uuid;
-          const bool is_same_type = existing_type == selected.type;
-          const bool is_loaded = asset_man.load_asset(selected.uuid);
-          if (!is_same_asset && is_same_type && is_loaded) {
-            if (*uuid) {
-              asset_man.unload_asset(*uuid);
-            }
-            *uuid = selected.uuid;
-            modified = true;
-          }
-        }
-      }
-
-      ImGui::SameLine();
-
-      const float x = ImGui::GetContentRegionAvail().x;
-      const float y = ImGui::GetFrameHeight();
-      const auto btn = fmt::format("{} Drop an asset file", ICON_MDI_FILE_UPLOAD);
-      UI::button(btn.c_str(), {x, y});
-      ImGui::PopID();
-
-      if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
-          const auto payload = PayloadData::from_payload(imgui_payload);
-          if (payload->get_str().empty())
-            return;
-          if (auto imported_asset = asset_man.import_asset(payload->str)) {
-            // Must not hold a registry read guard while unloading: unload_asset() takes the
-            // registry write lock. unload_asset() no-ops on missing/unloaded assets.
-            if (*uuid) {
-              asset_man.unload_asset(*uuid);
-            }
-            if (asset_man.load_asset(imported_asset)) {
-              *uuid = imported_asset;
-              modified = true;
-            }
-          }
-        }
-        ImGui::EndDragDropTarget();
-      }
-      ImGui::Spacing();
-      ImGui::Separator();
-
-      if (auto asset = asset_man.get_asset(*uuid)) {
-        const auto asset_type = asset->type;
-        const auto asset_uuid = asset->uuid;
-        const auto asset_path = asset->path;
-        const auto model_id = asset_type == AssetType::Model ? asset->model_id : ModelID::Invalid;
-        const auto material_id = asset_type == AssetType::Material ? asset->material_id : MaterialID::Invalid;
-        const auto audio_id = asset_type == AssetType::Audio ? asset->audio_id : AudioID::Invalid;
-        const auto script_id = asset_type == AssetType::Script ? asset->script_id : ScriptID::Invalid;
-        asset.reset();
-
-        switch (asset_type) {
-          case ox::AssetType::None:
-          case AssetType::Shader  : // TODO: Shaders
-          case AssetType::Texture : // TODO: Textures
-          case AssetType::Font    : // TODO: Fonts
-          case AssetType::Scene   : // TODO: Scenes
-          case AssetType::Terrain : // TODO: Terrain edits
-            break;
-          case AssetType::ParticleSystem: {
-            if (UI::button("Open Particle Editor")) {
-              App::mod<Editor>().editor_panel_registry.get<ParticleEditorPanel>().open_asset(asset_uuid);
-            }
-            break;
-          }
-          case AssetType::Model: {
-            auto model = asset_man.get_model(model_id);
-            inspector_panel.draw_model_asset(std::move(model));
-            break;
-          }
-          case AssetType::Material: {
-            auto material = asset_man.get_material(material_id);
-            auto material_dirty = inspector_panel.draw_material_asset(asset_uuid, asset_path, std::move(material));
-            material.reset();
-            if (material_dirty) {
-              asset_man.set_material_dirty(material_id);
-              App::mod<Editor>().thumbnail_manager.invalidate_material(asset_uuid);
-            }
-            break;
-          }
-          case AssetType::Audio: {
-            auto audio = asset_man.get_audio(audio_id);
-            inspector_panel.draw_audio_asset(std::move(audio));
-            break;
-          }
-          case AssetType::Script: {
-            auto script = asset_man.get_script(script_id);
-            if (inspector_panel.draw_script_asset(asset_uuid, std::move(script))) {
-              modified = true;
-            }
-            break;
-          }
-        }
-      }
-
-      UI::begin_properties();
+    if (field_type != world.entity<UUID>()) {
+      return;
     }
+
+    auto* uuid = static_cast<UUID*>(field_ptr);
+
+    // The asset field and whatever editor its asset brings with it are both too tall for a property
+    // row, so they go between two property tables rather than inside one.
+    UI::end_properties();
+
+    modified |= inspector_panel.draw_asset_field(name, *uuid);
+    inspector_panel.draw_asset_contents(*uuid);
+
+    UI::begin_properties();
   }
 };
 
 InspectorPanel::InspectorPanel() : EditorPanelState("Inspector", ICON_MDI_INFORMATION, true), scene_(nullptr) {
-  viewer.search_icon = ICON_MDI_MAGNIFY;
-  viewer.filter_icon = ICON_MDI_FILTER;
-
   auto& event_system = App::get_event_system();
   auto& asset_man = App::mod<AssetManager>();
 
@@ -365,6 +283,9 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
 
     if (e != self.last_edited_entity) {
       self.euler_cache.reset();
+      // The open picker is identified by the address of a field on the entity that was inspected,
+      // which means nothing once a different one is.
+      self.asset_picker_field = nullptr;
       self.last_edited_entity = e;
     }
 
@@ -376,27 +297,19 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
 
     auto& asset_man = App::mod<AssetManager>();
 
+    // Selecting a file is a request to look at the asset inside it, and only the registry can say
+    // what that is. Importing registers the file (writing its meta the first time) and hands back
+    // the uuid everything else is keyed on; for a file that has been imported already it just
+    // resolves. Files of a type the manager does not handle yield nothing, as before.
     auto path = std::filesystem::path(editor_context.str.value());
-    std::unique_ptr<AssetManager::AssetMetaFile> meta_file = nullptr;
-
-    if (path.extension() == ".oxasset") {
-      meta_file = asset_man.read_meta_file(path);
-    } else {
-      meta_file = asset_man.read_meta_file_from_asset(path);
+    if (path != self.resolved_asset_path) {
+      self.resolved_asset_path = std::move(path);
+      self.resolved_asset_uuid = asset_man.import_asset(self.resolved_asset_path);
+      self.asset_picker_field = nullptr;
     }
 
-    if (!meta_file) {
-      return;
-    }
-
-    auto uuid_str_json = meta_file->doc["uuid"].get_string();
-    if (uuid_str_json.error())
-      return;
-
-    auto uuid_from_str = UUID::from_string(uuid_str_json.value_unsafe());
-    if (uuid_from_str.has_value()) {
-      if (auto asset = asset_man.get_asset(*uuid_from_str))
-        self.draw_asset_info(std::move(asset));
+    if (auto asset = asset_man.get_asset(self.resolved_asset_uuid)) {
+      self.draw_asset_info(std::move(asset));
     }
   }
 }
@@ -509,26 +422,34 @@ auto InspectorPanel::draw_material_properties(
 
   dirty |= UI::property_vector("Color", material->albedo_color, true, true);
 
+  // draw_material_properties is static (the material browser reaches it without a panel), so the
+  // texture picker keeps its own viewer rather than borrowing the inspector's.
   const auto load_callback = [](bool is_srgb) {
     return [is_srgb](const char* label, const UUID& uuid, bool& active) -> UUID {
-      Asset selected = {};
-      AssetType filter = AssetType::Texture;
-      auto name = fmt::format("Asset Picker: {}", label);
-      static AssetManagerViewer am;
-      am.render(name.c_str(), &active, filter, &selected);
+      memory::ScopedStack stack;
 
-      if (selected.type == AssetType::Texture) {
-        auto& asset_man = App::mod<AssetManager>();
-        const bool is_loaded = asset_man.load_asset(selected.uuid, TextureLoadInfo{.is_srgb = is_srgb});
-        if (is_loaded) {
-          if (uuid) {
-            asset_man.unload_asset(uuid);
-          }
-          return selected.uuid;
-        }
+      static auto texture_picker = AssetBrowser{};
+      const auto picked = texture_picker.render_picker(
+        stack.format_char("Pick {} texture###TexturePicker", label),
+        &active,
+        AssetType::Texture,
+        uuid
+      );
+
+      if (!picked || picked->uuid == uuid) {
+        return UUID(nullptr);
       }
 
-      return UUID(nullptr);
+      auto& asset_man = App::mod<AssetManager>();
+      if (!asset_man.load_asset(picked->uuid, TextureLoadInfo{.is_srgb = is_srgb})) {
+        return UUID(nullptr);
+      }
+
+      if (uuid) {
+        asset_man.unload_asset(uuid);
+      }
+
+      return picked->uuid;
     };
   };
 
@@ -710,8 +631,194 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   });
 }
 
+auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::string_view label, UUID& uuid) -> bool {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  auto& asset_man = App::mod<AssetManager>();
+  auto& editor = App::mod<Editor>();
+
+  auto type = AssetType::None;
+  auto path = std::filesystem::path{};
+  if (auto asset = asset_man.get_asset(uuid)) {
+    type = asset->type;
+    path = asset->path;
+  }
+  const auto picker_type = type != AssetType::None ? type : expected_asset_type(label);
+  const auto name = uuid ? path.filename().string() : std::string("None");
+
+  // Putting a model in a scene has to go through Scene::create_model_entity, which builds the
+  // entity hierarchy the mesh instances need; pointing a bare uuid field at one would skip that.
+  const auto pickable = picker_type != AssetType::Model;
+  const auto browse_tooltip = pickable ? "Click to browse, or drop an asset file here"
+                                       : "Models are added to the scene from the content browser, not assigned here";
+
+  auto changed = false;
+
+  ImGui::PushID(&uuid);
+  ImGui::SeparatorText(stack.format_char("{} {}", asset_type_icon(picker_type), label));
+
+  // Any file dropped here is imported first, so dragging straight from the content browser works
+  // even for a file the registry has never seen.
+  const auto accept_drop = [&asset_man, &uuid, &changed, pickable] {
+    if (!pickable || !ImGui::BeginDragDropTarget()) {
+      return;
+    }
+
+    if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+      const auto* payload = PayloadData::from_payload(imgui_payload);
+      if (
+        const auto imported = asset_man.import_asset(payload->get_path()); imported && asset_man.load_asset(imported)
+      ) {
+        // Must not hold a registry read guard while unloading: unload_asset() takes the registry
+        // write lock. unload_asset() no-ops on missing/unloaded assets.
+        if (uuid) {
+          asset_man.unload_asset(uuid);
+        }
+        uuid = imported;
+        changed = true;
+      }
+    }
+    ImGui::EndDragDropTarget();
+  };
+
+  const auto preview_size = ImGui::GetFrameHeight() * 2.0f + ImGui::GetStyle().ItemSpacing.y;
+  const auto thumbnail = uuid ? editor.thumbnail_manager.get_thumbnail(type, path, uuid) : TextureView{};
+  auto browse = false;
+
+  ImGui::BeginDisabled(!pickable);
+  if (thumbnail) {
+    browse |= UI::image_button("##asset_preview", thumbnail, {preview_size, preview_size});
+  } else {
+    browse |= UI::button(
+      stack.format_char("{}##asset_preview", asset_type_icon(picker_type)),
+      {preview_size, preview_size}
+    );
+  }
+  ImGui::EndDisabled();
+  UI::tooltip_hover(browse_tooltip);
+  accept_drop();
+
+  ImGui::SameLine();
+
+  ImGui::BeginGroup();
+  ImGui::TextUnformatted(name.c_str());
+  if (uuid) {
+    UI::tooltip_hover(stack.format_char("{}\n{}", path.string(), uuid.str()));
+  }
+
+  ImGui::BeginDisabled(!pickable);
+  browse |= UI::button(stack.format_char("{} Browse", ICON_MDI_MAGNIFY));
+  ImGui::EndDisabled();
+  UI::tooltip_hover(browse_tooltip);
+  accept_drop();
+
+  ImGui::SameLine();
+
+  ImGui::BeginDisabled(!uuid);
+  if (UI::button(stack.format_char("{} Clear", ICON_MDI_CLOSE))) {
+    // The field owns one reference, the same way picking and dropping do, so clearing gives it back.
+    asset_man.unload_asset(uuid);
+    uuid = UUID(nullptr);
+    changed = true;
+  }
+  ImGui::EndDisabled();
+  ImGui::EndGroup();
+
+  if (browse) {
+    self.asset_picker_field = &uuid;
+  }
+
+  if (self.asset_picker_field == &uuid) {
+    auto open = true;
+    const auto picked = self.asset_browser
+                          .render_picker(stack.format_char("Pick {}###AssetPicker", label), &open, picker_type, uuid);
+
+    if (picked && picked->uuid != uuid && asset_man.load_asset(picked->uuid)) {
+      if (uuid) {
+        asset_man.unload_asset(uuid);
+      }
+      uuid = picked->uuid;
+      changed = true;
+    }
+
+    if (!open) {
+      self.asset_picker_field = nullptr;
+    }
+  }
+
+  ImGui::PopID();
+
+  return changed;
+}
+
+auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& uuid) -> void {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
+  auto& editor = App::mod<Editor>();
+
+  auto asset = asset_man.get_asset(uuid);
+  if (!asset) {
+    return;
+  }
+
+  const auto type = asset->type;
+  const auto path = asset->path;
+  const auto material_id = type == AssetType::Material ? asset->material_id : MaterialID::Invalid;
+  const auto audio_id = type == AssetType::Audio ? asset->audio_id : AudioID::Invalid;
+  const auto script_id = type == AssetType::Script ? asset->script_id : ScriptID::Invalid;
+  asset.reset();
+
+  switch (type) {
+    case AssetType::None:
+    case AssetType::Shader:  // TODO: Shaders
+    case AssetType::Texture: // TODO: Textures
+    case AssetType::Font:    // TODO: Fonts
+    case AssetType::Scene:   // TODO: Scenes
+    case AssetType::Model:   // nothing to edit on a model itself yet
+    case AssetType::Terrain: // TODO: Terrain edits
+      break;
+    case AssetType::ParticleSystem: {
+      memory::ScopedStack stack;
+      if (UI::button(stack.format_char("{} Open Particle Editor", asset_type_icon(type)))) {
+        editor.editor_panel_registry.get<ParticleEditorPanel>().open_asset(uuid);
+      }
+      break;
+    }
+    case AssetType::Material: {
+      ImGui::SeparatorText("Material");
+      auto material = asset_man.get_material(material_id);
+      if (!material) {
+        ImGui::TextUnformatted("Couldn't load material.");
+        break;
+      }
+
+      const auto material_dirty = draw_material_properties(std::move(material), uuid, path);
+      material.reset();
+      if (material_dirty) {
+        asset_man.set_material_dirty(material_id);
+        editor.thumbnail_manager.invalidate_material(uuid);
+      }
+      break;
+    }
+    case AssetType::Audio: {
+      ImGui::SeparatorText("Audio");
+      self.draw_audio_asset(path, asset_man.get_audio(audio_id));
+      break;
+    }
+    case AssetType::Script: {
+      ImGui::SeparatorText("Script");
+      self.draw_script_asset(asset_man.get_script(script_id));
+      break;
+    }
+  }
+}
+
 auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset) -> void {
   ZoneScoped;
+  memory::ScopedStack stack;
+
   auto& editor = App::mod<Editor>();
   auto& asset_man = App::mod<AssetManager>();
 
@@ -720,31 +827,23 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
   const auto asset_path = asset->path;
   asset.reset();
 
-  auto type_str = asset_man.to_asset_type_sv(asset_type);
+  auto type_str = AssetManager::to_asset_type_sv(asset_type);
   auto uuid_str = asset_uuid.str();
   auto name = asset_path.filename().string();
   auto path_str = asset_path.string();
 
-  ImGui::SeparatorText("Asset");
+  ImGui::SeparatorText(stack.format_char("{} Asset", asset_type_icon(asset_type)));
   ImGui::Indent();
 
-  auto thumbnail_image = TextureView{};
-  if (asset_type == AssetType::Texture) {
-    thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(path_str);
-  } else if (asset_type == AssetType::Model) {
-    thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(path_str);
-  } else if (asset_type == AssetType::Material) {
-    thumbnail_image = editor.thumbnail_manager.get_thumbnail_material(asset_uuid);
-  } else if (asset_type == AssetType::Terrain) {
-    thumbnail_image = editor.thumbnail_manager.get_thumbnail_terrain(path_str);
-  }
-  const auto region = ImGui::GetContentRegionAvail();
-  auto content_width = region.x - ImGui::GetStyle().IndentSpacing;
-  if (thumbnail_image) {
-    UI::image(thumbnail_image, {content_width, content_width});
+  const auto thumbnail = editor.thumbnail_manager.get_thumbnail(asset_type, asset_path, asset_uuid);
+  const auto content_width = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().IndentSpacing;
+  if (thumbnail) {
+    UI::image(thumbnail, {content_width, content_width});
   } else {
     ImGui::PushFont(nullptr, 32.f);
-    ImGui::Text("No thumbnail");
+    ImGui::BeginDisabled();
+    ImGui::TextUnformatted(stack.format_char("{} No preview", asset_type_icon(asset_type)));
+    ImGui::EndDisabled();
     ImGui::PopFont();
   }
 
@@ -757,89 +856,141 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
 
   ImGui::Unindent();
 
-  if (asset_type == AssetType::Material) {
-    if (!asset_man.is_loaded(asset_uuid)) {
-      asset_man.load_asset(asset_uuid);
-    }
-
-    auto mat = asset_man.get_material(asset_uuid);
-    if (mat) {
-      ImGui::SeparatorText("Material");
-      const auto material_dirty = draw_material_properties(std::move(mat), asset_uuid, asset_path);
-      mat.reset();
-      if (material_dirty) {
-        asset_man.set_material_dirty(asset_uuid);
-        editor.thumbnail_manager.invalidate_material(asset_uuid);
-      }
-    } else {
-      ImGui::SeparatorText("Material");
-      ImGui::TextUnformatted("Couldn't load material.");
-    }
-  }
-}
-
-auto InspectorPanel::draw_model_asset(this InspectorPanel& self, ReadGuard<Model> model) -> void {
-  ZoneScoped;
-
-  if (!model) {
-    return;
-  }
-}
-
-auto InspectorPanel::draw_material_asset(
-  this InspectorPanel& self, const UUID& uuid, const std::filesystem::path& path, ReadGuard<Material> material
-) -> bool {
-  ZoneScoped;
-
-  ImGui::SeparatorText("Material");
-
-  if (material) {
-    return draw_material_properties(std::move(material), uuid, path);
-  } else {
-    ImGui::Text("No Material");
+  // Selecting a file in the content browser is a request to look at it, so anything it can preview
+  // gets loaded here rather than showing an empty editor.
+  if (!asset_man.is_loaded(asset_uuid)) {
+    asset_man.load_asset(asset_uuid);
   }
 
-  return false;
+  self.draw_asset_contents(asset_uuid);
 }
 
-void InspectorPanel::draw_audio_asset(this InspectorPanel& self, ReadGuard<AudioSource> audio) {
-  ZoneScoped;
-
-  auto& audio_engine = App::mod<AudioEngine>();
-
-  ImGui::Spacing();
-  if (UI::button(ICON_MDI_PLAY "Play "))
-    audio_engine.play_source(audio->get_source());
-  ImGui::SameLine();
-  if (UI::button(ICON_MDI_PAUSE "Pause "))
-    audio_engine.pause_source(audio->get_source());
-  ImGui::SameLine();
-  if (UI::button(ICON_MDI_STOP "Stop "))
-    audio_engine.stop_source(audio->get_source());
-  ImGui::Spacing();
-}
-
-bool InspectorPanel::draw_script_asset(this InspectorPanel& self, const UUID& uuid, ReadGuard<LuaScript> script) {
+auto InspectorPanel::draw_audio_asset(
+  this InspectorPanel& self, const std::filesystem::path& path, ReadGuard<AudioSource> audio
+) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 
-  auto& asset_man = App::mod<AssetManager>();
-
-  if (!script)
-    return false;
-
-  auto script_path_filename = stack.format("{}", script->path.filename());
-  auto script_path_str = script->path.string();
-  UI::begin_properties(ImGuiTableFlags_SizingFixedFit);
-  UI::text("File Name:", script_path_filename);
-  UI::input_text("Path:", &script_path_str, ImGuiInputTextFlags_ReadOnly);
-  UI::end_properties();
-  auto* rmv_str = stack.format_char("{} Remove", ICON_MDI_TRASH_CAN);
-  if (UI::button(rmv_str)) {
-    if (uuid)
-      asset_man.unload_asset(uuid);
+  if (!audio) {
+    ImGui::TextUnformatted("Couldn't load audio.");
+    return;
   }
 
-  return false;
+  auto& editor = App::mod<Editor>();
+  auto& audio_engine = App::mod<AudioEngine>();
+  auto* source = audio->get_source();
+  if (source == nullptr) {
+    ImGui::TextUnformatted("Couldn't load audio.");
+    return;
+  }
+
+  const auto length = audio_engine.get_source_length(source);
+  auto cursor = audio_engine.get_source_cursor(source);
+  const auto playing = audio_engine.is_source_playing(source);
+
+  // The waveform doubles as the seek bar: the whole strip is one item, drawn over by hand so the
+  // playhead can sit on top of it.
+  const auto width = ImGui::GetContentRegionAvail().x;
+  const auto height = UI::scale(64.0f);
+  ImGui::InvisibleButton("##waveform", {width, height});
+  const auto strip_min = ImGui::GetItemRectMin();
+  const auto strip_max = ImGui::GetItemRectMax();
+
+  auto* draw_list = ImGui::GetWindowDrawList();
+  if (const auto waveform = editor.thumbnail_manager.get_thumbnail_audio(path)) {
+    draw_list->AddImage(App::mod<ImGuiRenderer>().add_image(waveform), strip_min, strip_max);
+  } else {
+    draw_list->AddRectFilled(strip_min, strip_max, ImGui::GetColorU32(ImGuiCol_FrameBg));
+    draw_list->AddText(
+      {strip_min.x + ImGui::GetStyle().FramePadding.x, (strip_min.y + strip_max.y) * 0.5f},
+      ImGui::GetColorU32(ImGuiCol_TextDisabled),
+      editor.thumbnail_manager.thumbnail_unavailable(path) ? "No waveform for this file" : "Generating waveform..."
+    );
+  }
+
+  if (length > 0.0f && ImGui::IsItemActive()) {
+    const auto ratio = std::clamp((ImGui::GetIO().MousePos.x - strip_min.x) / width, 0.0f, 1.0f);
+    cursor = ratio * length;
+    audio_engine.seek_source(source, cursor);
+  }
+
+  if (length > 0.0f) {
+    const auto playhead_x = strip_min.x + width * std::clamp(cursor / length, 0.0f, 1.0f);
+    draw_list->AddLine(
+      {playhead_x, strip_min.y},
+      {playhead_x, strip_max.y},
+      ImGui::GetColorU32(ImGuiCol_SliderGrabActive),
+      UI::scale(2.0f)
+    );
+  }
+  draw_list->AddRect(strip_min, strip_max, ImGui::GetColorU32(ImGuiCol_Border));
+
+  const auto button_size = ImVec2(ImGui::GetFrameHeight() * 1.6f, ImGui::GetFrameHeight());
+
+  if (UI::button(stack.format_char("{}##rewind", ICON_MDI_SKIP_PREVIOUS), button_size, "Back to the start")) {
+    audio_engine.seek_source(source, 0.0f);
+  }
+
+  ImGui::SameLine();
+  if (playing) {
+    if (UI::button(stack.format_char("{}##pause", ICON_MDI_PAUSE), button_size, "Pause")) {
+      audio_engine.pause_source(source);
+    }
+  } else {
+    // play_source() always rewinds, so resuming a paused sound goes through unpause instead; a
+    // finished one still has to be rewound by hand or it resumes at its own end.
+    if (UI::button(stack.format_char("{}##play", ICON_MDI_PLAY), button_size, "Play")) {
+      if (audio_engine.is_source_at_end(source)) {
+        audio_engine.seek_source(source, 0.0f);
+      }
+      audio_engine.unpause_source(source);
+    }
+  }
+
+  ImGui::SameLine();
+  if (UI::button(stack.format_char("{}##stop", ICON_MDI_STOP), button_size, "Stop")) {
+    audio_engine.stop_source(source);
+  }
+
+  ImGui::SameLine();
+  const auto looping = audio_engine.is_source_looping(source);
+  if (
+    UI::toggle_button(
+      stack.format_char("{}##loop", looping ? ICON_MDI_REPEAT : ICON_MDI_REPEAT_OFF),
+      looping,
+      button_size
+    )
+  ) {
+    audio_engine.set_source_looping(source, !looping);
+  }
+  UI::tooltip_hover("Loop the preview");
+
+  ImGui::SameLine();
+  ImGui::TextUnformatted(
+    stack.format_char("{} / {}", format_timestamp(stack, cursor), format_timestamp(stack, length))
+  );
+
+  auto volume = audio_engine.get_source_volume(source);
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+  if (ImGui::SliderFloat("##preview_volume", &volume, 0.0f, 1.0f, "Volume %.2f")) {
+    audio_engine.set_source_volume(source, volume);
+  }
+}
+
+auto InspectorPanel::draw_script_asset(this InspectorPanel& self, ReadGuard<LuaScript> script) -> void {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  if (!script) {
+    ImGui::TextUnformatted("Couldn't load script.");
+    return;
+  }
+
+  auto script_path_str = script->path.string();
+
+  UI::begin_properties(ImGuiTableFlags_SizingFixedFit);
+  UI::text("File", stack.format("{}", script->path.filename()));
+  UI::input_text("Path", &script_path_str, ImGuiInputTextFlags_ReadOnly);
+  UI::end_properties();
 }
 } // namespace ox

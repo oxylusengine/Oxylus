@@ -99,7 +99,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
 
   self.active_project = std::make_unique<Project>();
 
-  auto scene_hierarchy_panel = self.editor_panel_registry.add<SceneHierarchyPanel>();
+  self.editor_panel_registry.add<SceneHierarchyPanel>();
   self.editor_panel_registry.add<ContentPanel>();
   self.editor_panel_registry.add<InspectorPanel>();
   self.editor_panel_registry.add<EditorSettingsPanel>();
@@ -108,16 +108,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_panel_registry.add<ParticleEditorPanel>();
   auto activity_log_panel = self.editor_panel_registry.add<ActivityLogPanel>();
   activity_log_panel->set_system(&self.notification_system);
-  auto text_editor_panel = self.editor_panel_registry.add<TextEditorPanel>();
-
-  scene_hierarchy_panel->viewer.opened_script_callback = [text_editor_panel](const UUID& uuid) {
-    auto& asset_man = App::mod<AssetManager>();
-    auto asset = asset_man.get_asset(uuid);
-    if (asset) {
-      text_editor_panel->visible = true;
-      text_editor_panel->text_editor.open_file(asset->path);
-    }
-  };
+  self.editor_panel_registry.add<TextEditorPanel>();
 
   self.main_viewport_panel.init();
 

@@ -233,6 +233,18 @@ static auto file_type_label(const FileType type) -> const char* {
   return it != FILE_TYPES_TO_STRING.end() ? it->second : "Unknown";
 }
 
+// File types the thumbnail manager can draw a preview for; everything else falls back to its icon.
+static auto previewable_asset_type(const FileType type) -> AssetType {
+  switch (type) {
+    case FileType::Texture : return AssetType::Texture;
+    case FileType::Model   : return AssetType::Model;
+    case FileType::Material: return AssetType::Material;
+    case FileType::Terrain : return AssetType::Terrain;
+    case FileType::Audio   : return AssetType::Audio;
+    default                : return AssetType::None;
+  }
+}
+
 static auto file_type_icon(const FileType type) -> const char* {
   const auto it = FILE_TYPES_TO_ICON.find(type);
   return it != FILE_TYPES_TO_ICON.end() ? it->second : ICON_MDI_FILE;
@@ -1088,20 +1100,12 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           ImGui::SetCursorPos({cursor_pos.x + thumbnail_image_offset, cursor_pos.y + thumbnail_image_offset});
           ImGui::SetNextItemAllowOverlap();
 
+          const auto previewed_type = previewable_asset_type(file.type);
           auto use_thumbnail_image = !is_dir && editor_cvar.cvar_file_thumbnails.get() &&
-                                     (file.type == FileType::Texture || file.type == FileType::Model ||
-                                      file.type == FileType::Material || file.type == FileType::Terrain);
+                                     previewed_type != AssetType::None;
           auto thumbnail_image = TextureView{};
           if (use_thumbnail_image) {
-            if (file.type == FileType::Texture) {
-              thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(file_path_str);
-            } else if (file.type == FileType::Model) {
-              thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(file_path_str);
-            } else if (file.type == FileType::Material) {
-              thumbnail_image = editor.thumbnail_manager.get_thumbnail_material(file_path_str);
-            } else if (file.type == FileType::Terrain) {
-              thumbnail_image = editor.thumbnail_manager.get_thumbnail_terrain(file_path_str);
-            }
+            thumbnail_image = editor.thumbnail_manager.get_thumbnail(previewed_type, file_path_str);
 
             // Otherwise the spinner below waits on a thumbnail that will never arrive.
             if (!thumbnail_image && editor.thumbnail_manager.thumbnail_unavailable(file_path_str)) {
