@@ -1,8 +1,10 @@
 #pragma once
 
+#include <expected>
 #include <filesystem>
 #include <vector>
 
+#include "Asset/AssetFile.hpp"
 #include "Asset/ShaderFeature.hpp"
 #include "Core/Handle.hpp"
 #include "Core/Option.hpp"
@@ -51,6 +53,50 @@ struct ShaderCompileRequest {
   std::vector<ShaderCompileInfo> shaders = {};
 };
 
+struct TextureCompileRequest {
+  std::filesystem::path path = {};
+  // takes priority over `path`, for images embedded in a glTF buffer
+  std::vector<u8> source_bytes = {};
+  std::string name = {};
+  bool srgb = false;
+};
+
+struct ModelCompileRequest {
+  std::filesystem::path path = {};
+  std::string name = {};
+};
+
+struct ModelVertex {
+  f32 position[3] = {};
+  f32 normal[3] = {};
+  f32 uv[2] = {};
+};
+
+struct ProceduralMeshRequest {
+  std::string name = {};
+  std::vector<ModelVertex> vertices = {};
+  std::vector<u32> indices = {};
+};
+
+struct CompiledTexture {
+  enum class Kind : u32 {
+    None = 0,    // the glTF texture has no usable image source
+    External,    // a sibling file the caller imports as an asset of its own
+    Compiled,    // decoded here; `data` is ready to pack
+    SourceBytes, // PNG/JPEG, left encoded for the engine's stb path
+  };
+
+  Kind kind = Kind::None;
+  std::filesystem::path external_path = {}; // Kind::External, relative to the model file
+  TextureData data = {};                    // Kind::Compiled
+  std::vector<u8> source_bytes = {};        // Kind::SourceBytes
+};
+
+struct ModelCompileResult {
+  ModelData model = {};
+  std::vector<CompiledTexture> textures = {};
+};
+
 struct OXRC_API Session : Handle<Session> {
   static auto create() -> option<Session>;
   auto destroy() -> void;
@@ -59,10 +105,21 @@ struct OXRC_API Session : Handle<Session> {
   auto compile() -> bool;
   auto write_to_file(const std::filesystem::path& output_path) -> bool;
 
+  auto process(const TextureCompileRequest& request) -> option<TextureData>;
+  auto process(const ModelCompileRequest& request) -> option<ModelCompileResult>;
+  auto process(const ProceduralMeshRequest& request) -> option<ModelData>;
+
   auto push_error(std::string msg) -> void;
   auto push_message(std::string msg) -> void;
   auto get_errors() const -> const std::vector<std::string>&;
   auto get_messages() const -> const std::vector<std::string>&;
+};
+
+struct OXRC_API ResourceCompiler final : Session {
+  constexpr static auto MODULE_NAME = "ResourceCompiler";
+
+  auto init(this ResourceCompiler& self) -> std::expected<void, std::string>;
+  auto deinit(this ResourceCompiler& self) -> std::expected<void, std::string>;
 };
 
 } // namespace ox::rc

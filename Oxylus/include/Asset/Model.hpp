@@ -24,9 +24,6 @@ struct ModelLoadInfo {
 };
 
 struct Model {
-  constexpr static auto MAX_MESHLET_INDICES = 64_sz;
-  constexpr static auto MAX_MESHLET_PRIMITIVES = 64_sz;
-
   using Index = u32;
 
   struct MeshGroup {

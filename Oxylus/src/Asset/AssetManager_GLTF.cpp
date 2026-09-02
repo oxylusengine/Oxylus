@@ -628,12 +628,12 @@ auto build_gltf_mesh(const fastgltf::Asset& gltf_asset, const fastgltf::Primitiv
 
     auto max_meshlet_count = meshopt_buildMeshletsBound(
       simplified_indices.size(),
-      Model::MAX_MESHLET_INDICES,
-      Model::MAX_MESHLET_PRIMITIVES
+      GPU::Mesh::MAX_MESHLET_INDICES,
+      GPU::Mesh::MAX_MESHLET_PRIMITIVES
     );
     auto raw_meshlets = std::vector<meshopt_Meshlet>(max_meshlet_count);
-    auto indirect_vertex_indices = std::vector<u32>(max_meshlet_count * Model::MAX_MESHLET_INDICES);
-    auto local_triangle_indices = std::vector<u8>(max_meshlet_count * Model::MAX_MESHLET_PRIMITIVES * 3);
+    auto indirect_vertex_indices = std::vector<u32>(max_meshlet_count * GPU::Mesh::MAX_MESHLET_INDICES);
+    auto local_triangle_indices = std::vector<u8>(max_meshlet_count * GPU::Mesh::MAX_MESHLET_PRIMITIVES * 3);
 
     auto meshlet_count = meshopt_buildMeshlets(
       raw_meshlets.data(),
@@ -644,8 +644,8 @@ auto build_gltf_mesh(const fastgltf::Asset& gltf_asset, const fastgltf::Primitiv
       reinterpret_cast<const f32*>(positions.data()),
       vertex_count,
       sizeof(glm::vec3),
-      Model::MAX_MESHLET_INDICES,
-      Model::MAX_MESHLET_PRIMITIVES,
+      GPU::Mesh::MAX_MESHLET_INDICES,
+      GPU::Mesh::MAX_MESHLET_PRIMITIVES,
       0.0
     );
 
@@ -1130,13 +1130,13 @@ auto AssetManager::load_model(this AssetManager& self, const ModelLoadInfo& info
 
   const auto max_meshlets = meshopt_buildMeshletsBound(
     info.indices.size(),
-    Model::MAX_MESHLET_INDICES,
-    Model::MAX_MESHLET_PRIMITIVES
+    GPU::Mesh::MAX_MESHLET_INDICES,
+    GPU::Mesh::MAX_MESHLET_PRIMITIVES
   );
 
   auto raw_meshlets = std::vector<meshopt_Meshlet>(max_meshlets);
-  auto indirect_vertex_indices = std::vector<u32>(max_meshlets * Model::MAX_MESHLET_INDICES);
-  auto local_triangle_indices = std::vector<u8>(max_meshlets * Model::MAX_MESHLET_PRIMITIVES * 3);
+  auto indirect_vertex_indices = std::vector<u32>(max_meshlets * GPU::Mesh::MAX_MESHLET_INDICES);
+  auto local_triangle_indices = std::vector<u8>(max_meshlets * GPU::Mesh::MAX_MESHLET_PRIMITIVES * 3);
 
   const auto meshlet_count = meshopt_buildMeshlets(
     raw_meshlets.data(),
@@ -1147,8 +1147,8 @@ auto AssetManager::load_model(this AssetManager& self, const ModelLoadInfo& info
     position_floats.data(),
     vertex_count,
     sizeof(glm::vec3),
-    Model::MAX_MESHLET_INDICES,
-    Model::MAX_MESHLET_PRIMITIVES,
+    GPU::Mesh::MAX_MESHLET_INDICES,
+    GPU::Mesh::MAX_MESHLET_PRIMITIVES,
     0.0f
   );
 

@@ -2,7 +2,9 @@
 
 #include <zpp_bits.h>
 
+#include "ModelCompiler.hpp"
 #include "ShaderSession.hpp"
+#include "TextureCompiler.hpp"
 
 namespace ox::rc {
 auto create_shader_session(slang::IGlobalSession* global_session, const ShaderSessionInfo& info)
@@ -163,6 +165,18 @@ auto Session::compile() -> bool {
 
 auto Session::write_to_file(const std::filesystem::path& output_path) -> bool {
   return impl->asset_file.pack(output_path);
+}
+
+auto Session::process(const TextureCompileRequest& request) -> option<TextureData> {
+  return compile_texture(*this, request);
+}
+
+auto Session::process(const ModelCompileRequest& request) -> option<ModelCompileResult> {
+  return compile_model(*this, request);
+}
+
+auto Session::process(const ProceduralMeshRequest& request) -> option<ModelData> {
+  return compile_procedural_mesh(*this, request);
 }
 
 } // namespace ox::rc
