@@ -74,6 +74,8 @@ struct Material {
   alignas(2) u16 roughness_factor = 0;
   alignas(2) u16 metallic_factor = 0;
   alignas(2) u16 alpha_cutoff = 0;
+  alignas(2) u16 normal_scale = 0;
+  alignas(2) u16 occlusion_strength = 0;
   alignas(4) MaterialFlag flags = MaterialFlag::None;
   alignas(4) u32 sampler_index = 0;
   alignas(4) u32 albedo_image_index = 0;
@@ -84,6 +86,7 @@ struct Material {
   alignas(2) glm::u16vec2 uv_size = {};
   alignas(2) glm::u16vec2 uv_offset = {};
 };
+static_assert(sizeof(Material) == 60, "Material layout drifted from scene.slang");
 
 struct MeshletInstanceVisibility {
   // This is incremented __ONLY__ during cull MESHES pass.

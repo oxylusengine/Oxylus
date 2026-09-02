@@ -105,6 +105,8 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
     .roughness_factor = glm::packHalf1x16(material.roughness_factor),
     .metallic_factor = glm::packHalf1x16(material.metallic_factor),
     .alpha_cutoff = glm::packHalf1x16(material.alpha_cutoff),
+    .normal_scale = glm::packHalf1x16(material.normal_scale),
+    .occlusion_strength = glm::packHalf1x16(material.occlusion_strength),
     .flags = flags,
     .sampler_index = sampler_index,
     .albedo_image_index = albedo_image_index.value_or(0_u32),

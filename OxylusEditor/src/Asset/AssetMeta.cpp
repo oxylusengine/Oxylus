@@ -56,6 +56,8 @@ auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Mater
   writer["emissive_color"] = material.emissive_color;
   writer["roughness_factor"] = material.roughness_factor;
   writer["metallic_factor"] = material.metallic_factor;
+  writer["normal_scale"] = material.normal_scale;
+  writer["occlusion_strength"] = material.occlusion_strength;
   writer["alpha_mode"] = std::to_underlying(material.alpha_mode);
   writer["alpha_cutoff"] = material.alpha_cutoff;
   writer["flip_normal_y"] = material.flip_normal_y;
@@ -128,6 +130,8 @@ auto read_material_asset_meta(simdjson::ondemand::value json, Material& material
   read_vec("emissive_color", material.emissive_color);
   read_f32("roughness_factor", material.roughness_factor);
   read_f32("metallic_factor", material.metallic_factor);
+  read_f32("normal_scale", material.normal_scale);
+  read_f32("occlusion_strength", material.occlusion_strength);
   read_f32("alpha_cutoff", material.alpha_cutoff);
   read_bool("flip_normal_y", material.flip_normal_y);
   read_uuid("albedo_texture", material.albedo_texture);

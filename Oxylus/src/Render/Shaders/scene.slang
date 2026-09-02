@@ -91,6 +91,8 @@ public struct Material {
   public u16 roughness_factor = 0;
   public u16 metallic_factor = 0;
   public u16 alpha_cutoff = 0;
+  public u16 normal_scale = 0;
+  public u16 occlusion_strength = 0;
   public MaterialFlag flags = MaterialFlag::None;
   public u32 sampler_index = 0;
   public u32 albedo_image_index = 0;
@@ -124,6 +126,14 @@ public struct Material {
 
   public func get_metallic_factor() -> f32 {
     return com::dequantize_half(metallic_factor);
+  }
+
+  public func get_normal_scale() -> f32 {
+    return com::dequantize_half(normal_scale);
+  }
+
+  public func get_occlusion_strength() -> f32 {
+    return com::dequantize_half(occlusion_strength);
   }
 
   public func get_alpha_cutoff() -> f32 {
@@ -181,6 +191,29 @@ public struct Material {
     return { 0.0 };
   }
 
+  // Decoded tangent-space normal, or a flat one when the material has no normal map. Two-component
+  // maps rebuild z from the unscaled xy, since that reconstruction assumes a unit vector, and only
+  // then does glTF's normalTexture.scale widen the xy.
+  public func sample_tangent_normal<S : IUVSample>(in S s) -> f32x3 {
+    if (!(this.flags & MaterialFlag::HasNormalImage)) {
+        return f32x3(0.0, 0.0, 1.0);
+    }
+
+    var normal = this.sample_normal_color(s) * 2.0 - 1.0;
+
+    if (this.flags & MaterialFlag::NormalFlipY) {
+        normal.y = -normal.y;
+    }
+
+    if (this.flags & MaterialFlag::NormalTwoComponent) {
+        normal.z = sqrt(saturate(1.0 - dot(normal.xy, normal.xy)));
+    }
+
+    normal.xy *= this.get_normal_scale();
+
+    return normalize(normal);
+  }
+
   public func sample_emissive_color<S : IUVSample>(in S s) -> f32x3 {
     let emissive = this.get_emissive_color();
     if (this.flags & MaterialFlag::HasEmissiveImage) {
@@ -201,7 +234,8 @@ public struct Material {
 
   public func sample_occlusion_color<S : IUVSample>(in S s) -> f32 {
     if (this.flags & MaterialFlag::HasOcclusionImage) {
-        return s.sample(this.occlusion_image_index, this.sampler_index).r;
+        let occlusion = s.sample(this.occlusion_image_index, this.sampler_index).r;
+        return 1.0 + this.get_occlusion_strength() * (occlusion - 1.0);
     }
 
     return 1.0;

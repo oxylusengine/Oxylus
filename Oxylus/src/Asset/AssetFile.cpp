@@ -33,6 +33,8 @@ auto to_material(const ModelData::Material& src, std::span<const UUID> textures)
     .emissive_color = glm::make_vec3(src.emissive_color),
     .roughness_factor = src.roughness_factor,
     .metallic_factor = src.metallic_factor,
+    .normal_scale = src.normal_scale,
+    .occlusion_strength = src.occlusion_strength,
     .alpha_mode = src.alpha_mode,
     .alpha_cutoff = src.alpha_cutoff,
     .sampling_mode = src.sampling_mode,

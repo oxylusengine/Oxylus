@@ -127,6 +127,8 @@ struct ModelData {
     f32 roughness_factor = 1.0f;
     f32 metallic_factor = 0.0f;
     f32 alpha_cutoff = 0.1f;
+    f32 normal_scale = 1.0f;
+    f32 occlusion_strength = 1.0f;
     AlphaMode alpha_mode = AlphaMode::Opaque;
     SamplingMode sampling_mode = SamplingMode::LinearRepeated;
     bool flip_normal_y = false;
@@ -212,7 +214,7 @@ consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
   static constexpr auto SIGNATURE = 0x4352584F_u32;
-  static constexpr auto VERSION = 2_u16;
+  static constexpr auto VERSION = 3_u16;
 
   u32 magic = SIGNATURE; // "OXRC"
   u16 version = VERSION;

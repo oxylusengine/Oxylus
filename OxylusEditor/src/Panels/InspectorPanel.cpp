@@ -544,6 +544,7 @@ auto InspectorPanel::draw_material_properties(
 
   dirty |= texture_slot("Albedo", material->albedo_texture, true);
   dirty |= texture_slot("Normal", material->normal_texture, false);
+  dirty |= UI::property("Normal Scale", &material->normal_scale, 0.0f, 4.0f);
   dirty |= UI::property("Flip Normal Y", &material->flip_normal_y, "Enable for DirectX-convention normal maps.");
   dirty |= texture_slot("Emissive", material->emissive_texture, true);
   dirty |= UI::property_vector("Emissive Color", material->emissive_color, true, false);
@@ -551,6 +552,7 @@ auto InspectorPanel::draw_material_properties(
   dirty |= UI::property("Roughness Factor", &material->roughness_factor, 0.0f, 1.0f);
   dirty |= UI::property("Metallic Factor", &material->metallic_factor, 0.0f, 1.0f);
   dirty |= texture_slot("Occlusion", material->occlusion_texture, false);
+  dirty |= UI::property("Occlusion Strength", &material->occlusion_strength, 0.0f, 1.0f);
 
   UI::end_properties();
 

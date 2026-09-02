@@ -30,6 +30,9 @@ struct Material {
   glm::vec3 emissive_color = {0.0f, 0.0f, 0.0f};
   f32 roughness_factor = 1.0f;
   f32 metallic_factor = 0.0f;
+  // glTF's normalTexture.scale and occlusionTexture.strength, both a no-op at 1.0
+  f32 normal_scale = 1.0f;
+  f32 occlusion_strength = 1.0f;
   AlphaMode alpha_mode = AlphaMode::Opaque;
   f32 alpha_cutoff = 0.1f;
   SamplingMode sampling_mode = SamplingMode::LinearRepeated;

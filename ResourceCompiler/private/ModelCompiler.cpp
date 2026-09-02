@@ -106,6 +106,8 @@ auto gltf_material_to_material(const fastgltf::Material& gltf_material, usize te
   material.emissive_color[1] = gltf_material.emissiveFactor.y() * gltf_material.emissiveStrength;
   material.emissive_color[2] = gltf_material.emissiveFactor.z() * gltf_material.emissiveStrength;
 
+  // Material carries one uv_offset/uv_size for every slot, so only base colour's KHR_texture_transform
+  // can be honoured. A transform on any other slot is dropped rather than fought over.
   auto resolve_uv_transform = [&](const fastgltf::TextureInfo& info) {
     if (info.transform) {
       material.uv_offset[0] = info.transform->uvOffset[0];
@@ -126,10 +128,12 @@ auto gltf_material_to_material(const fastgltf::Material& gltf_material, usize te
 
   if (gltf_material.normalTexture.has_value()) {
     material.normal_texture_index = texture_index_of(gltf_material.normalTexture.value(), texture_count);
+    material.normal_scale = gltf_material.normalTexture->scale;
   }
 
   if (gltf_material.occlusionTexture.has_value()) {
     material.occlusion_texture_index = texture_index_of(gltf_material.occlusionTexture.value(), texture_count);
+    material.occlusion_strength = gltf_material.occlusionTexture->strength;
   }
 
   if (gltf_material.emissiveTexture.has_value()) {
