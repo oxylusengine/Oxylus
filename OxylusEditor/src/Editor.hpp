@@ -1,10 +1,10 @@
 #pragma once
 
 #include "Core/EventSystem.hpp"
-#include "Core/Project.hpp"
 #include "Panels/EditorPanelRegistry.hpp"
 #include "Panels/MainViewportPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
+#include "Project/Project.hpp"
 #include "Utils/Command.hpp"
 #include "Utils/EditorCVar.hpp"
 #include "Utils/EditorContext.hpp"

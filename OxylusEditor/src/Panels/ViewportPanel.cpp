@@ -7,6 +7,7 @@
 #include <imgui.h>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
@@ -531,7 +532,7 @@ auto ViewportPanel::drag_drop(this const ViewportPanel& self) -> void {
         auto& job_man = App::get_job_manager();
         job_man.push_job_name("ViewportPanel_ImportModel");
         job_man.submit(Job::create([path, scene = self.editor_scene->get_scene()]() {
-          auto asset = App::mod<AssetManager>().import_asset(path);
+          auto asset = import_asset(App::mod<AssetManager>(), path);
           if (!asset) {
             return;
           }

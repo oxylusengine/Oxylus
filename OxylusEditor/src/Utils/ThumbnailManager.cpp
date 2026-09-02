@@ -11,6 +11,7 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Asset/Model.hpp"
 #include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
@@ -284,11 +285,11 @@ static auto write_thumbnail_png(const std::filesystem::path& path, std::span<con
 }
 
 static auto material_meta_path(const std::filesystem::path& asset_path) -> std::filesystem::path {
-  if (!AssetManager::owns_meta_file(asset_path)) {
+  if (!owns_meta_file(asset_path)) {
     return {};
   }
 
-  return AssetManager::meta_file_path(asset_path);
+  return meta_file_path(asset_path);
 }
 
 static auto file_mtime(const std::filesystem::path& path) -> i64 {
@@ -600,7 +601,7 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
   }
 
   auto& asset_man = App::mod<AssetManager>();
-  auto model_uuid = asset_man.import_asset(asset_path);
+  auto model_uuid = import_asset(asset_man, asset_path);
   if (!model_uuid) {
     self.release_job(asset_hash);
     return {};
@@ -1038,7 +1039,7 @@ auto ThumbnailManager::resolve_material_uuid(this ThumbnailManager& self, const 
     }
   }
 
-  const auto uuid = App::mod<AssetManager>().import_asset(path);
+  const auto uuid = import_asset(App::mod<AssetManager>(), path);
 
   auto lock = std::unique_lock(self.material_uuids_mutex);
   self.material_uuids.insert_or_assign(path, uuid);

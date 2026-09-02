@@ -14,6 +14,7 @@
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
@@ -246,7 +247,7 @@ static auto standalone_asset_file_type(const std::filesystem::path& path) -> opt
   }
 
   auto& asset_man = App::mod<AssetManager>();
-  auto meta_file = asset_man.read_meta_file(path);
+  auto meta_file = read_meta_file(path);
   if (!meta_file) {
     return nullopt;
   }
@@ -278,7 +279,7 @@ static bool drag_drop_target(const std::filesystem::path& drop_path) {
         counter++;
       } while (std::filesystem::exists(fmt::format("{}.oxasset", file_path)));
 
-      if (!asset_man.export_asset(asset->uuid, file_path))
+      if (!export_asset(asset_man, asset->uuid, file_path))
         OX_LOG_ERROR("Couldn't export asset!");
 
       ImGui::EndDragDropTarget();
@@ -322,7 +323,7 @@ static void open_file(const std::filesystem::path& path) {
       case ox::FileType::Material  : break;
       case FileType::ParticleSystem: {
         // `open_asset` loads it and holds the ref for as long as the panel shows it
-        if (const auto uuid = App::mod<AssetManager>().import_asset(path)) {
+        if (const auto uuid = import_asset(App::mod<AssetManager>(), path)) {
           App::mod<Editor>().editor_panel_registry.get<ParticleEditorPanel>().open_asset(uuid);
         }
         break;
@@ -1301,7 +1302,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
         auto asset = asset_man.create_asset(self.new_asset_type, asset_path);
         asset_man.load_asset(asset);
-        if (asset_man.export_asset(asset, asset_path)) {
+        if (export_asset(asset_man, asset, asset_path)) {
           OX_LOG_INFO(
             "Created new {} asset {}",
             AssetManager::to_asset_type_sv(self.new_asset_type),

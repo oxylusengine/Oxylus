@@ -7,6 +7,7 @@
 
 #include "Asset/AssetFile.hpp"
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
 #include "Editor.hpp"
@@ -250,7 +251,7 @@ struct EntityInspector : IEntitySerializer {
           const auto payload = PayloadData::from_payload(imgui_payload);
           if (payload->get_str().empty())
             return;
-          if (auto imported_asset = asset_man.import_asset(payload->str)) {
+          if (auto imported_asset = import_asset(asset_man, payload->str)) {
             // Must not hold a registry read guard while unloading: unload_asset() takes the
             // registry write lock. unload_asset() no-ops on missing/unloaded assets.
             if (*uuid) {
@@ -334,7 +335,7 @@ InspectorPanel::InspectorPanel() : EditorPanelState("Inspector", ICON_MDI_INFORM
   auto& asset_man = App::mod<AssetManager>();
 
   auto r = event_system.subscribe<DialogSaveEvent>([&asset_man](const DialogSaveEvent& e) {
-    if (!asset_man.export_asset(e.asset_uuid, e.path)) {
+    if (!export_asset(asset_man, e.asset_uuid, e.path)) {
       OX_LOG_ERROR("Couldn't save asset {} to {}!", e.asset_uuid.str(), e.path);
       return;
     }
@@ -377,12 +378,12 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
     auto& asset_man = App::mod<AssetManager>();
 
     auto path = std::filesystem::path(editor_context.str.value());
-    std::unique_ptr<AssetManager::AssetMetaFile> meta_file = nullptr;
+    std::unique_ptr<AssetMetaFile> meta_file = nullptr;
 
     if (path.extension() == ".oxasset") {
-      meta_file = asset_man.read_meta_file(path);
+      meta_file = read_meta_file(path);
     } else {
-      meta_file = asset_man.read_meta_file_from_asset(path);
+      meta_file = read_meta_file_from_asset(path);
     }
 
     if (!meta_file) {
@@ -413,7 +414,7 @@ auto InspectorPanel::draw_material_properties(
     const float x = ImGui::GetContentRegionAvail().x / 2;
     const float y = ImGui::GetFrameHeight();
 
-    const auto has_own_file = AssetManager::owns_meta_file(default_path);
+    const auto has_own_file = owns_meta_file(default_path);
 
     const auto open_save_as_dialog = [&window, &material_uuid, &default_path] {
       pending_save_material_uuid = material_uuid;
@@ -532,8 +533,12 @@ auto InspectorPanel::draw_material_properties(
     };
   };
 
-  const auto texture_slot = [&load_callback](const char* label, UUID& uuid, bool is_srgb) -> bool {
-    return UI::texture_property(label, uuid, is_srgb, load_callback(is_srgb));
+  const auto import_callback = [](const std::filesystem::path& path) -> UUID {
+    return import_asset(App::mod<AssetManager>(), path);
+  };
+
+  const auto texture_slot = [&](const char* label, UUID& uuid, bool is_srgb) -> bool {
+    return UI::texture_property(label, uuid, is_srgb, load_callback(is_srgb), import_callback);
   };
 
   dirty |= texture_slot("Albedo", material->albedo_texture, true);

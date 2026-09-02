@@ -1,12 +1,13 @@
-#include "Core/Project.hpp"
+#include "Project/Project.hpp"
 
 #include <system_error>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
-#include "Core/ProjectSerializer.hpp"
 #include "Core/UUID.hpp"
 #include "Core/VFS.hpp"
+#include "Project/ProjectSerializer.hpp"
 
 namespace ox {
 struct AssetDirectoryCallbacks {
@@ -71,7 +72,7 @@ auto AssetDirectory::add_subdir(this AssetDirectory& self, std::unique_ptr<Asset
 
 auto AssetDirectory::add_asset(this AssetDirectory& self, const std::filesystem::path& dir_path) -> UUID {
   auto& asset_man = App::mod<AssetManager>();
-  auto asset_uuid = asset_man.import_asset(dir_path);
+  auto asset_uuid = import_asset(asset_man, dir_path);
   if (!asset_uuid) {
     return UUID(nullptr);
   }

@@ -8,10 +8,10 @@
 #include <system_error>
 
 #include "Core/App.hpp"
-#include "Core/Project.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Panels/ContentPanel.hpp"
+#include "Project/Project.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EmbeddedBanner.hpp"
 
@@ -386,9 +386,7 @@ auto ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment) -> v
                 }
 
                 auto path = std::filesystem::path(std::string(*files));
-                App::defer_to_next_frame([panel, p = std::move(path)]() -> void {
-                  panel->load_project_for_editor(p);
-                });
+                App::defer_to_next_frame([panel, p = std::move(path)]() -> void { panel->load_project_for_editor(p); });
               },
             .title = "Open an Oxylus project",
             .default_path = std::filesystem::current_path(),

@@ -3,8 +3,8 @@
 #include <toml++/toml.hpp>
 #include <tracy/Tracy.hpp>
 
-#include "Core/Project.hpp"
 #include "OS/File.hpp"
+#include "Project/Project.hpp"
 
 namespace ox {
 EditorCVar::EditorCVar() {

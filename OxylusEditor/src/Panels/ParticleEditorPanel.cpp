@@ -12,6 +12,7 @@
 #include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
 #include "Memory/Stack.hpp"
@@ -1222,7 +1223,7 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
         if (const auto* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
           const auto* data = PayloadData::from_payload(payload);
           if (!data->get_str().empty()) {
-            if (const auto imported = asset_man.import_asset(data->str)) {
+            if (const auto imported = import_asset(asset_man, data->str)) {
               uuid = imported;
               modified = true;
             }
@@ -1895,7 +1896,7 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
   }
 
   if (UI::button(ICON_MDI_CONTENT_SAVE " Save") && !self.asset_path.empty()) {
-    App::mod<AssetManager>().export_asset(self.asset_uuid, self.asset_path);
+    export_asset(App::mod<AssetManager>(), self.asset_uuid, self.asset_path);
   }
 
   if (!self.compile_error.empty()) {

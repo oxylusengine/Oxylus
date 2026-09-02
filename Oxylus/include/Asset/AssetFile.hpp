@@ -33,23 +33,6 @@ enum class AssetType : u32 {
   ParticleSystem,
 };
 
-// List of file extensions supported by Engine.
-enum class AssetFileType : u32 {
-  None = 0,
-  Binary,
-  Meta,
-  GLB,
-  GLTF,
-  PNG,
-  JPEG,
-  DDS,
-  JSON,
-  KTX2,
-  LUA,
-  OXTERRAIN,
-  OXPARTICLE,
-};
-
 struct NoneAsset {
   using serialize_id = zpp::bits::serialization_id<AssetType::None>;
 };

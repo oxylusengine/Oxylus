@@ -7,6 +7,7 @@
 #include <implot.h>
 #include <vuk/vsl/Core.hpp>
 
+#include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
@@ -427,7 +428,7 @@ auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -
     job_man.submit(Job::create([scene, scene_path, edits_path, edits_uuid] {
       scene->get_scene()->save_to_file(scene_path);
       if (edits_uuid) {
-        App::mod<AssetManager>().export_asset(edits_uuid, edits_path);
+        export_asset(App::mod<AssetManager>(), edits_uuid, edits_path);
       }
       scene->set_path(scene_path);
     }));
