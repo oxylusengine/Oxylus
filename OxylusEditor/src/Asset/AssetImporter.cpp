@@ -1,6 +1,7 @@
 #include "Asset/AssetImporter.hpp"
 
 #include <ResourceCompiler.hpp>
+#include <ankerl/unordered_dense.h>
 #include <charconv>
 #include <condition_variable>
 #include <mutex>
@@ -118,9 +119,14 @@ auto source_hash(const std::filesystem::path& path) -> u64 {
     return 0;
   }
 
+  // normalized, because a file is reached by more than one spelling: the project scan walks to
+  // `dir/textures/x.png` while a glTF whose URI reads `./textures/x.png` reaches the same file as
+  // `dir/./textures/x.png`. Unnormalized those hash differently, so the two importers keep
+  // invalidating each other's pack and the model cooks itself on every open. `ImportClaim`
+  // normalizes its key for the same reason.
   const auto signature = stack.format(
     "{}{}{}{}",
-    path.string(),
+    path.lexically_normal().string(),
     last_write.time_since_epoch().count(),
     ASSET_COMPILER_VERSION,
     AssetFileHeader::VERSION
@@ -316,6 +322,12 @@ auto compile_model(
   meta.textures.clear();
   meta.textures.resize(model.textures.size());
 
+  // Two slots can name the same sibling file with different colour spaces -- a glTF that uses one
+  // image as both a base colour and a normal map. There is one pack per file, so the first slot to
+  // claim it settles the question for the rest; letting each slot pass its own directive down leaves
+  // them fighting over one cache entry, and the file recompiles on every import forever.
+  auto external_srgb = ankerl::unordered_dense::map<std::string, bool>{};
+
   for (auto texture_index = 0_sz; texture_index < model.textures.size(); texture_index++) {
     auto& entry = meta.textures[texture_index];
     auto& compiled_texture = compiled->textures[texture_index];
@@ -325,8 +337,22 @@ auto compile_model(
     if (compiled_texture.kind == rc::CompiledTexture::Kind::External) {
       // an asset in its own right, so its own sidecar owns the UUID -- but the model still oversees
       // how its own resources are read, so the slot's colour space goes down with it
+      const auto texture_path = (model_dir / compiled_texture.external_path).lexically_normal();
+      const auto [claim, claimed] = external_srgb.try_emplace(texture_path.string(), entry.is_srgb);
+      if (!claimed && claim->second != entry.is_srgb) {
+        OX_LOG_WARN(
+          "'{}' is used as both an sRGB and a linear texture by '{}'. Cooking it as {}.",
+          texture_path,
+          path,
+          claim->second ? "sRGB" : "linear"
+        );
+      }
+
+      entry.is_srgb = claim->second;
+      // what the pack ends up holding, so the engine's load-time colour space check agrees with it
+      model.textures[texture_index].is_srgb = entry.is_srgb;
       entry.external = compiled_texture.external_path;
-      entry.uuid = import_asset(asset_man, session, model_dir / compiled_texture.external_path, entry.is_srgb);
+      entry.uuid = import_asset(asset_man, session, texture_path, entry.is_srgb);
       model.textures[texture_index].uuid = PackedUUID::pack(entry.uuid);
       continue;
     }
