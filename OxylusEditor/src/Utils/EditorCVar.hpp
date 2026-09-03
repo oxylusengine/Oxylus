@@ -37,6 +37,7 @@ public:
 
   AutoCVar_Int cvar_file_thumbnails;
   AutoCVar_Float cvar_file_thumbnail_size;
+  AutoCVar_Int cvar_thumbnail_pool_size;
   AutoCVar_Int cvar_show_meta_files;
   AutoCVar_Int cvar_content_sort_field;
   AutoCVar_Int cvar_content_sort_ascending;

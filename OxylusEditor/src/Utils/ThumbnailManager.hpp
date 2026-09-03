@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ankerl/unordered_dense.h>
+#include <atomic>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -79,6 +80,22 @@ private:
     u32 polls = 0;
   };
 
+  // `last_used` is stamped from `find_cached`, which holds only a shared lock, so it is written
+  // through a `std::atomic_ref` -- several panels can read the same thumbnail in one frame. It stays
+  // a plain `u64` because the map relocates its values and an atomic member cannot move.
+  struct ThumbnailEntry {
+    Texture texture = {};
+    u64 last_used = 0;
+  };
+
+  // A thumbnail handed out this frame is in an ImGui draw list the GPU has not finished with, and the
+  // `ImageViewID` behind it would be recycled the moment the texture dies. Evicted entries wait here
+  // until every frame that could still name them has retired.
+  struct RetiringThumbnail {
+    Texture texture = {};
+    u64 retire_after = 0;
+  };
+
   static constexpr u32 THUMBNAIL_SIZE = 256;
 
   // Model and material previews are GPU renders that `update` drains one per frame, and each one
@@ -89,7 +106,9 @@ private:
 
   std::filesystem::path cache_dir = {};
 
-  ankerl::unordered_dense::map<std::string, Texture> thumbnail_cache = {};
+  ankerl::unordered_dense::map<std::string, ThumbnailEntry> thumbnail_cache = {};
+  std::vector<RetiringThumbnail> retiring_thumbnails = {};
+  std::atomic<u64> frame_counter = 0;
   ankerl::unordered_dense::set<std::string> active_jobs = {};
   ankerl::unordered_dense::set<std::string> failed_jobs = {};
   std::shared_mutex thumbnail_mutex = {};
@@ -132,6 +151,7 @@ private:
   auto request_thumbnail(this ThumbnailManager& self, const ThumbnailPrewarmRequest& request) -> TextureView;
 
   auto get_asset_hash(this const ThumbnailManager& self, const std::filesystem::path& path) -> std::string;
+  auto material_is_being_edited(this ThumbnailManager& self, const UUID& material_uuid) -> bool;
   auto has_unsaved_edits(this ThumbnailManager& self, const UUID& material_uuid, const std::filesystem::path& meta_path)
     -> bool;
 
@@ -151,8 +171,9 @@ private:
   auto submit_cached_png_load(
     this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& png_path
   ) -> void;
-  auto submit_compiled_texture_load(
-    this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& pack_path
+  auto submit_pack_load(
+    this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& pack_path, bool cached
   ) -> void;
+  auto evict_stale_thumbnails(this ThumbnailManager& self) -> void;
 };
 } // namespace ox

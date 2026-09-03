@@ -1118,7 +1118,12 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           ImGui::SetCursorPos({cursor_pos.x + thumbnail_image_offset, cursor_pos.y + thumbnail_image_offset});
           ImGui::SetNextItemAllowOverlap();
 
-          auto use_thumbnail_image = !is_dir && !importing && editor_cvar.cvar_file_thumbnails.get() &&
+          // The table lays every row out even though it only draws the ones on screen, so without this
+          // a directory of a few hundred textures would ask for -- and hold on to -- every thumbnail in
+          // it. Asking only for what is visible is also what lets the manager's pool reclaim the rest.
+          const auto tile_visible = ImGui::IsRectVisible({thumb_image_size, thumb_image_size});
+
+          auto use_thumbnail_image = !is_dir && !importing && tile_visible && editor_cvar.cvar_file_thumbnails.get() &&
                                      (file.type == FileType::Texture || file.type == FileType::Model ||
                                       file.type == FileType::Material || file.type == FileType::Terrain);
           auto thumbnail_image = TextureView{};
@@ -1430,7 +1435,6 @@ void ContentPanel::update_directory_entries(this ContentPanel& self, const std::
       .name = std::move(file_name_str),
       .file_path = path,
       .directory_entry = directory_entry,
-      .thumbnail = nullptr,
       .icon = file_icon,
       .is_directory = is_directory,
       .type = file_type,

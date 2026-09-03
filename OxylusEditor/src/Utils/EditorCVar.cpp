@@ -38,6 +38,8 @@ auto EditorCVar::init(this EditorCVar& self) -> void {
   self.cvar_file_thumbnails.init(self.system, "editor.file_thumbnails", "show file thumbnails in content panel", 0);
   self.cvar_file_thumbnail_size
     .init(self.system, "editor.file_thumbnail_size", "file thumbnail size in content panel", 120.0f);
+  self.cvar_thumbnail_pool_size
+    .init(self.system, "editor.thumbnail_pool_size", "max live thumbnails kept in memory", 256);
   self.cvar_show_meta_files.init(self.system, "editor.show_meta_files", "show oxasset files in conten panel", 0);
   self.cvar_content_sort_field.init(self.system, "editor.content_sort_field", "content panel sort field", 0);
   self.cvar_content_sort_ascending
@@ -80,6 +82,8 @@ auto EditorCVar::load(this EditorCVar& self) -> void {
     self.cvar_file_thumbnails.set(v->get());
   if (auto v = config["file_thumbnail_size"].as_floating_point())
     self.cvar_file_thumbnail_size.set(static_cast<f32>(v->get()));
+  if (auto v = config["thumbnail_pool_size"].as_integer())
+    self.cvar_thumbnail_pool_size.set(static_cast<i32>(v->get()));
   if (auto v = config["show_meta_files"].as_boolean())
     self.cvar_show_meta_files.set(v->get());
   if (auto v = config["content_sort_field"].as_integer()) {
@@ -117,6 +121,7 @@ auto EditorCVar::save(this EditorCVar& self) -> void {
        {"viewport_scale_amount", self.cvar_viewport_scale_amount.get()},
        {"file_thumbnails", self.cvar_file_thumbnails.as_bool()},
        {"file_thumbnail_size", self.cvar_file_thumbnail_size.get()},
+       {"thumbnail_pool_size", self.cvar_thumbnail_pool_size.get()},
        {"show_meta_files", self.cvar_show_meta_files.as_bool()},
        {"content_sort_field", self.cvar_content_sort_field.get()},
        {"content_sort_ascending", self.cvar_content_sort_ascending.as_bool()},

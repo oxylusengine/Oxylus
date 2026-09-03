@@ -57,7 +57,6 @@ private:
     std::string name;
     std::filesystem::path file_path;
     std::filesystem::directory_entry directory_entry;
-    std::shared_ptr<Texture> thumbnail = nullptr;
     std::string icon;
     bool is_directory = false;
 

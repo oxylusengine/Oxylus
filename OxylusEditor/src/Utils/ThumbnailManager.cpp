@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <glm/common.hpp>
 #include <glm/geometric.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -18,6 +19,7 @@
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/JobManager.hpp"
+#include "Editor.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/RenderContext.hpp"
@@ -308,6 +310,18 @@ static auto trim_to_thumbnail_mips(const TextureData& data, u32 size) -> Texture
   return result;
 }
 
+// The trim is persisted as a small pack rather than a PNG: the blocks would have to be decoded to
+// write one, and a pack reads back through the same path as the importer's own output. It is a few
+// kilobytes, so the copy here costs nothing next to unpacking the full-size source again.
+static auto write_thumbnail_pack(const std::filesystem::path& path, const TextureData& data) -> bool {
+  ZoneScoped;
+
+  auto file = AssetFile{};
+  file.add_entry(TextureData(data));
+
+  return file.pack(path);
+}
+
 static auto material_meta_path(const std::filesystem::path& asset_path) -> std::filesystem::path {
   if (!owns_meta_file(asset_path)) {
     return {};
@@ -407,6 +421,11 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
     return;
   }
 
+  // `Editor::update` runs this ahead of every panel, so nothing evicted here was handed out earlier
+  // in the same frame
+  self.frame_counter.fetch_add(1, std::memory_order_relaxed);
+  self.evict_stale_thumbnails();
+
   self.pump_prewarm();
   self.drain_pending_upload();
 
@@ -443,10 +462,12 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
     }
   }
 
-  // The pixels are what the cache keeps; the model itself is only needed for the render, and a
-  // project-wide prewarm would otherwise leave every model in the project resident. Materials keep
-  // their ref because an edit re-renders them.
-  if (asset_type == AssetType::Model) {
+  // The pixels are what the cache keeps; the asset itself was only needed for the render, and holding
+  // on to it leaves a project-wide prewarm pinning every model and every material -- and a material
+  // refs its five texture slots, so that is most of the project's textures resident for the session.
+  // A material being dragged in the inspector is the exception: it is about to be rendered again, so
+  // it keeps its ref until the edit is written out and the next render releases it.
+  if (asset_type == AssetType::Model || !self.material_is_being_edited(render_job->asset_uuid)) {
     self.release_asset(render_job->asset_uuid);
   }
 
@@ -486,7 +507,13 @@ auto ThumbnailManager::store_thumbnail(
     return;
   }
 
-  self.thumbnail_cache.insert_or_assign(cache_key, std::move(thumbnail_texture));
+  self.thumbnail_cache.insert_or_assign(
+    cache_key,
+    ThumbnailEntry{
+      .texture = std::move(thumbnail_texture),
+      .last_used = self.frame_counter.load(std::memory_order_relaxed)
+    }
+  );
   self.active_jobs.erase(cache_key);
 }
 
@@ -623,10 +650,71 @@ auto ThumbnailManager::find_cached(this ThumbnailManager& self, const std::strin
   auto lock = std::shared_lock(self.thumbnail_mutex);
   auto it = self.thumbnail_cache.find(cache_key);
   if (it != self.thumbnail_cache.end()) {
-    return it->second.view();
+    // the only place a thumbnail is handed out, so this is where the LRU learns what is still in use
+    std::atomic_ref(it->second.last_used)
+      .store(self.frame_counter.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    return it->second.texture.view();
   }
 
   return nullopt;
+}
+
+// Thumbnails are only reclaimed once the pool is over its cap, and never while the prewarm is still
+// polling for one -- dropping an entry it is waiting on would send it back around to cook the asset
+// again.
+auto ThumbnailManager::evict_stale_thumbnails(this ThumbnailManager& self) -> void {
+  ZoneScoped;
+
+  // A view handed out on an earlier frame can still be in a draw list the GPU is working through, so
+  // an evicted texture is only destroyed once every such frame has retired.
+  const auto retire_delay = static_cast<u64>(App::get_rendercontext().num_inflight_frames) + 1;
+  const auto frame = self.frame_counter.load(std::memory_order_relaxed);
+
+  std::erase_if(self.retiring_thumbnails, [frame](const RetiringThumbnail& retiring) {
+    return frame >= retiring.retire_after;
+  });
+
+  if (self.prewarm_done != self.prewarm_queue.size()) {
+    return;
+  }
+
+  const auto cap = static_cast<usize>(ox::max(App::mod<Editor>().editor_cvar.cvar_thumbnail_pool_size.get(), 1));
+
+  auto lock = std::unique_lock(self.thumbnail_mutex);
+  if (self.thumbnail_cache.size() <= cap) {
+    return;
+  }
+
+  auto candidates = std::vector<std::pair<u64, std::string>>();
+  candidates.reserve(self.thumbnail_cache.size());
+  for (const auto& [key, entry] : self.thumbnail_cache) {
+    // a unique lock is held, so no `find_cached` can be stamping this concurrently
+    const auto last_used = entry.last_used;
+    // anything a live frame could still be naming stays, however cold it looks
+    if (frame - last_used < retire_delay) {
+      continue;
+    }
+
+    candidates.emplace_back(last_used, key);
+  }
+
+  const auto excess = self.thumbnail_cache.size() - cap;
+  if (candidates.size() > excess) {
+    std::ranges::nth_element(candidates, candidates.begin() + static_cast<std::ptrdiff_t>(excess));
+    candidates.resize(excess);
+  }
+
+  for (const auto& [last_used, key] : candidates) {
+    auto it = self.thumbnail_cache.find(key);
+    if (it == self.thumbnail_cache.end()) {
+      continue;
+    }
+
+    self.retiring_thumbnails.emplace_back(
+      RetiringThumbnail{.texture = std::move(it->second.texture), .retire_after = frame + retire_delay}
+    );
+    self.thumbnail_cache.erase(it);
+  }
 }
 
 auto ThumbnailManager::try_claim_job(this ThumbnailManager& self, const std::string& cache_key) -> bool {
@@ -667,18 +755,27 @@ auto ThumbnailManager::submit_cached_png_load(
     }
 
     auto lock = std::unique_lock(self.thumbnail_mutex);
-    self.thumbnail_cache.insert_or_assign(cache_key, std::move(thumbnail_texture));
+    self.thumbnail_cache.insert_or_assign(
+      cache_key,
+      ThumbnailEntry{
+        .texture = std::move(thumbnail_texture),
+        .last_used = self.frame_counter.load(std::memory_order_relaxed)
+      }
+    );
     self.active_jobs.erase(cache_key);
   }));
   job_man.pop_job_name();
 }
 
-auto ThumbnailManager::submit_compiled_texture_load(
-  this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& pack_path
+// `pack_path` is either the importer's full-size pack, which gets trimmed down and the trim kept for
+// next time, or a trim this function wrote on an earlier run. Reading the source pack costs its whole
+// size on disk -- tens of megabytes for a 4K texture -- so it is worth doing exactly once per file.
+auto ThumbnailManager::submit_pack_load(
+  this ThumbnailManager& self, const std::string& cache_key, const std::filesystem::path& pack_path, const bool cached
 ) -> void {
   auto& job_man = App::get_job_manager();
-  job_man.push_job_name("ContentPanelThumbnail_CompiledTextureLoad");
-  job_man.submit(Job::create([&self, pack_path, cache_key]() {
+  job_man.push_job_name(cached ? "ContentPanelThumbnail_CachedPackLoad" : "ContentPanelThumbnail_CompiledTextureLoad");
+  job_man.submit(Job::create([&self, pack_path, cache_key, cached]() {
     auto pack = AssetFile::unpack(pack_path);
     if (!pack) {
       self.mark_job_failed(cache_key);
@@ -699,14 +796,25 @@ auto ThumbnailManager::submit_compiled_texture_load(
       return;
     }
 
-    auto thumbnail_texture = Texture::create(trim_to_thumbnail_mips(*texture_data, THUMBNAIL_SIZE), TextureLoadInfo{});
+    auto trimmed = cached ? TextureData(*texture_data) : trim_to_thumbnail_mips(*texture_data, THUMBNAIL_SIZE);
+    if (!cached) {
+      write_thumbnail_pack(self.cache_dir / (cache_key + ".oxpack"), trimmed);
+    }
+
+    auto thumbnail_texture = Texture::create(std::move(trimmed), TextureLoadInfo{});
     if (!thumbnail_texture) {
       self.mark_job_failed(cache_key);
       return;
     }
 
     auto lock = std::unique_lock(self.thumbnail_mutex);
-    self.thumbnail_cache.insert_or_assign(cache_key, std::move(thumbnail_texture));
+    self.thumbnail_cache.insert_or_assign(
+      cache_key,
+      ThumbnailEntry{
+        .texture = std::move(thumbnail_texture),
+        .last_used = self.frame_counter.load(std::memory_order_relaxed)
+      }
+    );
     self.active_jobs.erase(cache_key);
   }));
   job_man.pop_job_name();
@@ -733,6 +841,14 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
   // KTX2 and DDS are cooked offline now, so their source bytes mean nothing to the engine; the
   // preview comes out of the pack the importer produced instead.
   if (needs_compiling(asset_path)) {
+    // the trim kept from an earlier look at this file, which is a few kilobytes against the source
+    // pack's tens of megabytes
+    auto cached_pack = self.cache_dir / (asset_hash + ".oxpack");
+    if (std::filesystem::exists(cached_pack)) {
+      self.submit_pack_load(asset_hash, cached_pack, true);
+      return {};
+    }
+
     auto& asset_man = App::mod<AssetManager>();
     const auto uuid = import_asset(asset_man, asset_path);
 
@@ -746,7 +862,7 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
       return {};
     }
 
-    self.submit_compiled_texture_load(asset_hash, pack_path);
+    self.submit_pack_load(asset_hash, pack_path, false);
 
     return {};
   }
@@ -765,7 +881,13 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
     }
 
     auto lock = std::unique_lock(self.thumbnail_mutex);
-    self.thumbnail_cache.insert_or_assign(asset_hash, std::move(thumbnail_texture));
+    self.thumbnail_cache.insert_or_assign(
+      asset_hash,
+      ThumbnailEntry{
+        .texture = std::move(thumbnail_texture),
+        .last_used = self.frame_counter.load(std::memory_order_relaxed)
+      }
+    );
     self.active_jobs.erase(asset_hash);
   }));
   job_man.pop_job_name();
@@ -975,6 +1097,11 @@ auto ThumbnailManager::invalidate_material(this ThumbnailManager& self, const UU
   } else {
     self.unsaved_materials.insert_or_assign(material_uuid, 0);
   }
+}
+
+auto ThumbnailManager::material_is_being_edited(this ThumbnailManager& self, const UUID& material_uuid) -> bool {
+  auto lock = std::shared_lock(self.thumbnail_mutex);
+  return self.unsaved_materials.contains(material_uuid);
 }
 
 auto ThumbnailManager::has_unsaved_edits(

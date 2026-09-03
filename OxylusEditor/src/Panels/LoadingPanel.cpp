@@ -87,6 +87,10 @@ static auto phase_row(
 LoadingPanel::LoadingPanel() : EditorPanelState("Loading", ICON_MDI_TIMER_SAND, false) {}
 
 auto LoadingPanel::begin(this LoadingPanel& self, std::filesystem::path project_file_) -> void {
+  // whatever the last open queued is about to be replaced, and its paths point into a project that
+  // is being torn down
+  App::mod<Editor>().thumbnail_manager.cancel_prewarm();
+
   self.project_file = std::move(project_file_);
   self.project_name = self.project_file.stem().string();
   self.phase = Phase::Discovering;
@@ -155,12 +159,15 @@ auto LoadingPanel::start_thumbnail_prewarm(this LoadingPanel& self) -> void {
       continue;
     }
 
-    auto kind = ThumbnailKind::Texture;
+    auto kind = ThumbnailKind::Model;
     switch (classify_file_type(path)) {
-      case FileType::Texture : kind = ThumbnailKind::Texture; break;
       case FileType::Model   : kind = ThumbnailKind::Model; break;
       case FileType::Material: kind = ThumbnailKind::Material; break;
       case FileType::Terrain : kind = ThumbnailKind::Terrain; break;
+      // A texture preview is a trim of a pack the importer already baked, so there is nothing here
+      // worth doing up front -- and a project holds orders of magnitude more textures than models,
+      // so prewarming them is the whole of the wait. The content panel asks for one when it scrolls
+      // into view instead.
       default                : continue;
     }
 
@@ -261,6 +268,7 @@ auto LoadingPanel::on_render(this LoadingPanel& self, vuk::ImageAttachment) -> v
         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "%s  %s", ICON_MDI_ALERT_CIRCLE, self.failure.c_str());
         UI::spacing(2);
         if (ImGui::Button(ICON_MDI_ARROW_LEFT "  Back", {-1.0f, UI::scale(34.0f)})) {
+          App::mod<Editor>().thumbnail_manager.cancel_prewarm();
           App::mod<Editor>().editor_panel_registry.get<ProjectPanel>().show_error(self.failure);
           self.close_requested = true;
         }
