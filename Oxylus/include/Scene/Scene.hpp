@@ -11,8 +11,11 @@
 
 #include <simdjson.h>
 
+#include "Animation/Pose.hpp"
+#include "Animation/PoseTaskSystem.hpp"
 #include "Asset/Model.hpp"
 #include "Asset/ParticleSystem.hpp"
+#include "Cinematic/Fwd.hpp"
 #include "Core/UUID.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Render/DebugRenderer.hpp"
@@ -57,9 +60,69 @@ struct ComponentDB {
   auto get_components(this ComponentDB&) -> std::span<flecs::id>;
 };
 
+// kept out of AnimatorComponent so the component stays small, serializable and reflection-friendly
+struct AnimationInstance {
+  UUID skeleton_uuid = {};
+  UUID clip_uuid = {};
+  UUID fade_from_clip_uuid = {};
+
+  f32 current_time = 0.f;
+  f32 fade_from_time = 0.f;
+  f32 fade_elapsed = 0.f;
+  f32 fade_duration = 0.f;
+
+  Pose pose = {};
+  PoseTaskSystem task_system = {};
+
+  u32 bone_offset = 0;
+  u32 bone_count = 0;
+  // Model::max_bone_influence_radius of whatever skinned mesh linked to this animator
+  f32 influence_radius = 0.f;
+  // model-space and conservative: bone positions inflated by the widest bone influence
+  GPU::MeshBounds bounds = {};
+  // advanced this frame, so anything skinned from it has to be re-uploaded and re-skinned
+  bool advanced = false;
+  // something other than the clock changed the pose, so it has to be pushed once more even though
+  // the clip is not running
+  bool pose_dirty = true;
+  bool was_advancing = false;
+};
+
+// one per property track, resolved once so a per-frame write is a memcpy at a known offset rather
+// than another reflection walk
+struct BoundProperty {
+  flecs::entity target = {};
+  flecs::entity_t component = 0;
+  u32 offset = 0;
+  CinematicValueKind kind = CinematicValueKind::Float;
+  glm::vec4 restore_value = {};
+  bool valid = false;
+};
+
+// kept off CinematicPlayerComponent for the same reason AnimationInstance is: variable length and
+// nothing here is reflectable
+struct CinematicInstance {
+  UUID cinematic_uuid = {};
+  f32 current_time = 0.0f;
+  bool bound = false;
+  bool was_playing = false;
+  // a scrub or a freshly bound asset has to be applied even though the clock did not move
+  bool seek_pending = true;
+  std::vector<BoundProperty> bound_properties = {};
+  std::vector<flecs::entity> bound_cameras = {};
+  // concatenated, Cinematic::ARC_LUT_SIZE entries per camera track
+  std::vector<f32> arc_luts = {};
+};
+
 enum class SceneID : u64 { Invalid = std::numeric_limits<u64>::max() };
 class Scene {
 public:
+  // where a unique mesh came from, so its BLAS address can be re-read without a full rebuild
+  struct GPUMeshSource {
+    ModelID model_id = ModelID::Invalid;
+    u32 mesh_node_index = 0;
+  };
+
   std::string scene_name = "Untitled";
 
   bool tearing_down = false;
@@ -82,7 +145,23 @@ public:
   SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};
 
+  SlotMap<AnimationInstance, AnimationInstanceID> animation_instances = {};
+  ankerl::unordered_dense::map<flecs::entity, AnimationInstanceID> entity_to_animation_instance_map = {};
+  std::vector<GPU::SkinningTransform> skinning_transforms = {};
+  u32 skinned_vertex_total = 0;
+
+  // rebuilt only when `meshes_dirty`, though skinned entries are patched in place every frame
+  std::vector<GPU::Mesh> gpu_meshes = {};
+  std::vector<GPUMeshSource> gpu_mesh_sources = {};
+  // parallel to `gpu_meshes`, and unlike the rest of these it is refreshed every frame
+  std::vector<u64> gpu_mesh_blas_addresses = {};
+  std::vector<GPU::MeshInstance> gpu_mesh_instances = {};
+  std::vector<SkinnedMeshInstance> skinned_mesh_instances = {};
+
   SlotMap<GPU::Light, GPU::LightID> lights = {};
+
+  SlotMap<CinematicInstance, CinematicInstanceID> cinematic_instances = {};
+  ankerl::unordered_dense::map<flecs::entity, CinematicInstanceID> entity_to_cinematic_instance_map = {};
 
   SlotMap<ParticleEmitterState, ParticleEmitterID> particle_emitters = {};
   ankerl::unordered_dense::map<flecs::entity, ParticleEmitterID> entity_particle_emitters_map = {};
@@ -131,6 +210,32 @@ public:
   ) -> bool;
   auto detach_mesh(this Scene& self, flecs::entity entity) -> bool;
 
+  auto attach_animator(this Scene& self, flecs::entity entity) -> bool;
+  auto detach_animator(this Scene& self, flecs::entity entity) -> bool;
+  static auto find_animator_entity(flecs::entity entity) -> flecs::entity;
+  // needed because a mesh entity can be created before the animator it belongs to
+  auto relink_skinned_meshes(this Scene& self, flecs::entity animator) -> void;
+  // `node` walks the subtree while `animator` stays put, so a mesh nested several levels down is
+  // still stamped with the animator rather than with its own parent
+  auto relink_skinned_meshes_under(this Scene& self, flecs::entity animator, flecs::entity node) -> void;
+  auto update_animations(this Scene& self, f32 delta_time) -> void;
+  auto end_animation_fade(this Scene& self, AnimationInstance& instance) -> void;
+
+  // --- Cinematics ---
+  auto attach_cinematic(this Scene& self, flecs::entity entity) -> bool;
+  auto detach_cinematic(this Scene& self, flecs::entity entity) -> bool;
+  // re-resolves every track against the live world. Deferred to the first update after a load
+  // because a track names its target by entity path, which only resolves once the hierarchy exists.
+  auto rebind_cinematic(this Scene& self, flecs::entity entity) -> void;
+  auto cinematic_instance(this Scene& self, flecs::entity entity) -> CinematicInstance*;
+  auto update_cinematics(this Scene& self, f32 delta_time) -> void;
+  auto play_cinematic(this Scene& self, flecs::entity entity) -> void;
+  // honours `restore_on_stop`
+  auto stop_cinematic(this Scene& self, flecs::entity entity) -> void;
+  auto seek_cinematic(this Scene& self, flecs::entity entity, f32 time) -> void;
+  auto cinematic_time(this Scene& self, flecs::entity entity) -> f32;
+  auto cinematic_duration(this Scene& self, flecs::entity entity) -> f32;
+
   // --- Particles ---
   // Runtime control over an entity's emitter. Stopping only halts spawning; particles already alive
   // keep simulating until their lifetime runs out.
@@ -157,6 +262,10 @@ public:
   static auto get_local_transform(flecs::entity entity) -> glm::mat4;
 
   auto get_entity_transform_id(flecs::entity entity) const -> option<GPU::TransformID>;
+  // the transform a mesh entity is actually drawn with, which is not its own when the mesh is
+  // skinned: `attach_mesh` binds those to the animator root, and that is the index the visbuffer
+  // carries, so anything matching against rendered pixels has to ask for this one
+  auto get_mesh_transform_id(this const Scene& self, flecs::entity entity) -> option<GPU::TransformID>;
   auto get_entity_transform(GPU::TransformID transform_id) const -> const GPU::Transforms*;
 
   auto set_dirty(this Scene& self, flecs::entity entity) -> void;
@@ -245,6 +354,10 @@ private:
     };
 
     UUID model_uuid = {};
+    // used when the glTF root node is unnamed, so the entity holding the model's AnimatorComponent
+    // is still findable in the hierarchy, and resolved by the caller because spawning runs under a
+    // read guard on the model that the asset registry must not be locked from under
+    std::string fallback_root_name = {};
     std::vector<MeshEntity> mesh_entities = {};
     bool hierarchy_spawned = false;
   };
@@ -281,6 +394,7 @@ private:
     std::string name = {};
 
     UUID material_uuid = {};
+    UUID skeleton_uuid = {};
     AABB aabb = {};
   };
 

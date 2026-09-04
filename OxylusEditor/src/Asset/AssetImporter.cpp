@@ -72,6 +72,10 @@ struct ImportedModelMeta {
   std::vector<ImportedTexture> textures = {};
   std::vector<UUID> material_uuids = {};
   std::vector<Material> materials = {};
+  // nil when the source carried no skin. The clips keep one slot per glTF animation, holes and
+  // all, so a clip that stops resampling does not shift the UUID of every clip after it.
+  UUID skeleton_uuid = UUID(nullptr);
+  std::vector<UUID> animation_uuids = {};
 };
 
 auto needs_compiling(AssetFileType file_type) -> bool {
@@ -99,6 +103,7 @@ auto to_asset_type(AssetFileType file_type) -> AssetType {
     case AssetFileType::LUA       : return AssetType::Script;
     case AssetFileType::OXTERRAIN : return AssetType::Terrain;
     case AssetFileType::OXPARTICLE: return AssetType::ParticleSystem;
+    case AssetFileType::OXCINE    : return AssetType::Cinematic;
     default                       : return AssetType::None;
   }
 }
@@ -235,6 +240,21 @@ auto read_model_meta(const std::filesystem::path& meta_path) -> option<ImportedM
     }
   }
 
+  if (auto skeleton_json = meta_json->doc["skeleton"].get_string(); !skeleton_json.error()) {
+    meta.skeleton_uuid = UUID::from_string(skeleton_json.value_unsafe()).value_or(UUID(nullptr));
+  }
+
+  if (auto animations_json = meta_json->doc["animations"].get_array(); !animations_json.error()) {
+    for (auto animation_json : animations_json.value_unsafe()) {
+      auto animation_uuid = UUID(nullptr);
+      if (!animation_json.error() && animation_json.is_string()) {
+        animation_uuid = UUID::from_string(animation_json.get_string()).value_or(UUID(nullptr));
+      }
+
+      meta.animation_uuids.push_back(animation_uuid);
+    }
+  }
+
   return meta;
 }
 
@@ -259,6 +279,14 @@ auto write_model_meta(const std::filesystem::path& source_path, const ImportedMo
   writer["materials"].begin_array();
   for (const auto& [material_uuid, material] : std::views::zip(meta.material_uuids, meta.materials)) {
     write_material_asset_meta(writer, material_uuid, material);
+  }
+  writer.end_array();
+
+  writer["skeleton"] = meta.skeleton_uuid.str();
+
+  writer["animations"].begin_array();
+  for (const auto& animation_uuid : meta.animation_uuids) {
+    writer << animation_uuid.str();
   }
   writer.end_array();
 
@@ -393,6 +421,31 @@ auto compile_model(
     meta.materials.push_back(to_material(model.materials[material_index], texture_uuids));
   }
 
+  // the skeleton and its clips have no file of their own, so nothing but this sidecar can keep
+  // their UUIDs stable across a recompile, and a scene that names a clip depends on that
+  if (!model.skeleton.bone_names.empty()) {
+    if (!meta.skeleton_uuid) {
+      meta.skeleton_uuid = UUID::generate_random();
+    }
+
+    model.skeleton.uuid = PackedUUID::pack(meta.skeleton_uuid);
+  } else {
+    meta.skeleton_uuid = UUID(nullptr);
+  }
+
+  auto previous_animation_uuids = std::move(meta.animation_uuids);
+  meta.animation_uuids.clear();
+  meta.animation_uuids.reserve(model.animations.size());
+  for (auto animation_index = 0_sz; animation_index < model.animations.size(); animation_index++) {
+    const auto animation_uuid = animation_index < previous_animation_uuids.size() &&
+                                    previous_animation_uuids[animation_index]
+                                  ? previous_animation_uuids[animation_index]
+                                  : UUID::generate_random();
+
+    model.animations[animation_index].uuid = PackedUUID::pack(animation_uuid);
+    meta.animation_uuids.push_back(animation_uuid);
+  }
+
   auto file = AssetFile{};
   file.add_entry(std::move(model), PackedUUID::pack(meta.uuid));
   if (!file.pack(cache_path(meta.uuid))) {
@@ -436,6 +489,19 @@ auto register_model(
     // model it came from is touched, and then this is the only source.
     asset_man.register_asset(material_uuid, AssetType::Material, path);
     asset_man.set_pending_load_info(material_uuid, material);
+  }
+
+  // Same reasoning, except the payload only exists once the model pack is unpacked, so these point
+  // at the pack: loading one of them goes through the model.
+  const auto pack_path = cache_path(meta.uuid);
+  if (meta.skeleton_uuid) {
+    asset_man.register_asset(meta.skeleton_uuid, AssetType::Skeleton, pack_path);
+  }
+
+  for (const auto& animation_uuid : meta.animation_uuids) {
+    if (animation_uuid) {
+      asset_man.register_asset(animation_uuid, AssetType::Animation, pack_path);
+    }
   }
 }
 

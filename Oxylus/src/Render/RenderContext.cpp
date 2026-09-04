@@ -38,6 +38,8 @@ PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets = nullptr;
 PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets = nullptr;
 
 PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR = nullptr;
+PFN_vkCmdWriteAccelerationStructuresPropertiesKHR vkCmdWriteAccelerationStructuresPropertiesKHR = nullptr;
+PFN_vkCmdCopyAccelerationStructureKHR vkCmdCopyAccelerationStructureKHR = nullptr;
 
 template <typename T>
 static auto query_device_feature(const vkb::Instance& instance, VkPhysicalDevice physical_device, VkStructureType type)
@@ -535,6 +537,12 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   if (self.features & RenderContext::Feature::RayTracing) {
     vkGetAccelerationStructureDeviceAddressKHR = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
       self.vkb_instance.fp_vkGetDeviceProcAddr(self.device, "vkGetAccelerationStructureDeviceAddressKHR")
+    );
+    vkCmdWriteAccelerationStructuresPropertiesKHR = reinterpret_cast<PFN_vkCmdWriteAccelerationStructuresPropertiesKHR>(
+      self.vkb_instance.fp_vkGetDeviceProcAddr(self.device, "vkCmdWriteAccelerationStructuresPropertiesKHR")
+    );
+    vkCmdCopyAccelerationStructureKHR = reinterpret_cast<PFN_vkCmdCopyAccelerationStructureKHR>(
+      self.vkb_instance.fp_vkGetDeviceProcAddr(self.device, "vkCmdCopyAccelerationStructureKHR")
     );
   }
 
@@ -1288,6 +1296,96 @@ auto RenderContext::get_accel_structure_device_address(
   };
 
   return vkGetAccelerationStructureDeviceAddressKHR(self.device, &address_info);
+}
+
+auto RenderContext::cmd_write_accel_structure_compacted_size(
+  this const RenderContext& self,
+  VkCommandBuffer command_buffer,
+  VkAccelerationStructureKHR handle,
+  VkQueryPool query_pool,
+  u32 query_index
+) -> void {
+  ZoneScoped;
+
+  if (!vkCmdWriteAccelerationStructuresPropertiesKHR) {
+    return;
+  }
+
+  vkCmdWriteAccelerationStructuresPropertiesKHR(
+    command_buffer,
+    1,
+    &handle,
+    VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+    query_pool,
+    query_index
+  );
+}
+
+auto RenderContext::cmd_copy_accel_structure(
+  this const RenderContext& self, VkCommandBuffer command_buffer, const VkCopyAccelerationStructureInfoKHR& info
+) -> void {
+  ZoneScoped;
+
+  if (!vkCmdCopyAccelerationStructureKHR) {
+    return;
+  }
+
+  vkCmdCopyAccelerationStructureKHR(command_buffer, &info);
+}
+
+auto RenderContext::create_query_pool(this const RenderContext& self, VkQueryType type, u32 count) -> VkQueryPool {
+  ZoneScoped;
+
+  const auto pool_info = VkQueryPoolCreateInfo{
+    .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .queryType = type,
+    .queryCount = count,
+    .pipelineStatistics = 0,
+  };
+
+  auto query_pool = VkQueryPool{VK_NULL_HANDLE};
+  if (self.runtime->vkCreateQueryPool(self.device, &pool_info, nullptr, &query_pool) != VK_SUCCESS) {
+    OX_LOG_ERROR("Failed to create query pool.");
+    return VK_NULL_HANDLE;
+  }
+
+  self.runtime->vkResetQueryPool(self.device, query_pool, 0, count);
+
+  return query_pool;
+}
+
+auto RenderContext::destroy_query_pool(this const RenderContext& self, VkQueryPool query_pool) -> void {
+  ZoneScoped;
+
+  if (query_pool == VK_NULL_HANDLE) {
+    return;
+  }
+
+  self.runtime->vkDestroyQueryPool(self.device, query_pool, nullptr);
+}
+
+auto RenderContext::read_query_pool(this const RenderContext& self, VkQueryPool query_pool, std::span<u64> results)
+  -> bool {
+  ZoneScoped;
+
+  if (query_pool == VK_NULL_HANDLE || results.empty()) {
+    return false;
+  }
+
+  const auto result = self.runtime->vkGetQueryPoolResults(
+    self.device,
+    query_pool,
+    0,
+    static_cast<u32>(results.size()),
+    results.size_bytes(),
+    results.data(),
+    sizeof(u64),
+    VK_QUERY_RESULT_64_BIT
+  );
+
+  return result == VK_SUCCESS;
 }
 
 auto RenderContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)

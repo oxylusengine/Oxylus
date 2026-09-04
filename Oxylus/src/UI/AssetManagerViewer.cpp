@@ -7,6 +7,22 @@
 #include "UI/UI.hpp"
 
 namespace ox {
+// every clip of a model is its own asset sharing the model's file, so the file name alone renders
+// them as a row of identical entries
+auto asset_display_name(const Asset& asset) -> std::string {
+  ZoneScoped;
+
+  if (asset.type == AssetType::Animation) {
+    if (auto clip = App::mod<AssetManager>().get_animation(asset.animation_id)) {
+      if (!clip->name.empty()) {
+        return fmt::format("{} ({})", clip->name, asset.path.filename().string());
+      }
+    }
+  }
+
+  return asset.path.filename().string();
+}
+
 auto draw_asset_table_columns(const Asset& asset) -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
@@ -25,7 +41,7 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
                                                       ImGuiSelectableFlags_AllowOverlap |
                                                       ImGuiSelectableFlags_AllowDoubleClick;
 
-    auto name = asset.path.filename().string();
+    auto name = asset_display_name(asset);
     if (ImGui::Selectable(name.c_str(), false, selectable_flags, ImVec2(0.0f, UI::scale(20.0f)))) {
       is_selected = true;
     }
@@ -52,6 +68,17 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
 
     // explicit format here because MSVC %lu != clang %lu (its %llu instead)
     ImGui::TextUnformatted(stack.format_char("RefCount: {}", asset.ref_count));
+
+    if (asset.type == AssetType::Cinematic) {
+      if (auto cinematic = asset_man.get_cinematic(asset.cinematic_id)) {
+        ImGui::TextUnformatted(stack.format_char("Duration: {:.2f}s", cinematic->duration));
+        ImGui::TextUnformatted(stack.format_char(
+          "Tracks: {} camera, {} property",
+          cinematic->camera_tracks.size(),
+          cinematic->property_tracks.size()
+        ));
+      }
+    }
 
     ImGui::EndPopup();
   }
@@ -81,7 +108,7 @@ auto AssetManagerViewer::draw_asset_table(
       ImGui::TableSetupColumn("UUID");
 
       for (const auto& asset : assets) {
-        auto name = asset.path.filename().string();
+        auto name = asset_display_name(asset);
         if (!text_filter.PassFilter(name.c_str())) {
           continue;
         }
@@ -152,6 +179,18 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
         }
         case AssetType::ParticleSystem: {
           particle_system_assets.emplace_back(asset);
+          break;
+        }
+        case AssetType::Skeleton: {
+          skeleton_assets.emplace_back(asset);
+          break;
+        }
+        case AssetType::Animation: {
+          animation_assets.emplace_back(asset);
+          break;
+        }
+        case AssetType::Cinematic: {
+          cinematic_assets.emplace_back(asset);
           break;
         }
       }
@@ -340,6 +379,48 @@ auto AssetManagerViewer::render(const char* id, bool* visible, AssetType default
       );
     }
 
+    if (asset_type_filter_flags[AssetType::Skeleton]) {
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      draw_asset_table(
+        "Skeleton Assets",
+        "skeleton_table",
+        skeleton_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
+    }
+
+    if (asset_type_filter_flags[AssetType::Animation]) {
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      draw_asset_table(
+        "Animation Assets",
+        "animation_table",
+        animation_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
+    }
+
+    if (asset_type_filter_flags[AssetType::Cinematic]) {
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
+      draw_asset_table(
+        "Cinematic Assets",
+        "cinematic_table",
+        cinematic_assets,
+        TREE_FLAGS,
+        TABLE_COLUMNS_COUNT,
+        TABLE_FLAGS,
+        selected
+      );
+    }
+
     if (asset_type_filter_flags[AssetType::Shader]) {
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
@@ -385,5 +466,8 @@ auto AssetManagerViewer::clear_vectors(this AssetManagerViewer& self) -> void {
   self.font_assets.clear();
   self.terrain_assets.clear();
   self.particle_system_assets.clear();
+  self.skeleton_assets.clear();
+  self.animation_assets.clear();
+  self.cinematic_assets.clear();
 }
 } // namespace ox

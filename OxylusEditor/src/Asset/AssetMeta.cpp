@@ -1,6 +1,7 @@
 #include "Asset/AssetMeta.hpp"
 
 #include "Asset/AssetManager.hpp"
+#include "Cinematic/Cinematic.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
@@ -34,6 +35,8 @@ auto write_script_asset_meta(JsonWriter&, LuaScript*) -> bool { return true; }
 auto write_terrain_asset_meta(JsonWriter&, const TerrainEdits*) -> bool { return true; }
 
 auto write_particle_system_asset_meta(JsonWriter&, const ParticleSystem*) -> bool { return true; }
+
+auto write_cinematic_asset_meta(JsonWriter&, const Cinematic*) -> bool { return true; }
 
 auto write_scene_asset_meta(JsonWriter& writer, const Scene* scene) -> bool {
   ZoneScoped;
@@ -165,6 +168,7 @@ auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {
     case fnv64_c(".LUA")       : return AssetFileType::LUA;
     case fnv64_c(".OXTERRAIN") : return AssetFileType::OXTERRAIN;
     case fnv64_c(".OXPARTICLE"): return AssetFileType::OXPARTICLE;
+    case fnv64_c(".OXCINE")    : return AssetFileType::OXCINE;
     default                    : return AssetFileType::None;
   }
 }
@@ -328,6 +332,22 @@ auto export_particle_system(
   return write_particle_system_asset_meta(writer, particle_system.value);
 }
 
+auto export_cinematic(AssetManager& asset_man, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
+  -> bool {
+  ZoneScoped;
+
+  auto cinematic = asset_man.get_cinematic(uuid);
+  if (!cinematic) {
+    return false;
+  }
+
+  if (!cinematic->write(path)) {
+    return false;
+  }
+
+  return write_cinematic_asset_meta(writer, cinematic.value);
+}
+
 auto export_asset(AssetManager& asset_man, const UUID& uuid, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
@@ -383,6 +403,10 @@ auto export_asset(AssetManager& asset_man, const UUID& uuid, const std::filesyst
     } break;
     case AssetType::ParticleSystem: {
       if (!export_particle_system(asset_man, uuid, writer, path))
+        return false;
+    } break;
+    case AssetType::Cinematic: {
+      if (!export_cinematic(asset_man, uuid, writer, path))
         return false;
     } break;
     default: return false;

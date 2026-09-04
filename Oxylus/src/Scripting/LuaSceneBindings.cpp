@@ -51,6 +51,12 @@ auto SceneBinding::bind(sol::state* state) -> void {
     return scene->get_local_transform(e)[3];
   });
 
+  SET_TYPE_FUNCTION(scene_type, Scene, play_cinematic);
+  SET_TYPE_FUNCTION(scene_type, Scene, stop_cinematic);
+  SET_TYPE_FUNCTION(scene_type, Scene, seek_cinematic);
+  SET_TYPE_FUNCTION(scene_type, Scene, cinematic_time);
+  SET_TYPE_FUNCTION(scene_type, Scene, cinematic_duration);
+
   SET_TYPE_FUNCTION(scene_type, Scene, play_particles);
   SET_TYPE_FUNCTION(scene_type, Scene, stop_particles);
   SET_TYPE_FUNCTION(scene_type, Scene, restart_particles);

@@ -339,6 +339,10 @@ public enum SceneFlags : u32 {
   HasSky = 1 << 10,
   TransparentBackground = 1 << 11,
   HasDDGI = 1 << 12,
+  HasParticles = 1 << 13,
+  HasParticleSorting = 1 << 14,
+  HasLetterbox = 1 << 15,
+  HasScreenFade = 1 << 16,
 };
 
 public struct DirectionalLightCascade {
@@ -549,12 +553,38 @@ public struct MeshletInstance {
     public u32 meshlet_index = 0;
 };
 
+public struct SkinningTransform {
+    public f32x4 rotation;
+    public f32x4 translation_scale;
+
+    public func rotate(in f32x3 v) -> f32x3 {
+        let axis = rotation.xyz;
+        return v + 2.0 * cross(axis, cross(axis, v) + rotation.w * v);
+    }
+
+    public func transform_point(in f32x3 p) -> f32x3 {
+        return rotate(p * translation_scale.w) + translation_scale.xyz;
+    }
+
+    public func transform_normal(in f32x3 n) -> f32x3 {
+        return rotate(n);
+    }
+};
+
 public struct MeshInstance {
     public u32 mesh_index = 0;
     public u32 lod_index = 0;
     public u32 material_index = 0;
     public u32 transform_index = 0;
     public u32 meshlet_instance_visibility_offset = 0;
+    public u32 skinned_instance_index = 0;
+    public u16x4 *skinned_vertex_positions = nullptr;
+    public u32 *skinned_vertex_normals = nullptr;
+    public MeshBounds skinned_bounds = {};
+
+    public func is_skinned() -> bool {
+        return skinned_vertex_positions != nullptr;
+    }
 };
 
 public struct MeshLOD {
@@ -575,10 +605,25 @@ public struct Mesh {
     public u16x4 *vertex_positions = nullptr;
     public u32 *vertex_normals = nullptr;
     public u16x2 *texture_coords = nullptr;
+    public u16x4 *skin_joint_indices = nullptr;
+    public u16x4 *skin_weights = nullptr;
     public u32 vertex_count = 0;
     public u32 lod_count = 0;
     public MeshLOD *lods = nullptr;
     public MeshBounds bounds = {};
+
+    // redirects vertex fetch at the instance's skinned copy, which the skinning pass wrote in the
+    // same quantized format, so meshlet decode, LOD selection and culling bounds work unchanged
+    [[mutating]]
+    public func apply_skin(in MeshInstance instance) {
+        if (instance.skinned_vertex_positions == nullptr) {
+            return;
+        }
+
+        this.vertex_positions = instance.skinned_vertex_positions;
+        this.vertex_normals = instance.skinned_vertex_normals;
+        this.bounds = instance.skinned_bounds;
+    }
 
     public func decode_position(u32 index) -> f32x3 {
         return f32x3(
@@ -646,6 +691,11 @@ public struct PostProcessSettings {
     public f32 film_grain_scale;
     public f32 film_grain_amount;
     public u32 film_grain_seed;
+    public f32 letterbox_amount;
+    public f32 letterbox_aspect;
+    public f32x3 letterbox_color;
+    public f32 fade_amount;
+    public f32x3 fade_color;
 };
 
 public enum TonemapType : u32 {

@@ -4,6 +4,7 @@
 #include <ankerl/unordered_dense.h>
 #include <array>
 
+#include "Animation/Fwd.hpp"
 #include "Asset/Texture.hpp"
 #include "Render/AccelerationStructure.hpp"
 #include "Render/Renderer.hpp"
@@ -191,6 +192,11 @@ struct RendererInstanceUpdateInfo {
   u32 mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
 
+  // the mesh and instance arrays are only rebuilt when the instance set changes, but skinned
+  // instances carry per-frame vertex pointers and bounds, so their upload runs more often
+  bool meshes_dirty = false;
+  bool mesh_instances_dirty = false;
+
   std::span<GPU::TransformID> dirty_transform_ids = {};
   std::span<GPU::Transforms> gpu_transforms = {};
 
@@ -198,6 +204,10 @@ struct RendererInstanceUpdateInfo {
   std::span<u64> gpu_mesh_blas_addresses = {};
   std::span<GPU::MeshInstance> gpu_mesh_instances = {};
   std::span<u32> dirty_mesh_instance_indices = {};
+
+  std::span<const SkinnedMeshInstance> skinned_mesh_instances = {};
+  std::span<GPU::SkinningTransform> skinning_transforms = {};
+  u32 skinned_vertex_total = 0;
 };
 
 struct ParticleMeshDraw {
@@ -215,7 +225,13 @@ struct PreparedFrame {
   vuk::Value<vuk::Buffer> transforms_previous_buffer = {};
   vuk::Value<vuk::Buffer> meshes_buffer = {};
   vuk::Value<vuk::Buffer> blas_addresses_buffer = {};
+  vuk::Value<vuk::Buffer> skinned_blas_addresses_buffer = {};
+  u32 skinned_instance_count = 0;
   vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
+  vuk::Value<vuk::Buffer> skinning_transforms_buffer = {};
+  vuk::Value<vuk::Buffer> skinned_vertices_buffer = {};
+  u32 skinned_vertex_total = 0;
+  std::vector<GPU::SkinJob> skin_jobs = {};
   vuk::Value<vuk::Buffer> meshlet_instances_buffer = {};
   vuk::Value<vuk::Buffer> visible_meshlet_instances_indices_buffer = {};
   vuk::Value<vuk::Buffer> meshlet_instance_visibility_mask_buffer = {};
@@ -713,6 +729,7 @@ public:
   auto get_viewport_size(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_size_; }
 
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
+  auto skin_vertices(this RendererInstance& self) -> void;
   auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
   auto cull_geometry_pointspot(this RendererInstance& self, CullGeometryPointSpotContext& context) -> void;
   auto build_light_grid(this RendererInstance&, LightGridContext& context) -> void;
@@ -729,6 +746,10 @@ public:
   auto draw_atmosphere(this RendererInstance&, AtmosphereContext& context) -> void;
   auto generate_ambient_occlusion(this RendererInstance&, AmbientOcclusionContext& context) -> void;
   auto generate_rtao(this RendererInstance&, RTAOContext& context) -> void;
+
+  // mirrors the two sites that actually consume the TLAS. With no consumer the whole chain would be
+  // recorded and then dropped unsubmitted, so both the pool and the build read this one answer
+  auto tlas_has_consumer(this const RendererInstance& self, const RendererCVar& cvar) -> bool;
   auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
     -> vuk::Value<vuk::ImageAttachment>;
   auto apply_eye_adaptation(this RendererInstance&, PostProcessContext& context) -> void;
@@ -820,8 +841,18 @@ private:
   vuk::Unique<vuk::Buffer> transforms_world_buffer{};
   vuk::Unique<vuk::Buffer> transforms_previous_buffer{};
   vuk::Unique<vuk::Buffer> mesh_instances_buffer{};
+  vuk::Unique<vuk::Buffer> skinning_transforms_buffer{};
+  // in the same quantized format as the bind pose, so every downstream consumer works by pointer
+  // swap alone
+  vuk::Unique<vuk::Buffer> skinned_vertices_buffer{};
   vuk::Unique<vuk::Buffer> meshes_buffer{};
   vuk::Unique<vuk::Buffer> blas_addresses_buffer{};
+  // one entry per skinned instance rather than per mesh, because ten characters sharing a model
+  // need ten structures. Renderer owned and uploaded every frame, so a moving address cannot
+  // outlive a scene dirty flag that never fires
+  std::vector<u64> skinned_blas_addresses = {};
+  vuk::Unique<vuk::Buffer> skinned_blas_addresses_buffer{};
+  SkinnedBLASPool skinned_blas_pool{};
   SceneTLAS scene_tlas{};
   vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
   vuk::Unique<vuk::Buffer> lights_buffer{};

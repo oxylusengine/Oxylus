@@ -4,6 +4,8 @@
 #include <functional>
 #include <variant>
 
+#include "Animation/AnimationClip.hpp"
+#include "Animation/Skeleton.hpp"
 #include "Asset/AssetFile.hpp"
 #include "Asset/AudioSource.hpp"
 #include "Asset/Material.hpp"
@@ -11,6 +13,7 @@
 #include "Asset/ParticleSystem.hpp"
 #include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
+#include "Cinematic/Cinematic.hpp"
 #include "Core/UUID.hpp"
 #include "Memory/ReadGuard.hpp"
 #include "Memory/SlotMap.hpp"
@@ -31,6 +34,9 @@ struct Asset {
     ScriptID script_id;
     TerrainEditsID terrain_edits_id;
     ParticleSystemID particle_system_id;
+    SkeletonID skeleton_id;
+    AnimationID animation_id;
+    CinematicID cinematic_id;
   };
 
   // Reference count of loads
@@ -112,12 +118,27 @@ public:
   auto get_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> ReadGuard<TerrainEdits>;
   auto set_terrain_edits(this AssetManager& self, const UUID& uuid, TerrainEdits&& edits) -> void;
 
+  // these have no file of their own, so publishing is how the importer's payload enters the
+  // registry, and it takes no reference because holders acquire
+  auto publish_skeleton(this AssetManager& self, const UUID& uuid, Skeleton&& skeleton) -> bool;
+  auto publish_animation(this AssetManager& self, const UUID& uuid, AnimationClip&& clip) -> bool;
+
+  auto get_skeleton(this AssetManager& self, const UUID& uuid) -> ReadGuard<Skeleton>;
+  auto get_skeleton(this AssetManager& self, SkeletonID skeleton_id) -> ReadGuard<Skeleton>;
+
+  auto get_animation(this AssetManager& self, const UUID& uuid) -> ReadGuard<AnimationClip>;
+  auto get_animation(this AssetManager& self, AnimationID animation_id) -> ReadGuard<AnimationClip>;
+
   auto get_particle_system(this AssetManager& self, const UUID& uuid) -> ReadGuard<ParticleSystem>;
   auto get_particle_system(this AssetManager& self, ParticleSystemID particle_system_id) -> ReadGuard<ParticleSystem>;
   auto set_particle_system_dirty(this AssetManager& self, const UUID& uuid) -> void;
   auto edit_particle_system(
     this AssetManager& self, const UUID& uuid, const std::function<void(ParticleSystem&)>& mutate, bool recompile = true
   ) -> void;
+
+  auto get_cinematic(this AssetManager& self, const UUID& uuid) -> ReadGuard<Cinematic>;
+  auto get_cinematic(this AssetManager& self, CinematicID cinematic_id) -> ReadGuard<Cinematic>;
+  auto edit_cinematic(this AssetManager& self, const UUID& uuid, const std::function<void(Cinematic&)>& mutate) -> void;
 
 private:
   auto load_asset_impl(
@@ -126,7 +147,14 @@ private:
 
   auto unload_asset_impl(this AssetManager& self, AssetType type, u64 id) -> bool;
 
-  auto load_model(this AssetManager& self, ModelData&& model_data, bool async) -> ModelID;
+  // the model whose pack a skeleton or a clip was published from, which is the only thing that can
+  // materialize one
+  auto source_model_uuid(this AssetManager& self, const std::filesystem::path& path) -> UUID;
+
+  // `model_path` is the pack the data came from, which is what the skeleton and the clips it
+  // publishes get registered against, since neither has a file of its own
+  auto load_model(this AssetManager& self, ModelData&& model_data, const std::filesystem::path& model_path, bool async)
+    -> ModelID;
   // Unpacks the compiled model out of the `.oxpack` at `path`.
   auto load_model(this AssetManager& self, const std::filesystem::path& path, bool async) -> ModelID;
   auto unload_model(this AssetManager& self, ModelID model_id) -> bool;
@@ -154,8 +182,17 @@ private:
   auto load_terrain_edits(this AssetManager& self, const std::filesystem::path& path) -> TerrainEditsID;
   auto unload_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> bool;
 
+  auto load_skeleton(this AssetManager& self, Skeleton&& skeleton) -> SkeletonID;
+  auto unload_skeleton(this AssetManager& self, SkeletonID skeleton_id) -> bool;
+
+  auto load_animation(this AssetManager& self, AnimationClip&& clip) -> AnimationID;
+  auto unload_animation(this AssetManager& self, AnimationID animation_id) -> bool;
+
   auto load_particle_system(this AssetManager& self, const std::filesystem::path& path) -> ParticleSystemID;
   auto unload_particle_system(this AssetManager& self, ParticleSystemID particle_system_id) -> bool;
+
+  auto load_cinematic(this AssetManager& self, const std::filesystem::path& path) -> CinematicID;
+  auto unload_cinematic(this AssetManager& self, CinematicID cinematic_id) -> bool;
 
   AssetRegistry asset_registry = {};
 
@@ -168,6 +205,9 @@ private:
   std::shared_mutex scripts_mutex = {};
   std::shared_mutex terrain_edits_mutex = {};
   std::shared_mutex particle_systems_mutex = {};
+  std::shared_mutex skeletons_mutex = {};
+  std::shared_mutex animations_mutex = {};
+  std::shared_mutex cinematics_mutex = {};
 
   std::vector<MaterialID> dirty_materials = {};
 
@@ -188,6 +228,9 @@ private:
   SlotMap<std::unique_ptr<LuaScript>, ScriptID> script_map = {};
   SlotMap<TerrainEdits, TerrainEditsID> terrain_edits_map = {};
   SlotMap<ParticleSystem, ParticleSystemID> particle_system_map = {};
+  SlotMap<Skeleton, SkeletonID> skeleton_map = {};
+  SlotMap<AnimationClip, AnimationID> animation_map = {};
+  SlotMap<Cinematic, CinematicID> cinematic_map = {};
 
   UUID null_material = {};
 };

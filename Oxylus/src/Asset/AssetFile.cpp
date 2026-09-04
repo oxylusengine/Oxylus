@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "Animation/AnimationClip.hpp"
+#include "Animation/Skeleton.hpp"
 #include "OS/File.hpp"
 #include "Utils/Log.hpp"
 
@@ -45,6 +47,127 @@ auto to_material(const ModelData::Material& src, std::span<const UUID> textures)
     .metallic_roughness_texture = resolve(src.metallic_roughness_texture_index),
     .occlusion_texture = resolve(src.occlusion_texture_index),
   };
+}
+
+auto to_bone_transform(const ModelData::BoneTransform& src) -> BoneTransform {
+  return BoneTransform{
+    .rotation = glm::quat::wxyz(src.rotation[3], src.rotation[0], src.rotation[1], src.rotation[2]),
+    .translation_scale = glm::make_vec4(src.translation_scale.data()),
+  };
+}
+
+auto to_skeleton(const ModelData::Skeleton& src) -> Skeleton {
+  ZoneScoped;
+
+  auto skeleton = Skeleton{};
+  skeleton.bone_names = src.bone_names;
+  skeleton.parent_indices = src.parent_indices;
+
+  skeleton.parent_space_reference_pose.reserve(src.parent_space_reference_pose.size());
+  for (const auto& bone : src.parent_space_reference_pose) {
+    skeleton.parent_space_reference_pose.push_back(to_bone_transform(bone));
+  }
+
+  skeleton.inverse_bind_pose.reserve(src.inverse_bind_pose.size());
+  for (const auto& bone : src.inverse_bind_pose) {
+    skeleton.inverse_bind_pose.push_back(to_bone_transform(bone));
+  }
+
+  if (!skeleton.finalize()) {
+    return {};
+  }
+
+  return skeleton;
+}
+
+auto to_animation_clip(const ModelData::Animation& src, const UUID& skeleton_uuid) -> AnimationClip {
+  ZoneScoped;
+
+  auto clip = AnimationClip{};
+  clip.name = src.name;
+  clip.skeleton_uuid = skeleton_uuid;
+  clip.frame_count = src.frame_count;
+  clip.duration = src.duration;
+  clip.compressed_pose_data = src.compressed_pose_data;
+  clip.compressed_pose_offsets = src.compressed_pose_offsets;
+
+  clip.track_defs.reserve(src.track_defs.size());
+  for (const auto& track : src.track_defs) {
+    clip.track_defs.push_back(
+      TrackDefinition{
+        .translation_range_x = {track.translation_range_x[0], track.translation_range_x[1]},
+        .translation_range_y = {track.translation_range_y[0], track.translation_range_y[1]},
+        .translation_range_z = {track.translation_range_z[0], track.translation_range_z[1]},
+        .scale_range = {track.scale_range[0], track.scale_range[1]},
+        .constant_rotation = {track.constant_rotation[0], track.constant_rotation[1], track.constant_rotation[2]},
+        .track_read_offset = track.track_read_offset,
+        .is_rotation_static = track.is_rotation_static,
+        .is_translation_static = track.is_translation_static,
+        .is_scale_static = track.is_scale_static,
+      }
+    );
+  }
+
+  return clip;
+}
+
+auto to_model_bone_transform(const BoneTransform& src) -> ModelData::BoneTransform {
+  return ModelData::BoneTransform{
+    .rotation = {src.rotation.x, src.rotation.y, src.rotation.z, src.rotation.w},
+    .translation_scale =
+      {src.translation_scale.x, src.translation_scale.y, src.translation_scale.z, src.translation_scale.w},
+  };
+}
+
+auto to_model_skeleton(const Skeleton& src) -> ModelData::Skeleton {
+  ZoneScoped;
+
+  auto skeleton = ModelData::Skeleton{};
+  skeleton.bone_names = src.bone_names;
+  skeleton.parent_indices = src.parent_indices;
+
+  skeleton.parent_space_reference_pose.reserve(src.parent_space_reference_pose.size());
+  for (const auto& bone : src.parent_space_reference_pose) {
+    skeleton.parent_space_reference_pose.push_back(to_model_bone_transform(bone));
+  }
+
+  skeleton.inverse_bind_pose.reserve(src.inverse_bind_pose.size());
+  for (const auto& bone : src.inverse_bind_pose) {
+    skeleton.inverse_bind_pose.push_back(to_model_bone_transform(bone));
+  }
+
+  return skeleton;
+}
+
+auto to_model_animation(const AnimationClip& src) -> ModelData::Animation {
+  ZoneScoped;
+
+  auto animation = ModelData::Animation{};
+  animation.name = src.name;
+  animation.frame_count = src.frame_count;
+  animation.duration = src.duration;
+  animation.compressed_pose_data = src.compressed_pose_data;
+  animation.compressed_pose_offsets = src.compressed_pose_offsets;
+
+  animation.track_defs.reserve(src.track_defs.size());
+  for (const auto& track : src.track_defs) {
+    animation.track_defs.push_back(
+      ModelData::AnimationTrack{
+        .translation_range_x = {track.translation_range_x.start, track.translation_range_x.length},
+        .translation_range_y = {track.translation_range_y.start, track.translation_range_y.length},
+        .translation_range_z = {track.translation_range_z.start, track.translation_range_z.length},
+        .scale_range = {track.scale_range.start, track.scale_range.length},
+        .constant_rotation =
+          {track.constant_rotation.data0, track.constant_rotation.data1, track.constant_rotation.data2},
+        .track_read_offset = track.track_read_offset,
+        .is_rotation_static = track.is_rotation_static,
+        .is_translation_static = track.is_translation_static,
+        .is_scale_static = track.is_scale_static,
+      }
+    );
+  }
+
+  return animation;
 }
 
 auto AssetFile::unpack(const std::filesystem::path& path) -> option<AssetFile> {

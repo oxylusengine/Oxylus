@@ -29,7 +29,8 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
     let vis = VisBufferData(vertex_index);
     let vsm_meshlet_instance = vsm_meshlet_instances[vis.meshlet_instance_index];
     let mesh_instance = mesh_instances[vsm_meshlet_instance.mesh_instance_index];
-    let mesh = meshes[mesh_instance.mesh_index];
+    var mesh = meshes[mesh_instance.mesh_index];
+    mesh.apply_skin(mesh_instance);
     let mesh_lod = mesh.lods[mesh_instance.lod_index];
     let transform = transforms[mesh_instance.transform_index];
     let meshlet = mesh_lod.meshlets[vsm_meshlet_instance.meshlet_index];

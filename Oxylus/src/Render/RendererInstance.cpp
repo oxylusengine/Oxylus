@@ -774,6 +774,10 @@ auto RendererInstance::render(
      .layer_count = 1}
   );
 
+  // before anything reads vertex positions: the culling passes, both visbuffer encoders and every
+  // shadow pass all fetch through the same pointers this rewrites
+  self.skin_vertices();
+
   auto vis_clear_pass = vuk::make_pass(
     "vis clear",
     [draw_overdraw](
@@ -880,21 +884,39 @@ auto RendererInstance::render(
   // should probably move this entire scope to somewhere else, shit_in_a_kettle.gif
   auto& frame_render_context = *self.renderer.render_context;
   if (
-    frame_render_context.use_ray_tracing() && self.prepared_frame.mesh_instance_count > 0 &&
-    self.prepared_frame.blas_addresses_buffer.node != nullptr &&
+    frame_render_context.use_ray_tracing() && self.tlas_has_consumer(cvar) &&
+    self.prepared_frame.mesh_instance_count > 0 && self.prepared_frame.blas_addresses_buffer.node != nullptr &&
+    self.prepared_frame.skinned_blas_addresses_buffer.node != nullptr &&
     self.prepared_frame.mesh_instances_buffer.node != nullptr
   ) {
+    auto skinned_blas_buffer = build_skinned_blases(
+      frame_render_context,
+      self.skinned_blas_pool,
+      SkinnedBLASBudget{
+        .rebuild_primitive_budget = static_cast<u32>(ox::max(0, cvar.cvar_rt_skinned_rebuild_budget.get())),
+        .max_refits_before_rebuild = static_cast<u32>(ox::max(0, cvar.cvar_rt_skinned_max_refits.get())),
+      },
+      std::move(self.prepared_frame.skinned_vertices_buffer)
+    );
+
     auto tlas_value = build_scene_tlas(
       frame_render_context,
       self.scene_tlas,
       TLASBuildInfo{
         .instance_count = self.prepared_frame.mesh_instance_count,
+        .skinned_instance_count = self.prepared_frame.skinned_instance_count,
         .mesh_instances_buffer = self.prepared_frame.mesh_instances_buffer,
         .transforms_buffer = self.prepared_frame.transforms_world_buffer,
         .blas_addresses_buffer = self.prepared_frame.blas_addresses_buffer,
+        .skinned_blas_addresses_buffer = self.prepared_frame.skinned_blas_addresses_buffer,
+        .skinned_blas_buffer = std::move(skinned_blas_buffer),
       }
     );
+
     if (tlas_value.node != nullptr) {
+      // build_scene_tlas waits on the subgraph the builds were threaded into, so by here they have
+      // run: only now may an entry count as built and start publishing its address
+      self.skinned_blas_pool.commit_builds();
       self.shared_resources.buffer_resources["tlas"] = std::move(tlas_value);
     }
   }
@@ -1824,12 +1846,16 @@ auto RendererInstance::render(
     dst_attachment = self.apply_debug_view(debug_context, std::move(dst_attachment));
   }
 
-  const auto draw_bounding_boxes = cvar.cvar_draw_bounding_boxes.as_bool() || debugging;
-  if (draw_bounding_boxes) {
+  if (cvar.cvar_enable_debug_renderer.as_bool()) {
     dst_attachment = self.draw_bounding_boxes(std::move(depth_attachment), std::move(dst_attachment));
   }
 
   return dst_attachment;
+}
+
+auto RendererInstance::tlas_has_consumer(this const RendererInstance& self, const RendererCVar& cvar) -> bool {
+  return cvar.cvar_rtao_enable.as_bool() ||
+         (!self.probe_volumes.empty() && self.renderer.render_context->use_ray_tracing_pipeline());
 }
 
 auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdateInfo& info, const RendererCVar& cvar)
@@ -1847,6 +1873,9 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   CameraComponent current_camera = {};
   CameraComponent frozen_camera = {};
   const auto freeze_culling = static_cast<bool>(cvar.cvar_freeze_culling_frustum.get());
+  // an explicitly active camera wins over a later one; with none marked the last one still does,
+  // which is what every single-camera scene has always relied on
+  auto found_active_camera = false;
 
   self.scene.world
     .query_builder<const TransformComponent, const CameraComponent>() //
@@ -1868,7 +1897,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         debug_renderer.draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
       }
 
-      current_camera = c;
+      if (c.active || !found_active_camera) {
+        current_camera = c;
+        found_active_camera = c.active;
+      }
     });
 
   CameraComponent cam = freeze_culling ? frozen_camera : current_camera;
@@ -1960,35 +1992,52 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           }
         );
       }
-      if (const auto* atmos_info = e.try_get<AtmosphereComponent>()) {
-        self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
+    });
 
-        self.atmosphere.rayleigh_scatter = atmos_info->rayleigh_scattering * 1e-3f;
-        self.atmosphere.rayleigh_density = atmos_info->rayleigh_density;
-        self.atmosphere.mie_scatter = atmos_info->mie_scattering * 1e-3f;
-        self.atmosphere.mie_density = atmos_info->mie_density;
-        self.atmosphere.mie_extinction = atmos_info->mie_extinction * 1e-3f;
-        self.atmosphere.mie_asymmetry = atmos_info->mie_asymmetry;
-        self.atmosphere.mie_haze_amount = atmos_info->mie_haze_amount;
-        self.atmosphere.mie_haze_scale_height = atmos_info->mie_haze_scale_height;
-        self.atmosphere.ozone_absorption = atmos_info->ozone_absorption * 1e-3f;
-        self.atmosphere.ozone_height = atmos_info->ozone_height;
-        self.atmosphere.ozone_thickness = atmos_info->ozone_thickness;
-        self.atmosphere.aerial_perspective_start_km = atmos_info->aerial_perspective_start_km;
-        self.atmosphere.aerial_perspective_exposure = atmos_info->aerial_perspective_exposure;
-        self.atmosphere.sky_view_lut_size = self.sky_view_lut_extent;
-        self.atmosphere.aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
-        self.atmosphere.transmittance_lut_size = self.sky_transmittance_lut.get_extent();
-        self.atmosphere.multiscattering_lut_size = self.sky_multiscatter_lut.get_extent();
+  // queried apart from the lights: an environment does not need a light on the same entity, and
+  // riding along with one meant a scene that lit itself any other way silently lost its sky
+  self.scene.world
+    .query_builder<const AtmosphereComponent>() //
+    .build()
+    .each([&self](flecs::entity e, const AtmosphereComponent& atmos_info) {
+      if (!e.enabled()) {
+        return;
       }
 
-      if (const auto* sky_info = e.try_get<SkyComponent>()) {
-        self.gpu_scene_flags |= GPU::SceneFlags::HasSky;
+      self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
 
-        self.sky_data.solid_color = sky_info->solid_color;
-        self.sky_data.ambient_color = sky_info->ambient_color;
-        self.sky_data.has_texture = static_cast<bool>(sky_info->texture);
+      self.atmosphere.rayleigh_scatter = atmos_info.rayleigh_scattering * 1e-3f;
+      self.atmosphere.rayleigh_density = atmos_info.rayleigh_density;
+      self.atmosphere.mie_scatter = atmos_info.mie_scattering * 1e-3f;
+      self.atmosphere.mie_density = atmos_info.mie_density;
+      self.atmosphere.mie_extinction = atmos_info.mie_extinction * 1e-3f;
+      self.atmosphere.mie_asymmetry = atmos_info.mie_asymmetry;
+      self.atmosphere.mie_haze_amount = atmos_info.mie_haze_amount;
+      self.atmosphere.mie_haze_scale_height = atmos_info.mie_haze_scale_height;
+      self.atmosphere.ozone_absorption = atmos_info.ozone_absorption * 1e-3f;
+      self.atmosphere.ozone_height = atmos_info.ozone_height;
+      self.atmosphere.ozone_thickness = atmos_info.ozone_thickness;
+      self.atmosphere.aerial_perspective_start_km = atmos_info.aerial_perspective_start_km;
+      self.atmosphere.aerial_perspective_exposure = atmos_info.aerial_perspective_exposure;
+      self.atmosphere.sky_view_lut_size = self.sky_view_lut_extent;
+      self.atmosphere.aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
+      self.atmosphere.transmittance_lut_size = self.sky_transmittance_lut.get_extent();
+      self.atmosphere.multiscattering_lut_size = self.sky_multiscatter_lut.get_extent();
+    });
+
+  self.scene.world
+    .query_builder<const SkyComponent>() //
+    .build()
+    .each([&self](flecs::entity e, const SkyComponent& sky_info) {
+      if (!e.enabled()) {
+        return;
       }
+
+      self.gpu_scene_flags |= GPU::SceneFlags::HasSky;
+
+      self.sky_data.solid_color = sky_info.solid_color;
+      self.sky_data.ambient_color = sky_info.ambient_color;
+      self.sky_data.has_texture = static_cast<bool>(sky_info.texture);
     });
 
   if (
@@ -2186,6 +2235,27 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     });
 
   self.scene.world
+    .query_builder<const TransformComponent, const LetterboxComponent>() //
+    .build()
+    .each([&](flecs::entity e, const TransformComponent& tc, const LetterboxComponent& c) {
+      self.post_proces_settings.letterbox_amount = c.amount;
+      self.post_proces_settings.letterbox_aspect = c.target_aspect;
+      self.post_proces_settings.letterbox_color = c.color;
+
+      self.gpu_scene_flags |= GPU::SceneFlags::HasLetterbox;
+    });
+
+  self.scene.world
+    .query_builder<const TransformComponent, const ScreenFadeComponent>() //
+    .build()
+    .each([&](flecs::entity e, const TransformComponent& tc, const ScreenFadeComponent& c) {
+      self.post_proces_settings.fade_amount = c.amount;
+      self.post_proces_settings.fade_color = c.color;
+
+      self.gpu_scene_flags |= GPU::SceneFlags::HasScreenFade;
+    });
+
+  self.scene.world
     .query_builder<const TonemappingComponent>() //
     .build()
     .each([&](flecs::entity e, const TonemappingComponent& tc) {
@@ -2241,7 +2311,80 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   self.prepared_frame.atmosphere_buffer = self.renderer.render_context->scratch_buffer(self.atmosphere);
 
-  if (!info.gpu_meshes.empty()) {
+  // the arena has to exist before the instance array is patched with pointers into it, and the
+  // instance array has to be uploaded after that patch
+  self.prepared_frame.skinned_vertex_total = info.skinned_vertex_total;
+  if (info.skinned_vertex_total > 0) {
+    const auto positions_bytes = static_cast<usize>(info.skinned_vertex_total) * sizeof(glm::u16vec4);
+    const auto normals_bytes = static_cast<usize>(info.skinned_vertex_total) * sizeof(u32);
+
+    self.skinned_vertices_buffer = render_context.resize_buffer(
+      std::move(self.skinned_vertices_buffer),
+      vuk::MemoryUsage::eGPUonly,
+      positions_bytes + normals_bytes
+    );
+
+    const auto arena_address = self.skinned_vertices_buffer->device_address;
+    for (const auto& skinned : info.skinned_mesh_instances) {
+      if (skinned.gpu_instance_index >= info.gpu_mesh_instances.size()) {
+        continue;
+      }
+
+      // no skeleton yet means nothing wrote this instance's slice of the arena, so leaving the
+      // pointers null renders it in bind pose instead of skinning against uninitialized transforms
+      auto& gpu_mesh_instance = info.gpu_mesh_instances[skinned.gpu_instance_index];
+      if (skinned.bone_count == 0) {
+        gpu_mesh_instance.skinned_vertex_positions = 0;
+        gpu_mesh_instance.skinned_vertex_normals = 0;
+        continue;
+      }
+
+      gpu_mesh_instance.skinned_vertex_positions = arena_address + skinned.vertex_offset * sizeof(glm::u16vec4);
+      gpu_mesh_instance.skinned_vertex_normals = arena_address + positions_bytes + skinned.vertex_offset * sizeof(u32);
+    }
+
+    self.skinning_transforms_buffer = render_context.resize_buffer(
+      std::move(self.skinning_transforms_buffer),
+      vuk::MemoryUsage::eGPUonly,
+      ox::max(info.skinning_transforms.size_bytes(), sizeof(GPU::SkinningTransform))
+    );
+    self.prepared_frame.skinning_transforms_buffer =
+      info.skinning_transforms.empty()
+        ? vuk::acquire_buf("skinning transforms", *self.skinning_transforms_buffer, vuk::eNone)
+        : render_context.upload_staging(info.skinning_transforms, *self.skinning_transforms_buffer);
+
+    self.prepared_frame.skin_jobs.clear();
+    self.prepared_frame.skin_jobs.reserve(info.skinned_mesh_instances.size());
+    for (const auto& skinned : info.skinned_mesh_instances) {
+      if (skinned.vertex_count == 0 || skinned.bone_count == 0) {
+        continue;
+      }
+
+      self.prepared_frame.skin_jobs.emplace_back(
+        GPU::SkinJob{
+          .mesh_instance_index = skinned.gpu_instance_index,
+          .vertex_offset = skinned.vertex_offset,
+          .bone_offset = skinned.bone_offset,
+          .vertex_count = skinned.vertex_count,
+        }
+      );
+    }
+
+    self.prepared_frame
+      .skinned_vertices_buffer = vuk::acquire_buf("skinned vertices", *self.skinned_vertices_buffer, vuk::eNone);
+
+    // after the arena is final, because an entry's structure is built straight out of its slice.
+    // Same answer `render` builds against, so the pool holds no memory while nothing traces
+    if (self.tlas_has_consumer(cvar)) {
+      self.skinned_blas_pool.sync(render_context, info.skinned_mesh_instances, arena_address);
+    } else {
+      self.skinned_blas_pool.reset(render_context);
+    }
+  } else {
+    self.skinned_blas_pool.reset(render_context);
+  }
+
+  if (info.meshes_dirty && !info.gpu_meshes.empty()) {
     self.meshes_buffer = render_context.resize_buffer(
       std::move(self.meshes_buffer),
       vuk::MemoryUsage::eGPUonly,
@@ -2252,6 +2395,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     self.prepared_frame.meshes_buffer = vuk::acquire_buf("meshes", *self.meshes_buffer, vuk::Access::eMemoryRead);
   }
 
+  // uploaded every frame rather than under `meshes_dirty`, matching how the scene refreshes it: the
+  // TLAS build dereferences these as raw pointers, and it is 8 bytes per unique mesh
   if (!info.gpu_mesh_blas_addresses.empty()) {
     self.blas_addresses_buffer = render_context.resize_buffer(
       std::move(self.blas_addresses_buffer),
@@ -2270,7 +2415,27 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
   }
 
-  if (!info.gpu_mesh_instances.empty()) {
+  // an entry the pool has not actually built yet reads back as zero, which drops that instance out
+  // of the TLAS rather than pointing the build at memory nothing has written. Since this runs before
+  // the frame records its builds, a freshly pooled structure publishes its address next frame
+  self.prepared_frame.skinned_instance_count = static_cast<u32>(info.skinned_mesh_instances.size());
+  self.skinned_blas_addresses.assign(ox::max(info.skinned_mesh_instances.size(), 1_sz), 0_u64);
+  for (usize i = 0; i < info.skinned_mesh_instances.size(); i++) {
+    self.skinned_blas_addresses[i] = self.skinned_blas_pool.address_of(
+      info.skinned_mesh_instances[i].mesh_instance_slot
+    );
+  }
+  self.skinned_blas_addresses_buffer = render_context.resize_buffer(
+    std::move(self.skinned_blas_addresses_buffer),
+    vuk::MemoryUsage::eGPUonly,
+    ox::size_bytes(self.skinned_blas_addresses)
+  );
+  self.prepared_frame.skinned_blas_addresses_buffer = render_context.upload_staging(
+    std::span(self.skinned_blas_addresses),
+    *self.skinned_blas_addresses_buffer
+  );
+
+  if (info.mesh_instances_dirty && !info.gpu_mesh_instances.empty()) {
     self.mesh_instances_buffer = render_context.resize_buffer(
       std::move(self.mesh_instances_buffer),
       vuk::MemoryUsage::eGPUonly,

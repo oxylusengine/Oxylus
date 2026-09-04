@@ -13,19 +13,15 @@
 #include <glm/gtx/quaternion.hpp>
 #include <limits>
 #include <meshoptimizer.h>
+#include <numeric>
 #include <queue>
 #include <ranges>
 
+#include "AnimationCompiler.hpp"
+#include "GltfElementTraits.hpp"
 #include "Parallel.hpp"
 #include "Session.hpp"
 #include "TextureCompiler.hpp"
-
-template <>
-struct fastgltf::ElementTraits<glm::vec4> : fastgltf::ElementTraitsBase<glm::vec4, AccessorType::Vec4, float> {};
-template <>
-struct fastgltf::ElementTraits<glm::vec3> : fastgltf::ElementTraitsBase<glm::vec3, AccessorType::Vec3, float> {};
-template <>
-struct fastgltf::ElementTraits<glm::vec2> : fastgltf::ElementTraitsBase<glm::vec2, AccessorType::Vec2, float> {};
 
 namespace ox::rc {
 auto get_default_gltf_extensions() -> fastgltf::Extensions {
@@ -199,7 +195,7 @@ auto blob_append(std::vector<u8>& blob, const std::vector<T>& data, usize alignm
   return blob_append(blob, data.data(), ox::size_bytes(data), alignment);
 }
 
-auto build_mesh(const MeshSource& source) -> option<ModelData::Mesh> {
+auto build_mesh(const MeshSource& source, const SkinBinding& skin) -> option<ModelData::Mesh> {
   ZoneScoped;
 
   if (source.positions.empty() || source.indices.empty()) {
@@ -257,6 +253,31 @@ auto build_mesh(const MeshSource& source) -> option<ModelData::Mesh> {
     );
   }
 
+  auto joints = std::vector<glm::u16vec4>();
+  auto weights = std::vector<glm::vec4>();
+  if (
+    !skin.joint_to_bone.empty() && source.joints.size() == source.positions.size() &&
+    source.weights.size() == source.positions.size()
+  ) {
+    joints.resize(vertex_count);
+    meshopt_remapVertexBuffer(
+      joints.data(),
+      source.joints.data(),
+      source.joints.size(),
+      sizeof(glm::u16vec4),
+      vertex_remap.data()
+    );
+
+    weights.resize(vertex_count);
+    meshopt_remapVertexBuffer(
+      weights.data(),
+      source.weights.data(),
+      source.weights.size(),
+      sizeof(glm::vec4),
+      vertex_remap.data()
+    );
+  }
+
   auto indices = std::vector<u32>(source.indices.size());
   meshopt_remapIndexBuffer(indices.data(), source.indices.data(), source.indices.size(), vertex_remap.data());
 
@@ -280,9 +301,40 @@ auto build_mesh(const MeshSource& source) -> option<ModelData::Mesh> {
     quantized_texcoord.y = meshopt_quantizeHalf(texcoord.y);
   }
 
+  auto quantized_joints = std::vector<glm::u16vec4>();
+  auto quantized_weights = std::vector<glm::u16vec4>();
+  auto max_bone_influence_radius = 0.0f;
+  if (!joints.empty()) {
+    quantized_joints.resize(vertex_count);
+    quantized_weights.resize(vertex_count);
+
+    for (auto i = 0_u32; i < vertex_count; ++i) {
+      // exporters routinely emit weights that sum to slightly off 1.0, and the shader does a plain
+      // weighted sum with no correction of its own
+      auto weight = weights[i];
+      const auto sum = weight.x + weight.y + weight.z + weight.w;
+      weight = sum > glm::epsilon<f32>() ? weight / sum : glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+
+      for (auto influence = 0_u32; influence < MAX_BONE_INFLUENCES; ++influence) {
+        const auto component = static_cast<int>(influence);
+        const auto joint = joints[i][component];
+        const auto bone = joint < skin.joint_to_bone.size() ? skin.joint_to_bone[joint] : 0_u32;
+        quantized_joints[i][component] = static_cast<u16>(bone);
+        quantized_weights[i][component] = static_cast<u16>(glm::clamp(weight[component], 0.0f, 1.0f) * 65535.0f + 0.5f);
+
+        // widest bind-pose reach of any bone, which is what inflates the animated culling bounds
+        if (weight[component] > 0.0f && bone < skin.inverse_bind_pose.size()) {
+          const auto bone_local = skin.inverse_bind_pose[bone].transform_point(positions[i]);
+          max_bone_influence_radius = glm::max(max_bone_influence_radius, glm::length(bone_local));
+        }
+      }
+    }
+  }
+
   auto mesh = ModelData::Mesh{};
   mesh.name = source.name;
   mesh.vertex_count = vertex_count;
+  mesh.max_bone_influence_radius = max_bone_influence_radius;
 
   mesh.collision_positions.reserve(positions.size() * 3);
   for (const auto& position : positions) {
@@ -297,6 +349,11 @@ auto build_mesh(const MeshSource& source) -> option<ModelData::Mesh> {
   if (!texcoords.empty()) {
     mesh.has_texture_coords = true;
     mesh.texture_coords_offset = blob_append(mesh.blob, quantized_texcoords, 4);
+  }
+  if (!quantized_joints.empty()) {
+    mesh.has_skin = true;
+    mesh.skin_joint_indices_offset = blob_append(mesh.blob, quantized_joints, 8);
+    mesh.skin_weights_offset = blob_append(mesh.blob, quantized_weights, 8);
   }
 
   auto last_lod_indices = std::vector<u32>();
@@ -610,7 +667,12 @@ struct PendingMesh {
   usize gltf_primitive_index = 0;
 };
 
-auto flatten_gltf_nodes(const fastgltf::Asset& asset, ModelData& model) -> std::vector<PendingMesh> {
+auto flatten_gltf_nodes(
+  Session& session,
+  const fastgltf::Asset& asset,
+  const ankerl::unordered_dense::set<usize>& joint_nodes,
+  ModelData& model
+) -> std::vector<PendingMesh> {
   ZoneScoped;
 
   auto pending_meshes = std::vector<PendingMesh>();
@@ -632,6 +694,12 @@ auto flatten_gltf_nodes(const fastgltf::Asset& asset, ModelData& model) -> std::
     auto [gltf_node_index, parent_mesh_group_index] = processing_gltf_nodes.front();
     const auto& node = asset.nodes[gltf_node_index];
     processing_gltf_nodes.pop();
+
+    // joints live in the Skeleton, not the scene graph, because an entity per joint would make
+    // hundreds of them per character whose transforms would fight the pose every frame
+    if (joint_nodes.contains(gltf_node_index)) {
+      continue;
+    }
 
     const auto mesh_group_index = static_cast<u32>(model.mesh_groups.size());
     model.mesh_groups[parent_mesh_group_index].child_indices.push_back(mesh_group_index);
@@ -680,12 +748,20 @@ auto flatten_gltf_nodes(const fastgltf::Asset& asset, ModelData& model) -> std::
     const auto& gltf_mesh = asset.meshes[gltf_mesh_index];
     for (const auto& [gltf_primitive, gltf_primitive_index] :
          std::views::zip(gltf_mesh.primitives, std::views::iota(0_sz))) {
-      if (!gltf_primitive.indicesAccessor.has_value()) {
+      // dropping a primitive silently is how a whole model goes missing with nothing in the log
+      // to say why, so both of these report
+      if (gltf_primitive.findAttribute("POSITION") == gltf_primitive.attributes.end()) {
+        session.push_message(
+          fmt::format("Primitive {} of mesh '{}' has no POSITION attribute.", gltf_primitive_index, gltf_mesh.name)
+        );
         continue;
       }
 
       // meshlets are triangle lists; strips, fans, lines and points have nothing to build from
       if (gltf_primitive.type != fastgltf::PrimitiveType::Triangles) {
+        session.push_message(
+          fmt::format("Primitive {} of mesh '{}' is not a triangle list.", gltf_primitive_index, gltf_mesh.name)
+        );
         continue;
       }
 
@@ -704,18 +780,31 @@ auto read_gltf_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive
   auto source = MeshSource{};
   source.name = std::move(name);
 
-  const auto& index_accessor = asset.accessors[primitive.indicesAccessor.value()];
-  source.indices.resize(index_accessor.count);
-  fastgltf::iterateAccessorWithIndex<u32>(asset, index_accessor, [&](u32 index, usize i) {
-    source.indices[i] = index;
-  });
+  const auto position_attrib = primitive.findAttribute("POSITION");
+  if (position_attrib == primitive.attributes.end()) {
+    return source;
+  }
 
-  if (auto attrib = primitive.findAttribute("POSITION"); attrib != primitive.attributes.end()) {
-    const auto& accessor = asset.accessors[attrib->accessorIndex];
+  {
+    const auto& accessor = asset.accessors[position_attrib->accessorIndex];
     source.positions.resize(accessor.count);
     fastgltf::iterateAccessorWithIndex<glm::vec3>(asset, accessor, [&](glm::vec3 pos, usize i) {
       source.positions[i] = pos;
     });
+  }
+
+  if (primitive.indicesAccessor.has_value()) {
+    const auto& index_accessor = asset.accessors[primitive.indicesAccessor.value()];
+    source.indices.resize(index_accessor.count);
+    fastgltf::iterateAccessorWithIndex<u32>(asset, index_accessor, [&](u32 index, usize i) {
+      source.indices[i] = index;
+    });
+  } else {
+    // glTF allows a non-indexed triangle soup but the rest of this pipeline does not, and a
+    // sequential index buffer costs one pass while letting meshopt, the meshlet builder and the
+    // BLAS work unchanged, leaving vertices unwelded so such a mesh simply gets no LOD chain
+    source.indices.resize(source.positions.size());
+    std::iota(source.indices.begin(), source.indices.end(), 0_u32);
   }
 
   if (auto attrib = primitive.findAttribute("NORMAL"); attrib != primitive.attributes.end()) {
@@ -734,12 +823,32 @@ auto read_gltf_primitive(const fastgltf::Asset& asset, const fastgltf::Primitive
     });
   }
 
+  const auto joints_attrib = primitive.findAttribute("JOINTS_0");
+  const auto weights_attrib = primitive.findAttribute("WEIGHTS_0");
+  if (joints_attrib != primitive.attributes.end() && weights_attrib != primitive.attributes.end()) {
+    const auto& joints_accessor = asset.accessors[joints_attrib->accessorIndex];
+    source.joints.resize(joints_accessor.count);
+    fastgltf::iterateAccessorWithIndex<glm::u16vec4>(asset, joints_accessor, [&](glm::u16vec4 joint, usize i) {
+      source.joints[i] = joint;
+    });
+
+    const auto& weights_accessor = asset.accessors[weights_attrib->accessorIndex];
+    source.weights.resize(weights_accessor.count);
+    fastgltf::iterateAccessorWithIndex<glm::vec4>(asset, weights_accessor, [&](glm::vec4 weight, usize i) {
+      source.weights[i] = weight;
+    });
+  }
+
   return source;
 }
 
 // writes only the slot it is handed, so a whole model's primitives can be built at once
 auto build_pending_mesh(
-  Session& session, const fastgltf::Asset& asset, const PendingMesh& pending, ModelData::Mesh& out
+  Session& session,
+  const fastgltf::Asset& asset,
+  const PendingMesh& pending,
+  const SkinBinding& skin,
+  ModelData::Mesh& out
 ) -> void {
   ZoneScoped;
 
@@ -747,7 +856,7 @@ auto build_pending_mesh(
   const auto& gltf_primitive = gltf_mesh.primitives[pending.gltf_primitive_index];
 
   auto name = fmt::format("{}_{}", std::string(gltf_mesh.name), pending.gltf_primitive_index);
-  auto built = build_mesh(read_gltf_primitive(asset, gltf_primitive, name));
+  auto built = build_mesh(read_gltf_primitive(asset, gltf_primitive, name), skin);
   if (!built.has_value()) {
     session.push_message(fmt::format("Primitive '{}' produced no renderable geometry.", name));
     // The slot has to stay so `MeshGroup::mesh_indices` keeps pointing at the right mesh.
@@ -787,8 +896,30 @@ auto compile_model(Session& session, const ModelCompileRequest& request) -> opti
 
   compile_gltf_lights(asset, model);
 
+  // a clip names the nodes it drives, so more than one skin makes "which skeleton does this clip
+  // target" ambiguous, mirroring the single-scene restriction above
+  if (asset.skins.size() > 1) {
+    session.push_error(fmt::format("'{}' has {} skins; only one is supported.", request.path, asset.skins.size()));
+    return nullopt;
+  }
+
+  auto skin = option<SkinBuildData>(nullopt);
+  auto joint_nodes = ankerl::unordered_dense::set<usize>();
+  if (!asset.skins.empty()) {
+    skin = build_gltf_skeleton(session, asset, asset.skins[0]);
+    if (!skin.has_value()) {
+      return nullopt;
+    }
+
+    joint_nodes.insert(skin->bone_to_node.begin(), skin->bone_to_node.end());
+    model.skeleton = to_model_skeleton(skin->skeleton);
+  }
+
+  const auto skin_binding = skin.has_value() ? SkinBinding{skin->joint_to_bone, skin->skeleton.inverse_bind_pose}
+                                             : SkinBinding{};
+
   // has to stay serial: it walks the node graph breadth-first and grows `model.mesh_groups`
-  const auto pending_meshes = flatten_gltf_nodes(asset, model);
+  const auto pending_meshes = flatten_gltf_nodes(session, asset, joint_nodes, model);
 
   const auto linear_texture_indices = extract_linear_texture_indices(asset);
 
@@ -796,6 +927,9 @@ auto compile_model(Session& session, const ModelCompileRequest& request) -> opti
   model.textures.resize(asset.textures.size());
   result.textures.resize(asset.textures.size());
   model.meshes.resize(pending_meshes.size());
+  // one slot per glTF animation, so a clip that resamples to nothing leaves a `frame_count == 0`
+  // hole rather than shifting every UUID the sidecar has recorded after it
+  model.animations.resize(skin.has_value() ? asset.animations.size() : 0_sz);
 
   {
     // texture decodes and mesh builds only read the parsed asset, so they share one barrier and
@@ -818,10 +952,26 @@ auto compile_model(Session& session, const ModelCompileRequest& request) -> opti
     }
 
     for (auto mesh_index = 0_sz; mesh_index < pending_meshes.size(); mesh_index++) {
-      scope.dispatch([&session, &asset, &model, &pending_meshes, mesh_index] {
-        build_pending_mesh(session, asset, pending_meshes[mesh_index], model.meshes[mesh_index]);
+      scope.dispatch([&session, &asset, &model, &pending_meshes, &skin_binding, mesh_index] {
+        build_pending_mesh(session, asset, pending_meshes[mesh_index], skin_binding, model.meshes[mesh_index]);
       });
     }
+
+    for (auto animation_index = 0_sz; animation_index < model.animations.size(); animation_index++) {
+      scope.dispatch([&asset, &model, &skin, animation_index] {
+        auto clip = build_gltf_animation(asset, asset.animations[animation_index], skin.value());
+        if (clip.has_value()) {
+          model.animations[animation_index] = std::move(clip.value());
+        }
+      });
+    }
+  }
+
+  for (const auto& mesh : model.meshes) {
+    model.skeleton.max_bone_influence_radius = glm::max(
+      model.skeleton.max_bone_influence_radius,
+      mesh.max_bone_influence_radius
+    );
   }
 
   return result;

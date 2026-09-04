@@ -86,7 +86,8 @@ public func resolve_visbuffer_triangle(
 ) -> TriangleHit {
     let meshlet_instance = meshlet_instances[vis.meshlet_instance_index];
     let mesh_instance = geometry.mesh_instances[meshlet_instance.mesh_instance_index];
-    let mesh = geometry.meshes[mesh_instance.mesh_index];
+    var mesh = geometry.meshes[mesh_instance.mesh_index];
+    mesh.apply_skin(mesh_instance);
     let mesh_lod = mesh.lods[mesh_instance.lod_index];
     let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
 
@@ -102,7 +103,8 @@ public func resolve_visbuffer_triangle(
 public func resolve_ray_triangle(in SceneGeometry geometry, u32 mesh_instance_index, u32 primitive_index)
     -> TriangleHit {
     let mesh_instance = geometry.mesh_instances[mesh_instance_index];
-    let mesh = geometry.meshes[mesh_instance.mesh_index];
+    var mesh = geometry.meshes[mesh_instance.mesh_index];
+    mesh.apply_skin(mesh_instance);
     if (mesh.lod_count == 0) {
         return {};
     }

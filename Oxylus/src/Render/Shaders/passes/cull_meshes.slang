@@ -27,7 +27,10 @@ func cs_main(
 
     if (mesh_instance_index < camera.mesh_instances_count) {
         let mesh_instance = mesh_instances[mesh_instance_index];
-        let mesh = meshes[mesh_instance.mesh_index];
+        var mesh = meshes[mesh_instance.mesh_index];
+        // swaps in the animated bounds, so frustum culling and LOD selection see where the mesh
+        // actually is this frame rather than where it was authored
+        mesh.apply_skin(mesh_instance);
         let transform = transforms[mesh_instance.transform_index];
         let mvp = mul(camera.projection_view, transform.world);
 
