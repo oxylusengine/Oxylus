@@ -24,7 +24,22 @@ struct FragmentOutput {
     f32x4 normal_color : SV_Target1;
     f32x3 emission_color : SV_Target2;
     f32x2 metallic_roughness_color : SV_Target3;
+    f32x2 velocity : SV_Target4;
 };
+
+// terrain never moves, so its screen motion is the camera's alone: reproject the same world point
+// through both frames. see visbuffer_decode for the units and sign convention
+func camera_velocity(f32x3 world_position) -> f32x2 {
+    let current_clip = mul(params.camera.projection_view, f32x4(world_position, 1.0));
+    let previous_clip = mul(params.camera.previous_projection_view, f32x4(world_position, 1.0));
+    if (current_clip.w <= 0.0 || previous_clip.w <= 0.0) {
+        return f32x2(0.0);
+    }
+
+    let delta_ndc = (previous_clip.xy / previous_clip.w) - (current_clip.xy / current_clip.w);
+
+    return delta_ndc * 0.5 * params.camera.resolution;
+}
 
 struct TerrainSurface {
     f32x4 albedo;
@@ -162,6 +177,7 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
     output.normal_color.zw = com::vec3_to_oct(geometric_normal);
     output.emission_color = surface.emissive;
     output.metallic_roughness_color = surface.metallic_roughness;
+    output.velocity = camera_velocity(world_position);
 
     return output;
 }

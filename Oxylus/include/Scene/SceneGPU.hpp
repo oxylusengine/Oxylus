@@ -197,6 +197,8 @@ struct CullCamera {
   glm::vec2 resolution = {};
   f32 near_clip = {};
   u32 mesh_instance_count = {};
+  // only the main geometry pass sets this; culling and shadow users leave it zero
+  glm::vec2 jitter = {};
 };
 
 constexpr static u32 MAX_POINT_LIGHTS = 128;
@@ -381,6 +383,42 @@ struct PostProcessSettings {
   alignas(4) f32 film_grain_scale = 1.0f;
   alignas(4) f32 film_grain_amount = 0.5f;
   alignas(4) u32 film_grain_seed = 0;
+};
+
+// mirrors FSR3Constants in Render/Shaders/fsr3/constants.slang, same field order as the SDK's
+// cbFSR3Upscaler so the port stays comparable against the reference
+struct FSR3Constants {
+  alignas(4) glm::ivec2 render_size = {};
+  alignas(4) glm::ivec2 previous_frame_render_size = {};
+
+  alignas(4) glm::ivec2 upscale_size = {};
+  alignas(4) glm::ivec2 previous_frame_upscale_size = {};
+
+  alignas(4) glm::ivec2 max_render_size = {};
+  alignas(4) glm::ivec2 max_upscale_size = {};
+
+  alignas(4) glm::vec4 device_to_view_depth = {};
+
+  alignas(4) glm::vec2 jitter_offset = {};
+  alignas(4) glm::vec2 previous_frame_jitter_offset = {};
+
+  alignas(4) glm::vec2 motion_vector_scale = {};
+  alignas(4) glm::vec2 downscale_factor = {};
+
+  alignas(4) glm::vec2 motion_vector_jitter_cancellation = {};
+  alignas(4) f32 tan_half_fov = 0.0f;
+  alignas(4) f32 jitter_phase_count = 1.0f;
+
+  alignas(4) f32 delta_time = 0.0f;
+  alignas(4) f32 delta_pre_exposure = 1.0f;
+  alignas(4) f32 view_space_to_meters_factor = 1.0f;
+  alignas(4) f32 frame_index = 0.0f;
+
+  alignas(4) f32 velocity_factor = 1.0f;
+  alignas(4) f32 reactiveness_scale = 1.0f;
+  alignas(4) f32 shading_change_scale = 1.0f;
+  alignas(4) f32 accumulation_added_per_frame = 1.0f / 3.0f;
+  alignas(4) f32 min_disocclusion_accumulation = -1.0f / 3.0f;
 };
 
 enum struct TonemapType : u32 {

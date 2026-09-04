@@ -15,7 +15,11 @@ struct CompositeParameters {
 struct PushConstants {
   f32x4 outline_color; // RGBA
   u32x2 resolution;
-  i32 outline_width;   // Dilate radius (pixels)
+  // The silhouette masks come from the visbuffer, so they sit at render resolution and have to be
+  // indexed separately from the display sized output whenever an upscaler is running. Must stay in
+  // sync with the PC struct in ViewportPanel.cpp.
+  u32x2 mask_resolution;
+  i32 outline_width;   // Dilate radius (mask pixels)
   i32 occluded_mode;   // 0 = Hide behind walls, 1 = Faded behind walls, 2 = Always visible
 };
 
@@ -33,15 +37,17 @@ func fs_main(VertexOutput input, uniform ParameterBlock<CompositeParameters> par
   i32 r = max(1, config.outline_width);
   f32 max_mask = 0.0;
 
+  u32x2 mask_coords = min(u32x2(input.tex_coord * f32x2(config.mask_resolution)), config.mask_resolution - 1u);
+
   // 1D Vertical Sweep (Completes the 2D separable dilation)
   for (i32 y = -r; y <= r; y++) {
-    i32 sample_y = clamp(int(pixel_coords.y) + y, 0, int(config.resolution.y) - 1);
-    f32 val = params.dilated_horiz_mask.Load(i32x3(pixel_coords.x, sample_y, 0)).r;
+    i32 sample_y = clamp(int(mask_coords.y) + y, 0, int(config.mask_resolution.y) - 1);
+    f32 val = params.dilated_horiz_mask.Load(i32x3(mask_coords.x, sample_y, 0)).r;
     max_mask = max(max_mask, val);
   }
 
   // Isolate the outer edge boundary
-  f32 center_mask = params.original_mask.Load(i32x3(pixel_coords, 0)).r;
+  f32 center_mask = params.original_mask.Load(i32x3(mask_coords, 0)).r;
   f32 edge_intensity = max_mask - center_mask;
 
   f32x4 back_color = params.scene_color.Sample(params.linear_sampler, input.tex_coord);

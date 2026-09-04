@@ -75,6 +75,12 @@ struct RendererCVar {
 
   AutoCVar_Int cvar_fxaa_enable;
 
+  AutoCVar_Int cvar_upscaler_backend;
+  AutoCVar_Int cvar_upscaler_quality;
+  AutoCVar_Float cvar_upscaler_sharpness;
+  AutoCVar_Int cvar_upscaler_debug_view;
+  AutoCVar_Int cvar_upscaler_disable_jitter;
+
   AutoCVar_Int cvar_tonemapper;
   AutoCVar_Float cvar_exposure;
   AutoCVar_Float cvar_gamma;

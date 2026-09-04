@@ -624,7 +624,44 @@ auto RendererInstance::render(
 
   auto& bindless_set = self.renderer.render_context->get_descriptor_set();
 
-  self.camera_data.resolution = {dst_extent.width, dst_extent.height};
+  const auto upscaler = UpscalerSettings{
+    .backend = static_cast<UpscalerBackend>(
+      std::clamp(cvar.cvar_upscaler_backend.get(), 0, static_cast<i32>(UpscalerBackend::Count) - 1)
+    ),
+    .quality = static_cast<UpscalerQuality>(
+      std::clamp(cvar.cvar_upscaler_quality.get(), 0, static_cast<i32>(UpscalerQuality::Count) - 1)
+    ),
+    .sharpness = cvar.cvar_upscaler_sharpness.get(),
+  };
+  const auto upscaling = upscaler.backend != UpscalerBackend::None;
+
+  // everything from the visbuffer through lighting runs at render resolution; only the upscale
+  // output and the post chain behind it are display resolution
+  const auto display_size = glm::uvec2(dst_extent.width, dst_extent.height);
+  const auto render_size = upscaling ? upscaler_render_extent(display_size, upscaler.quality) : display_size;
+  const auto render_extent = vuk::Extent3D{render_size.x, render_size.y, 1};
+
+  self.render_size_ = render_size;
+
+  if (upscaling && !cvar.cvar_upscaler_disable_jitter.as_bool()) {
+    const auto phase_count = upscaler_jitter_phase_count(render_size.x, display_size.x);
+    self.previous_jitter = self.current_jitter;
+    self.current_jitter = upscaler_jitter_offset(self.jitter_frame_index, phase_count);
+    self.jitter_frame_index += 1;
+  } else if (upscaling) {
+    // jitter held at zero; the accumulator still runs, which isolates jitter related artifacts
+    self.previous_jitter = {};
+    self.current_jitter = {};
+    self.jitter_frame_index += 1;
+  } else {
+    self.previous_jitter = {};
+    self.current_jitter = {};
+    self.jitter_frame_index = 0;
+  }
+
+  self.camera_data.resolution = {render_extent.width, render_extent.height};
+  self.camera_data.temporalaa_jitter = self.current_jitter;
+  self.camera_data.temporalaa_jitter_prev = self.previous_jitter;
   self.prepared_frame.camera_buffer = self.renderer.render_context->scratch_buffer(self.camera_data);
 
   self.render_queue_2d.update();
@@ -638,7 +675,8 @@ auto RendererInstance::render(
 
   if (cvar.cvar_bloom_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasBloom;
-  if (cvar.cvar_fxaa_enable.as_bool())
+  // a temporal upscaler already resolves aliasing, and FXAA would smear its output
+  if (cvar.cvar_fxaa_enable.as_bool() && !upscaling)
     self.gpu_scene_flags |= GPU::SceneFlags::HasFXAA;
   if (cvar.cvar_vbgtao_enable.as_bool())
     self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
@@ -665,7 +703,7 @@ auto RendererInstance::render(
   auto final_attachment = vuk::declare_ia(
     "final_attachment",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
-     .extent = dst_extent,
+     .extent = render_extent,
      .format = hdr_format,
      .sample_count = vuk::Samples::e1,
      .level_count = 1,
@@ -679,7 +717,7 @@ auto RendererInstance::render(
   auto depth_attachment = vuk::declare_ia(
     "depth_image",
     {.usage = vuk::ImageUsageFlagBits::eDepthStencilAttachment | vuk::ImageUsageFlagBits::eSampled,
-     .extent = dst_extent,
+     .extent = render_extent,
      .format = vuk::Format::eD32Sfloat,
      .sample_count = vuk::SampleCountFlagBits::e1,
      .level_count = 1,
@@ -767,7 +805,7 @@ auto RendererInstance::render(
   auto overdraw_attachment = vuk::declare_ia(
     "overdraw",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .extent = draw_overdraw ? dst_extent : vuk::Extent3D{1, 1, 1},
+     .extent = draw_overdraw ? render_extent : vuk::Extent3D{1, 1, 1},
      .format = vuk::Format::eR32Uint,
      .sample_count = vuk::SampleCountFlagBits::e1,
      .level_count = 1,
@@ -850,6 +888,27 @@ auto RendererInstance::render(
     vuk::Black<f32>
   );
 
+  // alpha blended content (sprites, particles) cannot produce a meaningful motion vector, so it
+  // marks itself reactive here and the upscaler leans on the current frame in those pixels
+  auto reactive_mask_attachment = vuk::declare_ia(
+    "reactive_mask",
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+     .format = vuk::Format::eR8Unorm,
+     .sample_count = vuk::Samples::e1}
+  );
+  reactive_mask_attachment.same_shape_as(final_attachment);
+  reactive_mask_attachment = vuk::clear_image(std::move(reactive_mask_attachment), vuk::Black<f32>);
+
+  auto velocity_attachment = vuk::declare_ia(
+    "velocity",
+    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eColorAttachment,
+     .format = vuk::Format::eR16G16Sfloat,
+     .sample_count = vuk::Samples::e1}
+  );
+  velocity_attachment.same_shape_as(visbuffer_attachment);
+  // background pixels keep a zero vector, which reprojects onto themselves
+  velocity_attachment = vuk::clear_image(std::move(velocity_attachment), vuk::Black<f32>);
+
   auto vbgtao_occlusion_attachment = vuk::declare_ia(
     "vbgtao occlusion",
     {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
@@ -912,6 +971,7 @@ auto RendererInstance::render(
       .normal_attachment = std::move(normal_attachment),
       .emissive_attachment = std::move(emissive_attachment),
       .metallic_roughness_occlusion_attachment = std::move(metallic_roughness_occlusion_attachment),
+      .velocity_attachment = std::move(velocity_attachment),
     };
 
     auto cull_camera = GPU::CullCamera{
@@ -921,6 +981,7 @@ auto RendererInstance::render(
       .resolution = self.camera_data.resolution,
       .near_clip = self.camera_data.near_clip,
       .mesh_instance_count = self.prepared_frame.mesh_instance_count,
+      .jitter = self.current_jitter,
     };
     const auto has_meshes = self.prepared_frame.mesh_instance_count > 0;
 
@@ -1074,6 +1135,7 @@ auto RendererInstance::render(
         .metallic_roughness_occlusion_attachment = std::move(
           main_geometry_context.metallic_roughness_occlusion_attachment
         ),
+        .velocity_attachment = std::move(main_geometry_context.velocity_attachment),
       };
       self.decode_terrain(terrain_decode_context);
 
@@ -1085,6 +1147,7 @@ auto RendererInstance::render(
       main_geometry_context.metallic_roughness_occlusion_attachment = std::move(
         terrain_decode_context.metallic_roughness_occlusion_attachment
       );
+      main_geometry_context.velocity_attachment = std::move(terrain_decode_context.velocity_attachment);
     }
 
     visbuffer_attachment = std::move(main_geometry_context.visbuffer_attachment);
@@ -1094,6 +1157,7 @@ auto RendererInstance::render(
     normal_attachment = std::move(main_geometry_context.normal_attachment);
     emissive_attachment = std::move(main_geometry_context.emissive_attachment);
     metallic_roughness_occlusion_attachment = std::move(main_geometry_context.metallic_roughness_occlusion_attachment);
+    velocity_attachment = std::move(main_geometry_context.velocity_attachment);
 
     const auto has_shadow_pointspot = self.prepared_frame.shadow_point_light_count +
                                         self.prepared_frame.shadow_spot_light_count >
@@ -1108,7 +1172,7 @@ auto RendererInstance::render(
       auto rmvsm_context = RMVSMContext{
         .bindless_set = &bindless_set,
         .sun_moved = self.sun_direction_changed,
-        .depth_extent = dst_extent,
+        .depth_extent = render_extent,
         .depth_attachment = std::move(depth_attachment),
         .normal_attachment = std::move(normal_attachment),
         .light_grid_origin = light_grid_context.grid_origin,
@@ -1223,7 +1287,7 @@ auto RendererInstance::render(
       vbgtao_depth_differences_attachment = vuk::declare_ia(
         "vbgtao depth differences",
         {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-         .extent = dst_extent,
+         .extent = render_extent,
          .format = vuk::Format::eR32Uint,
          .sample_count = vuk::Samples::e1,
          .level_count = 1,
@@ -1576,6 +1640,7 @@ auto RendererInstance::render(
       [rq2d = self.render_queue_2d, &descriptor_set = bindless_set](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eColorWrite) target,
+        VUK_IA(vuk::eColorRW) reactive,
         VUK_IA(vuk::eDepthStencilRW) depth,
         VUK_BA(vuk::eAttributeRead) vertex_buffer,
         VUK_BA(vuk::eVertexRead) materials,
@@ -1603,7 +1668,8 @@ auto RendererInstance::render(
             .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
             .set_viewport(0, vuk::Rect2D::framebuffer())
             .set_scissor(0, vuk::Rect2D::framebuffer())
-            .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
+            .set_color_blend(target, vuk::BlendPreset::eAlphaBlend)
+            .set_color_blend(reactive, REACTIVE_MASK_BLEND_STATE)
             .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
             .bind_vertex_buffer(0, vertex_buffer, 0, vertex_pack_2d, vuk::VertexInputRate::eInstance)
             .push_constants(
@@ -1615,12 +1681,13 @@ auto RendererInstance::render(
             .draw(6, batch.count, 0, batch.offset);
         }
 
-        return std::make_tuple(target, depth, camera, vertex_buffer, materials, transforms_);
+        return std::make_tuple(target, reactive, depth, camera, vertex_buffer, materials, transforms_);
       }
     );
 
     std::tie(
       final_attachment,
+      reactive_mask_attachment,
       depth_attachment,
       self.prepared_frame.camera_buffer,
       vertex_buffer_2d,
@@ -1629,6 +1696,7 @@ auto RendererInstance::render(
     ) =
       forward_2d_pass(
         std::move(final_attachment),
+        std::move(reactive_mask_attachment),
         std::move(depth_attachment),
         std::move(vertex_buffer_2d),
         std::move(self.prepared_frame.materials_buffer),
@@ -1669,12 +1737,14 @@ auto RendererInstance::render(
       .camera_buffer = std::move(self.prepared_frame.camera_buffer),
       .materials_buffer = std::move(self.prepared_frame.materials_buffer),
       .depth_attachment = std::move(depth_attachment),
+      .reactive_mask_attachment = std::move(reactive_mask_attachment),
     };
 
     self.simulate_particles(particle_context);
     final_attachment = self.draw_particles(particle_context, std::move(final_attachment));
 
     depth_attachment = std::move(particle_context.depth_attachment);
+    reactive_mask_attachment = std::move(particle_context.reactive_mask_attachment);
     self.prepared_frame.camera_buffer = std::move(particle_context.camera_buffer);
     self.prepared_frame.materials_buffer = std::move(particle_context.materials_buffer);
   }
@@ -1699,6 +1769,85 @@ auto RendererInstance::render(
     depth_attachment = std::move(ddgi_debug_context.depth_attachment);
     ddgi_irradiance_attachment = std::move(ddgi_debug_context.irradiance_attachment);
     ddgi_probe_states_buffer = std::move(ddgi_debug_context.probe_states_buffer);
+  }
+
+  // --- FSR3 Upscale ---
+  // sits between scene composition and post processing, so bloom and tonemap run at display
+  // resolution on the upscaled image
+  if (upscaling) {
+    self.allocate_fsr3_resources(render_size, display_size);
+
+    const auto resolution_changed = self.fsr3_previous_render_size != render_size ||
+                                    self.fsr3_previous_display_size != display_size;
+    const auto reset_history = !self.fsr3_history_valid || resolution_changed;
+
+    if (reset_history) {
+      self.fsr3_frame_index = 0;
+    }
+
+    auto fsr3_constants = GPU::FSR3Constants{
+      .render_size = glm::ivec2(render_size),
+      .previous_frame_render_size = glm::ivec2(reset_history ? render_size : self.fsr3_previous_render_size),
+      .upscale_size = glm::ivec2(display_size),
+      .previous_frame_upscale_size = glm::ivec2(reset_history ? display_size : self.fsr3_previous_display_size),
+      .max_render_size = glm::ivec2(self.fsr3_render_size),
+      .max_upscale_size = glm::ivec2(self.fsr3_display_size),
+      .jitter_offset = self.current_jitter,
+      .previous_frame_jitter_offset = reset_history ? self.current_jitter : self.previous_jitter,
+      // velocity is written in render resolution pixels, fsr reprojects in uv
+      .motion_vector_scale = 1.0f / glm::vec2(render_size),
+      .downscale_factor = glm::vec2(render_size) / glm::vec2(display_size),
+      // motion vectors are built from unjittered matrices, so there is nothing to cancel
+      .motion_vector_jitter_cancellation = {},
+      .jitter_phase_count = static_cast<f32>(upscaler_jitter_phase_count(render_size.x, display_size.x)),
+      .delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f,
+      // oxylus does not pre-expose the hdr buffer, so there is no exposure delta to undo
+      .delta_pre_exposure = 1.0f,
+      .frame_index = static_cast<f32>(self.fsr3_frame_index),
+    };
+
+    // reversed-z with a finite far plane: the SDK's inverted, non-infinite case
+    {
+      const auto near_clip = self.camera_data.near_clip;
+      const auto far_clip = self.camera_data.far_clip;
+      const auto depth_min = std::max(near_clip, far_clip);
+      const auto depth_max = std::min(near_clip, far_clip);
+      const auto q = depth_max / (depth_min - depth_max);
+
+      const auto aspect = static_cast<f32>(render_size.x) / static_cast<f32>(render_size.y);
+      const auto fov_vertical = glm::radians(self.camera_data.fov);
+      const auto cot_half_fov_y = std::cos(0.5f * fov_vertical) / std::sin(0.5f * fov_vertical);
+
+      fsr3_constants.device_to_view_depth = {
+        -1.0f * q,
+        q * depth_min,
+        aspect / cot_half_fov_y,
+        1.0f / cot_half_fov_y,
+      };
+      fsr3_constants.tan_half_fov = 1.0f / cot_half_fov_y;
+    }
+
+    auto fsr3_context = FSR3Context{
+      .constants = fsr3_constants,
+      .sharpness = std::clamp(upscaler.sharpness, 0.0f, 1.0f),
+      .reset = reset_history,
+      .debug_view = static_cast<u32>(std::max(cvar.cvar_upscaler_debug_view.get(), 0)),
+      .color_attachment = std::move(final_attachment),
+      .depth_attachment = std::move(depth_attachment),
+      .velocity_attachment = std::move(velocity_attachment),
+      .reactive_mask_attachment = std::move(reactive_mask_attachment),
+      .exposure_buffer = std::move(self.prepared_frame.exposure_buffer),
+    };
+
+    final_attachment = self.apply_fsr3(fsr3_context);
+    depth_attachment = std::move(fsr3_context.depth_attachment);
+    velocity_attachment = std::move(fsr3_context.velocity_attachment);
+    reactive_mask_attachment = std::move(fsr3_context.reactive_mask_attachment);
+    self.prepared_frame.exposure_buffer = std::move(fsr3_context.exposure_buffer);
+
+    self.fsr3_previous_render_size = render_size;
+    self.fsr3_previous_display_size = display_size;
+    self.fsr3_frame_index += 1;
   }
 
   // --- FXAA Pass ---
@@ -1781,6 +1930,46 @@ auto RendererInstance::render(
   }
 
   dst_attachment = self.apply_tonemap(post_process_context);
+
+  // overlay passes in the PostProcessing stage bind depth as a real attachment next to the display
+  // resolution result, and vulkan needs the extents to match
+  if (upscaling) {
+    auto upscaled_depth = vuk::declare_ia(
+      "depth_image_display",
+      {.usage = vuk::ImageUsageFlagBits::eDepthStencilAttachment | vuk::ImageUsageFlagBits::eSampled,
+       .extent = dst_extent,
+       .format = vuk::Format::eD32Sfloat,
+       .sample_count = vuk::SampleCountFlagBits::e1,
+       .level_count = 1,
+       .layer_count = 1}
+    );
+    upscaled_depth = vuk::clear_image(std::move(upscaled_depth), vuk::DepthZero);
+
+    auto depth_upscale_pass = vuk::make_pass(
+      "depth upscale",
+      [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eDepthStencilRW) dst, VUK_IA(vuk::eFragmentSampled) src) {
+        cmd_list.bind_graphics_pipeline("depth_upscale")
+          .set_rasterization({})
+          .set_depth_stencil(
+            {.depthTestEnable = true, .depthWriteEnable = true, .depthCompareOp = vuk::CompareOp::eAlways}
+          )
+          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
+          .set_viewport(0, vuk::Rect2D::framebuffer())
+          .set_scissor(0, vuk::Rect2D::framebuffer())
+          .bind_image(0, 0, src)
+          .bind_sampler(0, 1, vuk::NearestSamplerClamped)
+          .draw(3, 1, 0, 0);
+
+        return std::make_tuple(dst, src);
+      }
+    );
+
+    std::tie(upscaled_depth, depth_attachment) = depth_upscale_pass(
+      std::move(upscaled_depth),
+      std::move(depth_attachment)
+    );
+    depth_attachment = std::move(upscaled_depth);
+  }
 
   {
     RenderStageContext ctx(self, self.shared_resources, RenderStage::PostProcessing, *self.renderer.render_context);
@@ -1887,8 +2076,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     .previous_inv_view = self.previous_camera_data.inv_view,
     .previous_projection_view = self.previous_camera_data.projection_view,
     .previous_inv_projection_view = self.previous_camera_data.inv_projection_view,
-    .temporalaa_jitter = cam.jitter,
-    .temporalaa_jitter_prev = self.previous_camera_data.temporalaa_jitter_prev,
     .up = cam.up,
     .near_clip = cam.near_clip,
     .forward = cam.forward,

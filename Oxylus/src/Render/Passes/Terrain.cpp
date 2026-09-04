@@ -294,7 +294,8 @@ auto RendererInstance::decode_terrain(this RendererInstance& self, TerrainDecode
       VUK_IA(vuk::eColorRW) albedo,
       VUK_IA(vuk::eColorRW) normal,
       VUK_IA(vuk::eColorRW) emissive,
-      VUK_IA(vuk::eColorRW) metallic_roughness_occlusion
+      VUK_IA(vuk::eColorRW) metallic_roughness_occlusion,
+      VUK_IA(vuk::eColorRW) velocity
     ) {
       cmd_list //
         .bind_graphics_pipeline("terrain_decode")
@@ -304,6 +305,7 @@ auto RendererInstance::decode_terrain(this RendererInstance& self, TerrainDecode
         .set_color_blend(normal, vuk::BlendPreset::eOff)
         .set_color_blend(emissive, vuk::BlendPreset::eOff)
         .set_color_blend(metallic_roughness_occlusion, vuk::BlendPreset::eOff)
+        .set_color_blend(velocity, vuk::BlendPreset::eOff)
         .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
         .set_viewport(0, vuk::Rect2D::framebuffer())
         .set_scissor(0, vuk::Rect2D::framebuffer())
@@ -331,7 +333,8 @@ auto RendererInstance::decode_terrain(this RendererInstance& self, TerrainDecode
         albedo,
         normal,
         emissive,
-        metallic_roughness_occlusion
+        metallic_roughness_occlusion,
+        velocity
       );
     }
   );
@@ -348,7 +351,8 @@ auto RendererInstance::decode_terrain(this RendererInstance& self, TerrainDecode
     context.albedo_attachment,
     context.normal_attachment,
     context.emissive_attachment,
-    context.metallic_roughness_occlusion_attachment
+    context.metallic_roughness_occlusion_attachment,
+    context.velocity_attachment
   ) =
     decode_pass(
       std::move(self.prepared_frame.camera_buffer),
@@ -362,7 +366,8 @@ auto RendererInstance::decode_terrain(this RendererInstance& self, TerrainDecode
       std::move(context.albedo_attachment),
       std::move(context.normal_attachment),
       std::move(context.emissive_attachment),
-      std::move(context.metallic_roughness_occlusion_attachment)
+      std::move(context.metallic_roughness_occlusion_attachment),
+      std::move(context.velocity_attachment)
     );
 }
 } // namespace ox

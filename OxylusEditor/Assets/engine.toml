@@ -338,6 +338,61 @@ path = "passes/fxaa/fxaa.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
+name = "depth_upscale"
+path = "passes/depth_upscale.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "fsr3_prepare_inputs"
+path = "passes/fsr3/fsr3_prepare_inputs.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "fsr3_farthest_depth_mip1"
+path = "passes/fsr3/fsr3_farthest_depth_mip1.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "fsr3_shading_change_pyramid"
+path = "passes/fsr3/fsr3_shading_change_pyramid.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "fsr3_downsample"
+path = "passes/fsr3/fsr3_downsample.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "fsr3_shading_change"
+path = "passes/fsr3/fsr3_shading_change.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "fsr3_prepare_reactivity"
+path = "passes/fsr3/fsr3_prepare_reactivity.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "fsr3_luma_instability"
+path = "passes/fsr3/fsr3_luma_instability.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "fsr3_accumulate"
+path = "passes/fsr3/fsr3_accumulate.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "fsr3_debug_view"
+path = "passes/fsr3/fsr3_debug_view.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "fsr3_rcas"
+path = "passes/fsr3/fsr3_rcas.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "debug_mesh"
 path = "passes/debug_mesh.slang"
 entry_points = ["vs_main", "fs_main"]

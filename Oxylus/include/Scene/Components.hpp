@@ -95,9 +95,6 @@ struct CameraComponent {
   f32 tilt = 0.0f;
   f32 zoom = 1.0f;
 
-  glm::vec2 jitter = {};
-  glm::vec2 jitter_prev = {};
-
   struct Matrices {
     glm::mat4 view_matrix = {};
     glm::mat4 projection_matrix = {};

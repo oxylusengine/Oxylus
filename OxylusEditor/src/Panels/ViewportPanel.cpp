@@ -15,6 +15,7 @@
 #include "Editor.hpp"
 #include "Render/Camera.hpp"
 #include "Render/RenderContext.hpp"
+#include "Render/Upscaler.hpp"
 #include "Render/Utils/VukCommon.hpp"
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
@@ -336,8 +337,15 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         corrected_min_region.y + self.render_size.y
       };
 
+      // picking and the terrain brush index the visbuffer, which sits at render resolution while an
+      // upscaler is active, so map into that rather than the displayed size
+      const auto picking_render_size = renderer_instance->get_render_size();
+      const auto picking_target_size = picking_render_size.x > 0 && picking_render_size.y > 0
+                                         ? picking_render_size
+                                         : glm::uvec2(self.scaled_render_size.x, self.scaled_render_size.y);
+
       glm::uvec2 picking_texel = get_mouse_texel_coords(
-        {self.scaled_render_size.x, self.scaled_render_size.y},
+        {static_cast<f32>(picking_target_size.x), static_cast<f32>(picking_target_size.y)},
         self.viewport_position,
         corrected_min_region,
         corrected_max_region,
@@ -348,9 +356,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       }
 
       self.update_terrain_brush(
-        picking_texel.x == ~0_u32
-          ? glm::vec2(-1.0f)
-          : glm::vec2(picking_texel) / glm::vec2(self.scaled_render_size.x, self.scaled_render_size.y)
+        picking_texel.x == ~0_u32 ? glm::vec2(-1.0f) : glm::vec2(picking_texel) / glm::vec2(picking_target_size)
       );
 
       if (editor.editor_cvar.cvar_draw_grid.as_bool()) {
@@ -652,6 +658,11 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
       cvar_sys.cvar_bloom_intensity.set_default();
       cvar_sys.cvar_bloom_clamp.set_default();
       cvar_sys.cvar_fxaa_enable.set_default();
+      cvar_sys.cvar_upscaler_backend.set_default();
+      cvar_sys.cvar_upscaler_quality.set_default();
+      cvar_sys.cvar_upscaler_sharpness.set_default();
+      cvar_sys.cvar_upscaler_debug_view.set_default();
+      cvar_sys.cvar_upscaler_disable_jitter.set_default();
       cvar_sys.cvar_vbgtao_quality_level.set_default();
       cvar_sys.cvar_vbgtao_radius.set_default();
       cvar_sys.cvar_vbgtao_thickness.set_default();
@@ -774,9 +785,65 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
 
       if (open_action != -1)
         ImGui::SetNextItemOpen(open_action != 0);
+      if (ImGui::TreeNodeEx("Upscaling", TREE_FLAGS, "%s", "Upscaling")) {
+        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          const char* backends[2] = {"None", "FSR 3.1.5"};
+          UI::property("Backend", cvar_sys.cvar_upscaler_backend.get_ptr(), backends, 2);
+
+          const auto upscaling_active = cvar_sys.cvar_upscaler_backend.get() != 0;
+          ImGui::BeginDisabled(!upscaling_active);
+          const char* quality_modes[5] = {
+            "Native AA (1.0x)",
+            "Quality (1.5x)",
+            "Balanced (1.7x)",
+            "Performance (2.0x)",
+            "Ultra Performance (3.0x)",
+          };
+
+          const auto display_size = glm::uvec2(
+            static_cast<u32>(std::max(self.scaled_render_size.x, 0.0f)),
+            static_cast<u32>(std::max(self.scaled_render_size.y, 0.0f))
+          );
+          const auto quality = static_cast<UpscalerQuality>(
+            std::clamp(cvar_sys.cvar_upscaler_quality.get(), 0, static_cast<i32>(UpscalerQuality::Count) - 1)
+          );
+          const auto render_size = upscaler_render_extent(display_size, quality);
+          auto quality_text = fmt::format(
+            "Quality: {}x{} -> {}x{}",
+            render_size.x,
+            render_size.y,
+            display_size.x,
+            display_size.y
+          );
+          UI::property(quality_text.c_str(), cvar_sys.cvar_upscaler_quality.get_ptr(), quality_modes, 5);
+          UI::property<float>("Sharpness", cvar_sys.cvar_upscaler_sharpness.get_ptr(), 0.0f, 1.0f);
+
+          const char* debug_views[8] = {
+            "Off",
+            "Dilated Motion Vectors",
+            "Disocclusion",
+            "Reactive",
+            "Shading Change",
+            "Accumulation",
+            "Luma Instability",
+            "Dilated Depth",
+          };
+          UI::property("Debug View", cvar_sys.cvar_upscaler_debug_view.get_ptr(), debug_views, 8);
+          UI::property("Hold Jitter At Zero", cvar_sys.cvar_upscaler_disable_jitter.get_ptr_bool());
+          ImGui::EndDisabled();
+
+          UI::end_properties();
+        }
+        ImGui::TreePop();
+      }
+
+      if (open_action != -1)
+        ImGui::SetNextItemOpen(open_action != 0);
       if (ImGui::TreeNodeEx("FXAA", TREE_FLAGS, "%s", "FXAA")) {
         if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+          ImGui::BeginDisabled(cvar_sys.cvar_upscaler_backend.get() != 0);
           UI::property("Enabled", cvar_sys.cvar_fxaa_enable.get_ptr_bool());
+          ImGui::EndDisabled();
           UI::end_properties();
         }
         ImGui::TreePop();
@@ -1475,7 +1542,8 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
      .format = vuk::Format::eR8Unorm,
      .sample_count = vuk::Samples::e1}
   );
-  temp_mask.same_shape_as(outline_composite_output);
+  // the dilation runs entirely in mask space; the composite maps display fragments into it
+  temp_mask.same_shape_as(*silhouette_mask);
 
   auto horiz_dilate_pass = vuk::make_pass(
     "horizontal_dilate_pass",
@@ -1518,11 +1586,13 @@ auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAtt
       struct PC {
         glm::vec4 outline_color = glm::vec4(1.0f, 0.53f, 0.0f, 1.0f); // Pure Gold
         glm::uvec2 resolution;
+        glm::uvec2 mask_resolution;
         i32 outline_width = 5;
         i32 occluded_mode = OccludeMode::AlwaysVisible;
       } push_block;
 
       push_block.resolution = glm::uvec2(color->extent.width, color->extent.height);
+      push_block.mask_resolution = glm::uvec2(original_mask->extent.width, original_mask->extent.height);
 
       cmd_list.bind_graphics_pipeline("highlight_composite")
         .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)

@@ -52,14 +52,24 @@ VOutput vs_main(VertexInput input, u32 vertex_id : SV_VertexID) {
   f32x4 world_position = f32x4(f32x2(positions[vertex_index].xy * f32x2((f32)((bool)flip ? -1 : 1), 1)), 0, 1);
   world_position = mul(transform, world_position);
 
-  output.position = mul(C.camera_buffer.projection_view, f32x4(world_position.xyz, 1.0f));
+  output.position = C.camera_buffer.jitter_clip(
+    mul(C.camera_buffer.projection_view, f32x4(world_position.xyz, 1.0f))
+  );
   output.material_index = material_index;
 
   return output;
 }
 
+// Alpha blended content has no usable motion vector, so instead of ghosting it is marked reactive
+// and the upscaler leans on the current frame in those pixels. The SDK asks that reactivity stay at
+// or below 0.9 so history is never fully discarded.
+struct FragmentOutput {
+    f32x4 color : SV_Target0;
+    f32 reactive : SV_Target1;
+};
+
 [[shader("fragment")]]
-f32x4 fs_main(VOutput input) : SV_Target0 {
+FragmentOutput fs_main(VOutput input) {
   const Material material = C.materials[input.material_index];
 
   f32x2 uv = input.uv_alpha.xy;
@@ -74,5 +84,9 @@ f32x4 fs_main(VOutput input) : SV_Target0 {
     discard;
   }
 
-  return color;
+  FragmentOutput output;
+  output.color = color;
+  output.reactive = min(color.w, 0.9);
+
+  return output;
 }
