@@ -2,7 +2,7 @@ local fmt_version = "12.1.0"
 local fmt_configs = { header_only = false, shared = false }
 local lua_version = "v5.4.7"
 local imgui_version = "v1.92.9b-docking"
-local simdjson_version = "v4.6.8"
+local simdjson_version = "v4.2.4"
 
 packages = {
   ["stb 2024.06.01"] = {},
