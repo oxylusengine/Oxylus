@@ -6,6 +6,8 @@
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 
+#include "Asset/AssetImporter.hpp"
+#include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Editor.hpp"
 #include "Render/DebugRenderer.hpp"
@@ -21,6 +23,9 @@ SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanelState("Scene Hierarchy",
 
   viewer.asset_manager_viewer.filter_icon = ICON_MDI_FILTER;
   viewer.asset_manager_viewer.search_icon = ICON_MDI_MAGNIFY;
+  viewer.import_asset_callback = [](const std::filesystem::path& path) {
+    return import_asset(App::mod<AssetManager>(), path);
+  };
 
   viewer.on_selected_entity_callback([](flecs::entity e) {
     auto& context = App::mod<Editor>().get_context();

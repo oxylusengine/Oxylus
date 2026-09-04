@@ -15,153 +15,6 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-auto begin_asset_meta(JsonWriter& writer, const UUID& uuid, AssetType type) -> void {
-  ZoneScoped;
-
-  writer.begin_obj();
-  writer["uuid"] = uuid.str();
-  writer["type"] = std::to_underlying(type);
-}
-
-auto write_texture_asset_meta(JsonWriter& writer, Texture*) -> bool {
-  ZoneScoped;
-
-  return true;
-}
-
-auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Material& material) -> bool {
-  ZoneScoped;
-
-  writer.begin_obj();
-
-  writer["uuid"] = uuid.str();
-  writer["sampling_mode"] = static_cast<u32>(material.sampling_mode);
-  writer["albedo_color"] = material.albedo_color;
-  writer["uv_size"] = material.uv_size;
-  writer["uv_offset"] = material.uv_offset;
-  writer["emissive_color"] = material.emissive_color;
-  writer["roughness_factor"] = material.roughness_factor;
-  writer["metallic_factor"] = material.metallic_factor;
-  writer["alpha_mode"] = std::to_underlying(material.alpha_mode);
-  writer["alpha_cutoff"] = material.alpha_cutoff;
-  writer["flip_normal_y"] = material.flip_normal_y;
-  writer["albedo_texture"] = material.albedo_texture.str().c_str();
-  writer["normal_texture"] = material.normal_texture.str().c_str();
-  writer["emissive_texture"] = material.emissive_texture.str().c_str();
-  writer["metallic_roughness_texture"] = material.metallic_roughness_texture.str().c_str();
-  writer["occlusion_texture"] = material.occlusion_texture.str().c_str();
-
-  writer.end_obj();
-
-  return true;
-}
-
-auto read_material_asset_meta(simdjson::ondemand::value json, Material& material) -> bool {
-  ZoneScoped;
-
-  const auto read_f32 = [&json](std::string_view key, f32& value) {
-    auto result = json[key].get_double();
-    if (!result.error()) {
-      value = static_cast<f32>(result.value_unsafe());
-    }
-  };
-
-  const auto read_enum = [&json]<typename T>(std::string_view key, T& value) {
-    auto result = json[key].get_uint64();
-    if (!result.error()) {
-      value = static_cast<T>(result.value_unsafe());
-    }
-  };
-
-  const auto read_bool = [&json](std::string_view key, bool& value) {
-    auto result = json[key].get_bool();
-    if (!result.error()) {
-      value = result.value_unsafe();
-    }
-  };
-
-  const auto read_uuid = [&json](std::string_view key, UUID& value) {
-    auto result = json[key].get_string();
-    if (result.error()) {
-      return;
-    }
-
-    if (auto uuid = UUID::from_string(result.value_unsafe()); uuid.has_value()) {
-      value = uuid.value();
-    }
-  };
-
-  const auto read_vec = [&json]<glm::length_t N>(std::string_view key, glm::vec<N, f32>& value) {
-    constexpr static std::string_view components[] = {"x", "y", "z", "w"};
-    auto field = json[key];
-    if (field.error()) {
-      return;
-    }
-
-    for (glm::length_t i = 0; i < N; i++) {
-      auto result = field[components[i]].get_double();
-      if (!result.error()) {
-        value[i] = static_cast<f32>(result.value_unsafe());
-      }
-    }
-  };
-
-  read_enum("sampling_mode", material.sampling_mode);
-  read_enum("alpha_mode", material.alpha_mode);
-  read_vec("albedo_color", material.albedo_color);
-  read_vec("uv_size", material.uv_size);
-  read_vec("uv_offset", material.uv_offset);
-  read_vec("emissive_color", material.emissive_color);
-  read_f32("roughness_factor", material.roughness_factor);
-  read_f32("metallic_factor", material.metallic_factor);
-  read_f32("alpha_cutoff", material.alpha_cutoff);
-  read_bool("flip_normal_y", material.flip_normal_y);
-  read_uuid("albedo_texture", material.albedo_texture);
-  read_uuid("normal_texture", material.normal_texture);
-  read_uuid("emissive_texture", material.emissive_texture);
-  read_uuid("metallic_roughness_texture", material.metallic_roughness_texture);
-  read_uuid("occlusion_texture", material.occlusion_texture);
-
-  return true;
-}
-
-auto write_scene_asset_meta(JsonWriter& writer, const Scene* scene) -> bool {
-  ZoneScoped;
-
-  writer["name"] = scene->scene_name;
-
-  return true;
-}
-
-auto write_script_asset_meta(JsonWriter&, LuaScript*) -> bool {
-  ZoneScoped;
-
-  return true;
-}
-
-auto write_terrain_asset_meta(JsonWriter&, const TerrainEdits*) -> bool {
-  ZoneScoped;
-
-  return true;
-}
-
-auto write_particle_system_asset_meta(JsonWriter&, const ParticleSystem*) -> bool {
-  ZoneScoped;
-
-  return true;
-}
-
-auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bool {
-  ZoneScoped;
-
-  writer.end_obj();
-
-  auto file = File(AssetManager::meta_file_path(path), FileAccess::Write);
-  file.write(writer.stream.view());
-  file.close();
-  return true;
-}
-
 auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
@@ -187,6 +40,7 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   }
 
   self.asset_registry.clear();
+  self.pending_load_info.clear();
   self.dirty_materials.clear();
   self.model_map.reset();
   self.texture_map.reset();
@@ -211,93 +65,6 @@ auto AssetManager::get_registry_snapshot(this AssetManager& self) -> std::vector
   }
 
   return snapshot;
-}
-
-auto AssetManager::read_meta_file(this AssetManager& self, const std::filesystem::path& path)
-  -> std::unique_ptr<AssetMetaFile> {
-  auto content = File::to_string(path);
-  if (content.empty()) {
-    OX_LOG_ERROR("Failed to read/open file {}!", path);
-    return nullptr;
-  }
-
-  auto meta_file = std::make_unique<AssetMetaFile>();
-  meta_file->contents = simdjson::padded_string(content);
-  meta_file->doc = meta_file->parser.iterate(meta_file->contents);
-
-  if (meta_file->doc.error()) {
-    OX_LOG_ERROR("Failed to parse meta file! {}", simdjson::error_message(meta_file->doc.error()));
-    return nullptr;
-  }
-
-  return meta_file;
-}
-
-auto AssetManager::read_meta_file_from_asset(this AssetManager& self, const std::filesystem::path& path)
-  -> std::unique_ptr<AssetMetaFile> {
-  ZoneScoped;
-
-  auto meta_path = meta_file_path(path);
-  if (meta_path.empty() || !std::filesystem::exists(meta_path)) {
-    return nullptr;
-  }
-
-  return self.read_meta_file(meta_path);
-}
-
-auto AssetManager::to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  if (!path.has_extension()) {
-    return AssetFileType::None;
-  }
-
-  auto extension = stack.to_upper(path.extension().string());
-  switch (fnv64_str(extension)) {
-    case fnv64_c(".GLB")       : return AssetFileType::GLB;
-    case fnv64_c(".GLTF")      : return AssetFileType::GLTF;
-    case fnv64_c(".PNG")       : return AssetFileType::PNG;
-    case fnv64_c(".JPG")       :
-    case fnv64_c(".JPEG")      : return AssetFileType::JPEG;
-    case fnv64_c(".DDS")       : return AssetFileType::DDS;
-    case fnv64_c(".JSON")      : return AssetFileType::JSON;
-    case fnv64_c(".OXASSET")   : return AssetFileType::Meta;
-    case fnv64_c(".KTX2")      : return AssetFileType::KTX2;
-    case fnv64_c(".LUA")       : return AssetFileType::LUA;
-    case fnv64_c(".OXTERRAIN") : return AssetFileType::OXTERRAIN;
-    case fnv64_c(".OXPARTICLE"): return AssetFileType::OXPARTICLE;
-    default                    : return AssetFileType::None;
-  }
-}
-
-auto AssetManager::meta_file_path(const std::filesystem::path& path) -> std::filesystem::path {
-  ZoneScoped;
-
-  if (path.empty()) {
-    return {};
-  }
-
-  if (to_asset_file_type(path) == AssetFileType::Meta) {
-    return path;
-  }
-
-  auto meta_path = path;
-  meta_path += ".oxasset";
-
-  return meta_path;
-}
-
-auto AssetManager::owns_meta_file(const std::filesystem::path& path) -> bool {
-  ZoneScoped;
-
-  if (path.empty()) {
-    return false;
-  }
-
-  const auto file_type = to_asset_file_type(path);
-
-  return file_type == AssetFileType::None || file_type == AssetFileType::Meta;
 }
 
 auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
@@ -337,82 +104,6 @@ auto AssetManager::create_asset(this AssetManager& self, const AssetType type, c
   return asset.uuid;
 }
 
-auto AssetManager::import_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID {
-  ZoneScoped;
-
-  if (!std::filesystem::exists(path)) {
-    OX_LOG_ERROR("Trying to import an asset '{}' that doesn't exist.", path);
-    return UUID(nullptr);
-  }
-
-  auto asset_type = AssetType::None;
-  switch (to_asset_file_type(path)) {
-    case AssetFileType::Meta: {
-      return self.register_asset(path);
-    }
-    case AssetFileType::GLB :
-    case AssetFileType::GLTF: {
-      asset_type = AssetType::Model;
-      break;
-    }
-    case AssetFileType::PNG :
-    case AssetFileType::JPEG:
-    case AssetFileType::DDS :
-    case AssetFileType::KTX2: {
-      asset_type = AssetType::Texture;
-      break;
-    }
-    case AssetFileType::LUA: {
-      asset_type = AssetType::Script;
-      break;
-    }
-    case AssetFileType::OXTERRAIN: {
-      asset_type = AssetType::Terrain;
-      break;
-    }
-    case AssetFileType::OXPARTICLE: {
-      asset_type = AssetType::ParticleSystem;
-      break;
-    }
-    default: {
-      return UUID(nullptr);
-    }
-  }
-
-  auto meta_path = meta_file_path(path);
-  if (std::filesystem::exists(meta_path)) {
-    return self.register_asset(meta_path);
-  }
-
-  auto uuid = self.create_asset(asset_type, path);
-  if (!uuid) {
-    return UUID(nullptr);
-  }
-
-  JsonWriter writer{};
-  begin_asset_meta(writer, uuid, asset_type);
-
-  switch (asset_type) {
-    case AssetType::Model: {
-      write_gltf_meta(self, path, writer);
-    } break;
-    case AssetType::Texture: {
-      Texture texture = {};
-      write_texture_asset_meta(writer, &texture);
-    } break;
-    case AssetType::Script: {
-      write_script_asset_meta(writer, nullptr);
-    } break;
-    default:;
-  }
-
-  if (!end_asset_meta(writer, path)) {
-    return UUID(nullptr);
-  }
-
-  return uuid;
-}
-
 auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> void {
   ZoneScoped;
 
@@ -444,40 +135,9 @@ auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> vo
     self.asset_registry.erase(uuid);
   }
 
-  OX_LOG_INFO("Deleted asset {}.", uuid.str());
-}
+  self.clear_pending_load_info(uuid);
 
-auto AssetManager::register_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  auto meta_json = self.read_meta_file(path);
-  if (!meta_json) {
-    return UUID(nullptr);
-  }
-
-  auto uuid_json = meta_json->doc["uuid"].get_string();
-  if (uuid_json.error()) {
-    OX_LOG_ERROR("Failed to read asset meta file. `uuid` is missing.");
-    return UUID(nullptr);
-  }
-
-  auto type_json = meta_json->doc["type"].get_number();
-  if (type_json.error()) {
-    OX_LOG_ERROR("Failed to read asset meta file. `type` is missing.");
-    return UUID(nullptr);
-  }
-
-  auto asset_path = path;
-  asset_path.replace_extension("");
-  auto uuid = UUID::from_string(uuid_json.value_unsafe()).value();
-  auto type = static_cast<AssetType>(type_json.value_unsafe().get_uint64());
-
-  if (!self.register_asset(uuid, type, asset_path)) {
-    return UUID(nullptr);
-  }
-
-  return uuid;
+  OX_LOG_TRACE("Deleted asset {}.", uuid.str());
 }
 
 auto AssetManager::register_asset(
@@ -500,9 +160,36 @@ auto AssetManager::register_asset(
   asset.path = path;
   asset.type = type;
 
-  OX_LOG_INFO("Registered new asset: {}:{}", to_asset_type_sv(asset.type), uuid.str());
+  OX_LOG_TRACE("Registered new asset: {}:{}", to_asset_type_sv(asset.type), uuid.str());
 
   return true;
+}
+
+auto AssetManager::set_pending_load_info(this AssetManager& self, const UUID& uuid, LoadInfo info) -> void {
+  ZoneScoped;
+
+  auto write_lock = std::unique_lock(self.pending_load_info_mutex);
+  self.pending_load_info.insert_or_assign(uuid, std::move(info));
+}
+
+auto AssetManager::get_pending_load_info(this AssetManager& self, const UUID& uuid) -> LoadInfo {
+  ZoneScoped;
+
+  // a copy, not a guard: the value goes straight into a load that must not run holding this lock
+  auto read_lock = std::shared_lock(self.pending_load_info_mutex);
+  const auto it = self.pending_load_info.find(uuid);
+  if (it == self.pending_load_info.end()) {
+    return {};
+  }
+
+  return it->second;
+}
+
+auto AssetManager::clear_pending_load_info(this AssetManager& self, const UUID& uuid) -> void {
+  ZoneScoped;
+
+  auto write_lock = std::unique_lock(self.pending_load_info_mutex);
+  self.pending_load_info.erase(uuid);
 }
 
 auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void {
@@ -660,121 +347,6 @@ auto AssetManager::unload_asset_impl(this AssetManager& self, const AssetType ty
   return false;
 }
 
-auto AssetManager::export_asset(this AssetManager& self, const UUID& uuid, const std::filesystem::path& path) -> bool {
-  auto asset = self.get_asset(uuid);
-  if (!asset)
-    return false;
-
-  const auto meta_path = meta_file_path(path);
-  if (std::filesystem::exists(meta_path)) {
-    if (auto existing_meta = self.read_meta_file(meta_path)) {
-      auto existing_uuid = existing_meta->doc["uuid"].get_string();
-      if (!existing_uuid.error() && existing_uuid.value_unsafe() != uuid.str()) {
-        OX_LOG_ERROR("Refusing to overwrite {}, which belongs to another asset.", meta_path);
-        return false;
-      }
-    }
-  }
-
-  JsonWriter writer{};
-  begin_asset_meta(writer, uuid, asset->type);
-
-  switch (asset->type) {
-    case AssetType::Texture:
-    case AssetType::Model  : {
-      OX_LOG_ERROR("Cannot export unsupported asset type {}.", to_asset_type_sv(asset->type));
-      return false;
-    }
-    case AssetType::Scene: {
-      if (!self.export_scene(asset->uuid, writer, path))
-        return false;
-    } break;
-    case AssetType::Material: {
-      if (!self.export_material(asset->uuid, writer, path))
-        return false;
-    } break;
-    case AssetType::Script: {
-      if (!self.export_script(asset->uuid, writer, path))
-        return false;
-    } break;
-    case AssetType::Terrain: {
-      if (!self.export_terrain_edits(asset->uuid, writer, path))
-        return false;
-    } break;
-    case AssetType::ParticleSystem: {
-      if (!self.export_particle_system(asset->uuid, writer, path))
-        return false;
-    } break;
-    default: return false;
-  }
-
-  return end_asset_meta(writer, path);
-}
-
-auto AssetManager::export_scene(
-  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
-) -> bool {
-  ZoneScoped;
-
-  auto scene = self.get_scene(uuid);
-  write_scene_asset_meta(writer, scene.value);
-
-  return scene->save_to_file(path);
-}
-
-auto AssetManager::export_material(
-  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
-) -> bool {
-  ZoneScoped;
-
-  auto material = self.get_material(uuid);
-
-  writer.key("material");
-  return write_material_asset_meta(writer, uuid, *material.value);
-}
-
-auto AssetManager::export_script(
-  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
-) -> bool {
-  ZoneScoped;
-
-  return write_script_asset_meta(writer, nullptr);
-}
-
-auto AssetManager::export_terrain_edits(
-  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
-) -> bool {
-  ZoneScoped;
-
-  auto edits = self.get_terrain_edits(uuid);
-  if (!edits) {
-    return false;
-  }
-
-  if (!edits->write(path)) {
-    return false;
-  }
-
-  return write_terrain_asset_meta(writer, edits.value);
-}
-
-auto AssetManager::export_particle_system(
-  this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
-) -> bool {
-  ZoneScoped;
-
-  auto particle_system = self.get_particle_system(uuid);
-  if (!particle_system) {
-    return false;
-  }
-
-  if (!particle_system->write(path)) {
-    return false;
-  }
-
-  return write_particle_system_asset_meta(writer, particle_system.value);
-}
-
 auto AssetManager::load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire)
   -> bool {
   return self.load_asset_impl(uuid, std::move(explicit_load), should_acquire, false);
@@ -825,6 +397,10 @@ auto AssetManager::load_asset_impl(
     return false;
   }
 
+  if (std::holds_alternative<std::monostate>(explicit_load)) {
+    explicit_load = self.get_pending_load_info(uuid);
+  }
+
   if (asset->is_loaded()) {
     const auto loaded_model_id = asset->type == AssetType::Model ? asset->model_id : ModelID::Invalid;
     const auto* texture_info = asset->type == AssetType::Texture ? std::get_if<TextureLoadInfo>(&explicit_load)
@@ -840,12 +416,17 @@ auto AssetManager::load_asset_impl(
     if (texture_info) {
       auto texture = self.get_texture(loaded_texture_id);
       if (texture && texture->is_srgb() != texture_info->is_srgb) {
+        // A compiled texture's colour space is settled at import, so no slot ever wins the race --
+        // the pack does, and the fix is to re-import rather than to split the asset.
+        const auto is_compiled = loaded_path.extension() == ".oxpack";
         OX_LOG_WARN(
-          "Texture '{}' is already loaded as {}; the request for {} is ignored. Whichever slot "
-          "loaded it first won. Use a separate asset per color space.",
+          "Texture '{}' is {} as {} but is being used as {}. {}",
           loaded_path.string(),
+          is_compiled ? "compiled" : "already loaded",
           texture->is_srgb() ? "sRGB" : "linear",
-          texture_info->is_srgb ? "sRGB" : "linear"
+          texture_info->is_srgb ? "sRGB" : "linear",
+          is_compiled ? "Re-import the source with the other color space."
+                      : "Whichever slot loaded it first won; use a separate asset per color space."
         );
       }
     }
@@ -865,14 +446,18 @@ auto AssetManager::load_asset_impl(
   auto asset_id = [&]() -> u64 {
     switch (asset_type) {
       case AssetType::Model: {
-        if (auto* info = std::get_if<ModelLoadInfo>(&explicit_load)) {
-          return static_cast<u64>(self.load_model(*info));
+        if (auto* model_data = std::get_if<ModelData>(&explicit_load)) {
+          return static_cast<u64>(self.load_model(std::move(*model_data), async));
         }
 
         return static_cast<u64>(self.load_model(asset_path, async));
       }
       case AssetType::Texture: {
-        auto info = std::get_if<TextureLoadInfo>(&explicit_load);
+        if (auto* texture_data = std::get_if<TextureData>(&explicit_load)) {
+          return static_cast<u64>(self.load_texture(*texture_data, TextureLoadInfo{}));
+        }
+
+        const auto* info = std::get_if<TextureLoadInfo>(&explicit_load);
         return static_cast<u64>(self.load_texture(asset_path, info ? *info : TextureLoadInfo{}));
       }
       case AssetType::Scene         : return static_cast<u64>(self.load_scene(asset_path));
@@ -881,18 +466,8 @@ auto AssetManager::load_asset_impl(
       case AssetType::Terrain       : return static_cast<u64>(self.load_terrain_edits(asset_path));
       case AssetType::ParticleSystem: return static_cast<u64>(self.load_particle_system(asset_path));
       case AssetType::Material      : {
-        if (auto* info = std::get_if<Material>(&explicit_load)) {
-          return static_cast<u64>(self.load_material(asset_path, *info));
-        }
-
-        auto material = Material{};
-        if (auto meta_file = self.read_meta_file_from_asset(asset_path)) {
-          if (auto material_json = meta_file->doc["material"]; !material_json.error()) {
-            read_material_asset_meta(material_json.value_unsafe(), material);
-          }
-        }
-
-        return static_cast<u64>(self.load_material(asset_path, material));
+        const auto* info = std::get_if<Material>(&explicit_load);
+        return static_cast<u64>(self.load_material(asset_path, info ? *info : Material{}));
       }
       default:;
     }
@@ -948,6 +523,26 @@ auto AssetManager::load_texture(this AssetManager& self, const std::filesystem::
     data_source = path;
   }
 
+  // A cooked texture lives in a pack of its own; only PNG/JPEG still reach the engine encoded.
+  if (
+    const auto* file_path = std::get_if<std::filesystem::path>(&data_source);
+    file_path && file_path->extension() == ".oxpack"
+  ) {
+    auto pack = AssetFile::unpack(*file_path);
+    if (!pack) {
+      return TextureID::Invalid;
+    }
+
+    for (auto& entry : pack->entries) {
+      if (auto* texture_data = std::get_if<TextureData>(&entry.data)) {
+        return self.load_texture(*texture_data, info);
+      }
+    }
+
+    OX_LOG_ERROR("Asset pack '{}' contains no texture.", *file_path);
+    return TextureID::Invalid;
+  }
+
   auto texture = Texture::create({
     .source = data_source,
     .level_count = info.level_count,
@@ -955,7 +550,21 @@ auto AssetManager::load_texture(this AssetManager& self, const std::filesystem::
     .target_width = info.target_width,
     .target_height = info.target_height,
     .sampler_info = info.sampler_info,
+    .batch = info.batch,
   });
+  if (!texture) {
+    return TextureID::Invalid;
+  }
+
+  auto write_lock = std::unique_lock(self.textures_mutex);
+  return self.texture_map.create_slot(std::move(texture));
+}
+
+auto AssetManager::load_texture(this AssetManager& self, const TextureData& data, const TextureLoadInfo& info)
+  -> TextureID {
+  ZoneScoped;
+
+  auto texture = Texture::create(data, info);
   if (!texture) {
     return TextureID::Invalid;
   }

@@ -1,6 +1,5 @@
 #include "Render/Renderer.hpp"
 
-#include <meshoptimizer.h>
 #include <vuk/runtime/CommandBuffer.hpp>
 #include <vuk/vsl/Core.hpp>
 
@@ -18,14 +17,14 @@ static_assert(ModuleHasUpdate<Renderer>, "Renderer::update must be registered as
 
 static auto is_two_component_format(vuk::Format format) -> bool {
   switch (format) {
-    case vuk::Format::eBc5UnormBlock:
-    case vuk::Format::eBc5SnormBlock:
+    case vuk::Format::eBc5UnormBlock      :
+    case vuk::Format::eBc5SnormBlock      :
     case vuk::Format::eEacR11G11UnormBlock:
     case vuk::Format::eEacR11G11SnormBlock:
-    case vuk::Format::eR8G8Unorm:
-    case vuk::Format::eR8G8Snorm:
-    case vuk::Format::eR16G16Unorm:
-    case vuk::Format::eR16G16Snorm:
+    case vuk::Format::eR8G8Unorm          :
+    case vuk::Format::eR8G8Snorm          :
+    case vuk::Format::eR16G16Unorm        :
+    case vuk::Format::eR16G16Snorm        :
     case vuk::Format::eR16G16Sfloat       : return true;
     default                               : return false;
   }
@@ -92,20 +91,22 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
   return GPU::Material{
     .albedo_color =
       glm::u16vec4{
-        meshopt_quantizeHalf(material.albedo_color.x),
-        meshopt_quantizeHalf(material.albedo_color.y),
-        meshopt_quantizeHalf(material.albedo_color.z),
-        meshopt_quantizeHalf(material.albedo_color.w),
+        glm::packHalf1x16(material.albedo_color.x),
+        glm::packHalf1x16(material.albedo_color.y),
+        glm::packHalf1x16(material.albedo_color.z),
+        glm::packHalf1x16(material.albedo_color.w),
       },
     .emissive_color =
       glm::u16vec3{
-        meshopt_quantizeHalf(material.emissive_color.x),
-        meshopt_quantizeHalf(material.emissive_color.y),
-        meshopt_quantizeHalf(material.emissive_color.z),
+        glm::packHalf1x16(material.emissive_color.x),
+        glm::packHalf1x16(material.emissive_color.y),
+        glm::packHalf1x16(material.emissive_color.z),
       },
-    .roughness_factor = meshopt_quantizeHalf(material.roughness_factor),
-    .metallic_factor = meshopt_quantizeHalf(material.metallic_factor),
-    .alpha_cutoff = meshopt_quantizeHalf(material.alpha_cutoff),
+    .roughness_factor = glm::packHalf1x16(material.roughness_factor),
+    .metallic_factor = glm::packHalf1x16(material.metallic_factor),
+    .alpha_cutoff = glm::packHalf1x16(material.alpha_cutoff),
+    .normal_scale = glm::packHalf1x16(material.normal_scale),
+    .occlusion_strength = glm::packHalf1x16(material.occlusion_strength),
     .flags = flags,
     .sampler_index = sampler_index,
     .albedo_image_index = albedo_image_index.value_or(0_u32),
@@ -115,12 +116,12 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
     .occlusion_image_index = occlusion_image_index.value_or(0_u32),
     .uv_size =
       glm::u16vec2{
-        meshopt_quantizeHalf(material.uv_size.x),
-        meshopt_quantizeHalf(material.uv_size.y),
+        glm::packHalf1x16(material.uv_size.x),
+        glm::packHalf1x16(material.uv_size.y),
       },
     .uv_offset = glm::u16vec2{
-      meshopt_quantizeHalf(material.uv_offset.x),
-      meshopt_quantizeHalf(material.uv_offset.y),
+      glm::packHalf1x16(material.uv_offset.x),
+      glm::packHalf1x16(material.uv_offset.y),
     },
   };
 }

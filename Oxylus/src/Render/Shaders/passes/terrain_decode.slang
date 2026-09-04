@@ -63,14 +63,7 @@ func sample_terrain_layers(f32x2 uv, f32x2 ddx_uv, f32x2 ddy_uv, f32x4 weights) 
         result.metallic_roughness += material.sample_metallic_roughness(grad) * weight;
         result.occlusion += material.sample_occlusion_color(grad) * weight;
 
-        var tangent_normal = f32x3(0.0, 0.0, 1.0);
-        if (material.flags & MaterialFlag::HasNormalImage) {
-            tangent_normal = material.sample_normal_color(grad) * 2.0 - 1.0;
-            if (material.flags & MaterialFlag::NormalFlipY) {
-                tangent_normal.y = -tangent_normal.y;
-            }
-        }
-        result.tangent_normal += tangent_normal * weight;
+        result.tangent_normal += material.sample_tangent_normal(grad) * weight;
     }
 
     return result;

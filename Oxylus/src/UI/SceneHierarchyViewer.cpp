@@ -188,7 +188,7 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
             const auto* payload_data = PayloadData::from_payload(payload);
             const auto path = payload_data->get_path();
             if (path.extension() == ".oxparticle") {
-              auto asset = App::mod<AssetManager>().import_asset(path);
+              auto asset = import_asset_callback ? import_asset_callback(path) : UUID(nullptr);
               if (asset) {
                 auto new_entity = scene_->create_particle_system_entity(asset);
                 if (new_entity != flecs::entity::null()) {
@@ -368,7 +368,7 @@ auto SceneHierarchyViewer::draw_entity_node(
         const auto* payload_data = PayloadData::from_payload(payload);
         const auto path = payload_data->get_path();
         if (path.extension() == ".oxparticle") {
-          auto asset = App::mod<AssetManager>().import_asset(path);
+          auto asset = import_asset_callback ? import_asset_callback(path) : UUID(nullptr);
           if (asset) {
             auto new_entity = scene_->create_particle_system_entity(asset);
             if (new_entity != flecs::entity::null()) {

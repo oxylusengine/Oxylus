@@ -1,10 +1,10 @@
 #pragma once
 
 #include "Core/EventSystem.hpp"
-#include "Core/Project.hpp"
 #include "Panels/EditorPanelRegistry.hpp"
 #include "Panels/MainViewportPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
+#include "Project/Project.hpp"
 #include "Utils/Command.hpp"
 #include "Utils/EditorCVar.hpp"
 #include "Utils/EditorContext.hpp"
@@ -43,6 +43,8 @@ public:
   SceneManager scene_manager = {};
 
   std::unique_ptr<Project> active_project = nullptr;
+  // Set when a project opens, consumed once its asset scan has registered everything the scene names.
+  option<std::filesystem::path> pending_start_scene = nullopt;
 
   EditorTheme editor_theme;
 
