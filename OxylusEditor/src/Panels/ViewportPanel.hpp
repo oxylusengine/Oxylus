@@ -75,6 +75,8 @@ private:
   f32 snap_amount = 1.f;
   f32 rotate_snap_amount = 45.f;
 
+  f32 volume_level = 0.f;
+
   bool terrain_brush_enabled = false;
   bool terrain_stroke_active = false;
   TerrainBrush terrain_brush = {};
@@ -87,10 +89,12 @@ private:
   std::vector<vuk::Unique<vuk::Buffer>> id_buffers = {};
 
   // Camera
-  f32 translation_dampening = 0.3f;
-  f32 rotation_dampening = 0.3f;
+  f32 translation_dampening = 0.15f;
+  f32 rotation_dampening = 0.08f;
   // Editor camera orientation state; the scene camera derives its basis from the transform rotation.
   glm::vec2 camera_yaw_pitch = glm::vec2(0.0f);
+  glm::vec3 camera_position_target = glm::vec3(0.0f);
+  glm::vec2 camera_yaw_pitch_target = glm::vec2(0.0f);
   glm::vec2 locked_mouse_position = glm::vec2(0.0f);
   glm::vec3 translation_velocity = glm::vec3(0);
   glm::vec2 rotation_velocity = glm::vec2(0);
@@ -100,6 +104,7 @@ private:
   auto draw_snap_settings_panel(this ViewportPanel& self) -> void;
   auto draw_terrain_brush_settings_panel(this ViewportPanel& self) -> void;
   auto update_terrain_brush(this ViewportPanel& self, glm::vec2 viewport_uv) -> void;
+  auto draw_sound_settings_panel(this ViewportPanel& self) -> void;
   auto draw_stats_overlay(this const ViewportPanel& self, bool draw_scene_stats) -> void;
   auto draw_gizmos(this ViewportPanel& self) -> void;
   auto mouse_picking_stages(this ViewportPanel& self, RendererInstance* renderer_instance, glm::uvec2 picking_texel)

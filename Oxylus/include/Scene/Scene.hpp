@@ -203,6 +203,8 @@ public:
 
   auto create_model_entity_async(this Scene& self, const UUID& asset_uuid) -> void;
 
+  auto create_particle_system_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity;
+
   auto attach_mesh(
     this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid = {}
   ) -> bool;
@@ -324,6 +326,7 @@ public:
   auto get_rml_context(this const Scene& self) -> Rml::Context*;
   auto get_rml_context_name(this const Scene& self) -> std::string_view;
   auto set_rml_dpi_ratio(this const Scene& self, f32 ratio) -> void;
+  auto clear_rml_dpi_ratio_override(this const Scene& self) -> void;
 
   static auto entity_to_json(JsonWriter& writer, flecs::entity e) -> void;
   static auto json_to_entity(

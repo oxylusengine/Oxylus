@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Project.hpp"
+#include "Project/Project.hpp"
 
 namespace ox {
 class ProjectSerializer {

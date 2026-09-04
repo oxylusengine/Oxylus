@@ -77,6 +77,27 @@ static auto query_device_features(const vkb::Instance& instance, VkPhysicalDevic
   return features_2.features;
 }
 
+template <typename T>
+static auto query_device_property(const vkb::Instance& instance, VkPhysicalDevice physical_device, VkStructureType type)
+  -> T {
+  T property = {};
+  property.sType = type;
+
+  const auto get_properties_2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(
+    instance.fp_vkGetInstanceProcAddr(instance.instance, "vkGetPhysicalDeviceProperties2")
+  );
+  if (!get_properties_2) {
+    return property;
+  }
+
+  VkPhysicalDeviceProperties2 properties_2 = {};
+  properties_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+  properties_2.pNext = &property;
+  get_properties_2(physical_device, &properties_2);
+
+  return property;
+}
+
 static auto supports_optimal_format_features(
   const vkb::Instance& instance,
   VkPhysicalDevice physical_device,
@@ -590,24 +611,77 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   }
 
   // Initialize resource descriptors
-  constexpr auto MAX_DESCRIPTORS = 1024_sz; // TODO: Change this to devicelimits
+  const auto descriptor_indexing_properties = query_device_property<VkPhysicalDeviceDescriptorIndexingProperties>(
+    self.vkb_instance,
+    self.physical_device,
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES
+  );
+  const auto requested_descriptor_count = static_cast<u32>(
+    std::max(self.context_cvar.cvar_bindless_descriptor_count.get(), 1)
+  );
+  auto descriptor_counts = std::array{
+    std::min(
+      requested_descriptor_count,
+      std::min(
+        descriptor_indexing_properties.maxDescriptorSetUpdateAfterBindSamplers,
+        descriptor_indexing_properties.maxPerStageDescriptorUpdateAfterBindSamplers
+      )
+    ),
+    std::min(
+      requested_descriptor_count,
+      std::min(
+        descriptor_indexing_properties.maxDescriptorSetUpdateAfterBindSampledImages,
+        descriptor_indexing_properties.maxPerStageDescriptorUpdateAfterBindSampledImages
+      )
+    ),
+    std::min(
+      requested_descriptor_count,
+      std::min(
+        descriptor_indexing_properties.maxDescriptorSetUpdateAfterBindStorageImages,
+        descriptor_indexing_properties.maxPerStageDescriptorUpdateAfterBindStorageImages
+      )
+    ),
+  };
+
+  const auto shared_descriptor_limit = std::min(
+    descriptor_indexing_properties.maxUpdateAfterBindDescriptorsInAllPools,
+    descriptor_indexing_properties.maxPerStageUpdateAfterBindResources
+  );
+  const auto total_descriptor_count = static_cast<u64>(descriptor_counts[0]) + descriptor_counts[1] +
+                                      descriptor_counts[2];
+  if (total_descriptor_count > shared_descriptor_limit) {
+    for (auto& count : descriptor_counts) {
+      count = static_cast<u32>(static_cast<u64>(count) * shared_descriptor_limit / total_descriptor_count);
+    }
+  }
+
+  if (std::ranges::any_of(descriptor_counts, [](u32 count) { return count == 0; })) {
+    OX_LOG_FATAL("The selected device cannot provide the required bindless descriptor arrays.");
+  }
+
+  OX_LOG_INFO(
+    "Bindless descriptor capacities: samplers({}), sampled images({}), storage images({})",
+    descriptor_counts[0],
+    descriptor_counts[1],
+    descriptor_counts[2]
+  );
   VkDescriptorSetLayoutBinding bindless_set_info[] = {
     // Samplers
     {.binding = DescriptorTable_SamplerIndex,
      .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-     .descriptorCount = MAX_DESCRIPTORS,
+     .descriptorCount = descriptor_counts[0],
      .stageFlags = VK_SHADER_STAGE_ALL,
      .pImmutableSamplers = nullptr},
     // Sampled Images
     {.binding = DescriptorTable_SampledImageIndex,
      .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-     .descriptorCount = MAX_DESCRIPTORS,
+     .descriptorCount = descriptor_counts[1],
      .stageFlags = VK_SHADER_STAGE_ALL,
      .pImmutableSamplers = nullptr},
     // Storage Images
     {.binding = DescriptorTable_StorageImageIndex,
      .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-     .descriptorCount = MAX_DESCRIPTORS,
+     .descriptorCount = descriptor_counts[2],
      .stageFlags = VK_SHADER_STAGE_ALL,
      .pImmutableSamplers = nullptr},
   };
@@ -829,7 +903,9 @@ auto RenderContext::create_persistent_descriptor_set(
     .pPoolSizes = descriptor_sizes.data(),
   };
   auto pool = VkDescriptorPool{};
-  vkCreateDescriptorPool(self.device, &pool_info, nullptr, &pool);
+  if (const auto result = vkCreateDescriptorPool(self.device, &pool_info, nullptr, &pool); result != VK_SUCCESS) {
+    OX_LOG_FATAL("Failed to create persistent descriptor pool: VkResult({}).", static_cast<i32>(result));
+  }
 
   auto set_layout_binding_flags_info = VkDescriptorSetLayoutBindingFlagsCreateInfo{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
@@ -846,7 +922,12 @@ auto RenderContext::create_persistent_descriptor_set(
     .pBindings = bindings.data(),
   };
   auto set_layout = VkDescriptorSetLayout{};
-  vkCreateDescriptorSetLayout(self.device, &set_layout_info, nullptr, &set_layout);
+  if (
+    const auto result = vkCreateDescriptorSetLayout(self.device, &set_layout_info, nullptr, &set_layout);
+    result != VK_SUCCESS
+  ) {
+    OX_LOG_FATAL("Failed to create persistent descriptor set layout: VkResult({}).", static_cast<i32>(result));
+  }
 
   auto set_alloc_info = VkDescriptorSetAllocateInfo{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -856,7 +937,11 @@ auto RenderContext::create_persistent_descriptor_set(
     .pSetLayouts = &set_layout,
   };
   auto descriptor_set = VkDescriptorSet{};
-  vkAllocateDescriptorSets(self.device, &set_alloc_info, &descriptor_set);
+  if (
+    const auto result = vkAllocateDescriptorSets(self.device, &set_alloc_info, &descriptor_set); result != VK_SUCCESS
+  ) {
+    OX_LOG_FATAL("Failed to allocate persistent descriptor set: VkResult({}).", static_cast<i32>(result));
+  }
 
   auto persistent_set_create_info = vuk::DescriptorSetLayoutCreateInfo{
     .dslci = set_layout_info,

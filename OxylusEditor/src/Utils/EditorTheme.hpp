@@ -54,8 +54,12 @@ public:
   ankerl::unordered_dense::map<size_t, const char*> component_icon_map = {};
 
   void init(this EditorTheme& self);
+  auto sync_scale(this EditorTheme& self, f32 ui_scale) -> void;
 
   void apply_theme(bool dark = true);
   void set_style();
+
+private:
+  f32 applied_ui_scale = 0.0f;
 };
 } // namespace ox

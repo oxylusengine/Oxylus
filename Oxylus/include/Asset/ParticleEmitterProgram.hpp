@@ -3,13 +3,11 @@
 #include <glm/vec4.hpp>
 #include <span>
 
+#include "Asset/ParticleSystem.hpp"
 #include "Core/Types.hpp"
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
-struct ParticleCurve;
-struct ParticleGradient;
-
 struct ParticleEmitterProgramInput {
   f32 time = 0.0f;
   f32 cycle_time = 0.0f;

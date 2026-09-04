@@ -1,10 +1,10 @@
 #include "EditorCVar.hpp"
 
-#include <tracy/Tracy.hpp>
 #include <toml++/toml.hpp>
+#include <tracy/Tracy.hpp>
 
-#include "Core/Project.hpp"
 #include "OS/File.hpp"
+#include "Project/Project.hpp"
 
 namespace ox {
 EditorCVar::EditorCVar() {
@@ -32,14 +32,20 @@ auto EditorCVar::init(this EditorCVar& self) -> void {
   self.cvar_camera_zoom.init(self.system, "editor.camera_zoom", "editor camera zoom for ortho projection", 1);
 
   self.cvar_scale_viewport_size_with_content_scale
-    .init(self.system, "editor.scale_viewport_size_with_content_scale", "scale viewport size with content scale", 1);
-  self.cvar_viewport_scale_amount
-    .init(self.system, "editor.viewport_scale_amount", "scale viewport size with content scale", 1);
+    .init(self.system, "editor.scale_viewport_size_with_content_scale", "scale viewport size with pixel density", 1);
+  self.cvar_viewport_scale_amount.init(self.system, "editor.viewport_scale_amount", "manual viewport render scale", 1);
 
   self.cvar_file_thumbnails.init(self.system, "editor.file_thumbnails", "show file thumbnails in content panel", 0);
   self.cvar_file_thumbnail_size
     .init(self.system, "editor.file_thumbnail_size", "file thumbnail size in content panel", 120.0f);
+  self.cvar_thumbnail_pool_size
+    .init(self.system, "editor.thumbnail_pool_size", "max live thumbnails kept in memory", 256);
   self.cvar_show_meta_files.init(self.system, "editor.show_meta_files", "show oxasset files in conten panel", 0);
+  self.cvar_content_sort_field.init(self.system, "editor.content_sort_field", "content panel sort field", 0);
+  self.cvar_content_sort_ascending
+    .init(self.system, "editor.content_sort_ascending", "sort content panel entries in ascending order", 1);
+  self.cvar_content_type_filter
+    .init(self.system, "editor.content_type_filter", "content panel asset type filter bitmask", 0);
   self.cvar_show_style_editor.init(self.system, "ui.imgui_style_editor", "show imgui style editor", 0);
   self.cvar_show_imgui_demo.init(self.system, "ui.imgui_demo", "show imgui demo window", 0);
 }
@@ -76,8 +82,20 @@ auto EditorCVar::load(this EditorCVar& self) -> void {
     self.cvar_file_thumbnails.set(v->get());
   if (auto v = config["file_thumbnail_size"].as_floating_point())
     self.cvar_file_thumbnail_size.set(static_cast<f32>(v->get()));
+  if (auto v = config["thumbnail_pool_size"].as_integer())
+    self.cvar_thumbnail_pool_size.set(static_cast<i32>(v->get()));
   if (auto v = config["show_meta_files"].as_boolean())
     self.cvar_show_meta_files.set(v->get());
+  if (auto v = config["content_sort_field"].as_integer()) {
+    constexpr i64 MAX_CONTENT_SORT_FIELD = 3;
+    if (v->get() >= 0 && v->get() <= MAX_CONTENT_SORT_FIELD)
+      self.cvar_content_sort_field.set(static_cast<i32>(v->get()));
+  }
+  if (auto v = config["content_sort_ascending"].as_boolean())
+    self.cvar_content_sort_ascending.set(v->get());
+  // the content panel masks this down to the bits it knows about
+  if (auto v = config["content_type_filter"].as_integer())
+    self.cvar_content_type_filter.set(static_cast<i32>(v->get()));
 
   return;
 }
@@ -103,7 +121,11 @@ auto EditorCVar::save(this EditorCVar& self) -> void {
        {"viewport_scale_amount", self.cvar_viewport_scale_amount.get()},
        {"file_thumbnails", self.cvar_file_thumbnails.as_bool()},
        {"file_thumbnail_size", self.cvar_file_thumbnail_size.get()},
+       {"thumbnail_pool_size", self.cvar_thumbnail_pool_size.get()},
        {"show_meta_files", self.cvar_show_meta_files.as_bool()},
+       {"content_sort_field", self.cvar_content_sort_field.get()},
+       {"content_sort_ascending", self.cvar_content_sort_ascending.as_bool()},
+       {"content_type_filter", self.cvar_content_type_filter.get()},
      }}
   };
 
@@ -115,18 +137,19 @@ auto EditorCVar::save(this EditorCVar& self) -> void {
   file.close();
 }
 
-void EditorCVar::add_recent_project(this EditorCVar& self, const Project* project) {
-  for (auto& recent_project_path : self.recent_projects) {
-    if (recent_project_path.filename() == project->get_project_file_path().filename()) {
-      return;
-    }
-  }
-
-  self.recent_projects.emplace_back(project->get_project_file_path());
+auto EditorCVar::add_recent_project(this EditorCVar& self, const Project* project) -> void {
+  const auto project_path = project->get_project_file_path().lexically_normal();
+  std::erase_if(self.recent_projects, [&project_path](const std::filesystem::path& recent_path) {
+    return recent_path.lexically_normal() == project_path;
+  });
+  self.recent_projects.emplace(self.recent_projects.begin(), project_path);
 }
 
 auto EditorCVar::remove_recent_project(this EditorCVar& self, const std::filesystem::path& path) -> void {
-  std::erase_if(self.recent_projects, [path](const std::filesystem::path& e) { return e == path; });
+  const auto normalized_path = path.lexically_normal();
+  std::erase_if(self.recent_projects, [&normalized_path](const std::filesystem::path& recent_path) {
+    return recent_path.lexically_normal() == normalized_path;
+  });
 }
 
 } // namespace ox

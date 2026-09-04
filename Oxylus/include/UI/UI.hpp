@@ -40,6 +40,9 @@ public:
 
   static void align_right(float item_width);
 
+  static auto scale(f32 value) -> f32;
+  static auto scale(ImVec2 value) -> ImVec2;
+
   static void text(std::string_view label, std::string_view value, const char* tooltip = nullptr);
 
   static void help_marker(const char* desc);
@@ -153,11 +156,13 @@ public:
   }
 
   // `is_srgb` is the color space of the slot, not the file; it decides the loaded image format.
+  // `import_callback` turns a dropped file into an asset; leave it empty to disable drop-to-import.
   static bool texture_property(
     const char* label,
     UUID& texture_uuid,
     bool is_srgb,
     const std::function<UUID(const char*, const UUID&, bool&)>& load_callback,
+    const std::function<UUID(const std::filesystem::path&)>& import_callback = {},
     const char* tooltip = nullptr
   );
 

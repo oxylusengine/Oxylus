@@ -87,6 +87,7 @@ public:
 
   static auto get_window() -> const Window&;
   static auto get_rendercontext() -> RenderContext&;
+  static auto get_ui_scale() -> f32;
   static auto get_timestep() -> const Timestep&;
   static auto get_vfs() -> VFS&;
   static auto get_job_manager() -> JobManager&;

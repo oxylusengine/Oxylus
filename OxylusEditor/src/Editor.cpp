@@ -7,6 +7,8 @@
 #include <implot.h>
 #include <vuk/vsl/Core.hpp>
 
+#include "Asset/AssetImporter.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
@@ -18,6 +20,7 @@
 #include "Panels/ContentPanel.hpp"
 #include "Panels/EditorSettingsPanel.hpp"
 #include "Panels/InspectorPanel.hpp"
+#include "Panels/LoadingPanel.hpp"
 #include "Panels/ParticleEditorPanel.hpp"
 #include "Panels/ProjectPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
@@ -106,6 +109,8 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_panel_registry.add<InspectorPanel>();
   self.editor_panel_registry.add<EditorSettingsPanel>();
   self.editor_panel_registry.add<ProjectPanel>();
+  // after ProjectPanel so its modal renders on top when a project hands off to it
+  self.editor_panel_registry.add<LoadingPanel>();
   self.editor_panel_registry.add<AssetManagerPanel>();
   self.editor_panel_registry.add<ParticleEditorPanel>();
   self.editor_panel_registry.add<AnimationEditorPanel>();
@@ -169,6 +174,10 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
 auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
+  // Modules tear down in reverse registration order, so the compiler and the asset manager an
+  // in-flight scan is using are still alive here and will not be a frame later.
+  wait_for_asset_scans();
+
   auto& job_man = App::get_job_manager();
   job_man.get_tracker().stop_tracking();
 
@@ -195,6 +204,21 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
 auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   ZoneScoped;
 
+  poll_asset_scans();
+
+  // the panels below read the notification containers, and workers only ever queue into them
+  self.notification_system.drain_pending();
+
+  // A scene names its assets by UUID, and those only exist once the scan has registered them, so
+  // opening it waits for the import rather than landing on entities with missing meshes.
+  if (self.pending_start_scene.has_value() && !asset_scan_active()) {
+    const auto scene_path = self.pending_start_scene.value();
+    self.pending_start_scene = nullopt;
+    if (!self.open_scene(scene_path)) {
+      self.new_scene();
+    }
+  }
+
   self.thumbnail_manager.update();
 
   self.editor_panel_registry.update_all();
@@ -211,6 +235,7 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   imgui_renderer.keyboard_input_enabled = !self.main_viewport_panel.is_any_scene_playing();
 
+  self.editor_theme.sync_scale(App::get_ui_scale());
   imgui_renderer.begin_frame(timestep.get_seconds(), window.get_logical_size(), window.get_real_size());
   ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
   ImGuizmo::BeginFrame();
@@ -263,7 +288,7 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
                                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings;
 
-  constexpr float bottom_bar_height = 30.0f;
+  const float bottom_bar_height = UI::scale(30.0f);
 
   ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -430,7 +455,7 @@ auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -
     job_man.submit(Job::create([scene, scene_path, edits_path, edits_uuid] {
       scene->get_scene()->save_to_file(scene_path);
       if (edits_uuid) {
-        App::mod<AssetManager>().export_asset(edits_uuid, edits_path);
+        export_asset(App::mod<AssetManager>(), edits_uuid, edits_path);
       }
       scene->set_path(scene_path);
     }));
@@ -604,7 +629,7 @@ void Editor::draw_menubar(this Editor& self) {
       // Project name text
       const std::string& project_name = self.active_project->get_config().name;
       ImGui::SetCursorPos(
-        ImVec2(ImGui::GetMainViewport()->Size.x - 10 - ImGui::CalcTextSize(project_name.c_str()).x, 0)
+        ImVec2(ImGui::GetMainViewport()->Size.x - UI::scale(10.0f) - ImGui::CalcTextSize(project_name.c_str()).x, 0)
       );
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
       ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
@@ -628,7 +653,7 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
                                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 4.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, UI::scale(ImVec2(8.0f, 4.0f)));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.11f, 0.11f, 0.11f, 1.0f));
@@ -695,7 +720,7 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
 
       auto notif_text = fmt::format("{} {}", icon_text, notif.title);
       const float text_width = ImGui::CalcTextSize(notif_text.c_str()).x;
-      ImGui::SameLine(ImGui::GetWindowWidth() - text_width - 16.0f);
+      ImGui::SameLine(ImGui::GetWindowWidth() - text_width - UI::scale(16.0f));
       ImGui::TextUnformatted(notif_text.c_str());
       if (ImGui::IsItemClicked()) {
         activity_log_panel_state = !activity_log_panel_state;

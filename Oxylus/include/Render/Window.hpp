@@ -141,6 +141,7 @@ struct Window : Handle<Window> {
   auto get_handle() const -> void*;
 
   auto get_dpi_scale() const -> f32;
+  auto get_content_scale() const -> f32;
 
   auto get_refresh_rate() const -> f32;
 };

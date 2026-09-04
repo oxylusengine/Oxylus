@@ -42,7 +42,7 @@ auto draw_asset_table_columns(const Asset& asset) -> bool {
                                                       ImGuiSelectableFlags_AllowDoubleClick;
 
     auto name = asset_display_name(asset);
-    if (ImGui::Selectable(name.c_str(), false, selectable_flags, ImVec2(0.f, 20.f))) {
+    if (ImGui::Selectable(name.c_str(), false, selectable_flags, ImVec2(0.0f, UI::scale(20.0f)))) {
       is_selected = true;
     }
     ImGui::PopID();

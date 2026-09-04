@@ -11,9 +11,7 @@ packages = {
   ["meshoptimizer v1.2"] = {},
   ["libsdl3 3.4.12"] = { configs = { x11 = true, wayland = false } },
   ["ktx-ox v4.4.0"] = { system = false, debug = false },
-  ["zstd v1.5.7"] = { system = false },
   ["shader-slang v2026.12.2"] = { configs = { shared = true }, system = false },
-  ["spirv-tools 1.4.335+0"] = { system = false },
   ["enet-ox v2.6.5"] = {
     configs = {
       test = false,
@@ -48,7 +46,7 @@ packages = {
       header_only = true,
     },
   },
-  ["simdjson " .. simdjson_version] = {},
+  ["simdjson " .. simdjson_version] = { system = false },
   ["joltphysics v5.6.0"] = {
     configs = {
       debug_renderer = true,
@@ -128,6 +126,7 @@ confs = {
     configs = {
       override = true,
       version = simdjson_version,
+      system = false,
     },
   },
 

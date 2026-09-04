@@ -31,7 +31,10 @@ public:
   ) -> bool;
 
   auto draw_components(this InspectorPanel& self, flecs::entity entity) -> void;
-  auto draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset) -> void;
+  // `source_path` is the file in the project directory, not `Asset::path` -- for anything the
+  // importer cooks that one names the `.oxpack` in the editor's cache.
+  auto draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset, const std::filesystem::path& source_path)
+    -> void;
 
   auto draw_model_asset(this InspectorPanel& self, ReadGuard<Model> model) -> void;
   auto draw_material_asset(

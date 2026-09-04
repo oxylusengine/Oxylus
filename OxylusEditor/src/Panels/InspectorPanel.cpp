@@ -8,7 +8,9 @@
 
 #include "AnimationEditorPanel.hpp"
 #include "Asset/AssetFile.hpp"
+#include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "CinematicEditorPanel.hpp"
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
@@ -254,7 +256,7 @@ struct EntityInspector : IEntitySerializer {
           const auto payload = PayloadData::from_payload(imgui_payload);
           if (payload->get_str().empty())
             return;
-          if (auto imported_asset = asset_man.import_asset(payload->str)) {
+          if (auto imported_asset = import_asset(asset_man, payload->str)) {
             // Must not hold a registry read guard while unloading: unload_asset() takes the
             // registry write lock. unload_asset() no-ops on missing/unloaded assets.
             if (*uuid) {
@@ -446,7 +448,7 @@ InspectorPanel::InspectorPanel() : EditorPanelState("Inspector", ICON_MDI_INFORM
   auto& asset_man = App::mod<AssetManager>();
 
   auto r = event_system.subscribe<DialogSaveEvent>([&asset_man](const DialogSaveEvent& e) {
-    if (!asset_man.export_asset(e.asset_uuid, e.path)) {
+    if (!export_asset(asset_man, e.asset_uuid, e.path)) {
       OX_LOG_ERROR("Couldn't save asset {} to {}!", e.asset_uuid.str(), e.path);
       return;
     }
@@ -489,12 +491,12 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
     auto& asset_man = App::mod<AssetManager>();
 
     auto path = std::filesystem::path(editor_context.str.value());
-    std::unique_ptr<AssetManager::AssetMetaFile> meta_file = nullptr;
+    std::unique_ptr<AssetMetaFile> meta_file = nullptr;
 
     if (path.extension() == ".oxasset") {
-      meta_file = asset_man.read_meta_file(path);
+      meta_file = read_meta_file(path);
     } else {
-      meta_file = asset_man.read_meta_file_from_asset(path);
+      meta_file = read_meta_file_from_asset(path);
     }
 
     if (!meta_file) {
@@ -505,10 +507,21 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
     if (uuid_str_json.error())
       return;
 
+    // a sidecar is not the asset itself: `foo.png.oxasset` describes `foo.png`, and that is what
+    // the inspector should be showing. Assets that own their meta file have nothing to strip.
+    auto source_path = path;
+    if (source_path.extension() == ".oxasset") {
+      auto stripped = source_path;
+      stripped.replace_extension();
+      if (std::filesystem::exists(stripped)) {
+        source_path = std::move(stripped);
+      }
+    }
+
     auto uuid_from_str = UUID::from_string(uuid_str_json.value_unsafe());
     if (uuid_from_str.has_value()) {
       if (auto asset = asset_man.get_asset(*uuid_from_str))
-        self.draw_asset_info(std::move(asset));
+        self.draw_asset_info(std::move(asset), source_path);
     }
   }
 }
@@ -525,7 +538,7 @@ auto InspectorPanel::draw_material_properties(
     const float x = ImGui::GetContentRegionAvail().x / 2;
     const float y = ImGui::GetFrameHeight();
 
-    const auto has_own_file = AssetManager::owns_meta_file(default_path);
+    const auto has_own_file = owns_meta_file(default_path);
 
     const auto open_save_as_dialog = [&window, &material_uuid, &default_path] {
       pending_save_material_uuid = material_uuid;
@@ -644,12 +657,17 @@ auto InspectorPanel::draw_material_properties(
     };
   };
 
-  const auto texture_slot = [&load_callback](const char* label, UUID& uuid, bool is_srgb) -> bool {
-    return UI::texture_property(label, uuid, is_srgb, load_callback(is_srgb));
+  const auto import_callback = [](const std::filesystem::path& path) -> UUID {
+    return import_asset(App::mod<AssetManager>(), path);
+  };
+
+  const auto texture_slot = [&](const char* label, UUID& uuid, bool is_srgb) -> bool {
+    return UI::texture_property(label, uuid, is_srgb, load_callback(is_srgb), import_callback);
   };
 
   dirty |= texture_slot("Albedo", material->albedo_texture, true);
   dirty |= texture_slot("Normal", material->normal_texture, false);
+  dirty |= UI::property("Normal Scale", &material->normal_scale, 0.0f, 4.0f);
   dirty |= UI::property("Flip Normal Y", &material->flip_normal_y, "Enable for DirectX-convention normal maps.");
   dirty |= texture_slot("Emissive", material->emissive_texture, true);
   dirty |= UI::property_vector("Emissive Color", material->emissive_color, true, false);
@@ -657,6 +675,7 @@ auto InspectorPanel::draw_material_properties(
   dirty |= UI::property("Roughness Factor", &material->roughness_factor, 0.0f, 1.0f);
   dirty |= UI::property("Metallic Factor", &material->metallic_factor, 0.0f, 1.0f);
   dirty |= texture_slot("Occlusion", material->occlusion_texture, false);
+  dirty |= UI::property("Occlusion Strength", &material->occlusion_strength, 0.0f, 1.0f);
 
   UI::end_properties();
 
@@ -705,7 +724,7 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   auto& editor = App::mod<Editor>();
   auto& undo_redo_system = editor.undo_redo_system;
 
-  ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + 20.0f));
+  ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + UI::scale(20.0f)));
   std::string new_name = entity.name().c_str();
   if (self.rename_entity_)
     ImGui::SetKeyboardFocusHere();
@@ -763,7 +782,7 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
                                                      ImGuiTreeNodeFlags_SpanAvailWidth |
                                                      ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
                                                      ImGuiTreeNodeFlags_FramePadding;
-    const float line_height = editor.editor_theme.regular_font_size + GImGui->Style.FramePadding.y * 2.0f;
+    const float line_height = ImGui::GetFontSize() + GImGui->Style.FramePadding.y * 2.0f;
 
     auto ty = fid.type_id();
     if (!ty) {
@@ -822,7 +841,9 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   });
 }
 
-auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset) -> void {
+auto InspectorPanel::draw_asset_info(
+  this InspectorPanel& self, ReadGuard<Asset> asset, const std::filesystem::path& source_path
+) -> void {
   ZoneScoped;
   auto& editor = App::mod<Editor>();
   auto& asset_man = App::mod<AssetManager>();
@@ -834,8 +855,8 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
 
   auto type_str = asset_man.to_asset_type_sv(asset_type);
   auto uuid_str = asset_uuid.str();
-  auto name = asset_path.filename().string();
-  auto path_str = asset_path.string();
+  auto name = source_path.filename().string();
+  auto path_str = source_path.string();
 
   ImGui::SeparatorText("Asset");
   ImGui::Indent();

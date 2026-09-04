@@ -177,8 +177,8 @@ public struct AtmosphereIntegrateInfo {
     public f32 sun_intensity = 1.0;
     public f32 step_count = 32.0;
     public f32 t_max = -1.0;
-    public constexpr bool eval_planet_luminance = false;
-    public constexpr bool eval_multiscattering = false;
+    public bool eval_planet_luminance = false;
+    public bool eval_multiscattering = false;
 };
 
 public func integrate_single_scattered_luminance(

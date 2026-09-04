@@ -5,6 +5,7 @@
 #include <string>
 
 #include "Asset/AssetFile.hpp"
+#include "Core/JobManager.hpp"
 #include "ResourceCompiler.hpp"
 
 namespace ox {
@@ -15,10 +16,11 @@ struct Handle<rc::Session>::Impl {
   std::vector<std::string> errors = {};
   std::vector<std::string> messages = {};
 
-  std::shared_mutex session_mutex = {};
   Slang::ComPtr<slang::IGlobalSession> slang_global_session = {};
 
   std::vector<rc::ShaderCompileRequest> shader_requests = {};
   AssetFile asset_file = {};
+
+  JobManager job_manager = {};
 };
 } // namespace ox

@@ -6,6 +6,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "UI/AssetManagerViewer.hpp"
+#include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 #include "Utils/ImGuiScoped.hpp"
 
@@ -37,7 +38,7 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
     if (ImGui::TreeNodeEx("Scripts", ImGuiTreeNodeFlags_Framed)) {
       scripts_filter_.Draw(
         "###HierarchyFilter",
-        ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_icon).x + 20.0f)
+        ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_icon).x + UI::scale(20.0f))
       );
       ImGui::SameLine();
 
@@ -61,7 +62,7 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
         ImGui::TextUnformatted(search_txt.c_str());
       }
 
-      if (ImGui::BeginTable("ScriptsTable", 1, table_flags, ImVec2(0, 100))) {
+      if (ImGui::BeginTable("ScriptsTable", 1, table_flags, ImVec2(0.0f, UI::scale(100.0f)))) {
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_NoClip);
 
         for (auto& [uuid, system] : scene_->get_lua_systems()) {
@@ -154,7 +155,7 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
     if (ImGui::TreeNodeEx("Entities", ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen)) {
       entities_filter_.Draw(
         "###HierarchyFilter",
-        ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_icon).x + 20.0f)
+        ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_icon).x + UI::scale(20.0f))
       );
       ImGui::SameLine();
 
@@ -180,8 +181,26 @@ auto SceneHierarchyViewer::render(const char* id, bool* visible) -> void {
 
       const ImVec2 cursor_pos = ImGui::GetCursorPos();
       const ImVec2 region = ImGui::GetContentRegionAvail();
-      if (region.x != 0.0f && region.y != 0.0f)
+      if (region.x != 0.0f && region.y != 0.0f) {
         ImGui::InvisibleButton("##DragDropTargetBehindTable", region);
+        if (ImGui::BeginDragDropTarget()) {
+          if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+            const auto* payload_data = PayloadData::from_payload(payload);
+            const auto path = payload_data->get_path();
+            if (path.extension() == ".oxparticle") {
+              auto asset = import_asset_callback ? import_asset_callback(path) : UUID(nullptr);
+              if (asset) {
+                auto new_entity = scene_->create_particle_system_entity(asset);
+                if (new_entity != flecs::entity::null()) {
+                  selected_entity_.set(new_entity);
+                  selected_script_ = nullptr;
+                }
+              }
+            }
+          }
+          ImGui::EndDragDropTarget();
+        }
+      }
 
       ImGui::SetCursorPos(cursor_pos);
       if (ImGui::BeginTable("HierarchyTable", 3, table_flags)) {
@@ -345,11 +364,19 @@ auto SceneHierarchyViewer::draw_entity_node(
       if (const ImGuiPayload* entity_payload = ImGui::AcceptDragDropPayload("Entity")) {
         dragged_entity_ = *static_cast<flecs::entity*>(entity_payload->Data);
         dragged_entity_target_ = entity;
-      } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-        const std::filesystem::path path = std::filesystem::path((const char*)payload->Data);
-        if (path.extension() == ".oxprefab") {
-          // dragged_entity = EntitySerializer::deserialize_entity_as_prefab(path.string().c_str(), _scene.get());
-          // dragged_entity = entity;
+      } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+        const auto* payload_data = PayloadData::from_payload(payload);
+        const auto path = payload_data->get_path();
+        if (path.extension() == ".oxparticle") {
+          auto asset = import_asset_callback ? import_asset_callback(path) : UUID(nullptr);
+          if (asset) {
+            auto new_entity = scene_->create_particle_system_entity(asset);
+            if (new_entity != flecs::entity::null()) {
+              new_entity.child_of(entity);
+              selected_entity_.set(new_entity);
+              selected_script_ = nullptr;
+            }
+          }
         }
       }
 
@@ -429,13 +456,15 @@ auto SceneHierarchyViewer::draw_entity_node(
       entity.children([this, depth, force_expand_tree, is_part_of_prefab, vertical_line_start, tree_line_color](
                         const flecs::entity child
                       ) {
-        const float horizontal_tree_line_size = scene_->world.count(flecs::ChildOf, child) > 0 ? 9.f : 18.f;
+        const float horizontal_tree_line_size = UI::scale(
+          scene_->world.count(flecs::ChildOf, child) > 0 ? 9.0f : 18.0f
+        );
         // chosen arbitrarily
         const ImRect child_rect = draw_entity_node(child, depth + 1, force_expand_tree, is_part_of_prefab);
 
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         ImVec2 vertical_line_end = vertical_line_start;
-        constexpr float line_thickness = 1.5f;
+        const float line_thickness = UI::scale(1.5f);
         const float midpoint = (child_rect.Min.y + child_rect.Max.y) / 2.0f;
         draw_list->AddLine(
           ImVec2(vertical_line_start.x, midpoint),
@@ -466,8 +495,8 @@ auto SceneHierarchyViewer::draw_entities_context_menu() -> void {
 
   flecs::entity to_select = flecs::entity::null();
 
-  ImGuiScoped::StyleVar styleVar1(ImGuiStyleVar_ItemInnerSpacing, {0, 5});
-  ImGuiScoped::StyleVar styleVar2(ImGuiStyleVar_ItemSpacing, {1, 5});
+  ImGuiScoped::StyleVar styleVar1(ImGuiStyleVar_ItemInnerSpacing, UI::scale(ImVec2(0.0f, 5.0f)));
+  ImGuiScoped::StyleVar styleVar2(ImGuiStyleVar_ItemSpacing, UI::scale(ImVec2(1.0f, 5.0f)));
   if (ImGui::BeginMenu("Create")) {
     if (ImGui::MenuItem("New Entity")) {
       to_select = scene_->create_entity("entity", true);

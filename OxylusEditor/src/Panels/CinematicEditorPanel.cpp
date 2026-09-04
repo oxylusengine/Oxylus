@@ -10,6 +10,7 @@
 #include <misc/cpp/imgui_stdlib.h>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
@@ -808,7 +809,7 @@ auto CinematicEditorPanel::draw_toolbar(this CinematicEditorPanel& self) -> void
   ImGui::SameLine();
   if (UI::button(ICON_MDI_CONTENT_SAVE " Save") && !self.asset_path.empty()) {
     self.commit();
-    if (!App::mod<AssetManager>().export_asset(self.asset_uuid, self.asset_path)) {
+    if (!export_asset(App::mod<AssetManager>(), self.asset_uuid, self.asset_path)) {
       OX_LOG_ERROR("Couldn't save cinematic to {}.", self.asset_path);
     }
   }

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <filesystem>
+#include <functional>
+
 #include <imgui_internal.h>
 
 #include "Scene/Scene.hpp"
@@ -40,6 +43,7 @@ public:
 
   const UUID* selected_script_ = nullptr;
   std::function<void(const UUID&)> opened_script_callback = nullptr;
+  std::function<UUID(const std::filesystem::path&)> import_asset_callback = nullptr;
 
   AssetManagerViewer asset_manager_viewer = {};
 

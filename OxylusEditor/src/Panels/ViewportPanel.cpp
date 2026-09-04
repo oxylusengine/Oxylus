@@ -2,11 +2,14 @@
 
 #include <ImGuizmo.h>
 #include <algorithm>
+#include <cmath>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 
+#include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "CinematicEditorPanel.hpp"
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
@@ -37,6 +40,7 @@ template <typename T, typename Func>
 void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, Scene* scene, Func&& icon_select_func) {
   auto& editor = App::mod<Editor>();
   auto& editor_theme = editor.editor_theme;
+  const auto scaled_icon_size = UI::scale(gizmo_info.icon_size);
 
   scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T& component) {
     const glm::vec3 pos = Scene::get_world_transform(entity)[3];
@@ -55,14 +59,14 @@ void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, 
       gizmo_info.xpos,
       gizmo_info.ypos
     );
-    ImGui::SetCursorPos({screen_pos.x - (gizmo_info.icon_size / 2.f), screen_pos.y - (gizmo_info.icon_size / 2.f)});
+    ImGui::SetCursorPos({screen_pos.x - scaled_icon_size * 0.5f, screen_pos.y - scaled_icon_size * 0.5f});
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.7f, 0.7f, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.1f));
 
     ImGui::PushFont(nullptr, gizmo_info.icon_size);
     ImGui::PushID(static_cast<i32>(entity.id()));
     const char* icon = icon_select_func(editor_theme.component_icon_map.at(typeid(T).hash_code()), component);
-    if (ImGui::Button(icon, {gizmo_info.icon_size, gizmo_info.icon_size})) {
+    if (ImGui::Button(icon, {scaled_icon_size, scaled_icon_size})) {
       auto& editor_context = editor.get_context();
       editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
     }
@@ -133,6 +137,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     bool gizmo_settings_popup = false;
     bool snap_settings_popup = false;
     bool terrain_brush_settings_popup = false;
+    bool sound_settings_popup = false;
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
     if (ImGui::BeginMenuBar()) {
@@ -161,6 +166,18 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       if (ImGui::MenuItem(ICON_MDI_BRUSH, nullptr, self.terrain_brush_enabled)) {
         terrain_brush_settings_popup = true;
       }
+
+      auto& audio_engine = App::mod<AudioEngine>();
+      auto sound_muted = audio_engine.get_device_volume() <= 0.f;
+      const char* sound_icon = sound_muted ? ICON_MDI_VOLUME_MUTE : ICON_MDI_VOLUME_HIGH;
+      if (ImGui::MenuItem(sound_icon, nullptr, sound_settings_popup)) {
+        audio_engine.set_device_volume(sound_muted ? 100.f : 0.f);
+      }
+      UI::tooltip_hover("Left-click to toggle mute, right-click for settings");
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+        sound_settings_popup = true;
+      }
+
       ImGui::EndMenuBar();
     }
 
@@ -173,7 +190,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     if (viewport_settings_popup)
       ImGui::OpenPopup("viewport_settings");
 
-    ImGui::SetNextWindowSize(ImVec2(345, 0));
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(345.0f, 0.0f)));
     if (ImGui::BeginPopup("viewport_settings")) {
       self.draw_settings_panel();
       ImGui::EndPopup();
@@ -182,7 +199,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     if (gizmo_settings_popup)
       ImGui::OpenPopup("gizmo_settings");
 
-    ImGui::SetNextWindowSize(ImVec2(325, 0));
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(325.0f, 0.0f)));
     if (ImGui::BeginPopup("gizmo_settings")) {
       self.draw_gizmo_settings_panel();
       ImGui::EndPopup();
@@ -191,7 +208,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     if (snap_settings_popup)
       ImGui::OpenPopup("snap_settings");
 
-    ImGui::SetNextWindowSize(ImVec2(325, 0));
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(325.0f, 0.0f)));
     if (ImGui::BeginPopup("snap_settings")) {
       self.draw_snap_settings_panel();
       ImGui::EndPopup();
@@ -200,9 +217,17 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     if (terrain_brush_settings_popup)
       ImGui::OpenPopup("terrain_brush_settings");
 
-    ImGui::SetNextWindowSize(ImVec2(345, 0));
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(345.0f, 0.0f)));
     if (ImGui::BeginPopup("terrain_brush_settings")) {
       self.draw_terrain_brush_settings_panel();
+      ImGui::EndPopup();
+    }
+
+    if (sound_settings_popup)
+      ImGui::OpenPopup("sound_settings", ImGuiPopupFlags_MouseButtonRight);
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(225.0f, 0.0f)));
+    if (ImGui::BeginPopup("sound_settings")) {
+      self.draw_sound_settings_panel();
       ImGui::EndPopup();
     }
 
@@ -239,15 +264,15 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       }
     }
 
-    self.scaled_render_size = self.render_size;
-    const u32 scale = editor.editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool()
-                        ? static_cast<u32>(App::get_window().get_dpi_scale())
-                        : (
-                            1u << static_cast<u32>(editor.editor_cvar.cvar_viewport_scale_amount.get())
-                          ); // 0->1, 1->2, 2->4, 3->8
-
-    self.scaled_render_size.x *= scale;
-    self.scaled_render_size.y *= scale;
+    const auto render_scale = editor.editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool()
+                                ? ImGui::GetIO().DisplayFramebufferScale.x
+                                : static_cast<f32>(
+                                    1u << static_cast<u32>(editor.editor_cvar.cvar_viewport_scale_amount.get())
+                                  ); // 0->1, 1->2, 2->4, 3->8
+    self.scaled_render_size = {
+      std::round(self.render_size.x * render_scale),
+      std::round(self.render_size.y * render_scale),
+    };
     self.viewport_bounds_[0] = {
       viewport_min_region.x + self.viewport_position.x + self.viewport_offset.x,
       viewport_min_region.y + self.viewport_position.y + self.viewport_offset.y
@@ -423,15 +448,13 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
 
   auto& cam = self.editor_camera.get_mut<CameraComponent>();
   auto& tc = self.editor_camera.get_mut<TransformComponent>();
-  const glm::vec3 position = tc.position;
-  const glm::vec2 yaw_pitch = self.camera_yaw_pitch;
-  glm::vec3 final_position = position;
-  glm::vec2 final_yaw_pitch = yaw_pitch;
+  glm::vec3 final_position = self.camera_position_target;
+  glm::vec2 final_yaw_pitch = self.camera_yaw_pitch_target;
 
   const auto is_ortho = cam.projection == CameraComponent::Projection::Orthographic;
   if (is_ortho) {
     final_position = {0.0f, 0.0f, 0.0f};
-    final_yaw_pitch = {0.f, 0.f};
+    final_yaw_pitch = {0.0f, 0.0f};
   }
 
   const auto& window = App::get_window();
@@ -447,13 +470,8 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
     }
   }
 
-  const auto actual_sens = editor.editor_cvar.cvar_camera_sens.get() / 10.f;
-  const auto smoothed_sens = actual_sens * 100.f;
-  const auto camera_sens = editor.editor_cvar.cvar_camera_smooth.get() ? smoothed_sens : actual_sens;
-
-  const auto actual_speed = editor.editor_cvar.cvar_camera_speed.get();
-  const auto smoothed_speed = actual_speed * 100.f;
-  const auto camera_speed = editor.editor_cvar.cvar_camera_smooth.get() ? smoothed_speed : actual_speed;
+  const auto camera_sens = editor.editor_cvar.cvar_camera_sens.get() * glm::radians(2.0f);
+  const auto camera_speed = editor.editor_cvar.cvar_camera_speed.get();
 
   if ((input_sys.get_mouse_held(MouseCode::Middle) || input_sys.get_mouse_held(MouseCode::Right)) && !is_ortho) {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
@@ -487,23 +505,42 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
     const glm::vec2 new_mouse_position = input_sys.get_mouse_position_rel();
     window.set_cursor_override(WindowCursor::ResizeAll);
 
-    const glm::vec2 change = (new_mouse_position - self.locked_mouse_position) * 1.f;
+    const glm::vec2 change = new_mouse_position - self.locked_mouse_position;
 
     if (input_sys.get_mouse_moved()) {
-      const float max_move_speed = camera_speed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f) * dt;
-      final_position += cam.forward * change.y * max_move_speed;
-      final_position += cam.right * change.x * max_move_speed;
+      const f32 pan_speed = camera_speed * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 3.0f : 1.0f) * 0.01f;
+      final_position += cam.forward * change.y * pan_speed;
+      final_position += cam.right * change.x * pan_speed;
     }
   }
 
-  const glm::vec3 damped_position =
-    math::smooth_damp(position, final_position, self.translation_velocity, self.translation_dampening, 1000.0f, dt);
-  const glm::vec2 damped_yaw_pitch =
-    math::smooth_damp(yaw_pitch, final_yaw_pitch, self.rotation_velocity, self.rotation_dampening, 1000.0f, dt);
+  self.camera_position_target = final_position;
+  self.camera_yaw_pitch_target = final_yaw_pitch;
 
-  const bool smooth = editor.editor_cvar.cvar_camera_smooth.as_bool();
-  tc.position = smooth ? damped_position : final_position;
-  self.camera_yaw_pitch = smooth ? damped_yaw_pitch : final_yaw_pitch;
+  if (editor.editor_cvar.cvar_camera_smooth.as_bool()) {
+    tc.position = math::smooth_damp(
+      tc.position,
+      final_position,
+      self.translation_velocity,
+      self.translation_dampening,
+      1000.0f,
+      dt
+    );
+    self.camera_yaw_pitch = math::smooth_damp(
+      self.camera_yaw_pitch,
+      final_yaw_pitch,
+      self.rotation_velocity,
+      self.rotation_dampening,
+      1000.0f,
+      dt
+    );
+  } else {
+    tc.position = final_position;
+    self.camera_yaw_pitch = final_yaw_pitch;
+    self.translation_velocity = glm::vec3(0.0f);
+    self.rotation_velocity = glm::vec2(0.0f);
+  }
+
   tc.rotation = glm::quat(glm::vec3(self.camera_yaw_pitch.y, self.camera_yaw_pitch.x, 0.0f));
   cam.zoom = static_cast<float>(editor.editor_cvar.cvar_camera_zoom.get());
 }
@@ -518,6 +555,12 @@ auto ViewportPanel::set_context(this ViewportPanel& self, const std::shared_ptr<
   if (!scene->is_playing()) {
     self.editor_camera = self.editor_scene->get_scene()->create_entity("editor_camera", false);
     self.editor_camera.add<CameraComponent>().add<Hidden>();
+
+    self.camera_position_target = glm::vec3(0.0f);
+    self.camera_yaw_pitch_target = glm::vec2(0.0f);
+    self.camera_yaw_pitch = glm::vec2(0.0f);
+    self.translation_velocity = glm::vec3(0.0f);
+    self.rotation_velocity = glm::vec2(0.0f);
   }
 
   auto& event_system = App::get_event_system();
@@ -533,7 +576,7 @@ auto ViewportPanel::drag_drop(this const ViewportPanel& self) -> void {
         auto& job_man = App::get_job_manager();
         job_man.push_job_name("ViewportPanel_ImportModel");
         job_man.submit(Job::create([path, scene = self.editor_scene->get_scene()]() {
-          auto asset = App::mod<AssetManager>().import_asset(path);
+          auto asset = import_asset(App::mod<AssetManager>(), path);
           if (!asset) {
             return;
           }
@@ -541,6 +584,15 @@ auto ViewportPanel::drag_drop(this const ViewportPanel& self) -> void {
           App::defer_to_next_frame([scene, asset]() { scene->create_model_entity_async(asset); });
         }));
         job_man.pop_job_name();
+      } else if (path.extension() == ".oxparticle") {
+        auto asset = import_asset(App::mod<AssetManager>(), path);
+        if (asset) {
+          auto entity = self.editor_scene->get_scene()->create_particle_system_entity(asset);
+          if (entity != flecs::entity::null()) {
+            auto& editor_context = App::mod<Editor>().get_context();
+            editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
+          }
+        }
       }
     }
 
@@ -553,7 +605,7 @@ auto ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw
     return;
   auto work_pos = ImVec2(self.viewport_position.x, self.viewport_position.y);
   auto work_size = ImVec2(self.viewport_size.x, self.viewport_size.y);
-  auto padding = glm::vec2{15, 55};
+  const auto padding = UI::scale(ImVec2(15.0f, 55.0f));
 
   ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
@@ -565,8 +617,8 @@ auto ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw
   window_pos_pivot.y = 0.0f;
   ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
   ImGui::SetNextWindowBgAlpha(0.35f);
-  ImGui::SetNextWindowSize(draw ? ImVec2({220.f, 0.f}) : ImVec2(120.f, 5.f), ImGuiCond_Always);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
+  ImGui::SetNextWindowSize(draw ? UI::scale(ImVec2(220.0f, 0.0f)) : UI::scale(ImVec2(120.0f, 5.0f)), ImGuiCond_Always);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UI::scale(2.0f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   auto overlay_id = fmt::format("{}_overlay", self.get_id());
   if (ImGui::Begin(overlay_id.c_str(), nullptr, window_flags)) {
@@ -930,7 +982,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
     ImGui::TextUnformatted(resolution.c_str());
     if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
       UI::property(
-        "Scale Viewport With Content Scale",
+        "Scale Viewport With Pixel Density",
         editor_cvar.cvar_scale_viewport_size_with_content_scale.get_ptr_bool()
       );
       const char* scale_amounts[4] = {
@@ -1121,6 +1173,19 @@ auto ViewportPanel::update_terrain_brush(this ViewportPanel& self, glm::vec2 vie
   brush.active = can_begin || self.terrain_stroke_active;
   brush.painting = self.terrain_stroke_active;
   brush.invert = ImGui::GetIO().KeyShift;
+}
+
+auto ViewportPanel::draw_sound_settings_panel(this ViewportPanel& self) -> void {
+  ZoneScoped;
+
+  if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
+    auto& audio_engine = App::mod<AudioEngine>();
+    self.volume_level = audio_engine.get_device_volume();
+    if (UI::property<f32>("Volume", &self.volume_level, 0.0f, 100.0f, nullptr, 1.0f, "%.0f")) {
+      audio_engine.set_device_volume(self.volume_level);
+    }
+    UI::end_properties();
+  }
 }
 
 void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
@@ -1791,25 +1856,29 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
   const ImVec2 content_min = ImGui::GetWindowContentRegionMin();
   const ImVec2 panel_top_left = {window_pos.x + content_min.x, window_pos.y + content_min.y};
 
-  const ImVec2 gizmo_pos = {panel_top_left.x + self.gizmo_position.x, panel_top_left.y + self.gizmo_position.y};
+  const auto scaled_gizmo_position = UI::scale(self.gizmo_position);
+  const ImVec2 gizmo_pos = {
+    panel_top_left.x + scaled_gizmo_position.x,
+    panel_top_left.y + scaled_gizmo_position.y,
+  };
   const ImRect bb(
     gizmo_pos.x,
     gizmo_pos.y,
-    gizmo_pos.x + button_size.x + 8,
-    gizmo_pos.y + (button_size.y + 2) * (button_count + 0.5f)
+    gizmo_pos.x + button_size.x + UI::scale(8.0f),
+    gizmo_pos.y + (button_size.y + UI::scale(2.0f)) * (button_count + 0.5f)
   );
   ImVec4 frame_color = ImGui::GetStyleColorVec4(ImGuiCol_Tab);
   frame_color.w = 0.5f;
   ImGui::RenderFrame(bb.Min, bb.Max, ImGui::GetColorU32(frame_color), false, ImGui::GetStyle().FrameRounding);
 
-  const auto temp_gizmo_position = self.gizmo_position;
-  ImGui::SetCursorPos(
-    {start_cursor_pos.x + temp_gizmo_position.x + frame_padding.x, start_cursor_pos.y + temp_gizmo_position.y}
-  );
+  ImGui::SetCursorPos({
+    start_cursor_pos.x + scaled_gizmo_position.x + frame_padding.x,
+    start_cursor_pos.y + scaled_gizmo_position.y,
+  });
   ImGui::BeginGroup();
   {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, UI::scale(ImVec2(1.0f, 1.0f)));
 
     const ImVec2 dragger_cursor_pos = ImGui::GetCursorPos();
     ImGui::SetCursorPosX(dragger_cursor_pos.x + frame_padding.x);
@@ -1821,8 +1890,8 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
     static ImVec2 last_mouse_position = ImGui::GetMousePos();
     const ImVec2 mouse_pos = ImGui::GetMousePos();
     if (ImGui::IsItemActive()) {
-      self.gizmo_position.x += mouse_pos.x - last_mouse_position.x;
-      self.gizmo_position.y += mouse_pos.y - last_mouse_position.y;
+      self.gizmo_position.x += (mouse_pos.x - last_mouse_position.x) / App::get_ui_scale();
+      self.gizmo_position.y += (mouse_pos.y - last_mouse_position.y) / App::get_ui_scale();
     }
     last_mouse_position = mouse_pos;
 
@@ -1880,16 +1949,16 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
 
 void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) {
   constexpr float button_count = 2.0f;
-  constexpr float y_pad = 3.0f;
-  const ImVec2 button_size = {35.f, 25.f};
+  const float y_pad = UI::scale(3.0f);
+  const ImVec2 button_size = UI::scale(ImVec2(35.0f, 25.0f));
   const ImVec2 group_size = {button_size.x * button_count, button_size.y + y_pad};
 
   ImGui::SetCursorPos({self.viewport_size.x * 0.5f - (group_size.x * 0.5f), start_cursor_pos.y + y_pad});
   ImGui::BeginGroup();
   {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, UI::scale(ImVec2(1.0f, 1.0f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UI::scale(1.0f));
 
     auto& event_system = App::get_event_system();
 

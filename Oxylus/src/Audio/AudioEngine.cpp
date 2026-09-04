@@ -38,6 +38,18 @@ auto AudioEngine::deinit() -> std::expected<void, std::string> {
 
 auto AudioEngine::get_engine() const -> ma_engine* { return engine; }
 
+auto AudioEngine::set_device_volume(f32 volume) -> void {
+  ZoneScoped;
+  ma_device_set_master_volume(engine->pDevice, volume);
+}
+
+auto AudioEngine::get_device_volume() -> f32 {
+  ZoneScoped;
+  f32 volume;
+  ma_device_get_master_volume(engine->pDevice, &volume);
+  return volume;
+}
+
 auto AudioEngine::play_source(ma_sound* sound) -> void {
   ZoneScoped;
   ma_sound_seek_to_pcm_frame(sound, 0);

@@ -17,22 +17,7 @@ using entity_t = std::uint64_t;
 namespace ox {
 enum class ModelID : u64 { Invalid = std::numeric_limits<u64>::max() };
 
-struct ModelLoadInfo {
-  struct Vertex {
-    glm::vec3 position = {};
-    glm::vec3 normal = {};
-    glm::vec2 uv = {};
-  };
-
-  std::vector<Vertex> vertices = {};
-  std::vector<u32> indices = {};
-  std::vector<UUID> materials = {};
-};
-
 struct Model {
-  constexpr static auto MAX_MESHLET_INDICES = 64_sz;
-  constexpr static auto MAX_MESHLET_PRIMITIVES = 64_sz;
-
   using Index = u32;
 
   struct MeshGroup {

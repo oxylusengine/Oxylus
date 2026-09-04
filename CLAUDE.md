@@ -28,9 +28,9 @@ repo declared in the root `xmake.lua` (`oxylus https://github.com/oxylusengine/x
 # Configure (pick toolchain from xmake/toolchains.lua: clang, clang-cl, nix-clang, mac-clang, ...)
 xmake f --toolchain=nix-clang --runtimes=c++_static -m debug
 
-xmake b -j
-xmake b -j Oxylus          # single target
-xmake b -j -a              # all targets, including non-default ones (tests)
+xmake b
+xmake b Oxylus          # single target
+xmake b -a              # all targets, including non-default ones (tests)
 
 xmake r OxylusEditor         # run the editor
 ```
@@ -390,6 +390,6 @@ preference:
 
 ## CI
 
-`.github/workflows/xmake.yaml` builds Windows/msvc, Linux/clang-20, and macOS/mac-clang in both debug
-and release with `--tests=false`, then `xmake build -a` and `xmake install`. It does **not** run
-tests, so verify tests locally.
+`.github/workflows/xmake.yaml` builds Windows/msvc, Windows/clang-cl, Linux/clang-23, and
+macOS/mac-clang (homebrew LLVM, not Apple Clang) in both debug and release with `--tests=false`,
+then `xmake build -a` and `xmake install`. It does **not** run tests, so verify tests locally.

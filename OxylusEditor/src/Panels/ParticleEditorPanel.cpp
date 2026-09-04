@@ -11,8 +11,11 @@
 #include <implot.h>
 #include <vuk/vsl/Core.hpp>
 
+#include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
+#include "Core/Input.hpp"
 #include "Memory/Stack.hpp"
 #include "Scene/Components.hpp"
 #include "UI/PayloadData.hpp"
@@ -72,7 +75,7 @@ struct ParticleShapeGizmo {
       b = glm::mix(b, a, (near_w - b.w) / (a.w - b.w));
     }
 
-    self.draw_list->AddLine(self.to_screen(a), self.to_screen(b), self.color);
+    self.draw_list->AddLine(self.to_screen(a), self.to_screen(b), self.color, UI::scale(1.0f));
   }
 
   // Traces center + u * cos(t) + v * sin(t) over [begin, end] radians.
@@ -300,6 +303,50 @@ ParticleEditorPanel::~ParticleEditorPanel() {
   }
 }
 
+auto ParticleEditorPanel::sync_node_editor_scale(this ParticleEditorPanel& self) -> void {
+  const auto ui_scale = App::get_ui_scale();
+  if (std::abs(self.applied_node_editor_scale - ui_scale) <= 0.0001f) {
+    return;
+  }
+
+  const auto previous_ui_scale = self.applied_node_editor_scale > 0.0f ? self.applied_node_editor_scale : 1.0f;
+  const auto scale_ratio = ui_scale / previous_ui_scale;
+  self.inspector_width *= scale_ratio;
+  self.preview_width *= scale_ratio;
+
+  auto* previous_context = ed::GetCurrentEditor();
+  for (auto* context : self.graph_contexts) {
+    ed::SetCurrentEditor(context);
+    auto style = ed::Style{};
+    style.NodePadding.x *= ui_scale;
+    style.NodePadding.y *= ui_scale;
+    style.NodePadding.z *= ui_scale;
+    style.NodePadding.w *= ui_scale;
+    style.NodeRounding *= ui_scale;
+    style.NodeBorderWidth *= ui_scale;
+    style.HoveredNodeBorderWidth *= ui_scale;
+    style.HoverNodeBorderOffset *= ui_scale;
+    style.SelectedNodeBorderWidth *= ui_scale;
+    style.SelectedNodeBorderOffset *= ui_scale;
+    style.PinRounding *= ui_scale;
+    style.PinBorderWidth *= ui_scale;
+    style.LinkStrength *= ui_scale;
+    style.FlowMarkerDistance *= ui_scale;
+    style.FlowSpeed *= ui_scale;
+    style.PivotSize.x *= ui_scale;
+    style.PivotSize.y *= ui_scale;
+    style.PinRadius *= ui_scale;
+    style.PinArrowSize *= ui_scale;
+    style.PinArrowWidth *= ui_scale;
+    style.GroupRounding *= ui_scale;
+    style.GroupBorderWidth *= ui_scale;
+    ed::GetStyle() = style;
+  }
+  ed::SetCurrentEditor(previous_context);
+
+  self.applied_node_editor_scale = ui_scale;
+}
+
 auto ParticleEditorPanel::active_graph(this ParticleEditorPanel& self) -> ParticleGraph& {
   return self.graph_for(self.active_kind);
 }
@@ -492,7 +539,7 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self, const Part
     ed::BeginNode(node_id);
     ImGui::TextUnformatted(desc.name.data(), desc.name.data() + desc.name.size());
     const auto header_bottom = ImGui::GetItemRectMax().y;
-    ImGui::Dummy(ImVec2(140.0f, 2.0f));
+    ImGui::Dummy(UI::scale(ImVec2(140.0f, 2.0f)));
 
     for (auto pin = 0_u32; pin < desc.input_count; pin++) {
       ed::BeginPin(ed::PinId(particle_input_pin_id(node.id, pin)), ed::PinKind::Input);
@@ -501,11 +548,11 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self, const Part
     }
 
     if (desc.has_output) {
-      ImGui::Indent(90.0f);
+      ImGui::Indent(UI::scale(90.0f));
       ed::BeginPin(ed::PinId(particle_output_pin_id(node.id)), ed::PinKind::Output);
       ImGui::TextUnformatted(stack.format_char("out {}", ICON_MDI_CIRCLE_SMALL));
       ed::EndPin();
-      ImGui::Unindent(90.0f);
+      ImGui::Unindent(UI::scale(90.0f));
     }
 
     ed::EndNode();
@@ -610,6 +657,14 @@ auto ParticleEditorPanel::draw_canvas(this ParticleEditorPanel& self, const Part
       }
     }
     self.selected_node = picked;
+  }
+
+  auto input = App::mod<Input>();
+  if (
+    input.get_key_held(ScanCode::LeftControl) &&
+    (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) || ed::IsBackgroundClicked())
+  ) {
+    App::get_window().set_cursor_override(WindowCursor::Hand);
   }
 
   ed::Suspend();
@@ -1169,7 +1224,7 @@ auto ParticleEditorPanel::draw_inspector(this ParticleEditorPanel& self) -> void
         if (const auto* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
           const auto* data = PayloadData::from_payload(payload);
           if (!data->get_str().empty()) {
-            if (const auto imported = asset_man.import_asset(data->str)) {
+            if (const auto imported = import_asset(asset_man, data->str)) {
               uuid = imported;
               modified = true;
             }
@@ -1452,9 +1507,9 @@ auto ParticleEditorPanel::draw_curve_editor(
 ) -> bool {
   ZoneScoped;
 
-  constexpr auto plot_height = 140.0f;
-  constexpr auto grab_radius = 7.0f;
-  constexpr auto point_radius = 4.0f;
+  const auto plot_height = UI::scale(140.0f);
+  const auto grab_radius = UI::scale(7.0f);
+  const auto point_radius = UI::scale(4.0f);
 
   auto modified = false;
 
@@ -1511,6 +1566,8 @@ auto ParticleEditorPanel::draw_curve_editor(
       );
 
       if (dragging) {
+        App::get_window().set_cursor_override(WindowCursor::Crosshair);
+
         const auto mouse_delta = ImGui::GetIO().MouseDelta;
         const auto value_span = std::max(max_value - min_value, 0.001f);
         curve.points[i] = {
@@ -1578,7 +1635,7 @@ auto ParticleEditorPanel::draw_curve_editor(
 
     auto line_spec = ImPlotSpec{};
     line_spec.LineColor = ImVec4(120.0f / 255.0f, 190.0f / 255.0f, 1.0f, 1.0f);
-    line_spec.LineWeight = 2.0f;
+    line_spec.LineWeight = UI::scale(2.0f);
 
     // Sample at the atlas resolution, so the plot is exactly what gets baked.
     ImPlot::PlotLineG(
@@ -1690,7 +1747,11 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk
   self.ensure_preview_scene();
 
   const auto available = ImGui::GetContentRegionAvail();
-  self.preview_size = {std::max(available.x, 32.0f), std::max(available.y - 64.0f, 32.0f)};
+  const auto minimum_preview_size = UI::scale(32.0f);
+  self.preview_size = {
+    std::max(available.x, minimum_preview_size),
+    std::max(available.y - UI::scale(64.0f), minimum_preview_size),
+  };
 
   auto attachment_info = swapchain_attachment;
   attachment_info.extent = vuk::Extent3D{
@@ -1802,7 +1863,7 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk
     ImGui::SetTooltip("Toggle emission shape");
   }
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(120.0f);
+  ImGui::SetNextItemWidth(UI::scale(120.0f));
   ImGui::SliderFloat("Speed", &self.preview_speed, 0.0f, 4.0f);
   ImGui::SameLine();
   ImGui::ColorEdit3(
@@ -1822,6 +1883,8 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
   -> void {
   ZoneScoped;
 
+  self.sync_node_editor_scale();
+
   if (!self.on_begin()) {
     self.on_end();
     return;
@@ -1834,7 +1897,7 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
   }
 
   if (UI::button(ICON_MDI_CONTENT_SAVE " Save") && !self.asset_path.empty()) {
-    App::mod<AssetManager>().export_asset(self.asset_uuid, self.asset_path);
+    export_asset(App::mod<AssetManager>(), self.asset_uuid, self.asset_path);
   }
 
   if (!self.compile_error.empty()) {
@@ -1843,8 +1906,8 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
   }
 
   const auto region = ImGui::GetContentRegionAvail();
-  constexpr auto splitter_width = 6.0f;
-  constexpr auto min_column_width = 200.0f;
+  const auto splitter_width = UI::scale(6.0f);
+  const auto min_column_width = UI::scale(200.0f);
 
   // A splitter takes width off the column to its right, so the canvas absorbs whatever is left.
   const auto drag_splitter = [&](const c8* id, f32& width) {

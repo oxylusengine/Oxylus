@@ -34,6 +34,7 @@ auto Input::reset_pressed() -> void {
   input_data.mouse_data.mouse_pressed.clear();
   input_data.mouse_data.mouse_released.clear();
   input_data.mouse_data.scroll_offset_y = 0;
+  input_data.mouse_data.mouse_pos_rel = {};
   input_data.mouse_data.mouse_moved = false;
 
   for (auto& [id, data] : input_data.gamepad_data_map) {
@@ -588,10 +589,10 @@ void Input::set_mouse_position(const glm::vec2& position) {
   }
 }
 
-void Input::set_mouse_position_rel(const glm::vec2& position) {
+void Input::set_mouse_position_rel(const glm::vec2& delta) {
   ZoneScoped;
 
-  input_data.mouse_data.mouse_pos_rel = position;
+  input_data.mouse_data.mouse_pos_rel += delta;
 }
 
 void Input::set_mouse_scroll_offset_y(const f32 offset) {
@@ -849,8 +850,10 @@ auto Input::find_conflicts(this const Input& self, const ActionBinding& binding)
       for (auto it = range.first; it != range.second; ++it) {
         const auto& existing_action = it->second;
         // Only conflict if same context
-        if (auto existing_binding = self.get_binding(existing_action);
-            existing_binding && existing_binding->context == binding.context && existing_action != binding.action_id) {
+        if (
+          auto existing_binding = self.get_binding(existing_action);
+          existing_binding && existing_binding->context == binding.context && existing_action != binding.action_id
+        ) {
           conflicts.push_back(existing_action);
         }
       }

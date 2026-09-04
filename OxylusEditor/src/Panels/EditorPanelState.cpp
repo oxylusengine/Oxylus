@@ -2,6 +2,8 @@
 
 #include <fmt/format.h>
 
+#include "UI/UI.hpp"
+
 namespace ox {
 u32 EditorPanelState::count = 0;
 
@@ -19,9 +21,9 @@ auto EditorPanelState::set_name(this EditorPanelState& self, const std::string& 
 }
 
 bool EditorPanelState::on_begin(this EditorPanelState& self, int32_t window_flags) {
-  ImGui::SetNextWindowSize(ImVec2(self.window_default_size.x, self.window_default_size.y), self.window_sizing_cond);
+  ImGui::SetNextWindowSize(UI::scale(self.window_default_size), self.window_sizing_cond);
 
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, UI::scale(2.0f));
 
   if (self.window_center_at_appear) {
     const auto center = ImGui::GetMainViewport()->GetCenter();
