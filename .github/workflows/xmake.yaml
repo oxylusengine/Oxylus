@@ -126,7 +126,9 @@ jobs:
 
       - name: Install macOS dependencies
         if: matrix.platform.os == 'macos'
-        run: python -m pip install --upgrade pip setuptools wheel
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          brew unlink simdjson || true
 
       - name: Install LLVM for macOS
         if: matrix.platform.os == 'macos'
@@ -141,6 +143,7 @@ jobs:
           else
             brew install ${{ matrix.platform.llvm_formula }}
           fi
+          brew unlink simdjson 2>/dev/null || true
           LLVM_PATH=$(brew --prefix ${{ matrix.platform.llvm_formula }})
           {
             echo "LLVM_PATH=$LLVM_PATH"
