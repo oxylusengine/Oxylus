@@ -31,7 +31,10 @@ public:
   ) -> bool;
 
   auto draw_components(this InspectorPanel& self, flecs::entity entity) -> void;
-  auto draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset) -> void;
+  // `source_path` is the file in the project directory, not `Asset::path` -- for anything the
+  // importer cooks that one names the `.oxpack` in the editor's cache.
+  auto draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset, const std::filesystem::path& source_path)
+    -> void;
 
   // One component field holding an asset UUID: preview, name, picker, clear, and drop target.
   // Returns true when it pointed the field somewhere else.

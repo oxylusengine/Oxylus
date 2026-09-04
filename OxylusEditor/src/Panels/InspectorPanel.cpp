@@ -6,7 +6,9 @@
 #include <misc/cpp/imgui_stdlib.h>
 
 #include "Asset/AssetFile.hpp"
+#include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
@@ -252,7 +254,7 @@ InspectorPanel::InspectorPanel() : EditorPanelState("Inspector", ICON_MDI_INFORM
   auto& asset_man = App::mod<AssetManager>();
 
   auto r = event_system.subscribe<DialogSaveEvent>([&asset_man](const DialogSaveEvent& e) {
-    if (!asset_man.export_asset(e.asset_uuid, e.path)) {
+    if (!export_asset(asset_man, e.asset_uuid, e.path)) {
       OX_LOG_ERROR("Couldn't save asset {} to {}!", e.asset_uuid.str(), e.path);
       return;
     }
@@ -302,14 +304,25 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
     // the uuid everything else is keyed on; for a file that has been imported already it just
     // resolves. Files of a type the manager does not handle yield nothing, as before.
     auto path = std::filesystem::path(editor_context.str.value());
+
+    // a sidecar is not the asset itself: `foo.png.oxasset` describes `foo.png`, and that is what
+    // the inspector should be showing. Assets that own their meta file have nothing to strip.
+    if (path.extension() == ".oxasset") {
+      auto stripped = path;
+      stripped.replace_extension();
+      if (std::filesystem::exists(stripped)) {
+        path = std::move(stripped);
+      }
+    }
+
     if (path != self.resolved_asset_path) {
       self.resolved_asset_path = std::move(path);
-      self.resolved_asset_uuid = asset_man.import_asset(self.resolved_asset_path);
+      self.resolved_asset_uuid = import_asset(asset_man, self.resolved_asset_path);
       self.asset_picker_field = nullptr;
     }
 
     if (auto asset = asset_man.get_asset(self.resolved_asset_uuid)) {
-      self.draw_asset_info(std::move(asset));
+      self.draw_asset_info(std::move(asset), self.resolved_asset_path);
     }
   }
 }
@@ -326,7 +339,7 @@ auto InspectorPanel::draw_material_properties(
     const float x = ImGui::GetContentRegionAvail().x / 2;
     const float y = ImGui::GetFrameHeight();
 
-    const auto has_own_file = AssetManager::owns_meta_file(default_path);
+    const auto has_own_file = owns_meta_file(default_path);
 
     const auto open_save_as_dialog = [&window, &material_uuid, &default_path] {
       pending_save_material_uuid = material_uuid;
@@ -453,12 +466,17 @@ auto InspectorPanel::draw_material_properties(
     };
   };
 
-  const auto texture_slot = [&load_callback](const char* label, UUID& uuid, bool is_srgb) -> bool {
-    return UI::texture_property(label, uuid, is_srgb, load_callback(is_srgb));
+  const auto import_callback = [](const std::filesystem::path& path) -> UUID {
+    return import_asset(App::mod<AssetManager>(), path);
+  };
+
+  const auto texture_slot = [&](const char* label, UUID& uuid, bool is_srgb) -> bool {
+    return UI::texture_property(label, uuid, is_srgb, load_callback(is_srgb), import_callback);
   };
 
   dirty |= texture_slot("Albedo", material->albedo_texture, true);
   dirty |= texture_slot("Normal", material->normal_texture, false);
+  dirty |= UI::property("Normal Scale", &material->normal_scale, 0.0f, 4.0f);
   dirty |= UI::property("Flip Normal Y", &material->flip_normal_y, "Enable for DirectX-convention normal maps.");
   dirty |= texture_slot("Emissive", material->emissive_texture, true);
   dirty |= UI::property_vector("Emissive Color", material->emissive_color, true, false);
@@ -466,6 +484,7 @@ auto InspectorPanel::draw_material_properties(
   dirty |= UI::property("Roughness Factor", &material->roughness_factor, 0.0f, 1.0f);
   dirty |= UI::property("Metallic Factor", &material->metallic_factor, 0.0f, 1.0f);
   dirty |= texture_slot("Occlusion", material->occlusion_texture, false);
+  dirty |= UI::property("Occlusion Strength", &material->occlusion_strength, 0.0f, 1.0f);
 
   UI::end_properties();
 
@@ -668,7 +687,7 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
     if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
       const auto* payload = PayloadData::from_payload(imgui_payload);
       if (
-        const auto imported = asset_man.import_asset(payload->get_path()); imported && asset_man.load_asset(imported)
+        const auto imported = import_asset(asset_man, payload->get_path()); imported && asset_man.load_asset(imported)
       ) {
         // Must not hold a registry read guard while unloading: unload_asset() takes the registry
         // write lock. unload_asset() no-ops on missing/unloaded assets.
@@ -771,12 +790,12 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
   asset.reset();
 
   switch (type) {
-    case AssetType::None:
-    case AssetType::Shader:  // TODO: Shaders
+    case AssetType::None   :
+    case AssetType::Shader : // TODO: Shaders
     case AssetType::Texture: // TODO: Textures
-    case AssetType::Font:    // TODO: Fonts
-    case AssetType::Scene:   // TODO: Scenes
-    case AssetType::Model:   // nothing to edit on a model itself yet
+    case AssetType::Font   : // TODO: Fonts
+    case AssetType::Scene  : // TODO: Scenes
+    case AssetType::Model  : // nothing to edit on a model itself yet
     case AssetType::Terrain: // TODO: Terrain edits
       break;
     case AssetType::ParticleSystem: {
@@ -815,7 +834,9 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
   }
 }
 
-auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset) -> void {
+auto InspectorPanel::draw_asset_info(
+  this InspectorPanel& self, ReadGuard<Asset> asset, const std::filesystem::path& source_path
+) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -829,8 +850,8 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
 
   auto type_str = AssetManager::to_asset_type_sv(asset_type);
   auto uuid_str = asset_uuid.str();
-  auto name = asset_path.filename().string();
-  auto path_str = asset_path.string();
+  auto name = source_path.filename().string();
+  auto path_str = source_path.string();
 
   ImGui::SeparatorText(stack.format_char("{} Asset", asset_type_icon(asset_type)));
   ImGui::Indent();

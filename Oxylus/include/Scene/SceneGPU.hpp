@@ -7,6 +7,7 @@
 #include <vuk/runtime/CommandBuffer.hpp>
 
 #include "Core/Types.hpp"
+#include "Scene/MeshGPU.hpp"
 #include "Utils/OxMath.hpp"
 
 namespace ox::GPU {
@@ -73,6 +74,8 @@ struct Material {
   alignas(2) u16 roughness_factor = 0;
   alignas(2) u16 metallic_factor = 0;
   alignas(2) u16 alpha_cutoff = 0;
+  alignas(2) u16 normal_scale = 0;
+  alignas(2) u16 occlusion_strength = 0;
   alignas(4) MaterialFlag flags = MaterialFlag::None;
   alignas(4) u32 sampler_index = 0;
   alignas(4) u32 albedo_image_index = 0;
@@ -83,19 +86,7 @@ struct Material {
   alignas(2) glm::u16vec2 uv_size = {};
   alignas(2) glm::u16vec2 uv_offset = {};
 };
-
-struct MeshletBounds {
-  alignas(2) glm::u16vec3 aabb_center = {};
-  alignas(1) glm::i8vec2 cone_axis_xy = {};
-  alignas(2) glm::u16vec3 aabb_extent = {};
-  alignas(1) i8 cone_axis_z = {};
-  alignas(1) i8 cone_cutoff = {};
-};
-
-struct MeshBounds {
-  alignas(4) glm::vec3 aabb_center = {};
-  alignas(4) glm::vec3 aabb_extent = {};
-};
+static_assert(sizeof(Material) == 60, "Material layout drifted from scene.slang");
 
 struct MeshletInstanceVisibility {
   // This is incremented __ONLY__ during cull MESHES pass.
@@ -119,13 +110,6 @@ struct MeshInstance {
   alignas(4) u32 meshlet_instance_visibility_offset = 0;
 };
 
-struct Meshlet {
-  alignas(4) u32 indirect_vertex_index_offset = 0;
-  alignas(4) u32 local_triangle_index_offset = 0;
-  alignas(4) u32 vertex_count = 0;
-  alignas(4) u32 triangle_count = 0;
-};
-
 struct AccelerationStructureInstance {
   alignas(4) f32 transform[12] = {};
   alignas(4) u32 custom_index_and_mask = 0;
@@ -133,34 +117,6 @@ struct AccelerationStructureInstance {
   alignas(8) u64 blas_address = 0;
 };
 static_assert(sizeof(AccelerationStructureInstance) == 64);
-
-struct MeshLOD {
-  alignas(8) u64 indices = 0;
-  alignas(8) u64 meshlets = 0;
-  alignas(8) u64 meshlet_bounds = 0;
-  alignas(8) u64 local_triangle_indices = 0;
-  alignas(8) u64 indirect_vertex_indices = 0;
-
-  alignas(4) u32 indices_count = 0;
-  alignas(4) u32 meshlet_count = 0;
-  alignas(4) u32 meshlet_bounds_count = 0;
-  alignas(4) u32 local_triangle_indices_count = 0;
-  alignas(4) u32 indirect_vertex_indices_count = 0;
-
-  alignas(4) f32 error = 0.0f;
-};
-
-struct Mesh {
-  constexpr static auto MAX_LODS = 8_sz;
-
-  alignas(8) u64 vertex_positions = 0;
-  alignas(8) u64 vertex_normals = 0;
-  alignas(8) u64 texture_coords = 0;
-  alignas(4) u32 vertex_count = 0;
-  alignas(4) u32 lod_count = 0;
-  alignas(8) u64 lods = 0;
-  alignas(4) MeshBounds bounds = {};
-};
 
 constexpr static f32 CAMERA_SCALE_UNIT = 0.01f;
 constexpr static f32 INV_CAMERA_SCALE_UNIT = 1.0f / CAMERA_SCALE_UNIT;

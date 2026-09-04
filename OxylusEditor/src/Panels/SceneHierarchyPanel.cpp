@@ -6,6 +6,7 @@
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 
+#include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Editor.hpp"
@@ -288,7 +289,7 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
             const auto* payload_data = PayloadData::from_payload(payload);
             const auto path = payload_data->get_path();
             if (path.extension() == ".oxparticle") {
-              auto asset = App::mod<AssetManager>().import_asset(path);
+              auto asset = import_asset(App::mod<AssetManager>(), path);
               if (asset) {
                 auto new_entity = self.scene_->create_particle_system_entity(asset);
                 if (new_entity != flecs::entity::null()) {
@@ -470,7 +471,7 @@ auto SceneHierarchyPanel::draw_entity_node(
         const auto* payload_data = PayloadData::from_payload(payload);
         const auto path = payload_data->get_path();
         if (path.extension() == ".oxparticle") {
-          auto asset = App::mod<AssetManager>().import_asset(path);
+          auto asset = import_asset(App::mod<AssetManager>(), path);
           if (asset) {
             auto new_entity = self.scene_->create_particle_system_entity(asset);
             if (new_entity != flecs::entity::null()) {

@@ -2358,7 +2358,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       );
       self.prepared_frame.reordered_indices_buffer = render_context.alloc_transient_buffer(
         vuk::MemoryUsage::eGPUonly,
-        self.prepared_frame.max_meshlet_instance_count * Model::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32)
+        self.prepared_frame.max_meshlet_instance_count * GPU::Mesh::MAX_MESHLET_PRIMITIVES * 3 * sizeof(u32)
       );
     }
   }

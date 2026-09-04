@@ -4,6 +4,7 @@
 #include <charconv>
 #include <functional>
 #include <imgui.h>
+#include <mutex>
 
 #include "Utils/CVars.hpp"
 #include "Utils/Log.hpp"
@@ -65,6 +66,9 @@ public:
 
   auto add_log(const char* fmt, loguru::Verbosity verb) -> void;
   auto clear_log() -> void;
+  // `add_log` is a loguru callback, so any thread reaches it. It only queues; this is the single
+  // writer of `text_buffer`, and `render` calls it.
+  auto drain_pending(this RuntimeConsole& self) -> void;
 
   auto set_scene_cvar_system(this RuntimeConsole& self, CVarSystem* system) -> void { self.scene_cvar_system = system; }
 
@@ -102,6 +106,8 @@ private:
   static constexpr uint32_t MAX_TEXT_BUFFER_SIZE = 32;
   i32 history_position = -1;
   std::vector<ConsoleText> text_buffer = {};
+  std::mutex pending_mutex = {};
+  std::vector<ConsoleText> pending = {};
   std::vector<std::string> input_log = {};
   bool request_scroll_to_bottom = true;
   bool request_keyboard_focus = true;

@@ -25,7 +25,6 @@
 #include <algorithm>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
-#include <meshoptimizer.h>
 #include <simdjson.h>
 #include <sol/state.hpp>
 
@@ -43,7 +42,6 @@
 #include "UI/RmlView.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Log.hpp"
-#include "Utils/Random.hpp"
 #include "Utils/Timestep.hpp"
 
 namespace ox {

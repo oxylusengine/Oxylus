@@ -8,13 +8,18 @@ target("ResourceCompiler")
   remove_files("./private/cli.cpp")
 
   add_deps("Oxylus", { public = false })
+  add_forceincludes("tracy/Tracy.hpp")
 
   add_defines("OXRC_EXPORTS=1", { public = false })
 
   add_packages(
     "shader-slang",
-    "spirv-tools",
     "zpp_bits",
+    "fastgltf-ox",
+    "meshoptimizer",
+    "ktx-ox",
+    "stb",
+    "glm",
     { public = false })
 
 target_end()
@@ -29,6 +34,6 @@ target("rcli")
   add_files("./private/cli.cpp", "./private/ResourceConfig.cpp")
 
   add_deps("ResourceCompiler")
-  add_packages("fmt", "toml++", "shader-slang")
+  add_packages("fmt", "toml++", "shader-slang", "zpp_bits", "glm", "unordered_dense")
 
 target_end()

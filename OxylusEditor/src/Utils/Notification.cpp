@@ -19,20 +19,38 @@ static constexpr u32 history_max = 50;
 auto NotificationSystem::add(this NotificationSystem& self, Notification&& notif) -> void {
   ZoneScoped;
 
+  // before the lock: this logs, which re-enters `add` through the same callback
   if (notif.title.empty()) {
     OX_LOG_WARN("Unnamed activity found!");
     return;
   }
 
-  if (self.active_notifications.contains(notif.title)) {
-    if (notif.completed) {
-      self.active_notifications.insert_or_assign(notif.title, std::move(notif));
+  auto lock = std::unique_lock(self.pending_mutex);
+  self.pending.emplace_back(std::move(notif));
+}
+
+auto NotificationSystem::drain_pending(this NotificationSystem& self) -> void {
+  ZoneScoped;
+
+  auto incoming = std::vector<Notification>();
+  {
+    auto lock = std::unique_lock(self.pending_mutex);
+    if (self.pending.empty()) {
       return;
     }
+
+    incoming.swap(self.pending);
   }
 
-  self.notification_history.emplace_back(notif);
-  self.active_notifications.emplace(notif.title, std::move(notif));
+  for (auto& notif : incoming) {
+    if (self.active_notifications.contains(notif.title) && notif.completed) {
+      self.active_notifications.insert_or_assign(notif.title, std::move(notif));
+      continue;
+    }
+
+    self.notification_history.emplace_back(notif);
+    self.active_notifications.emplace(notif.title, std::move(notif));
+  }
 
   // cleanup history
   while (self.notification_history.size() >= history_max) {
@@ -51,6 +69,8 @@ auto NotificationSystem::get_last_notification(this NotificationSystem& self) ->
 
 auto NotificationSystem::draw(this NotificationSystem& self) -> void {
   ZoneScoped;
+
+  self.drain_pending();
 
   // Bottom right
   const auto scaled_root_window_size = UI::scale(root_window_size);

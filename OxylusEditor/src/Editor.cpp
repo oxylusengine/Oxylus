@@ -7,6 +7,8 @@
 #include <implot.h>
 #include <vuk/vsl/Core.hpp>
 
+#include "Asset/AssetImporter.hpp"
+#include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
@@ -16,6 +18,7 @@
 #include "Panels/ContentPanel.hpp"
 #include "Panels/EditorSettingsPanel.hpp"
 #include "Panels/InspectorPanel.hpp"
+#include "Panels/LoadingPanel.hpp"
 #include "Panels/ParticleEditorPanel.hpp"
 #include "Panels/ProjectPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
@@ -104,6 +107,8 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_panel_registry.add<InspectorPanel>();
   self.editor_panel_registry.add<EditorSettingsPanel>();
   self.editor_panel_registry.add<ProjectPanel>();
+  // after ProjectPanel so its modal renders on top when a project hands off to it
+  self.editor_panel_registry.add<LoadingPanel>();
   self.editor_panel_registry.add<AssetManagerPanel>();
   self.editor_panel_registry.add<ParticleEditorPanel>();
   auto activity_log_panel = self.editor_panel_registry.add<ActivityLogPanel>();
@@ -156,6 +161,10 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
 auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
+  // Modules tear down in reverse registration order, so the compiler and the asset manager an
+  // in-flight scan is using are still alive here and will not be a frame later.
+  wait_for_asset_scans();
+
   auto& job_man = App::get_job_manager();
   job_man.get_tracker().stop_tracking();
 
@@ -181,6 +190,21 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
 
 auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   ZoneScoped;
+
+  poll_asset_scans();
+
+  // the panels below read the notification containers, and workers only ever queue into them
+  self.notification_system.drain_pending();
+
+  // A scene names its assets by UUID, and those only exist once the scan has registered them, so
+  // opening it waits for the import rather than landing on entities with missing meshes.
+  if (self.pending_start_scene.has_value() && !asset_scan_active()) {
+    const auto scene_path = self.pending_start_scene.value();
+    self.pending_start_scene = nullopt;
+    if (!self.open_scene(scene_path)) {
+      self.new_scene();
+    }
+  }
 
   self.thumbnail_manager.update();
 
@@ -418,7 +442,7 @@ auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -
     job_man.submit(Job::create([scene, scene_path, edits_path, edits_uuid] {
       scene->get_scene()->save_to_file(scene_path);
       if (edits_uuid) {
-        App::mod<AssetManager>().export_asset(edits_uuid, edits_path);
+        export_asset(App::mod<AssetManager>(), edits_uuid, edits_path);
       }
       scene->set_path(scene_path);
     }));

@@ -185,16 +185,7 @@ public func shade_surface<S : IUVSample>(in Material material, in TangentFrame f
     surface.normal = frame.normal;
 
     if (material.flags & MaterialFlag::HasNormalImage) {
-        var sampled_normal = material.sample_normal_color(uv_sample) * 2.0 - 1.0;
-
-        let two_component = (material.flags & MaterialFlag::NormalTwoComponent) != MaterialFlag::None;
-        let flip_y = (material.flags & MaterialFlag::NormalFlipY) != MaterialFlag::None;
-
-        sampled_normal.y = flip_y ? -sampled_normal.y : sampled_normal.y;
-        sampled_normal.z = two_component ? sqrt(saturate(1.0 - dot(sampled_normal.xy, sampled_normal.xy)))
-                                         : sampled_normal.z;
-
-        surface.normal = frame.to_world(sampled_normal);
+        surface.normal = frame.to_world(material.sample_tangent_normal(uv_sample));
     }
 
     return surface;

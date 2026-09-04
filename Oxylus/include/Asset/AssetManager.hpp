@@ -2,7 +2,7 @@
 
 #include <condition_variable>
 #include <functional>
-#include <simdjson.h>
+#include <variant>
 
 #include "Asset/AssetFile.hpp"
 #include "Asset/AudioSource.hpp"
@@ -16,7 +16,6 @@
 #include "Memory/SlotMap.hpp"
 #include "Scene/Scene.hpp"
 #include "Scripting/LuaScript.hpp"
-#include "Utils/JsonWriter.hpp"
 
 namespace ox {
 struct Asset {
@@ -50,51 +49,29 @@ class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
 
-  using LoadInfo = std::variant<TextureLoadInfo, Material, ModelLoadInfo>;
+  // `monostate` is 'nothing supplied', which is what makes the pending map's fallback possible.
+  using LoadInfo = std::variant<std::monostate, TextureLoadInfo, Material, ModelData, TextureData>;
 
-  static auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
-  static auto meta_file_path(const std::filesystem::path& path) -> std::filesystem::path;
-  static auto owns_meta_file(const std::filesystem::path& path) -> bool;
-  static auto write_gltf_meta(AssetManager& self, const std::filesystem::path& path, JsonWriter& json) -> bool;
-
-  struct AssetMetaFile {
-    simdjson::padded_string contents;
-    simdjson::ondemand::parser parser;
-    simdjson::simdjson_result<simdjson::ondemand::document> doc;
-  };
 
   auto init(this AssetManager& self) -> std::expected<void, std::string>;
   auto deinit(this AssetManager& self) -> std::expected<void, std::string>;
 
   auto get_registry_snapshot(this AssetManager& self) -> std::vector<Asset>;
 
-  auto read_meta_file(this AssetManager& self, const std::filesystem::path& path) -> std::unique_ptr<AssetMetaFile>;
-  auto read_meta_file_from_asset(this AssetManager& self, const std::filesystem::path& path)
-    -> std::unique_ptr<AssetMetaFile>;
-
   auto create_asset(this AssetManager& self, AssetType type, const std::filesystem::path& path = {}) -> UUID;
-  auto import_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID;
   auto delete_asset(this AssetManager& self, const UUID& uuid) -> void;
-  auto register_asset(this AssetManager& self, const std::filesystem::path& path) -> UUID;
   auto register_asset(this AssetManager& self, const UUID& uuid, AssetType type, const std::filesystem::path& path)
     -> bool;
   auto acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void;
   auto release_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void;
 
-  auto export_asset(this AssetManager& self, const UUID& uuid, const std::filesystem::path& path) -> bool;
-  auto export_scene(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
-    -> bool;
-  auto export_material(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
-    -> bool;
-  auto export_script(this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path)
-    -> bool;
-  auto export_terrain_edits(
-    this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
-  ) -> bool;
-  auto export_particle_system(
-    this AssetManager& self, const UUID& uuid, JsonWriter& writer, const std::filesystem::path& path
-  ) -> bool;
+  // What an asset should be loaded with when nothing is handed to `load_asset` at the call site.
+  // The engine cannot discover it, a material's definition lives in the editor's sidecar, so
+  // whoever registers the asset pushes it here first. Entries survive a load, so unload/reload works.
+  auto set_pending_load_info(this AssetManager& self, const UUID& uuid, LoadInfo info) -> void;
+  auto get_pending_load_info(this AssetManager& self, const UUID& uuid) -> LoadInfo;
+  auto clear_pending_load_info(this AssetManager& self, const UUID& uuid) -> void;
 
   auto load_asset(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}, bool should_acquire = true)
     -> bool;
@@ -149,14 +126,16 @@ private:
 
   auto unload_asset_impl(this AssetManager& self, AssetType type, u64 id) -> bool;
 
+  auto load_model(this AssetManager& self, ModelData&& model_data, bool async) -> ModelID;
+  // Unpacks the compiled model out of the `.oxpack` at `path`.
   auto load_model(this AssetManager& self, const std::filesystem::path& path, bool async) -> ModelID;
-  auto load_model(this AssetManager& self, const ModelLoadInfo& info) -> ModelID;
   auto unload_model(this AssetManager& self, ModelID model_id) -> bool;
   // Blocks until every mesh job of the model has finished.
   auto wait_until_model_loaded(this AssetManager& self, ModelID model_id) -> void;
   auto notify_model_loaded(this AssetManager& self) -> void;
 
   auto load_texture(this AssetManager& self, const std::filesystem::path& path, TextureLoadInfo info = {}) -> TextureID;
+  auto load_texture(this AssetManager& self, const TextureData& data, const TextureLoadInfo& info) -> TextureID;
   auto unload_texture(this AssetManager& self, TextureID texture_id) -> bool;
 
   auto load_material(this AssetManager& self, const std::filesystem::path& path, const Material& info = {})
@@ -194,6 +173,9 @@ private:
 
   std::shared_mutex loading_mutex = {};
   ankerl::unordered_dense::set<UUID> loading_assets = {};
+
+  std::shared_mutex pending_load_info_mutex = {};
+  ankerl::unordered_dense::map<UUID, LoadInfo> pending_load_info = {};
 
   std::mutex model_load_mutex = {};
   std::condition_variable model_load_cv = {};

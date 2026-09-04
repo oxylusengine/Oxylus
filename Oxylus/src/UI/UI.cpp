@@ -174,6 +174,7 @@ bool UI::texture_property(
   UUID& texture_uuid,
   bool is_srgb,
   const std::function<UUID(const char*, const UUID&, bool&)>& load_callback,
+  const std::function<UUID(const std::filesystem::path&)>& import_callback,
   const char* tooltip
 ) {
   begin_property_grid(label, tooltip);
@@ -228,7 +229,7 @@ bool UI::texture_property(
     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
       const auto* p = PayloadData::from_payload(payload);
       const auto path = p->get_str();
-      if (auto new_texture = asset_man.import_asset(path)) {
+      if (auto new_texture = import_callback ? import_callback(path) : UUID(nullptr)) {
         if (asset_man.load_asset(new_texture, TextureLoadInfo{.is_srgb = is_srgb})) {
           if (texture_uuid) {
             asset_man.unload_asset(texture_uuid);

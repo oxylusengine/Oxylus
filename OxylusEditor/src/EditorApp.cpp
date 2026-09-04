@@ -3,6 +3,7 @@
 #include "Core/EmbeddedLogo.hpp"
 #include "Core/Enum.hpp"
 #include "Editor.hpp"
+#include "ResourceCompiler.hpp"
 
 int main(int argc, char** argv) {
   std::string name = "Oxylus Engine - Editor";
@@ -36,6 +37,7 @@ int main(int argc, char** argv) {
       }
     )
     .with(ox::DefaultModules{})
+    .with<ox::rc::ResourceCompiler>()
     .with<ox::Editor>()
     .run();
 

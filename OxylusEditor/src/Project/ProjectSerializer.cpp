@@ -1,4 +1,4 @@
-#include "Core/ProjectSerializer.hpp"
+#include "Project/ProjectSerializer.hpp"
 
 #include <toml++/toml.hpp>
 
