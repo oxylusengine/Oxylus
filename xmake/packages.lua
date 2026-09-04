@@ -46,7 +46,7 @@ packages = {
       header_only = true,
     },
   },
-  ["simdjson " .. simdjson_version] = {},
+  ["simdjson " .. simdjson_version] = { system = false },
   ["joltphysics v5.6.0"] = {
     configs = {
       debug_renderer = true,
