@@ -395,10 +395,21 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
     if (uuid_str_json.error())
       return;
 
+    // a sidecar is not the asset itself: `foo.png.oxasset` describes `foo.png`, and that is what
+    // the inspector should be showing. Assets that own their meta file have nothing to strip.
+    auto source_path = path;
+    if (source_path.extension() == ".oxasset") {
+      auto stripped = source_path;
+      stripped.replace_extension();
+      if (std::filesystem::exists(stripped)) {
+        source_path = std::move(stripped);
+      }
+    }
+
     auto uuid_from_str = UUID::from_string(uuid_str_json.value_unsafe());
     if (uuid_from_str.has_value()) {
       if (auto asset = asset_man.get_asset(*uuid_from_str))
-        self.draw_asset_info(std::move(asset));
+        self.draw_asset_info(std::move(asset), source_path);
     }
   }
 }
@@ -718,7 +729,9 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   });
 }
 
-auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset> asset) -> void {
+auto InspectorPanel::draw_asset_info(
+  this InspectorPanel& self, ReadGuard<Asset> asset, const std::filesystem::path& source_path
+) -> void {
   ZoneScoped;
   auto& editor = App::mod<Editor>();
   auto& asset_man = App::mod<AssetManager>();
@@ -730,8 +743,8 @@ auto InspectorPanel::draw_asset_info(this InspectorPanel& self, ReadGuard<Asset>
 
   auto type_str = asset_man.to_asset_type_sv(asset_type);
   auto uuid_str = asset_uuid.str();
-  auto name = asset_path.filename().string();
-  auto path_str = asset_path.string();
+  auto name = source_path.filename().string();
+  auto path_str = source_path.string();
 
   ImGui::SeparatorText("Asset");
   ImGui::Indent();
