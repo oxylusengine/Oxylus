@@ -1,5 +1,9 @@
 #include "Asset/AssetMeta.hpp"
 
+#include <array>
+#include <cstring>
+#include <span>
+
 #include "Asset/AssetManager.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
@@ -143,9 +147,88 @@ auto read_material_asset_meta(simdjson::ondemand::value json, Material& material
   return true;
 }
 
+static auto header_matches(std::span<const u8> header, std::span<const u8> magic, const usize offset = 0) -> bool {
+  return header.size() >= offset + magic.size() && std::memcmp(header.data() + offset, magic.data(), magic.size()) == 0;
+}
+
+// What the file says it is, which a rename cannot change. Only formats that carry a signature are
+// here: glTF, Lua, JSON and the sidecars are text, and the two `ox` formats are ours to name.
+static auto to_asset_file_signature(const std::filesystem::path& path) -> AssetFileType {
+  ZoneScoped;
+
+  auto error = std::error_code{};
+  if (!std::filesystem::is_regular_file(path, error)) {
+    return AssetFileType::None;
+  }
+
+  auto file = File(path, FileAccess::Read);
+  if (!file) {
+    return AssetFileType::None;
+  }
+
+  // as much as the longest signature checked below, KTX2's twelve bytes, plus the tag WAV carries
+  // past its RIFF header
+  auto bytes = std::array<u8, 16>{};
+  const auto read = file.read(bytes.data(), bytes.size());
+  const auto header = std::span(bytes).first(ox::min(static_cast<usize>(read), bytes.size()));
+
+  constexpr u8 PNG[] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  constexpr u8 JPEG[] = {0xFF, 0xD8, 0xFF};
+  constexpr u8 KTX2[] = {0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
+  constexpr u8 DDS[] = {'D', 'D', 'S', ' '};
+  constexpr u8 GLB[] = {'g', 'l', 'T', 'F'};
+  constexpr u8 OGG[] = {'O', 'g', 'g', 'S'};
+  constexpr u8 FLAC[] = {'f', 'L', 'a', 'C'};
+  constexpr u8 RIFF[] = {'R', 'I', 'F', 'F'};
+  constexpr u8 WAVE[] = {'W', 'A', 'V', 'E'};
+  constexpr u8 ID3[] = {'I', 'D', '3'};
+
+  if (header_matches(header, PNG)) {
+    return AssetFileType::PNG;
+  }
+  if (header_matches(header, JPEG)) {
+    return AssetFileType::JPEG;
+  }
+  if (header_matches(header, KTX2)) {
+    return AssetFileType::KTX2;
+  }
+  if (header_matches(header, DDS)) {
+    return AssetFileType::DDS;
+  }
+  if (header_matches(header, GLB)) {
+    return AssetFileType::GLB;
+  }
+  if (header_matches(header, OGG)) {
+    return AssetFileType::OGG;
+  }
+  if (header_matches(header, FLAC)) {
+    return AssetFileType::FLAC;
+  }
+  // RIFF is a container, so the form it holds is what decides
+  if (header_matches(header, RIFF) && header_matches(header, WAVE, 8)) {
+    return AssetFileType::WAV;
+  }
+  // MP3 is the one format with no real magic: an ID3 tag if it has one, otherwise the eleven set
+  // bits an mp3 frame starts with. Checked last because that sync pattern is weak evidence next to
+  // everything above.
+  if (header_matches(header, ID3) || (header.size() >= 2 && header[0] == 0xFF && (header[1] & 0xE0) == 0xE0)) {
+    return AssetFileType::MP3;
+  }
+
+  return AssetFileType::None;
+}
+
 auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {
   ZoneScoped;
   memory::ScopedStack stack;
+
+  // The signature is the stronger evidence, so it settles the question whenever the file has one:
+  // a jpeg saved as `.png` reaches a decoder that cannot read it otherwise. The extension answers
+  // for text formats, and for a path that is not on disk yet -- a sidecar named for a file that is
+  // about to be written.
+  if (const auto signature = to_asset_file_signature(path); signature != AssetFileType::None) {
+    return signature;
+  }
 
   if (!path.has_extension()) {
     return AssetFileType::None;

@@ -76,49 +76,49 @@ auto read_audio_peaks(const std::filesystem::path& path, const u32 bucket_count)
 
 AudioSource::~AudioSource() { unload(); }
 
-AudioSource::AudioSource(AudioSource&& other) noexcept : _sound(std::exchange(other._sound, nullptr)) {}
+AudioSource::AudioSource(AudioSource&& other) noexcept : sound(std::exchange(other.sound, nullptr)) {}
 
 auto AudioSource::operator=(AudioSource&& other) noexcept -> AudioSource& {
   if (this != &other) {
     unload();
-    _sound = std::exchange(other._sound, nullptr);
+    sound = std::exchange(other.sound, nullptr);
   }
 
   return *this;
 }
 
-auto AudioSource::load(const std::filesystem::path& path) -> bool {
+auto AudioSource::load(this AudioSource& self, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
-  unload();
+  self.unload();
 
-  _sound = new ma_sound;
+  self.sound = new ma_sound;
   auto* engine = App::mod<AudioEngine>().get_engine();
   auto path_str = path.string();
   const ma_result result =
-    ma_sound_init_from_file(engine, path_str.c_str(), MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, _sound);
+    ma_sound_init_from_file(engine, path_str.c_str(), MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, self.sound);
   if (result != MA_SUCCESS) {
     OX_LOG_ERROR("Failed to load sound: {}", path);
     // init failed, so there is nothing to uninit
-    delete _sound;
-    _sound = nullptr;
+    delete self.sound;
+    self.sound = nullptr;
     return false;
   }
 
   return true;
 }
 
-auto AudioSource::unload() -> void {
+auto AudioSource::unload(this AudioSource& self) -> void {
   ZoneScoped;
 
-  if (_sound == nullptr) {
+  if (self.sound == nullptr) {
     return;
   }
 
-  ma_sound_uninit(_sound);
-  delete _sound;
-  _sound = nullptr;
+  ma_sound_uninit(self.sound);
+  delete self.sound;
+  self.sound = nullptr;
 }
 
-auto AudioSource::get_source() -> ma_sound* { return _sound; }
+auto AudioSource::get_source(this AudioSource& self) -> ma_sound* { return self.sound; }
 } // namespace ox

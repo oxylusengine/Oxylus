@@ -35,11 +35,11 @@ public:
   AudioSource(AudioSource&& other) noexcept;
   auto operator=(AudioSource&& other) noexcept -> AudioSource&;
 
-  auto load(const std::filesystem::path& path) -> bool;
-  auto unload() -> void;
-  auto get_source() -> ma_sound*;
+  auto load(this AudioSource& self, const std::filesystem::path& path) -> bool;
+  auto unload(this AudioSource& self) -> void;
+  auto get_source(this AudioSource& self) -> ma_sound*;
 
 private:
-  ma_sound* _sound = nullptr;
+  ma_sound* sound = nullptr;
 };
 } // namespace ox
