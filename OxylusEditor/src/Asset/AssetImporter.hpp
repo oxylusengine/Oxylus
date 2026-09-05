@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
@@ -43,4 +44,17 @@ auto import_asset(
 // Same, resolving the compiler module itself.
 auto import_asset(AssetManager& asset_man, const std::filesystem::path& path, option<bool> srgb_directive = nullopt)
   -> UUID;
+
+// Where a uuid came from on disk. Anything the compiler cooks is registered against the
+// `<uuid>.oxpack` in the cache, so `Asset::path` names the pack rather than the file, and the
+// sidecar that knows better is keyed by source path -- the import is the only moment both are in
+// hand, so it records them here. `name` is what the UI shows: the source file, plus which slot of
+// it for the textures and materials a model brings with it. Empty when the uuid was never imported,
+// which is every asset whose registry path is already its source.
+struct AssetSource {
+  std::filesystem::path path = {};
+  std::string name = {};
+};
+
+auto asset_source(const UUID& uuid) -> AssetSource;
 } // namespace ox

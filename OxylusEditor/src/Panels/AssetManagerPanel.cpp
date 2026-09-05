@@ -6,6 +6,7 @@
 #include <imgui_internal.h>
 #include <tracy/Tracy.hpp>
 
+#include "Asset/AssetImporter.hpp"
 #include "Core/App.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
@@ -40,9 +41,23 @@ enum class AssetColumn : i32 { Name = 0, Type, References, Status, UUID };
 
 static auto asset_type_label(const AssetType type) -> std::string_view { return AssetManager::to_asset_type_sv(type); }
 
-static auto asset_name(const Asset& asset) -> std::string {
-  auto name = asset.path.filename().string();
-  return name.empty() ? asset.uuid.str() : name;
+auto asset_display_name(const UUID& uuid, const std::filesystem::path& registry_path) -> std::string {
+  const auto source = asset_source(uuid);
+  auto name = source.name.empty() ? registry_path.filename().string() : source.name;
+
+  return name.empty() ? uuid.str() : name;
+}
+
+auto asset_display_path(const UUID& uuid, const std::filesystem::path& registry_path) -> std::filesystem::path {
+  auto source = asset_source(uuid);
+
+  return source.path.empty() ? registry_path : std::move(source.path);
+}
+
+static auto asset_name(const Asset& asset) -> std::string { return asset_display_name(asset.uuid, asset.path); }
+
+static auto asset_path(const Asset& asset) -> std::filesystem::path {
+  return asset_display_path(asset.uuid, asset.path);
 }
 
 // A loaded asset is one the manager holds a payload for; an unloaded one is only a registry entry
@@ -248,7 +263,7 @@ auto AssetBrowser::draw_row_context_menu(this AssetBrowser& self, const Asset& a
     ImGui::SetClipboardText(asset.uuid.str().c_str());
   }
   if (ImGui::MenuItem(stack.format_char("{} Copy path", ICON_MDI_CONTENT_COPY))) {
-    ImGui::SetClipboardText(asset.path.string().c_str());
+    ImGui::SetClipboardText(asset_path(asset).string().c_str());
   }
 }
 
@@ -350,7 +365,7 @@ auto AssetBrowser::draw_list(this AssetBrowser& self, const bool picking, const 
       // Dragging out of the browser is how an asset gets onto a component field without going
       // through the file tree.
       if (!picking && ImGui::BeginDragDropSource()) {
-        auto payload = PayloadData(asset.path.string(), asset.uuid);
+        auto payload = PayloadData(asset_path(asset).string(), asset.uuid);
         ImGui::SetDragDropPayload(PayloadData::DRAG_DROP_TARGET, &payload, payload.size());
         ImGui::TextUnformatted(label);
         ImGui::EndDragDropSource();
@@ -415,7 +430,7 @@ auto AssetBrowser::draw_details(this AssetBrowser& self, const Asset& asset) -> 
   }
 
   auto name = asset_name(asset);
-  auto path_str = asset.path.string();
+  auto path_str = asset_path(asset).string();
   auto uuid_str = asset.uuid.str();
 
   UI::begin_properties(ImGuiTableFlags_SizingStretchProp);

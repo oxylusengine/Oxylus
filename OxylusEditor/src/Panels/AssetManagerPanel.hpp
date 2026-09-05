@@ -8,6 +8,13 @@
 namespace ox {
 auto asset_type_icon(AssetType type) -> const c8*;
 
+// What an asset is called and where it came from, for every list, field and tooltip that shows one.
+// `Asset::path` is what the loader reads, which for anything the importer cooks is the `<uuid>.oxpack`
+// in the cache -- a name nobody recognizes -- so these resolve back to the source the import
+// recorded and fall back to the registry path for assets that are their own source.
+auto asset_display_name(const UUID& uuid, const std::filesystem::path& registry_path) -> std::string;
+auto asset_display_path(const UUID& uuid, const std::filesystem::path& registry_path) -> std::filesystem::path;
+
 // Browses the asset registry: the body of the Asset Manager panel, and of the picker windows the
 // inspector's asset fields open.
 struct AssetBrowser {

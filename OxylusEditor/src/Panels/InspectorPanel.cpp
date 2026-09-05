@@ -658,13 +658,16 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
   auto& editor = App::mod<Editor>();
 
   auto type = AssetType::None;
-  auto path = std::filesystem::path{};
+  auto registry_path = std::filesystem::path{};
   if (auto asset = asset_man.get_asset(uuid)) {
     type = asset->type;
-    path = asset->path;
+    registry_path = asset->path;
   }
   const auto picker_type = type != AssetType::None ? type : expected_asset_type(label);
-  const auto name = uuid ? path.filename().string() : std::string("None");
+  // The same resolution the browser rows get, so a field and the picker it opens call an asset by
+  // the same name instead of the field showing the cache pack.
+  const auto path = asset_display_path(uuid, registry_path);
+  const auto name = uuid ? asset_display_name(uuid, registry_path) : std::string("None");
 
   // Putting a model in a scene has to go through Scene::create_model_entity, which builds the
   // entity hierarchy the mesh instances need; pointing a bare uuid field at one would skip that.
@@ -702,7 +705,7 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
   };
 
   const auto preview_size = ImGui::GetFrameHeight() * 2.0f + ImGui::GetStyle().ItemSpacing.y;
-  const auto thumbnail = uuid ? editor.thumbnail_manager.get_thumbnail(type, path, uuid) : TextureView{};
+  const auto thumbnail = uuid ? editor.thumbnail_manager.get_thumbnail(type, registry_path, uuid) : TextureView{};
   auto browse = false;
 
   ImGui::BeginDisabled(!pickable);
