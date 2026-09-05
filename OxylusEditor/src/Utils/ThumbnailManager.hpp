@@ -47,7 +47,9 @@ public:
   auto reset(this ThumbnailManager& self) -> void;
 
   auto get_thumbnail_texture(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> TextureView;
-  auto get_thumbnail_model(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> TextureView;
+  auto get_thumbnail_model(
+    this ThumbnailManager& self, const std::filesystem::path& asset_path, const UUID& asset_uuid = UUID(nullptr)
+  ) -> TextureView;
 
   auto get_thumbnail_material(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> TextureView;
   auto get_thumbnail_material(this ThumbnailManager& self, const UUID& material_uuid) -> TextureView;

@@ -721,7 +721,7 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
           break;
       }
 
-      const float max_width = UI::scale(300.0f);
+      const float max_width = UI::scale(600.0f);
       const float padding_x = UI::scale(8.0f);
       const float spacing = UI::scale(6.0f);
       const float icon_width = ImGui::CalcTextSize(icon_text.c_str()).x;

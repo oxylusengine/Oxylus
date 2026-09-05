@@ -895,9 +895,14 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
     return {};
   }
 
+  // A caller that knows the registry hands over `Asset::path`, which for anything the importer
+  // cooked is the pack in the asset cache, and a texture packed inside a model has no other file at
+  // all. That pack is already the compiled payload, so it skips straight to the pack loader.
+  const auto compiled = asset_path.extension() == ".oxpack";
+
   // KTX2 and DDS are cooked offline now, so their source bytes mean nothing to the engine; the
   // preview comes out of the pack the importer produced instead.
-  if (needs_compiling(asset_path)) {
+  if (compiled || needs_compiling(asset_path)) {
     // the trim kept from an earlier look at this file, which is a few kilobytes against the source
     // pack's tens of megabytes
     auto cached_pack = self.cache_dir / (asset_hash + ".oxpack");
@@ -906,17 +911,20 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
       return {};
     }
 
-    auto& asset_man = App::mod<AssetManager>();
-    const auto uuid = import_asset(asset_man, asset_path);
+    auto pack_path = asset_path;
+    if (!compiled) {
+      auto& asset_man = App::mod<AssetManager>();
+      const auto uuid = import_asset(asset_man, asset_path);
 
-    auto pack_path = std::filesystem::path();
-    if (auto asset = asset_man.get_asset(uuid)) {
-      pack_path = asset->path;
-    }
+      pack_path.clear();
+      if (auto asset = asset_man.get_asset(uuid)) {
+        pack_path = asset->path;
+      }
 
-    if (pack_path.empty()) {
-      self.mark_job_failed(asset_hash);
-      return {};
+      if (pack_path.empty()) {
+        self.mark_job_failed(asset_hash);
+        return {};
+      }
     }
 
     self.submit_pack_load(asset_hash, pack_path, false);
@@ -952,8 +960,9 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
   return {};
 }
 
-auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const std::filesystem::path& asset_path)
-  -> TextureView {
+auto ThumbnailManager::get_thumbnail_model(
+  this ThumbnailManager& self, const std::filesystem::path& asset_path, const UUID& asset_uuid
+) -> TextureView {
   ZoneScoped;
 
   if (!std::filesystem::exists(asset_path)) {
@@ -976,8 +985,13 @@ auto ThumbnailManager::get_thumbnail_model(this ThumbnailManager& self, const st
     return {};
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-  auto model_uuid = import_asset(asset_man, asset_path);
+  // Same as above: a model's registry path is its cache pack, and nothing can import one of those.
+  // Whoever already knows the uuid passes it in, and then there is nothing left to resolve.
+  auto model_uuid = asset_uuid;
+  if (!model_uuid) {
+    model_uuid = import_asset(App::mod<AssetManager>(), asset_path);
+  }
+
   if (!model_uuid) {
     self.release_job(asset_hash);
     return {};
@@ -1167,7 +1181,7 @@ auto ThumbnailManager::get_thumbnail(
 
   switch (type) {
     case AssetType::Texture : return self.get_thumbnail_texture(asset_path);
-    case AssetType::Model   : return self.get_thumbnail_model(asset_path);
+    case AssetType::Model   : return self.get_thumbnail_model(asset_path, asset_uuid);
     case AssetType::Terrain : return self.get_thumbnail_terrain(asset_path);
     case AssetType::Audio   : return self.get_thumbnail_audio(asset_path);
     // A material's preview follows its in-memory edits, which only the UUID can find.
