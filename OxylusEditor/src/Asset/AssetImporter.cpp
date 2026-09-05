@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <ranges>
+#include <shared_mutex>
 #include <span>
 
 #include "Asset/AssetManager.hpp"
@@ -32,6 +33,31 @@ struct ImportGate {
 };
 
 static ImportGate import_gate = {};
+
+// Filled as imports go through, read by the UI on the main thread, so it is shared even though
+// nothing here is hot.
+struct AssetSourceRegistry {
+  std::shared_mutex mutex = {};
+  ankerl::unordered_dense::map<UUID, AssetSource> sources = {};
+};
+
+static AssetSourceRegistry asset_sources = {};
+
+static auto record_asset_source(const UUID& uuid, const std::filesystem::path& path, std::string name) -> void {
+  if (!uuid) {
+    return;
+  }
+
+  auto lock = std::unique_lock(asset_sources.mutex);
+  asset_sources.sources.insert_or_assign(uuid, AssetSource{.path = path, .name = std::move(name)});
+}
+
+auto asset_source(const UUID& uuid) -> AssetSource {
+  auto lock = std::shared_lock(asset_sources.mutex);
+  const auto it = asset_sources.sources.find(uuid);
+
+  return it != asset_sources.sources.end() ? it->second : AssetSource{};
+}
 
 struct ImportClaim {
   std::string key = {};
@@ -99,6 +125,10 @@ auto to_asset_type(AssetFileType file_type) -> AssetType {
     case AssetFileType::LUA       : return AssetType::Script;
     case AssetFileType::OXTERRAIN : return AssetType::Terrain;
     case AssetFileType::OXPARTICLE: return AssetType::ParticleSystem;
+    case AssetFileType::WAV       :
+    case AssetFileType::MP3       :
+    case AssetFileType::FLAC      :
+    case AssetFileType::OGG       : return AssetType::Audio;
     default                       : return AssetType::None;
   }
 }
@@ -410,8 +440,11 @@ auto register_model(
 
   asset_man.register_asset(meta.uuid, AssetType::Model, cache_path(meta.uuid));
 
+  const auto source_name = path.filename().string();
+  record_asset_source(meta.uuid, path, source_name);
+
   const auto model_dir = path.parent_path();
-  for (const auto& texture : meta.textures) {
+  for (const auto& [texture_index, texture] : std::views::enumerate(meta.textures)) {
     if (!texture.uuid) {
       continue;
     }
@@ -425,9 +458,14 @@ auto register_model(
     }
 
     asset_man.register_asset(texture.uuid, AssetType::Texture, cache_dir() / texture.cache);
+    // an image that lives inside the glTF has no file of its own, so the slot it fills is all there
+    // is to tell it apart from its siblings in a list
+    record_asset_source(texture.uuid, path, fmt::format("{} (texture {})", source_name, texture_index));
   }
 
-  for (const auto& [material_uuid, material] : std::views::zip(meta.material_uuids, meta.materials)) {
+  for (auto material_index = 0_sz; material_index < meta.material_uuids.size(); material_index++) {
+    const auto& material_uuid = meta.material_uuids[material_index];
+    const auto& material = meta.materials[material_index];
     if (!material_uuid) {
       continue;
     }
@@ -436,6 +474,7 @@ auto register_model(
     // model it came from is touched, and then this is the only source.
     asset_man.register_asset(material_uuid, AssetType::Material, path);
     asset_man.set_pending_load_info(material_uuid, material);
+    record_asset_source(material_uuid, path, fmt::format("{} (material {})", source_name, material_index));
   }
 }
 
@@ -531,6 +570,7 @@ auto import_compiled_texture(
   }
 
   asset_man.register_asset(uuid, AssetType::Texture, pack_path);
+  record_asset_source(uuid, path, path.filename().string());
 
   return uuid;
 }

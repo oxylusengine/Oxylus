@@ -3,6 +3,7 @@
 #include <expected>
 #include <glm/ext/vector_float3.hpp>
 #include <string>
+
 #include "Core/Types.hpp"
 struct ma_engine;
 struct ma_sound;
@@ -30,6 +31,12 @@ public:
   auto unpause_source(ma_sound* sound) -> void;
   auto stop_source(ma_sound* sound) -> void;
   auto is_source_playing(ma_sound* sound) -> bool;
+  auto is_source_at_end(ma_sound* sound) -> bool;
+  auto seek_source(ma_sound* sound, f32 seconds) -> void;
+  auto get_source_cursor(ma_sound* sound) -> f32;
+  auto get_source_length(ma_sound* sound) -> f32;
+  auto get_source_volume(ma_sound* sound) -> f32;
+  auto is_source_looping(ma_sound* sound) -> bool;
   auto set_source_volume(ma_sound* sound, f32 volume) -> void;
   auto set_source_pitch(ma_sound* sound, f32 pitch) -> void;
   auto set_source_looping(ma_sound* sound, bool state) -> void;

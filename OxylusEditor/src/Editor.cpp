@@ -102,7 +102,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
 
   self.active_project = std::make_unique<Project>();
 
-  auto scene_hierarchy_panel = self.editor_panel_registry.add<SceneHierarchyPanel>();
+  self.editor_panel_registry.add<SceneHierarchyPanel>();
   self.editor_panel_registry.add<ContentPanel>();
   self.editor_panel_registry.add<InspectorPanel>();
   self.editor_panel_registry.add<EditorSettingsPanel>();
@@ -113,16 +113,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_panel_registry.add<ParticleEditorPanel>();
   auto activity_log_panel = self.editor_panel_registry.add<ActivityLogPanel>();
   activity_log_panel->set_system(&self.notification_system);
-  auto text_editor_panel = self.editor_panel_registry.add<TextEditorPanel>();
-
-  scene_hierarchy_panel->viewer.opened_script_callback = [text_editor_panel](const UUID& uuid) {
-    auto& asset_man = App::mod<AssetManager>();
-    auto asset = asset_man.get_asset(uuid);
-    if (asset) {
-      text_editor_panel->visible = true;
-      text_editor_panel->text_editor.open_file(asset->path);
-    }
-  };
+  self.editor_panel_registry.add<TextEditorPanel>();
 
   self.main_viewport_panel.init();
 
@@ -671,6 +662,8 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
     ) {
       content_panel.visible = !content_panel.visible;
     }
+    if (ImGui::IsItemHovered())
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     if (content_panel.visible)
       ImGui::PopStyleColor();
 
@@ -692,6 +685,8 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
     ) {
       activity_log_panel_state = !activity_log_panel_state;
     }
+    if (ImGui::IsItemHovered())
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     if (activity_log_panel_state)
       ImGui::PopStyleColor();
 
@@ -706,19 +701,89 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
     if (last_notification.has_value()) {
       auto& notif = *last_notification;
       std::string icon_text = {};
+      ImColor icon_color = {};
       switch (notif.type) {
-        case Notification::Info   : icon_text = ICON_MDI_INFORMATION; break;
-        case Notification::Warn   : icon_text = ICON_MDI_ALERT; break;
-        case Notification::Error  : icon_text = ICON_MDI_EXCLAMATION; break;
-        case Notification::Loading: icon_text = ICON_MDI_CHECK_BOLD; break;
+        case Notification::Info:
+          icon_text = ICON_MDI_INFORMATION;
+          icon_color = Gruvbox::bright_blue;
+          break;
+        case Notification::Warn:
+          icon_text = ICON_MDI_ALERT;
+          icon_color = Gruvbox::bright_yellow;
+          break;
+        case Notification::Error:
+          icon_text = ICON_MDI_EXCLAMATION;
+          icon_color = Gruvbox::bright_red;
+          break;
+        case Notification::Loading:
+          icon_text = ICON_MDI_CHECK_BOLD;
+          icon_color = Gruvbox::bright_green;
+          break;
       }
 
-      auto notif_text = fmt::format("{} {}", icon_text, notif.title);
-      const float text_width = ImGui::CalcTextSize(notif_text.c_str()).x;
-      ImGui::SameLine(ImGui::GetWindowWidth() - text_width - UI::scale(16.0f));
-      ImGui::TextUnformatted(notif_text.c_str());
-      if (ImGui::IsItemClicked()) {
+      const float max_width = UI::scale(600.0f);
+      const float padding_x = UI::scale(8.0f);
+      const float spacing = UI::scale(6.0f);
+      const float icon_width = ImGui::CalcTextSize(icon_text.c_str()).x;
+      const float title_width = ImGui::CalcTextSize(notif.title.c_str()).x;
+      const float content_width = icon_width + spacing + title_width + padding_x * 2.0f;
+      const float button_width = std::min(content_width, max_width);
+
+      const float min_pos_x = ImGui::GetItemRectMax().x + UI::scale(8.0f);
+      const float pos_x = std::max(min_pos_x, ImGui::GetWindowWidth() - button_width - UI::scale(16.0f));
+      ImGui::SameLine(pos_x);
+
+      const ImVec4 btn_bg = activity_log_panel_state ? ImVec4(0.22f, 0.22f, 0.22f, 0.9f)
+                                                     : ImVec4(0.16f, 0.16f, 0.16f, 0.0f);
+      ImGui::PushStyleColor(ImGuiCol_Button, btn_bg);
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.26f, 0.26f, 1.0f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.32f, 0.32f, 0.32f, 1.0f));
+      ImGui::PushStyleColor(
+        ImGuiCol_Border,
+        activity_log_panel_state ? ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive) : Gruvbox::dark1.Value
+      );
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UI::scale(4.0f));
+
+      if (ImGui::ButtonEx("##BottomBarNotification", ImVec2(button_width, 0))) {
         activity_log_panel_state = !activity_log_panel_state;
+      }
+
+      ImGui::PopStyleVar(2);
+      ImGui::PopStyleColor(4);
+
+      const ImVec2 btn_min = ImGui::GetItemRectMin();
+      const ImVec2 btn_max = ImGui::GetItemRectMax();
+      auto* draw_list = ImGui::GetWindowDrawList();
+
+      const float text_y = btn_min.y + (btn_max.y - btn_min.y - ImGui::GetTextLineHeight()) * 0.5f;
+      const float icon_x = btn_min.x + padding_x;
+      draw_list->AddText({icon_x, text_y}, ImU32(icon_color), icon_text.c_str());
+
+      const float text_x = icon_x + icon_width + spacing;
+      const float text_max_x = btn_max.x - padding_x;
+      if (text_max_x > text_x) {
+        ImGui::RenderTextEllipsis(
+          draw_list,
+          {text_x, text_y},
+          {text_max_x, text_y + ImGui::GetTextLineHeight()},
+          text_max_x,
+          notif.title.data(),
+          notif.title.data() + notif.title.size(),
+          nullptr
+        );
+      }
+
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (ImGui::BeginTooltip()) {
+          ImGui::TextColored(icon_color.Value, "%s", icon_text.c_str());
+          ImGui::SameLine();
+          ImGui::TextUnformatted(notif.title.c_str());
+          ImGui::Spacing();
+          ImGui::TextDisabled("Click to toggle Activity Log");
+          ImGui::EndTooltip();
+        }
       }
     }
   }

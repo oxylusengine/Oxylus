@@ -651,7 +651,9 @@ auto AssetManager::load_audio(this AssetManager& self, const std::filesystem::pa
   ZoneScoped;
 
   auto audio = AudioSource{};
-  audio.load(path);
+  if (!audio.load(path)) {
+    return AudioID::Invalid;
+  }
 
   auto write_lock = std::unique_lock(self.audio_mutex);
   return self.audio_map.create_slot(std::move(audio));

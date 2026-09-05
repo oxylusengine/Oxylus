@@ -27,6 +27,10 @@ enum class AssetFileType : u32 {
   LUA,
   OXTERRAIN,
   OXPARTICLE,
+  WAV,
+  MP3,
+  FLAC,
+  OGG,
 };
 
 // `doc` borrows `contents` and `parser`, so the declaration order is the destruction order.
