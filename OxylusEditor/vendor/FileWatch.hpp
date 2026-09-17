@@ -78,6 +78,7 @@
 #include <algorithm>
 #include <type_traits>
 #include <future>
+#include <optional>
 #include <regex>
 #include <cstddef>
 #include <cstring>
@@ -840,14 +841,23 @@ namespace filewatch {
                   return fcntl(fd, F_GETPATH, buf) == -1;
             }
 
-            FileState makeFileState(const StringType& path) {
+            std::optional<FileState> makeFileState(const StringType& path) {
                   int fd = openFile(path);
                   struct stat stat;
 
-                  fstat(fd, &stat);
+                  // FSEvents may report an entry which has already disappeared by
+                  // the time its directory is scanned. Treat that as a stale event
+                  // instead of aborting the process.
+                  if (fd == -1) {
+                        return std::nullopt;
+                  }
+                  if (fstat(fd, &stat) == -1) {
+                        close(fd);
+                        return std::nullopt;
+                  }
 
                   return FileState {
-                        openFile(path),
+                        fd,
                         stat.st_nlink,
                         stat.st_mtimespec.tv_sec
                   };
@@ -883,9 +893,7 @@ namespace filewatch {
             }
 
             int openFile(const StringType& file) {
-                  int fd = open(fullPathOf(file).c_str(), O_RDONLY);
-                  assert(fd != -1);
-                  return fd;
+                  return open(fullPathOf(file).c_str(), O_RDONLY);
             }
 
             void walkAndSeeChanges() {
@@ -956,16 +964,19 @@ namespace filewatch {
                               return;
                         }
                         if (newSnapshot.count(file) == 0) {
-                              FileState state = makeFileState(file);
+                              auto state = makeFileState(file);
+                              if (!state) {
+                                    return;
+                              }
                               struct stat stat;
 
-                              fstat(state.fd, &stat);
+                              fstat(state->fd, &stat);
                               events.push_back(EventInfo {
                                     .event = Event::added,
                                     .file = file,
                                     .time = stat.st_mtimespec
                               });
-                              newSnapshot.insert(std::make_pair(file, std::move(state)));
+                              newSnapshot.insert(std::make_pair(file, std::move(*state)));
                         }
                   });
 
@@ -1079,29 +1090,49 @@ namespace filewatch {
 
                   Event event = Event::modified;
                   if (_previous_event_is_rename) {
+                        auto state = makeFileState(pathPair.filename);
+                        _previous_event_is_rename = false;
+                        if (!state) {
+                              return;
+                        }
                         event = Event::renamed_new;
                         _directory_snapshot.insert(std::make_pair(pathPair.filename,
-                              std::move(makeFileState(pathPair.filename))));
-                        _previous_event_is_rename = false;
+                              std::move(*state)));
                   }
                   else if (flags & kFSEventStreamEventFlagItemRenamed) {
                         const auto state = _directory_snapshot.find(pathPair.filename);
-                        assert(state != _directory_snapshot.end());
-                        StringType fdPath = pathOfFd(state->second.fd);
-
-                        // moved/delete to Trash folder
-                        if (!isInDirectory(absolutePath, fdPath)) {
-                              event = Event::removed;
+                        if (state == _directory_snapshot.end()) {
+                              // Rename notifications can arrive after a scan has
+                              // discarded the old entry. Rebuild the snapshot rather
+                              // than assuming the entry is still present.
+                              walkAndSeeChanges();
+                              return;
+                        }
+                        if (fdIsRemoved(state->second.fd)) {
                               _directory_snapshot.erase(pathPair.filename);
+                              event = Event::removed;
                         }
                         else {
-                              event = Event::renamed_old;
-                              _previous_event_is_rename = true;
+                              StringType fdPath = pathOfFd(state->second.fd);
+
+                              // moved/delete to Trash folder
+                              if (!isInDirectory(absolutePath, fdPath)) {
+                                    event = Event::removed;
+                                    _directory_snapshot.erase(pathPair.filename);
+                              }
+                              else {
+                                    event = Event::renamed_old;
+                                    _previous_event_is_rename = true;
+                              }
                         }
                   }
                   else if (flags & kFSEventStreamEventFlagItemCreated) {
+                        auto state = makeFileState(pathPair.filename);
+                        if (!state) {
+                              return;
+                        }
                         _directory_snapshot.insert(std::make_pair(pathPair.filename,
-                              std::move(makeFileState(pathPair.filename))));
+                              std::move(*state)));
                         event = Event::added;
                   }
                   else if (flags & kFSEventStreamEventFlagItemRemoved) {
@@ -1175,8 +1206,11 @@ namespace filewatch {
                   FSEventStreamRef stream = openStream(directory);
                   walkDirectory(directory, [this] (StringType path) mutable {
                         if (!isParentOrSelfDirectory(path) && std::regex_match(path, _pattern)) {
-                              _directory_snapshot.insert(std::make_pair(std::move(path),
-                                                std::move(makeFileState(path))));
+                              auto state = makeFileState(path);
+                              if (state) {
+                                    _directory_snapshot.insert(std::make_pair(std::move(path),
+                                                      std::move(*state)));
+                              }
                         }
                   });
                   return stream;
