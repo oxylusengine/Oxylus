@@ -77,6 +77,40 @@ auto AudioEngine::is_source_playing(ma_sound* sound) -> bool {
   return ma_sound_is_playing(sound);
 }
 
+auto AudioEngine::is_source_at_end(ma_sound* sound) -> bool {
+  ZoneScoped;
+  return ma_sound_at_end(sound);
+}
+
+auto AudioEngine::seek_source(ma_sound* sound, f32 seconds) -> void {
+  ZoneScoped;
+  ma_sound_seek_to_second(sound, glm::max(seconds, 0.0f));
+}
+
+auto AudioEngine::get_source_cursor(ma_sound* sound) -> f32 {
+  ZoneScoped;
+  f32 cursor = 0.0f;
+  ma_sound_get_cursor_in_seconds(sound, &cursor);
+  return cursor;
+}
+
+auto AudioEngine::get_source_length(ma_sound* sound) -> f32 {
+  ZoneScoped;
+  f32 length = 0.0f;
+  ma_sound_get_length_in_seconds(sound, &length);
+  return length;
+}
+
+auto AudioEngine::get_source_volume(ma_sound* sound) -> f32 {
+  ZoneScoped;
+  return ma_sound_get_volume(sound);
+}
+
+auto AudioEngine::is_source_looping(ma_sound* sound) -> bool {
+  ZoneScoped;
+  return ma_sound_is_looping(sound);
+}
+
 auto AudioEngine::set_source_volume(ma_sound* sound, f32 volume) -> void {
   ZoneScoped;
   ma_sound_set_volume(sound, volume);

@@ -1147,16 +1147,15 @@ auto RendererInstance::render(
 
     auto contact_shadows_pass = vuk::make_pass(
       "contact_shadows",
-      [sun_dir = self.directional_light.direction, &cvar](
+      [sun_dir = self.directional_light.direction,
+       steps = static_cast<u32>(cvar.cvar_contact_shadows_steps.get()),
+       thickness = cvar.cvar_contact_shadows_thickness.get(),
+       length = cvar.cvar_contact_shadows_length.get()](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eComputeRW) result,
         VUK_IA(vuk::eComputeSampled) src_depth,
         VUK_BA(vuk::eComputeRead) camera
       ) {
-        const u32 steps = static_cast<u32>(cvar.cvar_contact_shadows_steps.get());
-        const f32 thickness = cvar.cvar_contact_shadows_thickness.get();
-        const f32 length = cvar.cvar_contact_shadows_length.get();
-
         cmd_list //
           .bind_compute_pipeline("contact_shadows")
           .bind_image(0, 0, src_depth)
