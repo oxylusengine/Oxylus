@@ -1323,11 +1323,66 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     ImGui::EndPopup();
   }
 
+  if (self.should_open_new_folder_popup)
+    ImGui::OpenPopup("New Folder");
+
+  if (ImGui::BeginPopupModal("New Folder", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::IsWindowAppearing())
+      ImGui::SetKeyboardFocusHere();
+
+    UI::begin_properties(UI::default_properties_flags, true, .5f);
+    const bool create_requested = UI::input_text("Name", &self.new_folder_name, ImGuiInputTextFlags_EnterReturnsTrue);
+    UI::end_properties();
+
+    if (!self.new_folder_error.empty())
+      ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", self.new_folder_error.c_str());
+
+    const auto reset_new_folder_popup = [&self] {
+      self.new_folder_parent.clear();
+      self.new_folder_name.clear();
+      self.new_folder_error.clear();
+      self.should_open_new_folder_popup = false;
+    };
+
+    ImGui::Separator();
+    if (create_requested || ImGui::Button("Create", UI::scale(ImVec2(120.0f, 0.0f)))) {
+      if (self.new_folder_name.empty()) {
+        self.new_folder_error = "Enter a folder name.";
+      } else if (
+        self.new_folder_name == "." || self.new_folder_name == ".." ||
+        self.new_folder_name.find_first_of("/\\") != std::string::npos
+      ) {
+        self.new_folder_error = "Folder names cannot contain path separators.";
+      } else {
+        const auto new_folder_path = self.new_folder_parent / self.new_folder_name;
+        std::error_code error;
+        if (std::filesystem::create_directory(new_folder_path, error)) {
+          editor_context.reset(EditorContext::Type::File, new_folder_path.string());
+          self.refresh();
+          reset_new_folder_popup();
+          ImGui::CloseCurrentPopup();
+        } else if (error) {
+          self.new_folder_error = fmt::format("Couldn't create folder: {}", error.message());
+        } else {
+          self.new_folder_error = "A file or folder with that name already exists.";
+        }
+      }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", UI::scale(ImVec2(120.0f, 0.0f)))) {
+      reset_new_folder_popup();
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+
   if (self.should_open_new_asset_popup)
     ImGui::OpenPopup("New Asset");
 
-  if (ImGui::BeginPopupModal("New Asset", nullptr, ImGuiWindowFlags_NoResize)) {
-    UI::begin_properties();
+  if (ImGui::BeginPopupModal("New Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    UI::begin_properties(UI::default_properties_flags, true, 0.5f);
     UI::input_text("Name", &self.new_asset_name);
     UI::end_properties();
 
@@ -1490,17 +1545,10 @@ auto ContentPanel::draw_context_menu_items(this ContentPanel& self, const std::f
   if (is_dir) {
     if (ImGui::BeginMenu("Create")) {
       if (ImGui::MenuItem("Folder")) {
-        i32 i = 0;
-        bool created = false;
-        std::string new_folder_path;
-        while (!created) {
-          std::string folder_name = "New Folder" + (i == 0 ? "" : fmt::format(" ({})", i));
-          new_folder_path = (context / folder_name).string();
-          created = std::filesystem::create_directory(new_folder_path);
-          ++i;
-        }
-        auto& editor_context = App::mod<Editor>().get_context();
-        editor_context.reset(EditorContext::Type::File, new_folder_path);
+        self.new_folder_parent = context;
+        self.new_folder_name.clear();
+        self.new_folder_error.clear();
+        self.should_open_new_folder_popup = true;
       }
       if (ImGui::MenuItem("Material")) {
         self.new_asset_name.clear();
