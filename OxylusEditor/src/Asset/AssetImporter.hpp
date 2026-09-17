@@ -45,6 +45,16 @@ auto import_asset(
 auto import_asset(AssetManager& asset_man, const std::filesystem::path& path, option<bool> srgb_directive = nullopt)
   -> UUID;
 
+auto remap_path(
+  const std::filesystem::path& path, const std::filesystem::path& old_path, const std::filesystem::path& new_path
+) -> option<std::filesystem::path>;
+
+// Moves the registry and source-display paths rooted at `old_path` to `new_path`. Compiled assets
+// keep their cache path; direct-to-source assets use the new source on their next load or save.
+auto relocate_asset_paths(
+  AssetManager& asset_man, const std::filesystem::path& old_path, const std::filesystem::path& new_path
+) -> void;
+
 // Where a uuid came from on disk. Anything the compiler cooks is registered against the
 // `<uuid>.oxpack` in the cache, so `Asset::path` names the pack rather than the file, and the
 // sidecar that knows better is keyed by source path -- the import is the only moment both are in

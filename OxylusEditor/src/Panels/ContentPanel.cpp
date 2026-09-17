@@ -299,8 +299,164 @@ auto classify_file_type(const std::filesystem::path& path) -> FileType {
   return file_type;
 }
 
-static bool drag_drop_target(const std::filesystem::path& drop_path) {
+static auto update_selected_path(const std::filesystem::path& old_path, const std::filesystem::path& new_path) -> void {
+  auto& editor_context = App::mod<Editor>().get_context();
+  if (editor_context.type != EditorContext::Type::File || !editor_context.str.has_value()) {
+    return;
+  }
+
+  if (const auto relocated_path = remap_path(std::filesystem::path(*editor_context.str), old_path, new_path)) {
+    editor_context.reset(EditorContext::Type::File, relocated_path->string());
+  }
+}
+
+static auto move_content_entry(
+  const std::filesystem::path& requested_path,
+  const std::filesystem::path& drop_path,
+  const std::filesystem::path& assets_directory
+) -> bool {
+  const auto normalized_root = assets_directory.lexically_normal();
+  const auto normalized_requested_path = requested_path.lexically_normal();
+  const auto normalized_drop_path = drop_path.lexically_normal();
+
+  const auto is_in_assets_directory = [&normalized_root](const std::filesystem::path& path) {
+    const auto normalized_path = path.lexically_normal();
+    if (normalized_path == normalized_root) {
+      return true;
+    }
+
+    const auto relative_path = normalized_path.lexically_relative(normalized_root);
+    if (relative_path.empty() || relative_path.is_absolute()) {
+      return false;
+    }
+
+    return std::ranges::none_of(relative_path, [](const auto& component) { return component == ".."; });
+  };
+
+  std::error_code error;
+  if (
+    !is_in_assets_directory(normalized_requested_path) || !is_in_assets_directory(normalized_drop_path) ||
+    !std::filesystem::exists(normalized_requested_path, error) || error ||
+    !std::filesystem::is_directory(normalized_drop_path, error) || error
+  ) {
+    OX_LOG_ERROR(
+      "Couldn't move {} into {}: source or target is outside the asset directory or unavailable.",
+      requested_path,
+      drop_path
+    );
+    return false;
+  }
+
+  auto source_path = normalized_requested_path;
+  if (!std::filesystem::is_directory(source_path, error) && !error && source_path.extension() == ".oxasset") {
+    auto companion_path = source_path;
+    companion_path.replace_extension();
+    if (std::filesystem::exists(companion_path, error) && !error) {
+      // A visible sidecar describes its sibling. Moving it must move that sibling as well, otherwise
+      // the asset would lose its stable UUID on the next import.
+      source_path = std::move(companion_path);
+    }
+  }
+  if (error) {
+    OX_LOG_ERROR("Couldn't inspect {} before moving it: {}", requested_path, error.message());
+    return false;
+  }
+
+  const bool is_directory = std::filesystem::is_directory(source_path, error);
+  if (error) {
+    OX_LOG_ERROR("Couldn't inspect {} before moving it: {}", source_path, error.message());
+    return false;
+  }
+
+  if (source_path.parent_path().lexically_normal() == normalized_drop_path) {
+    return false;
+  }
+
+  // Moving a directory into itself (or any child) would create an invalid recursive move.
+  if (is_directory && remap_path(normalized_drop_path, source_path, source_path)) {
+    OX_LOG_ERROR("Can't move directory {} into itself.", source_path);
+    return false;
+  }
+
+  const auto destination_path = normalized_drop_path / source_path.filename();
+  if (std::filesystem::exists(destination_path, error) || error) {
+    OX_LOG_ERROR("Couldn't move {}: {} already exists or can't be inspected.", source_path, destination_path);
+    return false;
+  }
+
+  const auto source_meta_path = is_directory ? std::filesystem::path{} : meta_file_path(source_path);
+  const bool has_meta_file = !source_meta_path.empty() && source_meta_path != source_path &&
+                             std::filesystem::exists(source_meta_path, error) && !error;
+  if (error) {
+    OX_LOG_ERROR("Couldn't inspect sidecar for {}: {}", source_path, error.message());
+    return false;
+  }
+
+  const auto destination_meta_path = has_meta_file ? meta_file_path(destination_path) : std::filesystem::path{};
+  if (has_meta_file && (std::filesystem::exists(destination_meta_path, error) || error)) {
+    OX_LOG_ERROR(
+      "Couldn't move {}: sidecar {} already exists or can't be inspected.",
+      source_path,
+      destination_meta_path
+    );
+    return false;
+  }
+
+  std::filesystem::rename(source_path, destination_path, error);
+  if (error) {
+    OX_LOG_ERROR("Couldn't move {} to {}: {}", source_path, destination_path, error.message());
+    return false;
+  }
+
+  if (has_meta_file) {
+    std::filesystem::rename(source_meta_path, destination_meta_path, error);
+    if (error) {
+      const auto sidecar_error = error;
+      std::error_code rollback_error;
+      std::filesystem::rename(destination_path, source_path, rollback_error);
+      OX_LOG_ERROR(
+        "Couldn't move sidecar {} to {}: {}{}",
+        source_meta_path,
+        destination_meta_path,
+        sidecar_error.message(),
+        rollback_error ? fmt::format(" (and couldn't restore {}: {})", source_path, rollback_error.message()) : ""
+      );
+      return false;
+    }
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+  relocate_asset_paths(asset_man, source_path, destination_path);
+
+  // Standalone assets consist only of an `.oxasset`; their registered path omits that extension.
+  if (
+    !is_directory && source_path == normalized_requested_path && source_path.extension() == ".oxasset" &&
+    source_meta_path == source_path
+  ) {
+    auto source_asset_path = source_path;
+    source_asset_path.replace_extension();
+    auto destination_asset_path = destination_path;
+    destination_asset_path.replace_extension();
+    relocate_asset_paths(asset_man, source_asset_path, destination_asset_path);
+  }
+
+  update_selected_path(source_path, destination_path);
+  if (has_meta_file) {
+    update_selected_path(source_meta_path, destination_meta_path);
+  }
+
+  return true;
+}
+
+static bool drag_drop_target(const std::filesystem::path& drop_path, const std::filesystem::path& assets_directory) {
   if (ImGui::BeginDragDropTarget()) {
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+      const auto* source = PayloadData::from_payload(payload);
+      const bool moved = move_content_entry(source->get_path(), drop_path, assets_directory);
+      ImGui::EndDragDropTarget();
+      return moved;
+    }
+
     const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_TARGET);
     if (payload) {
       auto* asset = static_cast<PayloadData*>(payload->Data);
@@ -538,7 +694,8 @@ auto ContentPanel::directory_tree_view_recursive(
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
       self.update_directory_entries(entry_path);
 
-    drag_drop_target(entry_path);
+    if (drag_drop_target(entry_path, self.assets_directory))
+      self.refresh_requested = true;
     drag_drop_from(entry_path);
 
     ImGui::SameLine();
@@ -940,6 +1097,8 @@ void ContentPanel::render_side_view(this ContentPanel& self) {
 
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
       self.update_directory_entries(self.assets_directory);
+    if (drag_drop_target(self.assets_directory, self.assets_directory))
+      self.refresh_requested = true;
     const char* folder_icon = opened ? ICON_MDI_FOLDER_OPEN : ICON_MDI_FOLDER;
     ImGui::SameLine();
     if (selected)
@@ -1030,9 +1189,17 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     }
   }
 
+  std::filesystem::path drop_directory;
+  {
+    auto read_lock = std::shared_lock(self.directory_mutex);
+    drop_directory = self.current_directory;
+  }
+
   ImVec2 cursor_pos = ImGui::GetCursorPos();
   const ImVec2 region = ImGui::GetContentRegionAvail();
   ImGui::InvisibleButton("##DragDropTargetAssetPanelBody", region);
+  if (drag_drop_target(drop_directory, self.assets_directory))
+    self.refresh_requested = true;
 
   ImGui::SetNextItemAllowOverlap();
   ImGui::SetCursorPos(cursor_pos);
@@ -1097,8 +1264,8 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           }
           ImGui::PopStyleVar();
 
-          if (is_dir)
-            drag_drop_target(file.file_path);
+          if (is_dir && drag_drop_target(file.file_path, self.assets_directory))
+            self.refresh_requested = true;
 
           drag_drop_from(file.file_path);
 
@@ -1246,8 +1413,8 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           }
           ImGui::PopStyleVar();
 
-          if (is_dir)
-            drag_drop_target(path);
+          if (is_dir && drag_drop_target(path, self.assets_directory))
+            self.refresh_requested = true;
           drag_drop_from(path);
 
           any_item_hovered |= hovered;
