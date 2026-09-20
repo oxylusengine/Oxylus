@@ -541,6 +541,7 @@ auto AssetBrowser::render_picker(
   memory::ScopedStack stack;
 
   if (open && !*open) {
+    self.selected_uuid = UUID(nullptr);
     return nullopt;
   }
 
@@ -554,7 +555,7 @@ auto AssetBrowser::render_picker(
 
   ImGui::SetNextWindowSize(UI::scale({860.0f, 520.0f}), ImGuiCond_Appearing);
   UI::center_next_window(ImGuiCond_Appearing);
-  if (ImGui::Begin(id, open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
+  if (ImGui::Begin(id, nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
     auto commit = self.draw(filter, true);
 
     const auto* selected = self.find_asset(self.selected_uuid);

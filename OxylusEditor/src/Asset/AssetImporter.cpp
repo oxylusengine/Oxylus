@@ -43,6 +43,34 @@ struct AssetSourceRegistry {
 
 static AssetSourceRegistry asset_sources = {};
 
+auto remap_path(
+  const std::filesystem::path& path, const std::filesystem::path& old_path, const std::filesystem::path& new_path
+) -> option<std::filesystem::path> {
+  if (path.empty() || old_path.empty() || new_path.empty()) {
+    return nullopt;
+  }
+
+  const auto normalized_path = path.lexically_normal();
+  const auto normalized_old_path = old_path.lexically_normal();
+  const auto normalized_new_path = new_path.lexically_normal();
+  if (normalized_path == normalized_old_path) {
+    return normalized_new_path;
+  }
+
+  const auto relative_path = normalized_path.lexically_relative(normalized_old_path);
+  if (relative_path.empty() || relative_path.is_absolute()) {
+    return nullopt;
+  }
+
+  for (const auto& component : relative_path) {
+    if (component == "..") {
+      return nullopt;
+    }
+  }
+
+  return normalized_new_path / relative_path;
+}
+
 static auto record_asset_source(const UUID& uuid, const std::filesystem::path& path, std::string name) -> void {
   if (!uuid) {
     return;
@@ -57,6 +85,25 @@ auto asset_source(const UUID& uuid) -> AssetSource {
   const auto it = asset_sources.sources.find(uuid);
 
   return it != asset_sources.sources.end() ? it->second : AssetSource{};
+}
+
+auto relocate_asset_paths(
+  AssetManager& asset_man, const std::filesystem::path& old_path, const std::filesystem::path& new_path
+) -> void {
+  ZoneScoped;
+
+  for (const auto& asset : asset_man.get_registry_snapshot()) {
+    if (const auto relocated_path = remap_path(asset.path, old_path, new_path)) {
+      asset_man.update_asset_path(asset.uuid, *relocated_path);
+    }
+  }
+
+  auto lock = std::unique_lock(asset_sources.mutex);
+  for (auto& [uuid, source] : asset_sources.sources) {
+    if (const auto relocated_path = remap_path(source.path, old_path, new_path)) {
+      source.path = std::move(*relocated_path);
+    }
+  }
 }
 
 struct ImportClaim {
