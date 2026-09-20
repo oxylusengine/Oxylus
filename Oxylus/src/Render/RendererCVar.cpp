@@ -14,7 +14,7 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_enable_physics_debug_renderer
     .init(self.system, "rr.physics_debug_renderer", "enable physics debug renderer", 0);
   self.cvar_freeze_culling_frustum.init(self.system, "rr.freeze_culling_frustum", "freeze culling frustum", 0);
-  self.cvar_draw_camera_frustum.init(self.system, "rr.draw_camera_frustum", "draw camera frustum", 0);
+  self.cvar_draw_camera_frustum.init(self.system, "rr.draw_camera_frustum", "draw camera frustum", 1);
   self.cvar_debug_view.init(
     self.system,
     "rr.debug_view",

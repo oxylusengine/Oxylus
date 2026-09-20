@@ -310,10 +310,8 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         ImVec2 rendered_max = {window_pos.x + content_max.x, window_pos.y + content_max.y};
         ImVec2 rendered_size = {rendered_max.x - rendered_min.x, rendered_max.y - rendered_min.y};
 
-        if (
-          mouse_pos.x < rendered_min.x || mouse_pos.x > rendered_max.x || mouse_pos.y < rendered_min.y ||
-          mouse_pos.y > rendered_max.y
-        ) {
+        if (mouse_pos.x < rendered_min.x || mouse_pos.x > rendered_max.x || mouse_pos.y < rendered_min.y ||
+            mouse_pos.y > rendered_max.y) {
           return glm::uvec2(~0_u32);
         }
 
@@ -410,10 +408,8 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
 }
 
 auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
-  if (
-    !self.editor_scene || !self.is_viewport_hovered || self.editor_scene->get_scene()->is_running() ||
-    !self.editor_camera.has<CameraComponent>()
-  ) {
+  if (!self.editor_scene || !self.is_viewport_hovered || self.editor_scene->get_scene()->is_running() ||
+      !self.editor_camera.has<CameraComponent>()) {
     return;
   }
 
@@ -717,6 +713,7 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
           ImGui::BeginDisabled(!cvar_sys.cvar_enable_debug_renderer.as_bool());
           UI::property("Draw bounding boxes", cvar_sys.cvar_draw_bounding_boxes.get_ptr_bool());
           UI::property("Draw camera frustum", cvar_sys.cvar_draw_camera_frustum.get_ptr_bool());
+          UI::property("Draw physics shapes", cvar_sys.cvar_enable_physics_debug_renderer.get_ptr_bool());
           const char* debug_views[] = {
             "None",
             "Triangles",
@@ -745,8 +742,10 @@ auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
           );
           ImGui::EndDisabled();
           ImGui::Unindent();
+          UI::end_properties();
 
-          UI::property("Enable physics debug renderer", cvar_sys.cvar_enable_physics_debug_renderer.get_ptr_bool());
+          ImGui::SeparatorText("Culling");
+          UI::begin_properties(UI::default_properties_flags, true, 0.3f);
           UI::property("Freeze culling frustum", cvar_sys.cvar_freeze_culling_frustum.get_ptr_bool());
           UI::property("Enable frustum culling", cvar_sys.cvar_culling_frustum.get_ptr_bool());
           UI::property("Enable occlusion culling", cvar_sys.cvar_culling_occlusion.get_ptr_bool());
@@ -1826,19 +1825,21 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
       self.gizmo_type = ImGuizmo::BOUNDS;
     if (UI::toggle_button(ICON_MDI_ARROW_EXPAND_ALL, self.gizmo_type == ImGuizmo::UNIVERSAL, button_size, alpha, alpha))
       self.gizmo_type = ImGuizmo::UNIVERSAL;
-    if (
-      UI::toggle_button(
-        self.gizmo_mode == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
-        self.gizmo_mode == ImGuizmo::WORLD,
-        button_size,
-        alpha,
-        alpha
-      )
-    )
+    if (UI::toggle_button(
+          self.gizmo_mode == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
+          self.gizmo_mode == ImGuizmo::WORLD,
+          button_size,
+          alpha,
+          alpha
+        ))
       self.gizmo_mode = self.gizmo_mode == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
-    if (
-      UI::toggle_button(ICON_MDI_GRID, App::mod<Editor>().editor_cvar.cvar_draw_grid.get(), button_size, alpha, alpha)
-    )
+    if (UI::toggle_button(
+          ICON_MDI_GRID,
+          App::mod<Editor>().editor_cvar.cvar_draw_grid.get(),
+          button_size,
+          alpha,
+          alpha
+        ))
       App::mod<Editor>().editor_cvar.cvar_draw_grid.toggle();
 
     if (UI::toggle_button(ICON_MDI_BRUSH, self.terrain_brush_enabled, button_size, alpha, alpha))
@@ -1847,15 +1848,13 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
     if (self.editor_camera.is_alive() && self.editor_camera.has<CameraComponent>()) {
       auto& cam = self.editor_camera.get_mut<CameraComponent>();
       UI::push_id();
-      if (
-        UI::toggle_button(
-          ICON_MDI_CAMERA,
-          cam.projection == CameraComponent::Projection::Orthographic,
-          button_size,
-          alpha,
-          alpha
-        )
-      )
+      if (UI::toggle_button(
+            ICON_MDI_CAMERA,
+            cam.projection == CameraComponent::Projection::Orthographic,
+            button_size,
+            alpha,
+            alpha
+          ))
         cam.projection = cam.projection == CameraComponent::Projection::Orthographic
                            ? CameraComponent::Projection::Perspective
                            : CameraComponent::Projection::Orthographic;
