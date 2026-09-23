@@ -19,6 +19,15 @@ static const f32 HYSTERESIS_GAIN = 0.1;
 static const f32 HYSTERESIS_BALANCE_CHANGE = 0.2;
 static const f32 HYSTERESIS_MAX_CHANGE = 4.0;
 
+func texel_confidence(f32 previous_confidence, f32x3 history, f32x3 result, f32 hysteresis, f32 dark_bias) -> f32 {
+    let scale = min(history, result) + dark_bias;
+    let relative = abs(history - result) / scale;
+    let change = min(max(max(relative.r, relative.g), relative.b), HYSTERESIS_MAX_CHANGE);
+
+    let confidence = previous_confidence + HYSTERESIS_GAIN - change * (HYSTERESIS_GAIN / HYSTERESIS_BALANCE_CHANGE);
+    return clamp(confidence, 0.0, hysteresis);
+}
+
 [[shader("compute")]]
 [[numthreads(8, 8, 1)]]
 func cs_main(
@@ -107,16 +116,11 @@ func cs_main(
 
     var confidence = 0.0;
     if (!reset) {
-        let scale = min(history, result) + hysteresis_dark_bias;
-        let relative = abs(history - result) / scale;
-        let change = min(max(max(relative.r, relative.g), relative.b), HYSTERESIS_MAX_CHANGE);
-
-        confidence = previous_confidence + HYSTERESIS_GAIN -
-                     change * (HYSTERESIS_GAIN / HYSTERESIS_BALANCE_CHANGE);
-        confidence = clamp(confidence, 0.0, hysteresis);
+        confidence = texel_confidence(previous_confidence, history, result, hysteresis, hysteresis_dark_bias);
     }
 
-    let rate = confidence;
+    let interval = f32(probe_update_interval(flags));
+    let rate = pow(confidence, interval);
 
     // darkening runs at full rate so a light going out registers at once
     var delta = result - history;
@@ -153,14 +157,27 @@ func cs_main(
 
     let radiance_origin = probe_radiance_tile_origin(probe_row, radiance_atlas_y_offset);
     let radiance_coords = radiance_origin + 1 + work.texel;
-    let radiance_history = com::sanitize(irradiance[radiance_coords].rgb);
-    let radiance_rate = reset ? 0.0 : confidence * 0.75;
+    let radiance_previous = irradiance[radiance_coords];
+    let radiance_history = com::sanitize(radiance_previous.rgb);
+
+    // radiance texel (x, y) looks a different way than irradiance texel (x, y), so it keeps its own confidence
+    var radiance_confidence = 0.0;
+    if (!reset) {
+        radiance_confidence = texel_confidence(
+            saturate(radiance_previous.a),
+            encode_probe_irradiance(radiance_history),
+            encode_probe_irradiance(selected_radiance),
+            hysteresis,
+            hysteresis_dark_bias
+        );
+    }
+    let radiance_rate = pow(radiance_confidence, interval) * 0.75;
     let radiance_root = lerp(
         sqrt(max(selected_radiance, f32x3(0.0))),
         sqrt(max(radiance_history, f32x3(0.0))),
         radiance_rate
     );
-    let radiance_texel = f32x4(radiance_root * radiance_root, 1.0);
+    let radiance_texel = f32x4(radiance_root * radiance_root, radiance_confidence);
     irradiance[radiance_coords] = radiance_texel;
 
     let radiance_border = probe_border_writes(work.texel, RADIANCE_TEXELS);

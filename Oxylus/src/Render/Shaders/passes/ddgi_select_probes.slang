@@ -74,7 +74,8 @@ func cs_main(
         !reset && probe_is_mesh_distant(flags),
         update,
         reset,
-        !reset ? probe_mesh_distance_grace(flags) : 0u
+        !reset ? probe_mesh_distance_grace(flags) : 0u,
+        update_interval
     );
 
     if (update) {
