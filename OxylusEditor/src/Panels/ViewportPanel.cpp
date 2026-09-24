@@ -413,9 +413,9 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
           editor.save_scene_as();
         }
         UI::tooltip_hover("Save scene as");
-        if (ImGui::MenuItem(ICON_MDI_COG)) {
-          viewport_settings_popup = true;
-        }
+      }
+      if (ImGui::MenuItem(ICON_MDI_COG)) {
+        viewport_settings_popup = true;
       }
       if (ImGui::MenuItem(ICON_MDI_INFORMATION, nullptr, self.draw_scene_stats)) {
         self.draw_scene_stats = !self.draw_scene_stats;
