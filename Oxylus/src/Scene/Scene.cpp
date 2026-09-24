@@ -1268,10 +1268,20 @@ auto Scene::prepare_render(this Scene& self) -> void {
       }
     }
 
+    // Upload this frame's dirty transforms plus last frame's: the `previous_world` fix-up below
+    // runs after the upload, so a transform's corrected previous matrix only reaches the GPU on the
+    // following frame. Duplicates are collapsed inside the uploader.
+    auto transform_upload_ids = self.dirty_transforms;
+    transform_upload_ids.insert(
+      transform_upload_ids.end(),
+      self.previously_dirty_transforms.begin(),
+      self.previously_dirty_transforms.end()
+    );
+
     auto update_info = RendererInstanceUpdateInfo{
       .mesh_instance_count = self.gpu_mesh_instance_count,
       .max_meshlet_instance_count = self.max_meshlet_instance_count,
-      .dirty_transform_ids = self.dirty_transforms,
+      .dirty_transform_ids = transform_upload_ids,
       .gpu_transforms = self.transforms.slots_unsafe(),
       .gpu_meshes = gpu_meshes,
       .gpu_mesh_blas_addresses = blas_addresses,
@@ -1285,6 +1295,8 @@ auto Scene::prepare_render(this Scene& self) -> void {
         gpu_transform->previous_world = gpu_transform->world;
       }
     }
+
+    self.previously_dirty_transforms = self.dirty_transforms;
   }
 }
 

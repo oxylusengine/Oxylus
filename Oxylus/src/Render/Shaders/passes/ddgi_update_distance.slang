@@ -81,7 +81,7 @@ func cs_main(
     let previous = probe_distance[coords];
     let history = all(isfinite(previous)) ? previous : result;
 
-    let rate = probe_is_reset(flags) ? 0.0 : hysteresis;
+    let rate = probe_is_reset(flags) ? 0.0 : probe_hysteresis(hysteresis, flags);
 
     let result_texel = lerp(result, history, rate);
     probe_distance[coords] = result_texel;

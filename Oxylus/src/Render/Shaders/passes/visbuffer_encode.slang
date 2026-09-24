@@ -35,7 +35,7 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
     let vertex_pos = meshlet.position(mesh, index);
     let tex_coord = meshlet.tex_coord(mesh, index);
     let world_pos = transform.to_world_position(vertex_pos);
-    let clip_pos = mul(camera.projection_view, f32x4(world_pos.xyz, 1.0));
+    let clip_pos = camera.jitter_clip(mul(camera.projection_view, f32x4(world_pos.xyz, 1.0)));
 
     let encoded_vis = VisBufferData(vis.meshlet_instance_index, vis.triangle_index / 3);
 
@@ -57,6 +57,7 @@ func fs_main(VertexOutput input) -> u32 {
         grad.uv = input.tex_coord;
         grad.ddx = ddx(input.tex_coord);
         grad.ddy = ddy(input.tex_coord);
+        grad.apply_mip_bias(camera.texture_mip_bias);
         let alpha_color = material.sample_albedo_color(grad).a;
 
         // We are doing deferred, blend alpha mode is not supported in this pass.

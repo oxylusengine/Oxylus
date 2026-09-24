@@ -29,6 +29,8 @@ public static const u32 PROBE_MESH_DISTANCE_GRACE_SHIFT = 8u;
 public static const u32 PROBE_MESH_DISTANCE_GRACE_MASK = 0x0f00u;
 public static const u32 PROBE_MESH_DISTANCE_GRACE_UPDATES = 8u;
 public static const u32 PROBE_MESH_DISTANCE_RECHECK_INTERVAL = 32u;
+public static const u32 PROBE_INTERVAL_SHIFT = 16u;
+public static const u32 PROBE_INTERVAL_MASK = 0x00ff0000u;
 
 // Above this share of backface hits a probe is taken to be inside geometry rather than merely facing a
 // wall. Coming back out is held to the lower figure: the ray set is rotated every frame, so a probe
@@ -66,12 +68,23 @@ public func probe_mesh_distance_grace(u32 flags) -> u32 {
     return (flags & PROBE_MESH_DISTANCE_GRACE_MASK) >> PROBE_MESH_DISTANCE_GRACE_SHIFT;
 }
 
+public func probe_update_interval(u32 flags) -> u32 {
+    return max((flags & PROBE_INTERVAL_MASK) >> PROBE_INTERVAL_SHIFT, 1u);
+}
+
+// hysteresis is per update, a probe updated every n frames has to forget n frames' worth or it fades
+// n times slower than the ones on screen
+public func probe_hysteresis(f32 hysteresis, u32 flags) -> f32 {
+    return pow(hysteresis, f32(probe_update_interval(flags)));
+}
+
 public func probe_pack_flags(
     bool inside_geometry,
     bool mesh_distant,
     bool update,
     bool reset,
-    u32 mesh_distance_grace
+    u32 mesh_distance_grace,
+    u32 interval
 ) -> u32 {
     let inactive = inside_geometry || mesh_distant;
     return (inactive ? PROBE_INACTIVE_BIT : 0u) |
@@ -79,7 +92,8 @@ public func probe_pack_flags(
            (reset ? PROBE_RESET_BIT : 0u) |
            (inside_geometry ? PROBE_INSIDE_GEOMETRY_BIT : 0u) |
            (mesh_distant ? PROBE_MESH_DISTANCE_BIT : 0u) |
-           ((mesh_distance_grace << PROBE_MESH_DISTANCE_GRACE_SHIFT) & PROBE_MESH_DISTANCE_GRACE_MASK);
+           ((mesh_distance_grace << PROBE_MESH_DISTANCE_GRACE_SHIFT) & PROBE_MESH_DISTANCE_GRACE_MASK) |
+           ((interval << PROBE_INTERVAL_SHIFT) & PROBE_INTERVAL_MASK);
 }
 
 public struct ProbeUpdateArgs {
