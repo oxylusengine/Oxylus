@@ -13,6 +13,7 @@
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
 #include "Editor.hpp"
+#include "Memory/Stack.hpp"
 #include "Render/Camera.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/Upscaler.hpp"
@@ -77,6 +78,245 @@ void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, 
     UI::tooltip_hover(name.data());
   });
 }
+
+// drives the settings popup: each section body runs once to scan (search matches, modified rows),
+// optionally once to reset, then once to draw, so the header knows its state before the body is drawn
+struct ViewportPanel::SettingsUI {
+  enum class Pass : u8 { Scan, Reset, Draw };
+
+  struct Section {
+    const c8* name = nullptr;
+    const AutoCVar_Int* toggle = nullptr;
+    const c8* toggle_tooltip = nullptr;
+    // locks the toggle and the body, shown as the toggle's tooltip
+    const c8* locked_reason = nullptr;
+    // replaces the body with locked_reason
+    bool unsupported = false;
+    const c8* tag = nullptr;
+    const c8* tag_tooltip = nullptr;
+  };
+
+  static constexpr f32 WIDGET_WIDTH = 0.5f;
+  static constexpr ImVec4 TAG_COLOR = ImVec4(1.0f, 0.4f, 0.3f, 1.0f);
+  static constexpr ImGuiTreeNodeFlags SECTION_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth |
+                                                      ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_Framed |
+                                                      ImGuiTreeNodeFlags_FramePadding |
+                                                      ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+  const ImGuiTextFilter& filter;
+  i32 open_action = -1;
+  bool show_advanced = false;
+  // walk sections resetting them without drawing anything
+  bool reset_only = false;
+  ImU32 modified_color = 0;
+  ImVec4 accent_color = {};
+
+  Pass pass = Pass::Draw;
+  bool section_name_matches = false;
+  bool in_advanced = false;
+  u32 visible_rows = 0;
+  u32 modified_rows = 0;
+  u32 shown_sections = 0;
+
+  auto visible(this const SettingsUI& self, const c8* label) -> bool {
+    if (self.in_advanced && !self.show_advanced && !self.filter.IsActive())
+      return false;
+    return self.section_name_matches || self.filter.PassFilter(label);
+  }
+
+  template <typename T, typename F>
+  auto row(this SettingsUI& self, const c8* label, T* value, const T default_value, F&& draw) -> void {
+    const auto modified = *value != default_value;
+    switch (self.pass) {
+      case Pass::Scan:
+        self.visible_rows += self.visible(label);
+        self.modified_rows += modified;
+        return;
+      case Pass::Reset: *value = default_value; return;
+      case Pass::Draw : break;
+    }
+
+    if (!self.visible(label))
+      return;
+
+    draw();
+    // the widget is the row's last item, so the menu attaches to it
+    if (ImGui::BeginPopupContextItem()) {
+      if (ImGui::MenuItem("Reset to Default", nullptr, false, modified))
+        *value = default_value;
+      ImGui::EndPopup();
+    }
+    if (modified)
+      ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, self.modified_color, 0);
+  }
+
+  auto checkbox(this SettingsUI& self, const c8* label, const AutoCVar_Int& cvar, const c8* tooltip = nullptr) -> void {
+    self.row(label, cvar.get_ptr(), cvar.get_default(), [&] { UI::property(label, cvar.get_ptr_bool(), tooltip); });
+  }
+
+  auto drag(
+    this SettingsUI& self,
+    const c8* label,
+    const AutoCVar_Int& cvar,
+    const i32 min_value,
+    const i32 max_value,
+    const c8* tooltip = nullptr
+  ) -> void {
+    self.row(label, cvar.get_ptr(), cvar.get_default(), [&] {
+      UI::property(label, cvar.get_ptr(), min_value, max_value, 1.0f, tooltip);
+    });
+  }
+
+  auto drag(
+    this SettingsUI& self,
+    const c8* label,
+    const AutoCVar_Float& cvar,
+    const f32 min_value,
+    const f32 max_value,
+    const c8* tooltip = nullptr
+  ) -> void {
+    self.row(label, cvar.get_ptr(), cvar.get_default(), [&] {
+      UI::property<f32>(label, cvar.get_ptr(), min_value, max_value, tooltip);
+    });
+  }
+
+  auto combo(
+    this SettingsUI& self,
+    const c8* label,
+    i32* value,
+    const i32 default_value,
+    std::span<const c8*> items,
+    const c8* tooltip = nullptr
+  ) -> void {
+    self.row(label, value, default_value, [&] {
+      UI::property(label, value, items.data(), static_cast<i32>(items.size()), tooltip);
+    });
+  }
+
+  auto combo(
+    this SettingsUI& self,
+    const c8* label,
+    const AutoCVar_Int& cvar,
+    std::span<const c8*> items,
+    const c8* tooltip = nullptr
+  ) -> void {
+    self.combo(label, cvar.get_ptr(), cvar.get_default(), items, tooltip);
+  }
+
+  auto info(this SettingsUI& self, const c8* label, std::string_view value, const c8* tooltip = nullptr) -> void {
+    if (self.pass == Pass::Scan)
+      self.visible_rows += self.visible(label);
+    else if (self.pass == Pass::Draw && self.visible(label))
+      UI::text(label, value, tooltip);
+  }
+
+  auto begin_disabled(this const SettingsUI& self, const bool disabled) -> void {
+    if (self.pass == Pass::Draw)
+      ImGui::BeginDisabled(disabled);
+  }
+
+  auto end_disabled(this const SettingsUI& self) -> void {
+    if (self.pass == Pass::Draw)
+      ImGui::EndDisabled();
+  }
+
+  auto begin_advanced(this SettingsUI& self) -> void { self.in_advanced = true; }
+  auto end_advanced(this SettingsUI& self) -> void { self.in_advanced = false; }
+
+  template <typename F>
+  auto section(this SettingsUI& self, const Section& desc, F&& body) -> void {
+    self.section_name_matches = self.filter.PassFilter(desc.name);
+    self.in_advanced = false;
+
+    const auto reset = [&] {
+      self.pass = Pass::Reset;
+      body();
+      if (desc.toggle)
+        desc.toggle->set_default();
+    };
+    if (self.reset_only) {
+      reset();
+      return;
+    }
+
+    self.pass = Pass::Scan;
+    self.visible_rows = 0;
+    self.modified_rows = 0;
+    body();
+    if (desc.toggle && desc.toggle->get() != desc.toggle->get_default())
+      ++self.modified_rows;
+    if (self.visible_rows == 0 && !(desc.toggle && self.section_name_matches))
+      return;
+    ++self.shown_sections;
+
+    const auto frame_padding = ImGui::GetStyle().FramePadding;
+    const auto spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+    const auto header_y = ImGui::GetCursorPosY();
+    auto header_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - frame_padding.x;
+
+    if (self.filter.IsActive())
+      ImGui::SetNextItemOpen(true);
+    else if (self.open_action != -1)
+      ImGui::SetNextItemOpen(self.open_action != 0);
+    const auto open = ImGui::TreeNodeEx(desc.name, SECTION_FLAGS);
+
+    // header widgets are laid out right to left on top of the header frame
+    ImGui::PushID(desc.name);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+    const auto place = [&](const f32 width) {
+      header_x -= width;
+      ImGui::SameLine();
+      ImGui::SetCursorPos(ImVec2(header_x, header_y + frame_padding.y));
+      header_x -= spacing;
+    };
+
+    if (desc.toggle) {
+      place(ImGui::GetFrameHeight());
+      ImGui::BeginDisabled(desc.locked_reason != nullptr);
+      ImGui::Checkbox("##toggle", desc.toggle->get_ptr_bool());
+      ImGui::EndDisabled();
+      UI::tooltip_hover(desc.locked_reason ? desc.locked_reason : desc.toggle_tooltip);
+    }
+
+    auto reset_clicked = false;
+    if (self.modified_rows > 0) {
+      place(ImGui::CalcTextSize(ICON_MDI_RESTORE).x);
+      ImGui::PushStyleColor(ImGuiCol_Text, self.accent_color);
+      ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+      reset_clicked = ImGui::SmallButton(ICON_MDI_RESTORE "##reset");
+      ImGui::PopStyleColor(2);
+      UI::tooltip_hover("Reset this section to defaults");
+    }
+
+    if (desc.tag) {
+      place(ImGui::CalcTextSize(desc.tag).x);
+      ImGui::TextColored(TAG_COLOR, "%s", desc.tag);
+      UI::tooltip_hover(desc.tag_tooltip);
+    }
+    ImGui::PopStyleVar();
+    ImGui::PopID();
+
+    if (reset_clicked)
+      reset();
+
+    if (!open)
+      return;
+
+    ImGui::TreePush(desc.name);
+    if (desc.unsupported) {
+      ImGui::PushTextWrapPos(0.0f);
+      ImGui::TextDisabled("%s", desc.locked_reason);
+      ImGui::PopTextWrapPos();
+    } else if (UI::begin_properties(UI::default_properties_flags, true, WIDGET_WIDTH)) {
+      self.pass = Pass::Draw;
+      ImGui::BeginDisabled(desc.locked_reason || (desc.toggle && !desc.toggle->as_bool()));
+      body();
+      ImGui::EndDisabled();
+      UI::end_properties();
+    }
+    ImGui::TreePop();
+  }
+};
 
 ViewportPanel::ViewportPanel() : EditorPanelState("Viewport", ICON_MDI_TERRAIN, true) {
   ZoneScoped;
@@ -189,7 +429,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     if (viewport_settings_popup)
       ImGui::OpenPopup("viewport_settings");
 
-    ImGui::SetNextWindowSize(UI::scale(ImVec2(345.0f, 0.0f)));
+    ImGui::SetNextWindowSize(UI::scale(ImVec2(380.0f, 0.0f)));
     if (ImGui::BeginPopup("viewport_settings")) {
       self.draw_settings_panel();
       ImGui::EndPopup();
@@ -311,8 +551,10 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
         ImVec2 rendered_max = {window_pos.x + content_max.x, window_pos.y + content_max.y};
         ImVec2 rendered_size = {rendered_max.x - rendered_min.x, rendered_max.y - rendered_min.y};
 
-        if (mouse_pos.x < rendered_min.x || mouse_pos.x > rendered_max.x || mouse_pos.y < rendered_min.y ||
-            mouse_pos.y > rendered_max.y) {
+        if (
+          mouse_pos.x < rendered_min.x || mouse_pos.x > rendered_max.x || mouse_pos.y < rendered_min.y ||
+          mouse_pos.y > rendered_max.y
+        ) {
           return glm::uvec2(~0_u32);
         }
 
@@ -414,8 +656,10 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
 }
 
 auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
-  if (!self.editor_scene || !self.is_viewport_hovered || self.editor_scene->get_scene()->is_running() ||
-      !self.editor_camera.has<CameraComponent>()) {
+  if (
+    !self.editor_scene || !self.is_viewport_hovered || self.editor_scene->get_scene()->is_running() ||
+    !self.editor_camera.has<CameraComponent>()
+  ) {
     return;
   }
 
@@ -625,446 +869,470 @@ auto ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw
 auto ViewportPanel::draw_settings_panel(this ViewportPanel& self) -> void {
   ZoneScoped;
 
+  const auto& style = ImGui::GetStyle();
+  const auto button_size = ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight());
+
+  auto& filter = self.settings_filter;
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - (button_size.x + style.ItemSpacing.x) * 4.0f);
+  if (ImGui::IsWindowAppearing())
+    ImGui::SetKeyboardFocusHere();
+  if (
+    ImGui::InputTextWithHint(
+      "###settings_search",
+      ICON_MDI_MAGNIFY " Search settings...",
+      filter.InputBuf,
+      IM_ARRAYSIZE(filter.InputBuf)
+    )
+  )
+    filter.Build();
+  const auto searching = filter.IsActive();
+
   i32 open_action = -1;
+  ImGui::SameLine();
+  ImGui::BeginDisabled(searching);
+  if (UI::button(ICON_MDI_UNFOLD_MORE_HORIZONTAL "###expand_all", button_size, "Expand all sections"))
+    open_action = 1;
+  ImGui::SameLine();
+  if (UI::button(ICON_MDI_UNFOLD_LESS_HORIZONTAL "###collapse_all", button_size, "Collapse all sections"))
+    open_action = 0;
+  ImGui::EndDisabled();
 
-  auto is_scene_valid = self.editor_scene->is_valid();
+  ImGui::SameLine();
+  if (UI::toggle_button(ICON_MDI_TUNE_VARIANT "###show_advanced", self.show_advanced_settings, button_size))
+    self.show_advanced_settings = !self.show_advanced_settings;
+  UI::tooltip_hover(self.show_advanced_settings ? "Hide advanced settings" : "Show advanced settings");
 
-  auto& context_cvar = App::get_rendercontext().context_cvar;
+  ImGui::SameLine();
+  if (UI::button(ICON_MDI_RESTORE "###reset_menu", button_size, "Reset settings to defaults"))
+    ImGui::OpenPopup("settings_reset_menu");
+  if (ImGui::BeginPopup("settings_reset_menu")) {
+    auto reset_ui = SettingsUI{.filter = filter, .reset_only = true};
+    ImGui::TextDisabled("Reset to defaults");
+    ImGui::Separator();
+    const auto reset_render = ImGui::MenuItem("Scene Render Settings", nullptr, false, self.editor_scene->is_valid());
+    UI::tooltip_hover("Everything in the Render tab, saved with the scene");
+    const auto reset_device = ImGui::MenuItem("Device Settings");
+    UI::tooltip_hover("VSync and mesh shaders, saved globally");
+    const auto reset_viewport = ImGui::MenuItem("Viewport & Camera");
+    UI::tooltip_hover("Editor viewport and camera preferences");
+    ImGui::Separator();
+    const auto reset_all = ImGui::MenuItem("Everything");
+    if (reset_render || reset_all)
+      self.draw_render_settings(reset_ui);
+    if (reset_device || reset_all)
+      self.draw_device_settings(reset_ui);
+    if (reset_viewport || reset_all)
+      self.draw_viewport_settings(reset_ui);
+    ImGui::EndPopup();
+  }
+
+  auto modified_color = style.Colors[ImGuiCol_CheckMark];
+  modified_color.w = 0.15f;
+  auto ui = SettingsUI{
+    .filter = filter,
+    .open_action = open_action,
+    .show_advanced = self.show_advanced_settings,
+    .modified_color = ImGui::GetColorU32(modified_color),
+    .accent_color = style.Colors[ImGuiCol_CheckMark],
+  };
+
+  ImGui::Spacing();
+
+  if (searching) {
+    // search results get their own open state so they don't disturb the tabs'
+    ImGui::PushID("search");
+    self.draw_render_settings(ui);
+    self.draw_device_settings(ui);
+    self.draw_viewport_settings(ui);
+    ImGui::PopID();
+    if (ui.shown_sections == 0)
+      ImGui::TextDisabled("No settings match \"%s\"", filter.InputBuf);
+  } else if (ImGui::BeginTabBar("settings_tabs")) {
+    if (ImGui::BeginTabItem("Render")) {
+      self.draw_render_settings(ui);
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Device")) {
+      self.draw_device_settings(ui);
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Viewport")) {
+      self.draw_viewport_settings(ui);
+      ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
+  }
+}
+
+auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& ui) -> void {
+  ZoneScoped;
+
+  memory::ScopedStack stack;
+
+  if (!self.editor_scene->is_valid()) {
+    if (!ui.reset_only && !ui.filter.IsActive())
+      ImGui::TextDisabled("Open a scene to edit its render settings");
+    return;
+  }
+
+  auto& render_context = App::get_rendercontext();
+  auto& cvar_sys = self.editor_scene->get_scene()->renderer_cvar;
+
+  const auto upscaling_active = cvar_sys.cvar_upscaler_backend.get() != 0;
+  const auto rtao_active = render_context.use_ray_tracing() && cvar_sys.cvar_rtao_enable.as_bool();
+
+  const c8* ray_tracing_reason = nullptr;
+  if (!render_context.use_ray_tracing())
+    ray_tracing_reason = render_context.features & RenderContext::Feature::RayTracing
+                           ? "Ray tracing is turned off (rr.ray_tracing)"
+                           : "This device does not support ray queries";
+  auto* ddgi_reason = ray_tracing_reason;
+  if (!ddgi_reason && !render_context.use_ray_tracing_pipeline())
+    ddgi_reason = "This device does not support ray tracing pipelines";
+
+  ui.section(
+    {.name = "Debug",
+     .toggle = &cvar_sys.cvar_enable_debug_renderer,
+     .toggle_tooltip = "Draw debug shapes and visualizations"},
+    [&] {
+      ui.checkbox("Bounding Boxes", cvar_sys.cvar_draw_bounding_boxes);
+      ui.checkbox("Camera Frustum", cvar_sys.cvar_draw_camera_frustum);
+      ui.checkbox("Physics Shapes", cvar_sys.cvar_enable_physics_debug_renderer);
+      const c8* debug_views[] = {
+        "None",
+        "Triangles",
+        "Meshlets",
+        "Overdraw",
+        "Materials",
+        "Mesh Instances",
+        "Mesh Lods",
+        "Albedo",
+        "Normal",
+        "Emissive",
+        "Metallic",
+        "Roughness",
+        "Baked Occlusion",
+        "GTAO",
+        "Geometric Normal",
+        "Virtual Shadowmaps",
+        "Virtual Shadowmaps (Point/Spot)",
+        "DDGI Probes"
+      };
+      ui.combo("Visualization", cvar_sys.cvar_debug_view, debug_views);
+    }
+  );
+
+  ui.section({.name = "Culling"}, [&] {
+    ui.begin_advanced();
+    ui.checkbox("Frustum", cvar_sys.cvar_culling_frustum);
+    ui.checkbox("Occlusion", cvar_sys.cvar_culling_occlusion);
+    ui.checkbox("Triangle", cvar_sys.cvar_culling_triangle);
+    ui.checkbox(
+      "Freeze Frustum",
+      cvar_sys.cvar_freeze_culling_frustum,
+      "Keep culling against the current view so you can move away and inspect the result"
+    );
+    ui.end_advanced();
+  });
+
+  ui.section({.name = "Bloom", .toggle = &cvar_sys.cvar_bloom_enable}, [&] {
+    ui.drag("Threshold", cvar_sys.cvar_bloom_threshold, 0.0f, 100.0f);
+    ui.drag("Soft Threshold", cvar_sys.cvar_bloom_soft_threshold, 0.0f, 1.0f);
+    ui.drag("Radius", cvar_sys.cvar_bloom_radius, 0.0f, 1.0f);
+    ui.drag("Intensity", cvar_sys.cvar_bloom_intensity, 0.0f, 1.0f);
+    ui.begin_advanced();
+    ui.drag("Clamp", cvar_sys.cvar_bloom_clamp, 1.0f, 64.0f);
+    ui.end_advanced();
+  });
+
+  ui.section({.name = "Upscaling & AA"}, [&] {
+    const c8* backends[] = {"None", "FSR 3.1.5"};
+    ui.combo("Upscaler", cvar_sys.cvar_upscaler_backend, backends);
+
+    ui.begin_disabled(!upscaling_active);
+    const c8* quality_modes[] = {
+      "Native AA (1.0x)",
+      "Quality (1.5x)",
+      "Balanced (1.7x)",
+      "Performance (2.0x)",
+      "Ultra Performance (3.0x)",
+    };
+    ui.combo("Quality", cvar_sys.cvar_upscaler_quality, quality_modes);
+
+    const auto display_size = glm::uvec2(
+      static_cast<u32>(std::max(self.scaled_render_size.x, 0.0f)),
+      static_cast<u32>(std::max(self.scaled_render_size.y, 0.0f))
+    );
+    const auto quality = static_cast<UpscalerQuality>(
+      std::clamp(cvar_sys.cvar_upscaler_quality.get(), 0, static_cast<i32>(UpscalerQuality::Count) - 1)
+    );
+    const auto render_size = upscaler_render_extent(display_size, quality);
+    ui.info(
+      "Resolution",
+      stack.format_char("{}x{} -> {}x{}", render_size.x, render_size.y, display_size.x, display_size.y),
+      "Internal render resolution and the output resolution it is upscaled to"
+    );
+    ui.drag("Sharpness", cvar_sys.cvar_upscaler_sharpness, 0.0f, 1.0f);
+    ui.end_disabled();
+
+    ui.begin_disabled(upscaling_active);
+    ui.checkbox(
+      "FXAA",
+      cvar_sys.cvar_fxaa_enable,
+      upscaling_active ? "The upscaler already resolves aliasing, so FXAA is skipped while it is active"
+                       : "Post-process anti-aliasing, used when no upscaler is active"
+    );
+    ui.end_disabled();
+
+    ui.begin_advanced();
+    ui.begin_disabled(!upscaling_active);
+    const c8* debug_views[] = {
+      "Off",
+      "Dilated Motion Vectors",
+      "Disocclusion",
+      "Reactive",
+      "Shading Change",
+      "Accumulation",
+      "Luma Instability",
+      "Dilated Depth",
+    };
+    ui.combo("Debug View", cvar_sys.cvar_upscaler_debug_view, debug_views);
+    ui.checkbox("Hold Jitter At Zero", cvar_sys.cvar_upscaler_disable_jitter);
+    ui.end_disabled();
+    ui.end_advanced();
+  });
+
+  ui.section(
+    {.name = "GTAO",
+     .toggle = &cvar_sys.cvar_vbgtao_enable,
+     .toggle_tooltip = "Screen space ambient occlusion",
+     .locked_reason = rtao_active ? "RTAO is enabled and replaces GTAO" : nullptr},
+    [&] {
+      const c8* quality_levels[] = {"Low", "Medium", "High", "Ultra"};
+      ui.combo("Quality", cvar_sys.cvar_vbgtao_quality_level, quality_levels);
+      ui.drag("Radius", cvar_sys.cvar_vbgtao_radius, 0.1f, 5.0f);
+      ui.drag("Thickness", cvar_sys.cvar_vbgtao_thickness, 0.0f, 5.0f);
+      ui.drag("Final Power", cvar_sys.cvar_vbgtao_final_power, 0.0f, 10.0f);
+    }
+  );
+
+  ui.section(
+    {.name = "RTAO",
+     .toggle = &cvar_sys.cvar_rtao_enable,
+     .toggle_tooltip = "Trace occlusion rays against the scene TLAS instead of running GTAO",
+     .locked_reason = ray_tracing_reason,
+     .unsupported = ray_tracing_reason != nullptr,
+     .tag = "Experimental",
+     .tag_tooltip = "Testing only, not ready for regular use"},
+    [&] {
+      ui.drag("Ray Count", cvar_sys.cvar_rtao_ray_count, 1, 32);
+      ui.drag("Radius", cvar_sys.cvar_rtao_radius, 0.05f, 20.0f);
+      ui.drag("Power", cvar_sys.cvar_rtao_power, 0.0f, 10.0f);
+    }
+  );
+
+  ui.section(
+    {.name = "DDGI",
+     .toggle = &cvar_sys.cvar_ddgi_enable,
+     .toggle_tooltip = "Light probe volumes gather indirect diffuse by tracing the scene TLAS",
+     .locked_reason = ddgi_reason,
+     .unsupported = ddgi_reason != nullptr},
+    [&] {
+      ui.drag(
+        "Rays Per Probe",
+        cvar_sys.cvar_ddgi_rays_per_probe,
+        8,
+        512,
+        "More rays converge faster and flicker less, at a linear cost"
+      );
+      ui.drag(
+        "Max Ray Distance",
+        cvar_sys.cvar_ddgi_max_ray_distance,
+        1.0f,
+        500.0f,
+        "World space length of a cascade 0 probe ray, doubled per cascade"
+      );
+      ui.drag(
+        "Hysteresis",
+        cvar_sys.cvar_ddgi_hysteresis,
+        0.0f,
+        0.99f,
+        "How much of a probe's history survives each update"
+      );
+      ui.drag("Intensity", cvar_sys.cvar_ddgi_intensity, 0.0f, 10.0f);
+
+      ui.begin_advanced();
+      ui.drag(
+        "Max Ray Radiance",
+        cvar_sys.cvar_ddgi_max_ray_radiance,
+        0.1f,
+        100.0f,
+        "Luminance cap per probe ray. Lower it to stop a bright emitter from making probes flicker"
+      );
+      ui.drag(
+        "Max Update Interval",
+        cvar_sys.cvar_ddgi_update_max_interval,
+        1,
+        64,
+        "Most frames a probe may go without being retraced. 1 retraces every probe every frame"
+      );
+      ui.drag(
+        "Full Rate Distance",
+        cvar_sys.cvar_ddgi_update_full_rate_distance,
+        1.0f,
+        200.0f,
+        "Probes within this distance of the camera retrace every frame"
+      );
+      ui.checkbox(
+        "Distance Culling",
+        cvar_sys.cvar_ddgi_distance_culling,
+        "Trace mesh-distant probes only for staggered rechecks and reuse cached probe radiance for far ray hits"
+      );
+      ui.checkbox(
+        "Probe Relocation",
+        cvar_sys.cvar_ddgi_probe_relocation,
+        "Move probes out of geometry they are buried in, and drop the ones that stay stuck"
+      );
+      ui.drag(
+        "Min Frontface Distance",
+        cvar_sys.cvar_ddgi_min_frontface_distance,
+        0.0f,
+        5.0f,
+        "How far relocation keeps a probe off a surface, in world units"
+      );
+      ui.drag(
+        "Shadow Bias",
+        cvar_sys.cvar_ddgi_shadow_ray_offset,
+        0.0f,
+        1.0f,
+        "Offsets a probe ray hit for ray-traced and virtual-shadow-map visibility tests, in world units"
+      );
+      ui.drag(
+        "Normal Bias",
+        cvar_sys.cvar_ddgi_normal_bias,
+        0.0f,
+        1.0f,
+        "Offsets the probe lookup along the surface normal, in probe spacings"
+      );
+      ui.drag(
+        "View Bias",
+        cvar_sys.cvar_ddgi_view_bias,
+        0.0f,
+        1.0f,
+        "Offsets the probe lookup toward the camera, in probe spacings"
+      );
+      ui.drag(
+        "Max Brightness Step",
+        cvar_sys.cvar_ddgi_max_brightness_step,
+        0.0f,
+        2.0f,
+        "How far a probe may brighten in one update before the step is quartered, tames emissive flicker"
+      );
+      ui.drag(
+        "Debug Probe Radius",
+        cvar_sys.cvar_ddgi_probe_debug_radius,
+        0.01f,
+        2.0f,
+        "Size of the spheres drawn by the DDGI Probes debug view"
+      );
+      ui.end_advanced();
+    }
+  );
+
+  ui.section({.name = "Contact Shadows", .toggle = &cvar_sys.cvar_contact_shadows_enabled}, [&] {
+    ui.drag("Steps", cvar_sys.cvar_contact_shadows_steps, 1, 64);
+    ui.drag("Thickness", cvar_sys.cvar_contact_shadows_thickness, 0.0f, 5.0f);
+    ui.drag("Length", cvar_sys.cvar_contact_shadows_length, 0.0f, 5.0f);
+  });
+}
+
+auto ViewportPanel::draw_device_settings(this ViewportPanel&, SettingsUI& ui) -> void {
+  ZoneScoped;
+
+  memory::ScopedStack stack;
+
+  auto& render_context = App::get_rendercontext();
+  auto& context_cvar = render_context.context_cvar;
+  auto& window = App::get_window();
+
+  ui.section({.name = "Device"}, [&] {
+    ui.info("GPU", render_context.device_name, render_context.device_name.c_str());
+    ui.info(
+      "Swapchain",
+      stack.format_char(
+        "{}x{}",
+        static_cast<u32>(render_context.swapchain_extent.x),
+        static_cast<u32>(render_context.swapchain_extent.y)
+      )
+    );
+    ui.info(
+      "Window",
+      stack.format_char(
+        "{}x{} @ {:.0f} Hz",
+        window.get_logical_width(),
+        window.get_logical_height(),
+        window.get_refresh_rate()
+      )
+    );
+    ui.info("DPI Scale", stack.format_char("{:.2f}x", window.get_dpi_scale()));
+  });
+
+  ui.section({.name = "Pipeline"}, [&] {
+    ui.checkbox("VSync", context_cvar.cvar_vsync);
+    const auto has_mesh_shaders = render_context.features & RenderContext::Feature::MeshShaders;
+    ui.begin_disabled(!has_mesh_shaders);
+    ui.checkbox(
+      "Mesh Shaders",
+      context_cvar.cvar_mesh_shaders,
+      has_mesh_shaders ? "Draw geometry with the mesh shader pipeline instead of the compute one"
+                       : "This device does not support VK_EXT_mesh_shader"
+    );
+    ui.end_disabled();
+  });
+}
+
+auto ViewportPanel::draw_viewport_settings(this ViewportPanel& self, SettingsUI& ui) -> void {
+  ZoneScoped;
+
+  memory::ScopedStack stack;
+
   auto& editor_cvar = App::mod<Editor>().editor_cvar;
 
-  if (UI::button("Expand All")) {
-    open_action = 1;
-  }
-  ImGui::SameLine();
-  if (UI::button("Collapse All")) {
-    open_action = 0;
-  }
-  ImGui::SameLine();
-  if (UI::button("Reset to defaults")) {
-    if (is_scene_valid) {
-      auto& cvar_sys = self.editor_scene->get_scene()->renderer_cvar;
-      cvar_sys.cvar_enable_debug_renderer.set_default();
-      cvar_sys.cvar_enable_physics_debug_renderer.set_default();
-      cvar_sys.cvar_draw_bounding_boxes.set_default();
-      cvar_sys.cvar_draw_camera_frustum.get_default();
-      cvar_sys.cvar_bloom_enable.set_default();
-      cvar_sys.cvar_bloom_threshold.set_default();
-      cvar_sys.cvar_bloom_soft_threshold.set_default();
-      cvar_sys.cvar_bloom_radius.set_default();
-      cvar_sys.cvar_bloom_intensity.set_default();
-      cvar_sys.cvar_bloom_clamp.set_default();
-      cvar_sys.cvar_fxaa_enable.set_default();
-      cvar_sys.cvar_upscaler_backend.set_default();
-      cvar_sys.cvar_upscaler_quality.set_default();
-      cvar_sys.cvar_upscaler_sharpness.set_default();
-      cvar_sys.cvar_upscaler_debug_view.set_default();
-      cvar_sys.cvar_upscaler_disable_jitter.set_default();
-      cvar_sys.cvar_vbgtao_quality_level.set_default();
-      cvar_sys.cvar_vbgtao_radius.set_default();
-      cvar_sys.cvar_vbgtao_thickness.set_default();
-      cvar_sys.cvar_vbgtao_final_power.set_default();
-      cvar_sys.cvar_rtao_enable.set_default();
-      cvar_sys.cvar_rtao_ray_count.set_default();
-      cvar_sys.cvar_rtao_radius.set_default();
-      cvar_sys.cvar_rtao_power.set_default();
-      cvar_sys.cvar_contact_shadows_enabled.set_default();
-      cvar_sys.cvar_contact_shadows_steps.set_default();
-      cvar_sys.cvar_contact_shadows_thickness.set_default();
-      cvar_sys.cvar_contact_shadows_length.set_default();
-    }
-    editor_cvar.cvar_camera_sens.set_default();
-    editor_cvar.cvar_camera_speed.set_default();
-    editor_cvar.cvar_camera_smooth.set_default();
-    editor_cvar.cvar_camera_zoom.set_default();
-  }
-
-  constexpr ImGuiTreeNodeFlags TREE_FLAGS = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap |
-                                            ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_FramePadding;
-
-  if (open_action != -1)
-    ImGui::SetNextItemOpen(open_action != 0);
-  if (ImGui::TreeNodeEx("Renderer", TREE_FLAGS, "%s", "Renderer")) {
-    auto& render_context = App::get_rendercontext();
-    ImGui::Text("GPU: %s", render_context.device_name.c_str());
-    ImGui::Text(
-      "Swapchain: %dx%d",
-      static_cast<u32>(render_context.swapchain_extent.x),
-      static_cast<u32>(render_context.swapchain_extent.y)
+  ui.section({.name = "Viewport"}, [&] {
+    ui.info(
+      "Resolution",
+      stack
+        .format_char("{}x{}", static_cast<u32>(self.scaled_render_size.x), static_cast<u32>(self.scaled_render_size.y))
     );
-    auto& window = App::get_window();
-    ImGui::Text(
-      "Window: %dx%d@%.1fhz x%.1f",
-      window.get_logical_width(),
-      window.get_logical_height(),
-      window.get_refresh_rate(),
-      window.get_dpi_scale()
+    const auto match_density = editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool();
+    ui.checkbox(
+      "Match Pixel Density",
+      editor_cvar.cvar_scale_viewport_size_with_content_scale,
+      "Scale the render resolution by the display's pixel density"
     );
-    if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-      UI::property("VSync", context_cvar.cvar_vsync.get_ptr_bool());
-      const auto has_mesh_shaders = render_context.features & RenderContext::Feature::MeshShaders;
-      ImGui::BeginDisabled(!has_mesh_shaders);
-      UI::property(
-        "Mesh shaders",
-        context_cvar.cvar_mesh_shaders.get_ptr_bool(),
-        has_mesh_shaders ? "Draw geometry with the mesh shader pipeline instead of the compute one"
-                         : "This device does not support VK_EXT_mesh_shader"
-      );
-      ImGui::EndDisabled();
-      UI::end_properties();
-    }
+    const c8* scale_amounts[] = {"1x", "2x", "4x", "8x"};
+    ui.begin_disabled(match_density);
+    ui.combo(
+      "Render Scale",
+      editor_cvar.cvar_viewport_scale_amount,
+      scale_amounts,
+      match_density ? "The pixel density sets the scale while \"Match Pixel Density\" is on"
+                    : "Multiplies the viewport size to get the render resolution"
+    );
+    ui.end_disabled();
 
-    if (open_action != -1)
-      ImGui::SetNextItemOpen(open_action != 0);
-    if (is_scene_valid) {
-      auto& cvar_sys = self.editor_scene->get_scene()->renderer_cvar;
-      if (ImGui::TreeNodeEx("Debug", TREE_FLAGS, "%s", "Debug")) {
-        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property("Enable debug renderer", cvar_sys.cvar_enable_debug_renderer.get_ptr_bool());
-          ImGui::Indent();
-          ImGui::BeginDisabled(!cvar_sys.cvar_enable_debug_renderer.as_bool());
-          UI::property("Draw bounding boxes", cvar_sys.cvar_draw_bounding_boxes.get_ptr_bool());
-          UI::property("Draw camera frustum", cvar_sys.cvar_draw_camera_frustum.get_ptr_bool());
-          UI::property("Draw physics shapes", cvar_sys.cvar_enable_physics_debug_renderer.get_ptr_bool());
-          const char* debug_views[] = {
-            "None",
-            "Triangles",
-            "Meshlets",
-            "Overdraw",
-            "Materials",
-            "Mesh Instances",
-            "Mesh Lods",
-            "Albdeo",
-            "Normal",
-            "Emissive",
-            "Metallic",
-            "Roughness",
-            "Baked Occlusion",
-            "GTAO",
-            "Geometric Normal",
-            "Virtual Shadowmaps",
-            "Virtual Shadowmaps (Point/Spot)",
-            "DDGI Probes"
-          };
-          UI::property(
-            "Debug View",
-            cvar_sys.cvar_debug_view.get_ptr(),
-            debug_views,
-            static_cast<i32>(ox::count_of(debug_views))
-          );
-          ImGui::EndDisabled();
-          ImGui::Unindent();
-          UI::end_properties();
+    const c8* aspect_ratios[] = {"Auto", "16:9", "16:10", "3:2", "4:3", "21:9", "32:9", "9:16"};
+    auto aspect_ratio = static_cast<i32>(self.viewport_aspect_ratio);
+    ui.combo("Aspect Ratio", &aspect_ratio, static_cast<i32>(AspectRatio::Auto), aspect_ratios);
+    self.viewport_aspect_ratio = static_cast<AspectRatio>(aspect_ratio);
+  });
 
-          ImGui::SeparatorText("Culling");
-          UI::begin_properties(UI::default_properties_flags, true, 0.3f);
-          UI::property("Freeze culling frustum", cvar_sys.cvar_freeze_culling_frustum.get_ptr_bool());
-          UI::property("Enable frustum culling", cvar_sys.cvar_culling_frustum.get_ptr_bool());
-          UI::property("Enable occlusion culling", cvar_sys.cvar_culling_occlusion.get_ptr_bool());
-          UI::property("Enable triangle culling", cvar_sys.cvar_culling_triangle.get_ptr_bool());
-          UI::end_properties();
-        }
-
-        ImGui::TreePop();
-      }
-
-      if (open_action != -1)
-        ImGui::SetNextItemOpen(open_action != 0);
-      if (ImGui::TreeNodeEx("Bloom", TREE_FLAGS, "%s", "Bloom")) {
-        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property("Enabled", cvar_sys.cvar_bloom_enable.get_ptr_bool());
-          UI::property<float>("Threshold", cvar_sys.cvar_bloom_threshold.get_ptr(), 0.0f, 100.0f);
-          UI::property<float>("Soft Threshold", cvar_sys.cvar_bloom_soft_threshold.get_ptr(), 0.0f, 1.0f);
-          UI::property<float>("Radius", cvar_sys.cvar_bloom_radius.get_ptr(), 0.0f, 1.0f);
-          UI::property<float>("Intensity", cvar_sys.cvar_bloom_intensity.get_ptr(), 0.0f, 1.0f);
-          UI::property<float>("Clamp", cvar_sys.cvar_bloom_clamp.get_ptr(), 1.0f, 64.0f);
-          UI::end_properties();
-        }
-        ImGui::TreePop();
-      }
-
-      if (open_action != -1)
-        ImGui::SetNextItemOpen(open_action != 0);
-      if (ImGui::TreeNodeEx("Upscaling", TREE_FLAGS, "%s", "Upscaling")) {
-        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          const char* backends[2] = {"None", "FSR 3.1.5"};
-          UI::property("Backend", cvar_sys.cvar_upscaler_backend.get_ptr(), backends, 2);
-
-          const auto upscaling_active = cvar_sys.cvar_upscaler_backend.get() != 0;
-          ImGui::BeginDisabled(!upscaling_active);
-          const char* quality_modes[5] = {
-            "Native AA (1.0x)",
-            "Quality (1.5x)",
-            "Balanced (1.7x)",
-            "Performance (2.0x)",
-            "Ultra Performance (3.0x)",
-          };
-
-          const auto display_size = glm::uvec2(
-            static_cast<u32>(std::max(self.scaled_render_size.x, 0.0f)),
-            static_cast<u32>(std::max(self.scaled_render_size.y, 0.0f))
-          );
-          const auto quality = static_cast<UpscalerQuality>(
-            std::clamp(cvar_sys.cvar_upscaler_quality.get(), 0, static_cast<i32>(UpscalerQuality::Count) - 1)
-          );
-          const auto render_size = upscaler_render_extent(display_size, quality);
-          auto quality_text = fmt::format(
-            "Quality: {}x{} -> {}x{}",
-            render_size.x,
-            render_size.y,
-            display_size.x,
-            display_size.y
-          );
-          UI::property(quality_text.c_str(), cvar_sys.cvar_upscaler_quality.get_ptr(), quality_modes, 5);
-          UI::property<float>("Sharpness", cvar_sys.cvar_upscaler_sharpness.get_ptr(), 0.0f, 1.0f);
-
-          const char* debug_views[8] = {
-            "Off",
-            "Dilated Motion Vectors",
-            "Disocclusion",
-            "Reactive",
-            "Shading Change",
-            "Accumulation",
-            "Luma Instability",
-            "Dilated Depth",
-          };
-          UI::property("Debug View", cvar_sys.cvar_upscaler_debug_view.get_ptr(), debug_views, 8);
-          UI::property("Hold Jitter At Zero", cvar_sys.cvar_upscaler_disable_jitter.get_ptr_bool());
-          ImGui::EndDisabled();
-
-          UI::end_properties();
-        }
-        ImGui::TreePop();
-      }
-
-      if (open_action != -1)
-        ImGui::SetNextItemOpen(open_action != 0);
-      if (ImGui::TreeNodeEx("FXAA", TREE_FLAGS, "%s", "FXAA")) {
-        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          ImGui::BeginDisabled(cvar_sys.cvar_upscaler_backend.get() != 0);
-          UI::property("Enabled", cvar_sys.cvar_fxaa_enable.get_ptr_bool());
-          ImGui::EndDisabled();
-          UI::end_properties();
-        }
-        ImGui::TreePop();
-      }
-
-      if (open_action != -1)
-        ImGui::SetNextItemOpen(open_action != 0);
-      if (ImGui::TreeNodeEx("GTAO", TREE_FLAGS, "%s", "GTAO")) {
-        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property("Enabled", cvar_sys.cvar_vbgtao_enable.get_ptr_bool());
-          const char* quality_levels[4] = {"Low", "Medium", "High", "Ultra"};
-          UI::property("Quality Level", cvar_sys.cvar_vbgtao_quality_level.get_ptr(), quality_levels, 4);
-          UI::property<float>("Radius", cvar_sys.cvar_vbgtao_radius.get_ptr(), 0.1f, 5.f);
-          UI::property<float>("Thickness", cvar_sys.cvar_vbgtao_thickness.get_ptr(), 0.0f, 5.f);
-          UI::property<float>("Final Power", cvar_sys.cvar_vbgtao_final_power.get_ptr(), 0.f, 10.f);
-          UI::end_properties();
-        }
-        ImGui::TreePop();
-      }
-
-      if (open_action != -1)
-        ImGui::SetNextItemOpen(open_action != 0);
-      if (ImGui::TreeNodeEx("RTAO", TREE_FLAGS, "%s", "RTAO (DO NOT USE, TESTING ONLY)")) {
-        const auto has_ray_tracing = render_context.features & RenderContext::Feature::RayTracing;
-        ImGui::BeginDisabled(!has_ray_tracing);
-        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property(
-            "Enabled",
-            cvar_sys.cvar_rtao_enable.get_ptr_bool(),
-            has_ray_tracing ? "Trace occlusion rays against the scene TLAS instead of running GTAO"
-                            : "This device does not support ray queries"
-          );
-          UI::property("Ray Count", cvar_sys.cvar_rtao_ray_count.get_ptr(), 1, 32);
-          UI::property<float>("Radius", cvar_sys.cvar_rtao_radius.get_ptr(), 0.05f, 20.f);
-          UI::property<float>("Power", cvar_sys.cvar_rtao_power.get_ptr(), 0.f, 10.f);
-          UI::end_properties();
-        }
-        ImGui::EndDisabled();
-        ImGui::TreePop();
-      }
-
-      if (open_action != -1)
-        ImGui::SetNextItemOpen(open_action != 0);
-      if (ImGui::TreeNodeEx("DDGI", TREE_FLAGS, "%s", "DDGI")) {
-        const auto has_ray_tracing = (render_context.features & RenderContext::Feature::RayTracing) &&
-                                     (render_context.features & RenderContext::Feature::RayTracingPipeline);
-        ImGui::BeginDisabled(!has_ray_tracing);
-        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property(
-            "Enabled",
-            cvar_sys.cvar_ddgi_enable.get_ptr_bool(),
-            has_ray_tracing ? "Light probe volumes gather indirect diffuse by tracing the scene TLAS"
-                            : "This device does not support ray tracing pipelines"
-          );
-          UI::property(
-            "Rays Per Probe",
-            cvar_sys.cvar_ddgi_rays_per_probe.get_ptr(),
-            8,
-            512,
-            1.0f,
-            "More rays converge faster and flicker less, at a linear cost"
-          );
-          UI::property<float>(
-            "Max Ray Distance (Cascade 0)",
-            cvar_sys.cvar_ddgi_max_ray_distance.get_ptr(),
-            1.f,
-            500.f
-          );
-          UI::property<float>(
-            "Max Ray Radiance",
-            cvar_sys.cvar_ddgi_max_ray_radiance.get_ptr(),
-            0.1f,
-            100.f,
-            "Luminance cap per probe ray. Lower it to stop a bright emitter from making probes flicker"
-          );
-          UI::property<float>(
-            "Hysteresis",
-            cvar_sys.cvar_ddgi_hysteresis.get_ptr(),
-            0.f,
-            0.99f,
-            "How much of a probe's history survives each update"
-          );
-          UI::property(
-            "Max Update Interval",
-            cvar_sys.cvar_ddgi_update_max_interval.get_ptr(),
-            1,
-            64,
-            1.0f,
-            "Most frames a probe may go without being retraced. 1 retraces every probe every frame"
-          );
-          UI::property<float>(
-            "Full Rate Distance",
-            cvar_sys.cvar_ddgi_update_full_rate_distance.get_ptr(),
-            1.f,
-            200.f,
-            "Probes within this distance of the camera retrace every frame"
-          );
-          UI::property(
-            "Distance Culling",
-            cvar_sys.cvar_ddgi_distance_culling.get_ptr_bool(),
-            "Trace mesh-distant probes only for staggered rechecks and reuse cached probe radiance for far ray hits"
-          );
-          UI::property(
-            "Probe Relocation",
-            cvar_sys.cvar_ddgi_probe_relocation.get_ptr_bool(),
-            "Move probes out of geometry they are buried in, and drop the ones that stay stuck"
-          );
-          UI::property<float>(
-            "Min Frontface Distance",
-            cvar_sys.cvar_ddgi_min_frontface_distance.get_ptr(),
-            0.f,
-            5.f,
-            "How far relocation keeps a probe off a surface, in world units"
-          );
-          UI::property<float>(
-            "Shadow Bias",
-            cvar_sys.cvar_ddgi_shadow_ray_offset.get_ptr(),
-            0.f,
-            1.f,
-            "Offsets a probe ray hit for ray-traced and virtual-shadow-map visibility tests, in world units"
-          );
-          UI::property<float>(
-            "Normal Bias",
-            cvar_sys.cvar_ddgi_normal_bias.get_ptr(),
-            0.f,
-            1.f,
-            "Offsets the probe lookup along the surface normal, in probe spacings"
-          );
-          UI::property<float>(
-            "View Bias",
-            cvar_sys.cvar_ddgi_view_bias.get_ptr(),
-            0.f,
-            1.f,
-            "Offsets the probe lookup toward the camera, in probe spacings"
-          );
-          UI::property<float>(
-            "Max Brightness Step",
-            cvar_sys.cvar_ddgi_max_brightness_step.get_ptr(),
-            0.f,
-            2.f,
-            "How far a probe may brighten in one update before the step is quartered, tames emissive flicker"
-          );
-          UI::property<float>("Intensity", cvar_sys.cvar_ddgi_intensity.get_ptr(), 0.f, 10.f);
-          UI::property<float>(
-            "Debug Probe Radius",
-            cvar_sys.cvar_ddgi_probe_debug_radius.get_ptr(),
-            0.01f,
-            2.f,
-            "Size of the spheres drawn by the DDGI Probes debug view"
-          );
-          UI::end_properties();
-        }
-        ImGui::EndDisabled();
-        ImGui::TreePop();
-      }
-
-      if (open_action != -1)
-        ImGui::SetNextItemOpen(open_action != 0);
-      if (ImGui::TreeNodeEx("Contact Shadows", TREE_FLAGS, "%s", "Contact Shadows")) {
-        if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-          UI::property("Enabled", cvar_sys.cvar_contact_shadows_enabled.get_ptr_bool());
-          UI::property("Steps", cvar_sys.cvar_contact_shadows_steps.get_ptr(), 1, 64);
-          UI::property<float>("Thickness", cvar_sys.cvar_contact_shadows_thickness.get_ptr(), 0.0, 5);
-          UI::property<float>("Length", cvar_sys.cvar_contact_shadows_length.get_ptr(), 0.0, 5);
-          UI::end_properties();
-        }
-        ImGui::TreePop();
-      }
-    }
-
-    ImGui::TreePop();
-  }
-
-  if (open_action != -1)
-    ImGui::SetNextItemOpen(open_action != 0);
-  if (ImGui::TreeNodeEx("Viewport", TREE_FLAGS, "%s", "Viewport")) {
-    auto resolution = fmt::format("Viewport Resolution: {}x{}", self.scaled_render_size.x, self.scaled_render_size.y);
-    ImGui::TextUnformatted(resolution.c_str());
-    if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-      UI::property(
-        "Scale Viewport With Pixel Density",
-        editor_cvar.cvar_scale_viewport_size_with_content_scale.get_ptr_bool()
-      );
-      const char* scale_amounts[4] = {
-        "1x",
-        "2x",
-        "4x",
-        "8x",
-      };
-      ImGui::BeginDisabled(editor_cvar.cvar_scale_viewport_size_with_content_scale.as_bool());
-      UI::property("Scale Viewport", (editor_cvar.cvar_viewport_scale_amount.get_ptr()), scale_amounts, 4);
-      ImGui::EndDisabled();
-      const char* aspect_ratios[8] = {
-        "Auto",
-        "16x9",
-        "16x10",
-        "3x2",
-        "4x3",
-        "21x9",
-        "32x9",
-        "9x16",
-      };
-      UI::property("Aspect Ratio", ((i32*)&self.viewport_aspect_ratio), aspect_ratios, 8);
-      UI::end_properties();
-    }
-
-    if (open_action != -1)
-      ImGui::SetNextItemOpen(open_action != 0);
-    if (ImGui::TreeNodeEx("Camera", TREE_FLAGS, "%s", "Camera")) {
-      if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
-        UI::property<float>("Camera sensitivity", editor_cvar.cvar_camera_sens.get_ptr(), 0.01f, 20.0f);
-        UI::property<float>("Movement speed", editor_cvar.cvar_camera_speed.get_ptr(), 0.1f, 100.0f);
-        UI::property("Smooth camera", editor_cvar.cvar_camera_smooth.get_ptr_bool());
-        UI::property("Camera zoom", editor_cvar.cvar_camera_zoom.get_ptr(), 1, 100);
-        UI::end_properties();
-      }
-
-      ImGui::TreePop();
-    }
-
-    ImGui::TreePop();
-  }
+  ui.section({.name = "Camera"}, [&] {
+    ui.drag("Sensitivity", editor_cvar.cvar_camera_sens, 0.01f, 20.0f);
+    ui.drag("Movement Speed", editor_cvar.cvar_camera_speed, 0.1f, 100.0f);
+    ui.checkbox("Smoothing", editor_cvar.cvar_camera_smooth);
+    ui.drag("Zoom", editor_cvar.cvar_camera_zoom, 1, 100);
+  });
 }
 
 auto ViewportPanel::draw_gizmo_settings_panel(this ViewportPanel& self) -> void {
@@ -1895,21 +2163,19 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
       self.gizmo_type = ImGuizmo::BOUNDS;
     if (UI::toggle_button(ICON_MDI_ARROW_EXPAND_ALL, self.gizmo_type == ImGuizmo::UNIVERSAL, button_size, alpha, alpha))
       self.gizmo_type = ImGuizmo::UNIVERSAL;
-    if (UI::toggle_button(
-          self.gizmo_mode == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
-          self.gizmo_mode == ImGuizmo::WORLD,
-          button_size,
-          alpha,
-          alpha
-        ))
+    if (
+      UI::toggle_button(
+        self.gizmo_mode == ImGuizmo::WORLD ? ICON_MDI_EARTH : ICON_MDI_EARTH_OFF,
+        self.gizmo_mode == ImGuizmo::WORLD,
+        button_size,
+        alpha,
+        alpha
+      )
+    )
       self.gizmo_mode = self.gizmo_mode == ImGuizmo::LOCAL ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
-    if (UI::toggle_button(
-          ICON_MDI_GRID,
-          App::mod<Editor>().editor_cvar.cvar_draw_grid.get(),
-          button_size,
-          alpha,
-          alpha
-        ))
+    if (
+      UI::toggle_button(ICON_MDI_GRID, App::mod<Editor>().editor_cvar.cvar_draw_grid.get(), button_size, alpha, alpha)
+    )
       App::mod<Editor>().editor_cvar.cvar_draw_grid.toggle();
 
     if (UI::toggle_button(ICON_MDI_BRUSH, self.terrain_brush_enabled, button_size, alpha, alpha))
@@ -1918,13 +2184,15 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
     if (self.editor_camera.is_alive() && self.editor_camera.has<CameraComponent>()) {
       auto& cam = self.editor_camera.get_mut<CameraComponent>();
       UI::push_id();
-      if (UI::toggle_button(
-            ICON_MDI_CAMERA,
-            cam.projection == CameraComponent::Projection::Orthographic,
-            button_size,
-            alpha,
-            alpha
-          ))
+      if (
+        UI::toggle_button(
+          ICON_MDI_CAMERA,
+          cam.projection == CameraComponent::Projection::Orthographic,
+          button_size,
+          alpha,
+          alpha
+        )
+      )
         cam.projection = cam.projection == CameraComponent::Projection::Orthographic
                            ? CameraComponent::Projection::Perspective
                            : CameraComponent::Projection::Orthographic;

@@ -88,7 +88,10 @@ void UI::end_property_grid() {
 }
 
 void UI::tooltip_hover(const char* text) {
-  if (text && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
+  // disabled rows are where the tooltip usually explains why
+  constexpr auto HOVER_FLAGS = ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay |
+                               ImGuiHoveredFlags_AllowWhenDisabled;
+  if (text && ImGui::IsItemHovered(HOVER_FLAGS)) {
     ImGui::BeginTooltip();
     ImGui::TextUnformatted(text);
     ImGui::EndTooltip();
