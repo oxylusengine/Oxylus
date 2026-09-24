@@ -4,6 +4,7 @@
 #include <bit>
 #include <chrono>
 #include <ctime>
+#include <expected>
 #include <filesystem>
 #include <fmt/chrono.h>
 #include <icons/IconsMaterialDesignIcons.h>
@@ -310,6 +311,101 @@ static auto update_selected_path(const std::filesystem::path& old_path, const st
   }
 }
 
+static auto entry_name_error(std::string_view name) -> std::string_view {
+  if (name.empty())
+    return "Enter a name.";
+  if (name == "." || name == ".." || name.find_first_of("/\\") != std::string_view::npos)
+    return "Names cannot contain path separators.";
+  return {};
+}
+
+// a visible sidecar describes its sibling, so moving or renaming it has to carry that sibling along,
+// otherwise the asset would lose its stable UUID on the next import
+static auto content_entry_source(const std::filesystem::path& path, std::error_code& error) -> std::filesystem::path {
+  if (std::filesystem::is_directory(path, error) || error || path.extension() != ".oxasset")
+    return path;
+
+  auto companion_path = path;
+  companion_path.replace_extension();
+  if (std::filesystem::exists(companion_path, error) && !error)
+    return companion_path;
+
+  return path;
+}
+
+// on case-insensitive filesystems a case-only rename finds its own source at the destination
+static auto destination_taken(
+  const std::filesystem::path& source_path, const std::filesystem::path& destination_path, std::error_code& error
+) -> bool {
+  return std::filesystem::exists(destination_path, error) &&
+         !std::filesystem::equivalent(source_path, destination_path, error);
+}
+
+static auto relocate_content_entry(
+  const std::filesystem::path& source_path, const std::filesystem::path& destination_path, bool is_directory
+) -> std::expected<void, std::string> {
+  std::error_code error;
+  if (destination_taken(source_path, destination_path, error) || error) {
+    return std::unexpected(fmt::format("{} already exists or can't be inspected.", destination_path.filename()));
+  }
+
+  const auto source_meta_path = is_directory ? std::filesystem::path{} : meta_file_path(source_path);
+  const bool has_meta_file = !source_meta_path.empty() && source_meta_path != source_path &&
+                             std::filesystem::exists(source_meta_path, error) && !error;
+  if (error) {
+    return std::unexpected(fmt::format("Couldn't inspect sidecar for {}: {}", source_path, error.message()));
+  }
+
+  const auto destination_meta_path = has_meta_file ? meta_file_path(destination_path) : std::filesystem::path{};
+  if (has_meta_file && (destination_taken(source_meta_path, destination_meta_path, error) || error)) {
+    return std::unexpected(
+      fmt::format("Sidecar {} already exists or can't be inspected.", destination_meta_path.filename())
+    );
+  }
+
+  std::filesystem::rename(source_path, destination_path, error);
+  if (error) {
+    return std::unexpected(error.message());
+  }
+
+  if (has_meta_file) {
+    std::filesystem::rename(source_meta_path, destination_meta_path, error);
+    if (error) {
+      const auto sidecar_error = error;
+      std::error_code rollback_error;
+      std::filesystem::rename(destination_path, source_path, rollback_error);
+      return std::unexpected(
+        fmt::format(
+          "Couldn't move sidecar {} to {}: {}{}",
+          source_meta_path,
+          destination_meta_path,
+          sidecar_error.message(),
+          rollback_error ? fmt::format(" (and couldn't restore {}: {})", source_path, rollback_error.message()) : ""
+        )
+      );
+    }
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+  relocate_asset_paths(asset_man, source_path, destination_path);
+
+  // Standalone assets consist only of an `.oxasset`; their registered path omits that extension.
+  if (!is_directory && source_path.extension() == ".oxasset" && source_meta_path == source_path) {
+    auto source_asset_path = source_path;
+    source_asset_path.replace_extension();
+    auto destination_asset_path = destination_path;
+    destination_asset_path.replace_extension();
+    relocate_asset_paths(asset_man, source_asset_path, destination_asset_path);
+  }
+
+  update_selected_path(source_path, destination_path);
+  if (has_meta_file) {
+    update_selected_path(source_meta_path, destination_meta_path);
+  }
+
+  return {};
+}
+
 static auto move_content_entry(
   const std::filesystem::path& requested_path,
   const std::filesystem::path& drop_path,
@@ -347,16 +443,7 @@ static auto move_content_entry(
     return false;
   }
 
-  auto source_path = normalized_requested_path;
-  if (!std::filesystem::is_directory(source_path, error) && !error && source_path.extension() == ".oxasset") {
-    auto companion_path = source_path;
-    companion_path.replace_extension();
-    if (std::filesystem::exists(companion_path, error) && !error) {
-      // A visible sidecar describes its sibling. Moving it must move that sibling as well, otherwise
-      // the asset would lose its stable UUID on the next import.
-      source_path = std::move(companion_path);
-    }
-  }
+  const auto source_path = content_entry_source(normalized_requested_path, error);
   if (error) {
     OX_LOG_ERROR("Couldn't inspect {} before moving it: {}", requested_path, error.message());
     return false;
@@ -378,74 +465,47 @@ static auto move_content_entry(
     return false;
   }
 
-  const auto destination_path = normalized_drop_path / source_path.filename();
-  if (std::filesystem::exists(destination_path, error) || error) {
-    OX_LOG_ERROR("Couldn't move {}: {} already exists or can't be inspected.", source_path, destination_path);
-    return false;
-  }
-
-  const auto source_meta_path = is_directory ? std::filesystem::path{} : meta_file_path(source_path);
-  const bool has_meta_file = !source_meta_path.empty() && source_meta_path != source_path &&
-                             std::filesystem::exists(source_meta_path, error) && !error;
-  if (error) {
-    OX_LOG_ERROR("Couldn't inspect sidecar for {}: {}", source_path, error.message());
-    return false;
-  }
-
-  const auto destination_meta_path = has_meta_file ? meta_file_path(destination_path) : std::filesystem::path{};
-  if (has_meta_file && (std::filesystem::exists(destination_meta_path, error) || error)) {
-    OX_LOG_ERROR(
-      "Couldn't move {}: sidecar {} already exists or can't be inspected.",
-      source_path,
-      destination_meta_path
-    );
-    return false;
-  }
-
-  std::filesystem::rename(source_path, destination_path, error);
-  if (error) {
-    OX_LOG_ERROR("Couldn't move {} to {}: {}", source_path, destination_path, error.message());
-    return false;
-  }
-
-  if (has_meta_file) {
-    std::filesystem::rename(source_meta_path, destination_meta_path, error);
-    if (error) {
-      const auto sidecar_error = error;
-      std::error_code rollback_error;
-      std::filesystem::rename(destination_path, source_path, rollback_error);
-      OX_LOG_ERROR(
-        "Couldn't move sidecar {} to {}: {}{}",
-        source_meta_path,
-        destination_meta_path,
-        sidecar_error.message(),
-        rollback_error ? fmt::format(" (and couldn't restore {}: {})", source_path, rollback_error.message()) : ""
-      );
-      return false;
-    }
-  }
-
-  auto& asset_man = App::mod<AssetManager>();
-  relocate_asset_paths(asset_man, source_path, destination_path);
-
-  // Standalone assets consist only of an `.oxasset`; their registered path omits that extension.
   if (
-    !is_directory && source_path == normalized_requested_path && source_path.extension() == ".oxasset" &&
-    source_meta_path == source_path
+    const auto moved = relocate_content_entry(source_path, normalized_drop_path / source_path.filename(), is_directory);
+    !moved
   ) {
-    auto source_asset_path = source_path;
-    source_asset_path.replace_extension();
-    auto destination_asset_path = destination_path;
-    destination_asset_path.replace_extension();
-    relocate_asset_paths(asset_man, source_asset_path, destination_asset_path);
-  }
-
-  update_selected_path(source_path, destination_path);
-  if (has_meta_file) {
-    update_selected_path(source_meta_path, destination_meta_path);
+    OX_LOG_ERROR("Couldn't move {} into {}: {}", source_path, normalized_drop_path, moved.error());
+    return false;
   }
 
   return true;
+}
+
+static auto rename_content_entry(const std::filesystem::path& requested_path, std::string_view new_name)
+  -> std::expected<void, std::string> {
+  const auto normalized_requested_path = requested_path.lexically_normal();
+  const bool requested_meta_file = normalized_requested_path.extension() == ".oxasset";
+
+  // whatever sits behind an `.oxasset` stays one, whether or not the typed name keeps the extension
+  auto base_name = new_name;
+  if (requested_meta_file && base_name.ends_with(".oxasset"))
+    base_name.remove_suffix(std::string_view(".oxasset").size());
+
+  if (const auto name_error = entry_name_error(base_name); !name_error.empty())
+    return std::unexpected(std::string(name_error));
+
+  std::error_code error;
+  const auto source_path = content_entry_source(normalized_requested_path, error);
+  if (error)
+    return std::unexpected(fmt::format("Couldn't inspect {}: {}", requested_path, error.message()));
+
+  const bool is_directory = std::filesystem::is_directory(source_path, error);
+  if (error)
+    return std::unexpected(fmt::format("Couldn't inspect {}: {}", source_path, error.message()));
+
+  auto destination_path = source_path.parent_path() / base_name;
+  if (requested_meta_file && source_path == normalized_requested_path)
+    destination_path += ".oxasset";
+
+  if (destination_path == source_path)
+    return {};
+
+  return relocate_content_entry(source_path, destination_path, is_directory);
 }
 
 static bool drag_drop_target(const std::filesystem::path& drop_path, const std::filesystem::path& assets_directory) {
@@ -1252,6 +1312,10 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
               ImGui::CloseCurrentPopup();
             }
             if (ImGui::MenuItem("Rename")) {
+              self.rename_path = path;
+              self.rename_name = file.name;
+              self.rename_error.clear();
+              self.should_open_rename_popup = true;
               ImGui::CloseCurrentPopup();
             }
 
@@ -1403,8 +1467,13 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
               self.directory_to_delete = path;
               ImGui::CloseCurrentPopup();
             }
-            if (ImGui::MenuItem("Rename"))
+            if (ImGui::MenuItem("Rename")) {
+              self.rename_path = path;
+              self.rename_name = file.name;
+              self.rename_error.clear();
+              self.should_open_rename_popup = true;
               ImGui::CloseCurrentPopup();
+            }
 
             ImGui::Separator();
             if (auto p = self.draw_context_menu_items(path, is_dir); !p.empty())
@@ -1513,13 +1582,8 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
     ImGui::Separator();
     if (create_requested || ImGui::Button("Create", UI::scale(ImVec2(120.0f, 0.0f)))) {
-      if (self.new_folder_name.empty()) {
-        self.new_folder_error = "Enter a folder name.";
-      } else if (
-        self.new_folder_name == "." || self.new_folder_name == ".." ||
-        self.new_folder_name.find_first_of("/\\") != std::string::npos
-      ) {
-        self.new_folder_error = "Folder names cannot contain path separators.";
+      if (const auto name_error = entry_name_error(self.new_folder_name); !name_error.empty()) {
+        self.new_folder_error = name_error;
       } else {
         const auto new_folder_path = self.new_folder_parent / self.new_folder_name;
         std::error_code error;
@@ -1539,6 +1603,52 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     ImGui::SameLine();
     if (ImGui::Button("Cancel", UI::scale(ImVec2(120.0f, 0.0f)))) {
       reset_new_folder_popup();
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+
+  if (self.should_open_rename_popup) {
+    ImGui::OpenPopup("Rename");
+    self.should_open_rename_popup = false;
+  }
+
+  if (ImGui::BeginPopupModal("Rename", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::IsWindowAppearing())
+      ImGui::SetKeyboardFocusHere();
+
+    UI::begin_properties(UI::default_properties_flags, true, 0.5f);
+    const bool rename_requested = UI::input_text(
+      "Name",
+      &self.rename_name,
+      ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll
+    );
+    UI::end_properties();
+
+    if (!self.rename_error.empty())
+      ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", self.rename_error.c_str());
+
+    const auto reset_rename_popup = [&self] {
+      self.rename_path.clear();
+      self.rename_name.clear();
+      self.rename_error.clear();
+    };
+
+    ImGui::Separator();
+    if (rename_requested || ImGui::Button("Rename", UI::scale(ImVec2(120.0f, 0.0f)))) {
+      if (const auto renamed = rename_content_entry(self.rename_path, self.rename_name); renamed) {
+        self.refresh();
+        reset_rename_popup();
+        ImGui::CloseCurrentPopup();
+      } else {
+        self.rename_error = renamed.error();
+      }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", UI::scale(ImVec2(120.0f, 0.0f)))) {
+      reset_rename_popup();
       ImGui::CloseCurrentPopup();
     }
 
