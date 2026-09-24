@@ -77,6 +77,7 @@ FragmentOutput fs_main(VOutput input) {
   grad.uv = uv;
   grad.ddx = ddx(uv);
   grad.ddy = ddy(uv);
+  grad.apply_mip_bias(C.camera_buffer.texture_mip_bias);
 
   f32x4 color = material.sample_albedo_color(grad);
 

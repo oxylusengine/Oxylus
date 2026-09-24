@@ -55,6 +55,7 @@ func sample_terrain_layers(f32x2 uv, f32x2 ddx_uv, f32x2 ddy_uv, f32x4 weights) 
     grad.uv = uv;
     grad.ddx = ddx_uv;
     grad.ddy = ddy_uv;
+    grad.apply_mip_bias(params.camera.texture_mip_bias);
 
     TerrainSurface result = {};
     for (var i = 0; i < 4; i++) {

@@ -662,6 +662,7 @@ auto RendererInstance::render(
   self.camera_data.resolution = {render_extent.width, render_extent.height};
   self.camera_data.temporalaa_jitter = self.current_jitter;
   self.camera_data.temporalaa_jitter_prev = self.previous_jitter;
+  self.camera_data.texture_mip_bias = upscaling ? upscaler_mip_bias(render_size, display_size) : -1.0f;
   self.prepared_frame.camera_buffer = self.renderer.render_context->scratch_buffer(self.camera_data);
 
   self.render_queue_2d.update();
@@ -982,6 +983,7 @@ auto RendererInstance::render(
       .near_clip = self.camera_data.near_clip,
       .mesh_instance_count = self.prepared_frame.mesh_instance_count,
       .jitter = self.current_jitter,
+      .texture_mip_bias = self.camera_data.texture_mip_bias,
     };
     const auto has_meshes = self.prepared_frame.mesh_instance_count > 0;
 

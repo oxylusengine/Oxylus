@@ -146,6 +146,8 @@ func fs_main(VertexOutput input) -> FragmentOutput {
         tex_coord_grad.ddy
     );
 
+    // biased after the tangent frame, which needs the true uv derivatives
+    tex_coord_grad.apply_mip_bias(params.camera.texture_mip_bias);
     let surface = shade_surface(material, frame, tex_coord_grad);
 
     output.albedo_color = f32x4(surface.albedo.rgb, surface.occlusion);

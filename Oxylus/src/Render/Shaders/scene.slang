@@ -46,6 +46,14 @@ public struct UVGradient : IUVSample {
     this.ddx *= size;
     this.ddy *= size;
   }
+
+  // scaling both gradients by 2^bias shifts the selected lod by bias, same as a sampler lod bias
+  [[mutating]]
+  public func apply_mip_bias(f32 bias) {
+    let scale = exp2(bias);
+    this.ddx *= scale;
+    this.ddy *= scale;
+  }
 };
 
 public struct UVLod : IUVSample {
@@ -268,6 +276,8 @@ public struct Camera {
   public u32 output_index = 0;
   public f32x2 resolution;
   public f32 acceptable_lod_error;
+  // negative when upscaling, so material textures keep display resolution detail
+  public f32 texture_mip_bias;
 
   // jitter stays out of `projection` so cpu side culling and the motion vector reprojection keep
   // working off unjittered matrices. oxylus ndc has +y down, matching the texel space the upscaler
@@ -292,6 +302,7 @@ public struct CullCamera {
     public f32 near_clip = {};
     public u32 mesh_instances_count = {};
     public f32x2 jitter = {};
+    public f32 texture_mip_bias = {};
 
     // see Camera::jitter_clip, same convention
     public func jitter_clip(f32x4 clip_pos) -> f32x4 {

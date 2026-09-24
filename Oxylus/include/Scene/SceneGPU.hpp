@@ -188,6 +188,8 @@ struct CameraData {
   alignas(4) u32 output_index = 0;
   alignas(4) glm::vec2 resolution = {};
   alignas(4) f32 acceptable_lod_error = 2.0f; // TODO: Make this configurable
+  // negative when upscaling, so material textures keep display resolution detail
+  alignas(4) f32 texture_mip_bias = 0.0f;
 };
 
 struct CullCamera {
@@ -199,6 +201,7 @@ struct CullCamera {
   u32 mesh_instance_count = {};
   // only the main geometry pass sets this; culling and shadow users leave it zero
   glm::vec2 jitter = {};
+  f32 texture_mip_bias = {};
 };
 
 constexpr static u32 MAX_POINT_LIGHTS = 128;

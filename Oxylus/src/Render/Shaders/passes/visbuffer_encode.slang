@@ -57,6 +57,7 @@ func fs_main(VertexOutput input) -> u32 {
         grad.uv = input.tex_coord;
         grad.ddx = ddx(input.tex_coord);
         grad.ddy = ddy(input.tex_coord);
+        grad.apply_mip_bias(camera.texture_mip_bias);
         let alpha_color = material.sample_albedo_color(grad).a;
 
         // We are doing deferred, blend alpha mode is not supported in this pass.
