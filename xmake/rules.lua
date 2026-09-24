@@ -24,7 +24,7 @@ end)
 
 rule("ox.install_resources")
 set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".mp3", ".wav", ".ogg",
-  ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".rml", ".rcss")
+  ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".oxparticle", ".rml", ".rcss")
 before_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local output_dir = target:extraconf("rules", "ox.install_resources", "output_dir") or ""
   local root_dir = target:extraconf("rules", "ox.install_resources", "root_dir") or os.scriptdir()
