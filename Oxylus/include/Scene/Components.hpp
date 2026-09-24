@@ -293,6 +293,7 @@ struct RigidBodyComponent {
   f32 gravity_factor = 1.0f;
   f32 friction = 0.2f;
   f32 restitution = 0.0f;
+  glm::vec3 center_of_mass_offset = glm::vec3(0.0f);
   bool allow_sleep = true;
   bool awake = true;
   bool continuous = false;

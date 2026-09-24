@@ -14,6 +14,7 @@
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
@@ -2414,8 +2415,21 @@ auto Scene::create_rigidbody(this Scene& self, flecs::entity entity, RigidBodyCo
     return;
   }
 
+  // static bodies never rotate, so their center of mass has nothing to affect
+  auto body_shape = compound_shape.Get();
+  const auto& com_offset = component.center_of_mass_offset;
+  if (component.type != RigidBodyComponent::BodyType::Static && com_offset != glm::vec3(0.0f)) {
+    auto offset_shape = JPH::OffsetCenterOfMassShapeSettings({com_offset.x, com_offset.y, com_offset.z}, body_shape)
+                          .Create();
+    if (offset_shape.HasError()) {
+      OX_LOG_ERROR("Jolt shape error: {}", offset_shape.GetError().c_str());
+    } else {
+      body_shape = offset_shape.Get();
+    }
+  }
+
   JPH::BodyCreationSettings body_settings(
-    compound_shape.Get(),
+    body_shape,
     {body_position.x, body_position.y, body_position.z},
     {body_rotation.x, body_rotation.y, body_rotation.z, body_rotation.w},
     static_cast<JPH::EMotionType>(component.type),
