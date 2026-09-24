@@ -201,12 +201,14 @@ auto RendererInstance::decode_visbuffer(this RendererInstance& self, MainGeometr
       VUK_BA(vuk::eFragmentRead) mesh_instances,
       VUK_BA(vuk::eFragmentRead) meshes,
       VUK_BA(vuk::eFragmentRead) transforms,
+      VUK_BA(vuk::eFragmentRead) transforms_previous,
       VUK_BA(vuk::eFragmentRead) materials,
       VUK_IA(vuk::eFragmentSampled) visbuffer,
       VUK_IA(vuk::eColorRW) albedo,
       VUK_IA(vuk::eColorRW) normal,
       VUK_IA(vuk::eColorRW) emissive,
-      VUK_IA(vuk::eColorRW) metallic_roughness_occlusion
+      VUK_IA(vuk::eColorRW) metallic_roughness_occlusion,
+      VUK_IA(vuk::eColorRW) velocity
     ) {
       cmd_list //
         .bind_graphics_pipeline("visbuffer_decode")
@@ -216,6 +218,7 @@ auto RendererInstance::decode_visbuffer(this RendererInstance& self, MainGeometr
         .set_color_blend(normal, vuk::BlendPreset::eOff)
         .set_color_blend(emissive, vuk::BlendPreset::eOff)
         .set_color_blend(metallic_roughness_occlusion, vuk::BlendPreset::eOff)
+        .set_color_blend(velocity, vuk::BlendPreset::eOff)
         .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
         .set_viewport(0, vuk::Rect2D::framebuffer())
         .set_scissor(0, vuk::Rect2D::framebuffer())
@@ -225,8 +228,9 @@ auto RendererInstance::decode_visbuffer(this RendererInstance& self, MainGeometr
         .bind_buffer(0, 2, mesh_instances)
         .bind_buffer(0, 3, meshes)
         .bind_buffer(0, 4, transforms)
-        .bind_buffer(0, 5, materials)
-        .bind_image(0, 6, visbuffer)
+        .bind_buffer(0, 5, transforms_previous)
+        .bind_buffer(0, 6, materials)
+        .bind_image(0, 7, visbuffer)
         .draw(3, 1, 0, 1);
 
       return std::make_tuple(
@@ -235,12 +239,14 @@ auto RendererInstance::decode_visbuffer(this RendererInstance& self, MainGeometr
         mesh_instances,
         meshes,
         transforms,
+        transforms_previous,
         materials,
         visbuffer,
         albedo,
         normal,
         emissive,
-        metallic_roughness_occlusion
+        metallic_roughness_occlusion,
+        velocity
       );
     }
   );
@@ -251,12 +257,14 @@ auto RendererInstance::decode_visbuffer(this RendererInstance& self, MainGeometr
     self.prepared_frame.mesh_instances_buffer,
     self.prepared_frame.meshes_buffer,
     self.prepared_frame.transforms_world_buffer,
+    self.prepared_frame.transforms_previous_buffer,
     self.prepared_frame.materials_buffer,
     context.visbuffer_attachment,
     context.albedo_attachment,
     context.normal_attachment,
     context.emissive_attachment,
-    context.metallic_roughness_occlusion_attachment
+    context.metallic_roughness_occlusion_attachment,
+    context.velocity_attachment
   ) =
     vis_decode_pass(
       std::move(self.prepared_frame.camera_buffer),
@@ -264,12 +272,14 @@ auto RendererInstance::decode_visbuffer(this RendererInstance& self, MainGeometr
       std::move(self.prepared_frame.mesh_instances_buffer),
       std::move(self.prepared_frame.meshes_buffer),
       std::move(self.prepared_frame.transforms_world_buffer),
+      std::move(self.prepared_frame.transforms_previous_buffer),
       std::move(self.prepared_frame.materials_buffer),
       std::move(context.visbuffer_attachment),
       std::move(context.albedo_attachment),
       std::move(context.normal_attachment),
       std::move(context.emissive_attachment),
-      std::move(context.metallic_roughness_occlusion_attachment)
+      std::move(context.metallic_roughness_occlusion_attachment),
+      std::move(context.velocity_attachment)
     );
 }
 

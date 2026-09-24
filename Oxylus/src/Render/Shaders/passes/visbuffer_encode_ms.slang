@@ -135,7 +135,7 @@ func ms_main(
 
     if (local_index < vertex_count) {
         let vertex_index = mesh_lod.indirect_vertex_indices[meshlet.indirect_vertex_index_offset + local_index];
-        let clip_pos = mul(mvp, f32x4(meshlet.position(mesh, vertex_index), 1.0));
+        let clip_pos = camera.jitter_clip(mul(mvp, f32x4(meshlet.position(mesh, vertex_index), 1.0)));
         clip_positions_shared[local_index] = clip_pos;
 
         VertexOutput output;
@@ -179,6 +179,7 @@ func fs_main(VertexOutput input) -> u32 {
         grad.uv = input.tex_coord;
         grad.ddx = ddx(input.tex_coord);
         grad.ddy = ddy(input.tex_coord);
+        grad.apply_mip_bias(camera.texture_mip_bias);
         let alpha_color = material.sample_albedo_color(grad).a;
 
         // We are doing deferred, blend alpha mode is not supported in this pass.
