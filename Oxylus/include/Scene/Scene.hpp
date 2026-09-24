@@ -15,7 +15,6 @@
 #include "Asset/ParticleSystem.hpp"
 #include "Core/UUID.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
-#include "Render/DebugRenderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Scene/Components.hpp"
@@ -271,7 +270,6 @@ private:
   // Physics
   std::shared_mutex physics_mutex = {};
   std::unique_ptr<JPH::PhysicsSystem> physics_system = nullptr;
-  std::unique_ptr<PhysicsDebugRenderer> physics_debug_renderer = nullptr;
   std::unique_ptr<Physics3DContactListener> contact_listener_3d = nullptr;
   std::unique_ptr<Physics3DBodyActivationListener> body_activation_listener_3d = nullptr;
   JPH::BodyID terrain_body_id = {};

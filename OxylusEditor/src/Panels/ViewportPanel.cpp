@@ -14,6 +14,7 @@
 #include "Core/Input.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
+#include "Physics/Physics.hpp"
 #include "Render/Camera.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/Upscaler.hpp"
@@ -154,6 +155,12 @@ struct ViewportPanel::SettingsUI {
     self.row(label, cvar.get_ptr(), cvar.get_default(), [&] { UI::property(label, cvar.get_ptr_bool(), tooltip); });
   }
 
+  auto checkbox(
+    this SettingsUI& self, const c8* label, bool* value, const bool default_value, const c8* tooltip = nullptr
+  ) -> void {
+    self.row(label, value, default_value, [&] { UI::property(label, value, tooltip); });
+  }
+
   auto drag(
     this SettingsUI& self,
     const c8* label,
@@ -201,6 +208,23 @@ struct ViewportPanel::SettingsUI {
     const c8* tooltip = nullptr
   ) -> void {
     self.combo(label, cvar.get_ptr(), cvar.get_default(), items, tooltip);
+  }
+
+  template <typename E>
+    requires std::is_enum_v<E>
+  auto combo(
+    this SettingsUI& self,
+    const c8* label,
+    E* value,
+    const E default_value,
+    std::span<const c8*> items,
+    const c8* tooltip = nullptr
+  ) -> void {
+    self.row(label, value, default_value, [&] {
+      auto index = static_cast<i32>(*value);
+      if (UI::property(label, &index, items.data(), static_cast<i32>(items.size()), tooltip))
+        *value = static_cast<E>(index);
+    });
   }
 
   auto info(this SettingsUI& self, const c8* label, std::string_view value, const c8* tooltip = nullptr) -> void {
@@ -997,7 +1021,6 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
     [&] {
       ui.checkbox("Bounding Boxes", cvar_sys.cvar_draw_bounding_boxes);
       ui.checkbox("Camera Frustum", cvar_sys.cvar_draw_camera_frustum);
-      ui.checkbox("Physics Shapes", cvar_sys.cvar_enable_physics_debug_renderer);
       const c8* debug_views[] = {
         "None",
         "Triangles",
@@ -1019,6 +1042,126 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
         "DDGI Probes"
       };
       ui.combo("Visualization", cvar_sys.cvar_debug_view, debug_views);
+    }
+  );
+
+  ui.section(
+    {.name = "Physics Debug",
+     .toggle = &cvar_sys.cvar_enable_physics_debug_renderer,
+     .toggle_tooltip = "Draw Jolt physics debug info, needs the Debug section enabled"},
+    [&] {
+      auto& physics_debug = App::mod<Physics>().debug_renderer->settings;
+      auto& bodies = physics_debug.bodies;
+      const auto defaults = PhysicsDebugSettings{};
+      const auto& body_defaults = defaults.bodies;
+
+      ui.checkbox(
+        "Depth Tested",
+        &physics_debug.depth_tested,
+        defaults.depth_tested,
+        "Hide what is behind scene geometry instead of drawing it dimmed"
+      );
+      ui.checkbox("Shapes", &bodies.mDrawShape, body_defaults.mDrawShape);
+      ui.checkbox("Wireframe", &bodies.mDrawShapeWireframe, body_defaults.mDrawShapeWireframe);
+      const c8* shape_colors[] = {"Instance", "Shape Type", "Motion Type", "Sleep State", "Island", "Material"};
+      ui.combo("Shape Color", &bodies.mDrawShapeColor, body_defaults.mDrawShapeColor, shape_colors);
+      ui.checkbox("Bounding Boxes", &bodies.mDrawBoundingBox, body_defaults.mDrawBoundingBox);
+      ui.checkbox("Center Of Mass", &bodies.mDrawCenterOfMassTransform, body_defaults.mDrawCenterOfMassTransform);
+      ui.checkbox("World Transform", &bodies.mDrawWorldTransform, body_defaults.mDrawWorldTransform);
+      ui.checkbox("Velocity", &bodies.mDrawVelocity, body_defaults.mDrawVelocity);
+      ui.checkbox("Mass And Inertia", &bodies.mDrawMassAndInertia, body_defaults.mDrawMassAndInertia);
+      ui.checkbox("Sleep Stats", &bodies.mDrawSleepStats, body_defaults.mDrawSleepStats);
+      ui.checkbox("Constraints", &physics_debug.constraints, defaults.constraints);
+      ui.checkbox("Constraint Limits", &physics_debug.constraint_limits, defaults.constraint_limits);
+      ui.checkbox(
+        "Constraint Frames",
+        &physics_debug.constraint_reference_frames,
+        defaults.constraint_reference_frames
+      );
+      ui.checkbox(
+        "Contact Points",
+        &physics_debug.contact_points,
+        defaults.contact_points,
+        "Drawn while the simulation steps"
+      );
+      ui.checkbox(
+        "Contact Manifolds",
+        &physics_debug.contact_manifolds,
+        defaults.contact_manifolds,
+        "Drawn while the simulation steps"
+      );
+      ui.checkbox(
+        "Submerged Volumes",
+        &physics_debug.submerged_volumes,
+        defaults.submerged_volumes,
+        "Buoyancy volumes, drawn while the simulation steps"
+      );
+      ui.checkbox(
+        "Linear Cast CCD",
+        &physics_debug.motion_quality_linear_cast,
+        defaults.motion_quality_linear_cast,
+        "Bodies using the linear cast motion quality, drawn while the simulation steps"
+      );
+
+      ui.begin_advanced();
+      ui.checkbox(
+        "Contact Reduction",
+        &physics_debug.contact_point_reduction,
+        defaults.contact_point_reduction,
+        "Drawn while the simulation steps"
+      );
+      ui.checkbox(
+        "Contact Supporting Faces",
+        &physics_debug.supporting_faces,
+        defaults.supporting_faces,
+        "Drawn while the simulation steps"
+      );
+      ui.checkbox("Support Function", &bodies.mDrawGetSupportFunction, body_defaults.mDrawGetSupportFunction);
+      ui.checkbox("Support Direction", &bodies.mDrawSupportDirection, body_defaults.mDrawSupportDirection);
+      ui.checkbox("Supporting Face", &bodies.mDrawGetSupportingFace, body_defaults.mDrawGetSupportingFace);
+      ui.checkbox("Mesh Triangle Groups", &physics_debug.mesh_triangle_groups, defaults.mesh_triangle_groups);
+      ui.checkbox("Mesh Triangle Outlines", &physics_debug.mesh_triangle_outlines, defaults.mesh_triangle_outlines);
+      ui.checkbox(
+        "Height Field Outlines",
+        &physics_debug.height_field_triangle_outlines,
+        defaults.height_field_triangle_outlines
+      );
+      ui.checkbox("Convex Hull Outlines", &physics_debug.convex_hull_face_outlines, defaults.convex_hull_face_outlines);
+      ui.checkbox("Soft Body Vertices", &bodies.mDrawSoftBodyVertices, body_defaults.mDrawSoftBodyVertices);
+      ui.checkbox(
+        "Soft Body Velocities",
+        &bodies.mDrawSoftBodyVertexVelocities,
+        body_defaults.mDrawSoftBodyVertexVelocities
+      );
+      ui.checkbox("Soft Body Edges", &bodies.mDrawSoftBodyEdgeConstraints, body_defaults.mDrawSoftBodyEdgeConstraints);
+      ui.checkbox("Soft Body Bends", &bodies.mDrawSoftBodyBendConstraints, body_defaults.mDrawSoftBodyBendConstraints);
+      ui.checkbox(
+        "Soft Body Volumes",
+        &bodies.mDrawSoftBodyVolumeConstraints,
+        body_defaults.mDrawSoftBodyVolumeConstraints
+      );
+      ui.checkbox("Soft Body Skin", &bodies.mDrawSoftBodySkinConstraints, body_defaults.mDrawSoftBodySkinConstraints);
+      ui.checkbox("Soft Body LRA", &bodies.mDrawSoftBodyLRAConstraints, body_defaults.mDrawSoftBodyLRAConstraints);
+      ui.checkbox("Soft Body Rods", &bodies.mDrawSoftBodyRods, body_defaults.mDrawSoftBodyRods);
+      ui.checkbox("Soft Body Rod States", &bodies.mDrawSoftBodyRodStates, body_defaults.mDrawSoftBodyRodStates);
+      ui.checkbox(
+        "Soft Body Rod Bend Twist",
+        &bodies.mDrawSoftBodyRodBendTwistConstraints,
+        body_defaults.mDrawSoftBodyRodBendTwistConstraints
+      );
+      ui.checkbox(
+        "Soft Body Predicted Bounds",
+        &bodies.mDrawSoftBodyPredictedBounds,
+        body_defaults.mDrawSoftBodyPredictedBounds
+      );
+      const c8* soft_body_colors[] = {"Constraint Type", "Constraint Group", "Constraint Order"};
+      ui.combo(
+        "Soft Body Constraint Color",
+        &bodies.mDrawSoftBodyConstraintColor,
+        body_defaults.mDrawSoftBodyConstraintColor,
+        soft_body_colors
+      );
+      ui.end_advanced();
     }
   );
 

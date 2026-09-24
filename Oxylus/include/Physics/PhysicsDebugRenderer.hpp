@@ -1,0 +1,94 @@
+#pragma once
+
+// clang-format off
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Body/BodyManager.h>
+#include <Jolt/Renderer/DebugRenderer.h>
+// clang-format on
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include "Render/DebugRenderer.hpp"
+
+namespace JPH {
+class PhysicsSystem;
+}
+
+namespace ox {
+struct PhysicsDebugSettings {
+  // hide what is behind scene geometry instead of drawing it dimmed
+  bool depth_tested = false;
+  JPH::BodyManager::DrawSettings bodies = {.mDrawShapeWireframe = true};
+  bool constraints = false;
+  bool constraint_limits = false;
+  bool constraint_reference_frames = false;
+
+  // jolt keeps the rest as globals and draws them from inside the physics step
+  bool contact_points = false;
+  bool contact_manifolds = false;
+  bool contact_point_reduction = false;
+  bool supporting_faces = false;
+  bool motion_quality_linear_cast = false;
+  bool submerged_volumes = false;
+  bool mesh_triangle_groups = false;
+  bool mesh_triangle_outlines = false;
+  bool height_field_triangle_outlines = false;
+  bool convex_hull_face_outlines = false;
+};
+
+// forwards everything jolt draws into the DebugRenderer module. one instance lives in the Physics module since
+// jolt's step-time drawing goes through the JPH::DebugRenderer::sInstance global
+class PhysicsDebugRenderer final : public JPH::DebugRenderer {
+public:
+  struct StepText {
+    JPH::RVec3 position = {};
+    std::string text = {};
+    JPH::Color color = {};
+    f32 height = 0.0f;
+  };
+
+  PhysicsDebugSettings settings = {};
+
+  // primitives drawn during the last physics step, replayed every frame so they don't flicker when the frame
+  // rate outpaces the fixed step. guarded by step_mutex, jolt emits them from its job threads
+  std::mutex step_mutex = {};
+  std::vector<ox::DebugRenderer::Vertex> step_lines = {};
+  std::vector<ox::DebugRenderer::Vertex> step_triangles = {};
+  std::vector<StepText> step_texts = {};
+  bool recording_step = false;
+
+  PhysicsDebugRenderer();
+
+  // wrap PhysicsSystem::Update, enabled = false turns jolt's step-time drawing off
+  auto begin_step(this PhysicsDebugRenderer& self, bool enabled) -> void;
+  auto end_step(this PhysicsDebugRenderer& self) -> void;
+  // draws bodies and constraints, replay_step also redraws what the last step emitted
+  auto draw(this PhysicsDebugRenderer& self, JPH::PhysicsSystem& system, bool replay_step) -> void;
+
+  // virtual overrides can't take an explicit object parameter
+  auto DrawLine(JPH::RVec3Arg inFrom, JPH::RVec3Arg inTo, JPH::ColorArg inColor) -> void override;
+  auto DrawTriangle(
+    JPH::RVec3Arg inV1,
+    JPH::RVec3Arg inV2,
+    JPH::RVec3Arg inV3,
+    JPH::ColorArg inColor,
+    ECastShadow inCastShadow = ECastShadow::Off
+  ) -> void override;
+  auto CreateTriangleBatch(const Triangle* inTriangles, int inTriangleCount) -> Batch override;
+  auto CreateTriangleBatch(const Vertex* inVertices, int inVertexCount, const u32* inIndices, int inIndexCount)
+    -> Batch override;
+  auto DrawGeometry(
+    JPH::RMat44Arg inModelMatrix,
+    const JPH::AABox& inWorldSpaceBounds,
+    float inLODScaleSq,
+    JPH::ColorArg inModelColor,
+    const GeometryRef& inGeometry,
+    ECullMode inCullMode,
+    ECastShadow inCastShadow,
+    EDrawMode inDrawMode
+  ) -> void override;
+  auto DrawText3D(JPH::RVec3Arg inPosition, const std::string_view& inString, JPH::ColorArg inColor, float inHeight)
+    -> void override;
+};
+} // namespace ox

@@ -85,11 +85,15 @@ auto Physics::init(this Physics& self) -> std::expected<void, std::string> {
   self.job_system = std::make_unique<JoltJobSystem>();
   self.job_system->Init(JPH::cMaxPhysicsBarriers);
 
+  self.debug_renderer = std::make_unique<PhysicsDebugRenderer>();
+
   return {};
 }
 
 auto Physics::deinit(this Physics& self) -> std::expected<void, std::string> {
   ZoneScoped;
+
+  self.debug_renderer.reset();
 
   JPH::UnregisterTypes();
   delete JPH::Factory::sInstance;
@@ -113,11 +117,5 @@ auto Physics::new_system(this const Physics& self) -> std::unique_ptr<JPH::Physi
   );
 
   return sys;
-}
-
-auto Physics::new_debug_renderer(this const Physics& self) -> std::unique_ptr<PhysicsDebugRenderer> {
-  ZoneScoped;
-
-  return std::make_unique<PhysicsDebugRenderer>();
 }
 } // namespace ox

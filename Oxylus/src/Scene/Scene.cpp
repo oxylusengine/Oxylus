@@ -36,6 +36,7 @@
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Physics/PhysicsMaterial.hpp"
 #include "Render/Camera.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "UI/RmlUI.hpp"
@@ -45,6 +46,12 @@
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+// the debug renderer only drains its queue while enabled, so drawing without it would grow unbounded
+static auto physics_debug_draw_enabled(const Scene& scene) -> bool {
+  return App::has_mod<DebugRenderer>() && scene.renderer_cvar.cvar_enable_debug_renderer.as_bool() &&
+         scene.renderer_cvar.cvar_enable_physics_debug_renderer.as_bool();
+}
+
 struct JsonEntityDeserializer : IEntitySerializer {
   simdjson::ondemand::value json_value;
   memory::ScopedStack stack;
@@ -463,7 +470,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   auto& physics = App::mod<Physics>();
   self.physics_system = physics.new_system();
-  self.physics_debug_renderer = physics.new_debug_renderer();
 
   self.world.observer<TransformComponent>()
     .event(flecs::OnSet)
@@ -836,7 +842,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .run([&self](flecs::iter& it) {
       OX_CHECK_NULL(self.physics_system);
       auto& p = App::mod<Physics>();
+      p.debug_renderer->begin_step(physics_debug_draw_enabled(self));
       self.physics_system->Update(self.physics_interval, 1, p.get_temp_allocator(), p.get_job_system());
+      p.debug_renderer->end_step();
     });
 
   // Drives the wheel child entities from the constraint so wheel meshes spin and steer.
@@ -1162,12 +1170,8 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   // TODO: Pass our delta_time?
   self.world.progress();
 
-  if (self.renderer_cvar.cvar_enable_physics_debug_renderer.get()) {
-    JPH::BodyManager::DrawSettings settings{};
-    settings.mDrawShape = true;
-    settings.mDrawShapeWireframe = true;
-
-    self.physics_system->DrawBodies(settings, self.physics_debug_renderer.get());
+  if (physics_debug_draw_enabled(self)) {
+    App::mod<Physics>().debug_renderer->draw(*self.physics_system, self.running);
   }
 
   if (self.terrain_dirty) {
