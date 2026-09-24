@@ -1213,16 +1213,15 @@ auto RendererInstance::render(
 
     auto contact_shadows_pass = vuk::make_pass(
       "contact_shadows",
-      [sun_dir = self.directional_light.direction, &cvar](
+      [sun_dir = self.directional_light.direction,
+       steps = static_cast<u32>(cvar.cvar_contact_shadows_steps.get()),
+       thickness = cvar.cvar_contact_shadows_thickness.get(),
+       length = cvar.cvar_contact_shadows_length.get()](
         vuk::CommandBuffer& cmd_list,
         VUK_IA(vuk::eComputeRW) result,
         VUK_IA(vuk::eComputeSampled) src_depth,
         VUK_BA(vuk::eComputeRead) camera
       ) {
-        const u32 steps = static_cast<u32>(cvar.cvar_contact_shadows_steps.get());
-        const f32 thickness = cvar.cvar_contact_shadows_thickness.get();
-        const f32 length = cvar.cvar_contact_shadows_length.get();
-
         cmd_list //
           .bind_compute_pipeline("contact_shadows")
           .bind_image(0, 0, src_depth)
@@ -2015,8 +2014,7 @@ auto RendererInstance::render(
     dst_attachment = self.apply_debug_view(debug_context, std::move(dst_attachment));
   }
 
-  const auto draw_bounding_boxes = cvar.cvar_draw_bounding_boxes.as_bool() || debugging;
-  if (draw_bounding_boxes) {
+  if (cvar.cvar_enable_debug_renderer.as_bool()) {
     dst_attachment = self.draw_bounding_boxes(std::move(depth_attachment), std::move(dst_attachment));
   }
 

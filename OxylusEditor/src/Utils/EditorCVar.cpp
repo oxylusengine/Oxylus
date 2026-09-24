@@ -35,7 +35,7 @@ auto EditorCVar::init(this EditorCVar& self) -> void {
     .init(self.system, "editor.scale_viewport_size_with_content_scale", "scale viewport size with pixel density", 1);
   self.cvar_viewport_scale_amount.init(self.system, "editor.viewport_scale_amount", "manual viewport render scale", 1);
 
-  self.cvar_file_thumbnails.init(self.system, "editor.file_thumbnails", "show file thumbnails in content panel", 0);
+  self.cvar_file_thumbnails.init(self.system, "editor.file_thumbnails", "show file thumbnails in content panel", 1);
   self.cvar_file_thumbnail_size
     .init(self.system, "editor.file_thumbnail_size", "file thumbnail size in content panel", 120.0f);
   self.cvar_thumbnail_pool_size

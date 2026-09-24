@@ -165,6 +165,20 @@ auto AssetManager::register_asset(
   return true;
 }
 
+auto AssetManager::update_asset_path(this AssetManager& self, const UUID& uuid, const std::filesystem::path& path)
+  -> bool {
+  ZoneScoped;
+
+  auto write_lock = std::unique_lock(self.registry_mutex);
+  const auto asset_it = self.asset_registry.find(uuid);
+  if (asset_it == self.asset_registry.end()) {
+    return false;
+  }
+
+  asset_it->second.path = path;
+  return true;
+}
+
 auto AssetManager::set_pending_load_info(this AssetManager& self, const UUID& uuid, LoadInfo info) -> void {
   ZoneScoped;
 
@@ -651,7 +665,9 @@ auto AssetManager::load_audio(this AssetManager& self, const std::filesystem::pa
   ZoneScoped;
 
   auto audio = AudioSource{};
-  audio.load(path);
+  if (!audio.load(path)) {
+    return AudioID::Invalid;
+  }
 
   auto write_lock = std::unique_lock(self.audio_mutex);
   return self.audio_map.create_slot(std::move(audio));

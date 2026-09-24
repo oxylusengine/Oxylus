@@ -14,7 +14,7 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_enable_physics_debug_renderer
     .init(self.system, "rr.physics_debug_renderer", "enable physics debug renderer", 0);
   self.cvar_freeze_culling_frustum.init(self.system, "rr.freeze_culling_frustum", "freeze culling frustum", 0);
-  self.cvar_draw_camera_frustum.init(self.system, "rr.draw_camera_frustum", "draw camera frustum", 0);
+  self.cvar_draw_camera_frustum.init(self.system, "rr.draw_camera_frustum", "draw camera frustum", 1);
   self.cvar_debug_view.init(
     self.system,
     "rr.debug_view",
@@ -40,7 +40,7 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_contact_shadows_steps.init(self.system, "pp.contact_shadows_steps", "contact shadows steps", 8);
   self.cvar_contact_shadows_thickness
     .init(self.system, "pp.contact_shadows_thickness", "contact shadows thickness", 0.1f);
-  self.cvar_contact_shadows_length.init(self.system, "pp.contact_shadows_thickness", "contact shadows length", 0.01f);
+  self.cvar_contact_shadows_length.init(self.system, "pp.contact_shadows_length", "contact shadows length", 0.01f);
 
   self.cvar_vbgtao_enable.init(self.system, "pp.vbgtao", "use vbgtao", 1);
   self.cvar_vbgtao_quality_level

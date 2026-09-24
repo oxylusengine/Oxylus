@@ -86,6 +86,10 @@ private:
 
   std::string new_asset_name = {};
   bool should_open_new_asset_popup = false;
+  std::filesystem::path new_folder_parent;
+  std::string new_folder_name = {};
+  std::string new_folder_error = {};
+  bool should_open_new_folder_popup = false;
   bool refresh_requested = false;
   AssetType new_asset_type = AssetType::Material;
 

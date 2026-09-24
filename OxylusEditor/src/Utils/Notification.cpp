@@ -14,7 +14,8 @@ namespace ox {
 static constexpr auto notification_window_size = ImVec2(400.f, 60.f);
 static constexpr auto root_window_size = ImVec2(420.f, 80.f);
 static constexpr f32 padding = 10.f;
-static constexpr u32 history_max = 50;
+// the panel is a log now, so it keeps enough scrollback to be worth searching
+static constexpr usize history_max = 512;
 
 auto NotificationSystem::add(this NotificationSystem& self, Notification&& notif) -> void {
   ZoneScoped;
@@ -48,14 +49,34 @@ auto NotificationSystem::drain_pending(this NotificationSystem& self) -> void {
       continue;
     }
 
-    self.notification_history.emplace_back(notif);
+    // a message repeating back to back is one row with a counter, otherwise a spamming system
+    // pushes everything else out of the history
+    auto* last = self.notification_history.empty() ? nullptr : &self.notification_history.back();
+    if (last != nullptr && last->type == notif.type && last->title == notif.title) {
+      last->repeat_count += 1;
+      last->created_at = notif.created_at;
+      last->wall_time = notif.wall_time;
+    } else {
+      notif.id = self.next_notification_id++;
+      self.notification_history.emplace_back(notif);
+    }
+
     self.active_notifications.emplace(notif.title, std::move(notif));
   }
 
-  // cleanup history
-  while (self.notification_history.size() >= history_max) {
-    self.notification_history.erase(self.notification_history.begin());
+  if (self.notification_history.size() > history_max) {
+    const auto excess = self.notification_history.size() - history_max;
+    self.notification_history.erase(
+      self.notification_history.begin(),
+      self.notification_history.begin() + static_cast<std::ptrdiff_t>(excess)
+    );
   }
+}
+
+auto NotificationSystem::clear_history(this NotificationSystem& self) -> void {
+  ZoneScoped;
+
+  self.notification_history.clear();
 }
 
 auto NotificationSystem::get_last_notification(this NotificationSystem& self) -> option<Notification> {
