@@ -2053,8 +2053,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         static_cast<bool>(cvar.cvar_draw_camera_frustum.get())
       ) {
         const auto proj = frozen_camera.get_projection_matrix() * frozen_camera.get_view_matrix();
-        auto& debug_renderer = App::mod<ox::DebugRenderer>();
-        debug_renderer.draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
+        self.scene.debug_renderer
+          .draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
       }
 
       current_camera = c;
@@ -2291,7 +2291,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     if (draw_volume_bounds) {
       for (const auto& volume : self.probe_volumes) {
         const auto extents = glm::vec3(volume.counts - 1u) * volume.spacing * 0.5f;
-        App::mod<ox::DebugRenderer>().draw_aabb(
+        self.scene.debug_renderer.draw_aabb(
           AABB(volume.origin - extents, volume.origin + extents),
           glm::vec4(0, 1, 1, 1)
         );
@@ -2553,9 +2553,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   auto debug_renderer_enabled = (bool)cvar.cvar_enable_debug_renderer.get();
 
-  if (debug_renderer_enabled) {
-    auto& debug_renderer = App::mod<ox::DebugRenderer>();
-
+  auto& debug_renderer = self.scene.debug_renderer;
+  if (!debug_renderer_enabled) {
+    debug_renderer.discard();
+  } else {
     self.debug_vertices.clear();
     self.prepared_frame.debug_draw_ranges = debug_renderer.flush(
       {.position = cam.position, .right = cam.right, .up = cam.up},

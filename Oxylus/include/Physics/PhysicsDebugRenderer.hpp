@@ -5,9 +5,6 @@
 #include <Jolt/Physics/Body/BodyManager.h>
 #include <Jolt/Renderer/DebugRenderer.h>
 // clang-format on
-#include <mutex>
-#include <string>
-#include <vector>
 
 #include "Render/DebugRenderer.hpp"
 
@@ -37,34 +34,23 @@ struct PhysicsDebugSettings {
   bool convex_hull_face_outlines = false;
 };
 
-// forwards everything jolt draws into the DebugRenderer module. one instance lives in the Physics module since
-// jolt's step-time drawing goes through the JPH::DebugRenderer::sInstance global
+// forwards everything jolt draws into the DebugRenderer of the scene being stepped or drawn. one instance lives in
+// the Physics module since jolt's step-time drawing goes through the JPH::DebugRenderer::sInstance global
 class PhysicsDebugRenderer final : public JPH::DebugRenderer {
 public:
-  struct StepText {
-    JPH::RVec3 position = {};
-    std::string text = {};
-    JPH::Color color = {};
-    f32 height = 0.0f;
-  };
-
   PhysicsDebugSettings settings = {};
-
-  // primitives drawn during the last physics step, replayed every frame so they don't flicker when the frame
-  // rate outpaces the fixed step. guarded by step_mutex, jolt emits them from its job threads
-  std::mutex step_mutex = {};
-  std::vector<ox::DebugRenderer::Vertex> step_lines = {};
-  std::vector<ox::DebugRenderer::Vertex> step_triangles = {};
-  std::vector<StepText> step_texts = {};
+  // only set inside begin_step/end_step and draw
+  ox::DebugRenderer* target = nullptr;
+  // step output is retained so it doesn't flicker when the frame rate outpaces the fixed step
   bool recording_step = false;
 
   PhysicsDebugRenderer();
 
   // wrap PhysicsSystem::Update, enabled = false turns jolt's step-time drawing off
-  auto begin_step(this PhysicsDebugRenderer& self, bool enabled) -> void;
+  auto begin_step(this PhysicsDebugRenderer& self, ox::DebugRenderer& debug_renderer, bool enabled) -> void;
   auto end_step(this PhysicsDebugRenderer& self) -> void;
-  // draws bodies and constraints, replay_step also redraws what the last step emitted
-  auto draw(this PhysicsDebugRenderer& self, JPH::PhysicsSystem& system, bool replay_step) -> void;
+  // draws bodies and constraints
+  auto draw(this PhysicsDebugRenderer& self, JPH::PhysicsSystem& system, ox::DebugRenderer& debug_renderer) -> void;
 
   // virtual overrides can't take an explicit object parameter
   auto DrawLine(JPH::RVec3Arg inFrom, JPH::RVec3Arg inTo, JPH::ColorArg inColor) -> void override;

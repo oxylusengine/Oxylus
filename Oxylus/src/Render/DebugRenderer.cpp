@@ -190,9 +190,12 @@ static auto draw_arc(
   );
 }
 
-auto DebugRenderer::init(this DebugRenderer&) -> std::expected<void, std::string> { return {}; }
-
-auto DebugRenderer::deinit(this DebugRenderer&) -> std::expected<void, std::string> { return {}; }
+static auto clear_list(auto& list) -> void {
+  list.line_vertices.clear();
+  list.triangle_vertices.clear();
+  list.texts.clear();
+  list.text_chars.clear();
+}
 
 auto DebugRenderer::pack_color(const glm::vec4& color) -> u32 { return glm::packUnorm4x8(color); }
 
@@ -251,13 +254,14 @@ auto DebugRenderer::draw_text(
   std::string_view text,
   const f32 height,
   const glm::vec4& color,
-  const bool depth_tested
+  const bool depth_tested,
+  const Lifetime lifetime
 ) -> void {
   if (text.empty())
     return;
 
   std::unique_lock lock(self.mutex);
-  auto& list = self.draw_lists[depth_tested];
+  auto& list = self.draw_lists[std::to_underlying(lifetime)][depth_tested];
   list.texts.push_back(
     {.position = position,
      .height = height,
@@ -453,6 +457,12 @@ auto DebugRenderer::get_view(this DebugRenderer& self) -> View {
   return self.view;
 }
 
+auto DebugRenderer::clear_retained(this DebugRenderer& self) -> void {
+  std::unique_lock lock(self.mutex);
+  for (auto& list : self.draw_lists[std::to_underlying(Lifetime::Retained)])
+    clear_list(list);
+}
+
 auto DebugRenderer::flush(this DebugRenderer& self, const View& view, std::vector<Vertex>& vertices) -> DrawRanges {
   ZoneScoped;
 
@@ -461,30 +471,36 @@ auto DebugRenderer::flush(this DebugRenderer& self, const View& view, std::vecto
 
   DrawRanges ranges = {};
   for (usize depth_tested = 0; depth_tested < 2; depth_tested++) {
-    auto& list = self.draw_lists[depth_tested];
     const auto offset = vertices.size();
-    vertices.insert(vertices.end(), list.line_vertices.begin(), list.line_vertices.end());
-    for (const auto& text : list.texts) {
-      const auto chars = std::string_view(list.text_chars).substr(text.offset, text.length);
-      append_text(vertices, view, text.position, text.height, text.color, chars);
+    for (auto& lists : self.draw_lists) {
+      const auto& list = lists[depth_tested];
+      vertices.insert(vertices.end(), list.line_vertices.begin(), list.line_vertices.end());
+      for (const auto& text : list.texts) {
+        const auto chars = std::string_view(list.text_chars).substr(text.offset, text.length);
+        append_text(vertices, view, text.position, text.height, text.color, chars);
+      }
     }
     ranges.lines[depth_tested] = {static_cast<u32>(offset), static_cast<u32>(vertices.size() - offset)};
   }
 
   for (usize depth_tested = 0; depth_tested < 2; depth_tested++) {
-    auto& list = self.draw_lists[depth_tested];
     const auto offset = vertices.size();
-    vertices.insert(vertices.end(), list.triangle_vertices.begin(), list.triangle_vertices.end());
+    for (auto& lists : self.draw_lists) {
+      const auto& list = lists[depth_tested];
+      vertices.insert(vertices.end(), list.triangle_vertices.begin(), list.triangle_vertices.end());
+    }
     ranges.triangles[depth_tested] = {static_cast<u32>(offset), static_cast<u32>(vertices.size() - offset)};
   }
 
-  for (auto& list : self.draw_lists) {
-    list.line_vertices.clear();
-    list.triangle_vertices.clear();
-    list.texts.clear();
-    list.text_chars.clear();
-  }
+  for (auto& list : self.draw_lists[std::to_underlying(Lifetime::Frame)])
+    clear_list(list);
 
   return ranges;
+}
+
+auto DebugRenderer::discard(this DebugRenderer& self) -> void {
+  std::unique_lock lock(self.mutex);
+  for (auto& list : self.draw_lists[std::to_underlying(Lifetime::Frame)])
+    clear_list(list);
 }
 } // namespace ox

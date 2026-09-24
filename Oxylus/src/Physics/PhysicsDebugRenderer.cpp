@@ -6,10 +6,10 @@
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/Constraints/ContactConstraintManager.h>
 #include <Jolt/Physics/PhysicsSystem.h>
-#include <algorithm>
 #include <atomic>
 
-#include "Core/App.hpp"
+#include "Core/Base.hpp"
+#include "Utils/Log.hpp"
 #include "Utils/OxMath.hpp"
 
 namespace ox {
@@ -31,16 +31,9 @@ template <typename F>
 static auto emit_primitives(
   PhysicsDebugRenderer& self, const DebugRenderer::Primitive primitive, const usize vertex_count, F&& fill
 ) -> void {
-  if (self.recording_step) {
-    std::unique_lock lock(self.step_mutex);
-    auto& vertices = primitive == DebugRenderer::Primitive::Lines ? self.step_lines : self.step_triangles;
-    const auto first = vertices.size();
-    vertices.resize(first + vertex_count);
-    fill(std::span<DebugRenderer::Vertex>(vertices).subspan(first));
-    return;
-  }
-
-  App::mod<DebugRenderer>().emit(primitive, vertex_count, self.settings.depth_tested, std::forward<F>(fill));
+  OX_CHECK_NULL(self.target, "jolt drew outside begin_step/end_step or draw");
+  const auto lifetime = self.recording_step ? DebugRenderer::Lifetime::Retained : DebugRenderer::Lifetime::Frame;
+  self.target->emit(primitive, vertex_count, self.settings.depth_tested, std::forward<F>(fill), lifetime);
 }
 
 static auto to_glm(JPH::RMat44Arg matrix) -> glm::mat4 {
@@ -54,7 +47,9 @@ static auto to_glm(JPH::RMat44Arg matrix) -> glm::mat4 {
 
 PhysicsDebugRenderer::PhysicsDebugRenderer() { Initialize(); }
 
-auto PhysicsDebugRenderer::begin_step(this PhysicsDebugRenderer& self, const bool enabled) -> void {
+auto PhysicsDebugRenderer::begin_step(
+  this PhysicsDebugRenderer& self, ox::DebugRenderer& debug_renderer, const bool enabled
+) -> void {
   const auto& settings = self.settings;
   JPH::ContactConstraintManager::sDrawContactPoint = enabled && settings.contact_points;
   JPH::ContactConstraintManager::sDrawSupportingFaces = enabled && settings.supporting_faces;
@@ -66,17 +61,20 @@ auto PhysicsDebugRenderer::begin_step(this PhysicsDebugRenderer& self, const boo
   // jolt's destructor nulls this, so don't rely on the constructor having set it
   JPH::DebugRenderer::sInstance = &self;
 
-  std::unique_lock lock(self.step_mutex);
-  self.step_lines.clear();
-  self.step_triangles.clear();
-  self.step_texts.clear();
-  self.recording_step = enabled;
+  // this step replaces the last one
+  debug_renderer.clear_retained();
+  self.target = &debug_renderer;
+  self.recording_step = true;
 }
 
-auto PhysicsDebugRenderer::end_step(this PhysicsDebugRenderer& self) -> void { self.recording_step = false; }
+auto PhysicsDebugRenderer::end_step(this PhysicsDebugRenderer& self) -> void {
+  self.recording_step = false;
+  self.target = nullptr;
+}
 
-auto PhysicsDebugRenderer::draw(this PhysicsDebugRenderer& self, JPH::PhysicsSystem& system, const bool replay_step)
-  -> void {
+auto PhysicsDebugRenderer::draw(
+  this PhysicsDebugRenderer& self, JPH::PhysicsSystem& system, ox::DebugRenderer& debug_renderer
+) -> void {
   ZoneScoped;
 
   const auto& settings = self.settings;
@@ -85,6 +83,9 @@ auto PhysicsDebugRenderer::draw(this PhysicsDebugRenderer& self, JPH::PhysicsSys
   JPH::HeightFieldShape::sDrawTriangleOutlines = settings.height_field_triangle_outlines;
   JPH::ConvexHullShape::sDrawFaceOutlines = settings.convex_hull_face_outlines;
 
+  self.target = &debug_renderer;
+  OX_DEFER(&) { self.target = nullptr; };
+
   system.DrawBodies(settings.bodies, &self);
   if (settings.constraints)
     system.DrawConstraints(&self);
@@ -92,33 +93,6 @@ auto PhysicsDebugRenderer::draw(this PhysicsDebugRenderer& self, JPH::PhysicsSys
     system.DrawConstraintLimits(&self);
   if (settings.constraint_reference_frames)
     system.DrawConstraintReferenceFrame(&self);
-
-  if (!replay_step)
-    return;
-
-  auto& debug_renderer = App::mod<ox::DebugRenderer>();
-  std::unique_lock lock(self.step_mutex);
-  debug_renderer.emit(
-    ox::DebugRenderer::Primitive::Lines,
-    self.step_lines.size(),
-    settings.depth_tested,
-    [&](std::span<ox::DebugRenderer::Vertex> out) { std::ranges::copy(self.step_lines, out.begin()); }
-  );
-  debug_renderer.emit(
-    ox::DebugRenderer::Primitive::Triangles,
-    self.step_triangles.size(),
-    settings.depth_tested,
-    [&](std::span<ox::DebugRenderer::Vertex> out) { std::ranges::copy(self.step_triangles, out.begin()); }
-  );
-  for (const auto& text : self.step_texts) {
-    debug_renderer.draw_text(
-      math::from_jolt(JPH::Vec3(text.position)),
-      text.text,
-      text.height,
-      math::from_jolt(text.color.ToVec4()),
-      settings.depth_tested
-    );
-  }
 }
 
 auto PhysicsDebugRenderer::DrawLine(JPH::RVec3Arg inFrom, JPH::RVec3Arg inTo, JPH::ColorArg inColor) -> void {
@@ -179,7 +153,8 @@ auto PhysicsDebugRenderer::DrawGeometry(
   if (inGeometry == nullptr || inGeometry->mLODs.empty())
     return;
 
-  const auto camera_position = math::to_jolt(App::mod<ox::DebugRenderer>().get_view().position);
+  OX_CHECK_NULL(target, "jolt drew outside begin_step/end_step or draw");
+  const auto camera_position = math::to_jolt(target->get_view().position);
   const auto& lod = inGeometry->GetLOD(camera_position, inWorldSpaceBounds, inLODScaleSq);
   const auto* batch = static_cast<const PhysicsTriangleBatch*>(lod.mTriangleBatch.GetPtr());
   if (batch == nullptr || batch->vertices.empty())
@@ -248,18 +223,14 @@ auto PhysicsDebugRenderer::DrawGeometry(
 auto PhysicsDebugRenderer::DrawText3D(
   JPH::RVec3Arg inPosition, const std::string_view& inString, JPH::ColorArg inColor, float inHeight
 ) -> void {
-  if (recording_step) {
-    std::unique_lock lock(step_mutex);
-    step_texts.push_back({.position = inPosition, .text = std::string(inString), .color = inColor, .height = inHeight});
-    return;
-  }
-
-  App::mod<ox::DebugRenderer>().draw_text(
+  OX_CHECK_NULL(target, "jolt drew outside begin_step/end_step or draw");
+  target->draw_text(
     math::from_jolt(JPH::Vec3(inPosition)),
     inString,
     inHeight,
     math::from_jolt(inColor.ToVec4()),
-    settings.depth_tested
+    settings.depth_tested,
+    recording_step ? ox::DebugRenderer::Lifetime::Retained : ox::DebugRenderer::Lifetime::Frame
   );
 }
 } // namespace ox

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <expected>
 #include <glm/ext/quaternion_float.hpp>
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
@@ -11,7 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "Core/Types.hpp"
@@ -19,13 +18,9 @@
 #include "Render/BoundingVolume.hpp"
 
 namespace ox {
-class Renderer;
-
+// one per scene so a scene's shapes only ever show up in its own viewport
 class DebugRenderer {
 public:
-  constexpr static auto MODULE_NAME = "DebugRenderer";
-  using module_dependencies = std::tuple<Renderer>;
-
   struct Vertex {
     glm::vec3 position = {};
     // rgba8, r in the lowest byte (same layout as JPH::Color)
@@ -33,6 +28,8 @@ public:
   };
 
   enum class Primitive : u8 { Lines, Triangles };
+  // retained primitives survive flushes until clear_retained, physics replays its last step with them
+  enum class Lifetime : u8 { Frame, Retained };
 
   // camera the last flush was built for, text faces it and physics picks geometry lods from it
   struct View {
@@ -55,9 +52,6 @@ public:
       return self.lines[0].count + self.lines[1].count + self.triangles[0].count + self.triangles[1].count == 0;
     }
   };
-
-  auto init(this DebugRenderer& self) -> std::expected<void, std::string>;
-  auto deinit(this DebugRenderer& self) -> std::expected<void, std::string>;
 
   static auto pack_color(const glm::vec4& color) -> u32;
 
@@ -93,7 +87,8 @@ public:
     std::string_view text,
     f32 height,
     const glm::vec4& color = glm::vec4(1.0f),
-    bool depth_tested = false
+    bool depth_tested = false,
+    Lifetime lifetime = Lifetime::Frame
   ) -> void;
   auto draw_circle(
     this DebugRenderer& self,
@@ -144,12 +139,19 @@ public:
   // bulk path: reserves vertex_count vertices (2 per line, 3 per triangle) under one lock and lets fill write them.
   // thread safe, jolt draws from its job threads during the physics step
   template <typename F>
-  auto emit(this DebugRenderer& self, Primitive primitive, usize vertex_count, bool depth_tested, F&& fill) -> void {
+  auto emit(
+    this DebugRenderer& self,
+    Primitive primitive,
+    usize vertex_count,
+    bool depth_tested,
+    F&& fill,
+    Lifetime lifetime = Lifetime::Frame
+  ) -> void {
     if (vertex_count == 0)
       return;
 
     std::unique_lock lock(self.mutex);
-    auto& list = self.draw_lists[depth_tested];
+    auto& list = self.draw_lists[std::to_underlying(lifetime)][depth_tested];
     auto& vertices = primitive == Primitive::Lines ? list.line_vertices : list.triangle_vertices;
     const auto first = vertices.size();
     vertices.resize(first + vertex_count);
@@ -157,10 +159,13 @@ public:
   }
 
   auto get_view(this DebugRenderer& self) -> View;
+  auto clear_retained(this DebugRenderer& self) -> void;
 
-  // moves everything queued since the last flush into vertices, lines first so a single buffer serves both
-  // topologies, and remembers view for the next frame's text and lods
+  // appends retained primitives and moves everything queued since the last flush into vertices, lines first so
+  // a single buffer serves both topologies, and remembers view for the next frame's text and lods
   auto flush(this DebugRenderer& self, const View& view, std::vector<Vertex>& vertices) -> DrawRanges;
+  // drops this frame's primitives, for when nothing will flush them
+  auto discard(this DebugRenderer& self) -> void;
 
 private:
   struct Text {
@@ -179,8 +184,8 @@ private:
   };
 
   std::shared_mutex mutex = {};
-  // indexed by depth_tested
-  std::array<DrawList, 2> draw_lists = {};
+  // indexed by [lifetime][depth_tested]
+  std::array<std::array<DrawList, 2>, 2> draw_lists = {};
   View view = {};
 };
 } // namespace ox

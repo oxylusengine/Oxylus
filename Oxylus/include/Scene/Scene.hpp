@@ -15,6 +15,7 @@
 #include "Asset/ParticleSystem.hpp"
 #include "Core/UUID.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Scene/Components.hpp"
@@ -81,6 +82,7 @@ public:
   bool input_focused = true;
 
   RendererCVar renderer_cvar = {};
+  DebugRenderer debug_renderer = {};
 
   SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};

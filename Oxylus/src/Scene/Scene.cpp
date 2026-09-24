@@ -46,9 +46,8 @@
 #include "Utils/Timestep.hpp"
 
 namespace ox {
-// the debug renderer only drains its queue while enabled, so drawing without it would grow unbounded
 static auto physics_debug_draw_enabled(const Scene& scene) -> bool {
-  return App::has_mod<DebugRenderer>() && scene.renderer_cvar.cvar_enable_debug_renderer.as_bool() &&
+  return scene.renderer_cvar.cvar_enable_debug_renderer.as_bool() &&
          scene.renderer_cvar.cvar_enable_physics_debug_renderer.as_bool();
 }
 
@@ -842,7 +841,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .run([&self](flecs::iter& it) {
       OX_CHECK_NULL(self.physics_system);
       auto& p = App::mod<Physics>();
-      p.debug_renderer->begin_step(physics_debug_draw_enabled(self));
+      p.debug_renderer->begin_step(self.debug_renderer, physics_debug_draw_enabled(self));
       self.physics_system->Update(self.physics_interval, 1, p.get_temp_allocator(), p.get_job_system());
       p.debug_renderer->end_step();
     });
@@ -961,19 +960,17 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.system<SpriteComponent>("sprite_aabb")
     .kind(flecs::PostUpdate)
-    .each([cvar = &self.renderer_cvar](const flecs::entity entity, SpriteComponent& sprite) {
-      if (cvar->cvar_draw_bounding_boxes.get()) {
-        auto& debug_renderer = App::mod<DebugRenderer>();
-        debug_renderer.draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
+    .each([&self](const flecs::entity entity, SpriteComponent& sprite) {
+      if (self.renderer_cvar.cvar_draw_bounding_boxes.get()) {
+        self.debug_renderer.draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
       }
     });
 
   self.world.system<MeshComponent>("mesh_aabb")
     .kind(flecs::PostUpdate)
-    .each([cvar = &self.renderer_cvar](const flecs::entity entity, MeshComponent& mc) {
-      if (cvar->cvar_draw_bounding_boxes.get()) {
-        auto& debug_renderer = App::mod<DebugRenderer>();
-        debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.f, 1.f, 0.f, 1.0f));
+    .each([&self](const flecs::entity entity, MeshComponent& mc) {
+      if (self.renderer_cvar.cvar_draw_bounding_boxes.get()) {
+        self.debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.f, 1.f, 0.f, 1.0f));
       }
     });
 
@@ -1171,7 +1168,10 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   self.world.progress();
 
   if (physics_debug_draw_enabled(self)) {
-    App::mod<Physics>().debug_renderer->draw(*self.physics_system, self.running);
+    App::mod<Physics>().debug_renderer->draw(*self.physics_system, self.debug_renderer);
+  } else {
+    // otherwise the last step's contacts would keep showing
+    self.debug_renderer.clear_retained();
   }
 
   if (self.terrain_dirty) {
