@@ -787,7 +787,7 @@ ContentPanel::ContentPanel() : EditorPanelState("Contents", ICON_MDI_FOLDER_STAR
 }
 
 void ContentPanel::init(this ContentPanel& self) {
-  auto vfs = App::get_vfs();
+  auto& vfs = App::get_vfs();
   if (!vfs.is_mounted_dir(VFS::PROJECT_DIR))
     return;
 
