@@ -65,16 +65,14 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
   }
 
   if (self.selected_entity_.get() != flecs::entity::null()) {
-    if (auto* cam = self.selected_entity_.get().try_get<CameraComponent>()) {
+    if (auto* cam = self.selected_entity_.get().try_get<CameraComponent>(); cam && self.scene_) {
       const auto proj = cam->get_projection_matrix() * cam->get_view_matrix();
-      auto& debug_renderer = App::mod<DebugRenderer>();
-      debug_renderer.draw_frustum(proj, glm::vec4(0, 1, 0, 1), cam->near_clip, cam->far_clip);
+      self.scene_->debug_renderer.draw_frustum(proj, glm::vec4(0, 1, 0, 1), cam->near_clip, cam->far_clip);
     }
     if (auto* light = self.selected_entity_.get().try_get<LightComponent>()) {
       const glm::vec3 world_pos = Scene::get_world_position(self.selected_entity_.get());
-      if (light->type == LightComponent::Point) {
-        auto& debug_renderer = App::mod<DebugRenderer>();
-        debug_renderer.draw_sphere(light->radius, world_pos, glm::vec4(0, 1.f, 0.f, 1.f));
+      if (light->type == LightComponent::Point && self.scene_) {
+        self.scene_->debug_renderer.draw_sphere(light->radius, world_pos, glm::vec4(0, 1.f, 0.f, 1.f));
       } else if (light->type == LightComponent::Spot) {
       }
     }

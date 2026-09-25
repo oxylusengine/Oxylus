@@ -14,6 +14,7 @@
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
@@ -36,6 +37,7 @@
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Physics/PhysicsMaterial.hpp"
 #include "Render/Camera.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "UI/RmlUI.hpp"
@@ -45,6 +47,11 @@
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+static auto physics_debug_draw_enabled(const Scene& scene) -> bool {
+  return scene.renderer_cvar.cvar_enable_debug_renderer.as_bool() &&
+         scene.renderer_cvar.cvar_enable_physics_debug_renderer.as_bool();
+}
+
 struct JsonEntityDeserializer : IEntitySerializer {
   simdjson::ondemand::value json_value;
   memory::ScopedStack stack;
@@ -463,7 +470,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   auto& physics = App::mod<Physics>();
   self.physics_system = physics.new_system();
-  self.physics_debug_renderer = physics.new_debug_renderer();
 
   self.world.observer<TransformComponent>()
     .event(flecs::OnSet)
@@ -836,7 +842,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .run([&self](flecs::iter& it) {
       OX_CHECK_NULL(self.physics_system);
       auto& p = App::mod<Physics>();
+      p.debug_renderer->begin_step(self.debug_renderer, physics_debug_draw_enabled(self));
       self.physics_system->Update(self.physics_interval, 1, p.get_temp_allocator(), p.get_job_system());
+      p.debug_renderer->end_step();
     });
 
   // Drives the wheel child entities from the constraint so wheel meshes spin and steer.
@@ -953,19 +961,17 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.system<SpriteComponent>("sprite_aabb")
     .kind(flecs::PostUpdate)
-    .each([cvar = &self.renderer_cvar](const flecs::entity entity, SpriteComponent& sprite) {
-      if (cvar->cvar_draw_bounding_boxes.get()) {
-        auto& debug_renderer = App::mod<DebugRenderer>();
-        debug_renderer.draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
+    .each([&self](const flecs::entity entity, SpriteComponent& sprite) {
+      if (self.renderer_cvar.cvar_draw_bounding_boxes.get()) {
+        self.debug_renderer.draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
       }
     });
 
   self.world.system<MeshComponent>("mesh_aabb")
     .kind(flecs::PostUpdate)
-    .each([cvar = &self.renderer_cvar](const flecs::entity entity, MeshComponent& mc) {
-      if (cvar->cvar_draw_bounding_boxes.get()) {
-        auto& debug_renderer = App::mod<DebugRenderer>();
-        debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.f, 1.f, 0.f, 1.0f));
+    .each([&self](const flecs::entity entity, MeshComponent& mc) {
+      if (self.renderer_cvar.cvar_draw_bounding_boxes.get()) {
+        self.debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.f, 1.f, 0.f, 1.0f));
       }
     });
 
@@ -1162,12 +1168,11 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   // TODO: Pass our delta_time?
   self.world.progress();
 
-  if (self.renderer_cvar.cvar_enable_physics_debug_renderer.get()) {
-    JPH::BodyManager::DrawSettings settings{};
-    settings.mDrawShape = true;
-    settings.mDrawShapeWireframe = true;
-
-    self.physics_system->DrawBodies(settings, self.physics_debug_renderer.get());
+  if (physics_debug_draw_enabled(self)) {
+    App::mod<Physics>().debug_renderer->draw(*self.physics_system, self.debug_renderer);
+  } else {
+    // otherwise the last step's contacts would keep showing
+    self.debug_renderer.clear_retained();
   }
 
   if (self.terrain_dirty) {
@@ -2410,8 +2415,21 @@ auto Scene::create_rigidbody(this Scene& self, flecs::entity entity, RigidBodyCo
     return;
   }
 
+  // static bodies never rotate, so their center of mass has nothing to affect
+  auto body_shape = compound_shape.Get();
+  const auto& com_offset = component.center_of_mass_offset;
+  if (component.type != RigidBodyComponent::BodyType::Static && com_offset != glm::vec3(0.0f)) {
+    auto offset_shape = JPH::OffsetCenterOfMassShapeSettings({com_offset.x, com_offset.y, com_offset.z}, body_shape)
+                          .Create();
+    if (offset_shape.HasError()) {
+      OX_LOG_ERROR("Jolt shape error: {}", offset_shape.GetError().c_str());
+    } else {
+      body_shape = offset_shape.Get();
+    }
+  }
+
   JPH::BodyCreationSettings body_settings(
-    compound_shape.Get(),
+    body_shape,
     {body_position.x, body_position.y, body_position.z},
     {body_rotation.x, body_rotation.y, body_rotation.z, body_rotation.w},
     static_cast<JPH::EMotionType>(component.type),
@@ -2672,6 +2690,8 @@ auto Scene::create_vehicle(this Scene& self, flecs::entity entity, VehicleCompon
   settings.mForward = JPH::Vec3(component.forward.x, component.forward.y, component.forward.z)
                         .NormalizedOr(JPH::Vec3::sAxisZ());
   settings.mMaxPitchRollAngle = JPH::DegreesToRadians(component.max_pitch_roll_angle);
+  // sizes the debug text and markers, jolt's 1.0 default gives metre tall letters
+  settings.mDrawConstraintSize = 0.1f;
 
   for (auto wheel_index = 0_u32; wheel_index < wheel_entities.size(); wheel_index++) {
     auto wheel_entity = wheel_entities[wheel_index];

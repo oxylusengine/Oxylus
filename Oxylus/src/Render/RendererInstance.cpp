@@ -2015,7 +2015,7 @@ auto RendererInstance::render(
   }
 
   if (cvar.cvar_enable_debug_renderer.as_bool()) {
-    dst_attachment = self.draw_bounding_boxes(std::move(depth_attachment), std::move(dst_attachment));
+    dst_attachment = self.draw_debug_shapes(std::move(depth_attachment), std::move(dst_attachment));
   }
 
   return dst_attachment;
@@ -2053,8 +2053,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         static_cast<bool>(cvar.cvar_draw_camera_frustum.get())
       ) {
         const auto proj = frozen_camera.get_projection_matrix() * frozen_camera.get_view_matrix();
-        auto& debug_renderer = App::mod<ox::DebugRenderer>();
-        debug_renderer.draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
+        self.scene.debug_renderer
+          .draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
       }
 
       current_camera = c;
@@ -2291,7 +2291,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     if (draw_volume_bounds) {
       for (const auto& volume : self.probe_volumes) {
         const auto extents = glm::vec3(volume.counts - 1u) * volume.spacing * 0.5f;
-        App::mod<ox::DebugRenderer>().draw_aabb(
+        self.scene.debug_renderer.draw_aabb(
           AABB(volume.origin - extents, volume.origin + extents),
           glm::vec4(0, 1, 1, 1)
         );
@@ -2553,44 +2553,21 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   auto debug_renderer_enabled = (bool)cvar.cvar_enable_debug_renderer.get();
 
-  if (debug_renderer_enabled) {
-    auto& debug_renderer = App::mod<ox::DebugRenderer>();
+  auto& debug_renderer = self.scene.debug_renderer;
+  if (!debug_renderer_enabled) {
+    debug_renderer.discard();
+  } else {
+    self.debug_vertices.clear();
+    self.prepared_frame.debug_draw_ranges = debug_renderer.flush(
+      {.position = cam.position, .right = cam.right, .up = cam.up},
+      self.debug_vertices
+    );
 
-    const auto& lines = debug_renderer.get_lines(false);
-    auto [line_vertices, line_index_count] = debug_renderer.get_vertices_from_lines(lines);
-
-    const auto& triangles = debug_renderer.get_triangles(false);
-    auto [triangle_vertices, triangle_index_count] = debug_renderer.get_vertices_from_triangles(triangles);
-
-    const u32 index_count = line_index_count + triangle_index_count;
-    OX_CHECK_LT(index_count, DebugRenderer::MAX_LINE_INDICES, "Increase DebugRenderer::MAX_LINE_INDICES");
-
-    self.prepared_frame.line_index_count = line_index_count;
-    self.prepared_frame.triangle_index_count = triangle_index_count;
-
-    std::vector<DebugRenderer::Vertex> vertices = line_vertices;
-    vertices.insert(vertices.end(), triangle_vertices.begin(), triangle_vertices.end());
-    std::span<DebugRenderer::Vertex> vertices_span = line_vertices;
-
-    if (!vertices.empty()) {
-      self.debug_renderer_verticies_buffer = render_context.resize_buffer(
-        std::move(self.debug_renderer_verticies_buffer),
-        vuk::MemoryUsage::eGPUonly,
-        vertices_span.size_bytes()
-      );
-      self.prepared_frame.debug_renderer_verticies_buffer = render_context.upload_staging(
-        vertices_span,
-        *self.debug_renderer_verticies_buffer
-      );
-    } else if (self.debug_renderer_verticies_buffer) {
-      self.prepared_frame.debug_renderer_verticies_buffer = vuk::acquire_buf(
-        "debug_renderer_verticies_buffer",
-        *self.debug_renderer_verticies_buffer,
-        vuk::Access::eMemoryRead
+    if (!self.debug_vertices.empty()) {
+      self.prepared_frame.debug_renderer_vertices_buffer = render_context.scratch_buffer_span(
+        std::span(self.debug_vertices)
       );
     }
-
-    debug_renderer.reset();
   }
 
   self.update_vbgtao_info(cvar);

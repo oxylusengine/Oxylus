@@ -6,6 +6,7 @@
 
 #include "Asset/Texture.hpp"
 #include "Render/AccelerationStructure.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Render/Upscaler.hpp"
@@ -251,9 +252,8 @@ struct PreparedFrame {
   bool particle_pool_reset = false;
   bool particle_sort_enabled = false;
 
-  u32 line_index_count = 0;
-  u32 triangle_index_count = 0;
-  vuk::Value<vuk::Buffer> debug_renderer_verticies_buffer = {};
+  DebugRenderer::DrawRanges debug_draw_ranges = {};
+  vuk::Value<vuk::Buffer> debug_renderer_vertices_buffer = {};
 };
 
 struct ParticleContext {
@@ -792,7 +792,7 @@ public:
   auto draw_ddgi_probes(
     this RendererInstance& self, DDGIDebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
   ) -> vuk::Value<vuk::ImageAttachment>;
-  auto draw_bounding_boxes(
+  auto draw_debug_shapes(
     this RendererInstance&,
     vuk::Value<vuk::ImageAttachment>&& depth_attachment,
     vuk::Value<vuk::ImageAttachment>&& dst_attachment
@@ -877,7 +877,8 @@ private:
   vuk::Unique<vuk::Buffer> meshes_buffer{};
   vuk::Unique<vuk::Buffer> blas_addresses_buffer{};
   SceneTLAS scene_tlas{};
-  vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
+  // kept across frames to reuse its capacity
+  std::vector<DebugRenderer::Vertex> debug_vertices = {};
   vuk::Unique<vuk::Buffer> lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
   vuk::Unique<vuk::Buffer> terrain_patch_visibility_mask_buffer{};

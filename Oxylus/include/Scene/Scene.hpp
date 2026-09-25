@@ -82,6 +82,7 @@ public:
   bool input_focused = true;
 
   RendererCVar renderer_cvar = {};
+  DebugRenderer debug_renderer = {};
 
   SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};
@@ -271,7 +272,6 @@ private:
   // Physics
   std::shared_mutex physics_mutex = {};
   std::unique_ptr<JPH::PhysicsSystem> physics_system = nullptr;
-  std::unique_ptr<PhysicsDebugRenderer> physics_debug_renderer = nullptr;
   std::unique_ptr<Physics3DContactListener> contact_listener_3d = nullptr;
   std::unique_ptr<Physics3DBodyActivationListener> body_activation_listener_3d = nullptr;
   JPH::BodyID terrain_body_id = {};

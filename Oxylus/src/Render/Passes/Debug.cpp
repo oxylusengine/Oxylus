@@ -6,6 +6,15 @@
 #include "Render/Utils/VukCommon.hpp"
 
 namespace ox {
+static const auto DEBUG_VERTEX_PACK = vuk::Packed{
+  vuk::Format::eR32G32B32Sfloat, // position
+  vuk::Format::eR32Uint,         // rgba8 color
+};
+
+// mirrored in debug_mesh.slang
+static constexpr u32 DEBUG_FLAG_DEPTH_TESTED = 1_u32 << 0_u32;
+static constexpr u32 DEBUG_FLAG_SHADED = 1_u32 << 1_u32;
+
 auto RendererInstance::apply_debug_view(
   this RendererInstance& self, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
 ) -> vuk::Value<vuk::ImageAttachment> {
@@ -185,59 +194,66 @@ auto RendererInstance::apply_debug_view(
   }
 }
 
-auto RendererInstance::draw_bounding_boxes(
+auto RendererInstance::draw_debug_shapes(
   this RendererInstance& self,
   vuk::Value<vuk::ImageAttachment>&& depth_attachment,
   vuk::Value<vuk::ImageAttachment>&& dst_attachment
 ) -> vuk::Value<vuk::ImageAttachment> {
   ZoneScoped;
 
-  if (self.prepared_frame.line_index_count == 0 && self.prepared_frame.triangle_index_count == 0) {
+  const auto ranges = self.prepared_frame.debug_draw_ranges;
+  if (ranges.empty()) {
     return std::move(dst_attachment);
   }
 
-  auto debug_mesh_pass = vuk::make_pass(
-    "debug mesh",
-    [line_index_count = self.prepared_frame.line_index_count](
+  auto debug_shapes_pass = vuk::make_pass(
+    "debug shapes",
+    [ranges](
       vuk::CommandBuffer& cmd_list,
       VUK_IA(vuk::eColorWrite) dst,
       VUK_IA(vuk::eFragmentSampled) depth_img,
-      VUK_BA(vuk::eMemoryRead) dbg_vtx,
-      VUK_BA(vuk::eFragmentRead) camera
+      VUK_BA(vuk::eAttributeRead) dbg_vtx,
+      VUK_BA(vuk::eVertexUniformRead | vuk::eFragmentUniformRead) camera
     ) {
-      auto& dbg_index_buffer = *App::mod<DebugRenderer>().get_global_index_buffer();
-
-      cmd_list.bind_graphics_pipeline("debug_mesh")
-        .set_depth_stencil(
-          vuk::PipelineDepthStencilStateCreateInfo{
-            .depthTestEnable = false,
-            .depthWriteEnable = false,
-            .depthCompareOp = vuk::CompareOp::eGreaterOrEqual,
-          }
-        )
-        .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
+      cmd_list.set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
         .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
-        .set_rasterization(
-          {.polygonMode = vuk::PolygonMode::eLine, .cullMode = vuk::CullModeFlagBits::eNone, .lineWidth = 3.f}
-        )
-        .set_primitive_topology(vuk::PrimitiveTopology::eLineList)
         .set_viewport(0, vuk::Rect2D::framebuffer())
         .set_scissor(0, vuk::Rect2D::framebuffer())
-        .bind_vertex_buffer(0, dbg_vtx, 0, DebugRenderer::vertex_pack)
-        .bind_index_buffer(dbg_index_buffer, vuk::IndexType::eUint32)
+        .bind_vertex_buffer(0, dbg_vtx, 0, DEBUG_VERTEX_PACK)
         .bind_buffer(0, 0, camera)
-        .bind_image(0, 1, depth_img)
-        .draw_indexed(line_index_count, 1, 0, 0, 0);
+        .bind_image(0, 1, depth_img);
+
+      const auto draw_ranges = [&](std::span<const DebugRenderer::VertexRange> draws, const u32 flags) {
+        for (u32 depth_tested = 0; depth_tested < draws.size(); depth_tested++) {
+          const auto& range = draws[depth_tested];
+          if (range.count == 0)
+            continue;
+
+          const auto depth_flag = depth_tested != 0 ? DEBUG_FLAG_DEPTH_TESTED : 0_u32;
+          cmd_list.push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(flags | depth_flag))
+            .draw(range.count, 1, range.offset, 0);
+        }
+      };
+
+      cmd_list.bind_graphics_pipeline("debug_mesh")
+        .set_primitive_topology(vuk::PrimitiveTopology::eTriangleList)
+        .set_rasterization({.cullMode = vuk::CullModeFlagBits::eBack});
+      draw_ranges(ranges.triangles, DEBUG_FLAG_SHADED);
+
+      cmd_list.bind_graphics_pipeline("debug_mesh")
+        .set_primitive_topology(vuk::PrimitiveTopology::eLineList)
+        .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone});
+      draw_ranges(ranges.lines, 0_u32);
 
       return std::make_tuple(dst, camera, depth_img);
     }
   );
 
-  std::tie(dst_attachment, self.prepared_frame.camera_buffer, depth_attachment) = debug_mesh_pass(
-    dst_attachment,
-    depth_attachment,
-    self.prepared_frame.debug_renderer_verticies_buffer,
-    self.prepared_frame.camera_buffer
+  std::tie(dst_attachment, self.prepared_frame.camera_buffer, depth_attachment) = debug_shapes_pass(
+    std::move(dst_attachment),
+    std::move(depth_attachment),
+    std::move(self.prepared_frame.debug_renderer_vertices_buffer),
+    std::move(self.prepared_frame.camera_buffer)
   );
 
   return dst_attachment;

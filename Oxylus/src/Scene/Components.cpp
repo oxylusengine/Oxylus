@@ -221,6 +221,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::gravity_factor,
       &C::friction,
       &C::restitution,
+      &C::center_of_mass_offset,
       &C::allow_sleep,
       &C::awake,
       &C::continuous,
