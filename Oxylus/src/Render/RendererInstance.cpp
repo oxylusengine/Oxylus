@@ -2564,15 +2564,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
 
     if (!self.debug_vertices.empty()) {
-      const auto vertices = std::span(self.debug_vertices);
-      self.debug_renderer_vertices_buffer = render_context.resize_buffer(
-        std::move(self.debug_renderer_vertices_buffer),
-        vuk::MemoryUsage::eGPUonly,
-        vertices.size_bytes()
-      );
-      self.prepared_frame.debug_renderer_vertices_buffer = render_context.upload_staging(
-        vertices,
-        *self.debug_renderer_vertices_buffer
+      self.prepared_frame.debug_renderer_vertices_buffer = render_context.scratch_buffer_span(
+        std::span(self.debug_vertices)
       );
     }
   }

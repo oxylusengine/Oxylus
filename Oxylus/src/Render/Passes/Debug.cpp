@@ -215,8 +215,7 @@ auto RendererInstance::draw_debug_shapes(
       VUK_BA(vuk::eAttributeRead) dbg_vtx,
       VUK_BA(vuk::eVertexUniformRead | vuk::eFragmentUniformRead) camera
     ) {
-      cmd_list.bind_graphics_pipeline("debug_mesh")
-        .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
+      cmd_list.set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
         .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
         .set_viewport(0, vuk::Rect2D::framebuffer())
         .set_scissor(0, vuk::Rect2D::framebuffer())
@@ -236,12 +235,13 @@ auto RendererInstance::draw_debug_shapes(
         }
       };
 
-      // triangles first so lines stay readable on top of solid shapes
-      cmd_list.set_primitive_topology(vuk::PrimitiveTopology::eTriangleList)
+      cmd_list.bind_graphics_pipeline("debug_mesh")
+        .set_primitive_topology(vuk::PrimitiveTopology::eTriangleList)
         .set_rasterization({.cullMode = vuk::CullModeFlagBits::eBack});
       draw_ranges(ranges.triangles, DEBUG_FLAG_SHADED);
 
-      cmd_list.set_primitive_topology(vuk::PrimitiveTopology::eLineList)
+      cmd_list.bind_graphics_pipeline("debug_mesh")
+        .set_primitive_topology(vuk::PrimitiveTopology::eLineList)
         .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone});
       draw_ranges(ranges.lines, 0_u32);
 

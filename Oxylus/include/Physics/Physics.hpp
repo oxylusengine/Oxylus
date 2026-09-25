@@ -12,6 +12,7 @@
 
 namespace ox {
 class RayCast;
+class Timestep;
 
 class Physics {
 public:
@@ -32,6 +33,7 @@ public:
 
   auto init(this Physics& self) -> std::expected<void, std::string>;
   auto deinit(this Physics& self) -> std::expected<void, std::string>;
+  auto update(this Physics& self, const Timestep& timestep) -> void;
 
   auto new_system(this const Physics& self) -> std::unique_ptr<JPH::PhysicsSystem>;
 

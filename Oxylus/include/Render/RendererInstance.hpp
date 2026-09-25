@@ -877,7 +877,6 @@ private:
   vuk::Unique<vuk::Buffer> meshes_buffer{};
   vuk::Unique<vuk::Buffer> blas_addresses_buffer{};
   SceneTLAS scene_tlas{};
-  vuk::Unique<vuk::Buffer> debug_renderer_vertices_buffer{};
   // kept across frames to reuse its capacity
   std::vector<DebugRenderer::Vertex> debug_vertices = {};
   vuk::Unique<vuk::Buffer> lights_buffer{};

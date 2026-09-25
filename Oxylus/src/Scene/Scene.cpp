@@ -2690,6 +2690,8 @@ auto Scene::create_vehicle(this Scene& self, flecs::entity entity, VehicleCompon
   settings.mForward = JPH::Vec3(component.forward.x, component.forward.y, component.forward.z)
                         .NormalizedOr(JPH::Vec3::sAxisZ());
   settings.mMaxPitchRollAngle = JPH::DegreesToRadians(component.max_pitch_roll_angle);
+  // sizes the debug text and markers, jolt's 1.0 default gives metre tall letters
+  settings.mDrawConstraintSize = 0.1f;
 
   for (auto wheel_index = 0_u32; wheel_index < wheel_entities.size(); wheel_index++) {
     auto wheel_entity = wheel_entities[wheel_index];

@@ -12,6 +12,7 @@
 #include "Physics/RayCast.hpp"
 #include "Utils/Log.hpp"
 #include "Utils/OxMath.hpp"
+#include "Utils/Timestep.hpp"
 
 namespace ox {
 static void TraceImpl(const char* inFMT, ...) {
@@ -88,6 +89,11 @@ auto Physics::init(this Physics& self) -> std::expected<void, std::string> {
   self.debug_renderer = std::make_unique<PhysicsDebugRenderer>();
 
   return {};
+}
+
+auto Physics::update(this Physics& self, const Timestep&) -> void {
+  // jolt caches constraint limit and pie geometry per shape of the limit, this drops what went unused
+  self.debug_renderer->NextFrame();
 }
 
 auto Physics::deinit(this Physics& self) -> std::expected<void, std::string> {
