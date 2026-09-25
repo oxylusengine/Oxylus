@@ -20,7 +20,12 @@
 namespace ox {
 struct Asset {
   UUID uuid = {};
+  // both are VFS virtual paths (see `VFS::to_virtual`), so a registry entry means the same file in the editor and in
+  // a shipped game. `path` is where the payload loads from, a cooked asset's `.oxpack` rather than its source
   std::filesystem::path path = {};
+  // the file this asset was imported from and what `find_asset` looks up. Empty for assets with no file of their
+  // own, like the materials and embedded textures a model brings with it
+  std::filesystem::path source_path = {};
   AssetType type = AssetType::None;
   union {
     ModelID model_id = ModelID::Invalid;
@@ -59,11 +64,25 @@ public:
 
   auto get_registry_snapshot(this AssetManager& self) -> std::vector<Asset>;
 
+  // paths may be physical or virtual, they are stored virtual
   auto create_asset(this AssetManager& self, AssetType type, const std::filesystem::path& path = {}) -> UUID;
   auto delete_asset(this AssetManager& self, const UUID& uuid) -> void;
-  auto register_asset(this AssetManager& self, const UUID& uuid, AssetType type, const std::filesystem::path& path)
-    -> bool;
-  auto update_asset_path(this AssetManager& self, const UUID& uuid, const std::filesystem::path& path) -> bool;
+  auto register_asset(
+    this AssetManager& self,
+    const UUID& uuid,
+    AssetType type,
+    const std::filesystem::path& path,
+    const std::filesystem::path& source_path = {}
+  ) -> bool;
+  auto update_asset_path(
+    this AssetManager& self,
+    const UUID& uuid,
+    const std::filesystem::path& path,
+    const std::filesystem::path& source_path
+  ) -> bool;
+
+  // the asset imported from `source_path` (physical or virtual), or a null UUID. Does not load or acquire it
+  auto find_asset(this AssetManager& self, const std::filesystem::path& source_path) -> UUID;
   auto acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void;
   auto release_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void;
 
@@ -159,7 +178,10 @@ private:
   auto unload_particle_system(this AssetManager& self, ParticleSystemID particle_system_id) -> bool;
 
   AssetRegistry asset_registry = {};
+  // generic-string keys: native separators differ per platform and would hash apart
+  ankerl::unordered_dense::map<std::string, UUID> source_index = {};
 
+  // guards `asset_registry` and `source_index`
   std::shared_mutex registry_mutex = {};
   std::shared_mutex models_mutex = {};
   std::shared_mutex textures_mutex = {};

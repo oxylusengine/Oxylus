@@ -50,7 +50,8 @@ auto remap_path(
 ) -> option<std::filesystem::path>;
 
 // Moves the registry and source-display paths rooted at `old_path` to `new_path`. Compiled assets
-// keep their cache path; direct-to-source assets use the new source on their next load or save.
+// keep their cache path but follow with their source path; direct-to-source assets use the new
+// source on their next load or save.
 auto relocate_asset_paths(
   AssetManager& asset_man, const std::filesystem::path& old_path, const std::filesystem::path& new_path
 ) -> void;

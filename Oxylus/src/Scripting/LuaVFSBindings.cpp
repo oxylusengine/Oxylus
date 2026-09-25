@@ -12,8 +12,11 @@ auto VFSBinding::bind(sol::state* state) -> void {
     "APP_DIR",
     sol::var(VFS::APP_DIR),
 
-    "PROJECT_DIR",
-    sol::var(VFS::PROJECT_DIR),
+    "ASSETS_DIR",
+    sol::var(VFS::ASSETS_DIR),
+
+    "COOKED_DIR",
+    sol::var(VFS::COOKED_DIR),
 
     "is_mounted_dir",
     [](const VFS& vfs, const std::string& virtual_dir) -> bool { return vfs.is_mounted_dir(virtual_dir); },
@@ -31,10 +34,13 @@ auto VFSBinding::bind(sol::state* state) -> void {
       return vfs.resolve_physical_dir(virtual_dir, file_path).string();
     },
 
-    "resolve_virtual_dir",
-    [](const VFS& vfs, const std::string& file_path) -> std::string {
-      return vfs.resolve_virtual_dir(file_path).string();
-    }
+    "to_physical",
+    [](const VFS& vfs, const std::string& virtual_path) -> std::string {
+      return vfs.to_physical(virtual_path).string();
+    },
+
+    "to_virtual",
+    [](const VFS& vfs, const std::string& path) -> std::string { return vfs.to_virtual(path).generic_string(); }
   );
 }
 } // namespace ox

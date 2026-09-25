@@ -99,9 +99,22 @@ Physics, Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI.
 `EventSystem` (`Core/EventSystem.hpp`) is a typed pub/sub bus keyed on `std::type_index`; event types
 are plain copyable structs (`WindowResizeEvent`, `AppCloseEvent`, `Editor::ScenePlayEvent`, ...).
 
-`VFS` (`Core/VFS.hpp`) maps virtual dirs to physical ones. `App::init` mounts `VFS::APP_DIR` to the
-assets path (`Assets` by default, override with `with_assets_directory`); `VFS::PROJECT_DIR` is
-editor-only. Runtime asset paths go through `resolve_physical_dir`.
+`VFS` (`Core/VFS.hpp`) maps virtual dirs to physical ones. A virtual path is `<virtual dir>/<relative>`
+(`assets_dir/Audio/engine.wav`); `to_physical`/`to_virtual` convert, and absolute paths pass through
+both untouched. Three mounts:
+
+- `VFS::APP_DIR`: the running program's own resources (the editor's fonts and shaders).
+- `VFS::ASSETS_DIR`: game content. `App::init` mounts both of these to the assets path (`Assets` by
+  default, override with `with_assets_directory`); the editor unmounts `ASSETS_DIR` at init and
+  `Project::load` remounts it to the project's asset directory. Gameplay code always uses this one,
+  so the same path works in the editor and in a shipped game.
+- `VFS::COOKED_DIR`: compiled `.oxpack` payloads, mounted by the editor on its asset cache.
+
+`Asset::path` (where the payload loads from) and `Asset::source_path` (the file it was imported
+from, looked up by `AssetManager::find_asset`) are stored virtual; `register_asset`/`create_asset`
+convert whatever they are given, and anything that opens the file calls `to_physical` first.
+Lua scripts load their siblings with `require_script("relative/to/this/file.lua")`, cached per
+`LuaSystem`, and name other assets relative to `ASSETS_DIR` (`Mod.AssetManager:acquire("Audio/x.wav")`).
 
 ### Scene / ECS
 

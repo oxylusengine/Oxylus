@@ -16,6 +16,7 @@
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
+#include "Core/VFS.hpp"
 #include "Memory/Stack.hpp"
 #include "Scene/Components.hpp"
 #include "UI/PayloadData.hpp"
@@ -391,7 +392,7 @@ auto ParticleEditorPanel::open_asset(this ParticleEditorPanel& self, const UUID&
   }
 
   if (auto asset = asset_man.get_asset(uuid)) {
-    self.asset_path = asset->path;
+    self.asset_path = App::get_vfs().to_physical(asset->path);
   }
 
   const auto previous_asset = self.asset_uuid;
@@ -1897,7 +1898,7 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
   }
 
   if (auto asset = App::mod<AssetManager>().get_asset(self.asset_uuid)) {
-    self.asset_path = asset->path;
+    self.asset_path = App::get_vfs().to_physical(asset->path);
   }
 
   if (UI::button(ICON_MDI_CONTENT_SAVE " Save") && !self.asset_path.empty()) {

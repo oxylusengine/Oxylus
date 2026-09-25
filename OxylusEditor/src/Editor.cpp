@@ -13,6 +13,7 @@
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
+#include "Core/VFS.hpp"
 #include "Panels/ActivityLogPanel.hpp"
 #include "Panels/AssetManagerPanel.hpp"
 #include "Panels/ContentPanel.hpp"
@@ -33,6 +34,11 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   ImPlot::CreateContext();
+
+  // the editor's own files are APP_DIR; game content only exists once a project mounts it
+  auto& vfs = App::get_vfs();
+  vfs.unmount_dir(VFS::ASSETS_DIR);
+  vfs.mount_dir(VFS::COOKED_DIR, cache_dir());
 
   auto& job_man = App::get_job_manager();
   job_man.get_tracker().start_tracking();
@@ -424,7 +430,7 @@ auto Editor::sync_terrain_edits_asset(Scene& scene, const std::filesystem::path&
 
   auto asset = asset_man.get_asset(c.terrain_edits);
 
-  return asset ? asset->path : std::filesystem::path{};
+  return asset ? App::get_vfs().to_physical(asset->path) : std::filesystem::path{};
 }
 
 auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -> void {
@@ -651,15 +657,17 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
     if (was_content_visible)
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
 
-    if (UI::toggle_button(
-          content_panel_text.c_str(),
-          content_panel.visible,
-          {},
-          1.f,
-          1.f,
-          ImGuiButtonFlags_None,
-          ImGuiCol_Header
-        )) {
+    if (
+      UI::toggle_button(
+        content_panel_text.c_str(),
+        content_panel.visible,
+        {},
+        1.f,
+        1.f,
+        ImGuiButtonFlags_None,
+        ImGuiCol_Header
+      )
+    ) {
       content_panel.visible = !content_panel.visible;
     }
     if (ImGui::IsItemHovered())
@@ -677,15 +685,17 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
     if (was_activity_log_visible)
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
 
-    if (UI::toggle_button(
-          activity_log_text.c_str(),
-          activity_log_panel_state,
-          {},
-          1.f,
-          1.f,
-          ImGuiButtonFlags_None,
-          ImGuiCol_Header
-        )) {
+    if (
+      UI::toggle_button(
+        activity_log_text.c_str(),
+        activity_log_panel_state,
+        {},
+        1.f,
+        1.f,
+        ImGuiButtonFlags_None,
+        ImGuiCol_Header
+      )
+    ) {
       activity_log_panel_state = !activity_log_panel_state;
     }
     if (ImGui::IsItemHovered())

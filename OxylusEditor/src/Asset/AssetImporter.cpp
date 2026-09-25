@@ -12,6 +12,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
+#include "Core/VFS.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
@@ -92,9 +93,19 @@ auto relocate_asset_paths(
 ) -> void {
   ZoneScoped;
 
+  // the registry stores virtual paths, so the move has to be expressed in the same terms
+  auto& vfs = App::get_vfs();
+  const auto old_virtual_path = vfs.to_virtual(old_path);
+  const auto new_virtual_path = vfs.to_virtual(new_path);
   for (const auto& asset : asset_man.get_registry_snapshot()) {
-    if (const auto relocated_path = remap_path(asset.path, old_path, new_path)) {
-      asset_man.update_asset_path(asset.uuid, *relocated_path);
+    const auto relocated_path = remap_path(asset.path, old_virtual_path, new_virtual_path);
+    const auto relocated_source_path = remap_path(asset.source_path, old_virtual_path, new_virtual_path);
+    if (relocated_path || relocated_source_path) {
+      asset_man.update_asset_path(
+        asset.uuid,
+        relocated_path.value_or(asset.path),
+        relocated_source_path.value_or(asset.source_path)
+      );
     }
   }
 
@@ -485,7 +496,7 @@ auto register_model(
 ) -> void {
   ZoneScoped;
 
-  asset_man.register_asset(meta.uuid, AssetType::Model, cache_path(meta.uuid));
+  asset_man.register_asset(meta.uuid, AssetType::Model, cache_path(meta.uuid), path);
 
   const auto source_name = path.filename().string();
   record_asset_source(meta.uuid, path, source_name);
@@ -616,7 +627,7 @@ auto import_compiled_texture(
     }
   }
 
-  asset_man.register_asset(uuid, AssetType::Texture, pack_path);
+  asset_man.register_asset(uuid, AssetType::Texture, pack_path, path);
   record_asset_source(uuid, path, path.filename().string());
 
   return uuid;

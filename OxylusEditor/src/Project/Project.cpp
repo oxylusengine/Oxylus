@@ -305,7 +305,7 @@ auto Project::new_project(
   }
 
   const auto asset_dir_path = self.project_file_path.parent_path() / self.project_config.asset_directory;
-  App::get_vfs().mount_dir(VFS::PROJECT_DIR, asset_dir_path);
+  App::get_vfs().mount_dir(VFS::ASSETS_DIR, asset_dir_path);
 
   self.register_assets(asset_dir_path);
 
@@ -321,7 +321,7 @@ auto Project::load(this Project& self, const std::filesystem::path& path) -> boo
     auto project_root_path = self.project_file_path.parent_path();
     const auto asset_dir_path = project_root_path / self.project_config.asset_directory;
 
-    App::get_vfs().mount_dir(VFS::PROJECT_DIR, asset_dir_path);
+    App::get_vfs().mount_dir(VFS::ASSETS_DIR, asset_dir_path);
 
     wait_for_asset_scans();
     self.asset_directory.reset();

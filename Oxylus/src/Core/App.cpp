@@ -49,7 +49,9 @@ auto App::init(this App& self) -> void {
   else
     std::filesystem::current_path(self.working_directory);
 
-  self.vfs.mount_dir(VFS::APP_DIR, std::filesystem::absolute(self.assets_path));
+  // a shipped game's resources and content are the same folder; the editor remounts ASSETS_DIR per project
+  self.vfs.mount_dir(VFS::APP_DIR, self.assets_path);
+  self.vfs.mount_dir(VFS::ASSETS_DIR, self.assets_path);
 
   if (self.window_info.has_value()) {
     self.window = Window::create(*self.window_info);

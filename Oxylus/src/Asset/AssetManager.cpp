@@ -8,6 +8,7 @@
 #include <zpp_bits.h>
 
 #include "Core/App.hpp"
+#include "Core/VFS.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
@@ -15,6 +16,45 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
+// without an app (the engine tests) nothing is mounted and every path stays physical
+static auto asset_vfs() -> const VFS& {
+  static const VFS unmounted = {};
+  return App::get() ? App::get_vfs() : unmounted;
+}
+
+static auto source_index_key(const std::filesystem::path& virtual_path) -> std::string {
+  return virtual_path.generic_string();
+}
+
+// callers hold `registry_mutex` for writing
+static auto index_source(
+  ankerl::unordered_dense::map<std::string, UUID>& source_index, const UUID& uuid, const std::filesystem::path& path
+) -> void {
+  if (path.empty()) {
+    return;
+  }
+
+  // the newest import wins: a re-import under a fresh UUID is the one callers mean
+  auto& indexed = source_index[source_index_key(path)];
+  if (indexed && indexed != uuid) {
+    OX_LOG_WARN("Assets {} and {} were both imported from {}, using the latter.", indexed.str(), uuid.str(), path);
+  }
+  indexed = uuid;
+}
+
+static auto unindex_source(
+  ankerl::unordered_dense::map<std::string, UUID>& source_index, const UUID& uuid, const std::filesystem::path& path
+) -> void {
+  if (path.empty()) {
+    return;
+  }
+
+  const auto it = source_index.find(source_index_key(path));
+  if (it != source_index.end() && it->second == uuid) {
+    source_index.erase(it);
+  }
+}
+
 auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
@@ -40,6 +80,7 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   }
 
   self.asset_registry.clear();
+  self.source_index.clear();
   self.pending_load_info.clear();
   self.dirty_materials.clear();
   self.model_map.reset();
@@ -89,6 +130,7 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
 auto AssetManager::create_asset(this AssetManager& self, const AssetType type, const std::filesystem::path& path)
   -> UUID {
   const auto uuid = UUID::generate_random();
+  const auto virtual_path = asset_vfs().to_virtual(path);
   auto write_lock = std::unique_lock(self.registry_mutex);
   auto [asset_it, inserted] = self.asset_registry.try_emplace(uuid);
   if (!inserted) {
@@ -99,7 +141,10 @@ auto AssetManager::create_asset(this AssetManager& self, const AssetType type, c
   auto& asset = asset_it->second;
   asset.uuid = uuid;
   asset.type = type;
-  asset.path = path;
+  // created straight from its file, so that file is also its source
+  asset.path = virtual_path;
+  asset.source_path = virtual_path;
+  index_source(self.source_index, uuid, virtual_path);
 
   return asset.uuid;
 }
@@ -132,7 +177,10 @@ auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> vo
 
   {
     auto write_lock = std::unique_lock(self.registry_mutex);
-    self.asset_registry.erase(uuid);
+    if (const auto it = self.asset_registry.find(uuid); it != self.asset_registry.end()) {
+      unindex_source(self.source_index, uuid, it->second.source_path);
+      self.asset_registry.erase(it);
+    }
   }
 
   self.clear_pending_load_info(uuid);
@@ -141,33 +189,45 @@ auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> vo
 }
 
 auto AssetManager::register_asset(
-  this AssetManager& self, const UUID& uuid, AssetType type, const std::filesystem::path& path
+  this AssetManager& self,
+  const UUID& uuid,
+  AssetType type,
+  const std::filesystem::path& path,
+  const std::filesystem::path& source_path
 ) -> bool {
   ZoneScoped;
+
+  const auto& vfs = asset_vfs();
+  const auto virtual_path = vfs.to_virtual(path);
+  const auto virtual_source_path = vfs.to_virtual(source_path);
 
   auto write_lock = std::unique_lock(self.registry_mutex);
 
   auto [asset_it, inserted] = self.asset_registry.try_emplace(uuid);
   if (!inserted) {
-    if (asset_it != self.asset_registry.end()) {
-      return true;
-    }
-    return false;
+    return true;
   }
 
   auto& asset = asset_it->second;
   asset.uuid = uuid;
-  asset.path = path;
+  asset.path = virtual_path;
+  asset.source_path = virtual_source_path;
   asset.type = type;
+  index_source(self.source_index, uuid, virtual_source_path);
 
   OX_LOG_TRACE("Registered new asset: {}:{}", to_asset_type_sv(asset.type), uuid.str());
 
   return true;
 }
 
-auto AssetManager::update_asset_path(this AssetManager& self, const UUID& uuid, const std::filesystem::path& path)
-  -> bool {
+auto AssetManager::update_asset_path(
+  this AssetManager& self, const UUID& uuid, const std::filesystem::path& path, const std::filesystem::path& source_path
+) -> bool {
   ZoneScoped;
+
+  const auto& vfs = asset_vfs();
+  const auto virtual_path = vfs.to_virtual(path);
+  const auto virtual_source_path = vfs.to_virtual(source_path);
 
   auto write_lock = std::unique_lock(self.registry_mutex);
   const auto asset_it = self.asset_registry.find(uuid);
@@ -175,8 +235,23 @@ auto AssetManager::update_asset_path(this AssetManager& self, const UUID& uuid, 
     return false;
   }
 
-  asset_it->second.path = path;
+  auto& asset = asset_it->second;
+  unindex_source(self.source_index, uuid, asset.source_path);
+  asset.path = virtual_path;
+  asset.source_path = virtual_source_path;
+  index_source(self.source_index, uuid, virtual_source_path);
+
   return true;
+}
+
+auto AssetManager::find_asset(this AssetManager& self, const std::filesystem::path& source_path) -> UUID {
+  ZoneScoped;
+
+  const auto key = source_index_key(asset_vfs().to_virtual(source_path));
+
+  auto read_lock = std::shared_lock(self.registry_mutex);
+  const auto it = self.source_index.find(key);
+  return it != self.source_index.end() ? it->second : UUID(nullptr);
 }
 
 auto AssetManager::set_pending_load_info(this AssetManager& self, const UUID& uuid, LoadInfo info) -> void {
@@ -453,7 +528,7 @@ auto AssetManager::load_asset_impl(
   }
 
   auto asset_type = asset->type;
-  auto asset_path = asset->path;
+  auto asset_path = asset_vfs().to_physical(asset->path);
 
   asset.reset();
 

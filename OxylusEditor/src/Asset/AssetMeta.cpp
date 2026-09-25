@@ -344,7 +344,7 @@ auto register_asset_from_meta(AssetManager& asset_man, const std::filesystem::pa
   auto uuid = UUID::from_string(uuid_json.value_unsafe()).value();
   auto type = static_cast<AssetType>(type_json.value_unsafe().get_uint64());
 
-  if (!asset_man.register_asset(uuid, type, asset_path)) {
+  if (!asset_man.register_asset(uuid, type, asset_path, asset_path)) {
     return UUID(nullptr);
   }
 
