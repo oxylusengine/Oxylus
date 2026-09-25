@@ -7,6 +7,7 @@
 #include <vuk/vsl/Core.hpp>
 #include <zpp_bits.h>
 
+#include "Asset/AssetManifest.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Memory/Hasher.hpp"
@@ -60,6 +61,15 @@ auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::str
 
   self.null_material = self.create_asset(AssetType::Material);
   self.load_asset(self.null_material, {});
+
+  // only a game shipped with exported assets has one, the editor registers by scanning the project instead
+  const auto& vfs = asset_vfs();
+  if (vfs.is_mounted_dir(VFS::COOKED_DIR)) {
+    const auto manifest_path = vfs.resolve_physical_dir(VFS::COOKED_DIR, AssetManifest::FILE_NAME);
+    if (std::filesystem::exists(manifest_path)) {
+      self.load_manifest(manifest_path);
+    }
+  }
 
   return {};
 }
@@ -240,6 +250,27 @@ auto AssetManager::update_asset_path(
   asset.path = virtual_path;
   asset.source_path = virtual_source_path;
   index_source(self.source_index, uuid, virtual_source_path);
+
+  return true;
+}
+
+auto AssetManager::load_manifest(this AssetManager& self, const std::filesystem::path& path) -> bool {
+  ZoneScoped;
+
+  auto manifest = AssetManifest::read(path);
+  if (!manifest) {
+    return false;
+  }
+
+  for (const auto& entry : manifest->assets) {
+    self.register_asset(entry.uuid.unpack(), entry.type, entry.path, entry.source_path);
+  }
+
+  for (const auto& entry : manifest->materials) {
+    self.set_pending_load_info(entry.uuid.unpack(), entry.unpack());
+  }
+
+  OX_LOG_INFO("Registered {} assets from {}.", manifest->assets.size(), path);
 
   return true;
 }

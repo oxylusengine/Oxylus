@@ -108,7 +108,17 @@ both untouched. Three mounts:
   default, override with `with_assets_directory`); the editor unmounts `ASSETS_DIR` at init and
   `Project::load` remounts it to the project's asset directory. Gameplay code always uses this one,
   so the same path works in the editor and in a shipped game.
-- `VFS::COOKED_DIR`: compiled `.oxpack` payloads, mounted by the editor on its asset cache.
+- `VFS::COOKED_DIR`: compiled `.oxpack` payloads and the asset manifest. The editor mounts it on its
+  asset cache; a game gets `<assets>/.cooked` (`VFS::COOKED_SUBDIR`).
+
+**The editor is optional for shipping.** Importing (sidecars, UUIDs, cooking models and textures into
+packs) lives in ResourceCompiler (`public/AssetImport.hpp`), not the editor. The editor calls
+`rc::import_asset` into its cache and registers what comes back; a game build runs the same code
+through `rcli --cook-assets <assets> --output <targetdir>/Assets/.cooked` (the `ox.cook_assets` rule),
+which also writes `assets.oxmanifest` (`Asset/AssetManifest.hpp`). `AssetManager::init` registers
+everything in it. A cook writes a sidecar for any asset that lacks one, commit those. ResourceCompiler
+is a shared library with its own copy of the engine's statics, so code there reports through
+`Session` diagnostics, never `OX_LOG_*` or `App`.
 
 `Asset::path` (where the payload loads from) and `Asset::source_path` (the file it was imported
 from, looked up by `AssetManager::find_asset`) are stored virtual; `register_asset`/`create_asset`

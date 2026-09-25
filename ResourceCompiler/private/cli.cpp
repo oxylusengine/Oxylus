@@ -1,3 +1,4 @@
+#include <AssetImport.hpp>
 #include <Core/AppCommandLineArgs.hpp>
 #include <ResourceCompiler.hpp>
 #include <charconv>
@@ -20,9 +21,36 @@ auto print_help() -> void {
   print_command("help", "Show list of command line arguments.");
   print_command("silent", "Do not output anything to the console.");
   print_command("config \"path\"", "TOML config file with resources to compile.");
+  print_command("cook-assets \"path\"", "Asset directory to cook for a game build, into `--output`.");
   print_command("output \"path\"", "Output path for compiled resources. Overrides config file output.");
   print_command("include-dir \"path\"", "Extra shader search path, appended to every session. Repeatable.");
   print_command("threads N", "Number of compile workers. Defaults to the hardware concurrency.");
+}
+
+// the game build's asset step: `rcli --cook-assets Assets --output build/.../Assets/.cooked`
+static auto cook_assets(const AppCommandLineArgs& args, rc::Session& session, const auto& log) -> i32 {
+  auto assets_arg = args.get(args.get_index("--cook-assets").value() + 1);
+  auto output_arg = option<AppCommandLineArgs::Arg>(nullopt);
+  if (auto output_argi = args.get_index("--output"); output_argi.has_value()) {
+    output_arg = args.get(output_argi.value() + 1);
+  }
+  if (!assets_arg.has_value() || !output_arg.has_value()) {
+    log("Usage: `rcli --cook-assets <assets dir> --output <cooked dir>`");
+    return 1;
+  }
+
+  const auto succeeded = rc::cook_assets(session, assets_arg->arg_str, output_arg->arg_str);
+
+  // errors print even when silent, a failed build step has to say why
+  const auto diagnostics = session.take_diagnostics();
+  for (const auto& message : diagnostics.messages) {
+    log(message);
+  }
+  for (const auto& error : diagnostics.errors) {
+    fmt::println("Error: {}", error);
+  }
+
+  return succeeded ? 0 : 1;
 }
 
 auto main(i32 argc, c8** argv) -> i32 {
@@ -39,27 +67,6 @@ auto main(i32 argc, c8** argv) -> i32 {
       fmt::println("{}", msg);
     }
   };
-
-  auto config_argi = args.get_index("--config");
-  if (!config_argi.has_value()) {
-    log("Specify `--config` flag to use this CLI. Example: `rcli --config resources.toml --output shaders.bin`");
-    return 1;
-  }
-
-  auto config_arg = args.get(config_argi.value() + 1);
-  if (!config_arg.has_value()) {
-    log("Specify a config file path.");
-    return 1;
-  }
-
-  auto config_path = std::filesystem::path(config_arg->arg_str);
-  log(fmt::format("Using config file \"{}\"...", config_path));
-
-  auto config = rc::parse_resource_config(config_path);
-  if (!config.has_value()) {
-    log(fmt::format("Error: failed to parse '{}'.", config_path));
-    return 1;
-  }
 
   auto session_info = rc::SessionCreateInfo{};
   auto threads_argi = args.get_index("--threads");
@@ -84,6 +91,31 @@ auto main(i32 argc, c8** argv) -> i32 {
   auto session = rc::Session::create(session_info);
   if (!session.has_value()) {
     log("Error: failed to create compiler session.");
+    return 1;
+  }
+
+  if (args.contains("--cook-assets")) {
+    return cook_assets(args, session.value(), log);
+  }
+
+  auto config_argi = args.get_index("--config");
+  if (!config_argi.has_value()) {
+    log("Specify `--config` flag to use this CLI. Example: `rcli --config resources.toml --output shaders.bin`");
+    return 1;
+  }
+
+  auto config_arg = args.get(config_argi.value() + 1);
+  if (!config_arg.has_value()) {
+    log("Specify a config file path.");
+    return 1;
+  }
+
+  auto config_path = std::filesystem::path(config_arg->arg_str);
+  log(fmt::format("Using config file \"{}\"...", config_path));
+
+  auto config = rc::parse_resource_config(config_path);
+  if (!config.has_value()) {
+    log(fmt::format("Error: failed to parse '{}'.", config_path));
     return 1;
   }
 

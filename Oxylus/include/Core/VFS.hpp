@@ -16,8 +16,10 @@ public:
   // game content: the loaded project's assets in the editor, the shipped assets directory otherwise
   static constexpr auto ASSETS_DIR = "assets_dir";
 
-  // compiled asset payloads, the editor's asset cache while editing
+  // compiled asset payloads and the asset manifest: the editor's asset cache while editing, and in a shipped game
+  // `COOKED_SUBDIR` inside the assets directory, so the game's build copies it along with the sources
   static constexpr auto COOKED_DIR = "cooked_dir";
+  static constexpr auto COOKED_SUBDIR = ".cooked";
 
   auto is_mounted_dir(this const VFS& self, const std::filesystem::path& virtual_dir) -> bool;
 

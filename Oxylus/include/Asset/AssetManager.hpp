@@ -81,6 +81,9 @@ public:
     const std::filesystem::path& source_path
   ) -> bool;
 
+  // registers everything an exported manifest lists, the way a shipped game learns its assets
+  auto load_manifest(this AssetManager& self, const std::filesystem::path& path) -> bool;
+
   // the asset imported from `source_path` (physical or virtual), or a null UUID. Does not load or acquire it
   auto find_asset(this AssetManager& self, const std::filesystem::path& source_path) -> UUID;
   auto acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void;
