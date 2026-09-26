@@ -67,6 +67,8 @@ public:
   flecs::world world;
   ComponentDB component_db = {};
 
+  // what the last runtime_update advanced gameplay by, 0 while the gameplay phases are disabled
+  f32 last_step_delta = 0.0f;
   f32 physics_interval = 1.f / 60.f; // the tick source is built from it at init, changing it later desyncs the step
 
   std::vector<GPU::TransformID> dirty_transforms = {};

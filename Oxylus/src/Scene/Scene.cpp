@@ -1167,7 +1167,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
   auto pre_update_phase_enabled = !self.world.entity(flecs::PreUpdate).has(flecs::Disabled);
   auto on_update_phase_enabled = !self.world.entity(flecs::OnUpdate).has(flecs::Disabled);
-  if (pre_update_phase_enabled && on_update_phase_enabled) {
+  const auto gameplay_enabled = pre_update_phase_enabled && on_update_phase_enabled;
+  self.last_step_delta = gameplay_enabled ? static_cast<f32>(delta_time.get_seconds()) : 0.0f;
+  if (gameplay_enabled) {
     for (auto& [_, system] : self.lua_systems) {
       system->on_scene_update(&self, static_cast<f32>(delta_time.get_seconds()));
     }

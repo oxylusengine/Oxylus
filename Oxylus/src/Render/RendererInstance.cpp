@@ -2575,7 +2575,11 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.update_vbgtao_info(cvar);
 
   if (cvar.cvar_particles_enable.as_bool()) {
-    const auto particle_delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f;
+    // a running scene's particles follow its gameplay clock so they pause with it, the editor
+    // previews them in real time
+    const auto particle_delta_time = self.scene.is_running()
+                                       ? self.scene.last_step_delta
+                                       : static_cast<f32>(App::get_timestep().get_millis()) * 0.001f;
     self.prepare_particles(particle_delta_time, cvar.cvar_particle_sort.as_bool());
   }
 
