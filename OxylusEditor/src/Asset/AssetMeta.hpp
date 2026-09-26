@@ -27,6 +27,7 @@ enum class AssetFileType : u32 {
   LUA,
   OXTERRAIN,
   OXPARTICLE,
+  OXCINE,
   WAV,
   MP3,
   FLAC,

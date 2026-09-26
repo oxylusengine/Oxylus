@@ -11,6 +11,9 @@ namespace ox {
 class ViewportPanel : public EditorPanelState {
 public:
   flecs::entity editor_camera = {};
+  // while set, the fly-cam mirrors this entity's pose instead of taking input, so the viewport looks
+  // through a scene camera without changing which camera the renderer picks
+  flecs::entity piloted_camera = {};
 
   bool performance_overlay_visible = true;
   bool is_viewport_focused = {};

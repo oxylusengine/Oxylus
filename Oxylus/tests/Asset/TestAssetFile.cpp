@@ -2,6 +2,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "Animation/AnimationClip.hpp"
+#include "Animation/Skeleton.hpp"
 #include "Asset/AssetFile.hpp"
 #include "Utils/Log.hpp"
 
@@ -30,6 +32,10 @@ protected:
     mesh.lod_count = 3;
     mesh.lod_metadata_offset = 4096;
     mesh.has_texture_coords = true;
+    mesh.has_skin = true;
+    mesh.skin_joint_indices_offset = 8192;
+    mesh.skin_weights_offset = 8256;
+    mesh.max_bone_influence_radius = 1.5f;
     mesh.bounds_center[1] = 2.5f;
     mesh.bounds_extent[2] = 7.25f;
     mesh.lods[2].indices = 777;
@@ -55,7 +61,51 @@ protected:
     );
     model.mesh_groups.push_back({.name = "root", .child_indices = {1, 2}, .mesh_indices = {0}});
 
+    model.skeleton = make_skeleton();
+    model.animations.push_back(make_animation());
+
     return model;
+  }
+
+  static auto make_skeleton() -> ModelData::Skeleton {
+    auto skeleton = ModelData::Skeleton{};
+    skeleton.uuid.bytes = {3, 1, 4, 1, 5, 9};
+    skeleton.bone_names = {"root", "spine"};
+    skeleton.parent_indices = {-1, 0};
+    skeleton.parent_space_reference_pose = {
+      {.rotation = {0.0f, 0.0f, 0.0f, 1.0f}, .translation_scale = {0.0f, 1.0f, 0.0f, 1.0f}},
+      {.rotation = {0.0f, 0.0f, 0.0f, 1.0f}, .translation_scale = {0.0f, 2.0f, 0.0f, 1.0f}},
+    };
+    skeleton.inverse_bind_pose = {
+      {.rotation = {0.0f, 0.0f, 0.0f, 1.0f}, .translation_scale = {0.0f, -1.0f, 0.0f, 1.0f}},
+      {.rotation = {0.0f, 0.0f, 0.0f, 1.0f}, .translation_scale = {0.0f, -3.0f, 0.0f, 1.0f}},
+    };
+    skeleton.max_bone_influence_radius = 1.5f;
+
+    return skeleton;
+  }
+
+  static auto make_animation() -> ModelData::Animation {
+    auto animation = ModelData::Animation{};
+    animation.name = "idle";
+    animation.uuid.bytes = {2, 7, 1, 8, 2, 8};
+    animation.frame_count = 2;
+    animation.duration = 0.5f;
+    animation.track_defs = {
+      {
+        .translation_range_x = {1.0f, 2.0f},
+        .scale_range = {1.0f, 0.0f},
+        .constant_rotation = {11, 22, 33},
+        .track_read_offset = 0,
+        .is_rotation_static = true,
+        .is_translation_static = false,
+        .is_scale_static = true,
+      },
+    };
+    animation.compressed_pose_data = {1, 2, 3, 4, 5, 6};
+    animation.compressed_pose_offsets = {0, 3};
+
+    return animation;
   }
 
   static auto make_texture() -> TextureData {
@@ -127,6 +177,25 @@ TEST_F(AssetFileTest, PacksAndUnpacksEveryPayloadType) {
   EXPECT_FLOAT_EQ(model->lights[0].range, 9.0f);
   ASSERT_EQ(model->mesh_groups.size(), 1u);
   EXPECT_THAT(model->mesh_groups[0].child_indices, ::testing::ElementsAre(1u, 2u));
+  EXPECT_TRUE(model->meshes[0].has_skin);
+  EXPECT_EQ(model->meshes[0].skin_joint_indices_offset, 8192u);
+  EXPECT_EQ(model->meshes[0].skin_weights_offset, 8256u);
+  EXPECT_EQ(model->skeleton.uuid.bytes[0], 3);
+  EXPECT_THAT(model->skeleton.bone_names, ::testing::ElementsAre("root", "spine"));
+  EXPECT_THAT(model->skeleton.parent_indices, ::testing::ElementsAre(-1, 0));
+  ASSERT_EQ(model->skeleton.inverse_bind_pose.size(), 2u);
+  EXPECT_FLOAT_EQ(model->skeleton.inverse_bind_pose[1].translation_scale[1], -3.0f);
+  EXPECT_FLOAT_EQ(model->skeleton.max_bone_influence_radius, 1.5f);
+  ASSERT_EQ(model->animations.size(), 1u);
+  EXPECT_EQ(model->animations[0].name, "idle");
+  EXPECT_EQ(model->animations[0].uuid.bytes[1], 7);
+  EXPECT_EQ(model->animations[0].frame_count, 2u);
+  EXPECT_FLOAT_EQ(model->animations[0].duration, 0.5f);
+  ASSERT_EQ(model->animations[0].track_defs.size(), 1u);
+  EXPECT_TRUE(model->animations[0].track_defs[0].is_rotation_static);
+  EXPECT_THAT(model->animations[0].track_defs[0].constant_rotation, ::testing::ElementsAre(11, 22, 33));
+  EXPECT_THAT(model->animations[0].compressed_pose_data, ::testing::ElementsAre(1, 2, 3, 4, 5, 6));
+  EXPECT_THAT(model->animations[0].compressed_pose_offsets, ::testing::ElementsAre(0u, 3u));
 
   EXPECT_EQ(read->entries[1].type, AssetType::Texture);
   const auto* texture = std::get_if<TextureData>(&read->entries[1].data);
@@ -145,6 +214,45 @@ TEST_F(AssetFileTest, PacksAndUnpacksEveryPayloadType) {
   ASSERT_EQ(pipeline->entry_points.size(), 1u);
   EXPECT_EQ(pipeline->entry_points[0].shader_stage, ShaderStage::Compute);
   EXPECT_THAT(pipeline->entry_points[0].spirv, ::testing::ElementsAre(1u, 2u, 3u));
+}
+
+TEST_F(AssetFileTest, ConvertsPackedAnimationDataToTheRuntimeTypes) {
+  const auto skeleton_uuid = UUID::generate_random();
+
+  const auto skeleton = to_skeleton(make_skeleton());
+  ASSERT_TRUE(skeleton.is_valid());
+  EXPECT_EQ(skeleton.bone_count(), 2u);
+  // finalize() derives these, and a skeleton that arrives without them cannot be posed
+  auto spine = skeleton.find_bone("spine");
+  ASSERT_TRUE(spine.has_value());
+  EXPECT_EQ(*spine, 1u);
+  EXPECT_FLOAT_EQ(skeleton.model_space_reference_pose[1].translation().y, 3.0f);
+  EXPECT_FLOAT_EQ(skeleton.inverse_bind_pose[1].translation().y, -3.0f);
+
+  const auto clip = to_animation_clip(make_animation(), skeleton_uuid);
+  EXPECT_EQ(clip.name, "idle");
+  EXPECT_EQ(clip.skeleton_uuid, skeleton_uuid);
+  EXPECT_EQ(clip.frame_count, 2u);
+  EXPECT_FLOAT_EQ(clip.duration, 0.5f);
+  ASSERT_EQ(clip.track_defs.size(), 1u);
+  EXPECT_FLOAT_EQ(clip.track_defs[0].translation_range_x.start, 1.0f);
+  EXPECT_FLOAT_EQ(clip.track_defs[0].translation_range_x.length, 2.0f);
+  EXPECT_EQ(clip.track_defs[0].constant_rotation.data1, 22u);
+  EXPECT_TRUE(clip.track_defs[0].is_scale_static);
+  EXPECT_THAT(clip.compressed_pose_offsets, ::testing::ElementsAre(0u, 3u));
+
+  // and back, because the compiler builds a clip and then flattens it
+  const auto packed = to_model_animation(clip);
+  EXPECT_EQ(packed.name, "idle");
+  EXPECT_EQ(packed.frame_count, 2u);
+  ASSERT_EQ(packed.track_defs.size(), 1u);
+  EXPECT_THAT(packed.track_defs[0].translation_range_x, ::testing::ElementsAre(1.0f, 2.0f));
+  EXPECT_THAT(packed.track_defs[0].constant_rotation, ::testing::ElementsAre(11, 22, 33));
+
+  const auto repacked = to_model_skeleton(skeleton);
+  EXPECT_THAT(repacked.bone_names, ::testing::ElementsAre("root", "spine"));
+  EXPECT_THAT(repacked.parent_indices, ::testing::ElementsAre(-1, 0));
+  EXPECT_FLOAT_EQ(repacked.parent_space_reference_pose[1].translation_scale[1], 2.0f);
 }
 
 TEST_F(AssetFileTest, RejectsAPackFromAnOtherVersion) {

@@ -45,6 +45,7 @@ func cs_main(
         let meshlet_instance = meshlet_instances[meshlet_instance_index_shared];
         let mesh_instance = mesh_instances[meshlet_instance.mesh_instance_index];
         mesh_shared = meshes[mesh_instance.mesh_index];
+        mesh_shared.apply_skin(mesh_instance);
         mesh_lod_shared = mesh_shared.lods[mesh_instance.lod_index];
         meshlet_shared = mesh_lod_shared.meshlets[meshlet_instance.meshlet_index];
 

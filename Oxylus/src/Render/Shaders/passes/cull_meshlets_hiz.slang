@@ -32,7 +32,8 @@ func cs_main(
     let transform = transforms[mesh_instance.transform_index];
     let mvp = mul(camera.projection_view, transform.world);
 
-    let mesh = meshes[mesh_instance.mesh_index];
+    var mesh = meshes[mesh_instance.mesh_index];
+    mesh.apply_skin(mesh_instance);
     let mesh_lod = mesh.lods[mesh_instance.lod_index];
     let meshlet_bounds = mesh_lod.meshlet_bounds[meshlet_instance.meshlet_index];
     let aabb_center = meshlet_bounds.get_aabb_center();
@@ -55,10 +56,14 @@ func cs_main(
     let world_radius = transform.to_world_radius(length(aabb_extent * 0.5));
 
     var visible = HAS_FLAG(CULL_FLAGS, CullFlag.LatePass) ? true : was_visible;
-    visible = visible && (cone_cutoff >= 1.0 || !test_cone(world_center, world_radius, cone_axis, cone_cutoff, camera.position));
-    visible = visible && test_frustum(mvp, aabb_center, aabb_extent);
+    // bind-pose meshlet bounds are meaningless once the mesh deforms, so a skinned instance
+    // skips meshlet-level culling and relies on the per-mesh animated bounds instead
+    let skinned = mesh_instance.is_skinned();
 
-    if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) && visible) {
+    visible = visible && (skinned || cone_cutoff >= 1.0 || !test_cone(world_center, world_radius, cone_axis, cone_cutoff, camera.position));
+    visible = visible && (skinned || test_frustum(mvp, aabb_center, aabb_extent));
+
+    if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) && visible && !skinned) {
         if (let screen_aabb = project_aabb(mvp, camera.near_clip, aabb_center, aabb_extent)) {
             visible = !test_occlusion(screen_aabb, hiz_image);
         }

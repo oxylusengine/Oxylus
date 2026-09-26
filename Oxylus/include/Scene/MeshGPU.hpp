@@ -53,6 +53,9 @@ struct Mesh {
   alignas(8) u64 vertex_positions = 0;
   alignas(8) u64 vertex_normals = 0;
   alignas(8) u64 texture_coords = 0;
+  // u16x4 bone indices and u16x4 unorm weights, both null on a static mesh
+  alignas(8) u64 skin_joint_indices = 0;
+  alignas(8) u64 skin_weights = 0;
   alignas(4) u32 vertex_count = 0;
   alignas(4) u32 lod_count = 0;
   alignas(8) u64 lods = 0;

@@ -29,7 +29,8 @@ func cs_main(
     if (mesh_instance_index < ctx.mesh_instance_count) {
         let view = views[layer];
         let mesh_instance = mesh_instances[mesh_instance_index];
-        let mesh = meshes[mesh_instance.mesh_index];
+        var mesh = meshes[mesh_instance.mesh_index];
+        mesh.apply_skin(mesh_instance);
         let transform = transforms[mesh_instance.transform_index];
 
         let world_center = transform.to_world_position(mesh.bounds.aabb_center).xyz;

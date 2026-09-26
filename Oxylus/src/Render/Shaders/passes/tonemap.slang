@@ -718,6 +718,27 @@ f32x4 fs_main(VertexOutput input) {
         C.post_process_settings.film_grain_seed);
     }
 
+    if ((scene_flags & SceneFlags::HasLetterbox) != 0) {
+        let screen_aspect = f32(C.screen_size.x) / max(f32(C.screen_size.y), 1.0);
+        let target_aspect = C.post_process_settings.letterbox_aspect;
+        // fraction of the screen height one bar covers
+        let bar = saturate(target_aspect > 0.0
+            ? saturate(0.5 * (1.0 - screen_aspect / target_aspect)) * C.post_process_settings.letterbox_amount
+            : C.post_process_settings.letterbox_amount * 0.5);
+
+        // one pixel of feather at each edge, so the bar does not crawl while it animates
+        let feather = 1.0 / max(f32(C.screen_size.y), 1.0);
+        let v = input.tex_coord.y;
+        let inside = min(smoothstep(bar - feather, bar + feather, v),
+                         smoothstep(bar - feather, bar + feather, 1.0 - v));
+        color = lerp(C.post_process_settings.letterbox_color, color, inside);
+    }
+
+    // last, so it covers the bars too
+    if ((scene_flags & SceneFlags::HasScreenFade) != 0) {
+        color = lerp(color, C.post_process_settings.fade_color, saturate(C.post_process_settings.fade_amount));
+    }
+
     let alpha = ((scene_flags & SceneFlags::TransparentBackground) != 0) ? source.a : 1.0;
     return f32x4(color, alpha);
 }

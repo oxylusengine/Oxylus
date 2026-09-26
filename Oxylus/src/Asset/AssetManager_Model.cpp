@@ -4,6 +4,8 @@
 #include <vuk/Types.hpp>
 #include <vuk/vsl/Core.hpp>
 
+#include "Animation/AnimationClip.hpp"
+#include "Animation/Skeleton.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Render/AccelerationStructure.hpp"
@@ -37,6 +39,10 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
   gpu_mesh.vertex_normals = gpu_mesh_bda + mesh.vertex_normals_offset;
   if (mesh.has_texture_coords) {
     gpu_mesh.texture_coords = gpu_mesh_bda + mesh.texture_coords_offset;
+  }
+  if (mesh.has_skin) {
+    gpu_mesh.skin_joint_indices = gpu_mesh_bda + mesh.skin_joint_indices_offset;
+    gpu_mesh.skin_weights = gpu_mesh_bda + mesh.skin_weights_offset;
   }
   gpu_mesh.lods = gpu_mesh_bda + mesh.lod_metadata_offset;
 
@@ -107,7 +113,9 @@ auto to_collision_mesh(const ModelData::Mesh& mesh) -> Model::CollisionMesh {
   return collision;
 }
 
-auto AssetManager::load_model(this AssetManager& self, ModelData&& model_data, bool async) -> ModelID {
+auto AssetManager::load_model(
+  this AssetManager& self, ModelData&& model_data, const std::filesystem::path& model_path, bool async
+) -> ModelID {
   ZoneScoped;
 
   auto& job_man = App::get_job_manager();
@@ -167,6 +175,29 @@ auto AssetManager::load_model(this AssetManager& self, ModelData&& model_data, b
   model.textures = std::move(textures);
   model.materials = std::move(materials);
   model.default_scene_index = data->default_scene_index;
+  model.max_bone_influence_radius = data->skeleton.max_bone_influence_radius;
+
+  // the skeleton and the clips have no file of their own: the model pack is where they live, so
+  // publishing them here is the only way they ever enter the registry
+  if (!data->skeleton.bone_names.empty()) {
+    const auto skeleton_uuid = data->skeleton.uuid.unpack();
+    if (skeleton_uuid) {
+      model.skeleton_uuid = skeleton_uuid;
+      self.register_asset(skeleton_uuid, AssetType::Skeleton, model_path);
+      self.publish_skeleton(skeleton_uuid, to_skeleton(data->skeleton));
+
+      for (const auto& animation : data->animations) {
+        const auto animation_uuid = animation.uuid.unpack();
+        if (!animation_uuid || animation.frame_count == 0) {
+          continue;
+        }
+
+        self.register_asset(animation_uuid, AssetType::Animation, model_path);
+        self.publish_animation(animation_uuid, to_animation_clip(animation, skeleton_uuid));
+        model.animations.emplace_back(animation_uuid);
+      }
+    }
+  }
 
   model.lights.reserve(data->lights.size());
   for (const auto& light : data->lights) {
@@ -275,7 +306,7 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
 
   for (auto& entry : pack->entries) {
     if (auto* model_data = std::get_if<ModelData>(&entry.data)) {
-      return self.load_model(std::move(*model_data), async);
+      return self.load_model(std::move(*model_data), path, async);
     }
   }
 

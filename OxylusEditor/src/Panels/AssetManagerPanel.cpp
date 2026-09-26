@@ -25,6 +25,9 @@ constexpr AssetType FILTERABLE_ASSET_TYPES[] = {
   AssetType::Terrain,
   AssetType::Shader,
   AssetType::Font,
+  AssetType::Skeleton,
+  AssetType::Animation,
+  AssetType::Cinematic,
 };
 
 constexpr auto asset_type_bit(const AssetType type) -> u32 { return 1u << static_cast<u32>(type); }
@@ -42,8 +45,20 @@ enum class AssetColumn : i32 { Name = 0, Type, References, Status, UUID };
 static auto asset_type_label(const AssetType type) -> std::string_view { return AssetManager::to_asset_type_sv(type); }
 
 auto asset_display_name(const UUID& uuid, const std::filesystem::path& registry_path) -> std::string {
+  auto& asset_man = App::mod<AssetManager>();
+
   const auto source = asset_source(uuid);
   auto name = source.name.empty() ? registry_path.filename().string() : source.name;
+
+  // every clip of a model is its own asset sharing the model's file, so the file name alone renders
+  // them as a row of identical entries
+  auto animation_id = AnimationID::Invalid;
+  if (auto asset = asset_man.get_asset(uuid); asset && asset->type == AssetType::Animation) {
+    animation_id = asset->animation_id;
+  }
+  if (auto clip = asset_man.get_animation(animation_id); clip && !clip->name.empty()) {
+    return fmt::format("{} ({})", clip->name, name);
+  }
 
   return name.empty() ? uuid.str() : name;
 }
@@ -77,6 +92,9 @@ auto asset_type_icon(const AssetType type) -> const c8* {
     case AssetType::Script        : return ICON_MDI_LANGUAGE_LUA;
     case AssetType::Terrain       : return ICON_MDI_TERRAIN;
     case AssetType::ParticleSystem: return ICON_MDI_SHIMMER;
+    case AssetType::Skeleton      : return ICON_MDI_BONE;
+    case AssetType::Animation     : return ICON_MDI_ANIMATION_PLAY;
+    case AssetType::Cinematic     : return ICON_MDI_MOVIE_OPEN;
   }
 
   return ICON_MDI_HELP_CIRCLE_OUTLINE;
@@ -450,6 +468,15 @@ auto AssetBrowser::draw_details(this AssetBrowser& self, const Asset& asset) -> 
   UI::text("References", stack.format("{}", asset.ref_count));
   UI::input_text("UUID", &uuid_str, ImGuiInputTextFlags_ReadOnly);
   UI::input_text("Path", &path_str, ImGuiInputTextFlags_ReadOnly);
+  if (asset.type == AssetType::Cinematic) {
+    if (auto cinematic = asset_man.get_cinematic(asset.cinematic_id)) {
+      UI::text("Duration", stack.format("{:.2f}s", cinematic->duration));
+      UI::text(
+        "Tracks",
+        stack.format("{} camera, {} property", cinematic->camera_tracks.size(), cinematic->property_tracks.size())
+      );
+    }
+  }
   UI::end_properties();
 
   const auto button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
