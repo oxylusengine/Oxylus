@@ -107,7 +107,7 @@ auto os::file_open(const std::filesystem::path& path, FileAccess access) -> std:
       case EEXIST: return std::unexpected(FileError::Exists);
       case EISDIR: return std::unexpected(FileError::IsDir);
       case EBUSY : return std::unexpected(FileError::InUse);
-      case ENOENT: return std::unexpected(FileError::Exists);
+      case ENOENT: return std::unexpected(FileError::NotFound);
       default    : return std::unexpected(FileError::Unknown);
     }
   }

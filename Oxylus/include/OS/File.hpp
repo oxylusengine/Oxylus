@@ -1,5 +1,6 @@
 #pragma once
 
+#include <expected>
 #include <string_view>
 #include <vector>
 
@@ -8,6 +9,8 @@
 #include "OS/OS.hpp"
 
 namespace ox {
+auto file_error_to_str(FileError error) -> std::string_view;
+
 struct File {
   option<FileDescriptor> handle = nullopt;
   usize size = 0;
@@ -49,6 +52,7 @@ struct File {
 
   static auto to_bytes(const std::filesystem::path& path) -> std::vector<u8>;
   static auto to_string(const std::filesystem::path& path) -> std::string;
+  static auto try_to_string(const std::filesystem::path& path) -> std::expected<std::string, FileError>;
   static auto to_stdout(std::string_view str) -> void;
   static auto to_stderr(std::string_view str) -> void;
 
