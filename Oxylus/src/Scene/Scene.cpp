@@ -805,13 +805,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.system<const TransformComponent, AudioListenerComponent>("audio_listener_update")
     .kind(flecs::PreUpdate)
-    .each([&self](const flecs::entity& e, const TransformComponent& tc, AudioListenerComponent& ac) {
+    .each([&self](const flecs::entity& e, const TransformComponent&, AudioListenerComponent& ac) {
       if (ac.active) {
         auto& audio_engine = App::mod<AudioEngine>();
-        const glm::mat4 inverted = glm::inverse(self.get_world_transform(e));
-        const glm::vec3 forward = normalize(glm::vec3(inverted[2]));
-        audio_engine.set_listener_position(ac.listener_index, tc.position);
-        audio_engine.set_listener_direction(ac.listener_index, -forward);
+        const auto world = self.get_world_transform(e);
+        // local +z in world space, the listener faces down -z like the camera
+        const auto back = glm::normalize(glm::vec3(world[2]));
+        audio_engine.set_listener_position(ac.listener_index, glm::vec3(world[3]));
+        audio_engine.set_listener_direction(ac.listener_index, -back);
         audio_engine.set_listener_cone(ac.listener_index, ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
       }
     });
