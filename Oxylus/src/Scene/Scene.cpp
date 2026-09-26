@@ -514,8 +514,33 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.observer<TransformComponent, MeshComponent>()
     .event(flecs::OnRemove)
     .each([&self](flecs::iter& it, usize i, TransformComponent&, MeshComponent& mc) {
-      if (mc.model_uuid) {
-        self.detach_mesh(it.entity(i));
+      if (!mc.model_uuid) {
+        return;
+      }
+
+      const auto entity = it.entity(i);
+      if (!self.detach_mesh(entity) || !mc.cast_shadows || self.tearing_down) {
+        return;
+      }
+
+      auto push_bounds = [&self](const AABB& box) {
+        self.removed_mesh_bounds.push_back({.aabb_center = box.get_center(), .aabb_extent = box.get_size()});
+      };
+
+      // the gpu transform is what the shadow was last drawn with, and it may still be at the
+      // previous position if the mesh moved this frame
+      const GPU::Transforms* transform = nullptr;
+      if (auto transform_id = self.get_entity_transform_id(entity)) {
+        transform = self.get_entity_transform(*transform_id);
+      }
+      if (!transform) {
+        push_bounds(mc.world_aabb);
+        return;
+      }
+
+      push_bounds(mc.baked_aabb.get_transformed(transform->world));
+      if (transform->previous_world != transform->world) {
+        push_bounds(mc.baked_aabb.get_transformed(transform->previous_world));
       }
     });
 
@@ -1308,6 +1333,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
       .gpu_mesh_blas_addresses = blas_addresses,
       .gpu_mesh_instances = gpu_mesh_instances,
       .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices,
+      .removed_mesh_bounds = self.removed_mesh_bounds,
     };
     self.renderer_instance->update(update_info, self.renderer_cvar);
 
@@ -2882,6 +2908,7 @@ auto Scene::render(
   // The prepared frame is consumed here, so the dirty state it covers has now really been submitted.
   self.dirty_transforms.clear();
   self.dirty_mesh_instances.clear();
+  self.removed_mesh_bounds.clear();
   self.meshes_dirty = false;
 
   auto scene_surface = ri->render(

@@ -2536,6 +2536,19 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
     self.prepared_frame.dirty_mesh_instances_buffer = std::move(dirty_mesh_instances_buffer);
   }
+  if (!info.removed_mesh_bounds.empty()) {
+    self.prepared_frame.removed_mesh_bounds_count = static_cast<u32>(info.removed_mesh_bounds.size());
+    auto removed_mesh_bounds_buffer = render_context.alloc_transient_buffer(
+      vuk::MemoryUsage::eCPUtoGPU,
+      info.removed_mesh_bounds.size_bytes()
+    );
+    std::memcpy(
+      removed_mesh_bounds_buffer->mapped_ptr,
+      info.removed_mesh_bounds.data(),
+      info.removed_mesh_bounds.size_bytes()
+    );
+    self.prepared_frame.removed_mesh_bounds_buffer = std::move(removed_mesh_bounds_buffer);
+  }
   if (info.max_meshlet_instance_count > 0) {
     self.prepared_frame.meshlet_instances_buffer = render_context.alloc_transient_buffer(
       vuk::MemoryUsage::eGPUonly,

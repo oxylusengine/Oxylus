@@ -77,6 +77,9 @@ public:
   // that is created and never touched again keeps a zero `previous_world` on the GPU forever.
   std::vector<GPU::TransformID> previously_dirty_transforms = {};
   std::vector<MeshInstanceID> dirty_mesh_instances = {};
+  // last world boxes of shadow casters removed since the previous render, their shadow pages have to
+  // be invalidated since no instance buffer holds them anymore
+  std::vector<GPU::MeshBounds> removed_mesh_bounds = {};
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
   ankerl::unordered_dense::map<u32, flecs::entity> transform_index_entities_map = {};
