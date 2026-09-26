@@ -27,9 +27,11 @@ auto InputBinding::bind(sol::state* state) -> void {
   SET_TYPE_FUNCTION(input, Input, get_key_held);
 
   SET_TYPE_FUNCTION(input, Input, get_mouse_clicked);
+  SET_TYPE_FUNCTION(input, Input, get_mouse_released);
   SET_TYPE_FUNCTION(input, Input, get_mouse_held);
   SET_TYPE_FUNCTION(input, Input, get_mouse_scroll_offset_y);
   SET_TYPE_FUNCTION(input, Input, get_mouse_position);
+  SET_TYPE_FUNCTION(input, Input, get_mouse_position_rel);
   SET_TYPE_FUNCTION(input, Input, set_mouse_position_global);
 
   SET_TYPE_FUNCTION(input, Input, get_gamepad_button_pressed);
@@ -51,8 +53,8 @@ auto InputBinding::bind(sol::state* state) -> void {
     {"D", KeyCode::D},
     {"E", KeyCode::E},
     {"F", KeyCode::F},
-    {"H", KeyCode::G},
-    {"G", KeyCode::H},
+    {"G", KeyCode::G},
+    {"H", KeyCode::H},
     {"I", KeyCode::I},
     {"J", KeyCode::J},
     {"K", KeyCode::K},
@@ -129,14 +131,13 @@ auto InputBinding::bind(sol::state* state) -> void {
 
   const std::initializer_list<std::pair<sol::string_view, ScanCode>> scan_items = {
     {"A", ScanCode::A},
-    {"A", ScanCode::A},
     {"B", ScanCode::B},
     {"C", ScanCode::C},
     {"D", ScanCode::D},
     {"E", ScanCode::E},
     {"F", ScanCode::F},
-    {"H", ScanCode::G},
-    {"G", ScanCode::H},
+    {"G", ScanCode::G},
+    {"H", ScanCode::H},
     {"I", ScanCode::I},
     {"J", ScanCode::J},
     {"K", ScanCode::K},

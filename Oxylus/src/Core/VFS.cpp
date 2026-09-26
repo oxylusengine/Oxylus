@@ -3,46 +3,44 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-auto VFS::is_mounted_dir(const std::filesystem::path& virtual_dir) -> bool {
+auto VFS::is_mounted_dir(this const VFS& self, const std::filesystem::path& virtual_dir) -> bool {
   ZoneScoped;
-  return mapped_dirs.contains(virtual_dir);
+  return self.mapped_dirs.contains(virtual_dir);
 }
 
-auto VFS::mount_dir(const std::filesystem::path& virtual_dir, const std::filesystem::path& physical_dir) -> void {
+auto VFS::mount_dir(this VFS& self, const std::filesystem::path& virtual_dir, const std::filesystem::path& physical_dir)
+  -> void {
   ZoneScoped;
-  mapped_dirs.emplace(virtual_dir, physical_dir);
+  self.mapped_dirs.insert_or_assign(virtual_dir, physical_dir);
 }
 
-auto VFS::unmount_dir(const std::filesystem::path& virtual_dir) -> void {
+auto VFS::unmount_dir(this VFS& self, const std::filesystem::path& virtual_dir) -> void {
   ZoneScoped;
-  mapped_dirs.erase(virtual_dir);
+  self.mapped_dirs.erase(virtual_dir);
 }
 
-auto VFS::resolve_physical_dir(const std::filesystem::path& virtual_dir, const std::filesystem::path& file_path)
-  -> std::filesystem::path {
+auto VFS::resolve_physical_dir(
+  this const VFS& self, const std::filesystem::path& virtual_dir, const std::filesystem::path& file_path
+) -> std::filesystem::path {
   ZoneScoped;
-  if (!mapped_dirs.contains(virtual_dir)) {
+  const auto it = self.mapped_dirs.find(virtual_dir);
+  if (it == self.mapped_dirs.end()) {
     OX_LOG_ERROR("Not a mounted virtual dir: {}", virtual_dir);
     return {};
   }
 
-  const auto physical_dir = mapped_dirs[virtual_dir];
-
-  return physical_dir / file_path;
+  return it->second / file_path;
 }
 
-auto VFS::resolve_virtual_dir(const std::filesystem::path& file_path) -> std::filesystem::path {
+auto VFS::resolve_virtual_dir(this const VFS& self, const std::filesystem::path& file_path) -> std::filesystem::path {
   ZoneScoped;
 
-  auto file_path_str = file_path.string();
-
-  for (const auto& [virtual_dir, physical_dir] : mapped_dirs) {
-    auto physical_dir_str = physical_dir.string();
-
-    if (file_path_str.starts_with(physical_dir_str)) {
-      const std::string relative_path = file_path_str.substr(physical_dir_str.length() + 1);
-      return physical_dir.filename() / relative_path;
-    }
+  const auto normalized_path = file_path.lexically_normal();
+  for (const auto& [virtual_dir, physical_dir] : self.mapped_dirs) {
+    // component-wise, so "Assets2/x" doesn't match a mount at "Assets"
+    const auto relative_path = normalized_path.lexically_relative(physical_dir.lexically_normal());
+    if (!relative_path.empty() && *relative_path.begin() != "..")
+      return virtual_dir / relative_path;
   }
 
   OX_LOG_ERROR("Could not resolve virtual dir for: {}", file_path);
