@@ -2278,8 +2278,8 @@ auto build_collider_shape(
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), bc->friction, bc->restitution);
 
-    glm::vec3 scale = bc->size;
-    JPH::BoxShapeSettings shape_settings({glm::abs(scale.x), glm::abs(scale.y), glm::abs(scale.z)}, 0.05f, mat);
+    const auto half_extents = glm::abs(bc->size * world_scale);
+    JPH::BoxShapeSettings shape_settings({half_extents.x, half_extents.y, half_extents.z}, 0.05f, mat);
     shape_settings.SetDensity(glm::max(0.001f, bc->density));
     offset = bc->offset;
     return shape_settings.Create();
@@ -2289,7 +2289,7 @@ auto build_collider_shape(
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), scc->friction, scc->restitution);
 
-    float radius = 2.0f * scc->radius * max_scale_component;
+    float radius = scc->radius * max_scale_component;
     JPH::SphereShapeSettings shape_settings(glm::max(0.01f, radius), mat);
     shape_settings.SetDensity(glm::max(0.001f, scc->density));
     offset = scc->offset;
@@ -2300,8 +2300,9 @@ auto build_collider_shape(
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), ccc->friction, ccc->restitution);
 
-    float radius = 2.0f * ccc->radius * max_scale_component;
-    JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, ccc->height) * 0.5f, glm::max(0.01f, radius), mat);
+    float radius = ccc->radius * max_scale_component;
+    float height = ccc->height * world_scale.y;
+    JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, height) * 0.5f, glm::max(0.01f, radius), mat);
     shape_settings.SetDensity(glm::max(0.001f, ccc->density));
     offset = ccc->offset;
     return shape_settings.Create();
@@ -2311,14 +2312,11 @@ auto build_collider_shape(
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), tcc->friction, tcc->restitution);
 
-    float top_radius = 2.0f * tcc->top_radius * max_scale_component;
-    float bottom_radius = 2.0f * tcc->bottom_radius * max_scale_component;
-    JPH::TaperedCapsuleShapeSettings shape_settings(
-      glm::max(0.01f, tcc->height) * 0.5f,
-      glm::max(0.01f, top_radius),
-      glm::max(0.01f, bottom_radius),
-      mat
-    );
+    float top_radius = tcc->top_radius * max_scale_component;
+    float bottom_radius = tcc->bottom_radius * max_scale_component;
+    float height = tcc->height * world_scale.y;
+    JPH::TaperedCapsuleShapeSettings
+      shape_settings(glm::max(0.01f, height) * 0.5f, glm::max(0.01f, top_radius), glm::max(0.01f, bottom_radius), mat);
     shape_settings.SetDensity(glm::max(0.001f, tcc->density));
     offset = tcc->offset;
     return shape_settings.Create();
@@ -2328,9 +2326,9 @@ auto build_collider_shape(
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cycc->friction, cycc->restitution);
 
-    float radius = 2.0f * cycc->radius * max_scale_component;
-    JPH::CylinderShapeSettings
-      shape_settings(glm::max(0.01f, cycc->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
+    float radius = cycc->radius * max_scale_component;
+    float height = cycc->height * world_scale.y;
+    JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
     shape_settings.SetDensity(glm::max(0.001f, cycc->density));
     offset = cycc->offset;
     return shape_settings.Create();
