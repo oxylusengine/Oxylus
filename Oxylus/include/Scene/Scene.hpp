@@ -133,6 +133,10 @@ public:
   f32 physics_interval = 1.f / 60.f; // used only on initialization
 
   std::vector<GPU::TransformID> dirty_transforms = {};
+  // `previous_world` is only corrected after the renderer has already uploaded, so the corrected
+  // value has to be re-uploaded the frame after a transform goes dirty. Without this a transform
+  // that is created and never touched again keeps a zero `previous_world` on the GPU forever.
+  std::vector<GPU::TransformID> previously_dirty_transforms = {};
   std::vector<MeshInstanceID> dirty_mesh_instances = {};
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
@@ -141,6 +145,7 @@ public:
   bool input_focused = true;
 
   RendererCVar renderer_cvar = {};
+  DebugRenderer debug_renderer = {};
 
   SlotMap<MeshInstance, MeshInstanceID> mesh_instances = {};
   ankerl::unordered_dense::map<flecs::entity, MeshInstanceID> entity_to_mesh_instance_map = {};
@@ -380,7 +385,6 @@ private:
   // Physics
   std::shared_mutex physics_mutex = {};
   std::unique_ptr<JPH::PhysicsSystem> physics_system = nullptr;
-  std::unique_ptr<PhysicsDebugRenderer> physics_debug_renderer = nullptr;
   std::unique_ptr<Physics3DContactListener> contact_listener_3d = nullptr;
   std::unique_ptr<Physics3DBodyActivationListener> body_activation_listener_3d = nullptr;
   JPH::BodyID terrain_body_id = {};

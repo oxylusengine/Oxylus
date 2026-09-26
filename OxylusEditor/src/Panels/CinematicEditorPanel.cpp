@@ -712,7 +712,12 @@ auto CinematicEditorPanel::on_update(this CinematicEditorPanel& self) -> void {
 auto CinematicEditorPanel::draw_path_overlay(this CinematicEditorPanel& self) -> void {
   ZoneScoped;
 
-  auto& debug_renderer = App::mod<DebugRenderer>();
+  auto* scene = self.active_scene();
+  if (scene == nullptr) {
+    return;
+  }
+
+  auto& debug_renderer = scene->debug_renderer;
 
   for (usize i = 0; i < self.camera_tracks.size(); i++) {
     const auto& track = self.camera_tracks[i];

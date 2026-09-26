@@ -7,8 +7,10 @@
 #include "Animation/Fwd.hpp"
 #include "Asset/Texture.hpp"
 #include "Render/AccelerationStructure.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererCVar.hpp"
+#include "Render/Upscaler.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Scene/Terrain.hpp"
 
@@ -266,9 +268,8 @@ struct PreparedFrame {
   bool particle_pool_reset = false;
   bool particle_sort_enabled = false;
 
-  u32 line_index_count = 0;
-  u32 triangle_index_count = 0;
-  vuk::Value<vuk::Buffer> debug_renderer_verticies_buffer = {};
+  DebugRenderer::DrawRanges debug_draw_ranges = {};
+  vuk::Value<vuk::Buffer> debug_renderer_vertices_buffer = {};
 };
 
 struct ParticleContext {
@@ -287,6 +288,8 @@ struct ParticleContext {
   vuk::Value<vuk::Buffer> camera_buffer = {};
   vuk::Value<vuk::Buffer> materials_buffer = {};
   vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  // alpha blended particles have no usable motion vector, so they mark themselves reactive instead
+  vuk::Value<vuk::ImageAttachment> reactive_mask_attachment = {};
 
   vuk::Value<vuk::Buffer> particles_buffer = {};
   vuk::Value<vuk::Buffer> sort_keys_buffer = {};
@@ -362,6 +365,7 @@ struct MainGeometryContext {
   vuk::Value<vuk::ImageAttachment> normal_attachment = {};
   vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> velocity_attachment = {};
 
   vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
   vuk::Value<vuk::Buffer> visibility_buffer = {};
@@ -414,6 +418,7 @@ struct TerrainDecodeContext {
   vuk::Value<vuk::ImageAttachment> normal_attachment = {};
   vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
   vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
+  vuk::Value<vuk::ImageAttachment> velocity_attachment = {};
 };
 
 struct RMVSMContext {
@@ -675,6 +680,42 @@ struct DebugContext {
   vuk::Value<vuk::ImageAttachment> vsm_pointspot_page_table_attachment = {};
 };
 
+// Reactivity is a coverage value in [0, 1], so overlapping alpha blended draws combine as
+// `src + dst * (1 - src)` rather than summing. That saturates instead of running away, and treats
+// two half covering layers as covering more than either alone, which is what actually happened.
+//
+// BlendOp::eMax would say "take the strongest layer" more directly, but it hangs the Metal Vulkan
+// driver inside its NIR lowering, apparently while lowering max blending into the shader. Nothing
+// else in the engine uses eMax, so that path had never been exercised.
+constexpr static auto REACTIVE_MASK_BLEND_STATE = vuk::PipelineColorBlendAttachmentState{
+  .blendEnable = true,
+  .srcColorBlendFactor = vuk::BlendFactor::eOne,
+  .dstColorBlendFactor = vuk::BlendFactor::eOneMinusSrcColor,
+  .colorBlendOp = vuk::BlendOp::eAdd,
+  .srcAlphaBlendFactor = vuk::BlendFactor::eOne,
+  .dstAlphaBlendFactor = vuk::BlendFactor::eOneMinusSrcAlpha,
+  .alphaBlendOp = vuk::BlendOp::eAdd,
+};
+
+struct FSR3Context {
+  GPU::FSR3Constants constants = {};
+  // 0 skips the RCAS pass, in which case the accumulate pass writes the final output itself
+  f32 sharpness = 0.0f;
+  // drops history and treats every pixel as a new sample, for the first frame and after a
+  // resolution or quality change
+  bool reset = false;
+  // diagnostic: non-zero replaces the output with an intermediate, see pp.upscaler_debug_view
+  u32 debug_view = 0;
+
+  vuk::Value<vuk::ImageAttachment> color_attachment = {};
+  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vuk::Value<vuk::ImageAttachment> velocity_attachment = {};
+  vuk::Value<vuk::ImageAttachment> reactive_mask_attachment = {};
+  vuk::Value<vuk::Buffer> exposure_buffer = {};
+
+  vuk::Value<vuk::ImageAttachment> output_attachment = {};
+};
+
 struct PostProcessContext {
   f32 delta_time = 0.0f;
   vuk::Extent3D extent = {};
@@ -728,6 +769,10 @@ public:
 
   auto get_viewport_size(this const RendererInstance& self) -> glm::uvec2 { return self.viewport_size_; }
 
+  // resolution the scene is actually rasterized at; below the display size while an upscaler runs,
+  // so anything indexing the visbuffer or g-buffer by pixel has to go through this
+  auto get_render_size(this const RendererInstance& self) -> glm::uvec2 { return self.render_size_; }
+
   auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
   auto skin_vertices(this RendererInstance& self) -> void;
   auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
@@ -768,7 +813,7 @@ public:
   auto draw_ddgi_probes(
     this RendererInstance& self, DDGIDebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
   ) -> vuk::Value<vuk::ImageAttachment>;
-  auto draw_bounding_boxes(
+  auto draw_debug_shapes(
     this RendererInstance&,
     vuk::Value<vuk::ImageAttachment>&& depth_attachment,
     vuk::Value<vuk::ImageAttachment>&& dst_attachment
@@ -781,6 +826,9 @@ public:
   ) -> vuk::Value<vuk::ImageAttachment>;
 
   auto update_vbgtao_info(this RendererInstance&, const RendererCVar& cvar) -> void;
+
+  auto allocate_fsr3_resources(this RendererInstance& self, glm::uvec2 render_size, glm::uvec2 display_size) -> void;
+  auto apply_fsr3(this RendererInstance& self, FSR3Context& context) -> vuk::Value<vuk::ImageAttachment>;
 
 private:
   bool update_ran_this_frame = false; // Sanity Check
@@ -802,6 +850,12 @@ private:
   glm::uvec2 viewport_size_ = {};
   glm::uvec2 viewport_origin_ = {};
   glm::uvec2 surface_size_ = {};
+  // resolution the scene is rasterized at, below the display size whenever an upscaler is active
+  glm::uvec2 render_size_ = {};
+
+  glm::vec2 current_jitter = {};
+  glm::vec2 previous_jitter = {};
+  u32 jitter_frame_index = 0;
 
   vuk::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
   vuk::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
@@ -854,7 +908,8 @@ private:
   vuk::Unique<vuk::Buffer> skinned_blas_addresses_buffer{};
   SkinnedBLASPool skinned_blas_pool{};
   SceneTLAS scene_tlas{};
-  vuk::Unique<vuk::Buffer> debug_renderer_verticies_buffer{};
+  // kept across frames to reuse its capacity
+  std::vector<DebugRenderer::Vertex> debug_vertices = {};
   vuk::Unique<vuk::Buffer> lights_buffer{};
   vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
   vuk::Unique<vuk::Buffer> terrain_patch_visibility_mask_buffer{};
@@ -883,6 +938,26 @@ private:
   vuk::Unique<vuk::Image> ddgi_distance{};
   vuk::Unique<vuk::ImageView> ddgi_distance_view{};
   vuk::ImageAttachment ddgi_distance_attachment = {};
+
+  // FSR3 history. the ping-pong pairs alternate on `fsr3_history_ping` each frame; sizes are keyed
+  // on `fsr3_render_size` / `fsr3_display_size` so a resize reallocates and forces a history reset
+  glm::uvec2 fsr3_render_size = {};
+  glm::uvec2 fsr3_display_size = {};
+  bool fsr3_history_valid = false;
+  bool fsr3_history_ping = false;
+  u32 fsr3_frame_index = 0;
+  glm::uvec2 fsr3_previous_render_size = {};
+  glm::uvec2 fsr3_previous_display_size = {};
+  glm::vec2 fsr3_previous_jitter = {};
+  struct FSR3History {
+    vuk::Unique<vuk::Image> image{};
+    vuk::Unique<vuk::ImageView> view{};
+    vuk::ImageAttachment attachment = {};
+  };
+  std::array<FSR3History, 2> fsr3_internal_upscaled_color{};
+  std::array<FSR3History, 2> fsr3_accumulation{};
+  std::array<FSR3History, 2> fsr3_luma{};
+  std::array<FSR3History, 2> fsr3_luma_history{};
 
   Texture vsm_virtual_page_table = {};
   Texture vsm_pointspot_virtual_page_table = {};

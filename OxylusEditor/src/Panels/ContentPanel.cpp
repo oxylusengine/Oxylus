@@ -4,6 +4,7 @@
 #include <bit>
 #include <chrono>
 #include <ctime>
+#include <expected>
 #include <filesystem>
 #include <fmt/chrono.h>
 #include <icons/IconsMaterialDesignIcons.h>
@@ -240,6 +241,18 @@ static auto file_type_label(const FileType type) -> const char* {
   return it != FILE_TYPES_TO_STRING.end() ? it->second : "Unknown";
 }
 
+// File types the thumbnail manager can draw a preview for; everything else falls back to its icon.
+static auto previewable_asset_type(const FileType type) -> AssetType {
+  switch (type) {
+    case FileType::Texture : return AssetType::Texture;
+    case FileType::Model   : return AssetType::Model;
+    case FileType::Material: return AssetType::Material;
+    case FileType::Terrain : return AssetType::Terrain;
+    case FileType::Audio   : return AssetType::Audio;
+    default                : return AssetType::None;
+  }
+}
+
 static auto file_type_icon(const FileType type) -> const char* {
   const auto it = FILE_TYPES_TO_ICON.find(type);
   return it != FILE_TYPES_TO_ICON.end() ? it->second : ICON_MDI_FILE;
@@ -292,8 +305,223 @@ auto classify_file_type(const std::filesystem::path& path) -> FileType {
   return file_type;
 }
 
-static bool drag_drop_target(const std::filesystem::path& drop_path) {
+static auto update_selected_path(const std::filesystem::path& old_path, const std::filesystem::path& new_path) -> void {
+  auto& editor_context = App::mod<Editor>().get_context();
+  if (editor_context.type != EditorContext::Type::File || !editor_context.str.has_value()) {
+    return;
+  }
+
+  if (const auto relocated_path = remap_path(std::filesystem::path(*editor_context.str), old_path, new_path)) {
+    editor_context.reset(EditorContext::Type::File, relocated_path->string());
+  }
+}
+
+static auto entry_name_error(std::string_view name) -> std::string_view {
+  if (name.empty())
+    return "Enter a name.";
+  if (name == "." || name == ".." || name.find_first_of("/\\") != std::string_view::npos)
+    return "Names cannot contain path separators.";
+  return {};
+}
+
+// a visible sidecar describes its sibling, so moving or renaming it has to carry that sibling along,
+// otherwise the asset would lose its stable UUID on the next import
+static auto content_entry_source(const std::filesystem::path& path, std::error_code& error) -> std::filesystem::path {
+  if (std::filesystem::is_directory(path, error) || error || path.extension() != ".oxasset")
+    return path;
+
+  auto companion_path = path;
+  companion_path.replace_extension();
+  if (std::filesystem::exists(companion_path, error) && !error)
+    return companion_path;
+
+  return path;
+}
+
+// on case-insensitive filesystems a case-only rename finds its own source at the destination
+static auto destination_taken(
+  const std::filesystem::path& source_path, const std::filesystem::path& destination_path, std::error_code& error
+) -> bool {
+  return std::filesystem::exists(destination_path, error) &&
+         !std::filesystem::equivalent(source_path, destination_path, error);
+}
+
+static auto relocate_content_entry(
+  const std::filesystem::path& source_path, const std::filesystem::path& destination_path, bool is_directory
+) -> std::expected<void, std::string> {
+  std::error_code error;
+  if (destination_taken(source_path, destination_path, error) || error) {
+    return std::unexpected(fmt::format("{} already exists or can't be inspected.", destination_path.filename()));
+  }
+
+  const auto source_meta_path = is_directory ? std::filesystem::path{} : meta_file_path(source_path);
+  const bool has_meta_file = !source_meta_path.empty() && source_meta_path != source_path &&
+                             std::filesystem::exists(source_meta_path, error) && !error;
+  if (error) {
+    return std::unexpected(fmt::format("Couldn't inspect sidecar for {}: {}", source_path, error.message()));
+  }
+
+  const auto destination_meta_path = has_meta_file ? meta_file_path(destination_path) : std::filesystem::path{};
+  if (has_meta_file && (destination_taken(source_meta_path, destination_meta_path, error) || error)) {
+    return std::unexpected(
+      fmt::format("Sidecar {} already exists or can't be inspected.", destination_meta_path.filename())
+    );
+  }
+
+  std::filesystem::rename(source_path, destination_path, error);
+  if (error) {
+    return std::unexpected(error.message());
+  }
+
+  if (has_meta_file) {
+    std::filesystem::rename(source_meta_path, destination_meta_path, error);
+    if (error) {
+      const auto sidecar_error = error;
+      std::error_code rollback_error;
+      std::filesystem::rename(destination_path, source_path, rollback_error);
+      return std::unexpected(
+        fmt::format(
+          "Couldn't move sidecar {} to {}: {}{}",
+          source_meta_path,
+          destination_meta_path,
+          sidecar_error.message(),
+          rollback_error ? fmt::format(" (and couldn't restore {}: {})", source_path, rollback_error.message()) : ""
+        )
+      );
+    }
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+  relocate_asset_paths(asset_man, source_path, destination_path);
+
+  // Standalone assets consist only of an `.oxasset`; their registered path omits that extension.
+  if (!is_directory && source_path.extension() == ".oxasset" && source_meta_path == source_path) {
+    auto source_asset_path = source_path;
+    source_asset_path.replace_extension();
+    auto destination_asset_path = destination_path;
+    destination_asset_path.replace_extension();
+    relocate_asset_paths(asset_man, source_asset_path, destination_asset_path);
+  }
+
+  update_selected_path(source_path, destination_path);
+  if (has_meta_file) {
+    update_selected_path(source_meta_path, destination_meta_path);
+  }
+
+  return {};
+}
+
+static auto move_content_entry(
+  const std::filesystem::path& requested_path,
+  const std::filesystem::path& drop_path,
+  const std::filesystem::path& assets_directory
+) -> bool {
+  const auto normalized_root = assets_directory.lexically_normal();
+  const auto normalized_requested_path = requested_path.lexically_normal();
+  const auto normalized_drop_path = drop_path.lexically_normal();
+
+  const auto is_in_assets_directory = [&normalized_root](const std::filesystem::path& path) {
+    const auto normalized_path = path.lexically_normal();
+    if (normalized_path == normalized_root) {
+      return true;
+    }
+
+    const auto relative_path = normalized_path.lexically_relative(normalized_root);
+    if (relative_path.empty() || relative_path.is_absolute()) {
+      return false;
+    }
+
+    return std::ranges::none_of(relative_path, [](const auto& component) { return component == ".."; });
+  };
+
+  std::error_code error;
+  if (
+    !is_in_assets_directory(normalized_requested_path) || !is_in_assets_directory(normalized_drop_path) ||
+    !std::filesystem::exists(normalized_requested_path, error) || error ||
+    !std::filesystem::is_directory(normalized_drop_path, error) || error
+  ) {
+    OX_LOG_ERROR(
+      "Couldn't move {} into {}: source or target is outside the asset directory or unavailable.",
+      requested_path,
+      drop_path
+    );
+    return false;
+  }
+
+  const auto source_path = content_entry_source(normalized_requested_path, error);
+  if (error) {
+    OX_LOG_ERROR("Couldn't inspect {} before moving it: {}", requested_path, error.message());
+    return false;
+  }
+
+  const bool is_directory = std::filesystem::is_directory(source_path, error);
+  if (error) {
+    OX_LOG_ERROR("Couldn't inspect {} before moving it: {}", source_path, error.message());
+    return false;
+  }
+
+  if (source_path.parent_path().lexically_normal() == normalized_drop_path) {
+    return false;
+  }
+
+  // Moving a directory into itself (or any child) would create an invalid recursive move.
+  if (is_directory && remap_path(normalized_drop_path, source_path, source_path)) {
+    OX_LOG_ERROR("Can't move directory {} into itself.", source_path);
+    return false;
+  }
+
+  if (
+    const auto moved = relocate_content_entry(source_path, normalized_drop_path / source_path.filename(), is_directory);
+    !moved
+  ) {
+    OX_LOG_ERROR("Couldn't move {} into {}: {}", source_path, normalized_drop_path, moved.error());
+    return false;
+  }
+
+  return true;
+}
+
+static auto rename_content_entry(const std::filesystem::path& requested_path, std::string_view new_name)
+  -> std::expected<void, std::string> {
+  const auto normalized_requested_path = requested_path.lexically_normal();
+  const bool requested_meta_file = normalized_requested_path.extension() == ".oxasset";
+
+  // whatever sits behind an `.oxasset` stays one, whether or not the typed name keeps the extension
+  auto base_name = new_name;
+  if (requested_meta_file && base_name.ends_with(".oxasset"))
+    base_name.remove_suffix(std::string_view(".oxasset").size());
+
+  if (const auto name_error = entry_name_error(base_name); !name_error.empty())
+    return std::unexpected(std::string(name_error));
+
+  std::error_code error;
+  const auto source_path = content_entry_source(normalized_requested_path, error);
+  if (error)
+    return std::unexpected(fmt::format("Couldn't inspect {}: {}", requested_path, error.message()));
+
+  const bool is_directory = std::filesystem::is_directory(source_path, error);
+  if (error)
+    return std::unexpected(fmt::format("Couldn't inspect {}: {}", source_path, error.message()));
+
+  auto destination_path = source_path.parent_path() / base_name;
+  if (requested_meta_file && source_path == normalized_requested_path)
+    destination_path += ".oxasset";
+
+  if (destination_path == source_path)
+    return {};
+
+  return relocate_content_entry(source_path, destination_path, is_directory);
+}
+
+static bool drag_drop_target(const std::filesystem::path& drop_path, const std::filesystem::path& assets_directory) {
   if (ImGui::BeginDragDropTarget()) {
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
+      const auto* source = PayloadData::from_payload(payload);
+      const bool moved = move_content_entry(source->get_path(), drop_path, assets_directory);
+      ImGui::EndDragDropTarget();
+      return moved;
+    }
+
     const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_TARGET);
     if (payload) {
       auto* asset = static_cast<PayloadData*>(payload->Data);
@@ -537,7 +765,8 @@ auto ContentPanel::directory_tree_view_recursive(
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
       self.update_directory_entries(entry_path);
 
-    drag_drop_target(entry_path);
+    if (drag_drop_target(entry_path, self.assets_directory))
+      self.refresh_requested = true;
     drag_drop_from(entry_path);
 
     ImGui::SameLine();
@@ -939,6 +1168,8 @@ void ContentPanel::render_side_view(this ContentPanel& self) {
 
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
       self.update_directory_entries(self.assets_directory);
+    if (drag_drop_target(self.assets_directory, self.assets_directory))
+      self.refresh_requested = true;
     const char* folder_icon = opened ? ICON_MDI_FOLDER_OPEN : ICON_MDI_FOLDER;
     ImGui::SameLine();
     if (selected)
@@ -1029,9 +1260,17 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     }
   }
 
+  std::filesystem::path drop_directory;
+  {
+    auto read_lock = std::shared_lock(self.directory_mutex);
+    drop_directory = self.current_directory;
+  }
+
   ImVec2 cursor_pos = ImGui::GetCursorPos();
   const ImVec2 region = ImGui::GetContentRegionAvail();
   ImGui::InvisibleButton("##DragDropTargetAssetPanelBody", region);
+  if (drag_drop_target(drop_directory, self.assets_directory))
+    self.refresh_requested = true;
 
   ImGui::SetNextItemAllowOverlap();
   ImGui::SetCursorPos(cursor_pos);
@@ -1084,6 +1323,10 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
               ImGui::CloseCurrentPopup();
             }
             if (ImGui::MenuItem("Rename")) {
+              self.rename_path = path;
+              self.rename_name = file.name;
+              self.rename_error.clear();
+              self.should_open_rename_popup = true;
               ImGui::CloseCurrentPopup();
             }
 
@@ -1096,8 +1339,8 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           }
           ImGui::PopStyleVar();
 
-          if (is_dir)
-            drag_drop_target(file.file_path);
+          if (is_dir && drag_drop_target(file.file_path, self.assets_directory))
+            self.refresh_requested = true;
 
           drag_drop_from(file.file_path);
 
@@ -1129,25 +1372,18 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           ImGui::SetCursorPos({cursor_pos.x + thumbnail_image_offset, cursor_pos.y + thumbnail_image_offset});
           ImGui::SetNextItemAllowOverlap();
 
+          const auto previewed_type = previewable_asset_type(file.type);
+
           // The table lays every row out even though it only draws the ones on screen, so without this
           // a directory of a few hundred textures would ask for -- and hold on to -- every thumbnail in
           // it. Asking only for what is visible is also what lets the manager's pool reclaim the rest.
           const auto tile_visible = ImGui::IsRectVisible({thumb_image_size, thumb_image_size});
 
           auto use_thumbnail_image = !is_dir && !importing && tile_visible && editor_cvar.cvar_file_thumbnails.get() &&
-                                     (file.type == FileType::Texture || file.type == FileType::Model ||
-                                      file.type == FileType::Material || file.type == FileType::Terrain);
+                                     previewed_type != AssetType::None;
           auto thumbnail_image = TextureView{};
           if (use_thumbnail_image) {
-            if (file.type == FileType::Texture) {
-              thumbnail_image = editor.thumbnail_manager.get_thumbnail_texture(file_path_str);
-            } else if (file.type == FileType::Model) {
-              thumbnail_image = editor.thumbnail_manager.get_thumbnail_model(file_path_str);
-            } else if (file.type == FileType::Material) {
-              thumbnail_image = editor.thumbnail_manager.get_thumbnail_material(file_path_str);
-            } else if (file.type == FileType::Terrain) {
-              thumbnail_image = editor.thumbnail_manager.get_thumbnail_terrain(file_path_str);
-            }
+            thumbnail_image = editor.thumbnail_manager.get_thumbnail(previewed_type, file_path_str);
 
             // Otherwise the spinner below waits on a thumbnail that will never arrive.
             if (!thumbnail_image && editor.thumbnail_manager.thumbnail_unavailable(file_path_str)) {
@@ -1242,8 +1478,13 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
               self.directory_to_delete = path;
               ImGui::CloseCurrentPopup();
             }
-            if (ImGui::MenuItem("Rename"))
+            if (ImGui::MenuItem("Rename")) {
+              self.rename_path = path;
+              self.rename_name = file.name;
+              self.rename_error.clear();
+              self.should_open_rename_popup = true;
               ImGui::CloseCurrentPopup();
+            }
 
             ImGui::Separator();
             if (auto p = self.draw_context_menu_items(path, is_dir); !p.empty())
@@ -1252,8 +1493,8 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           }
           ImGui::PopStyleVar();
 
-          if (is_dir)
-            drag_drop_target(path);
+          if (is_dir && drag_drop_target(path, self.assets_directory))
+            self.refresh_requested = true;
           drag_drop_from(path);
 
           any_item_hovered |= hovered;
@@ -1329,11 +1570,107 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     ImGui::EndPopup();
   }
 
+  if (self.should_open_new_folder_popup)
+    ImGui::OpenPopup("New Folder");
+
+  if (ImGui::BeginPopupModal("New Folder", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::IsWindowAppearing())
+      ImGui::SetKeyboardFocusHere();
+
+    UI::begin_properties(UI::default_properties_flags, true, .5f);
+    const bool create_requested = UI::input_text("Name", &self.new_folder_name, ImGuiInputTextFlags_EnterReturnsTrue);
+    UI::end_properties();
+
+    if (!self.new_folder_error.empty())
+      ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", self.new_folder_error.c_str());
+
+    const auto reset_new_folder_popup = [&self] {
+      self.new_folder_parent.clear();
+      self.new_folder_name.clear();
+      self.new_folder_error.clear();
+      self.should_open_new_folder_popup = false;
+    };
+
+    ImGui::Separator();
+    if (create_requested || ImGui::Button("Create", UI::scale(ImVec2(120.0f, 0.0f)))) {
+      if (const auto name_error = entry_name_error(self.new_folder_name); !name_error.empty()) {
+        self.new_folder_error = name_error;
+      } else {
+        const auto new_folder_path = self.new_folder_parent / self.new_folder_name;
+        std::error_code error;
+        if (std::filesystem::create_directory(new_folder_path, error)) {
+          editor_context.reset(EditorContext::Type::File, new_folder_path.string());
+          self.refresh();
+          reset_new_folder_popup();
+          ImGui::CloseCurrentPopup();
+        } else if (error) {
+          self.new_folder_error = fmt::format("Couldn't create folder: {}", error.message());
+        } else {
+          self.new_folder_error = "A file or folder with that name already exists.";
+        }
+      }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", UI::scale(ImVec2(120.0f, 0.0f)))) {
+      reset_new_folder_popup();
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+
+  if (self.should_open_rename_popup) {
+    ImGui::OpenPopup("Rename");
+    self.should_open_rename_popup = false;
+  }
+
+  if (ImGui::BeginPopupModal("Rename", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::IsWindowAppearing())
+      ImGui::SetKeyboardFocusHere();
+
+    UI::begin_properties(UI::default_properties_flags, true, 0.5f);
+    const bool rename_requested = UI::input_text(
+      "Name",
+      &self.rename_name,
+      ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll
+    );
+    UI::end_properties();
+
+    if (!self.rename_error.empty())
+      ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", self.rename_error.c_str());
+
+    const auto reset_rename_popup = [&self] {
+      self.rename_path.clear();
+      self.rename_name.clear();
+      self.rename_error.clear();
+    };
+
+    ImGui::Separator();
+    if (rename_requested || ImGui::Button("Rename", UI::scale(ImVec2(120.0f, 0.0f)))) {
+      if (const auto renamed = rename_content_entry(self.rename_path, self.rename_name); renamed) {
+        self.refresh();
+        reset_rename_popup();
+        ImGui::CloseCurrentPopup();
+      } else {
+        self.rename_error = renamed.error();
+      }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", UI::scale(ImVec2(120.0f, 0.0f)))) {
+      reset_rename_popup();
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+
   if (self.should_open_new_asset_popup)
     ImGui::OpenPopup("New Asset");
 
-  if (ImGui::BeginPopupModal("New Asset", nullptr, ImGuiWindowFlags_NoResize)) {
-    UI::begin_properties();
+  if (ImGui::BeginPopupModal("New Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    UI::begin_properties(UI::default_properties_flags, true, 0.5f);
     UI::input_text("Name", &self.new_asset_name);
     UI::end_properties();
 
@@ -1500,17 +1837,10 @@ auto ContentPanel::draw_context_menu_items(this ContentPanel& self, const std::f
   if (is_dir) {
     if (ImGui::BeginMenu("Create")) {
       if (ImGui::MenuItem("Folder")) {
-        i32 i = 0;
-        bool created = false;
-        std::string new_folder_path;
-        while (!created) {
-          std::string folder_name = "New Folder" + (i == 0 ? "" : fmt::format(" ({})", i));
-          new_folder_path = (context / folder_name).string();
-          created = std::filesystem::create_directory(new_folder_path);
-          ++i;
-        }
-        auto& editor_context = App::mod<Editor>().get_context();
-        editor_context.reset(EditorContext::Type::File, new_folder_path);
+        self.new_folder_parent = context;
+        self.new_folder_name.clear();
+        self.new_folder_error.clear();
+        self.should_open_new_folder_popup = true;
       }
       if (ImGui::MenuItem("Material")) {
         self.new_asset_name.clear();

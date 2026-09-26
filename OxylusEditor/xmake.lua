@@ -31,7 +31,7 @@ target("OxylusEditor")
     add_files("./src/**.cpp")
     add_defines("IMGUI_DEFINE_MATH_OPERATORS")
 
-    add_files("./Assets/**")
+    add_files("./Assets/**|.DS_Store|**/.DS_Store")
     add_rules("ox.install_resources", {
         root_dir = os.scriptdir() .. "/Assets",
         output_dir = "Assets",

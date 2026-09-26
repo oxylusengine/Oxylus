@@ -124,9 +124,6 @@ struct CameraComponent {
   // keying this member on two cameras
   bool active = true;
 
-  glm::vec2 jitter = {};
-  glm::vec2 jitter_prev = {};
-
   struct Matrices {
     glm::mat4 view_matrix = {};
     glm::mat4 projection_matrix = {};
@@ -338,6 +335,7 @@ struct RigidBodyComponent {
   f32 gravity_factor = 1.0f;
   f32 friction = 0.2f;
   f32 restitution = 0.0f;
+  glm::vec3 center_of_mass_offset = glm::vec3(0.0f);
   bool allow_sleep = true;
   bool awake = true;
   bool continuous = false;

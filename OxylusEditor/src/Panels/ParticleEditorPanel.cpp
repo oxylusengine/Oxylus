@@ -1896,6 +1896,10 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
     return;
   }
 
+  if (auto asset = App::mod<AssetManager>().get_asset(self.asset_uuid)) {
+    self.asset_path = asset->path;
+  }
+
   if (UI::button(ICON_MDI_CONTENT_SAVE " Save") && !self.asset_path.empty()) {
     export_asset(App::mod<AssetManager>(), self.asset_uuid, self.asset_path);
   }

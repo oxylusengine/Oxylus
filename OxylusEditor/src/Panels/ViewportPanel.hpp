@@ -99,7 +99,14 @@ private:
   glm::vec3 translation_velocity = glm::vec3(0);
   glm::vec2 rotation_velocity = glm::vec2(0);
 
+  struct SettingsUI;
+  ImGuiTextFilter settings_filter = {};
+  bool show_advanced_settings = false;
+
   auto draw_settings_panel(this ViewportPanel& self) -> void;
+  auto draw_render_settings(this ViewportPanel& self, SettingsUI& ui) -> void;
+  auto draw_device_settings(this ViewportPanel& self, SettingsUI& ui) -> void;
+  auto draw_viewport_settings(this ViewportPanel& self, SettingsUI& ui) -> void;
   auto draw_gizmo_settings_panel(this ViewportPanel& self) -> void;
   auto draw_snap_settings_panel(this ViewportPanel& self) -> void;
   auto draw_terrain_brush_settings_panel(this ViewportPanel& self) -> void;

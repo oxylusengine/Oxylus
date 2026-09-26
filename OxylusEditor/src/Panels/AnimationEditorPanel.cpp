@@ -349,7 +349,7 @@ auto AnimationEditorPanel::draw_skeleton(this AnimationEditorPanel& self) -> voi
     }
   }
 
-  auto& debug_renderer = App::mod<DebugRenderer>();
+  auto& debug_renderer = self.preview_scene->debug_renderer;
   for (auto bone = 0_sz; bone < bone_count; ++bone) {
     const auto position = bone_position(bone);
 

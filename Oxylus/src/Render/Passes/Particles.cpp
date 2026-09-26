@@ -727,13 +727,15 @@ auto RendererInstance::draw_particles(
       VUK_BA(vuk::eVertexRead) camera,
       VUK_BA(vuk::eFragmentRead) materials,
       VUK_IA(vuk::eFragmentSampled) depth,
-      VUK_IA(vuk::eColorRW) dst
+      VUK_IA(vuk::eColorRW) dst,
+      VUK_IA(vuk::eColorRW) reactive
     ) {
       cmd_list //
         .bind_graphics_pipeline("particle_billboard")
         .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
         .set_depth_stencil({})
         .set_color_blend(dst, PARTICLE_BLEND_STATE)
+        .set_color_blend(reactive, REACTIVE_MASK_BLEND_STATE)
         .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
         .set_viewport(0, vuk::Rect2D::framebuffer())
         .set_scissor(0, vuk::Rect2D::framebuffer())
@@ -746,7 +748,7 @@ auto RendererInstance::draw_particles(
         .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(materials->device_address))
         .draw_indirect(1, draw_cmd);
 
-      return std::make_tuple(sort_keys, particles, emitters, camera, materials, depth, dst);
+      return std::make_tuple(sort_keys, particles, emitters, camera, materials, depth, dst, reactive);
     }
   );
 
@@ -757,7 +759,8 @@ auto RendererInstance::draw_particles(
     context.camera_buffer,
     context.materials_buffer,
     context.depth_attachment,
-    dst_attachment
+    dst_attachment,
+    context.reactive_mask_attachment
   ) =
     billboard_pass(
       std::move(context.draw_cmd_buffer),
@@ -767,7 +770,8 @@ auto RendererInstance::draw_particles(
       std::move(context.camera_buffer),
       std::move(context.materials_buffer),
       std::move(context.depth_attachment),
-      std::move(dst_attachment)
+      std::move(dst_attachment),
+      std::move(context.reactive_mask_attachment)
     );
 
   for (auto draw_index = 0_u32; draw_index < context.mesh_draws.size(); draw_index++) {
@@ -790,13 +794,15 @@ auto RendererInstance::draw_particles(
         VUK_BA(vuk::eVertexRead) mesh,
         VUK_BA(vuk::eFragmentRead) materials,
         VUK_IA(vuk::eFragmentSampled) depth,
-        VUK_IA(vuk::eColorRW) dst
+        VUK_IA(vuk::eColorRW) dst,
+        VUK_IA(vuk::eColorRW) reactive
       ) {
         cmd_list //
           .bind_graphics_pipeline("particle_mesh")
           .set_rasterization({.cullMode = vuk::CullModeFlagBits::eBack})
           .set_depth_stencil({})
           .set_color_blend(dst, PARTICLE_BLEND_STATE)
+          .set_color_blend(reactive, REACTIVE_MASK_BLEND_STATE)
           .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
           .set_viewport(0, vuk::Rect2D::framebuffer())
           .set_scissor(0, vuk::Rect2D::framebuffer())
@@ -818,7 +824,7 @@ auto RendererInstance::draw_particles(
               ->subrange(draw_index * sizeof(vuk::DrawIndexedIndirectCommand), sizeof(vuk::DrawIndexedIndirectCommand))
           );
 
-        return std::make_tuple(draw_cmd, sort_keys, particles, emitters, camera, mesh, materials, depth, dst);
+        return std::make_tuple(draw_cmd, sort_keys, particles, emitters, camera, mesh, materials, depth, dst, reactive);
       }
     );
 
@@ -832,7 +838,8 @@ auto RendererInstance::draw_particles(
       mesh_value,
       context.materials_buffer,
       context.depth_attachment,
-      dst_attachment
+      dst_attachment,
+      context.reactive_mask_attachment
     ) =
       mesh_pass(
         std::move(context.draw_indexed_cmd_buffer),
@@ -843,7 +850,8 @@ auto RendererInstance::draw_particles(
         std::move(mesh_buffer),
         std::move(context.materials_buffer),
         std::move(context.depth_attachment),
-        std::move(dst_attachment)
+        std::move(dst_attachment),
+        std::move(context.reactive_mask_attachment)
       );
   }
 

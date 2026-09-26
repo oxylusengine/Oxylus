@@ -7,22 +7,12 @@
 #include "Core/Input.hpp"
 #include "Networking/NetworkManager.hpp"
 #include "Physics/Physics.hpp"
-#include "Render/DebugRenderer.hpp"
 #include "Render/Renderer.hpp"
 #include "Scripting/LuaManager.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/RmlUI.hpp"
 
 namespace ox {
-using DefaultModules = std::tuple<
-  LuaManager,
-  AssetManager,
-  AudioEngine,
-  Physics,
-  Input,
-  NetworkManager,
-  Renderer,
-  DebugRenderer,
-  ImGuiRenderer,
-  RmlUI>;
+using DefaultModules =
+  std::tuple<LuaManager, AssetManager, AudioEngine, Physics, Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI>;
 }

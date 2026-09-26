@@ -2,10 +2,17 @@ import common;
 import scene;
 import gpu;
 
-struct ShaderParameters {
-  ConstantBuffer<Camera> camera;
-  Image2D<f32> depth_image;
+[[vk::binding(0, 0)]] ConstantBuffer<Camera> camera;
+[[vk::binding(1, 0)]] Image2D<f32> depth_image;
+
+// mirrored in Debug.cpp
+static const u32 DEBUG_FLAG_DEPTH_TESTED = 1u << 0u;
+static const u32 DEBUG_FLAG_SHADED = 1u << 1u;
+
+struct PushConstants {
+  u32 flags;
 };
+[[vk::push_constant]] PushConstants C;
 
 struct VertexInput {
   f32x3 position;
@@ -14,47 +21,42 @@ struct VertexInput {
 
 struct VertexOutput {
   f32x4 position : SV_Position;
-  f32x4 color : COLOR;
+  f32x4 color;
+  f32x3 world_position;
 };
 
-f32x3 oct_to_vec3(f32x2 e) {
-  f32x3 v = f32x3(e.xy, 1.0 - abs(e.x) - abs(e.y));
-  const f32x2 sign_not_zero = f32x2((v.x >= 0.0) ? +1.0 : -1.0, (v.y >= 0.0) ? +1.0 : -1.0);
-  if (v.z < 0.0)
-    v.xy = (1.0 - abs(v.yx)) * sign_not_zero;
-  return normalize(v);
-}
-
-f32x2 unpack_snorm2_x16(const u32 packed) {
-  i32x2 signextended;
-  signextended.x = (int)(packed << 16) >> 16;
-  signextended.y = (int)(packed & 0xFFFF0000) >> 16;
-  return max(f32x2(signextended) / 32767.0f, -1.0f);
-}
-
 [[shader("vertex")]]
-func vs_main(VertexInput input, uniform ParameterBlock<ShaderParameters> params) -> VertexOutput {
+func vs_main(VertexInput input) -> VertexOutput {
   VertexOutput output;
 
-  output.position = mul(params.camera.projection_view, f32x4(input.position, 1.0));
-  output.color = f32x4(oct_to_vec3(unpack_snorm2_x16(input.color)), 1.0f);
+  output.position = mul(camera.projection_view, f32x4(input.position, 1.0));
+  // rgba8, r in the lowest byte
+  output.color = f32x4((u32x4(input.color) >> u32x4(0, 8, 16, 24)) & 0xFFu) / 255.0;
+  output.world_position = input.position;
 
   return output;
 }
 
 [[shader("fragment")]]
-func fs_main(VertexOutput input, uniform ParameterBlock<ShaderParameters> params) -> f32x4 {
-  const f32 scene_depth = params.depth_image.Load(u32x3(u32x2(input.position.xy), 0));
-  const f32 fragment_depth = input.position.z;
+func fs_main(VertexOutput input) -> f32x4 {
+  f32x4 color = input.color;
 
-  f32x4 final_color = input.color;
-
-  const f32 near_geometry_threshold = 0.99; // Adjust based on your depth range
-
-  bool is_occluded = !(scene_depth > 0.0 && scene_depth < fragment_depth && scene_depth < near_geometry_threshold);
-  if (is_occluded && scene_depth != 0.0) {
-    final_color.rgb *= 0.4;
+  if ((C.flags & DEBUG_FLAG_SHADED) != 0) {
+    // flat headlight shading, otherwise solid shapes read as a single blob of color
+    const f32x3 normal = normalize(cross(ddx(input.world_position), ddy(input.world_position)));
+    const f32x3 view_dir = normalize(camera.position.xyz - input.world_position);
+    color.rgb *= 0.35 + 0.65 * abs(dot(normal, view_dir));
   }
 
-  return final_color;
+  // reversed z, the relative bias keeps shapes lying on scene surfaces from flickering
+  const f32 scene_depth = depth_image.Load(u32x3(u32x2(input.position.xy), 0));
+  const bool occluded = scene_depth > input.position.z * 1.001;
+  if (occluded) {
+    if ((C.flags & DEBUG_FLAG_DEPTH_TESTED) != 0)
+      discard;
+
+    color.rgb *= 0.4;
+  }
+
+  return color;
 }

@@ -146,7 +146,8 @@ func cs_main(
         mesh_distant,
         probe_updates_this_frame(flags),
         probe_is_reset(flags) || classification_changed,
-        mesh_distance_grace
+        mesh_distance_grace,
+        probe_update_interval(flags)
     );
 
     probe_states[probe_row] = state;

@@ -114,7 +114,6 @@ auto AppBinding::bind(sol::state* state) -> void {
   APP_MOD(Physics);
   APP_MOD(Input);
   APP_MOD(NetworkManager);
-  APP_MOD(DebugRenderer);
   app.set("mod", mod_table);
 
   auto timestep = state->new_usertype<Timestep>(
