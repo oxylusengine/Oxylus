@@ -2556,12 +2556,18 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           .vertex_offset = skinned.vertex_offset,
           .bone_offset = skinned.bone_offset,
           .vertex_count = skinned.vertex_count,
+          .bone_count = skinned.bone_count,
         }
       );
     }
 
-    self.prepared_frame
-      .skinned_vertices_buffer = vuk::acquire_buf("skinned vertices", *self.skinned_vertices_buffer, vuk::eNone);
+    self.prepared_frame.skinned_vertices_buffer = vuk::acquire_buf(
+      "skinned vertices",
+      *self.skinned_vertices_buffer,
+      // last frame's raster, compute and ray tracing passes read this through device addresses, so
+      // the skinning pass has to wait them out before it overwrites the arena
+      vuk::Access::eMemoryRead
+    );
 
     // after the arena is final, because an entry's structure is built straight out of its slice.
     // Same answer `render` builds against, so the pool holds no memory while nothing traces

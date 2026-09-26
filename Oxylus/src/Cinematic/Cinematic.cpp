@@ -12,6 +12,43 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
+template <typename T>
+static auto load_as(const void* src) -> T {
+  auto value = T{};
+  std::memcpy(&value, src, sizeof(T));
+  return value;
+}
+
+template <typename T>
+static auto store_as(void* dst, const T value) -> void {
+  std::memcpy(dst, &value, sizeof(T));
+}
+
+static auto read_integer(const void* src, const CinematicStorage storage) -> f32 {
+  switch (storage.size) {
+    case 1 : return storage.is_signed ? static_cast<f32>(load_as<i8>(src)) : static_cast<f32>(load_as<u8>(src));
+    case 2 : return storage.is_signed ? static_cast<f32>(load_as<i16>(src)) : static_cast<f32>(load_as<u16>(src));
+    case 8 : return storage.is_signed ? static_cast<f32>(load_as<i64>(src)) : static_cast<f32>(load_as<u64>(src));
+    default: return storage.is_signed ? static_cast<f32>(load_as<i32>(src)) : static_cast<f32>(load_as<u32>(src));
+  }
+}
+
+static auto write_integer(void* dst, const CinematicStorage storage, const f32 value) -> void {
+  const auto rounded = static_cast<i64>(glm::round(value));
+  switch (storage.size) {
+    case 1:
+      storage.is_signed ? store_as(dst, static_cast<i8>(rounded)) : store_as(dst, static_cast<u8>(rounded));
+      break;
+    case 2:
+      storage.is_signed ? store_as(dst, static_cast<i16>(rounded)) : store_as(dst, static_cast<u16>(rounded));
+      break;
+    case 8: storage.is_signed ? store_as(dst, rounded) : store_as(dst, static_cast<u64>(rounded)); break;
+    default:
+      storage.is_signed ? store_as(dst, static_cast<i32>(rounded)) : store_as(dst, static_cast<u32>(rounded));
+      break;
+  }
+}
+
 static auto read_f32(simdjson::ondemand::value json, std::string_view key, f32& value) -> void {
   auto result = json[key].get_double();
   if (!result.error()) {
@@ -501,14 +538,12 @@ auto sample_camera(const CinematicCameraTrack& track, std::span<const f32> arc_l
   return sample_camera_raw(track, remapped);
 }
 
-auto read_value(const void* src, const CinematicValueKind kind) -> glm::vec4 {
+auto read_value(const void* src, const CinematicValueKind kind, const CinematicStorage storage) -> glm::vec4 {
   auto value = glm::vec4(0.0f);
 
   switch (kind) {
     case CinematicValueKind::Float: {
-      auto scalar = 0.0f;
-      std::memcpy(&scalar, src, sizeof(scalar));
-      value.x = scalar;
+      value.x = storage.size == sizeof(f64) ? static_cast<f32>(load_as<f64>(src)) : load_as<f32>(src);
     } break;
     case CinematicValueKind::Float2: {
       auto vec = glm::vec2(0.0f);
@@ -530,9 +565,7 @@ auto read_value(const void* src, const CinematicValueKind kind) -> glm::vec4 {
     } break;
     case CinematicValueKind::Int :
     case CinematicValueKind::Enum: {
-      auto integer = 0_i32;
-      std::memcpy(&integer, src, sizeof(integer));
-      value.x = static_cast<f32>(integer);
+      value.x = read_integer(src, storage);
     } break;
     case CinematicValueKind::Bool: {
       auto boolean = false;
@@ -545,11 +578,15 @@ auto read_value(const void* src, const CinematicValueKind kind) -> glm::vec4 {
   return value;
 }
 
-auto write_value(void* dst, const CinematicValueKind kind, const glm::vec4& value) -> void {
+auto write_value(void* dst, const CinematicValueKind kind, const glm::vec4& value, const CinematicStorage storage)
+  -> void {
   switch (kind) {
     case CinematicValueKind::Float: {
-      const auto scalar = value.x;
-      std::memcpy(dst, &scalar, sizeof(scalar));
+      if (storage.size == sizeof(f64)) {
+        store_as(dst, static_cast<f64>(value.x));
+      } else {
+        store_as(dst, value.x);
+      }
     } break;
     case CinematicValueKind::Float2: {
       const auto vec = glm::vec2(value);
@@ -568,8 +605,7 @@ auto write_value(void* dst, const CinematicValueKind kind, const glm::vec4& valu
     } break;
     case CinematicValueKind::Int :
     case CinematicValueKind::Enum: {
-      const auto integer = static_cast<i32>(glm::round(value.x));
-      std::memcpy(dst, &integer, sizeof(integer));
+      write_integer(dst, storage, value.x);
     } break;
     case CinematicValueKind::Bool: {
       const auto boolean = value.x != 0.0f;

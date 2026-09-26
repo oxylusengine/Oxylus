@@ -76,7 +76,10 @@ auto RendererInstance::skin_vertices(this RendererInstance& self) -> void {
     [jobs = prepared.skin_jobs, positions_bytes, normals_bytes](
       vuk::CommandBuffer& cmd_list,
       VUK_BA(vuk::eComputeRead) meshes,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
+      // declared as written even though the shader only reads it: every consumer reaches the skinned
+      // vertices through the pointers in here and names only this buffer, so this edge is what
+      // orders them after the skinning, and vuk emits buffer barriers as global memory barriers
+      VUK_BA(vuk::eComputeRW) mesh_instances,
       VUK_BA(vuk::eComputeRead) skinning_transforms,
       VUK_BA(vuk::eComputeWrite) skinned_vertices
     ) {

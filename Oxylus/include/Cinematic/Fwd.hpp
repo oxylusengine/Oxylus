@@ -25,4 +25,11 @@ enum class CinematicValueKind : u8 {
 };
 
 enum class CameraInterp : u8 { Linear = 0, CatmullRom, Count };
+
+// the member's real layout, resolved from reflection at bind time, so an Int or Enum key lands in
+// the 1, 2, 4 or 8 bytes the member actually has. `size == 0` means the kind's natural layout
+struct CinematicStorage {
+  u32 size = 0;
+  bool is_signed = true;
+};
 } // namespace ox

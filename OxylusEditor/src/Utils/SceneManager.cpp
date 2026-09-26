@@ -78,6 +78,9 @@ auto SceneManager::new_play_scene(this SceneManager& self, SceneID from) -> Scen
   ZoneScoped;
 
   auto src_scene = self.get_scene(from);
+  // a cinematic scrubbed in the editor has written into the scene, and play has to start from the
+  // authored values
+  src_scene->get_scene()->restore_cinematics();
   auto copy_scene = Scene::copy(src_scene->get_scene());
 
   auto copy_scene_id = self.scenes.create_slot(std::make_shared<EditorScene>(copy_scene));

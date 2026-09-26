@@ -98,8 +98,8 @@ auto track_has_cuts(const CinematicCameraTrack& track) -> bool;
 auto build_arc_length_lut(const CinematicCameraTrack& track, std::span<f32> out) -> void;
 
 // reads a component member into the vec4 representation the keys use
-auto read_value(const void* src, CinematicValueKind kind) -> glm::vec4;
+auto read_value(const void* src, CinematicValueKind kind, CinematicStorage storage = {}) -> glm::vec4;
 // converts back out of the vec4 representation, so Int/Bool/Enum land as their own types
-auto write_value(void* dst, CinematicValueKind kind, const glm::vec4& value) -> void;
+auto write_value(void* dst, CinematicValueKind kind, const glm::vec4& value, CinematicStorage storage = {}) -> void;
 } // namespace cinematic
 } // namespace ox

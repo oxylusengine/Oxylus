@@ -105,8 +105,8 @@ struct MeshletInstance {
 // half the bandwidth of a 3x4 matrix per bone, and the shader rotates a vector instead of doing a
 // matrix multiply
 struct SkinningTransform {
-  alignas(4) glm::vec4 rotation = {0.f, 0.f, 0.f, 1.f};
-  alignas(4) glm::vec4 translation_scale = {0.f, 0.f, 0.f, 1.f};
+  alignas(4) glm::vec4 rotation = {0.0f, 0.0f, 0.0f, 1.0f};
+  alignas(4) glm::vec4 translation_scale = {0.0f, 0.0f, 0.0f, 1.0f};
 };
 static_assert(sizeof(SkinningTransform) == 32);
 
@@ -115,6 +115,7 @@ struct SkinJob {
   alignas(4) u32 vertex_offset = 0;
   alignas(4) u32 bone_offset = 0;
   alignas(4) u32 vertex_count = 0;
+  alignas(4) u32 bone_count = 0;
 };
 
 struct MeshInstance {

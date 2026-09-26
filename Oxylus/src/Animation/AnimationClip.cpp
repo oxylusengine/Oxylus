@@ -8,8 +8,8 @@
 
 namespace ox {
 auto AnimationClip::fps(this const AnimationClip& self) -> f32 {
-  if (self.frame_count < 2 || self.duration <= 0.f) {
-    return 0.f;
+  if (self.frame_count < 2 || self.duration <= 0.0f) {
+    return 0.0f;
   }
 
   return static_cast<f32>(self.frame_count - 1) / self.duration;
@@ -51,7 +51,7 @@ auto AnimationClip::read_compressed_pose(
       cursor += 3;
     }
 
-    auto scale = 1.f;
+    auto scale = 1.0f;
     if (track.is_scale_static) {
       scale = track.static_scale();
     } else {
@@ -71,7 +71,7 @@ auto AnimationClip::sample(this const AnimationClip& self, const f32 time, Pose&
 
   out.clear_model_space_transforms();
 
-  const auto clamped = glm::clamp(time, 0.f, self.duration);
+  const auto clamped = glm::clamp(time, 0.0f, self.duration);
   const auto frame_position = clamped * self.fps();
   const auto lower = ox::min(static_cast<u32>(frame_position), self.frame_count - 1);
   const auto upper = ox::min(lower + 1, self.frame_count - 1);
@@ -84,7 +84,10 @@ auto AnimationClip::sample(this const AnimationClip& self, const f32 time, Pose&
     auto scratch = stack.alloc<BoneTransform>(out.bone_count());
     self.read_compressed_pose(upper, scratch);
 
-    for (auto i = 0_u32; i < out.bone_count(); ++i) {
+    // read_compressed_pose only fills the bones both sides have, and the rest of the scratch is
+    // uninitialized
+    const auto count = ox::min(out.bone_count(), self.bone_count());
+    for (auto i = 0_u32; i < count; ++i) {
       out.parent_space_transforms[i] = slerp(out.parent_space_transforms[i], scratch[i], fraction);
     }
   }
@@ -131,16 +134,16 @@ auto compress_tracks(
     track.is_rotation_static = rotation_is_static;
 
     if (track.is_translation_static) {
-      track.translation_range_x = {.start = translation_min.x, .length = 0.f};
-      track.translation_range_y = {.start = translation_min.y, .length = 0.f};
-      track.translation_range_z = {.start = translation_min.z, .length = 0.f};
+      track.translation_range_x = {.start = translation_min.x, .length = 0.0f};
+      track.translation_range_y = {.start = translation_min.y, .length = 0.0f};
+      track.translation_range_z = {.start = translation_min.z, .length = 0.0f};
     } else {
       track.translation_range_x = FloatRange::from_bounds(translation_min.x, translation_max.x);
       track.translation_range_y = FloatRange::from_bounds(translation_min.y, translation_max.y);
       track.translation_range_z = FloatRange::from_bounds(translation_min.z, translation_max.z);
     }
 
-    track.scale_range = track.is_scale_static ? FloatRange{.start = scale_min, .length = 0.f}
+    track.scale_range = track.is_scale_static ? FloatRange{.start = scale_min, .length = 0.0f}
                                               : FloatRange::from_bounds(scale_min, scale_max);
 
     if (track.is_rotation_static) {

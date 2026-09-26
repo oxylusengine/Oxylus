@@ -698,6 +698,23 @@ auto flatten_gltf_nodes(
     // joints live in the Skeleton, not the scene graph, because an entity per joint would make
     // hundreds of them per character whose transforms would fight the pose every frame
     if (joint_nodes.contains(gltf_node_index)) {
+      // a prop parented to a bone would need a socket to follow the pose, and there is none yet, so
+      // say so rather than letting it vanish
+      for (auto child_node_index : node.children) {
+        if (!joint_nodes.contains(child_node_index)) {
+          session.push_message(
+            fmt::format(
+              "Node '{}' is parented to bone '{}'; bone attachments are not supported yet, so it is dropped.",
+              asset.nodes[child_node_index].name,
+              node.name
+            )
+          );
+          continue;
+        }
+
+        processing_gltf_nodes.push({child_node_index, parent_mesh_group_index});
+      }
+
       continue;
     }
 
@@ -897,15 +914,16 @@ auto compile_model(Session& session, const ModelCompileRequest& request) -> opti
   compile_gltf_lights(asset, model);
 
   // a clip names the nodes it drives, so more than one skin makes "which skeleton does this clip
-  // target" ambiguous, mirroring the single-scene restriction above
+  // target" ambiguous. Such a file still imports, just static, the way it did before skinning existed
   if (asset.skins.size() > 1) {
-    session.push_error(fmt::format("'{}' has {} skins; only one is supported.", request.path, asset.skins.size()));
-    return nullopt;
+    session.push_message(
+      fmt::format("'{}' has {} skins; only one is supported, importing it static.", request.path, asset.skins.size())
+    );
   }
 
   auto skin = option<SkinBuildData>(nullopt);
   auto joint_nodes = ankerl::unordered_dense::set<usize>();
-  if (!asset.skins.empty()) {
+  if (asset.skins.size() == 1) {
     skin = build_gltf_skeleton(session, asset, asset.skins[0]);
     if (!skin.has_value()) {
       return nullopt;

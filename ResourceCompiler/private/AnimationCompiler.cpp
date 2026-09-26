@@ -5,7 +5,9 @@
 #include <fastgltf/tools.hpp>
 #include <fmt/format.h>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <limits>
 #include <ranges>
 
 #include "Animation/AnimationClip.hpp"
@@ -170,11 +172,13 @@ struct GltfAnimationSampler {
   std::vector<glm::vec4> values = {};
   fastgltf::AnimationInterpolation interpolation = fastgltf::AnimationInterpolation::Linear;
 
-  auto sample(this const GltfAnimationSampler& self, f32 time, const glm::vec4& fallback) -> glm::vec4;
+  auto sample(this const GltfAnimationSampler& self, f32 time, const glm::vec4& fallback, bool is_rotation = false)
+    -> glm::vec4;
 };
 
-auto GltfAnimationSampler::sample(this const GltfAnimationSampler& self, const f32 time, const glm::vec4& fallback)
-  -> glm::vec4 {
+auto GltfAnimationSampler::sample(
+  this const GltfAnimationSampler& self, const f32 time, const glm::vec4& fallback, const bool is_rotation
+) -> glm::vec4 {
   const auto is_cubic = self.interpolation == fastgltf::AnimationInterpolation::CubicSpline;
   const auto key_count = self.times.size();
   const auto value_at = [&](const usize key) {
@@ -213,6 +217,15 @@ auto GltfAnimationSampler::sample(this const GltfAnimationSampler& self, const f
              (t3 - t2) * m1;
     }
     default: {
+      if (is_rotation) {
+        // glTF specifies slerp here, and exporters freely emit q and -q back to back, which a
+        // component-wise mix would drag through zero
+        const auto a = value_at(lower);
+        const auto b = value_at(upper);
+        const auto result = glm::slerp(glm::quat::wxyz(a.w, a.x, a.y, a.z), glm::quat::wxyz(b.w, b.x, b.y, b.z), t);
+        return {result.x, result.y, result.z, result.w};
+      }
+
       return glm::mix(value_at(lower), value_at(upper), t);
     }
   }
@@ -271,7 +284,10 @@ auto build_gltf_animation(
   }
 
   auto bone_channels = std::vector<BoneChannels>(bone_count);
-  auto duration = 0.0f;
+  // an action exported off a shared timeline starts wherever it sat on that timeline, and the clip
+  // should start on its first key rather than hold the pose until then
+  auto start_time = std::numeric_limits<f32>::max();
+  auto end_time = 0.0f;
   auto max_key_count = 0_sz;
   auto touched_bones = false;
 
@@ -295,12 +311,14 @@ auto build_gltf_animation(
 
     const auto& sampler = samplers[channel.samplerIndex];
     if (!sampler.times.empty()) {
-      duration = glm::max(duration, sampler.times.back());
+      start_time = glm::min(start_time, sampler.times.front());
+      end_time = glm::max(end_time, sampler.times.back());
       max_key_count = ox::max(max_key_count, sampler.times.size());
     }
     touched_bones = true;
   }
 
+  const auto duration = end_time - start_time;
   if (!touched_bones || duration <= 0.0f) {
     return nullopt;
   }
@@ -316,7 +334,7 @@ auto build_gltf_animation(
 
   auto sampled = std::vector<BoneTransform>(static_cast<usize>(frame_count) * bone_count);
   for (auto frame = 0_u32; frame < frame_count; ++frame) {
-    const auto time = duration * static_cast<f32>(frame) / static_cast<f32>(frame_count - 1);
+    const auto time = start_time + duration * static_cast<f32>(frame) / static_cast<f32>(frame_count - 1);
 
     for (auto bone = 0_u32; bone < bone_count; ++bone) {
       const auto& reference = skin.skeleton.parent_space_reference_pose[bone];
@@ -334,10 +352,8 @@ auto build_gltf_animation(
         translation = glm::vec3(samplers[channels.translation.value()].sample(time, glm::vec4(translation, 0.0f)));
       }
       if (channels.rotation.has_value()) {
-        const auto sampled_rotation = samplers[channels.rotation.value()].sample(
-          time,
-          glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w)
-        );
+        const auto sampled_rotation = samplers[channels.rotation.value()]
+                                        .sample(time, glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w), true);
         rotation = glm::normalize(
           glm::quat::wxyz(sampled_rotation.w, sampled_rotation.x, sampled_rotation.y, sampled_rotation.z)
         );

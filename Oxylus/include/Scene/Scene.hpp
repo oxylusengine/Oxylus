@@ -66,10 +66,10 @@ struct AnimationInstance {
   UUID clip_uuid = {};
   UUID fade_from_clip_uuid = {};
 
-  f32 current_time = 0.f;
-  f32 fade_from_time = 0.f;
-  f32 fade_elapsed = 0.f;
-  f32 fade_duration = 0.f;
+  f32 current_time = 0.0f;
+  f32 fade_from_time = 0.0f;
+  f32 fade_elapsed = 0.0f;
+  f32 fade_duration = 0.0f;
 
   Pose pose = {};
   PoseTaskSystem task_system = {};
@@ -77,7 +77,7 @@ struct AnimationInstance {
   u32 bone_offset = 0;
   u32 bone_count = 0;
   // Model::max_bone_influence_radius of whatever skinned mesh linked to this animator
-  f32 influence_radius = 0.f;
+  f32 influence_radius = 0.0f;
   // model-space and conservative: bone positions inflated by the widest bone influence
   GPU::MeshBounds bounds = {};
   // advanced this frame, so anything skinned from it has to be re-uploaded and re-skinned
@@ -95,8 +95,18 @@ struct BoundProperty {
   flecs::entity_t component = 0;
   u32 offset = 0;
   CinematicValueKind kind = CinematicValueKind::Float;
+  CinematicStorage storage = {};
   glm::vec4 restore_value = {};
   bool valid = false;
+};
+
+// what a camera track's entity looked like before anything was written to it
+struct BoundCameraPose {
+  glm::vec3 position = {};
+  glm::quat rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
+  f32 fov = 0.0f;
+  bool has_transform = false;
+  bool has_fov = false;
 };
 
 // kept off CinematicPlayerComponent for the same reason AnimationInstance is: variable length and
@@ -110,6 +120,8 @@ struct CinematicInstance {
   bool seek_pending = true;
   std::vector<BoundProperty> bound_properties = {};
   std::vector<flecs::entity> bound_cameras = {};
+  // parallel to `bound_cameras`
+  std::vector<BoundCameraPose> camera_restore_poses = {};
   // concatenated, Cinematic::ARC_LUT_SIZE entries per camera track
   std::vector<f32> arc_luts = {};
 };
@@ -242,6 +254,9 @@ public:
   auto play_cinematic(this Scene& self, flecs::entity entity) -> void;
   // honours `restore_on_stop`
   auto stop_cinematic(this Scene& self, flecs::entity entity) -> void;
+  // puts every member a cinematic has written back to its authored value without stopping it. The
+  // editor scrubs the live scene, so this runs before the scene is saved or copied for play
+  auto restore_cinematics(this Scene& self) -> void;
   auto seek_cinematic(this Scene& self, flecs::entity entity, f32 time) -> void;
   auto cinematic_time(this Scene& self, flecs::entity entity) -> f32;
   auto cinematic_duration(this Scene& self, flecs::entity entity) -> f32;

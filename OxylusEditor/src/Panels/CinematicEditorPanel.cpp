@@ -474,7 +474,7 @@ auto CinematicEditorPanel::key_property_track(this CinematicEditorPanel& self, c
         const auto& bound = instance->bound_properties[track_index];
         if (bound.valid && bound.target.is_alive()) {
           if (auto* base = bound.target.try_get_mut(bound.component)) {
-            value = cinematic::read_value(static_cast<u8*>(base) + bound.offset, bound.kind);
+            value = cinematic::read_value(static_cast<u8*>(base) + bound.offset, bound.kind, bound.storage);
           }
         }
       }

@@ -13,6 +13,7 @@ struct SkinJob {
     u32 vertex_offset;
     u32 bone_offset;
     u32 vertex_count;
+    u32 bone_count;
 };
 
 [[shader("compute")]]
@@ -41,11 +42,13 @@ func cs_main(u32x3 thread_id: SV_DispatchThreadID, uniform SkinJob job) -> void 
     [unroll]
     for (u32 i = 0; i < 4; ++i) {
         let weight = f32(weights[i]) / 65535.0;
-        if (weight <= 0.0) {
+        // a joint past the animator's skeleton would read another instance's bones, or past the end
+        let joint = u32(joints[i]);
+        if (weight <= 0.0 || joint >= job.bone_count) {
             continue;
         }
 
-        let bone = skinning_transforms[job.bone_offset + u32(joints[i])];
+        let bone = skinning_transforms[job.bone_offset + joint];
         position += bone.transform_point(bind_position) * weight;
         normal += bone.transform_normal(bind_normal) * weight;
     }
