@@ -282,6 +282,14 @@ auto Texture::create(const TextureData& data, const TextureLoadInfo& info, OX_CA
 auto Texture::destroy(this Texture& self) -> void {
   ZoneScoped;
 
+  // never created, so there is nothing to free and possibly no renderer to ask
+  if (
+    self.image_id == ImageID::Invalid && self.image_view_id == ImageViewID::Invalid &&
+    self.sampler_id == SamplerID::Invalid
+  ) {
+    return;
+  }
+
   auto& render_context = App::get_rendercontext();
 
   if (self.image_id != ImageID::Invalid)
