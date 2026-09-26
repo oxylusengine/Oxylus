@@ -3022,10 +3022,21 @@ auto Scene::json_to_entity(
     return flecs::entity::null();
   }
 
-  const auto entity_name = name_override.empty() ? entity_name_json.get_string().value_unsafe() : name_override;
-  auto e = self.create_entity(std::string(entity_name));
+  const auto entity_name = std::string(
+    name_override.empty() ? entity_name_json.get_string().value_unsafe() : name_override
+  );
+
+  // named only once it sits in its final scope: `world.entity(name)` resolves at the root, so a child
+  // sharing a root entity's name would get that entity back and reparent it
+  auto e = self.create_entity();
   if (root != flecs::entity::null())
     e.child_of(root);
+
+  if (!entity_name.empty()) {
+    const auto name_taken = root != flecs::entity::null() ? root.lookup(entity_name.c_str()) != 0
+                                                          : world.lookup(entity_name.c_str()) != 0;
+    e.set_name(name_taken ? self.safe_entity_name(entity_name, root).c_str() : entity_name.c_str());
+  }
 
   auto entity_tags_json = json["tags"];
   for (auto entity_tag : entity_tags_json.get_array()) {
