@@ -27,6 +27,9 @@ auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::str
 auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
+  self.unload_asset(self.null_material);
+  self.null_material = {};
+
   for (auto& [uuid, asset] : self.asset_registry) {
     if (asset.is_loaded() && asset.ref_count != 0) {
       OX_LOG_WARN(
