@@ -108,6 +108,8 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
 
         auto& es = App::get_event_system();
         std::ignore = es.emit<ServerDisconnectEvent>({.client = &self, .reason = NetClientStatus::Disconnected});
+        self.on_disconnect(NetClientStatus::Disconnected);
+        self.net_id = 0;
       } break;
       case ENET_EVENT_TYPE_RECEIVE: {
         ZoneScopedN("ENET_EVENT_TYPE_RECEIVE");
@@ -144,6 +146,7 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
 
       auto& es = App::get_event_system();
       std::ignore = es.emit<ServerDisconnectEvent>({.client = &self, .reason = NetClientStatus::TimedOut});
+      self.on_disconnect(NetClientStatus::TimedOut);
 
       return false;
     }
