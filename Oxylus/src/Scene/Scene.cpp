@@ -435,6 +435,13 @@ Scene::~Scene() {
     }
     entity_particle_emitters_map.clear();
     particle_emitters.reset();
+
+    for (const auto& spawn : pending_model_spawns) {
+      if (spawn.hierarchy_spawned) {
+        asset_man.unload_asset(spawn.model_uuid);
+      }
+    }
+    pending_model_spawns.clear();
   }
 
   destroy_terrain_collision();
@@ -1539,6 +1546,10 @@ auto Scene::resolve_mesh_spawn(this Scene& self, Model& model, const PendingMode
 auto Scene::spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, const MeshSpawnInfo& info) -> void {
   ZoneScoped;
 
+  // the MeshComponent OnRemove observer releases once per mesh entity, so each one holds its own ref
+  auto& asset_man = App::mod<AssetManager>();
+  asset_man.acquire_ref(asset_man.get_asset(model_uuid));
+
   auto entity = self.create_entity(self.safe_entity_name(info.name, info.parent), false);
   entity.set<TransformComponent>({});
   entity.set<MeshComponent>({
@@ -1571,25 +1582,26 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   auto mesh_spawns = std::vector<MeshSpawnInfo>();
   {
     auto model = asset_man.get_model(asset_uuid);
-    if (!model) {
-      return {};
-    }
+    if (model) {
+      auto spawn = PendingModelSpawn{.model_uuid = asset_uuid};
+      root_entity = self.spawn_model_hierarchy(*model.value, spawn);
 
-    auto spawn = PendingModelSpawn{.model_uuid = asset_uuid};
-    root_entity = self.spawn_model_hierarchy(*model.value, spawn);
+      for (const auto& mesh_entity : spawn.mesh_entities) {
+        if (!model->is_mesh_ready(mesh_entity.mesh_index)) {
+          continue;
+        }
 
-    for (const auto& mesh_entity : spawn.mesh_entities) {
-      if (!model->is_mesh_ready(mesh_entity.mesh_index)) {
-        continue;
+        mesh_spawns.emplace_back(self.resolve_mesh_spawn(*model.value, mesh_entity));
       }
-
-      mesh_spawns.emplace_back(self.resolve_mesh_spawn(*model.value, mesh_entity));
     }
   }
 
   for (const auto& mesh_spawn : mesh_spawns) {
     self.spawn_model_mesh_entity(asset_uuid, mesh_spawn);
   }
+
+  // the mesh entities hold their own refs now, so the one load_asset took goes back
+  asset_man.unload_asset(asset_uuid);
 
   return root_entity;
 }
@@ -1661,6 +1673,9 @@ auto Scene::update_pending_model_spawns(this Scene& self) -> void {
         if (asset_man.is_loading(spawn.model_uuid)) {
           ++it;
         } else {
+          if (spawn.hierarchy_spawned) {
+            asset_man.unload_asset(spawn.model_uuid);
+          }
           it = self.pending_model_spawns.erase(it);
         }
 
@@ -1687,6 +1702,7 @@ auto Scene::update_pending_model_spawns(this Scene& self) -> void {
       }
     }
 
+    // held while the spawn is pending, so the model can't unload between two mesh batches
     if (hierarchy_just_spawned) {
       asset_man.acquire_ref(asset_man.get_asset(spawn.model_uuid));
     }
@@ -1697,6 +1713,7 @@ auto Scene::update_pending_model_spawns(this Scene& self) -> void {
 
     // Anything still listed once the model is done failed to build.
     if (fully_loaded) {
+      asset_man.unload_asset(spawn.model_uuid);
       it = self.pending_model_spawns.erase(it);
     } else {
       ++it;
