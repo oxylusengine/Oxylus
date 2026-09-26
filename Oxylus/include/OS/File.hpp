@@ -20,8 +20,10 @@ struct File {
 
   File() = default;
   File(const std::filesystem::path& path, FileAccess access) noexcept;
-  File(const File&) = default;
-  File(File&&) = default;
+  File(const File&) = delete;
+  auto operator=(const File&) -> File& = delete;
+  File(File&& other) noexcept;
+  auto operator=(File&& other) noexcept -> File&;
   ~File() { close(); }
 
   auto write_data(const void* data, usize data_size) -> u64;
@@ -56,15 +58,6 @@ struct File {
   static auto to_stdout(std::string_view str) -> void;
   static auto to_stderr(std::string_view str) -> void;
 
-  File& operator=(File&& rhs) noexcept {
-    this->handle = rhs.handle;
-    this->size = rhs.size;
-    this->error = rhs.error;
-
-    rhs.handle.reset();
-
-    return *this;
-  }
   bool operator==(const File&) const = default;
   explicit operator bool() { return error == FileError::None; }
 };

@@ -1,5 +1,7 @@
 #include "OS/File.hpp"
 
+#include <utility>
+
 #include "Core/Base.hpp"
 #include "Utils/Log.hpp"
 
@@ -51,6 +53,26 @@ File::File(const std::filesystem::path& path, FileAccess access) noexcept : file
 
   this->handle = file_handle.value();
   this->size = os::file_size(this->handle.value()).value_or(0);
+}
+
+File::File(File&& other) noexcept
+    : handle(std::exchange(other.handle, nullopt)),
+      size(std::exchange(other.size, 0)),
+      error(std::exchange(other.error, FileError::None)),
+      mapped_data(std::exchange(other.mapped_data, nullopt)),
+      file_path(std::move(other.file_path)) {}
+
+auto File::operator=(File&& other) noexcept -> File& {
+  if (this != &other) {
+    this->close();
+    this->handle = std::exchange(other.handle, nullopt);
+    this->size = std::exchange(other.size, 0);
+    this->error = std::exchange(other.error, FileError::None);
+    this->mapped_data = std::exchange(other.mapped_data, nullopt);
+    this->file_path = std::move(other.file_path);
+  }
+
+  return *this;
 }
 
 auto File::write_data(const void* data, usize data_size) -> u64 {
