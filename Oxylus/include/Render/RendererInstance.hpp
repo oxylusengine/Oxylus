@@ -922,6 +922,8 @@ private:
     vuk::Unique<vuk::Image> image{};
     vuk::Unique<vuk::ImageView> view{};
     vuk::ImageAttachment attachment = {};
+    // how the frame that wrote it left it, which is what acquire_ia needs next frame
+    vuk::Access last_access = vuk::eNone;
   };
   std::array<FSR3History, 2> fsr3_internal_upscaled_color{};
   std::array<FSR3History, 2> fsr3_accumulation{};
