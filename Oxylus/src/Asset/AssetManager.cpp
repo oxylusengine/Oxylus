@@ -720,8 +720,13 @@ auto AssetManager::load_particle_system(this AssetManager& self, const std::file
   -> ParticleSystemID {
   ZoneScoped;
 
+  // a missing or broken file fails the load, a silent default would loop at 32/s forever. read()
+  // already logged why
   auto system = ParticleSystem::read(path);
-  auto payload = system ? std::move(*system) : ParticleSystem::make_default();
+  if (!system) {
+    return ParticleSystemID::Invalid;
+  }
+  auto payload = std::move(*system);
 
   if (payload.render.material) {
     self.load_asset(payload.render.material, {}, false);
