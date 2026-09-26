@@ -22,7 +22,9 @@ auto RendererInstance::allocate_fsr3_resources(
 
   auto allocate = [&](FSR3History& target, const vuk::Extent3D extent, const vuk::Format format) {
     target.attachment = vuk::ImageAttachment{
-      .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+      // cleared on a history reset, and vuk only infers usage for images it allocates itself
+      .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+               vuk::ImageUsageFlagBits::eTransferDst,
       .extent = extent,
       .format = format,
       .sample_count = vuk::Samples::e1,
