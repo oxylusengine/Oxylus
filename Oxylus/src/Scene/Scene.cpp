@@ -667,6 +667,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.observer<MeshComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, MeshComponent& c) {
     auto& asset_man = App::mod<AssetManager>();
     asset_man.unload_asset(c.model_uuid);
+    asset_man.unload_asset(c.material_uuid);
   });
 
   self.world.observer<AudioSourceComponent>()
@@ -1583,9 +1584,12 @@ auto Scene::resolve_mesh_spawn(this Scene& self, Model& model, const PendingMode
 auto Scene::spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, const MeshSpawnInfo& info) -> void {
   ZoneScoped;
 
-  // the MeshComponent OnRemove observer releases once per mesh entity, so each one holds its own ref
+  // the MeshComponent OnRemove observer releases once per mesh entity, so each one holds its own refs.
+  // the material is the model's own, but the component names it and the inspector swaps it as an
+  // owned ref, so it counts as one here too
   auto& asset_man = App::mod<AssetManager>();
   asset_man.acquire_ref(asset_man.get_asset(model_uuid));
+  asset_man.acquire_ref(asset_man.get_asset(info.material_uuid));
 
   auto entity = self.create_entity(self.safe_entity_name(info.name, info.parent), false);
   entity.set<TransformComponent>({});
