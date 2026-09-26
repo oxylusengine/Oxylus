@@ -234,8 +234,12 @@ public:
     Scene& self, //
     flecs::entity root,
     simdjson::ondemand::value& json,
-    std::vector<UUID>& requested_assets
+    std::vector<UUID>& requested_assets,
+    std::string_view name_override = {}
   ) -> flecs::entity;
+  // acquires what json_to_entity collected, which is the ref every asset uuid field owns
+  auto load_requested_assets(this Scene& self, std::span<const UUID> requested_assets) -> void;
+  auto duplicate_entity(this Scene& self, flecs::entity entity) -> flecs::entity;
 
   auto to_json(this const Scene& self) -> JsonWriter;
   auto from_json(this Scene& self, const std::string& json) -> bool;

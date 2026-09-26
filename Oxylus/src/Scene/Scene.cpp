@@ -3004,7 +3004,11 @@ auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
 }
 
 auto Scene::json_to_entity(
-  Scene& self, flecs::entity root, simdjson::ondemand::value& json, std::vector<UUID>& requested_assets
+  Scene& self,
+  flecs::entity root,
+  simdjson::ondemand::value& json,
+  std::vector<UUID>& requested_assets,
+  std::string_view name_override
 ) -> flecs::entity {
   ZoneScoped;
   memory::ScopedStack stack;
@@ -3017,7 +3021,8 @@ auto Scene::json_to_entity(
     return flecs::entity::null();
   }
 
-  auto e = self.create_entity(std::string(entity_name_json.get_string().value_unsafe()));
+  const auto entity_name = name_override.empty() ? entity_name_json.get_string().value_unsafe() : name_override;
+  auto e = self.create_entity(std::string(entity_name));
   if (root != flecs::entity::null())
     e.child_of(root);
 
@@ -3206,7 +3211,15 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   }
 
   OX_LOG_INFO("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
+  self.load_requested_assets(requested_assets);
 
+  return true;
+}
+
+auto Scene::load_requested_assets(this Scene& self, std::span<const UUID> requested_assets) -> void {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
   for (const auto& asset_uuid : requested_assets) {
     // Snapshot the type and release the read guard before load_asset()/add_lua_system(),
     // which re-lock the registry.
@@ -3231,8 +3244,36 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
       self.attach_mesh(e, mc.model_uuid, mc.mesh_index, mc.material_uuid);
     }
   });
+}
 
-  return true;
+auto Scene::duplicate_entity(this Scene& self, flecs::entity entity) -> flecs::entity {
+  ZoneScoped;
+
+  // a round trip through the scene format copies the whole subtree and reports every asset uuid in
+  // it, which a raw flecs clone does neither of
+  JsonWriter writer{};
+  writer.begin_obj();
+  writer["entities"].begin_array();
+  Scene::entity_to_json(writer, entity);
+  writer.end_array();
+  writer.end_obj();
+
+  const auto content = simdjson::padded_string(writer.stream.str());
+  auto parser = simdjson::ondemand::parser{};
+  auto doc = parser.iterate(content);
+
+  const auto parent = entity.parent();
+  const auto clone_name = self.safe_entity_name(fmt::format("{}_clone", entity.name().c_str()), parent);
+
+  auto clone = flecs::entity::null();
+  auto requested_assets = std::vector<UUID>{};
+  for (auto entity_json : doc["entities"].get_array()) {
+    clone = Scene::json_to_entity(self, parent, entity_json.value_unsafe(), requested_assets, clone_name);
+  }
+
+  self.load_requested_assets(requested_assets);
+
+  return clone;
 }
 
 auto Scene::save_to_file(this const Scene& self, const std::filesystem::path& path) -> bool {
