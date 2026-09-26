@@ -259,6 +259,11 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     builder.request_validation_layers();
   }
 
+  // whatever the video driver needs, including VK_EXT_headless_surface under SDL's offscreen driver
+  for (const auto* extension : window.get_vulkan_instance_extensions()) {
+    builder.enable_extension(extension);
+  }
+
   builder.enable_extension(VK_KHR_SURFACE_EXTENSION_NAME)
     .enable_extension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)
     .set_debug_callback(
