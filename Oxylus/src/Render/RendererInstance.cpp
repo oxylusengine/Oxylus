@@ -2405,7 +2405,9 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     "transforms_previous",
     "update transform previous"
   );
-  // Materials are global and already synced by the renderer; this instance only reads them.
+  // anything loaded after Renderer::update ran this frame (every later module) would otherwise draw
+  // with material indices the gpu buffer does not have yet
+  self.renderer.sync_materials();
   self.prepared_frame.materials_buffer = self.renderer.get_materials_buffer();
 
   {
