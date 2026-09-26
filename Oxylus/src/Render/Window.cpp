@@ -619,6 +619,17 @@ auto Window::get_surface(VkInstance instance) const -> VkSurfaceKHR {
   return surface;
 }
 
+auto Window::get_vulkan_instance_extensions() const -> std::span<const c8* const> {
+  u32 count = 0;
+  const auto* extensions = SDL_Vulkan_GetInstanceExtensions(&count);
+  if (!extensions) {
+    LOG_SDL_ERROR(SDL_Vulkan_GetInstanceExtensions);
+    return {};
+  }
+
+  return {extensions, count};
+}
+
 auto Window::get_size_in_pixels() const -> glm::ivec2 {
   i32 real_width;
   i32 real_height;

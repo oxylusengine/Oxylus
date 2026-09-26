@@ -93,7 +93,7 @@ Access modules statically: `App::mod<Renderer>()`, `App::has_mod<Physics>()`. Co
 modules and have their own accessors: `App::get_vfs()`, `get_job_manager()`, `get_event_system()`,
 `get_rendercontext()`, `get_window()`, `get_timestep()`. `App::defer_to_next_frame(fn)` queues work.
 
-`Core/DefaultModules.hpp` is the canonical registration order: LuaManager, AssetManager, AudioEngine,
+`Core/DefaultModules.hpp` is the canonical registration order: LuaManager, AudioEngine, AssetManager,
 Physics, Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI.
 
 `EventSystem` (`Core/EventSystem.hpp`) is a typed pub/sub bus keyed on `std::type_index`; event types
@@ -147,7 +147,11 @@ every other holder on a freed slot.
 
 **Children count too.** `acquire_ref`/`release_ref` walk the asset's sub-assets: a `Model` refs its
 materials, a `Material` refs its five textures. So acquiring a model transitively acquires every
-texture beneath it, and holders never ref sub-assets themselves — doing so double-counts. Both
+texture beneath it, and holders don't ref sub-assets just to keep them alive — the parent already
+does. The one exception is a component field that names a sub-asset's UUID directly, like
+`MeshComponent::material_uuid`: the component owns a ref on whatever UUID it stores, whoever writes
+that field acquires it, and its `OnRemove` releases it (scene loading and the inspector already work
+this way). The count is doubled but balanced, so it still frees once both holders let go. Both
 functions carry their own `switch` over `AssetType`, so **an asset type that references other assets
 must be handled in both**, or its children leak (or get freed out from under it). Keep the existing
 ordering when you do: acquire takes its own ref first and releases collect children before dropping

@@ -203,7 +203,7 @@ public struct Material {
   // maps rebuild z from the unscaled xy, since that reconstruction assumes a unit vector, and only
   // then does glTF's normalTexture.scale widen the xy.
   public func sample_tangent_normal<S : IUVSample>(in S s) -> f32x3 {
-    if (!(this.flags & MaterialFlag::HasNormalImage)) {
+    if (!HAS_FLAG(this.flags, MaterialFlag::HasNormalImage)) {
         return f32x3(0.0, 0.0, 1.0);
     }
 

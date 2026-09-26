@@ -24,6 +24,7 @@
 // clang-format on
 #include <RmlUi/Core.h>
 #include <algorithm>
+#include <cmath>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <simdjson.h>
@@ -306,7 +307,8 @@ struct JsonEntityDeserializer : IEntitySerializer {
         auto* str_cstr = stack.null_terminate_cstr(result.value_unsafe());
         opaque_info->assign_string(field_ptr, str_cstr);
 
-        if (field_type == world.entity<UUID>()) {
+        // an empty uuid field is an unset slot, not an asset to load
+        if (field_type == world.entity<UUID>() && *static_cast<UUID*>(field_ptr)) {
           requested_assets.push_back(*static_cast<UUID*>(field_ptr));
         }
       }
@@ -434,6 +436,13 @@ Scene::~Scene() {
     }
     entity_particle_emitters_map.clear();
     particle_emitters.reset();
+
+    for (const auto& spawn : pending_model_spawns) {
+      if (spawn.hierarchy_spawned) {
+        asset_man.unload_asset(spawn.model_uuid);
+      }
+    }
+    pending_model_spawns.clear();
   }
 
   destroy_terrain_collision();
@@ -506,8 +515,33 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.observer<TransformComponent, MeshComponent>()
     .event(flecs::OnRemove)
     .each([&self](flecs::iter& it, usize i, TransformComponent&, MeshComponent& mc) {
-      if (mc.model_uuid) {
-        self.detach_mesh(it.entity(i));
+      if (!mc.model_uuid) {
+        return;
+      }
+
+      const auto entity = it.entity(i);
+      if (!self.detach_mesh(entity) || !mc.cast_shadows || self.tearing_down) {
+        return;
+      }
+
+      auto push_bounds = [&self](const AABB& box) {
+        self.removed_mesh_bounds.push_back({.aabb_center = box.get_center(), .aabb_extent = box.get_size()});
+      };
+
+      // the gpu transform is what the shadow was last drawn with, and it may still be at the
+      // previous position if the mesh moved this frame
+      const GPU::Transforms* transform = nullptr;
+      if (auto transform_id = self.get_entity_transform_id(entity)) {
+        transform = self.get_entity_transform(*transform_id);
+      }
+      if (!transform) {
+        push_bounds(mc.world_aabb);
+        return;
+      }
+
+      push_bounds(mc.baked_aabb.get_transformed(transform->world));
+      if (transform->previous_world != transform->world) {
+        push_bounds(mc.baked_aabb.get_transformed(transform->previous_world));
       }
     });
 
@@ -634,6 +668,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.observer<MeshComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, MeshComponent& c) {
     auto& asset_man = App::mod<AssetManager>();
     asset_man.unload_asset(c.model_uuid);
+    asset_man.unload_asset(c.material_uuid);
   });
 
   self.world.observer<AudioSourceComponent>()
@@ -772,13 +807,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.system<const TransformComponent, AudioListenerComponent>("audio_listener_update")
     .kind(flecs::PreUpdate)
-    .each([&self](const flecs::entity& e, const TransformComponent& tc, AudioListenerComponent& ac) {
+    .each([&self](const flecs::entity& e, const TransformComponent&, AudioListenerComponent& ac) {
       if (ac.active) {
         auto& audio_engine = App::mod<AudioEngine>();
-        const glm::mat4 inverted = glm::inverse(self.get_world_transform(e));
-        const glm::vec3 forward = normalize(glm::vec3(inverted[2]));
-        audio_engine.set_listener_position(ac.listener_index, tc.position);
-        audio_engine.set_listener_direction(ac.listener_index, -forward);
+        const auto world = self.get_world_transform(e);
+        // local +z in world space, the listener faces down -z like the camera
+        const auto back = glm::normalize(glm::vec3(world[2]));
+        audio_engine.set_listener_position(ac.listener_index, glm::vec3(world[3]));
+        audio_engine.set_listener_direction(ac.listener_index, -back);
         audio_engine.set_listener_cone(ac.listener_index, ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
       }
     });
@@ -796,7 +832,13 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         audio_engine.set_source_volume(audio->get_source(), ac.volume);
         audio_engine.set_source_pitch(audio->get_source(), ac.pitch);
         audio_engine.set_source_looping(audio->get_source(), ac.looping);
-        audio_engine.set_source_spatialization(audio->get_source(), ac.looping);
+        audio_engine.set_source_spatialization(audio->get_source(), ac.spatialization);
+        if (ac.spatialization) {
+          // the cone points down local -z, the same way the listener faces
+          const auto world = Scene::get_world_transform(e);
+          audio_engine.set_source_position(audio->get_source(), glm::vec3(world[3]));
+          audio_engine.set_source_direction(audio->get_source(), -glm::normalize(glm::vec3(world[2])));
+        }
         audio_engine.set_source_roll_off(audio->get_source(), ac.roll_off);
         audio_engine.set_source_min_gain(audio->get_source(), ac.min_gain);
         audio_engine.set_source_max_gain(audio->get_source(), ac.max_gain);
@@ -816,7 +858,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<VehicleComponent>("vehicle_input")
     .kind(flecs::OnUpdate)
     .tick_source(physics_tick_source)
-    .each([](VehicleComponent& vehicle) {
+    .each([&self](VehicleComponent& vehicle) {
       if (!vehicle.runtime_constraint)
         return;
 
@@ -825,14 +867,11 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       controller
         ->SetDriverInput(vehicle.input_forward, vehicle.input_right, vehicle.input_brake, vehicle.input_hand_brake);
 
-      // Jolt puts the body to sleep on its own, and a sleeping chassis ignores driver input.
-      if (
-        vehicle.input_forward != 0.f || vehicle.input_right != 0.f || vehicle.input_brake != 0.f ||
-        vehicle.input_hand_brake != 0.f
-      ) {
-        constraint->GetVehicleBody()->GetMotionProperties()->SetLinearVelocity(
-          constraint->GetVehicleBody()->GetLinearVelocity()
-        );
+      // jolt puts the body to sleep on its own and a sleeping chassis ignores driver input, braking
+      // alone leaves it asleep so parked cars on the handbrake stay cheap
+      const auto* body = constraint->GetVehicleBody();
+      if ((vehicle.input_forward != 0.0f || vehicle.input_right != 0.0f) && !body->IsActive()) {
+        self.physics_system->GetBodyInterface().ActivateBody(body->GetID());
       }
     });
 
@@ -842,8 +881,15 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .run([&self](flecs::iter& it) {
       OX_CHECK_NULL(self.physics_system);
       auto& p = App::mod<Physics>();
+
+      // an interval tick source fires at most once per frame, so below the tick rate one tick has to
+      // cover several intervals or the simulation falls behind the clock
+      const auto owed_steps = std::round(it.delta_system_time() / self.physics_interval);
+      const auto steps = std::clamp(static_cast<i32>(owed_steps), 1, 4);
+
       p.debug_renderer->begin_step(self.debug_renderer, physics_debug_draw_enabled(self));
-      self.physics_system->Update(self.physics_interval, 1, p.get_temp_allocator(), p.get_job_system());
+      self.physics_system
+        ->Update(self.physics_interval * static_cast<f32>(steps), steps, p.get_temp_allocator(), p.get_job_system());
       p.debug_renderer->end_step();
     });
 
@@ -1159,14 +1205,15 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
   auto pre_update_phase_enabled = !self.world.entity(flecs::PreUpdate).has(flecs::Disabled);
   auto on_update_phase_enabled = !self.world.entity(flecs::OnUpdate).has(flecs::Disabled);
-  if (pre_update_phase_enabled && on_update_phase_enabled) {
+  const auto gameplay_enabled = pre_update_phase_enabled && on_update_phase_enabled;
+  self.last_step_delta = gameplay_enabled ? static_cast<f32>(delta_time.get_seconds()) : 0.0f;
+  if (gameplay_enabled) {
     for (auto& [_, system] : self.lua_systems) {
       system->on_scene_update(&self, static_cast<f32>(delta_time.get_seconds()));
     }
   }
 
-  // TODO: Pass our delta_time?
-  self.world.progress();
+  self.world.progress(static_cast<f32>(delta_time.get_seconds()));
 
   if (physics_debug_draw_enabled(self)) {
     App::mod<Physics>().debug_renderer->draw(*self.physics_system, self.debug_renderer);
@@ -1292,6 +1339,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
       .gpu_mesh_blas_addresses = blas_addresses,
       .gpu_mesh_instances = gpu_mesh_instances,
       .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices,
+      .removed_mesh_bounds = self.removed_mesh_bounds,
     };
     self.renderer_instance->update(update_info, self.renderer_cvar);
 
@@ -1430,7 +1478,14 @@ auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSp
   ZoneScoped;
 
   const auto& root_node = model.mesh_groups.front();
-  auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
+  // named against the parent's scope too, or a second instance under the same parent aborts in child_of
+  auto root_entity = root_node.name.empty()
+                       ? self.create_entity("", false)
+                       : self.create_entity(self.safe_entity_name(root_node.name, spawn.parent), false);
+  if (spawn.parent) {
+    root_entity.child_of(spawn.parent);
+    root_entity.modified<TransformComponent>();
+  }
 
   struct ProcessingNode {
     flecs::entity parent = {};
@@ -1530,6 +1585,13 @@ auto Scene::resolve_mesh_spawn(this Scene& self, Model& model, const PendingMode
 auto Scene::spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, const MeshSpawnInfo& info) -> void {
   ZoneScoped;
 
+  // the MeshComponent OnRemove observer releases once per mesh entity, so each one holds its own refs.
+  // the material is the model's own, but the component names it and the inspector swaps it as an
+  // owned ref, so it counts as one here too
+  auto& asset_man = App::mod<AssetManager>();
+  asset_man.acquire_ref(asset_man.get_asset(model_uuid));
+  asset_man.acquire_ref(asset_man.get_asset(info.material_uuid));
+
   auto entity = self.create_entity(self.safe_entity_name(info.name, info.parent), false);
   entity.set<TransformComponent>({});
   entity.set<MeshComponent>({
@@ -1542,7 +1604,7 @@ auto Scene::spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, co
   entity.modified<TransformComponent>();
 }
 
-auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity {
+auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid, flecs::entity parent) -> flecs::entity {
   ZoneScoped;
 
   auto& asset_man = App::mod<AssetManager>();
@@ -1562,25 +1624,26 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   auto mesh_spawns = std::vector<MeshSpawnInfo>();
   {
     auto model = asset_man.get_model(asset_uuid);
-    if (!model) {
-      return {};
-    }
+    if (model) {
+      auto spawn = PendingModelSpawn{.model_uuid = asset_uuid, .parent = parent};
+      root_entity = self.spawn_model_hierarchy(*model.value, spawn);
 
-    auto spawn = PendingModelSpawn{.model_uuid = asset_uuid};
-    root_entity = self.spawn_model_hierarchy(*model.value, spawn);
+      for (const auto& mesh_entity : spawn.mesh_entities) {
+        if (!model->is_mesh_ready(mesh_entity.mesh_index)) {
+          continue;
+        }
 
-    for (const auto& mesh_entity : spawn.mesh_entities) {
-      if (!model->is_mesh_ready(mesh_entity.mesh_index)) {
-        continue;
+        mesh_spawns.emplace_back(self.resolve_mesh_spawn(*model.value, mesh_entity));
       }
-
-      mesh_spawns.emplace_back(self.resolve_mesh_spawn(*model.value, mesh_entity));
     }
   }
 
   for (const auto& mesh_spawn : mesh_spawns) {
     self.spawn_model_mesh_entity(asset_uuid, mesh_spawn);
   }
+
+  // the mesh entities hold their own refs now, so the one load_asset took goes back
+  asset_man.unload_asset(asset_uuid);
 
   return root_entity;
 }
@@ -1652,6 +1715,9 @@ auto Scene::update_pending_model_spawns(this Scene& self) -> void {
         if (asset_man.is_loading(spawn.model_uuid)) {
           ++it;
         } else {
+          if (spawn.hierarchy_spawned) {
+            asset_man.unload_asset(spawn.model_uuid);
+          }
           it = self.pending_model_spawns.erase(it);
         }
 
@@ -1678,6 +1744,7 @@ auto Scene::update_pending_model_spawns(this Scene& self) -> void {
       }
     }
 
+    // held while the spawn is pending, so the model can't unload between two mesh batches
     if (hierarchy_just_spawned) {
       asset_man.acquire_ref(asset_man.get_asset(spawn.model_uuid));
     }
@@ -1688,6 +1755,7 @@ auto Scene::update_pending_model_spawns(this Scene& self) -> void {
 
     // Anything still listed once the model is done failed to build.
     if (fully_loaded) {
+      asset_man.unload_asset(spawn.model_uuid);
       it = self.pending_model_spawns.erase(it);
     } else {
       ++it;
@@ -2245,8 +2313,8 @@ auto build_collider_shape(
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), bc->friction, bc->restitution);
 
-    glm::vec3 scale = bc->size;
-    JPH::BoxShapeSettings shape_settings({glm::abs(scale.x), glm::abs(scale.y), glm::abs(scale.z)}, 0.05f, mat);
+    const auto half_extents = glm::abs(bc->size * world_scale);
+    JPH::BoxShapeSettings shape_settings({half_extents.x, half_extents.y, half_extents.z}, 0.05f, mat);
     shape_settings.SetDensity(glm::max(0.001f, bc->density));
     offset = bc->offset;
     return shape_settings.Create();
@@ -2256,7 +2324,7 @@ auto build_collider_shape(
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), scc->friction, scc->restitution);
 
-    float radius = 2.0f * scc->radius * max_scale_component;
+    float radius = scc->radius * max_scale_component;
     JPH::SphereShapeSettings shape_settings(glm::max(0.01f, radius), mat);
     shape_settings.SetDensity(glm::max(0.001f, scc->density));
     offset = scc->offset;
@@ -2267,8 +2335,9 @@ auto build_collider_shape(
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), ccc->friction, ccc->restitution);
 
-    float radius = 2.0f * ccc->radius * max_scale_component;
-    JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, ccc->height) * 0.5f, glm::max(0.01f, radius), mat);
+    float radius = ccc->radius * max_scale_component;
+    float height = ccc->height * world_scale.y;
+    JPH::CapsuleShapeSettings shape_settings(glm::max(0.01f, height) * 0.5f, glm::max(0.01f, radius), mat);
     shape_settings.SetDensity(glm::max(0.001f, ccc->density));
     offset = ccc->offset;
     return shape_settings.Create();
@@ -2278,14 +2347,11 @@ auto build_collider_shape(
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), tcc->friction, tcc->restitution);
 
-    float top_radius = 2.0f * tcc->top_radius * max_scale_component;
-    float bottom_radius = 2.0f * tcc->bottom_radius * max_scale_component;
-    JPH::TaperedCapsuleShapeSettings shape_settings(
-      glm::max(0.01f, tcc->height) * 0.5f,
-      glm::max(0.01f, top_radius),
-      glm::max(0.01f, bottom_radius),
-      mat
-    );
+    float top_radius = tcc->top_radius * max_scale_component;
+    float bottom_radius = tcc->bottom_radius * max_scale_component;
+    float height = tcc->height * world_scale.y;
+    JPH::TaperedCapsuleShapeSettings
+      shape_settings(glm::max(0.01f, height) * 0.5f, glm::max(0.01f, top_radius), glm::max(0.01f, bottom_radius), mat);
     shape_settings.SetDensity(glm::max(0.001f, tcc->density));
     offset = tcc->offset;
     return shape_settings.Create();
@@ -2295,9 +2361,9 @@ auto build_collider_shape(
     const JPH::Ref<PhysicsMaterial3D>
       mat = new PhysicsMaterial3D(entity_name, JPH::ColorArg(255, 0, 0), cycc->friction, cycc->restitution);
 
-    float radius = 2.0f * cycc->radius * max_scale_component;
-    JPH::CylinderShapeSettings
-      shape_settings(glm::max(0.01f, cycc->height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
+    float radius = cycc->radius * max_scale_component;
+    float height = cycc->height * world_scale.y;
+    JPH::CylinderShapeSettings shape_settings(glm::max(0.01f, height) * 0.5f, glm::max(0.01f, radius), 0.05f, mat);
     shape_settings.SetDensity(glm::max(0.001f, cycc->density));
     offset = cycc->offset;
     return shape_settings.Create();
@@ -2851,6 +2917,7 @@ auto Scene::render(
   // The prepared frame is consumed here, so the dirty state it covers has now really been submitted.
   self.dirty_transforms.clear();
   self.dirty_mesh_instances.clear();
+  self.removed_mesh_bounds.clear();
   self.meshes_dirty = false;
 
   auto scene_surface = ri->render(
@@ -2938,7 +3005,11 @@ auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
 }
 
 auto Scene::json_to_entity(
-  Scene& self, flecs::entity root, simdjson::ondemand::value& json, std::vector<UUID>& requested_assets
+  Scene& self,
+  flecs::entity root,
+  simdjson::ondemand::value& json,
+  std::vector<UUID>& requested_assets,
+  std::string_view name_override
 ) -> flecs::entity {
   ZoneScoped;
   memory::ScopedStack stack;
@@ -2951,9 +3022,21 @@ auto Scene::json_to_entity(
     return flecs::entity::null();
   }
 
-  auto e = self.create_entity(std::string(entity_name_json.get_string().value_unsafe()));
+  const auto entity_name = std::string(
+    name_override.empty() ? entity_name_json.get_string().value_unsafe() : name_override
+  );
+
+  // named only once it sits in its final scope: `world.entity(name)` resolves at the root, so a child
+  // sharing a root entity's name would get that entity back and reparent it
+  auto e = self.create_entity();
   if (root != flecs::entity::null())
     e.child_of(root);
+
+  if (!entity_name.empty()) {
+    const auto name_taken = root != flecs::entity::null() ? root.lookup(entity_name.c_str()) != 0
+                                                          : world.lookup(entity_name.c_str()) != 0;
+    e.set_name(name_taken ? self.safe_entity_name(entity_name, root).c_str() : entity_name.c_str());
+  }
 
   auto entity_tags_json = json["tags"];
   for (auto entity_tag : entity_tags_json.get_array()) {
@@ -3140,7 +3223,15 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   }
 
   OX_LOG_INFO("Loading scene {} with {} assets...", self.scene_name, requested_assets.size());
+  self.load_requested_assets(requested_assets);
 
+  return true;
+}
+
+auto Scene::load_requested_assets(this Scene& self, std::span<const UUID> requested_assets) -> void {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
   for (const auto& asset_uuid : requested_assets) {
     // Snapshot the type and release the read guard before load_asset()/add_lua_system(),
     // which re-lock the registry.
@@ -3165,8 +3256,36 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
       self.attach_mesh(e, mc.model_uuid, mc.mesh_index, mc.material_uuid);
     }
   });
+}
 
-  return true;
+auto Scene::duplicate_entity(this Scene& self, flecs::entity entity) -> flecs::entity {
+  ZoneScoped;
+
+  // a round trip through the scene format copies the whole subtree and reports every asset uuid in
+  // it, which a raw flecs clone does neither of
+  JsonWriter writer{};
+  writer.begin_obj();
+  writer["entities"].begin_array();
+  Scene::entity_to_json(writer, entity);
+  writer.end_array();
+  writer.end_obj();
+
+  const auto content = simdjson::padded_string(writer.stream.str());
+  auto parser = simdjson::ondemand::parser{};
+  auto doc = parser.iterate(content);
+
+  const auto parent = entity.parent();
+  const auto clone_name = self.safe_entity_name(fmt::format("{}_clone", entity.name().c_str()), parent);
+
+  auto clone = flecs::entity::null();
+  auto requested_assets = std::vector<UUID>{};
+  for (auto entity_json : doc["entities"].get_array()) {
+    clone = Scene::json_to_entity(self, parent, entity_json.value_unsafe(), requested_assets, clone_name);
+  }
+
+  self.load_requested_assets(requested_assets);
+
+  return clone;
 }
 
 auto Scene::save_to_file(this const Scene& self, const std::filesystem::path& path) -> bool {

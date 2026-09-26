@@ -9,6 +9,7 @@
 #include <limits>
 #include <numbers>
 #include <stb_image_write.h>
+#include <utility>
 #include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetImporter.hpp"
@@ -24,10 +25,10 @@
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/RenderContext.hpp"
-#include "Render/Renderer.hpp"
 #include "ResourceCompiler.hpp"
 #include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
+#include "Scene/SceneGPU.hpp"
 #include "Utils/ThumbnailCamera.hpp"
 
 namespace ox {
@@ -1283,8 +1284,6 @@ auto ThumbnailManager::render_model_thumbnail(this ThumbnailManager& self, const
   auto thumbnail_scene = Scene("ThumbnailScene");
   thumbnail_scene.create_model_entity(model_uuid);
 
-  App::mod<Renderer>().sync_materials();
-
   auto& asset_man = App::mod<AssetManager>();
   auto model_asset = asset_man.get_model(model_uuid);
   if (!model_asset) {
@@ -1340,12 +1339,17 @@ auto ThumbnailManager::render_material_thumbnail(this ThumbnailManager& self, co
     return nullopt;
   }
 
+  // the sphere's MeshComponent owns a ref on its material like any other, taken before the old one
+  // goes so swapping to the same material never drops it to zero
+  auto& asset_man = App::mod<AssetManager>();
+  asset_man.load_asset(material_uuid);
+
   auto& sphere = self.material_preview->sphere;
   auto& mesh_component = sphere.ensure<MeshComponent>();
-  mesh_component.material_uuid = material_uuid;
+  const auto previous_material = std::exchange(mesh_component.material_uuid, material_uuid);
   sphere.modified<MeshComponent>();
 
-  App::mod<Renderer>().sync_materials();
+  asset_man.unload_asset(previous_material);
 
   return self.render_scene(*self.material_preview->scene, size);
 }
