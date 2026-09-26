@@ -104,12 +104,12 @@ public:
 
   template <typename SelfT>
   [[nodiscard]]
-  constexpr T&& value(this SelfT&& self) {
+  constexpr auto value(this SelfT&& self) -> decltype(auto) {
     if (!self.has_value()) {
       throw std::bad_optional_access();
     }
 
-    return std::forward<option_flag<T>>(self).value_;
+    return (std::forward<SelfT>(self).value_);
   }
 
   template <typename U, typename SelfT>
@@ -140,12 +140,12 @@ public:
 
   // operators
   template <typename SelfT>
-  constexpr T&& operator*(this SelfT&& self) {
+  constexpr auto operator*(this SelfT&& self) -> decltype(auto) {
     if (!self.has_value()) {
       throw std::bad_optional_access();
     }
 
-    return std::forward<option_flag<T>>(self).value_;
+    return (std::forward<SelfT>(self).value_);
   }
 
   constexpr option_flag& operator=(std::nullopt_t) noexcept {
