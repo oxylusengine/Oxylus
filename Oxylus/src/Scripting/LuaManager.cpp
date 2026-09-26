@@ -1,9 +1,14 @@
 ﻿#include "Scripting/LuaManager.hpp"
 
+#include <filesystem>
+#include <format>
+#include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
 #include <sol/sol.hpp>
+#include <stdexcept>
 
-#include "Core/App.hpp"
-#include "OS/File.hpp"
+#include "Core/Types.hpp"
 #include "Scripting/LuaNetworkBindings.hpp"
 #include "Utils/Log.hpp"
 
@@ -24,6 +29,87 @@
 #endif
 
 namespace ox {
+// only their addresses matter, as lightuserdata keys and markers; not const so the linker can't fold them together
+static u8 module_cache_key = 0;
+static u8 module_loading_marker = 0;
+
+// resolves `path` against the calling script's own file, so scripts load their siblings the same way whether the
+// asset root is the editor's project dir or the shipped app dir
+static auto require_script(sol::this_state lua, sol::this_environment this_env, std::string_view path) -> sol::object {
+  ZoneScoped;
+
+  // level 1 is the calling lua function, file-loaded chunks carry an '@path' source
+  lua_Debug caller = {};
+  if (!lua_getstack(lua, 1, &caller) || !lua_getinfo(lua, "Sl", &caller) || caller.source[0] != '@') {
+    throw std::runtime_error(std::format("require_script('{}'): caller was not loaded from a file", path));
+  }
+  if (!this_env) {
+    throw std::runtime_error(std::format("require_script('{}'): caller has no environment", path));
+  }
+
+  const auto script_path = (std::filesystem::path(caller.source + 1).parent_path() / path).lexically_normal();
+  const auto key = script_path.generic_string();
+
+  // cached per environment rather than in package.loaded, so each LuaSystem (and every reload or play session)
+  // re-reads its modules from disk and never shares module state with another scene
+  sol::state_view state(lua);
+  sol::environment& env = this_env;
+  auto modules = env.raw_get<sol::optional<sol::table>>(sol::lightuserdata_value(&module_cache_key));
+  if (!modules) {
+    modules = state.create_table();
+    env.raw_set(sol::lightuserdata_value(&module_cache_key), *modules);
+  }
+
+  if (sol::object cached = (*modules)[key]; cached.valid()) {
+    if (cached.is<void*>() && cached.as<void*>() == &module_loading_marker) {
+      throw std::runtime_error(
+        std::format(
+          "{}:{}: require_script('{}'): circular require of '{}'",
+          caller.short_src,
+          caller.currentline,
+          path,
+          key
+        )
+      );
+    }
+    return cached;
+  }
+
+  // a missing file would otherwise surface much later as a nil module at the use site
+  if (!std::filesystem::exists(script_path)) {
+    throw std::runtime_error(
+      std::format("{}:{}: require_script('{}'): '{}' does not exist", caller.short_src, caller.currentline, path, key)
+    );
+  }
+
+  sol::load_result chunk = state.load_file(script_path.string());
+  if (!chunk.valid()) {
+    const sol::error err = chunk;
+    throw std::runtime_error(err.what());
+  }
+
+  // no error handler: the outermost call already appends a traceback, nested ones would stack a copy per level
+  auto chunk_func = sol::protected_function(chunk.get<sol::function>(), sol::reference(sol::lua_nil));
+  env.set_on(chunk_func);
+
+  (*modules)[key] = sol::lightuserdata_value(&module_loading_marker);
+  sol::protected_function_result result = chunk_func();
+  if (!result.valid()) {
+    (*modules)[key] = sol::lua_nil;
+    const sol::error err = result;
+    throw std::runtime_error(err.what());
+  }
+
+  // same contract as lua's require: a module that returns nothing is cached as true
+  sol::object module = result.get<sol::object>();
+  if (!module.valid()) {
+    module = sol::make_object(state, true);
+  }
+  (*modules)[key] = module;
+
+  return module;
+}
+
 auto LuaManager::init(this LuaManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
   self.state = std::make_unique<sol::state>();
@@ -36,26 +122,7 @@ auto LuaManager::init(this LuaManager& self) -> std::expected<void, std::string>
     sol::lib::string
   );
 
-  self.state->set_function(
-    "require_script",
-    [s = self.state.get()](const std::string& virtual_dir, const std::string& path) -> sol::object {
-      ZoneScopedN("LuaRequire");
-      auto& vfs = App::get_vfs();
-      auto physical_path = vfs.resolve_physical_dir(virtual_dir, path);
-      // Without this, a missing file requires an empty chunk and only fails much later, at the use site.
-      if (!std::filesystem::exists(physical_path)) {
-        OX_LOG_ERROR(
-          "require_script('{}', '{}') resolved to '{}', which does not exist.",
-          virtual_dir,
-          path,
-          physical_path.string()
-        );
-        return sol::make_object(*s, sol::lua_nil);
-      }
-      auto script = File::to_string(physical_path);
-      return s->require_script(path, script);
-    }
-  );
+  self.state->set_function("require_script", &require_script);
 
 #define BIND(type) self.bind<type>(#type, self.state.get())
 

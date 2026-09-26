@@ -39,29 +39,21 @@ auto LuaSystem::init_script(
     self.environment.reset();
   self.environment = std::make_unique<sol::environment>(*state, sol::create, state->globals());
 
+  // '@path' chunk name lets require_script resolve siblings of in-memory scripts too
   auto file_path_str = self.file_path.string();
   const auto load_file_result = script.has_value()
-                                  ? state->script(self.script_.value(), *self.environment, sol::script_pass_on_error)
+                                  ? state->script(
+                                      self.script_.value(),
+                                      *self.environment,
+                                      sol::script_pass_on_error,
+                                      "@" + file_path_str
+                                    )
                                   : state->script_file(file_path_str, *self.environment, sol::script_pass_on_error);
 
   if (!load_file_result.valid()) {
     const sol::error err = load_file_result;
     OX_LOG_ERROR("Failed to Execute Lua script {0}", self.file_path);
     OX_LOG_ERROR("Error : {0}", err.what());
-    std::string error = std::string(err.what());
-
-    const auto linepos = error.find(".lua:");
-    std::string error_line = error.substr(linepos + 5); //+4 .lua: + 1
-    const auto linepos_end = error_line.find(':');
-    error_line = error_line.substr(0, linepos_end);
-    const int line = std::stoi(error_line);
-    error = error.substr(linepos + error_line.size() + linepos_end + 4); //+4 .lua:
-
-    self.errors[line] = error;
-  }
-
-  for (auto [l, e] : self.errors) {
-    OX_LOG_ERROR("{} {}", l, e);
   }
 
   constexpr auto reset_unused = [](std::unique_ptr<sol::protected_function>& func) {

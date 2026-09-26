@@ -162,9 +162,8 @@ auto os::file_read(FileDescriptor file, void* data, usize size) -> usize {
     OVERLAPPED overlapped = {};
     overlapped.Offset = read_bytes_size & 0x00000000ffffffffull;
     overlapped.OffsetHigh = (read_bytes_size & 0xffffffff00000000ull) >> 32u;
-    ReadFile(file_handle, cur_data, remainder_size, &cur_read_size, &overlapped);
-    if (cur_read_size < 0) {
-      OX_LOG_TRACE("File read interrupted! {}", cur_read_size);
+    // a failed read or end of file (zero bytes) ends it, otherwise asking for more than is left spins forever
+    if (!ReadFile(file_handle, cur_data, remainder_size, &cur_read_size, &overlapped) || cur_read_size == 0) {
       break;
     }
 

@@ -788,8 +788,8 @@ ContentPanel::ContentPanel() : EditorPanelState("Contents", ICON_MDI_FOLDER_STAR
 }
 
 void ContentPanel::init(this ContentPanel& self) {
-  auto vfs = App::get_vfs();
-  if (!vfs.is_mounted_dir(VFS::PROJECT_DIR))
+  auto& vfs = App::get_vfs();
+  if (!vfs.is_mounted_dir(VFS::ASSETS_DIR))
     return;
 
   auto& editor_cvar = App::mod<Editor>().editor_cvar;
@@ -801,7 +801,7 @@ void ContentPanel::init(this ContentPanel& self) {
   self.sort_ascending_ = editor_cvar.cvar_content_sort_ascending.as_bool();
   self.type_filter_mask_ = static_cast<u32>(editor_cvar.cvar_content_type_filter.get()) & ALL_FILTER_TYPES_MASK;
 
-  auto assets_dir = vfs.resolve_physical_dir(VFS::PROJECT_DIR, "");
+  auto assets_dir = vfs.resolve_physical_dir(VFS::ASSETS_DIR, "");
   self.assets_directory = assets_dir;
   self.current_directory = self.assets_directory;
   self.refresh();

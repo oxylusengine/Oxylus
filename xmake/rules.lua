@@ -23,8 +23,8 @@ on_config(function(target)
 end)
 
 rule("ox.install_resources")
-set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".mp3", ".wav", ".ogg",
-  ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".oxparticle", ".rml", ".rcss")
+set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".jpeg", ".mp3", ".wav", ".ogg", ".flac", ".json",
+  ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".oxparticle", ".oxterrain", ".rml", ".rcss")
 before_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local output_dir = target:extraconf("rules", "ox.install_resources", "output_dir") or ""
   local root_dir = target:extraconf("rules", "ox.install_resources", "root_dir") or os.scriptdir()
@@ -87,4 +87,32 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
 
   batchcmds:set_depmtime(os.mtime(abs_output))
   batchcmds:set_depcache(target:dependfile(abs_output))
+end)
+
+-- Cooks a game's assets at build time into `<targetdir>/<output_dir>`: the compiled packs plus the manifest
+-- `AssetManager` registers them from, so a game ships without the editor ever running. `root_dir` is the asset
+-- directory the game's `install_resources` copies, and `output_dir` must land where the game mounts
+-- `VFS::COOKED_DIR`, `<assets>/.cooked`.
+rule("ox.cook_assets")
+after_build(function(target)
+  import("core.project.depend")
+
+  local root_dir = target:extraconf("rules", "ox.cook_assets", "root_dir")
+  local output_dir = target:extraconf("rules", "ox.cook_assets", "output_dir") or "Assets/.cooked"
+  local abs_output = path.absolute(path.join(target:targetdir(), output_dir))
+  local rcli = target:dep("rcli"):targetfile()
+
+  -- rcli skips a warm asset on its own, this only saves walking the tree when nothing moved. The file list goes in
+  -- `values` too: mtimes alone never notice a file that was added or removed
+  local sources = os.files(path.join(root_dir, "**"))
+  table.sort(sources)
+  depend.on_changed(function()
+    cprint("${color.build.object}cooking assets %s -> %s", root_dir, abs_output)
+    os.vrunv(rcli, { "--cook-assets", root_dir, "--output", abs_output })
+  end, {
+    dependfile = target:dependfile("ox.cook_assets"),
+    files = table.join(sources, { rcli }),
+    values = table.join({ abs_output }, sources),
+    changed = not os.isfile(path.join(abs_output, "assets.oxmanifest")),
+  })
 end)

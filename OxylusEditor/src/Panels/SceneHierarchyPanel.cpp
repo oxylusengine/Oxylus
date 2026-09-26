@@ -9,6 +9,7 @@
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
+#include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "Panels/TextEditorPanel.hpp"
@@ -47,7 +48,7 @@ static auto open_script_in_editor(const UUID& uuid) -> void {
 
   auto& text_editor_panel = App::mod<Editor>().editor_panel_registry.get<TextEditorPanel>();
   text_editor_panel.visible = true;
-  text_editor_panel.text_editor.open_file(asset->path);
+  text_editor_panel.text_editor.open_file(App::get_vfs().to_physical(asset->path));
 }
 
 SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanelState("Scene Hierarchy", ICON_MDI_VIEW_LIST, true) {}

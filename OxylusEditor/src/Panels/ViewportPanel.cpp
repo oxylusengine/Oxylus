@@ -388,10 +388,12 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     }
 
     if (ImGui::BeginPopupContextItem("viewport context")) {
-      if (ImGui::MenuItem("Unload Scene")) {
-        self.editor_scene = nullptr;
-        self.set_name("Viewport");
-        editor.reset_current_docking_layout();
+      if (!self.editor_scene->is_playing()) {
+        if (ImGui::MenuItem("Unload Scene")) {
+          self.editor_scene = nullptr;
+          self.set_name("Viewport");
+          editor.reset_current_docking_layout();
+        }
       }
       ImGui::EndPopup();
     }

@@ -21,6 +21,7 @@
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/JobManager.hpp"
+#include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
@@ -919,7 +920,7 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
 
       pack_path.clear();
       if (auto asset = asset_man.get_asset(uuid)) {
-        pack_path = asset->path;
+        pack_path = App::get_vfs().to_physical(asset->path);
       }
 
       if (pack_path.empty()) {
@@ -1024,7 +1025,7 @@ auto ThumbnailManager::get_thumbnail_material(this ThumbnailManager& self, const
 
   auto asset_path = std::filesystem::path{};
   if (auto asset = App::mod<AssetManager>().get_asset(material_uuid)) {
-    asset_path = asset->path;
+    asset_path = App::get_vfs().to_physical(asset->path);
   }
 
   return self.material_thumbnail_for(material_uuid, asset_path);
@@ -1215,7 +1216,7 @@ auto ThumbnailManager::invalidate_material(this ThumbnailManager& self, const UU
 
   auto meta_path = std::filesystem::path{};
   if (auto asset = App::mod<AssetManager>().get_asset(material_uuid)) {
-    meta_path = material_meta_path(asset->path);
+    meta_path = material_meta_path(App::get_vfs().to_physical(asset->path));
   }
 
   const auto live_key = live_cache_key(material_uuid);

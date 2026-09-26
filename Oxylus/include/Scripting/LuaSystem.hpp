@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include <ankerl/unordered_dense.h>
 #include <filesystem>
 #include <flecs.h>
 #include <sol/environment.hpp>
@@ -72,7 +71,6 @@ public:
 private:
   std::filesystem::path file_path = {};
   ox::option<std::string> script_ = {};
-  ankerl::unordered_dense::map<int, std::string> errors = {};
 
   std::unique_ptr<sol::environment> environment = nullptr;
 
