@@ -35,6 +35,7 @@ struct ModuleRegistry {
   std::vector<std::function<void(const Timestep&)>> update_callbacks = {};
   std::vector<std::function<std::expected<void, std::string>()>> deinit_callbacks = {};
   std::vector<std::string_view> module_names = {};
+  usize initialized_count = 0;
 
   template <typename ModuleT, typename... DepTypes>
   void check_dependencies(std::tuple<DepTypes...>) {

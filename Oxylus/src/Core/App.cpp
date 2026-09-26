@@ -78,7 +78,10 @@ auto App::init(this App& self) -> void {
   else
     OX_LOG_ERROR("Failed to initalize EventSystem: {}", event_system_init_result.error());
 
-  self.registry.init();
+  if (!self.registry.init()) {
+    OX_LOG_ERROR("Stopping the app because a module failed to initialize.");
+    self.is_running = false;
+  }
 
   self.job_manager.wait();
 }
