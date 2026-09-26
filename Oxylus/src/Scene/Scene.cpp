@@ -24,6 +24,7 @@
 // clang-format on
 #include <RmlUi/Core.h>
 #include <algorithm>
+#include <cmath>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <simdjson.h>
@@ -842,8 +843,15 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .run([&self](flecs::iter& it) {
       OX_CHECK_NULL(self.physics_system);
       auto& p = App::mod<Physics>();
+
+      // an interval tick source fires at most once per frame, so below the tick rate one tick has to
+      // cover several intervals or the simulation falls behind the clock
+      const auto owed_steps = std::round(it.delta_system_time() / self.physics_interval);
+      const auto steps = std::clamp(static_cast<i32>(owed_steps), 1, 4);
+
       p.debug_renderer->begin_step(self.debug_renderer, physics_debug_draw_enabled(self));
-      self.physics_system->Update(self.physics_interval, 1, p.get_temp_allocator(), p.get_job_system());
+      self.physics_system
+        ->Update(self.physics_interval * static_cast<f32>(steps), steps, p.get_temp_allocator(), p.get_job_system());
       p.debug_renderer->end_step();
     });
 
@@ -1165,8 +1173,7 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
     }
   }
 
-  // TODO: Pass our delta_time?
-  self.world.progress();
+  self.world.progress(static_cast<f32>(delta_time.get_seconds()));
 
   if (physics_debug_draw_enabled(self)) {
     App::mod<Physics>().debug_renderer->draw(*self.physics_system, self.debug_renderer);

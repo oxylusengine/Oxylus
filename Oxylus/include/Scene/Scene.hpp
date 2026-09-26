@@ -67,7 +67,7 @@ public:
   flecs::world world;
   ComponentDB component_db = {};
 
-  f32 physics_interval = 1.f / 60.f; // used only on initialization
+  f32 physics_interval = 1.f / 60.f; // the tick source is built from it at init, changing it later desyncs the step
 
   std::vector<GPU::TransformID> dirty_transforms = {};
   // `previous_world` is only corrected after the renderer has already uploaded, so the corrected
