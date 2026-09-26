@@ -27,6 +27,9 @@ auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::str
 auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
+  self.unload_asset(self.null_material);
+  self.null_material = {};
+
   for (auto& [uuid, asset] : self.asset_registry) {
     if (asset.is_loaded() && asset.ref_count != 0) {
       OX_LOG_WARN(
@@ -360,13 +363,20 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     {
       auto write_lock = std::unique_lock(self.registry_mutex);
       auto it = self.asset_registry.find(uuid);
-      if (it == self.asset_registry.end()) {
+      if (it == self.asset_registry.end() || !it->second.is_loaded() || it->second.ref_count != 0) {
         return;
       }
 
       removed_type = it->second.type;
       removed_id = std::to_underlying(it->second.model_id);
-      self.asset_registry.erase(it);
+
+      // unloading drops the payload, not the registration, so the uuid can be loaded again. an
+      // asset with no path was made at runtime and has nothing to reload from
+      if (it->second.path.empty()) {
+        self.asset_registry.erase(it);
+      } else {
+        it->second.model_id = ModelID::Invalid;
+      }
     }
 
     self.unload_asset_impl(removed_type, removed_id);
@@ -774,8 +784,13 @@ auto AssetManager::load_particle_system(this AssetManager& self, const std::file
   -> ParticleSystemID {
   ZoneScoped;
 
+  // a missing or broken file fails the load, a silent default would loop at 32/s forever. read()
+  // already logged why
   auto system = ParticleSystem::read(path);
-  auto payload = system ? std::move(*system) : ParticleSystem::make_default();
+  if (!system) {
+    return ParticleSystemID::Invalid;
+  }
+  auto payload = std::move(*system);
 
   if (payload.render.material) {
     self.load_asset(payload.render.material, {}, false);

@@ -210,6 +210,8 @@ struct RendererInstanceUpdateInfo {
   std::span<const SkinnedMeshInstance> skinned_mesh_instances = {};
   std::span<GPU::SkinningTransform> skinning_transforms = {};
   u32 skinned_vertex_total = 0;
+
+  std::span<GPU::MeshBounds> removed_mesh_bounds = {};
 };
 
 struct ParticleMeshDraw {
@@ -255,6 +257,8 @@ struct PreparedFrame {
 
   vuk::Value<vuk::Buffer> dirty_mesh_instances_buffer = {};
   u32 dirty_mesh_instance_count = 0;
+  vuk::Value<vuk::Buffer> removed_mesh_bounds_buffer = {};
+  u32 removed_mesh_bounds_count = 0;
 
   vuk::Value<vuk::Buffer> terrain_patch_visibility_mask_buffer = {};
 
@@ -953,6 +957,8 @@ private:
     vuk::Unique<vuk::Image> image{};
     vuk::Unique<vuk::ImageView> view{};
     vuk::ImageAttachment attachment = {};
+    // how the frame that wrote it left it, which is what acquire_ia needs next frame
+    vuk::Access last_access = vuk::eNone;
   };
   std::array<FSR3History, 2> fsr3_internal_upscaled_color{};
   std::array<FSR3History, 2> fsr3_accumulation{};

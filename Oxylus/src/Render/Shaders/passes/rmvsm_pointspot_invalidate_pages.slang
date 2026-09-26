@@ -20,6 +20,7 @@ import cull;
 [[vk::binding(9)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(10)]] StructuredBuffer<TransformPrevious> transforms_previous;
 [[vk::binding(11)]] StructuredBuffer<VSMPointSpotView> views;
+[[vk::binding(12)]] StructuredBuffer<MeshBounds> removed_bounds;
 
 constexpr static i32 INVALIDATE_SECTIONS_PER_DIM = 4;
 
@@ -87,6 +88,27 @@ func invalidate_in_region(
     }
 }
 
+func invalidate_in_all_mips(
+    f32x4x4 mvp,
+    f32 near,
+    f32x3 aabb_center,
+    f32x3 aabb_extent,
+    i32x2 section_coords,
+    i32 layer
+) -> void {
+    for (var mip = 0; mip < VSM_POINT_SPOT_MIP_COUNT; mip++) {
+        let mip_table_size = VSM_POINT_SPOT_PAGE_TABLE_SIZE >> mip;
+        let block_size = max(mip_table_size / INVALIDATE_SECTIONS_PER_DIM, 1);
+        let region_min = section_coords * block_size;
+        if (any(region_min >= mip_table_size)) {
+            continue;
+        }
+        let region_max = min(region_min + block_size, mip_table_size) - 1;
+
+        invalidate_in_region(mvp, near, aabb_center, aabb_extent, region_min, region_max, layer, mip, mip_table_size);
+    }
+}
+
 [[shader("compute")]]
 [[numthreads(1, INVALIDATE_PAGES_WORKGROUP_Y, 1)]]
 func cs_main(
@@ -128,31 +150,46 @@ func cs_main(
         return;
     }
 
-    let mvp_prev = mul(view.projection_view, transform_previous.previous_world);
-    let mvp_curr = mul(view.projection_view, transform.world);
-
-    for (var mip = 0; mip < VSM_POINT_SPOT_MIP_COUNT; mip++) {
-        let mip_table_size = VSM_POINT_SPOT_PAGE_TABLE_SIZE >> mip;
-        let block_size = max(mip_table_size / INVALIDATE_SECTIONS_PER_DIM, 1);
-        let region_min = section_coords * block_size;
-        if (any(region_min >= mip_table_size)) {
-            continue;
-        }
-        let region_max = min(region_min + block_size, mip_table_size) - 1;
-
-        if (in_range_prev) {
-            invalidate_in_region(
-                mvp_prev, view.z_near,
-                mesh.bounds.aabb_center, mesh.bounds.aabb_extent,
-                region_min, region_max, layer, mip, mip_table_size
-            );
-        }
-        if (in_range_curr) {
-            invalidate_in_region(
-                mvp_curr, view.z_near,
-                mesh.bounds.aabb_center, mesh.bounds.aabb_extent,
-                region_min, region_max, layer, mip, mip_table_size
-            );
-        }
+    if (in_range_prev) {
+        let mvp_prev = mul(view.projection_view, transform_previous.previous_world);
+        invalidate_in_all_mips(mvp_prev, view.z_near, mesh.bounds.aabb_center, mesh.bounds.aabb_extent, section_coords, layer);
     }
+    if (in_range_curr) {
+        let mvp_curr = mul(view.projection_view, transform.world);
+        invalidate_in_all_mips(mvp_curr, view.z_near, mesh.bounds.aabb_center, mesh.bounds.aabb_extent, section_coords, layer);
+    }
+}
+
+// meshes destroyed since the last frame are in no instance buffer anymore, so the pages their shadow
+// was drawn into are found from their last world box instead
+[[shader("compute")]]
+[[numthreads(1, INVALIDATE_PAGES_WORKGROUP_Y, 1)]]
+func cs_bounds(
+    u32x3 thread_id : SV_DispatchThreadID,
+    uniform VSMPointSpotContext ctx
+) -> void {
+    let bounds_index = thread_id.x;
+    let section_index = i32(thread_id.y);
+    let layer = i32(thread_id.z);
+
+    if (section_index >= INVALIDATE_SECTIONS_PER_DIM * INVALIDATE_SECTIONS_PER_DIM || layer >= i32(ctx.layer_count)) {
+        return;
+    }
+
+    let view = views[layer];
+    if (view.range <= 0.0) {
+        return;
+    }
+
+    let bounds = removed_bounds[bounds_index];
+    let radius = length(bounds.aabb_extent * 0.5);
+    if (distance(bounds.aabb_center, view.light_position) - radius > view.range) {
+        return;
+    }
+
+    let section_coords = i32x2(
+        section_index % INVALIDATE_SECTIONS_PER_DIM,
+        section_index / INVALIDATE_SECTIONS_PER_DIM
+    );
+    invalidate_in_all_mips(view.projection_view, view.z_near, bounds.aabb_center, bounds.aabb_extent, section_coords, layer);
 }

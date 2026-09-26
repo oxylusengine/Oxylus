@@ -67,5 +67,6 @@ struct NetClient {
   auto call_server(this NetClient&, std::string_view proc, std::span<const RPCParameter> params, bool reliable) -> bool;
 
   virtual auto on_scene_snapshot(u8 sequence, SceneState&& state) -> void {};
+  virtual auto on_disconnect(NetClientStatus reason) -> void {};
 };
 } // namespace ox

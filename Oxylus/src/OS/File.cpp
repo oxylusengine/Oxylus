@@ -1,15 +1,19 @@
 #include "OS/File.hpp"
 
+#include <utility>
+
+#include "Core/Base.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
 
-static auto file_error_to_str(FileError error) -> std::string_view {
+auto file_error_to_str(FileError error) -> std::string_view {
   ZoneScoped;
 
   switch (error) {
     case FileError::None             : return "None";
     case FileError::NoAccess         : return "NoAccess";
+    case FileError::NotFound         : return "NotFound";
     case FileError::Exists           : return "Exists";
     case FileError::IsDir            : return "IsDir";
     case FileError::InUse            : return "InUse";
@@ -49,6 +53,26 @@ File::File(const std::filesystem::path& path, FileAccess access) noexcept : file
 
   this->handle = file_handle.value();
   this->size = os::file_size(this->handle.value()).value_or(0);
+}
+
+File::File(File&& other) noexcept
+    : handle(std::exchange(other.handle, nullopt)),
+      size(std::exchange(other.size, 0)),
+      error(std::exchange(other.error, FileError::None)),
+      mapped_data(std::exchange(other.mapped_data, nullopt)),
+      file_path(std::move(other.file_path)) {}
+
+auto File::operator=(File&& other) noexcept -> File& {
+  if (this != &other) {
+    this->close();
+    this->handle = std::exchange(other.handle, nullopt);
+    this->size = std::exchange(other.size, 0);
+    this->error = std::exchange(other.error, FileError::None);
+    this->mapped_data = std::exchange(other.mapped_data, nullopt);
+    this->file_path = std::move(other.file_path);
+  }
+
+  return *this;
 }
 
 auto File::write_data(const void* data, usize data_size) -> u64 {
@@ -152,6 +176,26 @@ auto File::to_string(const std::filesystem::path& path) -> std::string {
   std::string str;
   str.resize(file.size);
   file.read(str.data(), file.size);
+
+  return str;
+}
+
+auto File::try_to_string(const std::filesystem::path& path) -> std::expected<std::string, FileError> {
+  ZoneScoped;
+
+  auto handle = os::file_open(path, FileAccess::Read);
+  if (!handle.has_value()) {
+    return std::unexpected(handle.error());
+  }
+  OX_DEFER(&) { os::file_close(handle.value()); };
+
+  auto size = os::file_size(handle.value());
+  if (!size.has_value()) {
+    return std::unexpected(size.error());
+  }
+
+  auto str = std::string(size.value(), '\0');
+  str.resize(os::file_read(handle.value(), str.data(), str.size()));
 
   return str;
 }

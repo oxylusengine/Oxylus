@@ -77,17 +77,8 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
       }
     }
 
-    if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_D)) {
-      auto clone_entity = [](flecs::entity entity) -> flecs::entity {
-        std::string clone_name = entity.name().c_str();
-        while (entity.world().lookup(clone_name.data())) {
-          clone_name = fmt::format("{}_clone", clone_name);
-        }
-        auto cloned_entity = entity.clone(true);
-        return cloned_entity.set_name(clone_name.data());
-      };
-
-      self.selected_entity_.set(clone_entity(self.selected_entity_.get()));
+    if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_D) && self.scene_) {
+      self.selected_entity_.set(self.scene_->duplicate_entity(self.selected_entity_.get()));
     }
     if (
       ImGui::IsKeyPressed(ImGuiKey_Delete) && (self.table_hovered_ || editor.main_viewport_panel.get_focused_viewport())
@@ -436,13 +427,7 @@ auto SceneHierarchyPanel::draw_entity_node(
     if (ImGui::MenuItem("Rename", "F2"))
       self.renaming_entity_ = entity;
     if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
-      auto clone_entity = [&self](flecs::entity e) -> flecs::entity {
-        std::string clone_name = self.scene_->safe_entity_name(fmt::format("{}_clone", e.name().c_str()));
-        auto cloned_entity = e.clone(true);
-        return cloned_entity.set_name(clone_name.data());
-      };
-
-      self.selected_entity_.set(clone_entity(entity));
+      self.selected_entity_.set(self.scene_->duplicate_entity(entity));
       self.selected_script_ = nullptr;
     }
     if (ImGui::MenuItem("Delete", "Del"))

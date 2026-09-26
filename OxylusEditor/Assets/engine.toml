@@ -170,6 +170,11 @@ path = "passes/rmvsm_invalidate_pages.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "rmvsm_invalidate_pages_bounds"
+path = "passes/rmvsm_invalidate_pages.slang"
+entry_points = ["cs_bounds"]
+
+[[shader_sessions.programs]]
 name = "rmvsm_mark_dirty_pages"
 path = "passes/rmvsm_mark_dirty_pages.slang"
 entry_points = ["cs_main"]
@@ -213,6 +218,11 @@ entry_points = ["cs_main"]
 name = "rmvsm_pointspot_invalidate_pages"
 path = "passes/rmvsm_pointspot_invalidate_pages.slang"
 entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rmvsm_pointspot_invalidate_pages_bounds"
+path = "passes/rmvsm_pointspot_invalidate_pages.slang"
+entry_points = ["cs_bounds"]
 
 [[shader_sessions.programs]]
 name = "rmvsm_pointspot_build_active_layers"

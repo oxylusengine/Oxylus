@@ -129,6 +129,7 @@ struct Window : Handle<Window> {
   auto show_cursor(bool show) const -> void;
 
   auto get_surface(VkInstance instance) const -> VkSurfaceKHR;
+  auto get_vulkan_instance_extensions() const -> std::span<const c8* const>;
 
   auto get_size_in_pixels() const -> glm::ivec2;
   auto get_logical_size() const -> glm::ivec2;

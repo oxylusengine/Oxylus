@@ -17,6 +17,7 @@ auto ModuleRegistry::init(this ModuleRegistry& self) -> bool {
       return false;
     }
 
+    self.initialized_count++;
     OX_LOG_INFO("Initialized module {} in {} ms.", name, timer.get_elapsed_ms());
   }
 
@@ -26,8 +27,10 @@ auto ModuleRegistry::init(this ModuleRegistry& self) -> bool {
 auto ModuleRegistry::deinit(this ModuleRegistry& self) -> bool {
   ZoneScoped;
 
-  for (const auto& [name, cb, type] :
-       std::views::reverse(std::views::zip(self.module_names, self.deinit_callbacks, self.module_types))) {
+  // a failed init leaves the modules after it untouched, so they get no deinit either
+  auto initialized = std::views::zip(self.module_names, self.deinit_callbacks, self.module_types) |
+                     std::views::take(self.initialized_count);
+  for (const auto& [name, cb, type] : std::views::reverse(initialized)) {
     Timer timer{};
 
     auto result = cb();
@@ -37,6 +40,7 @@ auto ModuleRegistry::deinit(this ModuleRegistry& self) -> bool {
     }
 
     self.registry.erase(type);
+    self.initialized_count--;
 
     OX_LOG_INFO("Deinitialized module {} in {} ms.", name, timer.get_elapsed_ms());
   }
@@ -47,8 +51,11 @@ auto ModuleRegistry::deinit(this ModuleRegistry& self) -> bool {
 auto ModuleRegistry::update(this ModuleRegistry& self, const Timestep& timestep) -> void {
   ZoneScoped;
 
-  for (const auto& cb : self.update_callbacks) {
-    cb(timestep);
+  // init stops at the first failure, so the initialized modules are exactly the first initialized_count
+  for (const auto& [module_index, fn] : self.update_callbacks) {
+    if (module_index < self.initialized_count) {
+      fn(timestep);
+    }
   }
 }
 } // namespace ox

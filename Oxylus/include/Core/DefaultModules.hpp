@@ -14,5 +14,5 @@
 
 namespace ox {
 using DefaultModules =
-  std::tuple<LuaManager, AssetManager, AudioEngine, Physics, Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI>;
+  std::tuple<LuaManager, AudioEngine, AssetManager, Physics, Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI>;
 }

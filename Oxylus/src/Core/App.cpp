@@ -78,14 +78,19 @@ auto App::init(this App& self) -> void {
   else
     OX_LOG_ERROR("Failed to initalize EventSystem: {}", event_system_init_result.error());
 
-  self.registry.init();
+  if (!self.registry.init()) {
+    OX_LOG_ERROR("Stopping the app because a module failed to initialize.");
+    self.is_running = false;
+  }
 
   self.job_manager.wait();
 }
 
 auto App::step(this App& self) -> void {
-  const i32 frame_limit = self.frame_limit > 0 ? self.frame_limit
-                                               : self.render_context->context_cvar.cvar_frame_limit.get();
+  auto frame_limit = self.frame_limit;
+  if (frame_limit <= 0 && self.render_context) {
+    frame_limit = self.render_context->context_cvar.cvar_frame_limit.get();
+  }
   if (frame_limit > 0) {
     self.timestep.set_max_frame_time(1000.0 / static_cast<f64>(frame_limit));
   } else {

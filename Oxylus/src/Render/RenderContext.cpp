@@ -186,8 +186,13 @@ vuk::Swapchain make_swapchain(
   vuk::PresentModeKHR present_mode,
   u32 frame_count
 ) {
+  // surfaces without a fixed currentExtent (wayland, headless) take whatever we ask for, and
+  // vk-bootstrap falls back to 256x256 if we ask for nothing
+  const auto window_size = App::get_window().get_size_in_pixels();
+
   vkb::SwapchainBuilder swb(vkbdevice, surface);
   swb.set_desired_min_image_count(frame_count)
+    .set_desired_extent(static_cast<u32>(window_size.x), static_cast<u32>(window_size.y))
     .set_desired_format(
       vuk::SurfaceFormatKHR{.format = vuk::Format::eR8G8B8A8Srgb, .colorSpace = vuk::ColorSpaceKHR::eSrgbNonlinear}
     )
@@ -259,6 +264,11 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   if (vulkan_validation_layers) {
     OX_LOG_INFO("Enabled vulkan validation layers.");
     builder.request_validation_layers();
+  }
+
+  // whatever the video driver needs, including VK_EXT_headless_surface under SDL's offscreen driver
+  for (const auto* extension : window.get_vulkan_instance_extensions()) {
+    builder.enable_extension(extension);
   }
 
   builder.enable_extension(VK_KHR_SURFACE_EXTENSION_NAME)
@@ -697,8 +707,8 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
                                     .create_persistent_descriptor_set(1, bindless_set_info, bindless_set_binding_flags);
 
   auto& event_system = App::get_event_system();
-  auto sub_result = event_system.subscribe<WindowResizeEvent>([&self](const WindowResizeEvent& e) {
-    self.handle_resize(e.width, e.height);
+  auto sub_result = event_system.subscribe<WindowResizeEvent>([&self](const WindowResizeEvent&) {
+    self.handle_resize();
   });
   if (!sub_result.has_value()) {
     OX_LOG_ERROR("Failed to subscribe for WindowResizeEvent!");
@@ -755,17 +765,17 @@ auto RenderContext::destroy_context(this RenderContext& self) -> void {
   vkb::destroy_instance(self.vkb_instance);
 }
 
-auto RenderContext::handle_resize(u32 width, u32 height) -> void {
-  wait();
+auto RenderContext::handle_resize(this RenderContext& self) -> void {
+  self.wait();
 
-  swapchain = make_swapchain(
-    *runtime,
-    *superframe_allocator,
-    vkb_device,
-    surface,
-    std::move(swapchain),
-    present_mode,
-    num_inflight_frames
+  self.swapchain = make_swapchain(
+    *self.runtime,
+    *self.superframe_allocator,
+    self.vkb_device,
+    self.surface,
+    std::move(self.swapchain),
+    self.present_mode,
+    self.num_inflight_frames
   );
 }
 
@@ -784,7 +794,7 @@ auto RenderContext::new_frame(this RenderContext& self) -> vuk::Value<vuk::Image
   auto present_mode_changed = wanted_vsync != self.present_mode;
   if (present_mode_changed) {
     self.present_mode = wanted_vsync;
-    self.handle_resize(1, 1);
+    self.handle_resize();
   }
 
   {
