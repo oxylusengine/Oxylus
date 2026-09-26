@@ -327,13 +327,20 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     {
       auto write_lock = std::unique_lock(self.registry_mutex);
       auto it = self.asset_registry.find(uuid);
-      if (it == self.asset_registry.end()) {
+      if (it == self.asset_registry.end() || !it->second.is_loaded() || it->second.ref_count != 0) {
         return;
       }
 
       removed_type = it->second.type;
       removed_id = std::to_underlying(it->second.model_id);
-      self.asset_registry.erase(it);
+
+      // unloading drops the payload, not the registration, so the uuid can be loaded again. an
+      // asset with no path was made at runtime and has nothing to reload from
+      if (it->second.path.empty()) {
+        self.asset_registry.erase(it);
+      } else {
+        it->second.model_id = ModelID::Invalid;
+      }
     }
 
     self.unload_asset_impl(removed_type, removed_id);
