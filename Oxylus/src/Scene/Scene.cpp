@@ -832,7 +832,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         audio_engine.set_source_looping(audio->get_source(), ac.looping);
         audio_engine.set_source_spatialization(audio->get_source(), ac.spatialization);
         if (ac.spatialization) {
-          audio_engine.set_source_position(audio->get_source(), Scene::get_world_position(e));
+          // the cone points down local -z, the same way the listener faces
+          const auto world = Scene::get_world_transform(e);
+          audio_engine.set_source_position(audio->get_source(), glm::vec3(world[3]));
+          audio_engine.set_source_direction(audio->get_source(), -glm::normalize(glm::vec3(world[2])));
         }
         audio_engine.set_source_roll_off(audio->get_source(), ac.roll_off);
         audio_engine.set_source_min_gain(audio->get_source(), ac.min_gain);
