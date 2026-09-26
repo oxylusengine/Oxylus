@@ -127,7 +127,7 @@ public:
 
   auto create_entity(const std::string& name = "", bool safe_naming = false) const -> flecs::entity;
 
-  auto create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity;
+  auto create_model_entity(this Scene& self, const UUID& asset_uuid, flecs::entity parent = {}) -> flecs::entity;
 
   auto create_model_entity_async(this Scene& self, const UUID& asset_uuid) -> void;
 
@@ -252,6 +252,7 @@ private:
     };
 
     UUID model_uuid = {};
+    flecs::entity parent = {};
     std::vector<MeshEntity> mesh_entities = {};
     bool hierarchy_spawned = false;
   };

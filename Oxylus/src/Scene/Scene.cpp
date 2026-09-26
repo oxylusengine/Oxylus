@@ -1446,7 +1446,14 @@ auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSp
   ZoneScoped;
 
   const auto& root_node = model.mesh_groups.front();
-  auto root_entity = self.create_entity(root_node.name, root_node.name.empty() ? false : true);
+  // named against the parent's scope too, or a second instance under the same parent aborts in child_of
+  auto root_entity = root_node.name.empty()
+                       ? self.create_entity("", false)
+                       : self.create_entity(self.safe_entity_name(root_node.name, spawn.parent), false);
+  if (spawn.parent) {
+    root_entity.child_of(spawn.parent);
+    root_entity.modified<TransformComponent>();
+  }
 
   struct ProcessingNode {
     flecs::entity parent = {};
@@ -1562,7 +1569,7 @@ auto Scene::spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, co
   entity.modified<TransformComponent>();
 }
 
-auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity {
+auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid, flecs::entity parent) -> flecs::entity {
   ZoneScoped;
 
   auto& asset_man = App::mod<AssetManager>();
@@ -1583,7 +1590,7 @@ auto Scene::create_model_entity(this Scene& self, const UUID& asset_uuid) -> fle
   {
     auto model = asset_man.get_model(asset_uuid);
     if (model) {
-      auto spawn = PendingModelSpawn{.model_uuid = asset_uuid};
+      auto spawn = PendingModelSpawn{.model_uuid = asset_uuid, .parent = parent};
       root_entity = self.spawn_model_hierarchy(*model.value, spawn);
 
       for (const auto& mesh_entity : spawn.mesh_entities) {
