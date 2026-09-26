@@ -51,8 +51,11 @@ auto ModuleRegistry::deinit(this ModuleRegistry& self) -> bool {
 auto ModuleRegistry::update(this ModuleRegistry& self, const Timestep& timestep) -> void {
   ZoneScoped;
 
-  for (const auto& cb : self.update_callbacks) {
-    cb(timestep);
+  // init stops at the first failure, so the initialized modules are exactly the first initialized_count
+  for (const auto& [module_index, fn] : self.update_callbacks) {
+    if (module_index < self.initialized_count) {
+      fn(timestep);
+    }
   }
 }
 } // namespace ox

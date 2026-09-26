@@ -29,10 +29,15 @@ struct ModuleRegistry {
   using ModulePtr = std::unique_ptr<void, void (*)(void*)>;
   using Registry = ankerl::unordered_dense::map<std::type_index, ModulePtr, TypeIndexHash>;
 
+  struct UpdateCallback {
+    usize module_index = 0;
+    std::function<void(const Timestep&)> fn = {};
+  };
+
   Registry registry = {};
   std::vector<std::type_index> module_types = {};
   std::vector<std::function<std::expected<void, std::string>()>> init_callbacks = {};
-  std::vector<std::function<void(const Timestep&)>> update_callbacks = {};
+  std::vector<UpdateCallback> update_callbacks = {};
   std::vector<std::function<std::expected<void, std::string>()>> deinit_callbacks = {};
   std::vector<std::string_view> module_names = {};
   usize initialized_count = 0;
@@ -91,9 +96,10 @@ struct ModuleRegistry {
     init_callbacks.emplace_back([m = static_cast<T*>(module.get())]() { return m->init(); });
     deinit_callbacks.emplace_back([m = static_cast<T*>(module.get())]() { return m->deinit(); });
     if constexpr (ModuleHasUpdate<T>) {
-      update_callbacks.emplace_back([m = static_cast<T*>(module.get())](const Timestep& timestep) {
-        m->update(timestep);
-      });
+      update_callbacks.emplace_back(
+        module_types.size() - 1,
+        [m = static_cast<T*>(module.get())](const Timestep& timestep) { m->update(timestep); }
+      );
     }
 
     module_names.emplace_back(T::MODULE_NAME);
