@@ -18,6 +18,24 @@
 #include "Utils/ImGuiScoped.hpp"
 
 namespace ox {
+static auto has_mesh_in_hierarchy(flecs::entity entity) -> bool {
+  if (entity.has<MeshComponent>()) {
+    return true;
+  }
+
+  auto found = false;
+  entity.children([&found](flecs::entity child) { found = found || has_mesh_in_hierarchy(child); });
+  return found;
+}
+
+static auto add_mesh_colliders_to_hierarchy(flecs::entity entity) -> void {
+  if (entity.has<MeshComponent>() && !entity.has<MeshColliderComponent>()) {
+    entity.add<MeshColliderComponent>();
+  }
+
+  entity.children([](flecs::entity child) { add_mesh_colliders_to_hierarchy(child); });
+}
+
 auto SceneHierarchyPanel::SelectedEntity::set(this SelectedEntity& self, flecs::entity e) -> void {
   self.entity = e;
   App::mod<Editor>().get_context().reset(EditorContext::Type::Entity, nullopt, e);
@@ -432,6 +450,16 @@ auto SceneHierarchyPanel::draw_entity_node(
     }
     if (ImGui::MenuItem("Delete", "Del"))
       entity_deleted = true;
+
+    if (has_mesh_in_hierarchy(entity) && ImGui::MenuItem("Add Mesh Colliders")) {
+      // deferred so adding components doesn't move entities out from under the children() walk
+      entity.world().defer([&entity] {
+        add_mesh_colliders_to_hierarchy(entity);
+        if (!entity.has<RigidBodyComponent>()) {
+          entity.set<RigidBodyComponent>({.type = RigidBodyComponent::Static});
+        }
+      });
+    }
 
     ImGui::Separator();
 
