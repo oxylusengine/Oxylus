@@ -25,7 +25,7 @@ auto SceneSnapshotBuilder::find_last_acked(this SceneSnapshotBuilder& self) -> o
   ZoneScoped;
 
   for (auto i = 1_u8; i < MAX_SEQUENCES; i++) {
-    auto seq = static_cast<u8>((self.current_sequence + MAX_SEQUENCES - 1) % MAX_SEQUENCES);
+    auto seq = static_cast<u8>((self.current_sequence + MAX_SEQUENCES - i) % MAX_SEQUENCES);
     if (self.acks[seq]) {
       return seq;
     }
@@ -56,8 +56,10 @@ auto SceneSnapshotBuilder::delta(this SceneSnapshotBuilder& self) -> SceneState 
       // check for changed components
       for (const auto& [component_id, component_state] : entity_state.components) {
         auto prev_component_it = last_entity_state.components.find(component_id);
-        if (prev_component_it == last_entity_state.components.end() ||
-            prev_component_it->second.hash != component_state.hash) {
+        if (
+          prev_component_it == last_entity_state.components.end() ||
+          prev_component_it->second.hash != component_state.hash
+        ) {
           delta_entity.components.emplace(component_id, component_state);
           changed = true; // we've inserted new/changed component
         }
