@@ -195,6 +195,9 @@ public:
         requested_assets
       );
     }
+
+    // deleting released every ref the entity's components owned, so the restored ones take them back
+    scene_->load_requested_assets(requested_assets);
   }
 
   auto get_id() const -> std::string_view override { return id_; }
