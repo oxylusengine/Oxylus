@@ -307,7 +307,8 @@ struct JsonEntityDeserializer : IEntitySerializer {
         auto* str_cstr = stack.null_terminate_cstr(result.value_unsafe());
         opaque_info->assign_string(field_ptr, str_cstr);
 
-        if (field_type == world.entity<UUID>()) {
+        // an empty uuid field is an unset slot, not an asset to load
+        if (field_type == world.entity<UUID>() && *static_cast<UUID*>(field_ptr)) {
           requested_assets.push_back(*static_cast<UUID*>(field_ptr));
         }
       }
