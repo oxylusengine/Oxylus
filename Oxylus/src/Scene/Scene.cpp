@@ -796,7 +796,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         audio_engine.set_source_volume(audio->get_source(), ac.volume);
         audio_engine.set_source_pitch(audio->get_source(), ac.pitch);
         audio_engine.set_source_looping(audio->get_source(), ac.looping);
-        audio_engine.set_source_spatialization(audio->get_source(), ac.looping);
+        audio_engine.set_source_spatialization(audio->get_source(), ac.spatialization);
+        if (ac.spatialization) {
+          audio_engine.set_source_position(audio->get_source(), Scene::get_world_position(e));
+        }
         audio_engine.set_source_roll_off(audio->get_source(), ac.roll_off);
         audio_engine.set_source_min_gain(audio->get_source(), ac.min_gain);
         audio_engine.set_source_max_gain(audio->get_source(), ac.max_gain);
