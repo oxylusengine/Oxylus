@@ -38,7 +38,7 @@ public:
 
   // One component field holding an asset UUID: preview, name, picker, clear, and drop target.
   // Returns true when it pointed the field somewhere else.
-  auto draw_asset_field(this InspectorPanel& self, std::string_view label, UUID& uuid) -> bool;
+  auto draw_asset_field(this InspectorPanel& self, std::string_view label, UUID& uuid, AssetType expected_type) -> bool;
 
   // Type specific editor for whatever `uuid` names, shown under an asset field and under a file
   // selected in the content browser.

@@ -4,10 +4,12 @@
 
 #include "Audio/AudioEngine.hpp"
 #include "Core/UUID.hpp"
-#include "Scene/SceneGPU.hpp"
+#include "Render/GPU/Shared.hpp"
+#include "Scene/ComponentReflection.hpp"
 #include "Utils/OxMath.hpp"
 
 namespace ox {
+OX_COMPONENT(networked)
 struct TransformComponent {
   glm::vec3 position = {};
   glm::quat rotation = glm::quat::wxyz(1.0, 0.0, 0.0, 0.0);
@@ -18,30 +20,34 @@ struct TransformComponent {
   }
 };
 
+OX_COMPONENT()
 struct LayerComponent {
   u16 layer = 1;
 };
 
 // Rendering
+OX_COMPONENT()
 struct MeshComponent {
-  UUID model_uuid = {};
+  OX_FIELD(asset = Model) UUID model_uuid = {};
   u32 mesh_index = {};
-  UUID material_uuid = {};
+  OX_FIELD(asset = Material) UUID material_uuid = {};
   bool cast_shadows = true;
 
-  AABB baked_aabb = {};
-  AABB world_aabb = {};
+  OX_TRANSIENT AABB baked_aabb = {};
+  OX_TRANSIENT AABB world_aabb = {};
 };
 
+OX_COMPONENT(networked)
 struct SpriteComponent {
   u32 layer = 0;
   bool sort_y = true;
   bool flip_x = false;
-  UUID material = {};
+  OX_FIELD(asset = Material) UUID material = {};
 
-  AABB rect = {};
+  OX_TRANSIENT AABB rect = {};
 };
 
+OX_COMPONENT()
 struct SpriteAnimationComponent {
   u32 num_frames = 0;
   bool loop = true;
@@ -50,7 +56,7 @@ struct SpriteAnimationComponent {
   u32 columns = 1;
   glm::vec2 frame_size = {};
 
-  float current_time = 0.f;
+  OX_TRANSIENT float current_time = 0.f;
 
   void reset() { current_time = 0.f; }
 
@@ -81,6 +87,7 @@ struct SpriteAnimationComponent {
   }
 };
 
+OX_COMPONENT()
 struct CameraComponent {
   enum Projection {
     Perspective = 0,
@@ -100,13 +107,13 @@ struct CameraComponent {
     glm::mat4 projection_matrix = {};
   };
 
-  Matrices matrices = {};
-  Matrices matrices_prev = {};
+  OX_TRANSIENT Matrices matrices = {};
+  OX_TRANSIENT Matrices matrices_prev = {};
 
-  glm::vec3 position = {};
-  glm::vec3 forward = {};
-  glm::vec3 up = {};
-  glm::vec3 right = {};
+  OX_TRANSIENT glm::vec3 position = {};
+  OX_TRANSIENT glm::vec3 forward = {};
+  OX_TRANSIENT glm::vec3 up = {};
+  OX_TRANSIENT glm::vec3 right = {};
 
   glm::mat4 get_projection_matrix() const { return matrices.projection_matrix; }
   glm::mat4 get_inv_projection_matrix() const { return glm::inverse(matrices.projection_matrix); }
@@ -125,8 +132,9 @@ struct CameraComponent {
   }
 };
 
+OX_COMPONENT()
 struct ParticleSystemComponent {
-  UUID particle_system = {};
+  OX_FIELD(asset = ParticleSystem) UUID particle_system = {};
   bool play_on_awake = true;
   f32 simulation_speed = 1.0f;
   u32 seed = 0;
@@ -151,8 +159,9 @@ struct ParticleSystemComponent {
   }
 };
 
+OX_COMPONENT()
 struct LightComponent {
-  enum LightType : u32 { Directional = 0, Spot, Point };
+  OX_ENUM("LightType") enum LightType : u32 { Directional = 0, Spot, Point };
 
   LightType type = LightType::Point;
   glm::vec3 color = {0.02f, 0.02f, 0.02f};
@@ -168,6 +177,7 @@ struct LightComponent {
   f32 clipmap_selection_bias = -0.5f;
 };
 
+OX_COMPONENT()
 struct ProbeVolumeComponent {
   glm::uvec3 probe_counts = {32, 32, 32};
   glm::vec3 probe_range = {64.0f, 64.0f, 64.0f};
@@ -176,12 +186,14 @@ struct ProbeVolumeComponent {
   bool follow_camera = true;
 };
 
+OX_COMPONENT()
 struct SkyComponent {
   glm::vec4 solid_color = glm::vec4{0.f, 0.f, 0.f, 1.0f};
   glm::vec3 ambient_color = glm::vec3{0.03f};
-  UUID texture = {};
+  OX_FIELD(asset = Texture) UUID texture = {};
 };
 
+OX_COMPONENT()
 struct TerrainComponent {
   glm::vec2 world_size = {1024.0f, 1024.0f};
   glm::vec2 height_range = {0.0f, 400.0f};
@@ -213,12 +225,12 @@ struct TerrainComponent {
   f32 altitude_snow_begin = 0.7f;
   f32 altitude_snow_end = 0.85f;
 
-  UUID terrain_edits = {};
+  OX_FIELD(asset = Terrain) UUID terrain_edits = {};
 
-  UUID layer_grass = {};
-  UUID layer_rock = {};
-  UUID layer_drainage = {};
-  UUID layer_snow = {};
+  OX_FIELD(asset = Texture) UUID layer_grass = {};
+  OX_FIELD(asset = Texture) UUID layer_rock = {};
+  OX_FIELD(asset = Texture) UUID layer_drainage = {};
+  OX_FIELD(asset = Texture) UUID layer_snow = {};
   // World-space size, in metres, of one tile of each layer texture.
   f32 layer_tiling = 8.0f;
   // Slope above which triplanar projection takes over, so cliffs do not stretch.
@@ -230,6 +242,7 @@ struct TerrainComponent {
   f32 collision_restitution = 0.0f;
 };
 
+OX_COMPONENT()
 struct AtmosphereComponent {
   glm::vec3 rayleigh_scattering = {5.802f, 13.558f, 33.100f};
   f32 rayleigh_density = 8.0;
@@ -246,6 +259,7 @@ struct AtmosphereComponent {
   f32 aerial_perspective_exposure = 1.0f;
 };
 
+OX_COMPONENT()
 struct AutoExposureComponent {
   f32 min_exposure = -11.5f;
   f32 max_exposure = 18.f;
@@ -253,26 +267,31 @@ struct AutoExposureComponent {
   f32 ev100_bias = 1.f;
 };
 
+OX_COMPONENT()
 struct VignetteComponent {
   f32 amount = 0.5f;
 };
 
+OX_COMPONENT()
 struct ChromaticAberrationComponent {
   f32 amount = 0.5f;
 };
 
+OX_COMPONENT()
 struct FilmGrainComponent {
   f32 amount = 0.6f;
   f32 scale = 0.7f;
 };
 
+OX_COMPONENT()
 struct TonemappingComponent {
   GPU::TonemapType tonemap_type = GPU::TonemapType::AgX;
 };
 
 // Physics
+OX_COMPONENT()
 struct RigidBodyComponent {
-  enum BodyType { Static = 0, Kinematic, Dynamic };
+  OX_ENUM("RigidBodyType") enum BodyType { Static = 0, Kinematic, Dynamic };
   enum AllowedDOFs : u32 {
     None = 0b000000, ///< No degrees of freedom are allowed. Note that this is not valid and will crash. Use a static
                      ///< body instead.
@@ -301,15 +320,16 @@ struct RigidBodyComponent {
   bool is_sensor = false;
 
   // Stored as JPH::Body
-  void* runtime_body = nullptr;
+  OX_TRANSIENT void* runtime_body = nullptr;
 
   // For interpolation/extrapolation
-  glm::vec3 previous_translation = glm::vec3(0.0f);
-  glm::quat previous_rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
-  glm::vec3 translation = glm::vec3(0.0f);
-  glm::quat rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
+  OX_TRANSIENT glm::vec3 previous_translation = glm::vec3(0.0f);
+  OX_TRANSIENT glm::quat previous_rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
+  OX_TRANSIENT glm::vec3 translation = glm::vec3(0.0f);
+  OX_TRANSIENT glm::quat rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
 };
 
+OX_COMPONENT()
 struct BoxColliderComponent {
   glm::vec3 size = {0.5f, 0.5f, 0.5f};
   glm::vec3 offset = {0.f, 0.f, 0.f};
@@ -318,6 +338,7 @@ struct BoxColliderComponent {
   f32 restitution = 0.0f;
 };
 
+OX_COMPONENT()
 struct SphereColliderComponent {
   f32 radius = .5f;
   glm::vec3 offset = {0.f, 0.f, 0.f};
@@ -326,6 +347,7 @@ struct SphereColliderComponent {
   f32 restitution = 0.0f;
 };
 
+OX_COMPONENT()
 struct CapsuleColliderComponent {
   f32 height = 1.f;
   f32 radius = .5f;
@@ -335,6 +357,7 @@ struct CapsuleColliderComponent {
   f32 restitution = 0.0f;
 };
 
+OX_COMPONENT()
 struct TaperedCapsuleColliderComponent {
   f32 height = 1.f;
   f32 top_radius = .5f;
@@ -345,6 +368,7 @@ struct TaperedCapsuleColliderComponent {
   f32 restitution = 0.0f;
 };
 
+OX_COMPONENT()
 struct CylinderColliderComponent {
   f32 height = 1.f;
   f32 radius = .5f;
@@ -357,6 +381,7 @@ struct CylinderColliderComponent {
 // Collides against the triangles of the entity's MeshComponent. Jolt's triangle mesh shape has no
 // inertia, so it only works on a Static or Kinematic body: set `convex` for a Dynamic one and the
 // mesh is replaced by its convex hull.
+OX_COMPONENT()
 struct MeshColliderComponent {
   glm::vec3 offset = {0.f, 0.f, 0.f};
   f32 friction = 0.5f;
@@ -368,6 +393,7 @@ struct MeshColliderComponent {
 // Goes on the chassis entity, which must also carry a dynamic RigidBodyComponent and a collider.
 // Wheels are child entities carrying VehicleWheelComponent: their local transform gives the
 // suspension attachment point, and the constraint drives it back so a wheel mesh animates for free.
+OX_COMPONENT()
 struct VehicleComponent {
   enum DriveMode : u32 { FrontWheelDrive = 0, RearWheelDrive, AllWheelDrive };
   // How each wheel probes the ground. Ray is cheapest, cylinder is most accurate over rough terrain.
@@ -402,9 +428,10 @@ struct VehicleComponent {
   f32 input_hand_brake = 0.f;
 
   // Stored as JPH::VehicleConstraint. Owned by the physics system once added, not by this component.
-  void* runtime_constraint = nullptr;
+  OX_TRANSIENT void* runtime_constraint = nullptr;
 };
 
+OX_COMPONENT()
 struct VehicleWheelComponent {
   glm::vec3 attachment = {0.f, 0.f, 0.f};
 
@@ -424,9 +451,10 @@ struct VehicleWheelComponent {
   bool driven = true;
 
   // Index into the constraint's wheel array, assigned when the vehicle is created.
-  u32 runtime_wheel_index = 0;
+  OX_TRANSIENT u32 runtime_wheel_index = 0;
 };
 
+OX_COMPONENT()
 struct CharacterControllerComponent {
   // Size
   f32 character_height_standing = 1.35f;
@@ -457,18 +485,19 @@ struct CharacterControllerComponent {
   f32 gravity = 20.f;
   f32 collision_tolerance = 0.05f;
 
-  void* character = nullptr; // Stored as JPHCharacter
+  OX_TRANSIENT void* character = nullptr; // Stored as JPHCharacter
 
   // For interpolation/extrapolation
-  glm::vec3 previous_translation = glm::vec3(0.0f);
-  glm::quat previous_rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
-  glm::vec3 translation = glm::vec3(0.0f);
-  glm::quat rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
+  OX_TRANSIENT glm::vec3 previous_translation = glm::vec3(0.0f);
+  OX_TRANSIENT glm::quat previous_rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
+  OX_TRANSIENT glm::vec3 translation = glm::vec3(0.0f);
+  OX_TRANSIENT glm::quat rotation = glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f);
 };
 
 // Audio
+OX_COMPONENT()
 struct AudioSourceComponent {
-  UUID audio_source = {};
+  OX_FIELD(asset = Audio) UUID audio_source = {};
 
   u32 attenuation_model = AudioEngine::AttenuationModelType::Inverse;
   f32 volume = 1.0f;
@@ -490,6 +519,7 @@ struct AudioSourceComponent {
   f32 doppler_factor = 1.0f;
 };
 
+OX_COMPONENT()
 struct AudioListenerComponent {
   bool active = true;
   u32 listener_index = 0;

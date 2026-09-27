@@ -8,12 +8,16 @@ target("Oxylus")
     add_files("./src/**.cpp")
     add_forceincludes("tracy/Tracy.hpp")
 
+    add_deps("ecsgen")
+    add_rules("ox.components", { headers = { { "include/Scene/Components.hpp", "bind_core_components" } } })
+
     add_options("profile")
     add_options("llvmpipe")
     if not has_config("lua_bindings") then
         remove_files("./src/Scripting/*Bindings*")
     else
-        add_defines("OX_LUA_BINDINGS")
+        -- public, ComponentRegistry.hpp changes shape on it and consumers include that header
+        add_defines("OX_LUA_BINDINGS", { public = true })
     end
 
     if is_plat("windows") then
