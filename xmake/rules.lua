@@ -85,6 +85,11 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
     end
   end
 
+  -- shared.slang textually includes these, so an edit to a GPU struct has to recompile the pack
+  for _, shared_header in ipairs(os.files(path.join(os.scriptdir(), "../Oxylus/include/Render/GPU/*.hpp"))) do
+    batchcmds:add_depfiles(shared_header)
+  end
+
   batchcmds:set_depmtime(os.mtime(abs_output))
   batchcmds:set_depcache(target:dependfile(abs_output))
 end)

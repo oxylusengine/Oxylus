@@ -127,19 +127,7 @@ public struct VSMClipmapSelection {
     }
 };
 
-public struct VSMContext {
-    public i32 page_size;
-    public i32 page_table_size;
-    public i32 physcial_page_table_size;
-    public i32 curr_clipmap_index;
-    public i32 clipmap_count;
-    public i32x2 depth_extent;
-    public f32 first_clipmap_width;
-    public f32 clipmap_selection_bias;
-    public f32 virtual_extent;
-    public f32 z_length;
-    public f32x3 directional_light_dir;
-
+public extension VSMContext {
     public func page_coords_virtual_to_wrapped(i32x2 virt_coords, i32x2 clipmap_offset) -> i32x2 {
         let bounds = i32x2(0, this.page_table_size - 1);
         if (any(virt_coords < bounds.x) || any(virt_coords > bounds.y)) {
@@ -275,11 +263,7 @@ public struct VirtualClipmapInfo {
     }
 };
 
-public struct VirtualClipmap {
-    public f32x4x4 projection_view_mat;
-    public i32x2 page_offset;
-    public f32 z_near;
-
+public extension VirtualClipmap {
     public func get_clipmap_info(f32x3 world_pos) -> VirtualClipmapInfo {
         let light_pos_h = mul(this.projection_view_mat, f32x4(world_pos, 1.0));
         let light_pos = light_pos_h.xyz / light_pos_h.w;
@@ -317,15 +301,7 @@ public struct VSMPointSpotProjection {
     public bool valid;
 };
 
-public struct VSMPointSpotView {
-    public f32x4x4 projection_view;
-    public f32x3 light_position;
-    public f32 range; // 0 means the layer is inactive
-    public u32 light_index;
-    public f32 z_near;
-    public f32 texel_world_scale;
-    public u32 _pad_0;
-
+public extension VSMPointSpotView {
     public func project(f32x3 world_pos) -> VSMPointSpotProjection {
         let clip_pos = mul(this.projection_view, f32x4(world_pos, 1.0));
         VSMPointSpotProjection result;
@@ -340,39 +316,6 @@ public struct VSMPointSpotView {
 
 public constexpr static u32 VSM_POINT_SPOT_MAX_MESHLET_INSTANCES = 1u << 18;
 public constexpr static u32 VSM_POINT_SPOT_MAX_INDEX_COUNT = 1u << 23;
-
-public struct VSMMeshletInstance {
-    public u32 mesh_instance_index;
-    public u32 meshlet_index;
-    public u32 layer;
-};
-
-public struct VSMPointSpotContext {
-    public i32 curr_mip;
-    public u32 layer_count;
-    public u32 mesh_instance_count;
-    public i32x2 depth_extent;
-    public u32 mip_bias_min;
-    public u32 shadow_point_light_count;
-    public u32 shadow_spot_light_count;
-};
-
-public struct VSMAllocRequest {
-    public i32x3 page_table_address;
-    public i32 mip;
-};
-
-public struct VSMPageAllocator {
-    public u32 active_request_count;
-    public u32 dirty_physical_page_count;
-    public u32 free_page_count;
-    public u32 alloc_cursor;
-    public u32 request_capacity;
-    public u32 _pad_0;
-    public VSMAllocRequest *requests;
-    public u32x2 *dirty_physical_page_coords;
-    public u32 *free_page_list;
-};
 
 public func push_page_alloc_request(__ref VSMPageAllocator allocator, in VSMAllocRequest request) -> void {
     let index = __atomic_add(allocator.active_request_count, 1, MemoryOrder::AcquireRelease);

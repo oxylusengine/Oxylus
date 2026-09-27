@@ -3,6 +3,7 @@
 #include <ankerl/svector.h>
 #include <ankerl/unordered_dense.h>
 #include <array>
+#include <glm/gtc/packing.hpp>
 
 #include "Asset/Texture.hpp"
 #include "Render/AccelerationStructure.hpp"
@@ -170,7 +171,7 @@ struct RenderQueue2D {
     num_sprites += 1;
   }
 
-  void sort() { std::ranges::sort(sprite_data, std::greater<GPU::SpriteGPUData>()); }
+  void sort() { std::ranges::sort(sprite_data, GPU::SpriteGreater()); }
 
   void clear() {
     num_sprites = 0;
@@ -843,8 +844,8 @@ private:
   vuk::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
 
   PreparedFrame prepared_frame = {};
-  GPU::CameraData camera_data = {};
-  GPU::CameraData previous_camera_data = {};
+  GPU::Camera camera_data = {};
+  GPU::Camera previous_camera_data = {};
 
   GPU::SceneFlags gpu_scene_flags = {};
 
@@ -864,7 +865,7 @@ private:
   GPU::Atmosphere atmosphere_lut_state = {};
   bool atmosphere_lut_state_valid = false;
   bool atmosphere_luts_dirty = true;
-  GPU::SkyData sky_data = {};
+  GPU::Sky sky_data = {};
   GPU::EyeAdaptationSettings eye_adaptation = {};
   GPU::VBGTAOSettings vbgtao_info = {};
   GPU::PostProcessSettings post_proces_settings = {};

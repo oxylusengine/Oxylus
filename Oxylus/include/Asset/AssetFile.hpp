@@ -10,7 +10,7 @@
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
 #include "Core/UUID.hpp"
-#include "Scene/MeshGPU.hpp"
+#include "Render/GPU/Shared.hpp"
 
 namespace ox {
 struct PackedUUID {

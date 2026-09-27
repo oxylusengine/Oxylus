@@ -14,7 +14,7 @@ struct ShaderParameters {
     Texture2D<f32> current_luma;
     Texture2D<f32> previous_luma;
     Texture2D<f32x2> dilated_motion_vectors;
-    ConstantBuffer<FSR3Exposure> exposure;
+    ConstantBuffer<HistogramLuminance> exposure;
 
     RWTexture2D<f32x2> spd_mip0;
 };

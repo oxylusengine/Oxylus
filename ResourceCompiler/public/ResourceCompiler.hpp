@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include "Asset/AssetFile.hpp"
@@ -102,6 +103,19 @@ struct SessionDiagnostics {
   std::vector<std::string> messages = {};
 };
 
+struct ReflectedField {
+  std::string name = {};
+  u64 offset = 0;
+  u64 size = 0;
+};
+
+struct ReflectedType {
+  std::string name = {};
+  u64 size = 0;
+  // empty for enums
+  std::vector<ReflectedField> fields = {};
+};
+
 struct SessionCreateInfo {
   // 0 derives a count from the hardware concurrency
   u32 thread_count = 0;
@@ -114,6 +128,9 @@ struct OXRC_API Session : Handle<Session> {
   auto add_request(const ShaderCompileRequest& request) -> void;
   auto compile() -> bool;
   auto write_to_file(const std::filesystem::path& output_path) -> bool;
+  // struct and enum layouts of one module, as the shader build lays them out
+  auto reflect_layouts(const ShaderSessionInfo& session_info, const std::filesystem::path& path)
+    -> std::expected<std::vector<ReflectedType>, std::string>;
 
   auto process(const TextureCompileRequest& request) -> option<TextureData>;
   auto process(const ModelCompileRequest& request) -> option<ModelCompileResult>;

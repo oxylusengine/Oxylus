@@ -17,7 +17,7 @@ func cs_main(
     uniform u32 frame_index,
     uniform f32 hysteresis
 ) -> void {
-    let work = probe_texel_work(thread_id.xy, DISTANCE_TEXELS);
+    let work = probe_texel_work(thread_id.xy, DDGI_DISTANCE_TEXELS);
     if (work.list_index >= probe_update_args[0].count) {
         return;
     }
@@ -32,7 +32,7 @@ func cs_main(
     let ray_origin = ray_data_row_origin(probe_row, rays_per_probe, ray_data_width);
 
     let max_distance = volume.max_probe_distance;
-    let texel_direction = probe_texel_direction(work.texel, DISTANCE_TEXELS);
+    let texel_direction = probe_texel_direction(work.texel, DDGI_DISTANCE_TEXELS);
     let rotation = probe_ray_rotation(frame_index);
 
     var result = f32x2(max_distance, max_distance * max_distance);
@@ -75,7 +75,7 @@ func cs_main(
         }
     }
 
-    let origin = probe_tile_origin(probe_row, DISTANCE_TEXELS);
+    let origin = probe_tile_origin(probe_row, DDGI_DISTANCE_TEXELS);
     let coords = origin + 1 + work.texel;
 
     let previous = probe_distance[coords];
@@ -86,7 +86,7 @@ func cs_main(
     let result_texel = lerp(result, history, rate);
     probe_distance[coords] = result_texel;
 
-    let border = probe_border_writes(work.texel, DISTANCE_TEXELS);
+    let border = probe_border_writes(work.texel, DDGI_DISTANCE_TEXELS);
     if (border.has_x) {
         probe_distance[origin + border.x_texel] = result_texel;
     }

@@ -11,7 +11,7 @@ struct ShaderParameters {
     Texture2D<f32> luma_instability;
     Texture2D<f32> farthest_depth_mip1;
     Texture2D<f32x4> internal_upscaled_color_prev;
-    ConstantBuffer<FSR3Exposure> exposure;
+    ConstantBuffer<HistogramLuminance> exposure;
     Sampler sampler_linear_clamp;
 
     RWTexture2D<f32> new_locks;

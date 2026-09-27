@@ -310,13 +310,7 @@ public struct AccumulationPassData {
     public f32 lock_contribution_this_frame;
 };
 
-// Mirrors GPU::HistogramLuminance. The exposure multiplier is the *second* field; the first is the
-// adapted scene luminance, which is a different quantity entirely and drifts every frame while eye
-// adaptation converges.
-public struct FSR3Exposure {
-    public f32 adapted_luminance;
-    public f32 exposure;
-
+public extension HistogramLuminance {
     // the SDK applies this same guard: a zero exposure would divide the stored history to infinity
     public func value() -> f32 {
         return this.exposure == 0.0 ? 1.0 : this.exposure;

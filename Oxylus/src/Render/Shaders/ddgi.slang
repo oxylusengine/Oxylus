@@ -1,24 +1,12 @@
 import common;
 import gpu;
+__exported import shared;
 
-public constexpr static u32 IRRADIANCE_TEXELS = 12;
-public constexpr static u32 RADIANCE_TEXELS = 6;
-public constexpr static u32 DISTANCE_TEXELS = 12;
-public constexpr static u32 PROBES_PER_ATLAS_ROW = 512;
-public constexpr static u32 IRRADIANCE_ATLAS_WIDTH = PROBES_PER_ATLAS_ROW * (IRRADIANCE_TEXELS + 2);
-public constexpr static u32 RADIANCE_PROBES_PER_ATLAS_ROW = IRRADIANCE_ATLAS_WIDTH / (RADIANCE_TEXELS + 2);
-public constexpr static u32 PROBE_SELECT_GROUP = 64;
-public constexpr static u32 TEXEL_UPDATE_GROUP = 8;
-public constexpr static u32 TEXEL_UPDATE_THREADS_Y = 48;
 public constexpr static f32 DISTANCE_SHARPNESS = 50.0;
 public constexpr static f32 IRRADIANCE_ENCODING_GAMMA = 5.0;
 
 public constexpr static bool SHARP_DISTANCE = true;
 public constexpr static f32 DISTANCE_VARIANCE_BIAS = 0.01;
-
-public constexpr static u32 DEBUG_SPHERE_RINGS = 8;
-public constexpr static u32 DEBUG_SPHERE_SECTORS = 12;
-public constexpr static u32 DEBUG_SPHERE_VERTEX_COUNT = DEBUG_SPHERE_RINGS * DEBUG_SPHERE_SECTORS * 6;
 
 public static const u32 PROBE_INACTIVE_BIT = 1u;
 public static const u32 PROBE_UPDATE_BIT = 2u;
@@ -38,11 +26,6 @@ public static const u32 PROBE_INTERVAL_MASK = 0x00ff0000u;
 // eight probe blend.
 public static const f32 PROBE_INSIDE_BACKFACE_RATIO = 0.25;
 public static const f32 PROBE_ESCAPED_BACKFACE_RATIO = 0.1;
-
-public struct ProbeState {
-    public f32x3 offset;
-    public u32 flags;
-};
 
 public func probe_is_inactive(u32 flags) -> bool {
     return (flags & PROBE_INACTIVE_BIT) != 0;
@@ -96,13 +79,6 @@ public func probe_pack_flags(
            ((interval << PROBE_INTERVAL_SHIFT) & PROBE_INTERVAL_MASK);
 }
 
-public struct ProbeUpdateArgs {
-    public u32 count;
-    public DispatchIndirectCommand irradiance;
-    public DispatchIndirectCommand distance;
-    public DispatchIndirectCommand relocate;
-};
-
 public func probe_pack_update_entry(u32 volume_index, u32 probe_index) -> u32 {
     return (volume_index << 24u) | (probe_index & 0x00ffffffu);
 }
@@ -121,7 +97,7 @@ public struct ProbeTexelWork {
 };
 
 public func probe_texel_work(u32x2 thread, u32 interior_texels) -> ProbeTexelWork {
-    let probes_per_column = TEXEL_UPDATE_THREADS_Y / interior_texels;
+    let probes_per_column = DDGI_TEXEL_UPDATE_THREADS_Y / interior_texels;
 
     ProbeTexelWork work;
     work.list_index = (thread.x / interior_texels) * probes_per_column + thread.y / interior_texels;
@@ -130,20 +106,7 @@ public func probe_texel_work(u32x2 thread, u32 interior_texels) -> ProbeTexelWor
     return work;
 }
 
-public struct ProbeVolume {
-    public f32x3 origin;
-    public u32 probe_offset;
-    public f32x3 spacing;
-    public u32 probe_count;
-    public f32x3 spacing_rcp;
-    public u32 cascade_index;
-    public u32x3 counts;
-    public u32 cascade_count;
-    public i32x3 scroll;
-    public f32 cascade_blend;
-    public f32x3 center;
-    public f32 max_probe_distance;
-
+public extension ProbeVolume {
     public func extents() -> f32x3 {
         return f32x3(max(this.counts, 1u) - 1u) * this.spacing * 0.5;
     }
@@ -207,7 +170,7 @@ public func probe_texel_direction(u32x2 texel, u32 interior_texels) -> f32x3 {
 
 public func probe_tile_origin(u32 probe_row, u32 interior_texels) -> u32x2 {
     let tile = interior_texels + 2;
-    return u32x2(probe_row % PROBES_PER_ATLAS_ROW, probe_row / PROBES_PER_ATLAS_ROW) * tile;
+    return u32x2(probe_row % DDGI_PROBES_PER_ATLAS_ROW, probe_row / DDGI_PROBES_PER_ATLAS_ROW) * tile;
 }
 
 public func ray_data_row_origin(u32 probe_row, u32 rays_per_probe, u32 ray_data_width) -> u32x2 {
@@ -236,7 +199,7 @@ public func sample_probe_irradiance(Image2D<f32x4> atlas, Sampler atlas_sampler,
     u32 width, height;
     atlas.GetDimensions(width, height);
 
-    let uv = probe_atlas_uv(probe_row, direction, IRRADIANCE_TEXELS, f32x2(width, height));
+    let uv = probe_atlas_uv(probe_row, direction, DDGI_IRRADIANCE_TEXELS, f32x2(width, height));
     return atlas.SampleLevel(atlas_sampler, uv, 0.0).rgb;
 }
 
@@ -245,15 +208,15 @@ public func sample_probe_distance(Image2D<f32x2> atlas, Sampler atlas_sampler, u
     u32 width, height;
     atlas.GetDimensions(width, height);
 
-    let uv = probe_atlas_uv(probe_row, direction, DISTANCE_TEXELS, f32x2(width, height));
+    let uv = probe_atlas_uv(probe_row, direction, DDGI_DISTANCE_TEXELS, f32x2(width, height));
     return atlas.SampleLevel(atlas_sampler, uv, 0.0).rg;
 }
 
 public func probe_radiance_tile_origin(u32 probe_row, u32 atlas_y_offset) -> u32x2 {
-    let tile = RADIANCE_TEXELS + 2;
+    let tile = DDGI_RADIANCE_TEXELS + 2;
     return u32x2(
-        (probe_row % RADIANCE_PROBES_PER_ATLAS_ROW) * tile,
-        atlas_y_offset + (probe_row / RADIANCE_PROBES_PER_ATLAS_ROW) * tile
+        (probe_row % DDGI_RADIANCE_PROBES_PER_ATLAS_ROW) * tile,
+        atlas_y_offset + (probe_row / DDGI_RADIANCE_PROBES_PER_ATLAS_ROW) * tile
     );
 }
 
@@ -266,8 +229,8 @@ public func load_probe_radiance(
     let origin = probe_radiance_tile_origin(probe_row, atlas_y_offset);
     let octant = saturate(com::vec3_to_oct(normalize(direction)) * 0.5 + 0.5);
     let texel = min(
-        u32x2(octant * f32(RADIANCE_TEXELS)),
-        u32x2(RADIANCE_TEXELS - 1u)
+        u32x2(octant * f32(DDGI_RADIANCE_TEXELS)),
+        u32x2(DDGI_RADIANCE_TEXELS - 1u)
     );
 
     return atlas.Load(u32x3(origin + 1 + texel, 0)).rgb;
@@ -714,11 +677,11 @@ public func debug_sphere_vertex(u32 vertex_index) -> f32x3 {
 
     let quad_index = vertex_index / 6;
     let corner = corners[vertex_index % 6];
-    let sector = quad_index % DEBUG_SPHERE_SECTORS + corner.x;
-    let ring = quad_index / DEBUG_SPHERE_SECTORS + corner.y;
+    let sector = quad_index % DDGI_DEBUG_SPHERE_SECTORS + corner.x;
+    let ring = quad_index / DDGI_DEBUG_SPHERE_SECTORS + corner.y;
 
-    let phi = f32(sector) / f32(DEBUG_SPHERE_SECTORS) * TAU;
-    let theta = f32(ring) / f32(DEBUG_SPHERE_RINGS) * PI;
+    let phi = f32(sector) / f32(DDGI_DEBUG_SPHERE_SECTORS) * TAU;
+    let theta = f32(ring) / f32(DDGI_DEBUG_SPHERE_RINGS) * PI;
 
     return f32x3(sin(theta) * cos(phi), cos(theta), sin(theta) * sin(phi));
 }

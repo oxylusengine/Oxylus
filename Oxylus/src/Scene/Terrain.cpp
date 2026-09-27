@@ -9,13 +9,6 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-static_assert(sizeof(GPU::TerrainErosion) == 80, "TerrainErosion layout drifted from scene.slang");
-static_assert(sizeof(GPU::TerrainGenerate) == 120, "TerrainGenerate layout drifted from scene.slang");
-static_assert(sizeof(GPU::TerrainDerive) == 40, "TerrainDerive layout drifted from scene.slang");
-static_assert(sizeof(GPU::TerrainMinMax) == 16, "TerrainMinMax layout drifted from scene.slang");
-static_assert(sizeof(GPU::TerrainRegion) == 16, "TerrainRegion layout drifted from scene.slang");
-static_assert(sizeof(GPU::TerrainBrushHit) == 16, "TerrainBrushHit layout drifted from scene.slang");
-static_assert(sizeof(GPU::TerrainBrushParams) == 96, "TerrainBrushParams layout drifted from scene.slang");
 static_assert(sizeof(GPU::TerrainGenerate) <= 128, "push constant blocks must fit the guaranteed 128 bytes");
 static_assert(sizeof(GPU::TerrainBrushParams) <= 128, "push constant blocks must fit the guaranteed 128 bytes");
 
