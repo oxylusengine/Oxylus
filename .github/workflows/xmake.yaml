@@ -195,10 +195,11 @@ jobs:
       - name: Stage package shared libs (Unix)
         if: matrix.platform.os != 'windows'
         run: |
-          mkdir -p dest/bin
-          find "${{ env.XMAKE_GLOBALDIR }}/.xmake/packages" \( -name "*.so*" -o -name "*.dylib" \) -exec cp {} dest/bin/ \; 2>/dev/null || true
-          echo "LD_LIBRARY_PATH=$PWD/dest/bin:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
-          echo "DYLD_LIBRARY_PATH=$PWD/dest/bin:$DYLD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          pkglibs="${{ runner.temp }}/pkglibs"
+          mkdir -p "$pkglibs"
+          find "${{ env.XMAKE_GLOBALDIR }}/.xmake/packages" \( -name "*.so*" -o -name "*.dylib" \) -exec cp {} "$pkglibs/" \; 2>/dev/null || true
+          echo "LD_LIBRARY_PATH=$pkglibs:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$pkglibs:$DYLD_LIBRARY_PATH" >> "$GITHUB_ENV"
         shell: bash
 
       - name: Stage package shared libs (Windows)
@@ -213,11 +214,8 @@ jobs:
       - name: Build all targets
         run: xmake build -vD -a
 
-      - name: Install project targets
-        run: |
-          xmake install -vo dest/
-          rm -rf dest/include dest/lib
-        shell: bash
+      - name: Install editor
+        run: xmake install -vo dest OxylusEditor
 
       - name: Archive production artifacts
         uses: actions/upload-artifact@v4
