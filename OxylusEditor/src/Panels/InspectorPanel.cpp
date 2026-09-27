@@ -15,42 +15,14 @@
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "ParticleEditorPanel.hpp"
+#include "Scene/ComponentReflection.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
-#include "Utils/EditorTheme.hpp"
 
 namespace ox {
 static UUID pending_save_material_uuid = {};
-
-// Components only carry a UUID, and nothing in the reflection says which kind of asset a field
-// points at, so an empty field is matched by the name the component gave it. A field that already
-// holds something uses the type of what it holds instead.
-static auto expected_asset_type(const std::string_view field_name) -> AssetType {
-  const auto has = [field_name](const std::string_view needle) {
-    return field_name.find(needle) != std::string_view::npos;
-  };
-
-  if (has("model"))
-    return AssetType::Model;
-  if (has("material"))
-    return AssetType::Material;
-  if (has("texture") || has("layer_"))
-    return AssetType::Texture;
-  if (has("audio") || has("sound"))
-    return AssetType::Audio;
-  if (has("particle"))
-    return AssetType::ParticleSystem;
-  if (has("terrain"))
-    return AssetType::Terrain;
-  if (has("script"))
-    return AssetType::Script;
-  if (has("scene") || has("prefab"))
-    return AssetType::Scene;
-
-  return AssetType::None;
-}
 
 static auto format_timestamp(memory::ScopedStack& stack, const f32 seconds) -> const c8* {
   const auto total = static_cast<i32>(seconds);
@@ -61,6 +33,7 @@ static auto format_timestamp(memory::ScopedStack& stack, const f32 seconds) -> c
 struct EntityInspector : IEntitySerializer {
   UndoRedoSystem& undo_redo_system;
   InspectorPanel& inspector_panel;
+  flecs::entity component_type = {};
   bool modified;
 
   EntityInspector(flecs::world& world_, UndoRedoSystem& undo_redo_system_, InspectorPanel& inspector_panel_)
@@ -238,11 +211,19 @@ struct EntityInspector : IEntitySerializer {
 
     auto* uuid = static_cast<UUID*>(field_ptr);
 
+    auto expected_type = AssetType::None;
+    if (const auto* asset_fields = component_type ? component_type.try_get<AssetFields>() : nullptr) {
+      for (const auto& asset_field : asset_fields->fields) {
+        if (name == asset_field.member)
+          expected_type = asset_field.type;
+      }
+    }
+
     // The asset field and whatever editor its asset brings with it are both too tall for a property
     // row, so they go between two property tables rather than inside one.
     UI::end_properties();
 
-    modified |= inspector_panel.draw_asset_field(name, *uuid);
+    modified |= inspector_panel.draw_asset_field(name, *uuid, expected_type);
     inspector_panel.draw_asset_contents(*uuid);
 
     UI::begin_properties();
@@ -630,6 +611,7 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
 
       auto world = entity.world();
       auto inspector = EntityInspector(world, *undo_redo_system.get(), self);
+      inspector.component_type = ty;
       auto* component = entity.get_mut(fid);
       inspector.serialize(ty, component);
       if (inspector.modified) {
@@ -650,7 +632,9 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   });
 }
 
-auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::string_view label, UUID& uuid) -> bool {
+auto InspectorPanel::draw_asset_field(
+  this InspectorPanel& self, const std::string_view label, UUID& uuid, const AssetType expected_type
+) -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -663,7 +647,7 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
     type = asset->type;
     registry_path = asset->path;
   }
-  const auto picker_type = type != AssetType::None ? type : expected_asset_type(label);
+  const auto picker_type = type != AssetType::None ? type : expected_type;
   // The same resolution the browser rows get, so a field and the picker it opens call an asset by
   // the same name instead of the field showing the cache pack.
   const auto path = asset_display_path(uuid, registry_path);
