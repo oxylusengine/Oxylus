@@ -109,11 +109,14 @@ static auto log_diagnostics(rc::Session& session) -> void {
 }
 
 auto import_asset(
-  AssetManager& asset_man, rc::Session& session, const std::filesystem::path& path, option<bool> srgb_directive
+  AssetManager& asset_man,
+  rc::Session& session,
+  const std::filesystem::path& path,
+  option<rc::TextureUsage> usage_directive
 ) -> UUID {
   ZoneScoped;
 
-  const auto result = rc::import_asset(session, cache_dir(), path, srgb_directive);
+  const auto result = rc::import_asset(session, cache_dir(), path, usage_directive);
   log_diagnostics(session);
 
   for (const auto& asset : result.assets) {
@@ -127,9 +130,20 @@ auto import_asset(
   return result.uuid;
 }
 
-auto import_asset(AssetManager& asset_man, const std::filesystem::path& path, option<bool> srgb_directive) -> UUID {
+auto cook_project_assets(const std::filesystem::path& assets_dir, const std::filesystem::path& output_dir) -> bool {
   ZoneScoped;
 
-  return import_asset(asset_man, App::mod<rc::ResourceCompiler>(), path, srgb_directive);
+  auto& session = App::mod<rc::ResourceCompiler>();
+  const auto succeeded = rc::cook_assets(session, assets_dir, output_dir);
+  log_diagnostics(session);
+
+  return succeeded;
+}
+
+auto import_asset(AssetManager& asset_man, const std::filesystem::path& path, option<rc::TextureUsage> usage_directive)
+  -> UUID {
+  ZoneScoped;
+
+  return import_asset(asset_man, App::mod<rc::ResourceCompiler>(), path, usage_directive);
 }
 } // namespace ox

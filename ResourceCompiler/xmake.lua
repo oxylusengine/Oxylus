@@ -17,8 +17,7 @@ target("ResourceCompiler")
     "zpp_bits",
     "fastgltf-ox",
     "meshoptimizer",
-    "ktx-ox",
-    "stb",
+    "basisu-ox",
     "glm",
     { public = false })
 

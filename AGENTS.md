@@ -120,6 +120,14 @@ everything in it. A cook writes a sidecar for any asset that lacks one, commit t
 is a shared library with its own copy of the engine's statics, so code there reports through
 `Session` diagnostics, never `OX_LOG_*` or `App`.
 
+Textures cook to GPU block formats (`ResourceCompiler/private/TextureCompiler.cpp`) with basis_universal
+(the `basisu-ox` package), the one image library in the project: it also decodes PNG/JPEG at runtime and
+writes the editor's thumbnails, so don't add stb, libktx or another codec. An `rc::TextureUsage` picks
+the format: colour is BC7 sRGB, packed data BC7 linear, normals BC5 (the renderer rebuilds z), single
+channels BC4 read back as `rrr1` through `TextureData::components`. Usage comes from the glTF material
+slot, then a sidecar `"usage"`, then inference (grayscale source, a normal-map file name). DDS (BC1-5,
+BC7, uncompressed) and Basis Universal KTX2 are accepted; plain-format KTX2 is not.
+
 `Asset::path` (where the payload loads from) and `Asset::source_path` (the file it was imported
 from, looked up by `AssetManager::find_asset`) are stored virtual; `register_asset`/`create_asset`
 convert whatever they are given, and anything that opens the file calls `to_physical` first.

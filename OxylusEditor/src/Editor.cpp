@@ -555,6 +555,35 @@ void Editor::reset_current_docking_layout() {
   main_viewport_panel.update_dockspace();
 }
 
+auto Editor::cook_assets_into(this Editor& self, const std::filesystem::path& folder) -> void {
+  ZoneScoped;
+
+  if (self.cooking_assets.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+
+  auto& vfs = App::get_vfs();
+  if (!vfs.is_mounted_dir(VFS::ASSETS_DIR)) {
+    self.cooking_assets.store(false, std::memory_order_release);
+    return;
+  }
+
+  // a .cooked subfolder, so the cook never prunes anything in the folder that was picked
+  auto assets_dir = vfs.resolve_physical_dir(VFS::ASSETS_DIR, "");
+  auto output_dir = folder / VFS::COOKED_SUBDIR;
+
+  auto& job_man = App::get_job_manager();
+  job_man.push_job_name("Cooking assets");
+  job_man.submit(Job::create([&self, assets_dir = std::move(assets_dir), output_dir = std::move(output_dir)]() {
+    if (!cook_project_assets(assets_dir, output_dir)) {
+      OX_LOG_ERROR("Cooking assets into {} failed, see the errors above.", output_dir);
+    }
+
+    self.cooking_assets.store(false, std::memory_order_release);
+  }));
+  job_man.pop_job_name();
+}
+
 void Editor::draw_menubar(this Editor& self) {
   ZoneScoped;
 
@@ -607,6 +636,34 @@ void Editor::draw_menubar(this Editor& self) {
       if (ImGui::MenuItem("Asset Manager")) {
         self.editor_panel_registry.get<AssetManagerPanel>().visible = true;
       }
+
+      auto& vfs = App::get_vfs();
+      const auto cooking = self.cooking_assets.load(std::memory_order_acquire);
+      ImGui::BeginDisabled(!vfs.is_mounted_dir(VFS::ASSETS_DIR) || cooking);
+      if (ImGui::MenuItem(cooking ? "Cooking Assets..." : "Cook Assets (test)...")) {
+        App::get_window().show_dialog({
+          .kind = DialogKind::OpenFolder,
+          .user_data = &self,
+          .callback =
+            [](void* user_data, const c8* const* files, i32) {
+              auto* editor = static_cast<Editor*>(user_data);
+              if (!editor || !files || !*files) {
+                return;
+              }
+
+              auto folder = std::filesystem::path(std::string(*files));
+              App::defer_to_next_frame([editor, f = std::move(folder)]() -> void { editor->cook_assets_into(f); });
+            },
+          .title = "Cook assets into (a game build's Assets folder works)",
+          .default_path = vfs.resolve_physical_dir(VFS::ASSETS_DIR, "").parent_path(),
+          .multi_select = false,
+        });
+      }
+      ImGui::EndDisabled();
+      UI::tooltip_hover(
+        "Optional, for testing: runs the cook a game build does (rcli --cook-assets) into the chosen folder's "
+        ".cooked subfolder, the layout a game reads. Editing and shipping never need it."
+      );
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {

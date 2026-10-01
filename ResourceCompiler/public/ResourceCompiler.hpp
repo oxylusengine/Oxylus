@@ -53,14 +53,22 @@ struct ShaderCompileRequest {
   std::vector<ShaderCompileInfo> shaders = {};
 };
 
+// what a texture is for, which decides its block format and colour space
+enum class TextureUsage : u8 {
+  Color = 0, // sRGB colour (albedo, emissive): BC7
+  Linear,    // data spread over several channels (packed metallic-roughness): BC7, linear
+  Normal,    // tangent-space normal map: BC5, the renderer rebuilds z
+  Mask,      // one channel (occlusion, roughness, height): BC4, sampled as rrr1
+};
+
 struct TextureCompileRequest {
   std::filesystem::path path = {};
   // takes priority over `path`, for images embedded in a glTF buffer
   std::vector<u8> source_bytes = {};
   std::string name = {};
-  // unset honours the colour space the source declares (a KTX2's transfer function, a DDS's DXGI
-  // format); a value overrides it, which is what a glTF does since the material slot knows better
-  option<bool> srgb = nullopt;
+  // unset infers it from the source: a KTX2's or DDS's declared colour space, a grayscale image as a mask, a file
+  // named like a normal map as one. a value overrides that, which is what a glTF does since the material slot knows
+  option<TextureUsage> usage = nullopt;
 };
 
 struct ModelCompileRequest {
@@ -90,6 +98,8 @@ struct CompiledTexture {
   Kind kind = Kind::None;
   std::filesystem::path external_path = {}; // Kind::External, relative to the model file
   TextureData data = {};                    // Kind::Compiled
+  // what the material slots using it need, which an External texture's own import has to honour
+  TextureUsage usage = TextureUsage::Color;
 };
 
 struct ModelCompileResult {

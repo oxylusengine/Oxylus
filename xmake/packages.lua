@@ -5,12 +5,12 @@ local imgui_version = "v1.92.9b-docking"
 local simdjson_version = "v4.2.4"
 
 packages = {
-  ["stb 2024.06.01"] = {},
   ["miniaudio 0.11.25"] = {},
   ["fastgltf-ox v0.8.0"] = { system = false, debug = is_mode("debug") },
   ["meshoptimizer v1.2"] = {},
   ["libsdl3 3.4.12"] = { configs = { x11 = true, wayland = false } },
-  ["ktx-ox v4.4.0"] = { system = false, debug = false },
+  -- release even in debug builds, an unoptimized BC7 encoder makes every texture import crawl
+  ["basisu-ox 2.50"] = { system = false, debug = false },
   ["shader-slang v2026.12.2"] = { configs = { shared = true }, system = false },
   ["enet-ox v2.6.5"] = {
     configs = {

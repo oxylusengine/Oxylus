@@ -65,6 +65,7 @@ protected:
     texture.width = 256;
     texture.height = 128;
     texture.mips.push_back({.width = 256, .height = 128, .pixels = {0xAA, 0xBB}});
+    texture.components = {3, 3, 3, 2};
     return texture;
   }
 
@@ -135,6 +136,7 @@ TEST_F(AssetFileTest, PacksAndUnpacksEveryPayloadType) {
   EXPECT_EQ(texture->vk_format, 145u);
   EXPECT_EQ(texture->width, 256u);
   EXPECT_EQ(texture->height, 128u);
+  EXPECT_EQ(texture->components, (std::array<u8, 4>{3, 3, 3, 2}));
   ASSERT_EQ(texture->mips.size(), 1u);
   EXPECT_THAT(texture->mips[0].pixels, ::testing::ElementsAre(0xAA, 0xBB));
 

@@ -19,7 +19,7 @@ namespace ox::rc {
 // Bumped whenever a compiled payload's meaning changes, so every cooked pack everywhere goes stale at once.
 // `AssetFileHeader::VERSION` covers layout; this covers everything else the compiler decides (sRGB choices, LOD
 // thresholds, meshlet limits).
-constexpr static auto ASSET_COMPILER_VERSION = 4_u32;
+constexpr static auto ASSET_COMPILER_VERSION = 6_u32;
 
 // Project file formats the importer knows how to turn into assets.
 enum class AssetFileType : u32 {
@@ -86,14 +86,13 @@ struct ImportResult {
 // updates its sidecar, creating one (and so a UUID) for a file that has none. Safe to call from several threads, a
 // file reached twice at once is cooked once. Failures are pushed to the session's diagnostics.
 //
-// `srgb_directive` is how a model oversees its own resources: a glTF knows a sibling file is a normal map, which
-// beats whatever colour space that file labels itself with. A hand-written "color_space" in the sidecar still
-// outranks both.
+// `usage_directive` is how a model oversees its own resources: a glTF knows a sibling file is a normal map, which beats
+// whatever the file alone suggests. A hand-written "usage" in the sidecar still outranks both.
 OXRC_API auto import_asset(
   Session& session,
   const std::filesystem::path& cooked_dir,
   const std::filesystem::path& path,
-  option<bool> srgb_directive = nullopt
+  option<TextureUsage> usage_directive = nullopt
 ) -> ImportResult;
 
 // What a game build runs instead of the editor: imports everything under `assets_dir`, cooking into `output_dir`,

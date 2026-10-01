@@ -30,6 +30,7 @@ struct TextureCreateInfo {
   vuk::ImageUsageFlags usage = {};
   vuk::ImageViewCreateFlags image_view_flags = {};
   vuk::ImageViewType view_type = vuk::ImageViewType::e2D;
+  vuk::ComponentMapping components = {};
   vuk::SamplerCreateInfo sampler_info = {
     .magFilter = vuk::Filter::eLinear,
     .minFilter = vuk::Filter::eLinear,

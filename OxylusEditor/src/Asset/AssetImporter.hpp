@@ -26,19 +26,22 @@ auto cache_dir() -> std::filesystem::path;
 // The single funnel every editor import goes through: `rc::import_asset` into the editor's cache,
 // then registers everything it produced with `asset_man`.
 //
-// `srgb_directive` is how a model oversees its own resources: a glTF knows a sibling file is a
-// normal map, which beats whatever colour space that file labels itself with. A hand-written
-// "color_space" in the sidecar still outranks both.
+// `usage_directive` is how a model oversees its own resources, see `rc::import_asset`.
 auto import_asset(
   AssetManager& asset_man,
   rc::Session& session,
   const std::filesystem::path& path,
-  option<bool> srgb_directive = nullopt
+  option<rc::TextureUsage> usage_directive = nullopt
 ) -> UUID;
 
 // Same, resolving the compiler module itself.
-auto import_asset(AssetManager& asset_man, const std::filesystem::path& path, option<bool> srgb_directive = nullopt)
-  -> UUID;
+auto import_asset(
+  AssetManager& asset_man, const std::filesystem::path& path, option<rc::TextureUsage> usage_directive = nullopt
+) -> UUID;
+
+// The cook a game build runs through `rcli --cook-assets`, for checking its output from the editor. Nothing in
+// editing or shipping depends on it. `output_dir` is dedicated to the cook, stale packs in it are removed.
+auto cook_project_assets(const std::filesystem::path& assets_dir, const std::filesystem::path& output_dir) -> bool;
 
 auto remap_path(
   const std::filesystem::path& path, const std::filesystem::path& old_path, const std::filesystem::path& new_path
