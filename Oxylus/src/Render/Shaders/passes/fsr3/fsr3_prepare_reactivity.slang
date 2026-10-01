@@ -13,7 +13,7 @@ struct ShaderParameters {
     Texture2D<f32> accumulation_prev;
     Texture2D<f32> input_reactive_mask;
     Texture2D<f32> input_transparency_and_composition_mask;
-    ConstantBuffer<FSR3Exposure> exposure;
+    ConstantBuffer<HistogramLuminance> exposure;
     Sampler sampler_linear_clamp;
 
     RWTexture2D<f32x4> dilated_reactive_masks;

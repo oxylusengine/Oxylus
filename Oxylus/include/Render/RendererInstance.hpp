@@ -3,6 +3,7 @@
 #include <ankerl/svector.h>
 #include <ankerl/unordered_dense.h>
 #include <array>
+#include <glm/gtc/packing.hpp>
 
 #include "Asset/Texture.hpp"
 #include "Render/AccelerationStructure.hpp"
@@ -170,7 +171,7 @@ struct RenderQueue2D {
     num_sprites += 1;
   }
 
-  void sort() { std::ranges::sort(sprite_data, std::greater<GPU::SpriteGPUData>()); }
+  void sort() { std::ranges::sort(sprite_data, GPU::SpriteGreater()); }
 
   void clear() {
     num_sprites = 0;
@@ -200,6 +201,7 @@ struct RendererInstanceUpdateInfo {
   std::span<u64> gpu_mesh_blas_addresses = {};
   std::span<GPU::MeshInstance> gpu_mesh_instances = {};
   std::span<u32> dirty_mesh_instance_indices = {};
+  std::span<GPU::MeshBounds> removed_mesh_bounds = {};
 };
 
 struct ParticleMeshDraw {
@@ -239,6 +241,8 @@ struct PreparedFrame {
 
   vuk::Value<vuk::Buffer> dirty_mesh_instances_buffer = {};
   u32 dirty_mesh_instance_count = 0;
+  vuk::Value<vuk::Buffer> removed_mesh_bounds_buffer = {};
+  u32 removed_mesh_bounds_count = 0;
 
   vuk::Value<vuk::Buffer> terrain_patch_visibility_mask_buffer = {};
 
@@ -840,8 +844,8 @@ private:
   vuk::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
 
   PreparedFrame prepared_frame = {};
-  GPU::CameraData camera_data = {};
-  GPU::CameraData previous_camera_data = {};
+  GPU::Camera camera_data = {};
+  GPU::Camera previous_camera_data = {};
 
   GPU::SceneFlags gpu_scene_flags = {};
 
@@ -861,7 +865,7 @@ private:
   GPU::Atmosphere atmosphere_lut_state = {};
   bool atmosphere_lut_state_valid = false;
   bool atmosphere_luts_dirty = true;
-  GPU::SkyData sky_data = {};
+  GPU::Sky sky_data = {};
   GPU::EyeAdaptationSettings eye_adaptation = {};
   GPU::VBGTAOSettings vbgtao_info = {};
   GPU::PostProcessSettings post_proces_settings = {};
@@ -922,6 +926,8 @@ private:
     vuk::Unique<vuk::Image> image{};
     vuk::Unique<vuk::ImageView> view{};
     vuk::ImageAttachment attachment = {};
+    // how the frame that wrote it left it, which is what acquire_ia needs next frame
+    vuk::Access last_access = vuk::eNone;
   };
   std::array<FSR3History, 2> fsr3_internal_upscaled_color{};
   std::array<FSR3History, 2> fsr3_accumulation{};

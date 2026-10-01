@@ -12,6 +12,7 @@ namespace ox {
 enum class FileError : i32 {
   None = 0,
   NoAccess,
+  NotFound,
   Exists,
   IsDir,
   InUse,

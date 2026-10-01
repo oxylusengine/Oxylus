@@ -25,7 +25,7 @@ func cs_main(
     var meshlet_count = 0u;
     var lod_index = 0u;
 
-    if (mesh_instance_index < camera.mesh_instances_count) {
+    if (mesh_instance_index < camera.mesh_instance_count) {
         let mesh_instance = mesh_instances[mesh_instance_index];
         let mesh = meshes[mesh_instance.mesh_index];
         let transform = transforms[mesh_instance.transform_index];

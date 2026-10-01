@@ -108,7 +108,7 @@ func vs_main(u32 vertex_id : SV_VertexID, u32 instance_id : SV_InstanceID) -> VO
     output.view_distance = distance(camera.position.xyz, world);
     output.soft_distance = emitter.soft_particle_distance;
     output.material_index = emitter.material_index;
-    output.flags = emitter.flags;
+    output.flags = u32(emitter.flags);
 
     return output;
 }

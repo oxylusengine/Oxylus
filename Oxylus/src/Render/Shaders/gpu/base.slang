@@ -2,34 +2,6 @@ implementing gpu;
 
 import common;
 
-public struct DispatchIndirectCommand {
-    public u32 x;
-    public u32 y;
-    public u32 z;
-};
-
-public struct DrawIndexedIndirectCommand {
-    public u32 index_count;
-    public u32 instance_count;
-    public u32 first_index;
-    public i32 vertex_offset;
-    public u32 first_instance;
-};
-
-public struct DrawIndirectCommand {
-    public u32 vertex_count;
-    public u32 instance_count;
-    public u32 first_vertex;
-    public u32 first_instance;
-};
-
-public struct AccelerationStructureInstance {
-    public f32 transform[12];
-    public u32 custom_index_and_mask;
-    public u32 sbt_offset_and_flags;
-    public u64 blas_address;
-};
-
 public enum ImageFormat : i32 {
     Undefined = 0,
     RGBA32F,           // 4 channel 32-bit floating point texture

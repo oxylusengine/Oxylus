@@ -1,6 +1,7 @@
 #include "Networking/NetworkManager.hpp"
 
 #include <enet.h>
+#include <span>
 
 #include "Utils/Log.hpp"
 
@@ -68,6 +69,11 @@ auto NetworkManager::create_client_handle(this NetworkManager& self) -> ENetHost
 
 auto NetworkManager::destroy_server(this NetworkManager& self, NetServer* server) -> void {
   ZoneScoped;
+
+  enet_host_flush(server->local_host);
+  for (auto& peer : std::span(server->local_host->peers, server->local_host->peerCount)) {
+    enet_peer_disconnect_now(&peer, 0);
+  }
 
   enet_host_destroy(server->local_host);
   std::erase_if(self.servers, [&](std::unique_ptr<NetServer>& v) { return v.get() == server; });

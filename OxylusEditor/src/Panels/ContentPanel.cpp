@@ -17,6 +17,7 @@
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
+#include "Asset/ParticleSystem.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
@@ -1671,8 +1672,12 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
           asset_path.replace_extension("");
         }
 
-        if (self.new_asset_type == AssetType::ParticleSystem && asset_path.extension() != ".oxparticle") {
-          asset_path.replace_extension(".oxparticle");
+        if (self.new_asset_type == AssetType::ParticleSystem) {
+          if (asset_path.extension() != ".oxparticle") {
+            asset_path.replace_extension(".oxparticle");
+          }
+          // loading reads the file, and a new system has nothing on disk yet
+          ParticleSystem::make_default().write(asset_path);
         }
 
         auto asset = asset_man.create_asset(self.new_asset_type, asset_path);

@@ -4,6 +4,7 @@
 
 #include "OS/File.hpp"
 #include "UI/UIScale.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 ContextCVar::ContextCVar() {
@@ -70,11 +71,15 @@ auto ContextCVar::save(this ContextCVar& self) -> void {
 auto ContextCVar::load(this ContextCVar& self) -> bool {
   ZoneScoped;
 
-  auto content = File::to_string(CONTEXT_CVAR_PATH);
-  if (content.empty())
+  auto content = File::try_to_string(CONTEXT_CVAR_PATH);
+  if (!content.has_value()) {
+    if (content.error() != FileError::NotFound) {
+      OX_LOG_ERROR("Couldn't read {}: {}", CONTEXT_CVAR_PATH, file_error_to_str(content.error()));
+    }
     return false;
+  }
 
-  toml::table toml = toml::parse(content);
+  toml::table toml = toml::parse(*content);
 
   if (const auto display_config = toml["display"]) {
     if (auto v = display_config["vsync"].as_boolean())

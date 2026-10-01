@@ -491,7 +491,7 @@ struct AudioSourceComponent {
 };
 
 struct AudioListenerComponent {
-  bool active = false;
+  bool active = true;
   u32 listener_index = 0;
   f32 cone_inner_angle = glm::radians(360.0f);
   f32 cone_outer_angle = glm::radians(360.0f);

@@ -85,6 +85,7 @@ auto os::file_open(const std::filesystem::path& path, FileAccess access) -> std:
   if (file < 0) {
     switch (errno) {
       case EACCES: return std::unexpected(FileError::NoAccess);
+      case ENOENT: return std::unexpected(FileError::NotFound);
       case EEXIST: return std::unexpected(FileError::Exists);
       case EISDIR: return std::unexpected(FileError::IsDir);
       case EBUSY : return std::unexpected(FileError::InUse);

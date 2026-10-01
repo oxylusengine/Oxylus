@@ -25,7 +25,8 @@ struct ClientAckEvent {
 struct NetServer {
   ENetHost* local_host = nullptr;
   SlotMap<NetClient, NetClientID> remote_clients = {};
-  u64 net_id_counter = 0;
+  // starts at 1 so a client's net_id of 0 means the handshake hasn't finished
+  u64 net_id_counter = 1;
   f64 tick_interval = 1000.0f / 20.0f;
   f64 tick_accum = 0.0f;
 

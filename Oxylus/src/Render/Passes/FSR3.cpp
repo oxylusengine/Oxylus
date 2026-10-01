@@ -22,7 +22,9 @@ auto RendererInstance::allocate_fsr3_resources(
 
   auto allocate = [&](FSR3History& target, const vuk::Extent3D extent, const vuk::Format format) {
     target.attachment = vuk::ImageAttachment{
-      .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
+      // cleared on a history reset, and vuk only infers usage for images it allocates itself
+      .usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled |
+               vuk::ImageUsageFlagBits::eTransferDst,
       .extent = extent,
       .format = format,
       .sample_count = vuk::Samples::e1,
@@ -169,7 +171,7 @@ auto RendererInstance::apply_fsr3(this RendererInstance& self, FSR3Context& cont
     if (context.reset) {
       return vuk::clear_image(vuk::discard_ia(name, target.attachment), vuk::Black<f32>);
     }
-    return vuk::acquire_ia(name, target.attachment, vuk::eComputeSampled);
+    return vuk::acquire_ia(name, target.attachment, target.last_access);
   };
 
   auto internal_upscaled_color_prev = acquire_or_clear(self.fsr3_internal_upscaled_color[previous], "fsr3 prev color");
@@ -674,6 +676,11 @@ auto RendererInstance::apply_fsr3(this RendererInstance& self, FSR3Context& cont
   // the history writes ride along on passes that are already kept alive by their other outputs
   // (accumulate feeds upscaled_output, prepare_inputs feeds the dilated targets, and so on), so
   // there is nothing further to release here
+  self.fsr3_internal_upscaled_color[current].last_access = apply_sharpening ? vuk::eComputeSampled : vuk::eComputeRW;
+  self.fsr3_accumulation[current].last_access = vuk::eComputeRW;
+  self.fsr3_luma[current].last_access = vuk::eComputeSampled;
+  self.fsr3_luma_history[current].last_access = vuk::eComputeRW;
+
   self.fsr3_history_ping = !self.fsr3_history_ping;
   self.fsr3_history_valid = true;
 

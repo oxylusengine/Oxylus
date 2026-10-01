@@ -178,6 +178,8 @@ public:
 
   auto execute() -> void override {
     serialize_entity(entity_);
+    parent_ = entity_.parent();
+    entity_name_ = entity_.name().c_str();
     entity_.destruct();
   }
 
@@ -186,15 +188,24 @@ public:
     simdjson::ondemand::parser parser;
     auto doc = parser.iterate(content);
     auto entities_array = doc["entities"];
+    // back under the parent it was deleted from, named so it can't collide with whatever took its name
+    // since, which would make flecs hand back that entity instead
+    const auto parent = parent_ && parent_.is_alive() ? parent_ : flecs::entity::null();
+    const auto restored_name = scene_->safe_entity_name(entity_name_, parent);
+
     std::vector<UUID> requested_assets = {};
     for (auto entity_json : entities_array.get_array()) {
       entity_ = Scene::json_to_entity(
         *scene_, //
-        flecs::entity::null(),
+        parent,
         entity_json.value_unsafe(),
-        requested_assets
+        requested_assets,
+        restored_name
       );
     }
+
+    // deleting released every ref the entity's components owned, so the restored ones take them back
+    scene_->load_requested_assets(requested_assets);
   }
 
   auto get_id() const -> std::string_view override { return id_; }
@@ -207,6 +218,7 @@ public:
 private:
   Scene* scene_;
   flecs::entity entity_;
+  flecs::entity parent_;
   std::string serialized_entity_;
   std::string entity_name_;
   std::string id_;

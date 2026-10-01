@@ -27,7 +27,12 @@ auto SceneBinding::bind(sol::state* state) -> void {
       return scene->create_entity(name.has_value() ? *name : "", safe_naming.has_value() ? *safe_naming : false);
     }
   );
-  SET_TYPE_FUNCTION(scene_type, Scene, create_model_entity);
+  scene_type.set_function(
+    "create_model_entity",
+    [](Scene* scene, const UUID& asset_uuid, sol::optional<flecs::entity> parent) {
+      return scene->create_model_entity(asset_uuid, parent.value_or(flecs::entity{}));
+    }
+  );
   SET_TYPE_FUNCTION(scene_type, Scene, create_particle_system_entity);
   SET_TYPE_FUNCTION(scene_type, Scene, save_to_file);
   SET_TYPE_FUNCTION(scene_type, Scene, load_from_file);

@@ -187,9 +187,19 @@ auto NetServer::send_to_client(this NetServer& self, NetClientID client_id, NetP
 auto NetServer::broadcast(this NetServer& self, NetPacket& packet, bool reliable) -> void {
   ZoneScoped;
 
+  // not enet_host_broadcast, that also reaches peers that never finished the handshake
   packet.inner->flags = reliable ? ENET_PACKET_FLAG_RELIABLE : 0;
-  // enet_host_broadcast owns the packet from here on, including destroying it when there are no peers.
-  enet_host_broadcast(self.local_host, reliable ? NET_CHANNEL_RELIABLE : NET_CHANNEL_UNRELIABLE, packet);
+  const auto channel = reliable ? NET_CHANNEL_RELIABLE : NET_CHANNEL_UNRELIABLE;
+  self.remote_clients.for_each_active([&](usize, NetClient& client) {
+    if (client.remote_peer) {
+      enet_peer_send(client.remote_peer, channel, packet);
+    }
+  });
+
+  // no send took a reference, so the packet is still ours to free
+  if (packet.can_destroy()) {
+    packet.destroy();
+  }
 }
 
 auto NetServer::call_client(

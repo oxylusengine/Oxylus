@@ -119,8 +119,8 @@ auto os::file_open(const std::filesystem::path& path, FileAccess access) -> std:
   if (file_handle == INVALID_HANDLE_VALUE) {
     DWORD error = GetLastError();
     switch (error) {
-      case ERROR_FILE_NOT_FOUND   : return std::unexpected(FileError::Exists);
-      case ERROR_PATH_NOT_FOUND   : return std::unexpected(FileError::Exists);
+      case ERROR_FILE_NOT_FOUND   : return std::unexpected(FileError::NotFound);
+      case ERROR_PATH_NOT_FOUND   : return std::unexpected(FileError::NotFound);
       case ERROR_ACCESS_DENIED    : return std::unexpected(FileError::NoAccess);
       case ERROR_SHARING_VIOLATION: return std::unexpected(FileError::InUse);
       case ERROR_DIRECTORY        : return std::unexpected(FileError::IsDir);

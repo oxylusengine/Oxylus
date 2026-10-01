@@ -37,6 +37,10 @@ struct ShadowSlotStats {
 // prevent slot churn near frustum and priority boundaries
 constexpr static f32 SHADOW_SLOT_HYSTERESIS = 1.25f;
 
+static auto to_lut_size(const vuk::Extent3D& extent) -> glm::ivec3 {
+  return {static_cast<i32>(extent.width), static_cast<i32>(extent.height), static_cast<i32>(extent.depth)};
+}
+
 static auto atmosphere_lut_inputs_equal(const GPU::Atmosphere& a, const GPU::Atmosphere& b) -> bool {
   return a.rayleigh_scatter == b.rayleigh_scatter &&           //
          a.rayleigh_density == b.rayleigh_density &&           //
@@ -2062,7 +2066,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   CameraComponent cam = freeze_culling ? frozen_camera : current_camera;
 
-  self.camera_data = GPU::CameraData{
+  self.camera_data = GPU::Camera{
     .position = glm::vec4(cam.position, 0.0f),
     .projection = cam.get_projection_matrix(),
     .inv_projection = cam.get_inv_projection_matrix(),
@@ -2163,10 +2167,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.atmosphere.ozone_thickness = atmos_info->ozone_thickness;
         self.atmosphere.aerial_perspective_start_km = atmos_info->aerial_perspective_start_km;
         self.atmosphere.aerial_perspective_exposure = atmos_info->aerial_perspective_exposure;
-        self.atmosphere.sky_view_lut_size = self.sky_view_lut_extent;
-        self.atmosphere.aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
-        self.atmosphere.transmittance_lut_size = self.sky_transmittance_lut.get_extent();
-        self.atmosphere.multiscattering_lut_size = self.sky_multiscatter_lut.get_extent();
+        self.atmosphere.sky_view_lut_size = to_lut_size(self.sky_view_lut_extent);
+        self.atmosphere.aerial_perspective_lut_size = to_lut_size(self.sky_aerial_perspective_lut_extent);
+        self.atmosphere.transmittance_lut_size = to_lut_size(self.sky_transmittance_lut.get_extent());
+        self.atmosphere.multiscattering_lut_size = to_lut_size(self.sky_multiscatter_lut.get_extent());
       }
 
       if (const auto* sky_info = e.try_get<SkyComponent>()) {
@@ -2405,7 +2409,9 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     "transforms_previous",
     "update transform previous"
   );
-  // Materials are global and already synced by the renderer; this instance only reads them.
+  // anything loaded after Renderer::update ran this frame (every later module) would otherwise draw
+  // with material indices the gpu buffer does not have yet
+  self.renderer.sync_materials();
   self.prepared_frame.materials_buffer = self.renderer.get_materials_buffer();
 
   {
@@ -2534,6 +2540,19 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
     self.prepared_frame.dirty_mesh_instances_buffer = std::move(dirty_mesh_instances_buffer);
   }
+  if (!info.removed_mesh_bounds.empty()) {
+    self.prepared_frame.removed_mesh_bounds_count = static_cast<u32>(info.removed_mesh_bounds.size());
+    auto removed_mesh_bounds_buffer = render_context.alloc_transient_buffer(
+      vuk::MemoryUsage::eCPUtoGPU,
+      info.removed_mesh_bounds.size_bytes()
+    );
+    std::memcpy(
+      removed_mesh_bounds_buffer->mapped_ptr,
+      info.removed_mesh_bounds.data(),
+      info.removed_mesh_bounds.size_bytes()
+    );
+    self.prepared_frame.removed_mesh_bounds_buffer = std::move(removed_mesh_bounds_buffer);
+  }
   if (info.max_meshlet_instance_count > 0) {
     self.prepared_frame.meshlet_instances_buffer = render_context.alloc_transient_buffer(
       vuk::MemoryUsage::eGPUonly,
@@ -2573,7 +2592,11 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.update_vbgtao_info(cvar);
 
   if (cvar.cvar_particles_enable.as_bool()) {
-    const auto particle_delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f;
+    // a running scene's particles follow its gameplay clock so they pause with it, the editor
+    // previews them in real time
+    const auto particle_delta_time = self.scene.is_running()
+                                       ? self.scene.last_step_delta
+                                       : static_cast<f32>(App::get_timestep().get_millis()) * 0.001f;
     self.prepare_particles(particle_delta_time, cvar.cvar_particle_sort.as_bool());
   }
 

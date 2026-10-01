@@ -2,6 +2,7 @@
 
 #include <condition_variable>
 #include <functional>
+#include <tuple>
 #include <variant>
 
 #include "Asset/AssetFile.hpp"
@@ -18,6 +19,8 @@
 #include "Scripting/LuaScript.hpp"
 
 namespace ox {
+class AudioEngine;
+
 struct Asset {
   UUID uuid = {};
   // both are VFS virtual paths (see `VFS::to_virtual`), so a registry entry means the same file in the editor and in
@@ -53,6 +56,8 @@ using AssetRegistry = ankerl::unordered_dense::map<UUID, Asset>;
 class AssetManager {
 public:
   constexpr static auto MODULE_NAME = "AssetManager";
+  // audio assets hold sounds of the engine, so it has to outlive them
+  using module_dependencies = std::tuple<AudioEngine>;
 
   // `monostate` is 'nothing supplied', which is what makes the pending map's fallback possible.
   using LoadInfo = std::variant<std::monostate, TextureLoadInfo, Material, ModelData, TextureData>;

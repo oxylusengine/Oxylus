@@ -154,9 +154,7 @@ struct ParticleValue {
   GPU::ParticleOperandKind kind = GPU::ParticleOperandKind::Constant;
   u32 payload = 0;
 
-  auto encode(this const ParticleValue& self) -> u32 {
-    return GPU::ParticleInstruction::encode_operand(self.kind, self.payload);
-  }
+  auto encode(this const ParticleValue& self) -> u32 { return GPU::encode_particle_operand(self.kind, self.payload); }
 };
 
 struct ParticleCompiler {
@@ -216,7 +214,7 @@ struct ParticleCompiler {
   ) -> void {
     self.program.instructions.push_back(
       GPU::ParticleInstruction{
-        .op_dst = GPU::ParticleInstruction::encode_op(op, dst_register, write_mask),
+        .op_dst = GPU::encode_particle_op(op, dst_register, write_mask),
         .src0 = a.encode(),
         .src1 = b.encode(),
         .src2 = c.encode(),
@@ -760,7 +758,7 @@ auto compile_particle_graphs(
     for (auto* src : {&instruction.src0, &instruction.src1, &instruction.src2}) {
       const auto kind = static_cast<GPU::ParticleOperandKind>(*src >> 30u);
       if (kind == GPU::ParticleOperandKind::Constant) {
-        *src = GPU::ParticleInstruction::encode_operand(kind, (*src & 0x3FFFFFFFu) + constant_offset);
+        *src = GPU::encode_particle_operand(kind, (*src & 0x3FFFFFFFu) + constant_offset);
       }
     }
 

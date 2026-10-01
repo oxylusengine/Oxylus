@@ -67,6 +67,8 @@ in pkgs.mkShell.override {
     pkgs.llvmPackages_23.libcxx
     pkgs.gcc14.cc.lib
     pkgs.vulkan-loader
+    pkgs.alsa-lib
+    pkgs.libpulseaudio
     # SDL3
     pkgs.libX11
     pkgs.libxcb

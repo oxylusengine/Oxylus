@@ -93,7 +93,7 @@ Access modules statically: `App::mod<Renderer>()`, `App::has_mod<Physics>()`. Co
 modules and have their own accessors: `App::get_vfs()`, `get_job_manager()`, `get_event_system()`,
 `get_rendercontext()`, `get_window()`, `get_timestep()`. `App::defer_to_next_frame(fn)` queues work.
 
-`Core/DefaultModules.hpp` is the canonical registration order: LuaManager, AssetManager, AudioEngine,
+`Core/DefaultModules.hpp` is the canonical registration order: LuaManager, AudioEngine, AssetManager,
 Physics, Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI.
 
 `EventSystem` (`Core/EventSystem.hpp`) is a typed pub/sub bus keyed on `std::type_index`; event types
@@ -178,7 +178,11 @@ every other holder on a freed slot.
 
 **Children count too.** `acquire_ref`/`release_ref` walk the asset's sub-assets: a `Model` refs its
 materials, a `Material` refs its five textures. So acquiring a model transitively acquires every
-texture beneath it, and holders never ref sub-assets themselves — doing so double-counts. Both
+texture beneath it, and holders don't ref sub-assets just to keep them alive — the parent already
+does. The one exception is a component field that names a sub-asset's UUID directly, like
+`MeshComponent::material_uuid`: the component owns a ref on whatever UUID it stores, whoever writes
+that field acquires it, and its `OnRemove` releases it (scene loading and the inspector already work
+this way). The count is doubled but balanced, so it still frees once both holders let go. Both
 functions carry their own `switch` over `AssetType`, so **an asset type that references other assets
 must be handled in both**, or its children leak (or get freed out from under it). Keep the existing
 ordering when you do: acquire takes its own ref first and releases collect children before dropping
@@ -197,6 +201,16 @@ Shaders are Slang (`Oxylus/src/Render/Shaders/`, editor-only ones under `Shaders
 produces `engine.oxpack` / `editor.oxpack` next to the binary. At runtime `Renderer::init` unpacks
 `engine.oxpack` and calls `RenderContext::create_pipeline` for each entry. **Adding a shader means
 editing the TOML**, and the rule parses the TOML to register `.slang` files as build dependencies.
+
+**GPU-visible types are written once.** `Oxylus/include/Render/GPU/Shared.hpp` holds every struct,
+enum, and constant that both C++ and Slang read, in Slang spelling (`f32x3`, `u32x2`, `mat4`), and
+`Render/GPU/Prelude.hpp` aliases those to glm for C++ and supplies `OX_CONST`, `OX_PTR(T)` (a `u64`
+device address in C++), and `OX_BITMASK`. Slang sees it only through `Shaders/shared.slang` (a legacy
+module, so everything is public), which `scene`, `gpu`, `particles`, `ddgi`, and `fsr3` re-export;
+never `#include` the header from another shader. Shader-side methods go in `extension` blocks in the
+`.slang` files, and C++-only helpers stay in `Scene/SceneGPU.hpp`. No `bool` fields and no field that
+exists on only one side. The `GPULayoutCheck` target runs `rcli --gpu-layout` over Slang reflection
+and static_asserts every field's offset and size, so a layout mismatch is a build error.
 
 `RendererInstance.hpp` defines the frame structure: a fixed `RenderStage` enum (Initialization,
 Culling, VisBufferEncode/Decode, Forward2D, Lighting, PostProcessing, Atmosphere, Debug, FinalOutput)

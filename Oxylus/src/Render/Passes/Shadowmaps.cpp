@@ -436,6 +436,44 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
       );
   }
 
+  const auto removed_bounds_count = self.prepared_frame.removed_mesh_bounds_count;
+
+  auto pointspot_invalidate_bounds_pass = vuk::make_pass(
+    "vsm pointspot invalidate removed",
+    [ps_ctx, removed_bounds_count](
+      vuk::CommandBuffer& cmd_list,
+      VUK_IA(vuk::eComputeRW) page_table,
+      VUK_BA(vuk::eComputeRead) removed_bounds,
+      VUK_BA(vuk::eComputeRead) views
+    ) {
+      cmd_list.bind_compute_pipeline("rmvsm_pointspot_invalidate_pages_bounds");
+      bind_vsm_pointspot_spec_constants(cmd_list);
+      for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
+        cmd_list.bind_image(0, mip, page_table->mip(mip));
+      }
+      cmd_list //
+        .bind_buffer(0, 11, views)
+        .bind_buffer(0, 12, removed_bounds)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, ps_ctx)
+        .dispatch_invocations(removed_bounds_count, 16, RMVSMContext::POINT_SPOT_LAYER_COUNT);
+
+      return std::make_tuple(page_table, removed_bounds, views);
+    }
+  );
+
+  if (has_pointspot && removed_bounds_count > 0) {
+    std::tie(
+      context.pointspot_page_table_attachment,
+      self.prepared_frame.removed_mesh_bounds_buffer,
+      context.pointspot_views_buffer
+    ) =
+      pointspot_invalidate_bounds_pass(
+        std::move(context.pointspot_page_table_attachment),
+        std::move(self.prepared_frame.removed_mesh_bounds_buffer),
+        std::move(context.pointspot_views_buffer)
+      );
+  }
+
   auto invalidate_pages_pass = vuk::make_pass(
     "vsm invalidate pages",
     [vsm_ctx, dirty_mesh_count](
@@ -489,6 +527,39 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
         std::move(self.prepared_frame.meshes_buffer),
         std::move(self.prepared_frame.transforms_world_buffer),
         std::move(self.prepared_frame.transforms_previous_buffer),
+        std::move(context.directional_clipmaps_buffer)
+      );
+  }
+
+  auto invalidate_bounds_pass = vuk::make_pass(
+    "vsm invalidate removed",
+    [vsm_ctx, removed_bounds_count](
+      vuk::CommandBuffer& cmd_list,
+      VUK_IA(vuk::eComputeRW) page_table,
+      VUK_BA(vuk::eComputeRead) removed_bounds,
+      VUK_BA(vuk::eComputeRead) clipmaps
+    ) {
+      cmd_list //
+        .bind_compute_pipeline("rmvsm_invalidate_pages_bounds")
+        .bind_image(0, 0, page_table)
+        .bind_buffer(0, 5, clipmaps)
+        .bind_buffer(0, 7, removed_bounds)
+        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, vsm_ctx)
+        .dispatch_invocations(removed_bounds_count, RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE, page_table->layer_count);
+
+      return std::make_tuple(page_table, removed_bounds, clipmaps);
+    }
+  );
+
+  if (has_directional && !context.sun_moved && removed_bounds_count > 0) {
+    std::tie(
+      context.virtual_page_table_attachment,
+      self.prepared_frame.removed_mesh_bounds_buffer,
+      context.directional_clipmaps_buffer
+    ) =
+      invalidate_bounds_pass(
+        std::move(context.virtual_page_table_attachment),
+        std::move(self.prepared_frame.removed_mesh_bounds_buffer),
         std::move(context.directional_clipmaps_buffer)
       );
   }

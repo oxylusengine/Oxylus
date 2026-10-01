@@ -10,7 +10,7 @@ struct ShaderParameters {
     Texture2D<f32> current_luma;
     Texture2D<f32x4> luma_history_prev;
     Texture2D<f32> farthest_depth_mip1;
-    ConstantBuffer<FSR3Exposure> exposure;
+    ConstantBuffer<HistogramLuminance> exposure;
     Sampler sampler_linear_clamp;
 
     RWTexture2D<f32x4> luma_history;

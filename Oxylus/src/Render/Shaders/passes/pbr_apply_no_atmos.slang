@@ -66,7 +66,7 @@ func fs_main(
     let NoL = max(dot(N, L), 0.0);
 
     if ((scene_flags & SceneFlags::HasSky) != 0 && depth == 0.0) {
-      return sky.has_texture ? f32x4(1.f) : f32x4(sky.solid_color);
+      return sky.has_texture != 0 ? f32x4(1.f) : f32x4(sky.solid_color);
     }
 
     let shadow_visibility = shadows_image.Load(pixel_pos);

@@ -83,9 +83,9 @@ auto Camera::get_screen_ray(const CameraComponent& component, const glm::vec2& s
   screen_x = 2.0f * screen_x - 1.0f;
   screen_y = 2.0f * screen_y - 1.0f;
 
-  // Transform screen coordinates to view space
-  glm::vec4 ray_view_near = proj_inverse * glm::vec4(screen_x, screen_y, 0.0f, 1.0f);
-  glm::vec4 ray_view_far = proj_inverse * glm::vec4(screen_x, screen_y, 1.0f, 1.0f);
+  // reversed-z, so ndc depth 1 is the near plane and 0 the far one
+  glm::vec4 ray_view_near = proj_inverse * glm::vec4(screen_x, screen_y, 1.0f, 1.0f);
+  glm::vec4 ray_view_far = proj_inverse * glm::vec4(screen_x, screen_y, 0.0f, 1.0f);
 
   ray_view_near /= ray_view_near.w;
   ray_view_far /= ray_view_far.w;

@@ -90,7 +90,7 @@ public:
   auto new_frame(this RenderContext& self) -> vuk::Value<vuk::ImageAttachment>;
   auto end_frame(this RenderContext& self, vuk::Value<vuk::ImageAttachment> target) -> void;
 
-  auto handle_resize(u32 width, u32 height) -> void;
+  auto handle_resize(this RenderContext& self) -> void;
   auto set_vsync(bool enable) -> void;
   bool is_vsync() const;
 

@@ -8,7 +8,7 @@ struct ShaderParameters {
     ConstantBuffer<FSR3Constants> constants;
 
     Texture2D<f32x4> rcas_input;
-    ConstantBuffer<FSR3Exposure> exposure;
+    ConstantBuffer<HistogramLuminance> exposure;
 
     RWTexture2D<f32x4> upscaled_output;
 };

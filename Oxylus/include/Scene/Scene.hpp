@@ -67,7 +67,9 @@ public:
   flecs::world world;
   ComponentDB component_db = {};
 
-  f32 physics_interval = 1.f / 60.f; // used only on initialization
+  // what the last runtime_update advanced gameplay by, 0 while the gameplay phases are disabled
+  f32 last_step_delta = 0.0f;
+  f32 physics_interval = 1.f / 60.f; // the tick source is built from it at init, changing it later desyncs the step
 
   std::vector<GPU::TransformID> dirty_transforms = {};
   // `previous_world` is only corrected after the renderer has already uploaded, so the corrected
@@ -75,6 +77,9 @@ public:
   // that is created and never touched again keeps a zero `previous_world` on the GPU forever.
   std::vector<GPU::TransformID> previously_dirty_transforms = {};
   std::vector<MeshInstanceID> dirty_mesh_instances = {};
+  // last world boxes of shadow casters removed since the previous render, their shadow pages have to
+  // be invalidated since no instance buffer holds them anymore
+  std::vector<GPU::MeshBounds> removed_mesh_bounds = {};
   SlotMap<GPU::Transforms, GPU::TransformID> transforms = {};
   ankerl::unordered_dense::map<flecs::entity, GPU::TransformID> entity_transforms_map = {};
   ankerl::unordered_dense::map<u32, flecs::entity> transform_index_entities_map = {};
@@ -125,7 +130,7 @@ public:
 
   auto create_entity(const std::string& name = "", bool safe_naming = false) const -> flecs::entity;
 
-  auto create_model_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity;
+  auto create_model_entity(this Scene& self, const UUID& asset_uuid, flecs::entity parent = {}) -> flecs::entity;
 
   auto create_model_entity_async(this Scene& self, const UUID& asset_uuid) -> void;
 
@@ -229,8 +234,12 @@ public:
     Scene& self, //
     flecs::entity root,
     simdjson::ondemand::value& json,
-    std::vector<UUID>& requested_assets
+    std::vector<UUID>& requested_assets,
+    std::string_view name_override = {}
   ) -> flecs::entity;
+  // acquires what json_to_entity collected, which is the ref every asset uuid field owns
+  auto load_requested_assets(this Scene& self, std::span<const UUID> requested_assets) -> void;
+  auto duplicate_entity(this Scene& self, flecs::entity entity) -> flecs::entity;
 
   auto to_json(this const Scene& self) -> JsonWriter;
   auto from_json(this Scene& self, const std::string& json) -> bool;
@@ -250,6 +259,7 @@ private:
     };
 
     UUID model_uuid = {};
+    flecs::entity parent = {};
     std::vector<MeshEntity> mesh_entities = {};
     bool hierarchy_spawned = false;
   };

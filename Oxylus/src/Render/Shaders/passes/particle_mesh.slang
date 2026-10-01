@@ -70,7 +70,7 @@ func vs_main(u32 vertex_index : SV_VertexID, u32 instance_id : SV_InstanceID) ->
     output.color = particle_unpack_rgba8(particle.color);
     output.particle_depth = clip.w > 0.0 ? clip.z / clip.w : 0.0;
     output.material_index = emitter.material_index;
-    output.flags = emitter.flags;
+    output.flags = u32(emitter.flags);
 
     return output;
 }

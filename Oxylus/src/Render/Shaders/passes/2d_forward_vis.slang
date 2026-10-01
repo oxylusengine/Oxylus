@@ -2,8 +2,6 @@ import common;
 
 import scene;
 
-#define RENDER_FLAGS_2D_FLIP_X 1u << 1u
-
 struct PushConstants {
   Material* materials;
   Camera* camera_buffer;
@@ -18,14 +16,8 @@ struct VOutput {
   u32 transform_id : T_ID;
 };
 
-struct VertexInput {
-  [[vk::location(0)]] u32 material_id16_ypos16 : MAT_INDEX;
-  [[vk::location(1)]] u32 flags16_distance16 : FLAGS;
-  [[vk::location(2)]] u32 transform_id : T_ID;
-};
-
 [[shader("vertex")]]
-VOutput vs_main(VertexInput input, u32 vertex_id : SV_VertexID) {
+VOutput vs_main(SpriteGPUData input, u32 vertex_id : SV_VertexID) {
   VOutput output = (VOutput)0;
 
   const u32 flags = com::unpack_u32_low(input.flags16_distance16);

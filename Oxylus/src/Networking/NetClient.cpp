@@ -2,6 +2,7 @@
 
 #include "Core/App.hpp"
 #include "Core/Base.hpp"
+#include "Memory/Stack.hpp"
 #include "Utils/Log.hpp"
 
 #ifndef ENET_FEATURE_ADDRESS_MAPPING
@@ -42,9 +43,14 @@ auto NetClient::update_stats(this NetClient& self) -> void {
 
 auto NetClient::connect(this NetClient& self, std::string_view host_name, u16 port, f64 timeout) -> bool {
   ZoneScoped;
+  memory::ScopedStack stack;
 
   auto address = ENetAddress{};
-  enet_address_set_host(&address, host_name.data());
+  if (enet_address_set_host(&address, stack.null_terminate_cstr(host_name)) != 0) {
+    OX_LOG_ERROR("Failed to resolve host {}!", host_name);
+    return false;
+  }
+
   address.port = port;
   self.remote_peer = enet_host_connect(self.local_host, &address, NET_CHANNEL_COUNT, 0);
   if (!self.remote_peer) {
@@ -102,6 +108,8 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
 
         auto& es = App::get_event_system();
         std::ignore = es.emit<ServerDisconnectEvent>({.client = &self, .reason = NetClientStatus::Disconnected});
+        self.on_disconnect(NetClientStatus::Disconnected);
+        self.net_id = 0;
       } break;
       case ENET_EVENT_TYPE_RECEIVE: {
         ZoneScopedN("ENET_EVENT_TYPE_RECEIVE");
@@ -138,6 +146,7 @@ auto NetClient::tick(this NetClient& self, const Timestep& ts) -> bool {
 
       auto& es = App::get_event_system();
       std::ignore = es.emit<ServerDisconnectEvent>({.client = &self, .reason = NetClientStatus::TimedOut});
+      self.on_disconnect(NetClientStatus::TimedOut);
 
       return false;
     }
