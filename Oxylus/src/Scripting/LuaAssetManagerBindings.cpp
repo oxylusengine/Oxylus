@@ -27,7 +27,11 @@ public:
       return;
     }
 
-    App::mod<AssetManager>().unload_asset(self.uuid_);
+    // LuaManager deinits last, so a handle collected at shutdown outlives the AssetManager it would release into
+    if (App::has_mod<AssetManager>()) {
+      App::mod<AssetManager>().unload_asset(self.uuid_);
+    }
+
     self.uuid_ = UUID(nullptr);
   }
 
