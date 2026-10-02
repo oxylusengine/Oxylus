@@ -31,12 +31,16 @@ auto print_help() -> void {
 }
 
 auto write_gpu_layout_asserts(
-  rc::Session& session, const std::filesystem::path& module_path, const std::filesystem::path& output_path
+  rc::Session& session,
+  const std::filesystem::path& module_path,
+  const std::filesystem::path& output_path,
+  std::vector<std::filesystem::path> include_dirs
 ) -> i32 {
   auto types = session.reflect_layouts(
     {
       .name = "gpu-layout",
       .root_directory = module_path.parent_path(),
+      .include_directories = std::move(include_dirs),
     },
     module_path
   );
@@ -157,6 +161,21 @@ auto main(i32 argc, c8** argv) -> i32 {
     return cook_assets(args, session.value(), log);
   }
 
+  auto cli_include_dirs = std::vector<std::filesystem::path>{};
+  for (const auto& arg : args.args) {
+    if (arg.arg_str != "--include-dir") {
+      continue;
+    }
+
+    auto include_arg = args.get(arg.arg_index + 1);
+    if (!include_arg.has_value()) {
+      log("Specify a path after `--include-dir`.");
+      return 1;
+    }
+
+    cli_include_dirs.emplace_back(std::filesystem::absolute(include_arg->arg_str).lexically_normal());
+  }
+
   if (auto layout_argi = args.get_index("--gpu-layout"); layout_argi.has_value()) {
     auto module_arg = args.get(layout_argi.value() + 1);
     auto output_arg = option<AppCommandLineArgs::Arg>(nullopt);
@@ -174,7 +193,8 @@ auto main(i32 argc, c8** argv) -> i32 {
     return write_gpu_layout_asserts(
       session.value(),
       std::filesystem::absolute(module_arg->arg_str),
-      std::filesystem::absolute(output_arg->arg_str)
+      std::filesystem::absolute(output_arg->arg_str),
+      std::move(cli_include_dirs)
     );
   }
 
@@ -200,23 +220,6 @@ auto main(i32 argc, c8** argv) -> i32 {
   }
 
   auto config_dir = std::filesystem::absolute(config_path).parent_path();
-
-  // Repeatable. The `compile_shaders` xmake rule uses this to hand downstream projects the engine
-  // shader tree without baking an absolute path into their config.
-  auto cli_include_dirs = std::vector<std::filesystem::path>{};
-  for (const auto& arg : args.args) {
-    if (arg.arg_str != "--include-dir") {
-      continue;
-    }
-
-    auto include_arg = args.get(arg.arg_index + 1);
-    if (!include_arg.has_value()) {
-      log("Specify a path after `--include-dir`.");
-      return 1;
-    }
-
-    cli_include_dirs.emplace_back(std::filesystem::absolute(include_arg->arg_str).lexically_normal());
-  }
 
   for (const auto& shader_session : config->shader_sessions) {
     auto root = (config_dir / shader_session.root_directory).lexically_normal();

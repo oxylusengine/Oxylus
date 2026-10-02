@@ -64,7 +64,7 @@ target("GPULayoutCheck")
     }
 
     depend.on_changed(function ()
-      os.vrunv(rcli, { "--gpu-layout", module, "--output", output })
+      os.vrunv(rcli, { "--gpu-layout", module, "--output", output, "--include-dir", path.join(root, "Oxylus/include") })
     end, {
       dependfile = target:dependfile(output),
       files = inputs,
