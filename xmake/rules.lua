@@ -55,6 +55,10 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local output_name = target:extraconf("rules", "ox.compile_shaders", "output_name")
       or (path.basename(sourcefile) .. ".oxpack")
 
+  if not has_config("compile_resources") then
+    return
+  end
+
   import("private.action.run.runenvs")
 
   local rcli_target = target:dep("rcli")
@@ -105,6 +109,10 @@ end)
 -- `VFS::COOKED_DIR`, `<assets>/.cooked`.
 rule("ox.cook_assets")
 after_build(function(target)
+  if not has_config("compile_resources") then
+    return
+  end
+
   import("core.project.depend")
   import("private.action.run.runenvs")
 

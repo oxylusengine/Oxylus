@@ -129,6 +129,8 @@ struct ReflectedType {
 struct SessionCreateInfo {
   // 0 derives a count from the hardware concurrency
   u32 thread_count = 0;
+  // debug CRT asserts go to stderr instead of a dialog, for build steps nobody can click through
+  bool unattended = false;
 };
 
 struct OXRC_API Session : Handle<Session> {

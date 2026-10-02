@@ -6,6 +6,11 @@
 #include <utility>
 #include <zpp_bits.h>
 
+#ifdef _MSC_VER
+  #include <crtdbg.h>
+  #include <cstdlib>
+#endif
+
 #include "ModelCompiler.hpp"
 #include "OS/File.hpp"
 #include "Parallel.hpp"
@@ -13,6 +18,17 @@
 #include "TextureCompiler.hpp"
 
 namespace ox::rc {
+// a static CRT is per module, so the caller's settings don't reach the code in this dll
+static auto report_crt_errors_to_stderr() -> void {
+#ifdef _MSC_VER
+  _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+  _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+  _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+  _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+  _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+}
+
 struct ShaderTask {
   option<std::vector<ShaderEntryPointData>> result = nullopt;
   ShaderDiagnostics diag = {};
@@ -102,6 +118,10 @@ auto create_shader_session(slang::IGlobalSession* global_session, const ShaderSe
 }
 
 auto Session::create(const SessionCreateInfo& info) -> option<Session> {
+  if (info.unattended) {
+    report_crt_errors_to_stderr();
+  }
+
   auto* self = new Session::Impl;
   if (SLANG_FAILED(slang::createGlobalSession(self->slang_global_session.writeRef()))) {
     delete self;

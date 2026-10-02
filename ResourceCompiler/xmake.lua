@@ -39,6 +39,7 @@ target_end()
 
 -- fails the build when a Render/GPU/Shared.hpp type lays out differently in C++ than in Slang
 target("GPULayoutCheck")
+  set_enabled(has_config("compile_resources"))
   set_kind("object")
   set_languages("cxx23")
 

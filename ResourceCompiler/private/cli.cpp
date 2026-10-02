@@ -7,6 +7,11 @@
 #include <fstream>
 #include <sstream>
 
+#ifdef _MSC_VER
+  #include <crtdbg.h>
+  #include <cstdlib>
+#endif
+
 #include "ResourceConfig.hpp"
 
 using namespace ox;
@@ -117,6 +122,15 @@ static auto cook_assets(const AppCommandLineArgs& args, rc::Session& session, co
 }
 
 auto main(i32 argc, c8** argv) -> i32 {
+#ifdef _MSC_VER
+  // rcli runs unattended inside builds, a debug CRT assert dialog would hang the build instead of failing it
+  _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+  _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+  _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+  _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+  _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+
   auto args = AppCommandLineArgs(argc, argv);
 
   if (argc <= 1 || args.contains("--help")) {
@@ -131,7 +145,7 @@ auto main(i32 argc, c8** argv) -> i32 {
     }
   };
 
-  auto session_info = rc::SessionCreateInfo{};
+  auto session_info = rc::SessionCreateInfo{.unattended = true};
   auto threads_argi = args.get_index("--threads");
   if (threads_argi.has_value()) {
     auto threads_arg = args.get(threads_argi.value() + 1);
