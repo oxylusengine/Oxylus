@@ -1,13 +1,8 @@
-﻿#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
-
-#include "Asset/Texture.hpp"
+﻿#include "Asset/Texture.hpp"
 
 #include <ankerl/svector.h>
-#include <stb_image.h>
-#include <stb_image_resize2.h>
-#include <stb_image_write.h>
+#include <basisu/encoder/basisu_enc.h>
+#include <cstring>
 #include <vuk/RenderGraph.hpp>
 #include <vuk/runtime/vk/AllocatorHelpers.hpp>
 #include <vuk/vsl/Core.hpp>
@@ -33,58 +28,63 @@ auto default_resource_name(OX_CALLSTACK) -> vuk::Name {
   return vuk::Name(stack.format("{0}:{1}", file, LOC.line()));
 }
 
+// the signatures basisu's in-memory loaders understand
+static auto decode_image(std::span<const u8> bytes, basisu::image& image) -> bool {
+  constexpr static u8 PNG[] = {0x89, 'P', 'N', 'G'};
+  constexpr static u8 JPEG[] = {0xFF, 0xD8, 0xFF};
+  constexpr static u8 QOI[] = {'q', 'o', 'i', 'f'};
+  const auto starts_with = [bytes](std::span<const u8> signature) {
+    return bytes.size() >= signature.size() && std::memcmp(bytes.data(), signature.data(), signature.size()) == 0;
+  };
+
+  if (starts_with(PNG)) {
+    return basisu::load_png(bytes.data(), bytes.size(), image);
+  }
+  if (starts_with(JPEG)) {
+    return basisu::load_jpg(bytes.data(), bytes.size(), image);
+  }
+  if (starts_with(QOI)) {
+    return basisu::load_qoi(bytes.data(), bytes.size(), image);
+  }
+
+  return false;
+}
+
+// a PNG, JPEG or QOI handed over at runtime (UI images, sources nothing cooked), decoded by the same library the cook
+// uses
 auto process_generic(std::span<const u8> bytes, bool is_srgb, vuk::Extent3D desired_extent = {~0_u32, ~0_u32, 1_u32})
   -> option<ProcessedTexture> {
   ZoneScoped;
 
+  // the resampler's sRGB tables come from here; it returns straight away once they exist
+  basisu::basisu_encoder_init();
+
   auto result = ProcessedTexture{};
 
-  int width = 0, height = 0, channels = 0;
-  auto* raw_data =
-    stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height, &channels, STBI_rgb_alpha);
-  if (!raw_data) {
+  auto image = basisu::image{};
+  if (!decode_image(bytes, image)) {
     return nullopt;
   }
 
-  OX_DEFER(&) {
-    if (raw_data)
-      stbi_image_free(raw_data);
-  };
+  const auto target_w = ox::min(image.get_width(), desired_extent.width);
+  const auto target_h = ox::min(image.get_height(), desired_extent.height);
+  if (target_w != image.get_width() || target_h != image.get_height()) {
+    auto resized = basisu::image(target_w, target_h);
+    if (!basisu::image_resample(image, resized, is_srgb)) {
+      return nullopt;
+    }
 
-  auto level_w = static_cast<u32>(width);
-  auto level_h = static_cast<u32>(height);
-  const auto source_size = static_cast<u64>(level_w) * level_h * 4;
-  auto resized_pixels = std::vector<u8>();
-  auto pixels = std::span<u8>(raw_data, raw_data + source_size);
-
-  const auto target_w = ox::min(level_w, desired_extent.width);
-  const auto target_h = ox::min(level_h, desired_extent.height);
-  if (target_w != level_w || target_h != level_h) {
-    resized_pixels.resize(static_cast<usize>(target_w) * target_h * 4);
-    stbir_resize_uint8_linear(
-      pixels.data(),
-      static_cast<int>(level_w),
-      static_cast<int>(level_h),
-      0,
-      resized_pixels.data(),
-      static_cast<int>(target_w),
-      static_cast<int>(target_h),
-      0,
-      STBIR_RGBA
-    );
-
-    pixels = resized_pixels;
-    level_w = target_w;
-    level_h = target_h;
+    image = std::move(resized);
   }
 
   auto format = is_srgb ? vuk::Format::eR8G8B8A8Srgb : vuk::Format::eR8G8B8A8Unorm;
-  auto extent = vuk::Extent3D{level_w, level_h, 1_u32};
+  auto extent = vuk::Extent3D{image.get_width(), image.get_height(), 1_u32};
 
+  // color_rgba is laid out r, g, b, a, which is the RGBA8 the buffer holds
+  const auto pixels_size = static_cast<usize>(image.get_width()) * image.get_height() * 4;
   auto& render_context = App::get_rendercontext();
   auto buffer = render_context.alloc_image_buffer(format, extent);
-  auto safe_size_bytes = ox::min(pixels.size_bytes(), buffer->size);
-  std::memcpy(buffer->mapped_ptr, pixels.data(), safe_size_bytes);
+  std::memcpy(buffer->mapped_ptr, image.get_ptr(), ox::min(pixels_size, buffer->size));
 
   result.extent = extent;
   result.format = format;
@@ -155,6 +155,7 @@ auto Texture::create(const TextureCreateInfo& info, OX_CALLSTACK) -> Texture {
     .sample_count = vuk::SampleCountFlagBits::e1,
     .image_view_flags = info.image_view_flags,
     .view_type = info.view_type,
+    .components = info.components,
     .base_level = 0,
     .level_count = info.level_count,
     .base_layer = 0,
@@ -213,7 +214,7 @@ auto Texture::create(const TextureLoadInfo& info, OX_CALLSTACK) -> Texture {
   }
 
   // Compressed sources are cooked into a TextureData by the resource compiler; whatever reaches here
-  // is a plain image stb can decode.
+  // is a plain image.
   auto desired_extent = vuk::Extent3D{
     .width = info.target_width.value_or(~0_u32),
     .height = info.target_height.value_or(~0_u32),
@@ -261,6 +262,13 @@ auto Texture::create(const TextureData& data, const TextureLoadInfo& info, OX_CA
     .layer_count = data.layer_count,
     .level_count = static_cast<u32>(data.mips.size()),
     .usage = vuk::ImageUsageFlagBits::eSampled,
+    .components =
+      {
+        .r = static_cast<vuk::ComponentSwizzle>(data.components[0]),
+        .g = static_cast<vuk::ComponentSwizzle>(data.components[1]),
+        .b = static_cast<vuk::ComponentSwizzle>(data.components[2]),
+        .a = static_cast<vuk::ComponentSwizzle>(data.components[3]),
+      },
     .sampler_info = info.sampler_info,
     .batch = info.batch,
   });

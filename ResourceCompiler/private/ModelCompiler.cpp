@@ -145,39 +145,57 @@ auto gltf_material_to_material(const fastgltf::Material& gltf_material, usize te
   return material;
 }
 
-auto extract_linear_texture_indices(const fastgltf::Asset& asset) -> ankerl::unordered_dense::set<usize> {
+// lowest first: when materials disagree about a texture, the one needing the most from it wins
+static auto usage_rank(TextureUsage usage) -> u32 {
+  switch (usage) {
+    case TextureUsage::Mask  : return 0;
+    case TextureUsage::Color : return 1;
+    case TextureUsage::Linear: return 2;
+    case TextureUsage::Normal: return 3;
+  }
+
+  return 0;
+}
+
+// what every material slot reading a texture needs from it. a texture only occlusion reads (its red channel) can
+// drop to one channel, any packed data slot needs all of them unencoded by sRGB
+auto extract_texture_usages(const fastgltf::Asset& asset) -> ankerl::unordered_dense::map<usize, TextureUsage> {
   ZoneScoped;
 
-  auto result = ankerl::unordered_dense::set<usize>{};
+  auto result = ankerl::unordered_dense::map<usize, TextureUsage>{};
+  const auto claim = [&result](const auto& info, TextureUsage usage) {
+    if (!info.has_value()) {
+      return;
+    }
+
+    auto [it, inserted] = result.try_emplace(info->textureIndex, usage);
+    if (!inserted && usage_rank(usage) > usage_rank(it->second)) {
+      it->second = usage;
+    }
+  };
+
   for (const auto& material : asset.materials) {
-    if (material.normalTexture.has_value())
-      result.insert(material.normalTexture->textureIndex);
-    if (material.pbrData.metallicRoughnessTexture.has_value())
-      result.insert(material.pbrData.metallicRoughnessTexture->textureIndex);
-    if (material.occlusionTexture.has_value())
-      result.insert(material.occlusionTexture->textureIndex);
+    claim(material.pbrData.baseColorTexture, TextureUsage::Color);
+    claim(material.emissiveTexture, TextureUsage::Color);
+    claim(material.normalTexture, TextureUsage::Normal);
+    claim(material.pbrData.metallicRoughnessTexture, TextureUsage::Linear);
+    claim(material.occlusionTexture, TextureUsage::Mask);
 
     if (material.clearcoat) {
-      if (material.clearcoat->clearcoatRoughnessTexture.has_value())
-        result.insert(material.clearcoat->clearcoatRoughnessTexture->textureIndex);
-      if (material.clearcoat->clearcoatNormalTexture.has_value())
-        result.insert(material.clearcoat->clearcoatNormalTexture->textureIndex);
+      claim(material.clearcoat->clearcoatRoughnessTexture, TextureUsage::Linear);
+      claim(material.clearcoat->clearcoatNormalTexture, TextureUsage::Normal);
     }
     if (material.sheen) {
-      if (material.sheen->sheenRoughnessTexture.has_value())
-        result.insert(material.sheen->sheenRoughnessTexture->textureIndex);
+      claim(material.sheen->sheenRoughnessTexture, TextureUsage::Linear);
     }
     if (material.specular) {
-      if (material.specular->specularTexture.has_value())
-        result.insert(material.specular->specularTexture->textureIndex);
+      claim(material.specular->specularTexture, TextureUsage::Linear);
     }
     if (material.transmission) {
-      if (material.transmission->transmissionTexture.has_value())
-        result.insert(material.transmission->transmissionTexture->textureIndex);
+      claim(material.transmission->transmissionTexture, TextureUsage::Linear);
     }
     if (material.anisotropy) {
-      if (material.anisotropy->anisotropyTexture.has_value())
-        result.insert(material.anisotropy->anisotropyTexture->textureIndex);
+      claim(material.anisotropy->anisotropyTexture, TextureUsage::Linear);
     }
   }
 
@@ -546,7 +564,7 @@ auto compile_gltf_texture(
   Session& session,
   const fastgltf::Asset& asset,
   usize texture_index,
-  bool is_srgb,
+  TextureUsage usage,
   std::string_view model_name,
   ModelData::Texture& entry,
   CompiledTexture& compiled
@@ -554,7 +572,8 @@ auto compile_gltf_texture(
   ZoneScoped;
 
   const auto& gltf_texture = asset.textures[texture_index];
-  entry.is_srgb = is_srgb;
+  entry.is_srgb = usage == TextureUsage::Color;
+  compiled.usage = usage;
 
   auto image_index = get_effective_image_index(gltf_texture);
   if (!image_index.has_value()) {
@@ -577,7 +596,7 @@ auto compile_gltf_texture(
     return;
   }
 
-  auto data = compile_texture(session, bytes, entry.name, is_srgb);
+  auto data = compile_texture(session, bytes, entry.name, usage);
   if (!data.has_value()) {
     return;
   }
@@ -790,7 +809,7 @@ auto compile_model(Session& session, const ModelCompileRequest& request) -> opti
   // has to stay serial: it walks the node graph breadth-first and grows `model.mesh_groups`
   const auto pending_meshes = flatten_gltf_nodes(asset, model);
 
-  const auto linear_texture_indices = extract_linear_texture_indices(asset);
+  const auto texture_usages = extract_texture_usages(asset);
 
   // sized up front and filled by index, so the jobs below never touch a growing vector
   model.textures.resize(asset.textures.size());
@@ -803,13 +822,15 @@ auto compile_model(Session& session, const ModelCompileRequest& request) -> opti
     auto scope = ParallelScope(session->job_manager);
 
     for (auto texture_index = 0_sz; texture_index < asset.textures.size(); texture_index++) {
-      const auto is_srgb = !linear_texture_indices.contains(texture_index);
-      scope.dispatch([&session, &asset, &model, &result, texture_index, is_srgb] {
+      // a texture no material reads is most likely colour
+      const auto usage_it = texture_usages.find(texture_index);
+      const auto usage = usage_it != texture_usages.end() ? usage_it->second : TextureUsage::Color;
+      scope.dispatch([&session, &asset, &model, &result, texture_index, usage] {
         compile_gltf_texture(
           session,
           asset,
           texture_index,
-          is_srgb,
+          usage,
           model.name,
           model.textures[texture_index],
           result.textures[texture_index]

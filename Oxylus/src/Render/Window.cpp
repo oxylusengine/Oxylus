@@ -3,8 +3,8 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <array>
+#include <basisu/encoder/basisu_enc.h>
 #include <memory>
-#include <stb_image.h>
 #include <string>
 #include <vector>
 
@@ -168,9 +168,14 @@ auto Window::create(const WindowInfo& info) -> Window {
   };
 
   void* image_data = nullptr;
-  int width = {}, height = {}, channels = {};
+  int width = {}, height = {};
+  auto icon_image = basisu::image{};
   if (info.icon.path.has_value()) {
-    image_data = stbi_load(info.icon.path->c_str(), &width, &height, &channels, 4);
+    if (basisu::load_image(info.icon.path->c_str(), icon_image)) {
+      image_data = icon_image.get_ptr();
+      width = static_cast<int>(icon_image.get_width());
+      height = static_cast<int>(icon_image.get_height());
+    }
   } else if (info.icon.loaded.has_value()) {
     OX_CHECK_GT(info.icon.loaded->width, 0u);
     OX_CHECK_GT(info.icon.loaded->height, 0u);
@@ -184,8 +189,6 @@ auto Window::create(const WindowInfo& info) -> Window {
       LOG_SDL_ERROR(SDL_SetWindowIcon);
     }
     SDL_DestroySurface(surface);
-    if (!info.icon.loaded.has_value())
-      stbi_image_free(image_data);
   }
 
   i32 real_width;

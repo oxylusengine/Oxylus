@@ -54,8 +54,8 @@ public:
   std::vector<std::unique_ptr<ImDrawList>> shadow_draw_lists = {};
   std::vector<ImGuiShadowDrawData> shadow_draw_data = {};
 
-  auto init() -> std::expected<void, std::string>;
-  auto deinit() -> std::expected<void, std::string>;
+  auto init(this ImGuiRenderer& self) -> std::expected<void, std::string>;
+  auto deinit(this ImGuiRenderer& self) -> std::expected<void, std::string>;
 
   auto wants_keyboard(this const ImGuiRenderer& self) -> bool;
 
@@ -80,10 +80,12 @@ public:
   auto build_window_shadows(this ImGuiRenderer& self, ImDrawData* draw_data) -> void;
 
 private:
+  c8* clipboard_text = nullptr;
   ImGuiStyle base_style = {};
   f32 applied_ui_scale = 0.0f;
   bool keyboard_routed_last_frame = true;
 
+  auto init_clipboard(this ImGuiRenderer& self) -> void;
   auto apply_ui_scale(this ImGuiRenderer& self) -> void;
 };
 } // namespace ox

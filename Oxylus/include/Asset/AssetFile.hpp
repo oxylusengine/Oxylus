@@ -85,6 +85,9 @@ struct TextureData {
   u32 height = 0;
   u32 layer_count = 1;
   std::vector<TextureMipData> mips = {};
+  // VkComponentSwizzle per channel for the view, all identity unless the pack stores fewer channels than it is
+  // sampled with (a one-channel BC4 reads back as rrr1)
+  std::array<u8, 4> components = {};
 };
 
 enum class ModelLightType : u32 {
@@ -214,7 +217,7 @@ consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
   static constexpr auto SIGNATURE = 0x4352584F_u32;
-  static constexpr auto VERSION = 3_u16;
+  static constexpr auto VERSION = 4_u16;
 
   u32 magic = SIGNATURE; // "OXRC"
   u16 version = VERSION;

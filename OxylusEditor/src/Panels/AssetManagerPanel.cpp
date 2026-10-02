@@ -8,6 +8,7 @@
 
 #include "Asset/AssetImporter.hpp"
 #include "Core/App.hpp"
+#include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "UI/PayloadData.hpp"
@@ -51,7 +52,7 @@ auto asset_display_name(const UUID& uuid, const std::filesystem::path& registry_
 auto asset_display_path(const UUID& uuid, const std::filesystem::path& registry_path) -> std::filesystem::path {
   auto source = asset_source(uuid);
 
-  return source.path.empty() ? registry_path : std::move(source.path);
+  return source.path.empty() ? App::get_vfs().to_physical(registry_path) : std::move(source.path);
 }
 
 static auto asset_name(const Asset& asset) -> std::string { return asset_display_name(asset.uuid, asset.path); }
@@ -423,7 +424,8 @@ auto AssetBrowser::draw_details(this AssetBrowser& self, const Asset& asset) -> 
   auto& asset_man = App::mod<AssetManager>();
 
   const auto preview_size = ImGui::GetContentRegionAvail().x;
-  auto thumbnail = App::mod<Editor>().thumbnail_manager.get_thumbnail(asset.type, asset.path, asset.uuid);
+  auto thumbnail = App::mod<Editor>()
+                     .thumbnail_manager.get_thumbnail(asset.type, App::get_vfs().to_physical(asset.path), asset.uuid);
   if (thumbnail) {
     UI::image(thumbnail, {preview_size, preview_size});
   } else {
@@ -578,7 +580,7 @@ auto AssetBrowser::render_picker(
     }
 
     if (commit && selected) {
-      picked = Pick{.uuid = selected->uuid, .type = selected->type, .path = selected->path};
+      picked = Pick{.uuid = selected->uuid, .type = selected->type, .path = App::get_vfs().to_physical(selected->path)};
     }
 
     if (cancel || picked.has_value()) {

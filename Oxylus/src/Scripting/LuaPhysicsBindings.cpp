@@ -23,6 +23,34 @@
 // clang-format on
 
 namespace ox {
+static auto get_vehicle_constraint(flecs::entity e) -> JPH::VehicleConstraint* {
+  auto* vc = e.try_get<VehicleComponent>();
+  if (!vc)
+    return nullptr;
+  return static_cast<JPH::VehicleConstraint*>(vc->runtime_constraint);
+}
+
+static auto get_vehicle_controller(flecs::entity e) -> JPH::WheeledVehicleController* {
+  auto* constraint = get_vehicle_constraint(e);
+  if (!constraint)
+    return nullptr;
+  return static_cast<JPH::WheeledVehicleController*>(constraint->GetController());
+}
+
+// wheels are children of the vehicle entity
+static auto get_vehicle_wheel(flecs::entity wheel_entity) -> const JPH::WheelWV* {
+  auto* wc = wheel_entity.try_get<VehicleWheelComponent>();
+  if (!wc)
+    return nullptr;
+  auto parent = wheel_entity.parent();
+  if (!parent)
+    return nullptr;
+  auto* constraint = get_vehicle_constraint(parent);
+  if (!constraint || wc->runtime_wheel_index >= constraint->GetWheels().size())
+    return nullptr;
+  return static_cast<const JPH::WheelWV*>(constraint->GetWheel(wc->runtime_wheel_index));
+}
+
 // TODO(hatrickek): Move the functions that require Scene as an argument to the SceneBindings.
 
 auto PhysicsBinding::bind(sol::state* state) -> void {
@@ -73,61 +101,58 @@ auto PhysicsBinding::bind(sol::state* state) -> void {
       -> std::vector<JPH::BroadPhaseCastResult> { return {collector.mHits.begin(), collector.mHits.end()}; }
   );
 
+  // nil until the body exists, scripts can run a frame before physics creates it
   physics_table.set_function("get_body", [](flecs::entity* e) -> JPH::Body* {
     auto* rb = e->try_get<RigidBodyComponent>();
-    OX_CHECK_NULL(rb);
-    auto* body = static_cast<JPH::Body*>(rb->runtime_body);
-    OX_CHECK_NULL(body);
-    return body;
+    if (!rb)
+      return nullptr;
+    return static_cast<JPH::Body*>(rb->runtime_body);
   });
 
   physics_table.set_function("get_character", [](flecs::entity* e) -> JPH::Character* {
     auto* cc = e->try_get<CharacterControllerComponent>();
-    OX_CHECK_NULL(cc);
-    auto* character = reinterpret_cast<JPH::Character*>(cc->character);
-    OX_CHECK_NULL(character);
-    return character;
+    if (!cc)
+      return nullptr;
+    return reinterpret_cast<JPH::Character*>(cc->character);
   });
 
   physics_table.set_function("get_vehicle_engine_rpm", [](flecs::entity* e) -> f32 {
-    auto* vc = e->try_get<VehicleComponent>();
-    if (!vc || !vc->runtime_constraint)
-      return 0.f;
-    auto* constraint = static_cast<JPH::VehicleConstraint*>(vc->runtime_constraint);
-    return static_cast<JPH::WheeledVehicleController*>(constraint->GetController())->GetEngine().GetCurrentRPM();
+    auto* controller = get_vehicle_controller(*e);
+    return controller ? controller->GetEngine().GetCurrentRPM() : 0.0f;
   });
 
+  // engine crankshaft speed, never below min rpm while running, so not usable as vehicle speed
   physics_table.set_function("get_vehicle_angular_velocity", [](flecs::entity* e) -> f32 {
-    auto* vc = e->try_get<VehicleComponent>();
-    if (!vc || !vc->runtime_constraint)
-      return 0.f;
-    auto* constraint = static_cast<JPH::VehicleConstraint*>(vc->runtime_constraint);
-    return static_cast<JPH::WheeledVehicleController*>(constraint->GetController())->GetEngine().GetAngularVelocity();
+    auto* controller = get_vehicle_controller(*e);
+    return controller ? controller->GetEngine().GetAngularVelocity() : 0.0f;
   });
 
   physics_table.set_function("get_vehicle_gear", [](flecs::entity* e) -> i32 {
-    auto* vc = e->try_get<VehicleComponent>();
-    if (!vc || !vc->runtime_constraint)
-      return 0;
-    auto* constraint = static_cast<JPH::VehicleConstraint*>(vc->runtime_constraint);
-    return static_cast<JPH::WheeledVehicleController*>(constraint->GetController())->GetTransmission().GetCurrentGear();
+    auto* controller = get_vehicle_controller(*e);
+    return controller ? controller->GetTransmission().GetCurrentGear() : 0;
+  });
+
+  // m/s along the chassis forward axis, negative while rolling backwards
+  physics_table.set_function("get_vehicle_forward_speed", [](flecs::entity* e) -> f32 {
+    auto* constraint = get_vehicle_constraint(*e);
+    if (!constraint)
+      return 0.0f;
+    const auto* body = constraint->GetVehicleBody();
+    return (body->GetRotation() * constraint->GetLocalForward()).Dot(body->GetLinearVelocity());
   });
 
   // True while the wheel is touching something, for traction loss and skid effects.
   physics_table.set_function("is_vehicle_wheel_contacting", [](flecs::entity* wheel_entity) -> bool {
-    auto* wc = wheel_entity->try_get<VehicleWheelComponent>();
-    if (!wc)
-      return false;
-    auto parent = wheel_entity->parent();
-    if (!parent || !parent.has<VehicleComponent>())
-      return false;
-    const auto& vc = parent.get<VehicleComponent>();
-    if (!vc.runtime_constraint)
-      return false;
-    auto* constraint = static_cast<JPH::VehicleConstraint*>(vc.runtime_constraint);
-    if (wc->runtime_wheel_index >= constraint->GetWheels().size())
-      return false;
-    return constraint->GetWheel(wc->runtime_wheel_index)->HasContact();
+    const auto* wheel = get_vehicle_wheel(*wheel_entity);
+    return wheel && wheel->HasContact();
+  });
+
+  // longitudinal slip ratio and lateral slip angle in radians, both zero while airborne
+  physics_table.set_function("get_vehicle_wheel_slip", [](flecs::entity* wheel_entity) -> std::tuple<f32, f32> {
+    const auto* wheel = get_vehicle_wheel(*wheel_entity);
+    if (!wheel || !wheel->HasContact())
+      return {0.0f, 0.0f};
+    return {wheel->mLongitudinalSlip, wheel->mLateralSlip};
   });
 
   physics_table.set_function(

@@ -445,6 +445,11 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vk10_features.features.shaderStorageImageExtendedFormats = true;
   vk10_features.features.shaderInt16 = true;
   vk10_features.features.tessellationShader = true;
+  // every cooked texture is block compressed, so a device without it can't show any of them
+  vk10_features.features.textureCompressionBC = vk10_supported.textureCompressionBC;
+  if (!vk10_features.features.textureCompressionBC) {
+    OX_LOG_ERROR("{} has no BC texture support, cooked textures won't display.", self.device_name);
+  }
 
   VkPhysicalDeviceVulkan11Features vk11_features{};
   vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
