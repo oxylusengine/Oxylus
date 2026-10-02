@@ -29,7 +29,6 @@ target("rcli")
   set_policy("build.fence", true)
 
   set_kind("binary")
-  set_default(false)
   set_languages("cxx23")
   add_files("./private/cli.cpp", "./private/ResourceConfig.cpp")
 
