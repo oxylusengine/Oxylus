@@ -305,8 +305,11 @@ auto Project::new_project(
   }
 
   const auto asset_dir_path = self.project_file_path.parent_path() / self.project_config.asset_directory;
-  App::get_vfs().mount_dir(VFS::ASSETS_DIR, asset_dir_path);
 
+  wait_for_asset_scans();
+  self.asset_directory.reset();
+
+  App::get_vfs().mount_dir(VFS::ASSETS_DIR, asset_dir_path);
   self.register_assets(asset_dir_path);
 
   return true;
@@ -321,10 +324,11 @@ auto Project::load(this Project& self, const std::filesystem::path& path) -> boo
     auto project_root_path = self.project_file_path.parent_path();
     const auto asset_dir_path = project_root_path / self.project_config.asset_directory;
 
-    App::get_vfs().mount_dir(VFS::ASSETS_DIR, asset_dir_path);
-
+    // the old project's scans have to land, and its assets go, while its paths still resolve
     wait_for_asset_scans();
     self.asset_directory.reset();
+
+    App::get_vfs().mount_dir(VFS::ASSETS_DIR, asset_dir_path);
     self.register_assets(asset_dir_path);
 
     OX_LOG_INFO("Project loaded: {0}", self.project_config.name);
