@@ -40,7 +40,7 @@ func cs_main(
     uniform f32 firefly_ratio,
     uniform f32 hysteresis_dark_bias
 ) -> void {
-    let work = probe_texel_work(thread_id.xy, IRRADIANCE_TEXELS);
+    let work = probe_texel_work(thread_id.xy, DDGI_IRRADIANCE_TEXELS);
     if (work.list_index >= probe_update_args[0].count) {
         return;
     }
@@ -50,7 +50,7 @@ func cs_main(
     let probe_row = volume.probe_offset + probe_update_entry_index(entry);
     let flags = probe_states[probe_row].flags;
 
-    let origin = probe_tile_origin(probe_row, IRRADIANCE_TEXELS);
+    let origin = probe_tile_origin(probe_row, DDGI_IRRADIANCE_TEXELS);
     let coords = origin + 1 + work.texel;
     let previous = irradiance[coords];
     let history = com::sanitize(previous.rgb);
@@ -59,16 +59,16 @@ func cs_main(
     let reset = probe_is_reset(flags);
     let firefly_limit = reset ? com::HALF_MAX : (history_luminance + FIREFLY_FLOOR) * firefly_ratio;
 
-    let texel_direction = probe_texel_direction(work.texel, IRRADIANCE_TEXELS);
+    let texel_direction = probe_texel_direction(work.texel, DDGI_IRRADIANCE_TEXELS);
     let rotation = probe_ray_rotation(frame_index);
 
     var sum = f32x3(0.0);
     var weight_sum = 0.0;
     var backface_count = 0u;
-    let updates_radiance = all(work.texel < u32x2(RADIANCE_TEXELS));
+    let updates_radiance = all(work.texel < u32x2(DDGI_RADIANCE_TEXELS));
     let radiance_direction = probe_texel_direction(
-        min(work.texel, u32x2(RADIANCE_TEXELS - 1u)),
-        RADIANCE_TEXELS
+        min(work.texel, u32x2(DDGI_RADIANCE_TEXELS - 1u)),
+        DDGI_RADIANCE_TEXELS
     );
     var best_radiance_alignment = -2.0;
     var selected_radiance = f32x3(0.0);
@@ -140,7 +140,7 @@ func cs_main(
     let result_texel = f32x4(history + lerp_delta, confidence);
     irradiance[coords] = result_texel;
 
-    let border = probe_border_writes(work.texel, IRRADIANCE_TEXELS);
+    let border = probe_border_writes(work.texel, DDGI_IRRADIANCE_TEXELS);
     if (border.has_x) {
         irradiance[origin + border.x_texel] = result_texel;
     }
@@ -180,7 +180,7 @@ func cs_main(
     let radiance_texel = f32x4(radiance_root * radiance_root, radiance_confidence);
     irradiance[radiance_coords] = radiance_texel;
 
-    let radiance_border = probe_border_writes(work.texel, RADIANCE_TEXELS);
+    let radiance_border = probe_border_writes(work.texel, DDGI_RADIANCE_TEXELS);
     if (radiance_border.has_x) {
         irradiance[radiance_origin + radiance_border.x_texel] = radiance_texel;
     }

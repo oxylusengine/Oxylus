@@ -57,7 +57,7 @@ struct Model {
 
   std::vector<UUID> textures = {};
   std::vector<UUID> materials = {};
-  // nil unless the glTF carried a skin, and clips reference the same skeleton asset
+  // nullptr unless the glTF carried a skin, and clips reference the same skeleton asset
   UUID skeleton_uuid = UUID(nullptr);
   std::vector<UUID> animations = {};
   // widest bind-pose reach of any bone, which is what inflates the per-instance culling bounds

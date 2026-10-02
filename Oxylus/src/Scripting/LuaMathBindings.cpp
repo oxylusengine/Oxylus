@@ -141,11 +141,27 @@ auto MathBinding::bind(sol::state* state) -> void {
     [](const glm::mat4& a, const glm::mat4& b) { return a - b; }
   );
 
-  auto quat = state->new_usertype<glm::quat>("quat", sol::constructors<glm::quat(glm::vec4)>());
+  // glm::quat(vec4) silently picks the euler angle constructor, so spell out the component order
+  auto quat = state->new_usertype<glm::quat>(
+    "quat",
+    "new",
+    sol::factories(
+      []() -> glm::quat { return glm::quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f); },
+      [](f32 w, f32 x, f32 y, f32 z) -> glm::quat { return glm::quat::wxyz(w, x, y, z); },
+      [](const glm::vec3& euler_radians) -> glm::quat { return glm::quat(euler_radians); }
+    )
+  );
   SET_TYPE_FIELD(quat, glm::quat, x);
   SET_TYPE_FIELD(quat, glm::quat, y);
   SET_TYPE_FIELD(quat, glm::quat, z);
   SET_TYPE_FIELD(quat, glm::quat, w);
+  quat.set_function(
+    sol::meta_function::multiplication,
+    sol::overload(
+      [](const glm::quat& a, const glm::quat& b) -> glm::quat { return a * b; },
+      [](const glm::quat& q, const glm::vec3& v) -> glm::vec3 { return q * v; }
+    )
+  );
 
   state->new_enum<Intersection>("Intersection", {{"Outside", Outside}, {"Intersects", Intersects}, {"Inside", Inside}});
 
@@ -227,5 +243,23 @@ auto MathBinding::bind(sol::state* state) -> void {
   });
   glm_table.set_function("atan2", [](f32 x, f32 y) { return glm::atan2(x, y); });
   glm_table.set_function("angle_axis", [](f32 angle, glm::vec3 v) -> glm::quat { return glm::angleAxis(angle, v); });
+  glm_table.set_function("dot", [](const glm::vec3& a, const glm::vec3& b) -> f32 { return glm::dot(a, b); });
+  glm_table.set_function("cross", [](const glm::vec3& a, const glm::vec3& b) -> glm::vec3 { return glm::cross(a, b); });
+  glm_table.set_function("clamp", [](f32 v, f32 lo, f32 hi) -> f32 { return glm::clamp(v, lo, hi); });
+  glm_table.set_function(
+    "mix",
+    sol::overload(
+      [](f32 a, f32 b, f32 t) -> f32 { return glm::mix(a, b, t); },
+      [](const glm::vec3& a, const glm::vec3& b, f32 t) -> glm::vec3 { return glm::mix(a, b, t); }
+    )
+  );
+  glm_table.set_function("slerp", [](const glm::quat& a, const glm::quat& b, f32 t) -> glm::quat {
+    return glm::slerp(a, b, t);
+  });
+  glm_table.set_function("inverse", [](const glm::quat& q) -> glm::quat { return glm::inverse(q); });
+  // rotation whose -Z axis points along direction, which is how cameras look
+  glm_table.set_function("quat_look_at", [](const glm::vec3& direction, const glm::vec3& up) -> glm::quat {
+    return glm::quatLookAt(glm::normalize(direction), up);
+  });
 }
 } // namespace ox

@@ -41,4 +41,26 @@ target("OxylusEditor")
         output_dir = "Assets/Shaders",
     })
 
+    set_prefixdir("/", { bindir = ".", libdir = "." })
+
+    -- slang loads its modules at runtime, so xmake never sees them as dependencies
+    after_install(function (target)
+        local installdir = target:installdir()
+        os.vcp(path.join(target:targetdir(), "Assets"), installdir)
+
+        local slang = target:dep("ResourceCompiler"):pkg("shader-slang")
+        if target:is_plat("windows") then
+            os.vcp(path.join(slang:installdir(), "bin", "*.dll"), installdir)
+        elseif target:is_plat("macosx") then
+            os.vcp(path.join(slang:installdir(), "lib", "*.dylib"), installdir, { symlink = true })
+        else
+            for _, lib in ipairs(os.files(path.join(slang:installdir(), "lib", "*.so*"))) do
+                -- the package ships the link-time name as a full copy, nothing loads it at runtime
+                if #os.files(lib .. ".*") == 0 then
+                    os.vcp(lib, installdir, { symlink = true })
+                end
+            end
+        end
+    end)
+
 target_end()

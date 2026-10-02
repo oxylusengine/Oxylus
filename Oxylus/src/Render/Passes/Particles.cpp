@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/mat3x3.hpp>
@@ -290,7 +291,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         .flipbook_x = std::max(snapshot.render.flipbook.x, 1_u32),
         .flipbook_y = std::max(snapshot.render.flipbook.y, 1_u32),
         .flags = flags,
-        .shape = std::to_underlying(settings.shape),
+        .shape = settings.shape,
         .seed = settings.seed ^ component.seed ^ (emitter_index * 2654435761_u32),
         .time = state->time,
         .delta_time = step,
@@ -302,7 +303,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         .velocity_offset = glm::vec4(component.velocity_offset, 0.0f),
       };
 
-      gpu_emitter.user_params = user_params;
+      std::ranges::copy(user_params, gpu_emitter.user_params);
 
       prepared.particle_total_spawn += spawn_count;
       prepared.particle_sort_enabled = prepared.particle_sort_enabled || snapshot.render.sort;

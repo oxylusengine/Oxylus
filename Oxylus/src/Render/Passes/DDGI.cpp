@@ -236,7 +236,7 @@ auto RendererInstance::relocate_ddgi_probes(this RendererInstance& self, DDGIRel
           )
         )
         .dispatch_indirect(
-          probe_update_args->subrange(offsetof(GPU::ProbeUpdateArgs, relocate), sizeof(vuk::DispatchIndirectCommand))
+          probe_update_args->subrange(offsetof(GPU::ProbeUpdateArgs, relocate), sizeof(GPU::DispatchIndirectCommand))
         );
 
       return std::make_tuple(probe_states, ray_data, probe_volumes, probe_update_list, probe_update_args);
@@ -303,7 +303,7 @@ auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdat
           )
         )
         .dispatch_indirect(
-          probe_update_args->subrange(offsetof(GPU::ProbeUpdateArgs, irradiance), sizeof(vuk::DispatchIndirectCommand))
+          probe_update_args->subrange(offsetof(GPU::ProbeUpdateArgs, irradiance), sizeof(GPU::DispatchIndirectCommand))
         );
 
       return std::make_tuple(irradiance, ray_data, probe_volumes, probe_states, probe_update_list, probe_update_args);
@@ -348,7 +348,7 @@ auto RendererInstance::update_ddgi_probes(this RendererInstance& self, DDGIUpdat
         .bind_buffer(0, 5, probe_update_args)
         .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(rays_per_probe, frame_index, hysteresis))
         .dispatch_indirect(
-          probe_update_args->subrange(offsetof(GPU::ProbeUpdateArgs, distance), sizeof(vuk::DispatchIndirectCommand))
+          probe_update_args->subrange(offsetof(GPU::ProbeUpdateArgs, distance), sizeof(GPU::DispatchIndirectCommand))
         );
 
       return std::make_tuple(

@@ -1,29 +1,8 @@
-﻿import common;
+import common;
 import gpu;
+__exported import shared;
 
 #include <defines.slang>
-
-public const static f32 CAMERA_SCALE_UNIT     = 0.01;
-public const static f32 INV_CAMERA_SCALE_UNIT = 1.0 / CAMERA_SCALE_UNIT;
-public const static f32 PLANET_RADIUS_OFFSET  = 0.001;
-
-public enum DebugView : i32 {
-  None = 0,
-  Triangles,
-  Meshlets,
-  Overdraw,
-  Materials,
-  MeshInstances,
-  MeshLods,
-  Albedo,
-  Normal,
-  Emissive,
-  Metallic,
-  Roughness,
-  BakedOcclusion,
-  GTAO,
-  GeometricNormal,
-};
 
 public interface IUVSample {
   func sample(u32 image_index, u32 sampler_index) -> f32x4;
@@ -76,40 +55,7 @@ public struct UVLod : IUVSample {
   }
 };
 
-public enum MaterialFlag : u32 {
-  None = 0,
-  // Image flags
-  HasAlbedoImage = 1 << 0,
-  HasNormalImage = 1 << 1,
-  HasEmissiveImage = 1 << 2,
-  HasMetallicRoughnessImage = 1 << 3,
-  HasOcclusionImage = 1 << 4,
-  // Normal flags
-  NormalTwoComponent = 1 << 5,
-  NormalFlipY = 1 << 6,
-  // Alpha
-  AlphaOpaque = 1 << 7,
-  AlphaMask = 1 << 8,
-  AlphaBlend = 1 << 9,
-};
-
-public struct Material {
-  public u16x4 albedo_color = {};
-  public u16x3 emissive_color = {};
-  public u16 roughness_factor = 0;
-  public u16 metallic_factor = 0;
-  public u16 alpha_cutoff = 0;
-  public u16 normal_scale = 0;
-  public u16 occlusion_strength = 0;
-  public MaterialFlag flags = MaterialFlag::None;
-  public u32 sampler_index = 0;
-  public u32 albedo_image_index = 0;
-  public u32 normal_image_index = 0;
-  public u32 emissive_image_index = 0;
-  public u32 metallic_rougness_image_index = 0;
-  public u32 occlusion_image_index = 0;
-  public u16x2 uv_size = {};
-  public u16x2 uv_offset = {};
+public extension Material {
 
   public func get_albedo_color() -> f32x4 {
     return f32x4(
@@ -234,7 +180,7 @@ public struct Material {
   public func sample_metallic_roughness<S : IUVSample>(in S s) -> f32x2 {
     let metallic_roughness = f32x2(this.get_metallic_factor(), this.get_roughness_factor());
     if (this.flags & MaterialFlag::HasMetallicRoughnessImage) {
-        return metallic_roughness * s.sample(this.metallic_rougness_image_index, this.sampler_index).bg;
+        return metallic_roughness * s.sample(this.metallic_roughness_image_index, this.sampler_index).bg;
     }
 
     return metallic_roughness;
@@ -250,34 +196,7 @@ public struct Material {
   }
 };
 
-public struct Camera {
-  public f32x4 position = {};
-  public mat4 projection = {};
-  public mat4 inv_projection = {};
-  public mat4 view = {};
-  public mat4 inv_view = {};
-  public mat4 projection_view = {};
-  public mat4 inv_projection_view = {};
-  public mat4 previous_projection = {};
-  public mat4 previous_inv_projection = {};
-  public mat4 previous_view = {};
-  public mat4 previous_inv_view = {};
-  public mat4 previous_projection_view = {};
-  public mat4 previous_inv_projection_view = {};
-  public f32x2 temporalaa_jitter = {};
-  public f32x2 temporalaa_jitter_prev = {};
-  public f32x4 frustum_planes[6] = {};
-  public f32x3 up = {};
-  public f32 near_clip = 0;
-  public f32x3 forward = {};
-  public f32 far_clip = 0;
-  public f32x3 right = {};
-  public f32 fov = 0;
-  public u32 output_index = 0;
-  public f32x2 resolution;
-  public f32 acceptable_lod_error;
-  // negative when upscaling, so material textures keep display resolution detail
-  public f32 texture_mip_bias;
+public extension Camera {
 
   // jitter stays out of `projection` so cpu side culling and the motion vector reprojection keep
   // working off unjittered matrices. oxylus ndc has +y down, matching the texel space the upscaler
@@ -294,15 +213,7 @@ public struct Camera {
   }
 };
 
-public struct CullCamera {
-    public mat4 projection_view = {};
-    public f32x3 position = {};
-    public f32 acceptable_lod_error = {};
-    public f32x2 resolution = {};
-    public f32 near_clip = {};
-    public u32 mesh_instances_count = {};
-    public f32x2 jitter = {};
-    public f32 texture_mip_bias = {};
+public extension CullCamera {
 
     // see Camera::jitter_clip, same convention
     public func jitter_clip(f32x4 clip_pos) -> f32x4 {
@@ -311,31 +222,7 @@ public struct CullCamera {
     }
 };
 
-public struct Atmosphere {
-    public f32x3 rayleigh_scatter;
-    public f32   rayleigh_density;
-
-    public f32x3 mie_scatter;
-    public f32   mie_density;
-    public f32   mie_extinction;
-    public f32   mie_asymmetry;
-    public f32   mie_haze_amount;
-    public f32   mie_haze_scale_height;
-
-    public f32x3 ozone_absorption;
-    public f32   ozone_height;
-    public f32   ozone_thickness;
-
-    public f32x3 terrain_albedo;
-    public f32   planet_radius;
-    public f32   atmos_radius;
-    public f32   aerial_perspective_start_km;
-    public f32   aerial_perspective_exposure;
-
-    public i32x3 transmittance_lut_size;
-    public i32x3 sky_view_lut_size;
-    public i32x3 multiscattering_lut_size;
-    public i32x3 aerial_perspective_lut_size;
+public extension Atmosphere {
 
     public func get_eye_pos(f32x3 position) -> f32x3 {
         let min_altitude = this.planet_radius + PLANET_RADIUS_OFFSET;
@@ -344,67 +231,11 @@ public struct Atmosphere {
     }
 };
 
-public struct Sky {
-    public f32x4 solid_color;
-    public f32x3 ambient_color;
-    public bool has_texture;
-};
-
-public enum SceneFlags : u32 {
-  None = 0,
-  HasDirectionalLight = 1 << 0,
-  HasAtmosphere = 1 << 1,
-  HasEyeAdaptation = 1 << 2,
-  HasBloom = 1 << 3,
-  HasFXAA = 1 << 4,
-  HasGTAO = 1 << 5,
-  HasFilmGrain = 1 << 6,
-  HasChromaticAberration = 1 << 7,
-  HasVignette = 1 << 8,
-  HasContactShadows = 1 << 9,
-  HasSky = 1 << 10,
-  TransparentBackground = 1 << 11,
-  HasDDGI = 1 << 12,
-  HasParticles = 1 << 13,
-  HasParticleSorting = 1 << 14,
-  HasLetterbox = 1 << 15,
-  HasScreenFade = 1 << 16,
-};
-
 public struct DirectionalLightCascade {
   public f32x4x4 projection_view;
   public f32 far_bound;
   public f32 texel_size;
 };
-
-public struct DirectionalLight {
-  public f32x3 color;
-  public f32 intensity;
-  public f32x3 direction;
-};
-
-public enum LightKind : u32 { Directional = 0, Point = 1, Spot = 2 };
-
-public struct Light {
-  public f32x3 position = {};
-  public f32 intensity = 1.0;
-  public f32x3 color = {1.0, 1.0, 1.0};
-  public f32 range = 0.0;
-  public f32x3 direction = {};
-  public f32 inner_cone_angle = 0.0; // spot only (radians)
-  public f32 outer_cone_angle = 0.0; // spot only (radians)
-  public LightKind kind = LightKind::Point;
-  public i32 shadow_map_index = -1;
-  public u32 _pad_0 = 0;
-};
-
-public constexpr static u32 MAX_SHADOW_POINT_LIGHTS = 64;
-public constexpr static u32 MAX_SHADOW_SPOT_LIGHTS = 64;
-
-// per-cell shadow mask, point 0-63, then spot 0-63, packed into u32x4
-public constexpr static i32x3 LIGHT_GRID_RESOLUTION = i32x3(64, 32, 64);
-public constexpr static f32 LIGHT_GRID_CELL_SIZE = 8.0;
-public constexpr static u32 LIGHT_GRID_CELL_COUNT = 64u * 32u * 64u;
 
 public func light_grid_cell_coords(f32x3 world_pos, f32x3 grid_origin) -> i32x3 {
   return i32x3(floor((world_pos - grid_origin) / LIGHT_GRID_CELL_SIZE));
@@ -427,8 +258,7 @@ public func light_grid_mask_bit(i32 shadow_map_index) -> u32 {
   return 1u << (u32(shadow_map_index) & 31u);
 }
 
-public struct TransformWorld {
-  public mat4 world = {};
+public extension TransformWorld {
 
   public func to_world_position(in f32x3 position) -> f32x4 {
     return mul(this.world, f32x4(position, 1.0));
@@ -468,15 +298,7 @@ public struct TransformWorld {
   }
 };
 
-public struct TransformPrevious {
-  public mat4 previous_world = {};
-};
-
-public struct Meshlet {
-    public u32 indirect_vertex_index_offset = 0;
-    public u32 local_triangle_index_offset = 0;
-    public u32 vertex_count = 0;
-    public u32 triangle_count = 0;
+public extension Meshlet {
 
     public static func get_micro_index(Ptr<u32> buf, u32 byte_offset) -> u32 {
         let pack_index = byte_offset >> 2;
@@ -533,12 +355,7 @@ public struct Meshlet {
     }
 };
 
-public struct MeshletBounds {
-    u16x3 aabb_center;
-    i8x2 cone_axis_xy;
-    u16x3 aabb_extent;
-    i8 cone_axis_z;
-    i8 cone_cutoff;
+public extension MeshletBounds {
 
     public func get_cone_axis() -> f32x3 {
         return f32x3(
@@ -569,20 +386,7 @@ public struct MeshletBounds {
     }
 };
 
-public struct MeshBounds {
-    public f32x3 aabb_center = {};
-    public f32x3 aabb_extent = {};
-};
-
-public struct MeshletInstance {
-    public u32 mesh_instance_index = 0;
-    public u32 meshlet_index = 0;
-};
-
-public struct SkinningTransform {
-    public f32x4 rotation;
-    public f32x4 translation_scale;
-
+public extension SkinningTransform {
     public func rotate(in f32x3 v) -> f32x3 {
         let axis = rotation.xyz;
         return v + 2.0 * cross(axis, cross(axis, v) + rotation.w * v);
@@ -597,46 +401,13 @@ public struct SkinningTransform {
     }
 };
 
-public struct MeshInstance {
-    public u32 mesh_index = 0;
-    public u32 lod_index = 0;
-    public u32 material_index = 0;
-    public u32 transform_index = 0;
-    public u32 meshlet_instance_visibility_offset = 0;
-    public u32 skinned_instance_index = 0;
-    public u16x4 *skinned_vertex_positions = nullptr;
-    public u32 *skinned_vertex_normals = nullptr;
-    public MeshBounds skinned_bounds = {};
-
+public extension MeshInstance {
     public func is_skinned() -> bool {
         return skinned_vertex_positions != nullptr;
     }
 };
 
-public struct MeshLOD {
-    public u32 *indices = nullptr;
-    public Meshlet *meshlets = nullptr;
-    public MeshletBounds *meshlet_bounds = nullptr;
-    public u32 *local_triangle_indices = nullptr;
-    public u32 *indirect_vertex_indices = nullptr;
-    public u32 indices_count = 0;
-    public u32 meshlet_count = 0;
-    public u32 meshlet_bounds_count = 0;
-    public u32 local_triangle_indices_count = 0;
-    public u32 indirect_vertex_indices_count = 0;
-    public f32 error = 0.0;
-};
-
-public struct Mesh {
-    public u16x4 *vertex_positions = nullptr;
-    public u32 *vertex_normals = nullptr;
-    public u16x2 *texture_coords = nullptr;
-    public u16x4 *skin_joint_indices = nullptr;
-    public u16x4 *skin_weights = nullptr;
-    public u32 vertex_count = 0;
-    public u32 lod_count = 0;
-    public MeshLOD *lods = nullptr;
-    public MeshBounds bounds = {};
+public extension Mesh {
 
     // redirects vertex fetch at the instance's skinned copy, which the skinning pass wrote in the
     // same quantized format, so meshlet decode, LOD selection and culling bounds work unchanged
@@ -695,133 +466,7 @@ public struct Mesh {
     }
 };
 
-public struct MeshletInstanceVisibility {
-    public u32 total_visible_meshlet_instances;
-    public u32 early_visible_meshlet_instances;
-    public u32 late_visible_meshlet_instances;
-};
-
-public struct VBGTAOSettings {
-    public f32 thickness = 0.25;
-    public u32 slice_count = 3;
-    public u32 samples_per_slice_side = 3;
-    public f32 effect_radius = 0.5;
-    public u32 noise_index = 0;
-    public f32 final_power = 2.2;
-};
-
-public struct PostProcessSettings {
-    public f32 exposure;
-    public f32 chromatic_aberration_amount;
-    public f32 vignette_amount;
-    public f32 film_grain_scale;
-    public f32 film_grain_amount;
-    public u32 film_grain_seed;
-    public f32 letterbox_amount;
-    public f32 letterbox_aspect;
-    public f32x3 letterbox_color;
-    public f32 fade_amount;
-    public f32x3 fade_color;
-};
-
-public enum TonemapType : u32 {
-    None = 0,
-    ACES,
-    AgX,
-    GT7,
-};
-
-[[Flags]]
-public enum CullFlag : u32 {
-    TestFrustum,
-    SelectLOD,
-    TestOcclusion,
-    LatePass,
-};
-
-// --- Terrain ---
-
-public struct TerrainErosion {
-    public f32 scale;
-    public f32 strength;
-    public f32 gully_weight;
-    public f32 detail;
-    // x: ridge rounding, y: crease rounding, z: input height rounding, w: per-octave multiplier
-    public f32x4 rounding;
-    // x: input slope -> mask, y: octave slope -> mask, z: input slope -> ridge mask, w: octave -> ridge mask
-    public f32x4 onset;
-    // x: the pretended input slope magnitude, y: blend between real and assumed slope
-    public f32x2 assumed_slope;
-    public f32 cell_scale;
-    public f32 gain;
-    public f32 lacunarity;
-    public f32 normalization;
-    public u32 octaves;
-    public u32 seed;
-};
-
-public struct TerrainGenerate {
-    public TerrainErosion erosion;
-    public u32x2 resolution;
-    public f32x2 height_offset;
-    public f32 domain_size;
-    public f32 height_frequency;
-    public f32 height_amplitude;
-    public f32 height_lacunarity;
-    public f32 height_gain;
-    public u32 height_octaves;
-};
-
-public struct TerrainDerive {
-    public u32x2 resolution;
-    public f32x2 texel_world_size;
-    public f32 height_range;
-    public f32 slope_rock_begin;
-    public f32 slope_rock_end;
-    public f32 altitude_snow_begin;
-    public f32 altitude_snow_end;
-    public f32 ridge_drainage_scale;
-};
-
-public struct TerrainMinMax {
-    public u32x2 resolution;
-    public u32x2 patch_count;
-};
-
-public struct TerrainRegion {
-    public u32x2 texel_origin;
-    public u32x2 patch_origin;
-};
-
-public enum TerrainBrushMode : u32 {
-    Raise = 0,
-    Smooth,
-    Flatten,
-    Noise,
-    PaintLayer,
-};
-
-public struct TerrainBrushHit {
-    public f32x3 world_position;
-    public u32 valid;
-};
-
-public struct TerrainBrushParams {
-    public f32x3 ray_origin;
-    public f32 radius_texels;
-    public f32x3 ray_direction;
-    public f32 strength;
-    public u32x2 resolution;
-    public f32x2 world_min;
-    public f32x2 world_size;
-    public f32x2 inv_world_size;
-    public u32x2 patch_count;
-    public f32 base_height;
-    public f32 height_scale;
-    public f32 falloff;
-    public f32 flatten_height;
-    public u32 mode;
-    public u32 layer;
+public extension TerrainBrushParams {
 
     public func world_to_uv(f32x2 world_xz) -> f32x2 {
         return (world_xz - this.world_min) * this.inv_world_size;
@@ -832,21 +477,7 @@ public struct TerrainBrushParams {
     }
 };
 
-public constexpr static u32 TERRAIN_INVALID_LAYER_MATERIAL = ~0u;
-
-public struct TerrainData {
-    public f32x2 world_min;
-    public f32x2 world_size;
-    public f32x2 inv_world_size;
-    public u32x2 patch_count;
-    public f32 base_height;
-    public f32 height_scale;
-    public f32 target_edge_pixels;
-    public f32 max_tessellation;
-    public f32 layer_tiling;
-    public f32 triplanar_begin;
-    public u32x4 layer_material_indices;
-    public f32 brush_radius;
+public extension TerrainData {
 
     // XZ world position of a patch corner, given the patch's grid coordinate.
     public func patch_corner(u32x2 patch, u32x2 corner) -> f32x2 {

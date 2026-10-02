@@ -3,160 +3,9 @@ module particles;
 import common;
 import gpu;
 import scene;
+__exported import shared;
 
 #include <defines.slang>
-
-public static const u32 PARTICLE_REGISTER_COUNT = 16;
-public static const u32 PARTICLE_SIMULATE_GROUP = 64;
-public static const u32 PARTICLE_SORT_GROUP = 256;
-public static const u32 PARTICLE_CURVE_ATLAS_WIDTH = 64;
-public static const u32 PARTICLE_USER_PARAM_COUNT = 4;
-
-public enum ParticleRegister : u32 {
-    PositionLife = 0,
-    VelocityTotal,
-    SizeRotationSeed,
-    Color,
-    Context,
-};
-
-public enum ParticleOpCode : u32 {
-    Nop = 0,
-    Mov,
-    Swizzle,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mad,
-    Min,
-    Max,
-    Clamp,
-    Lerp,
-    Abs,
-    Floor,
-    Frac,
-    Pow,
-    Dot,
-    Cross,
-    Normalize,
-    Length,
-    Sin,
-    Cos,
-    Step,
-    Smoothstep,
-    Select,
-    Curve,
-    Gradient,
-    Noise,
-    Random,
-    Time,
-    AgeNorm,
-    Param,
-    // CPU-only, never emitted into a GPU program. Listed so the numbering matches SceneGPU.hpp.
-    LoadState,
-    StoreState,
-};
-
-public enum ParticleOperandKind : u32 {
-    Register = 0,
-    Constant,
-    Immediate,
-};
-
-[[Flags]]
-public enum ParticleEmitterFlags : u32 {
-    LocalSpace,
-    Additive,
-    VelocityStretched,
-    SoftParticles,
-    DepthCollision,
-    MeshRenderer,
-    HorizontalPlane,
-    VerticalPlane,
-};
-
-public enum ParticleShape : u32 {
-    Point = 0,
-    Sphere,
-    Hemisphere,
-    Box,
-    Circle,
-    Cone,
-};
-
-public struct ParticleInstruction {
-    public u32 op_dst;
-    public u32 src0;
-    public u32 src1;
-    public u32 src2;
-};
-
-public struct Particle {
-    public f32x3 position;
-    public f32 life_remaining;
-    public f32x3 velocity;
-    public f32 life_total;
-    public f32x2 size;
-    public f32 rotation;
-    public f32 seed;
-    public u32 color;
-    public u32 flipbook_frame;
-    public u32 emitter_index;
-    public u32 flags;
-};
-
-public struct ParticleEmitter {
-    public mat4 transform;
-    public f32x4 rotation;
-
-    public u32 pool_offset;
-    public u32 capacity;
-    public u32 spawn_count;
-    public u32 spawn_offset;
-
-    public u32 spawn_program_offset;
-    public u32 spawn_program_count;
-    public u32 update_program_offset;
-    public u32 update_program_count;
-
-    public u32 constants_offset;
-    public u32 curve_atlas_index;
-    public u32 curve_sampler_index;
-    public u32 curve_row_count;
-
-    public u32 atlas_row_count;
-    public u32 material_index;
-    public u32 flipbook_x;
-    public u32 flipbook_y;
-
-    public u32 flags;
-    public u32 shape;
-    public u32 seed;
-    public f32 time;
-
-    public f32 delta_time;
-    public f32 restitution;
-    public f32 soft_particle_distance;
-    public f32 velocity_stretch;
-
-    public f32x2 lifetime;
-    public f32x4 shape_params;
-    public f32x4 velocity_offset;
-    public f32x4 user_params[PARTICLE_USER_PARAM_COUNT];
-};
-
-public struct ParticleSortKey {
-    public u32 key;
-    public u32 index;
-};
-
-public struct ParticleCounters {
-    public u32 alive_count;
-    public u32 alive_count_next;
-    public u32 draw_count;
-    public u32 pad;
-};
 
 public func particle_pack_rgba8(f32x4 color) -> u32 {
     let c = u32x4(saturate(color) * 255.0 + 0.5);
@@ -259,23 +108,23 @@ public struct ParticleVM {
             this.regs[i] = f32x4(0.0);
         }
 
-        this.regs[ParticleRegister.PositionLife] = f32x4(particle.position, particle.life_remaining);
-        this.regs[ParticleRegister.VelocityTotal] = f32x4(particle.velocity, particle.life_total);
-        this.regs[ParticleRegister.SizeRotationSeed] = f32x4(particle.size, particle.rotation, particle.seed);
-        this.regs[ParticleRegister.Color] = particle_unpack_rgba8(particle.color);
-        this.regs[ParticleRegister.Context] = f32x4(age_norm, emitter.time, emitter.delta_time, f32(particle.flipbook_frame));
+        this.regs[PARTICLE_REG_POSITION_LIFE] = f32x4(particle.position, particle.life_remaining);
+        this.regs[PARTICLE_REG_VELOCITY_TOTAL] = f32x4(particle.velocity, particle.life_total);
+        this.regs[PARTICLE_REG_SIZE_ROT_SEED] = f32x4(particle.size, particle.rotation, particle.seed);
+        this.regs[PARTICLE_REG_COLOR] = particle_unpack_rgba8(particle.color);
+        this.regs[PARTICLE_REG_CONTEXT] = f32x4(age_norm, emitter.time, emitter.delta_time, f32(particle.flipbook_frame));
         this.rng = particle_hash(asuint(particle.seed));
     }
 
     public func store(inout Particle particle) {
-        particle.position = this.regs[ParticleRegister.PositionLife].xyz;
-        particle.life_remaining = this.regs[ParticleRegister.PositionLife].w;
-        particle.velocity = this.regs[ParticleRegister.VelocityTotal].xyz;
-        particle.life_total = this.regs[ParticleRegister.VelocityTotal].w;
-        particle.size = this.regs[ParticleRegister.SizeRotationSeed].xy;
-        particle.rotation = this.regs[ParticleRegister.SizeRotationSeed].z;
-        particle.seed = this.regs[ParticleRegister.SizeRotationSeed].w;
-        particle.color = particle_pack_rgba8(this.regs[ParticleRegister.Color]);
+        particle.position = this.regs[PARTICLE_REG_POSITION_LIFE].xyz;
+        particle.life_remaining = this.regs[PARTICLE_REG_POSITION_LIFE].w;
+        particle.velocity = this.regs[PARTICLE_REG_VELOCITY_TOTAL].xyz;
+        particle.life_total = this.regs[PARTICLE_REG_VELOCITY_TOTAL].w;
+        particle.size = this.regs[PARTICLE_REG_SIZE_ROT_SEED].xy;
+        particle.rotation = this.regs[PARTICLE_REG_SIZE_ROT_SEED].z;
+        particle.seed = this.regs[PARTICLE_REG_SIZE_ROT_SEED].w;
+        particle.color = particle_pack_rgba8(this.regs[PARTICLE_REG_COLOR]);
     }
 }
 
@@ -363,8 +212,8 @@ public func particle_execute(
                 );
                 result = lerp(a, b, r);
             } break;
-            case ParticleOpCode.Time      : result = f32x4(vm.regs[ParticleRegister.Context].y); break;
-            case ParticleOpCode.AgeNorm  : result = f32x4(vm.regs[ParticleRegister.Context].x); break;
+            case ParticleOpCode.Time      : result = f32x4(vm.regs[PARTICLE_REG_CONTEXT].y); break;
+            case ParticleOpCode.AgeNorm  : result = f32x4(vm.regs[PARTICLE_REG_CONTEXT].x); break;
             case ParticleOpCode.Param    :
                 result = emitter.user_params[(instruction.src1 & 0x3FFFFFFFu) % PARTICLE_USER_PARAM_COUNT];
                 break;
@@ -388,32 +237,32 @@ public func particle_emission_point(in ParticleEmitter emitter, u32 rng, out f32
     var local = f32x3(0.0);
     direction = f32x3(0.0, 1.0, 0.0);
 
-    switch (ParticleShape(emitter.shape)) {
-        case ParticleShape.Sphere: {
+    switch (emitter.shape) {
+        case ParticleEmissionShape.Sphere: {
             let theta = r.x * TAU;
             let z = r.y * 2.0 - 1.0;
             let radius = sqrt(max(1.0 - z * z, 0.0));
             direction = f32x3(radius * cos(theta), z, radius * sin(theta));
             local = direction * emitter.shape_params.xyz * pow(max(r.z, 1e-6), 1.0 / 3.0);
         } break;
-        case ParticleShape.Hemisphere: {
+        case ParticleEmissionShape.Hemisphere: {
             let theta = r.x * TAU;
             let z = r.y;
             let radius = sqrt(max(1.0 - z * z, 0.0));
             direction = f32x3(radius * cos(theta), z, radius * sin(theta));
             local = direction * emitter.shape_params.xyz * pow(max(r.z, 1e-6), 1.0 / 3.0);
         } break;
-        case ParticleShape.Box: {
+        case ParticleEmissionShape.Box: {
             local = (r * 2.0 - 1.0) * emitter.shape_params.xyz;
             direction = f32x3(0.0, 1.0, 0.0);
         } break;
-        case ParticleShape.Circle: {
+        case ParticleEmissionShape.Circle: {
             let theta = r.x * TAU;
             let radius = sqrt(max(r.y, 0.0));
             direction = f32x3(cos(theta), 0.0, sin(theta));
             local = direction * emitter.shape_params.xyz * radius;
         } break;
-        case ParticleShape.Cone: {
+        case ParticleEmissionShape.Cone: {
             let theta = r.x * TAU;
             // normalized radius, so the spread is the authored angle no matter how big the cone is
             let unit_radius = sqrt(max(r.y, 0.0));

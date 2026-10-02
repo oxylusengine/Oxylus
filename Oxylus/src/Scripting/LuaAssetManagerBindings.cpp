@@ -1,11 +1,58 @@
 ﻿#include "Scripting/LuaAssetManagerBindings.hpp"
 
+#include <memory>
 #include <sol/state.hpp>
+#include <string>
 
 #include "Asset/AssetManager.hpp"
+#include "Core/App.hpp"
+#include "Core/VFS.hpp"
 #include "Scripting/LuaHelpers.hpp"
 
 namespace ox {
+// one reference held on the script's behalf, dropped by `unload()` or when lua collects the handle, so a script that
+// forgets to unload can't pin the asset forever
+class LuaAssetHandle {
+public:
+  explicit LuaAssetHandle(const UUID& uuid) : uuid_(uuid) {}
+  LuaAssetHandle(const LuaAssetHandle&) = delete;
+  auto operator=(const LuaAssetHandle&) -> LuaAssetHandle& = delete;
+  ~LuaAssetHandle() { unload(); }
+
+  auto uuid(this const LuaAssetHandle& self) -> UUID { return self.uuid_; }
+  auto is_loaded(this const LuaAssetHandle& self) -> bool { return static_cast<bool>(self.uuid_); }
+
+  auto unload(this LuaAssetHandle& self) -> void {
+    if (!self.uuid_) {
+      return;
+    }
+
+    App::mod<AssetManager>().unload_asset(self.uuid_);
+    self.uuid_ = UUID(nullptr);
+  }
+
+private:
+  UUID uuid_ = {};
+};
+
+static auto acquire_asset(AssetManager& asset_man, const UUID& uuid) -> std::unique_ptr<LuaAssetHandle> {
+  if (!uuid || !asset_man.load_asset(uuid)) {
+    return nullptr;
+  }
+
+  return std::make_unique<LuaAssetHandle>(uuid);
+}
+
+// scripts only ever name game content, so their paths are relative to ASSETS_DIR
+static auto find_script_asset(AssetManager& asset_man, std::string_view path) -> UUID {
+  const auto uuid = asset_man.find_asset(std::filesystem::path(VFS::ASSETS_DIR) / path);
+  if (!uuid) {
+    OX_LOG_WARN("No asset was imported from '{}'.", path);
+  }
+
+  return uuid;
+}
+
 auto AssetManagerBinding::bind(sol::state* state) -> void {
   auto uuid_type = state->new_usertype<UUID>("UUID");
 
@@ -26,6 +73,28 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
   asset_manager.set_function("set_material_dirty", [](AssetManager* am, const UUID& uuid) {
     am->set_material_dirty(uuid);
   });
+  asset_manager.set_function("find_asset", [](AssetManager* am, std::string_view path) -> sol::optional<UUID> {
+    const auto uuid = find_script_asset(*am, path);
+    return uuid ? sol::optional<UUID>(uuid) : sol::nullopt;
+  });
+  asset_manager.set_function(
+    "acquire",
+    sol::overload(
+      [](AssetManager* am, std::string_view path) { return acquire_asset(*am, find_script_asset(*am, path)); },
+      [](AssetManager* am, const UUID& uuid) { return acquire_asset(*am, uuid); }
+    )
+  );
+
+  state->new_usertype<LuaAssetHandle>(
+    "AssetHandle",
+    sol::no_constructor,
+    "uuid",
+    &LuaAssetHandle::uuid,
+    "is_loaded",
+    &LuaAssetHandle::is_loaded,
+    "unload",
+    &LuaAssetHandle::unload
+  );
 
   state->new_enum(
     "SamplingMode",

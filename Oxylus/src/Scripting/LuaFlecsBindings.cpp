@@ -500,6 +500,9 @@ auto FlecsBinding::bind(sol::state* state) -> void {
     "count",
     [](ecs_iter_t* it) -> int32_t { return it->count; },
 
+    "delta_time",
+    [](ecs_iter_t* it) -> f32 { return it->delta_time; },
+
     "field",
     [state](ecs_iter_t* it, i32 index, sol::table component_table) {
       auto component = component_table.get<ecs_entity_t>("component_id");
@@ -701,6 +704,16 @@ auto FlecsBinding::bind(sol::state* state) -> void {
 
     "path",
     [](flecs::entity* e) -> std::string { return e->path().c_str(); },
+
+    "is_valid",
+    [](flecs::entity* e) -> bool { return e->is_valid(); },
+
+    "children",
+    [state](flecs::entity* e) -> sol::table {
+      auto children = state->create_table();
+      e->children([&children](flecs::entity child) { children.add(child); });
+      return children;
+    },
 
     "add",
     sol::overload(

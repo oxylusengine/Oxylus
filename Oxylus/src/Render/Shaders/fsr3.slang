@@ -11,8 +11,8 @@
 module fsr3;
 
 import common;
+__exported import shared;
 
-__include fsr3.constants;
 __include fsr3.common;
 __include fsr3.reproject;
 __include fsr3.sample;

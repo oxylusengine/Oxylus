@@ -3,13 +3,13 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <basisu/encoder/basisu_enc.h>
+#include <cstring>
 #include <glm/common.hpp>
 #include <glm/geometric.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <limits>
 #include <numbers>
-#include <stb_image_write.h>
-#include <utility>
 #include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetImporter.hpp"
@@ -21,6 +21,7 @@
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/JobManager.hpp"
+#include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
@@ -341,8 +342,10 @@ static auto render_audio_preview(const AudioPeaks& peaks, u32 size) -> std::vect
 static auto write_thumbnail_png(const std::filesystem::path& path, std::span<const u8> pixels, u32 size) -> void {
   ZoneScoped;
 
-  const auto isize = static_cast<i32>(size);
-  stbi_write_png(path.string().c_str(), isize, isize, 4, pixels.data(), isize * 4);
+  // color_rgba is laid out r, g, b, a, the same RGBA8 the thumbnail pixels are in
+  auto image = basisu::image(size, size);
+  std::memcpy(image.get_ptr(), pixels.data(), ox::min(pixels.size_bytes(), static_cast<usize>(size) * size * 4));
+  basisu::save_png(path.string().c_str(), image);
 }
 
 // A compiled texture is block compressed, so a preview cannot be resampled out of it. The smallest
@@ -362,6 +365,7 @@ static auto trim_to_thumbnail_mips(const TextureData& data, u32 size) -> Texture
     .width = data.mips[level].width,
     .height = data.mips[level].height,
     .layer_count = data.layer_count,
+    .components = data.components,
   };
   result.mips.assign(data.mips.begin() + static_cast<std::ptrdiff_t>(level), data.mips.end());
 
@@ -919,7 +923,7 @@ auto ThumbnailManager::get_thumbnail_texture(this ThumbnailManager& self, const 
 
       pack_path.clear();
       if (auto asset = asset_man.get_asset(uuid)) {
-        pack_path = asset->path;
+        pack_path = App::get_vfs().to_physical(asset->path);
       }
 
       if (pack_path.empty()) {
@@ -1024,7 +1028,7 @@ auto ThumbnailManager::get_thumbnail_material(this ThumbnailManager& self, const
 
   auto asset_path = std::filesystem::path{};
   if (auto asset = App::mod<AssetManager>().get_asset(material_uuid)) {
-    asset_path = asset->path;
+    asset_path = App::get_vfs().to_physical(asset->path);
   }
 
   return self.material_thumbnail_for(material_uuid, asset_path);
@@ -1215,7 +1219,7 @@ auto ThumbnailManager::invalidate_material(this ThumbnailManager& self, const UU
 
   auto meta_path = std::filesystem::path{};
   if (auto asset = App::mod<AssetManager>().get_asset(material_uuid)) {
-    meta_path = material_meta_path(asset->path);
+    meta_path = material_meta_path(App::get_vfs().to_physical(asset->path));
   }
 
   const auto live_key = live_cache_key(material_uuid);
@@ -1519,8 +1523,15 @@ auto ThumbnailManager::get_asset_hash(this const ThumbnailManager& self, const s
   ZoneScoped;
   memory::ScopedStack stack;
 
+  // the cook's versions too: a thumbnail cut from an older pack can't be read back once the format moves on
   auto last_write = std::filesystem::last_write_time(path).time_since_epoch().count();
-  auto signature = stack.format("{}{}", path.string(), last_write);
+  auto signature = stack.format(
+    "{}{}{}{}",
+    path.string(),
+    last_write,
+    rc::ASSET_COMPILER_VERSION,
+    AssetFileHeader::VERSION
+  );
 
   return fmt::format("{:016X}", fnv64_str(signature));
 }

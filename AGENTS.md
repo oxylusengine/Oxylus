@@ -99,9 +99,40 @@ Physics, Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI.
 `EventSystem` (`Core/EventSystem.hpp`) is a typed pub/sub bus keyed on `std::type_index`; event types
 are plain copyable structs (`WindowResizeEvent`, `AppCloseEvent`, `Editor::ScenePlayEvent`, ...).
 
-`VFS` (`Core/VFS.hpp`) maps virtual dirs to physical ones. `App::init` mounts `VFS::APP_DIR` to the
-assets path (`Assets` by default, override with `with_assets_directory`); `VFS::PROJECT_DIR` is
-editor-only. Runtime asset paths go through `resolve_physical_dir`.
+`VFS` (`Core/VFS.hpp`) maps virtual dirs to physical ones. A virtual path is `<virtual dir>/<relative>`
+(`assets_dir/Audio/engine.wav`); `to_physical`/`to_virtual` convert, and absolute paths pass through
+both untouched. Three mounts:
+
+- `VFS::APP_DIR`: the running program's own resources (the editor's fonts and shaders).
+- `VFS::ASSETS_DIR`: game content. `App::init` mounts both of these to the assets path (`Assets` by
+  default, override with `with_assets_directory`); the editor unmounts `ASSETS_DIR` at init and
+  `Project::load` remounts it to the project's asset directory. Gameplay code always uses this one,
+  so the same path works in the editor and in a shipped game.
+- `VFS::COOKED_DIR`: compiled `.oxpack` payloads and the asset manifest. The editor mounts it on its
+  asset cache; a game gets `<assets>/.cooked` (`VFS::COOKED_SUBDIR`).
+
+**The editor is optional for shipping.** Importing (sidecars, UUIDs, cooking models and textures into
+packs) lives in ResourceCompiler (`public/AssetImport.hpp`), not the editor. The editor calls
+`rc::import_asset` into its cache and registers what comes back; a game build runs the same code
+through `rcli --cook-assets <assets> --output <targetdir>/Assets/.cooked` (the `ox.cook_assets` rule),
+which also writes `assets.oxmanifest` (`Asset/AssetManifest.hpp`). `AssetManager::init` registers
+everything in it. A cook writes a sidecar for any asset that lacks one, commit those. ResourceCompiler
+is a shared library with its own copy of the engine's statics, so code there reports through
+`Session` diagnostics, never `OX_LOG_*` or `App`.
+
+Textures cook to GPU block formats (`ResourceCompiler/private/TextureCompiler.cpp`) with basis_universal
+(the `basisu-ox` package), the one image library in the project: it also decodes PNG/JPEG at runtime and
+writes the editor's thumbnails, so don't add stb, libktx or another codec. An `rc::TextureUsage` picks
+the format: colour is BC7 sRGB, packed data BC7 linear, normals BC5 (the renderer rebuilds z), single
+channels BC4 read back as `rrr1` through `TextureData::components`. Usage comes from the glTF material
+slot, then a sidecar `"usage"`, then inference (grayscale source, a normal-map file name). DDS (BC1-5,
+BC7, uncompressed) and Basis Universal KTX2 are accepted; plain-format KTX2 is not.
+
+`Asset::path` (where the payload loads from) and `Asset::source_path` (the file it was imported
+from, looked up by `AssetManager::find_asset`) are stored virtual; `register_asset`/`create_asset`
+convert whatever they are given, and anything that opens the file calls `to_physical` first.
+Lua scripts load their siblings with `require_script("relative/to/this/file.lua")`, cached per
+`LuaSystem`, and name other assets relative to `ASSETS_DIR` (`Mod.AssetManager:acquire("Audio/x.wav")`).
 
 ### Scene / ECS
 
@@ -170,6 +201,16 @@ Shaders are Slang (`Oxylus/src/Render/Shaders/`, editor-only ones under `Shaders
 produces `engine.oxpack` / `editor.oxpack` next to the binary. At runtime `Renderer::init` unpacks
 `engine.oxpack` and calls `RenderContext::create_pipeline` for each entry. **Adding a shader means
 editing the TOML**, and the rule parses the TOML to register `.slang` files as build dependencies.
+
+**GPU-visible types are written once.** `Oxylus/include/Render/GPU/Shared.hpp` holds every struct,
+enum, and constant that both C++ and Slang read, in Slang spelling (`f32x3`, `u32x2`, `mat4`), and
+`Render/GPU/Prelude.hpp` aliases those to glm for C++ and supplies `OX_CONST`, `OX_PTR(T)` (a `u64`
+device address in C++), and `OX_BITMASK`. Slang sees it only through `Shaders/shared.slang` (a legacy
+module, so everything is public), which `scene`, `gpu`, `particles`, `ddgi`, and `fsr3` re-export;
+never `#include` the header from another shader. Shader-side methods go in `extension` blocks in the
+`.slang` files, and C++-only helpers stay in `Scene/SceneGPU.hpp`. No `bool` fields and no field that
+exists on only one side. The `GPULayoutCheck` target runs `rcli --gpu-layout` over Slang reflection
+and static_asserts every field's offset and size, so a layout mismatch is a build error.
 
 `RendererInstance.hpp` defines the frame structure: a fixed `RenderStage` enum (Initialization,
 Culling, VisBufferEncode/Decode, Forward2D, Lighting, PostProcessing, Atmosphere, Debug, FinalOutput)

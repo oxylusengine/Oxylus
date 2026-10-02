@@ -15,6 +15,7 @@
 #include "CinematicEditorPanel.hpp"
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
+#include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "ParticleEditorPanel.hpp"
@@ -870,7 +871,7 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
   }
 
   const auto type = asset->type;
-  const auto path = asset->path;
+  const auto path = App::get_vfs().to_physical(asset->path);
   const auto material_id = type == AssetType::Material ? asset->material_id : MaterialID::Invalid;
   const auto audio_id = type == AssetType::Audio ? asset->audio_id : AudioID::Invalid;
   const auto script_id = type == AssetType::Script ? asset->script_id : ScriptID::Invalid;
@@ -983,7 +984,7 @@ auto InspectorPanel::draw_asset_info(
 
   const auto asset_type = asset->type;
   const auto asset_uuid = asset->uuid;
-  const auto asset_path = asset->path;
+  const auto asset_path = App::get_vfs().to_physical(asset->path);
   asset.reset();
 
   auto type_str = AssetManager::to_asset_type_sv(asset_type);

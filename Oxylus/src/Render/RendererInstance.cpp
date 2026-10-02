@@ -37,6 +37,10 @@ struct ShadowSlotStats {
 // prevent slot churn near frustum and priority boundaries
 constexpr static f32 SHADOW_SLOT_HYSTERESIS = 1.25f;
 
+static auto to_lut_size(const vuk::Extent3D& extent) -> glm::ivec3 {
+  return {static_cast<i32>(extent.width), static_cast<i32>(extent.height), static_cast<i32>(extent.depth)};
+}
+
 static auto atmosphere_lut_inputs_equal(const GPU::Atmosphere& a, const GPU::Atmosphere& b) -> bool {
   return a.rayleigh_scatter == b.rayleigh_scatter &&           //
          a.rayleigh_density == b.rayleigh_density &&           //
@@ -2095,7 +2099,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   CameraComponent cam = freeze_culling ? frozen_camera : current_camera;
 
-  self.camera_data = GPU::CameraData{
+  self.camera_data = GPU::Camera{
     .position = glm::vec4(cam.position, 0.0f),
     .projection = cam.get_projection_matrix(),
     .inv_projection = cam.get_inv_projection_matrix(),
@@ -2207,10 +2211,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.atmosphere.ozone_thickness = atmos_info.ozone_thickness;
       self.atmosphere.aerial_perspective_start_km = atmos_info.aerial_perspective_start_km;
       self.atmosphere.aerial_perspective_exposure = atmos_info.aerial_perspective_exposure;
-      self.atmosphere.sky_view_lut_size = self.sky_view_lut_extent;
-      self.atmosphere.aerial_perspective_lut_size = self.sky_aerial_perspective_lut_extent;
-      self.atmosphere.transmittance_lut_size = self.sky_transmittance_lut.get_extent();
-      self.atmosphere.multiscattering_lut_size = self.sky_multiscatter_lut.get_extent();
+      self.atmosphere.sky_view_lut_size = to_lut_size(self.sky_view_lut_extent);
+      self.atmosphere.aerial_perspective_lut_size = to_lut_size(self.sky_aerial_perspective_lut_extent);
+      self.atmosphere.transmittance_lut_size = to_lut_size(self.sky_transmittance_lut.get_extent());
+      self.atmosphere.multiscattering_lut_size = to_lut_size(self.sky_multiscatter_lut.get_extent());
     });
 
   self.scene.world

@@ -17,8 +17,7 @@ target("ResourceCompiler")
     "zpp_bits",
     "fastgltf-ox",
     "meshoptimizer",
-    "ktx-ox",
-    "stb",
+    "basisu-ox",
     "glm",
     { public = false })
 
@@ -36,4 +35,40 @@ target("rcli")
   add_deps("ResourceCompiler")
   add_packages("fmt", "toml++", "shader-slang", "zpp_bits", "glm", "unordered_dense")
 
+target_end()
+
+-- fails the build when a Render/GPU/Shared.hpp type lays out differently in C++ than in Slang
+target("GPULayoutCheck")
+  set_kind("object")
+  set_languages("cxx23")
+
+  add_deps("Oxylus", "rcli")
+  add_files("./check/GPULayoutCheck.cpp")
+
+  on_config(function (target)
+    target:add("includedirs", path.join(target:autogendir(), "gpu_layout"))
+  end)
+
+  before_build(function (target)
+    import("core.project.depend")
+
+    local rcli = target:dep("rcli"):targetfile()
+    local root = path.join(target:scriptdir(), "..")
+    local module = path.join(root, "Oxylus/src/Render/Shaders/shared.slang")
+    local output = path.join(target:autogendir(), "gpu_layout", "GPULayoutAsserts.inl")
+    local inputs = {
+      module,
+      path.join(root, "Oxylus/include/Render/GPU/Shared.hpp"),
+      path.join(root, "Oxylus/include/Render/GPU/Prelude.hpp"),
+      rcli,
+    }
+
+    depend.on_changed(function ()
+      os.vrunv(rcli, { "--gpu-layout", module, "--output", output, "--include-dir", path.join(root, "Oxylus/include") })
+    end, {
+      dependfile = target:dependfile(output),
+      files = inputs,
+      changed = target:is_rebuilt() or not os.isfile(output),
+    })
+  end)
 target_end()

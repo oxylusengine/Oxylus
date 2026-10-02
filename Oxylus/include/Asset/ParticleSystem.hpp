@@ -19,15 +19,7 @@
 namespace ox {
 enum class ParticleSystemID : u64 { Invalid = std::numeric_limits<u64>::max() };
 
-enum class ParticleEmissionShape : u32 {
-  Point = 0,
-  Sphere,
-  Hemisphere,
-  Box,
-  Circle,
-  Cone,
-  Count,
-};
+using ParticleEmissionShape = GPU::ParticleEmissionShape;
 
 enum class ParticleSimulationSpace : u32 {
   World = 0,
@@ -107,7 +99,7 @@ struct ParticleGradient {
 };
 
 struct ParticleSystem {
-  constexpr static u32 CURVE_ATLAS_WIDTH = 64;
+  constexpr static u32 CURVE_ATLAS_WIDTH = GPU::PARTICLE_CURVE_ATLAS_WIDTH;
 
   ParticleEmitterSettings emitter = {};
   ParticleRenderSettings render = {};

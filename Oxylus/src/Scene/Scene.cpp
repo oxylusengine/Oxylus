@@ -33,6 +33,7 @@
 #include <sol/state.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
 #include "Core/Option.hpp"
 #include "Memory/Stack.hpp"
@@ -109,6 +110,28 @@ static auto unlink_skinned_mesh(Scene& scene, flecs::entity entity) -> void {
 static auto physics_debug_draw_enabled(const Scene& scene) -> bool {
   return scene.renderer_cvar.cvar_enable_debug_renderer.as_bool() &&
          scene.renderer_cvar.cvar_enable_physics_debug_renderer.as_bool();
+}
+
+static auto apply_audio_source(ma_sound* sound, const AudioSourceComponent& c, flecs::entity entity) -> void {
+  auto& audio_engine = App::mod<AudioEngine>();
+  audio_engine.set_source_attenuation_model(sound, static_cast<AudioEngine::AttenuationModelType>(c.attenuation_model));
+  audio_engine.set_source_volume(sound, c.volume);
+  audio_engine.set_source_pitch(sound, c.pitch);
+  audio_engine.set_source_looping(sound, c.looping);
+  audio_engine.set_source_spatialization(sound, c.spatialization);
+  if (c.spatialization) {
+    // the cone points down local -z, the same way the listener faces
+    const auto world = Scene::get_world_transform(entity);
+    audio_engine.set_source_position(sound, glm::vec3(world[3]));
+    audio_engine.set_source_direction(sound, -glm::normalize(glm::vec3(world[2])));
+  }
+  audio_engine.set_source_roll_off(sound, c.roll_off);
+  audio_engine.set_source_min_gain(sound, c.min_gain);
+  audio_engine.set_source_max_gain(sound, c.max_gain);
+  audio_engine.set_source_min_distance(sound, c.min_distance);
+  audio_engine.set_source_max_distance(sound, c.max_distance);
+  audio_engine.set_source_cone(sound, c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain);
+  audio_engine.set_source_doppler_factor(sound, c.doppler_factor);
 }
 
 struct JsonEntityDeserializer : IEntitySerializer {
@@ -802,24 +825,10 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
       auto& asset_man = App::mod<AssetManager>();
       auto audio_asset = asset_man.get_audio(c.audio_source);
-      if (!audio_asset)
+      if (!audio_asset || !audio_asset->get_source())
         return;
 
-      auto& audio_engine = App::mod<AudioEngine>();
-      audio_engine.set_source_volume(audio_asset->get_source(), c.volume);
-      audio_engine.set_source_pitch(audio_asset->get_source(), c.pitch);
-      audio_engine.set_source_looping(audio_asset->get_source(), c.looping);
-      audio_engine.set_source_attenuation_model(
-        audio_asset->get_source(),
-        static_cast<AudioEngine::AttenuationModelType>(c.attenuation_model)
-      );
-      audio_engine.set_source_roll_off(audio_asset->get_source(), c.roll_off);
-      audio_engine.set_source_min_gain(audio_asset->get_source(), c.min_gain);
-      audio_engine.set_source_max_gain(audio_asset->get_source(), c.max_gain);
-      audio_engine.set_source_min_distance(audio_asset->get_source(), c.min_distance);
-      audio_engine.set_source_max_distance(audio_asset->get_source(), c.max_distance);
-      audio_engine
-        .set_source_cone(audio_asset->get_source(), c.cone_inner_angle, c.cone_outer_angle, c.cone_outer_gain);
+      apply_audio_source(audio_asset->get_source(), c, it.entity(i));
     });
 
   self.world.observer<SpriteAnimationComponent>()
@@ -983,31 +992,11 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.system<const TransformComponent, AudioSourceComponent>("audio_source_update")
     .kind(flecs::PreUpdate)
-    .each([](const flecs::entity& e, const TransformComponent& tc, const AudioSourceComponent& ac) {
+    .each([](const flecs::entity& e, const TransformComponent&, const AudioSourceComponent& ac) {
       auto& asset_man = App::mod<AssetManager>();
-      if (auto audio = asset_man.get_audio(ac.audio_source)) {
-        auto& audio_engine = App::mod<AudioEngine>();
-        audio_engine.set_source_attenuation_model(
-          audio->get_source(),
-          static_cast<AudioEngine::AttenuationModelType>(ac.attenuation_model)
-        );
-        audio_engine.set_source_volume(audio->get_source(), ac.volume);
-        audio_engine.set_source_pitch(audio->get_source(), ac.pitch);
-        audio_engine.set_source_looping(audio->get_source(), ac.looping);
-        audio_engine.set_source_spatialization(audio->get_source(), ac.spatialization);
-        if (ac.spatialization) {
-          // the cone points down local -z, the same way the listener faces
-          const auto world = Scene::get_world_transform(e);
-          audio_engine.set_source_position(audio->get_source(), glm::vec3(world[3]));
-          audio_engine.set_source_direction(audio->get_source(), -glm::normalize(glm::vec3(world[2])));
-        }
-        audio_engine.set_source_roll_off(audio->get_source(), ac.roll_off);
-        audio_engine.set_source_min_gain(audio->get_source(), ac.min_gain);
-        audio_engine.set_source_max_gain(audio->get_source(), ac.max_gain);
-        audio_engine.set_source_min_distance(audio->get_source(), ac.min_distance);
-        audio_engine.set_source_max_distance(audio->get_source(), ac.max_distance);
-        audio_engine.set_source_cone(audio->get_source(), ac.cone_inner_angle, ac.cone_outer_angle, ac.cone_outer_gain);
-        audio_engine.set_source_doppler_factor(audio->get_source(), ac.doppler_factor);
+      auto audio = asset_man.get_audio(ac.audio_source);
+      if (audio && audio->get_source()) {
+        apply_audio_source(audio->get_source(), ac, e);
       }
     });
 
@@ -1334,6 +1323,25 @@ auto Scene::runtime_start(this Scene& self) -> void {
     }
   );
 
+  auto& asset_man = App::mod<AssetManager>();
+  auto& audio_engine = App::mod<AudioEngine>();
+  self.world.query_builder<const AudioSourceComponent>().build().each(
+    [&](flecs::entity e, const AudioSourceComponent& ac) {
+      if (!ac.play_on_awake) {
+        return;
+      }
+
+      auto audio = asset_man.get_audio(ac.audio_source);
+      if (!audio || !audio->get_source()) {
+        return;
+      }
+
+      // settings first so a spatialized sound doesn't start at the origin
+      apply_audio_source(audio->get_source(), ac, e);
+      audio_engine.play_source(audio->get_source());
+    }
+  );
+
   // Scripting
   for (auto& [_, system] : self.lua_systems) {
     system->on_scene_start(&self);
@@ -1350,6 +1358,16 @@ auto Scene::runtime_stop(this Scene& self) -> void {
   );
 
   self.physics_deinit();
+
+  // the play scene shares each asset's sound with the edit scene, so it would keep playing after stop
+  auto& asset_man = App::mod<AssetManager>();
+  auto& audio_engine = App::mod<AudioEngine>();
+  self.world.query_builder<const AudioSourceComponent>().build().each([&](const AudioSourceComponent& ac) {
+    auto audio = asset_man.get_audio(ac.audio_source);
+    if (audio && audio->get_source()) {
+      audio_engine.stop_source(audio->get_source());
+    }
+  });
 
   // Scripting
   for (auto& [_, system] : self.lua_systems) {

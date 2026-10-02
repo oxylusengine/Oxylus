@@ -8,14 +8,6 @@ import scene;
 [[vk::binding(3)]] RWStructuredBuffer<u32x2> skinned_positions;
 [[vk::binding(4)]] RWStructuredBuffer<u32> skinned_normals;
 
-struct SkinJob {
-    u32 mesh_instance_index;
-    u32 vertex_offset;
-    u32 bone_offset;
-    u32 vertex_count;
-    u32 bone_count;
-};
-
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]
 func cs_main(u32x3 thread_id: SV_DispatchThreadID, uniform SkinJob job) -> void {

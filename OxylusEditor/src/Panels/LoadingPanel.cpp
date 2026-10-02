@@ -116,7 +116,7 @@ auto LoadingPanel::load_project(this LoadingPanel& self) -> void {
   }
 
   auto& vfs = App::get_vfs();
-  const auto start_scene = vfs.resolve_physical_dir(VFS::PROJECT_DIR, active_project->get_config().start_scene);
+  const auto start_scene = vfs.resolve_physical_dir(VFS::ASSETS_DIR, active_project->get_config().start_scene);
   editor.reset();
   // The project's assets are still cooking; `Editor::update` opens this once they are in.
   editor.pending_start_scene = start_scene;
@@ -132,14 +132,14 @@ auto LoadingPanel::start_thumbnail_prewarm(this LoadingPanel& self) -> void {
   ZoneScoped;
 
   auto& vfs = App::get_vfs();
-  if (!vfs.is_mounted_dir(VFS::PROJECT_DIR)) {
+  if (!vfs.is_mounted_dir(VFS::ASSETS_DIR)) {
     return;
   }
 
   auto requests = std::vector<ThumbnailPrewarmRequest>();
   auto error = std::error_code();
   auto directory_it = std::filesystem::recursive_directory_iterator(
-    vfs.resolve_physical_dir(VFS::PROJECT_DIR, ""),
+    vfs.resolve_physical_dir(VFS::ASSETS_DIR, ""),
     std::filesystem::directory_options::skip_permission_denied,
     error
   );

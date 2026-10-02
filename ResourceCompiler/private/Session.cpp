@@ -7,6 +7,7 @@
 #include <zpp_bits.h>
 
 #include "ModelCompiler.hpp"
+#include "OS/File.hpp"
 #include "Parallel.hpp"
 #include "ShaderSession.hpp"
 #include "TextureCompiler.hpp"
@@ -224,6 +225,77 @@ auto Session::compile() -> bool {
 
 auto Session::write_to_file(const std::filesystem::path& output_path) -> bool {
   return impl->asset_file.pack(output_path);
+}
+
+auto Session::reflect_layouts(const ShaderSessionInfo& session_info, const std::filesystem::path& path)
+  -> std::expected<std::vector<ReflectedType>, std::string> {
+  ZoneScoped;
+
+  // same session options as the shader build, reflection offsets only mean anything under the
+  // scalar layout the real pipelines are compiled with
+  auto slang_session = create_shader_session(impl->slang_global_session, session_info);
+  if (!slang_session) {
+    return std::unexpected(fmt::format("Failed to create shader session '{}'.", session_info.name));
+  }
+
+  const auto source = File::to_string(path);
+  if (source.empty()) {
+    return std::unexpected(fmt::format("'{}' is empty or unreadable.", path.string()));
+  }
+
+  const auto module_name = path.stem().string();
+  const auto path_str = path.string();
+  auto diagnostics = Slang::ComPtr<slang::IBlob>();
+  auto* module = slang_session->loadModuleFromSourceString(
+    module_name.c_str(),
+    path_str.c_str(),
+    source.c_str(),
+    diagnostics.writeRef()
+  );
+  if (!module) {
+    auto message = diagnostics ? std::string(
+                                   static_cast<const c8*>(diagnostics->getBufferPointer()),
+                                   diagnostics->getBufferSize()
+                                 )
+                               : std::string("no diagnostics");
+    return std::unexpected(fmt::format("Failed to load '{}': {}", path_str, message));
+  }
+
+  auto* program_layout = module->getLayout();
+  auto* module_decl = module->getModuleReflection();
+  if (!program_layout || !module_decl) {
+    return std::unexpected(fmt::format("'{}' has no reflection data.", path_str));
+  }
+
+  auto types = std::vector<ReflectedType>();
+  for (u32 child_index = 0; child_index < module_decl->getChildrenCount(); child_index++) {
+    auto* decl = module_decl->getChild(child_index);
+    const auto kind = decl->getKind();
+    if (kind != slang::DeclReflection::Kind::Struct && kind != slang::DeclReflection::Kind::Enum) {
+      continue;
+    }
+
+    auto* type_layout = program_layout->getTypeLayout(decl->getType(), slang::LayoutRules::DefaultStructuredBuffer);
+    if (!type_layout) {
+      return std::unexpected(fmt::format("No layout for '{}'.", decl->getName()));
+    }
+
+    auto& type = types.emplace_back(ReflectedType{.name = decl->getName(), .size = type_layout->getSize()});
+    if (kind != slang::DeclReflection::Kind::Struct) {
+      continue;
+    }
+
+    for (u32 field_index = 0; field_index < type_layout->getFieldCount(); field_index++) {
+      auto* field = type_layout->getFieldByIndex(field_index);
+      type.fields.push_back({
+        .name = field->getName(),
+        .offset = field->getOffset(),
+        .size = field->getTypeLayout()->getSize(),
+      });
+    }
+  }
+
+  return types;
 }
 
 auto Session::process(const TextureCompileRequest& request) -> option<TextureData> {
