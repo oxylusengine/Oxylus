@@ -12,31 +12,28 @@
 namespace ox {
 // one reference held on the script's behalf, dropped by `unload()` or when lua collects the handle, so a script that
 // forgets to unload can't pin the asset forever
-class LuaAssetHandle {
-public:
-  explicit LuaAssetHandle(const UUID& uuid) : uuid_(uuid) {}
+struct LuaAssetHandle {
+  UUID uuid = {};
+
+  explicit LuaAssetHandle(const UUID& asset_uuid) : uuid(asset_uuid) {}
   LuaAssetHandle(const LuaAssetHandle&) = delete;
   auto operator=(const LuaAssetHandle&) -> LuaAssetHandle& = delete;
   ~LuaAssetHandle() { unload(); }
 
-  auto uuid(this const LuaAssetHandle& self) -> UUID { return self.uuid_; }
-  auto is_loaded(this const LuaAssetHandle& self) -> bool { return static_cast<bool>(self.uuid_); }
+  auto is_loaded(this const LuaAssetHandle& self) -> bool { return static_cast<bool>(self.uuid); }
 
   auto unload(this LuaAssetHandle& self) -> void {
-    if (!self.uuid_) {
+    if (!self.uuid) {
       return;
     }
 
     // LuaManager deinits last, so a handle collected at shutdown outlives the AssetManager it would release into
     if (App::has_mod<AssetManager>()) {
-      App::mod<AssetManager>().unload_asset(self.uuid_);
+      App::mod<AssetManager>().unload_asset(self.uuid);
     }
 
-    self.uuid_ = UUID(nullptr);
+    self.uuid = UUID(nullptr);
   }
-
-private:
-  UUID uuid_ = {};
 };
 
 static auto acquire_asset(AssetManager& asset_man, const UUID& uuid) -> std::unique_ptr<LuaAssetHandle> {
@@ -93,7 +90,7 @@ auto AssetManagerBinding::bind(sol::state* state) -> void {
     "AssetHandle",
     sol::no_constructor,
     "uuid",
-    &LuaAssetHandle::uuid,
+    [](const LuaAssetHandle& handle) { return handle.uuid; },
     "is_loaded",
     &LuaAssetHandle::is_loaded,
     "unload",
