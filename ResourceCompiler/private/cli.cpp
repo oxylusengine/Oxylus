@@ -121,7 +121,7 @@ auto main(i32 argc, c8** argv) -> i32 {
   }
 
   auto silent = args.contains("--silent");
-  auto log = [silent](std::string_view msg) {
+  auto log = [silent](std::string_view msg) -> void {
     if (!silent) {
       fmt::println("{}", msg);
     }
@@ -155,6 +155,27 @@ auto main(i32 argc, c8** argv) -> i32 {
 
   if (args.contains("--cook-assets")) {
     return cook_assets(args, session.value(), log);
+  }
+
+  if (auto layout_argi = args.get_index("--gpu-layout"); layout_argi.has_value()) {
+    auto module_arg = args.get(layout_argi.value() + 1);
+    auto output_arg = option<AppCommandLineArgs::Arg>(nullopt);
+    if (auto output_argi = args.get_index("--output"); output_argi.has_value()) {
+      output_arg = args.get(output_argi.value() + 1);
+    }
+    if (
+      !module_arg.has_value() || module_arg->arg_str.empty() || module_arg->arg_str.starts_with("--") ||
+      !output_arg.has_value() || output_arg->arg_str.empty() || output_arg->arg_str.starts_with("--")
+    ) {
+      log("Usage: `rcli --gpu-layout <shared module> --output <asserts file>`");
+      return 1;
+    }
+
+    return write_gpu_layout_asserts(
+      session.value(),
+      std::filesystem::absolute(module_arg->arg_str),
+      std::filesystem::absolute(output_arg->arg_str)
+    );
   }
 
   auto config_argi = args.get_index("--config");
