@@ -55,7 +55,12 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local output_name = target:extraconf("rules", "ox.compile_shaders", "output_name")
       or (path.basename(sourcefile) .. ".oxpack")
 
-  local rcli        = target:dep("rcli"):targetfile()
+  import("private.action.run.runenvs")
+
+  local rcli_target = target:dep("rcli")
+  local rcli        = rcli_target:targetfile()
+  -- windows has no rpath, rcli finds slang's dlls through the package PATH
+  local rcli_envs   = runenvs.join(runenvs.make(rcli_target))
   local abs_output  = path.absolute(path.join(target:targetdir(), output_dir, output_name))
 
   local args        = { "--config", config_path, "--output", abs_output }
@@ -64,7 +69,7 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
     "${color.build.object}compiling shaders from %s -> %s",
     path.filename(config_path), output_name)
   batchcmds:mkdir(path.directory(abs_output))
-  batchcmds:vrunv(rcli, args)
+  batchcmds:vrunv(rcli, args, { envs = rcli_envs })
 
   batchcmds:add_depfiles(sourcefile)
   batchcmds:add_depfiles(rcli)
@@ -101,11 +106,15 @@ end)
 rule("ox.cook_assets")
 after_build(function(target)
   import("core.project.depend")
+  import("private.action.run.runenvs")
 
   local root_dir = target:extraconf("rules", "ox.cook_assets", "root_dir")
   local output_dir = target:extraconf("rules", "ox.cook_assets", "output_dir") or "Assets/.cooked"
   local abs_output = path.absolute(path.join(target:targetdir(), output_dir))
-  local rcli = target:dep("rcli"):targetfile()
+  local rcli_target = target:dep("rcli")
+  local rcli = rcli_target:targetfile()
+  -- windows has no rpath, rcli finds slang's dlls through the package PATH
+  local rcli_envs = runenvs.join(runenvs.make(rcli_target))
 
   -- rcli skips a warm asset on its own, this only saves walking the tree when nothing moved. The file list goes in
   -- `values` too: mtimes alone never notice a file that was added or removed
@@ -113,7 +122,7 @@ after_build(function(target)
   table.sort(sources)
   depend.on_changed(function()
     cprint("${color.build.object}cooking assets %s -> %s", root_dir, abs_output)
-    os.vrunv(rcli, { "--cook-assets", root_dir, "--output", abs_output })
+    os.vrunv(rcli, { "--cook-assets", root_dir, "--output", abs_output }, { envs = rcli_envs })
   end, {
     dependfile = target:dependfile("ox.cook_assets"),
     files = table.join(sources, { rcli }),
