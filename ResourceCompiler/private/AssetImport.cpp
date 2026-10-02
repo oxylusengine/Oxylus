@@ -687,9 +687,11 @@ static auto compile_model(Importer& importer, const std::filesystem::path& path,
       continue;
     }
 
-    entry.uuid = texture_index < previous_textures.size() && previous_textures[texture_index].uuid
-                   ? previous_textures[texture_index].uuid
-                   : UUID::generate_random();
+    // an external slot's UUID belongs to the sibling file's sidecar, reusing it would write over that file's pack
+    const auto is_previous_embedded = texture_index < previous_textures.size() &&
+                                      previous_textures[texture_index].uuid &&
+                                      previous_textures[texture_index].external.empty();
+    entry.uuid = is_previous_embedded ? previous_textures[texture_index].uuid : UUID::generate_random();
 
     entry.cache = entry.uuid.str() + ".oxpack";
     if (!write_texture_pack(importer.cooked_dir / entry.cache, std::move(compiled_texture.data), entry.uuid)) {
