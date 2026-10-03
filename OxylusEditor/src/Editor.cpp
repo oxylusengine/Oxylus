@@ -15,7 +15,9 @@
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
 #include "Panels/ActivityLogPanel.hpp"
+#include "Panels/AnimationEditorPanel.hpp"
 #include "Panels/AssetManagerPanel.hpp"
+#include "Panels/CinematicEditorPanel.hpp"
 #include "Panels/ContentPanel.hpp"
 #include "Panels/EditorSettingsPanel.hpp"
 #include "Panels/InspectorPanel.hpp"
@@ -117,6 +119,8 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_panel_registry.add<LoadingPanel>();
   self.editor_panel_registry.add<AssetManagerPanel>();
   self.editor_panel_registry.add<ParticleEditorPanel>();
+  self.editor_panel_registry.add<AnimationEditorPanel>();
+  self.editor_panel_registry.add<CinematicEditorPanel>();
   auto activity_log_panel = self.editor_panel_registry.add<ActivityLogPanel>();
   activity_log_panel->set_system(&self.notification_system);
   self.editor_panel_registry.add<TextEditorPanel>();
@@ -438,6 +442,9 @@ auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -
     // The readback records GPU work, so it has to finish here on the main thread; the job below
     // only writes files.
     auto edits_path = sync_terrain_edits_asset(*scene->get_scene(), scene_path);
+    // a scrubbed cinematic has written into the live scene, and the file has to hold the authored
+    // values instead
+    scene->get_scene()->restore_cinematics();
     auto edits_uuid = UUID{};
     if (!edits_path.empty()) {
       edits_uuid = scene->get_scene()->terrain_edits_ref;
@@ -620,6 +627,7 @@ void Editor::draw_menubar(this Editor& self) {
       ImGui::MenuItem("Scene hierarchy", nullptr, &self.editor_panel_registry.get<SceneHierarchyPanel>().visible);
       ImGui::MenuItem("Text Editor", nullptr, &self.editor_panel_registry.get<TextEditorPanel>().visible);
       ImGui::MenuItem("Particle Editor", nullptr, &self.editor_panel_registry.get<ParticleEditorPanel>().visible);
+      ImGui::MenuItem("Cinematic Editor", nullptr, &self.editor_panel_registry.get<CinematicEditorPanel>().visible);
       if (ImGui::BeginMenu("Layout")) {
         if (ImGui::MenuItem("Classic")) {
           self.set_docking_layout(EditorLayout::Classic);
@@ -719,8 +727,8 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
         content_panel_text.c_str(),
         content_panel.visible,
         {},
-        1.f,
-        1.f,
+        1.0f,
+        1.0f,
         ImGuiButtonFlags_None,
         ImGuiCol_Header
       )
@@ -747,8 +755,8 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
         activity_log_text.c_str(),
         activity_log_panel_state,
         {},
-        1.f,
-        1.f,
+        1.0f,
+        1.0f,
         ImGuiButtonFlags_None,
         ImGuiCol_Header
       )

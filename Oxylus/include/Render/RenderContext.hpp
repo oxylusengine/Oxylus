@@ -146,6 +146,21 @@ public:
 
   auto get_accel_structure_device_address(this const RenderContext&, VkAccelerationStructureKHR handle) -> u64;
 
+  auto cmd_write_accel_structure_compacted_size(
+    this const RenderContext& self,
+    VkCommandBuffer command_buffer,
+    VkAccelerationStructureKHR handle,
+    VkQueryPool query_pool,
+    u32 query_index
+  ) -> void;
+  auto cmd_copy_accel_structure(
+    this const RenderContext& self, VkCommandBuffer command_buffer, const VkCopyAccelerationStructureInfoKHR& info
+  ) -> void;
+
+  auto create_query_pool(this const RenderContext& self, VkQueryType type, u32 count) -> VkQueryPool;
+  auto destroy_query_pool(this const RenderContext& self, VkQueryPool query_pool) -> void;
+  auto read_query_pool(this const RenderContext& self, VkQueryPool query_pool, std::span<u64> results) -> bool;
+
   auto resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
     -> vuk::Unique<vuk::Buffer>;
 

@@ -386,7 +386,41 @@ public extension MeshletBounds {
     }
 };
 
+public extension SkinningTransform {
+    public func rotate(in f32x3 v) -> f32x3 {
+        let axis = rotation.xyz;
+        return v + 2.0 * cross(axis, cross(axis, v) + rotation.w * v);
+    }
+
+    public func transform_point(in f32x3 p) -> f32x3 {
+        return rotate(p * translation_scale.w) + translation_scale.xyz;
+    }
+
+    public func transform_normal(in f32x3 n) -> f32x3 {
+        return rotate(n);
+    }
+};
+
+public extension MeshInstance {
+    public func is_skinned() -> bool {
+        return skinned_vertex_positions != nullptr;
+    }
+};
+
 public extension Mesh {
+
+    // redirects vertex fetch at the instance's skinned copy, which the skinning pass wrote in the
+    // same quantized format, so meshlet decode, LOD selection and culling bounds work unchanged
+    [[mutating]]
+    public func apply_skin(in MeshInstance instance) {
+        if (instance.skinned_vertex_positions == nullptr) {
+            return;
+        }
+
+        this.vertex_positions = instance.skinned_vertex_positions;
+        this.vertex_normals = instance.skinned_vertex_normals;
+        this.bounds = instance.skinned_bounds;
+    }
 
     public func decode_position(u32 index) -> f32x3 {
         return f32x3(

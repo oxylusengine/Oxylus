@@ -40,6 +40,9 @@ public:
   // Returns true when it pointed the field somewhere else.
   auto draw_asset_field(this InspectorPanel& self, std::string_view label, UUID& uuid) -> bool;
 
+  // switches an animation field between the clips imported from the same model
+  auto draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid) -> bool;
+
   // Type specific editor for whatever `uuid` names, shown under an asset field and under a file
   // selected in the content browser.
   auto draw_asset_contents(this InspectorPanel& self, const UUID& uuid) -> void;

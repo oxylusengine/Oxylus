@@ -74,6 +74,21 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   }
 
   {
+    using C = SkinnedMeshComponent;
+    registry.bind<&C::skeleton_uuid>();
+  }
+
+  {
+    using C = AnimatorComponent;
+    registry.bind<&C::clip_uuid, &C::speed, &C::blend_time, &C::loop, &C::playing>();
+  }
+
+  {
+    using C = CinematicPlayerComponent;
+    registry.bind<&C::cinematic_uuid, &C::speed, &C::loop, &C::play_on_awake, &C::playing, &C::restore_on_stop>();
+  }
+
+  {
     using C = SpriteComponent;
     registry.bind<&C::layer, &C::sort_y, &C::flip_x, &C::material>().tags<Networked>();
   }
@@ -85,7 +100,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = CameraComponent;
-    registry.bind<&C::projection, &C::fov, &C::aspect, &C::far_clip, &C::near_clip, &C::tilt, &C::zoom>();
+    registry.bind<&C::projection, &C::fov, &C::aspect, &C::far_clip, &C::near_clip, &C::tilt, &C::zoom, &C::active>();
   }
 
   {
@@ -207,6 +222,16 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   {
     using C = FilmGrainComponent;
     registry.bind<&C::amount, &C::scale>();
+  }
+
+  {
+    using C = LetterboxComponent;
+    registry.bind<&C::amount, &C::target_aspect, &C::color>();
+  }
+
+  {
+    using C = ScreenFadeComponent;
+    registry.bind<&C::color, &C::amount>();
   }
 
   // Physics Components

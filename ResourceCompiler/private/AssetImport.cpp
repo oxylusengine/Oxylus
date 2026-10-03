@@ -90,6 +90,10 @@ struct ImportedModelMeta {
   std::vector<ImportedTexture> textures = {};
   std::vector<UUID> material_uuids = {};
   std::vector<Material> materials = {};
+  // nullptr when the source carried no skin. The clips keep one slot per glTF animation, holes and
+  // all, so a clip that stops resampling does not shift the UUID of every clip after it.
+  UUID skeleton_uuid = UUID(nullptr);
+  std::vector<UUID> animation_uuids = {};
 };
 
 static auto import_asset(Importer& importer, const std::filesystem::path& path, option<TextureUsage> usage_directive)
@@ -235,6 +239,7 @@ auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {
     case fnv64_c(".LUA")       : return AssetFileType::LUA;
     case fnv64_c(".OXTERRAIN") : return AssetFileType::OXTERRAIN;
     case fnv64_c(".OXPARTICLE"): return AssetFileType::OXPARTICLE;
+    case fnv64_c(".OXCINE")    : return AssetFileType::OXCINE;
     case fnv64_c(".WAV")       : return AssetFileType::WAV;
     case fnv64_c(".MP3")       : return AssetFileType::MP3;
     case fnv64_c(".FLAC")      : return AssetFileType::FLAC;
@@ -254,6 +259,7 @@ auto to_asset_type(AssetFileType file_type) -> AssetType {
     case AssetFileType::LUA       : return AssetType::Script;
     case AssetFileType::OXTERRAIN : return AssetType::Terrain;
     case AssetFileType::OXPARTICLE: return AssetType::ParticleSystem;
+    case AssetFileType::OXCINE    : return AssetType::Cinematic;
     case AssetFileType::WAV       :
     case AssetFileType::MP3       :
     case AssetFileType::FLAC      :
@@ -560,6 +566,21 @@ static auto read_model_meta(Session& session, const std::filesystem::path& meta_
     }
   }
 
+  if (auto skeleton_json = meta_json->doc["skeleton"].get_string(); !skeleton_json.error()) {
+    meta.skeleton_uuid = UUID::from_string(skeleton_json.value_unsafe()).value_or(UUID(nullptr));
+  }
+
+  if (auto animations_json = meta_json->doc["animations"].get_array(); !animations_json.error()) {
+    for (auto animation_json : animations_json.value_unsafe()) {
+      auto animation_uuid = UUID(nullptr);
+      if (!animation_json.error() && animation_json.is_string()) {
+        animation_uuid = UUID::from_string(animation_json.get_string()).value_or(UUID(nullptr));
+      }
+
+      meta.animation_uuids.push_back(animation_uuid);
+    }
+  }
+
   return meta;
 }
 
@@ -584,6 +605,14 @@ static auto write_model_meta(const std::filesystem::path& source_path, const Imp
   writer["materials"].begin_array();
   for (const auto& [material_uuid, material] : std::views::zip(meta.material_uuids, meta.materials)) {
     write_material_asset_meta(writer, material_uuid, material);
+  }
+  writer.end_array();
+
+  writer["skeleton"] = meta.skeleton_uuid.str();
+
+  writer["animations"].begin_array();
+  for (const auto& animation_uuid : meta.animation_uuids) {
+    writer << animation_uuid.str();
   }
   writer.end_array();
 
@@ -722,6 +751,31 @@ static auto compile_model(Importer& importer, const std::filesystem::path& path,
     meta.materials.push_back(to_material(model.materials[material_index], texture_uuids));
   }
 
+  // the skeleton and its clips have no file of their own, so nothing but this sidecar can keep
+  // their UUIDs stable across a recompile, and a scene that names a clip depends on that
+  if (!model.skeleton.bone_names.empty()) {
+    if (!meta.skeleton_uuid) {
+      meta.skeleton_uuid = UUID::generate_random();
+    }
+
+    model.skeleton.uuid = PackedUUID::pack(meta.skeleton_uuid);
+  } else {
+    meta.skeleton_uuid = UUID(nullptr);
+  }
+
+  auto previous_animation_uuids = std::move(meta.animation_uuids);
+  meta.animation_uuids.clear();
+  meta.animation_uuids.reserve(model.animations.size());
+  for (auto animation_index = 0_sz; animation_index < model.animations.size(); animation_index++) {
+    const auto animation_uuid = animation_index < previous_animation_uuids.size() &&
+                                    previous_animation_uuids[animation_index]
+                                  ? previous_animation_uuids[animation_index]
+                                  : UUID::generate_random();
+
+    model.animations[animation_index].uuid = PackedUUID::pack(animation_uuid);
+    meta.animation_uuids.push_back(animation_uuid);
+  }
+
   auto file = AssetFile{};
   file.add_entry(std::move(model), PackedUUID::pack(meta.uuid));
   if (!file.pack(cooked_path(importer, meta.uuid))) {
@@ -792,6 +846,37 @@ static auto add_model(Importer& importer, const std::filesystem::path& path, con
         .origin = path,
         .name = fmt::format("{} (material {})", source_name, material_index),
         .material = meta.materials[material_index],
+      }
+    );
+  }
+
+  // the payload only exists once the model pack is unpacked, so these point at the pack and loading
+  // one of them goes through the model
+  const auto pack_path = cooked_path(importer, meta.uuid);
+  if (meta.skeleton_uuid) {
+    importer.result.assets.push_back(
+      ImportedAsset{
+        .uuid = meta.skeleton_uuid,
+        .type = AssetType::Skeleton,
+        .path = pack_path,
+        .origin = path,
+        .name = fmt::format("{} (skeleton)", source_name),
+      }
+    );
+  }
+
+  for (const auto& [animation_index, animation_uuid] : std::views::enumerate(meta.animation_uuids)) {
+    if (!animation_uuid) {
+      continue;
+    }
+
+    importer.result.assets.push_back(
+      ImportedAsset{
+        .uuid = animation_uuid,
+        .type = AssetType::Animation,
+        .path = pack_path,
+        .origin = path,
+        .name = fmt::format("{} (animation {})", source_name, animation_index),
       }
     );
   }

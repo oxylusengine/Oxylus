@@ -19,7 +19,7 @@ namespace ox::rc {
 // Bumped whenever a compiled payload's meaning changes, so every cooked pack everywhere goes stale at once.
 // `AssetFileHeader::VERSION` covers layout; this covers everything else the compiler decides (sRGB choices, LOD
 // thresholds, meshlet limits).
-constexpr static auto ASSET_COMPILER_VERSION = 6_u32;
+constexpr static auto ASSET_COMPILER_VERSION = 7_u32;
 
 // Project file formats the importer knows how to turn into assets.
 enum class AssetFileType : u32 {
@@ -36,6 +36,7 @@ enum class AssetFileType : u32 {
   LUA,
   OXTERRAIN,
   OXPARTICLE,
+  OXCINE,
   WAV,
   MP3,
   FLAC,
