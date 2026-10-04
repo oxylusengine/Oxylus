@@ -68,7 +68,7 @@ func trace_occluded(f32x3 origin, f32x3 direction, f32 t_min, f32 t_max) -> bool
     ray.TMax = t_max;
 
     RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_FORCE_OPAQUE> query;
-    query.TraceRayInline(scene_tlas, RAY_FLAG_NONE, 0xffu, ray);
+    query.TraceRayInline(scene_tlas, RAY_FLAG_NONE, TLAS_MASK_SHADOW_CASTER, ray);
     query.Proceed();
 
     return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;

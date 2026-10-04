@@ -228,7 +228,12 @@ public:
   auto create_particle_system_entity(this Scene& self, const UUID& asset_uuid) -> flecs::entity;
 
   auto attach_mesh(
-    this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid = {}
+    this Scene& self,
+    flecs::entity entity,
+    const UUID& model_uuid,
+    usize mesh_index,
+    const UUID& material_uuid = {},
+    bool cast_shadows = true
   ) -> bool;
   auto detach_mesh(this Scene& self, flecs::entity entity) -> bool;
 

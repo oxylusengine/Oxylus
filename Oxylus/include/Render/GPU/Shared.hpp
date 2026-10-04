@@ -196,6 +196,12 @@ struct SkinJob {
   u32 bone_count = 0;
 };
 
+enum class MeshInstanceFlag : u32 {
+  None = 0,
+  CastShadows = 1 << 0,
+};
+OX_BITMASK(MeshInstanceFlag)
+
 struct MeshInstance {
   u32 mesh_index = 0;
   u32 lod_index = 0;
@@ -203,9 +209,9 @@ struct MeshInstance {
   u32 transform_index = 0;
   u32 meshlet_instance_visibility_offset = 0;
   // rank among the scene's skinned instances, which is what indexes the per-instance BLAS address
-  // table. Meaningless unless `skinned_vertex_positions` is set, and it lands in padding that was
-  // there anyway
+  // table. Meaningless unless `skinned_vertex_positions` is set
   u32 skinned_instance_index = 0;
+  MeshInstanceFlag flags = MeshInstanceFlag::None;
   // per-instance override of the mesh's bind-pose vertex data, written by the skinning pass, and
   // zero for a static instance so the mesh's own pointers and bounds are used
   OX_PTR(u16x4) skinned_vertex_positions = {};
@@ -554,6 +560,8 @@ enum class CullFlag : u32 {
   SelectLOD = 1 << 1,
   TestOcclusion = 1 << 2,
   LatePass = 1 << 3,
+  // drops instances without `MeshInstanceFlag::CastShadows`, for the shadow map passes
+  ShadowCastersOnly = 1 << 4,
 
   TestAll = (1 << 0) | (1 << 1) | (1 << 2),
 };

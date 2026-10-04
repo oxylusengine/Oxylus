@@ -401,9 +401,22 @@ public extension SkinningTransform {
     }
 };
 
+// tlas instance mask bits, every instance is in `TLAS_MASK_GEOMETRY` and shadow rays only trace
+// `TLAS_MASK_SHADOW_CASTER`
+public static const u32 TLAS_MASK_GEOMETRY = 1u << 0;
+public static const u32 TLAS_MASK_SHADOW_CASTER = 1u << 1;
+
 public extension MeshInstance {
     public func is_skinned() -> bool {
         return skinned_vertex_positions != nullptr;
+    }
+
+    public func casts_shadows() -> bool {
+        return (flags & MeshInstanceFlag::CastShadows) != MeshInstanceFlag::None;
+    }
+
+    public func tlas_mask() -> u32 {
+        return TLAS_MASK_GEOMETRY | (casts_shadows() ? TLAS_MASK_SHADOW_CASTER : 0u);
     }
 };
 

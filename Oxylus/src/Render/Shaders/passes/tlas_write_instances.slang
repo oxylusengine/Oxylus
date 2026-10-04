@@ -53,7 +53,7 @@ func cs_main(
 
     // an instance with no structure yet, which is every skinned one until the pool exists, drops out
     // of the TLAS rather than tracing against address zero
-    let mask = blas_address != 0 ? 0xffu : 0u;
+    let mask = blas_address != 0 ? mesh_instance.tlas_mask() : 0u;
     instance.custom_index_and_mask = (index & 0xffffffu) | (mask << 24);
     instance.sbt_offset_and_flags = 0;
     instance.blas_address = blas_address;

@@ -949,7 +949,7 @@ auto RendererInstance::draw_virtual_shadowmap(this RendererInstance& self, RMVSM
     auto cull_geometry_context = CullGeometryContext{
       .use_hiz = false,
       .use_hpb = true,
-      .cull_flags = GPU::CullFlag::TestFrustum,
+      .cull_flags = GPU::CullFlag::TestFrustum | GPU::CullFlag::ShadowCastersOnly,
       .hpb_attachment = std::move(hpb_attachment),
     };
 

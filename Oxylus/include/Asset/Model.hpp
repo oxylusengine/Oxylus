@@ -91,6 +91,7 @@ struct MeshInstance {
   UUID material_uuid = UUID(nullptr);
   GPU::TransformID transform_id = GPU::TransformID::Invalid;
   flecs::entity_t animator_entity = 0;
+  bool cast_shadows = true;
 };
 
 } // namespace ox

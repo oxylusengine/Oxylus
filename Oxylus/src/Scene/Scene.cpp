@@ -673,7 +673,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       auto entity = it.entity(i);
 
       if (mc.model_uuid)
-        self.attach_mesh(entity, mc.model_uuid, mc.mesh_index, mc.material_uuid);
+        self.attach_mesh(entity, mc.model_uuid, mc.mesh_index, mc.material_uuid, mc.cast_shadows);
 
       if (auto id = self.get_entity_transform_id(entity)) {
         if (auto* transform = self.get_entity_transform(*id)) {
@@ -1510,6 +1510,8 @@ auto Scene::prepare_render(this Scene& self) -> void {
         gpu_mesh_instance.material_index = SlotMap_decode_id(material_id).index;
         gpu_mesh_instance.transform_index = SlotMap_decode_id(mesh_instance.transform_id).index;
         gpu_mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
+        gpu_mesh_instance.flags = mesh_instance.cast_shadows ? GPU::MeshInstanceFlag::CastShadows
+                                                             : GPU::MeshInstanceFlag::None;
 
         const auto gpu_index = static_cast<u32>(gpu_mesh_instances.size() - 1);
         mesh_slot_to_gpu_index[static_cast<u32>(index)] = gpu_index;
@@ -1598,7 +1600,9 @@ auto Scene::prepare_render(this Scene& self) -> void {
 
         if (animation_instance->advanced) {
           any_skinned_advanced = true;
-          dirty_mesh_instance_gpu_indices.push_back(skinned.gpu_instance_index);
+          if (gpu_mesh_instances[skinned.gpu_instance_index].flags & GPU::MeshInstanceFlag::CastShadows) {
+            dirty_mesh_instance_gpu_indices.push_back(skinned.gpu_instance_index);
+          }
         }
       }
     }
@@ -2158,7 +2162,13 @@ auto Scene::set_dirty(this Scene& self, flecs::entity entity) -> void {
     const auto mesh_it = self.entity_to_mesh_instance_map.find(entity);
     mesh_it != self.entity_to_mesh_instance_map.end()
   ) {
-    self.dirty_mesh_instances.push_back(mesh_it->second);
+    // a non-caster is in no shadow page, moving it has nothing to invalidate
+    if (
+      const auto* mesh_instance = self.mesh_instances.slot(mesh_it->second);
+      mesh_instance && mesh_instance->cast_shadows
+    ) {
+      self.dirty_mesh_instances.push_back(mesh_it->second);
+    }
   }
 
   // notify children
@@ -2670,7 +2680,12 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
 }
 
 auto Scene::attach_mesh(
-  this Scene& self, flecs::entity entity, const UUID& model_uuid, usize mesh_index, const UUID& material_uuid
+  this Scene& self,
+  flecs::entity entity,
+  const UUID& model_uuid,
+  usize mesh_index,
+  const UUID& material_uuid,
+  bool cast_shadows
 ) -> bool {
   ZoneScoped;
 
@@ -2724,6 +2739,7 @@ auto Scene::attach_mesh(
       .material_uuid = overriden_material,
       .transform_id = transform_id,
       .animator_entity = animator_entity ? animator_entity.id() : 0,
+      .cast_shadows = cast_shadows,
     }
   );
   self.entity_to_mesh_instance_map.insert_or_assign(entity, instance_id);
@@ -2732,6 +2748,8 @@ auto Scene::attach_mesh(
   // without notifying descendants, because notifying from a skinned child would reach this observer
   // again through its animator ancestor and recursively reattach the mesh
   self.dirty_transforms.push_back(transform_id);
+  // queued even for a non-caster, toggling `cast_shadows` off reattaches and the pages it was drawn
+  // into still have to be cleared
   self.dirty_mesh_instances.push_back(instance_id);
 
   if (animator_entity) {
@@ -3988,7 +4006,7 @@ auto Scene::load_requested_assets(this Scene& self, std::span<const UUID> reques
   // when their component was set could not be attached. Attach them now that the models are in.
   self.world.query_builder<MeshComponent>().build().each([&self](flecs::entity e, MeshComponent& mc) {
     if (mc.model_uuid && !self.entity_to_mesh_instance_map.contains(e)) {
-      self.attach_mesh(e, mc.model_uuid, mc.mesh_index, mc.material_uuid);
+      self.attach_mesh(e, mc.model_uuid, mc.mesh_index, mc.material_uuid, mc.cast_shadows);
     }
   });
 

@@ -38,7 +38,7 @@ func cs_main(
         let in_range = distance(world_center, view.light_position) - world_radius <= view.range;
 
         let mvp = mul(view.projection_view, transform.world);
-        if (in_range && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
+        if (mesh_instance.casts_shadows() && in_range && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
             meshlet_count = mesh.lods[mesh_instance.lod_index].meshlet_count;
         }
     }
