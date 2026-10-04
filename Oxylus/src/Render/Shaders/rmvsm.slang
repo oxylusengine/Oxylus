@@ -246,7 +246,7 @@ public extension VSMContext {
 };
 
 public struct VirtualClipmapInfo {
-    f32x2 clip_uv;
+    public f32x2 clip_uv;
     public f32 projected_depth;
 
     public __init(f32x2 clip_uv, f32 projected_depth) {
