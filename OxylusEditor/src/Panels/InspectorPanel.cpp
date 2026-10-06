@@ -665,6 +665,32 @@ auto InspectorPanel::draw_asset_field(
   const auto browse_tooltip = pickable ? "Click to browse, or drop an asset file here"
                                        : "Models are added to the scene from the content browser, not assigned here";
 
+  // checked on the asset itself, a field with no declared type still opens an unfiltered picker and every
+  // field takes any dropped file
+  const auto accepts = [&asset_man, label, expected_type](const UUID& candidate) {
+    auto candidate_type = AssetType::None;
+    if (auto asset = asset_man.get_asset(candidate)) {
+      candidate_type = asset->type;
+    }
+
+    if (candidate_type == AssetType::Model) {
+      OX_LOG_WARN("{} can't hold a model, add models to the scene from the content browser", label);
+      return false;
+    }
+
+    if (expected_type != AssetType::None && candidate_type != expected_type) {
+      OX_LOG_WARN(
+        "{} takes a {} asset, not a {}",
+        label,
+        AssetManager::to_asset_type_sv(expected_type),
+        AssetManager::to_asset_type_sv(candidate_type)
+      );
+      return false;
+    }
+
+    return true;
+  };
+
   auto changed = false;
 
   ImGui::PushID(&uuid);
@@ -672,7 +698,7 @@ auto InspectorPanel::draw_asset_field(
 
   // Any file dropped here is imported first, so dragging straight from the content browser works
   // even for a file the registry has never seen.
-  const auto accept_drop = [&asset_man, &uuid, &changed, pickable] {
+  const auto accept_drop = [&asset_man, &uuid, &changed, &accepts, pickable] {
     if (!pickable || !ImGui::BeginDragDropTarget()) {
       return;
     }
@@ -680,7 +706,8 @@ auto InspectorPanel::draw_asset_field(
     if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
       const auto* payload = PayloadData::from_payload(imgui_payload);
       if (
-        const auto imported = import_asset(asset_man, payload->get_path()); imported && asset_man.load_asset(imported)
+        const auto imported = import_asset(asset_man, payload->get_path());
+        imported && accepts(imported) && asset_man.load_asset(imported)
       ) {
         // Must not hold a registry read guard while unloading: unload_asset() takes the registry
         // write lock. unload_asset() no-ops on missing/unloaded assets.
@@ -746,7 +773,7 @@ auto InspectorPanel::draw_asset_field(
     const auto picked = self.asset_browser
                           .render_picker(stack.format_char("Pick {}###AssetPicker", label), &open, picker_type, uuid);
 
-    if (picked && picked->uuid != uuid && asset_man.load_asset(picked->uuid)) {
+    if (picked && picked->uuid != uuid && accepts(picked->uuid) && asset_man.load_asset(picked->uuid)) {
       if (uuid) {
         asset_man.unload_asset(uuid);
       }
