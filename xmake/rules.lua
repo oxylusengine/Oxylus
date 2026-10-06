@@ -103,6 +103,30 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   batchcmds:set_depcache(target:dependfile(abs_output))
 end)
 
+-- headers = { { "include/Scene/Components.hpp", "bind_core_components" }, ... }, relative to the target's
+-- script dir. each header generates <autogendir>/components/<Name>.gen.inl defining that function
+rule("ox.components")
+on_config(function(target)
+  target:add("includedirs", path.join(target:autogendir(), "components"))
+end)
+before_build(function(target)
+  import("core.project.depend")
+
+  local ecsgen = target:dep("ecsgen"):targetfile()
+  for _, entry in ipairs(target:extraconf("rules", "ox.components", "headers") or {}) do
+    local header = path.absolute(path.join(target:scriptdir(), entry[1]))
+    local output = path.join(target:autogendir(), "components", path.basename(header) .. ".gen.inl")
+
+    depend.on_changed(function()
+      os.vrunv(ecsgen, { "--input", header, "--function", entry[2], "--output", output })
+    end, {
+      dependfile = target:dependfile(output),
+      files = { header, ecsgen },
+      changed = target:is_rebuilt() or not os.isfile(output),
+    })
+  end
+end)
+
 -- Cooks a game's assets at build time into `<targetdir>/<output_dir>`: the compiled packs plus the manifest
 -- `AssetManager` registers them from, so a game ships without the editor ever running. `root_dir` is the asset
 -- directory the game's `install_resources` copies, and `output_dir` must land where the game mounts
