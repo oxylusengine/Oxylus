@@ -29,7 +29,8 @@ func cs_main(
     if (mesh_instance_index < ctx.mesh_instance_count) {
         let view = views[layer];
         let mesh_instance = mesh_instances[mesh_instance_index];
-        let mesh = meshes[mesh_instance.mesh_index];
+        var mesh = meshes[mesh_instance.mesh_index];
+        mesh.apply_skin(mesh_instance);
         let transform = transforms[mesh_instance.transform_index];
 
         let world_center = transform.to_world_position(mesh.bounds.aabb_center).xyz;
@@ -37,7 +38,7 @@ func cs_main(
         let in_range = distance(world_center, view.light_position) - world_radius <= view.range;
 
         let mvp = mul(view.projection_view, transform.world);
-        if (in_range && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
+        if (mesh_instance.casts_shadows() && in_range && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
             meshlet_count = mesh.lods[mesh_instance.lod_index].meshlet_count;
         }
     }

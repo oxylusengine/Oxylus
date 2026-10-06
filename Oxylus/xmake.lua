@@ -81,7 +81,7 @@ target("Oxylus")
     end)
 
     add_packages(
-        "stb",
+        "basisu-ox",
         "miniaudio",
         "libsdl3",
         "zpp_bits",

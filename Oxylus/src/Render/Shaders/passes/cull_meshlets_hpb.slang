@@ -43,7 +43,8 @@ func cs_main(
         let transform = transforms[mesh_instance.transform_index];
         let mvp = mul(camera.projection_view, transform.world);
 
-        let mesh = meshes[mesh_instance.mesh_index];
+        var mesh = meshes[mesh_instance.mesh_index];
+        mesh.apply_skin(mesh_instance);
         let mesh_lod = mesh.lods[mesh_instance.lod_index];
         let meshlet_bounds = mesh_lod.meshlet_bounds[meshlet_instance.meshlet_index];
         let aabb_center = meshlet_bounds.get_aabb_center();
@@ -51,9 +52,12 @@ func cs_main(
         let cone_cutoff = meshlet_bounds.get_cone_cutoff();
 
         let cone_axis = normalize(transform.to_world_normal(meshlet_bounds.get_cone_axis()));
-        let cone_visible = cone_cutoff >= 1.0 || !test_cone_directional(cone_axis, cone_cutoff, camera.position);
+        // bind-pose meshlet bounds are meaningless once the mesh deforms, so a skinned instance
+        // skips meshlet-level culling and relies on the per-mesh animated bounds instead
+        let skinned = mesh_instance.is_skinned();
+        let cone_visible = skinned || cone_cutoff >= 1.0 || !test_cone_directional(cone_axis, cone_cutoff, camera.position);
 
-        if (cone_visible && test_frustum(mvp, aabb_center, aabb_extent)) {
+        if (cone_visible && (skinned || test_frustum(mvp, aabb_center, aabb_extent))) {
             var visible = false;
 
             for (var clipmap_index = 0u; clipmap_index < clipmap_count; clipmap_index++) {

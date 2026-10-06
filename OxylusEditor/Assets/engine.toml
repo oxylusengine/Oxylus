@@ -1,7 +1,8 @@
-version = 10
+version = 11
 
 [[shader_sessions]]
 root_directory = "../../Oxylus/src/Render/Shaders"
+include_directories = ["../../Oxylus/include"]
 session_name = "engine"
 debug_symbols = false
 optimization = "default"
@@ -51,6 +52,11 @@ entry_points = ["cs_main"]
 [[shader_sessions.programs]]
 name = "sky_ibl"
 path = "passes/sky_ibl.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "skin_vertices"
+path = "passes/skin_vertices.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]

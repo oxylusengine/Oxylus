@@ -39,6 +39,9 @@ struct RendererCVar {
   AutoCVar_Float cvar_vbgtao_radius;
   AutoCVar_Float cvar_vbgtao_final_power;
 
+  AutoCVar_Int cvar_rt_skinned_rebuild_budget;
+  AutoCVar_Int cvar_rt_skinned_max_refits;
+
   AutoCVar_Int cvar_rtao_enable;
   AutoCVar_Int cvar_rtao_ray_count;
   AutoCVar_Float cvar_rtao_radius;

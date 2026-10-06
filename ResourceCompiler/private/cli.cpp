@@ -1,3 +1,4 @@
+#include <AssetImport.hpp>
 #include <Core/AppCommandLineArgs.hpp>
 #include <ResourceCompiler.hpp>
 #include <charconv>
@@ -5,6 +6,11 @@
 #include <fmt/std.h>
 #include <fstream>
 #include <sstream>
+
+#ifdef _MSC_VER
+  #include <crtdbg.h>
+  #include <cstdlib>
+#endif
 
 #include "ResourceConfig.hpp"
 
@@ -22,6 +28,7 @@ auto print_help() -> void {
   print_command("help", "Show list of command line arguments.");
   print_command("silent", "Do not output anything to the console.");
   print_command("config \"path\"", "TOML config file with resources to compile.");
+  print_command("cook-assets \"path\"", "Asset directory to cook for a game build, into `--output`.");
   print_command("output \"path\"", "Output path for compiled resources. Overrides config file output.");
   print_command("include-dir \"path\"", "Extra shader search path, appended to every session. Repeatable.");
   print_command("threads N", "Number of compile workers. Defaults to the hardware concurrency.");
@@ -29,12 +36,16 @@ auto print_help() -> void {
 }
 
 auto write_gpu_layout_asserts(
-  rc::Session& session, const std::filesystem::path& module_path, const std::filesystem::path& output_path
+  rc::Session& session,
+  const std::filesystem::path& module_path,
+  const std::filesystem::path& output_path,
+  std::vector<std::filesystem::path> include_dirs
 ) -> i32 {
   auto types = session.reflect_layouts(
     {
       .name = "gpu-layout",
       .root_directory = module_path.parent_path(),
+      .include_directories = std::move(include_dirs),
     },
     module_path
   );
@@ -84,7 +95,42 @@ auto write_gpu_layout_asserts(
   return 0;
 }
 
+// the game build's asset step: `rcli --cook-assets Assets --output build/.../Assets/.cooked`
+static auto cook_assets(const AppCommandLineArgs& args, rc::Session& session, const auto& log) -> i32 {
+  auto assets_arg = args.get(args.get_index("--cook-assets").value() + 1);
+  auto output_arg = option<AppCommandLineArgs::Arg>(nullopt);
+  if (auto output_argi = args.get_index("--output"); output_argi.has_value()) {
+    output_arg = args.get(output_argi.value() + 1);
+  }
+  if (!assets_arg.has_value() || !output_arg.has_value()) {
+    log("Usage: `rcli --cook-assets <assets dir> --output <cooked dir>`");
+    return 1;
+  }
+
+  const auto succeeded = rc::cook_assets(session, assets_arg->arg_str, output_arg->arg_str);
+
+  // errors print even when silent, a failed build step has to say why
+  const auto diagnostics = session.take_diagnostics();
+  for (const auto& message : diagnostics.messages) {
+    log(message);
+  }
+  for (const auto& error : diagnostics.errors) {
+    fmt::println("Error: {}", error);
+  }
+
+  return succeeded ? 0 : 1;
+}
+
 auto main(i32 argc, c8** argv) -> i32 {
+#ifdef _MSC_VER
+  // rcli runs unattended inside builds, a debug CRT assert dialog would hang the build instead of failing it
+  _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+  _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+  _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+  _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+  _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+
   auto args = AppCommandLineArgs(argc, argv);
 
   if (argc <= 1 || args.contains("--help")) {
@@ -93,56 +139,13 @@ auto main(i32 argc, c8** argv) -> i32 {
   }
 
   auto silent = args.contains("--silent");
-  auto log = [silent](std::string_view msg) {
+  auto log = [silent](std::string_view msg) -> void {
     if (!silent) {
       fmt::println("{}", msg);
     }
   };
 
-  auto gpu_layout_argi = args.get_index("--gpu-layout");
-  if (gpu_layout_argi.has_value()) {
-    auto module_arg = args.get(gpu_layout_argi.value() + 1);
-    auto output_argi = args.get_index("--output");
-    if (!module_arg.has_value() || !output_argi.has_value() || !args.get(output_argi.value() + 1).has_value()) {
-      log("Usage: `rcli --gpu-layout shared.slang --output layout.inl`");
-      return 1;
-    }
-
-    auto session = rc::Session::create({.thread_count = 1});
-    if (!session.has_value()) {
-      log("Error: failed to create compiler session.");
-      return 1;
-    }
-
-    return write_gpu_layout_asserts(
-      session.value(),
-      std::filesystem::absolute(module_arg->arg_str).lexically_normal(),
-      std::filesystem::absolute(args.get(output_argi.value() + 1)->arg_str).lexically_normal()
-    );
-  }
-
-  auto config_argi = args.get_index("--config");
-  if (!config_argi.has_value()) {
-    log("Specify `--config` flag to use this CLI. Example: `rcli --config resources.toml --output shaders.bin`");
-    return 1;
-  }
-
-  auto config_arg = args.get(config_argi.value() + 1);
-  if (!config_arg.has_value()) {
-    log("Specify a config file path.");
-    return 1;
-  }
-
-  auto config_path = std::filesystem::path(config_arg->arg_str);
-  log(fmt::format("Using config file \"{}\"...", config_path));
-
-  auto config = rc::parse_resource_config(config_path);
-  if (!config.has_value()) {
-    log(fmt::format("Error: failed to parse '{}'.", config_path));
-    return 1;
-  }
-
-  auto session_info = rc::SessionCreateInfo{};
+  auto session_info = rc::SessionCreateInfo{.unattended = true};
   auto threads_argi = args.get_index("--threads");
   if (threads_argi.has_value()) {
     auto threads_arg = args.get(threads_argi.value() + 1);
@@ -168,10 +171,10 @@ auto main(i32 argc, c8** argv) -> i32 {
     return 1;
   }
 
-  auto config_dir = std::filesystem::absolute(config_path).parent_path();
+  if (args.contains("--cook-assets")) {
+    return cook_assets(args, session.value(), log);
+  }
 
-  // Repeatable. The `compile_shaders` xmake rule uses this to hand downstream projects the engine
-  // shader tree without baking an absolute path into their config.
   auto cli_include_dirs = std::vector<std::filesystem::path>{};
   for (const auto& arg : args.args) {
     if (arg.arg_str != "--include-dir") {
@@ -186,6 +189,51 @@ auto main(i32 argc, c8** argv) -> i32 {
 
     cli_include_dirs.emplace_back(std::filesystem::absolute(include_arg->arg_str).lexically_normal());
   }
+
+  if (auto layout_argi = args.get_index("--gpu-layout"); layout_argi.has_value()) {
+    auto module_arg = args.get(layout_argi.value() + 1);
+    auto output_arg = option<AppCommandLineArgs::Arg>(nullopt);
+    if (auto output_argi = args.get_index("--output"); output_argi.has_value()) {
+      output_arg = args.get(output_argi.value() + 1);
+    }
+    if (
+      !module_arg.has_value() || module_arg->arg_str.empty() || module_arg->arg_str.starts_with("--") ||
+      !output_arg.has_value() || output_arg->arg_str.empty() || output_arg->arg_str.starts_with("--")
+    ) {
+      log("Usage: `rcli --gpu-layout <shared module> --output <asserts file>`");
+      return 1;
+    }
+
+    return write_gpu_layout_asserts(
+      session.value(),
+      std::filesystem::absolute(module_arg->arg_str),
+      std::filesystem::absolute(output_arg->arg_str),
+      std::move(cli_include_dirs)
+    );
+  }
+
+  auto config_argi = args.get_index("--config");
+  if (!config_argi.has_value()) {
+    log("Specify `--config` flag to use this CLI. Example: `rcli --config resources.toml --output shaders.bin`");
+    return 1;
+  }
+
+  auto config_arg = args.get(config_argi.value() + 1);
+  if (!config_arg.has_value()) {
+    log("Specify a config file path.");
+    return 1;
+  }
+
+  auto config_path = std::filesystem::path(config_arg->arg_str);
+  log(fmt::format("Using config file \"{}\"...", config_path));
+
+  auto config = rc::parse_resource_config(config_path);
+  if (!config.has_value()) {
+    log(fmt::format("Error: failed to parse '{}'.", config_path));
+    return 1;
+  }
+
+  auto config_dir = std::filesystem::absolute(config_path).parent_path();
 
   for (const auto& shader_session : config->shader_sessions) {
     auto root = (config_dir / shader_session.root_directory).lexically_normal();

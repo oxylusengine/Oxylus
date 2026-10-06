@@ -27,11 +27,15 @@ func cs_main(
 
     if (mesh_instance_index < camera.mesh_instance_count) {
         let mesh_instance = mesh_instances[mesh_instance_index];
-        let mesh = meshes[mesh_instance.mesh_index];
+        var mesh = meshes[mesh_instance.mesh_index];
+        // swaps in the animated bounds, so frustum culling and LOD selection see where the mesh
+        // actually is this frame rather than where it was authored
+        mesh.apply_skin(mesh_instance);
         let transform = transforms[mesh_instance.transform_index];
         let mvp = mul(camera.projection_view, transform.world);
 
-        if (HAS_FLAG(CULL_FLAGS, CullFlag.TestFrustum) && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
+        let is_caster = !HAS_FLAG(CULL_FLAGS, CullFlag.ShadowCastersOnly) || mesh_instance.casts_shadows();
+        if (is_caster && HAS_FLAG(CULL_FLAGS, CullFlag.TestFrustum) && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
             if (HAS_FLAG(CULL_FLAGS, CullFlag.SelectLOD)) {
                 let aabb_center = mul(transform.world, f32x4(mesh.bounds.aabb_center, 1.0)).xyz;
                 let aabb_extent = abs(mul(transform.world, f32x4(mesh.bounds.aabb_extent, 0.0)).xyz);

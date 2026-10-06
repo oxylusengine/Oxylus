@@ -1,17 +1,21 @@
 #include "InspectorPanel.hpp"
 
+#include <ankerl/svector.h>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 
+#include "AnimationEditorPanel.hpp"
 #include "Asset/AssetFile.hpp"
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Audio/AudioEngine.hpp"
+#include "CinematicEditorPanel.hpp"
 #include "Core/App.hpp"
 #include "Core/EventSystem.hpp"
+#include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "ParticleEditorPanel.hpp"
@@ -20,6 +24,7 @@
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
+#include "Utils/AnimationAssets.hpp"
 
 namespace ox {
 static UUID pending_save_material_uuid = {};
@@ -224,6 +229,7 @@ struct EntityInspector : IEntitySerializer {
     UI::end_properties();
 
     modified |= inspector_panel.draw_asset_field(name, *uuid, expected_type);
+    modified |= inspector_panel.draw_animation_clip_selector(*uuid);
     inspector_panel.draw_asset_contents(*uuid);
 
     UI::begin_properties();
@@ -758,6 +764,79 @@ auto InspectorPanel::draw_asset_field(
   return changed;
 }
 
+auto InspectorPanel::draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid) -> bool {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  auto& asset_man = App::mod<AssetManager>();
+
+  if (auto asset = asset_man.get_asset(uuid); !asset || asset->type != AssetType::Animation) {
+    return false;
+  }
+
+  // the picker shows every clip of a model under the same file name, so offer the
+  // sibling clips by name instead
+  auto siblings = ankerl::svector<std::pair<const c8*, UUID>, 8>();
+
+  // the model's own list is authoritative and in import order, with the registry as a
+  // fallback for when the model itself is not loaded
+  auto model_animations = model_animation_clips(find_source_model(uuid));
+  if (model_animations.empty()) {
+    model_animations = sibling_animation_clips(uuid);
+  }
+
+  for (const auto& sibling_uuid : model_animations) {
+    // the name has to be copied onto the stack while the guard still holds the lock
+    const c8* label = nullptr;
+    if (auto sibling = asset_man.get_animation(sibling_uuid)) {
+      label = stack.null_terminate_cstr(sibling->name);
+    }
+
+    if (label == nullptr) {
+      continue;
+    }
+
+    siblings.emplace_back(label, sibling_uuid);
+  }
+
+  if (siblings.size() <= 1) {
+    return false;
+  }
+
+  // ImGui wants the labels contiguous
+  auto sibling_names = ankerl::svector<const c8*, 8>();
+  auto selected_clip = 0;
+  for (const auto& [label, sibling_uuid] : siblings) {
+    if (sibling_uuid == uuid) {
+      selected_clip = static_cast<i32>(sibling_names.size());
+    }
+
+    sibling_names.emplace_back(label);
+  }
+
+  auto chosen = UUID(nullptr);
+  UI::begin_properties();
+  if (
+    UI::property("Clip", &selected_clip, sibling_names.data(), static_cast<i32>(sibling_names.size())) &&
+    selected_clip >= 0 && selected_clip < static_cast<i32>(siblings.size())
+  ) {
+    chosen = siblings[static_cast<usize>(selected_clip)].second;
+  }
+  UI::end_properties();
+
+  // after every guard is gone, because load and unload take the registry write lock
+  if (!chosen || chosen == uuid || !asset_man.load_asset(chosen)) {
+    return false;
+  }
+
+  if (uuid) {
+    asset_man.unload_asset(uuid);
+  }
+
+  uuid = chosen;
+  return true;
+}
+
 auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& uuid) -> void {
   ZoneScoped;
 
@@ -770,10 +849,13 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
   }
 
   const auto type = asset->type;
-  const auto path = asset->path;
+  const auto path = App::get_vfs().to_physical(asset->path);
   const auto material_id = type == AssetType::Material ? asset->material_id : MaterialID::Invalid;
   const auto audio_id = type == AssetType::Audio ? asset->audio_id : AudioID::Invalid;
   const auto script_id = type == AssetType::Script ? asset->script_id : ScriptID::Invalid;
+  const auto skeleton_id = type == AssetType::Skeleton ? asset->skeleton_id : SkeletonID::Invalid;
+  const auto animation_id = type == AssetType::Animation ? asset->animation_id : AnimationID::Invalid;
+  const auto cinematic_id = type == AssetType::Cinematic ? asset->cinematic_id : CinematicID::Invalid;
   asset.reset();
 
   switch (type) {
@@ -785,6 +867,54 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
     case AssetType::Model  : // nothing to edit on a model itself yet
     case AssetType::Terrain: // TODO: Terrain edits
       break;
+    case AssetType::Skeleton: {
+      if (auto skeleton = asset_man.get_skeleton(skeleton_id)) {
+        UI::begin_properties();
+        UI::text("Bones", std::to_string(skeleton->bone_count()));
+        UI::end_properties();
+      }
+      break;
+    }
+    case AssetType::Animation: {
+      memory::ScopedStack stack;
+
+      auto duration = 0.0f;
+      auto frame_count = 0_u32;
+      const c8* clip_name = "";
+      if (auto clip = asset_man.get_animation(animation_id)) {
+        clip_name = stack.null_terminate_cstr(clip->name);
+        duration = clip->duration;
+        frame_count = clip->frame_count;
+      }
+
+      UI::begin_properties();
+      UI::text("Name", clip_name);
+      UI::text("Duration", stack.format("{:.2f}s", duration));
+      UI::text("Frames", stack.format("{}", frame_count));
+      UI::end_properties();
+
+      if (UI::button(ICON_MDI_ANIMATION_PLAY " Preview")) {
+        editor.editor_panel_registry.get<AnimationEditorPanel>().open_asset(uuid);
+      }
+      break;
+    }
+    case AssetType::Cinematic: {
+      memory::ScopedStack stack;
+
+      if (auto cinematic = asset_man.get_cinematic(cinematic_id)) {
+        UI::begin_properties();
+        UI::text("Name", cinematic->name);
+        UI::text("Duration", stack.format("{:.2f}s", cinematic->duration));
+        UI::text("Camera tracks", stack.format("{}", cinematic->camera_tracks.size()));
+        UI::text("Property tracks", stack.format("{}", cinematic->property_tracks.size()));
+        UI::end_properties();
+      }
+
+      if (UI::button(ICON_MDI_MOVIE_OPEN " Edit")) {
+        editor.editor_panel_registry.get<CinematicEditorPanel>().open_asset(uuid);
+      }
+      break;
+    }
     case AssetType::ParticleSystem: {
       memory::ScopedStack stack;
       if (UI::button(stack.format_char("{} Open Particle Editor", asset_type_icon(type)))) {
@@ -832,7 +962,7 @@ auto InspectorPanel::draw_asset_info(
 
   const auto asset_type = asset->type;
   const auto asset_uuid = asset->uuid;
-  const auto asset_path = asset->path;
+  const auto asset_path = App::get_vfs().to_physical(asset->path);
   asset.reset();
 
   auto type_str = AssetManager::to_asset_type_sv(asset_type);

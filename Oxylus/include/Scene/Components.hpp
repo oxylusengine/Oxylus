@@ -37,6 +37,34 @@ struct MeshComponent {
   OX_TRANSIENT AABB world_aabb = {};
 };
 
+// the pose comes from the nearest ancestor carrying an AnimatorComponent
+OX_COMPONENT()
+struct SkinnedMeshComponent {
+  OX_FIELD(asset = Skeleton) UUID skeleton_uuid = {};
+};
+
+// assigning a different `clip_uuid` crossfades from whatever is playing
+OX_COMPONENT()
+struct AnimatorComponent {
+  OX_FIELD(asset = Animation) UUID clip_uuid = {};
+  f32 speed = 1.0f;
+  f32 blend_time = 0.2f;
+  bool loop = true;
+  bool playing = true;
+};
+
+// drives a Cinematic asset's camera and property tracks against this scene
+OX_COMPONENT()
+struct CinematicPlayerComponent {
+  OX_FIELD(asset = Cinematic) UUID cinematic_uuid = {};
+  f32 speed = 1.0f;
+  bool loop = false;
+  bool play_on_awake = false;
+  bool playing = false;
+  // put every animated member back the way it was when the cinematic stops
+  bool restore_on_stop = true;
+};
+
 OX_COMPONENT(networked)
 struct SpriteComponent {
   u32 layer = 0;
@@ -101,6 +129,10 @@ struct CameraComponent {
 
   f32 tilt = 0.0f;
   f32 zoom = 1.0f;
+
+  // the scene renders through the last active camera, so a cinematic can cut between shots by
+  // keying this member on two cameras
+  bool active = true;
 
   struct Matrices {
     glm::mat4 view_matrix = {};
@@ -281,6 +313,21 @@ OX_COMPONENT()
 struct FilmGrainComponent {
   f32 amount = 0.6f;
   f32 scale = 0.7f;
+};
+
+OX_COMPONENT()
+struct LetterboxComponent {
+  // fraction of screen height covered by each bar, and the scale applied to the aspect-derived size
+  f32 amount = 1.0f;
+  // when > 0, bars are sized to frame the image to this aspect instead of using `amount` directly
+  f32 target_aspect = 2.39f;
+  glm::vec3 color = {0.0f, 0.0f, 0.0f};
+};
+
+OX_COMPONENT()
+struct ScreenFadeComponent {
+  glm::vec3 color = {0.0f, 0.0f, 0.0f};
+  f32 amount = 0.0f;
 };
 
 OX_COMPONENT()

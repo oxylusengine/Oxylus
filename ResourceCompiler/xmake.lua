@@ -17,8 +17,7 @@ target("ResourceCompiler")
     "zpp_bits",
     "fastgltf-ox",
     "meshoptimizer",
-    "ktx-ox",
-    "stb",
+    "basisu-ox",
     "glm",
     { public = false })
 
@@ -40,6 +39,7 @@ target_end()
 
 -- fails the build when a Render/GPU/Shared.hpp type lays out differently in C++ than in Slang
 target("GPULayoutCheck")
+  set_enabled(has_config("compile_resources"))
   set_kind("object")
   set_languages("cxx23")
 
@@ -52,8 +52,12 @@ target("GPULayoutCheck")
 
   before_build(function (target)
     import("core.project.depend")
+    import("private.action.run.runenvs")
 
-    local rcli = target:dep("rcli"):targetfile()
+    local rcli_target = target:dep("rcli")
+    local rcli = rcli_target:targetfile()
+    -- windows has no rpath, rcli finds slang's dlls through the package PATH
+    local rcli_envs = runenvs.join(runenvs.make(rcli_target))
     local root = path.join(target:scriptdir(), "..")
     local module = path.join(root, "Oxylus/src/Render/Shaders/shared.slang")
     local output = path.join(target:autogendir(), "gpu_layout", "GPULayoutAsserts.inl")
@@ -65,7 +69,11 @@ target("GPULayoutCheck")
     }
 
     depend.on_changed(function ()
-      os.vrunv(rcli, { "--gpu-layout", module, "--output", output })
+      os.vrunv(
+        rcli,
+        { "--gpu-layout", module, "--output", output, "--include-dir", path.join(root, "Oxylus/include") },
+        { envs = rcli_envs }
+      )
     end, {
       dependfile = target:dependfile(output),
       files = inputs,

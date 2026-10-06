@@ -151,6 +151,11 @@ auto os::file_read(FileDescriptor file, void* data, usize size) -> usize {
       break;
     }
 
+    // end of file: read() keeps returning 0, so asking for more than is left would spin forever
+    if (cur_read_size == 0_iptr) {
+      break;
+    }
+
     read_bytes_size += cur_read_size;
   }
 

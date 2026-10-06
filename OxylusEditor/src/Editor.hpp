@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include "Core/EventSystem.hpp"
 #include "Panels/EditorPanelRegistry.hpp"
 #include "Panels/MainViewportPanel.hpp"
@@ -97,6 +99,9 @@ private:
   // Context
   EditorContext editor_context = {};
 
+  // the optional test cook runs on a worker, one at a time
+  std::atomic<bool> cooking_assets = false;
+
   auto save_project(const std::string& path) -> void;
 
   // Terrain brush edits have to come back off the GPU before the save job can write them, so the
@@ -108,6 +113,7 @@ private:
   static auto sync_terrain_edits_asset(Scene& scene, const std::filesystem::path& scene_path) -> std::filesystem::path;
 
   auto draw_menubar(this Editor& self) -> void;
+  auto cook_assets_into(this Editor& self, const std::filesystem::path& folder) -> void;
   void draw_bottom_toolbar(this Editor& self, float height);
 
   auto undo() const -> void;

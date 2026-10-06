@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <string_view>
 #include <vector>
 #include <vuk/ImageAttachment.hpp>
 
@@ -28,7 +29,9 @@ private:
   auto draw_details(this ActivityLogPanel& self, f32 height) -> void;
   auto draw_context_menu(this ActivityLogPanel& self, const Notification& notif) -> void;
   auto find_selected(this const ActivityLogPanel& self) -> const Notification*;
-  auto copy_to_clipboard(this const ActivityLogPanel& self, bool only_selected) -> void;
+  auto copy_to_clipboard(this ActivityLogPanel& self, bool only_selected) -> void;
+  auto copy_text(this ActivityLogPanel& self, std::string_view text) -> void;
+  auto clear_history(this ActivityLogPanel& self) -> void;
 
   ImGuiTextFilter log_filter = {};
   NotificationSystem* notification_system = nullptr;
@@ -37,7 +40,10 @@ private:
   std::vector<u32> visible_rows = {};
   std::array<u32, TYPE_COUNT> type_counts = {};
   u32 type_mask = ALL_TYPES_MASK;
-  usize last_visible_count = 0;
+  u64 last_history_revision = 0;
+  u32 last_repeat_count = 0;
+  f32 details_height = 160.0f;
+  f64 copy_feedback_until = 0.0;
 
   u64 selected_id = 0; // Notification::id, 0 when nothing is selected
   bool auto_scroll = true;
@@ -45,5 +51,9 @@ private:
   bool show_timestamps = true;
   bool monospace = true;
   bool show_details = true;
+  bool following = true;
+  bool jump_to_latest = true;
+  bool clear_requested = false;
+  bool copy_failed = false;
 };
 } // namespace ox

@@ -1,7 +1,10 @@
 #include "UI/ImGuiRenderer.hpp"
 
+#include <SDL3/SDL_clipboard.h>
+#include <SDL3/SDL_error.h>
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_mouse.h>
+#include <SDL3/SDL_stdinc.h>
 #include <algorithm>
 #include <cmath>
 #include <glm/common.hpp>
@@ -18,6 +21,7 @@
 #include "ImGuiSPV_VS.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/Window.hpp"
+#include "Utils/Log.hpp"
 #include "Utils/Profiler.hpp"
 
 namespace ox {
@@ -118,7 +122,7 @@ void ImGuiRenderer::build_fonts() {
   font_texture.upload(pixels, vuk::eFragmentSampled);
 }
 
-auto ImGuiRenderer::init() -> std::expected<void, std::string> {
+auto ImGuiRenderer::init(this ImGuiRenderer& self) -> std::expected<void, std::string> {
   ZoneScoped;
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -133,12 +137,14 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   io.BackendRendererName = "oxylus";
   io.Fonts->TexDesiredFormat = ImTextureFormat_RGBA32;
 
+  self.init_clipboard();
+
   io.ConfigDpiScaleFonts = false;
   io.ConfigDpiScaleViewports = false;
   io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
   ImGuiStyle& style = ImGui::GetStyle();
   style.FontScaleDpi = 1.0f;
-  this->set_base_style(style);
+  self.set_base_style(style);
 
   auto& runtime = *App::get_rendercontext().runtime;
 
@@ -161,7 +167,7 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   );
   runtime.create_named_pipeline("imgui", pipelie_ci);
 
-  this->shadow_settings.layers = {
+  self.shadow_settings.layers = {
     ImGuiShadowLayer{.sigma = 22.0f, .spread = -4.0f, .offset = {0.0f, 10.0f}, .color = {0.0f, 0.0f, 0.0f, 0.75f}},
     ImGuiShadowLayer{.sigma = 5.0f, .spread = -1.0f, .offset = {0.0f, 2.0f}, .color = {0.0f, 0.0f, 0.0f, 0.65f}},
   };
@@ -169,13 +175,41 @@ auto ImGuiRenderer::init() -> std::expected<void, std::string> {
   return {};
 }
 
-auto ImGuiRenderer::deinit() -> std::expected<void, std::string> {
-  // Owned draw lists point into the context's shared draw data.
-  shadow_draw_lists.clear();
-  shadow_draw_data.clear();
+auto ImGuiRenderer::deinit(this ImGuiRenderer& self) -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  // owned draw lists point into the context's shared draw data
+  self.shadow_draw_lists.clear();
+  self.shadow_draw_data.clear();
+
+  SDL_free(self.clipboard_text);
+  self.clipboard_text = nullptr;
 
   ImGui::DestroyContext();
   return {};
+}
+
+auto ImGuiRenderer::init_clipboard(this ImGuiRenderer& self) -> void {
+  ZoneScoped;
+
+  // the custom backend needs SDL callbacks to reach the system clipboard on every platform
+  auto& platform = ImGui::GetPlatformIO();
+  platform.Platform_ClipboardUserData = &self;
+  platform.Platform_GetClipboardTextFn = [](ImGuiContext* context) -> const c8* {
+    ZoneScopedN("get clipboard text");
+
+    auto& renderer = *static_cast<ImGuiRenderer*>(context->PlatformIO.Platform_ClipboardUserData);
+    SDL_free(renderer.clipboard_text);
+    renderer.clipboard_text = SDL_GetClipboardText();
+    return renderer.clipboard_text;
+  };
+  platform.Platform_SetClipboardTextFn = [](ImGuiContext*, const c8* text) -> void {
+    ZoneScopedN("set clipboard text");
+
+    if (!SDL_SetClipboardText(text)) {
+      OX_LOG_ERROR("Could not copy text to the clipboard: {}", SDL_GetError());
+    }
+  };
 }
 
 void ImGuiRenderer::begin_frame(const f64 delta_time, glm::vec2 logical_size, glm::vec2 real_size) {

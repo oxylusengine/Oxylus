@@ -23,8 +23,8 @@ on_config(function(target)
 end)
 
 rule("ox.install_resources")
-set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".mp3", ".wav", ".ogg",
-  ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".oxparticle", ".rml", ".rcss")
+set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".jpeg", ".mp3", ".wav", ".ogg", ".flac", ".json",
+  ".otf", ".ttf", ".lua", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".oxparticle", ".oxcine", ".oxterrain", ".rml", ".rcss")
 before_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local output_dir = target:extraconf("rules", "ox.install_resources", "output_dir") or ""
   local root_dir = target:extraconf("rules", "ox.install_resources", "root_dir") or os.scriptdir()
@@ -55,7 +55,16 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local output_name = target:extraconf("rules", "ox.compile_shaders", "output_name")
       or (path.basename(sourcefile) .. ".oxpack")
 
-  local rcli        = target:dep("rcli"):targetfile()
+  if not has_config("compile_resources") then
+    return
+  end
+
+  import("private.action.run.runenvs")
+
+  local rcli_target = target:dep("rcli")
+  local rcli        = rcli_target:targetfile()
+  -- windows has no rpath, rcli finds slang's dlls through the package PATH
+  local rcli_envs   = runenvs.join(runenvs.make(rcli_target))
   local abs_output  = path.absolute(path.join(target:targetdir(), output_dir, output_name))
 
   local args        = { "--config", config_path, "--output", abs_output }
@@ -64,7 +73,7 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
     "${color.build.object}compiling shaders from %s -> %s",
     path.filename(config_path), output_name)
   batchcmds:mkdir(path.directory(abs_output))
-  batchcmds:vrunv(rcli, args)
+  batchcmds:vrunv(rcli, args, { envs = rcli_envs })
 
   batchcmds:add_depfiles(sourcefile)
   batchcmds:add_depfiles(rcli)
@@ -116,4 +125,40 @@ before_build(function(target)
       changed = target:is_rebuilt() or not os.isfile(output),
     })
   end
+end)
+
+-- Cooks a game's assets at build time into `<targetdir>/<output_dir>`: the compiled packs plus the manifest
+-- `AssetManager` registers them from, so a game ships without the editor ever running. `root_dir` is the asset
+-- directory the game's `install_resources` copies, and `output_dir` must land where the game mounts
+-- `VFS::COOKED_DIR`, `<assets>/.cooked`.
+rule("ox.cook_assets")
+after_build(function(target)
+  if not has_config("compile_resources") then
+    return
+  end
+
+  import("core.project.depend")
+  import("private.action.run.runenvs")
+
+  local root_dir = target:extraconf("rules", "ox.cook_assets", "root_dir")
+  local output_dir = target:extraconf("rules", "ox.cook_assets", "output_dir") or "Assets/.cooked"
+  local abs_output = path.absolute(path.join(target:targetdir(), output_dir))
+  local rcli_target = target:dep("rcli")
+  local rcli = rcli_target:targetfile()
+  -- windows has no rpath, rcli finds slang's dlls through the package PATH
+  local rcli_envs = runenvs.join(runenvs.make(rcli_target))
+
+  -- rcli skips a warm asset on its own, this only saves walking the tree when nothing moved. The file list goes in
+  -- `values` too: mtimes alone never notice a file that was added or removed
+  local sources = os.files(path.join(root_dir, "**"))
+  table.sort(sources)
+  depend.on_changed(function()
+    cprint("${color.build.object}cooking assets %s -> %s", root_dir, abs_output)
+    os.vrunv(rcli, { "--cook-assets", root_dir, "--output", abs_output }, { envs = rcli_envs })
+  end, {
+    dependfile = target:dependfile("ox.cook_assets"),
+    files = table.join(sources, { rcli }),
+    values = table.join({ abs_output }, sources),
+    changed = not os.isfile(path.join(abs_output, "assets.oxmanifest")),
+  })
 end)

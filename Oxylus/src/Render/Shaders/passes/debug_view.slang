@@ -104,7 +104,8 @@ func fs_main(
     let vis = VisBufferData(texel);
     let meshlet_instance = params.meshlet_instances[vis.meshlet_instance_index];
     let mesh_instance = params.mesh_instances[meshlet_instance.mesh_instance_index];
-    let mesh = params.meshes[mesh_instance.mesh_index];
+    var mesh = params.meshes[mesh_instance.mesh_index];
+    mesh.apply_skin(mesh_instance);
 
     switch (debug_view) {
         case DebugView::Triangles: {

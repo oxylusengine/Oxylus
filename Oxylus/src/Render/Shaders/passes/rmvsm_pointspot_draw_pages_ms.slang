@@ -56,7 +56,8 @@ func ts_main(
         let view = views[vsm_meshlet_instance.layer];
         let mvp = mul(view.projection_view, transform.world);
 
-        let mesh = meshes[mesh_instance.mesh_index];
+        var mesh = meshes[mesh_instance.mesh_index];
+        mesh.apply_skin(mesh_instance);
         let mesh_lod = mesh.lods[mesh_instance.lod_index];
         let meshlet_bounds = mesh_lod.meshlet_bounds[vsm_meshlet_instance.meshlet_index];
         let aabb_center = meshlet_bounds.get_aabb_center();
@@ -67,10 +68,13 @@ func ts_main(
         let world_center = transform.to_world_position(aabb_center).xyz;
         let world_radius = transform.to_world_radius(length(aabb_extent * 0.5));
         let in_range = distance(world_center, view.light_position) - world_radius <= view.range;
-        let cone_visible = cone_cutoff >= 1.0 ||
+        // bind-pose meshlet bounds are meaningless once the mesh deforms, so a skinned instance
+        // skips meshlet-level culling and relies on the per-mesh animated bounds instead
+        let skinned = mesh_instance.is_skinned();
+        let cone_visible = skinned || cone_cutoff >= 1.0 ||
                            !test_cone(world_center, world_radius, cone_axis, cone_cutoff, view.light_position);
 
-        if (in_range && cone_visible && test_frustum(mvp, aabb_center, aabb_extent)) {
+        if (in_range && cone_visible && (skinned || test_frustum(mvp, aabb_center, aabb_extent))) {
             var visible = true;
             if (let screen_aabb = project_aabb(mvp, view.z_near, aabb_center, aabb_extent)) {
                 visible = test_pointspot_pages(screen_aabb, hpb, vsm_meshlet_instance.layer, ctx.curr_mip);
@@ -105,7 +109,8 @@ func ms_main(
     let vsm_meshlet_instance_index = payload.base_meshlet_instance_index + u32(payload.visible_indices[slot]);
     let vsm_meshlet_instance = vsm_meshlet_instances[vsm_meshlet_instance_index];
     let mesh_instance = mesh_instances[vsm_meshlet_instance.mesh_instance_index];
-    let mesh = meshes[mesh_instance.mesh_index];
+    var mesh = meshes[mesh_instance.mesh_index];
+    mesh.apply_skin(mesh_instance);
     let mesh_lod = mesh.lods[mesh_instance.lod_index];
     let meshlet = mesh_lod.meshlets[vsm_meshlet_instance.meshlet_index];
     let vertex_count = u32(meshlet.vertex_count);

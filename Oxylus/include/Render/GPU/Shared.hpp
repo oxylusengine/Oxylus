@@ -88,6 +88,9 @@ struct Mesh {
   OX_PTR(u16x4) vertex_positions = {};
   OX_PTR(u32) vertex_normals = {};
   OX_PTR(u16x2) texture_coords = {};
+  // u16x4 bone indices and u16x4 unorm weights, both null on a static mesh
+  OX_PTR(u16x4) skin_joint_indices = {};
+  OX_PTR(u16x4) skin_weights = {};
   u32 vertex_count = 0;
   u32 lod_count = 0;
   OX_PTR(MeshLOD) lods = {};
@@ -178,12 +181,42 @@ struct MeshletInstance {
   u32 meshlet_index = 0;
 };
 
+// half the bandwidth of a 3x4 matrix per bone, and the shader rotates a vector instead of doing a
+// matrix multiply
+struct SkinningTransform {
+  f32x4 rotation = f32x4(0.0f, 0.0f, 0.0f, 1.0f);
+  f32x4 translation_scale = f32x4(0.0f, 0.0f, 0.0f, 1.0f);
+};
+
+struct SkinJob {
+  u32 mesh_instance_index = 0;
+  u32 vertex_offset = 0;
+  u32 bone_offset = 0;
+  u32 vertex_count = 0;
+  u32 bone_count = 0;
+};
+
+enum class MeshInstanceFlag : u32 {
+  None = 0,
+  CastShadows = 1 << 0,
+};
+OX_BITMASK(MeshInstanceFlag)
+
 struct MeshInstance {
   u32 mesh_index = 0;
   u32 lod_index = 0;
   u32 material_index = 0;
   u32 transform_index = 0;
   u32 meshlet_instance_visibility_offset = 0;
+  // rank among the scene's skinned instances, which is what indexes the per-instance BLAS address
+  // table. Meaningless unless `skinned_vertex_positions` is set
+  u32 skinned_instance_index = 0;
+  MeshInstanceFlag flags = MeshInstanceFlag::None;
+  // per-instance override of the mesh's bind-pose vertex data, written by the skinning pass, and
+  // zero for a static instance so the mesh's own pointers and bounds are used
+  OX_PTR(u16x4) skinned_vertex_positions = {};
+  OX_PTR(u32) skinned_vertex_normals = {};
+  MeshBounds skinned_bounds = {};
 };
 
 OX_CONST f32 CAMERA_SCALE_UNIT = 0.01f;
@@ -378,6 +411,8 @@ enum class SceneFlags : u32 {
   HasDDGI = 1 << 12,
   HasParticles = 1 << 13,
   HasParticleSorting = 1 << 14,
+  HasLetterbox = 1 << 15,
+  HasScreenFade = 1 << 16,
 };
 OX_BITMASK(SceneFlags)
 
@@ -403,6 +438,11 @@ struct PostProcessSettings {
   f32 film_grain_scale = 1.0f;
   f32 film_grain_amount = 0.5f;
   u32 film_grain_seed = 0;
+  f32 letterbox_amount = 0.0f;
+  f32 letterbox_aspect = 2.39f;
+  f32x3 letterbox_color = {};
+  f32 fade_amount = 0.0f;
+  f32x3 fade_color = {};
 };
 
 // same field order as the SDK's cbFSR3Upscaler so the port stays comparable against the reference
@@ -520,6 +560,8 @@ enum class CullFlag : u32 {
   SelectLOD = 1 << 1,
   TestOcclusion = 1 << 2,
   LatePass = 1 << 3,
+  // drops instances without `MeshInstanceFlag::CastShadows`, for the shadow map passes
+  ShadowCastersOnly = 1 << 4,
 
   TestAll = (1 << 0) | (1 << 1) | (1 << 2),
 };

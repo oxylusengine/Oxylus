@@ -18,6 +18,11 @@ option("editor")
     set_showmenu(true)
     set_description("Enable Oxylus Editor project")
 
+option("compile_resources")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Run rcli at build time: shader packs, asset cooking and the GPU layout check")
+
 option("llvmpipe")
     set_default(false)
     set_showmenu(true)
