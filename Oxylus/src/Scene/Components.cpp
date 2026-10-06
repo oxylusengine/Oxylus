@@ -13,6 +13,11 @@ namespace ox {
 CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   ZoneScoped;
 
+  // import already scoped us to Core, and every child of Core is offered as a gameplay component
+  const auto module_scope = world.set_scope(0);
+  world.component<AssetFields>("AssetFields");
+  world.set_scope(module_scope);
+
   world.module<CoreComponentsModule>("Core");
 
 #ifdef OX_LUA_BINDINGS
@@ -51,7 +56,6 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   // the one enum not nested in a component, ecsgen can't see it
   registry.bind_enum<GPU::TonemapType>("TonemapType");
-  world.component<AssetFields>("AssetFields");
 
   bind_core_components(registry);
 }
