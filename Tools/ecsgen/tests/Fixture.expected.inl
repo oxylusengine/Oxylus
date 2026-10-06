@@ -19,7 +19,10 @@ static auto bind_fixture_components(ox::ComponentRegistry& registry) -> void {
       &C::b,
       &C::rotation,
       &C::weights,
-      &C::color>("Renamed")
+      &C::color,
+      &C::aligned,
+      &C::sized,
+      &C::callback>("Renamed")
       .tags<ox::Networked>();
   }
 
@@ -27,8 +30,9 @@ static auto bind_fixture_components(ox::ComponentRegistry& registry) -> void {
     using C = EnumComponent;
     static constexpr auto asset_fields = std::array{
       ox::AssetField{"texture", ox::AssetType::Texture},
+      ox::AssetField{"model", ox::AssetType::Model},
     };
-    registry.bind<&C::mode, &C::kind, &C::texture>()
+    registry.bind<&C::mode, &C::kind, &C::texture, &C::model>()
       .asset_fields(asset_fields);
   }
 }

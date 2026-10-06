@@ -160,6 +160,23 @@ static auto closing_of(const std::string_view open) -> c8 {
   return '\0';
 }
 
+// index of the token closing the (), [] or {} group opened at `open`, tokens.size() when unbalanced
+static auto group_end(std::span<const Token> tokens, const usize open) -> usize {
+  auto depth = 0_sz;
+  for (auto i = open; i < tokens.size(); i++) {
+    const auto text = tokens[i].text;
+    if (closing_of(text) != '\0') {
+      depth += 1;
+    } else if (text == ")" || text == "]" || text == "}") {
+      depth -= 1;
+      if (depth == 0)
+        return i;
+    }
+  }
+
+  return tokens.size();
+}
+
 static auto join_type(std::span<const Token> tokens) -> std::string {
   auto result = std::string{};
   for (usize i = 0; i < tokens.size(); i++) {
@@ -508,12 +525,18 @@ struct Parser {
       return;
     }
 
-    for (const auto keyword : {"using", "typedef", "static_assert", "friend", "static"}) {
+    for (const auto keyword : {"using", "typedef", "static_assert", "friend"}) {
       if (self.is(keyword)) {
         not_a_field(std::format("'{}' declarations", keyword));
         self.skip_declaration();
         return;
       }
+    }
+
+    if (self.is_static_ahead()) {
+      not_a_field("static members");
+      self.skip_declaration();
+      return;
     }
 
     if (self.is_function_ahead(component)) {
@@ -525,32 +548,79 @@ struct Parser {
     self.parse_fields(component, transient, asset);
   }
 
-  auto is_function_ahead(this const Parser& self, const Component& component) -> bool {
+  // `inline static` and `constexpr static` put the keyword after other specifiers
+  auto is_static_ahead(this const Parser& self) -> bool {
     for (auto i = self.pos; i < self.tokens.size(); i++) {
       const auto& token = self.tokens[i];
       if (token.kind == TokenKind::End || token.text == ";" || token.text == "=" || token.text == "{")
         return false;
+
+      if (token.text == "static" || token.text == "thread_local")
+        return true;
+    }
+
+    return false;
+  }
+
+  // only a `(` at the top level of the declarator opens a parameter list, the ones in `alignas(16)`,
+  // `std::array<f32, sizeof(u64)>` or `std::function<void(u32)>` belong to a field
+  auto is_function_ahead(this const Parser& self, const Component& component) -> bool {
+    auto angle_depth = 0_sz;
+    for (auto i = self.pos; i < self.tokens.size(); i++) {
+      const auto& token = self.tokens[i];
+      if (token.kind == TokenKind::End || token.text == ";" || token.text == "=" || token.text == "{")
+        return false;
+
       if (token.text == "operator")
         return true;
-      if (token.text == "(") {
-        if (i > self.pos && self.tokens[i - 1].text == component.name)
+
+      if (token.text == "<")
+        angle_depth += 1;
+      else if (token.text == ">" && angle_depth > 0)
+        angle_depth -= 1;
+
+      if (closing_of(token.text) == '\0')
+        continue;
+
+      const auto previous = i > self.pos ? self.tokens[i - 1].text : std::string_view{};
+      const auto is_specifier_group = previous == "alignas" || previous == "decltype" || previous == "__attribute__" ||
+                                      previous == "__declspec";
+      if (token.text == "(" && angle_depth == 0 && !is_specifier_group) {
+        if (previous == component.name)
           self.fail_at(token.line, "components must stay aggregates, they can't declare constructors or destructors");
+
+        if (self.is("*", i - self.pos + 1) || self.is("&", i - self.pos + 1))
+          self.fail_at(
+            token.line,
+            "function pointer fields aren't supported, name the type with an alias outside the component"
+          );
+
         return true;
       }
+
+      i = group_end(self.tokens, i);
     }
+
     return false;
   }
 
   auto parse_fields(this Parser& self, Component& component, const bool transient, const std::string_view asset)
     -> void {
     const auto line = self.peek().line;
+    // leading attributes stay out of the type, it's compared against enum and UUID spellings
+    while (self.is("alignas") || (self.is("[") && self.is("[", 1))) {
+      if (self.is("alignas"))
+        self.next();
+      self.skip_group();
+    }
+
     const auto begin = self.pos;
     auto angle_depth = 0_sz;
 
     while (true) {
       if (self.at_end())
         self.fail("unterminated field declaration");
-      if (self.is("[") && self.is("[", 1)) {
+      if (self.is("(") || (self.is("[") && self.is("[", 1))) {
         self.skip_group();
         continue;
       }
