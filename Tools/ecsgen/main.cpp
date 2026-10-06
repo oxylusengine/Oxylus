@@ -187,15 +187,41 @@ static auto join_type(std::span<const Token> tokens) -> std::string {
   return result;
 }
 
+// what the enum and UUID checks compare against, `const ::ox::Foo::Mode` and `Foo::Mode` are the same field type
+// from inside namespace ox, and so is `b::T` from inside `a::b`
+static auto type_key(std::span<const Token> tokens, const std::string_view component_namespace) -> std::string {
+  auto unqualified = std::vector<Token>{};
+  std::ranges::copy_if(tokens, std::back_inserter(unqualified), [](const Token& token) {
+    return token.text != "const" && token.text != "volatile";
+  });
+
+  auto type = join_type(unqualified);
+  if (type.starts_with("::"))
+    type.erase(0, 2);
+
+  for (auto scope = component_namespace; !scope.empty();) {
+    if (type.starts_with(scope) && std::string_view(type).substr(scope.size()).starts_with("::")) {
+      type.erase(0, scope.size() + 2);
+      break;
+    }
+
+    const auto separator = scope.find("::");
+    if (separator == std::string_view::npos)
+      break;
+
+    scope.remove_prefix(separator + 2);
+  }
+
+  return type;
+}
+
 static auto unquote(const std::string_view text) -> std::string {
   if (text.size() >= 2 && text.front() == '"' && text.back() == '"')
     return std::string(text.substr(1, text.size() - 2));
   return std::string(text);
 }
 
-static auto is_uuid_type(const std::string_view type) -> bool {
-  return type == "UUID" || type == "ox::UUID" || type == "::ox::UUID";
-}
+static auto is_uuid_type(const std::string_view type) -> bool { return type == "UUID" || type == "ox::UUID"; }
 
 struct Parser {
   std::string_view path = {};
@@ -641,7 +667,7 @@ struct Parser {
     if (declarator.size() < 2 || declarator.back().kind != TokenKind::Identifier)
       self.fail_at(line, "expected a field declaration");
 
-    const auto type = join_type(declarator.first(declarator.size() - 1));
+    const auto type = type_key(declarator.first(declarator.size() - 1), self.component_namespace);
     auto name = std::string(declarator.back().text);
 
     while (true) {

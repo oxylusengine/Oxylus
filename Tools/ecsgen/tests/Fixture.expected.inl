@@ -11,6 +11,8 @@ static auto bind_fixture_components(ox::ComponentRegistry& registry) -> void {
   registry.bind_enum<EnumComponent::Mode>("EnumMode");
   registry.bind_enum<EnumComponent::Forced>("EnumForced");
   registry.bind_enum<EnumComponent::Kind>("Kind");
+  registry.bind_enum<EnumComponent::Shape>("EnumShape");
+  registry.bind_enum<EnumComponent::Side>("EnumSide");
 
   {
     using C = PlainComponent;
@@ -31,8 +33,16 @@ static auto bind_fixture_components(ox::ComponentRegistry& registry) -> void {
     static constexpr auto asset_fields = std::array{
       ox::AssetField{"texture", ox::AssetType::Texture},
       ox::AssetField{"model", ox::AssetType::Model},
+      ox::AssetField{"prefab", ox::AssetType::Scene},
     };
-    registry.bind<&C::mode, &C::kind, &C::texture, &C::model>()
+    registry.bind<
+      &C::mode,
+      &C::kind,
+      &C::shape,
+      &C::side,
+      &C::texture,
+      &C::model,
+      &C::prefab>()
       .asset_fields(asset_fields);
   }
 }

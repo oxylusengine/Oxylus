@@ -43,6 +43,8 @@ struct EnumComponent {
   enum class Unused { A, B };
   OX_ENUM() enum class Forced : u8 { X };
   OX_ENUM("Kind") enum Kind { K0 };
+  enum Shape : u8 { Box };
+  enum Side { Left };
 
   struct Nested {
     int x = 0;
@@ -50,9 +52,12 @@ struct EnumComponent {
 
   Mode mode = Mode::First;
   EnumComponent::Kind kind = K0;
+  ::ox::EnumComponent::Shape shape = Box;
+  const Side side = Left;
   OX_TRANSIENT Nested nested = {};
   OX_FIELD(asset = Texture) UUID texture = {};
   OX_FIELD(asset = Model) alignas(8) UUID model = {};
+  OX_FIELD(asset = Scene) const ::ox::UUID prefab = {};
 
   template <typename Self>
   auto pick(this Self& self, const u32 index) -> auto& {
