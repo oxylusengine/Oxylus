@@ -1371,6 +1371,9 @@ auto cook_assets(Session& session, const std::filesystem::path& assets_dir, cons
 
   auto manifest = AssetManifest{};
   auto seen = ankerl::unordered_dense::set<UUID>{};
+  // what actually made it into the manifest, which is all the game will be able to resolve
+  auto shipped = ankerl::unordered_dense::map<UUID, AssetType>{};
+  auto scene_sources = std::vector<std::filesystem::path>{};
   auto cooked_packs = ankerl::unordered_dense::set<std::string>{};
   auto succeeded = true;
   for (const auto& source : sources) {
@@ -1406,9 +1409,52 @@ auto cook_assets(Session& session, const std::filesystem::path& assets_dir, cons
           .source_path = vfs.to_virtual(asset.source_path).generic_string(),
         }
       );
+      shipped.emplace(asset.uuid, asset.type);
+      if (asset.type == AssetType::Scene && !asset.source_path.empty()) {
+        scene_sources.push_back(asset.source_path);
+      }
 
       if (asset.material.has_value()) {
         manifest.materials.push_back(AssetManifest::MaterialEntry::pack(asset.uuid, *asset.material));
+      }
+    }
+  }
+
+  // A scene names its assets by UUID and the loader only finds one missing when the game opens it, as a warning and a
+  // component left without its asset. Checked once everything is cooked, against what this cook ships.
+  for (const auto& scene_path : scene_sources) {
+    // a scene that doesn't parse was already reported by its import
+    const auto references = scene_references(File::to_string(scene_path));
+    if (!references.has_value()) {
+      continue;
+    }
+
+    for (const auto& reference : references.value()) {
+      const auto it = shipped.find(reference.uuid);
+      if (it == shipped.end()) {
+        session.push_error(
+          fmt::format(
+            "'{}' uses asset {} ({}), which isn't in this cook. Its source was removed or lives outside {}.",
+            scene_path,
+            reference.uuid.str(),
+            reference.where,
+            assets_dir
+          )
+        );
+        succeeded = false;
+        continue;
+      }
+
+      if (reference.expected_type.has_value() && it->second != *reference.expected_type) {
+        session.push_error(
+          fmt::format(
+            "'{}' uses {} as a script ({}), but it isn't one.",
+            scene_path,
+            reference.uuid.str(),
+            reference.where
+          )
+        );
+        succeeded = false;
       }
     }
   }
