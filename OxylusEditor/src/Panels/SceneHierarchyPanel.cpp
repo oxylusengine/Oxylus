@@ -236,7 +236,18 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
           if (ImGui::MenuItem("Reload")) {
             if (self.selected_script_ && !self.scene_->is_running()) {
               if (auto lua_system = self.scene_->get_lua_system(*self.selected_script_)) {
-                lua_system->reload();
+                auto& asset_man = App::mod<AssetManager>();
+                refresh_scripts(asset_man);
+
+                // copied out first, the script runs as it reloads and may well reach the asset manager
+                auto script = asset_man.get_script(*self.selected_script_);
+                if (script) {
+                  const auto fresh_script = script.copy();
+                  script.reset();
+                  lua_system->reload(fresh_script);
+                } else {
+                  lua_system->reload();
+                }
               }
             }
           }

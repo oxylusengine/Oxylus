@@ -43,6 +43,11 @@ auto import_asset(
 // editing or shipping depends on it. `output_dir` is dedicated to the cook, stale packs in it are removed.
 auto cook_project_assets(const std::filesystem::path& assets_dir, const std::filesystem::path& output_dir) -> bool;
 
+// Scripts are cooked like everything else, but they are the asset edited while the editor runs and expected to take
+// effect straight away. This cooks again every script whose source moved on and swaps the loaded ones in place, a play
+// session or a script reload calls it first.
+auto refresh_scripts(AssetManager& asset_man) -> void;
+
 auto remap_path(
   const std::filesystem::path& path, const std::filesystem::path& old_path, const std::filesystem::path& new_path
 ) -> option<std::filesystem::path>;

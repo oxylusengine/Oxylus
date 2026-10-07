@@ -96,6 +96,15 @@ struct TextureData {
   std::array<u8, 4> components = {};
 };
 
+struct ScriptData {
+  using serialize_id = zpp::bits::serialization_id<AssetType::Script>;
+
+  std::string name = {};
+  // what `lua_dump` wrote, debug info kept. The chunk name is baked in, and it is the source's virtual path, which is
+  // what errors print and `require_script` resolves siblings against
+  std::vector<u8> bytecode = {};
+};
+
 enum class ModelLightType : u32 {
   Directional = 0,
   Spot,
@@ -258,7 +267,7 @@ static_assert(GPU::Mesh::MAX_LODS == 8);
 struct AssetFileEntry {
   PackedUUID uuid = {};
   AssetType type = AssetType::None;
-  std::variant<NoneAsset, ShaderPipelineData, TextureData, ModelData> data;
+  std::variant<NoneAsset, ShaderPipelineData, TextureData, ModelData, ScriptData> data;
 
   constexpr static auto serialize(auto& archive, auto& self) -> zpp::bits::errc {
     if constexpr (std::remove_cvref_t<decltype(archive)>::kind() == zpp::bits::kind::out) {
@@ -296,5 +305,6 @@ struct AssetFile {
   auto add_entry(this AssetFile& self, ShaderPipelineData&& entry, const PackedUUID& uuid = {}) -> void;
   auto add_entry(this AssetFile& self, TextureData&& entry, const PackedUUID& uuid = {}) -> void;
   auto add_entry(this AssetFile& self, ModelData&& entry, const PackedUUID& uuid = {}) -> void;
+  auto add_entry(this AssetFile& self, ScriptData&& entry, const PackedUUID& uuid = {}) -> void;
 };
 } // namespace ox

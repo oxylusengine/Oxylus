@@ -273,4 +273,16 @@ auto AssetFile::add_entry(this AssetFile& self, ModelData&& entry, const PackedU
   );
 }
 
+auto AssetFile::add_entry(this AssetFile& self, ScriptData&& entry, const PackedUUID& uuid) -> void {
+  ZoneScoped;
+
+  self.entries.push_back(
+    AssetFileEntry{
+      .uuid = uuid,
+      .type = AssetType::Script,
+      .data = std::move(entry),
+    }
+  );
+}
+
 } // namespace ox

@@ -108,6 +108,12 @@ static auto log_diagnostics(rc::Session& session) -> void {
   }
 }
 
+// the project's assets once one is open, which is the mount a script's bytecode names itself under
+static auto import_assets_dir() -> std::filesystem::path {
+  const auto& vfs = App::get_vfs();
+  return vfs.is_mounted_dir(VFS::ASSETS_DIR) ? vfs.to_physical(VFS::ASSETS_DIR) : std::filesystem::path{};
+}
+
 auto import_asset(
   AssetManager& asset_man,
   rc::Session& session,
@@ -116,7 +122,7 @@ auto import_asset(
 ) -> UUID {
   ZoneScoped;
 
-  const auto result = rc::import_asset(session, cache_dir(), path, usage_directive);
+  const auto result = rc::import_asset(session, import_assets_dir(), cache_dir(), path, usage_directive);
   log_diagnostics(session);
 
   for (const auto& asset : result.assets) {
@@ -145,5 +151,39 @@ auto import_asset(AssetManager& asset_man, const std::filesystem::path& path, op
   ZoneScoped;
 
   return import_asset(asset_man, App::mod<rc::ResourceCompiler>(), path, usage_directive);
+}
+
+auto refresh_scripts(AssetManager& asset_man) -> void {
+  ZoneScoped;
+
+  auto& session = App::mod<rc::ResourceCompiler>();
+  const auto& vfs = App::get_vfs();
+  const auto assets_dir = import_assets_dir();
+  for (const auto& asset : asset_man.get_registry_snapshot()) {
+    if (asset.type != AssetType::Script || asset.source_path.empty()) {
+      continue;
+    }
+
+    const auto source_path = vfs.to_physical(asset.source_path);
+    if (source_path.empty() || !std::filesystem::exists(source_path)) {
+      continue;
+    }
+
+    // a warm script only costs a hash of its source here
+    const auto result = rc::import_asset(session, assets_dir, cache_dir(), source_path);
+    log_diagnostics(session);
+
+    // a script that didn't compile when it was registered points at its source, this moves it onto the pack once
+    // it does
+    for (const auto& imported : result.assets) {
+      if (imported.uuid == asset.uuid) {
+        asset_man.update_asset_path(imported.uuid, imported.path, imported.source_path);
+      }
+    }
+
+    if (asset_man.is_loaded(asset.uuid)) {
+      asset_man.reload_script(asset.uuid);
+    }
+  }
 }
 } // namespace ox
