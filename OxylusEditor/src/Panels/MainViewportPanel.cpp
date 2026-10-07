@@ -5,6 +5,8 @@
 #include <imgui_internal.h>
 #include <vuk/ImageAttachment.hpp>
 
+#include "Asset/AssetImporter.hpp"
+#include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Editor.hpp"
 #include "UI/PayloadData.hpp"
@@ -33,6 +35,8 @@ auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
                               .subscribe<Editor::ScenePlayEvent>([&self](const Editor::ScenePlayEvent& e) {
                                 App::defer_to_next_frame([&self, scene_id = e.scene_id] {
                                   auto& editor = App::mod<Editor>();
+                                  // the play copy builds its script systems from the loaded assets
+                                  refresh_scripts(App::mod<AssetManager>());
                                   auto play_scene_id = editor.scene_manager.new_play_scene(scene_id);
                                   auto copy_scene = editor.scene_manager.get_scene(play_scene_id);
                                   self.add_new_play_scene(copy_scene);

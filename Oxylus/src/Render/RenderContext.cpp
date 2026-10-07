@@ -1053,6 +1053,20 @@ auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipeli
   return true;
 }
 
+auto RenderContext::load_shader_pack(this RenderContext& self, const AssetFile& pack) -> void {
+  ZoneScoped;
+
+  auto& render_context = ox::App::get_rendercontext();
+  for (const auto& entry : pack.entries) {
+    const auto* pipeline_data = std::get_if<ox::ShaderPipelineData>(&entry.data);
+    if (!pipeline_data) {
+      continue;
+    }
+
+    render_context.create_pipeline(*pipeline_data);
+  }
+}
+
 auto RenderContext::use_mesh_shaders(this const RenderContext& self) -> bool {
   return (self.features & RenderContext::Feature::MeshShaders) && self.context_cvar.cvar_mesh_shaders.as_bool();
 }

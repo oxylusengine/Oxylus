@@ -32,10 +32,12 @@
 #include <simdjson.h>
 #include <sol/state.hpp>
 
+#include "Asset/AssetFile.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
 #include "Core/Option.hpp"
+#include "Core/VFS.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
 #include "Physics/Physics.hpp"
@@ -52,6 +54,35 @@
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+// a cooked scene is a pack holding its JSON, anything else is the JSON the editor saved
+static auto read_scene_json(const std::filesystem::path& path) -> option<std::string> {
+  ZoneScoped;
+
+  if (path.extension() == ".oxpack") {
+    auto pack = AssetFile::unpack(path);
+    if (!pack) {
+      return nullopt;
+    }
+
+    for (auto& entry : pack->entries) {
+      if (auto* scene_data = std::get_if<SceneData>(&entry.data)) {
+        return std::move(scene_data->json);
+      }
+    }
+
+    OX_LOG_ERROR("Asset pack '{}' contains no scene.", path);
+    return nullopt;
+  }
+
+  auto content = File::to_string(path);
+  if (content.empty()) {
+    OX_LOG_ERROR("Failed to read/open file {}!", path);
+    return nullopt;
+  }
+
+  return content;
+}
+
 auto wrap_clip_time(const f32 time, const f32 duration, const bool loop) -> f32 {
   if (duration <= 0.0f) {
     return 0.0f;
@@ -4075,12 +4106,30 @@ auto Scene::save_to_file(this const Scene& self, const std::filesystem::path& pa
 auto Scene::load_from_file(this Scene& self, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
-  auto content = File::to_string(path);
-  if (content.empty()) {
-    OX_LOG_ERROR("Failed to read/open file {}!", path);
+  const auto json = read_scene_json(path);
+  if (!json.has_value()) {
     return false;
   }
 
-  return self.from_json(content);
+  return self.from_json(json.value());
+}
+
+auto Scene::load_from_asset(this Scene& self, const UUID& uuid) -> bool {
+  ZoneScoped;
+
+  auto path = std::filesystem::path{};
+  {
+    // only the path is wanted, so no reference is taken: the scene owns refs on what it names, not on its own file
+    auto asset = App::mod<AssetManager>().get_asset(uuid);
+    if (!asset || asset->type != AssetType::Scene) {
+      OX_LOG_ERROR("{} is not a scene asset.", uuid.str());
+      return false;
+    }
+
+    path = App::get_vfs().to_physical(asset->path);
+  }
+
+  // its pack once cooked, or the editor's JSON when the cook failed on it
+  return self.load_from_file(path);
 }
 } // namespace ox

@@ -20,6 +20,8 @@
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
+#include "SceneCompiler.hpp"
+#include "ScriptCompiler.hpp"
 #include "Utils/JsonWriter.hpp"
 
 namespace ox::rc {
@@ -69,6 +71,8 @@ struct ImportClaim {
 // what one `import_asset` call threads through its recursion
 struct Importer {
   Session& session;
+  // the mount scripts name themselves under, see `script_chunk_name`
+  VFS vfs = {};
   std::filesystem::path cooked_dir = {};
   ImportResult& result;
 };
@@ -145,7 +149,7 @@ static auto header_matches(std::span<const u8> header, std::span<const u8> magic
 }
 
 // What the file says it is, which a rename cannot change. Only formats that carry a signature are here: glTF, Lua,
-// JSON and the sidecars are text, and the two `ox` formats are ours to name.
+// JSON and the sidecars are text, and the `ox` formats are ours to name.
 static auto to_asset_file_signature(const std::filesystem::path& path) -> AssetFileType {
   ZoneScoped;
 
@@ -240,6 +244,7 @@ auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {
     case fnv64_c(".OXTERRAIN") : return AssetFileType::OXTERRAIN;
     case fnv64_c(".OXPARTICLE"): return AssetFileType::OXPARTICLE;
     case fnv64_c(".OXCINE")    : return AssetFileType::OXCINE;
+    case fnv64_c(".OXSCENE")   : return AssetFileType::OXSCENE;
     case fnv64_c(".WAV")       : return AssetFileType::WAV;
     case fnv64_c(".MP3")       : return AssetFileType::MP3;
     case fnv64_c(".FLAC")      : return AssetFileType::FLAC;
@@ -260,6 +265,7 @@ auto to_asset_type(AssetFileType file_type) -> AssetType {
     case AssetFileType::OXTERRAIN : return AssetType::Terrain;
     case AssetFileType::OXPARTICLE: return AssetType::ParticleSystem;
     case AssetFileType::OXCINE    : return AssetType::Cinematic;
+    case AssetFileType::OXSCENE   : return AssetType::Scene;
     case AssetFileType::WAV       :
     case AssetFileType::MP3       :
     case AssetFileType::FLAC      :
@@ -270,13 +276,15 @@ auto to_asset_type(AssetFileType file_type) -> AssetType {
 
 auto needs_compiling(AssetFileType file_type) -> bool {
   switch (file_type) {
-    case AssetFileType::GLB :
-    case AssetFileType::GLTF:
-    case AssetFileType::KTX2:
-    case AssetFileType::DDS :
-    case AssetFileType::PNG :
-    case AssetFileType::JPEG: return true;
-    default                 : return false;
+    case AssetFileType::GLB    :
+    case AssetFileType::GLTF   :
+    case AssetFileType::KTX2   :
+    case AssetFileType::DDS    :
+    case AssetFileType::PNG    :
+    case AssetFileType::JPEG   :
+    case AssetFileType::LUA    :
+    case AssetFileType::OXSCENE: return true;
+    default                    : return false;
   }
 }
 
@@ -990,8 +998,180 @@ static auto import_compiled_texture(
   return uuid;
 }
 
+// The source a script's bytecode reports, which is also where `require_script` looks for its siblings: the virtual
+// path under the assets mount, so it resolves the same in the editor and in a shipped game. A script outside the
+// assets keeps its absolute path, and its siblings are read off disk.
+static auto script_chunk_name(const Importer& importer, const std::filesystem::path& path) -> std::string {
+  return "@" + importer.vfs.to_virtual(path).generic_string();
+}
+
+static auto import_script(Importer& importer, const std::filesystem::path& path) -> UUID {
+  ZoneScoped;
+
+  const auto meta_path = meta_file_path(path);
+  const auto had_meta = std::filesystem::exists(meta_path);
+  auto uuid = UUID(nullptr);
+  auto recorded_hash = 0_u64;
+  if (auto meta_json = had_meta ? read_meta_file(importer.session, meta_path) : nullptr) {
+    if (auto uuid_json = meta_json->doc["uuid"].get_string(); !uuid_json.error()) {
+      uuid = UUID::from_string(uuid_json.value_unsafe()).value_or(UUID(nullptr));
+    }
+    if (auto hash_json = meta_json->doc["source_hash"].get_string(); !hash_json.error()) {
+      recorded_hash = string_to_hash(hash_json.value_unsafe());
+    }
+  }
+
+  if (!uuid) {
+    uuid = UUID::generate_random();
+  }
+
+  // the chunk name is baked into the bytecode, so a script that moved recompiles even though its text didn't, and so
+  // does every script when lua's bytecode format moves on
+  const auto chunk_name = script_chunk_name(importer, path);
+  auto hash = mix_hash(source_hash(path), fnv64_str(chunk_name));
+  hash = mix_hash(hash, script_bytecode_version());
+
+  const auto pack_path = cooked_path(importer, uuid);
+  const auto had_pack = std::filesystem::exists(pack_path);
+  auto compiled = true;
+  if (recorded_hash != hash || !had_pack) {
+    const auto source = File::to_string(path);
+    const auto source_bytes = std::span(reinterpret_cast<const u8*>(source.data()), source.size());
+    auto bytecode = compile_script(source_bytes, chunk_name);
+    if (bytecode.has_value()) {
+      auto file = AssetFile{};
+      file.add_entry(
+        ScriptData{.name = path.filename().string(), .bytecode = std::move(bytecode.value())},
+        PackedUUID::pack(uuid)
+      );
+      if (!file.pack(pack_path)) {
+        importer.session.push_error(fmt::format("Failed to write the script pack for '{}'.", path));
+        return UUID(nullptr);
+      }
+
+      if (!write_simple_meta(path, uuid, AssetType::Script, hash)) {
+        importer.session.push_error(fmt::format("Couldn't write {}.", meta_path));
+        return UUID(nullptr);
+      }
+
+      if (!had_meta) {
+        note_new_sidecar(importer, path);
+      }
+    } else {
+      // lua's message already leads with the chunk name and line
+      importer.session.push_error(fmt::format("Failed to compile script: {}", bytecode.error()));
+      compiled = false;
+
+      // the recorded hash stays put so the next import tries again, and the sidecar has to exist for the UUID to hold
+      if (!had_meta) {
+        if (!write_simple_meta(path, uuid, AssetType::Script, 0)) {
+          importer.session.push_error(fmt::format("Couldn't write {}.", meta_path));
+          return UUID(nullptr);
+        }
+
+        note_new_sidecar(importer, path);
+      }
+    }
+  }
+
+  // A script mid-edit that doesn't parse still registers, so a scene naming it keeps the reference instead of dropping
+  // it on the next save: against the last pack that compiled, or the source when there is none, which fails again
+  // when it runs. The UUID still comes back null, a cook must not ship it.
+  const auto registered_path = compiled || had_pack ? pack_path : path;
+  importer.result.assets.push_back(
+    ImportedAsset{
+      .uuid = uuid,
+      .type = AssetType::Script,
+      .path = registered_path,
+      .source_path = path,
+      .origin = path,
+      .name = path.filename().string(),
+    }
+  );
+
+  return compiled ? uuid : UUID(nullptr);
+}
+
+// A scene ships as its pack and its source stays behind, so the cook is where a broken one has to be caught rather
+// than partway through loading it in the game. For now the pack holds the editor's JSON, checked and minified.
+static auto import_scene(Importer& importer, const std::filesystem::path& path) -> UUID {
+  ZoneScoped;
+
+  const auto meta_path = meta_file_path(path);
+  const auto had_meta = std::filesystem::exists(meta_path);
+  auto uuid = UUID(nullptr);
+  auto recorded_hash = 0_u64;
+  if (auto meta_json = had_meta ? read_meta_file(importer.session, meta_path) : nullptr) {
+    if (auto uuid_json = meta_json->doc["uuid"].get_string(); !uuid_json.error()) {
+      uuid = UUID::from_string(uuid_json.value_unsafe()).value_or(UUID(nullptr));
+    }
+    if (auto hash_json = meta_json->doc["source_hash"].get_string(); !hash_json.error()) {
+      recorded_hash = string_to_hash(hash_json.value_unsafe());
+    }
+  }
+
+  if (!uuid) {
+    uuid = UUID::generate_random();
+  }
+
+  const auto hash = source_hash(path);
+  const auto pack_path = cooked_path(importer, uuid);
+  auto compiled = true;
+  if (recorded_hash != hash || !std::filesystem::exists(pack_path)) {
+    auto json = compile_scene(File::to_string(path));
+    if (json.has_value()) {
+      auto file = AssetFile{};
+      file.add_entry(
+        SceneData{.name = path.filename().string(), .json = std::move(json.value())},
+        PackedUUID::pack(uuid)
+      );
+      if (!file.pack(pack_path)) {
+        importer.session.push_error(fmt::format("Failed to write the scene pack for '{}'.", path));
+        return UUID(nullptr);
+      }
+
+      if (!write_simple_meta(path, uuid, AssetType::Scene, hash)) {
+        importer.session.push_error(fmt::format("Couldn't write {}.", meta_path));
+        return UUID(nullptr);
+      }
+
+      if (!had_meta) {
+        note_new_sidecar(importer, path);
+      }
+    } else {
+      importer.session.push_error(fmt::format("Failed to cook scene '{}': {}", path, json.error()));
+      compiled = false;
+
+      // the recorded hash stays put so the next import tries again, and the sidecar has to exist for the UUID to hold
+      if (!had_meta) {
+        if (!write_simple_meta(path, uuid, AssetType::Scene, 0)) {
+          importer.session.push_error(fmt::format("Couldn't write {}.", meta_path));
+          return UUID(nullptr);
+        }
+
+        note_new_sidecar(importer, path);
+      }
+    }
+  }
+
+  // One that doesn't cook still registers against its source, which the loader reads as is and fails on with the real
+  // error. The UUID still comes back null, a cook must not ship it.
+  importer.result.assets.push_back(
+    ImportedAsset{
+      .uuid = uuid,
+      .type = AssetType::Scene,
+      .path = compiled ? pack_path : path,
+      .source_path = path,
+      .origin = path,
+      .name = path.filename().string(),
+    }
+  );
+
+  return compiled ? uuid : UUID(nullptr);
+}
+
 // Everything that has no payload of its own to cook: a sidecar standing alone is the whole asset (a material), and a
-// source the engine reads directly (scripts, audio) is registered against itself.
+// source the engine reads directly (audio, particles) is registered against itself.
 static auto import_from_meta(Importer& importer, const std::filesystem::path& meta_path) -> UUID {
   ZoneScoped;
 
@@ -1087,6 +1267,14 @@ static auto import_asset(Importer& importer, const std::filesystem::path& path, 
       return import_model(importer, path);
     }
 
+    if (asset_type == AssetType::Script) {
+      return import_script(importer, path);
+    }
+
+    if (asset_type == AssetType::Scene) {
+      return import_scene(importer, path);
+    }
+
     return import_compiled_texture(importer, path, usage_directive);
   }
 
@@ -1119,6 +1307,7 @@ static auto import_asset(Importer& importer, const std::filesystem::path& path, 
 
 auto import_asset(
   Session& session,
+  const std::filesystem::path& assets_dir,
   const std::filesystem::path& cooked_dir,
   const std::filesystem::path& path,
   option<TextureUsage> usage_directive
@@ -1127,6 +1316,10 @@ auto import_asset(
 
   auto result = ImportResult{};
   auto importer = Importer{.session = session, .cooked_dir = cooked_dir, .result = result};
+  if (!assets_dir.empty()) {
+    importer.vfs.mount_dir(VFS::ASSETS_DIR, assets_dir);
+  }
+
   result.uuid = import_asset(importer, path, usage_directive);
 
   return result;
@@ -1178,10 +1371,13 @@ auto cook_assets(Session& session, const std::filesystem::path& assets_dir, cons
 
   auto manifest = AssetManifest{};
   auto seen = ankerl::unordered_dense::set<UUID>{};
+  // what actually made it into the manifest, which is all the game will be able to resolve
+  auto shipped = ankerl::unordered_dense::map<UUID, AssetType>{};
+  auto scene_sources = std::vector<std::filesystem::path>{};
   auto cooked_packs = ankerl::unordered_dense::set<std::string>{};
   auto succeeded = true;
   for (const auto& source : sources) {
-    auto result = import_asset(session, output_dir, source);
+    auto result = import_asset(session, assets_dir, output_dir, source);
     // a file the importer doesn't know is not an error, a known one that yields nothing is
     if (!result.uuid && to_asset_type(to_asset_file_type(source)) != AssetType::None) {
       succeeded = false;
@@ -1213,9 +1409,52 @@ auto cook_assets(Session& session, const std::filesystem::path& assets_dir, cons
           .source_path = vfs.to_virtual(asset.source_path).generic_string(),
         }
       );
+      shipped.emplace(asset.uuid, asset.type);
+      if (asset.type == AssetType::Scene && !asset.source_path.empty()) {
+        scene_sources.push_back(asset.source_path);
+      }
 
       if (asset.material.has_value()) {
         manifest.materials.push_back(AssetManifest::MaterialEntry::pack(asset.uuid, *asset.material));
+      }
+    }
+  }
+
+  // A scene names its assets by UUID and the loader only finds one missing when the game opens it, as a warning and a
+  // component left without its asset. Checked once everything is cooked, against what this cook ships.
+  for (const auto& scene_path : scene_sources) {
+    // a scene that doesn't parse was already reported by its import
+    const auto references = scene_references(File::to_string(scene_path));
+    if (!references.has_value()) {
+      continue;
+    }
+
+    for (const auto& reference : references.value()) {
+      const auto it = shipped.find(reference.uuid);
+      if (it == shipped.end()) {
+        session.push_error(
+          fmt::format(
+            "'{}' uses asset {} ({}), which isn't in this cook. Its source was removed or lives outside {}.",
+            scene_path,
+            reference.uuid.str(),
+            reference.where,
+            assets_dir
+          )
+        );
+        succeeded = false;
+        continue;
+      }
+
+      if (reference.expected_type.has_value() && it->second != *reference.expected_type) {
+        session.push_error(
+          fmt::format(
+            "'{}' uses {} as a script ({}), but it isn't one.",
+            scene_path,
+            reference.uuid.str(),
+            reference.where
+          )
+        );
+        succeeded = false;
       }
     }
   }

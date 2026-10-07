@@ -13,7 +13,7 @@ namespace ox {
 LuaSystem::LuaSystem(const LuaScript& script) {
   ZoneScoped;
 
-  init_script(script.path, script.source);
+  init_script(script);
 }
 
 auto LuaSystem::check_result(const sol::protected_function_result& result, const char* func_name) -> void {
@@ -25,13 +25,10 @@ auto LuaSystem::check_result(const sol::protected_function_result& result, const
   }
 }
 
-auto LuaSystem::init_script(
-  this LuaSystem& self, const std::filesystem::path& path, const ox::option<std::string> script
-) -> void {
+auto LuaSystem::init_script(this LuaSystem& self, LuaScript script) -> void {
   ZoneScoped;
 
-  self.file_path = path;
-  self.script_ = script;
+  self.script_ = std::move(script);
 
   const auto state = App::mod<LuaManager>().get_state();
 
@@ -39,20 +36,40 @@ auto LuaSystem::init_script(
     self.environment.reset();
   self.environment = std::make_unique<sol::environment>(*state, sol::create, state->globals());
 
-  // '@path' chunk name lets require_script resolve siblings of in-memory scripts too
-  auto file_path_str = self.file_path.string();
-  const auto load_file_result = script.has_value()
-                                  ? state->script(
-                                      self.script_.value(),
-                                      *self.environment,
-                                      sol::script_pass_on_error,
-                                      "@" + file_path_str
-                                    )
-                                  : state->script_file(file_path_str, *self.environment, sol::script_pass_on_error);
+  const auto load_file_result = [&] {
+    const auto& loaded = self.script_;
+    // a cooked chunk already names its source, which is what require_script resolves siblings against
+    if (!loaded.bytecode.empty()) {
+      const auto bytecode = std::string_view(
+        reinterpret_cast<const c8*>(loaded.bytecode.data()),
+        loaded.bytecode.size()
+      );
+      return state->script(
+        bytecode,
+        *self.environment,
+        sol::script_pass_on_error,
+        "@" + loaded.path.generic_string(),
+        sol::load_mode::binary
+      );
+    }
+
+    // '@path' chunk name lets require_script resolve siblings of in-memory scripts too
+    if (loaded.source.has_value()) {
+      return state->script(
+        loaded.source.value(),
+        *self.environment,
+        sol::script_pass_on_error,
+        "@" + loaded.path.string(),
+        sol::load_mode::text
+      );
+    }
+
+    return state->script_file(loaded.path.string(), *self.environment, sol::script_pass_on_error);
+  }();
 
   if (!load_file_result.valid()) {
     const sol::error err = load_file_result;
-    OX_LOG_ERROR("Failed to Execute Lua script {0}", self.file_path);
+    OX_LOG_ERROR("Failed to Execute Lua script {0}", self.script_.path);
     OX_LOG_ERROR("Error : {0}", err.what());
   }
 
@@ -109,7 +126,7 @@ auto LuaSystem::load(this LuaSystem& self, const std::filesystem::path& path, co
   -> void {
   ZoneScoped;
 
-  self.init_script(path, script);
+  self.init_script(LuaScript{.path = path, .source = script});
 }
 
 auto LuaSystem::reload(this LuaSystem& self) -> void {
@@ -117,8 +134,15 @@ auto LuaSystem::reload(this LuaSystem& self) -> void {
 
   self.reset_functions();
 
-  // Pass the source back so an in-memory script survives a reload.
-  self.init_script(self.file_path, self.script_);
+  // Pass the script back so an in-memory or cooked one survives a reload.
+  self.init_script(self.script_);
+}
+
+auto LuaSystem::reload(this LuaSystem& self, const LuaScript& script) -> void {
+  ZoneScoped;
+
+  self.reset_functions();
+  self.init_script(script);
 }
 
 auto LuaSystem::reset_functions(this LuaSystem& self) -> void {

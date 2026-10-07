@@ -46,7 +46,7 @@ Be aware that Oxylus is still in it's early stages of development. Some importan
 - Networking with [enet](https://github.com/zpl-c/enet)
 
 ## Building
-Windows, Linux and Mac (with MoltenVK) is supported.
+Windows, Linux and Mac (with KosmicKrisp) is supported.
 
 ### Requirements
 - [Xmake](https://xmake.io)

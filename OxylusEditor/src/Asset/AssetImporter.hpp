@@ -19,9 +19,12 @@ using rc::owns_meta_file;
 using rc::to_asset_file_type;
 using rc::to_asset_type;
 
-// Alongside the thumbnail cache, and editor-global for the same reason: entries are keyed by UUID,
-// so nothing about them is specific to the project that produced them.
+// Where imports cook to: the open project's own cache, mounted as `VFS::COOKED_DIR`. Packs are named by UUID alone, so
+// a cache shared between projects lets one overwrite the other's wherever their UUIDs meet, and a project copied from
+// another keeps its sidecars' UUIDs. Before any project is open, a cache next to the editor.
 auto cache_dir() -> std::filesystem::path;
+// `<project>/.oxeditor/assets`, outside the asset directory so neither the editor's scan nor a game's cook walks it
+auto project_cache_dir(const std::filesystem::path& project_dir) -> std::filesystem::path;
 
 // The single funnel every editor import goes through: `rc::import_asset` into the editor's cache,
 // then registers everything it produced with `asset_man`.
@@ -42,6 +45,11 @@ auto import_asset(
 // The cook a game build runs through `rcli --cook-assets`, for checking its output from the editor. Nothing in
 // editing or shipping depends on it. `output_dir` is dedicated to the cook, stale packs in it are removed.
 auto cook_project_assets(const std::filesystem::path& assets_dir, const std::filesystem::path& output_dir) -> bool;
+
+// Scripts are cooked like everything else, but they are the asset edited while the editor runs and expected to take
+// effect straight away. This cooks again every script whose source moved on and swaps the loaded ones in place, a play
+// session or a script reload calls it first.
+auto refresh_scripts(AssetManager& asset_man) -> void;
 
 auto remap_path(
   const std::filesystem::path& path, const std::filesystem::path& old_path, const std::filesystem::path& new_path

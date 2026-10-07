@@ -56,6 +56,33 @@ static auto unindex_source(
   }
 }
 
+// a cooked script is bytecode in a pack, anything else is a source a LuaSystem reads when it runs
+static auto read_script(const std::filesystem::path& path, const std::filesystem::path& source_path)
+  -> option<LuaScript> {
+  ZoneScoped;
+
+  if (path.extension() != ".oxpack") {
+    return LuaScript{.path = path};
+  }
+
+  auto pack = AssetFile::unpack(path);
+  if (!pack) {
+    return nullopt;
+  }
+
+  for (auto& entry : pack->entries) {
+    if (auto* script_data = std::get_if<ScriptData>(&entry.data)) {
+      return LuaScript{
+        .path = source_path.empty() ? path : source_path,
+        .bytecode = std::move(script_data->bytecode),
+      };
+    }
+  }
+
+  OX_LOG_ERROR("Asset pack '{}' contains no script.", path);
+  return nullopt;
+}
+
 auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
@@ -609,6 +636,7 @@ auto AssetManager::load_asset_impl(
 
   auto asset_type = asset->type;
   auto asset_path = asset_vfs().to_physical(asset->path);
+  auto asset_source_path = asset->source_path;
 
   asset.reset();
 
@@ -655,7 +683,7 @@ auto AssetManager::load_asset_impl(
       }
       case AssetType::Scene         : return static_cast<u64>(self.load_scene(asset_path));
       case AssetType::Audio         : return static_cast<u64>(self.load_audio(asset_path));
-      case AssetType::Script        : return static_cast<u64>(self.load_script(asset_path));
+      case AssetType::Script        : return static_cast<u64>(self.load_script(asset_path, asset_source_path));
       case AssetType::Terrain       : return static_cast<u64>(self.load_terrain_edits(asset_path));
       case AssetType::ParticleSystem: return static_cast<u64>(self.load_particle_system(asset_path));
       case AssetType::Cinematic     : return static_cast<u64>(self.load_cinematic(asset_path));
@@ -867,14 +895,18 @@ auto AssetManager::unload_audio(this AssetManager& self, const AudioID audio_id)
   return true;
 }
 
-auto AssetManager::load_script(this AssetManager& self, const std::filesystem::path& path) -> ScriptID {
+auto AssetManager::load_script(
+  this AssetManager& self, const std::filesystem::path& path, const std::filesystem::path& source_path
+) -> ScriptID {
   ZoneScoped;
 
-  auto script = std::make_unique<LuaScript>();
-  script->path = path;
+  auto script = read_script(path, source_path);
+  if (!script.has_value()) {
+    return ScriptID::Invalid;
+  }
 
   auto write_lock = std::unique_lock(self.scripts_mutex);
-  return self.script_map.create_slot(std::move(script));
+  return self.script_map.create_slot(std::make_unique<LuaScript>(std::move(script.value())));
 }
 
 auto AssetManager::unload_script(this AssetManager& self, const ScriptID script_id) -> bool {
@@ -882,6 +914,36 @@ auto AssetManager::unload_script(this AssetManager& self, const ScriptID script_
 
   auto write_lock = std::unique_lock(self.scripts_mutex);
   self.script_map.destroy_slot(script_id);
+
+  return true;
+}
+
+auto AssetManager::reload_script(this AssetManager& self, const UUID& uuid) -> bool {
+  ZoneScoped;
+
+  auto asset = self.get_asset(uuid);
+  if (!asset || asset->type != AssetType::Script || asset->script_id == ScriptID::Invalid) {
+    return false;
+  }
+
+  const auto script_id = asset->script_id;
+  const auto path = asset_vfs().to_physical(asset->path);
+  const auto source_path = asset->source_path;
+  asset.reset();
+
+  // read outside the lock, a pack read is file IO
+  auto script = read_script(path, source_path);
+  if (!script.has_value()) {
+    return false;
+  }
+
+  auto write_lock = std::unique_lock(self.scripts_mutex);
+  auto* slot = self.script_map.slot(script_id);
+  if (!slot) {
+    return false;
+  }
+
+  **slot = std::move(script.value());
 
   return true;
 }

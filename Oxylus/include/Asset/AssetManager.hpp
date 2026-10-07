@@ -141,6 +141,8 @@ public:
 
   auto get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaScript>;
   auto get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaScript>;
+  // re-reads a loaded script's payload in place, for one that was cooked again while it was loaded
+  auto reload_script(this AssetManager& self, const UUID& uuid) -> bool;
 
   auto get_terrain_edits(this AssetManager& self, const UUID& uuid) -> ReadGuard<TerrainEdits>;
   auto get_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> ReadGuard<TerrainEdits>;
@@ -204,7 +206,9 @@ private:
   auto load_audio(this AssetManager& self, const std::filesystem::path& path) -> AudioID;
   auto unload_audio(this AssetManager& self, AudioID audio_id) -> bool;
 
-  auto load_script(this AssetManager& self, const std::filesystem::path& path) -> ScriptID;
+  auto load_script(
+    this AssetManager& self, const std::filesystem::path& path, const std::filesystem::path& source_path = {}
+  ) -> ScriptID;
   auto unload_script(this AssetManager& self, ScriptID script_id) -> bool;
 
   auto load_terrain_edits(this AssetManager& self, const std::filesystem::path& path) -> TerrainEditsID;
