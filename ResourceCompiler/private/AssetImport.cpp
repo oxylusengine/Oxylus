@@ -20,6 +20,7 @@
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
+#include "SceneCompiler.hpp"
 #include "ScriptCompiler.hpp"
 #include "Utils/JsonWriter.hpp"
 
@@ -264,7 +265,6 @@ auto to_asset_type(AssetFileType file_type) -> AssetType {
     case AssetFileType::OXTERRAIN : return AssetType::Terrain;
     case AssetFileType::OXPARTICLE: return AssetType::ParticleSystem;
     case AssetFileType::OXCINE    : return AssetType::Cinematic;
-    // registered against the JSON the editor saves, which the engine reads as is. A binary form would cook here
     case AssetFileType::OXSCENE   : return AssetType::Scene;
     case AssetFileType::WAV       :
     case AssetFileType::MP3       :
@@ -276,14 +276,15 @@ auto to_asset_type(AssetFileType file_type) -> AssetType {
 
 auto needs_compiling(AssetFileType file_type) -> bool {
   switch (file_type) {
-    case AssetFileType::GLB :
-    case AssetFileType::GLTF:
-    case AssetFileType::KTX2:
-    case AssetFileType::DDS :
-    case AssetFileType::PNG :
-    case AssetFileType::JPEG:
-    case AssetFileType::LUA : return true;
-    default                 : return false;
+    case AssetFileType::GLB    :
+    case AssetFileType::GLTF   :
+    case AssetFileType::KTX2   :
+    case AssetFileType::DDS    :
+    case AssetFileType::PNG    :
+    case AssetFileType::JPEG   :
+    case AssetFileType::LUA    :
+    case AssetFileType::OXSCENE: return true;
+    default                    : return false;
   }
 }
 
@@ -1091,6 +1092,84 @@ static auto import_script(Importer& importer, const std::filesystem::path& path)
   return compiled ? uuid : UUID(nullptr);
 }
 
+// A scene ships as its pack and its source stays behind, so the cook is where a broken one has to be caught rather
+// than partway through loading it in the game. For now the pack holds the editor's JSON, checked and minified.
+static auto import_scene(Importer& importer, const std::filesystem::path& path) -> UUID {
+  ZoneScoped;
+
+  const auto meta_path = meta_file_path(path);
+  const auto had_meta = std::filesystem::exists(meta_path);
+  auto uuid = UUID(nullptr);
+  auto recorded_hash = 0_u64;
+  if (auto meta_json = had_meta ? read_meta_file(importer.session, meta_path) : nullptr) {
+    if (auto uuid_json = meta_json->doc["uuid"].get_string(); !uuid_json.error()) {
+      uuid = UUID::from_string(uuid_json.value_unsafe()).value_or(UUID(nullptr));
+    }
+    if (auto hash_json = meta_json->doc["source_hash"].get_string(); !hash_json.error()) {
+      recorded_hash = string_to_hash(hash_json.value_unsafe());
+    }
+  }
+
+  if (!uuid) {
+    uuid = UUID::generate_random();
+  }
+
+  const auto hash = source_hash(path);
+  const auto pack_path = cooked_path(importer, uuid);
+  auto compiled = true;
+  if (recorded_hash != hash || !std::filesystem::exists(pack_path)) {
+    auto json = compile_scene(File::to_string(path));
+    if (json.has_value()) {
+      auto file = AssetFile{};
+      file.add_entry(
+        SceneData{.name = path.filename().string(), .json = std::move(json.value())},
+        PackedUUID::pack(uuid)
+      );
+      if (!file.pack(pack_path)) {
+        importer.session.push_error(fmt::format("Failed to write the scene pack for '{}'.", path));
+        return UUID(nullptr);
+      }
+
+      if (!write_simple_meta(path, uuid, AssetType::Scene, hash)) {
+        importer.session.push_error(fmt::format("Couldn't write {}.", meta_path));
+        return UUID(nullptr);
+      }
+
+      if (!had_meta) {
+        note_new_sidecar(importer, path);
+      }
+    } else {
+      importer.session.push_error(fmt::format("Failed to cook scene '{}': {}", path, json.error()));
+      compiled = false;
+
+      // the recorded hash stays put so the next import tries again, and the sidecar has to exist for the UUID to hold
+      if (!had_meta) {
+        if (!write_simple_meta(path, uuid, AssetType::Scene, 0)) {
+          importer.session.push_error(fmt::format("Couldn't write {}.", meta_path));
+          return UUID(nullptr);
+        }
+
+        note_new_sidecar(importer, path);
+      }
+    }
+  }
+
+  // One that doesn't cook still registers against its source, which the loader reads as is and fails on with the real
+  // error. The UUID still comes back null, a cook must not ship it.
+  importer.result.assets.push_back(
+    ImportedAsset{
+      .uuid = uuid,
+      .type = AssetType::Scene,
+      .path = compiled ? pack_path : path,
+      .source_path = path,
+      .origin = path,
+      .name = path.filename().string(),
+    }
+  );
+
+  return compiled ? uuid : UUID(nullptr);
+}
+
 // Everything that has no payload of its own to cook: a sidecar standing alone is the whole asset (a material), and a
 // source the engine reads directly (audio, particles) is registered against itself.
 static auto import_from_meta(Importer& importer, const std::filesystem::path& meta_path) -> UUID {
@@ -1190,6 +1269,10 @@ static auto import_asset(Importer& importer, const std::filesystem::path& path, 
 
     if (asset_type == AssetType::Script) {
       return import_script(importer, path);
+    }
+
+    if (asset_type == AssetType::Scene) {
+      return import_scene(importer, path);
     }
 
     return import_compiled_texture(importer, path, usage_directive);

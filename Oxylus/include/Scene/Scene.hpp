@@ -373,10 +373,10 @@ public:
   auto to_json(this const Scene& self) -> JsonWriter;
   auto from_json(this Scene& self, const std::string& json) -> bool;
   auto save_to_file(this const Scene& self, const std::filesystem::path& path) -> bool;
+  // the editor's `.oxscene` or a cooked `.oxpack`, the one place a cooked scene is read
   auto load_from_file(this Scene& self, const std::filesystem::path& path) -> bool;
   // A scene the importer registered, which is all a shipped game has once its sources are cooked: the asset says where
-  // the scene's data is, so a cooked format only ever has to be read here. Find the UUID with
-  // `AssetManager::find_asset`
+  // the scene's data is. Find the UUID with `AssetManager::find_asset`
   auto load_from_asset(this Scene& self, const UUID& uuid) -> bool;
 
   auto get_uuid(this const Scene& self) -> const UUID& { return self.uuid; }

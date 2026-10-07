@@ -377,6 +377,26 @@ TEST_F(AssetFileTest, RejectsACorruptCompressedPayload) {
   EXPECT_FALSE(AssetFile::unpack(path).has_value());
 }
 
+TEST_F(AssetFileTest, PacksAndUnpacksAScene) {
+  const auto uuid = PackedUUID{.bytes = {7, 7, 7}};
+  auto file = AssetFile{};
+  file.add_entry(SceneData{.name = "main_scene.oxscene", .json = R"({"name":"Main","entities":[]})"}, uuid);
+
+  const auto path = directory / "scene.oxpack";
+  ASSERT_TRUE(file.pack(path));
+
+  const auto read = AssetFile::unpack(path);
+  ASSERT_TRUE(read.has_value());
+  ASSERT_EQ(read->entries.size(), 1);
+  EXPECT_EQ(read->entries[0].type, AssetType::Scene);
+  EXPECT_EQ(read->entries[0].uuid.bytes, uuid.bytes);
+
+  const auto* scene = std::get_if<SceneData>(&read->entries[0].data);
+  ASSERT_NE(scene, nullptr);
+  EXPECT_EQ(scene->name, "main_scene.oxscene");
+  EXPECT_EQ(scene->json, R"({"name":"Main","entities":[]})");
+}
+
 TEST_F(AssetFileTest, RoundTripsAPackedUUID) {
   const auto uuid = UUID::generate_random();
   EXPECT_EQ(PackedUUID::pack(uuid).unpack(), uuid);
