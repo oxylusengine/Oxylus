@@ -92,7 +92,18 @@ auto relocate_asset_paths(
   }
 }
 
-auto cache_dir() -> std::filesystem::path { return std::filesystem::current_path() / ".oxeditor/assets"; }
+auto cache_dir() -> std::filesystem::path {
+  const auto& vfs = App::get_vfs();
+  if (vfs.is_mounted_dir(VFS::COOKED_DIR)) {
+    return vfs.to_physical(VFS::COOKED_DIR);
+  }
+
+  return std::filesystem::current_path() / ".oxeditor/cooked";
+}
+
+auto project_cache_dir(const std::filesystem::path& project_dir) -> std::filesystem::path {
+  return project_dir / ".oxeditor/cooked";
+}
 
 // `Session` accumulates messages for its whole lifetime, and imports run concurrently, so an import
 // drains what is there rather than slicing by offset -- with several importers pushing at once an
