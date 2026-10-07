@@ -374,6 +374,10 @@ public:
   auto from_json(this Scene& self, const std::string& json) -> bool;
   auto save_to_file(this const Scene& self, const std::filesystem::path& path) -> bool;
   auto load_from_file(this Scene& self, const std::filesystem::path& path) -> bool;
+  // A scene the importer registered, which is all a shipped game has once its sources are cooked: the asset says where
+  // the scene's data is, so a cooked format only ever has to be read here. Find the UUID with
+  // `AssetManager::find_asset`
+  auto load_from_asset(this Scene& self, const UUID& uuid) -> bool;
 
   auto get_uuid(this const Scene& self) -> const UUID& { return self.uuid; }
 

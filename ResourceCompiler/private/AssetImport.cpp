@@ -148,7 +148,7 @@ static auto header_matches(std::span<const u8> header, std::span<const u8> magic
 }
 
 // What the file says it is, which a rename cannot change. Only formats that carry a signature are here: glTF, Lua,
-// JSON and the sidecars are text, and the two `ox` formats are ours to name.
+// JSON and the sidecars are text, and the `ox` formats are ours to name.
 static auto to_asset_file_signature(const std::filesystem::path& path) -> AssetFileType {
   ZoneScoped;
 
@@ -243,6 +243,7 @@ auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {
     case fnv64_c(".OXTERRAIN") : return AssetFileType::OXTERRAIN;
     case fnv64_c(".OXPARTICLE"): return AssetFileType::OXPARTICLE;
     case fnv64_c(".OXCINE")    : return AssetFileType::OXCINE;
+    case fnv64_c(".OXSCENE")   : return AssetFileType::OXSCENE;
     case fnv64_c(".WAV")       : return AssetFileType::WAV;
     case fnv64_c(".MP3")       : return AssetFileType::MP3;
     case fnv64_c(".FLAC")      : return AssetFileType::FLAC;
@@ -263,6 +264,8 @@ auto to_asset_type(AssetFileType file_type) -> AssetType {
     case AssetFileType::OXTERRAIN : return AssetType::Terrain;
     case AssetFileType::OXPARTICLE: return AssetType::ParticleSystem;
     case AssetFileType::OXCINE    : return AssetType::Cinematic;
+    // registered against the JSON the editor saves, which the engine reads as is. A binary form would cook here
+    case AssetFileType::OXSCENE   : return AssetType::Scene;
     case AssetFileType::WAV       :
     case AssetFileType::MP3       :
     case AssetFileType::FLAC      :

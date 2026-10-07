@@ -41,6 +41,7 @@ enum class AssetFileType : u32 {
   MP3,
   FLAC,
   OGG,
+  OXSCENE,
 };
 
 OXRC_API auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;

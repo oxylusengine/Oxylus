@@ -36,6 +36,7 @@
 #include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
 #include "Core/Option.hpp"
+#include "Core/VFS.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
 #include "Physics/Physics.hpp"
@@ -4082,5 +4083,24 @@ auto Scene::load_from_file(this Scene& self, const std::filesystem::path& path) 
   }
 
   return self.from_json(content);
+}
+
+auto Scene::load_from_asset(this Scene& self, const UUID& uuid) -> bool {
+  ZoneScoped;
+
+  auto path = std::filesystem::path{};
+  {
+    // only the path is wanted, so no reference is taken: the scene owns refs on what it names, not on its own file
+    auto asset = App::mod<AssetManager>().get_asset(uuid);
+    if (!asset || asset->type != AssetType::Scene) {
+      OX_LOG_ERROR("{} is not a scene asset.", uuid.str());
+      return false;
+    }
+
+    path = App::get_vfs().to_physical(asset->path);
+  }
+
+  // registered against the JSON the editor saves, for now
+  return self.load_from_file(path);
 }
 } // namespace ox

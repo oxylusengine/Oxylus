@@ -454,6 +454,9 @@ auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -
     job_man.push_job_name("Saving scene");
     job_man.submit(Job::create([scene, scene_path, edits_path, edits_uuid] {
       scene->get_scene()->save_to_file(scene_path);
+      // a scene saved for the first time gets its sidecar, and so its UUID, now rather than on the next scan. A warm
+      // one is already registered and this only reads its sidecar
+      import_asset(App::mod<AssetManager>(), scene_path);
       if (edits_uuid) {
         export_asset(App::mod<AssetManager>(), edits_uuid, edits_path);
       }
