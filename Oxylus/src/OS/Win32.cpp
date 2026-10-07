@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <string>
 
 #include "OS/OS.hpp"
@@ -12,6 +13,9 @@
 #include <shellapi.h>
 
 namespace ox {
+// ReadFile and WriteFile take a DWORD count, so anything bigger goes through in pieces of this
+constexpr static u64 MAX_IO_CHUNK_SIZE = 1_u64 << 30;
+
 auto os::mem_page_size() -> u64 {
   ZoneScoped;
 
@@ -155,15 +159,15 @@ auto os::file_read(FileDescriptor file, void* data, usize size) -> usize {
   u64 read_bytes_size = 0;
   u64 target_size = size;
   while (read_bytes_size < target_size) {
-    auto remainder_size = static_cast<DWORD>(target_size - read_bytes_size);
+    auto remainder_size = static_cast<DWORD>(std::min(target_size - read_bytes_size, MAX_IO_CHUNK_SIZE));
     u8* cur_data = reinterpret_cast<u8*>(data) + read_bytes_size;
 
     DWORD cur_read_size = 0;
-    OVERLAPPED overlapped = {};
-    overlapped.Offset = read_bytes_size & 0x00000000ffffffffull;
-    overlapped.OffsetHigh = (read_bytes_size & 0xffffffff00000000ull) >> 32u;
-    // a failed read or end of file (zero bytes) ends it, otherwise asking for more than is left spins forever
-    if (!ReadFile(file_handle, cur_data, remainder_size, &cur_read_size, &overlapped) || cur_read_size == 0) {
+    // No OVERLAPPED: on a synchronous handle its offset is absolute, so every call would start over at whatever offset
+    // it names. The file pointer carries one call on from the last and is what `file_seek` moves, same as read()
+    // elsewhere. A failed read or end of file (zero bytes) ends it, otherwise asking for more than is left spins
+    // forever
+    if (!ReadFile(file_handle, cur_data, remainder_size, &cur_read_size, nullptr) || cur_read_size == 0) {
       break;
     }
 
@@ -180,13 +184,11 @@ auto os::file_write(FileDescriptor file, const void* data, usize size) -> usize 
   u64 written_bytes_size = 0;
   u64 target_size = size;
   while (written_bytes_size < target_size) {
-    auto remainder_size = static_cast<DWORD>(target_size - written_bytes_size);
+    auto remainder_size = static_cast<DWORD>(std::min(target_size - written_bytes_size, MAX_IO_CHUNK_SIZE));
     const u8* cur_data = reinterpret_cast<const u8*>(data) + written_bytes_size;
     DWORD cur_written_size = 0;
-    OVERLAPPED overlapped = {};
-    overlapped.Offset = written_bytes_size & 0x00000000ffffffffull;
-    overlapped.OffsetHigh = (written_bytes_size & 0xffffffff00000000ull) >> 32;
-    if (WriteFile(file_handle, cur_data, remainder_size, &cur_written_size, &overlapped) == 0) {
+    // no OVERLAPPED, see `file_read`: the write lands at the file pointer, so two writes append like write() does
+    if (WriteFile(file_handle, cur_data, remainder_size, &cur_written_size, nullptr) == 0 || cur_written_size == 0) {
       OX_LOG_TRACE("File write interrupted! {}", cur_written_size);
       break;
     }

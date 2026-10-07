@@ -284,12 +284,15 @@ struct AssetFileEntry {
 
 enum class AssetFileFlags : u32 {
   None = 0,
+  // everything after the header is a single zstd frame. Block-compressed textures are fixed rate, so a mostly flat
+  // image is many times its PNG until this squeezes it back down
+  Zstd = 1 << 0,
 };
 consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
   static constexpr auto SIGNATURE = 0x4352584F_u32;
-  static constexpr auto VERSION = 5_u16;
+  static constexpr auto VERSION = 6_u16;
 
   u32 magic = SIGNATURE; // "OXRC"
   u16 version = VERSION;
@@ -297,7 +300,7 @@ struct AssetFileHeader {
 };
 
 struct AssetFile {
-  AssetFileFlags flags = AssetFileFlags::None;
+  AssetFileFlags flags = AssetFileFlags::Zstd;
   std::vector<AssetFileEntry> entries = {};
 
   static auto unpack(const std::filesystem::path& path) -> option<AssetFile>;

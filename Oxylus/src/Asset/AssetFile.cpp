@@ -1,16 +1,24 @@
 #include "Asset/AssetFile.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <glm/gtc/type_ptr.hpp>
+#include <zstd.h>
 
 #include "Animation/AnimationClip.hpp"
 #include "Animation/Skeleton.hpp"
+#include "Core/Enum.hpp"
 #include "OS/File.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
 // caps any single length-prefixed container in a pack; the largest thing we store is a mesh blob
 constexpr static auto MAX_ENTRY_ELEMENTS = 1_u64 << 31;
+// and on what a compressed pack may claim it expands to, before anything is allocated for it
+constexpr static auto MAX_PAYLOAD_SIZE = 1_u64 << 32;
+// zstd decompresses at the same speed whatever level wrote the frame, so this only trades cook time for size. Past 12
+// the search gets much slower for a percent or two: a 22 MB BC7 pack takes 0.6s here and 2.6s at 15
+constexpr static auto ZSTD_LEVEL = 12;
 
 auto PackedUUID::pack(const UUID& uuid) -> PackedUUID {
   auto self = PackedUUID{};
@@ -176,13 +184,12 @@ auto AssetFile::unpack(const std::filesystem::path& path) -> option<AssetFile> {
   auto file = File(path, FileAccess::Read);
   auto* mapped_data = file.map();
   auto bytes = std::span(static_cast<u8*>(mapped_data), file.size);
-  // a pack is untrusted input: a corrupt length prefix must not turn into a huge allocation
-  auto deser = zpp::bits::in(bytes, zpp::bits::alloc_limit<MAX_ENTRY_ELEMENTS>{});
+  auto header_deser = zpp::bits::in(bytes);
 
   auto header = AssetFileHeader{};
   auto entries = std::vector<AssetFileEntry>();
 
-  if (zpp::bits::failure(deser(header))) {
+  if (zpp::bits::failure(header_deser(header))) {
     OX_LOG_ERROR("Failed to deserialize Asset Header.");
     return nullopt;
   }
@@ -202,6 +209,35 @@ auto AssetFile::unpack(const std::filesystem::path& path) -> option<AssetFile> {
     return nullopt;
   }
 
+  auto payload = bytes.subspan(header_deser.position());
+  // owns the payload only when it had to be decompressed, the entries copy out of it either way
+  auto decompressed = std::vector<u8>{};
+  if (header.flags & AssetFileFlags::Zstd) {
+    const auto payload_size = ZSTD_getFrameContentSize(payload.data(), payload.size());
+    if (
+      payload_size == ZSTD_CONTENTSIZE_ERROR || payload_size == ZSTD_CONTENTSIZE_UNKNOWN ||
+      payload_size > MAX_PAYLOAD_SIZE
+    ) {
+      OX_LOG_ERROR("Asset file '{}' has a corrupt compressed payload.", path);
+      return nullopt;
+    }
+
+    decompressed.resize(payload_size);
+    const auto written = ZSTD_decompress(decompressed.data(), decompressed.size(), payload.data(), payload.size());
+    if (ZSTD_isError(written) || written != payload_size) {
+      OX_LOG_ERROR(
+        "Failed to decompress asset file '{}': {}",
+        path,
+        ZSTD_isError(written) ? ZSTD_getErrorName(written) : "truncated payload"
+      );
+      return nullopt;
+    }
+
+    payload = decompressed;
+  }
+
+  // a pack is untrusted input: a corrupt length prefix must not turn into a huge allocation
+  auto deser = zpp::bits::in(payload, zpp::bits::alloc_limit<MAX_ENTRY_ELEMENTS>{});
   if (zpp::bits::failure(deser(entries))) {
     OX_LOG_ERROR("Failed to deserialize Asset entries.");
     return nullopt;
@@ -221,9 +257,36 @@ auto AssetFile::pack(this AssetFile& self, const std::filesystem::path& path) ->
   };
 
   auto [data, ser] = zpp::bits::data_out();
-  if (zpp::bits::failure(ser(header, self.entries))) {
+  if (zpp::bits::failure(ser(header))) {
     OX_LOG_ERROR("Failed to serialize asset file.");
     return false;
+  }
+
+  const auto header_size = ser.position();
+  if (zpp::bits::failure(ser(self.entries))) {
+    OX_LOG_ERROR("Failed to serialize asset file.");
+    return false;
+  }
+
+  auto packed = std::vector<u8>{};
+  auto packed_bytes = std::span<const u8>(reinterpret_cast<const u8*>(data.data()), ser.position());
+  if (self.flags & AssetFileFlags::Zstd) {
+    const auto payload = packed_bytes.subspan(header_size);
+    packed.resize(header_size + ZSTD_compressBound(payload.size()));
+    std::memcpy(packed.data(), data.data(), header_size);
+    const auto compressed_size = ZSTD_compress(
+      packed.data() + header_size,
+      packed.size() - header_size,
+      payload.data(),
+      payload.size(),
+      ZSTD_LEVEL
+    );
+    if (ZSTD_isError(compressed_size)) {
+      OX_LOG_ERROR("Failed to compress asset file '{}': {}", path, ZSTD_getErrorName(compressed_size));
+      return false;
+    }
+
+    packed_bytes = std::span(packed).first(header_size + compressed_size);
   }
 
   auto file = File(path, FileAccess::Write);
@@ -232,7 +295,7 @@ auto AssetFile::pack(this AssetFile& self, const std::filesystem::path& path) ->
     return false;
   }
 
-  file.write(data);
+  file.write(packed_bytes);
 
   return true;
 }

@@ -296,6 +296,87 @@ TEST_F(AssetFileTest, RejectsAPackWithABadSignature) {
   EXPECT_FALSE(AssetFile::unpack(path).has_value());
 }
 
+// a flat image is what a fixed-rate block format can't shrink, and what the pack's compression is for
+TEST_F(AssetFileTest, CompressesAPackByDefault) {
+  auto texture = make_texture();
+  texture.mips[0].pixels.assign(1_u64 << 20, 0x11);
+
+  auto file = AssetFile{};
+  file.add_entry(std::move(texture));
+
+  const auto path = directory / "flat.oxpack";
+  ASSERT_TRUE(file.pack(path));
+  EXPECT_LT(std::filesystem::file_size(path), 1_u64 << 16);
+
+  auto read = AssetFile::unpack(path);
+  ASSERT_TRUE(read.has_value());
+  EXPECT_TRUE(read->flags & AssetFileFlags::Zstd);
+
+  const auto* read_texture = std::get_if<TextureData>(&read->entries[0].data);
+  ASSERT_NE(read_texture, nullptr);
+  ASSERT_EQ(read_texture->mips[0].pixels.size(), 1_u64 << 20);
+  EXPECT_EQ(read_texture->mips[0].pixels.front(), 0x11);
+  EXPECT_EQ(read_texture->mips[0].pixels.back(), 0x11);
+}
+
+TEST_F(AssetFileTest, ReadsAnUncompressedPack) {
+  auto texture = make_texture();
+  texture.mips[0].pixels.assign(1_u64 << 16, 0x22);
+
+  auto file = AssetFile{.flags = AssetFileFlags::None};
+  file.add_entry(std::move(texture));
+
+  const auto path = directory / "raw.oxpack";
+  ASSERT_TRUE(file.pack(path));
+  EXPECT_GT(std::filesystem::file_size(path), 1_u64 << 16);
+
+  auto read = AssetFile::unpack(path);
+  ASSERT_TRUE(read.has_value());
+  EXPECT_FALSE(read->flags & AssetFileFlags::Zstd);
+
+  const auto* read_texture = std::get_if<TextureData>(&read->entries[0].data);
+  ASSERT_NE(read_texture, nullptr);
+  EXPECT_EQ(read_texture->mips[0].pixels.size(), 1_u64 << 16);
+}
+
+TEST_F(AssetFileTest, RejectsATruncatedCompressedPack) {
+  auto file = AssetFile{};
+  file.add_entry(make_model());
+
+  const auto path = directory / "truncated.oxpack";
+  ASSERT_TRUE(file.pack(path));
+  const auto size = std::filesystem::file_size(path);
+  std::filesystem::resize_file(path, size - 8);
+
+  EXPECT_FALSE(AssetFile::unpack(path).has_value());
+}
+
+TEST_F(AssetFileTest, RejectsACorruptCompressedPayload) {
+  auto file = AssetFile{};
+  file.add_entry(make_model());
+
+  const auto path = directory / "garbled.oxpack";
+  ASSERT_TRUE(file.pack(path));
+
+  auto bytes = std::vector<u8>{};
+  {
+    auto in = std::ifstream(path, std::ios::binary);
+    bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  // the header is the magic, the version and the flags, the zstd frame starts right after
+  constexpr auto header_size = sizeof(u32) + sizeof(u16) + sizeof(u32);
+  ASSERT_GT(bytes.size(), header_size + 4);
+  for (auto i = header_size; i < header_size + 4; i++) {
+    bytes[i] = 0xFF;
+  }
+  {
+    auto out = std::ofstream(path, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const c8*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+  }
+
+  EXPECT_FALSE(AssetFile::unpack(path).has_value());
+}
+
 TEST_F(AssetFileTest, RoundTripsAPackedUUID) {
   const auto uuid = UUID::generate_random();
   EXPECT_EQ(PackedUUID::pack(uuid).unpack(), uuid);

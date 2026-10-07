@@ -84,6 +84,7 @@ packages = {
     debug = is_mode("debug")
   },
   ["zpp_bits v4.7.1"] = {},
+  ["zstd v1.5.7"] = { system = false },
 }
 
 if has_config("tests") then
