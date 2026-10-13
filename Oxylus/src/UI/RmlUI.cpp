@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <ranges>
 
+#include "Asset/AssetManager.hpp"
+#include "Core/App.hpp"
 #include "Core/Keycodes.hpp"
 #include "UI/RmlView.hpp"
 
@@ -38,6 +40,10 @@ auto RmlUI::init(this RmlUI& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   Rml::SetSystemInterface(&self.rml_system);
+  // before `Initialise`, which is when RmlUi settles on one
+  self.rml_files.vfs = &App::get_vfs();
+  self.rml_files.asset_man = &App::mod<AssetManager>();
+  Rml::SetFileInterface(&self.rml_files);
 
   // No `Rml::SetRenderInterface`: every context brings its own.
   if (!Rml::Initialise()) {

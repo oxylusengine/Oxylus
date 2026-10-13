@@ -115,6 +115,8 @@ public:
 
   auto create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool;
 
+  auto load_shader_pack(this RenderContext& self, const AssetFile& pack) -> void;
+
   [[nodiscard]]
   auto use_mesh_shaders(this const RenderContext& self) -> bool;
 

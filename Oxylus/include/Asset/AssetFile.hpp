@@ -38,6 +38,7 @@ enum class AssetType : u32 {
   Skeleton,
   Animation,
   Cinematic,
+  UI,
 };
 
 struct NoneAsset {
@@ -94,6 +95,40 @@ struct TextureData {
   // VkComponentSwizzle per channel for the view, all identity unless the pack stores fewer channels than it is
   // sampled with (a one-channel BC4 reads back as rrr1)
   std::array<u8, 4> components = {};
+};
+
+struct ScriptData {
+  using serialize_id = zpp::bits::serialization_id<AssetType::Script>;
+
+  std::string name = {};
+  // what `lua_dump` wrote, debug info kept. The chunk name is baked in, and it is the source's virtual path, which is
+  // what errors print and `require_script` resolves siblings against
+  std::vector<u8> bytecode = {};
+};
+
+struct SceneData {
+  using serialize_id = zpp::bits::serialization_id<AssetType::Scene>;
+
+  std::string name = {};
+  // the scene as the editor saved it, checked and minified by the cook. A binary form of its own would replace this,
+  // and only the cooker and `Scene::load_from_file` read it
+  std::string json = {};
+};
+
+struct UIData {
+  using serialize_id = zpp::bits::serialization_id<AssetType::UI>;
+
+  std::string name = {};
+  // the file as written, RmlUi parses it when a document loads
+  std::string text = {};
+};
+
+struct FontData {
+  using serialize_id = zpp::bits::serialization_id<AssetType::Font>;
+
+  std::string name = {};
+  // the font file as written, rasterized at runtime by whoever loads it (RmlUi, ImGui)
+  std::vector<u8> bytes = {};
 };
 
 enum class ModelLightType : u32 {
@@ -258,7 +293,7 @@ static_assert(GPU::Mesh::MAX_LODS == 8);
 struct AssetFileEntry {
   PackedUUID uuid = {};
   AssetType type = AssetType::None;
-  std::variant<NoneAsset, ShaderPipelineData, TextureData, ModelData> data;
+  std::variant<NoneAsset, ShaderPipelineData, TextureData, ModelData, ScriptData, SceneData, UIData, FontData> data;
 
   constexpr static auto serialize(auto& archive, auto& self) -> zpp::bits::errc {
     if constexpr (std::remove_cvref_t<decltype(archive)>::kind() == zpp::bits::kind::out) {
@@ -275,12 +310,15 @@ struct AssetFileEntry {
 
 enum class AssetFileFlags : u32 {
   None = 0,
+  // everything after the header is a single zstd frame. Block-compressed textures are fixed rate, so a mostly flat
+  // image is many times its PNG until this squeezes it back down
+  Zstd = 1 << 0,
 };
 consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
   static constexpr auto SIGNATURE = 0x4352584F_u32;
-  static constexpr auto VERSION = 5_u16;
+  static constexpr auto VERSION = 6_u16;
 
   u32 magic = SIGNATURE; // "OXRC"
   u16 version = VERSION;
@@ -288,7 +326,7 @@ struct AssetFileHeader {
 };
 
 struct AssetFile {
-  AssetFileFlags flags = AssetFileFlags::None;
+  AssetFileFlags flags = AssetFileFlags::Zstd;
   std::vector<AssetFileEntry> entries = {};
 
   static auto unpack(const std::filesystem::path& path) -> option<AssetFile>;
@@ -296,5 +334,9 @@ struct AssetFile {
   auto add_entry(this AssetFile& self, ShaderPipelineData&& entry, const PackedUUID& uuid = {}) -> void;
   auto add_entry(this AssetFile& self, TextureData&& entry, const PackedUUID& uuid = {}) -> void;
   auto add_entry(this AssetFile& self, ModelData&& entry, const PackedUUID& uuid = {}) -> void;
+  auto add_entry(this AssetFile& self, ScriptData&& entry, const PackedUUID& uuid = {}) -> void;
+  auto add_entry(this AssetFile& self, SceneData&& entry, const PackedUUID& uuid = {}) -> void;
+  auto add_entry(this AssetFile& self, UIData&& entry, const PackedUUID& uuid = {}) -> void;
+  auto add_entry(this AssetFile& self, FontData&& entry, const PackedUUID& uuid = {}) -> void;
 };
 } // namespace ox

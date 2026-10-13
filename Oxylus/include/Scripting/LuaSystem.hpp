@@ -32,6 +32,8 @@ public:
   auto load(this LuaSystem& self, const std::filesystem::path& path, const ox::option<std::string> script = nullopt)
     -> void;
   auto reload(this LuaSystem& self) -> void;
+  // a fresh copy of the asset, for a script that was cooked again since this system loaded it
+  auto reload(this LuaSystem& self, const LuaScript& script) -> void;
 
   auto reset_functions(this LuaSystem& self) -> void;
 
@@ -66,11 +68,10 @@ public:
   auto on_body_deactivated(this const LuaSystem& self, Scene* scene, const JPH::BodyID& body_id, u64 body_user_data)
     -> void;
 
-  auto get_path() const -> const std::filesystem::path& { return file_path; }
+  auto get_path() const -> const std::filesystem::path& { return script_.path; }
 
 private:
-  std::filesystem::path file_path = {};
-  ox::option<std::string> script_ = {};
+  LuaScript script_ = {};
 
   std::unique_ptr<sol::environment> environment = nullptr;
 
@@ -89,9 +90,7 @@ private:
   std::unique_ptr<sol::protected_function> on_body_activated_func = nullptr;
   std::unique_ptr<sol::protected_function> on_body_deactivated_func = nullptr;
 
-  void init_script(
-    this LuaSystem& self, const std::filesystem::path& path, const ox::option<std::string> script = nullopt
-  );
+  auto init_script(this LuaSystem& self, LuaScript script) -> void;
   static void check_result(const sol::protected_function_result& result, const char* func_name);
 };
 } // namespace ox
