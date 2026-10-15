@@ -1,99 +1,135 @@
 #include "Utils/Profiler.hpp"
 
-#include <vuk/runtime/CommandBuffer.hpp>
-#include <vuk/runtime/vk/VkQueueExecutor.hpp>
-#include <vuk/runtime/vk/VkRuntime.hpp>
+#include <new>
+#include <tracy/Tracy.hpp>
+#include <vulkan/vulkan_core.h>
 
+#define TRACY_VK_USE_SYMBOL_TABLE
+#include <tracy/TracyVulkan.hpp>
+
+#include "Render/Graph/RenderGraph.hpp"
 #include "Render/RenderContext.hpp"
-
 #include "Utils/Log.hpp"
 
 namespace ox {
-void TracyProfiler::init_for_vulkan(this TracyProfiler& self, RenderContext* context) {
-#if TRACY_ENABLE
-  vuk::Runtime& runtime = context->runtime.value();
-  vuk::Allocator& allocator = context->superframe_allocator.value();
-  auto graphics_queue_executor = static_cast<vuk::QueueExecutor*>(
-      runtime.get_executor(vuk::DomainFlagBits::eGraphicsQueue));
-  VkCommandPoolCreateInfo cpci{.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-                               .pNext = nullptr,
-                               .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-                               .queueFamilyIndex = {}};
-  cpci.queueFamilyIndex = graphics_queue_executor->get_queue_family_index();
-  self.tracy_cpool = vuk::Unique<vuk::CommandPool>(allocator);
-  allocator.allocate_command_pools(std::span{&*self.tracy_cpool, 1}, std::span{&cpci, 1});
-  vuk::CommandBufferAllocationCreateInfo ci{.command_pool = *self.tracy_cpool};
-  self.tracy_cbufai = vuk::Unique<vuk::CommandBufferAllocation>(allocator);
-  allocator.allocate_command_buffers(std::span{&*self.tracy_cbufai, 1}, std::span{&ci, 1});
-
-  auto graphics_queue = graphics_queue_executor->get_underlying();
-  self.executors = runtime.get_executors();
-  for (size_t i = 0; i < self.executors.size(); i++) {
-    auto ctx = TracyVkContextCalibrated(runtime.instance,
-                                        runtime.physical_device,
-                                        runtime.device,
-                                        graphics_queue,
-                                        self.tracy_cbufai->command_buffer,
-                                        runtime.vkGetInstanceProcAddr,
-                                        runtime.vkGetDeviceProcAddr);
-    self.contexts.push_back(ctx);
-  }
-  OX_LOG_INFO("Tracy GPU profiler initialized.");
-#else
-  return;
+struct TracyProfilerState {
+#if defined(TRACY_ENABLE)
+  vir::Context* context = nullptr;
+  VkCommandPool pool = VK_NULL_HANDLE;
+  VkCommandBuffer command = VK_NULL_HANDLE;
+  tracy::VkCtx* tracy = nullptr;
+  alignas(tracy::VkCtxScope) u8 scope_storage[sizeof(tracy::VkCtxScope)] = {};
+  tracy::VkCtxScope* scope = nullptr;
 #endif
-}
-vuk::ProfilingCallbacks TracyProfiler::setup_vuk_callback() {
-#if TRACY_ENABLE
-  vuk::ProfilingCallbacks cbs = {};
-  cbs.user_data = this;
-  cbs.on_begin_command_buffer = [](void* user_data, vuk::ExecutorTag tag, VkCommandBuffer cbuf) -> void* {
-    TracyProfiler& tracy_ctx = *reinterpret_cast<TracyProfiler*>(user_data);
-    if ((tag.domain & vuk::DomainFlagBits::eQueueMask) != vuk::DomainFlagBits::eTransferQueue) {
-      for (auto& ctx : tracy_ctx.contexts) {
-        TracyVkCollect(ctx, cbuf);
-      }
-    }
-    return nullptr;
-  };
-  // runs whenever entering a new vuk::Pass
-  // we start a GPU zone and then keep it open
-  cbs.on_begin_pass = [](void* user_data, vuk::Name pass_name, vuk::CommandBuffer& cbuf, vuk::DomainFlagBits domain) {
-    TracyProfiler& tracy_ctx = *reinterpret_cast<TracyProfiler*>(user_data);
-    void* pass_data = nullptr;
-    for (size_t i = 0; i < tracy_ctx.executors.size(); i++) {
-      auto& exe = tracy_ctx.executors[i];
-      if (exe->tag.domain == domain) {
-        pass_data = new char[sizeof(tracy::VkCtxScope)];
-        new (pass_data) TracyVkZoneTransient(tracy_ctx.contexts[i], , cbuf.get_underlying(), pass_name.c_str(), true);
-        break;
-      }
-    }
+};
 
-    return pass_data;
-  };
-  // runs whenever a pass has ended, we end the GPU zone we started
-  cbs.on_end_pass = [](void* user_data, void* pass_data, vuk::CommandBuffer&) {
-    auto tracy_scope = reinterpret_cast<tracy::VkCtxScope*>(pass_data);
-    if (tracy_scope) {
-      tracy_scope->~VkCtxScope();
-      delete reinterpret_cast<char*>(pass_data);
-    }
-  };
+TracyProfiler::TracyProfiler() : state(std::make_unique<TracyProfilerState>()) {}
+TracyProfiler::~TracyProfiler() { destroy_context(); }
 
-  return cbs;
+auto TracyProfiler::init_for_vulkan(this TracyProfiler& self, RenderContext& render_context) -> void {
+#if defined(TRACY_ENABLE)
+  self.destroy_context();
+  auto& context = *render_context.context;
+  auto* graphics = context.queue(vir::DomainFlag::Graphics);
+  auto lock = std::unique_lock(graphics->submit_mutex);
+  self.state->context = &context;
+  const auto pool_info = VkCommandPoolCreateInfo{
+    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+    .queueFamilyIndex = graphics->family_index,
+  };
+  if (context.fn.vkCreateCommandPool(context.device, &pool_info, nullptr, &self.state->pool) != VK_SUCCESS) {
+    OX_LOG_ERROR("failed to create Tracy command pool");
+    return;
+  }
+  const auto buffer_info = VkCommandBufferAllocateInfo{
+    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+    .pNext = nullptr,
+    .commandPool = self.state->pool,
+    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+    .commandBufferCount = 1,
+  };
+  if (context.fn.vkAllocateCommandBuffers(context.device, &buffer_info, &self.state->command) != VK_SUCCESS) {
+    self.destroy_context();
+    OX_LOG_ERROR("failed to allocate Tracy command buffer");
+    return;
+  }
+  self.state->tracy = TracyVkContextCalibrated(
+    context.instance,
+    context.physical_device,
+    context.device,
+    graphics->handle,
+    self.state->command,
+    context.fn.vkGetInstanceProcAddr,
+    context.fn.vkGetDeviceProcAddr
+  );
 #else
-  return vuk::ProfilingCallbacks{};
+  (void)self;
+  (void)render_context;
 #endif
 }
 
-void TracyProfiler::destroy_context() {
-#if TRACY_ENABLE
-  for (auto ctx : contexts) {
-    TracyVkDestroy(ctx);
+auto TracyProfiler::callbacks(this TracyProfiler& self) -> vir::RenderGraphCallbacks {
+#if defined(TRACY_ENABLE)
+  if (!self.state->tracy) {
+    return {};
   }
+  return {
+    .user = self.state.get(),
+    .on_begin_command_buffer = [](void* user, VkCommandBuffer command) -> void {
+      auto& state = *static_cast<TracyProfilerState*>(user);
+      TracyVkCollect(state.tracy, command);
+    },
+    .on_begin_pass = [](void* user, std::string_view name, VkCommandBuffer command) -> void* {
+      auto& state = *static_cast<TracyProfilerState*>(user);
+      OX_ASSERT(!state.scope, "GPU pass profiling must not nest");
+      state.scope = new (state.scope_storage) tracy::VkCtxScope(
+        state.tracy,
+        __LINE__,
+        __FILE__,
+        sizeof(__FILE__) - 1,
+        "render pass",
+        sizeof("render pass") - 1,
+        name.data(),
+        name.size(),
+        command,
+        true
+      );
+      return state.scope;
+    },
+    .on_end_pass = [](void* user, void* pass, VkCommandBuffer) -> void {
+      auto& state = *static_cast<TracyProfilerState*>(user);
+      if (pass) {
+        static_cast<tracy::VkCtxScope*>(pass)->~VkCtxScope();
+        state.scope = nullptr;
+      }
+    },
+  };
+#else
+  (void)self;
+  return {};
 #endif
-  tracy_cbufai.reset();
-  tracy_cpool.reset();
+}
+
+auto TracyProfiler::destroy_context(this TracyProfiler& self) -> void {
+#if defined(TRACY_ENABLE)
+  if (self.state->scope) {
+    self.state->scope->~VkCtxScope();
+    self.state->scope = nullptr;
+  }
+  if (self.state->tracy) {
+    TracyVkDestroy(self.state->tracy);
+    self.state->tracy = nullptr;
+  }
+  if (self.state->pool) {
+    self.state->context->fn.vkDestroyCommandPool(self.state->context->device, self.state->pool, nullptr);
+    self.state->pool = VK_NULL_HANDLE;
+    self.state->command = VK_NULL_HANDLE;
+  }
+  self.state->context = nullptr;
+#else
+  (void)self;
+#endif
 }
 } // namespace ox

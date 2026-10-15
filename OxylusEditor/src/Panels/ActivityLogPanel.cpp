@@ -92,7 +92,7 @@ auto ActivityLogPanel::set_system(this ActivityLogPanel& self, NotificationSyste
   self.notification_system = system;
 }
 
-auto ActivityLogPanel::on_render(this ActivityLogPanel& self, vuk::ImageAttachment swapchain_attachment) -> void {
+auto ActivityLogPanel::on_render(this ActivityLogPanel& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 

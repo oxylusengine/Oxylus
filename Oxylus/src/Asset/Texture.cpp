@@ -1,32 +1,28 @@
-﻿#include "Asset/Texture.hpp"
+#include "Asset/Texture.hpp"
 
 #include <ankerl/svector.h>
 #include <basisu/encoder/basisu_enc.h>
 #include <cstring>
-#include <vuk/RenderGraph.hpp>
-#include <vuk/runtime/vk/AllocatorHelpers.hpp>
-#include <vuk/vsl/Core.hpp>
 
+#include "Asset/AssetFile.hpp"
 #include "Core/App.hpp"
+#include "Memory/SlotMap.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
+#include "Render/Graph/Allocator.hpp"
+#include "Render/Graph/Module.hpp"
+#include "Render/Graph/Types.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/UploadBatch.hpp"
 #include "Render/Utils/TextureFormat.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 struct ProcessedTexture {
-  vuk::Format format = {};
-  vuk::Extent3D extent = {};
-  ankerl::svector<vuk::Unique<vuk::Buffer>, 12> buffers = {};
+  vir::Format format = vir::Format::Undefined;
+  vir::Extent3D extent = {};
+  std::vector<u8> pixels = {};
 };
-
-auto default_resource_name(OX_CALLSTACK) -> vuk::Name {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  auto file = LOC.file_name();
-  return vuk::Name(stack.format("{0}:{1}", file, LOC.line()));
-}
 
 // the signatures basisu's in-memory loaders understand
 static auto decode_image(std::span<const u8> bytes, basisu::image& image) -> bool {
@@ -52,14 +48,12 @@ static auto decode_image(std::span<const u8> bytes, basisu::image& image) -> boo
 
 // a PNG, JPEG or QOI handed over at runtime (UI images, sources nothing cooked), decoded by the same library the cook
 // uses
-auto process_generic(std::span<const u8> bytes, bool is_srgb, vuk::Extent3D desired_extent = {~0_u32, ~0_u32, 1_u32})
+static auto process_generic(std::span<const u8> bytes, bool is_srgb, vir::Extent2D desired_extent)
   -> option<ProcessedTexture> {
   ZoneScoped;
 
   // the resampler's sRGB tables come from here; it returns straight away once they exist
   basisu::basisu_encoder_init();
-
-  auto result = ProcessedTexture{};
 
   auto image = basisu::image{};
   if (!decode_image(bytes, image)) {
@@ -77,26 +71,20 @@ auto process_generic(std::span<const u8> bytes, bool is_srgb, vuk::Extent3D desi
     image = std::move(resized);
   }
 
-  auto format = is_srgb ? vuk::Format::eR8G8B8A8Srgb : vuk::Format::eR8G8B8A8Unorm;
-  auto extent = vuk::Extent3D{image.get_width(), image.get_height(), 1_u32};
-
-  // color_rgba is laid out r, g, b, a, which is the RGBA8 the buffer holds
+  // color_rgba is laid out r, g, b, a, which is the RGBA8 the upload expects
   const auto pixels_size = static_cast<usize>(image.get_width()) * image.get_height() * 4;
-  auto& render_context = App::get_rendercontext();
-  auto buffer = render_context.alloc_image_buffer(format, extent);
-  std::memcpy(buffer->mapped_ptr, image.get_ptr(), ox::min(pixels_size, buffer->size));
-
-  result.extent = extent;
-  result.format = format;
-  result.buffers.push_back(std::move(buffer));
-
-  return result;
+  const auto* pixels = reinterpret_cast<const u8*>(image.get_ptr());
+  return ProcessedTexture{
+    .format = is_srgb ? vir::Format::RGBA8Srgb : vir::Format::RGBA8Unorm,
+    .extent = {image.get_width(), image.get_height(), 1_u32},
+    .pixels = {pixels, pixels + pixels_size},
+  };
 }
 
 Texture::Texture(
-  vuk::ImageAttachment attachment_, ImageID image_id_, ImageViewID image_view_id_, SamplerID sampler_id_
+  const vir::ImageAttachment& image_, ImageID image_id_, ImageViewID image_view_id_, SamplerID sampler_id_
 ) noexcept
-    : attachment(attachment_),
+    : image(image_),
       image_id(image_id_),
       image_view_id(image_view_id_),
       sampler_id(sampler_id_) {}
@@ -104,11 +92,11 @@ Texture::Texture(
 Texture::~Texture() noexcept { destroy(); }
 
 Texture::Texture(Texture&& other) noexcept
-    : attachment(other.attachment),
+    : image(other.image),
       image_id(other.image_id),
       image_view_id(other.image_view_id),
       sampler_id(other.sampler_id) {
-  other.attachment = {};
+  other.image = {};
   other.image_id = ImageID::Invalid;
   other.image_view_id = ImageViewID::Invalid;
   other.sampler_id = SamplerID::Invalid;
@@ -118,12 +106,12 @@ Texture& Texture::operator=(Texture&& other) noexcept {
   if (this != &other) {
     destroy();
 
-    attachment = other.attachment;
+    image = other.image;
     image_id = other.image_id;
     image_view_id = other.image_view_id;
     sampler_id = other.sampler_id;
 
-    other.attachment = {};
+    other.image = {};
     other.image_id = ImageID::Invalid;
     other.image_view_id = ImageViewID::Invalid;
     other.sampler_id = SamplerID::Invalid;
@@ -132,67 +120,105 @@ Texture& Texture::operator=(Texture&& other) noexcept {
   return *this;
 }
 
-auto Texture::get_name(OX_CALLSTACK) const -> vuk::Name { return default_resource_name(LOC); }
-
 auto Texture::create(const TextureCreateInfo& info, OX_CALLSTACK) -> Texture {
   ZoneScoped;
   memory::ScopedStack stack;
 
   auto& render_context = App::get_rendercontext();
 
-  auto usage = info.usage | vuk::ImageUsageFlagBits::eTransferDst;
+  auto usage = info.usage | vir::ImageUsageFlags::TransferDst;
   if (info.level_count > 1) {
-    usage |= vuk::ImageUsageFlagBits::eTransferSrc;
+    usage |= vir::ImageUsageFlags::TransferSrc;
   }
 
-  auto attachment = vuk::ImageAttachment{
-    .image_flags = info.image_flags,
-    .image_type = info.image_type,
-    .tiling = info.tiling,
-    .usage = usage,
+  const auto debug_name = stack.format("{}:{}", LOC.file_name(), LOC.line());
+  const auto image_id = render_context.allocate_image({
     .extent = info.extent,
     .format = info.format,
-    .sample_count = vuk::SampleCountFlagBits::e1,
-    .image_view_flags = info.image_view_flags,
+    .usage = usage,
+    .image_type = info.image_type,
     .view_type = info.view_type,
-    .components = info.components,
-    .base_level = 0,
-    .level_count = info.level_count,
-    .base_layer = 0,
-    .layer_count = info.layer_count,
+    .flags = info.image_flags,
+    .mip_levels = info.level_count,
+    .array_layers = info.layer_count,
+    .name = std::string(debug_name),
+  });
+  if (!image_id) {
+    OX_LOG_ERROR(
+      "Failed to create Texture({}), image allocation failed ({}).",
+      LOC,
+      std::to_underlying(image_id.error())
+    );
+    return {};
+  }
+
+  const auto image = render_context.image(*image_id);
+  const auto range = VkImageSubresourceRange{
+    .aspectMask = vir::aspect_mask(info.format),
+    .baseMipLevel = 0,
+    .levelCount = info.level_count,
+    .baseArrayLayer = 0,
+    .layerCount = info.layer_count,
   };
-
-  auto image_id = render_context.allocate_image(attachment);
-  if (image_id == ImageID::Invalid) {
+  const auto image_view_id = render_context.allocate_image_view(
+    {
+      .image = image.handle,
+      .format = info.format,
+      .view_type = info.view_type,
+      .range = range,
+      .components = info.components,
+      .usage = usage,
+      .name = std::string(debug_name),
+    },
+    info.batch == nullptr
+  );
+  if (!image_view_id) {
+    render_context.destroy_image(*image_id);
     return {};
   }
 
-  auto image = render_context.image(image_id);
-  attachment.image = image;
-
-  auto image_view_id = render_context.allocate_image_view(attachment, info.batch);
-  if (image_view_id == ImageViewID::Invalid) {
-    render_context.destroy_image(image_id);
+  const auto sampler_id = render_context.allocate_sampler(info.sampler_info, info.batch == nullptr);
+  if (!sampler_id) {
+    render_context.destroy_image_view(*image_view_id);
+    render_context.destroy_image(*image_id);
     return {};
   }
 
-  auto image_view = render_context.image_view(image_view_id);
-  attachment.image_view = image_view;
+  const auto view = render_context.image_view(*image_view_id).handle;
+  if (info.batch) {
+    const auto view_index = SlotMap_decode_id(*image_view_id).index;
+    if (vir::intersects(usage, vir::ImageUsageFlags::Sampled)) {
+      info.batch->add_descriptor_write({
+        .binding = DescriptorTable_SampledImageIndex,
+        .array_element = view_index,
+        .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .image_info = {VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL},
+      });
+    }
 
-  auto sampler_id = render_context.allocate_sampler(info.sampler_info, info.batch);
-  if (sampler_id == SamplerID::Invalid) {
-    render_context.destroy_image(image_id);
-    render_context.destroy_image_view(image_view_id);
-    return {};
+    if (vir::intersects(usage, vir::ImageUsageFlags::Storage)) {
+      info.batch->add_descriptor_write({
+        .binding = DescriptorTable_StorageImageIndex,
+        .array_element = view_index,
+        .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .image_info = {VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL},
+      });
+    }
+
+    info.batch->add_descriptor_write({
+      .binding = DescriptorTable_SamplerIndex,
+      .array_element = SlotMap_decode_id(*sampler_id).index,
+      .type = VK_DESCRIPTOR_TYPE_SAMPLER,
+      .image_info = {render_context.sampler(*sampler_id).handle, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED},
+    });
   }
 
-#if OX_DEBUG
-  auto debug_name = stack.format("{}:{}", LOC.file_name(), LOC.line());
-  render_context.runtime->set_name(render_context.image(image_id).image, debug_name);
-  render_context.runtime->set_name(render_context.image_view(image_view_id).payload, debug_name);
-#endif
-
-  return Texture(attachment, image_id, image_view_id, sampler_id);
+  auto attachment = vir::ImageAttachment::from_image(image, VK_IMAGE_LAYOUT_UNDEFINED);
+  attachment.image_view = view;
+  attachment.view_type = info.view_type;
+  attachment.subresource_range = range;
+  auto texture = Texture(attachment, *image_id, *image_view_id, *sampler_id);
+  return texture;
 }
 
 auto Texture::create(const TextureLoadInfo& info, OX_CALLSTACK) -> Texture {
@@ -213,37 +239,30 @@ auto Texture::create(const TextureLoadInfo& info, OX_CALLSTACK) -> Texture {
     bytes = *span;
   }
 
-  // Compressed sources are cooked into a TextureData by the resource compiler; whatever reaches here
-  // is a plain image.
-  auto desired_extent = vuk::Extent3D{
-    .width = info.target_width.value_or(~0_u32),
-    .height = info.target_height.value_or(~0_u32),
-    .depth = 1_u32,
-  };
+  // compressed sources are cooked into a TextureData by the resource compiler, whatever reaches here
+  // is a plain image
+  const auto desired_extent = vir::Extent2D{info.target_width.value_or(~0_u32), info.target_height.value_or(~0_u32)};
   auto processed_texture = process_generic(bytes, info.is_srgb, desired_extent);
   if (!processed_texture) {
     OX_LOG_ERROR("Failed to create Texture({}). Couldn't process the source data.", LOC);
     return {};
   }
 
-  const auto processed_level_count = static_cast<u32>(processed_texture->buffers.size());
   const auto requested_level_count = info.level_count.value_or(calculate_mip_count(processed_texture->extent));
-
   auto result = create({
     .format = processed_texture->format,
     .extent = processed_texture->extent,
-    .level_count = ox::max(requested_level_count, processed_level_count),
-    .usage = vuk::ImageUsageFlagBits::eSampled,
+    .level_count = ox::max(requested_level_count, 1_u32),
+    .usage = vir::ImageUsageFlags::Sampled,
     .sampler_info = info.sampler_info,
     .batch = info.batch,
   });
-
-  const auto generate_remaining_mips = requested_level_count > processed_level_count;
-  result.upload_mips(processed_texture->buffers, vuk::eFragmentSampled, generate_remaining_mips, info.batch);
-
-  if (info.batch) {
-    info.batch->take_staging(processed_texture->buffers);
+  if (!result) {
+    return {};
   }
+
+  const std::span<const u8> mip0[] = {processed_texture->pixels};
+  result.upload_mips(mip0, vir::Access::FragmentSampled, requested_level_count > 1, info.batch);
 
   return result;
 }
@@ -257,17 +276,17 @@ auto Texture::create(const TextureData& data, const TextureLoadInfo& info, OX_CA
   }
 
   auto result = create({
-    .format = static_cast<vuk::Format>(data.vk_format),
-    .extent = vuk::Extent3D{data.width, data.height, 1_u32},
+    .format = static_cast<vir::Format>(data.vk_format),
+    .extent = {data.width, data.height, 1_u32},
     .layer_count = data.layer_count,
     .level_count = static_cast<u32>(data.mips.size()),
-    .usage = vuk::ImageUsageFlagBits::eSampled,
+    .usage = vir::ImageUsageFlags::Sampled,
     .components =
       {
-        .r = static_cast<vuk::ComponentSwizzle>(data.components[0]),
-        .g = static_cast<vuk::ComponentSwizzle>(data.components[1]),
-        .b = static_cast<vuk::ComponentSwizzle>(data.components[2]),
-        .a = static_cast<vuk::ComponentSwizzle>(data.components[3]),
+        .r = static_cast<vir::ComponentSwizzle>(data.components[0]),
+        .g = static_cast<vir::ComponentSwizzle>(data.components[1]),
+        .b = static_cast<vir::ComponentSwizzle>(data.components[2]),
+        .a = static_cast<vir::ComponentSwizzle>(data.components[3]),
       },
     .sampler_info = info.sampler_info,
     .batch = info.batch,
@@ -282,7 +301,7 @@ auto Texture::create(const TextureData& data, const TextureLoadInfo& info, OX_CA
     per_mip_pixels.emplace_back(mip.pixels);
   }
 
-  result.upload_mips(per_mip_pixels, vuk::eFragmentSampled, false, info.batch);
+  result.upload_mips(per_mip_pixels, vir::Access::FragmentSampled, false, info.batch);
 
   return result;
 }
@@ -298,113 +317,107 @@ auto Texture::destroy(this Texture& self) -> void {
     return;
   }
 
+  // retired, so frames still in flight keep sampling it
   auto& render_context = App::get_rendercontext();
-
-  if (self.image_id != ImageID::Invalid)
-    render_context.destroy_image(self.image_id);
   if (self.image_view_id != ImageViewID::Invalid)
     render_context.destroy_image_view(self.image_view_id);
+  if (self.image_id != ImageID::Invalid)
+    render_context.destroy_image(self.image_id);
   if (self.sampler_id != SamplerID::Invalid)
     render_context.destroy_sampler(self.sampler_id);
 
-  self.attachment = {};
+  self.image = {};
   self.image_id = ImageID::Invalid;
   self.image_view_id = ImageViewID::Invalid;
   self.sampler_id = SamplerID::Invalid;
 }
 
-auto Texture::acquire(this const Texture& self, std::string_view name, vuk::Access last_access, OX_CALLSTACK)
-  -> vuk::Value<vuk::ImageAttachment> {
-  ZoneScoped;
-
-  return self.view().acquire(name, last_access, LOC);
+auto Texture::import(this const Texture& self, vir::Module& module, vir::Access rests_at) -> vir::ValueID {
+  auto resting = self.image;
+  resting.layout = vir::to_image_layout(rests_at);
+  return module.import_attachment(resting, rests_at);
 }
 
-auto Texture::discard(this const Texture& self, std::string_view name, OX_CALLSTACK)
-  -> vuk::Value<vuk::ImageAttachment> {
-  ZoneScoped;
+auto Texture::import_discarded(this const Texture& self, vir::Module& module, vir::Access rests_at) -> vir::ValueID {
+  auto discarded = self.image;
+  discarded.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+  return module.import_attachment(discarded, rests_at);
+}
 
-  return self.view().discard(name, LOC);
+auto Texture::clear(this const Texture& self, vir::ClearValue value, vir::Access rests_at)
+  -> std::expected<void, VkResult> {
+  ZoneScoped;
+  if (!self) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+
+  auto module = vir::Module{};
+  const auto cleared = module.clear(self.import_discarded(module, vir::Access::None), value);
+  module.export_to(cleared, rests_at);
+  const auto ticket = App::get_rendercontext().execute_blocking(std::move(module));
+  if (!ticket) {
+    return std::unexpected(ticket.error());
+  }
+  return {};
 }
 
 auto Texture::upload_mips(
   this Texture& self,
   std::span<const std::span<const u8>> per_mip_pixels,
-  vuk::Access release_as,
+  vir::Access release_as,
   bool generate_remaining,
   UploadBatch* batch
 ) -> void {
   ZoneScoped;
 
   auto& render_context = App::get_rendercontext();
-  auto effective_level_count = std::min(static_cast<u32>(per_mip_pixels.size()), self.attachment.level_count);
-  auto buffers = ankerl::svector<vuk::Unique<vuk::Buffer>, 12>();
-  buffers.reserve(effective_level_count);
-
-  auto base_extent = self.attachment.extent;
-  for (auto level = 0_u32; level < effective_level_count; level++) {
-    auto level_extent = vuk::Extent3D{
-      .width = ox::max(base_extent.width >> level, 1_u32),
-      .height = ox::max(base_extent.height >> level, 1_u32),
-      .depth = 1,
-    };
-
-    auto mip_pixels = per_mip_pixels[level];
-    auto buffer = render_context.alloc_image_buffer(self.attachment.format, level_extent);
-    const auto safe_size_bytes = ox::min(buffer->size, mip_pixels.size_bytes());
-    std::memcpy(buffer->mapped_ptr, mip_pixels.data(), safe_size_bytes);
-
-    buffers.push_back(std::move(buffer));
+  const auto level_count = self.image.subresource_range.levelCount;
+  const auto uploaded_count = std::min(static_cast<u32>(per_mip_pixels.size()), level_count);
+  if (uploaded_count == 0) {
+    return;
   }
 
-  self.upload_mips(buffers, release_as, generate_remaining, batch);
+  const auto should_generate = generate_remaining && level_count > uploaded_count;
 
-  if (batch) {
-    batch->take_staging(buffers);
-  }
-}
-
-auto Texture::upload_mips(
-  this Texture& self,
-  std::span<const vuk::Unique<vuk::Buffer>> per_mip_buffers,
-  vuk::Access release_as,
-  bool generate_remaining,
-  UploadBatch* batch
-) -> void {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  auto& render_context = App::get_rendercontext();
-  auto effective_level_count = std::min(static_cast<u32>(per_mip_buffers.size()), self.attachment.level_count);
-  auto should_generate = generate_remaining && self.attachment.level_count > effective_level_count;
-  auto waits = stack.alloc<vuk::UntypedValue>(should_generate ? 1_u32 : effective_level_count + 1);
-
-  auto attachment = vuk::discard_ia("upload mips", self.attachment);
-  for (auto level = 0_u32; level < effective_level_count; level++) {
-    auto mip_buffer = vuk::acquire_buf("mip staging", *per_mip_buffers[level], vuk::Access::eNone);
-    auto uploaded = vuk::copy(std::move(mip_buffer), attachment.mip(level));
-    if (!should_generate) {
-      waits[level] = std::move(uploaded.as_released(release_as));
+  // every mip below is rewritten, so the old contents go, but whatever last read them is waited on
+  auto module = vir::Module{};
+  auto current = self.import_discarded(module, release_as);
+  auto staging = std::vector<vir::Buffer>{};
+  staging.reserve(uploaded_count);
+  for (auto level = 0_u32; level < uploaded_count; level++) {
+    const auto pixels = per_mip_pixels[level];
+    if (pixels.empty()) {
+      continue;
     }
+
+    auto buffer = render_context.allocate_staging(pixels);
+    if (!buffer) {
+      OX_LOG_ERROR("Failed to upload texture mip {}, staging allocation failed.", level);
+      for (const auto& allocated : staging) {
+        render_context.persistent->deallocate_buffer(allocated);
+      }
+
+      return;
+    }
+
+    staging.push_back(*buffer);
+    const auto source = module.import_buffer(*buffer, vir::Access::HostWrite);
+    current = module.copy_buffer_to_image(source, module.mip(current, level));
   }
 
   if (should_generate) {
-    auto base_mip = effective_level_count - 1;
-    auto num_mips = self.attachment.level_count - effective_level_count;
-    attachment = vuk::generate_mips(attachment, base_mip, num_mips);
+    current = module.generate_mips(current, uploaded_count - 1, level_count - uploaded_count + 1);
+  } else {
+    current = module.whole(current);
   }
 
-  waits[waits.size() - 1] = std::move(attachment.as_released(release_as));
-
-  if (batch) {
-    render_context.submit_multiple(waits);
-    batch->add_upload(waits);
-  } else {
-    render_context.wait_on_multiple(waits);
+  module.export_to(current, release_as);
+  if (auto submitted = render_context.submit_upload(std::move(module), std::move(staging), batch); !submitted) {
+    OX_LOG_ERROR("Failed to upload texture ({}).", std::to_underlying(submitted.error()));
   }
 }
 
-auto Texture::upload(this Texture& self, std::span<const u8> pixels, vuk::Access release_as, bool generate_remaining)
+auto Texture::upload(this Texture& self, std::span<const u8> pixels, vir::Access release_as, bool generate_remaining)
   -> void {
   ZoneScoped;
 
@@ -414,40 +427,19 @@ auto Texture::upload(this Texture& self, std::span<const u8> pixels, vuk::Access
 
 auto Texture::set_name(std::string_view name, OX_CALLSTACK) -> void {
   ZoneScoped;
+  memory::ScopedStack stack;
 
   auto& render_context = App::get_rendercontext();
-  auto new_name = vuk::Name{name};
-  if (name.empty()) {
-    new_name = get_name();
-  }
-
-  render_context.runtime->set_name(render_context.image(image_id).image, new_name);
-  render_context.runtime->set_name(render_context.image_view(image_view_id).payload, new_name);
+  const auto new_name = name.empty() ? stack.format("{}:{}", LOC.file_name(), LOC.line()) : name;
+  render_context.context->set_name(VK_OBJECT_TYPE_IMAGE, image.image.handle, new_name);
+  render_context.context->set_name(VK_OBJECT_TYPE_IMAGE_VIEW, image.image_view, new_name);
 }
 
-auto Texture::view(this const Texture& self) -> TextureView { return {self.attachment, self.image_view_id}; }
-
-auto Texture::get_image() const -> const vuk::Image {
-  ZoneScoped;
-
-  auto& render_context = App::get_rendercontext();
-
-  return render_context.image(image_id);
+auto Texture::view(this const Texture& self) -> TextureView {
+  return {.extent = self.image.extent, .format = self.image.format, .image_view_id = self.image_view_id};
 }
 
-auto Texture::get_image_view() const -> const vuk::ImageView {
-  ZoneScoped;
-
-  auto& render_context = App::get_rendercontext();
-
-  return render_context.image_view(image_view_id);
-}
-
-auto Texture::get_extent() const -> const vuk::Extent3D& { return attachment.extent; }
-
-auto Texture::get_format() const -> vuk::Format { return attachment.format; }
-
-auto Texture::is_srgb() const -> bool { return to_unorm_format(attachment.format) != attachment.format; }
+auto Texture::is_srgb() const -> bool { return to_unorm_format(image.format) != image.format; }
 
 auto Texture::get_image_id() const -> ImageID { return image_id; }
 
@@ -460,24 +452,5 @@ auto Texture::get_view_index() const -> u32 { return SlotMap_decode_id(image_vie
 auto Texture::get_sampler_id() const -> SamplerID { return sampler_id; }
 
 auto Texture::get_sampler_index() const -> u32 { return SlotMap_decode_id(sampler_id).index; }
-
-auto TextureView::acquire(this const TextureView& self, std::string_view name, vuk::Access last_access, OX_CALLSTACK)
-  -> vuk::Value<vuk::ImageAttachment> {
-  ZoneScoped;
-
-  return vuk::acquire_ia(
-    name.empty() ? default_resource_name(LOC) : vuk::Name{name},
-    self.attachment,
-    last_access,
-    LOC
-  );
-}
-
-auto TextureView::discard(this const TextureView& self, std::string_view name, OX_CALLSTACK)
-  -> vuk::Value<vuk::ImageAttachment> {
-  ZoneScoped;
-
-  return vuk::discard_ia(name.empty() ? default_resource_name(LOC) : vuk::Name{name}, self.attachment, LOC);
-}
 
 } // namespace ox

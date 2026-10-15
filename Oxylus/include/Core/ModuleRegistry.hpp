@@ -5,9 +5,8 @@
 #include <memory>
 #include <tracy/Tracy.hpp>
 #include <typeindex>
-#include <vuk/Types.hpp>
 
-#include "Core/Option.hpp"
+#include "Render/Graph/Types.hpp"
 #include "Utils/Log.hpp"
 #include "Utils/Timestep.hpp"
 
@@ -23,7 +22,7 @@ template <typename T>
 concept ModuleHasUpdate = requires(T t, const Timestep& timestep) { t.update(timestep); };
 
 template <typename T>
-concept ModuleHasRender = requires(T t, vuk::Extent3D extent, vuk::Format format) { t.render(extent, format); };
+concept ModuleHasRender = requires(T t, vir::Extent3D extent, vir::Format format) { t.render(extent, format); };
 
 struct ModuleRegistry {
   using ModulePtr = std::unique_ptr<void, void (*)(void*)>;

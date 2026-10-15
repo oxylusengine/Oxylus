@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui_internal.h>
-#include <vuk/ImageAttachment.hpp>
 
 #include "Core/App.hpp"
 #include "Editor.hpp"
@@ -165,7 +164,7 @@ auto MainViewportPanel::add_viewport(this MainViewportPanel& self) -> ViewportPa
   return viewport.get();
 }
 
-void MainViewportPanel::on_render(this MainViewportPanel& self, vuk::ImageAttachment swapchain_attachment) {
+void MainViewportPanel::on_render(this MainViewportPanel& self, const SwapchainInfo& swapchain_info) {
   if (self.on_begin(ImGuiWindowFlags_MenuBar)) {
     auto viewport_size = ImGui::GetContentRegionAvail();
     auto& style = ImGui::GetStyle();
@@ -198,7 +197,7 @@ void MainViewportPanel::on_render(this MainViewportPanel& self, vuk::ImageAttach
     }
 
     for (const auto& panel : self.viewport_panels) {
-      panel->on_render(swapchain_attachment);
+      panel->on_render(swapchain_info);
     }
   }
 

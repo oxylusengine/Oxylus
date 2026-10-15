@@ -7,6 +7,8 @@
 #include "Panels/MainViewportPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Project/Project.hpp"
+#include "Render/Graph/Fwd.hpp"
+#include "UI/ImGuiRenderer.hpp"
 #include "Utils/Command.hpp"
 #include "Utils/EditorCVar.hpp"
 #include "Utils/EditorContext.hpp"
@@ -19,6 +21,9 @@ namespace ox {
 class Editor {
 public:
   constexpr static auto MODULE_NAME = "Editor";
+
+  Editor();
+  ~Editor();
 
   struct ViewportSceneLoadEvent {};
 
@@ -67,7 +72,7 @@ public:
   auto deinit(this Editor& self) -> std::expected<void, std::string>;
 
   auto update(this Editor& self, const Timestep& timestep) -> void;
-  auto render(this Editor& self, const vuk::ImageAttachment& swapchain_attachment) -> void;
+  auto render(this Editor& self, const SwapchainInfo& swapchain_info) -> void;
 
   // Removes all viewports then adds one and resets the SceneManager
   auto reset(this Editor& self) -> void;
@@ -98,6 +103,10 @@ public:
 private:
   // Context
   EditorContext editor_context = {};
+
+  std::unique_ptr<vir::Program> frame_program = {};
+  ImGuiVariables imgui_variables = {};
+  u64 frame_program_generation = 0;
 
   // the optional test cook runs on a worker, one at a time
   std::atomic<bool> cooking_assets = false;

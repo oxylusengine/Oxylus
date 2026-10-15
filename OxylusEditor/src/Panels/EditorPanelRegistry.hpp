@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Render/Fwd.hpp"
+
 #include <ankerl/unordered_dense.h>
 #include <functional>
 #include <memory>
@@ -7,19 +9,17 @@
 #include <tracy/Tracy.hpp>
 #include <typeindex>
 #include <vector>
-#include <vuk/ImageAttachment.hpp>
-#include <vuk/Types.hpp>
 
 #include "Core/Types.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
 template <typename T>
-concept EditorPanel = requires(T& panel, vuk::ImageAttachment attachment, const std::string& str, const char* cstr) {
+concept EditorPanel = requires(T& panel, const SwapchainInfo& swapchain_info, const std::string& str, const char* cstr) {
   { panel.visible } -> std::convertible_to<bool>;
 
   { panel.on_update() } -> std::same_as<void>;
-  { panel.on_render(attachment) } -> std::same_as<void>;
+  { panel.on_render(swapchain_info) } -> std::same_as<void>;
 
   { panel.get_name() } -> std::convertible_to<const char*>;
   { panel.get_id() } -> std::convertible_to<const char*>;
@@ -61,9 +61,9 @@ public:
       }
     });
 
-    render_callbacks.emplace_back([panel](vuk::ImageAttachment attachment) {
+    render_callbacks.emplace_back([panel](const SwapchainInfo& swapchain_info) {
       if (panel->visible) {
-        panel->on_render(attachment);
+        panel->on_render(swapchain_info);
       }
     });
 
@@ -79,7 +79,7 @@ public:
   }
 
   auto update_all(this EditorPanelRegistry& self) -> void;
-  auto render_all(this EditorPanelRegistry& self, vuk::ImageAttachment attachment) -> void;
+  auto render_all(this EditorPanelRegistry& self, const SwapchainInfo& swapchain_info) -> void;
 
   auto draw_window_menu(this EditorPanelRegistry& self) -> void;
 
@@ -90,7 +90,7 @@ private:
   Registry registry = {};
 
   std::vector<std::function<void()>> update_callbacks = {};
-  std::vector<std::function<void(vuk::ImageAttachment)>> render_callbacks = {};
+  std::vector<std::function<void(const SwapchainInfo&)>> render_callbacks = {};
 };
 
 } // namespace ox

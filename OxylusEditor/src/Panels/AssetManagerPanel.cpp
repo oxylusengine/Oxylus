@@ -628,7 +628,7 @@ AssetManagerPanel::AssetManagerPanel() : EditorPanelState("Asset Manager", ICON_
 
 auto AssetManagerPanel::on_update(this AssetManagerPanel& self) -> void {}
 
-auto AssetManagerPanel::on_render(this AssetManagerPanel& self, vuk::ImageAttachment swapchain_attachment) -> void {
+auto AssetManagerPanel::on_render(this AssetManagerPanel& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
 
   ImGui::SetNextWindowSize(UI::scale({900.0f, 560.0f}), ImGuiCond_FirstUseEver);

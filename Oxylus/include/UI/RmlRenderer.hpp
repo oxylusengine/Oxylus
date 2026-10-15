@@ -2,11 +2,13 @@
 
 #include <RmlUi/Core/RenderInterface.h>
 #include <ankerl/unordered_dense.h>
-#include <unordered_map>
-#include <vuk/Value.hpp>
+#include <glm/vec4.hpp>
 
 #include "Asset/Texture.hpp"
-#include "Render/RenderContext.hpp"
+#include "Memory/SlotMap.hpp"
+#include "Render/Fwd.hpp"
+#include "Render/Graph/Fwd.hpp"
+#include "Render/Graph/Resource.hpp"
 
 namespace ox {
 struct RmlDrawCmd {
@@ -14,7 +16,6 @@ struct RmlDrawCmd {
   u32 index_offset;
   u32 vertex_offset;
   Rml::TextureHandle texture;
-  Rml::TextureHandle texture_array_index{};
   Rml::Vector2f translation;
   Rml::Matrix4f transform;
   bool scissor_enabled;
@@ -26,15 +27,18 @@ struct RmlCompiledGeometry {
   std::vector<int> indices;
 };
 
-// One per context. Sharing an instance makes two contexts acquire the same attachments in a single frame.
+// One per context, the geometry it collects is drawn by the program of whatever owns the context.
 class RmlRenderer : public Rml::RenderInterface {
 public:
   RmlRenderer();
   ~RmlRenderer() override;
 
   auto begin_frame(this RmlRenderer& self) -> void;
-  auto end_frame(this RmlRenderer& self, RenderContext& context, vuk::Value<vuk::ImageAttachment> target)
-    -> vuk::Value<vuk::ImageAttachment>;
+  // stages the geometry collected since `begin_frame` into this frame's allocator
+  auto upload(this RmlRenderer& self, RenderContext& context) -> void;
+  // draws whatever was last uploaded over `target`. Recorded once, it reads the uploads every frame
+  auto record(this RmlRenderer& self, vir::Module& module, RenderContext& render_context, vir::ValueID target)
+    -> vir::ValueID;
 
   auto render_geometry(
     this RmlRenderer& self,
@@ -71,8 +75,10 @@ private:
 
   SlotMap<Texture, RmlTextureID> loaded_textures = {};
   Texture white_texture = {};
-  std::vector<vuk::Value<vuk::ImageAttachment>> frame_textures = {};
-  std::unordered_map<RmlTextureID, u32> frame_texture_indices = {};
+  vir::Buffer vertex_buffer = {};
+  vir::Buffer index_buffer = {};
+  // what the last upload staged, the draws of a frame that staged nothing are dropped
+  std::vector<RmlDrawCmd> uploaded_commands = {};
 
   bool current_scissor_enabled = false;
   glm::ivec4 current_scissor; // x, y, w, h

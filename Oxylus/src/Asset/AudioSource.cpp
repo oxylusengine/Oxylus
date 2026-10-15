@@ -5,6 +5,7 @@
 
 #include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
+#include "Core/Base.hpp"
 
 namespace ox {
 // Big enough that decoding a long file is not dominated by call overhead, small enough to stay off

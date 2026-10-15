@@ -1,28 +1,38 @@
 #pragma once
 
-#include <VkBootstrap.h>
-#include <glm/glm.hpp>
-#include <vuk/RenderGraph.hpp>
-#include <vuk/Value.hpp>
-#include <vuk/runtime/vk/DeviceFrameResource.hpp>
-#include <vuk/runtime/vk/VkRuntime.hpp>
+#include <expected>
+#include <memory>
+#include <shared_mutex>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+#include <vulkan/vulkan_core.h>
 
-#include "Asset/AssetFile.hpp"
-#include "Core/Base.hpp"
-#include "Core/Option.hpp"
-#include "Memory/SlotMap.hpp"
 #include "Render/ContextCVar.hpp"
+#include "Render/Fwd.hpp"
+#include "Render/Graph/Types.hpp"
 
 namespace ox {
 struct Window;
+struct ShaderPipelineData;
+struct DescriptorSet;
+struct RenderDevice;
 struct UploadBatch;
 class TracyProfiler;
 
-enum class BufferID : u64 { Invalid = ~0_u64 };
-enum class ImageID : u64 { Invalid = ~0_u64 };
-enum class ImageViewID : u64 { Invalid = ~0_u64 };
-enum class SamplerID : u64 { Invalid = ~0_u64 };
-enum class PipelineID : u64 { Invalid = ~0_u64 };
+struct SwapchainInfo {
+  vir::Format format = vir::Format::Undefined;
+  vir::Extent2D extent = {};
+  u64 generation = 0;
+};
+
+struct GPUAccelerationStructure {
+  VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
+  BufferID buffer = BufferID::Invalid;
+  VkDeviceAddress device_address = 0;
+  u64 size = 0;
+};
 
 enum : u32 {
   DescriptorTable_SamplerIndex = 0,
@@ -39,193 +49,130 @@ public:
     RayTracingPipeline = 1 << 2,
   };
 
-  struct Resources {
-    SlotMap<vuk::Buffer, BufferID> buffers = {};
-    SlotMap<vuk::Image, ImageID> images = {};
-    SlotMap<vuk::ImageView, ImageViewID> image_views = {};
-    SlotMap<vuk::Sampler, SamplerID> samplers = {};
-    SlotMap<vuk::PipelineBaseInfo*, PipelineID> pipelines = {};
-    vuk::PersistentDescriptorSet descriptor_set = {};
-  };
-
   Feature features = {};
-  Resources resources = {};
-
   ContextCVar context_cvar = {};
-
-  VkDevice device = nullptr;
-  VkPhysicalDevice physical_device = nullptr;
-  vkb::PhysicalDevice vkbphysical_device;
-  VkQueue graphics_queue = nullptr;
-  VkQueue transfer_queue = nullptr;
-  option<vuk::Runtime> runtime;
-
-  option<vuk::DeviceSuperFrameResource> superframe_resource;
-  option<vuk::Allocator> superframe_allocator = nullopt;
-  option<vuk::Allocator> frame_allocator = nullopt;
-  std::shared_mutex frame_allocator_mutex = {};
-  std::shared_mutex descriptor_mutex = {};
-  std::shared_mutex queue_mutex = {};
-
-  vuk::PresentModeKHR present_mode = vuk::PresentModeKHR::eFifo;
-  std::optional<vuk::Swapchain> swapchain;
-  VkSurfaceKHR surface;
-  vkb::Instance vkb_instance;
-  vkb::Device vkb_device;
-  u32 num_inflight_frames = vkb::SwapchainBuilder::BufferMode::TRIPLE_BUFFERING;
+  VkDevice device = VK_NULL_HANDLE;
+  VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+  VkQueue graphics_queue = VK_NULL_HANDLE;
+  VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+  u32 num_inflight_frames = 3;
   u64 num_frames = 0;
   u32 current_frame = 0;
-  std::shared_ptr<TracyProfiler> tracy_profiler = {};
-  vuk::Compiler compiler = {};
-  glm::vec2 swapchain_extent = {};
-
   std::string device_name = {};
 
-  RenderContext() = default;
-  ~RenderContext() = default;
+  std::unique_ptr<vir::Context> context = {};
+  std::unique_ptr<vir::PersistentAllocator> persistent = {};
+  std::unique_ptr<vir::SuperFrameAllocator> super_frame = {};
+  std::unique_ptr<vir::RenderGraph> graph = {};
+  std::unique_ptr<RenderResources> resources = {};
+  vir::FrameAllocator* frame = nullptr;
+  std::shared_mutex frame_mutex = {};
+  std::shared_mutex descriptor_mutex = {};
+  std::unique_ptr<TracyProfiler> tracy_profiler = {};
+  std::unique_ptr<RenderDevice> render_device = {};
+
+  RenderContext();
+  ~RenderContext();
+  RenderContext(const RenderContext&) = delete;
+  auto operator=(const RenderContext&) -> RenderContext& = delete;
 
   auto create_context(this RenderContext& self, const Window& window, bool vulkan_validation_layers) -> void;
+  // also supports a borrowed device, its graphics queue must already exist
+  auto initialize_graph(this RenderContext& self, std::unique_ptr<vir::Context> context)
+    -> std::expected<void, VkResult>;
   auto destroy_context(this RenderContext& self) -> void;
 
-  auto new_frame(this RenderContext& self) -> vuk::Value<vuk::ImageAttachment>;
-  auto end_frame(this RenderContext& self, vuk::Value<vuk::ImageAttachment> target) -> void;
-
+  auto new_frame(this RenderContext& self) -> std::expected<SwapchainInfo, VkResult>;
   auto handle_resize(this RenderContext& self) -> void;
-  auto set_vsync(bool enable) -> void;
-  bool is_vsync() const;
+  auto recreate_swapchain(this RenderContext& self, vir::Extent2D extent) -> std::expected<void, VkResult>;
+  auto swapchain_info(this const RenderContext& self) -> SwapchainInfo;
+  auto acquire_next_image(this RenderContext& self, vir::Module& module) -> vir::ValueID;
+  auto set_vsync(this RenderContext& self, bool enable) -> void;
+  auto is_vsync(this const RenderContext& self) -> bool;
 
-  auto wait(this RenderContext& self) -> void;
-  auto wait_on(vuk::UntypedValue&& fut) -> void;
-  auto submit_now(vuk::UntypedValue&& fut) -> void;
-  auto wait_on_multiple(std::span<vuk::UntypedValue> values) -> void;
-  // Submits without waiting. The values stay synchronizable, so a later `wait_on_multiple` over them
-  // costs only the fence wait. Backed by the superframe allocator, so the caller may keep the
-  // staging buffers alive across frames.
-  auto submit_multiple(std::span<vuk::UntypedValue> values) -> void;
-
-  auto get_compiler(this RenderContext& self) -> vuk::Compiler&;
+  auto compile(this RenderContext& self, vir::Module&& module) -> std::expected<vir::Program, VkResult>;
+  auto execute(this RenderContext& self, const vir::Program& program) -> std::expected<vir::SubmitTicket, VkResult>;
+  auto execute(this RenderContext& self, const vir::Program& program, vir::FrameAllocator& allocator)
+    -> std::expected<vir::SubmitTicket, VkResult>;
+  auto execute_blocking(this RenderContext& self, vir::Module&& module) -> std::expected<vir::SubmitTicket, VkResult>;
+  auto execute_blocking(this RenderContext& self, const vir::Program& program)
+    -> std::expected<vir::SubmitTicket, VkResult>;
+  // host visible, written and flushed, owned by the caller until the upload that reads it retires
+  auto allocate_staging(this RenderContext& self, std::span<const u8> data) -> std::expected<vir::Buffer, VkResult>;
+  // runs a one-shot module on an allocator of its own, then either waits for it or hands it and the
+  // staging buffers to `batch` to settle later
+  auto submit_upload(
+    this RenderContext& self, vir::Module&& module, std::vector<vir::Buffer> staging, UploadBatch* batch
+  ) -> std::expected<vir::SubmitTicket, VkResult>;
+  auto wait(this const RenderContext& self, vir::SubmitTicket ticket) -> std::expected<void, VkResult>;
+  auto is_retired(this const RenderContext& self, vir::SubmitTicket ticket) -> bool;
+  auto wait(this const RenderContext& self) -> void;
 
   auto create_persistent_descriptor_set(
-    this RenderContext&,
-    u32 set_index,
-    std::span<VkDescriptorSetLayoutBinding> bindings,
-    std::span<VkDescriptorBindingFlags> binding_flags
-  ) -> vuk::PersistentDescriptorSet;
-  auto commit_descriptor_set(this RenderContext&, std::span<VkWriteDescriptorSet> writes) -> void;
+    this RenderContext& self,
+    std::span<const VkDescriptorSetLayoutBinding> bindings,
+    std::span<const VkDescriptorBindingFlags> binding_flags
+  ) -> std::expected<DescriptorSet, VkResult>;
+  auto commit_descriptor_set(this RenderContext& self, std::span<const VkWriteDescriptorSet> writes) -> void;
+  auto bindless_set(this const RenderContext& self) -> vir::BindlessDescriptorSet;
 
   auto create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool;
-
-  [[nodiscard]]
+  auto pipeline(this const RenderContext& self, std::string_view name) -> vir::PipelineID;
+  auto pipeline(this const RenderContext& self, PipelineID id) -> vir::PipelineID;
   auto use_mesh_shaders(this const RenderContext& self) -> bool;
-
-  [[nodiscard]]
   auto use_ray_tracing(this const RenderContext& self) -> bool;
-
-  [[nodiscard]]
   auto use_ray_tracing_pipeline(this const RenderContext& self) -> bool;
-
-  [[nodiscard]]
   auto as_scratch_alignment(this const RenderContext& self) -> u64;
 
-  auto allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID;
-  auto destroy_image(const ImageID id) -> void;
-  auto image(const ImageID id) -> vuk::Image;
+  auto allocate_buffer(this RenderContext& self, const vir::BufferInfo& info) -> std::expected<BufferID, VkResult>;
+  auto destroy_buffer(this RenderContext& self, BufferID id) -> void;
+  auto buffer(this const RenderContext& self, BufferID id) -> vir::Buffer;
+  auto allocate_frame_buffer(this RenderContext& self, const vir::BufferInfo& info)
+    -> std::expected<vir::Buffer, VkResult>;
+  // host data a shader reads this frame, written into the frame allocator. Never empty, so a frame
+  // with nothing to upload still has a buffer to bind
+  auto upload_frame_buffer(this RenderContext& self, std::span<const u8> data, std::string_view name)
+    -> std::expected<vir::Buffer, VkResult>;
+  // grows `id` to hold at least `size` bytes, doubling so a slowly growing scene settles. The old
+  // buffer retires, so frames still in flight keep reading it. True when it was reallocated
+  auto resize_buffer(this RenderContext& self, BufferID& id, u64 size, std::string_view name)
+    -> std::expected<bool, VkResult>;
+  auto staging_buffer(
+    this RenderContext& self, vir::FrameAllocator& allocator, std::span<const u8> data, u64 alignment = 4
+  ) -> std::expected<vir::Buffer, VkResult>;
 
-  // `batch`, when given, collects the bindless write instead of committing it immediately; the
-  // descriptor is not live until that batch is flushed.
-  auto allocate_image_view(const vuk::ImageAttachment& image_attachment, UploadBatch* batch = nullptr) -> ImageViewID;
-  auto destroy_image_view(const ImageViewID id) -> void;
-  auto image_view(const ImageViewID id) -> vuk::ImageView;
+  auto allocate_image(this RenderContext& self, const vir::ImageInfo& info) -> std::expected<ImageID, VkResult>;
+  auto destroy_image(this RenderContext& self, ImageID id) -> void;
+  auto image(this const RenderContext& self, ImageID id) -> vir::Image;
+  auto allocate_image_view(this RenderContext& self, const vir::ImageViewInfo& info, bool write_bindless = true)
+    -> std::expected<ImageViewID, VkResult>;
+  auto destroy_image_view(this RenderContext& self, ImageViewID id) -> void;
+  auto image_view(this const RenderContext& self, ImageViewID id) -> vir::ImageView;
+  auto allocate_sampler(this RenderContext& self, const vir::SamplerInfo& info, bool write_bindless = true)
+    -> std::expected<SamplerID, VkResult>;
+  auto destroy_sampler(this RenderContext& self, SamplerID id) -> void;
+  // samplers built once per description and kept for the context's lifetime, bindless included
+  auto cached_sampler(this RenderContext& self, const vir::SamplerInfo& info) -> SamplerID;
+  auto cached_sampler_handle(this RenderContext& self, const vir::SamplerInfo& info) -> VkSampler;
+  auto sampler(this const RenderContext& self, SamplerID id) -> vir::Sampler;
+  auto allocate_acceleration_structure(
+    this RenderContext& self, VkAccelerationStructureTypeKHR type, u64 size, std::string_view name
+  ) -> std::expected<AccelerationStructureID, VkResult>;
+  // a structure placed in a slice of a buffer the caller owns, which outlives it
+  auto create_acceleration_structure_in(
+    this RenderContext& self, VkAccelerationStructureTypeKHR type, BufferID buffer, u64 offset, u64 size
+  ) -> std::expected<AccelerationStructureID, VkResult>;
+  // retires the structure, and the buffer under it when it owns one
+  auto destroy_acceleration_structure(this RenderContext& self, AccelerationStructureID id) -> void;
+  auto acceleration_structure(this const RenderContext& self, AccelerationStructureID id) -> GPUAccelerationStructure;
+  auto collect_retired(this RenderContext& self) -> void;
+  auto seal_retirements(this RenderContext& self, vir::SubmitTicket frame_ticket) -> void;
 
-  auto allocate_sampler(const vuk::SamplerCreateInfo& sampler_info, UploadBatch* batch = nullptr) -> SamplerID;
-  auto destroy_sampler(const SamplerID id) -> void;
-  auto sampler(const SamplerID id) -> vuk::Sampler;
-
-  auto get_max_viewport_count() const -> uint32_t { return vkbphysical_device.properties.limits.maxViewports; }
-  auto get_descriptor_set() -> vuk::PersistentDescriptorSet& { return resources.descriptor_set; }
-
-  auto get_accel_structure_device_address(this const RenderContext&, VkAccelerationStructureKHR handle) -> u64;
-
-  auto cmd_write_accel_structure_compacted_size(
-    this const RenderContext& self,
-    VkCommandBuffer command_buffer,
-    VkAccelerationStructureKHR handle,
-    VkQueryPool query_pool,
-    u32 query_index
-  ) -> void;
-  auto cmd_copy_accel_structure(
-    this const RenderContext& self, VkCommandBuffer command_buffer, const VkCopyAccelerationStructureInfoKHR& info
-  ) -> void;
-
+  auto get_accel_structure_device_address(this const RenderContext& self, VkAccelerationStructureKHR handle) -> u64;
   auto create_query_pool(this const RenderContext& self, VkQueryType type, u32 count) -> VkQueryPool;
-  auto destroy_query_pool(this const RenderContext& self, VkQueryPool query_pool) -> void;
-  auto read_query_pool(this const RenderContext& self, VkQueryPool query_pool, std::span<u64> results) -> bool;
-
-  auto resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
-    -> vuk::Unique<vuk::Buffer>;
-
-  [[nodiscard]]
-  auto allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment = 8) -> vuk::Unique<vuk::Buffer>;
-
-  [[nodiscard]]
-  auto alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, OX_THISCALL) noexcept -> vuk::Unique<vuk::Buffer>;
-
-  [[nodiscard]]
-  auto alloc_transient_buffer_raw(vuk::MemoryUsage usage, usize size, usize alignment = 8, OX_THISCALL) -> vuk::Buffer;
-
-  [[nodiscard]]
-  auto alloc_transient_buffer(vuk::MemoryUsage usage, usize size, usize alignment = 8, OX_THISCALL)
-    -> vuk::Value<vuk::Buffer>;
-
-  [[nodiscard]]
-  auto upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Buffer>&& dst, OX_THISCALL)
-    -> vuk::Value<vuk::Buffer>;
-
-  [[nodiscard]]
-  auto upload_staging(vuk::Value<vuk::Buffer>&& src, vuk::Buffer& dst, u64 dst_offset = 0, OX_THISCALL)
-    -> vuk::Value<vuk::Buffer>;
-
-  [[nodiscard]]
-  auto upload_staging(void* data, u64 data_size, vuk::Value<vuk::Buffer>&& dst, u64 dst_offset = 0, OX_THISCALL)
-    -> vuk::Value<vuk::Buffer>;
-
-  [[nodiscard]]
-  auto upload_staging(void* data, u64 data_size, vuk::Buffer& dst, u64 dst_offset = 0, OX_THISCALL)
-    -> vuk::Value<vuk::Buffer>;
-
-  template <typename T>
-  [[nodiscard]]
-  auto upload_staging(std::span<T> span, vuk::Buffer& dst, u64 dst_offset = 0, OX_THISCALL) -> vuk::Value<vuk::Buffer> {
-    return upload_staging(reinterpret_cast<void*>(span.data()), span.size_bytes(), dst, dst_offset, LOC);
-  }
-
-  template <typename T>
-  [[nodiscard]]
-  auto upload_staging(std::span<T> span, vuk::Value<vuk::Buffer>&& dst, u64 dst_offset = 0, OX_THISCALL)
-    -> vuk::Value<vuk::Buffer> {
-    return upload_staging(reinterpret_cast<void*>(span.data()), span.size_bytes(), std::move(dst), dst_offset, LOC);
-  }
-
-  template <typename T>
-  [[nodiscard]]
-  auto scratch_buffer_span(const std::span<T>& val = {}, usize alignment = 8, OX_THISCALL) -> vuk::Value<vuk::Buffer> {
-    if (val.empty())
-      return vuk::Value<vuk::Buffer>{};
-
-    return scratch_buffer(val.data(), sizeof(T) * val.size(), alignment, LOC);
-  }
-
-  template <typename T>
-    requires(!Container<T>)
-  [[nodiscard]]
-  auto scratch_buffer(const T& val = {}, usize alignment = 8, OX_THISCALL) -> vuk::Value<vuk::Buffer> {
-    return scratch_buffer(&val, sizeof(T), alignment, LOC);
-  }
-
-private:
-  [[nodiscard]]
-  auto scratch_buffer(const void* data, u64 size, usize alignment, OX_THISCALL) -> vuk::Value<vuk::Buffer>;
+  auto destroy_query_pool(this const RenderContext& self, VkQueryPool pool) -> void;
+  auto read_query_pool(this const RenderContext& self, VkQueryPool pool, std::span<u64> results) -> bool;
 };
 
-consteval void enable_bitmask(RenderContext::Feature);
+consteval auto enable_bitmask(RenderContext::Feature) -> void;
 } // namespace ox

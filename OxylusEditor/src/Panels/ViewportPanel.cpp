@@ -18,9 +18,14 @@
 #include "Memory/Stack.hpp"
 #include "Physics/Physics.hpp"
 #include "Render/Camera.hpp"
+#include "Render/Graph/Allocator.hpp"
+#include "Render/Graph/RenderGraph.hpp"
+#include "Render/Graph/Types.hpp"
 #include "Render/RenderContext.hpp"
+#include "Render/RendererInstance.hpp"
 #include "Render/Upscaler.hpp"
-#include "Render/Utils/VukCommon.hpp"
+#include "Render/Utils/PushConstants.hpp"
+#include "Render/Utils/Samplers.hpp"
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
@@ -348,8 +353,7 @@ ViewportPanel::ViewportPanel() : EditorPanelState("Viewport", ICON_MDI_TERRAIN, 
   ZoneScoped;
 
   auto& render_context = App::get_rendercontext();
-  auto& runtime = *render_context.runtime;
-  if (!runtime.is_pipeline_available("entity_mouse_picking")) {
+  if (render_context.pipeline("entity_mouse_picking") == vir::PipelineID::Invalid) {
     auto& vfs = App::get_vfs();
     auto shaders_dir = vfs.resolve_physical_dir(VFS::APP_DIR, "Shaders");
     auto shader_file = AssetFile::unpack(shaders_dir / "editor.oxpack");
@@ -369,13 +373,19 @@ ViewportPanel::ViewportPanel() : EditorPanelState("Viewport", ICON_MDI_TERRAIN, 
 }
 
 ViewportPanel::~ViewportPanel() {
+  for (const auto* pick : {&pending_pick_2d, &pending_pick_3d}) {
+    if (pick->buffer != BufferID::Invalid) {
+      App::get_rendercontext().destroy_buffer(pick->buffer);
+    }
+  }
+
   auto& event_system = App::get_event_system();
   if (editor_scene) {
     std::ignore = event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(editor_scene->get_id()));
   }
 }
 
-void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swapchain_attachment) {
+auto ViewportPanel::on_render(this ViewportPanel& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
 
   constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar;
@@ -384,13 +394,13 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
 
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 1.f));
   if (self.on_begin(flags)) {
-    if (auto s = self.editor_scene->get_scene()) {
+    if (auto s = self.editor_scene ? self.editor_scene->get_scene() : nullptr) {
       self.runtime_console.set_scene_cvar_system(reinterpret_cast<CVarSystem*>(&s->renderer_cvar));
       self.runtime_console.render();
     }
 
     if (ImGui::BeginPopupContextItem("viewport context")) {
-      if (!self.editor_scene->is_playing()) {
+      if (self.editor_scene && !self.editor_scene->is_playing()) {
         if (ImGui::MenuItem("Unload Scene")) {
           self.editor_scene = nullptr;
           self.set_name("Viewport");
@@ -408,7 +418,7 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
     ImVec2 start_cursor_pos = ImGui::GetCursorPos();
 
     if (ImGui::BeginMenuBar()) {
-      if (!self.editor_scene->is_playing()) {
+      if (self.editor_scene && !self.editor_scene->is_playing()) {
         if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE)) {
           editor.save_scene();
         }
@@ -628,30 +638,32 @@ void ViewportPanel::on_render(this ViewportPanel& self, vuk::ImageAttachment swa
       );
 
       if (editor.editor_cvar.cvar_draw_grid.as_bool()) {
-        add_editor_grid_stage(*renderer_instance, editor.editor_cvar.cvar_draw_grid_distance.get());
+        add_editor_grid_stage(*renderer_instance, [] {
+          return App::mod<Editor>().editor_cvar.cvar_draw_grid_distance.get();
+        });
       }
 
-      auto viewport_attachment_info = swapchain_attachment;
-      viewport_attachment_info.extent = vuk::Extent3D{
-        static_cast<u32>(self.scaled_render_size.x),
-        static_cast<u32>(self.scaled_render_size.y),
-        1u,
-      };
-      auto viewport_attachment = vuk::declare_ia("viewport", viewport_attachment_info);
-      viewport_attachment = vuk::clear_image(std::move(viewport_attachment), vuk::Black<f32>);
-
-      auto scene_view_image = self.editor_scene->get_scene()->render(
-        std::move(viewport_attachment),
+      const auto& scene_target = self.scene_target.ensure(
+        {static_cast<u32>(self.scaled_render_size.x), static_cast<u32>(self.scaled_render_size.y)},
+        swapchain_info.format
+      );
+      const auto rendered = self.editor_scene->get_scene()->render(
+        scene_target.attachment_info(),
         glm::ivec2{static_cast<i32>(self.viewport_bounds_[0].x), static_cast<i32>(self.viewport_bounds_[0].y)},
         glm::ivec2{static_cast<i32>(self.render_size.x), static_cast<i32>(self.render_size.y)},
         glm::ivec2{static_cast<i32>(self.scaled_render_size.x), static_cast<i32>(self.scaled_render_size.y)},
         self.is_viewport_focused
       );
+      self.pending_pick_2d.submitted(rendered);
+      self.pending_pick_3d.submitted(rendered);
+      if (!rendered) {
+        OX_LOG_ERROR("failed to render the viewport ({})", std::to_underlying(rendered.error()));
+      }
 
       ImGui::SetCursorPos(
         {ImGui::GetCursorPosX() + self.viewport_offset.x, ImGui::GetCursorPosY() + self.viewport_offset.y}
       );
-      UI::image(std::move(scene_view_image), ImVec2{self.render_size.x, self.render_size.y});
+      UI::image(scene_target.view(), ImVec2{self.render_size.x, self.render_size.y});
 
       self.drag_drop();
     }
@@ -1431,8 +1443,8 @@ auto ViewportPanel::draw_device_settings(this ViewportPanel&, SettingsUI& ui) ->
       "Swapchain",
       stack.format_char(
         "{}x{}",
-        static_cast<u32>(render_context.swapchain_extent.x),
-        static_cast<u32>(render_context.swapchain_extent.y)
+        render_context.swapchain_info().extent.width,
+        render_context.swapchain_info().extent.height
       )
     );
     ui.info(
@@ -1928,214 +1940,182 @@ static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
   }
 }
 
-auto highlight_mask_stage(
-  RenderStageContext& ctx, const std::vector<u32>& transform_indices, u32 terrain_transform_index
-) -> void {
+using HighlightMaskPush = PushConstants<u32, u32>;
+using PickPush2D = PushConstants<glm::uvec2, u64>;
+using PickPush3D = PushConstants<glm::uvec2, u64, u32>;
+
+// the stages are recorded into the scene's program once and kept, so everything that changes per
+// frame reaches them through the variables they declare and bind
+static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
   ZoneScoped;
 
-  auto selected_count = static_cast<u32>(transform_indices.size());
-
-  auto mask_generation_pass = vuk::make_pass(
-    "stencil_mask",
-    [selected_count, terrain_transform_index](
-      vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eComputeWrite) mask,
-      VUK_IA(vuk::eComputeSampled) visbuffer,
-      VUK_BA(vuk::eComputeRead) meshlet_instances,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
-      VUK_BA(vuk::eComputeRead) transform_indices_buffer_
-    ) {
-      cmd_list.bind_compute_pipeline("highlight_mask_generate")
-        .bind_buffer(0, 0, meshlet_instances)
-        .bind_buffer(0, 1, mesh_instances)
-        .bind_image(0, 2, visbuffer)
-        .bind_image(0, 3, mask)
-        .bind_buffer(0, 4, transform_indices_buffer_)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(selected_count, terrain_transform_index))
-        .dispatch_invocations_per_pixel(mask);
-
-      return std::make_tuple(mask, visbuffer, meshlet_instances, mesh_instances, transform_indices_buffer_);
-    }
-  );
-
-  auto depth_attachment = ctx.get_image_resource("depth_attachment");
+  auto& module = ctx.module;
+  auto& render_context = ctx.render_context;
   auto visbuffer_attachment = ctx.get_image_resource("visbuffer_attachment");
   auto meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
   auto mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
+  auto transform_indices = module.declare_buffer_var("highlight transform indices", vir::Access::None);
+  const auto push = module.declare_bytes_var("highlight mask push", sizeof(HighlightMaskPush));
+  ctx.variables["highlight transform indices"] = transform_indices;
+  ctx.variables["highlight mask push"] = push;
 
-  auto silhouette_mask = vuk::declare_ia(
-    "selection_silhouette_mask",
-    {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
-     .format = vuk::Format::eR8Unorm,
-     .sample_count = vuk::Samples::e1,
-     .base_level = 0,
-     .level_count = 1,
-     .base_layer = 0,
-     .layer_count = 1}
+  const auto extent = module.image_extent(visbuffer_attachment).value_or(vir::Extent3D{1, 1, 1});
+  auto silhouette_mask = module.clear(
+    module.transient_image({.extent = extent, .format = vir::Format::R8Unorm, .name = "selection silhouette mask"}),
+    vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f)
   );
-  silhouette_mask.same_extent_as(visbuffer_attachment);
-  silhouette_mask = vuk::clear_image(std::move(silhouette_mask), vuk::Black<f32>);
 
-  size_t buffer_size = transform_indices.size() * sizeof(u32);
-  auto transform_indices_buffer = ctx.render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, buffer_size);
-  std::memcpy(transform_indices_buffer->mapped_ptr, transform_indices.data(), buffer_size);
-
+  module
+    .begin_compute(
+      {{silhouette_mask, vir::Access::ComputeWrite},
+       {visbuffer_attachment, vir::Access::ComputeSampled},
+       {meshlet_instances_buffer, vir::Access::ComputeRead},
+       {mesh_instances_buffer, vir::Access::ComputeRead},
+       {transform_indices, vir::Access::ComputeRead}}
+    )
+    .with_name("highlight mask")
+    .bind_compute_pipeline(render_context.pipeline("highlight_mask_generate"))
+    .bind_buffer(0, 0, meshlet_instances_buffer)
+    .bind_buffer(0, 1, mesh_instances_buffer)
+    .bind_image(0, 2, visbuffer_attachment)
+    .bind_image(0, 3, silhouette_mask)
+    .bind_buffer(0, 4, transform_indices)
+    .push_constants_from(push)
+    .dispatch_invocations_per_pixel(silhouette_mask);
   std::tie(
     silhouette_mask,
     visbuffer_attachment,
     meshlet_instances_buffer,
     mesh_instances_buffer,
-    transform_indices_buffer
-  ) =
-    mask_generation_pass(
-      std::move(silhouette_mask),
-      std::move(visbuffer_attachment),
-      std::move(meshlet_instances_buffer),
-      std::move(mesh_instances_buffer),
-      std::move(transform_indices_buffer)
-    );
+    std::ignore
+  ) = std::tuple_cat(module.end_compute<5>());
 
-  ctx.set_shared_image_resource("silhouette_mask", std::move(silhouette_mask))
-    .set_image_resource("depth_attachment", std::move(depth_attachment))
-    .set_image_resource("visbuffer_attachment", std::move(visbuffer_attachment))
-    .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances_buffer))
-    .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances_buffer));
+  ctx.set_shared_image_resource("silhouette_mask", silhouette_mask)
+    .set_image_resource("visbuffer_attachment", visbuffer_attachment)
+    .set_buffer_resource("meshlet_instances_buffer", meshlet_instances_buffer)
+    .set_buffer_resource("mesh_instances_buffer", mesh_instances_buffer);
 }
 
-auto highlight_composite_stage(RenderStageContext& ctx, vuk::Value<vuk::ImageAttachment> original_result_attachment)
-  -> option<vuk::Value<vuk::ImageAttachment>> {
+static auto highlight_mask_bind(vir::Program& program, const StageVariables& variables, ViewportPanel& panel) -> void {
+  program.set(variables.at("highlight transform indices"), panel.highlight_indices_buffer);
+  program.set_bytes(
+    variables.at("highlight mask push"),
+    HighlightMaskPush(static_cast<u32>(panel.highlight_indices.size()), panel.highlight_terrain_index)
+  );
+}
+
+static auto highlight_composite_stage(RenderStageContext& ctx) -> void {
   ZoneScoped;
 
   auto silhouette_mask = ctx.get_shared_image_resource("silhouette_mask");
   if (!silhouette_mask.has_value()) {
-    return nullopt;
+    return;
   }
 
+  auto& module = ctx.module;
+  auto& render_context = ctx.render_context;
+  auto result_attachment = ctx.get_image_resource("result_attachment");
   auto depth_attachment = ctx.get_image_resource("depth_attachment");
 
-  auto outline_composite_output = vuk::declare_ia(
-    "outlined_composite",
-    {.usage = vuk::ImageUsageFlagBits::eColorAttachment | vuk::ImageUsageFlagBits::eSampled,
-     .sample_count = vuk::Samples::e1}
-  );
-  outline_composite_output.same_format_as(original_result_attachment);
-  outline_composite_output.same_shape_as(original_result_attachment);
-  outline_composite_output = vuk::clear_image(std::move(outline_composite_output), vuk::Black<f32>);
+  const auto mask_extent = module.image_extent(*silhouette_mask).value_or(vir::Extent3D{1, 1, 1});
+  const auto result_extent = module.image_extent(result_attachment).value_or(vir::Extent3D{1, 1, 1});
+  const auto result_format = module.image_format(result_attachment)
+                               .value_or(std::pair{vir::Format::RGBA8Unorm, vir::Samples::e1})
+                               .first;
 
-  auto temp_mask = vuk::declare_ia(
-    "temp_horiz_dilated_mask",
-    {.usage = vuk::ImageUsageFlagBits::eStorage | vuk::ImageUsageFlagBits::eSampled,
-     .format = vuk::Format::eR8Unorm,
-     .sample_count = vuk::Samples::e1}
-  );
   // the dilation runs entirely in mask space; the composite maps display fragments into it
-  temp_mask.same_shape_as(*silhouette_mask);
+  auto temp_mask = module.transient_image({
+    .extent = mask_extent,
+    .format = vir::Format::R8Unorm,
+    .name = "temp horizontal dilated mask",
+  });
+  struct DilatePush {
+    glm::uvec2 resolution = {};
+    i32 radius = 8;
+  };
+  module.begin_compute({{*silhouette_mask, vir::Access::ComputeSampled}, {temp_mask, vir::Access::ComputeWrite}})
+    .with_name("horizontal dilate")
+    .bind_compute_pipeline(render_context.pipeline("highlight_dilate_horizontal"))
+    .bind_image(0, 0, *silhouette_mask)
+    .bind_image(0, 1, temp_mask)
+    .push_constants(PushConstants(DilatePush{.resolution = {mask_extent.width, mask_extent.height}}))
+    .dispatch_invocations_per_pixel(temp_mask);
+  std::tie(*silhouette_mask, temp_mask) = std::tuple_cat(module.end_compute<2>());
 
-  auto horiz_dilate_pass = vuk::make_pass(
-    "horizontal_dilate_pass",
-    [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeSampled) input_mask, VUK_IA(vuk::eComputeWrite) output_mask) {
-      struct PC {
-        glm::uvec2 resolution;
-        i32 radius = 8;
-      } push_block;
-
-      push_block.resolution = glm::uvec2(input_mask->extent.width, input_mask->extent.height);
-
-      cmd_list.bind_compute_pipeline("highlight_dilate_horizontal")
-        .bind_image(0, 0, input_mask)
-        .bind_image(0, 1, output_mask)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(push_block))
-        .dispatch_invocations_per_pixel(output_mask);
-
-      return std::make_tuple(input_mask, output_mask);
-    }
+  // NOTE: HideBehindWalls is here for future use. Currently we render the silhoutte using main visbuffer which
+  // geometry alread passes the depth test.
+  // DimBehindWalls will also make the outlines slightly transparent.
+  enum OccludeMode {
+    HideBehindWalls = 0,
+    DimmBehindWalls = 1,
+    AlwaysVisible = 2,
+  };
+  struct CompositePush {
+    glm::vec4 outline_color = glm::vec4(1.0f, 0.53f, 0.0f, 1.0f); // Pure Gold
+    glm::uvec2 resolution = {};
+    glm::uvec2 mask_resolution = {};
+    i32 outline_width = 5;
+    i32 occluded_mode = OccludeMode::AlwaysVisible;
+  };
+  auto outline_composite = module.clear(
+    module.transient_image({.extent = result_extent, .format = result_format, .name = "outlined composite"}),
+    vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f)
   );
+  module
+    .begin_rendering(
+      {{outline_composite, vir::Access::ColorRW},
+       {*silhouette_mask, vir::Access::FragmentSampled},
+       {temp_mask, vir::Access::FragmentSampled},
+       {depth_attachment, vir::Access::FragmentSampled},
+       {result_attachment, vir::Access::FragmentSampled}}
+    )
+    .with_name("outline composite")
+    .bind_graphics_pipeline(render_context.pipeline("highlight_composite"))
+    .broadcast_color_blend(vir::BlendPreset::AlphaBlend)
+    .set_viewport(0, vir::Rect2D::framebuffer())
+    .set_scissor(0, vir::Rect2D::framebuffer())
+    .bind_image(0, 0, *silhouette_mask)
+    .bind_image(0, 1, temp_mask)
+    .bind_image(0, 2, depth_attachment)
+    .bind_image(0, 3, result_attachment)
+    .bind_sampler(0, 4, render_context.cached_sampler_handle(vir::LinearSamplerClamped))
+    .push_constants(PushConstants(
+      CompositePush{
+        .resolution = {result_extent.width, result_extent.height},
+        .mask_resolution = {mask_extent.width, mask_extent.height},
+      }
+    ))
+    .draw(3, 1);
+  const auto composited = module.end_rendering<5>();
 
-  auto composite_pass = vuk::make_pass(
-    "outline_composite",
-    [](
-      vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eFragmentSampled) original_mask,
-      VUK_IA(vuk::eFragmentSampled) dilated_horiz_mask,
-      VUK_IA(vuk::eFragmentSampled) depth,
-      VUK_IA(vuk::eFragmentSampled) color,
-      VUK_IA(vuk::eColorWrite) out_composite
-    ) {
-      // NOTE: HideBehindWalls is here for future use. Currently we render the silhoutte using main visbuffer which
-      // geometry alread passes the depth test.
-      // DimBehindWalls will also make the outlines slightly transparent.
-      enum OccludeMode {
-        HideBehindWalls = 0,
-        DimmBehindWalls = 1,
-        AlwaysVisible = 2,
-      };
-      struct PC {
-        glm::vec4 outline_color = glm::vec4(1.0f, 0.53f, 0.0f, 1.0f); // Pure Gold
-        glm::uvec2 resolution;
-        glm::uvec2 mask_resolution;
-        i32 outline_width = 5;
-        i32 occluded_mode = OccludeMode::AlwaysVisible;
-      } push_block;
-
-      push_block.resolution = glm::uvec2(color->extent.width, color->extent.height);
-      push_block.mask_resolution = glm::uvec2(original_mask->extent.width, original_mask->extent.height);
-
-      cmd_list.bind_graphics_pipeline("highlight_composite")
-        .broadcast_color_blend(vuk::BlendPreset::eAlphaBlend)
-        .set_dynamic_state(vuk::DynamicStateFlagBits::eScissor | vuk::DynamicStateFlagBits::eViewport)
-        .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
-        .bind_image(0, 0, original_mask)
-        .bind_image(0, 1, dilated_horiz_mask)
-        .bind_image(0, 2, depth)
-        .bind_image(0, 3, color)
-        .bind_sampler(0, 4, vuk::LinearSamplerClamped)
-        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(push_block))
-        .draw(3, 1, 0, 0);
-
-      return std::make_tuple(original_mask, dilated_horiz_mask, depth, color, out_composite);
-    }
-  );
-
-  std::tie(silhouette_mask, temp_mask) = horiz_dilate_pass(std::move(*silhouette_mask), std::move(temp_mask));
-
-  std::tie(*silhouette_mask, temp_mask, depth_attachment, original_result_attachment, outline_composite_output) =
-    composite_pass(
-      std::move(*silhouette_mask),
-      std::move(temp_mask),
-      std::move(depth_attachment),
-      std::move(original_result_attachment),
-      std::move(outline_composite_output)
-    );
-
-  ctx.set_image_resource("depth_attachment", std::move(depth_attachment));
-
-  return outline_composite_output;
+  ctx.set_image_resource("depth_attachment", composited[3]).set_image_resource("result_attachment", composited[0]);
 }
 
 auto ViewportPanel::resolve_pending_pick(this ViewportPanel& self, PendingPick& pick, bool skip_invalid) -> void {
   ZoneScoped;
 
-  if (!pick.pending || !pick.buffer) {
+  auto& render_context = App::get_rendercontext();
+  if (pick.buffer == BufferID::Invalid || !pick.is_ready(render_context)) {
     return;
   }
 
-  // Let the submission clear its full inflight depth before reading the mapping.
-  auto& render_context = App::get_rendercontext();
-  if (render_context.num_frames - pick.submitted_frame < render_context.num_inflight_frames) {
+  const auto buffer = render_context.buffer(pick.buffer);
+  if (const auto invalidated = render_context.persistent->invalidate_buffer(buffer); !invalidated) {
+    OX_LOG_ERROR("failed to invalidate pick readback ({})", std::to_underlying(invalidated.error()));
+    pick.pending = false;
     return;
   }
 
   pick.pending = false;
 
-  if (!self.editor_scene) {
+  if (!self.editor_scene || self.pending_pick_scene.lock() != self.editor_scene->get_scene()) {
     return;
   }
 
   u32 texel_data = ~0_u32;
-  std::memcpy(&texel_data, pick.buffer->mapped_ptr, sizeof(u32));
+  std::memcpy(&texel_data, buffer.mapped, sizeof(u32));
 
-  // The 3D pass reports a miss as an invalid index, which deselects. The 2D pass shares the frame
-  // with it, so a miss there must not clobber what 3D picked.
+  // a 2d miss must not clobber the entity picked by the 3d pass
   if (skip_invalid && texel_data == ~0_u32) {
     return;
   }
@@ -2151,182 +2131,192 @@ auto ViewportPanel::mouse_picking_stages(
   self.resolve_pending_pick(self.pending_pick_3d, false);
   self.resolve_pending_pick(self.pending_pick_2d, true);
 
+  auto& render_context = App::get_rendercontext();
   const auto using_gizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
   const bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
-                           !self.is_ui_capturing_mouse && !self.is_menubar_hovered;
+                           !self.is_ui_capturing_mouse && !self.is_menubar_hovered && !self.pending_pick_2d.pending &&
+                           !self.pending_pick_3d.pending;
 
+  self.picking_texel = picking_texel;
+  self.picking_terrain_index = get_terrain_transform_index(
+    self.editor_scene ? self.editor_scene->get_scene().get() : nullptr
+  );
+  // the picks only run on the frames that click, which is a program of their own
   if (should_pick) {
-    renderer_instance
-      ->add_stage_after(RenderStage::Forward2D, "mouse_picking_2d", [&self, picking_texel](RenderStageContext& ctx) {
-        auto visbuffer_attach = ctx.get_image_resource("visbuffer_attachment_2d");
-        auto final_attach = ctx.get_image_resource("final_attachment");
-
-        auto& pick = self.pending_pick_2d;
-        if (!pick.buffer) {
-          pick.buffer = ctx.render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
+    for (auto* pick : {&self.pending_pick_2d, &self.pending_pick_3d}) {
+      if (pick->buffer == BufferID::Invalid) {
+        auto buffer = render_context.allocate_buffer({
+          .size = sizeof(u32),
+          .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+          .location = vir::MemoryLocation::GpuToCpu,
+          .name = "pick readback",
+        });
+        if (!buffer) {
+          return;
         }
-        auto readback_buffer = vuk::acquire_buf("pick readback 2d", *pick.buffer, vuk::Access::eNone);
 
-        auto pick_pass = vuk::make_pass(
-          "mouse_picking_2d_pass",
-          [picking_texel](
-            vuk::CommandBuffer& cmd_list,
-            VUK_BA(vuk::eComputeWrite) buffer,
-            VUK_IA(vuk::eComputeSampled) visbuffer_,
-            VUK_IA(vuk::eComputeSampled) final_
-          ) {
-            cmd_list.bind_compute_pipeline("entity_mouse_picking_2d")
-              .bind_image(0, 0, visbuffer_)
-              .push_constants(
-                vuk::ShaderStageFlagBits::eCompute,
-                0,
-                PushConstants(picking_texel, buffer->device_address)
-              )
-              .dispatch(1, 1, 1);
+        pick->buffer = *buffer;
+      }
+    }
+    self.pending_pick_2d.request();
+    self.pending_pick_3d.request();
+    self.pending_pick_scene = self.editor_scene->get_scene();
 
-            return std::make_tuple(buffer, visbuffer_, final_);
-          }
+    renderer_instance->add_stage_after(
+      RenderStage::Forward2D,
+      "mouse_picking_2d",
+      [](RenderStageContext& ctx) {
+        auto& module = ctx.module;
+        auto visbuffer = ctx.get_image_resource("visbuffer_attachment_2d");
+        auto readback = module.declare_buffer_var("pick readback 2d", vir::Access::HostRead);
+        const auto push = module.declare_bytes_var("pick 2d push", sizeof(PickPush2D));
+        ctx.variables["pick readback 2d"] = readback;
+        ctx.variables["pick 2d push"] = push;
+        module.begin_compute({{readback, vir::Access::ComputeWrite}, {visbuffer, vir::Access::ComputeSampled}})
+          .with_name("mouse picking 2d")
+          .bind_compute_pipeline(ctx.render_context.pipeline("entity_mouse_picking_2d"))
+          .bind_image(0, 0, visbuffer)
+          .push_constants_from(push)
+          .dispatch(1, 1, 1);
+        std::tie(readback, visbuffer) = std::tuple_cat(module.end_compute<2>());
+        module.export_to(readback, vir::Access::HostRead);
+        ctx.set_image_resource("visbuffer_attachment_2d", visbuffer);
+      },
+      [&self](vir::Program& program, const StageVariables& variables) {
+        auto& context = App::get_rendercontext();
+        program.set(variables.at("pick readback 2d"), context.buffer(self.pending_pick_2d.buffer));
+        program.set_bytes(
+          variables.at("pick 2d push"),
+          PickPush2D(self.picking_texel, context.buffer(self.pending_pick_2d.buffer).device_address)
         );
+      }
+    );
 
-        std::tie(readback_buffer, visbuffer_attach, final_attach) = pick_pass(
-          std::move(readback_buffer),
-          std::move(visbuffer_attach),
-          std::move(final_attach)
-        );
-
-        // The attachments below carry the pass into the frame, so dropping the buffer value here
-        // does not cull it. The contents are read once this frame has certainly completed.
-        pick.submitted_frame = ctx.render_context.num_frames;
-        pick.pending = true;
-
-        ctx.set_image_resource("visbuffer_attachment_2d", std::move(visbuffer_attach))
-          .set_image_resource("final_attachment", std::move(final_attach));
-      });
-
-    renderer_instance
-      ->add_stage_after(RenderStage::VisBufferEncode, "mouse_picking", [&self, picking_texel](RenderStageContext& ctx) {
+    renderer_instance->add_stage_after(
+      RenderStage::VisBufferEncode,
+      "mouse_picking",
+      [](RenderStageContext& ctx) {
+        auto& module = ctx.module;
         auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
         auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
         auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
-
-        auto& pick = self.pending_pick_3d;
-        if (!pick.buffer) {
-          pick.buffer = ctx.render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUtoCPU, sizeof(u32));
-        }
-        auto readback_buffer = vuk::acquire_buf("pick readback", *pick.buffer, vuk::Access::eNone);
-
-        const auto terrain_transform_index = get_terrain_transform_index(
-          self.editor_scene ? self.editor_scene->get_scene().get() : nullptr
+        auto readback = module.declare_buffer_var("pick readback", vir::Access::HostRead);
+        const auto push = module.declare_bytes_var("pick push", sizeof(PickPush3D));
+        ctx.variables["pick readback"] = readback;
+        ctx.variables["pick push"] = push;
+        module
+          .begin_compute(
+            {{readback, vir::Access::ComputeWrite},
+             {visbuffer, vir::Access::ComputeSampled},
+             {meshlet_instances, vir::Access::ComputeRead},
+             {mesh_instances, vir::Access::ComputeRead}}
+          )
+          .with_name("mouse picking")
+          .bind_compute_pipeline(ctx.render_context.pipeline("entity_mouse_picking"))
+          .bind_buffer(0, 0, meshlet_instances)
+          .bind_buffer(0, 1, mesh_instances)
+          .bind_image(0, 2, visbuffer)
+          .push_constants_from(push)
+          .dispatch(1, 1, 1);
+        std::tie(readback, visbuffer, meshlet_instances, mesh_instances) = std::tuple_cat(module.end_compute<4>());
+        module.export_to(readback, vir::Access::HostRead);
+        ctx.set_image_resource("visbuffer_attachment", visbuffer)
+          .set_buffer_resource("meshlet_instances_buffer", meshlet_instances)
+          .set_buffer_resource("mesh_instances_buffer", mesh_instances);
+      },
+      [&self](vir::Program& program, const StageVariables& variables) {
+        auto& context = App::get_rendercontext();
+        program.set(variables.at("pick readback"), context.buffer(self.pending_pick_3d.buffer));
+        program.set_bytes(
+          variables.at("pick push"),
+          PickPush3D(
+            self.picking_texel,
+            context.buffer(self.pending_pick_3d.buffer).device_address,
+            self.picking_terrain_index
+          )
         );
-
-        auto write_pass = vuk::make_pass(
-          "mouse_picking_write_pass",
-          [picking_texel, terrain_transform_index](
-            vuk::CommandBuffer& cmd_list,
-            VUK_BA(vuk::eComputeWrite) buffer,
-            VUK_IA(vuk::eComputeSampled) visbuffer_,
-            VUK_BA(vuk::eComputeRead) meshlet_instances_,
-            VUK_BA(vuk::eComputeRead) mesh_instances_
-          ) {
-            cmd_list.bind_compute_pipeline("entity_mouse_picking")
-              .bind_buffer(0, 0, meshlet_instances_)
-              .bind_buffer(0, 1, mesh_instances_)
-              .bind_image(0, 2, visbuffer_)
-              .push_constants(
-                vuk::ShaderStageFlagBits::eCompute,
-                0,
-                PushConstants(picking_texel, buffer->device_address, terrain_transform_index)
-              )
-              .dispatch(1, 1, 1);
-
-            return std::make_tuple(buffer, visbuffer_, meshlet_instances_, mesh_instances_);
-          }
-        );
-
-        std::tie(readback_buffer, visbuffer, meshlet_instances, mesh_instances) = write_pass(
-          std::move(readback_buffer),
-          std::move(visbuffer),
-          std::move(meshlet_instances),
-          std::move(mesh_instances)
-        );
-
-        pick.submitted_frame = ctx.render_context.num_frames;
-        pick.pending = true;
-
-        ctx.set_image_resource("visbuffer_attachment", std::move(visbuffer))
-          .set_buffer_resource("meshlet_instances_buffer", std::move(meshlet_instances))
-          .set_buffer_resource("mesh_instances_buffer", std::move(mesh_instances));
-      });
+      }
+    );
   }
 
   if (!self.draw_entity_highlighting) {
     return;
   }
 
+  auto* s = self.editor_scene.get();
+  std::vector<u32> transform_indices = {};
+  {
+    auto& editor_context = App::mod<Editor>().get_context();
+
+    if (editor_context.entity.has_value()) {
+      if (!editor_context.entity->has<MeshComponent>()) {
+        auto traverse_hierarchy = [&](this auto&& f, flecs::entity entity) -> void {
+          entity.children([s, &transform_indices, &f](flecs::entity child) {
+            if (child.has<MeshComponent>()) {
+              auto transform_id = s->get_scene()->get_mesh_transform_id(child);
+              if (transform_id.has_value()) {
+                auto transform_index = SlotMap_decode_id(*transform_id).index;
+                transform_indices.emplace_back(transform_index);
+              }
+            }
+
+            f(child);
+          });
+        };
+
+        // Terrain carries no MeshComponent and no mesh children, so the hierarchy walk finds
+        // nothing; its own transform is what the mask has to match against.
+        if (editor_context.entity->has<TerrainComponent>()) {
+          auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
+          if (transform_id.has_value()) {
+            transform_indices.emplace_back(SlotMap_decode_id(*transform_id).index);
+          }
+        }
+
+        traverse_hierarchy(*editor_context.entity);
+      } else {
+        auto transform_id = s->get_scene()->get_mesh_transform_id(*editor_context.entity);
+        if (transform_id.has_value()) {
+          auto transform_index = SlotMap_decode_id(*transform_id).index;
+          transform_indices.emplace_back(transform_index);
+        }
+      }
+    }
+
+    // every skinned mesh under one animator resolves to that animator's transform, and the mask
+    // walks this list per pixel, so a rigged model with a dozen parts would pay for the same index
+    // a dozen times
+    std::ranges::sort(transform_indices);
+    transform_indices.erase(std::ranges::unique(transform_indices).begin(), transform_indices.end());
+  }
+
+  self.highlight_indices = std::move(transform_indices);
+  self.highlight_terrain_index = get_terrain_transform_index(s->get_scene().get());
+  // a frame with nothing selected records the program without the stages
+  if (self.highlight_indices.empty()) {
+    return;
+  }
+
+  const auto staged = render_context.upload_frame_buffer(
+    std::span(reinterpret_cast<const u8*>(self.highlight_indices.data()), ox::size_bytes(self.highlight_indices)),
+    "highlight transform indices"
+  );
+  if (!staged) {
+    return;
+  }
+
+  self.highlight_indices_buffer = *staged;
   renderer_instance->add_stage_after(
     RenderStage::VisBufferEncode,
     "entity_highlighting",
-    [s = self.editor_scene.get()](RenderStageContext& ctx) {
-      auto& editor_context = App::mod<Editor>().get_context();
-      std::vector<u32> transform_indices = {};
-
-      if (editor_context.entity.has_value()) {
-        if (!editor_context.entity->has<MeshComponent>()) {
-          auto traverse_hierarchy = [&](this auto&& f, flecs::entity entity) -> void {
-            entity.children([s, &transform_indices, &f](flecs::entity child) {
-              if (child.has<MeshComponent>()) {
-                auto transform_id = s->get_scene()->get_mesh_transform_id(child);
-                if (transform_id.has_value()) {
-                  auto transform_index = SlotMap_decode_id(*transform_id).index;
-                  transform_indices.emplace_back(transform_index);
-                }
-              }
-
-              f(child);
-            });
-          };
-
-          // Terrain carries no MeshComponent and no mesh children, so the hierarchy walk finds
-          // nothing; its own transform is what the mask has to match against.
-          if (editor_context.entity->has<TerrainComponent>()) {
-            auto transform_id = s->get_scene()->get_entity_transform_id(*editor_context.entity);
-            if (transform_id.has_value()) {
-              transform_indices.emplace_back(SlotMap_decode_id(*transform_id).index);
-            }
-          }
-
-          traverse_hierarchy(*editor_context.entity);
-        } else {
-          auto transform_id = s->get_scene()->get_mesh_transform_id(*editor_context.entity);
-          if (transform_id.has_value()) {
-            auto transform_index = SlotMap_decode_id(*transform_id).index;
-            transform_indices.emplace_back(transform_index);
-          }
-        }
-      }
-
-      // every skinned mesh under one animator resolves to that animator's transform, and the mask
-      // walks this list per pixel, so a rigged model with a dozen parts would pay for the same index
-      // a dozen times
-      std::ranges::sort(transform_indices);
-      transform_indices.erase(std::ranges::unique(transform_indices).begin(), transform_indices.end());
-
-      if (transform_indices.empty()) {
-        return;
-      }
-
-      highlight_mask_stage(ctx, transform_indices, get_terrain_transform_index(s->get_scene().get()));
-    }
+    [](RenderStageContext& ctx) { highlight_mask_stage(ctx); },
+    [&self](vir::Program& program, const StageVariables& variables) { highlight_mask_bind(program, variables, self); }
   );
-
-  renderer_instance->add_stage_after(RenderStage::PostProcessing, "entity_highlighting", [](RenderStageContext& ctx) {
-    auto result_attachment = ctx.get_image_resource("result_attachment");
-    auto composite_result = highlight_composite_stage(ctx, result_attachment);
-    ctx.set_image_resource(
-      "result_attachment",
-      std::move(composite_result.has_value() ? *composite_result : result_attachment)
-    );
-  });
+  renderer_instance->add_stage_after(
+    RenderStage::PostProcessing,
+    "entity_highlighting_composite",
+    [](RenderStageContext& ctx) { highlight_composite_stage(ctx); }
+  );
 }
 
 void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) {

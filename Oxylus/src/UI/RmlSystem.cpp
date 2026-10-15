@@ -29,7 +29,7 @@ auto RmlSystem::GetElapsedTime() -> double {
 
 auto RmlSystem::LogMessage(Rml::Log::Type type, const Rml::String& message) -> bool {
   switch (type) {
-    case Rml::Log::LT_ERROR:
+    case Rml::Log::LT_ERROR  :
     case Rml::Log::LT_ASSERT : OX_LOG_ERROR("RmlUi: {}", message); break;
     case Rml::Log::LT_WARNING: OX_LOG_WARN("RmlUi: {}", message); break;
     case Rml::Log::LT_INFO   : OX_LOG_INFO("RmlUi: {}", message); break;

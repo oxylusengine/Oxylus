@@ -7,6 +7,7 @@
 #include <simdjson.h>
 
 #include "OS/File.hpp"
+#include "Render/Graph/Types.hpp"
 #include "Utils/JsonWriter.hpp"
 #include "Utils/Log.hpp"
 
@@ -329,23 +330,16 @@ auto ParticleSystem::recompile(this ParticleSystem& self) -> void {
 
   if (!self.curve_atlas) {
     self.curve_atlas = Texture::create({
-      .format = vuk::Format::eR16G16B16A16Sfloat,
+      .format = vir::Format::RGBA16Sfloat,
       .extent = {CURVE_ATLAS_WIDTH, row_count, 1},
-      .usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eTransferDst,
-      .sampler_info = {
-        .magFilter = vuk::Filter::eLinear,
-        .minFilter = vuk::Filter::eLinear,
-        .mipmapMode = vuk::SamplerMipmapMode::eNearest,
-        .addressModeU = vuk::SamplerAddressMode::eClampToEdge,
-        .addressModeV = vuk::SamplerAddressMode::eClampToEdge,
-        .addressModeW = vuk::SamplerAddressMode::eClampToEdge
-      },
+      .usage = vir::ImageUsageFlags::Sampled | vir::ImageUsageFlags::TransferDst,
+      .sampler_info = {.mipmap_mode = VK_SAMPLER_MIPMAP_MODE_NEAREST},
     });
   }
 
   self.curve_atlas.upload(
     std::span(reinterpret_cast<const u8*>(texels.data()), texels.size() * sizeof(glm::u16vec4)),
-    vuk::eFragmentSampled
+    vir::Access::FragmentSampled
   );
 }
 

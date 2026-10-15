@@ -12,6 +12,7 @@
 #include "Panels/ContentPanel.hpp"
 #include "Panels/LoadingPanel.hpp"
 #include "Project/Project.hpp"
+#include "Render/Graph/Types.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EmbeddedBanner.hpp"
 
@@ -68,11 +69,11 @@ auto validate_new_project_form(
 
 ProjectPanel::ProjectPanel() : EditorPanelState("Projects", ICON_MDI_ACCOUNT_BADGE, true) {
   engine_banner = Texture::create({
-    .format = vuk::Format::eR8G8B8A8Srgb,
-    .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u},
-    .usage = vuk::ImageUsageFlagBits::eSampled,
+    .format = vir::Format::RGBA8Srgb,
+    .extent = {.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1},
+    .usage = vir::ImageUsageFlags::Sampled,
   });
-  engine_banner.upload(std::span(editor_banner), vuk::eFragmentSampled);
+  engine_banner.upload(std::span(editor_banner), vir::Access::FragmentSampled);
 
   std::error_code error;
   new_project_location = std::filesystem::current_path(error).string();
@@ -131,7 +132,7 @@ auto ProjectPanel::new_project(
   return true;
 }
 
-auto ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment) -> void {
+auto ProjectPanel::on_render(this ProjectPanel& self, const SwapchainInfo&) -> void {
   if (self.visible && !ImGui::IsPopupOpen("ProjectSelector"))
     ImGui::OpenPopup("ProjectSelector");
 

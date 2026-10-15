@@ -9,12 +9,12 @@
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 #include <string>
-#include <vuk/vsl/Core.hpp>
 
 #include "Animation/AnimationClip.hpp"
 #include "Animation/Skeleton.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
+#include "Render/RenderContext.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Scene/Components.hpp"
@@ -379,29 +379,16 @@ auto AnimationEditorPanel::on_update(this AnimationEditorPanel& self) -> void {
 }
 
 auto AnimationEditorPanel::draw_preview(
-  this AnimationEditorPanel& self, const vuk::ImageAttachment& swapchain_attachment
+  this AnimationEditorPanel& self, const SwapchainInfo& swapchain_info
 ) -> void {
   ZoneScoped;
 
   const auto available = ImGui::GetContentRegionAvail();
   self.preview_size = {glm::max(available.x, 32.0f), glm::max(available.y, 32.0f)};
 
-  auto attachment_info = swapchain_attachment;
-  attachment_info.extent = vuk::Extent3D{
-    static_cast<u32>(self.preview_size.x),
-    static_cast<u32>(self.preview_size.y),
-    1u,
-  };
-
-  auto attachment = vuk::declare_ia("animation preview", attachment_info);
-  attachment = vuk::clear_image(
-    std::move(attachment),
-    vuk::ClearColor(
-      self.preview_background.r,
-      self.preview_background.g,
-      self.preview_background.b,
-      self.preview_background.a
-    )
+  const auto& preview_image = self.preview_target_texture.ensure(
+    {static_cast<u32>(self.preview_size.x), static_cast<u32>(self.preview_size.y)},
+    swapchain_info.format
   );
 
   const auto orbit = glm::vec3(
@@ -444,21 +431,24 @@ auto AnimationEditorPanel::draw_preview(
 
   if (self.preview_grid_enabled) {
     if (auto* renderer_instance = self.preview_scene->get_renderer_instance(); renderer_instance != nullptr) {
-      add_editor_grid_stage(*renderer_instance, self.preview_grid_distance);
+      add_editor_grid_stage(*renderer_instance, [&self] { return self.preview_grid_distance; });
     }
   }
 
-  auto image = self.preview_scene->render(
-    std::move(attachment),
+  if (const auto rendered = self.preview_scene->render(
+        preview_image.attachment_info(),
     glm::ivec2(0),
     glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
     glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
     false
-  );
+      );
+      !rendered) {
+    OX_LOG_ERROR("failed to render the preview ({})", std::to_underlying(rendered.error()));
+  }
 
   const auto image_size = ImVec2(self.preview_size.x, self.preview_size.y);
   const auto image_cursor = ImGui::GetCursorPos();
-  UI::image(std::move(image), image_size);
+  UI::image(preview_image.view(), image_size);
 
   // an image is not an interactive item, so a drag over it would reach ImGui as a window move, and
   // the invisible button claims the mouse for the orbit instead
@@ -575,7 +565,7 @@ auto AnimationEditorPanel::draw_toolbar(this AnimationEditorPanel& self) -> void
   }
 }
 
-auto AnimationEditorPanel::on_render(this AnimationEditorPanel& self, const vuk::ImageAttachment swapchain_attachment)
+auto AnimationEditorPanel::on_render(this AnimationEditorPanel& self, const SwapchainInfo& swapchain_info)
   -> void {
   ZoneScoped;
 
@@ -591,7 +581,7 @@ auto AnimationEditorPanel::on_render(this AnimationEditorPanel& self, const vuk:
   }
 
   self.draw_toolbar();
-  self.draw_preview(swapchain_attachment);
+  self.draw_preview(swapchain_info);
 
   self.on_end();
 }

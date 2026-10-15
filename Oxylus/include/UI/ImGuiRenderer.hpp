@@ -7,14 +7,18 @@
 #include <glm/vec4.hpp>
 #include <imgui.h>
 #include <memory>
-#include <vuk/Value.hpp>
 
 #include "Asset/Texture.hpp"
+#include "Render/Graph/Fwd.hpp"
 
 namespace ox {
-class RenderContext;
 class Renderer;
 class Input;
+
+struct ImGuiVariables {
+  vir::ValueID vertices = vir::ValueID::Invalid;
+  vir::ValueID indices = vir::ValueID::Invalid;
+};
 
 struct ImGuiShadowLayer {
   f32 sigma = 12.0f;
@@ -28,7 +32,7 @@ struct ImGuiShadowSettings {
   ankerl::svector<ImGuiShadowLayer, 4> layers = {};
 };
 
-// Mirrors the tail of `imgui_shadow.slang`'s push constant block.
+// Mirrors the shadow half of `imgui.slang`'s push constant block.
 struct ImGuiShadowDrawData {
   glm::vec2 half_size = {};
   f32 corner_radius = 0.0f;
@@ -45,8 +49,6 @@ public:
   using module_dependencies = std::tuple<Input, Renderer>;
 
   Texture font_texture = {};
-  std::vector<vuk::Value<vuk::ImageAttachment>> rendering_images;
-  ankerl::unordered_dense::map<ImageViewID, ImTextureID> acquired_images;
 
   bool keyboard_input_enabled = true;
 
@@ -61,11 +63,16 @@ public:
 
   void begin_frame(f64 delta_time, glm::vec2 logical_size, glm::vec2 real_size);
   auto set_base_style(this ImGuiRenderer& self, const ImGuiStyle& style) -> void;
-  [[nodiscard]]
-  vuk::Value<vuk::ImageAttachment> end_frame(RenderContext& context, vuk::Value<vuk::ImageAttachment> target);
+  // finishes the frame's UI, before the program uploads and draws its geometry
+  auto end_frame(this ImGuiRenderer& self) -> void;
+  // draws the current UI over `target`, recorded once with the geometry going through `variables`
+  auto record(this ImGuiRenderer& self, vir::Module& module, vir::ValueID target, ImGuiVariables& variables)
+    -> vir::ValueID;
+  // uploads this frame's geometry into the variables `record` declared, before each execution
+  auto bind(this const ImGuiRenderer& self, vir::Program& program, const ImGuiVariables& variables) -> void;
 
-  ImTextureID add_image(vuk::Value<vuk::ImageAttachment>&& attachment);
-  ImTextureID add_image(const TextureView& texture_view);
+  // images are drawn by bindless index, so whatever is shown has to rest at `vir::Access::FragmentSampled`
+  auto add_image(this ImGuiRenderer& self, const TextureView& texture_view) -> ImTextureID;
 
   ImFont* load_default_font();
   ImFont* load_font(const std::filesystem::path& path, f32 font_size = 0.f, option<ImFontConfig> font_config = nullopt);
@@ -82,6 +89,8 @@ public:
 private:
   c8* clipboard_text = nullptr;
   ImGuiStyle base_style = {};
+  // the draw data finalized by the last `end_frame`
+  ImDrawData* staged_draw_data = nullptr;
   f32 applied_ui_scale = 0.0f;
   bool keyboard_routed_last_frame = true;
 

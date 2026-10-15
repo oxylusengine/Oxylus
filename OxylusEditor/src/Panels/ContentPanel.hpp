@@ -1,15 +1,17 @@
 #pragma once
 
+#include "Render/Fwd.hpp"
+
 #include <FileWatch.hpp>
 #include <ankerl/unordered_dense.h>
 #include <filesystem>
 #include <imgui.h>
+#include <shared_mutex>
 #include <span>
 #include <stack>
 #include <vector>
-#include <vuk/Types.hpp>
-#include <vuk/Value.hpp>
 
+#include "Asset/AssetFile.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/Types.hpp"
 #include "EditorPanelState.hpp"
@@ -44,7 +46,7 @@ public:
 
   auto init(this ContentPanel& self) -> void;
   auto on_update(this ContentPanel& self) -> void;
-  auto on_render(this ContentPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this ContentPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
 private:
   enum class SortField : u8 {

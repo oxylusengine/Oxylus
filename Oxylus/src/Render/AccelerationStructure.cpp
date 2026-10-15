@@ -2,20 +2,23 @@
 
 #include <algorithm>
 #include <ankerl/svector.h>
+#include <bit>
 #include <glm/glm.hpp>
 #include <limits>
-#include <vuk/RenderGraph.hpp>
-#include <vuk/runtime/CommandBuffer.hpp>
-#include <vuk/runtime/vk/AllocatorHelpers.hpp>
 
 #include "Core/Base.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/Graph/Allocator.hpp"
+#include "Render/Graph/Context.hpp"
+#include "Render/Graph/Module.hpp"
+#include "Render/Graph/Program.hpp"
+#include "Render/Graph/Types.hpp"
 #include "Render/RenderContext.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
-constexpr static auto BLAS_VERTEX_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
+constexpr static auto BLAS_VERTEX_FORMAT = vir::Format::RGBA16Sfloat;
 constexpr static auto BLAS_VERTEX_STRIDE = 8_u64;
 // fixed by the spec rather than a device limit: VkAccelerationStructureCreateInfoKHR::offset must be
 // a multiple of 256 and there is nothing to query it from. Scratch is the opposite case and reads
@@ -58,7 +61,7 @@ static auto make_triangle_geometry(const BLASBuildInfo& info) -> VkAccelerationS
          {
            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
            .pNext = nullptr,
-           .vertexFormat = BLAS_VERTEX_FORMAT,
+           .vertexFormat = static_cast<VkFormat>(BLAS_VERTEX_FORMAT),
            .vertexData = {.deviceAddress = info.vertex_positions},
            .vertexStride = BLAS_VERTEX_STRIDE,
            .maxVertex = info.vertex_count - 1,
@@ -74,221 +77,16 @@ static auto is_buildable(const BLASBuildInfo& info) -> bool {
   return info.vertex_positions != 0 && info.indices != 0 && info.vertex_count != 0 && info.index_count >= 3;
 }
 
-static auto create_acceleration_structure(RenderContext& render_context, VkAccelerationStructureTypeKHR type, u64 size)
-  -> AccelerationStructure {
-  ZoneScoped;
-
-  auto result = AccelerationStructure{};
-  result.buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, size, AS_BUFFER_ALIGNMENT);
-
-  auto create_info = VkAccelerationStructureCreateInfoKHR{
-    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR,
-    .pNext = nullptr,
-    .createFlags = 0,
-    .buffer = result.buffer->buffer,
-    .offset = result.buffer->offset,
-    .size = size,
-    .type = type,
-    .deviceAddress = 0,
-  };
-
-  auto& allocator = render_context.superframe_allocator.value();
-  result.handle = vuk::Unique<VkAccelerationStructureKHR>(allocator);
-  if (!allocator.allocate_acceleration_structures({&*result.handle, 1}, {&create_info, 1})) {
-    OX_LOG_ERROR("Failed to allocate acceleration structure.");
-    return {};
-  }
-
-  result.device_address = render_context.get_accel_structure_device_address(*result.handle);
-
-  return result;
-}
-
-// replaces `blas` with a compacted copy of itself. The build it measures has to have run already,
-// and the device address changes, so this belongs before the structure is handed to anyone
-static auto compact_blas(RenderContext& render_context, AccelerationStructure& blas) -> void {
-  ZoneScoped;
-
-  const auto query_pool = render_context.create_query_pool(VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, 1);
-  if (query_pool == VK_NULL_HANDLE) {
-    return;
-  }
-  OX_DEFER(&) { render_context.destroy_query_pool(query_pool); };
-
-  auto query_pass = vuk::make_pass(
-    "blas compacted size",
-    [&render_context,
-     query_pool,
-     handle = *blas.handle](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eAccelerationStructureBuildRead) blas_buffer) {
-      render_context.cmd_write_accel_structure_compacted_size(cmd_list.get_underlying(), handle, query_pool, 0);
-
-      return blas_buffer;
-    }
-  );
-
-  // the size has to be back on the host before the copy can even be sized, so this pass is its own
-  // submission rather than a link in the build's chain
-  auto queried_buffer = vuk::acquire_buf("blas", *blas.buffer, vuk::Access::eAccelerationStructureBuildWrite);
-  render_context.wait_on(query_pass(std::move(queried_buffer)));
-
-  auto compacted_size = 0_u64;
-  if (!render_context.read_query_pool(query_pool, {&compacted_size, 1})) {
-    return;
-  }
-  if (compacted_size == 0 || compacted_size >= blas.buffer->size) {
-    return;
-  }
-
-  auto compacted = create_acceleration_structure(
-    render_context,
-    VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-    compacted_size
-  );
-  if (!compacted) {
-    return;
-  }
-
-  const auto copy_info = VkCopyAccelerationStructureInfoKHR{
-    .sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR,
-    .pNext = nullptr,
-    .src = *blas.handle,
-    .dst = *compacted.handle,
-    .mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR,
-  };
-
-  auto copy_pass = vuk::make_pass(
-    "blas compact",
-    [&render_context, copy_info](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eAccelerationStructureBuildWrite) dst,
-      VUK_BA(vuk::eAccelerationStructureBuildRead) src
-    ) {
-      render_context.cmd_copy_accel_structure(cmd_list.get_underlying(), copy_info);
-
-      return dst;
-    }
-  );
-
-  // the source is read by the copy and dies at the assignment below
-  auto compacted_buffer = vuk::discard_buf("blas compacted", *compacted.buffer);
-  auto source_buffer = vuk::acquire_buf("blas", *blas.buffer, vuk::Access::eAccelerationStructureBuildWrite);
-  render_context.wait_on(copy_pass(std::move(compacted_buffer), std::move(source_buffer)));
-
-  blas = std::move(compacted);
-}
-
-auto build_mesh_blas(
-  RenderContext& render_context,
-  const BLASBuildInfo& info,
-  vuk::Value<vuk::Buffer>&& mesh_buffer,
-  AccelerationStructure& out_blas,
-  vuk::Unique<vuk::Buffer>& out_scratch
-) -> vuk::Value<vuk::Buffer> {
-  ZoneScoped;
-
-  out_blas = {};
-  out_scratch.reset();
-  if (!render_context.use_ray_tracing() || info.index_count < 3 || info.vertex_count == 0) {
-    return std::move(mesh_buffer);
-  }
-
-  const auto primitive_count = info.index_count / 3;
-
-  auto geometry = make_triangle_geometry(info);
-
-  auto build_info = VkAccelerationStructureBuildGeometryInfoKHR{
-    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
-    .pNext = nullptr,
-    .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-    .flags = STATIC_BLAS_BUILD_FLAGS,
-    .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
-    .srcAccelerationStructure = VK_NULL_HANDLE,
-    .dstAccelerationStructure = VK_NULL_HANDLE,
-    .geometryCount = 1,
-    .pGeometries = &geometry,
-    .ppGeometries = nullptr,
-    .scratchData = {},
-  };
-
-  auto size_info = VkAccelerationStructureBuildSizesInfoKHR{
-    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR,
-    .pNext = nullptr,
-    .accelerationStructureSize = 0,
-    .updateScratchSize = 0,
-    .buildScratchSize = 0,
-  };
-  render_context.runtime->vkGetAccelerationStructureBuildSizesKHR(
-    render_context.device,
-    VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-    &build_info,
-    &primitive_count,
-    &size_info
-  );
-
-  out_blas = create_acceleration_structure(
-    render_context,
-    VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-    size_info.accelerationStructureSize
-  );
-  if (!out_blas) {
-    return std::move(mesh_buffer);
-  }
-
-  out_scratch = render_context.allocate_buffer_super(
-    vuk::MemoryUsage::eGPUonly,
-    size_info.buildScratchSize,
-    render_context.as_scratch_alignment()
-  );
-
-  build_info.dstAccelerationStructure = *out_blas.handle;
-  build_info.scratchData.deviceAddress = out_scratch->device_address;
-
-  // TODO: vuk needs more granular acces for the mesh param under the pass
-  auto blas_buffer = vuk::discard_buf("blas", *out_blas.buffer);
-  auto build_pass = vuk::make_pass(
-    "blas build",
-    [build_info, geometry, primitive_count](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eAccelerationStructureBuildWrite) blas,
-      VUK_BA(vuk::eAccelerationStructureBuildRead) mesh
-    ) mutable {
-      build_info.pGeometries = &geometry;
-
-      const auto range = VkAccelerationStructureBuildRangeInfoKHR{
-        .primitiveCount = primitive_count,
-        .primitiveOffset = 0,
-        .firstVertex = 0,
-        .transformOffset = 0,
-      };
-      const auto* range_ptr = &range;
-      cmd_list.build_acceleration_structures(1, &build_info, &range_ptr);
-
-      return blas;
-    }
-  );
-
-  // callers publish `out_blas.device_address` as soon as this returns and the TLAS build dereferences
-  // it as a raw pointer, so the build has to have actually run by then. Nothing downstream waits on
-  // the returned value first: the batched loader path only parks it in an `UploadBatch`
-  auto built = build_pass(std::move(blas_buffer), std::move(mesh_buffer));
-  render_context.wait_on(vuk::UntypedValue(built));
-
-  compact_blas(render_context, out_blas);
-
-  return built;
-}
-
-constexpr static auto SKINNED_ARENA_MIN_SIZE = 1_u64 << 20;
-
-static auto query_skinned_blas_sizes(RenderContext& render_context, const BLASBuildInfo& info)
-  -> VkAccelerationStructureBuildSizesInfoKHR {
+static auto query_blas_sizes(
+  RenderContext& render_context, const BLASBuildInfo& info, VkBuildAccelerationStructureFlagsKHR flags
+) -> VkAccelerationStructureBuildSizesInfoKHR {
   const auto primitive_count = info.index_count / 3;
   const auto geometry = make_triangle_geometry(info);
-  auto build_info = VkAccelerationStructureBuildGeometryInfoKHR{
+  const auto build_info = VkAccelerationStructureBuildGeometryInfoKHR{
     .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
     .pNext = nullptr,
     .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-    .flags = SKINNED_BLAS_BUILD_FLAGS,
+    .flags = flags,
     .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
     .srcAccelerationStructure = VK_NULL_HANDLE,
     .dstAccelerationStructure = VK_NULL_HANDLE,
@@ -305,7 +103,7 @@ static auto query_skinned_blas_sizes(RenderContext& render_context, const BLASBu
     .updateScratchSize = 0,
     .buildScratchSize = 0,
   };
-  render_context.runtime->vkGetAccelerationStructureBuildSizesKHR(
+  render_context.context->fn.vkGetAccelerationStructureBuildSizesKHR(
     render_context.device,
     VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
     &build_info,
@@ -314,6 +112,161 @@ static auto query_skinned_blas_sizes(RenderContext& render_context, const BLASBu
   );
 
   return size_info;
+}
+
+// the copy is sized off a query that has to reach the host first, so it is a submission of its own.
+// The structure handed in is retired once the compacted one replaces it
+static auto compact_blas(RenderContext& render_context, AccelerationStructureID blas_id, u64 compacted_size)
+  -> AccelerationStructureID {
+  ZoneScoped;
+
+  const auto blas = render_context.acceleration_structure(blas_id);
+  if (compacted_size == 0 || compacted_size >= blas.size) {
+    return blas_id;
+  }
+
+  const auto compacted_id = render_context.allocate_acceleration_structure(
+    VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+    compacted_size,
+    "blas compacted"
+  );
+  if (!compacted_id) {
+    return blas_id;
+  }
+
+  const auto compacted = render_context.acceleration_structure(*compacted_id);
+  auto module = vir::Module{};
+  const auto source = module.import_buffer(
+    render_context.buffer(blas.buffer),
+    vir::Access::AccelerationStructureBuildRead
+  );
+  const auto copied = module.copy_acceleration_structure(
+    source,
+    module.import_buffer(render_context.buffer(compacted.buffer), vir::Access::None),
+    blas.handle,
+    compacted.handle
+  );
+  module.export_to(copied, vir::Access::AccelerationStructureBuildRead);
+  if (const auto executed = render_context.execute_blocking(std::move(module)); !executed) {
+    OX_LOG_ERROR("Failed to compact a BLAS ({}).", std::to_underlying(executed.error()));
+    render_context.destroy_acceleration_structure(*compacted_id);
+    return blas_id;
+  }
+
+  render_context.destroy_acceleration_structure(blas_id);
+  return *compacted_id;
+}
+
+auto build_mesh_blas(
+  RenderContext& render_context, BufferID mesh_buffer, vir::Access mesh_rests_at, const BLASBuildInfo& info
+) -> AccelerationStructureID {
+  ZoneScoped;
+
+  if (!render_context.use_ray_tracing() || !is_buildable(info)) {
+    return AccelerationStructureID::Invalid;
+  }
+
+  const auto size_info = query_blas_sizes(render_context, info, STATIC_BLAS_BUILD_FLAGS);
+  const auto blas_id = render_context.allocate_acceleration_structure(
+    VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+    size_info.accelerationStructureSize,
+    "blas"
+  );
+  if (!blas_id) {
+    OX_LOG_ERROR("Failed to allocate a BLAS ({}).", std::to_underlying(blas_id.error()));
+    return AccelerationStructureID::Invalid;
+  }
+
+  auto scratch = render_context.persistent->allocate_buffer({
+    .size = size_info.buildScratchSize,
+    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+    .location = vir::MemoryLocation::GpuOnly,
+    .alignment = render_context.as_scratch_alignment(),
+    .name = "blas scratch",
+  });
+  const auto query_pool = render_context.create_query_pool(VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, 1);
+  OX_DEFER(&) {
+    if (scratch) {
+      render_context.persistent->deallocate_buffer(*scratch);
+    }
+
+    render_context.destroy_query_pool(query_pool);
+  };
+  if (!scratch || query_pool == VK_NULL_HANDLE) {
+    render_context.destroy_acceleration_structure(*blas_id);
+    return AccelerationStructureID::Invalid;
+  }
+
+  const auto blas = render_context.acceleration_structure(*blas_id);
+  auto build = vir::AccelerationStructureBuild{
+    .info =
+      {
+        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+        .pNext = nullptr,
+        .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+        .flags = STATIC_BLAS_BUILD_FLAGS,
+        .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+        .srcAccelerationStructure = VK_NULL_HANDLE,
+        .dstAccelerationStructure = blas.handle,
+        .geometryCount = 0,
+        .pGeometries = nullptr,
+        .ppGeometries = nullptr,
+        .scratchData = {.deviceAddress = scratch->device_address},
+      },
+    .geometries = {make_triangle_geometry(info)},
+    .ranges = {{.primitiveCount = info.index_count / 3, .primitiveOffset = 0, .firstVertex = 0, .transformOffset = 0}},
+  };
+
+  auto module = vir::Module{};
+  const auto builds = module.declare_acceleration_structure_builds_var("blas builds");
+  const auto queries = module.declare_query_pool_var("blas compacted size");
+  const auto resources = std::array{
+    vir::ResourceAccess{
+      module.import_buffer(render_context.buffer(blas.buffer), vir::Access::None),
+      vir::Access::AccelerationStructureBuildWrite
+    },
+    vir::ResourceAccess{module.import_buffer(*scratch, vir::Access::None), vir::Access::AccelerationStructureBuildRW},
+    vir::ResourceAccess{
+      module.import_buffer(render_context.buffer(mesh_buffer), mesh_rests_at),
+      vir::Access::AccelerationStructureBuildRead
+    },
+  };
+  const auto built = module.build_acceleration_structures(builds, {}, resources);
+  const auto queried = module.write_acceleration_structure_properties(built[0], blas.handle, queries);
+  module.export_to(queried, vir::Access::AccelerationStructureBuildRead);
+  module.export_to(built[2], mesh_rests_at);
+
+  auto program = render_context.compile(std::move(module));
+  if (!program) {
+    OX_LOG_ERROR("Failed to compile a BLAS build ({}).", std::to_underlying(program.error()));
+    render_context.destroy_acceleration_structure(*blas_id);
+    return AccelerationStructureID::Invalid;
+  }
+
+  program->set(builds, std::make_shared<const std::vector<vir::AccelerationStructureBuild>>(1, std::move(build)));
+  program->set(
+    queries,
+    vir::QueryPool{.handle = query_pool, .type = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, .count = 1}
+  );
+  if (const auto executed = render_context.execute_blocking(*program); !executed) {
+    OX_LOG_ERROR("Failed to build a BLAS ({}).", std::to_underlying(executed.error()));
+    render_context.destroy_acceleration_structure(*blas_id);
+    return AccelerationStructureID::Invalid;
+  }
+
+  auto compacted_size = 0_u64;
+  if (!render_context.read_query_pool(query_pool, {&compacted_size, 1})) {
+    return *blas_id;
+  }
+
+  return compact_blas(render_context, *blas_id, compacted_size);
+}
+
+constexpr static auto SKINNED_ARENA_MIN_SIZE = 1_u64 << 20;
+
+static auto query_skinned_blas_sizes(RenderContext& render_context, const BLASBuildInfo& info)
+  -> VkAccelerationStructureBuildSizesInfoKHR {
+  return query_blas_sizes(render_context, info, SKINNED_BLAS_BUILD_FLAGS);
 }
 
 static auto take_free_block(std::vector<SkinnedBLASPool::Block>& free_blocks, u64 size) -> option<u64> {
@@ -358,30 +311,51 @@ static auto give_free_block(std::vector<SkinnedBLASPool::Block>& free_blocks, u6
   }
 }
 
-static auto create_pool_handle(RenderContext& render_context, SkinnedBLASPool& pool, SkinnedBLASPool::Entry& entry)
-  -> bool {
-  auto create_info = VkAccelerationStructureCreateInfoKHR{
-    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR,
-    .pNext = nullptr,
-    .createFlags = 0,
-    .buffer = pool.buffer->buffer,
-    .offset = pool.buffer->offset + entry.offset,
-    .size = entry.size,
-    .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-    .deviceAddress = 0,
-  };
+static auto allocate_arena(RenderContext& render_context, u64 size, u64 alignment, std::string_view name)
+  -> std::expected<BufferID, VkResult> {
+  return render_context.allocate_buffer({
+    .size = size,
+    .usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+    .location = vir::MemoryLocation::GpuOnly,
+    .alignment = alignment,
+    .name = std::string(name),
+  });
+}
 
-  auto& allocator = render_context.superframe_allocator.value();
-  entry.handle = vuk::Unique<VkAccelerationStructureKHR>(allocator);
-  if (!allocator.allocate_acceleration_structures({&*entry.handle, 1}, {&create_info, 1})) {
+// releasing through the render context is what lets a frame in flight keep traversing it
+static auto release_structure(RenderContext& render_context, AccelerationStructureID& id) -> void {
+  if (id != AccelerationStructureID::Invalid) {
+    render_context.destroy_acceleration_structure(id);
+    id = AccelerationStructureID::Invalid;
+  }
+}
+
+static auto release_buffer(RenderContext& render_context, BufferID& id) -> void {
+  if (id != BufferID::Invalid) {
+    render_context.destroy_buffer(id);
+    id = BufferID::Invalid;
+  }
+}
+
+static auto create_pool_structure(RenderContext& render_context, SkinnedBLASPool& pool, SkinnedBLASPool::Entry& entry)
+  -> bool {
+  const auto structure = render_context.create_acceleration_structure_in(
+    VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+    pool.buffer,
+    entry.offset,
+    entry.size
+  );
+  if (!structure) {
     OX_LOG_ERROR("Failed to allocate skinned bottom level acceleration structure.");
-    entry.handle.reset();
+    entry.structure = AccelerationStructureID::Invalid;
     entry.device_address = 0;
     return false;
   }
 
-  entry.device_address = render_context.get_accel_structure_device_address(*entry.handle);
-  // a fresh handle over fresh memory holds no tree, so nothing may refit from it and its address
+  entry.structure = *structure;
+  entry.device_address = render_context.acceleration_structure(*structure).device_address;
+  // a fresh structure over fresh memory holds no tree, so nothing may refit from it and its address
   // stays out of the TLAS until a build has actually run
   entry.built_once = false;
   entry.refits_since_build = 0;
@@ -389,34 +363,14 @@ static auto create_pool_handle(RenderContext& render_context, SkinnedBLASPool& p
   return true;
 }
 
-// a handle a frame in flight may still be traversing cannot be destroyed on the spot, so every
-// release goes through here and is collected a few frames later
-static auto retire_handle(
-  RenderContext& render_context, SkinnedBLASPool& pool, vuk::Unique<VkAccelerationStructureKHR>&& handle
-) -> void {
-  if (!handle) {
-    return;
-  }
-
-  if (pool.retired.empty() || pool.retired.back().frame != render_context.num_frames) {
-    pool.retired.emplace_back(SkinnedBLASPool::Retired{.frame = render_context.num_frames});
-  }
-
-  pool.retired.back().handles.emplace_back(std::move(handle));
-}
-
 // a staged migration can only run against the arena it was staged over, so anything that replaces or
 // drops that arena has to give up the sources first
 static auto discard_migrations(RenderContext& render_context, SkinnedBLASPool& pool) -> void {
   for (auto& entry : pool.entries) {
-    retire_handle(render_context, pool, std::move(entry.previous_handle));
+    release_structure(render_context, entry.previous_structure);
   }
 
-  if (pool.migration_source_buffer) {
-    pool.retired.emplace_back(
-      SkinnedBLASPool::Retired{.buffer = std::move(pool.migration_source_buffer), .frame = render_context.num_frames}
-    );
-  }
+  release_buffer(render_context, pool.migration_source_buffer);
 }
 
 // replaces the arena with a larger one and re-places every live entry in it. An entry that already
@@ -430,7 +384,7 @@ static auto grow_skinned_arena(RenderContext& render_context, SkinnedBLASPool& p
 
   auto live = 0_u64;
   for (const auto& entry : pool.entries) {
-    if (entry.handle) {
+    if (entry.structure != AccelerationStructureID::Invalid) {
       live += align_up(entry.size, AS_BUFFER_ALIGNMENT);
     }
   }
@@ -439,36 +393,33 @@ static auto grow_skinned_arena(RenderContext& render_context, SkinnedBLASPool& p
 
   // allocated before anything is given up, so a failure leaves the arena that is already working
   // alone rather than trading it for nothing
-  auto arena = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, capacity, AS_BUFFER_ALIGNMENT);
+  const auto arena = allocate_arena(render_context, capacity, AS_BUFFER_ALIGNMENT, "skinned blas arena");
   if (!arena) {
     return false;
   }
 
-  auto previous_arena = std::move(pool.buffer);
-  pool.buffer = std::move(arena);
+  auto previous_arena = std::exchange(pool.buffer, *arena);
   pool.capacity = capacity;
   pool.bump = 0;
   pool.free_blocks.clear();
 
-  auto retired = SkinnedBLASPool::Retired{.frame = render_context.num_frames};
-  auto migrating = false;
-
+  auto is_migrating = false;
   for (u32 index = 0; index < static_cast<u32>(pool.entries.size()); index++) {
     auto& entry = pool.entries[index];
     if (entry.size == 0) {
       continue;
     }
 
-    // create_pool_handle clears both, and a migrated tree inherits the staleness of the one it came
-    // from rather than counting as freshly built
+    // create_pool_structure clears both, and a migrated tree inherits the staleness of the one it
+    // came from rather than counting as freshly built
     const auto refits_since_build = entry.refits_since_build;
-    const auto can_migrate = entry.handle && entry.built_once;
-    auto previous = std::move(entry.handle);
+    const auto can_migrate = entry.structure != AccelerationStructureID::Invalid && entry.built_once;
+    auto previous = std::exchange(entry.structure, AccelerationStructureID::Invalid);
 
     entry.offset = pool.bump;
     pool.bump += align_up(entry.size, AS_BUFFER_ALIGNMENT);
-    if (!create_pool_handle(render_context, pool, entry)) {
-      retired.handles.emplace_back(std::move(previous));
+    if (!create_pool_structure(render_context, pool, entry)) {
+      release_structure(render_context, previous);
       pool.slot_to_entry.erase(entry.mesh_instance_slot);
       entry = {};
       pool.free_entries.push_back(index);
@@ -476,46 +427,31 @@ static auto grow_skinned_arena(RenderContext& render_context, SkinnedBLASPool& p
     }
 
     if (can_migrate) {
-      entry.previous_handle = std::move(previous);
+      entry.previous_structure = previous;
       entry.refits_since_build = refits_since_build;
-      migrating = true;
+      is_migrating = true;
     } else {
-      retired.handles.emplace_back(std::move(previous));
+      release_structure(render_context, previous);
     }
   }
 
-  if (migrating) {
-    pool.migration_source_buffer = std::move(previous_arena);
+  if (is_migrating) {
+    pool.migration_source_buffer = previous_arena;
   } else {
-    retired.buffer = std::move(previous_arena);
-  }
-
-  std::erase_if(retired.handles, [](const vuk::Unique<VkAccelerationStructureKHR>& handle) { return !handle; });
-  if (retired.buffer || !retired.handles.empty()) {
-    pool.retired.emplace_back(std::move(retired));
+    release_buffer(render_context, previous_arena);
   }
 
   return true;
 }
 
-// retires rather than drops, because a frame still in flight may be reading both the arena and the
-// handles that were created over it
 auto SkinnedBLASPool::reset(this SkinnedBLASPool& self, RenderContext& render_context) -> void {
   discard_migrations(render_context, self);
-
-  auto retired = Retired{.frame = render_context.num_frames};
-  retired.buffer = std::move(self.buffer);
   for (auto& entry : self.entries) {
-    if (entry.handle) {
-      retired.handles.emplace_back(std::move(entry.handle));
-    }
+    release_structure(render_context, entry.structure);
   }
-  if (retired.buffer || !retired.handles.empty()) {
-    self.retired.emplace_back(std::move(retired));
-  }
-  if (self.scratch_buffer) {
-    self.retired.emplace_back(Retired{.buffer = std::move(self.scratch_buffer), .frame = render_context.num_frames});
-  }
+
+  release_buffer(render_context, self.buffer);
+  release_buffer(render_context, self.scratch_buffer);
 
   self.entries.clear();
   self.free_entries.clear();
@@ -526,17 +462,6 @@ auto SkinnedBLASPool::reset(this SkinnedBLASPool& self, RenderContext& render_co
   self.pending_migrated.clear();
   self.capacity = 0;
   self.bump = 0;
-
-  self.collect_retired(render_context);
-}
-
-auto SkinnedBLASPool::collect_retired(this SkinnedBLASPool& self, RenderContext& render_context) -> void {
-  // a replaced arena has to outlive every frame that could still be recording or executing against
-  // it, which is the in flight count plus the frame doing the replacing
-  const auto window = static_cast<u64>(render_context.num_inflight_frames) + 1;
-  std::erase_if(self.retired, [&render_context, window](const Retired& entry) {
-    return render_context.num_frames - entry.frame >= window;
-  });
 }
 
 auto SkinnedBLASPool::address_of(this const SkinnedBLASPool& self, const u32 mesh_instance_slot) -> u64 {
@@ -554,7 +479,7 @@ auto SkinnedBLASPool::commit_builds(this SkinnedBLASPool& self) -> void {
     self.entries[index].refits_since_build += 1;
   }
   // a migration is an update, so it degrades the tree it carried over exactly like a refit does, and
-  // the entry is only back in the TLAS once that update has actually run
+  // the entry is only back in the TLAS once that update has been handed over
   for (const auto index : self.pending_migrated) {
     self.entries[index].refits_since_build += 1;
     self.entries[index].built_once = true;
@@ -582,8 +507,6 @@ auto SkinnedBLASPool::sync(
     self.reset(render_context);
     return;
   }
-
-  self.collect_retired(render_context);
 
   // anything a build was staged for last frame but never committed is not built, and the flags below
   // are rebuilt from scratch anyway
@@ -619,8 +542,8 @@ auto SkinnedBLASPool::sync(
       // a refit may be pointed at moved vertices, which is all an arena resize does, but it may not
       // be pointed at different geometry, so a model reloading under a slot invalidates the entry
       if (
-        entry.handle && entry.indices == info.indices && entry.vertex_count == info.vertex_count &&
-        entry.index_count == info.index_count
+        entry.structure != AccelerationStructureID::Invalid && entry.indices == info.indices &&
+        entry.vertex_count == info.vertex_count && entry.index_count == info.index_count
       ) {
         entry.alive = true;
         entry.pose_advanced = skinned.pose_advanced;
@@ -640,8 +563,8 @@ auto SkinnedBLASPool::sync(
 
     self.slot_to_entry.erase(entry.mesh_instance_slot);
     give_free_block(self.free_blocks, entry.offset, align_up(entry.size, AS_BUFFER_ALIGNMENT));
-    retire_handle(render_context, self, std::move(entry.handle));
-    retire_handle(render_context, self, std::move(entry.previous_handle));
+    release_structure(render_context, entry.structure);
+    release_structure(render_context, entry.previous_structure);
     entry = {};
     self.free_entries.push_back(index);
   }
@@ -670,7 +593,7 @@ auto SkinnedBLASPool::sync(
 
     const auto block_size = align_up(size_info.accelerationStructureSize, AS_BUFFER_ALIGNMENT);
     auto offset = take_free_block(self.free_blocks, block_size);
-    if (!offset && self.buffer && self.bump + block_size <= self.capacity) {
+    if (!offset && self.buffer != BufferID::Invalid && self.bump + block_size <= self.capacity) {
       offset = self.bump;
       self.bump += block_size;
     }
@@ -705,9 +628,8 @@ auto SkinnedBLASPool::sync(
     entry.alive = true;
     entry.pose_advanced = skinned.pose_advanced;
 
-    if (!create_pool_handle(render_context, self, entry)) {
+    if (!create_pool_structure(render_context, self, entry)) {
       give_free_block(self.free_blocks, entry.offset, block_size);
-      retire_handle(render_context, self, std::move(entry.handle));
       entry = {};
       self.free_entries.push_back(index);
       continue;
@@ -717,24 +639,20 @@ auto SkinnedBLASPool::sync(
   }
 
   // the replaced arena is only worth holding while something still has to read a tree out of it
-  const auto migrating = std::ranges::any_of(self.entries, [](const Entry& entry) {
-    return static_cast<bool>(entry.previous_handle);
+  const auto is_migrating = std::ranges::any_of(self.entries, [](const Entry& entry) {
+    return entry.previous_structure != AccelerationStructureID::Invalid;
   });
-  if (!migrating) {
+  if (!is_migrating) {
     discard_migrations(render_context, self);
   }
 }
 
-auto build_skinned_blases(
-  RenderContext& render_context,
-  SkinnedBLASPool& pool,
-  const SkinnedBLASBudget& budget,
-  vuk::Value<vuk::Buffer>&& skinned_vertices
-) -> vuk::Value<vuk::Buffer> {
+auto stage_skinned_blas_builds(RenderContext& render_context, SkinnedBLASPool& pool, const SkinnedBLASBudget& budget)
+  -> std::vector<vir::AccelerationStructureBuild> {
   ZoneScoped;
   memory::ScopedStack stack;
 
-  if (!render_context.use_ray_tracing() || !pool.buffer || pool.entries.empty() || skinned_vertices.node == nullptr) {
+  if (!render_context.use_ray_tracing() || pool.buffer == BufferID::Invalid || pool.entries.empty()) {
     return {};
   }
 
@@ -751,20 +669,19 @@ auto build_skinned_blases(
   auto stale_count = 0_sz;
   auto refits = stack.alloc<u32>(entry_count);
   auto refit_count = 0_sz;
-
   auto migrations = stack.alloc<u32>(entry_count);
   auto migration_count = 0_sz;
 
   const auto refit_limit = ox::max(budget.max_refits_before_rebuild, 1_u32);
   for (u32 index = 0; index < static_cast<u32>(entry_count); index++) {
     const auto& entry = pool.entries[index];
-    if (!entry.alive || !entry.handle || entry.device_address == 0) {
+    if (!entry.alive || entry.structure == AccelerationStructureID::Invalid || entry.device_address == 0) {
       continue;
     }
 
     // an entry holding a source structure has a tree already, it is just sitting in the arena that
     // was replaced, so it updates out of that one instead of joining the rebuild queue
-    if (entry.previous_handle) {
+    if (entry.previous_structure != AccelerationStructureID::Invalid) {
       migrations[migration_count++] = index;
     } else if (!entry.built_once) {
       unbuilt[unbuilt_count++] = index;
@@ -791,40 +708,23 @@ auto build_skinned_blases(
   std::sort(unbuilt.begin(), unbuilt.begin() + static_cast<std::ptrdiff_t>(unbuilt_count), by_primitives);
   std::sort(stale.begin(), stale.begin() + static_cast<std::ptrdiff_t>(stale_count), by_staleness);
 
-  struct Build {
-    VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
-    // null for a full build. The entry's own structure for an in place refit, and the structure it
-    // is migrating off for a move between arenas
-    VkAccelerationStructureKHR source = VK_NULL_HANDLE;
-    u64 vertex_positions = 0;
-    u64 indices = 0;
+  enum class Kind : u8 { Build, Refit, Migrate };
+  struct Staged {
+    u32 index = 0;
+    Kind kind = Kind::Build;
     u64 scratch_offset = 0;
-    u32 vertex_count = 0;
-    u32 primitive_count = 0;
   };
 
-  auto pending = stack.alloc<Build>(entry_count);
-  auto pending_count = 0_sz;
+  auto staged = stack.alloc<Staged>(entry_count);
+  auto staged_count = 0_sz;
   auto scratch_total = 0_u64;
   const auto scratch_alignment = render_context.as_scratch_alignment();
-
-  enum class Kind : u8 { Build, Refit, Migrate };
 
   // the builds in one command run concurrently, so every one of them needs its own scratch region
   const auto stage = [&](const u32 index, const Kind kind) {
     const auto& entry = pool.entries[index];
     const auto scratch_size = kind == Kind::Build ? entry.build_scratch_size : entry.update_scratch_size;
-    pending[pending_count++] = Build{
-      .handle = *entry.handle,
-      .source = kind == Kind::Build     ? VK_NULL_HANDLE
-                : kind == Kind::Migrate ? *entry.previous_handle
-                                        : *entry.handle,
-      .vertex_positions = entry.vertex_positions,
-      .indices = entry.indices,
-      .scratch_offset = scratch_total,
-      .vertex_count = entry.vertex_count,
-      .primitive_count = entry.index_count / 3,
-    };
+    staged[staged_count++] = Staged{.index = index, .kind = kind, .scratch_offset = scratch_total};
     scratch_total += align_up(scratch_size, scratch_alignment);
 
     switch (kind) {
@@ -871,132 +771,76 @@ auto build_skinned_blases(
     stage(refits[k], Kind::Refit);
   }
 
-  if (pending_count == 0) {
+  if (staged_count == 0) {
     return {};
   }
 
   // not resize_buffer: that allocates at the default alignment, and a scratch address the device
   // rejects is a driver crash rather than a validation message
-  if (!pool.scratch_buffer || pool.scratch_buffer->size < scratch_total) {
-    const auto scratch_capacity = ox::max(scratch_total, pool.scratch_buffer ? pool.scratch_buffer->size * 2 : 0_u64);
-    pool.scratch_buffer.reset();
-    pool.scratch_buffer = render_context
-                            .allocate_buffer_super(vuk::MemoryUsage::eGPUonly, scratch_capacity, scratch_alignment);
+  const auto scratch_size = pool.scratch_buffer != BufferID::Invalid ? render_context.buffer(pool.scratch_buffer).size
+                                                                     : 0_u64;
+  if (scratch_size < scratch_total) {
+    const auto scratch = allocate_arena(
+      render_context,
+      ox::max(scratch_total, scratch_size * 2),
+      scratch_alignment,
+      "skinned blas scratch"
+    );
+    release_buffer(render_context, pool.scratch_buffer);
+    if (scratch) {
+      pool.scratch_buffer = *scratch;
+    }
   }
-  if (!pool.scratch_buffer) {
+  if (pool.scratch_buffer == BufferID::Invalid) {
     pool.pending_refit.clear();
     pool.pending_migrated.clear();
     pool.pending_rebuilt.clear();
     return {};
   }
 
-  const auto scratch_address = pool.scratch_buffer->device_address;
-  for (usize i = 0; i < pending_count; i++) {
-    pending[i].scratch_offset += scratch_address;
-  }
-
-  // acquire, never discard: a refit reads the tree already sitting in this memory. The declared
-  // incoming access stands in for the edges vuk cannot see by itself, and there are two of them.
-  // The previous frame's build wrote here, and the previous frame's rays traversed here without ever
-  // naming this buffer, because rtao and ddgi_trace take only the TLAS as a pass resource. Drop the
-  // ray tracing read and an in place refit is free to run while last frame's traversal is still in it
-  auto blas_buffer = vuk::acquire_buf(
-    "skinned blas",
-    *pool.buffer,
-    vuk::Access::eAccelerationStructureBuildWrite | vuk::Access::eRayTracingRead
-  );
-  // the scratch is addressed by device address rather than bound, so it rides as a pass parameter
-  // purely to make vuk serialise this frame's builds against the previous frame's
-  auto scratch_buffer = vuk::acquire_buf(
-    "skinned blas scratch",
-    *pool.scratch_buffer,
-    vuk::Access::eAccelerationStructureBuildWrite
-  );
-  // the arena the migrations read out of. A stand-in keeps the pass signature fixed on the frames
-  // where nothing is migrating, which is nearly all of them
-  auto migration_source = migration_count > 0 ? vuk::acquire_buf(
-                                                  "skinned blas migration source",
-                                                  *pool.migration_source_buffer,
-                                                  vuk::Access::eAccelerationStructureBuildWrite
-                                                )
-                                              : render_context.scratch_buffer<u32>(0u);
-
-  auto build_pass = vuk::make_pass(
-    "skinned blas build",
-    [builds = ankerl::svector<Build, 8>(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(pending_count))](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eAccelerationStructureBuildRW) blas,
-      VUK_BA(vuk::eAccelerationStructureBuildWrite) scratch,
-      VUK_BA(vuk::eAccelerationStructureBuildRead) vertices,
-      VUK_BA(vuk::eAccelerationStructureBuildRead) migration_src
-    ) {
-      memory::ScopedStack pass_stack;
-
-      auto geometries = pass_stack.alloc<VkAccelerationStructureGeometryKHR>(builds.size());
-      auto build_infos = pass_stack.alloc<VkAccelerationStructureBuildGeometryInfoKHR>(builds.size());
-      auto ranges = pass_stack.alloc<VkAccelerationStructureBuildRangeInfoKHR>(builds.size());
-      auto range_ptrs = pass_stack.alloc<const VkAccelerationStructureBuildRangeInfoKHR*>(builds.size());
-
-      for (usize i = 0; i < builds.size(); i++) {
-        const auto& build = builds[i];
-
-        geometries[i] = make_triangle_geometry(
-          BLASBuildInfo{
-            .vertex_positions = build.vertex_positions,
-            .indices = build.indices,
-            .vertex_count = build.vertex_count,
-            .index_count = build.primitive_count * 3,
-          }
-        );
-
-        build_infos[i] = {
+  const auto scratch_address = render_context.buffer(pool.scratch_buffer).device_address;
+  auto builds = std::vector<vir::AccelerationStructureBuild>{};
+  builds.reserve(staged_count);
+  for (usize i = 0; i < staged_count; i++) {
+    const auto& [index, kind, scratch_offset] = staged[i];
+    const auto& entry = pool.entries[index];
+    const auto source = kind == Kind::Build     ? VK_NULL_HANDLE
+                        : kind == Kind::Migrate ? render_context.acceleration_structure(entry.previous_structure).handle
+                                                : render_context.acceleration_structure(entry.structure).handle;
+    builds.push_back({
+      .info =
+        {
           .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
           .pNext = nullptr,
           .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
           .flags = SKINNED_BLAS_BUILD_FLAGS,
-          .mode = build.source != VK_NULL_HANDLE ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR
-                                                 : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
-          // refits are in place, which is why the pass takes the storage read write: the tree being
-          // rewritten is also the tree being read. A migration is the same update pointed at a
-          // source in the arena that was replaced, so the tree survives the move for the price of a
-          // refit instead of a full build
-          .srcAccelerationStructure = build.source,
-          .dstAccelerationStructure = build.handle,
-          .geometryCount = 1,
-          .pGeometries = &geometries[i],
+          // refits are in place: the tree being rewritten is also the tree being read. A migration
+          // is the same update pointed at a source in the arena that was replaced, so the tree
+          // survives the move for the price of a refit instead of a full build
+          .mode = source != VK_NULL_HANDLE ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR
+                                           : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+          .srcAccelerationStructure = source,
+          .dstAccelerationStructure = render_context.acceleration_structure(entry.structure).handle,
+          .geometryCount = 0,
+          .pGeometries = nullptr,
           .ppGeometries = nullptr,
-          .scratchData = {.deviceAddress = build.scratch_offset},
-        };
-
-        ranges[i] = {
-          .primitiveCount = build.primitive_count,
-          .primitiveOffset = 0,
-          .firstVertex = 0,
-          .transformOffset = 0,
-        };
-        range_ptrs[i] = &ranges[i];
-      }
-
-      cmd_list.build_acceleration_structures(static_cast<u32>(builds.size()), build_infos.data(), range_ptrs.data());
-
-      return blas;
-    }
-  );
-
-  auto built = build_pass(
-    std::move(blas_buffer),
-    std::move(scratch_buffer),
-    std::move(skinned_vertices),
-    std::move(migration_source)
-  );
-
-  // the caller submits and waits on this before the frame is out, so the sources have been consumed
-  // by the time the deferred release they go into can actually collect them
-  if (migration_count > 0) {
-    discard_migrations(render_context, pool);
+          .scratchData = {.deviceAddress = scratch_address + scratch_offset},
+        },
+      .geometries = {make_triangle_geometry(
+        BLASBuildInfo{
+          .vertex_positions = entry.vertex_positions,
+          .indices = entry.indices,
+          .vertex_count = entry.vertex_count,
+          .index_count = entry.index_count,
+        }
+      )},
+      .ranges = {
+        {.primitiveCount = entry.index_count / 3, .primitiveOffset = 0, .firstVertex = 0, .transformOffset = 0}
+      },
+    });
   }
 
-  return built;
+  return builds;
 }
 
 auto SceneTLAS::reserve(this SceneTLAS& self, RenderContext& render_context, u32 instance_count) -> bool {
@@ -1006,12 +850,12 @@ auto SceneTLAS::reserve(this SceneTLAS& self, RenderContext& render_context, u32
     return false;
   }
 
-  if (self.acceleration_structure && instance_count <= self.capacity) {
+  if (self.structure != AccelerationStructureID::Invalid && instance_count <= self.capacity) {
     return true;
   }
 
-  // grow only, deliberately: this is reserved from the frame that needs it, so releasing on a dip
-  // would hand the next spike a fresh structure, buffer and scratch allocation mid frame
+  // grow only, deliberately: releasing on a dip would hand the next spike a fresh structure, buffer
+  // and scratch allocation, and the frame shape keys on the structure so every change recompiles
   const auto capacity = std::bit_ceil(instance_count);
 
   auto geometry = VkAccelerationStructureGeometryKHR{
@@ -1050,7 +894,7 @@ auto SceneTLAS::reserve(this SceneTLAS& self, RenderContext& render_context, u32
     .updateScratchSize = 0,
     .buildScratchSize = 0,
   };
-  render_context.runtime->vkGetAccelerationStructureBuildSizesKHR(
+  render_context.context->fn.vkGetAccelerationStructureBuildSizesKHR(
     render_context.device,
     VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
     &build_info,
@@ -1058,142 +902,93 @@ auto SceneTLAS::reserve(this SceneTLAS& self, RenderContext& render_context, u32
     &size_info
   );
 
-  self.acceleration_structure = create_acceleration_structure(
-    render_context,
+  self.destroy(render_context);
+
+  const auto structure = render_context.allocate_acceleration_structure(
     VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
-    size_info.accelerationStructureSize
+    size_info.accelerationStructureSize,
+    "tlas"
   );
-  if (!self.acceleration_structure) {
-    self.capacity = 0;
+  const auto instances = render_context.allocate_buffer({
+    .size = static_cast<u64>(capacity) * sizeof(GPU::AccelerationStructureInstance),
+    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+             VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+    .location = vir::MemoryLocation::GpuOnly,
+    .alignment = 16,
+    .name = "tlas instances",
+  });
+  const auto scratch = allocate_arena(
+    render_context,
+    size_info.buildScratchSize,
+    render_context.as_scratch_alignment(),
+    "tlas scratch"
+  );
+  if (!structure || !instances || !scratch) {
+    OX_LOG_ERROR("Failed to allocate the scene TLAS.");
+    if (structure) {
+      render_context.destroy_acceleration_structure(*structure);
+    }
+    if (instances) {
+      render_context.destroy_buffer(*instances);
+    }
+    if (scratch) {
+      render_context.destroy_buffer(*scratch);
+    }
+
     return false;
   }
 
-  self.instances_buffer = render_context.allocate_buffer_super(
-    vuk::MemoryUsage::eGPUonly,
-    static_cast<u64>(capacity) * sizeof(GPU::AccelerationStructureInstance),
-    16
-  );
-  self.scratch_buffer = render_context.allocate_buffer_super(
-    vuk::MemoryUsage::eGPUonly,
-    size_info.buildScratchSize,
-    render_context.as_scratch_alignment()
-  );
+  self.structure = *structure;
+  self.instances_buffer = *instances;
+  self.scratch_buffer = *scratch;
   self.capacity = capacity;
 
   return true;
 }
 
-auto build_scene_tlas(RenderContext& render_context, SceneTLAS& scene_tlas, TLASBuildInfo&& info)
-  -> vuk::Value<vuk::Buffer> {
-  ZoneScoped;
-
-  if (!scene_tlas.reserve(render_context, info.instance_count)) {
-    // the skinned builds were threaded in here to be submitted, so dropping them on the floor would
-    // leave an orphan subgraph behind as well as structures nothing ever built
-    if (info.skinned_blas_buffer.node != nullptr) {
-      render_context.wait_on(std::move(info.skinned_blas_buffer));
-    }
-
-    return {};
+auto SceneTLAS::destroy(this SceneTLAS& self, RenderContext& render_context) -> void {
+  if (self.structure != AccelerationStructureID::Invalid) {
+    render_context.destroy_acceleration_structure(self.structure);
+    self.structure = AccelerationStructureID::Invalid;
   }
 
-  // the shader does not read this. It rides along so the skinned structure builds land in the
-  // subgraph the wait below submits, which is what makes them run at all and what makes them
-  // complete before this build dereferences their addresses. A stand-in keeps the pass signature
-  // fixed on a frame where nothing was recorded
-  auto skinned_blas_buffer = info.skinned_blas_buffer.node != nullptr ? std::move(info.skinned_blas_buffer)
-                                                                      : render_context.scratch_buffer<u32>(0u);
+  release_buffer(render_context, self.instances_buffer);
+  release_buffer(render_context, self.scratch_buffer);
+  self.capacity = 0;
+}
 
-  auto instances_buffer = vuk::discard_buf("tlas instances", *scene_tlas.instances_buffer);
-  auto write_instances_pass = vuk::make_pass(
-    "tlas write instances",
-    [counts = glm::uvec2(info.instance_count, info.skinned_instance_count)](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeWrite) instances,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
-      VUK_BA(vuk::eComputeRead) transforms,
-      VUK_BA(vuk::eComputeRead) blas_addresses,
-      VUK_BA(vuk::eComputeRead) skinned_blas_addresses,
-      VUK_BA(vuk::eAccelerationStructureBuildRead) skinned_blas
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("tlas_write_instances")
-        .bind_buffer(0, 0, mesh_instances)
-        .bind_buffer(0, 1, transforms)
-        .bind_buffer(0, 2, blas_addresses)
-        .bind_buffer(0, 3, instances)
-        .bind_buffer(0, 4, skinned_blas_addresses)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, counts)
-        .dispatch_invocations(counts.x);
-
-      return instances;
-    }
-  );
-
-  instances_buffer = write_instances_pass(
-    std::move(instances_buffer),
-    std::move(info.mesh_instances_buffer),
-    std::move(info.transforms_buffer),
-    std::move(info.blas_addresses_buffer),
-    std::move(info.skinned_blas_addresses_buffer),
-    std::move(skinned_blas_buffer)
-  );
-
-  render_context.wait_on(std::move(instances_buffer));
-  instances_buffer = vuk::acquire_buf("tlas instances", *scene_tlas.instances_buffer, vuk::Access::eMemoryWrite);
-
-  auto geometry = VkAccelerationStructureGeometryKHR{
-    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
-    .pNext = nullptr,
-    .geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
-    .geometry =
-      {.instances =
-         {
-           .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
-           .pNext = nullptr,
-           .arrayOfPointers = VK_FALSE,
-           .data = {.deviceAddress = scene_tlas.instances_buffer->device_address},
-         }},
-    .flags = 0,
+auto SceneTLAS::build(this const SceneTLAS& self, RenderContext& render_context, u32 instance_count)
+  -> vir::AccelerationStructureBuild {
+  return {
+    .info =
+      {
+        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+        .pNext = nullptr,
+        .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
+        .flags = TLAS_BUILD_FLAGS,
+        .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+        .srcAccelerationStructure = VK_NULL_HANDLE,
+        .dstAccelerationStructure = render_context.acceleration_structure(self.structure).handle,
+        .geometryCount = 0,
+        .pGeometries = nullptr,
+        .ppGeometries = nullptr,
+        .scratchData = {.deviceAddress = render_context.buffer(self.scratch_buffer).device_address},
+      },
+    .geometries = {{
+      .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+      .pNext = nullptr,
+      .geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
+      .geometry =
+        {.instances =
+           {
+             .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
+             .pNext = nullptr,
+             .arrayOfPointers = VK_FALSE,
+             .data = {.deviceAddress = render_context.buffer(self.instances_buffer).device_address},
+           }},
+      .flags = 0,
+    }},
+    .ranges = {{.primitiveCount = instance_count, .primitiveOffset = 0, .firstVertex = 0, .transformOffset = 0}},
   };
-
-  auto build_info = VkAccelerationStructureBuildGeometryInfoKHR{
-    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
-    .pNext = nullptr,
-    .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
-    .flags = TLAS_BUILD_FLAGS,
-    .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
-    .srcAccelerationStructure = VK_NULL_HANDLE,
-    .dstAccelerationStructure = *scene_tlas.acceleration_structure.handle,
-    .geometryCount = 1,
-    .pGeometries = &geometry,
-    .ppGeometries = nullptr,
-    .scratchData = {.deviceAddress = scene_tlas.scratch_buffer->device_address},
-  };
-
-  auto tlas_buffer = vuk::discard_buf("tlas", *scene_tlas.acceleration_structure.buffer);
-  auto build_pass = vuk::make_pass(
-    "tlas build",
-    [build_info, geometry, instance_count = info.instance_count](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eAccelerationStructureBuildWrite) tlas,
-      VUK_BA(vuk::eAccelerationStructureBuildRead) instances
-    ) mutable {
-      build_info.pGeometries = &geometry;
-
-      const auto range = VkAccelerationStructureBuildRangeInfoKHR{
-        .primitiveCount = instance_count,
-        .primitiveOffset = 0,
-        .firstVertex = 0,
-        .transformOffset = 0,
-      };
-      const auto* range_ptr = &range;
-      cmd_list.build_acceleration_structures(1, &build_info, &range_ptr);
-
-      return tlas;
-    }
-  );
-
-  return build_pass(std::move(tlas_buffer), std::move(instances_buffer));
 }
 } // namespace ox

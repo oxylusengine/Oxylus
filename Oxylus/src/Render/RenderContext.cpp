@@ -1,45 +1,113 @@
 #include "Render/RenderContext.hpp"
 
+#include <VkBootstrap.h>
 #include <algorithm>
-#include <ankerl/svector.h>
+#include <array>
+#include <bit>
 #include <ranges>
-#include <sstream>
-#include <string_view>
-#include <vuk/ImageAttachment.hpp>
-#include <vuk/RenderGraph.hpp>
-#include <vuk/runtime/CommandBuffer.hpp>
-#include <vuk/runtime/ThisThreadExecutor.hpp>
-#include <vuk/runtime/vk/Allocator.hpp>
-#include <vuk/runtime/vk/AllocatorHelpers.hpp>
-#include <vuk/runtime/vk/Pipeline.hpp>
-#include <vuk/runtime/vk/PipelineInstance.hpp>
-#include <vuk/runtime/vk/Query.hpp>
-#include <zpp_bits.h>
+#include <tuple>
+#include <type_traits>
+#include <utility>
 
+#include "Asset/AssetFile.hpp"
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Memory/Stack.hpp"
-#include "Render/Renderer.hpp"
+#include "Render/Graph/RenderGraph.hpp"
+#include "Render/Graph/Types.hpp"
+#include "Render/RenderResources.hpp"
 #include "Render/UploadBatch.hpp"
+#include "Render/Utils/TextureFormat.hpp"
 #include "Render/Window.hpp"
+#include "Utils/Log.hpp"
 #include "Utils/Profiler.hpp"
 
 namespace ox {
-// Must outlive every graph it compiles. `allocate_node_links` puts `node->links` in the compiler's
-// pool while the nodes themselves live in the process-global IRModule, so a temporary compiler leaves
-// them pointing at freed memory and the next compile trips vuk's SSA assert. Reach it through
-// `get_compiler` rather than declaring a local one.
-thread_local vuk::Compiler this_thread_compiler;
+struct RenderDevice {
+  vkb::Instance instance = {};
+  vkb::PhysicalDevice physical = {};
+  vkb::Device device = {};
+  vkb::Swapchain swapchain = {};
+  VkSurfaceKHR surface = VK_NULL_HANDLE;
+  bool owns_device = false;
+};
 
-// i hate this
-PFN_vkCreateDescriptorPool vkCreateDescriptorPool = nullptr;
-PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout = nullptr;
-PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets = nullptr;
-PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets = nullptr;
+static auto debug_callback(
+  VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+  VkDebugUtilsMessageTypeFlagsEXT,
+  const VkDebugUtilsMessengerCallbackDataEXT* data,
+  void*
+) -> VkBool32 {
+  if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+    OX_LOG_ERROR("Vulkan [{}] {}: {}", data->messageIdNumber, data->pMessageIdName, data->pMessage);
+  } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+    OX_LOG_WARN("Vulkan [{}] {}: {}", data->messageIdNumber, data->pMessageIdName, data->pMessage);
+  } else {
+    OX_LOG_DEBUG("Vulkan [{}] {}: {}", data->messageIdNumber, data->pMessageIdName, data->pMessage);
+  }
+  return VK_FALSE;
+}
 
-PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR = nullptr;
-PFN_vkCmdWriteAccelerationStructuresPropertiesKHR vkCmdWriteAccelerationStructuresPropertiesKHR = nullptr;
-PFN_vkCmdCopyAccelerationStructureKHR vkCmdCopyAccelerationStructureKHR = nullptr;
+static auto program_acquires_swapchain(const vir::Program& program) -> bool {
+  return std::ranges::any_of(program.instructions, [](const vir::Instr& instruction) -> bool {
+    return std::holds_alternative<vir::ir::SwapchainImage>(instruction.ir);
+  });
+}
+
+static auto destroy_retired_resource(RenderContext& render_context, const RetiredRenderResource& resource) -> void {
+  std::visit(
+    [&](const auto& value) -> void {
+      using T = std::decay_t<decltype(value)>;
+      if constexpr (std::is_same_v<T, vir::Buffer>) {
+        render_context.persistent->deallocate_buffer(value);
+      } else if constexpr (std::is_same_v<T, vir::Image>) {
+        render_context.persistent->deallocate_image(value);
+      } else if constexpr (std::is_same_v<T, vir::ImageView>) {
+        render_context.persistent->deallocate_image_view(value.handle);
+      } else if constexpr (std::is_same_v<T, vir::Sampler>) {
+        render_context.persistent->deallocate_sampler(value.handle);
+      } else {
+        render_context.context->fn.vkDestroyAccelerationStructureKHR(render_context.device, value.handle, nullptr);
+      }
+    },
+    resource.value
+  );
+}
+
+template <typename T, typename ID>
+static auto retire_resource(RenderContext& render_context, SlotMap<T, ID>& slots, ID id) -> void {
+  auto* queue = render_context.context->queue(vir::DomainFlag::Graphics);
+  auto queue_lock = std::unique_lock(queue->submit_mutex);
+  auto lock = std::unique_lock(render_context.resources->retirement_mutex);
+  if (std::ranges::any_of(render_context.resources->retired, [id](const RetiredRenderResource& entry) -> bool {
+        const auto* pending = std::get_if<ID>(&entry.id);
+        return pending && *pending == id;
+      })) {
+    return;
+  }
+  if (const auto value = slots.copy_slot(id)) {
+    render_context.resources->retired.push_back({
+      .value = *value,
+      .id = id,
+      .ticket = {render_context.context->queue_id(vir::DomainFlag::Graphics), queue->timeline_value},
+    });
+  }
+}
+
+static auto descriptor_capacity(const DescriptorSet& set, u32 binding) -> u32 {
+  const auto it = std::ranges::find(set.bindings, binding, &VkDescriptorSetLayoutBinding::binding);
+  return it == set.bindings.end() ? 0 : it->descriptorCount;
+}
+
+static auto destroy_swapchain(RenderContext& render_context, vir::SwapChain& swapchain) -> void {
+  for (const auto& image : swapchain.attachments) {
+    render_context.persistent->deallocate_image_view(image.image_view);
+  }
+  for (const auto semaphore : swapchain.semaphores) {
+    render_context.persistent->deallocate_semaphore(semaphore);
+  }
+  swapchain = {};
+}
 
 template <typename T>
 static auto query_device_feature(const vkb::Instance& instance, VkPhysicalDevice physical_device, VkStructureType type)
@@ -101,7 +169,7 @@ static auto query_device_property(const vkb::Instance& instance, VkPhysicalDevic
 static auto supports_optimal_format_features(
   const vkb::Instance& instance,
   VkPhysicalDevice physical_device,
-  VkFormat format,
+  vir::Format format,
   VkFormatFeatureFlags required_features
 ) -> bool {
   const auto get_format_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceFormatProperties>(
@@ -112,17 +180,8 @@ static auto supports_optimal_format_features(
   }
 
   auto properties = VkFormatProperties{};
-  get_format_properties(physical_device, format, &properties);
+  get_format_properties(physical_device, static_cast<VkFormat>(format), &properties);
   return (properties.optimalTilingFeatures & required_features) == required_features;
-}
-
-static auto ray_tracing_stage_order(ShaderStage stage) -> u32 {
-  switch (stage) {
-    case ShaderStage::RayGeneration: return 0;
-    case ShaderStage::Miss         : return 1;
-    case ShaderStage::Callable     : return 2;
-    default                        : return 3;
-  }
 }
 
 static auto missing_shader_feature(RenderContext::Feature device_features, ShaderFeatureFlag required)
@@ -143,117 +202,28 @@ static auto missing_shader_feature(RenderContext::Feature device_features, Shade
   return {};
 }
 
-static VkBool32 debug_callback(
-  const VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-  VkDebugUtilsMessageTypeFlagsEXT messageType,
-  const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-  void* pUserData
-) {
-  std::string prefix;
-  if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT) {
-    prefix = "VULKAN VERBOSE: ";
-  } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) {
-    prefix = "VULKAN INFO: ";
-  } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-    prefix = "VULKAN WARNING: ";
-  } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
-    prefix = "VULKAN ERROR: ";
+template <typename T, typename ID>
+static auto live_resource(const RenderResources& resources, const SlotMap<T, ID>& slots, ID id) -> T {
+  auto lock = std::shared_lock(resources.retirement_mutex);
+  if (std::ranges::any_of(resources.retired, [id](const RetiredRenderResource& entry) -> bool {
+        const auto* pending = std::get_if<ID>(&entry.id);
+        return pending && *pending == id;
+      })) {
+    return {};
   }
-
-  std::stringstream debug_message;
-  debug_message << prefix << "[" << pCallbackData->messageIdNumber << "][" << pCallbackData->pMessageIdName
-                << "] : " << pCallbackData->pMessage;
-
-  if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT) {
-    OX_LOG_INFO("{}", debug_message.str());
-  } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) {
-    OX_LOG_INFO("{}", debug_message.str());
-  } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-    OX_LOG_WARN(debug_message.str().c_str());
-    // OX_DEBUGBREAK();
-  } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
-    OX_LOG_ERROR("{}", debug_message.str());
-  }
-  return VK_FALSE;
+  return slots.copy_slot(id).value_or(T{});
 }
 
-vuk::Swapchain make_swapchain(
-  vuk::Runtime& runtime,
-  vuk::Allocator& allocator,
-  vkb::Device& vkbdevice,
-  VkSurfaceKHR surface,
-  option<vuk::Swapchain> old_swapchain,
-  vuk::PresentModeKHR present_mode,
-  u32 frame_count
-) {
-  // surfaces without a fixed currentExtent (wayland, headless) take whatever we ask for, and
-  // vk-bootstrap falls back to 256x256 if we ask for nothing
-  const auto window_size = App::get_window().get_size_in_pixels();
+RenderContext::RenderContext()
+    : resources(std::make_unique<RenderResources>()),
+      render_device(std::make_unique<RenderDevice>()) {}
 
-  vkb::SwapchainBuilder swb(vkbdevice, surface);
-  swb.set_desired_min_image_count(frame_count)
-    .set_desired_extent(static_cast<u32>(window_size.x), static_cast<u32>(window_size.y))
-    .set_desired_format(
-      vuk::SurfaceFormatKHR{.format = vuk::Format::eR8G8B8A8Srgb, .colorSpace = vuk::ColorSpaceKHR::eSrgbNonlinear}
-    )
-    .add_fallback_format(
-      vuk::SurfaceFormatKHR{.format = vuk::Format::eB8G8R8A8Srgb, .colorSpace = vuk::ColorSpaceKHR::eSrgbNonlinear}
-    )
-    .set_image_usage_flags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-    .set_desired_present_mode(static_cast<VkPresentModeKHR>(present_mode));
-
-  bool recycling = false;
-  vkb::Result vkswapchain = {vkb::Swapchain{}};
-  if (!old_swapchain) {
-    vkswapchain = swb.build();
-    old_swapchain.emplace(allocator, vkswapchain->image_count);
-  } else {
-    recycling = true;
-    swb.set_old_swapchain(old_swapchain->swapchain);
-    vkswapchain = swb.build();
-  }
-
-  if (recycling) {
-    allocator.deallocate(std::span{&old_swapchain->swapchain, 1});
-    for (auto& iv : old_swapchain->images) {
-      allocator.deallocate(std::span{&iv.image_view, 1});
-    }
-  }
-
-  auto images = *vkswapchain->get_images();
-  auto views = *vkswapchain->get_image_views();
-
-  old_swapchain->images.clear();
-
-  for (uint32_t i = 0; i < (uint32_t)images.size(); i++) {
-    auto name = fmt::format("swapchain_image_{}", i);
-    runtime.set_name(images[i], vuk::Name(name));
-    vuk::ImageAttachment attachment = {
-      .image = vuk::Image{.image = images[i], .allocation = nullptr},
-      .image_view = vuk::ImageView{{0}, views[i]},
-      .usage = vuk::ImageUsageFlagBits::eColorAttachment | vuk::ImageUsageFlagBits::eTransferDst,
-      .extent = {.width = vkswapchain->extent.width, .height = vkswapchain->extent.height, .depth = 1},
-      .format = static_cast<vuk::Format>(vkswapchain->image_format),
-      .sample_count = vuk::Samples::e1,
-      .view_type = vuk::ImageViewType::e2D,
-      .components = {},
-      .base_level = 0,
-      .level_count = 1,
-      .base_layer = 0,
-      .layer_count = 1,
-    };
-    old_swapchain->images.push_back(attachment);
-  }
-
-  old_swapchain->swapchain = vkswapchain->swapchain;
-  old_swapchain->surface = surface;
-
-  return std::move(*old_swapchain);
-}
+RenderContext::~RenderContext() { destroy_context(); }
 
 auto RenderContext::create_context(this RenderContext& self, const Window& window, bool vulkan_validation_layers)
   -> void {
   ZoneScoped;
+  self.render_device->owns_device = true;
   vkb::InstanceBuilder builder;
   builder //
     .set_app_name("Oxylus App")
@@ -281,7 +251,6 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
         void* pUserData
       ) -> VkBool32 { return debug_callback(messageSeverity, messageType, pCallbackData, pUserData); }
     );
-  ;
 
   auto inst_ret = builder.build();
   if (!inst_ret) {
@@ -290,12 +259,12 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     );
   }
 
-  self.vkb_instance = inst_ret.value();
-  auto instance = self.vkb_instance.instance;
-  vkb::PhysicalDeviceSelector selector{self.vkb_instance};
-  self.surface = window.get_surface(instance);
+  self.render_device->instance = inst_ret.value();
+  auto instance = self.render_device->instance.instance;
+  vkb::PhysicalDeviceSelector selector{self.render_device->instance};
+  self.render_device->surface = window.get_surface(instance);
   selector //
-    .set_surface(self.surface)
+    .set_surface(self.render_device->surface)
     .set_minimum_version(1, 3)
     .disable_portability_subset();
 #ifdef OX_USE_LLVMPIPE
@@ -315,13 +284,13 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   if (auto phys_ret = selector.select(); !phys_ret) {
     OX_LOG_FATAL("{}", phys_ret.full_error().type.message());
   } else {
-    self.vkbphysical_device = phys_ret.value();
+    self.render_device->physical = phys_ret.value();
     self.device_name = phys_ret.value().name;
   }
 
-  self.physical_device = self.vkbphysical_device.physical_device;
+  self.physical_device = self.render_device->physical.physical_device;
 
-  const auto vk10_supported = query_device_features(self.vkb_instance, self.physical_device);
+  const auto vk10_supported = query_device_features(self.render_device->instance, self.physical_device);
   if (!vk10_supported.shaderStorageImageExtendedFormats) {
     OX_LOG_FATAL(
       "The selected device does not support shaderStorageImageExtendedFormats, which is required by the renderer."
@@ -331,22 +300,22 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   constexpr auto sampled_color = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
   constexpr auto sampled_storage = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
   constexpr auto sampled_storage_color = sampled_storage | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-  const auto require_format = [&](VkFormat format, VkFormatFeatureFlags features, std::string_view name) {
-    if (!supports_optimal_format_features(self.vkb_instance, self.physical_device, format, features)) {
+  const auto require_format = [&](vir::Format format, VkFormatFeatureFlags features, std::string_view name) {
+    if (!supports_optimal_format_features(self.render_device->instance, self.physical_device, format, features)) {
       OX_LOG_FATAL("The selected device does not support the required sampled/color/storage usage for {}.", name);
     }
   };
-  require_format(VK_FORMAT_R8G8B8A8_SNORM, sampled_color, "R8G8B8A8_SNORM normals");
-  require_format(VK_FORMAT_R8G8_UNORM, sampled_storage_color, "R8G8_UNORM material and shadow targets");
-  require_format(VK_FORMAT_R8_UNORM, sampled_storage, "R8_UNORM ambient occlusion");
+  require_format(vir::Format::RGBA8Snorm, sampled_color, "R8G8B8A8_SNORM normals");
+  require_format(vir::Format::RG8Unorm, sampled_storage_color, "R8G8_UNORM material and shadow targets");
+  require_format(vir::Format::R8Unorm, sampled_storage, "R8_UNORM ambient occlusion");
   require_format(
-    VK_FORMAT_B10G11R11_UFLOAT_PACK32,
+    vir::Format::B10G11R11UfloatPack32,
     sampled_storage_color,
     "B10G11R11_UFLOAT_PACK32 HDR and bloom targets"
   );
 
   const auto vk12_supported = query_device_feature<VkPhysicalDeviceVulkan12Features>(
-    self.vkb_instance,
+    self.render_device->instance,
     self.physical_device,
     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
   );
@@ -355,14 +324,14 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   }
   VkPhysicalDeviceMeshShaderFeaturesEXT mesh_shader_features = {};
   mesh_shader_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
-  if (self.vkbphysical_device.is_extension_present(VK_EXT_MESH_SHADER_EXTENSION_NAME)) {
+  if (self.render_device->physical.is_extension_present(VK_EXT_MESH_SHADER_EXTENSION_NAME)) {
     const auto supported = query_device_feature<VkPhysicalDeviceMeshShaderFeaturesEXT>(
-      self.vkb_instance,
+      self.render_device->instance,
       self.physical_device,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT
     );
     if (supported.meshShader && supported.taskShader) {
-      self.vkbphysical_device.enable_extension_if_present(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+      self.render_device->physical.enable_extension_if_present(VK_EXT_MESH_SHADER_EXTENSION_NAME);
       mesh_shader_features.meshShader = true;
       mesh_shader_features.taskShader = true;
       self.features |= RenderContext::Feature::MeshShaders;
@@ -383,36 +352,36 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR ray_tracing_pipeline_features = {};
   ray_tracing_pipeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
   if (
-    self.vkbphysical_device.is_extension_present(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
-    self.vkbphysical_device.is_extension_present(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
-    self.vkbphysical_device.is_extension_present(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)
+    self.render_device->physical.is_extension_present(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+    self.render_device->physical.is_extension_present(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+    self.render_device->physical.is_extension_present(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)
   ) {
     const auto as_supported = query_device_feature<VkPhysicalDeviceAccelerationStructureFeaturesKHR>(
-      self.vkb_instance,
+      self.render_device->instance,
       self.physical_device,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR
     );
     const auto ray_query_supported = query_device_feature<VkPhysicalDeviceRayQueryFeaturesKHR>(
-      self.vkb_instance,
+      self.render_device->instance,
       self.physical_device,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR
     );
     if (as_supported.accelerationStructure && ray_query_supported.rayQuery) {
-      self.vkbphysical_device.enable_extension_if_present(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
-      self.vkbphysical_device.enable_extension_if_present(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
-      self.vkbphysical_device.enable_extension_if_present(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+      self.render_device->physical.enable_extension_if_present(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+      self.render_device->physical.enable_extension_if_present(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+      self.render_device->physical.enable_extension_if_present(VK_KHR_RAY_QUERY_EXTENSION_NAME);
       acceleration_structure_features.accelerationStructure = true;
       ray_query_features.rayQuery = true;
       self.features |= RenderContext::Feature::RayTracing;
 
-      if (self.vkbphysical_device.is_extension_present(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)) {
+      if (self.render_device->physical.is_extension_present(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)) {
         const auto pipeline_supported = query_device_feature<VkPhysicalDeviceRayTracingPipelineFeaturesKHR>(
-          self.vkb_instance,
+          self.render_device->instance,
           self.physical_device,
           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR
         );
         if (pipeline_supported.rayTracingPipeline) {
-          self.vkbphysical_device.enable_extension_if_present(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+          self.render_device->physical.enable_extension_if_present(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
           ray_tracing_pipeline_features.rayTracingPipeline = true;
           self.features |= RenderContext::Feature::RayTracingPipeline;
         }
@@ -429,7 +398,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     }
   }
 
-  vkb::DeviceBuilder device_builder{self.vkbphysical_device};
+  vkb::DeviceBuilder device_builder{self.render_device->physical};
 
   VkPhysicalDeviceFeatures2 vk10_features{};
   vk10_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -480,7 +449,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vk12_features.bufferDeviceAddress = true;
   vk12_features.hostQueryReset = true;
   vk12_features.uniformAndStorageBuffer8BitAccess = true;
-  // Shader features
+  // shader features
   vk12_features.vulkanMemoryModel = true;
   vk12_features.storageBuffer8BitAccess = true;
   vk12_features.scalarBlockLayout = true;
@@ -494,17 +463,14 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   VkPhysicalDeviceVulkan13Features vk13_features = {};
   vk13_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
   vk13_features.synchronization2 = true;
+  vk13_features.dynamicRendering = true;
   vk13_features.shaderDemoteToHelperInvocation = true;
 
   VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT image_atomic_int64_features = {};
   image_atomic_int64_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT;
   image_atomic_int64_features.shaderImageInt64Atomics = true;
 
-  VkPhysicalDeviceVulkan14Features vk14_features = {};
-  vk14_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES;
-  vk14_features.pushDescriptor = true;
   device_builder //
-    .add_pNext(&vk14_features)
     .add_pNext(&vk13_features)
     .add_pNext(&vk12_features)
     .add_pNext(&vk11_features)
@@ -539,819 +505,1069 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     self.features & RenderContext::Feature::RayTracingPipeline
   );
 
-  self.vkb_device = dev_ret.value();
-  self.device = self.vkb_device.device;
-  vuk::FunctionPointers fps;
-  fps.vkGetInstanceProcAddr = self.vkb_instance.fp_vkGetInstanceProcAddr;
-  fps.vkGetDeviceProcAddr = self.vkb_instance.fp_vkGetDeviceProcAddr;
-  fps.load_pfns(instance, self.device, true);
-  vkCreateDescriptorPool = fps.vkCreateDescriptorPool;
-  vkCreateDescriptorSetLayout = fps.vkCreateDescriptorSetLayout;
-  vkAllocateDescriptorSets = fps.vkAllocateDescriptorSets;
-  vkUpdateDescriptorSets = fps.vkUpdateDescriptorSets;
-  if (self.features & RenderContext::Feature::RayTracing) {
-    vkGetAccelerationStructureDeviceAddressKHR = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
-      self.vkb_instance.fp_vkGetDeviceProcAddr(self.device, "vkGetAccelerationStructureDeviceAddressKHR")
-    );
-    vkCmdWriteAccelerationStructuresPropertiesKHR = reinterpret_cast<PFN_vkCmdWriteAccelerationStructuresPropertiesKHR>(
-      self.vkb_instance.fp_vkGetDeviceProcAddr(self.device, "vkCmdWriteAccelerationStructuresPropertiesKHR")
-    );
-    vkCmdCopyAccelerationStructureKHR = reinterpret_cast<PFN_vkCmdCopyAccelerationStructureKHR>(
-      self.vkb_instance.fp_vkGetDeviceProcAddr(self.device, "vkCmdCopyAccelerationStructureKHR")
-    );
+  self.render_device->device = dev_ret.value();
+  self.device = self.render_device->device.device;
+  auto vir_context = vir::Context::create({
+    .instance = instance,
+    .physical_device = self.physical_device,
+    .device = self.device,
+    .get_instance_proc_addr = self.render_device->instance.fp_vkGetInstanceProcAddr,
+    .api_version = VK_API_VERSION_1_3,
+  });
+  if (!vir_context) {
+    OX_LOG_FATAL("failed to create vir context ({})", std::to_underlying(vir_context.error()));
   }
-
-  std::vector<std::unique_ptr<vuk::Executor>> executors;
-
-  auto graphics_queue_result = self.vkb_device.get_queue(vkb::QueueType::graphics);
-  if (!graphics_queue_result) {
-    OX_LOG_FATAL("Failed creating graphics queue. Error: {}", graphics_queue_result.error().message());
+  const auto family = self.render_device->device.get_queue_index(vkb::QueueType::graphics);
+  if (!family) {
+    OX_LOG_FATAL("failed to find graphics queue: {}", family.error().message());
   }
-  self.graphics_queue = graphics_queue_result.value();
-  u32 graphics_queue_family_index = self.vkb_device.get_queue_index(vkb::QueueType::graphics).value();
-  executors.push_back(create_vkqueue_executor(
-    fps,
-    self.device,
-    self.graphics_queue,
-    graphics_queue_family_index,
-    vuk::DomainFlagBits::eGraphicsQueue
-  ));
-#if !defined(OX_USE_LLVMPIPE) && !defined(OX_PLATFORM_MACOSX)
-  auto transfer_queue_result = self.vkb_device.get_queue(vkb::QueueType::transfer);
-  if (!transfer_queue_result) {
-    OX_LOG_ERROR("Failed creating transfer queue. Error: {}", transfer_queue_result.error().message());
+  const auto queue = (*vir_context)->create_command_queue(*family, vir::DomainFlag::Graphics);
+  if (!queue) {
+    OX_LOG_FATAL("failed to create graphics timeline ({})", std::to_underlying(queue.error()));
   }
-  self.transfer_queue = transfer_queue_result.value();
-  auto transfer_queue_family_index_result = self.vkb_device.get_queue_index(vkb::QueueType::transfer);
-  if (!transfer_queue_family_index_result) {
-    OX_LOG_FATAL(
-      "Failed getting transfer queue family index. Error: {}",
-      transfer_queue_family_index_result.error().message()
-    );
+  const auto initialized = self.initialize_graph(std::move(*vir_context));
+  if (!initialized) {
+    OX_LOG_FATAL("failed to initialize graph ({})", std::to_underlying(initialized.error()));
   }
-  auto transfer_queue_family_index = transfer_queue_family_index_result.value();
-  executors.push_back(create_vkqueue_executor(
-    fps,
-    self.device,
-    self.transfer_queue,
-    transfer_queue_family_index,
-    vuk::DomainFlagBits::eTransferQueue
-  ));
-#endif
-  executors.push_back(std::make_unique<vuk::ThisThreadExecutor>());
+  self.set_vsync(self.context_cvar.cvar_vsync.as_bool());
 
-  self.runtime.emplace(
-    vuk::RuntimeCreateParameters{instance, self.device, self.physical_device, std::move(executors), fps}
-  );
-
-  self.set_vsync(static_cast<bool>(self.context_cvar.cvar_vsync.get()));
-
-  self.superframe_resource.emplace(*self.runtime, self.num_inflight_frames);
-  self.superframe_allocator.emplace(*self.superframe_resource);
-
-  auto& frame_resource = self.superframe_resource->get_next_frame();
-  self.frame_allocator.emplace(frame_resource);
-
-  self.runtime->set_shader_target_version(VK_API_VERSION_1_3);
-
-  self.tracy_profiler = std::make_shared<TracyProfiler>();
-  self.tracy_profiler->init_for_vulkan(&self);
-
-  u32 instanceVersion = VK_API_VERSION_1_0;
-  auto FN_vkEnumerateInstanceVersion = PFN_vkEnumerateInstanceVersion(
-    fps.vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion")
-  );
-  if (FN_vkEnumerateInstanceVersion) {
-    FN_vkEnumerateInstanceVersion(&instanceVersion);
-  }
-
-  // Initialize resource descriptors
-  const auto descriptor_indexing_properties = query_device_property<VkPhysicalDeviceDescriptorIndexingProperties>(
-    self.vkb_instance,
+  const auto properties = query_device_property<VkPhysicalDeviceDescriptorIndexingProperties>(
+    self.render_device->instance,
     self.physical_device,
     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES
   );
-  const auto requested_descriptor_count = static_cast<u32>(
-    std::max(self.context_cvar.cvar_bindless_descriptor_count.get(), 1)
-  );
-  auto descriptor_counts = std::array{
+  const auto requested = static_cast<u32>(std::max(self.context_cvar.cvar_bindless_descriptor_count.get(), 1));
+  auto counts = std::array{
     std::min(
-      requested_descriptor_count,
-      std::min(
-        descriptor_indexing_properties.maxDescriptorSetUpdateAfterBindSamplers,
-        descriptor_indexing_properties.maxPerStageDescriptorUpdateAfterBindSamplers
-      )
+      {requested,
+       properties.maxDescriptorSetUpdateAfterBindSamplers,
+       properties.maxPerStageDescriptorUpdateAfterBindSamplers}
     ),
     std::min(
-      requested_descriptor_count,
-      std::min(
-        descriptor_indexing_properties.maxDescriptorSetUpdateAfterBindSampledImages,
-        descriptor_indexing_properties.maxPerStageDescriptorUpdateAfterBindSampledImages
-      )
+      {requested,
+       properties.maxDescriptorSetUpdateAfterBindSampledImages,
+       properties.maxPerStageDescriptorUpdateAfterBindSampledImages}
     ),
     std::min(
-      requested_descriptor_count,
-      std::min(
-        descriptor_indexing_properties.maxDescriptorSetUpdateAfterBindStorageImages,
-        descriptor_indexing_properties.maxPerStageDescriptorUpdateAfterBindStorageImages
-      )
+      {requested,
+       properties.maxDescriptorSetUpdateAfterBindStorageImages,
+       properties.maxPerStageDescriptorUpdateAfterBindStorageImages}
     ),
   };
-
-  const auto shared_descriptor_limit = std::min(
-    descriptor_indexing_properties.maxUpdateAfterBindDescriptorsInAllPools,
-    descriptor_indexing_properties.maxPerStageUpdateAfterBindResources
+  const auto limit = std::min(
+    properties.maxUpdateAfterBindDescriptorsInAllPools,
+    properties.maxPerStageUpdateAfterBindResources
   );
-  const auto total_descriptor_count = static_cast<u64>(descriptor_counts[0]) + descriptor_counts[1] +
-                                      descriptor_counts[2];
-  if (total_descriptor_count > shared_descriptor_limit) {
-    for (auto& count : descriptor_counts) {
-      count = static_cast<u32>(static_cast<u64>(count) * shared_descriptor_limit / total_descriptor_count);
+  const auto total = u64(counts[0]) + counts[1] + counts[2];
+  if (total > limit) {
+    for (auto& count : counts) {
+      count = static_cast<u32>(u64(count) * limit / total);
     }
   }
-
-  if (std::ranges::any_of(descriptor_counts, [](u32 count) { return count == 0; })) {
-    OX_LOG_FATAL("The selected device cannot provide the required bindless descriptor arrays.");
+  if (std::ranges::any_of(counts, [](u32 count) -> bool { return count == 0; })) {
+    OX_LOG_FATAL("device cannot provide bindless descriptor arrays");
   }
-
-  OX_LOG_INFO(
-    "Bindless descriptor capacities: samplers({}), sampled images({}), storage images({})",
-    descriptor_counts[0],
-    descriptor_counts[1],
-    descriptor_counts[2]
+  const auto bindings = std::array{
+    VkDescriptorSetLayoutBinding{0, VK_DESCRIPTOR_TYPE_SAMPLER, counts[0], VK_SHADER_STAGE_ALL, nullptr},
+    VkDescriptorSetLayoutBinding{1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, counts[1], VK_SHADER_STAGE_ALL, nullptr},
+    VkDescriptorSetLayoutBinding{2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, counts[2], VK_SHADER_STAGE_ALL, nullptr},
+  };
+  constexpr auto flags = VkDescriptorBindingFlags(
+    VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
   );
-  VkDescriptorSetLayoutBinding bindless_set_info[] = {
-    // Samplers
-    {.binding = DescriptorTable_SamplerIndex,
-     .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-     .descriptorCount = descriptor_counts[0],
-     .stageFlags = VK_SHADER_STAGE_ALL,
-     .pImmutableSamplers = nullptr},
-    // Sampled Images
-    {.binding = DescriptorTable_SampledImageIndex,
-     .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-     .descriptorCount = descriptor_counts[1],
-     .stageFlags = VK_SHADER_STAGE_ALL,
-     .pImmutableSamplers = nullptr},
-    // Storage Images
-    {.binding = DescriptorTable_StorageImageIndex,
-     .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-     .descriptorCount = descriptor_counts[2],
-     .stageFlags = VK_SHADER_STAGE_ALL,
-     .pImmutableSamplers = nullptr},
-  };
-
-  constexpr static auto bindless_flags = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
-                                         VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
-  VkDescriptorBindingFlags bindless_set_binding_flags[] = {
-    bindless_flags,
-    bindless_flags,
-    bindless_flags,
-  };
-  self.resources.descriptor_set = self
-                                    .create_persistent_descriptor_set(1, bindless_set_info, bindless_set_binding_flags);
-
-  auto& event_system = App::get_event_system();
-  auto sub_result = event_system.subscribe<WindowResizeEvent>([&self](const WindowResizeEvent&) {
-    self.handle_resize();
-  });
-  if (!sub_result.has_value()) {
-    OX_LOG_ERROR("Failed to subscribe for WindowResizeEvent!");
+  const auto binding_flags = std::array{flags, flags, flags};
+  auto descriptor_set = self.create_persistent_descriptor_set(bindings, binding_flags);
+  if (!descriptor_set) {
+    OX_LOG_FATAL("failed to create bindless descriptors ({})", std::to_underlying(descriptor_set.error()));
   }
-
-  const u32 major = VK_VERSION_MAJOR(instanceVersion);
-  const u32 minor = VK_VERSION_MINOR(instanceVersion);
-  const u32 patch = VK_VERSION_PATCH(instanceVersion);
-
-  OX_LOG_INFO(
-    "Vulkan context initialized using device: {} with Vulkan Version: {}.{}.{}",
-    self.device_name,
-    major,
-    minor,
-    patch
+  self.resources->descriptor_set = std::move(*descriptor_set);
+  self.tracy_profiler = std::make_unique<TracyProfiler>();
+  self.tracy_profiler->init_for_vulkan(self);
+  self.graph->callbacks = self.tracy_profiler->callbacks();
+  const auto subscribed = App::get_event_system().subscribe<WindowResizeEvent>(
+    [&self](const WindowResizeEvent&) -> void { self.handle_resize(); }
   );
+  if (!subscribed) {
+    OX_LOG_ERROR("failed to subscribe to window resize");
+  }
+  OX_LOG_INFO("vir context initialized on {}", self.device_name);
+}
+
+auto RenderContext::initialize_graph(this RenderContext& self, std::unique_ptr<vir::Context> new_context)
+  -> std::expected<void, VkResult> {
+  if (self.context || !new_context || self.num_inflight_frames == 0 || !new_context->queue(vir::DomainFlag::Graphics)) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+  self.device = new_context->device;
+  self.physical_device = new_context->physical_device;
+  self.graphics_queue = new_context->queue(vir::DomainFlag::Graphics)->handle;
+  self.context = std::move(new_context);
+  self.persistent = std::make_unique<vir::PersistentAllocator>(*self.context);
+  self.super_frame = std::make_unique<vir::SuperFrameAllocator>(*self.persistent, self.num_inflight_frames);
+  self.frame = &self.super_frame->current();
+  self.graph = std::make_unique<vir::RenderGraph>(*self.context, *self.persistent);
+  return {};
 }
 
 auto RenderContext::destroy_context(this RenderContext& self) -> void {
   ZoneScoped;
-  self.runtime->wait_idle();
-
-  auto destroy_resource_pool = [&self](auto& pool) -> void {
-    for (auto i = 0_sz; i < pool.size(); i++) {
-      auto* v = pool.slot_from_index(i);
-      if (v) {
-        self.superframe_allocator->deallocate({v, 1});
+  if (!self.context) {
+    return;
+  }
+  self.wait();
+  self.graph.reset();
+  self.tracy_profiler.reset();
+  self.frame = nullptr;
+  self.super_frame.reset();
+  self.seal_retirements({});
+  self.collect_retired();
+  const auto destroy_pool = [](auto& pool, auto&& destroy) -> void {
+    for (usize index = 0; index < pool.capacity(); index++) {
+      if (const auto* value = pool.slot_from_index(index)) {
+        destroy(*value);
       }
     }
-
     pool.reset();
   };
-
-  destroy_resource_pool(self.resources.buffers);
-  destroy_resource_pool(self.resources.images);
-  destroy_resource_pool(self.resources.image_views);
-  self.resources.samplers.reset();
-  self.resources.pipelines.reset();
-
-  self.superframe_allocator->deallocate(std::span(&self.resources.descriptor_set, 1));
-  self.resources.descriptor_set = {};
-
-  self.tracy_profiler.reset();
-  self.swapchain.reset();
-  self.frame_allocator.reset();
-  self.superframe_allocator.reset();
-  self.superframe_resource.reset();
-  self.runtime.reset();
-
-  vkb::destroy_surface(self.vkb_instance, self.surface);
-  self.surface = VK_NULL_HANDLE;
-  vkb::destroy_device(self.vkb_device);
+  destroy_pool(self.resources->image_views, [&](const vir::ImageView& view) -> void {
+    self.persistent->deallocate_image_view(view.handle);
+  });
+  destroy_pool(self.resources->samplers, [&](const vir::Sampler& sampler) -> void {
+    self.persistent->deallocate_sampler(sampler.handle);
+  });
+  self.resources->cached_samplers.clear();
+  destroy_pool(self.resources->images, [&](const vir::Image& image) -> void {
+    self.persistent->deallocate_image(image);
+  });
+  destroy_pool(self.resources->acceleration_structures, [&](const GPUAccelerationStructure& structure) -> void {
+    self.context->fn.vkDestroyAccelerationStructureKHR(self.device, structure.handle, nullptr);
+  });
+  destroy_pool(self.resources->buffers, [&](const vir::Buffer& buffer) -> void {
+    self.persistent->deallocate_buffer(buffer);
+  });
+  self.resources->pipelines.reset();
+  self.resources->pipeline_names.clear();
+  destroy_swapchain(self, self.resources->swapchain);
+  auto& descriptor = self.resources->descriptor_set;
+  if (descriptor.pool != VK_NULL_HANDLE) {
+    self.context->fn.vkDestroyDescriptorPool(self.device, descriptor.pool, nullptr);
+  }
+  if (descriptor.layout != VK_NULL_HANDLE) {
+    self.context->fn.vkDestroyDescriptorSetLayout(self.device, descriptor.layout, nullptr);
+  }
+  descriptor = {};
+  if (self.render_device->swapchain.swapchain != VK_NULL_HANDLE) {
+    vkb::destroy_swapchain(self.render_device->swapchain);
+    self.render_device->swapchain = {};
+  }
+  self.persistent.reset();
+  self.context.reset();
+  if (self.render_device->owns_device) {
+    vkb::destroy_surface(self.render_device->instance, self.render_device->surface);
+    vkb::destroy_device(self.render_device->device);
+    vkb::destroy_instance(self.render_device->instance);
+    *self.render_device = {};
+  }
   self.device = VK_NULL_HANDLE;
-  vkb::destroy_instance(self.vkb_instance);
+  self.physical_device = VK_NULL_HANDLE;
+  self.graphics_queue = VK_NULL_HANDLE;
+}
+
+auto RenderContext::recreate_swapchain(this RenderContext& self, vir::Extent2D extent)
+  -> std::expected<void, VkResult> {
+  ZoneScoped;
+  if (extent.width == 0 || extent.height == 0) {
+    return std::unexpected(VK_NOT_READY);
+  }
+  auto frame_lock = std::unique_lock(self.frame_mutex);
+  auto* queue = self.context->queue(vir::DomainFlag::Graphics);
+  auto queue_lock = std::unique_lock(queue->submit_mutex);
+  const auto idle = self.context->fn.vkDeviceWaitIdle(self.device);
+  if (idle != VK_SUCCESS) {
+    return std::unexpected(idle);
+  }
+  auto builder = vkb::SwapchainBuilder(self.render_device->device, self.render_device->surface);
+  builder.set_desired_min_image_count(self.num_inflight_frames)
+    .set_desired_extent(extent.width, extent.height)
+    .set_desired_format({static_cast<VkFormat>(vir::Format::RGBA8Srgb), VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
+    .add_fallback_format({static_cast<VkFormat>(vir::Format::BGRA8Srgb), VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
+    .set_image_usage_flags(
+      static_cast<VkImageUsageFlags>(vir::ImageUsageFlags::ColorAttachment | vir::ImageUsageFlags::TransferDst)
+    )
+    .set_desired_present_mode(self.present_mode);
+  if (self.resources->swapchain.handle != VK_NULL_HANDLE) {
+    builder.set_old_swapchain(self.resources->swapchain.handle);
+  }
+  auto created = builder.build();
+  if (!created) {
+    OX_LOG_ERROR("failed to create swapchain: {}", created.error().message());
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+  const auto images = created->get_images();
+  const auto views = created->get_image_views();
+  if (!images || !views || images->size() != views->size()) {
+    if (views) {
+      for (const auto view : *views) {
+        self.persistent->deallocate_image_view(view);
+      }
+    }
+    vkb::destroy_swapchain(*created);
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+  auto next = vir::SwapChain{.handle = created->swapchain, .surface = self.render_device->surface};
+  for (usize index = 0; index < images->size(); index++) {
+    const auto image = vir::Image::from_info(
+      (*images)[index],
+      {
+        .extent = {created->extent.width, created->extent.height, 1},
+        .format = static_cast<vir::Format>(created->image_format),
+        .usage = vir::ImageUsageFlags::ColorAttachment | vir::ImageUsageFlags::TransferDst,
+      }
+    );
+    auto attachment = vir::ImageAttachment::from_image(image, VK_IMAGE_LAYOUT_UNDEFINED);
+    attachment.image_view = (*views)[index];
+    next.attachments.push_back(attachment);
+    auto stack = memory::ScopedStack{};
+    self.context->set_name(VK_OBJECT_TYPE_IMAGE, image.handle, stack.format("swapchain image {}", index));
+  }
+  for (usize index = 0; index < images->size(); index++) {
+    const auto semaphore = self.persistent->allocate_binary_semaphore();
+    if (!semaphore) {
+      destroy_swapchain(self, next);
+      vkb::destroy_swapchain(*created);
+      return std::unexpected(semaphore.error());
+    }
+    next.semaphores.push_back(*semaphore);
+  }
+  destroy_swapchain(self, self.resources->swapchain);
+  if (self.render_device->swapchain.swapchain != VK_NULL_HANDLE) {
+    vkb::destroy_swapchain(self.render_device->swapchain);
+  }
+  self.render_device->swapchain = *created;
+  next.generation = self.resources->swapchain_generation + 1;
+  self.resources->swapchain = std::move(next);
+  self.resources->swapchain_generation += 1;
+  return {};
 }
 
 auto RenderContext::handle_resize(this RenderContext& self) -> void {
-  self.wait();
-
-  self.swapchain = make_swapchain(
-    *self.runtime,
-    *self.superframe_allocator,
-    self.vkb_device,
-    self.surface,
-    std::move(self.swapchain),
-    self.present_mode,
-    self.num_inflight_frames
+  const auto size = App::get_window().get_size_in_pixels();
+  const auto resized = self.recreate_swapchain(
+    {static_cast<u32>(std::max(size.x, 0)), static_cast<u32>(std::max(size.y, 0))}
   );
+  if (!resized && resized.error() != VK_NOT_READY) {
+    OX_LOG_ERROR("failed to resize swapchain ({})", std::to_underlying(resized.error()));
+  }
 }
 
-auto RenderContext::set_vsync(bool enable) -> void {
-  const auto set_present_mode = enable ? vuk::PresentModeKHR::eFifo : vuk::PresentModeKHR::eImmediate;
-  present_mode = set_present_mode;
-}
-
-auto RenderContext::is_vsync() const -> bool { return present_mode == vuk::PresentModeKHR::eFifo; }
-
-auto RenderContext::new_frame(this RenderContext& self) -> vuk::Value<vuk::ImageAttachment> {
+auto RenderContext::new_frame(this RenderContext& self) -> std::expected<SwapchainInfo, VkResult> {
   ZoneScoped;
-
-  auto vsync_cvar_enabled = static_cast<bool>(self.context_cvar.cvar_vsync.get());
-  auto wanted_vsync = vsync_cvar_enabled ? vuk::PresentModeKHR::eFifo : vuk::PresentModeKHR::eImmediate;
-  auto present_mode_changed = wanted_vsync != self.present_mode;
-  if (present_mode_changed) {
-    self.present_mode = wanted_vsync;
-    self.handle_resize();
+  if (!self.super_frame) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
   }
-
-  {
-    auto write_lock = std::unique_lock(self.frame_allocator_mutex);
-    auto queue_lock = std::unique_lock(self.queue_mutex);
-    if (self.frame_allocator) {
-      self.frame_allocator.reset();
-    }
-
-    auto& frame_resource = self.superframe_resource->get_next_frame();
-    self.frame_allocator.emplace(frame_resource);
-  }
-  self.runtime->next_frame();
-
-  if (!self.swapchain.has_value()) {
-    self.swapchain = make_swapchain(
-      *self.runtime,
-      *self.superframe_allocator,
-      self.vkb_device,
-      self.surface,
-      {},
-      self.present_mode,
-      self.num_inflight_frames
+  const auto wanted_mode = self.context_cvar.cvar_vsync.as_bool() ? VK_PRESENT_MODE_FIFO_KHR
+                                                                  : VK_PRESENT_MODE_IMMEDIATE_KHR;
+  const auto changed = wanted_mode != self.present_mode;
+  self.present_mode = wanted_mode;
+  if (
+    self.render_device->surface != VK_NULL_HANDLE && (changed || self.resources->swapchain.handle == VK_NULL_HANDLE)
+  ) {
+    const auto size = App::get_window().get_size_in_pixels();
+    const auto resized = self.recreate_swapchain(
+      {static_cast<u32>(std::max(size.x, 0)), static_cast<u32>(std::max(size.y, 0))}
     );
-  }
-
-  auto acquired_swapchain = vuk::acquire_swapchain(*self.swapchain);
-  auto acquired_image = vuk::acquire_next_image("present_image", std::move(acquired_swapchain));
-
-  self.swapchain_extent = glm::vec2(acquired_image->extent.width, acquired_image->extent.height);
-
-  return acquired_image;
-}
-
-auto RenderContext::end_frame(this RenderContext& self, vuk::Value<vuk::ImageAttachment> target_) -> void {
-  ZoneScoped;
-
-  auto entire_thing = vuk::enqueue_presentation(std::move(target_));
-  vuk::ProfilingCallbacks cbs = self.tracy_profiler->setup_vuk_callback();
-  try {
-    auto queue_lock = std::unique_lock(self.queue_mutex);
-    entire_thing.submit(*self.frame_allocator, self.compiler, {.graph_label = {}, .callbacks = cbs});
-  } catch (vuk::VkException& exception) {
-    // Actions such as minimizing the window will report a VK_ERROR_OUT_OF_DATE_KHR error,
-    // so we don't wanna fatal error out on those.
-    if (exception.code() != VK_ERROR_OUT_OF_DATE_KHR) {
-      OX_LOG_FATAL("{}", exception.what());
+    if (!resized) {
+      return std::unexpected(resized.error());
     }
   }
-
-  self.current_frame = (self.current_frame + 1) % self.num_inflight_frames;
-  self.num_frames = self.runtime->get_frame_count();
+  auto lock = std::unique_lock(self.frame_mutex);
+  const auto next = self.super_frame->next_frame();
+  if (!next) {
+    return std::unexpected(next.error());
+  }
+  self.frame = *next;
+  self.current_frame = static_cast<u32>(self.super_frame->frame_counter % self.num_inflight_frames);
+  self.num_frames += 1;
+  self.collect_retired();
+  return self.swapchain_info();
 }
 
-auto RenderContext::wait(this RenderContext& self) -> void {
-  ZoneScoped;
-
-  OX_LOG_INFO("Device wait idle triggered!");
-  self.runtime->wait_idle();
+auto RenderContext::swapchain_info(this const RenderContext& self) -> SwapchainInfo {
+  return {self.resources->swapchain.format(), self.resources->swapchain.extent(), self.resources->swapchain_generation};
 }
 
-auto RenderContext::wait_on(vuk::UntypedValue&& fut) -> void {
-  ZoneScoped;
-
-  auto queue_lock = std::unique_lock(queue_mutex);
-  fut.wait(superframe_allocator.value(), this_thread_compiler);
+auto RenderContext::acquire_next_image(this RenderContext& self, vir::Module& module) -> vir::ValueID {
+  auto lock = std::shared_lock(self.frame_mutex);
+  OX_ASSERT(self.resources->swapchain.handle != VK_NULL_HANDLE, "swapchain has not been created");
+  return module.acquire_next_image(self.resources->swapchain);
 }
 
-auto RenderContext::submit_now(vuk::UntypedValue&& fut) -> void {
-  ZoneScoped;
-
-  auto read_lock = std::shared_lock(frame_allocator_mutex);
-  auto queue_lock = std::unique_lock(queue_mutex);
-  fut.submit(frame_allocator.value(), this_thread_compiler);
+auto RenderContext::set_vsync(this RenderContext& self, bool enable) -> void {
+  self.context_cvar.cvar_vsync.set(enable ? 1 : 0);
 }
 
-auto RenderContext::get_compiler(this RenderContext&) -> vuk::Compiler& { return this_thread_compiler; }
-
-auto RenderContext::wait_on_multiple(std::span<vuk::UntypedValue> values) -> void {
-  ZoneScoped;
-
-  auto queue_lock = std::unique_lock(queue_mutex);
-  vuk::wait_for_values_explicit(superframe_allocator.value(), this_thread_compiler, values);
+auto RenderContext::is_vsync(this const RenderContext& self) -> bool {
+  return self.present_mode == VK_PRESENT_MODE_FIFO_KHR;
 }
 
-auto RenderContext::submit_multiple(std::span<vuk::UntypedValue> values) -> void {
+auto RenderContext::compile(this RenderContext& self, vir::Module&& module) -> std::expected<vir::Program, VkResult> {
   ZoneScoped;
+  memory::ScopedStack stack;
+  auto lock = std::shared_lock(self.frame_mutex);
+  if (!self.graph) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+  for (const auto& variable : module.variables) {
+    if (
+      const auto* swapchain = std::get_if<vir::AcquiredSwapchain>(&variable.value);
+      swapchain && (swapchain->handle != self.resources->swapchain.handle ||
+                    (swapchain->generation && swapchain->generation != self.resources->swapchain_generation))
+    ) {
+      return std::unexpected(VK_ERROR_OUT_OF_DATE_KHR);
+    }
+  }
+  auto roots = stack.alloc<vir::ValueID>(module.instructions.size());
+  auto count = 0_sz;
+  for (usize index = 0; index < module.instructions.size(); index++) {
+    if (std::holds_alternative<vir::ir::Export>(module.instructions[index])) {
+      roots[count++] = static_cast<vir::ValueID>(index);
+    }
+  }
+  auto program = module.compile_all(self.graph->pipeline_bindings(), roots.first(count));
+  if (!program) {
+    return std::unexpected(program.error());
+  }
+  if (program_acquires_swapchain(*program)) {
+    program->presentation_generation = self.resources->swapchain_generation;
+  }
+  return program;
+}
 
-  auto queue_lock = std::unique_lock(queue_mutex);
-  vuk::submit(superframe_allocator.value(), this_thread_compiler, values, {});
+auto RenderContext::execute(this RenderContext& self, const vir::Program& program)
+  -> std::expected<vir::SubmitTicket, VkResult> {
+  ZoneScoped;
+  auto lock = std::shared_lock(self.frame_mutex);
+  if (!self.frame) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+  if (program_acquires_swapchain(program) && program.presentation_generation != self.resources->swapchain_generation) {
+    return std::unexpected(VK_ERROR_OUT_OF_DATE_KHR);
+  }
+  return self.graph->execute(program, *self.frame);
+}
+
+auto RenderContext::execute(this RenderContext& self, const vir::Program& program, vir::FrameAllocator& allocator)
+  -> std::expected<vir::SubmitTicket, VkResult> {
+  auto lock = std::shared_lock(self.frame_mutex);
+  if (!self.graph || allocator.upstream != self.persistent.get()) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+  if (program_acquires_swapchain(program) && program.presentation_generation != self.resources->swapchain_generation) {
+    return std::unexpected(VK_ERROR_OUT_OF_DATE_KHR);
+  }
+  return self.graph->execute(program, allocator);
+}
+
+auto RenderContext::execute_blocking(this RenderContext& self, vir::Module&& module)
+  -> std::expected<vir::SubmitTicket, VkResult> {
+  ZoneScoped;
+  const auto program = self.compile(std::move(module));
+  if (!program) {
+    return std::unexpected(program.error());
+  }
+  return self.execute_blocking(*program);
+}
+
+auto RenderContext::execute_blocking(this RenderContext& self, const vir::Program& program)
+  -> std::expected<vir::SubmitTicket, VkResult> {
+  ZoneScoped;
+  auto allocator = vir::FrameAllocator(*self.persistent);
+  const auto ticket = self.execute(program, allocator);
+  if (!ticket) {
+    return std::unexpected(ticket.error());
+  }
+  const auto waited = self.wait(*ticket);
+  if (!waited) {
+    return std::unexpected(waited.error());
+  }
+  return ticket;
+}
+
+auto RenderContext::allocate_staging(this RenderContext& self, std::span<const u8> data)
+  -> std::expected<vir::Buffer, VkResult> {
+  ZoneScoped;
+  if (data.empty()) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+
+  auto buffer = self.persistent->allocate_buffer({
+    .size = data.size_bytes(),
+    .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    .location = vir::MemoryLocation::CpuToGpu,
+    .alignment = 16,
+    .name = "staging",
+  });
+  if (!buffer) {
+    return std::unexpected(buffer.error());
+  }
+
+  const auto written = buffer->write_bytes(0, data);
+  const auto flushed = written ? self.persistent->flush_buffer(*buffer) : std::expected<void, VkResult>{};
+  if (!written || !flushed) {
+    self.persistent->deallocate_buffer(*buffer);
+    return std::unexpected(!written ? written.error() : flushed.error());
+  }
+
+  return buffer;
+}
+
+auto RenderContext::submit_upload(
+  this RenderContext& self, vir::Module&& module, std::vector<vir::Buffer> staging, UploadBatch* batch
+) -> std::expected<vir::SubmitTicket, VkResult> {
+  ZoneScoped;
+  const auto free_staging = [&] {
+    for (const auto& buffer : staging) {
+      self.persistent->deallocate_buffer(buffer);
+    }
+  };
+
+  auto program = self.compile(std::move(module));
+  if (!program) {
+    free_staging();
+    return std::unexpected(program.error());
+  }
+
+  auto allocator = std::make_unique<vir::FrameAllocator>(*self.persistent);
+  const auto ticket = self.execute(*program, *allocator);
+  if (!ticket) {
+    allocator.reset();
+    free_staging();
+    return std::unexpected(ticket.error());
+  }
+
+  if (batch) {
+    batch->add_upload({.allocator = std::move(allocator), .staging = std::move(staging), .ticket = *ticket});
+    return ticket;
+  }
+
+  const auto waited = self.wait(*ticket);
+  allocator.reset();
+  free_staging();
+  if (!waited) {
+    return std::unexpected(waited.error());
+  }
+
+  return ticket;
+}
+
+auto RenderContext::wait(this const RenderContext& self, vir::SubmitTicket ticket) -> std::expected<void, VkResult> {
+  return self.context->wait(ticket);
+}
+
+auto RenderContext::is_retired(this const RenderContext& self, vir::SubmitTicket ticket) -> bool {
+  return self.context->is_complete(ticket);
+}
+
+auto RenderContext::wait(this const RenderContext& self) -> void {
+  auto* queue = self.context->queue(vir::DomainFlag::Graphics);
+  auto lock = std::unique_lock(queue->submit_mutex);
+  self.context->wait_idle();
 }
 
 auto RenderContext::create_persistent_descriptor_set(
   this RenderContext& self,
-  u32 set_index,
-  std::span<VkDescriptorSetLayoutBinding> bindings,
-  std::span<VkDescriptorBindingFlags> binding_flags
-) -> vuk::PersistentDescriptorSet {
+  std::span<const VkDescriptorSetLayoutBinding> bindings,
+  std::span<const VkDescriptorBindingFlags> binding_flags
+) -> std::expected<DescriptorSet, VkResult> {
   ZoneScoped;
-
-  OX_CHECK_EQ(bindings.size(), binding_flags.size());
-
-  auto descriptor_sizes = std::vector<VkDescriptorPoolSize>();
-  for (const auto& binding : bindings) {
-    OX_CHECK_LT(binding.descriptorType, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
-    descriptor_sizes.emplace_back(binding.descriptorType, binding.descriptorCount);
+  if (bindings.empty() || bindings.size() != binding_flags.size()) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
   }
-
-  auto pool_flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-  auto pool_info = VkDescriptorPoolCreateInfo{
+  auto stack = memory::ScopedStack{};
+  auto sizes = stack.alloc<VkDescriptorPoolSize>(bindings.size());
+  for (usize index = 0; index < sizes.size(); index++) {
+    sizes[index] = {bindings[index].descriptorType, bindings[index].descriptorCount};
+  }
+  const auto pool_info = VkDescriptorPoolCreateInfo{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
     .pNext = nullptr,
-    .flags = static_cast<VkDescriptorPoolCreateFlags>(pool_flags),
+    .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
     .maxSets = 1,
-    .poolSizeCount = static_cast<u32>(descriptor_sizes.size()),
-    .pPoolSizes = descriptor_sizes.data(),
+    .poolSizeCount = static_cast<u32>(sizes.size()),
+    .pPoolSizes = sizes.data(),
   };
-  auto pool = VkDescriptorPool{};
-  if (const auto result = vkCreateDescriptorPool(self.device, &pool_info, nullptr, &pool); result != VK_SUCCESS) {
-    OX_LOG_FATAL("Failed to create persistent descriptor pool: VkResult({}).", static_cast<i32>(result));
+  auto descriptor = DescriptorSet{};
+  const auto& fn = self.context->fn;
+  auto result = fn.vkCreateDescriptorPool(self.device, &pool_info, nullptr, &descriptor.pool);
+  if (result != VK_SUCCESS) {
+    return std::unexpected(result);
   }
-
-  auto set_layout_binding_flags_info = VkDescriptorSetLayoutBindingFlagsCreateInfo{
+  const auto flags = VkDescriptorSetLayoutBindingFlagsCreateInfo{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
     .pNext = nullptr,
     .bindingCount = static_cast<u32>(binding_flags.size()),
     .pBindingFlags = binding_flags.data(),
   };
-
-  auto set_layout_info = VkDescriptorSetLayoutCreateInfo{
+  const auto layout_info = VkDescriptorSetLayoutCreateInfo{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-    .pNext = &set_layout_binding_flags_info,
+    .pNext = &flags,
     .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
     .bindingCount = static_cast<u32>(bindings.size()),
     .pBindings = bindings.data(),
   };
-  auto set_layout = VkDescriptorSetLayout{};
-  if (
-    const auto result = vkCreateDescriptorSetLayout(self.device, &set_layout_info, nullptr, &set_layout);
-    result != VK_SUCCESS
-  ) {
-    OX_LOG_FATAL("Failed to create persistent descriptor set layout: VkResult({}).", static_cast<i32>(result));
+  result = fn.vkCreateDescriptorSetLayout(self.device, &layout_info, nullptr, &descriptor.layout);
+  if (result != VK_SUCCESS) {
+    fn.vkDestroyDescriptorPool(self.device, descriptor.pool, nullptr);
+    return std::unexpected(result);
   }
-
-  auto set_alloc_info = VkDescriptorSetAllocateInfo{
+  const auto allocate = VkDescriptorSetAllocateInfo{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
     .pNext = nullptr,
-    .descriptorPool = pool,
+    .descriptorPool = descriptor.pool,
     .descriptorSetCount = 1,
-    .pSetLayouts = &set_layout,
+    .pSetLayouts = &descriptor.layout,
   };
-  auto descriptor_set = VkDescriptorSet{};
-  if (
-    const auto result = vkAllocateDescriptorSets(self.device, &set_alloc_info, &descriptor_set); result != VK_SUCCESS
-  ) {
-    OX_LOG_FATAL("Failed to allocate persistent descriptor set: VkResult({}).", static_cast<i32>(result));
+  result = fn.vkAllocateDescriptorSets(self.device, &allocate, &descriptor.set);
+  if (result != VK_SUCCESS) {
+    fn.vkDestroyDescriptorSetLayout(self.device, descriptor.layout, nullptr);
+    fn.vkDestroyDescriptorPool(self.device, descriptor.pool, nullptr);
+    return std::unexpected(result);
   }
-
-  auto persistent_set_create_info = vuk::DescriptorSetLayoutCreateInfo{
-    .dslci = set_layout_info,
-    .index = set_index,
-    .bindings = std::vector(bindings.begin(), bindings.end()),
-    .flags = std::vector(binding_flags.begin(), binding_flags.end()),
-  };
-  return vuk::PersistentDescriptorSet{
-    .backing_pool = pool,
-    .set_layout_create_info = persistent_set_create_info,
-    .set_layout = set_layout,
-    .backing_set = descriptor_set,
-    .wdss = {},
-    .descriptor_bindings = {},
-  };
+  descriptor.bindings.assign(bindings.begin(), bindings.end());
+  descriptor.flags.assign(binding_flags.begin(), binding_flags.end());
+  return descriptor;
 }
 
-auto RenderContext::commit_descriptor_set(this RenderContext& self, std::span<VkWriteDescriptorSet> writes) -> void {
-  ZoneScoped;
+auto RenderContext::commit_descriptor_set(this RenderContext& self, std::span<const VkWriteDescriptorSet> writes)
+  -> void {
+  auto lock = std::unique_lock(self.descriptor_mutex);
+  self.context->fn.vkUpdateDescriptorSets(self.device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
+}
 
-  auto write_lock = std::unique_lock(self.descriptor_mutex);
-  vkUpdateDescriptorSets(self.device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
+auto RenderContext::bindless_set(this const RenderContext& self) -> vir::BindlessDescriptorSet {
+  const auto& descriptor = self.resources->descriptor_set;
+  return {.index = 1, .layout = descriptor.layout, .set = descriptor.set};
 }
 
 auto RenderContext::create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool {
   ZoneScoped;
-
   if (const auto missing = missing_shader_feature(self.features, pipeline_data.required_features); !missing.empty()) {
-    OX_LOG_INFO("Skipped pipeline named {}, device has no {} support.", pipeline_data.module_name, missing);
+    OX_LOG_INFO("skipped pipeline {}, device has no {} support", pipeline_data.module_name, missing);
     return true;
   }
-
-  auto pipeline_ci = vuk::PipelineBaseCreateInfo{};
+  if (pipeline_data.entry_points.empty() || pipeline_data.module_name.empty()) {
+    return false;
+  }
+  auto lock = std::unique_lock(self.resources->pipeline_mutex);
+  if (self.resources->pipeline_names.contains(pipeline_data.module_name)) {
+    OX_LOG_ERROR("pipeline {} is already declared", pipeline_data.module_name);
+    return false;
+  }
+  auto bindless = option<vir::BindlessDescriptorSet>{};
   if (pipeline_data.required_features & ShaderFeatureFlag::Bindless) {
-    const auto& bindless_set = self.resources.descriptor_set;
-    const auto& set_layout_create_info = bindless_set.set_layout_create_info;
-    pipeline_ci.explicit_set_layouts.emplace_back(set_layout_create_info);
-
-    for (const auto& [binding, binding_flags] :
-         std::views::zip(set_layout_create_info.bindings, set_layout_create_info.flags)) {
-      pipeline_ci.set_binding_flags(
-        static_cast<u32>(set_layout_create_info.index),
-        binding.binding,
-        static_cast<vuk::DescriptorBindingFlagBits>(binding_flags)
-      );
-    }
+    bindless = self.bindless_set();
   }
-
-  const auto ray_tracing = std::ranges::any_of(pipeline_data.entry_points, [](const auto& entry_point) {
-    return entry_point.shader_stage == ShaderStage::RayGeneration;
-  });
-
-  if (ray_tracing) {
-    auto ordered = ankerl::svector<const ShaderEntryPointData*, 8>{};
-    for (const auto& entry_point : pipeline_data.entry_points) {
-      ordered.emplace_back(&entry_point);
-    }
-    std::ranges::stable_sort(ordered, {}, [](const ShaderEntryPointData* entry_point) {
-      return ray_tracing_stage_order(entry_point->shader_stage);
-    });
-
-    auto hit_group = vuk::HitGroup{.type = vuk::HitGroupType::eTriangles};
-    for (u32 index = 0; index < static_cast<u32>(ordered.size()); index++) {
-      const auto& entry_point = *ordered[index];
-      pipeline_ci.add_spirv(entry_point.spirv, pipeline_data.module_name, entry_point.name);
-
-      switch (entry_point.shader_stage) {
-        case ShaderStage::ClosestHit  : hit_group.closest_hit = index; break;
-        case ShaderStage::AnyHit      : hit_group.any_hit = index; break;
-        case ShaderStage::Intersection: hit_group.intersection = index; break;
-        default                       : break;
-      }
-    }
-
-    if (hit_group.intersection != VK_SHADER_UNUSED_KHR) {
-      hit_group.type = vuk::HitGroupType::eProcedural;
-    }
-    if (
-      hit_group.closest_hit != VK_SHADER_UNUSED_KHR || hit_group.any_hit != VK_SHADER_UNUSED_KHR ||
-      hit_group.intersection != VK_SHADER_UNUSED_KHR
-    ) {
-      pipeline_ci.add_hit_group(hit_group);
-    }
+  auto shaders = std::vector<vir::ShaderCode>{};
+  for (const auto& entry : pipeline_data.entry_points) {
+    shaders.push_back({.spirv = entry.spirv, .layout = entry.layout});
+  }
+  const auto is_ray_tracing = std::ranges::any_of(
+    pipeline_data.entry_points,
+    [](const ShaderEntryPointData& entry) -> bool { return entry.shader_stage == ShaderStage::RayGeneration; }
+  );
+  auto declared = std::expected<vir::PipelineID, VkResult>(std::unexpected(VK_ERROR_INITIALIZATION_FAILED));
+  if (is_ray_tracing) {
+    declared = self.graph->declare_ray_tracing_pipeline(
+      {.shaders = std::move(shaders), .bindless = bindless, .name = pipeline_data.module_name}
+    );
+  } else if (
+    pipeline_data.entry_points.size() == 1 && pipeline_data.entry_points[0].shader_stage == ShaderStage::Compute
+  ) {
+    declared = self.graph->declare_compute_pipeline(
+      {.shader = std::move(shaders[0]), .bindless = bindless, .name = pipeline_data.module_name}
+    );
   } else {
-    for (const auto& entry_point : pipeline_data.entry_points) {
-      pipeline_ci.add_spirv(entry_point.spirv, pipeline_data.module_name, entry_point.name);
-    }
+    declared = self.graph->declare_graphics_pipeline(
+      {.shaders = std::move(shaders), .bindless = bindless, .name = pipeline_data.module_name}
+    );
   }
-
-  self.runtime->create_named_pipeline(pipeline_data.module_name.c_str(), pipeline_ci);
-
-  OX_LOG_INFO("Created pipeline named {}.", pipeline_data.module_name);
-
+  if (!declared) {
+    OX_LOG_ERROR("failed to declare pipeline {} ({})", pipeline_data.module_name, std::to_underlying(declared.error()));
+    return false;
+  }
+  const auto id = self.resources->pipelines.create_slot(std::move(*declared));
+  self.resources->pipeline_names.emplace(pipeline_data.module_name, id);
   return true;
 }
 
+auto RenderContext::pipeline(this const RenderContext& self, std::string_view name) -> vir::PipelineID {
+  auto lock = std::shared_lock(self.resources->pipeline_mutex);
+  const auto it = self.resources->pipeline_names.find(name);
+  return it == self.resources->pipeline_names.end() ? vir::PipelineID::Invalid : self.pipeline(it->second);
+}
+
+auto RenderContext::pipeline(this const RenderContext& self, PipelineID id) -> vir::PipelineID {
+  return self.resources->pipelines.copy_slot(id).value_or(vir::PipelineID::Invalid);
+}
+
 auto RenderContext::use_mesh_shaders(this const RenderContext& self) -> bool {
-  return (self.features & RenderContext::Feature::MeshShaders) && self.context_cvar.cvar_mesh_shaders.as_bool();
+  return (self.features & Feature::MeshShaders) && self.context_cvar.cvar_mesh_shaders.as_bool();
 }
 
 auto RenderContext::use_ray_tracing(this const RenderContext& self) -> bool {
-  return (self.features & RenderContext::Feature::RayTracing) && self.context_cvar.cvar_ray_tracing.as_bool() &&
-         vkGetAccelerationStructureDeviceAddressKHR != nullptr;
+  return (self.features & Feature::RayTracing) && self.context_cvar.cvar_ray_tracing.as_bool() && self.context &&
+         self.context->fn.vkGetAccelerationStructureDeviceAddressKHR != nullptr;
 }
 
 auto RenderContext::use_ray_tracing_pipeline(this const RenderContext& self) -> bool {
-  return self.use_ray_tracing() && (self.features & RenderContext::Feature::RayTracingPipeline);
+  return self.use_ray_tracing() && (self.features & Feature::RayTracingPipeline);
 }
 
 auto RenderContext::as_scratch_alignment(this const RenderContext& self) -> u64 {
-  return self.runtime->as_properties.minAccelerationStructureScratchOffsetAlignment;
+  return self.context->acceleration_structure_scratch_alignment;
+}
+auto RenderContext::allocate_buffer(this RenderContext& self, const vir::BufferInfo& info)
+  -> std::expected<BufferID, VkResult> {
+  ZoneScoped;
+  auto value = self.persistent->allocate_buffer(info);
+  if (!value) {
+    return std::unexpected(value.error());
+  }
+  return self.resources->buffers.create_slot(std::move(*value));
 }
 
-auto RenderContext::allocate_image(const vuk::ImageAttachment& image_attachment) -> ImageID {
+auto RenderContext::destroy_buffer(this RenderContext& self, BufferID id) -> void {
+  retire_resource(self, self.resources->buffers, id);
+}
+
+auto RenderContext::buffer(this const RenderContext& self, BufferID id) -> vir::Buffer {
+  return live_resource(*self.resources, self.resources->buffers, id);
+}
+
+auto RenderContext::allocate_frame_buffer(this RenderContext& self, const vir::BufferInfo& info)
+  -> std::expected<vir::Buffer, VkResult> {
+  auto lock = std::unique_lock(self.frame_mutex);
+  if (!self.frame) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+  return self.frame->allocate_buffer(info);
+}
+
+auto RenderContext::upload_frame_buffer(this RenderContext& self, std::span<const u8> data, std::string_view name)
+  -> std::expected<vir::Buffer, VkResult> {
   ZoneScoped;
+  auto buffer = self.allocate_frame_buffer({
+    .size = std::max<u64>(data.size_bytes(), 16),
+    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+    .location = vir::MemoryLocation::CpuToGpu,
+    .alignment = 16,
+    .name = std::string(name),
+  });
+  if (!buffer) {
+    return std::unexpected(buffer.error());
+  }
 
-  vuk::ImageCreateInfo ici;
-  ici.format = vuk::Format(image_attachment.format);
-  ici.imageType = image_attachment.image_type;
-  ici.flags = image_attachment.image_flags;
-  ici.arrayLayers = image_attachment.layer_count;
-  ici.samples = image_attachment.sample_count.count;
-  ici.tiling = image_attachment.tiling;
-  ici.mipLevels = image_attachment.level_count;
-  ici.usage = image_attachment.usage;
-  ici.extent = image_attachment.extent;
-
-  VkImageFormatListCreateInfo listci = {};
-  listci.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
-  VkFormat formats[2];
-  if (image_attachment.allow_srgb_unorm_mutable) {
-    auto unorm_fmt = srgb_to_unorm(image_attachment.format);
-    auto srgb_fmt = unorm_to_srgb(image_attachment.format);
-    formats[0] = (VkFormat)image_attachment.format;
-    formats[1] = unorm_fmt == vuk::Format::eUndefined ? (VkFormat)srgb_fmt : (VkFormat)unorm_fmt;
-    listci.pViewFormats = formats;
-    listci.viewFormatCount = formats[1] == VK_FORMAT_UNDEFINED ? 1 : 2;
-    if (listci.viewFormatCount > 1) {
-      ici.flags |= vuk::ImageCreateFlagBits::eMutableFormat;
-      ici.pNext = &listci;
+  if (!data.empty()) {
+    if (const auto written = buffer->write_bytes(0, data); !written) {
+      return std::unexpected(written.error());
     }
   }
 
-  vuk::Image image = {};
-
-  if (auto res = superframe_allocator->allocate_images(std::span{&image, 1}, std::span{&ici, 1}); !res) {
-    OX_LOG_ERROR("{}", res.error().error_message);
+  if (const auto flushed = self.persistent->flush_buffer(*buffer); !flushed) {
+    return std::unexpected(flushed.error());
   }
 
-  return resources.images.create_slot(std::move(image));
+  return buffer;
 }
 
-auto RenderContext::destroy_image(const ImageID id) -> void {
+auto RenderContext::resize_buffer(this RenderContext& self, BufferID& id, u64 size, std::string_view name)
+  -> std::expected<bool, VkResult> {
   ZoneScoped;
-
-  auto image = resources.images.copy_slot(id);
-  if (!image) {
-    return;
+  const auto current = id != BufferID::Invalid ? self.buffer(id).size : 0_u64;
+  if (id != BufferID::Invalid && size <= current) {
+    return false;
   }
 
-  superframe_allocator->deallocate({&image.value(), 1});
-  resources.images.destroy_slot(id);
+  auto grown = self.allocate_buffer({
+    .size = std::max({size, current * 2, 16_u64}),
+    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = std::string(name),
+  });
+  if (!grown) {
+    return std::unexpected(grown.error());
+  }
+
+  if (id != BufferID::Invalid) {
+    self.destroy_buffer(id);
+  }
+
+  id = *grown;
+  return true;
 }
 
-auto RenderContext::image(const ImageID id) -> vuk::Image {
+auto RenderContext::staging_buffer(
+  this RenderContext& self, vir::FrameAllocator& allocator, std::span<const u8> data, u64 alignment
+) -> std::expected<vir::Buffer, VkResult> {
   ZoneScoped;
-
-  return resources.images.copy_slot(id).value_or(vuk::Image{});
+  if (allocator.upstream != self.persistent.get() || data.empty()) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+  auto value = allocator.allocate_buffer({
+    .size = data.size_bytes(),
+    .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    .location = vir::MemoryLocation::CpuToGpu,
+    .alignment = alignment,
+  });
+  if (!value) {
+    return std::unexpected(value.error());
+  }
+  if (const auto written = value->write_bytes(0, data); !written) {
+    return std::unexpected(written.error());
+  }
+  if (const auto flushed = self.persistent->flush_buffer(*value); !flushed) {
+    return std::unexpected(flushed.error());
+  }
+  return value;
 }
 
-auto RenderContext::allocate_image_view(const vuk::ImageAttachment& image_attachment, UploadBatch* batch)
-  -> ImageViewID {
+auto RenderContext::allocate_image(this RenderContext& self, const vir::ImageInfo& info)
+  -> std::expected<ImageID, VkResult> {
   ZoneScoped;
-
-  vuk::ImageViewCreateInfo ivci;
-  OX_CHECK_EQ((bool)image_attachment.image, true);
-  ivci.flags = image_attachment.image_view_flags;
-  ivci.image = image_attachment.image.image;
-  ivci.viewType = image_attachment.view_type;
-  ivci.format = vuk::Format(image_attachment.format);
-  ivci.components = image_attachment.components;
-  ivci.view_usage = image_attachment.usage;
-
-  vuk::ImageSubresourceRange& isr = ivci.subresourceRange;
-  isr.aspectMask = format_to_aspect(ivci.format);
-  isr.baseArrayLayer = image_attachment.base_layer;
-  isr.layerCount = image_attachment.layer_count;
-  isr.baseMipLevel = image_attachment.base_level;
-  isr.levelCount = image_attachment.level_count;
-
-  vuk::ImageView view;
-
-  if (auto res = superframe_allocator->allocate_image_views(std::span{&view, 1}, std::span{&ivci, 1}); !res) {
-    OX_LOG_ERROR("{}", res.error().error_message);
+  auto value = self.persistent->allocate_image(info);
+  if (!value) {
+    return std::unexpected(value.error());
   }
-
-  auto* image_view_handle = view.payload;
-  auto image_view_id = resources.image_views.create_slot(std::move(view));
-
-  auto& bindless_set = get_descriptor_set();
-
-  auto sampled_image_descriptor = VkDescriptorImageInfo{
-    .sampler = nullptr,
-    .imageView = image_view_handle,
-    .imageLayout = VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
-  };
-
-  auto storage_image_descriptor = VkDescriptorImageInfo{
-    .sampler = nullptr,
-    .imageView = image_view_handle,
-    .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-  };
-
-  const auto array_element = SlotMap_decode_id(image_view_id).index;
-  if (batch) {
-    if (image_attachment.usage & vuk::ImageUsageFlagBits::eSampled) {
-      batch->add_descriptor_write({
-        .binding = DescriptorTable_SampledImageIndex,
-        .array_element = array_element,
-        .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-        .image_info = sampled_image_descriptor,
-      });
-    }
-    if (image_attachment.usage & vuk::ImageUsageFlagBits::eStorage) {
-      batch->add_descriptor_write({
-        .binding = DescriptorTable_StorageImageIndex,
-        .array_element = array_element,
-        .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        .image_info = storage_image_descriptor,
-      });
-    }
-
-    return image_view_id;
-  }
-
-  auto descriptor_count = 0_sz;
-  auto descriptor_writes = std::array<VkWriteDescriptorSet, 2>();
-  if (image_attachment.usage & vuk::ImageUsageFlagBits::eSampled) {
-    descriptor_writes[descriptor_count++] = {
-      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-      .pNext = nullptr,
-      .dstSet = bindless_set.backing_set,
-      .dstBinding = DescriptorTable_SampledImageIndex,
-      .dstArrayElement = SlotMap_decode_id(image_view_id).index,
-      .descriptorCount = 1,
-      .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-      .pImageInfo = &sampled_image_descriptor,
-      .pBufferInfo = nullptr,
-      .pTexelBufferView = nullptr,
-    };
-  }
-  if (image_attachment.usage & vuk::ImageUsageFlagBits::eStorage) {
-    descriptor_writes[descriptor_count++] = {
-      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-      .pNext = nullptr,
-      .dstSet = bindless_set.backing_set,
-      .dstBinding = DescriptorTable_StorageImageIndex,
-      .dstArrayElement = SlotMap_decode_id(image_view_id).index,
-      .descriptorCount = 1,
-      .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-      .pImageInfo = &storage_image_descriptor,
-      .pBufferInfo = nullptr,
-      .pTexelBufferView = nullptr,
-    };
-  }
-  commit_descriptor_set({descriptor_writes.data(), descriptor_count});
-
-  return image_view_id;
+  return self.resources->images.create_slot(std::move(*value));
 }
 
-auto RenderContext::destroy_image_view(const ImageViewID id) -> void {
-  ZoneScoped;
-
-  auto view = resources.image_views.copy_slot(id);
-  if (!view) {
-    return;
-  }
-
-  superframe_allocator->deallocate({&view.value(), 1});
-  resources.image_views.destroy_slot(id);
+auto RenderContext::destroy_image(this RenderContext& self, ImageID id) -> void {
+  retire_resource(self, self.resources->images, id);
 }
 
-auto RenderContext::image_view(const ImageViewID id) -> vuk::ImageView {
-  ZoneScoped;
-
-  return resources.image_views.copy_slot(id).value_or(vuk::ImageView{});
+auto RenderContext::image(this const RenderContext& self, ImageID id) -> vir::Image {
+  return live_resource(*self.resources, self.resources->images, id);
 }
 
-auto RenderContext::allocate_sampler(const vuk::SamplerCreateInfo& sampler_info, UploadBatch* batch) -> SamplerID {
+auto RenderContext::allocate_image_view(this RenderContext& self, const vir::ImageViewInfo& info, bool write_bindless)
+  -> std::expected<ImageViewID, VkResult> {
   ZoneScoped;
-
-  auto sampler = runtime->acquire_sampler(sampler_info, num_frames);
-  auto sampler_handle = sampler.payload;
-  auto sampler_id = resources.samplers.create_slot(std::move(sampler));
-
-  auto sampler_descriptor = VkDescriptorImageInfo{
-    .sampler = sampler_handle,
-    .imageView = nullptr,
-    .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-  };
-
-  if (batch) {
-    batch->add_descriptor_write({
-      .binding = DescriptorTable_SamplerIndex,
-      .array_element = SlotMap_decode_id(sampler_id).index,
-      .type = VK_DESCRIPTOR_TYPE_SAMPLER,
-      .image_info = sampler_descriptor,
-    });
-
-    return sampler_id;
-  }
-
-  auto& bindless_set = get_descriptor_set();
-  auto descriptor_write = VkWriteDescriptorSet{
-    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, //
+  const auto usage_info = VkImageViewUsageCreateInfo{
+    .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
     .pNext = nullptr,
-    .dstSet = bindless_set.backing_set,
-    .dstBinding = DescriptorTable_SamplerIndex,
-    .dstArrayElement = SlotMap_decode_id(sampler_id).index,
-    .descriptorCount = 1,
-    .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-    .pImageInfo = &sampler_descriptor,
-    .pBufferInfo = nullptr,
-    .pTexelBufferView = nullptr,
+    .usage = static_cast<VkImageUsageFlags>(info.usage),
   };
-  commit_descriptor_set({&descriptor_write, 1});
-
-  return sampler_id;
+  const auto create_info = VkImageViewCreateInfo{
+    .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+    .pNext = vir::is_empty(info.usage) ? nullptr : &usage_info,
+    .flags = static_cast<VkImageViewCreateFlags>(info.flags),
+    .image = info.image,
+    .viewType = static_cast<VkImageViewType>(info.view_type),
+    .format = static_cast<VkFormat>(info.format),
+    .components = std::bit_cast<VkComponentMapping>(info.components),
+    .subresourceRange = info.range,
+  };
+  auto handle = VkImageView{VK_NULL_HANDLE};
+  if (
+    const auto result = self.context->fn.vkCreateImageView(self.device, &create_info, nullptr, &handle);
+    result != VK_SUCCESS
+  ) {
+    return std::unexpected(result);
+  }
+  auto id = self.resources->image_views.create_slot(vir::ImageView{handle});
+  const auto index = SlotMap_decode_id(id).index;
+  const auto& descriptor = self.resources->descriptor_set;
+  // bounds apply to deferred writes too, upload batches write into the same arrays
+  if (
+    (vir::intersects(info.usage, vir::ImageUsageFlags::Sampled) &&
+     index >= descriptor_capacity(descriptor, DescriptorTable_SampledImageIndex)) ||
+    (vir::intersects(info.usage, vir::ImageUsageFlags::Storage) &&
+     index >= descriptor_capacity(descriptor, DescriptorTable_StorageImageIndex))
+  ) {
+    self.resources->image_views.destroy_slot(id);
+    self.persistent->deallocate_image_view(handle);
+    return std::unexpected(VK_ERROR_OUT_OF_POOL_MEMORY);
+  }
+  self.context->set_name(VK_OBJECT_TYPE_IMAGE_VIEW, handle, info.name);
+  if (!write_bindless) {
+    return id;
+  }
+  const auto sampled = VkDescriptorImageInfo{VK_NULL_HANDLE, handle, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL};
+  const auto storage = VkDescriptorImageInfo{VK_NULL_HANDLE, handle, VK_IMAGE_LAYOUT_GENERAL};
+  auto writes = std::array<VkWriteDescriptorSet, 2>{};
+  auto count = 0_sz;
+  for (const auto [usage, binding, type, image_info] : {
+         std::tuple{
+           vir::ImageUsageFlags::Sampled,
+           DescriptorTable_SampledImageIndex,
+           VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+           &sampled
+         },
+         std::tuple{
+           vir::ImageUsageFlags::Storage,
+           DescriptorTable_StorageImageIndex,
+           VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+           &storage
+         },
+       }) {
+    if (vir::intersects(info.usage, usage)) {
+      writes[count++] = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr,
+        .dstSet = descriptor.set,
+        .dstBinding = binding,
+        .dstArrayElement = index,
+        .descriptorCount = 1,
+        .descriptorType = type,
+        .pImageInfo = image_info,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr,
+      };
+    }
+  }
+  if (count) {
+    self.commit_descriptor_set(std::span(writes).first(count));
+  }
+  return id;
 }
 
-auto RenderContext::destroy_sampler(const SamplerID id) -> void {
-  ZoneScoped;
-
-  resources.samplers.destroy_slot(id);
+auto RenderContext::destroy_image_view(this RenderContext& self, ImageViewID id) -> void {
+  retire_resource(self, self.resources->image_views, id);
 }
 
-auto RenderContext::sampler(const SamplerID id) -> vuk::Sampler {
+auto RenderContext::image_view(this const RenderContext& self, ImageViewID id) -> vir::ImageView {
+  return live_resource(*self.resources, self.resources->image_views, id);
+}
+
+auto RenderContext::allocate_sampler(this RenderContext& self, const vir::SamplerInfo& info, bool write_bindless)
+  -> std::expected<SamplerID, VkResult> {
+  ZoneScoped;
+  auto value = self.persistent->allocate_sampler(info);
+  if (!value) {
+    return std::unexpected(value.error());
+  }
+  const auto id = self.resources->samplers.create_slot(vir::Sampler{*value});
+  const auto index = SlotMap_decode_id(id).index;
+  const auto& descriptor = self.resources->descriptor_set;
+  if (index >= descriptor_capacity(descriptor, DescriptorTable_SamplerIndex)) {
+    self.resources->samplers.destroy_slot(id);
+    self.persistent->deallocate_sampler(*value);
+    return std::unexpected(VK_ERROR_OUT_OF_POOL_MEMORY);
+  }
+  if (write_bindless) {
+    const auto image_info = VkDescriptorImageInfo{*value, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+    const auto write = VkWriteDescriptorSet{
+      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+      .pNext = nullptr,
+      .dstSet = descriptor.set,
+      .dstBinding = DescriptorTable_SamplerIndex,
+      .dstArrayElement = index,
+      .descriptorCount = 1,
+      .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+      .pImageInfo = &image_info,
+      .pBufferInfo = nullptr,
+      .pTexelBufferView = nullptr,
+    };
+    self.commit_descriptor_set(std::span(&write, 1));
+  }
+  return id;
+}
+
+auto RenderContext::destroy_sampler(this RenderContext& self, SamplerID id) -> void {
+  retire_resource(self, self.resources->samplers, id);
+}
+
+auto RenderContext::sampler(this const RenderContext& self, SamplerID id) -> vir::Sampler {
+  return live_resource(*self.resources, self.resources->samplers, id);
+}
+
+auto RenderContext::allocate_acceleration_structure(
+  this RenderContext& self, VkAccelerationStructureTypeKHR type, u64 size, std::string_view name
+) -> std::expected<AccelerationStructureID, VkResult> {
   ZoneScoped;
 
-  return resources.samplers.copy_slot(id).value_or(vuk::Sampler{});
+  // VkAccelerationStructureCreateInfoKHR::offset must be a multiple of 256 by spec, not by a limit
+  const auto buffer_id = self.allocate_buffer({
+    .size = size,
+    .usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+    .location = vir::MemoryLocation::GpuOnly,
+    .alignment = 256,
+    .name = std::string(name),
+  });
+  if (!buffer_id) {
+    return std::unexpected(buffer_id.error());
+  }
+
+  const auto buffer = self.buffer(*buffer_id);
+  const auto create_info = VkAccelerationStructureCreateInfoKHR{
+    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR,
+    .pNext = nullptr,
+    .createFlags = 0,
+    .buffer = buffer.handle,
+    .offset = buffer.offset,
+    .size = size,
+    .type = type,
+    .deviceAddress = 0,
+  };
+  auto handle = VkAccelerationStructureKHR{VK_NULL_HANDLE};
+  if (
+    const auto result = self.context->fn.vkCreateAccelerationStructureKHR(self.device, &create_info, nullptr, &handle);
+    result != VK_SUCCESS
+  ) {
+    self.destroy_buffer(*buffer_id);
+    return std::unexpected(result);
+  }
+
+  return self.resources->acceleration_structures.create_slot({
+    .handle = handle,
+    .buffer = *buffer_id,
+    .device_address = self.get_accel_structure_device_address(handle),
+    .size = size,
+  });
+}
+
+auto RenderContext::create_acceleration_structure_in(
+  this RenderContext& self, VkAccelerationStructureTypeKHR type, BufferID buffer_id, u64 offset, u64 size
+) -> std::expected<AccelerationStructureID, VkResult> {
+  ZoneScoped;
+
+  const auto buffer = self.buffer(buffer_id);
+  const auto create_info = VkAccelerationStructureCreateInfoKHR{
+    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR,
+    .pNext = nullptr,
+    .createFlags = 0,
+    .buffer = buffer.handle,
+    .offset = buffer.offset + offset,
+    .size = size,
+    .type = type,
+    .deviceAddress = 0,
+  };
+  auto handle = VkAccelerationStructureKHR{VK_NULL_HANDLE};
+  if (
+    const auto result = self.context->fn.vkCreateAccelerationStructureKHR(self.device, &create_info, nullptr, &handle);
+    result != VK_SUCCESS
+  ) {
+    return std::unexpected(result);
+  }
+
+  return self.resources->acceleration_structures.create_slot({
+    .handle = handle,
+    .buffer = BufferID::Invalid,
+    .device_address = self.get_accel_structure_device_address(handle),
+    .size = size,
+  });
+}
+
+auto RenderContext::destroy_acceleration_structure(this RenderContext& self, AccelerationStructureID id) -> void {
+  const auto structure = self.resources->acceleration_structures.copy_slot(id);
+  if (!structure) {
+    return;
+  }
+
+  retire_resource(self, self.resources->acceleration_structures, id);
+  if (structure->buffer != BufferID::Invalid) {
+    self.destroy_buffer(structure->buffer);
+  }
+}
+
+auto RenderContext::acceleration_structure(this const RenderContext& self, AccelerationStructureID id)
+  -> GPUAccelerationStructure {
+  return live_resource(*self.resources, self.resources->acceleration_structures, id);
+}
+
+auto RenderContext::seal_retirements(this RenderContext& self, vir::SubmitTicket frame_ticket) -> void {
+  auto lock = std::unique_lock(self.resources->retirement_mutex);
+  for (auto& resource : self.resources->retired) {
+    if (!resource.is_sealed) {
+      resource.ticket = frame_ticket;
+      resource.is_sealed = true;
+    }
+  }
+}
+
+auto RenderContext::cached_sampler(this RenderContext& self, const vir::SamplerInfo& info) -> SamplerID {
+  {
+    auto lock = std::shared_lock(self.resources->sampler_cache_mutex);
+    const auto it = std::ranges::find(
+      self.resources->cached_samplers,
+      info,
+      &std::pair<vir::SamplerInfo, SamplerID>::first
+    );
+    if (it != self.resources->cached_samplers.end()) {
+      return it->second;
+    }
+  }
+
+  auto lock = std::unique_lock(self.resources->sampler_cache_mutex);
+  const auto it = std::ranges::find(
+    self.resources->cached_samplers,
+    info,
+    &std::pair<vir::SamplerInfo, SamplerID>::first
+  );
+  if (it != self.resources->cached_samplers.end()) {
+    return it->second;
+  }
+
+  const auto id = self.allocate_sampler(info);
+  if (!id) {
+    OX_LOG_ERROR("failed to create a cached sampler ({})", std::to_underlying(id.error()));
+    return SamplerID::Invalid;
+  }
+
+  self.resources->cached_samplers.emplace_back(info, *id);
+  return *id;
+}
+
+auto RenderContext::cached_sampler_handle(this RenderContext& self, const vir::SamplerInfo& info) -> VkSampler {
+  return self.sampler(self.cached_sampler(info)).handle;
+}
+
+auto RenderContext::collect_retired(this RenderContext& self) -> void {
+  ZoneScoped;
+  auto lock = std::unique_lock(self.resources->retirement_mutex);
+  std::erase_if(self.resources->retired, [&self](const RetiredRenderResource& resource) -> bool {
+    if (!resource.is_sealed || !self.is_retired(resource.ticket)) {
+      return false;
+    }
+    destroy_retired_resource(self, resource);
+    std::visit(
+      [&self](auto id) -> void {
+        using ID = decltype(id);
+        if constexpr (std::is_same_v<ID, BufferID>) {
+          self.resources->buffers.destroy_slot(id);
+        } else if constexpr (std::is_same_v<ID, ImageID>) {
+          self.resources->images.destroy_slot(id);
+        } else if constexpr (std::is_same_v<ID, ImageViewID>) {
+          self.resources->image_views.destroy_slot(id);
+        } else if constexpr (std::is_same_v<ID, SamplerID>) {
+          self.resources->samplers.destroy_slot(id);
+        } else {
+          self.resources->acceleration_structures.destroy_slot(id);
+        }
+      },
+      resource.id
+    );
+    return true;
+  });
 }
 
 auto RenderContext::get_accel_structure_device_address(
   this const RenderContext& self, VkAccelerationStructureKHR handle
 ) -> u64 {
-  ZoneScoped;
-
-  auto address_info = VkAccelerationStructureDeviceAddressInfoKHR{
+  const auto info = VkAccelerationStructureDeviceAddressInfoKHR{
     .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
     .pNext = nullptr,
     .accelerationStructure = handle,
   };
-
-  return vkGetAccelerationStructureDeviceAddressKHR(self.device, &address_info);
-}
-
-auto RenderContext::cmd_write_accel_structure_compacted_size(
-  this const RenderContext& self,
-  VkCommandBuffer command_buffer,
-  VkAccelerationStructureKHR handle,
-  VkQueryPool query_pool,
-  u32 query_index
-) -> void {
-  ZoneScoped;
-
-  if (!vkCmdWriteAccelerationStructuresPropertiesKHR) {
-    return;
-  }
-
-  vkCmdWriteAccelerationStructuresPropertiesKHR(
-    command_buffer,
-    1,
-    &handle,
-    VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
-    query_pool,
-    query_index
-  );
-}
-
-auto RenderContext::cmd_copy_accel_structure(
-  this const RenderContext& self, VkCommandBuffer command_buffer, const VkCopyAccelerationStructureInfoKHR& info
-) -> void {
-  ZoneScoped;
-
-  if (!vkCmdCopyAccelerationStructureKHR) {
-    return;
-  }
-
-  vkCmdCopyAccelerationStructureKHR(command_buffer, &info);
+  return self.context->fn.vkGetAccelerationStructureDeviceAddressKHR(self.device, &info);
 }
 
 auto RenderContext::create_query_pool(this const RenderContext& self, VkQueryType type, u32 count) -> VkQueryPool {
-  ZoneScoped;
-
-  const auto pool_info = VkQueryPoolCreateInfo{
+  const auto info = VkQueryPoolCreateInfo{
     .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
@@ -1359,191 +1575,34 @@ auto RenderContext::create_query_pool(this const RenderContext& self, VkQueryTyp
     .queryCount = count,
     .pipelineStatistics = 0,
   };
-
-  auto query_pool = VkQueryPool{VK_NULL_HANDLE};
-  if (self.runtime->vkCreateQueryPool(self.device, &pool_info, nullptr, &query_pool) != VK_SUCCESS) {
-    OX_LOG_ERROR("Failed to create query pool.");
+  auto pool = VkQueryPool{VK_NULL_HANDLE};
+  if (self.context->fn.vkCreateQueryPool(self.device, &info, nullptr, &pool) != VK_SUCCESS) {
     return VK_NULL_HANDLE;
   }
-
-  self.runtime->vkResetQueryPool(self.device, query_pool, 0, count);
-
-  return query_pool;
+  self.context->fn.vkResetQueryPool(self.device, pool, 0, count);
+  return pool;
 }
 
-auto RenderContext::destroy_query_pool(this const RenderContext& self, VkQueryPool query_pool) -> void {
-  ZoneScoped;
-
-  if (query_pool == VK_NULL_HANDLE) {
-    return;
+auto RenderContext::destroy_query_pool(this const RenderContext& self, VkQueryPool pool) -> void {
+  if (pool != VK_NULL_HANDLE) {
+    self.context->fn.vkDestroyQueryPool(self.device, pool, nullptr);
   }
-
-  self.runtime->vkDestroyQueryPool(self.device, query_pool, nullptr);
 }
 
-auto RenderContext::read_query_pool(this const RenderContext& self, VkQueryPool query_pool, std::span<u64> results)
-  -> bool {
-  ZoneScoped;
-
-  if (query_pool == VK_NULL_HANDLE || results.empty()) {
+auto RenderContext::read_query_pool(this const RenderContext& self, VkQueryPool pool, std::span<u64> results) -> bool {
+  if (pool == VK_NULL_HANDLE || results.empty()) {
     return false;
   }
-
-  const auto result = self.runtime->vkGetQueryPoolResults(
-    self.device,
-    query_pool,
-    0,
-    static_cast<u32>(results.size()),
-    results.size_bytes(),
-    results.data(),
-    sizeof(u64),
-    VK_QUERY_RESULT_64_BIT
-  );
-
-  return result == VK_SUCCESS;
+  return self.context->fn.vkGetQueryPoolResults(
+           self.device,
+           pool,
+           0,
+           static_cast<u32>(results.size()),
+           results.size_bytes(),
+           results.data(),
+           sizeof(u64),
+           VK_QUERY_RESULT_64_BIT
+         ) == VK_SUCCESS;
 }
 
-auto RenderContext::resize_buffer(vuk::Unique<vuk::Buffer>&& buffer, vuk::MemoryUsage usage, u64 new_size)
-  -> vuk::Unique<vuk::Buffer> {
-  if (!buffer || new_size > buffer->size) {
-    const auto old_size = buffer ? buffer->size : 0_u64;
-    const auto alloc_size = buffer ? std::max(new_size, buffer->size * 2_u64) : new_size;
-
-    buffer.reset();
-
-    OX_LOG_TRACE("resize_buffer growth {} -> {}", old_size, alloc_size);
-    return allocate_buffer_super(usage, alloc_size);
-  }
-
-  return std::move(buffer);
-}
-
-auto RenderContext::allocate_buffer_super(vuk::MemoryUsage usage, u64 size, u64 alignment) -> vuk::Unique<vuk::Buffer> {
-  return *vuk::allocate_buffer(
-    superframe_allocator.value(),
-    {.mem_usage = usage, .size = size, .alignment = alignment}
-  );
-}
-
-auto RenderContext::alloc_image_buffer(vuk::Format format, vuk::Extent3D extent, vuk::source_location LOC) noexcept
-  -> vuk::Unique<vuk::Buffer> {
-  ZoneScoped;
-
-  auto alignment = vuk::format_to_texel_block_size(format);
-  auto size = vuk::compute_image_size(format, extent);
-
-  return *vuk::allocate_buffer(
-    superframe_allocator.value(),
-    {.mem_usage = vuk::MemoryUsage::eCPUtoGPU, .size = size, .alignment = alignment},
-    LOC
-  );
-}
-
-auto RenderContext::alloc_transient_buffer_raw(
-  vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC
-) -> vuk::Buffer {
-  ZoneScoped;
-
-  auto read_lock = std::shared_lock(frame_allocator_mutex);
-
-  auto buffer = *vuk::allocate_buffer(
-    frame_allocator.value(),
-    {.mem_usage = usage, .size = size, .alignment = alignment},
-    LOC
-  );
-  return *buffer;
-}
-
-auto RenderContext::alloc_transient_buffer(
-  vuk::MemoryUsage usage, usize size, usize alignment, vuk::source_location LOC
-) -> vuk::Value<vuk::Buffer> {
-  ZoneScoped;
-
-  auto buffer = alloc_transient_buffer_raw(usage, size, alignment, LOC);
-  return vuk::acquire_buf("transient buffer", buffer, vuk::Access::eNone, LOC);
-}
-
-auto RenderContext::upload_staging(
-  vuk::Value<vuk::Buffer>&& src, vuk::Value<vuk::Buffer>&& dst, vuk::source_location LOC
-) -> vuk::Value<vuk::Buffer> {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  auto upload_pass = vuk::make_pass(
-    stack.format_char("{}", LOC),
-    [](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::Access::eTransferRead) src_ba,
-      VUK_BA(vuk::Access::eTransferWrite) dst_ba
-    ) {
-      cmd_list.copy_buffer(src_ba, dst_ba);
-      return dst_ba;
-    },
-    vuk::DomainFlagBits::eAny,
-    LOC
-  );
-
-  return upload_pass(std::move(src), std::move(dst));
-}
-
-auto RenderContext::upload_staging(
-  vuk::Value<vuk::Buffer>&& src, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC
-) -> vuk::Value<vuk::Buffer> {
-  ZoneScoped;
-
-  auto dst_buffer = vuk::discard_buf("dst", dst.subrange(dst_offset, src->size), LOC);
-  return upload_staging(std::move(src), std::move(dst_buffer), LOC);
-}
-
-auto RenderContext::upload_staging(
-  void* data, u64 data_size, vuk::Value<vuk::Buffer>&& dst, u64 dst_offset, vuk::source_location LOC
-) -> vuk::Value<vuk::Buffer> {
-  ZoneScoped;
-
-  auto cpu_buffer = alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, data_size, 8, LOC);
-  std::memcpy(cpu_buffer->mapped_ptr, data, data_size);
-
-  auto dst_buffer = vuk::discard_buf("dst", dst->subrange(dst_offset, cpu_buffer->size), LOC);
-  return upload_staging(std::move(cpu_buffer), std::move(dst_buffer), LOC);
-}
-
-auto RenderContext::upload_staging(
-  void* data, u64 data_size, vuk::Buffer& dst, u64 dst_offset, vuk::source_location LOC
-) -> vuk::Value<vuk::Buffer> {
-  ZoneScoped;
-
-  auto cpu_buffer = alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, data_size, 8, LOC);
-  std::memcpy(cpu_buffer->mapped_ptr, data, data_size);
-
-  auto dst_buffer = vuk::discard_buf("dst", dst.subrange(dst_offset, cpu_buffer->size), LOC);
-  return upload_staging(std::move(cpu_buffer), std::move(dst_buffer), LOC);
-}
-
-auto RenderContext::scratch_buffer(const void* data, u64 size, usize alignment, vuk::source_location LOC)
-  -> vuk::Value<vuk::Buffer> {
-  ZoneScoped;
-
-#define SCRATCH_BUFFER_USE_BAR
-#ifndef SCRATCH_BUFFER_USE_BAR
-  auto cpu_buffer = alloc_transient_buffer(vuk::MemoryUsage::eCPUonly, size, alignment, LOC);
-  std::memcpy(cpu_buffer->mapped_ptr, data, size);
-  auto gpu_buffer = alloc_transient_buffer(vuk::MemoryUsage::eGPUonly, size, alignment, LOC);
-
-  auto upload_pass = vuk::make_pass(
-    "scratch_buffer",
-    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::Access::eTransferRead) src, VUK_BA(vuk::Access::eTransferWrite) dst) {
-      cmd_list.copy_buffer(src, dst);
-      return dst;
-    },
-    vuk::DomainFlagBits::eAny,
-    LOC
-  );
-
-  return upload_pass(std::move(cpu_buffer), std::move(gpu_buffer));
-#else
-  auto buffer = alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, size, alignment, LOC);
-  std::memcpy(buffer->mapped_ptr, data, size);
-  return buffer;
-#endif
-}
 } // namespace ox

@@ -1,32 +1,32 @@
 #include "Render/Renderer.hpp"
 
-#include <vuk/runtime/CommandBuffer.hpp>
-#include <vuk/vsl/Core.hpp>
-
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Core/ModuleRegistry.hpp"
 #include "Core/VFS.hpp"
+#include "Memory/Stack.hpp"
+#include "Render/Graph/Module.hpp"
+#include "Render/Graph/Types.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
-#include "Render/Utils/VukCommon.hpp"
+#include "Render/Utils/Samplers.hpp"
 
 namespace ox {
 static_assert(ModuleHasUpdate<Renderer>, "Renderer::update must be registered as a module update");
 
-static auto is_two_component_format(vuk::Format format) -> bool {
+static auto is_two_component_format(vir::Format format) -> bool {
   switch (format) {
-    case vuk::Format::eBc5UnormBlock      :
-    case vuk::Format::eBc5SnormBlock      :
-    case vuk::Format::eEacR11G11UnormBlock:
-    case vuk::Format::eEacR11G11SnormBlock:
-    case vuk::Format::eR8G8Unorm          :
-    case vuk::Format::eR8G8Snorm          :
-    case vuk::Format::eR16G16Unorm        :
-    case vuk::Format::eR16G16Snorm        :
-    case vuk::Format::eR16G16Sfloat       : return true;
-    default                               : return false;
+    case vir::Format::BC5UnormBlock    :
+    case vir::Format::BC5SnormBlock    :
+    case vir::Format::EACRG11UnormBlock:
+    case vir::Format::EACRG11SnormBlock:
+    case vir::Format::RG8Unorm         :
+    case vir::Format::RG8Snorm         :
+    case vir::Format::RG16Unorm        :
+    case vir::Format::RG16Snorm        :
+    case vir::Format::RG16Sfloat       : return true;
+    default                            : return false;
   }
 }
 
@@ -57,21 +57,16 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
     auto texture = asset_man.get_texture(material.albedo_texture);
     sampler_index = texture->get_sampler_index();
 
-    auto texture_sampler = render_context.resources.samplers.copy_slot(texture->get_sampler_id());
-
-    vuk::SamplerCreateInfo sampler_ci = {};
+    auto sampler_info = vir::SamplerInfo{};
     switch (material.sampling_mode) {
-      case SamplingMode::LinearRepeated          : sampler_ci = vuk::LinearSamplerRepeated; break;
-      case SamplingMode::LinearClamped           : sampler_ci = vuk::LinearSamplerClamped; break;
-      case SamplingMode::NearestRepeated         : sampler_ci = vuk::NearestSamplerRepeated; break;
-      case SamplingMode::NearestClamped          : sampler_ci = vuk::NearestSamplerClamped; break;
-      case SamplingMode::LinearRepeatedAnisotropy: sampler_ci = vuk::LinearSamplerRepeatedAnisotropy; break;
+      case SamplingMode::LinearRepeated          : sampler_info = vir::LinearSamplerRepeated; break;
+      case SamplingMode::LinearClamped           : sampler_info = vir::LinearSamplerClamped; break;
+      case SamplingMode::NearestRepeated         : sampler_info = vir::NearestSamplerRepeated; break;
+      case SamplingMode::NearestClamped          : sampler_info = vir::NearestSamplerClamped; break;
+      case SamplingMode::LinearRepeatedAnisotropy: sampler_info = vir::LinearSamplerRepeatedAnisotropy; break;
     }
-    auto material_sampler = render_context.runtime->acquire_sampler(sampler_ci, render_context.num_frames);
-    if (!texture_sampler || texture_sampler->id != material_sampler.id) {
-      auto sampler_id = render_context.allocate_sampler(sampler_ci);
-      sampler_index = SlotMap_decode_id(sampler_id).index;
-    }
+    const auto material_sampler = render_context.cached_sampler(sampler_info);
+    sampler_index = SlotMap_decode_id(material_sampler).index;
   }
 
   if (normal_image_index.has_value()) {
@@ -126,68 +121,73 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
   };
 }
 
-auto upload_dirty_elements(
+// stages the dirty materials, or all of them once the buffer had to grow, and copies them in with a
+// program of their own. It rides the current frame's allocator, so it lands ahead of the frame
+static auto upload_dirty_materials(
   RenderContext& render_context,
-  vuk::Unique<vuk::Buffer>& buffer,
-  std::span<GPU::Material> gpu_data,
+  BufferID& buffer,
+  std::span<const GPU::Material> gpu_data,
   std::span<const usize> dirty_indices
-) -> vuk::Value<vuk::Buffer> {
+) -> bool {
   ZoneScoped;
+  memory::ScopedStack stack;
 
   constexpr auto element_size = sizeof(GPU::Material);
-  const auto data_size_bytes = gpu_data.size_bytes();
-
-  const auto rebuild_needed = !buffer || buffer->size < data_size_bytes;
-  buffer = render_context.resize_buffer(std::move(buffer), vuk::MemoryUsage::eGPUonly, data_size_bytes);
-
-  if (rebuild_needed || dirty_indices.size() * 5 >= gpu_data.size() * 2) {
-    return render_context.upload_staging(gpu_data, *buffer);
+  const auto resized = render_context.resize_buffer(buffer, gpu_data.size_bytes(), "materials");
+  if (!resized) {
+    return false;
   }
 
-  const auto dirty_count = dirty_indices.size();
-  auto upload_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, dirty_count * element_size);
-  auto* dst_ptr = reinterpret_cast<GPU::Material*>(upload_buffer->mapped_ptr);
-  for (usize i = 0; i < dirty_count; ++i) {
-    dst_ptr[i] = gpu_data[dirty_indices[i]];
-  }
-
-  struct CopyRange {
-    usize src_offset = 0;
-    usize dst_offset = 0;
-    usize size_bytes = 0;
-  };
-
-  auto ranges = std::vector<CopyRange>();
-  ranges.reserve(dirty_count);
-  for (usize i = 0; i < dirty_count;) {
-    const auto start_index = dirty_indices[i];
-    auto run_length = 1_sz;
-    while (i + run_length < dirty_count && dirty_indices[i + run_length] == start_index + run_length) {
-      ++run_length;
+  const auto is_full = *resized || dirty_indices.size() * 5 >= gpu_data.size() * 2;
+  const auto staged_count = is_full ? gpu_data.size() : dirty_indices.size();
+  auto staged = stack.alloc<GPU::Material>(staged_count);
+  auto regions = std::vector<vir::BufferCopy>{};
+  if (is_full) {
+    std::ranges::copy(gpu_data, staged.begin());
+    regions.push_back({.src_offset = 0, .dst_offset = 0, .size = gpu_data.size_bytes()});
+  } else {
+    for (usize i = 0; i < staged_count; i++) {
+      staged[i] = gpu_data[dirty_indices[i]];
     }
-    ranges.push_back({i * element_size, start_index * element_size, run_length * element_size});
-    i += run_length;
-  }
 
-  auto update_pass = vuk::make_pass(
-    "update materials",
-    [copy_ranges = std::move(ranges)](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::Access::eTransferRead) src_buffer,
-      VUK_BA(vuk::Access::eTransferWrite) dst_buffer
-    ) {
-      for (const auto& r : copy_ranges) {
-        cmd_list.copy_buffer(
-          src_buffer->subrange(r.src_offset, r.size_bytes),
-          dst_buffer->subrange(r.dst_offset, r.size_bytes)
-        );
+    for (usize i = 0; i < staged_count;) {
+      const auto start_index = dirty_indices[i];
+      auto run_length = 1_sz;
+      while (i + run_length < staged_count && dirty_indices[i + run_length] == start_index + run_length) {
+        ++run_length;
       }
-      return dst_buffer;
-    }
-  );
 
-  auto buffer_handle = vuk::acquire_buf("materials", *buffer, vuk::Access::eMemoryRead);
-  return update_pass(std::move(upload_buffer), std::move(buffer_handle));
+      regions.push_back({
+        .src_offset = i * element_size,
+        .dst_offset = start_index * element_size,
+        .size = run_length * element_size,
+      });
+      i += run_length;
+    }
+  }
+
+  const auto staging = render_context.upload_frame_buffer(
+    std::span(reinterpret_cast<const u8*>(staged.data()), staged.size_bytes()),
+    "material staging"
+  );
+  if (!staging) {
+    return false;
+  }
+
+  auto module = vir::Module{};
+  const auto src = module.import_buffer(*staging, vir::Access::HostWrite);
+  auto dst = module.import_buffer(render_context.buffer(buffer), vir::Access::MemoryRead);
+  for (const auto& region : regions) {
+    dst = module.copy_buffer(src, dst, region);
+  }
+
+  module.export_to(dst, vir::Access::MemoryRead);
+  auto program = render_context.compile(std::move(module));
+  if (!program) {
+    return false;
+  }
+
+  return render_context.execute(*program).has_value();
 }
 
 auto Renderer::new_instance(Scene& scene) -> std::unique_ptr<RendererInstance> {
@@ -248,24 +248,45 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
 
   auto indices = std::vector<uint32_t>{0, 1, 2, 2, 3, 0};
 
-  self.quad_vertex_buffer = self.render_context->resize_buffer(
-    std::move(self.quad_vertex_buffer),
-    vuk::MemoryUsage::eGPUonly,
-    ox::size_bytes(vertices)
-  );
-  auto upload_quad_vertex_buffer = self.render_context->upload_staging(std::span(vertices), *self.quad_vertex_buffer);
+  const auto upload = [&](BufferID& id, std::span<const u8> data, std::string_view name) {
+    auto buffer = self.render_context->allocate_buffer({
+      .size = data.size_bytes(),
+      .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = std::string(name),
+    });
+    auto staging = buffer ? self.render_context->allocate_staging(data) : std::unexpected(buffer.error());
+    if (!buffer || !staging) {
+      return false;
+    }
 
-  self.quad_index_buffer = self.render_context->resize_buffer(
-    std::move(self.quad_index_buffer),
-    vuk::MemoryUsage::eGPUonly,
-    ox::size_bytes(indices)
-  );
-  auto upload_quad_index_buffer = self.render_context->upload_staging(std::span(indices), *self.quad_index_buffer);
+    auto module = vir::Module{};
+    const auto copied = module.copy_buffer(
+      module.import_buffer(*staging, vir::Access::HostWrite),
+      module.import_buffer(self.render_context->buffer(*buffer), vir::Access::None)
+    );
+    module.export_to(copied, vir::Access::VertexRead | vir::Access::IndexRead);
+    id = *buffer;
+    return self.render_context->submit_upload(std::move(module), {*staging}, nullptr).has_value();
+  };
+  if (
+    !upload(
+      self.quad_vertex_buffer,
+      std::span(reinterpret_cast<const u8*>(vertices.data()), ox::size_bytes(vertices)),
+      "quad vertices"
+    ) ||
+    !upload(
+      self.quad_index_buffer,
+      std::span(reinterpret_cast<const u8*>(indices.data()), ox::size_bytes(indices)),
+      "quad indices"
+    )
+  ) {
+    return std::unexpected("Cannot upload the quad buffers!");
+  }
 
-  self.render_context->wait_on(std::move(upload_quad_vertex_buffer));
-  self.render_context->wait_on(std::move(upload_quad_index_buffer));
-
-  self.materials_buffer = self.render_context->allocate_buffer_super(vuk::MemoryUsage::eGPUonly, sizeof(GPU::Material));
+  if (!self.render_context->resize_buffer(self.materials_buffer, sizeof(GPU::Material), "materials")) {
+    return std::unexpected("Cannot allocate the materials buffer!");
+  }
 
   return {};
 }
@@ -305,32 +326,32 @@ auto Renderer::sync_materials(this Renderer& self) -> void {
     return;
   }
 
-  if (!self.render_context->frame_allocator.has_value()) {
-    return;
-  }
-
   std::ranges::sort(self.pending_material_indices);
   const auto unique_end = std::ranges::unique(self.pending_material_indices);
   self.pending_material_indices.erase(unique_end.begin(), unique_end.end());
 
-  self.render_context->submit_now(upload_dirty_elements(
-    *self.render_context,
-    self.materials_buffer,
-    self.gpu_materials,
-    self.pending_material_indices
-  ));
-
-  self.pending_material_indices.clear();
-}
-
-auto Renderer::get_materials_buffer(this Renderer& self) -> vuk::Value<vuk::Buffer> {
-  ZoneScoped;
-
-  return vuk::acquire_buf("materials", *self.materials_buffer, vuk::Access::eMemoryRead);
+  // outside a frame there is no allocator to stage into, so the indices wait for the next one
+  if (
+    upload_dirty_materials(
+      *self.render_context,
+      self.materials_buffer,
+      self.gpu_materials,
+      self.pending_material_indices
+    )
+  ) {
+    self.pending_material_indices.clear();
+  }
 }
 
 auto Renderer::deinit(this Renderer& self) -> std::expected<void, std::string> {
   ZoneScoped;
+
+  for (auto* buffer : {&self.quad_vertex_buffer, &self.quad_index_buffer, &self.materials_buffer}) {
+    if (*buffer != BufferID::Invalid) {
+      self.render_context->destroy_buffer(*buffer);
+      *buffer = BufferID::Invalid;
+    }
+  }
 
   return {};
 }

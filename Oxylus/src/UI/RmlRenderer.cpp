@@ -1,6 +1,10 @@
 #include "UI/RmlRenderer.hpp"
 
-#include "vuk/runtime/CommandBuffer.hpp"
+#include "Memory/SlotMap.hpp"
+#include "Render/Graph/RenderGraph.hpp"
+#include "Render/Graph/Types.hpp"
+#include "Render/RenderContext.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 RmlRenderer::RmlRenderer() {
@@ -8,11 +12,11 @@ RmlRenderer::RmlRenderer() {
 
   const u8 white_pixel[] = {0xFF, 0xFF, 0xFF, 0xFF};
   this->white_texture = Texture::create({
-    .format = vuk::Format::eR8G8B8A8Unorm,
-    .extent = vuk::Extent3D{1, 1, 1u},
-    .usage = vuk::ImageUsageFlagBits::eSampled,
+    .format = vir::Format::RGBA8Unorm,
+    .extent = {1, 1, 1},
+    .usage = vir::ImageUsageFlags::Sampled,
   });
-  this->white_texture.upload(white_pixel, vuk::eFragmentSampled);
+  this->white_texture.upload(white_pixel, vir::Access::FragmentSampled);
 }
 
 RmlRenderer::~RmlRenderer() = default;
@@ -21,123 +25,111 @@ auto RmlRenderer::begin_frame(this RmlRenderer& self) -> void {
   self.frame_indices.clear();
   self.frame_vertices.clear();
   self.draw_commands.clear();
-  self.frame_textures.clear();
-  self.frame_texture_indices.clear();
   self.current_scissor_enabled = false;
 }
 
-auto RmlRenderer::end_frame(this RmlRenderer& self, RenderContext& context, vuk::Value<vuk::ImageAttachment> target)
-  -> vuk::Value<vuk::ImageAttachment> {
-  usize vertex_size = self.frame_vertices.size() * sizeof(Rml::Vertex);
-  usize index_size = self.frame_indices.size() * sizeof(i32);
+auto RmlRenderer::upload(this RmlRenderer& self, RenderContext& context) -> void {
+  ZoneScoped;
 
-  if (self.draw_commands.empty() || vertex_size <= 0 || index_size <= 0) {
-    return target;
+  self.uploaded_commands.clear();
+  if (self.draw_commands.empty() || self.frame_vertices.empty() || self.frame_indices.empty()) {
+    return;
   }
 
-  auto vertex_buffer = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, vertex_size, 1);
-  auto index_buffer = context.alloc_transient_buffer(vuk::MemoryUsage::eCPUtoGPU, index_size, 1);
-
-  std::memcpy(vertex_buffer->mapped_ptr, self.frame_vertices.data(), vertex_size);
-  std::memcpy(index_buffer->mapped_ptr, self.frame_indices.data(), index_size);
-
-  if (self.frame_textures.empty()) {
-    self.frame_textures.emplace_back(self.white_texture.acquire("rmlui white", vuk::eFragmentSampled));
+  auto vertices = context.upload_frame_buffer(
+    std::span(
+      reinterpret_cast<const u8*>(self.frame_vertices.data()),
+      self.frame_vertices.size() * sizeof(Rml::Vertex)
+    ),
+    "rmlui vertices"
+  );
+  auto indices = context.upload_frame_buffer(
+    std::span(reinterpret_cast<const u8*>(self.frame_indices.data()), self.frame_indices.size() * sizeof(i32)),
+    "rmlui indices"
+  );
+  if (!vertices || !indices) {
+    OX_LOG_ERROR("failed to stage the rmlui geometry");
+    return;
   }
 
-  for (auto& cmd : self.draw_commands) {
-    if (!cmd.texture) {
-      cmd.texture_array_index = 0;
-      continue;
-    }
-
-    auto tex_id = static_cast<RmlTextureID>(cmd.texture);
-
-    auto it = self.frame_texture_indices.find(tex_id);
-    if (it != self.frame_texture_indices.end()) {
-      cmd.texture_array_index = it->second;
-    } else {
-      if (auto* texture_ptr = self.loaded_textures.slot(tex_id)) {
-        u32 new_index = static_cast<u32>(self.frame_textures.size());
-        self.frame_textures.push_back(texture_ptr->acquire({}, vuk::eFragmentSampled));
-
-        self.frame_texture_indices[tex_id] = new_index;
-        cmd.texture_array_index = new_index;
-      } else {
-        cmd.texture_array_index = 0;
-      }
-    }
-  }
-
-  auto textures_array = vuk::declare_array("rml_sampled_textures", std::span(self.frame_textures));
-  auto draw_commands = std::move(self.draw_commands);
+  self.vertex_buffer = *vertices;
+  self.index_buffer = *indices;
+  self.uploaded_commands = std::move(self.draw_commands);
+  self.draw_commands.clear();
   self.frame_vertices.clear();
   self.frame_indices.clear();
-  self.frame_textures.clear();
-  self.frame_texture_indices.clear();
+}
 
-  return vuk::make_pass("rmlui", //
-    [dc = std::move(draw_commands)](vuk::CommandBuffer& command_buffer,
-      VUK_BA(vuk::Access::eVertexRead) vertex_buf,
-      VUK_BA(vuk::Access::eIndexRead) index_buf,
-      VUK_IA(vuk::eColorWrite) color_rt,
-      VUK_ARG(vuk::ImageAttachment[], vuk::Access::eFragmentSampled) bound_textures) {
-        // Premultiplied alpha
-        vuk::PipelineColorBlendAttachmentState blend_state = {
-          .blendEnable = true,
-          .srcColorBlendFactor = vuk::BlendFactor::eOne,
-          .dstColorBlendFactor = vuk::BlendFactor::eOneMinusSrcAlpha,
-          .colorBlendOp = vuk::BlendOp::eAdd,
-          .srcAlphaBlendFactor = vuk::BlendFactor::eOne,
-          .dstAlphaBlendFactor = vuk::BlendFactor::eOneMinusSrcAlpha,
-          .alphaBlendOp = vuk::BlendOp::eAdd
-        };
+auto RmlRenderer::record(
+  this RmlRenderer& self, vir::Module& module, RenderContext& render_context, vir::ValueID target
+) -> vir::ValueID {
+  ZoneScoped;
 
-    command_buffer.set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-        .set_rasterization(vuk::PipelineRasterizationStateCreateInfo{})
-        .set_color_blend(color_rt, blend_state)
-        .bind_graphics_pipeline("rmlui")
-        .bind_vertex_buffer(
-          0,
-          vertex_buf,
-          0,
-          vuk::Packed{
-            vuk::Format::eR32G32Sfloat,   // Position
-            vuk::Format::eR8G8B8A8Unorm,  // Color
-            vuk::Format::eR32G32Sfloat    // TexCoord
-          }
-        )
-        .bind_index_buffer(index_buf, vuk::IndexType::eUint32)
-        .set_viewport(0, vuk::Rect2D::framebuffer());
+  // premultiplied alpha
+  static constexpr auto blend_state = vir::ColorBlendAttachmentState{
+    .is_blend_enabled = true,
+    .src_color_blend_factor = VK_BLEND_FACTOR_ONE,
+    .dst_color_blend_factor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+    .color_blend_op = VK_BLEND_OP_ADD,
+    .src_alpha_blend_factor = VK_BLEND_FACTOR_ONE,
+    .dst_alpha_blend_factor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+    .alpha_blend_op = VK_BLEND_OP_ADD,
+  };
+  static constexpr auto sampler_info = vir::SamplerInfo{
+    .mag_filter = VK_FILTER_LINEAR,
+    .min_filter = VK_FILTER_LINEAR,
+    .mipmap_mode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+    .address_mode_u = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .address_mode_v = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .address_mode_w = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+  };
+  const auto sampler_index = SlotMap_decode_id(render_context.cached_sampler(sampler_info)).index;
 
-      for (const auto& cmd : dc) {
-        if (cmd.scissor_enabled) {
-          vuk::Rect2D scissor;
-          scissor.offset = {cmd.scissor.x, cmd.scissor.y};
-          scissor.extent = {static_cast<u32>(cmd.scissor.z), static_cast<u32>(cmd.scissor.w)};
-          command_buffer.set_scissor(0, scissor);
-        } else {
-          command_buffer.set_scissor(0, vuk::Rect2D::framebuffer());
-        }
+  const auto draws = module.declare_callback_var("rmlui", [&self, sampler_index](vir::Recorder& recorder) -> void {
+    if (self.uploaded_commands.empty()) {
+      return;
+    }
 
-        struct PushConstant {
-          f32 translation[2] = {};
-          f32 screen_size[2] = {};
-          f32 transform[16] = {};
-        } pc;
-        pc.translation[0] = cmd.translation.x;
-        pc.translation[1] = cmd.translation.y;
-        pc.screen_size[0] = static_cast<f32>(color_rt->extent.width);
-        pc.screen_size[1] = static_cast<f32>(color_rt->extent.height);
-        std::memcpy(pc.transform, cmd.transform.data(), sizeof(float) * 16);
-        command_buffer.bind_image(0, 1, bound_textures[cmd.texture_array_index])
-                      .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
-                      .push_constants(vuk::ShaderStageFlagBits::eVertex, 0, pc)
-                      .draw_indexed(cmd.index_count, 1, cmd.index_offset, cmd.vertex_offset, 0);
+    const auto area = recorder.render_area();
+    recorder.bind_index_buffer(self.index_buffer, VK_INDEX_TYPE_UINT32);
+    for (const auto& cmd : self.uploaded_commands) {
+      if (cmd.scissor_enabled) {
+        recorder.set_scissor_absolute({
+          .offset = {cmd.scissor.x, cmd.scissor.y},
+          .extent = {static_cast<u32>(cmd.scissor.z), static_cast<u32>(cmd.scissor.w)},
+        });
+      } else {
+        recorder.set_scissor_absolute(area);
       }
 
-      return color_rt;
-    })(std::move(vertex_buffer), std::move(index_buffer), std::move(target), std::move(textures_array));
+      const auto* texture = cmd.texture ? self.loaded_textures.slot(static_cast<RmlTextureID>(cmd.texture)) : nullptr;
+      struct PushConstant {
+        f32 transform[16] = {};
+        u64 vertices = 0;
+        f32 translation[2] = {};
+        f32 screen_size[2] = {};
+        u32 image_index = 0;
+        u32 sampler_index = 0;
+      } push = {
+        .vertices = self.vertex_buffer.device_address + cmd.vertex_offset * sizeof(Rml::Vertex),
+        .translation = {cmd.translation.x, cmd.translation.y},
+        .screen_size = {static_cast<f32>(area.extent.width), static_cast<f32>(area.extent.height)},
+        .image_index = (texture ? *texture : self.white_texture).get_view_index(),
+        .sampler_index = sampler_index,
+      };
+      std::memcpy(push.transform, cmd.transform.data(), sizeof(push.transform));
+      recorder.push_constants(push).draw_indexed(cmd.index_count, 1, cmd.index_offset, 0, 0);
+    }
+  });
+
+  module.begin_rendering({{target, vir::Access::ColorRW}})
+    .with_name("rmlui")
+    .bind_graphics_pipeline(render_context.pipeline("rmlui"))
+    .set_color_blend(0, blend_state)
+    .set_viewport(0, vir::Rect2D::framebuffer())
+    .set_scissor(0, vir::Rect2D::framebuffer())
+    .record_from(draws);
+  return module.end_rendering<1>()[0];
 }
 
 auto RmlRenderer::CompileGeometry(Rml::Span<const Rml::Vertex> vertices, Rml::Span<const int> indices)
@@ -233,11 +225,11 @@ auto RmlRenderer::GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector
   }
 
   auto texture = Texture::create({
-    .format = vuk::Format::eR8G8B8A8Unorm,
-    .extent = vuk::Extent3D{static_cast<u32>(source_dimensions.x), static_cast<u32>(source_dimensions.y), 1u},
-    .usage = vuk::ImageUsageFlagBits::eSampled,
+    .format = vir::Format::RGBA8Unorm,
+    .extent = {static_cast<u32>(source_dimensions.x), static_cast<u32>(source_dimensions.y), 1_u32},
+    .usage = vir::ImageUsageFlags::Sampled,
   });
-  texture.upload(straight_alpha_data, vuk::eFragmentSampled);
+  texture.upload(straight_alpha_data, vir::Access::FragmentSampled);
 
   auto id = this->loaded_textures.create_slot(std::move(texture));
   return static_cast<Rml::TextureHandle>(id);

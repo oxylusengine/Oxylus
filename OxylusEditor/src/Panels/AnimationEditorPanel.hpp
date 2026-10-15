@@ -1,11 +1,14 @@
 #pragma once
 
+#include "Utils/SceneTarget.hpp"
+
+#include "Render/Fwd.hpp"
+
 #include <array>
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 #include <memory>
-#include <vuk/ImageAttachment.hpp>
 
 #include "Core/UUID.hpp"
 #include "EditorPanelState.hpp"
@@ -20,7 +23,7 @@ public:
   ~AnimationEditorPanel();
 
   auto on_update(this AnimationEditorPanel& self) -> void;
-  auto on_render(this AnimationEditorPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this AnimationEditorPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
   // takes a clip or the model it came from, and resolves whichever half is missing
   auto open_asset(this AnimationEditorPanel& self, const UUID& uuid) -> void;
@@ -35,13 +38,14 @@ private:
   auto update_studio_lights(this AnimationEditorPanel& self) -> void;
   // bone segments through the preview scene's own DebugRenderer
   auto draw_skeleton(this AnimationEditorPanel& self) -> void;
-  auto draw_preview(this AnimationEditorPanel& self, const vuk::ImageAttachment& swapchain_attachment) -> void;
+  auto draw_preview(this AnimationEditorPanel& self, const SwapchainInfo& swapchain_info) -> void;
   auto draw_toolbar(this AnimationEditorPanel& self) -> void;
 
   UUID model_uuid = {};
   UUID clip_uuid = {};
 
   std::unique_ptr<Scene> preview_scene = nullptr;
+  SceneTarget preview_target_texture = {};
   flecs::entity preview_animator = {};
   flecs::entity preview_sky = {};
   // key, fill and rim, evenly spaced above the model

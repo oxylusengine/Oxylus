@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vuk/ImageAttachment.hpp>
+#include "Render/Fwd.hpp"
+
 
 #include "EditorPanelState.hpp"
 
@@ -10,7 +11,7 @@ public:
   EditorSettingsPanel();
 
   auto on_update(this EditorSettingsPanel& self) -> void {}
-  auto on_render(this EditorSettingsPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this EditorSettingsPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
 private:
   enum class OptionRows : u32 {

@@ -85,7 +85,7 @@ target("Oxylus")
         "flecs",
         "imgui",
         "vk-bootstrap",
-        "vuk",
+        "vulkan-headers",
         "unordered_dense",
         "svector",
         "tracy",
@@ -101,5 +101,7 @@ target("Oxylus")
         "simdjson",
         "rmlui",
         {public = true})
+
+    add_packages("vulkan-memory-allocator", {public = false})
 
 target_end()

@@ -35,12 +35,8 @@ packages = {
     system = false,
   },
   ["vk-bootstrap v1.4.354"] = { system = false, debug = is_mode("debug") },
-  ["vuk 2026.08.25"] = {
-    configs = {
-      debug_allocations = false,
-    },
-    debug = is_mode("debug"),
-  },
+  ["vulkan-memory-allocator v3.1.0"] = { system = false },
+  ["vulkan-headers 1.4.335+0"] = { system = false },
   ["toml++ v3.4.0"] = {
     configs = {
       header_only = true,
@@ -101,17 +97,6 @@ confs = {
   {
     package = "fmt",
     override = "loguru.fmt",
-    configs = {
-      override = true,
-      version = fmt_version,
-      configs = fmt_configs,
-      system = false,
-    },
-  },
-
-  {
-    package = "fmt",
-    override = "vuk.fmt",
     configs = {
       override = true,
       version = fmt_version,

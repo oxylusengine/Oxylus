@@ -1,256 +1,293 @@
-#include <cstring>
-#include <vuk/runtime/CommandBuffer.hpp>
-#include <vuk/vsl/Core.hpp>
-
+#include "Asset/Texture.hpp"
+#include "Render/Graph/RenderGraph.hpp"
+#include "Render/Graph/Types.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
-#include "Render/Utils/VukCommon.hpp"
+#include "Render/Utils/PushConstants.hpp"
+#include "Render/Utils/Samplers.hpp"
 
 namespace ox {
-auto RendererInstance::apply_eye_adaptation(this RendererInstance& self, PostProcessContext& context) -> void {
+using HistogramGeneratePush = PushConstants<glm::uvec2, f32, f32>;
+using HistogramAveragePush = PushConstants<f32, f32, f32, f32, f32>;
+using BloomPrefilterPush = PushConstants<f32, f32, f32, vir::Extent3D>;
+using TonemapPush = PushConstants<GPU::PostProcessSettings, glm::ivec2, f32>;
+
+constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                                               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+auto RendererInstance::bind_eye_adaptation_variables(
+  this const RendererInstance& self, vir::Program& program, const PostProcessVariables& variables
+) -> void {
   ZoneScoped;
+  if (!program.has_variable(variables.histogram_average_push)) {
+    return;
+  }
 
-  constexpr auto histogram_size_bytes = GPU::HISTOGRAM_BIN_COUNT * sizeof(u32);
-  auto histogram_bin_indices_buffer = self.renderer.render_context->alloc_transient_buffer(
-    vuk::MemoryUsage::eGPUonly,
-    histogram_size_bytes
-  );
-  auto histogram_clear_buffer = self.renderer.render_context->alloc_transient_buffer(
-    vuk::MemoryUsage::eCPUtoGPU,
-    histogram_size_bytes
-  );
-  std::memset(histogram_clear_buffer->mapped_ptr, 0, histogram_size_bytes);
-  histogram_bin_indices_buffer = vuk::copy(std::move(histogram_clear_buffer), std::move(histogram_bin_indices_buffer));
-
-  auto histogram_generate_pass = vuk::make_pass(
-    "histogram generate",
-    [settings = self.eye_adaptation](
-      vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eComputeSampled) src,
-      VUK_BA(vuk::eComputeRW) histogram_bin_indices
-    ) {
-      cmd_list
-          .bind_compute_pipeline("histogram_generate")
-          .bind_image(0, 0, src)
-          .push_constants(vuk::ShaderStageFlagBits::eCompute,
-            0,
-            PushConstants( //
-              histogram_bin_indices->device_address,
-              glm::uvec2(src->extent.width, src->extent.height),
-              settings.min_exposure,
-              settings.max_exposure))
-          .dispatch_invocations_per_pixel(src);
-
-      return std::make_tuple(src, histogram_bin_indices);
-    }
+  const auto& shape = self.frame_params.shape;
+  const auto display_extent = vir::Extent3D{shape.display_size.x, shape.display_size.y, 1};
+  const auto& settings = self.eye_adaptation;
+  program.set_bytes(
+    variables.histogram_generate_push,
+    HistogramGeneratePush(
+      glm::uvec2(display_extent.width, display_extent.height),
+      settings.min_exposure,
+      settings.max_exposure
+    )
   );
 
-  std::tie(context.final_attachment, histogram_bin_indices_buffer) = histogram_generate_pass(
-    std::move(context.final_attachment),
-    std::move(histogram_bin_indices_buffer)
-  );
-
-  auto pixel_count = f32(context.extent.width * context.extent.height);
-  auto histogram_average_pass = vuk::make_pass(
-    "histogram average",
-    [pixel_count, delta_time = context.delta_time, settings = self.eye_adaptation](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeRW) histogram,
-      VUK_BA(vuk::eComputeRW) exposure
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("histogram_average")
-        .bind_buffer(0, 0, histogram)
-        .bind_buffer(0, 1, exposure)
-        .push_constants(
-          vuk::ShaderStageFlagBits::eCompute,
-          0,
-          PushConstants(
-            pixel_count,
-            settings.min_exposure,
-            settings.max_exposure - settings.min_exposure,
-            1.0f - glm::exp(-settings.adaptation_speed * delta_time),
-            settings.ev100_bias
-          )
-        )
-        .dispatch(1);
-
-      return exposure;
-    }
-  );
-
-  self.prepared_frame.exposure_buffer = histogram_average_pass(
-    std::move(histogram_bin_indices_buffer),
-    std::move(self.prepared_frame.exposure_buffer)
+  const auto pixel_count = static_cast<f32>(display_extent.width * display_extent.height);
+  program.set_bytes(
+    variables.histogram_average_push,
+    HistogramAveragePush(
+      pixel_count,
+      settings.min_exposure,
+      settings.max_exposure - settings.min_exposure,
+      1.0f - glm::exp(-settings.adaptation_speed * self.frame_params.delta_time),
+      settings.ev100_bias
+    )
   );
 }
 
-auto RendererInstance::apply_bloom(this RendererInstance& self, PostProcessContext& context, const RendererCVar& cvar)
-  -> void {
+auto RendererInstance::apply_eye_adaptation(
+  vir::Module& module, RenderContext& render_context, FrameRecording& recording, PostProcessContext& context
+) -> void {
   ZoneScoped;
-
-  const auto threshold = cvar.cvar_bloom_threshold.get();
-  const auto soft_threshold = cvar.cvar_bloom_soft_threshold.get();
-  const auto radius = cvar.cvar_bloom_radius.get();
-  const auto clamp_value = cvar.cvar_bloom_clamp.get();
-  context.bloom_intensity = cvar.cvar_bloom_intensity.get();
-
-  auto bloom_downsampled_attachment = vuk::declare_ia(
-    "bloom downsampled",
-    {.usage = vuk::ImageUsageFlagBits::eSampled | vuk::ImageUsageFlagBits::eStorage,
-     .sample_count = vuk::SampleCountFlagBits::e1,
-     .layer_count = 1}
+  auto& prepared = recording.prepared;
+  auto& variables = prepared.post_process;
+  variables.histogram_generate_push = module.declare_bytes_var(
+    "histogram generate push",
+    sizeof(HistogramGeneratePush)
   );
-  bloom_downsampled_attachment.same_shape_as(context.bloom_upsampled_attachment);
-  bloom_downsampled_attachment.same_format_as(context.bloom_upsampled_attachment);
-  bloom_downsampled_attachment = vuk::clear_image(std::move(bloom_downsampled_attachment), vuk::Black<float>);
+  variables.histogram_average_push = module.declare_bytes_var("histogram average push", sizeof(HistogramAveragePush));
 
-  auto bloom_prefilter_pass = vuk::make_pass(
-    "bloom prefilter",
-    [threshold, soft_threshold, clamp_value, scene_flags = self.gpu_scene_flags](
-      vuk::CommandBuffer& cmd_list, //
-      VUK_IA(vuk::eComputeSampled) src,
-      VUK_IA(vuk::eComputeRW) out,
-      VUK_BA(vuk::eComputeUniformRead) exposure
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("bloom_prefilter")
-        .bind_image(0, 0, out)
-        .bind_image(0, 1, src)
-        .bind_sampler(0, 2, vuk::LinearSamplerBorder)
-        .bind_buffer(0, 3, exposure)
-        .specialize_constants(0, std::to_underlying(scene_flags))
-        .push_constants(
-          vuk::ShaderStageFlagBits::eCompute,
-          0,
-          PushConstants(threshold, soft_threshold, clamp_value, out->extent)
-        )
-        .dispatch_invocations_per_pixel(out);
+  auto& values = recording.values;
 
-      return std::make_tuple(src, out, exposure);
-    }
+  auto histogram = module.transient_buffer({
+    .size = GPU::HISTOGRAM_BIN_COUNT * sizeof(u32),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "histogram bins",
+  });
+  histogram = module.fill_buffer(histogram, 0);
+
+  module.begin_compute({{context.final_attachment, vir::Access::ComputeSampled}, {histogram, vir::Access::ComputeRW}})
+    .with_name("histogram generate")
+    .bind_compute_pipeline(render_context.pipeline("histogram_generate"))
+    .bind_image(0, 0, context.final_attachment)
+    .push_constant_address(0, histogram)
+    .push_constants_from_at(8, variables.histogram_generate_push)
+    .dispatch_invocations_per_pixel(context.final_attachment);
+  std::tie(context.final_attachment, histogram) = std::tuple_cat(module.end_compute<2>());
+
+  module.begin_compute({{histogram, vir::Access::ComputeRW}, {values.exposure, vir::Access::ComputeRW}})
+    .with_name("histogram average")
+    .bind_compute_pipeline(render_context.pipeline("histogram_average"))
+    .bind_buffer(0, 0, histogram)
+    .bind_buffer(0, 1, values.exposure)
+    .push_constants_from(variables.histogram_average_push)
+    .dispatch(1, 1, 1);
+  std::tie(std::ignore, values.exposure) = std::tuple_cat(module.end_compute<2>());
+}
+
+auto RendererInstance::bind_bloom_variables(
+  this const RendererInstance& self, vir::Program& program, const PostProcessVariables& variables
+) -> void {
+  ZoneScoped;
+  if (!program.has_variable(variables.bloom_prefilter_push)) {
+    return;
+  }
+
+  const auto& shape = self.frame_params.shape;
+  const auto display_extent = vir::Extent3D{shape.display_size.x, shape.display_size.y, 1};
+  const auto& cvar = *self.frame_params.cvar;
+  const auto bloom_extent = vir::Extent3D{
+    .width = std::max(display_extent.width / 2, 1u),
+    .height = std::max(display_extent.height / 2, 1u),
+    .depth = 1,
+  };
+  program.set_bytes(
+    variables.bloom_prefilter_push,
+    BloomPrefilterPush(
+      cvar.cvar_bloom_threshold.get(),
+      cvar.cvar_bloom_soft_threshold.get(),
+      cvar.cvar_bloom_clamp.get(),
+      bloom_extent
+    )
   );
+  program.set_bytes(variables.bloom_radius, cvar.cvar_bloom_radius.get());
+}
 
-  std::tie(context.final_attachment, bloom_downsampled_attachment, self.prepared_frame.exposure_buffer) =
-    bloom_prefilter_pass(
-      std::move(context.final_attachment),
-      std::move(bloom_downsampled_attachment),
-      std::move(self.prepared_frame.exposure_buffer)
-    );
+auto RendererInstance::apply_bloom(
+  vir::Module& module, RenderContext& render_context, FrameRecording& recording, PostProcessContext& context
+) -> void {
+  ZoneScoped;
+  auto& prepared = recording.prepared;
+  auto& variables = prepared.post_process;
+  variables.bloom_prefilter_push = module.declare_bytes_var("bloom prefilter push", sizeof(BloomPrefilterPush));
+  variables.bloom_radius = module.declare_bytes_var("bloom radius", sizeof(f32));
 
-  auto bloom_downsample_pass = vuk::make_pass(
-    "bloom downsample",
-    [](vuk::CommandBuffer& cmd_list, VUK_IA(vuk::eComputeRW | vuk::eComputeSampled) bloom) {
-      cmd_list //
-        .bind_compute_pipeline("bloom_downsample")
-        .bind_sampler(0, 2, vuk::LinearSamplerBorder);
+  auto& values = recording.values;
+  const auto& shape = recording.shape;
 
-      auto extent = bloom->extent;
-      for (auto i = 1_u32; i < bloom->level_count; i++) {
-        auto mip_width = std::max(1_u32, extent.width >> i);
-        auto mip_height = std::max(1_u32, extent.height >> i);
-        auto prev_mip = bloom->mip(i - 1);
-        auto mip = bloom->mip(i);
+  const auto linear_border = render_context.cached_sampler_handle(vir::LinearSamplerBorder);
+  const auto extent = module.image_extent(context.bloom_upsampled_attachment).value_or(vir::Extent3D{1, 1, 1});
+  const auto level_count = Texture::calculate_mip_count(extent);
+  const auto format = module.image_format(context.bloom_upsampled_attachment)
+                        .value_or(std::pair{vir::Format::B10G11R11UfloatPack32, vir::Samples::e1})
+                        .first;
 
-        cmd_list.image_barrier(prev_mip, vuk::eComputeWrite, vuk::eComputeSampled)
-          .bind_image(0, 0, mip)
-          .bind_image(0, 1, prev_mip)
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height))
-          .dispatch_invocations(mip_width, mip_height);
-      }
+  auto downsampled = module.transient_image({
+    .extent = extent,
+    .format = format,
+    .mip_levels = level_count,
+    .name = "bloom downsampled",
+  });
+  downsampled = module.clear(downsampled, vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f));
 
-      cmd_list.image_barrier(bloom, vuk::eComputeSampled, vuk::eComputeRW);
+  const auto prefiltered = module.mip(downsampled, 0);
+  module
+    .begin_compute(
+      {{context.final_attachment, vir::Access::ComputeSampled},
+       {prefiltered, vir::Access::ComputeWrite},
+       {values.exposure, vir::Access::ComputeUniformRead}}
+    )
+    .with_name("bloom prefilter")
+    .bind_compute_pipeline(render_context.pipeline("bloom_prefilter"))
+    .bind_image(0, 0, prefiltered)
+    .bind_image(0, 1, context.final_attachment)
+    .bind_sampler(0, 2, linear_border)
+    .bind_buffer(0, 3, values.exposure)
+    .specialize_constant(0, std::to_underlying(shape.scene_flags))
+    .push_constants_from(variables.bloom_prefilter_push)
+    .dispatch_invocations(extent.width, extent.height, 1);
+  auto prefilter_results = module.end_compute<3>();
+  context.final_attachment = prefilter_results[0];
+  downsampled = module.whole(prefilter_results[1]);
+  values.exposure = prefilter_results[2];
 
-      return bloom;
-    }
-  );
+  if (level_count == 1) {
+    context.bloom_upsampled_attachment = downsampled;
+    return;
+  }
 
-  bloom_downsampled_attachment = bloom_downsample_pass(std::move(bloom_downsampled_attachment));
+  for (auto i = 1_u32; i < level_count; i++) {
+    const auto mip_width = std::max(1_u32, extent.width >> i);
+    const auto mip_height = std::max(1_u32, extent.height >> i);
+    const auto src = module.mip(downsampled, i - 1);
+    const auto dst = module.mip(downsampled, i);
+    module.begin_compute({{src, vir::Access::ComputeSampled}, {dst, vir::Access::ComputeWrite}})
+      .with_name("bloom downsample")
+      .bind_compute_pipeline(render_context.pipeline("bloom_downsample"))
+      .bind_image(0, 0, dst)
+      .bind_image(0, 1, src)
+      .bind_sampler(0, 2, linear_border)
+      .push_constants(PushConstants(mip_width, mip_height))
+      .dispatch_invocations(mip_width, mip_height, 1);
+    downsampled = module.whole(module.end_compute<2>()[1]);
+  }
 
   // https://www.froyok.fr/blog/2021-12-ue4-custom-bloom/resources/code/bloom_down_up_demo.jpg
-
-  auto bloom_upsample_pass = vuk::make_pass(
-    "bloom_upsample",
-    [radius](
-      vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eComputeRW | vuk::eComputeSampled) bloom_upsampled,
-      VUK_IA(vuk::eComputeSampled) bloom_downsampled
-    ) {
-      auto extent = bloom_upsampled->extent;
-      const auto last_mip = static_cast<i32>(bloom_upsampled->level_count) - 1;
-
-      cmd_list //
-        .bind_compute_pipeline("bloom_upsample")
-        .bind_sampler(0, 3, vuk::LinearSamplerClamped);
-
-      for (i32 i = last_mip; i > 0; i--) {
-        auto mip_width = std::max(1_u32, extent.width >> (i - 1));
-        auto mip_height = std::max(1_u32, extent.height >> (i - 1));
-
-        if (i == last_mip) {
-          cmd_list.bind_image(0, 1, bloom_downsampled->mip(last_mip));
-        } else {
-          cmd_list.image_barrier(bloom_upsampled->mip(i), vuk::eComputeWrite, vuk::eComputeSampled);
-          cmd_list.bind_image(0, 1, bloom_upsampled->mip(i));
-        }
-
-        cmd_list.image_barrier(bloom_upsampled->mip(i - 1), vuk::eComputeWrite, vuk::eComputeWrite);
-        cmd_list.bind_image(0, 0, bloom_upsampled->mip(i - 1));
-        cmd_list.bind_image(0, 2, bloom_downsampled->mip(i - 1));
-        cmd_list.push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mip_width, mip_height, radius));
-        cmd_list.dispatch_invocations(mip_width, mip_height);
-      }
-
-      return bloom_upsampled;
+  const auto linear_clamped = render_context.cached_sampler_handle(vir::LinearSamplerClamped);
+  auto upsampled = context.bloom_upsampled_attachment;
+  const auto last_mip = level_count - 1;
+  for (auto i = last_mip; i > 0; i--) {
+    const auto mip_width = std::max(1_u32, extent.width >> (i - 1));
+    const auto mip_height = std::max(1_u32, extent.height >> (i - 1));
+    const auto upsample_src = i == last_mip ? module.mip(downsampled, last_mip) : module.mip(upsampled, i);
+    const auto downsample_src = module.mip(downsampled, i - 1);
+    const auto dst = module.mip(upsampled, i - 1);
+    module
+      .begin_compute(
+        {{upsample_src, vir::Access::ComputeSampled},
+         {downsample_src, vir::Access::ComputeSampled},
+         {dst, vir::Access::ComputeWrite}}
+      )
+      .with_name("bloom upsample")
+      .bind_compute_pipeline(render_context.pipeline("bloom_upsample"))
+      .bind_image(0, 0, dst)
+      .bind_image(0, 1, upsample_src)
+      .bind_image(0, 2, downsample_src)
+      .bind_sampler(0, 3, linear_clamped)
+      .push_constants(PushConstants(mip_width, mip_height))
+      .push_constants_from_at(8, variables.bloom_radius)
+      .dispatch_invocations(mip_width, mip_height, 1);
+    const auto results = module.end_compute<3>();
+    if (i == last_mip) {
+      downsampled = module.whole(results[0]);
     }
-  );
 
-  context.bloom_upsampled_attachment = bloom_upsample_pass(
-    context.bloom_upsampled_attachment,
-    bloom_downsampled_attachment
+    upsampled = module.whole(results[2]);
+  }
+
+  context.bloom_upsampled_attachment = upsampled;
+}
+
+auto RendererInstance::bind_tonemap_variables(
+  this const RendererInstance& self, vir::Program& program, const PostProcessVariables& variables
+) -> void {
+  ZoneScoped;
+  if (!program.has_variable(variables.tonemap_push)) {
+    return;
+  }
+
+  const auto& shape = self.frame_params.shape;
+  const auto display_extent = vir::Extent3D{shape.display_size.x, shape.display_size.y, 1};
+  program.set_bytes(
+    variables.tonemap_push,
+    TonemapPush(
+      self.post_proces_settings,
+      glm::ivec2(display_extent.width, display_extent.height),
+      self.frame_params.bloom_intensity
+    )
   );
 }
 
-auto RendererInstance::apply_tonemap(this RendererInstance& self, PostProcessContext& context)
-  -> vuk::Value<vuk::ImageAttachment> {
+auto RendererInstance::apply_tonemap(
+  vir::Module& module, RenderContext& render_context, FrameRecording& recording, PostProcessContext& context
+) -> vir::ValueID {
   ZoneScoped;
+  auto& prepared = recording.prepared;
+  auto& variables = prepared.post_process;
+  variables.tonemap_push = module.declare_bytes_var("tonemap push", sizeof(TonemapPush));
 
-  auto tonemap_pass = vuk::make_pass(
-    "tonemap",
-    [scene_flags = self.gpu_scene_flags,
-     pp = self.post_proces_settings,
-     tt = self.tonemap_type,
-     bloom_intensity = context.bloom_intensity](
-      vuk::CommandBuffer& cmd_list,
-      VUK_IA(vuk::eColorWrite) dst,
-      VUK_IA(vuk::eFragmentSampled) src,
-      VUK_IA(vuk::eFragmentSampled) bloom_src,
-      VUK_BA(vuk::eFragmentUniformRead) exposure
-    ) {
-      const auto size = glm::ivec2(src->extent.width, src->extent.height);
-      cmd_list.bind_graphics_pipeline("tonemap")
-        .set_rasterization({})
-        .set_color_blend(dst, vuk::BlendPreset::eOff)
-        .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-        .set_viewport(0, vuk::Rect2D::framebuffer())
-        .set_scissor(0, vuk::Rect2D::framebuffer())
-        .bind_sampler(0, 0, {.magFilter = vuk::Filter::eLinear, .minFilter = vuk::Filter::eLinear})
-        .bind_image(0, 1, src)
-        .bind_image(0, 2, bloom_src)
-        .bind_buffer(0, 3, exposure)
-        .specialize_constants(0, std::to_underlying(scene_flags))
-        .specialize_constants(1, std::to_underlying(tt))
-        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(pp, size, bloom_intensity))
-        .draw(3, 1, 0, 0);
+  auto& values = recording.values;
+  const auto& shape = recording.shape;
 
-      return dst;
-    }
-  );
+  static constexpr auto tonemap_sampler = vir::SamplerInfo{
+    .mag_filter = VK_FILTER_LINEAR,
+    .min_filter = VK_FILTER_LINEAR,
+    .mipmap_mode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+    .address_mode_u = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .address_mode_v = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .address_mode_w = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+  };
+  module
+    .begin_rendering(
+      {{context.dst_attachment, vir::Access::ColorWrite},
+       {context.final_attachment, vir::Access::FragmentSampled},
+       {context.bloom_upsampled_attachment, vir::Access::FragmentSampled},
+       {values.exposure, vir::Access::FragmentUniformRead}}
+    )
+    .with_name("tonemap")
+    .bind_graphics_pipeline(render_context.pipeline("tonemap"))
+    .set_viewport(0, vir::Rect2D::framebuffer())
+    .set_scissor(0, vir::Rect2D::framebuffer())
+    .bind_sampler(0, 0, render_context.cached_sampler_handle(tonemap_sampler))
+    .bind_image(0, 1, context.final_attachment)
+    .bind_image(0, 2, context.bloom_upsampled_attachment)
+    .bind_buffer(0, 3, values.exposure)
+    .specialize_constant(0, std::to_underlying(shape.scene_flags))
+    .specialize_constant(1, std::to_underlying(shape.tonemap))
+    .push_constants_from(prepared.post_process.tonemap_push)
+    .draw(3, 1);
+  std::tie(
+    context.dst_attachment,
+    context.final_attachment,
+    context.bloom_upsampled_attachment,
+    values.exposure
+  ) = std::tuple_cat(module.end_rendering<4>());
 
-  return tonemap_pass(
-    std::move(context.dst_attachment),
-    std::move(context.final_attachment),
-    std::move(context.bloom_upsampled_attachment),
-    std::move(self.prepared_frame.exposure_buffer)
-  );
+  return context.dst_attachment;
 }
 } // namespace ox

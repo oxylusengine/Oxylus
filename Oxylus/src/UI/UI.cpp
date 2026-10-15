@@ -4,6 +4,7 @@
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
+#include "Render/Utils/TextureFormat.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 
@@ -218,7 +219,7 @@ bool UI::texture_property(
       // tooltip
       if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
         ImGui::BeginTooltip();
-        const auto txt_name = fmt::format("{}:{}", texture_asset->path, vuk::format_to_sv(texture->get_format()));
+        const auto txt_name = fmt::format("{}:{}", texture_asset->path, format_name(texture->get_format()));
         ImGui::TextUnformatted(txt_name.c_str());
         ImGui::Spacing();
         ImGui::Image(App::mod<ImGuiRenderer>().add_image(texture->view()), {tooltip_size, tooltip_size});
@@ -491,17 +492,6 @@ void UI::image(
   const ImVec4& border_col
 ) {
   ImGui::Image(App::mod<ImGuiRenderer>().add_image(texture_view), size, uv0, uv1, tint_col, border_col);
-}
-
-void UI::image(
-  vuk::Value<vuk::ImageAttachment>&& attch,
-  ImVec2 size,
-  const ImVec2& uv0,
-  const ImVec2& uv1,
-  const ImVec4& tint_col,
-  const ImVec4& border_col
-) {
-  ImGui::Image(App::mod<ImGuiRenderer>().add_image(std::move(attch)), size, uv0, uv1, tint_col, border_col);
 }
 
 bool UI::image_button(

@@ -13,7 +13,7 @@ public:
   ProjectPanel();
 
   auto on_update(this ProjectPanel& self) -> void {}
-  auto on_render(this ProjectPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this ProjectPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
   auto load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) -> void;
 

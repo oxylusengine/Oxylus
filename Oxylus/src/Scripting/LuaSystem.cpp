@@ -6,6 +6,7 @@
 #include <sol/state.hpp>
 
 #include "Core/App.hpp"
+#include "Render/Graph/Types.hpp"
 #include "Scene/Scene.hpp"
 #include "Scripting/LuaManager.hpp"
 
@@ -190,7 +191,7 @@ auto LuaSystem::on_scene_fixed_update(this const LuaSystem& self, Scene* scene, 
   check_result(result, "on_scene_fixed_update");
 }
 
-auto LuaSystem::on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent) -> void {
+auto LuaSystem::on_scene_render(this const LuaSystem& self, Scene* scene, vir::Extent3D extent) -> void {
   ZoneScoped;
 
   if (!self.on_scene_render_func)

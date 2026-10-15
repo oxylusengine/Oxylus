@@ -3,10 +3,10 @@
 #include <filesystem>
 #include <flecs.h>
 #include <sol/environment.hpp>
-#include <vuk/Types.hpp>
 
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
+#include "Render/Graph/Types.hpp"
 #include "Scripting/LuaScript.hpp"
 
 namespace JPH {
@@ -42,7 +42,7 @@ public:
   auto on_scene_stop(this const LuaSystem& self, Scene* scene) -> void;
   auto on_scene_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void;
   auto on_scene_fixed_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void;
-  auto on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent) -> void;
+  auto on_scene_render(this const LuaSystem& self, Scene* scene, vir::Extent3D extent) -> void;
 
   auto on_contact_added(
     this const LuaSystem& self,
