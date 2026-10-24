@@ -1,12 +1,15 @@
 ﻿#pragma once
 #include <ankerl/unordered_dense.h>
 #include <imgui.h>
+#include <memory>
 
 #include "Core/Types.hpp"
 
 struct ImFont;
 
 namespace ox {
+class Texture;
+
 namespace Gruvbox {
 constexpr auto dark0_hardest = ImColor(20, 20, 20, 255);
 constexpr auto dark0_hard = ImColor(29, 32, 33, 255);
@@ -37,6 +40,11 @@ constexpr auto neutral_orange = ImColor(214, 93, 14, 255);
 
 class EditorTheme {
 public:
+  EditorTheme();
+  ~EditorTheme();
+
+  std::unique_ptr<Texture> engine_banner;
+
   f32 regular_font_size = 16.0f;
   f32 small_font_size = 12.0f;
   ImFont* regular_font = nullptr;
@@ -53,7 +61,8 @@ public:
 
   ankerl::unordered_dense::map<size_t, const char*> component_icon_map = {};
 
-  void init(this EditorTheme& self);
+  auto init(this EditorTheme& self) -> void;
+  auto draw_banner(this const EditorTheme& self, f32 width) -> void;
   auto sync_scale(this EditorTheme& self, f32 ui_scale) -> void;
 
   void apply_theme(bool dark = true);

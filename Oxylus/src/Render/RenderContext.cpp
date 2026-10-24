@@ -18,6 +18,7 @@
 
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
+#include "Core/Version.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/UploadBatch.hpp"
@@ -254,10 +255,12 @@ vuk::Swapchain make_swapchain(
 auto RenderContext::create_context(this RenderContext& self, const Window& window, bool vulkan_validation_layers)
   -> void {
   ZoneScoped;
+  const auto& build_info = engine_build_info();
   vkb::InstanceBuilder builder;
   builder //
     .set_app_name("Oxylus App")
     .set_engine_name("Oxylus")
+    .set_engine_version(build_info.major, build_info.minor, build_info.patch)
     .require_api_version(1, 3, 0)
     .set_app_version(0, 1, 0);
 

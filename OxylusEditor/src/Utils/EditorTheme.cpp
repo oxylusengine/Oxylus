@@ -5,18 +5,35 @@
 #include <cmath>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <implot.h>
+#include <memory>
+#include <span>
 
+#include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
+#include "UI/UI.hpp"
+#include "Utils/EmbeddedBanner.hpp"
 
 namespace ox {
-static ImVec4 lighten(ImVec4 c, float p) {
-  return {glm::max(0.f, c.x + 1.0f * p), glm::max(0.f, c.y + 1.0f * p), glm::max(0.f, c.z + 1.0f * p), c.w};
+static auto lighten(ImVec4 c, f32 p) -> ImVec4 {
+  return {glm::max(0.0f, c.x + 1.0f * p), glm::max(0.0f, c.y + 1.0f * p), glm::max(0.0f, c.z + 1.0f * p), c.w};
 }
 
-void EditorTheme::init(this EditorTheme& self) {
+EditorTheme::EditorTheme() = default;
+EditorTheme::~EditorTheme() = default;
+
+auto EditorTheme::init(this EditorTheme& self) -> void {
+  ZoneScoped;
+
+  self.engine_banner = std::make_unique<Texture>(Texture::create({
+    .format = vuk::Format::eR8G8B8A8Srgb,
+    .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u},
+    .usage = vuk::ImageUsageFlagBits::eSampled,
+  }));
+  self.engine_banner->upload(std::span(editor_banner), vuk::eFragmentSampled);
+
   auto& vfs = App::get_vfs();
   auto regular_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraSans-Regular.ttf");
   auto bold_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraSans-Bold.ttf");
@@ -78,6 +95,22 @@ void EditorTheme::init(this EditorTheme& self) {
   self.apply_theme();
   self.set_style();
 }
+
+auto EditorTheme::draw_banner(this const EditorTheme& self, const f32 width) -> void {
+  ZoneScoped;
+
+  const auto cursor_x = ImGui::GetCursorPosX();
+  const auto available_width = ImGui::GetContentRegionAvail().x;
+  const auto banner_width = std::min(width, available_width);
+
+  ImGui::SetCursorPosX(cursor_x + (available_width - banner_width) * 0.5f);
+  UI::image(
+    self.engine_banner->view(),
+    {banner_width, banner_width * 92.0f / 203.0f},
+    {50.0f / 332.0f, 13.0f / 119.0f},
+    {253.0f / 332.0f, 105.0f / 119.0f}
+  );
+  ImGui::SetCursorPosX(cursor_x);}
 
 void EditorTheme::apply_theme(bool dark) {
   ImVec4* colors = ImGui::GetStyle().Colors;

@@ -14,6 +14,7 @@
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
+#include "Panels/AboutPanel.hpp"
 #include "Panels/ActivityLogPanel.hpp"
 #include "Panels/AnimationEditorPanel.hpp"
 #include "Panels/AssetManagerPanel.hpp"
@@ -124,6 +125,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   auto activity_log_panel = self.editor_panel_registry.add<ActivityLogPanel>();
   activity_log_panel->set_system(&self.notification_system);
   self.editor_panel_registry.add<TextEditorPanel>();
+  self.editor_panel_registry.add<AboutPanel>();
 
   self.main_viewport_panel.init();
 
@@ -679,8 +681,8 @@ void Editor::draw_menubar(this Editor& self) {
     }
     if (ImGui::BeginMenu("Help")) {
       if (ImGui::MenuItem("About")) {
+        self.editor_panel_registry.get<AboutPanel>().visible = true;
       }
-      UI::tooltip_hover("WIP");
       ImGui::EndMenu();
     }
     ImGui::SameLine();
