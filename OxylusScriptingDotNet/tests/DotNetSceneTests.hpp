@@ -884,6 +884,17 @@ TEST_F(DotNetSceneTest, MirrorsUuidFieldsOfComponents) {
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "sprite swapped"), 1) << logs_text();
 }
 
+TEST_F(DotNetSceneTest, DestroysASpriteInOnStop) {
+  ASSERT_TRUE(scene->add_script_type("SmokeGame.SpriteTeardownProbe").has_value());
+  scene->runtime_start();
+  step();
+  scene->runtime_stop();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "doomed sprite material True"), 1) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "doomed sprite destroyed"), 1) << logs_text();
+  scene.reset();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
 TEST_F(DotNetSceneTest, ReadsTheScenesStateFromCSharp) {
   behaviour_entity("Info", "SmokeGame.SceneInfoProbe");
   scene->runtime_start();

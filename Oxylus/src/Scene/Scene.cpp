@@ -606,6 +606,10 @@ Scene::~Scene() {
   }
 
   rml_view.reset();
+
+  // ecs_fini removes every entity still alive, and the observers that runs reach transforms, mesh_instances and the
+  // rest, which are declared after the world and so would already be destroyed by the time its own destructor ran
+  world.release();
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {

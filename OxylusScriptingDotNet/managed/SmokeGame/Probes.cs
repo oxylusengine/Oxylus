@@ -782,6 +782,27 @@ public sealed class SpriteProbe : Behaviour
     }
 }
 
+// a sprite spawned while the scene runs and destroyed in OnStop, the way a game cleans up what it made. "Kept" is left
+// for the scene's own teardown to remove
+public sealed class SpriteTeardownProbe : SceneScript
+{
+    Entity sprite;
+
+    public override void OnStart()
+    {
+        sprite = World.Spawn("Doomed");
+        sprite.Ensure<SpriteComponent>();
+        World.Spawn("Kept").Ensure<SpriteComponent>();
+        Log.Info($"doomed sprite material {sprite.Get<SpriteComponent>().Material.IsValid}");
+    }
+
+    public override void OnStop()
+    {
+        sprite.Destruct();
+        Log.Info("doomed sprite destroyed");
+    }
+}
+
 public sealed class AppResetProbe : Behaviour
 {
     public override void OnStart()
