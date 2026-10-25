@@ -27,7 +27,6 @@ enum class FileType {
   Texture,
   Model,
   Audio,
-  Script,
   Material,
   Terrain,
   ParticleSystem,

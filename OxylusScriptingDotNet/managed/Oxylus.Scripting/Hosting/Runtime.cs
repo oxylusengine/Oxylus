@@ -44,6 +44,7 @@ public static unsafe class Runtime
         managed->DetachWorld = &DetachWorld;
         managed->AllocatedBytes = &AllocatedBytes;
         Scenes.Fill(managed);
+        Callbacks.Fill(managed);
         return OxStatus.Ok;
     }
 
@@ -109,6 +110,15 @@ public static unsafe class Runtime
             return status;
         }
 
+        for (var i = 0; i < components.Length; i++)
+        {
+            if (components[i].IsScriptDefined && ids[i] != 0 && components[i].Size > 0 && !SetDefaults(world, ids[i], components[i]))
+            {
+                Log.Error($"Couldn't set the defaults of {System.Text.Encoding.UTF8.GetString(components[i].Path)}");
+                return OxStatus.InvalidArgument;
+            }
+        }
+
         var state = new WorldState(world, ids);
         Worlds.Add(state);
         foreach (var system in systems)
@@ -144,6 +154,14 @@ public static unsafe class Runtime
         }
 
         return Native.DefineComponent(world, scratch.String(component.Path), fields, component.Members.Length);
+    }
+
+    static bool SetDefaults(nint world, ulong id, ComponentDescriptor component)
+    {
+        fixed (byte* defaults = component.Defaults)
+        {
+            return Native.SetComponentDefaults(world, id, defaults, component.Size) == OxStatus.Ok;
+        }
     }
 
     static OxStatus Bind(nint world, ulong[] ids)
@@ -216,6 +234,8 @@ public static unsafe class Runtime
     // collected
     internal static void ReleaseScripts()
     {
+        Assets.ReleaseScripts();
+        Callbacks.Release();
         Scenes.Release();
         foreach (var world in Worlds.All)
         {

@@ -21,7 +21,6 @@ constexpr AssetType FILTERABLE_ASSET_TYPES[] = {
   AssetType::Material,
   AssetType::Scene,
   AssetType::Audio,
-  AssetType::Script,
   AssetType::ParticleSystem,
   AssetType::Terrain,
   AssetType::Shader,
@@ -83,7 +82,8 @@ static auto asset_status_label(const Asset& asset) -> const c8* { return asset.i
 
 auto asset_type_icon(const AssetType type) -> const c8* {
   switch (type) {
-    case AssetType::None          : return ICON_MDI_HELP_CIRCLE_OUTLINE;
+    case AssetType::None          :
+    case AssetType::Script        : return ICON_MDI_HELP_CIRCLE_OUTLINE;
     case AssetType::Shader        : return ICON_MDI_IMAGE_FILTER_BLACK_WHITE;
     case AssetType::Model         : return ICON_MDI_VECTOR_POLYGON;
     case AssetType::Texture       : return ICON_MDI_FILE_IMAGE;
@@ -91,7 +91,6 @@ auto asset_type_icon(const AssetType type) -> const c8* {
     case AssetType::Font          : return ICON_MDI_FORMAT_FONT;
     case AssetType::Scene         : return ICON_MDI_FILE_TREE;
     case AssetType::Audio         : return ICON_MDI_VOLUME_HIGH;
-    case AssetType::Script        : return ICON_MDI_LANGUAGE_LUA;
     case AssetType::Terrain       : return ICON_MDI_TERRAIN;
     case AssetType::ParticleSystem: return ICON_MDI_SHIMMER;
     case AssetType::Skeleton      : return ICON_MDI_BONE;

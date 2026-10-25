@@ -20,6 +20,10 @@ internal sealed class WorldState(nint handle, ulong[] componentIds)
     public readonly BehaviourList FixedUpdating = new(BehaviourList.FixedUpdate);
     public readonly List<Behaviour> Starting = [];
     public bool IsRunning;
+
+    // what Defer queued, run at the start of the next update
+    public List<Action> Deferred = [];
+    public List<Action> Running = [];
 }
 
 internal static class Worlds

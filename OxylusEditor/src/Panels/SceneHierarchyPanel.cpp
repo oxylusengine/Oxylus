@@ -12,9 +12,7 @@
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
-#include "Panels/TextEditorPanel.hpp"
 #include "Render/DebugRenderer.hpp"
-#include "Scripting/LuaSystem.hpp"
 #ifdef OX_DOTNET
   #include "Scripting/DotNetScripting.hpp"
 #endif
@@ -57,21 +55,6 @@ auto SceneHierarchyPanel::SelectedEntity::get(this SelectedEntity& self) -> flec
 auto SceneHierarchyPanel::SelectedEntity::reset(this SelectedEntity& self) -> void {
   self.entity = flecs::entity::null();
   App::mod<Editor>().get_context().reset();
-}
-
-// Opening a script is a hand-off to the text editor panel, which owns the buffer and the tab.
-static auto open_script_in_editor(const UUID& uuid) -> void {
-  ZoneScoped;
-
-  auto asset = App::mod<AssetManager>().get_asset(uuid);
-  if (!asset) {
-    return;
-  }
-
-  auto& text_editor_panel = App::mod<Editor>().editor_panel_registry.get<TextEditorPanel>();
-  text_editor_panel.visible = true;
-  const auto& source = asset->source_path.empty() ? asset->path : asset->source_path;
-  text_editor_panel.text_editor.open_file(App::get_vfs().to_physical(source));
 }
 
 SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanelState("Scene Hierarchy", ICON_MDI_VIEW_LIST, true) {}
@@ -219,9 +202,6 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
             self.selected_entity_.reset();
             self.selected_script_ = &key;
           }
-          if (key.asset_uuid && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-            open_script_in_editor(key.asset_uuid);
-          }
         }
 
         if (
@@ -239,25 +219,6 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
         ImGui::EndTable();
 
         if (ImGui::BeginPopupContextItem()) {
-          const auto is_lua_selected = self.selected_script_ != nullptr && self.selected_script_->asset_uuid;
-          if (is_lua_selected && ImGui::MenuItem("Reload")) {
-            if (!self.scene_->is_running()) {
-              if (auto lua_system = self.scene_->get_lua_system(self.selected_script_->asset_uuid)) {
-                auto& asset_man = App::mod<AssetManager>();
-                refresh_scripts(asset_man);
-
-                // copied out first, the script runs as it reloads and may well reach the asset manager
-                auto script = asset_man.get_script(self.selected_script_->asset_uuid);
-                if (script) {
-                  const auto fresh_script = script.copy();
-                  script.reset();
-                  lua_system->reload(fresh_script);
-                } else {
-                  lua_system->reload();
-                }
-              }
-            }
-          }
           if (ImGui::MenuItem("Remove", "Del")) {
             if (self.selected_script_) {
               self.scene_->remove_script(*self.selected_script_);
@@ -389,8 +350,6 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
   }
 
   ImGui::End();
-
-  self.draw_script_picker();
 }
 
 auto SceneHierarchyPanel::draw_entity_node(
@@ -715,11 +674,6 @@ auto SceneHierarchyPanel::draw_scripts_context_menu(this SceneHierarchyPanel& se
   ZoneScoped;
   memory::ScopedStack stack;
 
-  if (ImGui::MenuItem(stack.format_char("{} Add script...", ICON_MDI_SCRIPT))) {
-    self.script_picker_open_ = true;
-    ImGui::CloseCurrentPopup();
-  }
-
 #ifdef OX_DOTNET
   if (ImGui::BeginMenu(stack.format_char("{} Add C# script", ICON_MDI_LANGUAGE_CSHARP))) {
     auto is_any_listed = false;
@@ -752,23 +706,6 @@ auto SceneHierarchyPanel::draw_scripts_context_menu(this SceneHierarchyPanel& se
     ImGui::EndMenu();
   }
 #endif
-}
-
-auto SceneHierarchyPanel::draw_script_picker(this SceneHierarchyPanel& self) -> void {
-  ZoneScoped;
-
-  if (!self.script_picker_open_ || !self.scene_) {
-    return;
-  }
-
-  const auto picked = self.script_picker_.render_picker("Add Script", &self.script_picker_open_, AssetType::Script);
-  if (!picked) {
-    return;
-  }
-
-  if (auto result = self.scene_->add_lua_system(picked->uuid); !result) {
-    OX_LOG_ERROR("{}", result.error());
-  }
 }
 
 auto SceneHierarchyPanel::set_scene(this SceneHierarchyPanel& self, EditorScene* scene) -> void {

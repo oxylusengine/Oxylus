@@ -1,6 +1,5 @@
 local fmt_version = "12.1.0"
 local fmt_configs = { header_only = false, shared = false }
-local lua_version = "v5.4.7"
 local imgui_version = "v1.92.9b-docking"
 local simdjson_version = "v4.2.4"
 
@@ -70,8 +69,6 @@ packages = {
       system_tracing = true,
     },
   },
-  ["lua " .. lua_version] = {},
-  ["sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444"] = { configs = { includes_lua = false } },
   ["unordered_dense v4.8.1"] = {},
   ["svector v1.0.3"] = {},
   ["plf_colony v7.41"] = {},
@@ -79,7 +76,6 @@ packages = {
   ["rmlui f7b297e2c8fc44c5e85df498dbae91762c0769a5"] = {
     configs = {
       shared = false,
-      lua = true,
     },
     debug = is_mode("debug")
   },
@@ -130,16 +126,6 @@ confs = {
       system = false,
     },
   },
-
-  {
-    package = "lua",
-    override = "rmlui.lua",
-    configs = {
-      override = true,
-      version = lua_version,
-      system = false,
-    }
-  }
 }
 
 function require_packages()

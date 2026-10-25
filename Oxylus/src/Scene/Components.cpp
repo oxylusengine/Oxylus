@@ -2,25 +2,13 @@
 
 #include "Scene/ComponentRegistry.hpp"
 
-#ifdef OX_LUA_BINDINGS
-  #include "Core/App.hpp"
-  #include "Scripting/LuaManager.hpp"
-#endif
-
 namespace ox {
 CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   ZoneScoped;
 
   world.module<CoreComponentsModule>("Core");
 
-#ifdef OX_LUA_BINDINGS
-  // a bare world, like the C# bindgen's or a test's, has no app and nothing to mirror into
-  auto* state = App::get() && App::has_mod<LuaManager>() ? App::mod<LuaManager>().get_state() : nullptr;
-  auto registry = state ? ComponentRegistry{world, state, state->create_named_table("Core")}
-                        : ComponentRegistry{world, nullptr, sol::table{}};
-#else
   auto registry = ComponentRegistry{world};
-#endif
 
   // Math types
   registry.bind_value<&glm::vec2::x, &glm::vec2::y>("glm::vec2");

@@ -189,7 +189,7 @@ jobs:
           key: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.mode.name }}-${{ env.XMAKE_RUNTIME }}-${{ matrix.platform.toolchain }}${{ matrix.platform.llvm_version }}-${{ steps.dep_hash.outputs.hash }}-${{ steps.cache_key.outputs.key }}
 
       - name: Configure xmake and install dependencies
-        run: xmake config -v --toolchain=${{ matrix.platform.toolchain }} --arch=${{ matrix.platform.arch }} --mode=${{ matrix.mode.name }} --runtimes=${{ env.XMAKE_RUNTIME }} --yes --policies=package.precompiled:n --profile=n --lua_bindings=y --tests=false
+        run: xmake config -v --toolchain=${{ matrix.platform.toolchain }} --arch=${{ matrix.platform.arch }} --mode=${{ matrix.mode.name }} --runtimes=${{ env.XMAKE_RUNTIME }} --yes --policies=package.precompiled:n --profile=n --tests=false
 
       - name: Save cached xmake dependencies
         if: steps.restore-depcache.outputs.cache-hit != 'true'

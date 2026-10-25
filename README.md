@@ -9,7 +9,7 @@
 ## About   
 Oxylus is a simple yet powerful data-driven game engine built in C++ with a focus on developer productivity and performance. It is free and will be open-source forever!
 
-Be aware that Oxylus is still in it's early stages of development. Some important features and documentation might be missing. Oxylus will have many API breaking changes both on C++ and Lua. Only use if you're okay with these.
+Be aware that Oxylus is still in it's early stages of development. Some important features and documentation might be missing. Oxylus will have many API breaking changes both on C++ and C#. Only use if you're okay with these.
 
 <p align="center">
 <img src="https://raw.githubusercontent.com/oxylusengine/oxylus-resources/70e36b4dbb102eec9bc531c51d6a47510d3a5d54/home.png" height="800" />
@@ -39,7 +39,7 @@ Be aware that Oxylus is still in it's early stages of development. Some importan
 		- Tilemaps
   - Advanced Particle System
 - Multithreaded physics with [Jolt](https://github.com/jrouwe/JoltPhysics).
-- Extensive Lua scripting with [flecs](https://github.com/SanderMertens/flecs) events and systems.
+- Extensive C# scripting with [flecs](https://github.com/SanderMertens/flecs) events and systems.
   - Can write the whole game without ever touching C++, except app initalization and custom rendering.
 - A featureful editor built with [Dear ImGui](https://github.com/ocornut/imgui) to aid the development process. 
 - 3D Audio with [miniaudio](https://github.com/mackron/miniaudio)
@@ -63,7 +63,6 @@ Windows, Linux and Mac (with KosmicKrisp) is supported.
       - ex: `clang-cl` for Windows, `nix-clang` for nixos, `mac-clang` for macOS. Check `xmake/toolchains.lua` for details. 
 	- Pick a mode `-m debug, release, dist`
 	- Optionals:
-      - `--lua_bindings` Compile lua bindings (`true` by default)
       - `--profile` Enable tracy profiler (`false` by default)
       - `--tests` Enable tests. (`false` by default)
 - To build the project run:

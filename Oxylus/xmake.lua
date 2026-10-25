@@ -10,11 +10,6 @@ target("Oxylus")
 
     add_options("profile")
     add_options("llvmpipe")
-    if not has_config("lua_bindings") then
-        remove_files("./src/Scripting/*Bindings*")
-    else
-        add_defines("OX_LUA_BINDINGS")
-    end
 
     if is_plat("windows") then
         add_defines("_UNICODE", { force = true, public = true  })
@@ -100,8 +95,6 @@ target("Oxylus")
         "simdutf",
         "joltphysics",
         "glm",
-        "lua",
-        "sol2",
         "toml++",
         "loguru",
         "simdjson",

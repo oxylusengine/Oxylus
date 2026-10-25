@@ -295,7 +295,8 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
         }
 
         source.AppendLine("            ],");
-        source.AppendLine("            IsScriptDefined: true);");
+        source.AppendLine("            IsScriptDefined: true,");
+        source.AppendLine($"            Defaults: global::Oxylus.ComponentType.DefaultsOf(new {component.Type}()));");
         source.AppendLine("    }");
         source.AppendLine();
     }

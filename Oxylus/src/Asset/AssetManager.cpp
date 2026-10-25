@@ -13,7 +13,6 @@
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
-#include "Scripting/LuaScript.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
@@ -56,32 +55,18 @@ static auto unindex_source(
   }
 }
 
-// a cooked script is bytecode in a pack, anything else is a source a LuaSystem reads when it runs
-static auto read_script(const std::filesystem::path& path, const std::filesystem::path& source_path)
-  -> option<LuaScript> {
-  ZoneScoped;
+struct MaterialTextureSlot {
+  UUID Material::* member = nullptr;
+  bool is_srgb = false;
+};
 
-  if (path.extension() != ".oxpack") {
-    return LuaScript{.path = path};
-  }
-
-  auto pack = AssetFile::unpack(path);
-  if (!pack) {
-    return nullopt;
-  }
-
-  for (auto& entry : pack->entries) {
-    if (auto* script_data = std::get_if<ScriptData>(&entry.data)) {
-      return LuaScript{
-        .path = source_path.empty() ? path : source_path,
-        .bytecode = std::move(script_data->bytecode),
-      };
-    }
-  }
-
-  OX_LOG_ERROR("Asset pack '{}' contains no script.", path);
-  return nullopt;
-}
+static constexpr auto MATERIAL_TEXTURE_SLOTS = std::array{
+  MaterialTextureSlot{.member = &Material::albedo_texture, .is_srgb = true},
+  MaterialTextureSlot{.member = &Material::normal_texture, .is_srgb = false},
+  MaterialTextureSlot{.member = &Material::emissive_texture, .is_srgb = true},
+  MaterialTextureSlot{.member = &Material::metallic_roughness_texture, .is_srgb = false},
+  MaterialTextureSlot{.member = &Material::occlusion_texture, .is_srgb = false},
+};
 
 auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
@@ -128,7 +113,6 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   self.material_map.reset();
   self.scene_map.reset();
   self.audio_map.reset();
-  self.script_map.reset();
   self.terrain_edits_map.reset();
   self.particle_system_map.reset();
   self.cinematic_map.reset();
@@ -532,7 +516,6 @@ auto AssetManager::unload_asset_impl(this AssetManager& self, const AssetType ty
     case AssetType::Material      : return self.unload_material(static_cast<MaterialID>(id));
     case AssetType::Scene         : return self.unload_scene(static_cast<SceneID>(id));
     case AssetType::Audio         : return self.unload_audio(static_cast<AudioID>(id));
-    case AssetType::Script        : return self.unload_script(static_cast<ScriptID>(id));
     case AssetType::Terrain       : return self.unload_terrain_edits(static_cast<TerrainEditsID>(id));
     case AssetType::ParticleSystem: return self.unload_particle_system(static_cast<ParticleSystemID>(id));
     case AssetType::Skeleton      : return self.unload_skeleton(static_cast<SkeletonID>(id));
@@ -541,6 +524,7 @@ auto AssetManager::unload_asset_impl(this AssetManager& self, const AssetType ty
     case AssetType::None          :
     case AssetType::Shader        :
     case AssetType::Font          :
+    case AssetType::Script        :
     case AssetType::UI            : return false;
   }
 
@@ -640,7 +624,6 @@ auto AssetManager::load_asset_impl(
 
   auto asset_type = asset->type;
   auto asset_path = asset_vfs().to_physical(asset->path);
-  auto asset_source_path = asset->source_path;
 
   asset.reset();
 
@@ -687,7 +670,10 @@ auto AssetManager::load_asset_impl(
       }
       case AssetType::Scene         : return static_cast<u64>(self.load_scene(asset_path));
       case AssetType::Audio         : return static_cast<u64>(self.load_audio(asset_path));
-      case AssetType::Script        : return static_cast<u64>(self.load_script(asset_path, asset_source_path));
+      case AssetType::Script        : {
+        OX_LOG_WARN("Can't load asset {}, Lua script assets are no longer supported", uuid.str());
+        return ~0_u64;
+      }
       case AssetType::Terrain       : return static_cast<u64>(self.load_terrain_edits(asset_path));
       case AssetType::ParticleSystem: return static_cast<u64>(self.load_particle_system(asset_path));
       case AssetType::Cinematic     : return static_cast<u64>(self.load_cinematic(asset_path));
@@ -899,59 +885,6 @@ auto AssetManager::unload_audio(this AssetManager& self, const AudioID audio_id)
   return true;
 }
 
-auto AssetManager::load_script(
-  this AssetManager& self, const std::filesystem::path& path, const std::filesystem::path& source_path
-) -> ScriptID {
-  ZoneScoped;
-
-  auto script = read_script(path, source_path);
-  if (!script.has_value()) {
-    return ScriptID::Invalid;
-  }
-
-  auto write_lock = std::unique_lock(self.scripts_mutex);
-  return self.script_map.create_slot(std::make_unique<LuaScript>(std::move(script.value())));
-}
-
-auto AssetManager::unload_script(this AssetManager& self, const ScriptID script_id) -> bool {
-  ZoneScoped;
-
-  auto write_lock = std::unique_lock(self.scripts_mutex);
-  self.script_map.destroy_slot(script_id);
-
-  return true;
-}
-
-auto AssetManager::reload_script(this AssetManager& self, const UUID& uuid) -> bool {
-  ZoneScoped;
-
-  auto asset = self.get_asset(uuid);
-  if (!asset || asset->type != AssetType::Script || asset->script_id == ScriptID::Invalid) {
-    return false;
-  }
-
-  const auto script_id = asset->script_id;
-  const auto path = asset_vfs().to_physical(asset->path);
-  const auto source_path = asset->source_path;
-  asset.reset();
-
-  // read outside the lock, a pack read is file IO
-  auto script = read_script(path, source_path);
-  if (!script.has_value()) {
-    return false;
-  }
-
-  auto write_lock = std::unique_lock(self.scripts_mutex);
-  auto* slot = self.script_map.slot(script_id);
-  if (!slot) {
-    return false;
-  }
-
-  **slot = std::move(script.value());
-
-  return true;
-}
-
 auto AssetManager::load_particle_system(this AssetManager& self, const std::filesystem::path& path)
   -> ParticleSystemID {
   ZoneScoped;
@@ -1156,6 +1089,93 @@ auto AssetManager::get_material(this AssetManager& self, const MaterialID materi
   return ReadGuard<Material>(self.materials_mutex, material, adopt_lock);
 }
 
+// acquiring a material walks its textures once, so a material held by n owners holds n references on each of them, and
+// releasing it walks them n times. A swap has to move all n, or the last release drops a texture the material no longer
+// names and leaves the one it does. A material nobody holds (n is 0) took none, so the new texture is only loaded
+auto AssetManager::set_material(this AssetManager& self, const UUID& uuid, const Material& material) -> bool {
+  ZoneScoped;
+
+  auto material_id = MaterialID::Invalid;
+  auto holders = 0_u64;
+  {
+    const auto asset = self.get_asset(uuid);
+    if (!asset || asset->type != AssetType::Material || !asset->is_loaded()) {
+      return false;
+    }
+
+    material_id = asset->material_id;
+    holders = std::atomic_ref(asset->ref_count).load(std::memory_order_relaxed);
+  }
+
+  auto previous = Material{};
+  {
+    const auto current = self.get_material(material_id);
+    if (!current) {
+      return false;
+    }
+
+    previous = *current.value;
+  }
+
+  // the new textures first, so one that only moves between slots never reaches zero
+  auto acquired = ankerl::svector<UUID, 5>{};
+  const auto rollback = [&]() {
+    for (const auto& texture : acquired) {
+      for (u64 i = 0; i < holders; i++) {
+        self.unload_asset(texture);
+      }
+    }
+  };
+
+  for (const auto& slot : MATERIAL_TEXTURE_SLOTS) {
+    const auto& texture = material.*slot.member;
+    if (!texture || texture == previous.*slot.member) {
+      continue;
+    }
+
+    for (u64 i = 0; i < std::max(holders, 1_u64); i++) {
+      if (!self.load_asset(texture, TextureLoadInfo{.is_srgb = slot.is_srgb}, holders > 0)) {
+        // the i refs this texture already took aren't in `acquired` yet
+        for (u64 j = 0; j < i; j++) {
+          self.unload_asset(texture);
+        }
+
+        rollback();
+        return false;
+      }
+    }
+
+    acquired.push_back(texture);
+  }
+
+  {
+    auto write_lock = std::unique_lock(self.materials_mutex);
+    auto* payload = self.material_map.slot(material_id);
+    if (!payload) {
+      write_lock.unlock();
+      rollback();
+      return false;
+    }
+
+    *payload = material;
+  }
+
+  self.set_material_dirty(material_id);
+
+  for (const auto& slot : MATERIAL_TEXTURE_SLOTS) {
+    const auto& texture = previous.*slot.member;
+    if (!texture || texture == material.*slot.member) {
+      continue;
+    }
+
+    for (u64 i = 0; i < holders; i++) {
+      self.unload_asset(texture);
+    }
+  }
+
+  return true;
+}
+
 auto AssetManager::set_material_dirty(this AssetManager& self, MaterialID material_id) -> void {
   ZoneScoped;
 
@@ -1260,33 +1280,6 @@ auto AssetManager::get_audio(this AssetManager& self, const AudioID audio_id) ->
   return ReadGuard<AudioSource>(self.audio_mutex, audio, adopt_lock);
 }
 
-auto AssetManager::get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaScript> {
-  ZoneScoped;
-
-  ScriptID script_id;
-  {
-    auto guard = self.get_asset(uuid);
-    if (!guard || guard->type != AssetType::Script || guard->script_id == ScriptID::Invalid)
-      return {};
-    script_id = guard->script_id;
-  }
-  return self.get_script(script_id);
-}
-
-auto AssetManager::get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaScript> {
-  ZoneScoped;
-
-  if (script_id == ScriptID::Invalid)
-    return {};
-  self.scripts_mutex.lock_shared();
-  auto* script = self.script_map.slot(script_id);
-  if (!script) {
-    self.scripts_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<LuaScript>(self.scripts_mutex, script->get(), adopt_lock);
-}
-
 auto AssetManager::get_terrain_edits(this AssetManager& self, const UUID& uuid) -> ReadGuard<TerrainEdits> {
   ZoneScoped;
 
@@ -1365,6 +1358,48 @@ auto AssetManager::publish_skeleton(this AssetManager& self, const UUID& uuid, S
   }
 
   it->second.skeleton_id = skeleton_id;
+  return true;
+}
+
+auto AssetManager::publish_texture(this AssetManager& self, const UUID& uuid, Texture&& texture) -> bool {
+  ZoneScoped;
+
+  auto texture_id = TextureID::Invalid;
+  {
+    auto write_lock = std::unique_lock(self.textures_mutex);
+    texture_id = self.texture_map.create_slot(std::move(texture));
+  }
+
+  auto write_lock = std::unique_lock(self.registry_mutex);
+  const auto it = self.asset_registry.find(uuid);
+  if (it == self.asset_registry.end() || it->second.type != AssetType::Texture || it->second.is_loaded()) {
+    write_lock.unlock();
+    self.unload_texture(texture_id);
+    return false;
+  }
+
+  it->second.texture_id = texture_id;
+  return true;
+}
+
+auto AssetManager::publish_model(this AssetManager& self, const UUID& uuid, Model&& model) -> bool {
+  ZoneScoped;
+
+  auto model_id = ModelID::Invalid;
+  {
+    auto write_lock = std::unique_lock(self.models_mutex);
+    model_id = self.model_map.create_slot(std::move(model));
+  }
+
+  auto write_lock = std::unique_lock(self.registry_mutex);
+  const auto it = self.asset_registry.find(uuid);
+  if (it == self.asset_registry.end() || it->second.type != AssetType::Model || it->second.is_loaded()) {
+    write_lock.unlock();
+    self.unload_model(model_id);
+    return false;
+  }
+
+  it->second.model_id = model_id;
   return true;
 }
 

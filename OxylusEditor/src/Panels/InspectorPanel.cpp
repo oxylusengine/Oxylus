@@ -58,8 +58,6 @@ static auto expected_asset_type(const std::string_view field_name) -> AssetType 
     return AssetType::ParticleSystem;
   if (has("terrain"))
     return AssetType::Terrain;
-  if (has("script"))
-    return AssetType::Script;
   if (has("scene") || has("prefab"))
     return AssetType::Scene;
 
@@ -954,7 +952,6 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
   const auto path = App::get_vfs().to_physical(asset->path);
   const auto material_id = type == AssetType::Material ? asset->material_id : MaterialID::Invalid;
   const auto audio_id = type == AssetType::Audio ? asset->audio_id : AudioID::Invalid;
-  const auto script_id = type == AssetType::Script ? asset->script_id : ScriptID::Invalid;
   const auto skeleton_id = type == AssetType::Skeleton ? asset->skeleton_id : SkeletonID::Invalid;
   const auto animation_id = type == AssetType::Animation ? asset->animation_id : AnimationID::Invalid;
   const auto cinematic_id = type == AssetType::Cinematic ? asset->cinematic_id : CinematicID::Invalid;
@@ -962,6 +959,7 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
 
   switch (type) {
     case AssetType::None   :
+    case AssetType::Script : // retired with Lua scripting
     case AssetType::Shader : // TODO: Shaders
     case AssetType::Texture: // TODO: Textures
     case AssetType::Font   : // TODO: Fonts
@@ -1044,11 +1042,6 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
     case AssetType::Audio: {
       ImGui::SeparatorText("Audio");
       self.draw_audio_asset(path, asset_man.get_audio(audio_id));
-      break;
-    }
-    case AssetType::Script: {
-      ImGui::SeparatorText("Script");
-      self.draw_script_asset(asset_man.get_script(script_id));
       break;
     }
   }
@@ -1216,22 +1209,5 @@ auto InspectorPanel::draw_audio_asset(
   if (ImGui::SliderFloat("##preview_volume", &volume, 0.0f, 1.0f, "Volume %.2f")) {
     audio_engine.set_source_volume(source, volume);
   }
-}
-
-auto InspectorPanel::draw_script_asset(this InspectorPanel& self, ReadGuard<LuaScript> script) -> void {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  if (!script) {
-    ImGui::TextUnformatted("Couldn't load script.");
-    return;
-  }
-
-  auto script_path_str = script->path.string();
-
-  UI::begin_properties(ImGuiTableFlags_SizingFixedFit);
-  UI::text("File", stack.format("{}", script->path.filename()));
-  UI::input_text("Path", &script_path_str, ImGuiInputTextFlags_ReadOnly);
-  UI::end_properties();
 }
 } // namespace ox

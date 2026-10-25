@@ -8,8 +8,13 @@
 #include <vector>
 
 #include "Core/Option.hpp"
+#include "Core/UUID.hpp"
 #include "Scripting/DotNetAbi.hpp"
 #include "Scripting/SceneScript.hpp"
+
+namespace Rml {
+class Context;
+}
 
 namespace ox {
 struct ComponentDB;
@@ -39,6 +44,12 @@ struct DotNetScriptType {
 };
 
 auto make_native_api() -> OxNativeApi;
+
+// what C#'s Scene.Load emits. A script can't replace the scene running it in the middle of its frame, so whoever owns
+// the scene, a game's module or the editor, loads `scene` when it suits it
+struct SceneLoadRequestEvent {
+  UUID scene = {};
+};
 
 struct DotNetScripting {
   constexpr static auto MODULE_NAME = "DotNetScripting";
@@ -81,6 +92,9 @@ struct DotNetScripting {
     -> std::expected<void, std::string>;
   auto detach_world(this DotNetScripting& self, ecs_world_t* world) -> void;
   auto find_world(this DotNetScripting& self, ecs_world_t* world) -> AttachedWorld*;
+  // the RmlUi context C# in `world` loads documents and data models into, for a host that owns one outside a scene.
+  // A scene's world uses the scene's own
+  auto set_ui_context(this DotNetScripting& self, ecs_world_t* world, Rml::Context* context) -> void;
 
   // creates a behaviour for every ScriptComponent in the world, then starts the scene scripts and behaviours
   auto start_world(this DotNetScripting& self, ecs_world_t* world) -> void;

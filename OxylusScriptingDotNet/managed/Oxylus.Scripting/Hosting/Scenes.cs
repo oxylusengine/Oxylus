@@ -54,6 +54,8 @@ internal static unsafe class Scenes
             world.Updating.Clear();
             world.FixedUpdating.Clear();
             world.Starting.Clear();
+            world.Deferred.Clear();
+            world.Running.Clear();
             world.IsRunning = false;
         }
 
@@ -385,6 +387,7 @@ internal static unsafe class Scenes
                 return;
             }
 
+            RunDeferred(state);
             StartPending(state);
             for (var i = 0; i < state.Scripts.Count; i++)
             {
@@ -652,6 +655,30 @@ internal static unsafe class Scenes
     }
 
     static Entity EntityOf(nint world, ulong entity) => entity == 0 ? default : new Entity(world, entity);
+
+    // swapped out first, an action that defers another queues it for the next update
+    static void RunDeferred(WorldState state)
+    {
+        if (state.Deferred.Count == 0)
+        {
+            return;
+        }
+
+        (state.Deferred, state.Running) = (state.Running, state.Deferred);
+        foreach (var action in state.Running)
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception e)
+            {
+                Log.Error($"A deferred action threw: {e}");
+            }
+        }
+
+        state.Running.Clear();
+    }
 
     static void Contact(WorldState state, Behaviour behaviour, in Contact contact)
     {

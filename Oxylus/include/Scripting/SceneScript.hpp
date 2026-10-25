@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
 #include <expected>
 #include <glm/vec3.hpp>
 #include <memory>
@@ -8,14 +9,9 @@
 #include <string_view>
 
 #include "Core/Types.hpp"
-#include "Core/UUID.hpp"
 
 namespace JPH {
-class ContactSettings;
-class ContactManifold;
-class Body;
 class BodyID;
-class SubShapeIDPair;
 } // namespace JPH
 
 namespace vuk {
@@ -25,9 +21,7 @@ struct Extent3D;
 namespace ox {
 class Scene;
 
-// a lua script is keyed by its asset, a managed one by its type name, never both
 struct ScriptKey {
-  UUID asset_uuid = {};
   std::string type_name = {};
 
   auto operator==(const ScriptKey&) const -> bool = default;
@@ -68,16 +62,7 @@ public:
   // defined out of line, a default body would need vuk::Extent3D complete in every includer
   virtual auto on_scene_render(Scene*, vuk::Extent3D) -> void;
 
-  // called from jolt's worker threads with the scene's physics_mutex held
-  virtual auto on_contact_added(
-    Scene*, const JPH::Body&, const JPH::Body&, const JPH::ContactManifold&, const JPH::ContactSettings&
-  ) -> void {}
-  virtual auto on_contact_persisted(
-    Scene*, const JPH::Body&, const JPH::Body&, const JPH::ContactManifold&, const JPH::ContactSettings&
-  ) -> void {}
-  virtual auto on_contact_removed(Scene*, const JPH::SubShapeIDPair&) -> void {}
-
-  // the same contacts, buffered during a physics step and handed over on the main thread after it
+  // contacts buffered during a physics step and handed over on the main thread after it
   virtual auto on_contacts(Scene*, std::span<const PhysicsContact>) -> void {}
 
   virtual auto on_body_activated(Scene*, const JPH::BodyID&, u64) -> void {}
@@ -100,8 +85,6 @@ template <>
 struct ankerl::unordered_dense::hash<ox::ScriptKey> {
   using is_avalanching = void;
   auto operator()(const ox::ScriptKey& key) const noexcept -> u64 {
-    const auto uuid_hash = ankerl::unordered_dense::hash<ox::UUID>{}(key.asset_uuid);
-    const auto name_hash = ankerl::unordered_dense::detail::wyhash::hash(key.type_name.data(), key.type_name.size());
-    return ankerl::unordered_dense::detail::wyhash::mix(uuid_hash, name_hash);
+    return ankerl::unordered_dense::detail::wyhash::hash(key.type_name.data(), key.type_name.size());
   }
 };

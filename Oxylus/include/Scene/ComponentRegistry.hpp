@@ -7,10 +7,6 @@
 #include <string_view>
 #include <type_traits>
 
-#ifdef OX_LUA_BINDINGS
-  #include <sol/sol.hpp>
-#endif
-
 #include "Core/Types.hpp"
 
 namespace ox {
@@ -106,21 +102,11 @@ struct ComponentBuilder {
   operator flecs::entity() const { return component; }
 };
 
-// Registers types with flecs and, when scripting is enabled, mirrors components into a Lua module table.
+// Registers types with flecs.
 struct ComponentRegistry {
   flecs::world& world;
 
-#ifdef OX_LUA_BINDINGS
-  sol::state* state = nullptr;
-  sol::table module_table = {};
-
-  ComponentRegistry(flecs::world& world_, sol::state* state_, sol::table module_table_)
-      : world(world_),
-        state(state_),
-        module_table(module_table_) {}
-#else
   explicit ComponentRegistry(flecs::world& world_) : world(world_) {}
-#endif
 
   // Registers a component together with its members. The component type is deduced from the member
   // pointers, and both it and the member names are derived from the pointers.
@@ -135,19 +121,10 @@ struct ComponentRegistry {
     auto component = self.world.template component<T>(name != nullptr ? name : short_type_name<T>());
     (component.member(refl::member_cstr<Members>(), Members), ...);
 
-#ifdef OX_LUA_BINDINGS
-    if (self.state != nullptr) {
-      auto usertype = self.state->create_named_table(component.name().c_str());
-      usertype["component_id"] = static_cast<u64>(component.id());
-      ((usertype[refl::member_cstr<Members>()] = Members), ...);
-      self.module_table[component.name().c_str()] = usertype;
-    }
-#endif
-
     return ComponentBuilder{component};
   }
 
-  // Value types (glm and friends) need flecs meta for serialization, but no Lua module entry. Their
+  // Value types (glm and friends) need flecs meta for serialization, but no component of their own. Their
   // real type names are template ids, so they're always named explicitly.
   template <auto... Members>
   auto bind_value(this ComponentRegistry& self, const c8* name) -> flecs::untyped_component {

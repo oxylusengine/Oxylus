@@ -7,6 +7,8 @@
 #include <flecs.h>
 #include <glm/vec3.hpp>
 #include <gtest/gtest.h>
+#include <initializer_list>
+#include <string>
 #include <string_view>
 
 #include "DotNetTestHelpers.hpp"
@@ -25,6 +27,18 @@ struct Countdown {
 
 struct Census {
   i32 movers = 0;
+};
+
+// SmokeGame.Tuned starts from its field initializers, SmokeGame.Calm from zeros
+struct Tuned {
+  f32 speed = 0.0f;
+  i32 level = 0;
+  glm::vec3 scale = {};
+};
+
+struct Calm {
+  f32 speed = 0.0f;
+  i32 level = 0;
 };
 
 class DotNetEcsTest : public ::testing::Test {
@@ -60,6 +74,17 @@ protected:
   auto set(flecs::entity entity, flecs::entity_t component, const T& value) -> void {
     ecs_set_id(world.c_ptr(), entity, component, sizeof(T), &value);
   }
+
+  // a behaviour does its work in OnStart, which runs outside of a frame, so the world isn't deferred around it
+  auto run_behaviours(std::initializer_list<std::string_view> type_names) -> void {
+    for (const auto type_name : type_names) {
+      world.entity().set(ox::ScriptComponent{.type_name = std::string(type_name)});
+    }
+
+    scripting.start_world(world.c_ptr());
+  }
+
+  auto log_count(std::string_view message) -> usize { return count_logs(ox::OxLogLevel::Info, message); }
 
   auto mover(glm::vec3 position, glm::vec3 speed) -> flecs::entity {
     auto entity = world.entity().set(ox::TransformComponent{.position = position});
@@ -252,4 +277,109 @@ TEST_F(DotNetEcsTest, MovesManyEntitiesWithoutAllocating) {
     cpp_ms,
     csharp_ms / cpp_ms
   );
+}
+
+TEST_F(DotNetEcsTest, ReportsPathsAndWalksChildren) {
+  run_behaviours({"SmokeGame.PathProbe"});
+
+  EXPECT_EQ(log_count("ecs path PathParent.PathA.PathC"), 1) << logs_text();
+  EXPECT_NE(id_of("PathParent.PathA.PathC"), 0);
+  EXPECT_EQ(log_count("ecs children 2 matching True leaf False"), 1) << logs_text();
+  // longer than the managed side's first buffer, so it asks again with a bigger one
+  EXPECT_EQ(log_count("ecs long path 300"), 1) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
+TEST_F(DotNetEcsTest, EnsuresAComponentAndHandsBackItsStorage) {
+  run_behaviours({"SmokeGame.EnsureProbe"});
+
+  EXPECT_EQ(log_count("ecs ensure 1 3 has True"), 1) << logs_text();
+  const auto target = world.lookup("EnsureTarget");
+  ASSERT_NE(target, 0);
+  ASSERT_NE(get<Velocity>(target, velocity), nullptr);
+  EXPECT_EQ(get<Velocity>(target, velocity)->value, glm::vec3(1.0f, 2.0f, 3.0f));
+}
+
+TEST_F(DotNetEcsTest, AddsRemovesAndReadsPairs) {
+  run_behaviours({"SmokeGame.PairProbe"});
+
+  EXPECT_EQ(log_count("ecs pair before False False"), 1) << logs_text();
+  EXPECT_EQ(log_count("ecs pair added True True"), 1) << logs_text();
+  EXPECT_EQ(log_count("ecs pair targets True True 0"), 1) << logs_text();
+  EXPECT_EQ(log_count("ecs pair types True"), 1) << logs_text();
+  EXPECT_EQ(log_count("ecs pair removed False False False"), 1) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
+TEST_F(DotNetEcsTest, InheritsFromAPrefabWithIsA) {
+  run_behaviours({"SmokeGame.IsAProbe"});
+
+  EXPECT_EQ(log_count("ecs isa True 4"), 1) << logs_text();
+  const auto instance = world.lookup("IsAInstance");
+  const auto prefab = world.lookup("IsAPrefab");
+  EXPECT_TRUE(ecs_has_pair(world.c_ptr(), instance, EcsIsA, prefab));
+}
+
+TEST_F(DotNetEcsTest, HoldsCommandsBackBetweenDeferBeginAndEnd) {
+  run_behaviours({"SmokeGame.DeferProbe"});
+
+  EXPECT_EQ(log_count("ecs defer held True after True"), 1) << logs_text();
+  EXPECT_EQ(log_count("ecs defer suspended True"), 1) << logs_text();
+  EXPECT_FALSE(ecs_is_deferred(world.c_ptr()));
+}
+
+TEST_F(DotNetEcsTest, StartsComponentsFromTheirFieldInitializers) {
+  run_behaviours({"SmokeGame.DefaultsProbe"});
+
+  EXPECT_EQ(log_count("ecs defaults added 2.5 7 1"), 1) << logs_text();
+  EXPECT_EQ(log_count("ecs defaults ensured 7"), 1) << logs_text();
+  EXPECT_EQ(log_count("ecs defaults calm 0 0"), 1) << logs_text();
+
+  const auto check_native = [&] {
+    const auto tuned = id_of("SmokeGame.Tuned");
+    const auto calm = id_of("SmokeGame.Calm");
+    ASSERT_NE(tuned, 0);
+    ASSERT_NE(calm, 0);
+
+    // created by flecs rather than by C#
+    const auto added = world.entity();
+    ecs_add_id(world.c_ptr(), added, tuned);
+    ecs_add_id(world.c_ptr(), added, calm);
+    const auto* tuned_value = get<Tuned>(added, tuned);
+    ASSERT_NE(tuned_value, nullptr);
+    EXPECT_EQ(tuned_value->speed, 2.5f);
+    EXPECT_EQ(tuned_value->level, 7);
+    EXPECT_EQ(tuned_value->scale, glm::vec3(1.0f));
+    const auto* calm_value = get<Calm>(added, calm);
+    ASSERT_NE(calm_value, nullptr);
+    EXPECT_EQ(calm_value->speed, 0.0f);
+    EXPECT_EQ(calm_value->level, 0);
+  };
+  check_native();
+
+  // engine components C# binds rather than defines keep the defaults the engine gave them
+  const auto transformed = world.entity().add<ox::TransformComponent>();
+  EXPECT_EQ(transformed.get<ox::TransformComponent>().scale, ox::TransformComponent{}.scale);
+
+  // the hook survives a reload of the scripts, which would start the probe again
+  world.delete_with<ox::ScriptComponent>();
+  scripting.unload();
+  const auto loaded = scripting.load(smoke_game(), capturing_native_api());
+  ASSERT_TRUE(loaded.has_value()) << loaded.error();
+  check_native();
+}
+
+TEST_F(DotNetEcsTest, AnswersWithNothingForAWorldWithoutAScene) {
+  run_behaviours({"SmokeGame.SceneInfoProbe"});
+  EXPECT_EQ(log_count("scene uuid 00000000-0000-0000-0000-000000000000 valid False"), 1) << logs_text();
+  EXPECT_EQ(log_count("scene dpi set and cleared"), 1) << logs_text();
+}
+
+TEST_F(DotNetEcsTest, IgnoresParticlesAndCinematicsWithoutAScene) {
+  world.entity("Emitter");
+  run_behaviours({"SmokeGame.ParticleProbe", "SmokeGame.CinematicProbe"});
+  EXPECT_EQ(log_count("particles awake False"), 1) << logs_text();
+  EXPECT_EQ(log_count("particles played False stopped True named False"), 1) << logs_text();
+  EXPECT_EQ(log_count("cinematic plain 0 0"), 1) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
 }

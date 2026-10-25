@@ -143,7 +143,6 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_S
   {FileType::Shader, "Shader"},
   {FileType::Texture, "Texture"},
   {FileType::Model, "Model"},
-  {FileType::Script, "Script"},
   {FileType::Audio, "Audio"},
   {FileType::Material, "Material"},
   {FileType::Terrain, "Terrain"},
@@ -185,7 +184,6 @@ static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
   {".wav", FileType::Audio},  //
   {".ogg", FileType::Audio},  //
 
-  {".lua", FileType::Script}, //
   {".cs", FileType::CSharp},
 
   {".rcss", FileType::UI}, //
@@ -200,7 +198,6 @@ static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
   {FileType::Texture, {0.80f, 0.20f, 0.30f, 1.00f}},
   {FileType::Model, {0.20f, 0.80f, 0.75f, 1.00f}},
   {FileType::Audio, {0.20f, 0.80f, 0.50f, 1.00f}},
-  {FileType::Script, {0.0f, 16.0f, 121.0f, 1.00f}},
   {FileType::Material, {0.85f, 0.60f, 0.15f, 1.00f}},
   {FileType::Terrain, {0.45f, 0.70f, 0.30f, 1.00f}},
   {FileType::ParticleSystem, {0.60f, 0.35f, 0.85f, 1.00f}},
@@ -219,7 +216,6 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Texture, ICON_MDI_FILE_IMAGE},
   {FileType::Model, ICON_MDI_VECTOR_POLYGON},
   {FileType::Audio, ICON_MDI_VOLUME_HIGH},
-  {FileType::Script, ICON_MDI_LANGUAGE_LUA},
   {FileType::Material, ICON_MDI_PALETTE_SWATCH},
   {FileType::Terrain, ICON_MDI_TERRAIN},
   {FileType::ParticleSystem, ICON_MDI_SHIMMER},
@@ -236,7 +232,6 @@ static constexpr FileType FILTER_FILE_TYPES[] = {
   FileType::Material,
   FileType::Scene,
   FileType::Prefab,
-  FileType::Script,
   FileType::Shader,
   FileType::Audio,
   FileType::Terrain,
@@ -588,7 +583,6 @@ static void open_file(const std::filesystem::path& path) {
       case FileType::Prefab : break;
       case FileType::Texture: break;
       case FileType::Shader : [[fallthrough]];
-      case FileType::Script : [[fallthrough]];
       case FileType::CSharp : {
         os::open_file_externally(path);
         break;

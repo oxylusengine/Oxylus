@@ -57,6 +57,15 @@ static auto pascal_case(std::string_view name) -> std::string {
   return result;
 }
 
+// plain integers that hold the bits of a hand written C# enum
+static auto member_type_override(std::string_view component, std::string_view member) -> std::string_view {
+  if (component == "RigidBodyComponent" && member == "allowed_dofs") {
+    return "global::Oxylus.AllowedDofs";
+  }
+
+  return {};
+}
+
 static auto type_size(const flecs::world& world, flecs::entity_t type) -> u32 {
   const auto* info = static_cast<const EcsComponent*>(ecs_get_id(world, type, ecs_id(EcsComponent)));
   return info ? static_cast<u32>(info->size) : 0;
@@ -198,11 +207,12 @@ static auto generate(const flecs::world& world, flecs::entity core) -> std::stri
           continue;
         }
 
+        const auto override_type = member_type_override(mirror.name, member.name);
         mirror.members.push_back(
           Member{
             .name = member.name,
             .csharp_name = pascal_case(member.name),
-            .type = type->second.name,
+            .type = override_type.empty() ? type->second.name : std::string(override_type),
             .offset = static_cast<u32>(member.offset),
             .size = type_size(world, member.type),
           }

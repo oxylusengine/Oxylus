@@ -52,7 +52,6 @@ struct ankerl::unordered_dense::hash<flecs::entity> {
 namespace ox {
 struct JsonWriter;
 class RmlView;
-class LuaSystem;
 
 struct ComponentDB {
   std::vector<flecs::id> components = {};
@@ -339,12 +338,9 @@ public:
     -> flecs::entity;
   auto undefine_component(this Scene& self, flecs::entity component) -> void;
 
-  auto get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem*;
   auto get_scripts(this const Scene& self)
     -> const ankerl::unordered_dense::map<ScriptKey, std::unique_ptr<SceneScript>>&;
-  // a script keyed by an asset holds one ref on it for as long as it is in the scene
-  auto add_lua_system(this Scene& self, const UUID& lua_script) -> std::expected<void, std::string>;
-  // a script the scene script host creates from its type name, the C# kind
+  // a script the scene script host creates from its type name
   auto add_script_type(this Scene& self, std::string_view type_name) -> std::expected<void, std::string>;
   auto add_script(this Scene& self, ScriptKey key, std::unique_ptr<SceneScript> script) -> SceneScript*;
   auto remove_script(this Scene& self, const ScriptKey& key) -> void;
@@ -356,18 +352,9 @@ public:
   auto get_physics_system(this const Scene& self) -> JPH::PhysicsSystem*;
   auto cast_ray(this const Scene& self, const RayCast& ray_cast)
     -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>;
-  auto on_contact_added(
-    const JPH::Body& body1,
-    const JPH::Body& body2,
-    const JPH::ContactManifold& manifold,
-    const JPH::ContactSettings& settings
-  ) -> void;
-  auto on_contact_persisted(
-    const JPH::Body& body1,
-    const JPH::Body& body2,
-    const JPH::ContactManifold& manifold,
-    const JPH::ContactSettings& settings
-  ) -> void;
+  auto on_contact_added(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold) -> void;
+  auto on_contact_persisted(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold)
+    -> void;
   auto on_contact_removed(const JPH::SubShapeIDPair& sub_shape_pair) -> void;
 
   // jolt reports these from inside its own body locks, on any thread and from any BodyInterface call, so they are
@@ -483,7 +470,6 @@ private:
     bool is_activated = false;
   };
 
-  std::shared_mutex physics_mutex = {};
   std::mutex body_activations_mutex = {};
   std::vector<BodyActivation> pending_body_activations = {};
   std::mutex contacts_mutex = {};

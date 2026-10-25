@@ -31,7 +31,8 @@ static auto is_complete(const OxManagedApi& api) -> bool {
          api.allocated_bytes && api.find_script_type && api.list_script_types && api.script_create &&
          api.script_destroy && api.behaviour_add && api.behaviour_remove && api.world_start && api.world_stop &&
          api.world_update && api.world_fixed_update && api.world_render && api.world_contacts &&
-         api.world_body_activation;
+         api.world_body_activation && api.ui_event && api.ui_model_get && api.ui_model_set && api.ui_model_event &&
+         api.net_rpc && api.net_event && api.net_snapshot && api.window_resized;
 }
 
 static auto create_scene_script(const OxManagedApi& managed_api, ecs_world_t* world, ManagedSceneScript& script)
@@ -94,6 +95,8 @@ auto DotNetScripting::update(this DotNetScripting&, const Timestep& timestep) ->
   time.delta_time = static_cast<f32>(timestep.get_seconds());
   time.elapsed += timestep.get_seconds();
   time.frame++;
+
+  tick_network(timestep);
 }
 
 auto DotNetScripting::load(this DotNetScripting& self, const DotNetLoadInfo& info, const OxNativeApi& native_api)
@@ -116,6 +119,8 @@ auto DotNetScripting::load(this DotNetScripting& self, const DotNetLoadInfo& inf
   }
 
   self.managed_api = managed_api;
+  set_managed_api(&self.managed_api);
+  subscribe_window_events();
 
   const auto type_count = managed_api.list_script_types(nullptr, 0);
   auto type_infos = std::vector<OxScriptTypeInfo>(static_cast<usize>(std::max(type_count, 0)));
@@ -171,11 +176,17 @@ auto DotNetScripting::unload(this DotNetScripting& self) -> void {
     set_component_db(attached.world, nullptr);
   }
 
+  // the scripts' listeners, data models, servers and clients call into managed code, so they go before it does
+  release_ui();
+  release_network();
+  release_window_events();
+
   // shutdown detaches every world on the managed side, which drops their systems
   if (const auto status = self.managed_api.shutdown(); status != OxStatus::Ok) {
     OX_LOG_ERROR("Managed scripts didn't shut down cleanly: {}", status_message(status));
   }
 
+  set_managed_api(nullptr);
   self.managed_api = {};
   self.script_types.clear();
 }
@@ -209,6 +220,8 @@ auto DotNetScripting::detach_world(this DotNetScripting& self, ecs_world_t* worl
   }
 
   self.attached_worlds.erase(it);
+  release_ui(world);
+  ox::set_ui_context(world, nullptr);
   if (!self.is_loaded()) {
     return;
   }
@@ -218,6 +231,10 @@ auto DotNetScripting::detach_world(this DotNetScripting& self, ecs_world_t* worl
   }
 
   set_component_db(world, nullptr);
+}
+
+auto DotNetScripting::set_ui_context(this DotNetScripting&, ecs_world_t* world, Rml::Context* context) -> void {
+  ox::set_ui_context(world, context);
 }
 
 auto DotNetScripting::find_world(this DotNetScripting& self, ecs_world_t* world) -> AttachedWorld* {

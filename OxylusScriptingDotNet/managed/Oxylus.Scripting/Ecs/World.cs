@@ -24,6 +24,16 @@ public readonly unsafe struct World(nint handle) : IEquatable<World>
         }
     }
 
+    // commands hold back until the matching End, the way a system's do. They nest: only the outermost End applies them
+    public void DeferBegin() => Runtime.Native.EcsDeferBegin(Handle);
+
+    public void DeferEnd() => Runtime.Native.EcsDeferEnd(Handle);
+
+    // lets commands apply immediately inside a defer, until DeferResume
+    public void DeferSuspend() => Runtime.Native.EcsDeferSuspend(Handle);
+
+    public void DeferResume() => Runtime.Native.EcsDeferResume(Handle);
+
     public Query<T1> Query<T1>()
         where T1 : unmanaged => new(this);
 

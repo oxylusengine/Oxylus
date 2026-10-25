@@ -6,6 +6,7 @@
 #include <flecs.h>
 #include <new>
 #include <string_view>
+#include <vector>
 
 #include "DotNetHosts.hpp"
 #include "Memory/Stack.hpp"
@@ -23,11 +24,22 @@ static_assert(sizeof(OxTime) == 24 && offsetof(OxTime, frame) == 16);
 static_assert(sizeof(OxInputCode) == 8 && sizeof(OxMouseState) == 24);
 static_assert(sizeof(OxRay) == 40 && offsetof(OxRay, ignore_entity) == 32);
 static_assert(sizeof(OxRayHit) == 40 && offsetof(OxRayHit, normal) == 24);
-static_assert(sizeof(OxBodyState) == 56 && offsetof(OxBodyState, angular_velocity) == 44);
+static_assert(sizeof(OxBodyState) == 144 && offsetof(OxBodyState, angular_velocity) == 48);
+static_assert(offsetof(OxBodyState, bounds_max) == 96 && offsetof(OxBodyState, accumulated_torque) == 128);
+static_assert(sizeof(OxBodyArgs) == 48 && offsetof(OxBodyArgs, rotation) == 32);
+static_assert(sizeof(OxVehicleState) == 16 && sizeof(OxWheelState) == 12);
 static_assert(sizeof(OxCharacterState) == 40 && offsetof(OxCharacterState, ground_normal) == 28);
+static_assert(sizeof(OxAssetId) == 16 && sizeof(OxAssetInfo) == 16 && sizeof(OxAudioState) == 16);
+static_assert(sizeof(OxValue) == 40 && offsetof(OxValue, text) == 24);
+static_assert(sizeof(OxUiEvent) == 40 && offsetof(OxUiEvent, mouse_x) == 32);
+static_assert(sizeof(OxNetClientState) == 32 && offsetof(OxNetClientState, rtt) == 16);
+static_assert(sizeof(OxVec4) == 16 && sizeof(OxCinematicState) == 8 && sizeof(OxWindowSize) == 16);
+static_assert(sizeof(OxMaterialData) == 160 && offsetof(OxMaterialData, alpha_mode) == 60);
+static_assert(offsetof(OxMaterialData, flip_normal_y) == 72 && offsetof(OxMaterialData, albedo_texture) == 80);
 
 static auto component_dbs = ankerl::unordered_dense::map<ecs_world_t*, ComponentDB*>{};
 static auto frame_time = OxTime{};
+static auto loaded_managed_api = static_cast<const OxManagedApi*>(nullptr);
 
 static auto to_view(OxStringView view) -> std::string_view { return std::string_view(view.data, view.length); }
 
@@ -55,6 +67,80 @@ static auto get_name(ecs_world_t* world, u64 entity, OxStringView* name) -> void
 static auto set_name(ecs_world_t* world, u64 entity, OxStringView name) -> void {
   memory::ScopedStack stack;
   ecs_set_name(world, entity, name.length ? stack.null_terminate_cstr(to_view(name)) : nullptr);
+}
+
+static auto get_path(ecs_world_t* world, u64 entity, c8* out, u32 capacity) -> u32 {
+  auto* path = ecs_get_path_w_sep(world, 0, entity, ".", nullptr);
+  if (!path) {
+    return 0;
+  }
+
+  const auto length = std::strlen(path);
+  if (out) {
+    std::memcpy(out, path, std::min<usize>(length, capacity));
+  }
+
+  ecs_os_free(path);
+  return static_cast<u32>(length);
+}
+
+static auto children_iter(ecs_world_t* world, u64 parent, void* iter) -> void {
+  new (iter) ecs_iter_t(ecs_children(world, parent));
+}
+
+// flecs finishes the iterator itself when it runs out
+static auto children_next(void* iter, const u64** entities, i32* count) -> bool {
+  auto* it = static_cast<ecs_iter_t*>(iter);
+  if (!ecs_children_next(it)) {
+    return false;
+  }
+
+  *entities = it->entities;
+  *count = it->count;
+  return true;
+}
+
+static auto construct_defaults(void* ptr, i32 count, const ecs_type_info_t* type_info) -> void {
+  const auto& defaults = *static_cast<const std::vector<u8>*>(type_info->hooks.ctx);
+  for (auto* element = static_cast<u8*>(ptr); count > 0; count--, element += type_info->size) {
+    std::memcpy(element, defaults.data(), defaults.size());
+  }
+}
+
+static auto free_defaults(void* ctx) -> void { delete static_cast<std::vector<u8>*>(ctx); }
+
+static auto set_component_defaults(ecs_world_t* world, u64 component, const void* defaults, u32 size) -> OxStatus {
+  ZoneScoped;
+
+  const auto* info = static_cast<const EcsComponent*>(ecs_get_id(world, component, ecs_id(EcsComponent)));
+  if (!info || static_cast<u32>(info->size) != size) {
+    return OxStatus::InvalidArgument;
+  }
+
+  // a reload attaches the same component again, flecs keeps the hook so only what it copies changes
+  const auto* existing = ecs_get_hooks_id(world, component);
+  const auto is_ours = existing && existing->ctor == construct_defaults;
+  if (is_ours) {
+    auto& bytes = *static_cast<std::vector<u8>*>(existing->ctx);
+    if (defaults) {
+      std::memcpy(bytes.data(), defaults, size);
+    } else {
+      std::ranges::fill(bytes, u8{0});
+    }
+
+    return OxStatus::Ok;
+  }
+
+  if (!defaults) {
+    return OxStatus::Ok;
+  }
+
+  auto hooks = existing ? *existing : ecs_type_hooks_t{};
+  hooks.ctor = construct_defaults;
+  hooks.ctx = new std::vector<u8>(static_cast<const u8*>(defaults), static_cast<const u8*>(defaults) + size);
+  hooks.ctx_free = free_defaults;
+  ecs_set_hooks_id(world, component, &hooks);
+  return OxStatus::Ok;
 }
 
 static auto native_define_component(
@@ -310,10 +396,15 @@ auto set_component_db(ecs_world_t* world, ComponentDB* component_db) -> void {
 
 auto native_time() -> OxTime& { return frame_time; }
 
+auto set_managed_api(const OxManagedApi* managed_api) -> void { loaded_managed_api = managed_api; }
+
+auto managed_api() -> const OxManagedApi* { return loaded_managed_api; }
+
 auto make_native_api() -> OxNativeApi {
   auto api = OxNativeApi{
     .iter_size = sizeof(ecs_iter_t),
     .child_of = EcsChildOf,
+    .is_a = EcsIsA,
     .time = &frame_time,
     .log = native_log,
     .ecs_new = ecs_new,
@@ -327,10 +418,19 @@ auto make_native_api() -> OxNativeApi {
     .ecs_modified_id = ecs_modified_id,
     .ecs_get_target = ecs_get_target,
     .ecs_enable = ecs_enable,
+    .ecs_ensure_id = ecs_ensure_id,
+    .ecs_defer_begin = ecs_defer_begin,
+    .ecs_defer_end = ecs_defer_end,
+    .ecs_defer_suspend = ecs_defer_suspend,
+    .ecs_defer_resume = ecs_defer_resume,
+    .get_path = get_path,
+    .children_iter = children_iter,
+    .children_next = children_next,
     .lookup = lookup,
     .get_name = get_name,
     .set_name = set_name,
     .define_component = native_define_component,
+    .set_component_defaults = set_component_defaults,
     .bind_components = bind_components,
     .create_system = create_system,
     .create_query = create_query,
@@ -342,6 +442,10 @@ auto make_native_api() -> OxNativeApi {
   };
   fill_input_api(api);
   fill_physics_api(api);
+  fill_content_api(api);
+  fill_ui_api(api);
+  fill_net_api(api);
+  fill_app_api(api);
   return api;
 }
 } // namespace ox

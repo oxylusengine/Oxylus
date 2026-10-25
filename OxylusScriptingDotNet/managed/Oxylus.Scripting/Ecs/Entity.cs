@@ -1,12 +1,79 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 
 using Oxylus.Hosting;
 using Oxylus.Interop;
 
 namespace Oxylus;
+
+// the children of one entity, for foreach
+public readonly ref struct EntityChildren(nint world, ulong parent)
+{
+    public ChildEnumerator GetEnumerator() => new(world, parent);
+}
+
+public unsafe ref struct ChildEnumerator
+{
+    readonly nint world;
+    void* iter;
+    ulong* entities;
+    int count;
+    int index;
+
+    internal ChildEnumerator(nint world, ulong parent)
+    {
+        this.world = world;
+        iter = NativeMemory.AlignedAlloc(Runtime.Native.IterSize, 16);
+        Runtime.Native.ChildrenIter(world, parent, iter);
+        entities = null;
+        count = 0;
+        index = -1;
+    }
+
+    public readonly Entity Current => new(world, entities[index]);
+
+    public bool MoveNext()
+    {
+        if (iter is null)
+        {
+            return false;
+        }
+
+        while (++index >= count)
+        {
+            ulong* next;
+            int nextCount;
+            if (!Runtime.Native.ChildrenNext(iter, &next, &nextCount))
+            {
+                // flecs finishes the iterator when it runs out
+                NativeMemory.AlignedFree(iter);
+                iter = null;
+                return false;
+            }
+
+            entities = next;
+            count = nextCount;
+            index = -1;
+        }
+
+        return true;
+    }
+
+    public void Dispose()
+    {
+        if (iter is null)
+        {
+            return;
+        }
+
+        Runtime.Native.IterFini(iter);
+        NativeMemory.AlignedFree(iter);
+        iter = null;
+    }
+}
 
 // a flecs entity in one world. Components come back as `ref T` straight into flecs storage: writing through one
 // doesn't run OnSet observers, call Modified<T>() after, or use Set<T>() which does both
@@ -42,6 +109,11 @@ public readonly unsafe struct Entity(nint world, ulong id) : IEquatable<Entity>
         return this;
     }
 
+    // adds the component when the entity lacks it, starting from its defaults, and returns its storage. Works inside
+    // a defer, where Get can't see the component yet
+    public ref T Ensure<T>() where T : unmanaged =>
+        ref Unsafe.AsRef<T>(Runtime.Native.EcsEnsureId(world, Id, Worlds.IdOf<T>(world), (nuint)sizeof(T)));
+
     public Entity Set<T>(in T value) where T : unmanaged
     {
         var copy = value;
@@ -57,6 +129,55 @@ public readonly unsafe struct Entity(nint world, ulong id) : IEquatable<Entity>
 
     public void Modified<T>() where T : unmanaged => Runtime.Native.EcsModifiedId(world, Id, Worlds.IdOf<T>(world));
 
+    public Entity AddPair(Entity relationship, Entity target)
+    {
+        Runtime.Native.EcsAddId(world, Id, Pair(relationship.Id, target.Id));
+        return this;
+    }
+
+    public Entity AddPair<TRelationship>(Entity target) where TRelationship : unmanaged =>
+        AddPair(new Entity(world, Worlds.IdOf<TRelationship>(world)), target);
+
+    public Entity AddPair<TRelationship, TTarget>()
+        where TRelationship : unmanaged
+        where TTarget : unmanaged =>
+        AddPair(new Entity(world, Worlds.IdOf<TRelationship>(world)), new Entity(world, Worlds.IdOf<TTarget>(world)));
+
+    public Entity RemovePair(Entity relationship, Entity target)
+    {
+        Runtime.Native.EcsRemoveId(world, Id, Pair(relationship.Id, target.Id));
+        return this;
+    }
+
+    public Entity RemovePair<TRelationship>(Entity target) where TRelationship : unmanaged =>
+        RemovePair(new Entity(world, Worlds.IdOf<TRelationship>(world)), target);
+
+    public Entity RemovePair<TRelationship, TTarget>()
+        where TRelationship : unmanaged
+        where TTarget : unmanaged =>
+        RemovePair(new Entity(world, Worlds.IdOf<TRelationship>(world)), new Entity(world, Worlds.IdOf<TTarget>(world)));
+
+    public bool HasPair(Entity relationship, Entity target) =>
+        Runtime.Native.EcsHasId(world, Id, Pair(relationship.Id, target.Id));
+
+    public bool HasPair<TRelationship>(Entity target) where TRelationship : unmanaged =>
+        HasPair(new Entity(world, Worlds.IdOf<TRelationship>(world)), target);
+
+    public bool HasPair<TRelationship, TTarget>()
+        where TRelationship : unmanaged
+        where TTarget : unmanaged =>
+        HasPair(new Entity(world, Worlds.IdOf<TRelationship>(world)), new Entity(world, Worlds.IdOf<TTarget>(world)));
+
+    // the `index`th target of the relationship, or the default entity when there is none
+    public Entity Target(Entity relationship, int index = 0) =>
+        new(world, Runtime.Native.EcsGetTarget(world, Id, relationship.Id, index));
+
+    public Entity Target<TRelationship>(int index = 0) where TRelationship : unmanaged =>
+        Target(new Entity(world, Worlds.IdOf<TRelationship>(world)), index);
+
+    // inherits `prefab`'s components
+    public Entity IsA(Entity prefab) => AddPair(new Entity(world, Runtime.Native.IsA), prefab);
+
     public Entity Parent => new(world, Runtime.Native.EcsGetTarget(world, Id, Runtime.Native.ChildOf, 0));
 
     public Entity ChildOf(Entity parent)
@@ -64,6 +185,36 @@ public readonly unsafe struct Entity(nint world, ulong id) : IEquatable<Entity>
         Runtime.Native.EcsAddId(world, Id, Pair(Runtime.Native.ChildOf, parent.Id));
         return this;
     }
+
+    // "Parent.Child" from the root, the same path World.Lookup takes
+    public string Path
+    {
+        get
+        {
+            Span<byte> buffer = stackalloc byte[256];
+            uint length;
+            fixed (byte* data = buffer)
+            {
+                length = Runtime.Native.GetPath(world, Id, data, (uint)buffer.Length);
+            }
+
+            if (length <= buffer.Length)
+            {
+                return Encoding.UTF8.GetString(buffer[..(int)length]);
+            }
+
+            var large = new byte[length];
+            fixed (byte* data = large)
+            {
+                Runtime.Native.GetPath(world, Id, data, length);
+            }
+
+            return Encoding.UTF8.GetString(large);
+        }
+    }
+
+    // walks the children with no GC allocation. Defer the destruction of a child met on the way, or collect them first
+    public EntityChildren Children => new(world, Id);
 
     public string? Name
     {

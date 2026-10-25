@@ -8,7 +8,6 @@
 #include "Networking/NetworkManager.hpp"
 #include "Physics/Physics.hpp"
 #include "Render/Renderer.hpp"
-#include "Scripting/LuaManager.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/RmlUI.hpp"
 
@@ -20,7 +19,6 @@
 namespace ox {
 #ifdef OX_DOTNET
 using DefaultModules = std::tuple<
-  LuaManager,
   AudioEngine,
   AssetManager,
   Physics,
@@ -32,6 +30,6 @@ using DefaultModules = std::tuple<
   RmlUI>;
 #else
 using DefaultModules =
-  std::tuple<LuaManager, AudioEngine, AssetManager, Physics, Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI>;
+  std::tuple<AudioEngine, AssetManager, Physics, Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI>;
 #endif
 } // namespace ox

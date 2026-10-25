@@ -31,7 +31,6 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <ranges>
 #include <simdjson.h>
-#include <sol/state.hpp>
 
 #include "Asset/AssetFile.hpp"
 #include "Asset/AssetManager.hpp"
@@ -47,8 +46,6 @@
 #include "Render/Camera.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Scene/EntitySerializer.hpp"
-#include "Scripting/LuaManager.hpp"
-#include "Scripting/LuaSystem.hpp"
 #include "UI/RmlUI.hpp"
 #include "UI/RmlView.hpp"
 #include "Utils/JsonWriter.hpp"
@@ -600,15 +597,6 @@ Scene::~Scene() {
     script->on_remove(this);
   }
 
-  {
-    auto& asset_man = App::mod<AssetManager>();
-    for (const auto& [key, _] : scripts) {
-      if (key.asset_uuid) {
-        asset_man.unload_asset(key.asset_uuid);
-      }
-    }
-  }
-
   scripts.clear();
 
   // last, the runtime is what the scripts above ran inside of
@@ -618,9 +606,6 @@ Scene::~Scene() {
   }
 
   rml_view.reset();
-  if (App::has_mod<LuaManager>()) {
-    App::mod<LuaManager>().get_state()->collect_gc();
-  }
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {
@@ -1812,53 +1797,11 @@ auto Scene::undefine_component(this Scene& self, flecs::entity component) -> voi
   component.destruct();
 }
 
-auto Scene::get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem* {
-  ZoneScoped;
-
-  // only lua scripts are keyed by an asset
-  const auto it = self.scripts.find(ScriptKey{.asset_uuid = lua_script});
-
-  return it == self.scripts.end() ? nullptr : static_cast<LuaSystem*>(it->second.get());
-}
-
 auto Scene::get_scripts(this const Scene& self)
   -> const ankerl::unordered_dense::map<ScriptKey, std::unique_ptr<SceneScript>>& {
   ZoneScoped;
 
   return self.scripts;
-}
-
-auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> std::expected<void, std::string> {
-  ZoneScoped;
-
-  auto key = ScriptKey{.asset_uuid = lua_script};
-  if (self.scripts.contains(key)) {
-    return {};
-  }
-
-  auto& asset_man = App::mod<AssetManager>();
-  if (!asset_man.load_asset(lua_script)) {
-    return std::unexpected(fmt::format("Couldn't load script asset {}", lua_script.str()));
-  }
-
-  // Copy the source out and drop the guard before running any Lua, which can reach back into the asset registry.
-  auto script = LuaScript{};
-  {
-    auto guard = asset_man.get_script(lua_script);
-    if (!guard) {
-      guard.reset();
-      asset_man.unload_asset(lua_script);
-      return std::unexpected(fmt::format("Asset {} is not a script", lua_script.str()));
-    }
-
-    script = guard.copy();
-  }
-
-  self.add_script(std::move(key), std::make_unique<LuaSystem>(script));
-
-  OX_LOG_TRACE("Added lua system to the scene {}", script.path);
-
-  return {};
 }
 
 auto Scene::add_script_type(this Scene& self, std::string_view type_name) -> std::expected<void, std::string> {
@@ -1909,7 +1852,6 @@ auto Scene::remove_script(this Scene& self, const ScriptKey& key) -> void {
   }
 
   // taken out before on_remove runs, which may add or remove other scripts
-  auto asset_uuid = it->first.asset_uuid;
   auto script = std::move(it->second);
   self.scripts.erase(it);
 
@@ -1918,9 +1860,6 @@ auto Scene::remove_script(this Scene& self, const ScriptKey& key) -> void {
   OX_LOG_TRACE("Removed script {} from the scene", script->display_name());
 
   script.reset();
-  if (asset_uuid) {
-    App::mod<AssetManager>().unload_asset(asset_uuid);
-  }
 }
 
 auto Scene::get_physics_system(this const Scene& self) -> JPH::PhysicsSystem* {
@@ -1949,11 +1888,12 @@ auto Scene::defer_function(this Scene& self, const std::function<void(Scene* sce
 auto Scene::run_deferred_functions(this Scene& self) -> void {
   ZoneScoped;
 
-  if (!self.deferred_functions_.empty()) {
-    for (auto& func : self.deferred_functions_) {
-      func(&self);
-    }
-    self.deferred_functions_.clear();
+  // swapped out first, a deferred function that defers another would otherwise grow the vector under the loop. What
+  // it defers runs on the next call
+  auto functions = decltype(self.deferred_functions_){};
+  std::swap(functions, self.deferred_functions_);
+  for (auto& func : functions) {
+    func(&self);
   }
 }
 
@@ -3087,21 +3027,9 @@ auto Scene::set_particle_parameter(
   return true;
 }
 
-auto Scene::on_contact_added(
-  const JPH::Body& body1,
-  const JPH::Body& body2,
-  const JPH::ContactManifold& manifold,
-  const JPH::ContactSettings& settings
-) -> void {
+auto Scene::on_contact_added(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold)
+  -> void {
   ZoneScoped;
-
-  {
-    auto write_lock = std::unique_lock(physics_mutex);
-
-    for (auto& [_, script] : scripts) {
-      script->on_contact_added(this, body1, body2, manifold, settings);
-    }
-  }
 
   auto lock = std::unique_lock(contacts_mutex);
   pending_contacts.push_back(
@@ -3114,21 +3042,9 @@ auto Scene::on_contact_added(
   );
 }
 
-auto Scene::on_contact_persisted(
-  const JPH::Body& body1,
-  const JPH::Body& body2,
-  const JPH::ContactManifold& manifold,
-  const JPH::ContactSettings& settings
-) -> void {
+auto Scene::on_contact_persisted(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold)
+  -> void {
   ZoneScoped;
-
-  {
-    auto write_lock = std::unique_lock(physics_mutex);
-
-    for (auto& [_, script] : scripts) {
-      script->on_contact_persisted(this, body1, body2, manifold, settings);
-    }
-  }
 
   auto lock = std::unique_lock(contacts_mutex);
   pending_contacts.push_back(
@@ -3143,14 +3059,6 @@ auto Scene::on_contact_persisted(
 
 auto Scene::on_contact_removed(const JPH::SubShapeIDPair& sub_shape_pair) -> void {
   ZoneScoped;
-
-  {
-    auto write_lock = std::unique_lock(physics_mutex);
-
-    for (auto& [_, script] : scripts) {
-      script->on_contact_removed(this, sub_shape_pair);
-    }
-  }
 
   // jolt gives no bodies here, so the body ids ride in the entity slots until dispatch_contacts resolves them
   auto lock = std::unique_lock(contacts_mutex);
@@ -4140,12 +4048,7 @@ auto Scene::to_json(this const Scene& self) -> JsonWriter {
   writer["scripts"].begin_array();
   for (const auto& [key, _] : self.scripts) {
     writer.begin_obj();
-    if (key.asset_uuid) {
-      writer["uuid"] = key.asset_uuid.str();
-    } else {
-      writer["type"] = key.type_name;
-    }
-
+    writer["type"] = key.type_name;
     writer.end_obj();
   }
   writer.end_array();
@@ -4221,12 +4124,14 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   if (!scripts_array.error()) {
     for (auto script_json : scripts_array.get_array()) {
       auto script_obj = script_json.value_unsafe();
-      if (auto uuid_str = script_obj["uuid"].get_string(); !uuid_str.error()) {
-        if (auto script_uuid = UUID::from_string(uuid_str.value_unsafe())) {
-          requested_scripts.push_back({.asset_uuid = *script_uuid});
-        }
-      } else if (auto type_str = script_obj["type"].get_string(); !type_str.error()) {
+      if (auto type_str = script_obj["type"].get_string(); !type_str.error()) {
         requested_scripts.push_back({.type_name = std::string(type_str.value_unsafe())});
+      } else if (auto uuid_str = script_obj["uuid"].get_string(); !uuid_str.error()) {
+        OX_LOG_WARN(
+          "Skipping script {} in scene {}, Lua scene scripts were removed",
+          uuid_str.value_unsafe(),
+          self.scene_name
+        );
       }
     }
   } else {
@@ -4235,7 +4140,7 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
 
   // on_add callback of scripts should be called before entities are deserialized.
   for (const auto& script : requested_scripts) {
-    auto result = script.asset_uuid ? self.add_lua_system(script.asset_uuid) : self.add_script_type(script.type_name);
+    auto result = self.add_script_type(script.type_name);
     if (!result) {
       OX_LOG_ERROR("{}", result.error());
     }

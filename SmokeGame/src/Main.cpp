@@ -34,6 +34,9 @@ struct SmokeGame {
   bool is_smoke_test = false;
   i32 frame = 0;
   std::unique_ptr<Scene> scene = nullptr;
+  // what a script asked to load with Scene.Load, swapped in before the next frame runs
+  option<UUID> requested_scene = nullopt;
+  HandlerId scene_load_handler = {};
 
   // stays a failure when init doesn't get far enough for deinit to run
   static inline auto exit_code = 1;
@@ -59,11 +62,18 @@ struct SmokeGame {
     }
 
     self.scene->runtime_start();
+    self.scene_load_handler = App::get_event_system()
+                                .subscribe<SceneLoadRequestEvent>([&self](const SceneLoadRequestEvent& event) {
+                                  self.requested_scene = event.scene;
+                                })
+                                .value_or(HandlerId{});
     return {};
   }
 
   auto deinit(this SmokeGame& self) -> std::expected<void, std::string> {
     ZoneScoped;
+
+    std::ignore = App::get_event_system().unsubscribe<SceneLoadRequestEvent>(self.scene_load_handler);
 
     exit_code = !self.is_smoke_test || self.check_smoke_test() ? 0 : 1;
 
@@ -74,6 +84,10 @@ struct SmokeGame {
 
   auto update(this SmokeGame& self, const Timestep& timestep) -> void {
     ZoneScoped;
+
+    if (self.requested_scene.has_value()) {
+      self.load_requested_scene();
+    }
 
     self.scene->runtime_update(timestep);
 
@@ -93,6 +107,22 @@ struct SmokeGame {
     if (self.is_smoke_test && self.frame >= SMOKE_TEST_FRAMES) {
       App::get()->should_stop();
     }
+  }
+
+  // the next scene loads before the current one goes, so the assets both use stay loaded through the swap
+  auto load_requested_scene(this SmokeGame& self) -> void {
+    ZoneScoped;
+
+    const auto uuid = *self.requested_scene;
+    self.requested_scene = nullopt;
+    auto next = std::make_unique<Scene>("Main");
+    if (!next->load_from_asset(uuid)) {
+      OX_LOG_ERROR("Couldn't load scene {}, the current one keeps running", uuid.str());
+      return;
+    }
+
+    self.scene = std::move(next);
+    self.scene->runtime_start();
   }
 
   auto check_smoke_test(this const SmokeGame& self) -> bool {
