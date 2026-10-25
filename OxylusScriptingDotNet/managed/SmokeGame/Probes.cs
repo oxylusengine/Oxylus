@@ -465,6 +465,7 @@ public static class NetProbes
 {
     static readonly Rpc<int, string> Hello = new("probe_hello");
     static readonly Rpc<float, byte[], long> Reply = new("probe_reply");
+    static readonly Rpc<float, float, float, float> Quad = new("probe_quad");
     static NetServer? server;
     static NetClient? client;
 
@@ -490,6 +491,11 @@ public static class NetProbes
                 Log.Info($"server got {number} {text}");
                 Reply.Send(server, from, 1.5f, [1, 2, 3], 7L);
             });
+            Quad.On(server, (from, a, b, c, d) =>
+            {
+                Log.Info($"server got quad {a} {b} {c} {d}");
+                Quad.Send(server, from, d, c, b, a);
+            });
 
             client = NetClient.Connect("127.0.0.1", (ushort)probe.Port, 2000);
             var connecting = client;
@@ -497,7 +503,9 @@ public static class NetProbes
             {
                 Log.Info($"client connected {connecting.Status}");
                 Hello.Send(connecting, 42, "hi");
+                Quad.Send(connecting, 1.0f, 2.0f, 3.0f, 4.0f);
             };
+            Quad.On(client, (a, b, c, d) => Log.Info($"client got quad {a} {b} {c} {d}"));
             Reply.On(client, (number, bytes, count) => Log.Info($"client got {number:F1} {bytes.Length} bytes {count}"));
             client.SceneSnapshot += (sequence, changed, removed) =>
                 Log.Info($"client got snapshot {sequence} changed {Sorted(changed)} removed {Sorted(removed)}");
@@ -746,6 +754,31 @@ public sealed class AppProbe : Behaviour
         Log.Info($"time default {Time.MaxFrameTime}");
         Time.MaxFrameTime = 8.0;
         Log.Info($"time limited {Time.MaxFrameTime}");
+    }
+}
+
+public sealed class QuitProbe : Behaviour
+{
+    public override void OnStart()
+    {
+        App.Quit();
+        Log.Info("app quit called");
+    }
+}
+
+public sealed class SpriteProbe : Behaviour
+{
+    public override void OnStart()
+    {
+        var first = World.CreateEntity("SpriteA").Add<SpriteComponent>();
+        var second = World.CreateEntity("SpriteB").Add<SpriteComponent>();
+        var a = first.Get<SpriteComponent>().Material;
+        var b = second.Get<SpriteComponent>().Material;
+        Log.Info($"sprite materials {a} {b} valid {a.IsValid && b.IsValid}");
+
+        first.Get<SpriteComponent>().Material = b;
+        second.Get<SpriteComponent>().Material = a;
+        Log.Info("sprite swapped");
     }
 }
 

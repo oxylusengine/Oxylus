@@ -15,7 +15,7 @@ target("OxylusDotNet")
     end)
 target_end()
 
--- writes build/dotnet/generated/Components.g.cs, the C# mirrors of the engine's components
+-- writes <builddir>/dotnet/generated/Components.g.cs, the C# mirrors of the engine's components
 target("OxCSharpBindgen")
     set_kind("binary")
     set_default(false)
@@ -31,10 +31,10 @@ target("OxCSharpBindgen")
 target_end()
 
 -- builds Oxylus.Scripting and the generator into <targetdir>/managed, the one dotnet build of them, so targets that
--- need them depend on this rather than building them over the same intermediates at the same time
+-- need them depend on this rather than building them over the same intermediates at the same time. Installing it
+-- gives a game the SDK its C# project builds against: the two assemblies and Oxylus.Sdk.props
 target("OxylusManaged")
     set_kind("phony")
-    set_default(false)
 
     add_deps("OxCSharpBindgen")
 
@@ -48,6 +48,13 @@ target("OxylusManaged")
         },
         output_dir = "managed",
     })
+
+    on_install(function (target)
+        local built = path.join(target:targetdir(), "managed")
+        for _, file in ipairs({ "Oxylus.Scripting.dll", "Oxylus.Scripting.Generators.dll", "Oxylus.Sdk.props" }) do
+            os.vcp(path.join(built, file), path.join(target:installdir(), "managed", file))
+        end
+    end)
 target_end()
 
 if has_config("tests") then

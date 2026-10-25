@@ -36,6 +36,12 @@ static auto time_reset_max_frame_time() -> void {
   }
 }
 
+static auto app_quit() -> void {
+  if (App::get()) {
+    App::get()->should_stop();
+  }
+}
+
 auto subscribe_window_events() -> void {
   if (is_subscribed || !App::get()) {
     return;
@@ -66,5 +72,6 @@ auto fill_app_api(OxNativeApi& api) -> void {
   api.time_max_frame_time = time_max_frame_time;
   api.time_set_max_frame_time = time_set_max_frame_time;
   api.time_reset_max_frame_time = time_reset_max_frame_time;
+  api.app_quit = app_quit;
 }
 } // namespace ox

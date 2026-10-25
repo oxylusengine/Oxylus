@@ -40,9 +40,9 @@ auto to_csharp_identifier(std::string_view name) -> std::string;
 auto create_scripts_project(const std::filesystem::path& scripts_dir, std::string_view project_name)
   -> std::expected<std::filesystem::path, std::string>;
 
-// rewrites <scripts_dir>/Oxylus.props, which the csproj imports: the target framework, the AOT checks, the reference
-// to the Oxylus.Scripting and generator in `sdk_dir`, and the .cs files under `asset_dir`. The editor writes it every
-// time the project opens, so it always matches the editor in use
+// rewrites <scripts_dir>/Oxylus.props, which the csproj imports: `sdk_dir` and `asset_dir`, and the Oxylus.Sdk.props in
+// `sdk_dir` that holds everything else. The editor writes it every time the project opens, so it always matches the
+// editor in use
 auto write_scripts_props(
   const std::filesystem::path& scripts_dir, const std::filesystem::path& sdk_dir, const std::filesystem::path& asset_dir
 ) -> std::expected<void, std::string>;

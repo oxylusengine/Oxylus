@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 8;
+    public const uint Version = 9;
 }
 
 public enum OxStatus : int
@@ -561,6 +561,7 @@ public unsafe struct NativeApi
     public delegate* unmanaged<double> TimeMaxFrameTime;
     public delegate* unmanaged<double, void> TimeSetMaxFrameTime;
     public delegate* unmanaged<void> TimeResetMaxFrameTime;
+    public delegate* unmanaged<void> AppQuit;
 
     public delegate* unmanaged<ushort, uint, ulong*, OxStatus> NetServerStart;
     public delegate* unmanaged<StringView, ushort, uint, ulong*, OxStatus> NetClientConnect;

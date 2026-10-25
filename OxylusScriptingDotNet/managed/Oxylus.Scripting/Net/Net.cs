@@ -515,3 +515,50 @@ public sealed unsafe class Rpc<T1, T2, T3> : RpcDefinition
         }
     }
 }
+
+public sealed unsafe class Rpc<T1, T2, T3, T4> : RpcDefinition
+{
+    public Rpc(string name) : base(name)
+    {
+        Validate<T1>();
+        Validate<T2>();
+        Validate<T3>();
+        Validate<T4>();
+    }
+
+    public void On(NetServer server, Action<NetClientId, T1, T2, T3, T4> handler) =>
+        Register(server, (sender, args, count) => handler(
+            new NetClientId(sender),
+            Decode<T1>(args, count, 0),
+            Decode<T2>(args, count, 1),
+            Decode<T3>(args, count, 2),
+            Decode<T4>(args, count, 3)));
+
+    public void On(NetClient client, Action<T1, T2, T3, T4> handler) =>
+        Register(client, (_, args, count) => handler(
+            Decode<T1>(args, count, 0),
+            Decode<T2>(args, count, 1),
+            Decode<T3>(args, count, 2),
+            Decode<T4>(args, count, 3)));
+
+    public void Send(NetClient client, T1 a, T2 b, T3 c, T4 d, bool isReliable = true) =>
+        Call(client, 0, a, b, c, d, isReliable);
+
+    // to one client, or to all of them when `client` is null
+    public void Send(NetServer server, NetClientId? client, T1 a, T2 b, T3 c, T4 d, bool isReliable = true) =>
+        Call(server, Target(client), a, b, c, d, isReliable);
+
+    void Call(NetEndpoint endpoint, ulong client, T1 a, T2 b, T3 c, T4 d, bool isReliable)
+    {
+        var scratch = new Scratch(Scratch.SizeFor(Size(a) + Size(b) + Size(c) + Size(d), 4));
+        try
+        {
+            Span<Value> args = [Encode(a, ref scratch), Encode(b, ref scratch), Encode(c, ref scratch), Encode(d, ref scratch)];
+            Send(endpoint, client, args, isReliable);
+        }
+        finally
+        {
+            scratch.Dispose();
+        }
+    }
+}

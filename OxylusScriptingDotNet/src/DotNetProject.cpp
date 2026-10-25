@@ -13,10 +13,6 @@
 #include "DotNetHosts.hpp"
 
 namespace ox {
-// the trimming and NativeAOT analyzer warnings, an error in the editor build is a failure the shipped game is spared
-constexpr auto AOT_WARNINGS = "IL2026;IL2046;IL2050;IL2055;IL2057;IL2058;IL2060;IL2067;IL2070;IL2072;IL2075;IL2077;"
-                              "IL2080;IL2087;IL2090;IL2091;IL2111;IL3050;IL3051;IL3055;IL3056";
-
 static auto xml_escape(std::string_view text) -> std::string {
   auto escaped = std::string();
   escaped.reserve(text.size());
@@ -123,30 +119,18 @@ auto write_scripts_props(
 
   const auto content = fmt::format(
     R"(<Project>
-  <!-- written by the Oxylus editor every time the project opens, edit the csproj instead -->
+  <!-- written by the Oxylus editor every time the project opens, edit the csproj instead. A game's build sets both
+       properties itself and imports the Oxylus.Sdk.props its engine package installed -->
   <PropertyGroup>
     <OxylusSdkDir>{0}</OxylusSdkDir>
     <OxylusAssetDir>{1}</OxylusAssetDir>
-    <TargetFramework>net10.0</TargetFramework>
-    <LangVersion>latest</LangVersion>
-    <ImplicitUsings>disable</ImplicitUsings>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- a shipped game is NativeAOT, so code that would break it fails here, in the editor -->
-    <IsAotCompatible>true</IsAotCompatible>
-    <WarningsAsErrors>$(WarningsAsErrors);{2}</WarningsAsErrors>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!-- the editor's own copy, loaded once for every project, so it isn't copied next to the build -->
-    <Reference Include="Oxylus.Scripting" HintPath="$(OxylusSdkDir)Oxylus.Scripting.dll" Private="false" />
-    <Analyzer Include="$(OxylusSdkDir)Oxylus.Scripting.Generators.dll" />
-    <Compile Include="$(OxylusAssetDir)**/*.cs" />
-  </ItemGroup>
+  <Import Project="$(OxylusSdkDir)Oxylus.Sdk.props" />
 </Project>
 )",
     msbuild_dir(sdk_dir),
-    msbuild_dir(asset_dir),
-    AOT_WARNINGS
+    msbuild_dir(asset_dir)
   );
 
   return write_file(scripts_dir / "Oxylus.props", content);

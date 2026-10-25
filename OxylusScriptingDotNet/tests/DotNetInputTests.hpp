@@ -3,9 +3,11 @@
 // C# input through a real window, driven the way TestInputSystem drives it: SDL events from the virtual devices,
 // pumped by the window. Each test binary defines smoke_game() first
 
+#include <expected>
 #include <flecs.h>
 #include <glm/vec2.hpp>
 #include <gtest/gtest.h>
+#include <string>
 
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
@@ -30,6 +32,18 @@ struct InputProbe {
   glm::vec2 mouse_position = {};
 };
 
+struct UpdateCounter {
+  static constexpr auto MODULE_NAME = "UpdateCounter";
+
+  auto init(this UpdateCounter&) -> std::expected<void, std::string> { return {}; }
+
+  auto deinit(this UpdateCounter&) -> std::expected<void, std::string> { return {}; }
+
+  auto update(this UpdateCounter& self, const ox::Timestep&) -> void { self.updates++; }
+
+  i32 updates = 0;
+};
+
 class DotNetInputTest : public ::testing::Test {
 protected:
   void SetUp() override {
@@ -40,7 +54,8 @@ protected:
     app = std::make_unique<ox::App>(1, argv);
     app->with_name("TestDotNetInput")
       .with_window(ox::WindowInfo{.title = "TestDotNetInput", .width = 10, .height = 10})
-      .with<ox::Input>();
+      .with<ox::Input>()
+      .with<UpdateCounter>();
     app->init();
 
     world.import<ox::CoreComponentsModule>();
@@ -139,4 +154,18 @@ TEST_F(DotNetInputTest, ReadsAGamepad) {
   EXPECT_EQ(seen.gamepad_held, is_held ? 1 : 0);
 
   controller.disconnect();
+}
+
+TEST_F(DotNetInputTest, QuitsTheAppFromCSharp) {
+  auto& counter = app->mod<UpdateCounter>();
+  app->step();
+  const auto before = counter.updates;
+  EXPECT_GT(before, 0);
+
+  world.entity().set(ox::ScriptComponent{.type_name = "SmokeGame.QuitProbe"});
+  scripting.start_world(world.c_ptr());
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "app quit called"), 1) << logs_text();
+
+  app->step();
+  EXPECT_EQ(counter.updates, before);
 }

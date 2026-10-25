@@ -161,7 +161,7 @@ after_build(function(target)
     target:extraconf("rules", "ox.csharp", "aot_output_dir") or "aot"))
 
   -- the component mirrors follow the engine, so they are regenerated before anything is decided
-  local generated = path.join(os.projectdir(), "build", "dotnet", "generated", "Components.g.cs")
+  local generated = dotnet.generated_components()
   local bindgen = target:extraconf("rules", "ox.csharp", "bindgen")
   if bindgen then
     import("private.action.run.runenvs")
@@ -217,7 +217,7 @@ after_build(function(target)
     target:extraconf("rules", "ox.publish_csharp", "output_dir") or "scripts"))
   local source_roots = target:extraconf("rules", "ox.publish_csharp", "source_roots") or { path.directory(project) }
 
-  local sources = { path.join(os.projectdir(), "build", "dotnet", "generated", "Components.g.cs") }
+  local sources = { dotnet.generated_components() }
   for _, root in ipairs(source_roots) do
     table.join2(sources, os.files(path.join(root, "**.cs")), os.files(path.join(root, "**.csproj")),
       os.files(path.join(root, "**.props")))

@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 8u
+#define OX_DOTNET_ABI_VERSION 9u
 
 struct ecs_world_t;
 
@@ -613,6 +613,8 @@ struct OxNativeApi {
   auto (*time_max_frame_time)() -> f64 = nullptr;
   auto (*time_set_max_frame_time)(f64 millis) -> void = nullptr;
   auto (*time_reset_max_frame_time)() -> void = nullptr;
+  // stops the app after the current frame, does nothing without an App
+  auto (*app_quit)() -> void = nullptr;
 
   // servers and clients the scripts open, ticked by DotNetScripting::update and closed when the scripts unload
   auto (*net_server_start)(u16 port, u32 max_clients, u64* server) -> OxStatus = nullptr;

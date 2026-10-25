@@ -318,3 +318,11 @@ TEST_F(DotNetApiTest, ReadsNoWindowAndNoFrameLimitWithoutAnApp) {
   // setting it has nowhere to land
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "time limited -1"), 1) << logs_text();
 }
+
+TEST_F(DotNetApiTest, QuitsNothingWithoutAnApp) {
+  world.entity().set(ox::ScriptComponent{.type_name = "SmokeGame.QuitProbe"});
+  scripting.start_world(world.c_ptr());
+
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "app quit called"), 1) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}

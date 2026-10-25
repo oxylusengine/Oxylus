@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <flecs.h>
+#include <format>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <memory>
@@ -861,6 +862,26 @@ TEST_F(DotNetSceneTest, ControlsACinematicPlayerFromCSharp) {
   ASSERT_NE(scene->cinematic_instance(running), nullptr);
   EXPECT_TRUE(scene->cinematic_instance(running)->seek_pending);
   EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
+TEST_F(DotNetSceneTest, MirrorsUuidFieldsOfComponents) {
+  behaviour_entity("Sprites", "SmokeGame.SpriteProbe");
+  scene->runtime_start();
+
+  const auto first = scene->world.lookup("SpriteA");
+  const auto second = scene->world.lookup("SpriteB");
+  ASSERT_TRUE(first.is_valid());
+  ASSERT_TRUE(second.is_valid());
+
+  // C# swapped the two materials after reading them, so what C++ sees now is the other's
+  const auto& a = second.get<ox::SpriteComponent>().material;
+  const auto& b = first.get<ox::SpriteComponent>().material;
+  EXPECT_TRUE(a);
+  EXPECT_TRUE(b);
+  EXPECT_NE(a, b);
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, std::format("sprite materials {} {} valid True", a.str(), b.str())), 1)
+    << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "sprite swapped"), 1) << logs_text();
 }
 
 TEST_F(DotNetSceneTest, ReadsTheScenesStateFromCSharp) {

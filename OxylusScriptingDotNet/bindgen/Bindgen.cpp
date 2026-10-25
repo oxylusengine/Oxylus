@@ -167,6 +167,7 @@ static auto generate(const flecs::world& world, flecs::entity core) -> std::stri
   add_type(world.component<glm::ivec2>(), "global::Oxylus.Int2");
   add_type(world.component<glm::uvec3>(), "global::Oxylus.UInt3");
   add_type(world.component<glm::mat3>(), "global::Oxylus.Matrix3x3");
+  add_type(world.component<UUID>(), "global::Oxylus.AssetId");
 
   auto children = std::vector<flecs::entity>{};
   core.children([&children](flecs::entity child) { children.push_back(child); });

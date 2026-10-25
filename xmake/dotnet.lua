@@ -1,5 +1,6 @@
 -- locates the .NET 10 SDK and drives `dotnet` for the C# scripting targets
 import("core.base.semver")
+import("core.project.config")
 
 local sdk_root_cache = nil
 
@@ -61,6 +62,24 @@ function nethost_library(target)
   return "libnethost.so"
 end
 
+-- dotnet's obj and bin, and the component mirrors OxCSharpBindgen writes, under the build directory rather than the
+-- source tree, so an oxylus package built from a local checkout never shares them with the checkout's own build
+function artifacts_dir()
+  return path.absolute(path.join(config.builddir(), "dotnet"))
+end
+
+function generated_components()
+  return path.join(artifacts_dir(), "generated", "Components.g.cs")
+end
+
+-- MSBuild wants directories with a trailing separator
+local function artifacts_properties()
+  return {
+    "-p:ArtifactsPath=" .. artifacts_dir() .. "/",
+    "-p:OxylusGeneratedDir=" .. path.directory(generated_components()) .. "/",
+  }
+end
+
 local function configuration()
   return is_mode("debug") and "Debug" or "Release"
 end
@@ -86,7 +105,9 @@ local function aot_linker(target)
 end
 
 function build(project, output_dir)
-  os.vrunv("dotnet", { "build", project, "-c", configuration(), "-o", output_dir, "--nologo", "-v", "q" })
+  os.vrunv("dotnet", table.join(
+    { "build", project, "-c", configuration(), "-o", output_dir, "--nologo", "-v", "q" },
+    artifacts_properties()))
 end
 
 -- `properties` are extra MSBuild properties, { "-p:Name=Value", ... }. Always Release: what NativeAOT produces is
@@ -100,6 +121,7 @@ function publish_aot(target, project, output_dir, properties)
       "dotnet",
       table.join(
         { "publish", project, "-c", "Release", "-r", rid(target), "-o", output_dir, "--nologo", "-v", "q" },
+        artifacts_properties(),
         extra_args,
         properties or {})
     )

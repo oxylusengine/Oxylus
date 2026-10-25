@@ -92,6 +92,8 @@ TEST_F(DotNetNetTest, ConnectsAndCallsTypedRpcsBothWays) {
   EXPECT_EQ(network.clients.size(), 1);
 
   ASSERT_TRUE(frames_until("client got 1.5 3 bytes 7")) << logs_text();
+  ASSERT_TRUE(frames_until("client got quad 4 3 2 1")) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "server got quad 1 2 3 4"), 1);
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "server saw a client connect"), 1);
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "client connected Connected"), 1);
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "server got 42 hi"), 1);
