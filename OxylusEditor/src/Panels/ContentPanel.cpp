@@ -7,6 +7,7 @@
 #include <expected>
 #include <filesystem>
 #include <fmt/chrono.h>
+#include <fstream>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 #include <imspinner.h>
@@ -27,6 +28,9 @@
 #include "ParticleEditorPanel.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
+#ifdef OX_DOTNET
+#include "Scripting/DotNetProject.hpp"
+#endif
 
 namespace ox {
 static auto is_ascii_digit(const c8 value) -> bool { return value >= '0' && value <= '9'; }
@@ -146,6 +150,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_S
   {FileType::ParticleSystem, "Particle System"},
   {FileType::Cinematic, "Cinematic"},
   {FileType::UI, "UI"},
+  {FileType::CSharp, "C# Script"},
 };
 
 static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
@@ -181,6 +186,7 @@ static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
   {".ogg", FileType::Audio},  //
 
   {".lua", FileType::Script}, //
+  {".cs", FileType::CSharp},
 
   {".rcss", FileType::UI}, //
   {".rml", FileType::UI}, //
@@ -200,6 +206,7 @@ static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
   {FileType::ParticleSystem, {0.60f, 0.35f, 0.85f, 1.00f}},
   {FileType::Cinematic, {0.90f, 0.45f, 0.55f, 1.00f}},
   {FileType::UI, {0.0f, 16.0f, 121.0f, 1.00f}},
+  {FileType::CSharp, {0.40f, 0.30f, 0.85f, 1.00f}},
 };
 
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_ICON = {
@@ -218,6 +225,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::ParticleSystem, ICON_MDI_SHIMMER},
   {FileType::Cinematic, ICON_MDI_MOVIE_OPEN},
   {FileType::UI, ICON_MDI_LANGUAGE_HTML5},
+  {FileType::CSharp, ICON_MDI_LANGUAGE_CSHARP},
 };
 
 static constexpr auto file_type_bit(const FileType type) -> u32 { return 1u << static_cast<u32>(type); }
@@ -580,7 +588,8 @@ static void open_file(const std::filesystem::path& path) {
       case FileType::Prefab : break;
       case FileType::Texture: break;
       case FileType::Shader : [[fallthrough]];
-      case FileType::Script : {
+      case FileType::Script : [[fallthrough]];
+      case FileType::CSharp : {
         os::open_file_externally(path);
         break;
       }
@@ -1733,9 +1742,66 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     ImGui::EndPopup();
   }
 
+#ifdef OX_DOTNET
+  if (self.should_open_new_script_popup)
+    ImGui::OpenPopup("New C# Script");
+
+  if (ImGui::BeginPopupModal("New C# Script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    UI::begin_properties(UI::default_properties_flags, true, 0.5f);
+    UI::input_text("Class name", &self.new_script_name);
+    UI::end_properties();
+
+    if (ImGui::Button("Create", UI::scale(ImVec2(120.0f, 0.0f)))) {
+      if (!self.new_script_name.empty()) {
+        self.create_csharp_script();
+        self.new_script_name.clear();
+        self.should_open_new_script_popup = false;
+        ImGui::CloseCurrentPopup();
+      }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", UI::scale(ImVec2(120.0f, 0.0f)))) {
+      self.new_script_name.clear();
+      self.should_open_new_script_popup = false;
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+#endif
+
   if (!directory_to_open.empty())
     self.update_directory_entries(directory_to_open);
 }
+
+#ifdef OX_DOTNET
+auto ContentPanel::create_csharp_script(this ContentPanel& self) -> void {
+  const auto& scripts_project = App::mod<Editor>().active_project->get_config().scripts_project;
+  if (scripts_project.empty()) {
+    return;
+  }
+
+  const auto class_name = to_csharp_identifier(self.new_script_name);
+  const auto script_path = self.current_directory / (class_name + ".cs");
+  if (std::filesystem::exists(script_path)) {
+    OX_LOG_ERROR("Couldn't create C# script, {} already exists", script_path.string());
+    return;
+  }
+
+  auto file = std::ofstream(script_path, std::ios::binary);
+  if (!file) {
+    OX_LOG_ERROR("Couldn't create C# script {}", script_path.string());
+    return;
+  }
+
+  file << csharp_behaviour_template(scripts_project.stem().string(), class_name);
+  file.close();
+
+  OX_LOG_INFO("Created new C# script {}", class_name);
+  self.refresh();
+}
+#endif
 
 void ContentPanel::update_directory_entries(this ContentPanel& self, const std::filesystem::path& directory) {
   ZoneScoped;
@@ -1868,6 +1934,13 @@ auto ContentPanel::draw_context_menu_items(this ContentPanel& self, const std::f
         self.new_asset_type = AssetType::Cinematic;
         self.should_open_new_asset_popup = true;
       }
+#ifdef OX_DOTNET
+      const auto& scripts_project = App::mod<Editor>().active_project->get_config().scripts_project;
+      if (!scripts_project.empty() && ImGui::MenuItem("C# Script")) {
+        self.new_script_name.clear();
+        self.should_open_new_script_popup = true;
+      }
+#endif
       ImGui::EndMenu();
     }
   }

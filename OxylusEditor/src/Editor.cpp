@@ -193,6 +193,10 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   self.editor_context.reset();
   self.scene_manager.reset();
 
+#ifdef OX_DOTNET
+  self.csharp_scripts.close();
+#endif
+
   Log::remove_callback("editor_notifications");
 
   ImPlot::DestroyContext();
@@ -224,6 +228,10 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   auto& shp = self.editor_panel_registry.get<SceneHierarchyPanel>();
   self.main_viewport_panel.update(timestep, &shp);
+
+#ifdef OX_DOTNET
+  self.csharp_scripts.update(self.main_viewport_panel.is_any_scene_playing());
+#endif
 
   auto& render_context = App::get_rendercontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();

@@ -86,6 +86,7 @@ public:
   auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
 
   static auto get_window() -> const Window&;
+  static auto has_window() -> bool { return instance_ && instance_->window.has_value(); }
   static auto get_rendercontext() -> RenderContext&;
   static auto get_ui_scale() -> f32;
   static auto get_timestep() -> const Timestep&;

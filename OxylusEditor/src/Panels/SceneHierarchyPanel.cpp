@@ -14,6 +14,10 @@
 #include "Memory/Stack.hpp"
 #include "Panels/TextEditorPanel.hpp"
 #include "Render/DebugRenderer.hpp"
+#include "Scripting/LuaSystem.hpp"
+#ifdef OX_DOTNET
+  #include "Scripting/DotNetScripting.hpp"
+#endif
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 #include "Utils/ImGuiScoped.hpp"
@@ -66,7 +70,8 @@ static auto open_script_in_editor(const UUID& uuid) -> void {
 
   auto& text_editor_panel = App::mod<Editor>().editor_panel_registry.get<TextEditorPanel>();
   text_editor_panel.visible = true;
-  text_editor_panel.text_editor.open_file(App::get_vfs().to_physical(asset->path));
+  const auto& source = asset->source_path.empty() ? asset->path : asset->source_path;
+  text_editor_panel.text_editor.open_file(App::get_vfs().to_physical(source));
 }
 
 SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanelState("Scene Hierarchy", ICON_MDI_VIEW_LIST, true) {}
@@ -112,7 +117,8 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
   if (
     self.selected_script_ && ImGui::IsKeyPressed(ImGuiKey_Delete) && (self.table_hovered_ || self.table_hovered_scripts)
   ) {
-    self.scene_->remove_lua_system(*self.selected_script_);
+    self.scene_->remove_script(*self.selected_script_);
+    self.selected_script_ = nullptr;
   }
 
   if (self.deleted_entity_) {
@@ -175,8 +181,8 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
       if (ImGui::BeginTable("ScriptsTable", 1, table_flags, ImVec2(0.0f, UI::scale(100.0f)))) {
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_NoClip);
 
-        for (auto& [uuid, system] : self.scene_->get_lua_systems()) {
-          auto system_name = system->get_path().filename().string();
+        for (const auto& [key, script] : self.scene_->get_scripts()) {
+          auto system_name = script->display_name();
           if (self.scripts_filter_.IsActive() && !self.scripts_filter_.PassFilter(system_name.c_str())) {
             continue;
           }
@@ -185,7 +191,7 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
 
           ImGui::TableNextColumn();
 
-          bool is_selected = self.selected_script_ != nullptr && *self.selected_script_ == uuid;
+          bool is_selected = self.selected_script_ != nullptr && *self.selected_script_ == key;
 
           ImGuiTreeNodeFlags flags = (is_selected ? ImGuiTreeNodeFlags_Selected : 0);
           flags |= ImGuiTreeNodeFlags_OpenOnArrow;
@@ -203,7 +209,7 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
           }
 
-          ImGui::TreeNodeEx(uuid.str().c_str(), flags, "%s %s", ICON_MDI_SCRIPT, system_name.c_str());
+          ImGui::TreeNodeEx(script.get(), flags, "%s %s", ICON_MDI_SCRIPT, system_name.c_str());
 
           if (highlight)
             ImGui::PopStyleColor(3);
@@ -211,10 +217,10 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
           // Select
           if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
             self.selected_entity_.reset();
-            self.selected_script_ = &uuid;
+            self.selected_script_ = &key;
           }
-          if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-            open_script_in_editor(uuid);
+          if (key.asset_uuid && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+            open_script_in_editor(key.asset_uuid);
           }
         }
 
@@ -233,14 +239,15 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
         ImGui::EndTable();
 
         if (ImGui::BeginPopupContextItem()) {
-          if (ImGui::MenuItem("Reload")) {
-            if (self.selected_script_ && !self.scene_->is_running()) {
-              if (auto lua_system = self.scene_->get_lua_system(*self.selected_script_)) {
+          const auto is_lua_selected = self.selected_script_ != nullptr && self.selected_script_->asset_uuid;
+          if (is_lua_selected && ImGui::MenuItem("Reload")) {
+            if (!self.scene_->is_running()) {
+              if (auto lua_system = self.scene_->get_lua_system(self.selected_script_->asset_uuid)) {
                 auto& asset_man = App::mod<AssetManager>();
                 refresh_scripts(asset_man);
 
                 // copied out first, the script runs as it reloads and may well reach the asset manager
-                auto script = asset_man.get_script(*self.selected_script_);
+                auto script = asset_man.get_script(self.selected_script_->asset_uuid);
                 if (script) {
                   const auto fresh_script = script.copy();
                   script.reset();
@@ -253,7 +260,8 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAt
           }
           if (ImGui::MenuItem("Remove", "Del")) {
             if (self.selected_script_) {
-              self.scene_->remove_lua_system(*self.selected_script_);
+              self.scene_->remove_script(*self.selected_script_);
+              self.selected_script_ = nullptr;
             }
           }
 
@@ -711,6 +719,39 @@ auto SceneHierarchyPanel::draw_scripts_context_menu(this SceneHierarchyPanel& se
     self.script_picker_open_ = true;
     ImGui::CloseCurrentPopup();
   }
+
+#ifdef OX_DOTNET
+  if (ImGui::BeginMenu(stack.format_char("{} Add C# script", ICON_MDI_LANGUAGE_CSHARP))) {
+    auto is_any_listed = false;
+    if (App::has_mod<DotNetScripting>()) {
+      for (const auto& script_type : App::mod<DotNetScripting>().script_types) {
+        if (script_type.kind != OxScriptKind::SceneScript) {
+          continue;
+        }
+
+        const auto is_in_scene = self.scene_->get_scripts().contains(ScriptKey{.type_name = script_type.name});
+        if (is_in_scene) {
+          continue;
+        }
+
+        is_any_listed = true;
+        if (ImGui::MenuItem(script_type.name.c_str())) {
+          if (auto result = self.scene_->add_script_type(script_type.name); !result) {
+            OX_LOG_ERROR("{}", result.error());
+          }
+        }
+      }
+    }
+
+    if (!is_any_listed) {
+      ImGui::BeginDisabled();
+      ImGui::TextUnformatted("C# scripts aren't built yet");
+      ImGui::EndDisabled();
+    }
+
+    ImGui::EndMenu();
+  }
+#endif
 }
 
 auto SceneHierarchyPanel::draw_script_picker(this SceneHierarchyPanel& self) -> void {
@@ -725,13 +766,9 @@ auto SceneHierarchyPanel::draw_script_picker(this SceneHierarchyPanel& self) -> 
     return;
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-  if (!asset_man.load_asset(picked->uuid)) {
-    OX_LOG_ERROR("Couldn't load script asset {}!", picked->uuid.str());
-    return;
+  if (auto result = self.scene_->add_lua_system(picked->uuid); !result) {
+    OX_LOG_ERROR("{}", result.error());
   }
-
-  self.scene_->add_lua_system(picked->uuid);
 }
 
 auto SceneHierarchyPanel::set_scene(this SceneHierarchyPanel& self, EditorScene* scene) -> void {

@@ -42,8 +42,14 @@ require_confs()
 
 includes("Oxylus")
 includes("ResourceCompiler")
+if has_config("dotnet") then
+  includes("OxylusScriptingDotNet")
+end
 if has_config("editor") then
   includes("OxylusEditor")
+end
+if has_config("dotnet") then
+  includes("SmokeGame")
 end
 if has_config("tests") then
   includes("Oxylus/tests")

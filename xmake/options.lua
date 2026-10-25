@@ -8,6 +8,11 @@ option("lua_bindings")
     set_showmenu(true)
     set_description("Enable Lua bindings")
 
+option("dotnet")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Enable C# scripting, needs the .NET 10 SDK")
+
 option("tests")
     set_default(false)
     set_showmenu(true)

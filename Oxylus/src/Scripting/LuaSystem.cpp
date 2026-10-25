@@ -164,78 +164,77 @@ auto LuaSystem::reset_functions(this LuaSystem& self) -> void {
   self.on_body_deactivated_func.reset();
 }
 
-auto LuaSystem::on_add(this const LuaSystem& self, Scene* scene) -> void {
+auto LuaSystem::on_add(Scene* scene) -> void {
   ZoneScoped;
 
-  if (!self.on_add_func)
+  if (!on_add_func)
     return;
 
-  const auto result = self.on_add_func->call(scene);
+  const auto result = on_add_func->call(scene);
   check_result(result, "on_add");
 }
 
-auto LuaSystem::on_remove(this const LuaSystem& self, Scene* scene) -> void {
+auto LuaSystem::on_remove(Scene* scene) -> void {
   ZoneScoped;
 
-  if (!self.on_remove_func)
+  if (!on_remove_func)
     return;
 
-  const auto result = self.on_remove_func->call(scene);
+  const auto result = on_remove_func->call(scene);
   check_result(result, "on_remove");
 }
 
-auto LuaSystem::on_scene_start(this const LuaSystem& self, Scene* scene) -> void {
+auto LuaSystem::on_scene_start(Scene* scene) -> void {
   ZoneScoped;
 
-  if (!self.on_scene_start_func)
+  if (!on_scene_start_func)
     return;
 
-  const auto result = self.on_scene_start_func->call(scene);
+  const auto result = on_scene_start_func->call(scene);
   check_result(result, "on_scene_start");
 }
 
-auto LuaSystem::on_scene_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void {
+auto LuaSystem::on_scene_update(Scene* scene, f32 delta_time) -> void {
   ZoneScoped;
 
-  if (!self.on_scene_update_func)
+  if (!on_scene_update_func)
     return;
 
-  const auto result = self.on_scene_update_func->call(scene, delta_time);
+  const auto result = on_scene_update_func->call(scene, delta_time);
   check_result(result, "on_scene_update");
 }
 
-auto LuaSystem::on_scene_fixed_update(this const LuaSystem& self, Scene* scene, const f32 delta_time) -> void {
+auto LuaSystem::on_scene_fixed_update(Scene* scene, const f32 delta_time) -> void {
   ZoneScoped;
 
-  if (!self.on_scene_fixed_update_func)
+  if (!on_scene_fixed_update_func)
     return;
 
-  const auto result = self.on_scene_fixed_update_func->call(scene, delta_time);
+  const auto result = on_scene_fixed_update_func->call(scene, delta_time);
   check_result(result, "on_scene_fixed_update");
 }
 
-auto LuaSystem::on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent) -> void {
+auto LuaSystem::on_scene_render(Scene* scene, vuk::Extent3D extent) -> void {
   ZoneScoped;
 
-  if (!self.on_scene_render_func)
+  if (!on_scene_render_func)
     return;
 
-  const auto result = self.on_scene_render_func->call(scene, glm::vec3(extent.width, extent.height, extent.depth));
+  const auto result = on_scene_render_func->call(scene, glm::vec3(extent.width, extent.height, extent.depth));
   check_result(result, "on_scene_render");
 }
 
-auto LuaSystem::on_scene_stop(this const LuaSystem& self, Scene* scene) -> void {
+auto LuaSystem::on_scene_stop(Scene* scene) -> void {
   ZoneScoped;
 
-  if (!self.on_scene_stop_func)
+  if (!on_scene_stop_func)
     return;
 
-  const auto result = self.on_scene_stop_func->call(scene);
+  const auto result = on_scene_stop_func->call(scene);
   check_result(result, "on_scene_stop");
 }
 
 auto LuaSystem::on_contact_added(
-  this const LuaSystem& self,
   Scene* scene,
   const JPH::Body& body1,
   const JPH::Body& body2,
@@ -244,15 +243,14 @@ auto LuaSystem::on_contact_added(
 ) -> void {
   ZoneScoped;
 
-  if (!self.on_contact_added_func)
+  if (!on_contact_added_func)
     return;
 
-  const auto result = self.on_contact_added_func->call(scene, &body1, &body2, manifold, settings);
+  const auto result = on_contact_added_func->call(scene, &body1, &body2, manifold, settings);
   check_result(result, "on_contact_added");
 }
 
 auto LuaSystem::on_contact_persisted(
-  this const LuaSystem& self,
   Scene* scene,
   const JPH::Body& body1,
   const JPH::Body& body2,
@@ -261,45 +259,40 @@ auto LuaSystem::on_contact_persisted(
 ) -> void {
   ZoneScoped;
 
-  if (!self.on_contact_persisted_func)
+  if (!on_contact_persisted_func)
     return;
 
-  const auto result = self.on_contact_persisted_func->call(scene, &body1, &body2, manifold, settings);
+  const auto result = on_contact_persisted_func->call(scene, &body1, &body2, manifold, settings);
   check_result(result, "on_contact_persisted");
 }
 
-auto LuaSystem::on_contact_removed(this const LuaSystem& self, Scene* scene, const JPH::SubShapeIDPair& sub_shape_pair)
-  -> void {
+auto LuaSystem::on_contact_removed(Scene* scene, const JPH::SubShapeIDPair& sub_shape_pair) -> void {
   ZoneScoped;
 
-  if (!self.on_contact_removed_func)
+  if (!on_contact_removed_func)
     return;
 
-  const auto result = self.on_contact_removed_func->call(scene, sub_shape_pair);
+  const auto result = on_contact_removed_func->call(scene, sub_shape_pair);
   check_result(result, "on_contact_removed");
 }
 
-auto LuaSystem::on_body_activated(
-  this const LuaSystem& self, Scene* scene, const JPH::BodyID& body_id, u64 body_user_data
-) -> void {
+auto LuaSystem::on_body_activated(Scene* scene, const JPH::BodyID& body_id, u64 body_user_data) -> void {
   ZoneScoped;
 
-  if (!self.on_body_activated_func)
+  if (!on_body_activated_func)
     return;
 
-  const auto result = self.on_body_activated_func->call(scene, body_id, body_user_data);
+  const auto result = on_body_activated_func->call(scene, body_id, body_user_data);
   check_result(result, "on_body_activated");
 }
 
-auto LuaSystem::on_body_deactivated(
-  this const LuaSystem& self, Scene* scene, const JPH::BodyID& body_id, u64 body_user_data
-) -> void {
+auto LuaSystem::on_body_deactivated(Scene* scene, const JPH::BodyID& body_id, u64 body_user_data) -> void {
   ZoneScoped;
 
-  if (!self.on_body_deactivated_func)
+  if (!on_body_deactivated_func)
     return;
 
-  const auto result = self.on_body_deactivated_func->call(scene, body_id, body_user_data);
+  const auto result = on_body_deactivated_func->call(scene, body_id, body_user_data);
   check_result(result, "on_body_deactivated");
 }
 } // namespace ox

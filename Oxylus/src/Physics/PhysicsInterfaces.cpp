@@ -53,13 +53,13 @@ bool ObjectVsBroadPhaseLayerFilterImpl::ShouldCollide(JPH::ObjectLayer inLayer1,
 void Physics3DBodyActivationListener::OnBodyActivated(const JPH::BodyID& inBodyID, JPH::uint64 inBodyUserData) {
   ZoneScoped;
 
-  /* Body Activated */
+  _scene->on_body_activated(inBodyID, inBodyUserData);
 }
 
 void Physics3DBodyActivationListener::OnBodyDeactivated(const JPH::BodyID& inBodyID, JPH::uint64 inBodyUserData) {
   ZoneScoped;
 
-  /* Body Deactivated */
+  _scene->on_body_deactivated(inBodyID, inBodyUserData);
 }
 
 void Physics3DContactListener::GetFrictionAndRestitution(

@@ -7,6 +7,8 @@
 namespace ox {
 Timestep::Timestep() : timestep(0.0), last_time(0.0), elapsed(0.0) { timer = new Timer(); }
 
+Timestep::Timestep(f64 fixed_millis) : timestep(fixed_millis), last_time(0.0), elapsed(0.0) { timer = new Timer(); }
+
 Timestep::~Timestep() { delete timer; }
 
 void Timestep::on_update(this Timestep& self) {

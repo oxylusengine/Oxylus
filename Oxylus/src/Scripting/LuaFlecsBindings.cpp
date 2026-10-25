@@ -1,5 +1,8 @@
 #include "Scripting/LuaFlecsBindings.hpp"
 
+#include <algorithm>
+#include <ankerl/svector.h>
+#include <array>
 #include <flecs.h>
 #include <flecs/addons/meta.h>
 #include <sol/state.hpp>
@@ -919,13 +922,14 @@ auto FlecsBinding::bind(sol::state* state) -> void {
   };
   components_table["define"] =
     [state](Scene* scene, const std::string& name, sol::optional<sol::table> properties = {}) -> sol::table {
-    auto component = scene->world.component(name.c_str());
-
+    memory::ScopedStack stack;
+    auto fields = ankerl::svector<ComponentField, 16>();
     sol::table defaults = state->create_table();
 
     if (properties) {
       properties->for_each([&](sol::object key, sol::object value) {
-        std::string field_name = key.as<std::string>();
+        const auto key_name = key.as<std::string_view>();
+        const auto field_name = std::string_view(stack.null_terminate_cstr(key_name), key_name.size());
 
         // explicit types
         if (value.is<sol::table>()) {
@@ -933,67 +937,55 @@ auto FlecsBinding::bind(sol::state* state) -> void {
           std::string type = field_def["type"];
           sol::object default_val = field_def["default"];
 
-          if (type == "f32") {
-            component.member<f32>(field_name.c_str());
-            defaults[field_name] = default_val.as<f64>();
-          } else if (type == "f64") {
-            component.member<f64>(field_name.c_str());
-            defaults[field_name] = default_val.as<f64>();
-          } else if (type == "i8") {
-            component.member<i8>(field_name.c_str());
-            defaults[field_name] = default_val.as<f64>();
-          } else if (type == "i16") {
-            component.member<i16>(field_name.c_str());
-            defaults[field_name] = default_val.as<f64>();
-          } else if (type == "i32") {
-            component.member<i32>(field_name.c_str());
-            defaults[field_name] = default_val.as<f64>();
-          } else if (type == "i64") {
-            component.member<i64>(field_name.c_str());
-            defaults[field_name] = default_val.as<f64>();
-          } else if (type == "u8") {
-            component.member<u8>(field_name.c_str());
-            defaults[field_name] = default_val.as<f64>();
-          } else if (type == "u16") {
-            component.member<u16>(field_name.c_str());
-            defaults[field_name] = default_val.as<f64>();
-          } else if (type == "u32") {
-            component.member<u32>(field_name.c_str());
-            defaults[field_name] = default_val.as<f64>();
-          } else if (type == "u64") {
-            component.member<u64>(field_name.c_str());
+          constexpr auto number_types = std::array{
+            std::pair{"f32", ComponentFieldType::F32},
+            std::pair{"f64", ComponentFieldType::F64},
+            std::pair{"i8", ComponentFieldType::I8},
+            std::pair{"i16", ComponentFieldType::I16},
+            std::pair{"i32", ComponentFieldType::I32},
+            std::pair{"i64", ComponentFieldType::I64},
+            std::pair{"u8", ComponentFieldType::U8},
+            std::pair{"u16", ComponentFieldType::U16},
+            std::pair{"u32", ComponentFieldType::U32},
+            std::pair{"u64", ComponentFieldType::U64},
+          };
+
+          const auto number_type = std::ranges::find(number_types, type, [](const auto& p) {
+            return std::string_view(p.first);
+          });
+          if (number_type != number_types.end()) {
+            fields.push_back({.name = field_name, .type = number_type->second});
             defaults[field_name] = default_val.as<f64>();
           } else if (type == "vec2") {
-            component.member<glm::vec2>(field_name.c_str());
-            defaults[field_name] = default_val.as<glm::vec3>();
+            fields.push_back({.name = field_name, .type = ComponentFieldType::Vec2});
+            defaults[field_name] = default_val.as<glm::vec2>();
           } else if (type == "vec3") {
-            component.member<glm::vec3>(field_name.c_str());
+            fields.push_back({.name = field_name, .type = ComponentFieldType::Vec3});
             defaults[field_name] = default_val.as<glm::vec3>();
           } else if (type == "vec4") {
-            component.member<glm::vec4>(field_name.c_str());
-            defaults[field_name] = default_val.as<glm::vec3>();
+            fields.push_back({.name = field_name, .type = ComponentFieldType::Vec4});
+            defaults[field_name] = default_val.as<glm::vec4>();
           } else if (type == "quat") {
-            component.member<glm::quat>(field_name.c_str());
+            fields.push_back({.name = field_name, .type = ComponentFieldType::Quat});
             defaults[field_name] = default_val.as<glm::quat>();
           }
         }
 
         // default types
         if (value.is<f64>()) {
-          component.member<f64>(field_name.c_str());
+          fields.push_back({.name = field_name, .type = ComponentFieldType::F64});
           defaults[field_name] = value.as<f64>();
         } else if (value.is<bool>()) {
-          component.member<bool>(field_name.c_str());
+          fields.push_back({.name = field_name, .type = ComponentFieldType::Bool});
           defaults[field_name] = value.as<bool>();
         } else if (value.is<std::string>()) {
-          component.member<std::string>(field_name.c_str());
+          fields.push_back({.name = field_name, .type = ComponentFieldType::String});
           defaults[field_name] = value.as<std::string>();
         }
       });
     }
 
-    if (!scene->component_db.is_component_known(component))
-      scene->component_db.components.emplace_back(component);
+    auto component = scene->define_component(name, fields);
 
     sol::table component_table = state->create_table();
     component_table["component_id"] = ecs_entity_t(component);
@@ -1005,7 +997,7 @@ auto FlecsBinding::bind(sol::state* state) -> void {
 
   components_table["undefine"] = [](Scene* scene, sol::table component_table) -> void {
     auto component = component_table.get<ecs_entity_t>("component_id");
-    ecs_delete(scene->world.world_, component);
+    scene->undefine_component(scene->world.entity(component));
   };
 }
 } // namespace ox

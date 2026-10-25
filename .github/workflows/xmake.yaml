@@ -60,6 +60,11 @@ jobs:
         run: echo "XMAKE_GLOBALDIR=${{ runner.temp }}/xmake-global" >> "$GITHUB_ENV"
         shell: bash
 
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
       - name: Install Linux dependencies
         if: matrix.platform.os == 'linux'
         run: |
@@ -81,7 +86,8 @@ jobs:
             libxfixes-dev \
             libxi-dev \
             libxinerama-dev \
-            libxkbcommon-dev
+            libxkbcommon-dev \
+            zlib1g-dev
 
       - name: Verify Linux LLVM
         if: matrix.platform.os == 'linux'
@@ -217,8 +223,48 @@ jobs:
       - name: Install editor
         run: xmake install -vo dest OxylusEditor
 
+      # built by `build -a` above, its C# published with NativeAOT for this runner's platform
+      - name: Install SmokeGame
+        run: xmake install -vo dest-smokegame SmokeGame
+
+      - name: Check SmokeGame's scripts don't need .NET (Linux)
+        if: matrix.platform.os == 'linux'
+        run: |
+          ldd dest-smokegame/scripts/SmokeGame.so
+          if ldd dest-smokegame/scripts/SmokeGame.so | grep -Ei "coreclr|hostfxr|nethost"; then
+            echo "SmokeGame.so links the .NET runtime" >&2
+            exit 1
+          fi
+
+      - name: Check SmokeGame's scripts don't need .NET (macOS)
+        if: matrix.platform.os == 'macos'
+        run: |
+          otool -L dest-smokegame/scripts/SmokeGame.dylib
+          if otool -L dest-smokegame/scripts/SmokeGame.dylib | grep -Ei "coreclr|hostfxr|nethost"; then
+            echo "SmokeGame.dylib links the .NET runtime" >&2
+            exit 1
+          fi
+
+      - name: Check SmokeGame's scripts don't need .NET (Windows)
+        if: matrix.platform.os == 'windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          $imports = & $dumpbin /dependents dest-smokegame\scripts\SmokeGame.dll
+          $imports
+          if ($imports -match 'coreclr|hostfxr|nethost') {
+            throw "SmokeGame.dll links the .NET runtime"
+          }
+
       - name: Archive production artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.mode.name }}-${{ matrix.platform.toolchain }}-${{ env.XMAKE_RUNTIME }}
           path: dest
+
+      - name: Archive SmokeGame
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmokeGame-${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.mode.name }}-${{ matrix.platform.toolchain }}-${{ env.XMAKE_RUNTIME }}
+          path: dest-smokegame

@@ -8,6 +8,8 @@ class Timer;
 class Timestep {
 public:
   Timestep();
+  // reports `fixed_millis` until the first on_update, so frames can be simulated without a clock
+  explicit Timestep(f64 fixed_millis);
   ~Timestep();
 
   Timestep(const Timestep& other) = delete;

@@ -142,3 +142,127 @@ after_build(function(target)
     changed = not os.isfile(path.join(abs_output, "assets.oxmanifest")),
   })
 end)
+
+-- Builds C# projects for the hostfxr host with `dotnet build`, each of `projects` in order into
+-- `<targetdir>/<output_dir>`, and publishes `aot_project` with NativeAOT into `<targetdir>/<aot_output_dir>`.
+-- `source_root` is walked for the sources that decide whether anything needs rebuilding, and `bindgen` names the
+-- dependency that writes the component mirrors first
+rule("ox.csharp")
+after_build(function(target)
+  import("core.project.depend")
+  import("dotnet", { rootdir = os.scriptdir() })
+
+  local source_root = target:extraconf("rules", "ox.csharp", "source_root")
+  local projects = target:extraconf("rules", "ox.csharp", "projects") or {}
+  local output_dir = path.absolute(path.join(target:targetdir(),
+    target:extraconf("rules", "ox.csharp", "output_dir") or "managed"))
+  local aot_project = target:extraconf("rules", "ox.csharp", "aot_project")
+  local aot_output_dir = path.absolute(path.join(target:targetdir(),
+    target:extraconf("rules", "ox.csharp", "aot_output_dir") or "aot"))
+
+  -- the component mirrors follow the engine, so they are regenerated before anything is decided
+  local generated = path.join(os.projectdir(), "build", "dotnet", "generated", "Components.g.cs")
+  local bindgen = target:extraconf("rules", "ox.csharp", "bindgen")
+  if bindgen then
+    import("private.action.run.runenvs")
+    local bindgen_target = target:dep(bindgen)
+    os.vrunv(bindgen_target:targetfile(), { generated }, { envs = runenvs.join(runenvs.make(bindgen_target)) })
+  end
+
+  local sources = table.join(
+    { generated },
+    os.files(path.join(source_root, "**.cs")),
+    os.files(path.join(source_root, "**.csproj")),
+    os.files(path.join(source_root, "**.props")))
+  table.sort(sources)
+
+  local outputs = { output_dir }
+  for _, project in ipairs(projects) do
+    table.insert(outputs, path.join(output_dir, path.basename(project) .. ".dll"))
+  end
+
+  if aot_project then
+    table.insert(outputs, aot_output_dir)
+  end
+
+  depend.on_changed(function()
+    for _, project in ipairs(projects) do
+      cprint("${color.build.object}building C# %s", path.filename(project))
+      dotnet.build(project, output_dir)
+    end
+
+    if aot_project then
+      cprint("${color.build.object}publishing C# %s with NativeAOT", path.filename(aot_project))
+      dotnet.publish_aot(target, aot_project, aot_output_dir)
+    end
+  end, {
+    dependfile = target:dependfile("ox.csharp"),
+    files = sources,
+    values = table.join(outputs, sources),
+    changed = not os.isdir(output_dir) or (aot_project and not os.isdir(aot_output_dir)),
+  })
+end)
+
+-- Publishes a game's C# scripts with NativeAOT into `<targetdir>/<output_dir>` (default "scripts") and installs them
+-- next to the game, one native library with no .NET runtime behind it. NativeAOT can't cross compile between operating
+-- systems, so each platform publishes its own. `source_roots` are walked for the C# that decides whether to publish
+-- again, the generated component mirrors always count. The target depends on OxylusManaged, which writes those
+rule("ox.publish_csharp")
+after_build(function(target)
+  import("core.project.depend")
+  import("dotnet", { rootdir = os.scriptdir() })
+
+  local project = target:extraconf("rules", "ox.publish_csharp", "project")
+  local output_dir = path.absolute(path.join(target:targetdir(),
+    target:extraconf("rules", "ox.publish_csharp", "output_dir") or "scripts"))
+  local source_roots = target:extraconf("rules", "ox.publish_csharp", "source_roots") or { path.directory(project) }
+
+  local sources = { path.join(os.projectdir(), "build", "dotnet", "generated", "Components.g.cs") }
+  for _, root in ipairs(source_roots) do
+    table.join2(sources, os.files(path.join(root, "**.cs")), os.files(path.join(root, "**.csproj")),
+      os.files(path.join(root, "**.props")))
+  end
+  table.sort(sources)
+
+  depend.on_changed(function()
+    cprint("${color.build.object}publishing C# %s with NativeAOT", path.filename(project))
+    dotnet.publish_aot(target, project, output_dir, {
+      -- a game needs no culture data or exception message resources, and trades size for speed
+      "-p:InvariantGlobalization=true",
+      "-p:UseSystemResourceKeys=true",
+      "-p:OptimizationPreference=Speed",
+    })
+  end, {
+    dependfile = target:dependfile("ox.publish_csharp"),
+    files = sources,
+    values = table.join({ output_dir }, sources),
+    changed = not os.isdir(output_dir),
+  })
+end)
+after_install(function(target)
+  local output_dir = target:extraconf("rules", "ox.publish_csharp", "output_dir") or "scripts"
+  local published = path.join(target:targetdir(), output_dir)
+  local destination = path.join(target:installdir(), output_dir)
+  os.mkdir(destination)
+  -- the library alone, the debug symbols and import library the publish leaves next to it don't ship
+  local libraries = table.join(os.files(path.join(published, "*.dll")), os.files(path.join(published, "*.so")),
+    os.files(path.join(published, "*.dylib")))
+  for _, library in ipairs(libraries) do
+    os.vcp(library, destination)
+  end
+end)
+
+-- Copies nethost next to the binary, the hostfxr host loads it from there to find the installed runtime
+rule("ox.dotnet_nethost")
+after_build(function(target)
+  import("dotnet", { rootdir = os.scriptdir() })
+  local library = path.join(dotnet.host_pack_dir(target), dotnet.nethost_library(target))
+  local destination = path.join(target:targetdir(), path.filename(library))
+  if not os.isfile(destination) or os.mtime(destination) < os.mtime(library) then
+    os.vcp(library, destination)
+  end
+end)
+after_install(function(target)
+  import("dotnet", { rootdir = os.scriptdir() })
+  os.vcp(path.join(dotnet.host_pack_dir(target), dotnet.nethost_library(target)), target:installdir())
+end)

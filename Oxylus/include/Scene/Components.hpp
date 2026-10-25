@@ -1,6 +1,7 @@
 #pragma once
 
 #include <flecs.h>
+#include <string>
 
 #include "Audio/AudioEngine.hpp"
 #include "Core/UUID.hpp"
@@ -538,6 +539,11 @@ struct AudioListenerComponent {
   f32 cone_inner_angle = glm::radians(360.0f);
   f32 cone_outer_angle = glm::radians(360.0f);
   f32 cone_outer_gain = 0.0f;
+};
+
+// a C# behaviour, `type_name` is the class's full name, like "Game.Spinner"
+struct ScriptComponent {
+  std::string type_name = {};
 };
 
 struct Hidden {};

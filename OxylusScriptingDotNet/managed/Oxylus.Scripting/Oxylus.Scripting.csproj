@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Oxylus</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- engine code, optimized even in a debug editor: an unoptimized build boxes where the API promises not to.
+         The symbols stay, for stepping into it -->
+    <Optimize>true</Optimize>
+    <!-- writes the runtimeconfig hostfxr starts the editor's runtime from -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- OxCSharpBindgen writes the component mirrors here on every engine build, they follow its platform and mode -->
+    <OxylusGeneratedDir Condition="'$(OxylusGeneratedDir)' == ''">$(MSBuildThisFileDirectory)../../../build/dotnet/generated/</OxylusGeneratedDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(OxylusGeneratedDir)Components.g.cs" />
+  </ItemGroup>
+
+  <Target Name="OxylusRequireGeneratedComponents" BeforeTargets="CoreCompile" Condition="!Exists('$(OxylusGeneratedDir)Components.g.cs')">
+    <Error Text="$(OxylusGeneratedDir)Components.g.cs is missing, build the engine with xmake first, OxCSharpBindgen writes it" />
+  </Target>
+</Project>

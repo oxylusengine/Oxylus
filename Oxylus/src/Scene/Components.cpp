@@ -14,8 +14,10 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   world.module<CoreComponentsModule>("Core");
 
 #ifdef OX_LUA_BINDINGS
-  auto* state = App::mod<LuaManager>().get_state();
-  auto registry = ComponentRegistry{world, state, state->create_named_table("Core")};
+  // a bare world, like the C# bindgen's or a test's, has no app and nothing to mirror into
+  auto* state = App::get() && App::has_mod<LuaManager>() ? App::mod<LuaManager>().get_state() : nullptr;
+  auto registry = state ? ComponentRegistry{world, state, state->create_named_table("Core")}
+                        : ComponentRegistry{world, nullptr, sol::table{}};
 #else
   auto registry = ComponentRegistry{world};
 #endif
@@ -378,6 +380,11 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   {
     using C = TonemappingComponent;
     registry.bind<&C::tonemap_type>();
+  }
+
+  {
+    using C = ScriptComponent;
+    registry.bind<&C::type_name>();
   }
 }
 } // namespace ox

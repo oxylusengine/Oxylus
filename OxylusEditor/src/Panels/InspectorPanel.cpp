@@ -20,6 +20,9 @@
 #include "Memory/Stack.hpp"
 #include "ParticleEditorPanel.hpp"
 #include "Scene/EntitySerializer.hpp"
+#ifdef OX_DOTNET
+  #include "Scripting/DotNetScripting.hpp"
+#endif
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
@@ -67,6 +70,78 @@ static auto format_timestamp(memory::ScopedStack& stack, const f32 seconds) -> c
   const auto total = static_cast<i32>(seconds);
 
   return stack.format_char("{}:{:02}", total / 60, total % 60);
+}
+
+// no undo here, the observer only fires through `set`, which a property command writing through a pointer skips
+static auto draw_script_component(flecs::entity entity) -> void {
+  const auto current = entity.get<ScriptComponent>().type_name;
+
+  auto behaviours = std::vector<std::string>{};
+  auto is_loaded = false;
+#ifdef OX_DOTNET
+  if (App::has_mod<DotNetScripting>()) {
+    auto& dotnet = App::mod<DotNetScripting>();
+    is_loaded = dotnet.is_loaded();
+    for (const auto& script_type : dotnet.script_types) {
+      if (script_type.kind == OxScriptKind::Behaviour) {
+        behaviours.push_back(script_type.name);
+      }
+    }
+  }
+#endif
+
+  const auto is_missing = !current.empty() && is_loaded && std::ranges::find(behaviours, current) == behaviours.end();
+  const auto warning_color = ImVec4{1.0f, 0.75f, 0.2f, 1.0f};
+
+  UI::begin_property_grid("Type", nullptr);
+  if (is_loaded) {
+    const auto preview = current.empty() ? std::string("None") : is_missing ? current + " (missing)" : current;
+    if (is_missing) {
+      ImGui::PushStyleColor(ImGuiCol_Text, warning_color);
+    }
+
+    const auto is_open = ImGui::BeginCombo("##script_type", preview.c_str());
+    if (is_missing) {
+      ImGui::PopStyleColor();
+    }
+
+    if (is_open) {
+      if (is_missing) {
+        ImGui::PushStyleColor(ImGuiCol_Text, warning_color);
+        ImGui::Selectable((current + " (missing)").c_str(), true);
+        ImGui::PopStyleColor();
+      }
+
+      for (const auto& name : behaviours) {
+        const auto is_current = name == current;
+        if (ImGui::Selectable(name.c_str(), is_current) && !is_current) {
+          entity.set<ScriptComponent>({.type_name = name});
+        }
+      }
+
+      ImGui::EndCombo();
+    }
+  } else {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(current.empty() ? "None" : current.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("(scripts aren't built yet)");
+  }
+
+  UI::end_property_grid();
+
+  static std::string typed_name = {};
+  UI::begin_property_grid("Name", "type a behaviour's full name, like Game.Spinner");
+  if (ImGui::GetActiveID() != ImGui::GetID("##script_type_name")) {
+    typed_name = current;
+  }
+
+  ImGui::InputText("##script_type_name", &typed_name);
+  if (ImGui::IsItemDeactivatedAfterEdit() && typed_name != current) {
+    entity.set<ScriptComponent>({.type_name = typed_name});
+  }
+
+  UI::end_property_grid();
 }
 
 struct EntityInspector : IEntitySerializer {
@@ -635,7 +710,12 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
     }
     ImGui::PopID();
 
-    if (open && ty.has<flecs::TypeSerializer>()) {
+    if (open && fid == entity.world().id<ScriptComponent>()) {
+      UI::begin_properties(ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV);
+      draw_script_component(entity);
+      UI::end_properties();
+      ImGui::TreePop();
+    } else if (open && ty.has<flecs::TypeSerializer>()) {
       ImGuiTableFlags properties_flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV;
 
       UI::begin_properties(properties_flags);

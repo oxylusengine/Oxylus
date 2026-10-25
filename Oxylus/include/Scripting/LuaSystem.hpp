@@ -8,25 +8,16 @@
 #include "Core/Option.hpp"
 #include "Core/Types.hpp"
 #include "Scripting/LuaScript.hpp"
-
-namespace JPH {
-class ContactSettings;
-class ContactManifold;
-class Body;
-class BodyID;
-class SubShapeIDPair;
-} // namespace JPH
+#include "Scripting/SceneScript.hpp"
 
 namespace ox {
-class Scene;
-
 // One scene's live instance of a LuaScript: its own environment and its own resolved callbacks. Never share one
 // between scenes, that is what makes two scenes fight over the script's state.
-class LuaSystem {
+class LuaSystem final : public SceneScript {
 public:
   LuaSystem() = default;
   explicit LuaSystem(const LuaScript& script);
-  ~LuaSystem() = default;
+  ~LuaSystem() override = default;
 
   // Either use a path to load it from a lua file or pass in the lua
   auto load(this LuaSystem& self, const std::filesystem::path& path, const ox::option<std::string> script = nullopt)
@@ -37,36 +28,34 @@ public:
 
   auto reset_functions(this LuaSystem& self) -> void;
 
-  auto on_add(this const LuaSystem& self, Scene* scene) -> void;
-  auto on_remove(this const LuaSystem& self, Scene* scene) -> void;
+  auto display_name() const -> std::string override { return script_.path.filename().string(); }
 
-  auto on_scene_start(this const LuaSystem& self, Scene* scene) -> void;
-  auto on_scene_stop(this const LuaSystem& self, Scene* scene) -> void;
-  auto on_scene_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void;
-  auto on_scene_fixed_update(this const LuaSystem& self, Scene* scene, f32 delta_time) -> void;
-  auto on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent) -> void;
+  auto on_add(Scene* scene) -> void override;
+  auto on_remove(Scene* scene) -> void override;
+
+  auto on_scene_start(Scene* scene) -> void override;
+  auto on_scene_stop(Scene* scene) -> void override;
+  auto on_scene_update(Scene* scene, f32 delta_time) -> void override;
+  auto on_scene_fixed_update(Scene* scene, f32 delta_time) -> void override;
+  auto on_scene_render(Scene* scene, vuk::Extent3D extent) -> void override;
 
   auto on_contact_added(
-    this const LuaSystem& self,
     Scene* scene,
     const JPH::Body& body1,
     const JPH::Body& body2,
     const JPH::ContactManifold& manifold,
     const JPH::ContactSettings& settings
-  ) -> void;
+  ) -> void override;
   auto on_contact_persisted(
-    this const LuaSystem& self,
     Scene* scene,
     const JPH::Body& body1,
     const JPH::Body& body2,
     const JPH::ContactManifold& manifold,
     const JPH::ContactSettings& settings
-  ) -> void;
-  auto on_contact_removed(this const LuaSystem& self, Scene* scene, const JPH::SubShapeIDPair& sub_shape_pair) -> void;
-  auto on_body_activated(this const LuaSystem& self, Scene* scene, const JPH::BodyID& body_id, u64 body_user_data)
-    -> void;
-  auto on_body_deactivated(this const LuaSystem& self, Scene* scene, const JPH::BodyID& body_id, u64 body_user_data)
-    -> void;
+  ) -> void override;
+  auto on_contact_removed(Scene* scene, const JPH::SubShapeIDPair& sub_shape_pair) -> void override;
+  auto on_body_activated(Scene* scene, const JPH::BodyID& body_id, u64 body_user_data) -> void override;
+  auto on_body_deactivated(Scene* scene, const JPH::BodyID& body_id, u64 body_user_data) -> void override;
 
   auto get_path() const -> const std::filesystem::path& { return script_.path; }
 

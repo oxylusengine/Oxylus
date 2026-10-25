@@ -15,6 +15,10 @@
 #include "Utils/SceneManager.hpp"
 #include "Utils/ThumbnailManager.hpp"
 
+#ifdef OX_DOTNET
+  #include "Scripting/CSharpScripts.hpp"
+#endif
+
 namespace ox {
 class Editor {
 public:
@@ -59,6 +63,10 @@ public:
   std::unique_ptr<UndoRedoSystem> undo_redo_system = nullptr;
 
   NotificationSystem notification_system = {};
+
+#ifdef OX_DOTNET
+  CSharpScripts csharp_scripts;
+#endif
 
   HandlerId scene_play_handler = {};
   HandlerId scene_stop_handler = {};

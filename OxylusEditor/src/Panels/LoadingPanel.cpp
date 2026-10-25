@@ -123,6 +123,9 @@ auto LoadingPanel::load_project(this LoadingPanel& self) -> void {
   editor.reset_current_docking_layout();
   editor.editor_cvar.add_recent_project(active_project.get());
   editor.editor_panel_registry.get<ContentPanel>().init();
+#ifdef OX_DOTNET
+  editor.csharp_scripts.open(*active_project);
+#endif
 
   self.project_name = active_project->get_config().name;
   self.phase = Phase::Cooking;

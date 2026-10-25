@@ -229,9 +229,22 @@ Lua via sol2, compiled only when `lua_bindings` is on (`OX_LUA_BINDINGS`; the op
 name-keyed map of `LuaBinding` subclasses (`bind(sol::state*)`), one per subsystem
 (`LuaFlecsBindings`, `LuaSceneBindings`, `LuaPhysicsBindings`, ...).
 
-`LuaSystem` is a loaded script asset. `Scene` keeps `lua_systems` keyed by script UUID and forwards
-lifecycle hooks: `on_add`/`on_remove`, `on_scene_start`/`stop`/`update`/`fixed_update`/`render`, and
-Jolt contact callbacks. Scripts can define flecs systems, so gameplay can be written entirely in Lua.
+Every scene script implements `SceneScript` (`Scripting/SceneScript.hpp`). `Scene` keeps them in
+`scripts`, keyed by `ScriptKey`: a Lua script by its asset UUID, a C# one by its type name. It forwards
+`on_add`/`on_remove`, `on_scene_start`/`stop`/`update`/`render`, `on_scene_fixed_update` once per
+physics step, the threaded Jolt contact callbacks (Lua only), `on_contacts` with the same contacts
+buffered and handed over on the main thread after each step, and body activations. Scene JSON lists
+them under `"scripts"` as `{ "uuid": ... }` or `{ "type": ... }` entries.
+
+`LuaSystem` is a loaded script asset, and Lua scripts can define flecs systems.
+
+C# scripting lives in `OxylusScriptingDotNet/` behind the `dotnet` option (`OX_DOTNET`); the
+`DotNetScripting` module hosts CoreCLR in the editor and a NativeAOT library in shipped games, over the
+blittable ABI in `DotNetAbi.hpp`. Oxylus doesn't link it, so it plugs in through `SceneScriptHost`
+(`Scene::set_script_host`): every scene gets the host's runtime, which attaches the scene's world and
+gets each hook before the scene's scripts, and `Scene::add_script_type` asks the host for C# scene
+scripts by name. A `ScriptComponent { type_name }` puts a C# behaviour on an entity while the scene
+runs.
 
 ## Conventions
 
