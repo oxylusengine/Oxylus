@@ -37,7 +37,8 @@ auto add_editor_grid_stage(RendererInstance& renderer_instance, std::function<au
       ctx.variables["grid indices"] = index_buffer;
       ctx.variables["grid push"] = push;
 
-      const auto extent = module.image_extent(result_attachment).value_or(vir::Extent3D{1, 1, 1});
+      const auto extent = module.image_extent(result_attachment)
+                            .value_or(vir::Extent3D{ctx.display_size.x, ctx.display_size.y, 1});
       const auto format = module.image_format(result_attachment)
                             .value_or(std::pair{vir::Format::RGBA8Unorm, vir::Samples::e1})
                             .first;

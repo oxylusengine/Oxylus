@@ -35,6 +35,7 @@ public:
 
   // what the stages recorded into the scene's program read every frame
   glm::uvec2 picking_texel = {};
+  bool is_picking = false;
   u32 picking_terrain_index = ~0_u32;
   std::vector<u32> highlight_indices = {};
   u32 highlight_terrain_index = ~0_u32;

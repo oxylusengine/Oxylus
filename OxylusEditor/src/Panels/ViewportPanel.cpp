@@ -2,6 +2,7 @@
 
 #include <ImGuizmo.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
@@ -1965,41 +1966,50 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
   auto mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
   auto transform_indices = module.declare_buffer_var("highlight transform indices", vir::Access::None);
   const auto push = module.declare_bytes_var("highlight mask push", sizeof(HighlightMaskPush));
+  const auto highlight_condition = module.declare_bool_var("is highlighting", false);
   ctx.variables["highlight transform indices"] = transform_indices;
   ctx.variables["highlight mask push"] = push;
+  ctx.variables["is highlighting"] = highlight_condition;
 
   const auto extent = module.image_extent(visbuffer_attachment).value_or(vir::Extent3D{1, 1, 1});
-  auto silhouette_mask = module.clear(
-    module.transient_image({.extent = extent, .format = vir::Format::R8Unorm, .name = "selection silhouette mask"}),
-    vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f)
+  auto silhouette_mask = module.transient_image(
+    {.extent = extent, .format = vir::Format::R8Unorm, .name = "selection silhouette mask"}
   );
 
-  std::tie(
-    silhouette_mask,
-    visbuffer_attachment,
-    meshlet_instances_buffer,
-    mesh_instances_buffer,
-    std::ignore
-  ) = std::tuple_cat( //
-    module
-      .begin_compute(
-        {{silhouette_mask, vir::Access::ComputeWrite},
-         {visbuffer_attachment, vir::Access::ComputeSampled},
-         {meshlet_instances_buffer, vir::Access::ComputeRead},
-         {mesh_instances_buffer, vir::Access::ComputeRead},
-         {transform_indices, vir::Access::ComputeRead}}
-      )
-      .with_name("highlight mask")
-      .bind_compute_pipeline(render_context.pipeline("highlight_mask_generate"))
-      .bind_buffer(0, 0, meshlet_instances_buffer)
-      .bind_buffer(0, 1, mesh_instances_buffer)
-      .bind_image(0, 2, visbuffer_attachment)
-      .bind_image(0, 3, silhouette_mask)
-      .bind_buffer(0, 4, transform_indices)
-      .push_constants_from(push)
-      .dispatch_invocations_per_pixel(silhouette_mask)
-      .end_compute()
-  );
+  std::tie(silhouette_mask, visbuffer_attachment, meshlet_instances_buffer, mesh_instances_buffer, std::ignore) =
+    std::tuple_cat(module.set_condition(
+      highlight_condition,
+      [&](vir::Module& arm) {
+        const auto cleared_mask = arm.clear(silhouette_mask, vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f));
+        return arm
+          .begin_compute(
+            {{cleared_mask, vir::Access::ComputeWrite},
+             {visbuffer_attachment, vir::Access::ComputeSampled},
+             {meshlet_instances_buffer, vir::Access::ComputeRead},
+             {mesh_instances_buffer, vir::Access::ComputeRead},
+             {transform_indices, vir::Access::ComputeRead}}
+          )
+          .with_name("highlight mask")
+          .bind_compute_pipeline(render_context.pipeline("highlight_mask_generate"))
+          .bind_buffer(0, 0, meshlet_instances_buffer)
+          .bind_buffer(0, 1, mesh_instances_buffer)
+          .bind_image(0, 2, visbuffer_attachment)
+          .bind_image(0, 3, cleared_mask)
+          .bind_buffer(0, 4, transform_indices)
+          .push_constants_from(push)
+          .dispatch_invocations_per_pixel(cleared_mask)
+          .end_compute();
+      },
+      [&](vir::Module&) {
+        return std::array{
+          silhouette_mask,
+          visbuffer_attachment,
+          meshlet_instances_buffer,
+          mesh_instances_buffer,
+          transform_indices
+        };
+      }
+    ));
 
   ctx.set_shared_image_resource("silhouette_mask", silhouette_mask)
     .set_image_resource("visbuffer_attachment", visbuffer_attachment)
@@ -2008,6 +2018,7 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
 }
 
 static auto highlight_mask_bind(vir::Program& program, const StageVariables& variables, ViewportPanel& panel) -> void {
+  program.set(variables.at("is highlighting"), !panel.highlight_indices.empty());
   program.set(variables.at("highlight transform indices"), panel.highlight_indices_buffer);
   program.set_bytes(
     variables.at("highlight mask push"),
@@ -2027,15 +2038,18 @@ static auto highlight_composite_stage(RenderStageContext& ctx) -> void {
   auto& render_context = ctx.render_context;
   auto result_attachment = ctx.get_image_resource("result_attachment");
   auto depth_attachment = ctx.get_image_resource("depth_attachment");
+  const auto highlight_condition = module.declare_bool_var("is highlighting composite", false);
+  ctx.variables["is highlighting composite"] = highlight_condition;
 
   const auto mask_extent = module.image_extent(*silhouette_mask).value_or(vir::Extent3D{1, 1, 1});
-  const auto result_extent = module.image_extent(result_attachment).value_or(vir::Extent3D{1, 1, 1});
+  const auto result_extent = module.image_extent(result_attachment)
+                               .value_or(vir::Extent3D{ctx.display_size.x, ctx.display_size.y, 1});
   const auto result_format = module.image_format(result_attachment)
                                .value_or(std::pair{vir::Format::RGBA8Unorm, vir::Samples::e1})
                                .first;
 
   // the dilation runs entirely in mask space; the composite maps display fragments into it
-  auto temp_mask = module.transient_image({
+  const auto temp_mask = module.transient_image({
     .extent = mask_extent,
     .format = vir::Format::R8Unorm,
     .name = "temp horizontal dilated mask",
@@ -2044,16 +2058,6 @@ static auto highlight_composite_stage(RenderStageContext& ctx) -> void {
     glm::uvec2 resolution = {};
     i32 radius = 8;
   };
-  std::tie(*silhouette_mask, temp_mask) = std::tuple_cat(
-    module.begin_compute({{*silhouette_mask, vir::Access::ComputeSampled}, {temp_mask, vir::Access::ComputeWrite}})
-      .with_name("horizontal dilate")
-      .bind_compute_pipeline(render_context.pipeline("highlight_dilate_horizontal"))
-      .bind_image(0, 0, *silhouette_mask)
-      .bind_image(0, 1, temp_mask)
-      .push_constants(PushConstants(DilatePush{.resolution = {mask_extent.width, mask_extent.height}}))
-      .dispatch_invocations_per_pixel(temp_mask)
-      .end_compute()
-  );
 
   // NOTE: HideBehindWalls is here for future use. Currently we render the silhoutte using main visbuffer which
   // geometry alread passes the depth test.
@@ -2070,39 +2074,59 @@ static auto highlight_composite_stage(RenderStageContext& ctx) -> void {
     i32 outline_width = 5;
     i32 occluded_mode = OccludeMode::AlwaysVisible;
   };
-  auto outline_composite = module.clear(
-    module.transient_image({.extent = result_extent, .format = result_format, .name = "outlined composite"}),
-    vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f)
+  const auto outline_composite = module.transient_image(
+    {.extent = result_extent, .format = result_format, .name = "outlined composite"}
   );
-  const auto composited = //
-    module
-      .begin_rendering(
-        {{outline_composite, vir::Access::ColorRW},
-         {*silhouette_mask, vir::Access::FragmentSampled},
-         {temp_mask, vir::Access::FragmentSampled},
-         {depth_attachment, vir::Access::FragmentSampled},
-         {result_attachment, vir::Access::FragmentSampled}}
-      )
-      .with_name("outline composite")
-      .bind_graphics_pipeline(render_context.pipeline("highlight_composite"))
-      .broadcast_color_blend(vir::BlendPreset::AlphaBlend)
-      .set_viewport(0, vir::Rect2D::framebuffer())
-      .set_scissor(0, vir::Rect2D::framebuffer())
-      .bind_image(0, 0, *silhouette_mask)
-      .bind_image(0, 1, temp_mask)
-      .bind_image(0, 2, depth_attachment)
-      .bind_image(0, 3, result_attachment)
-      .bind_sampler(0, 4, render_context.cached_sampler_handle(LinearSamplerClamped))
-      .push_constants(PushConstants(
-        CompositePush{
-          .resolution = {result_extent.width, result_extent.height},
-          .mask_resolution = {mask_extent.width, mask_extent.height},
-        }
-      ))
-      .draw(3, 1)
-      .end_rendering();
 
-  ctx.set_image_resource("depth_attachment", composited[3]).set_image_resource("result_attachment", composited[0]);
+  // copied back into the result so both arms end on the same image. A phi resolves to its first arm
+  std::tie(result_attachment, depth_attachment) = std::tuple_cat(module.set_condition(
+    highlight_condition,
+    [&](vir::Module& arm) {
+      const auto [mask, dilated] =
+        arm.begin_compute({{*silhouette_mask, vir::Access::ComputeSampled}, {temp_mask, vir::Access::ComputeWrite}})
+          .with_name("horizontal dilate")
+          .bind_compute_pipeline(render_context.pipeline("highlight_dilate_horizontal"))
+          .bind_image(0, 0, *silhouette_mask)
+          .bind_image(0, 1, temp_mask)
+          .push_constants(PushConstants(DilatePush{.resolution = {mask_extent.width, mask_extent.height}}))
+          .dispatch_invocations_per_pixel(temp_mask)
+          .end_compute();
+
+      const auto cleared_composite = arm.clear(outline_composite, vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f));
+      const auto composited = //
+        arm
+          .begin_rendering(
+            {{cleared_composite, vir::Access::ColorRW},
+             {mask, vir::Access::FragmentSampled},
+             {dilated, vir::Access::FragmentSampled},
+             {depth_attachment, vir::Access::FragmentSampled},
+             {result_attachment, vir::Access::FragmentSampled}}
+          )
+          .with_name("outline composite")
+          .bind_graphics_pipeline(render_context.pipeline("highlight_composite"))
+          .broadcast_color_blend(vir::BlendPreset::AlphaBlend)
+          .set_viewport(0, vir::Rect2D::framebuffer())
+          .set_scissor(0, vir::Rect2D::framebuffer())
+          .bind_image(0, 0, mask)
+          .bind_image(0, 1, dilated)
+          .bind_image(0, 2, depth_attachment)
+          .bind_image(0, 3, result_attachment)
+          .bind_sampler(0, 4, render_context.cached_sampler_handle(LinearSamplerClamped))
+          .push_constants(PushConstants(
+            CompositePush{
+              .resolution = {result_extent.width, result_extent.height},
+              .mask_resolution = {mask_extent.width, mask_extent.height},
+            }
+          ))
+          .draw(3, 1)
+          .end_rendering();
+      return std::array{arm.copy_image(composited[0], composited[4]), composited[3]};
+    },
+    [&](vir::Module&) { return std::array{result_attachment, depth_attachment}; }
+  ));
+
+  ctx.set_image_resource("depth_attachment", depth_attachment)
+    .set_image_resource("result_attachment", result_attachment);
 }
 
 auto ViewportPanel::resolve_pending_pick(this ViewportPanel& self, PendingPick& pick, bool skip_invalid) -> void {
@@ -2155,26 +2179,34 @@ auto ViewportPanel::mouse_picking_stages(
   self.picking_terrain_index = get_terrain_transform_index(
     self.editor_scene ? self.editor_scene->get_scene().get() : nullptr
   );
-  // the picks only run on the frames that click, which is a program of their own
-  if (should_pick) {
-    for (auto* pick : {&self.pending_pick_2d, &self.pending_pick_3d}) {
-      if (pick->buffer == BufferID::Invalid) {
-        auto buffer = render_context.allocate_buffer({
-          .size = sizeof(u32),
-          .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-          .location = vir::MemoryLocation::GpuToCpu,
-          .name = "pick readback",
-        });
-        if (!buffer) {
-          return;
-        }
-
-        pick->buffer = *buffer;
-      }
+  auto is_pick_ready = true;
+  for (auto* pick : {&self.pending_pick_2d, &self.pending_pick_3d}) {
+    if (pick->buffer != BufferID::Invalid) {
+      continue;
     }
-    self.pending_pick_2d.request();
-    self.pending_pick_3d.request();
-    self.pending_pick_scene = self.editor_scene->get_scene();
+
+    auto buffer = render_context.allocate_buffer({
+      .size = sizeof(u32),
+      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      .location = vir::MemoryLocation::GpuToCpu,
+      .name = "pick readback",
+    });
+    if (!buffer) {
+      is_pick_ready = false;
+      break;
+    }
+
+    pick->buffer = *buffer;
+  }
+
+  // the stages are registered every frame and only dispatch on a click, so clicking keeps the frame shape
+  if (is_pick_ready) {
+    self.is_picking = should_pick;
+    if (should_pick) {
+      self.pending_pick_2d.request();
+      self.pending_pick_3d.request();
+      self.pending_pick_scene = self.editor_scene->get_scene();
+    }
 
     renderer_instance->add_stage_after(
       RenderStage::Forward2D,
@@ -2184,22 +2216,29 @@ auto ViewportPanel::mouse_picking_stages(
         auto visbuffer = ctx.get_image_resource("visbuffer_attachment_2d");
         auto readback = module.declare_buffer_var("pick readback 2d", vir::Access::HostRead);
         const auto push = module.declare_bytes_var("pick 2d push", sizeof(PickPush2D));
+        const auto pick_condition = module.declare_bool_var("is picking 2d", false);
         ctx.variables["pick readback 2d"] = readback;
         ctx.variables["pick 2d push"] = push;
-        std::tie(readback, visbuffer) = std::tuple_cat(
-          module.begin_compute({{readback, vir::Access::ComputeWrite}, {visbuffer, vir::Access::ComputeSampled}})
-            .with_name("mouse picking 2d")
-            .bind_compute_pipeline(ctx.render_context.pipeline("entity_mouse_picking_2d"))
-            .bind_image(0, 0, visbuffer)
-            .push_constants_from(push)
-            .dispatch(1, 1, 1)
-            .end_compute()
-        );
+        ctx.variables["is picking 2d"] = pick_condition;
+        std::tie(readback, visbuffer) = std::tuple_cat(module.set_condition(
+          pick_condition,
+          [&](vir::Module& arm) {
+            return arm.begin_compute({{readback, vir::Access::ComputeWrite}, {visbuffer, vir::Access::ComputeSampled}})
+              .with_name("mouse picking 2d")
+              .bind_compute_pipeline(ctx.render_context.pipeline("entity_mouse_picking_2d"))
+              .bind_image(0, 0, visbuffer)
+              .push_constants_from(push)
+              .dispatch(1, 1, 1)
+              .end_compute();
+          },
+          [&](vir::Module&) { return std::array{readback, visbuffer}; }
+        ));
         module.export_to(readback, vir::Access::HostRead);
         ctx.set_image_resource("visbuffer_attachment_2d", visbuffer);
       },
       [&self](vir::Program& program, const StageVariables& variables) {
         auto& context = App::get_rendercontext();
+        program.set(variables.at("is picking 2d"), self.is_picking);
         program.set(variables.at("pick readback 2d"), context.buffer(self.pending_pick_2d.buffer));
         program.set_bytes(
           variables.at("pick 2d push"),
@@ -2218,25 +2257,31 @@ auto ViewportPanel::mouse_picking_stages(
         auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
         auto readback = module.declare_buffer_var("pick readback", vir::Access::HostRead);
         const auto push = module.declare_bytes_var("pick push", sizeof(PickPush3D));
+        const auto pick_condition = module.declare_bool_var("is picking", false);
         ctx.variables["pick readback"] = readback;
         ctx.variables["pick push"] = push;
-        std::tie(readback, visbuffer, meshlet_instances, mesh_instances) = std::tuple_cat(
-          module
-            .begin_compute(
-              {{readback, vir::Access::ComputeWrite},
-               {visbuffer, vir::Access::ComputeSampled},
-               {meshlet_instances, vir::Access::ComputeRead},
-               {mesh_instances, vir::Access::ComputeRead}}
-            )
-            .with_name("mouse picking")
-            .bind_compute_pipeline(ctx.render_context.pipeline("entity_mouse_picking"))
-            .bind_buffer(0, 0, meshlet_instances)
-            .bind_buffer(0, 1, mesh_instances)
-            .bind_image(0, 2, visbuffer)
-            .push_constants_from(push)
-            .dispatch(1, 1, 1)
-            .end_compute()
-        );
+        ctx.variables["is picking"] = pick_condition;
+        std::tie(readback, visbuffer, meshlet_instances, mesh_instances) = std::tuple_cat(module.set_condition(
+          pick_condition,
+          [&](vir::Module& arm) {
+            return arm
+              .begin_compute(
+                {{readback, vir::Access::ComputeWrite},
+                 {visbuffer, vir::Access::ComputeSampled},
+                 {meshlet_instances, vir::Access::ComputeRead},
+                 {mesh_instances, vir::Access::ComputeRead}}
+              )
+              .with_name("mouse picking")
+              .bind_compute_pipeline(ctx.render_context.pipeline("entity_mouse_picking"))
+              .bind_buffer(0, 0, meshlet_instances)
+              .bind_buffer(0, 1, mesh_instances)
+              .bind_image(0, 2, visbuffer)
+              .push_constants_from(push)
+              .dispatch(1, 1, 1)
+              .end_compute();
+          },
+          [&](vir::Module&) { return std::array{readback, visbuffer, meshlet_instances, mesh_instances}; }
+        ));
         module.export_to(readback, vir::Access::HostRead);
         ctx.set_image_resource("visbuffer_attachment", visbuffer)
           .set_buffer_resource("meshlet_instances_buffer", meshlet_instances)
@@ -2244,6 +2289,7 @@ auto ViewportPanel::mouse_picking_stages(
       },
       [&self](vir::Program& program, const StageVariables& variables) {
         auto& context = App::get_rendercontext();
+        program.set(variables.at("is picking"), self.is_picking);
         program.set(variables.at("pick readback"), context.buffer(self.pending_pick_3d.buffer));
         program.set_bytes(
           variables.at("pick push"),
@@ -2310,11 +2356,7 @@ auto ViewportPanel::mouse_picking_stages(
 
   self.highlight_indices = std::move(transform_indices);
   self.highlight_terrain_index = get_terrain_transform_index(s->get_scene().get());
-  // a frame with nothing selected records the program without the stages
-  if (self.highlight_indices.empty()) {
-    return;
-  }
-
+  // registered with nothing selected too, so selecting only flips the stages' condition
   const auto staged = render_context.upload_frame_buffer(
     std::span(reinterpret_cast<const u8*>(self.highlight_indices.data()), ox::size_bytes(self.highlight_indices)),
     "highlight transform indices"
@@ -2333,7 +2375,10 @@ auto ViewportPanel::mouse_picking_stages(
   renderer_instance->add_stage_after(
     RenderStage::PostProcessing,
     "entity_highlighting_composite",
-    [](RenderStageContext& ctx) { highlight_composite_stage(ctx); }
+    [](RenderStageContext& ctx) { highlight_composite_stage(ctx); },
+    [&self](vir::Program& program, const StageVariables& variables) {
+      program.set(variables.at("is highlighting composite"), !self.highlight_indices.empty());
+    }
   );
 }
 

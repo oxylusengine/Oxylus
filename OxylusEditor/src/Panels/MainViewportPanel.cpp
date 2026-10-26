@@ -222,18 +222,34 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
     self.update_dockspace();
   }
 
+  // the hierarchy follows the focused viewport. Until one is focused it takes the first with a scene, otherwise a
+  // freshly opened project shows no scene, and the click that focuses the viewport would clear what it picks
+  auto* hierarchy_scene = sh->get_scene();
+  const auto is_hierarchy_scene_shown = hierarchy_scene != nullptr &&
+                                        std::ranges::any_of(self.viewport_panels, [hierarchy_scene](const auto& panel) {
+                                          return panel->get_scene() == hierarchy_scene;
+                                        });
+  auto active_panel = std::ranges::find_if(self.viewport_panels, [](const auto& panel) {
+    return panel->is_viewport_focused;
+  });
+  if (active_panel == self.viewport_panels.end() && !is_hierarchy_scene_shown) {
+    active_panel = std::ranges::find_if(self.viewport_panels, [](const auto& panel) {
+      return panel->get_scene() != nullptr;
+    });
+  }
+
+  if (active_panel != self.viewport_panels.end()) {
+    auto* panel_scene = (*active_panel)->get_scene();
+    // the hierarchy's scene is only safe to read while a viewport still shows it
+    const auto is_same_scene = panel_scene == hierarchy_scene || (is_hierarchy_scene_shown && panel_scene &&
+                                                                  hierarchy_scene->get_id() == panel_scene->get_id());
+    if (!is_same_scene) {
+      sh->set_scene(panel_scene);
+    }
+  }
+
   for (const auto& panel : self.viewport_panels) {
     auto* panel_scene = panel->get_scene();
-
-    if (panel->is_viewport_focused) {
-      auto sh_scene = sh->get_scene();
-
-      if (sh_scene != panel_scene) {
-        if (!sh_scene || !panel_scene || sh_scene->get_id() != panel_scene->get_id()) {
-          sh->set_scene(panel_scene);
-        }
-      }
-    }
 
     if (panel_scene) {
       panel_scene->get_scene()->input_focused = panel->is_viewport_focused;

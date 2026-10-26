@@ -77,6 +77,8 @@ struct RenderStageContext {
   RenderContext& render_context;
 
   glm::uvec2 viewport_size = {};
+  // the extent of `result_attachment` from PostProcessing on, which the module can't report for the render target
+  glm::uvec2 display_size = {};
 
   StageVariables& variables;
 
