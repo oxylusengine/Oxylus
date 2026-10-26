@@ -21,7 +21,7 @@ target("OxylusEditor")
     add_deps("Oxylus")
     add_deps("ResourceCompiler")
     add_deps("rcli")
-    if has_config("dotnet") then
+    if has_config("csharp") then
         -- OxylusManaged puts the Oxylus.Scripting a project references, and the generator it runs, in managed/
         add_deps("OxylusDotNet", "OxylusManaged")
         add_rules("ox.dotnet_nethost")
@@ -34,7 +34,7 @@ target("OxylusEditor")
     add_includedirs("./src")
     add_sysincludedirs("./vendor", { public = true })
     add_files("./src/**.cpp")
-    if not has_config("dotnet") then
+    if not has_config("csharp") then
         remove_files("./src/Scripting/CSharpScripts.cpp")
     end
     add_defines("IMGUI_DEFINE_MATH_OPERATORS")
@@ -55,7 +55,7 @@ target("OxylusEditor")
     after_install(function (target)
         local installdir = target:installdir()
         os.vcp(path.join(target:targetdir(), "Assets"), installdir)
-        if has_config("dotnet") then
+        if has_config("csharp") then
             os.vcp(path.join(target:targetdir(), "managed"), installdir)
         end
 

@@ -3,7 +3,7 @@ option("profile")
     set_description("Enable application wide profiling.")
     add_defines("TRACY_ENABLE=1", { public = true })
 
-option("dotnet")
+option("csharp")
     set_default(true)
     set_showmenu(true)
     set_description("Enable C# scripting, needs the .NET 10 SDK")

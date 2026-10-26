@@ -38,7 +38,8 @@ xmake r OxylusEditor         # run the editor
 On NixOS, use `nix-shell` (see `shell.nix`) and `--toolchain=nix-clang`; the shell pins libc++,
 Vulkan loader, and `shader-slang`.
 
-Configure options (`xmake f --<opt>=<val>`): `editor` (default true),
+Configure options (`xmake f --<opt>=<val>`): `editor` (default true), `csharp` (C# scripting, default true, needs
+the .NET 10 SDK; not `dotnet`, which xmake reads as the SDK's directory),
 `tests` (default false), `profile` (Tracy, default false), `llvmpipe` (force software Vulkan device).
 
 Build modes are `debug`, `release`, `dist`. Each defines `OX_DEBUG` / `OX_RELEASE` / `OX_DISTRIBUTION`.
@@ -229,7 +230,7 @@ physics step, `on_contacts` with the contacts buffered during a step and handed 
 thread after it, and body activations. Scene JSON lists them under `"scripts"` as `{ "type": ... }`
 entries.
 
-C# scripting lives in `OxylusScriptingDotNet/` behind the `dotnet` option (`OX_DOTNET`); the
+C# scripting lives in `OxylusScriptingDotNet/` behind the `csharp` option (`OX_DOTNET`); the
 `DotNetScripting` module hosts CoreCLR in the editor and a NativeAOT library in shipped games, over the
 blittable ABI in `DotNetAbi.hpp`. Oxylus doesn't link it, so it plugs in through `SceneScriptHost`
 (`Scene::set_script_host`): every scene gets the host's runtime, which attaches the scene's world and

@@ -29,7 +29,7 @@ function sdk_root()
   end
 
   if not sdk_root_cache then
-    raise("C# scripting needs the .NET 10 SDK on PATH, install it or configure with --dotnet=n")
+    raise("C# scripting needs the .NET 10 SDK on PATH, install it or configure with --csharp=n")
   end
 
   return sdk_root_cache
