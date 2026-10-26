@@ -40,6 +40,7 @@ includes("xmake/packages.lua")
 require_packages()
 require_confs()
 
+includes("Tools/ecsgen")
 includes("Oxylus")
 includes("ResourceCompiler")
 if has_config("editor") then

@@ -4,6 +4,7 @@
 #include <array>
 #include <cstring>
 #include <flecs.h>
+#include <span>
 #include <string_view>
 #include <type_traits>
 
@@ -12,6 +13,7 @@
 #endif
 
 #include "Core/Types.hpp"
+#include "Scene/ComponentReflection.hpp"
 
 namespace ox {
 // Compile time reflection over pointers to members. Component and member names are derived from the
@@ -100,6 +102,12 @@ struct ComponentBuilder {
 
   auto add(this ComponentBuilder self, flecs::entity e) -> ComponentBuilder {
     self.component.add(e);
+    return self;
+  }
+
+  // flecs keeps the span, so `fields` has to be static storage
+  auto asset_fields(this ComponentBuilder self, std::span<const AssetField> fields) -> ComponentBuilder {
+    self.component.set<AssetFields>({fields});
     return self;
   }
 

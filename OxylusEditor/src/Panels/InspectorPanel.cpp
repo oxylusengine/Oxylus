@@ -19,49 +19,15 @@
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "ParticleEditorPanel.hpp"
+#include "Scene/ComponentReflection.hpp"
 #include "Scene/EntitySerializer.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
 #include "Utils/AnimationAssets.hpp"
-#include "Utils/EditorTheme.hpp"
 
 namespace ox {
 static UUID pending_save_material_uuid = {};
-
-// Components only carry a UUID, and nothing in the reflection says which kind of asset a field
-// points at, so an empty field is matched by the name the component gave it. A field that already
-// holds something uses the type of what it holds instead.
-static auto expected_asset_type(const std::string_view field_name) -> AssetType {
-  const auto has = [field_name](const std::string_view needle) {
-    return field_name.find(needle) != std::string_view::npos;
-  };
-
-  if (has("skeleton"))
-    return AssetType::Skeleton;
-  if (has("clip") || has("animation"))
-    return AssetType::Animation;
-  if (has("cinematic"))
-    return AssetType::Cinematic;
-  if (has("model"))
-    return AssetType::Model;
-  if (has("material"))
-    return AssetType::Material;
-  if (has("texture") || has("layer_"))
-    return AssetType::Texture;
-  if (has("audio") || has("sound"))
-    return AssetType::Audio;
-  if (has("particle"))
-    return AssetType::ParticleSystem;
-  if (has("terrain"))
-    return AssetType::Terrain;
-  if (has("script"))
-    return AssetType::Script;
-  if (has("scene") || has("prefab"))
-    return AssetType::Scene;
-
-  return AssetType::None;
-}
 
 static auto format_timestamp(memory::ScopedStack& stack, const f32 seconds) -> const c8* {
   const auto total = static_cast<i32>(seconds);
@@ -72,6 +38,7 @@ static auto format_timestamp(memory::ScopedStack& stack, const f32 seconds) -> c
 struct EntityInspector : IEntitySerializer {
   UndoRedoSystem& undo_redo_system;
   InspectorPanel& inspector_panel;
+  flecs::entity component_type = {};
   bool modified;
 
   EntityInspector(flecs::world& world_, UndoRedoSystem& undo_redo_system_, InspectorPanel& inspector_panel_)
@@ -249,11 +216,19 @@ struct EntityInspector : IEntitySerializer {
 
     auto* uuid = static_cast<UUID*>(field_ptr);
 
+    auto expected_type = AssetType::None;
+    if (const auto* asset_fields = component_type ? component_type.try_get<AssetFields>() : nullptr) {
+      for (const auto& asset_field : asset_fields->fields) {
+        if (name == asset_field.member)
+          expected_type = asset_field.type;
+      }
+    }
+
     // The asset field and whatever editor its asset brings with it are both too tall for a property
     // row, so they go between two property tables rather than inside one.
     UI::end_properties();
 
-    modified |= inspector_panel.draw_asset_field(name, *uuid);
+    modified |= inspector_panel.draw_asset_field(name, *uuid, expected_type);
     modified |= inspector_panel.draw_animation_clip_selector(*uuid);
     inspector_panel.draw_asset_contents(*uuid);
 
@@ -642,6 +617,7 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
 
       auto world = entity.world();
       auto inspector = EntityInspector(world, *undo_redo_system.get(), self);
+      inspector.component_type = ty;
       auto* component = entity.get_mut(fid);
       inspector.serialize(ty, component);
       if (inspector.modified) {
@@ -662,7 +638,9 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   });
 }
 
-auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::string_view label, UUID& uuid) -> bool {
+auto InspectorPanel::draw_asset_field(
+  this InspectorPanel& self, const std::string_view label, UUID& uuid, const AssetType expected_type
+) -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -675,7 +653,7 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
     type = asset->type;
     registry_path = asset->path;
   }
-  const auto picker_type = type != AssetType::None ? type : expected_asset_type(label);
+  const auto picker_type = type != AssetType::None ? type : expected_type;
   // The same resolution the browser rows get, so a field and the picker it opens call an asset by
   // the same name instead of the field showing the cache pack.
   const auto path = asset_display_path(uuid, registry_path);
@@ -687,6 +665,32 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
   const auto browse_tooltip = pickable ? "Click to browse, or drop an asset file here"
                                        : "Models are added to the scene from the content browser, not assigned here";
 
+  // checked on the asset itself, a field with no declared type still opens an unfiltered picker and every
+  // field takes any dropped file
+  const auto accepts = [&asset_man, label, expected_type](const UUID& candidate) {
+    auto candidate_type = AssetType::None;
+    if (auto asset = asset_man.get_asset(candidate)) {
+      candidate_type = asset->type;
+    }
+
+    if (candidate_type == AssetType::Model) {
+      OX_LOG_WARN("{} can't hold a model, add models to the scene from the content browser", label);
+      return false;
+    }
+
+    if (expected_type != AssetType::None && candidate_type != expected_type) {
+      OX_LOG_WARN(
+        "{} takes a {} asset, not a {}",
+        label,
+        AssetManager::to_asset_type_sv(expected_type),
+        AssetManager::to_asset_type_sv(candidate_type)
+      );
+      return false;
+    }
+
+    return true;
+  };
+
   auto changed = false;
 
   ImGui::PushID(&uuid);
@@ -694,7 +698,7 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
 
   // Any file dropped here is imported first, so dragging straight from the content browser works
   // even for a file the registry has never seen.
-  const auto accept_drop = [&asset_man, &uuid, &changed, pickable] {
+  const auto accept_drop = [&asset_man, &uuid, &changed, &accepts, pickable] {
     if (!pickable || !ImGui::BeginDragDropTarget()) {
       return;
     }
@@ -702,7 +706,8 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
     if (const ImGuiPayload* imgui_payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
       const auto* payload = PayloadData::from_payload(imgui_payload);
       if (
-        const auto imported = import_asset(asset_man, payload->get_path()); imported && asset_man.load_asset(imported)
+        const auto imported = import_asset(asset_man, payload->get_path());
+        imported && accepts(imported) && asset_man.load_asset(imported)
       ) {
         // Must not hold a registry read guard while unloading: unload_asset() takes the registry
         // write lock. unload_asset() no-ops on missing/unloaded assets.
@@ -768,7 +773,7 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
     const auto picked = self.asset_browser
                           .render_picker(stack.format_char("Pick {}###AssetPicker", label), &open, picker_type, uuid);
 
-    if (picked && picked->uuid != uuid && asset_man.load_asset(picked->uuid)) {
+    if (picked && picked->uuid != uuid && accepts(picked->uuid) && asset_man.load_asset(picked->uuid)) {
       if (uuid) {
         asset_man.unload_asset(uuid);
       }
