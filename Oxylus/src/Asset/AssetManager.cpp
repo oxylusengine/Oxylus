@@ -858,8 +858,17 @@ auto AssetManager::load_scene(this AssetManager& self, const std::filesystem::pa
 auto AssetManager::unload_scene(this AssetManager& self, const SceneID scene_id) -> bool {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(self.scenes_mutex);
-  self.scene_map.destroy_slot(scene_id);
+  // destroy_slot leaves the value in place, which would keep the scene alive until deinit, after RmlUI is gone. It
+  // dies outside the lock since its destructor releases its own assets
+  auto scene = std::unique_ptr<Scene>();
+  {
+    auto write_lock = std::unique_lock(self.scenes_mutex);
+    if (auto* slot = self.scene_map.slot(scene_id)) {
+      scene = std::move(*slot);
+    }
+
+    self.scene_map.destroy_slot(scene_id);
+  }
 
   return true;
 }
