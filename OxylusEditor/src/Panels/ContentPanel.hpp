@@ -1,8 +1,5 @@
 #pragma once
 
-#include "Render/Fwd.hpp"
-
-#include <FileWatch.hpp>
 #include <ankerl/unordered_dense.h>
 #include <filesystem>
 #include <imgui.h>
@@ -15,6 +12,13 @@
 #include "Asset/Texture.hpp"
 #include "Core/Types.hpp"
 #include "EditorPanelState.hpp"
+#include "Render/Fwd.hpp"
+
+// FileWatch.hpp pulls in <windows.h>, whose macros (TRANSPARENT) break vir headers that follow it
+namespace filewatch {
+template <class StringType>
+class FileWatch;
+} // namespace filewatch
 
 namespace ox {
 class Texture;
@@ -44,6 +48,7 @@ auto classify_file_type(const std::filesystem::path& path) -> FileType;
 class ContentPanel : public EditorPanelState {
 public:
   ContentPanel();
+  ~ContentPanel();
 
   auto init(this ContentPanel& self) -> void;
   auto on_update(this ContentPanel& self) -> void;
@@ -104,7 +109,7 @@ private:
   Texture white_texture = {};
   std::filesystem::path directory_to_delete;
 
-  std::unique_ptr<filewatch::FileWatch<std::string>> filewatch = nullptr;
+  std::unique_ptr<filewatch::FileWatch<std::string>> filewatch;
 
   auto draw_context_menu_items(this ContentPanel& self, const std::filesystem::path& context, bool isDir)
     -> std::filesystem::path;

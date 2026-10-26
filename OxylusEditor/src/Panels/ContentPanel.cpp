@@ -1,5 +1,6 @@
 #include "ContentPanel.hpp"
 
+#include <FileWatch.hpp>
 #include <algorithm>
 #include <bit>
 #include <chrono>
@@ -803,6 +804,8 @@ ContentPanel::ContentPanel() : EditorPanelState("Contents", ICON_MDI_FOLDER_STAR
   });
   white_texture.upload(std::span(white_texture_data), vir::Access::FragmentSampled);
 }
+
+ContentPanel::~ContentPanel() = default;
 
 void ContentPanel::init(this ContentPanel& self) {
   auto& vfs = App::get_vfs();
