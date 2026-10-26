@@ -30,6 +30,7 @@ auto print_help() -> void {
   print_command("config \"path\"", "TOML config file with resources to compile.");
   print_command("cook-assets \"path\"", "Asset directory to cook for a game build, into `--output`.");
   print_command("output \"path\"", "Output path for compiled resources. Overrides config file output.");
+  print_command("debug-symbols", "Keep shader debug info in the SPIR-V, whatever the config says.");
   print_command("include-dir \"path\"", "Extra shader search path, appended to every session. Repeatable.");
   print_command("threads N", "Number of compile workers. Defaults to the hardware concurrency.");
   print_command("gpu-layout \"path\"", "Write layout static_asserts for a shared Slang module to `--output`.");
@@ -234,6 +235,8 @@ auto main(i32 argc, c8** argv) -> i32 {
   }
 
   auto config_dir = std::filesystem::absolute(config_path).parent_path();
+  // on top of the config's `debug_symbols`, so a debug build keeps them without editing the toml
+  const auto debug_symbols = args.contains("--debug-symbols");
 
   for (const auto& shader_session : config->shader_sessions) {
     auto root = (config_dir / shader_session.root_directory).lexically_normal();
@@ -252,6 +255,7 @@ auto main(i32 argc, c8** argv) -> i32 {
         .root_directory = root,
         .include_directories = std::move(include_dirs),
         .optimization_level = shader_session.optimization_level,
+        .debug_symbols = shader_session.debug_symbols || debug_symbols,
         .definitions = shader_session.definitions,
       },
     };

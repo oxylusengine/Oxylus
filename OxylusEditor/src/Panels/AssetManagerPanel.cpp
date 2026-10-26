@@ -29,6 +29,7 @@ constexpr AssetType FILTERABLE_ASSET_TYPES[] = {
   AssetType::Skeleton,
   AssetType::Animation,
   AssetType::Cinematic,
+  AssetType::UI,
 };
 
 constexpr auto asset_type_bit(const AssetType type) -> u32 { return 1u << static_cast<u32>(type); }
@@ -96,6 +97,7 @@ auto asset_type_icon(const AssetType type) -> const c8* {
     case AssetType::Skeleton      : return ICON_MDI_BONE;
     case AssetType::Animation     : return ICON_MDI_ANIMATION_PLAY;
     case AssetType::Cinematic     : return ICON_MDI_MOVIE_OPEN;
+    case AssetType::UI            : return ICON_MDI_LANGUAGE_HTML5;
   }
 
   return ICON_MDI_HELP_CIRCLE_OUTLINE;

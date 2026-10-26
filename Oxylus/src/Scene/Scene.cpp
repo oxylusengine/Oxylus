@@ -28,16 +28,19 @@
 #include <algorithm>
 #include <ankerl/svector.h>
 #include <cmath>
+#include <cstring>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <ranges>
 #include <simdjson.h>
 #include <sol/state.hpp>
 
+#include "Asset/AssetFile.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
 #include "Core/Option.hpp"
+#include "Core/VFS.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
 #include "Physics/Physics.hpp"
@@ -54,6 +57,35 @@
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+// a cooked scene is a pack holding its JSON, anything else is the JSON the editor saved
+static auto read_scene_json(const std::filesystem::path& path) -> option<std::string> {
+  ZoneScoped;
+
+  if (path.extension() == ".oxpack") {
+    auto pack = AssetFile::unpack(path);
+    if (!pack) {
+      return nullopt;
+    }
+
+    for (auto& entry : pack->entries) {
+      if (auto* scene_data = std::get_if<SceneData>(&entry.data)) {
+        return std::move(scene_data->json);
+      }
+    }
+
+    OX_LOG_ERROR("Asset pack '{}' contains no scene.", path);
+    return nullopt;
+  }
+
+  auto content = File::to_string(path);
+  if (content.empty()) {
+    OX_LOG_ERROR("Failed to read/open file {}!", path);
+    return nullopt;
+  }
+
+  return content;
+}
+
 auto wrap_clip_time(const f32 time, const f32 duration, const bool loop) -> f32 {
   if (duration <= 0.0f) {
     return 0.0f;
@@ -241,11 +273,11 @@ struct JsonEntityDeserializer : IEntitySerializer {
       return;
     }
 
+    // the field owns its string and flecs frees it with the component, so it can't point into the scratch stack
     auto result = field_result.get_string();
     if (!result.error()) {
-      auto str_view = result.value_unsafe();
-      auto* str_copy = stack.null_terminate_cstr(str_view);
-      *str = str_copy;
+      ecs_os_free(const_cast<c8*>(*str));
+      *str = ecs_os_strdup(stack.null_terminate_cstr(result.value_unsafe()));
     }
   }
 
@@ -277,21 +309,39 @@ struct JsonEntityDeserializer : IEntitySerializer {
       return;
     }
 
-    if (
-      underlying_kind == EcsOpU8 || underlying_kind == EcsOpU16 || underlying_kind == EcsOpU32 ||
-      underlying_kind == EcsOpU64
-    ) {
-      auto result = field_result.get_uint64();
-      auto current = static_cast<u64*>(ptr);
-      *current = result.value_unsafe();
-    } else if (
-      underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
-      underlying_kind == EcsOpI64
-    ) {
-      auto result = field_result.get_int64();
-      auto current = static_cast<i64*>(ptr);
-      *current = result.value_unsafe();
+    // Written at the enum's own width, the low bytes of the value: a wider write runs into whatever the component
+    // holds next. Every platform the engine targets is little endian.
+    auto width = 0_sz;
+    switch (underlying_kind) {
+      case EcsOpU8 :
+      case EcsOpI8 : width = 1; break;
+      case EcsOpU16:
+      case EcsOpI16: width = 2; break;
+      case EcsOpU32:
+      case EcsOpI32: width = 4; break;
+      case EcsOpU64:
+      case EcsOpI64: width = 8; break;
+      default      : return;
     }
+
+    const auto is_signed = underlying_kind == EcsOpI8 || underlying_kind == EcsOpI16 || underlying_kind == EcsOpI32 ||
+                           underlying_kind == EcsOpI64;
+    auto value = 0_u64;
+    if (is_signed) {
+      auto result = field_result.get_int64();
+      if (result.error()) {
+        return;
+      }
+      value = static_cast<u64>(result.value_unsafe());
+    } else {
+      auto result = field_result.get_uint64();
+      if (result.error()) {
+        return;
+      }
+      value = result.value_unsafe();
+    }
+
+    std::memcpy(ptr, &value, width);
   }
 
   auto on_component(std::string_view name, flecs::id_t* component) -> void override {
@@ -4078,12 +4128,30 @@ auto Scene::save_to_file(this const Scene& self, const std::filesystem::path& pa
 auto Scene::load_from_file(this Scene& self, const std::filesystem::path& path) -> bool {
   ZoneScoped;
 
-  auto content = File::to_string(path);
-  if (content.empty()) {
-    OX_LOG_ERROR("Failed to read/open file {}!", path);
+  const auto json = read_scene_json(path);
+  if (!json.has_value()) {
     return false;
   }
 
-  return self.from_json(content);
+  return self.from_json(json.value());
+}
+
+auto Scene::load_from_asset(this Scene& self, const UUID& uuid) -> bool {
+  ZoneScoped;
+
+  auto path = std::filesystem::path{};
+  {
+    // only the path is wanted, so no reference is taken: the scene owns refs on what it names, not on its own file
+    auto asset = App::mod<AssetManager>().get_asset(uuid);
+    if (!asset || asset->type != AssetType::Scene) {
+      OX_LOG_ERROR("{} is not a scene asset.", uuid.str());
+      return false;
+    }
+
+    path = App::get_vfs().to_physical(asset->path);
+  }
+
+  // its pack once cooked, or the editor's JSON when the cook failed on it
+  return self.load_from_file(path);
 }
 } // namespace ox

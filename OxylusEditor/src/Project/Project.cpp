@@ -309,7 +309,9 @@ auto Project::new_project(
   wait_for_asset_scans();
   self.asset_directory.reset();
 
-  App::get_vfs().mount_dir(VFS::ASSETS_DIR, asset_dir_path);
+  auto& vfs = App::get_vfs();
+  vfs.mount_dir(VFS::ASSETS_DIR, asset_dir_path);
+  vfs.mount_dir(VFS::COOKED_DIR, project_cache_dir(project_dir));
   self.register_assets(asset_dir_path);
 
   return true;
@@ -328,7 +330,10 @@ auto Project::load(this Project& self, const std::filesystem::path& path) -> boo
     wait_for_asset_scans();
     self.asset_directory.reset();
 
-    App::get_vfs().mount_dir(VFS::ASSETS_DIR, asset_dir_path);
+    // the cache follows the project too, a pack in it is only ever this project's
+    auto& vfs = App::get_vfs();
+    vfs.mount_dir(VFS::ASSETS_DIR, asset_dir_path);
+    vfs.mount_dir(VFS::COOKED_DIR, project_cache_dir(project_root_path));
     self.register_assets(asset_dir_path);
 
     OX_LOG_INFO("Project loaded: {0}", self.project_config.name);

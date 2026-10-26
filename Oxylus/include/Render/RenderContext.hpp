@@ -14,6 +14,7 @@
 #include "Render/Fwd.hpp"
 
 namespace ox {
+struct AssetFile;
 struct Window;
 struct ShaderPipelineData;
 struct DescriptorSet;
@@ -59,6 +60,7 @@ public:
   u64 num_frames = 0;
   u32 current_frame = 0;
   std::string device_name = {};
+  u32 device_api_version = 0;
 
   std::unique_ptr<vir::Context> context = {};
   std::unique_ptr<vir::PersistentAllocator> persistent = {};
@@ -119,6 +121,7 @@ public:
   auto create_pipeline(this RenderContext& self, const ShaderPipelineData& pipeline_data) -> bool;
   auto pipeline(this const RenderContext& self, std::string_view name) -> vir::PipelineID;
   auto pipeline(this const RenderContext& self, PipelineID id) -> vir::PipelineID;
+  auto load_shader_pack(this RenderContext& self, const AssetFile& pack) -> void;
   auto use_mesh_shaders(this const RenderContext& self) -> bool;
   auto use_ray_tracing(this const RenderContext& self) -> bool;
   auto use_ray_tracing_pipeline(this const RenderContext& self) -> bool;

@@ -45,8 +45,12 @@ Be aware that Oxylus is still in it's early stages of development. Some importan
 - 3D Audio with [miniaudio](https://github.com/mackron/miniaudio)
 - Networking with [enet](https://github.com/zpl-c/enet)
 
+## Documentation
+
+See the [documentation index](docs/README.md).
+
 ## Building
-Windows, Linux and Mac (with MoltenVK) is supported.
+Windows, Linux and Mac (with KosmicKrisp) is supported.
 
 ### Requirements
 - [Xmake](https://xmake.io)

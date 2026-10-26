@@ -8,7 +8,10 @@
 #include <sol/sol.hpp>
 #include <stdexcept>
 
+#include "Asset/AssetManager.hpp"
+#include "Core/App.hpp"
 #include "Core/Types.hpp"
+#include "Core/VFS.hpp"
 #include "Scripting/LuaNetworkBindings.hpp"
 #include "Utils/Log.hpp"
 
@@ -33,6 +36,35 @@ namespace ox {
 static u8 module_cache_key = 0;
 static u8 module_loading_marker = 0;
 
+// A sibling that was imported loads from its pack, which is all a shipped game has. `script_path` is virtual for a
+// cooked caller and physical otherwise, `find_asset` takes either.
+static auto load_cooked_module(sol::state_view state, const std::filesystem::path& script_path)
+  -> option<sol::load_result> {
+  ZoneScoped;
+
+  if (!App::get() || !App::has_mod<AssetManager>()) {
+    return nullopt;
+  }
+
+  auto& asset_man = App::mod<AssetManager>();
+  const auto uuid = asset_man.find_asset(script_path);
+  if (!uuid || !asset_man.load_asset(uuid)) {
+    return nullopt;
+  }
+
+  // the chunk keeps nothing of the payload once it is loaded, so the reference goes straight back
+  OX_DEFER(&) { asset_man.unload_asset(uuid); };
+
+  auto script = asset_man.get_script(uuid);
+  if (!script || script->bytecode.empty()) {
+    return nullopt;
+  }
+
+  const auto* bytecode = reinterpret_cast<const c8*>(script->bytecode.data());
+  const auto chunk_name = "@" + script_path.generic_string();
+  return state.load(std::string_view(bytecode, script->bytecode.size()), chunk_name, sol::load_mode::binary);
+}
+
 // resolves `path` against the calling script's own file, so scripts load their siblings the same way whether the
 // asset root is the editor's project dir or the shipped app dir
 static auto require_script(sol::this_state lua, sol::this_environment this_env, std::string_view path) -> sol::object {
@@ -51,7 +83,7 @@ static auto require_script(sol::this_state lua, sol::this_environment this_env, 
   const auto key = script_path.generic_string();
 
   // cached per environment rather than in package.loaded, so each LuaSystem (and every reload or play session)
-  // re-reads its modules from disk and never shares module state with another scene
+  // re-reads its modules and never shares module state with another scene
   sol::state_view state(lua);
   sol::environment& env = this_env;
   auto modules = env.raw_get<sol::optional<sol::table>>(sol::lightuserdata_value(&module_cache_key));
@@ -75,21 +107,28 @@ static auto require_script(sol::this_state lua, sol::this_environment this_env, 
     return cached;
   }
 
-  // a missing file would otherwise surface much later as a nil module at the use site
-  if (!std::filesystem::exists(script_path)) {
-    throw std::runtime_error(
-      std::format("{}:{}: require_script('{}'): '{}' does not exist", caller.short_src, caller.currentline, path, key)
-    );
+  auto chunk = load_cooked_module(state, script_path);
+  if (!chunk.has_value()) {
+    // anything else, a script outside the assets or one that didn't compile, is read off disk
+    const auto physical_path = App::get() ? App::get_vfs().to_physical(script_path) : script_path;
+
+    // a missing file would otherwise surface much later as a nil module at the use site
+    if (physical_path.empty() || !std::filesystem::exists(physical_path)) {
+      throw std::runtime_error(
+        std::format("{}:{}: require_script('{}'): '{}' does not exist", caller.short_src, caller.currentline, path, key)
+      );
+    }
+
+    chunk.emplace(state.load_file(physical_path.string()));
   }
 
-  sol::load_result chunk = state.load_file(script_path.string());
-  if (!chunk.valid()) {
-    const sol::error err = chunk;
+  if (!chunk->valid()) {
+    const sol::error err = chunk.value();
     throw std::runtime_error(err.what());
   }
 
   // no error handler: the outermost call already appends a traceback, nested ones would stack a copy per level
-  auto chunk_func = sol::protected_function(chunk.get<sol::function>(), sol::reference(sol::lua_nil));
+  auto chunk_func = sol::protected_function(chunk->get<sol::function>(), sol::reference(sol::lua_nil));
   env.set_on(chunk_func);
 
   (*modules)[key] = sol::lightuserdata_value(&module_loading_marker);

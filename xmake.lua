@@ -4,7 +4,7 @@ add_rules("mode.debug", "mode.release", "mode.dist")
 add_rules("plugin.compile_commands.autoupdate", { outputdir = "./build", lsp = "clangd" })
 
 set_project("Oxylus")
-set_version("1.0.0")
+set_version("0.1.0")
 
 -- GLOBAL COMPILER FLAGS --
 set_encodings("utf-8")

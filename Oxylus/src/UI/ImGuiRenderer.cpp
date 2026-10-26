@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <glm/common.hpp>
 #include <imgui_internal.h>
@@ -15,11 +16,13 @@
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
 
+#include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Memory/SlotMap.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/Window.hpp"
+#include "UI/RmlFileInterface.hpp"
 #include "Utils/Log.hpp"
 #include "Utils/Profiler.hpp"
 
@@ -95,12 +98,25 @@ ImFont* ImGuiRenderer::load_default_font() {
 ImFont* ImGuiRenderer::load_font(const std::filesystem::path& path, f32 font_size, option<ImFontConfig> font_config) {
   ZoneScoped;
 
-  auto path_str = path.string();
-  ImGuiIO& io = ImGui::GetIO();
-  if (font_config.has_value())
-    return io.Fonts->AddFontFromFileTTF(path_str.c_str(), font_size, &*font_config);
+  // read as RmlUi reads one: a virtual path resolves through the VFS, and a font cooked away loads from its pack
+  auto* asset_man = App::has_mod<AssetManager>() ? &App::mod<AssetManager>() : nullptr;
+  const auto contents = read_ui_file(&App::get_vfs(), asset_man, path.string());
+  if (!contents.has_value()) {
+    return nullptr;
+  }
 
-  return io.Fonts->AddFontFromFileTTF(path_str.c_str(), font_size);
+  auto config = font_config.value_or(ImFontConfig{});
+  // what `AddFontFromFileTTF` names a font after, for ImGui's metrics window
+  if (config.Name[0] == '\0') {
+    std::snprintf(config.Name, sizeof(config.Name), "%s", path.filename().string().c_str());
+  }
+
+  // the atlas frees what it is handed, so it has to come from ImGui's own allocator
+  config.FontDataOwnedByAtlas = true;
+  auto* data = IM_ALLOC(contents->size());
+  std::memcpy(data, contents->data(), contents->size());
+
+  return ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, static_cast<i32>(contents->size()), font_size, &config);
 }
 
 void ImGuiRenderer::build_fonts() {

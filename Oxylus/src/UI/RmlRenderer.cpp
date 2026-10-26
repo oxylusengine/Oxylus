@@ -3,8 +3,12 @@
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
 
+#include "Asset/AssetFile.hpp"
+#include "Asset/AssetManager.hpp"
+#include "Core/App.hpp"
 #include "Memory/SlotMap.hpp"
 #include "Render/RenderContext.hpp"
+#include "UI/RmlFileInterface.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
@@ -199,8 +203,30 @@ auto RmlRenderer::ReleaseGeometry(Rml::CompiledGeometryHandle geometry) -> void 
 auto RmlRenderer::LoadTexture(Rml::Vector2i& texture_dimensions, const Rml::String& source) -> Rml::TextureHandle {
   ZoneScoped;
 
-  auto path = std::filesystem::path(source);
-  auto texture = Texture::create({.source = path});
+  // joined against the document's own path by RmlUi, so as virtual as the document was. The source image while it is
+  // there, its cooked pack once it isn't, as `RmlFileInterface` reads documents: a shipped game strips the image
+  const auto& vfs = App::get_vfs();
+  const auto path = resolve_rml_path(&vfs, source);
+  auto texture = Texture{};
+  if (std::filesystem::exists(path)) {
+    texture = Texture::create({.source = path});
+  } else if (App::has_mod<AssetManager>()) {
+    const auto pack_path = find_rml_pack(App::mod<AssetManager>(), &vfs, source, {AssetType::Texture});
+    if (auto pack = pack_path.empty() ? nullopt : AssetFile::unpack(pack_path)) {
+      for (const auto& entry : pack->entries) {
+        if (const auto* texture_data = std::get_if<TextureData>(&entry.data)) {
+          texture = Texture::create(*texture_data, TextureLoadInfo{});
+          break;
+        }
+      }
+    }
+  }
+
+  if (!texture) {
+    OX_LOG_WARN("RmlUi couldn't load the image '{}' ({}).", source, path);
+    return 0;
+  }
+
   texture_dimensions.x = texture.get_extent().width;
   texture_dimensions.y = texture.get_extent().height;
 

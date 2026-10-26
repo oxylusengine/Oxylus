@@ -7,9 +7,11 @@
 #include <string>
 #include <string_view>
 
+#include "UI/RmlFileInterface.hpp"
 #include "UI/RmlSystem.hpp"
 
 namespace ox {
+class AssetManager;
 class Renderer;
 class Input;
 class RmlView;
@@ -20,7 +22,7 @@ class RmlView;
 class RmlUI {
 public:
   constexpr static auto MODULE_NAME = "RmlUI";
-  using module_dependencies = std::tuple<Input, Renderer>;
+  using module_dependencies = std::tuple<AssetManager, Input, Renderer>;
 
   auto init(this RmlUI& self) -> std::expected<void, std::string>;
   auto deinit(this RmlUI& self) -> std::expected<void, std::string>;
@@ -42,6 +44,7 @@ private:
   auto update_hover(this RmlUI& self, glm::vec2 position) -> RmlView*;
 
   RmlSystem rml_system = {};
+  RmlFileInterface rml_files = {};
   ankerl::svector<RmlView*, 4> views = {};
 
   RmlView* hovered_view = nullptr;

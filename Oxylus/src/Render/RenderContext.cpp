@@ -15,6 +15,7 @@
 #include "Asset/AssetFile.hpp"
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
+#include "Core/Version.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/RenderResources.hpp"
 #include "Render/UploadBatch.hpp"
@@ -239,10 +240,12 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vir::set_log_sink(vir_log_sink);
 
   self.render_device->owns_device = true;
+  const auto& build_info = engine_build_info();
   vkb::InstanceBuilder builder;
   builder //
     .set_app_name("Oxylus App")
     .set_engine_name("Oxylus")
+    .set_engine_version(build_info.major, build_info.minor, build_info.patch)
     .require_api_version(1, 3, 0)
     .set_app_version(0, 1, 0);
 
@@ -301,6 +304,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   } else {
     self.render_device->physical = phys_ret.value();
     self.device_name = phys_ret.value().name;
+    self.device_api_version = phys_ret.value().properties.apiVersion;
   }
 
   self.physical_device = self.render_device->physical.physical_device;
@@ -1123,6 +1127,19 @@ auto RenderContext::pipeline(this const RenderContext& self, std::string_view na
 
 auto RenderContext::pipeline(this const RenderContext& self, PipelineID id) -> vir::PipelineID {
   return self.resources->pipelines.copy_slot(id).value_or(vir::PipelineID::Invalid);
+}
+
+auto RenderContext::load_shader_pack(this RenderContext& self, const AssetFile& pack) -> void {
+  ZoneScoped;
+
+  for (const auto& entry : pack.entries) {
+    const auto* pipeline_data = std::get_if<ShaderPipelineData>(&entry.data);
+    if (!pipeline_data) {
+      continue;
+    }
+
+    self.create_pipeline(*pipeline_data);
+  }
 }
 
 auto RenderContext::use_mesh_shaders(this const RenderContext& self) -> bool {

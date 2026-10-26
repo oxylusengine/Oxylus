@@ -68,6 +68,10 @@ on_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local abs_output  = path.absolute(path.join(target:targetdir(), output_dir, output_name))
 
   local args        = { "--config", config_path, "--output", abs_output }
+  -- shader debug info is for RenderDoc and Nsight, release and dist ship without it
+  if is_mode("debug") then
+    table.insert(args, "--debug-symbols")
+  end
 
   batchcmds:show_progress(opt.progress,
     "${color.build.object}compiling shaders from %s -> %s",

@@ -39,6 +39,8 @@ struct ShaderSessionInfo {
   std::filesystem::path root_directory = {};
   std::vector<std::filesystem::path> include_directories = {};
   i32 optimization_level = 3;
+  // source-level debug info in the SPIR-V, for RenderDoc and Nsight. It is most of a pack's size before compression
+  bool debug_symbols = false;
   std::vector<std::pair<std::string, std::string>> definitions = {};
 };
 

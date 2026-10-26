@@ -36,13 +36,14 @@ struct ShaderTask {
 
 auto create_shader_session(slang::IGlobalSession* global_session, const ShaderSessionInfo& info)
   -> Slang::ComPtr<slang::ISession> {
+  const auto debug_level = static_cast<i32>(
+    info.debug_symbols ? SLANG_DEBUG_INFO_LEVEL_MAXIMAL : SLANG_DEBUG_INFO_LEVEL_NONE
+  );
   slang::CompilerOptionEntry entries[] = {
-#if 1
     {.name = slang::CompilerOptionName::DebugInformationFormat,
      .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_FORMAT_C7}},
     {.name = slang::CompilerOptionName::DebugInformation,
-     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = SLANG_DEBUG_INFO_LEVEL_MAXIMAL}},
-#endif
+     .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = debug_level}},
     {.name = slang::CompilerOptionName::Optimization,
      .value = {.kind = slang::CompilerOptionValueKind::Int, .intValue0 = info.optimization_level}},
     {.name = slang::CompilerOptionName::UseUpToDateBinaryModule,

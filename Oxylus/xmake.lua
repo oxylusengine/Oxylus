@@ -59,6 +59,7 @@ target("Oxylus")
         { public = true })
 
     on_config(function (target)
+        target:add("includedirs", path.join(target:autogendir(), "version"))
         if (target:has_tool("cxx", "msvc", "cl")) then
             target:add("defines", "OX_COMPILER_MSVC=1", { force = true, public = true })
             target:add("cxflags", "/arch:AVX2 /permissive- /EHsc /bigobj -wd4100 /Zc:preprocessor", { public = true })
@@ -74,6 +75,11 @@ target("Oxylus")
             target:add("cxflags", "-fPIC", { public = false })
             target:add("cxflags", "-march=native", { public = true })
         end
+    end)
+
+    before_build(function (target)
+        import("version", { rootdir = path.join(target:scriptdir(), "..", "xmake") })
+        version.generate(target)
     end)
 
     add_packages(
@@ -101,6 +107,7 @@ target("Oxylus")
         "simdjson",
         "rmlui",
         "vir",
+        "zstd",
         {public = true})
 
 target_end()

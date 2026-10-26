@@ -9,12 +9,14 @@
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
+#include "Core/Version.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/Window.hpp"
 #include "Scene/Scene.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/UIScale.hpp"
+#include "Utils/Log.hpp"
 #include "Utils/Profiler.hpp"
 
 namespace ox {
@@ -57,6 +59,9 @@ auto App::init(this App& self) -> void {
     Log::set_verbose();
     OX_LOG_TRACE("Enabled verbose logging.");
   }
+
+  const auto& build_info = engine_build_info();
+  OX_LOG_INFO("Oxylus {} ({})", build_info.full_version, build_info.build_mode);
 
   if (self.working_directory.empty())
     self.working_directory = std::filesystem::current_path();

@@ -145,6 +145,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_S
   {FileType::Terrain, "Terrain"},
   {FileType::ParticleSystem, "Particle System"},
   {FileType::Cinematic, "Cinematic"},
+  {FileType::UI, "UI"},
 };
 
 static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
@@ -180,6 +181,9 @@ static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
   {".ogg", FileType::Audio},  //
 
   {".lua", FileType::Script}, //
+
+  {".rcss", FileType::UI}, //
+  {".rml", FileType::UI}, //
 };
 
 static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
@@ -195,6 +199,7 @@ static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
   {FileType::Terrain, {0.45f, 0.70f, 0.30f, 1.00f}},
   {FileType::ParticleSystem, {0.60f, 0.35f, 0.85f, 1.00f}},
   {FileType::Cinematic, {0.90f, 0.45f, 0.55f, 1.00f}},
+  {FileType::UI, {0.0f, 16.0f, 121.0f, 1.00f}},
 };
 
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_ICON = {
@@ -212,6 +217,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Terrain, ICON_MDI_TERRAIN},
   {FileType::ParticleSystem, ICON_MDI_SHIMMER},
   {FileType::Cinematic, ICON_MDI_MOVIE_OPEN},
+  {FileType::UI, ICON_MDI_LANGUAGE_HTML5},
 };
 
 static constexpr auto file_type_bit(const FileType type) -> u32 { return 1u << static_cast<u32>(type); }

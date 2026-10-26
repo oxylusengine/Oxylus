@@ -65,6 +65,12 @@ toolchain("mac-clang")
 
         local libcxxdir = path.join(prefix, "lib", "c++")
         local unwinddir = path.join(prefix, "lib", "unwind")
+        import("core.project.config")
+        if config.get("runtimes") == "c++_static" then
+            -- no static libc++ on darwin: apple frameworks load /usr/lib/libc++ and dyld coalesces weak symbols across
+            -- images, so a second copy gets half its iostream/locale calls rebound. link the system dylib, not homebrew's
+            return
+        end
         for _, kind in ipairs({"ldflags", "shflags"}) do
             toolchain:add(kind, "-L" .. libcxxdir)
             toolchain:add(kind, "-Wl,-rpath," .. libcxxdir)

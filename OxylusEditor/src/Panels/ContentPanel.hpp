@@ -33,7 +33,8 @@ enum class FileType {
   Material,
   Terrain,
   ParticleSystem,
-  Cinematic
+  Cinematic,
+  UI
 };
 
 // Resolves what a file on disk is, including the meta-file case where a standalone `.oxasset`

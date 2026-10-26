@@ -888,6 +888,7 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
     case AssetType::Scene  : // TODO: Scenes
     case AssetType::Model  : // nothing to edit on a model itself yet
     case AssetType::Terrain: // TODO: Terrain edits
+    case AssetType::UI     : // edited as text
       break;
     case AssetType::Skeleton: {
       if (auto skeleton = asset_man.get_skeleton(skeleton_id)) {

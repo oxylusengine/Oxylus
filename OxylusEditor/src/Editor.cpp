@@ -15,6 +15,7 @@
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
+#include "Panels/AboutPanel.hpp"
 #include "Panels/ActivityLogPanel.hpp"
 #include "Panels/AnimationEditorPanel.hpp"
 #include "Panels/AssetManagerPanel.hpp"
@@ -129,6 +130,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   auto activity_log_panel = self.editor_panel_registry.add<ActivityLogPanel>();
   activity_log_panel->set_system(&self.notification_system);
   self.editor_panel_registry.add<TextEditorPanel>();
+  self.editor_panel_registry.add<AboutPanel>();
 
   self.main_viewport_panel.init();
 
@@ -490,6 +492,9 @@ auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -
     job_man.push_job_name("Saving scene");
     job_man.submit(Job::create([scene, scene_path, edits_path, edits_uuid] {
       scene->get_scene()->save_to_file(scene_path);
+      // a scene saved for the first time gets its sidecar, and so its UUID, now rather than on the next scan. A warm
+      // one is already registered and this only reads its sidecar
+      import_asset(App::mod<AssetManager>(), scene_path);
       if (edits_uuid) {
         export_asset(App::mod<AssetManager>(), edits_uuid, edits_path);
       }
@@ -714,8 +719,8 @@ void Editor::draw_menubar(this Editor& self) {
     }
     if (ImGui::BeginMenu("Help")) {
       if (ImGui::MenuItem("About")) {
+        self.editor_panel_registry.get<AboutPanel>().visible = true;
       }
-      UI::tooltip_hover("WIP");
       ImGui::EndMenu();
     }
     ImGui::SameLine();
