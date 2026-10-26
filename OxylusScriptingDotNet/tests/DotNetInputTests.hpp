@@ -3,6 +3,7 @@
 // C# input through a real window, driven the way TestInputSystem drives it: SDL events from the virtual devices,
 // pumped by the window. Each test binary defines smoke_game() first
 
+#include <SDL3/SDL_hints.h>
 #include <expected>
 #include <flecs.h>
 #include <glm/vec2.hpp>
@@ -51,6 +52,8 @@ protected:
     static char* argv[] = {arg0, nullptr};
     captured_logs.clear();
 
+    // SDL drops gamepad input while none of the app's windows has focus, which a test window often doesn't
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     app = std::make_unique<ox::App>(1, argv);
     app->with_name("TestDotNetInput")
       .with_window(ox::WindowInfo{.title = "TestDotNetInput", .width = 10, .height = 10})
@@ -144,14 +147,7 @@ TEST_F(DotNetInputTest, ReadsAGamepad) {
   const auto& seen = frame();
   EXPECT_GE(seen.gamepads, 1);
   EXPECT_NEAR(seen.gamepad_axis, 0.5f, 0.01f);
-
-  // the virtual controller's buttons don't reach Input on every machine, TestInputSystem's gamepad tests fail the
-  // same way, so C# is held to what Input saw rather than to the press
-  const auto is_held = app->mod<ox::Input>().get_gamepad_button_held(
-    controller.get_instance_id(),
-    ox::GamepadButtonCode::East
-  );
-  EXPECT_EQ(seen.gamepad_held, is_held ? 1 : 0);
+  EXPECT_EQ(seen.gamepad_held, 1);
 
   controller.disconnect();
 }
