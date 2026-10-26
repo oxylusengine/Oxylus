@@ -100,8 +100,9 @@ func point_spot_lighting(
     in PBRLighting lighting,
     Light *lights,
     u32x4 *light_grid,
-    VSMPointSpotView *vsm_pointspot_views
-) -> f32x3 {
+    VSMPointSpotView *vsm_pointspot_views,
+    inout f32x3 color
+) -> void {
     let grid_cell = light_grid_cell_coords(world_position, lighting.light_grid_origin);
     let grid_cell_in_bounds = light_grid_cell_in_bounds(grid_cell);
     let grid_mask = grid_cell_in_bounds ? light_grid[light_grid_cell_index(grid_cell)] : u32x4(0);
@@ -114,7 +115,6 @@ func point_spot_lighting(
     let pcf_rotation = 6.28318530718 *
                        fract(52.9829189 * fract(dot(f32x2(pixel_coords), f32x2(0.06711056, 0.00583715))));
 
-    var total_lighting = f32x3(0.0, 0.0, 0.0);
     for (u32 light_index = 0; light_index < lighting.light_count; light_index++) {
         let light = lights[light_index];
 
@@ -160,13 +160,11 @@ func point_spot_lighting(
         }
 
         if (light.kind == LightKind::Point) {
-            total_lighting += shadow * point_light_contribution(
+            color += shadow * point_light_contribution(
                 world_position, N, V, albedo_color, roughness, metallic, light.position, light);
         } else if (light.kind == LightKind::Spot) {
-            total_lighting += shadow * calculate_spot_light_contribution(
+            color += shadow * calculate_spot_light_contribution(
                 world_position, N, V, albedo_color, roughness, metallic, light.position, light.direction, light);
         }
     }
-
-    return total_lighting;
 }

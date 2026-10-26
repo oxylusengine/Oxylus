@@ -26,12 +26,33 @@ func fs_main(
         return f32x4(0.0);
     }
 
-    let albedo_occlusion = albedo_image.SampleLevel(linear_repeat_sampler, input.tex_coord, 0);
-    let albedo_color = albedo_occlusion.rgb;
+    if ((scene_flags & SceneFlags::HasSky) != 0 && depth == 0.0) {
+      return sky.has_texture != 0 ? f32x4(1.0) : f32x4(sky.solid_color);
+    }
+
+    let NDC = f32x3(input.tex_coord * 2.0 - 1.0, depth);
+    let world_position_h = mul(camera.inv_projection_view, f32x4(NDC, 1.0));
+    let world_position = world_position_h.xyz / world_position_h.w;
+
+    let L = lighting.sun_direction;
+    let Li = lighting.sun_intensity;
+    let has_directional_light = (scene_flags & SceneFlags::HasDirectionalLight) != 0;
 
     let mapped_smooth_normal = normal_image.Load(pixel_pos);
     let mapped_normal = com::oct_to_vec3(mapped_smooth_normal.rg);
     let smooth_normal = com::oct_to_vec3(mapped_smooth_normal.ba);
+    let N = normalize(mapped_normal);
+    let NoL = max(dot(N, L), 0.0);
+
+    // shadows run before the material reads so those don't stay live across the shadow loops
+    var visibility = 0.0;
+    if (NoL > 0.0) {
+        visibility = sun_visibility(
+            input.tex_coord, input.position.xy, depth, smooth_normal, world_position, has_directional_light, *lighting, vsm_clipmaps);
+    }
+
+    let albedo_occlusion = albedo_image.SampleLevel(linear_repeat_sampler, input.tex_coord, 0);
+    let albedo_color = albedo_occlusion.rgb;
 
     let emission = emissive_image.Load(pixel_pos);
 
@@ -43,37 +64,18 @@ func fs_main(
     let screen_space_occlusion = gtao_image.Load(pixel_pos).r;
     let occlusion = baked_occlusion * screen_space_occlusion;
 
-    let NDC = f32x3(input.tex_coord * 2.0 - 1.0, depth);
-    let world_position_h = mul(camera.inv_projection_view, f32x4(NDC, 1.0));
-    let world_position = world_position_h.xyz / world_position_h.w;
-
-    let L = lighting.sun_direction;
-    let Li = lighting.sun_intensity;
-    let base_ambient_color = lighting.base_ambient_color;
-
-    let has_directional_light = (scene_flags & SceneFlags::HasDirectionalLight) != 0;
-
-    // PBR constants
     let V = normalize(camera.position.xyz - world_position);
-    let N = normalize(mapped_normal);
     let R = reflect(-V, N);
     let NoV = abs(dot(N, V)) + 1e-5;
-    let NoL = max(dot(N, L), 0.0);
 
-    if ((scene_flags & SceneFlags::HasSky) != 0 && depth == 0.0) {
-      return sky.has_texture != 0 ? f32x4(1.f) : f32x4(sky.solid_color);
-    }
+    // no atmosphere, so no transmittance to attenuate the sun
+    let direct_illuminance = has_directional_light ? f32x3(Li) : f32x3(0.0);
 
-    // No atmosphere, so no transmittance to attenuate the sun.
     var indirect_illuminance = f32x3(0.0);
-    var direct_illuminance = has_directional_light ? f32x3(Li) : f32x3(0.0);
-
-    let has_sky = (scene_flags & SceneFlags::HasSky) != 0;
-    let environment_radiance = has_sky ? sky.ambient_color : base_ambient_color;
-    var diffuse_sky = environment_radiance;
-    var specular_sky = environment_radiance;
-
     if ((scene_flags & SceneFlags::HasDDGI) == 0) {
+        let has_sky = (scene_flags & SceneFlags::HasSky) != 0;
+        let environment_radiance = has_sky ? sky.ambient_color : lighting.base_ambient_color;
+
         let dielectric_F0 = f32x3(0.04);
         let F0 = lerp(dielectric_F0, albedo_color, metallic);
 
@@ -84,8 +86,8 @@ func fs_main(
 
         let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-        let ibl_diffuse = kD * diffuse_sky * albedo_color;
-        let ibl_specular = kS * specular_sky * spec_occlusion;
+        let ibl_diffuse = kD * environment_radiance * albedo_color;
+        let ibl_specular = kS * environment_radiance * spec_occlusion;
         indirect_illuminance = (ibl_diffuse * occlusion) + ibl_specular;
     }
 
@@ -95,19 +97,16 @@ func fs_main(
 
     var material_surface_color = f32x3(0.0);
     if (NoL > 0.0) {
-        let visibility = sun_visibility(
-            input.tex_coord, input.position.xy, depth, smooth_normal, world_position, has_directional_light, *lighting, vsm_clipmaps);
         let result = BRDF(V, N, L, albedo_color, roughness, metallic);
         material_surface_color = (result.diffuse + result.specular * horizon) * direct_illuminance * NoL * visibility;
     }
 
-    var point_spot_color = f32x3(0.0);
+    var color = material_surface_color + indirect_illuminance + emission;
     if (depth != 0.0) {
-        point_spot_color = point_spot_lighting(
+        point_spot_lighting(
             input.tex_coord, u32x2(input.position.xy), depth, world_position, N, V, smooth_normal, albedo_color, roughness, metallic,
-            *lighting, lights, light_grid, vsm_pointspot_views);
+            *lighting, lights, light_grid, vsm_pointspot_views, color);
     }
 
-    let final_color = material_surface_color + indirect_illuminance + emission + point_spot_color;
-    return f32x4(final_color, 1.0);
+    return f32x4(color, 1.0);
 }

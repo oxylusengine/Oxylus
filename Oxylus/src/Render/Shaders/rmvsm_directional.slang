@@ -25,6 +25,8 @@ static const f32 VSM_VISIBILITY_MISS = -1.0;
 static const f32 VSM_POINT_TEXEL_REACH = 0.5;
 static const f32 VSM_BILINEAR_TEXEL_REACH = 1.0;
 
+static const i32 VSM_FALLBACK_CLIPMAP_OFFSETS[3] = { 0, -1, 1 };
+
 func hash2(f32x2 p) -> f32x2 {
     let d = f32x2(dot(p, f32x2(127.1, 311.7)), dot(p, f32x2(269.5, 183.3)));
     return fract(sin(d) * 43758.5453);
@@ -111,15 +113,15 @@ func sample_vsm_shadow_depth_with_fallback(
     f32x3 world_pos,
     out i32 hit_clipmap_index
 ) -> f32 {
-    hit_clipmap_index = base_clipmap_index;
-    let d0 = sample_vsm_shadow_depth(vsm_ctx, res, base_clipmap_index, world_pos);
-    if (d0 != VSM_DEPTH_MISS) { return d0; }
-    hit_clipmap_index = base_clipmap_index - 1;
-    let d1 = sample_vsm_shadow_depth(vsm_ctx, res, base_clipmap_index - 1, world_pos);
-    if (d1 != VSM_DEPTH_MISS) { return d1; }
-    hit_clipmap_index = base_clipmap_index + 1;
-    let d2 = sample_vsm_shadow_depth(vsm_ctx, res, base_clipmap_index + 1, world_pos);
-    if (d2 != VSM_DEPTH_MISS) { return d2; }
+    [loop]
+    for (var i = 0; i < 3; i++) {
+        hit_clipmap_index = base_clipmap_index + VSM_FALLBACK_CLIPMAP_OFFSETS[i];
+        let depth = sample_vsm_shadow_depth(vsm_ctx, res, hit_clipmap_index, world_pos);
+        if (depth != VSM_DEPTH_MISS) {
+            return depth;
+        }
+    }
+
     return VSM_DEPTH_MISS;
 }
 
@@ -176,21 +178,16 @@ func sample_vsm_visibility_bilinear_with_fallback(
     f32 NoL,
     f32 extra_bias
 ) -> f32 {
-    let v0 = sample_vsm_visibility_bilinear(
-        vsm_ctx, res, base_clipmap_index, world_pos, receiver_depth,
-        get_vsm_bias_norm(vsm_ctx, base_clipmap_index, flat_normal, NoL, VSM_BILINEAR_TEXEL_REACH, extra_bias)
-    );
-    if (v0 != VSM_VISIBILITY_MISS) { return v0; }
-    let v1 = sample_vsm_visibility_bilinear(
-        vsm_ctx, res, base_clipmap_index - 1, world_pos, receiver_depth,
-        get_vsm_bias_norm(vsm_ctx, base_clipmap_index - 1, flat_normal, NoL, VSM_BILINEAR_TEXEL_REACH, extra_bias)
-    );
-    if (v1 != VSM_VISIBILITY_MISS) { return v1; }
-    let v2 = sample_vsm_visibility_bilinear(
-        vsm_ctx, res, base_clipmap_index + 1, world_pos, receiver_depth,
-        get_vsm_bias_norm(vsm_ctx, base_clipmap_index + 1, flat_normal, NoL, VSM_BILINEAR_TEXEL_REACH, extra_bias)
-    );
-    if (v2 != VSM_VISIBILITY_MISS) { return v2; }
+    [loop]
+    for (var i = 0; i < 3; i++) {
+        let clipmap_index = base_clipmap_index + VSM_FALLBACK_CLIPMAP_OFFSETS[i];
+        let bias_norm = get_vsm_bias_norm(vsm_ctx, clipmap_index, flat_normal, NoL, VSM_BILINEAR_TEXEL_REACH, extra_bias);
+        let visibility = sample_vsm_visibility_bilinear(vsm_ctx, res, clipmap_index, world_pos, receiver_depth, bias_norm);
+        if (visibility != VSM_VISIBILITY_MISS) {
+            return visibility;
+        }
+    }
+
     return VSM_VISIBILITY_MISS;
 }
 
@@ -201,33 +198,38 @@ func perpendicular_basis(f32x3 L, out f32x3 tangent, out f32x3 bitangent) -> voi
     bitangent = cross(L, t);
 }
 
-func pcss_shadow(
+func pcss_hard_shadow(
     in VSMContext vsm_ctx,
     in VSMDirectionalResources res,
     i32 base_clipmap_index,
     f32x3 world_position,
+    f32 receiver_depth,
     f32x3 flat_normal,
+    f32 NoL
+) -> f32 {
+    let visibility = sample_vsm_visibility_bilinear_with_fallback(
+        vsm_ctx, res, base_clipmap_index, world_position, receiver_depth, flat_normal, NoL, 0.0
+    );
+    return visibility == VSM_VISIBILITY_MISS ? 1.0 : visibility;
+}
+
+func pcss_soft_shadow(
+    in VSMContext vsm_ctx,
+    in VSMDirectionalResources res,
+    i32 base_clipmap_index,
+    f32x3 offset_world_position,
+    f32 d_receiver_norm,
+    f32x3 flat_normal,
+    f32 NoL,
     f32x2 noise
 ) -> f32 {
     let L = vsm_ctx.directional_light_dir;
-    let NoL = max(dot(flat_normal, L), 0.0);
-
     let clipmap_texel_size = get_clipmap_texel_size(vsm_ctx, base_clipmap_index);
-    let normal_offset_world = clipmap_texel_size * (1.0 + 2.0 * (1.0 - NoL));
-    let offset_world_position = world_position + flat_normal * normal_offset_world;
+    let d_receiver_world = d_receiver_norm * vsm_ctx.z_length;
 
     var tangent = f32x3(0.0);
     var bitangent = f32x3(0.0);
     perpendicular_basis(L, tangent, bitangent);
-
-    let receiver_info = res.clipmaps[base_clipmap_index].get_clipmap_info(offset_world_position);
-    let d_receiver_norm = receiver_info.projected_depth;
-    let d_receiver_world = d_receiver_norm * vsm_ctx.z_length;
-
-    let hard_shadow_visibility = sample_vsm_visibility_bilinear_with_fallback(
-        vsm_ctx, res, base_clipmap_index, offset_world_position, d_receiver_norm, flat_normal, NoL, 0.0
-    );
-    let hard_shadow = hard_shadow_visibility == VSM_VISIBILITY_MISS ? 1.0 : hard_shadow_visibility;
 
     // Blocker search
     let blocker_search_radius = max(PCSS_BLOCKER_SEARCH_RADIUS, PCSS_MIN_BLOCKER_SEARCH_TEXELS * clipmap_texel_size);
@@ -261,7 +263,7 @@ func pcss_shadow(
     }
 
     if (valid_blocker_samples == 0u) {
-        return hard_shadow;
+        return VSM_VISIBILITY_MISS;
     }
 
     if (blockers == 0u) {
@@ -299,10 +301,36 @@ func pcss_shadow(
     }
 
     if (valid_pcf_samples == 0u) {
-        return hard_shadow;
+        return VSM_VISIBILITY_MISS;
     }
 
     return light_visibility / f32(valid_pcf_samples);
+}
+
+func pcss_shadow(
+    in VSMContext vsm_ctx,
+    in VSMDirectionalResources res,
+    i32 base_clipmap_index,
+    f32x3 world_position,
+    f32x3 flat_normal,
+    f32x2 noise
+) -> f32 {
+    let L = vsm_ctx.directional_light_dir;
+    let NoL = max(dot(flat_normal, L), 0.0);
+
+    let clipmap_texel_size = get_clipmap_texel_size(vsm_ctx, base_clipmap_index);
+    let normal_offset_world = clipmap_texel_size * (1.0 + 2.0 * (1.0 - NoL));
+    let offset_world_position = world_position + flat_normal * normal_offset_world;
+    let d_receiver_norm = res.clipmaps[base_clipmap_index].get_clipmap_info(offset_world_position).projected_depth;
+
+    let soft_visibility = pcss_soft_shadow(
+        vsm_ctx, res, base_clipmap_index, offset_world_position, d_receiver_norm, flat_normal, NoL, noise
+    );
+    if (soft_visibility != VSM_VISIBILITY_MISS) {
+        return soft_visibility;
+    }
+
+    return pcss_hard_shadow(vsm_ctx, res, base_clipmap_index, offset_world_position, d_receiver_norm, flat_normal, NoL);
 }
 
 func vsm_directional_visibility(
